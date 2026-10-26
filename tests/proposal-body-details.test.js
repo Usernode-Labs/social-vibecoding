@@ -52,6 +52,9 @@ function makeAppView(renderMarkdown) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  // The ⋯ rows and meta links to GitHub decide by the address
+  // (frontend/src/lib/repo-link.js, published as window.RepoLink).
+  require('./lib/repo-link').installRepoLink(sandbox);
   vm.createContext(sandbox);
   vm.runInContext(
     `${MERGE_STATUS_SRC}\n${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`,
@@ -110,7 +113,7 @@ test('an imported Underway topic reuses proposal details without opening voting'
     source: 'imported',
     username: 'bruno',
     imported_pr_author: 'contributor',
-    pr_url: 'https://github.example/pull/88',
+    pr_url: 'https://github.com/example/app/pull/88',
     check_state: 'failing',
     checks_checked_at: '2026-09-04T12:00:00Z',
     test_results: [{
@@ -129,7 +132,7 @@ test('an imported Underway topic reuses proposal details without opening voting'
   const html = detailsHtml(AppView, item);
   // The GitHub link is the card's meta line's last word now (`_topicCard`),
   // not a line under the card; the model still carries it.
-  assert.equal(view.meta[0].href, 'https://github.example/pull/88');
+  assert.equal(view.meta[0].href, 'https://github.com/example/app/pull/88');
   assert.doesNotMatch(html, /View PR on GitHub/);
   // #2588: the imported note is no longer one of the steps. "Imported pull
   // request, authored by contributor …" said where the change came from

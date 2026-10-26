@@ -42,6 +42,7 @@ import { DevChatSubView } from './chat-frame';
 import { KanbanFilters } from './kanban-filters';
 import { mainPauseStore, type MainPauseState } from './main-pause-store';
 import { releaseStallStore, type ReleaseStallState } from './release-stall-store';
+import { codePauseStore, type CodePauseState } from './code-pause-store';
 import { discussionStore, type DiscussionState } from './discussion-store';
 import { kanbanFiltersStore, type KanbanFiltersState } from './kanban-filters-store';
 import { DevSessionShell } from './session-frame';
@@ -105,6 +106,7 @@ export interface DevBoardBridge {
   publishCardMenu(rows: CardMenuRowView[]): void;
   publishMainPause(state: MainPauseState): void;
   publishReleaseStall(state: ReleaseStallState): void;
+  publishCodePause(state: CodePauseState): void;
   publishDiscussion(state: DiscussionState): void;
   mountKanbanFilters(host: Element | null): void;
   publishKanbanFilters(patch: Partial<KanbanFiltersState>): void;
@@ -269,6 +271,13 @@ export const devBoardBridge: DevBoardBridge = {
   // promoted list, beside the two notices above.
   publishReleaseStall(state) {
     releaseStallStore.set(state);
+  },
+
+  // Whether changes to this project's code are paused while Homeroom moves
+  // off GitHub — see ./code-pause-store.ts. Published from the app record,
+  // beside the two notices above.
+  publishCodePause(state) {
+    codePauseStore.set(state);
   },
 
   // Where the app's general chat is, and the last thing said in it — see

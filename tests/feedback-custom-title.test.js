@@ -32,24 +32,13 @@ const github = require('../src/services/github');
 github.isEnabled = () => true;
 github.noteIssueCreated = () => {};
 
-// Platform-target feedback files via a raw fetch to api.github.com with
-// the PAT — stub it and capture the POSTed body. Local requests to the
-// test server pass through to the real fetch.
-process.env.GITHUB_BOT_TOKEN = 'test-pat';
-let ghCreates = [];
+// Platform-target feedback files a request row on the platform's own board
+// (services/requests.js, through github.createIssue); an in-memory store
+// stands in for it and records what was filed.
+const { installFakeRequests } = require('./helpers/fake-requests');
+const fakeRequests = installFakeRequests(null, { 'plat/repo': [] }, { firstNumber: 77 });
+const ghCreates = fakeRequests.filed;
 const realFetch = global.fetch;
-global.fetch = async (url, opts) => {
-  if (String(url).includes('api.github.com')) {
-    const body = JSON.parse(opts.body);
-    ghCreates.push(body);
-    return {
-      ok: true,
-      status: 201,
-      json: async () => ({ number: 77, html_url: 'https://github.com/plat/repo/issues/77' }),
-    };
-  }
-  return realFetch(url, opts);
-};
 
 const { feedbackRoutes } = require('../src/routes/feedback');
 const express = require('express');
@@ -66,7 +55,7 @@ function startServer() {
 
 function reset() {
   poolQueries = [];
-  ghCreates = [];
+  ghCreates.length = 0;
   generateCalls = 0;
 }
 
@@ -135,7 +124,7 @@ test('over-long title is rejected with 400 (nothing filed)', async () => {
   try {
     const res = await post(server, { description: 'x', title: 'a'.repeat(201) });
     assert.equal(res.status, 400);
-    assert.equal(ghCreates.length, 0, 'no GitHub issue created');
+    assert.equal(ghCreates.length, 0, 'no request filed');
     assert.equal(generateCalls, 0);
   } finally {
     server.close();

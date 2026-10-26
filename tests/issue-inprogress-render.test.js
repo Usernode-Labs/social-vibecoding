@@ -74,6 +74,9 @@ function makeAppView(opts) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  // The ⋯ rows and meta links to GitHub decide by the address
+  // (frontend/src/lib/repo-link.js, published as window.RepoLink).
+  require('./lib/repo-link').installRepoLink(sandbox);
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -534,13 +537,21 @@ test('LIVE proposal card links "Closes #N" to the in-app issue topic', () => {
   assert.ok(!html.includes('github.com/o/r/issues/6'), 'no external issue link on live cards');
 });
 
-test('MERGED proposal detail head keeps the external GitHub "Closed #N" links', () => {
+// The merged DETAIL head's "Closed #N" are links, not chips. They opened the
+// issue on GitHub; a request is Homeroom's own row now, for every project
+// (the platform's own included, whose pull requests are still on GitHub), so
+// each opens the request's page in place.
+test('MERGED proposal detail head links "Closed #N" to the request\'s page in Homeroom', () => {
   const AppView = makeAppView();
   const model = AppView._proposalCardModel(baseProposal({ status: 'merged' }));
   const html = cardHtml(model);
   assert.ok(!html.includes('data-issue-chip'), 'merged cards do not use in-app chips');
-  assert.match(html, /github\.com\/o\/r\/issues\/6/);
-  assert.match(html, /Closed #6/);
+  assert.ok(!html.includes('github.com/o/r/issues/6'), 'no GitHub issue address is derived from the PR any more');
+  const link = html.match(/<a [^>]*>Closed #6<\/a>/);
+  assert.ok(link, html);
+  assert.match(link[0], /href="#app\/demo\/dev\/issues\/6"/);
+  assert.doesNotMatch(link[0], /target=/, 'opens in place');
+  assert.match(link[0], /title="Open request #6, which this change closed"/);
 });
 
 test('MERGED kanban card opens "Closed #N" in the Homeroom issue topic', () => {

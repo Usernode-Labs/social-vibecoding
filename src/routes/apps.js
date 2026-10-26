@@ -3,6 +3,7 @@ const platformLimits = require('../services/platform-limit-alerts');
 const appLimit = require('../services/app-limit');
 const { NAME_BEING_PURGED, NAME_BEING_PURGED_ERROR } = require('../services/app-data-retention');
 const { Router } = require('express');
+const repoRef = require('../services/repo-ref');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { findForkSource } = require('../services/app-forker');
@@ -501,10 +502,7 @@ async function liveFirstVersion(pool, appId, viewerId) {
 function isPlatformRepo(parsed, config) {
   if (!parsed || !parsed.owner || !parsed.repo) return false;
   if (!config.platformRepoUrl) return false;
-  const platform = github.parseGithubUrl(config.platformRepoUrl);
-  if (!platform) return false;
-  return parsed.owner.toLowerCase() === platform.owner.toLowerCase()
-      && parsed.repo.toLowerCase() === platform.repo.toLowerCase();
+  return repoRef.sameRepo(parsed, config.platformRepoUrl);
 }
 
 // SELF-HOSTING.md sub-step 2h: the platform's deploy is GHA-driven, not
@@ -1043,18 +1041,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           a.active_users = parseInt(unionRows[0]?.cnt, 10) || 0;
         }
 
-        const [, owner, repo] = (a.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
         const version = a.main_sha
           ? {
               sha: a.main_sha,
               shortSha: a.main_sha.slice(0, 7),
               prNumber: a.main_pr_number || null,
-              commitUrl: owner && repo
-                ? `https://github.com/${owner}/${repo}/commit/${a.main_sha}`
-                : null,
-              prUrl: a.main_pr_number && owner && repo
-                ? `https://github.com/${owner}/${repo}/pull/${a.main_pr_number}`
-                : null,
+              commitUrl: repoRef.commitUrl(a.repo_url, a.main_sha),
+              prUrl: require('../services/app-version').mergedPrUrl(a, a.main_pr_number),
             }
           : null;
         // #416: the raw last_failure JSONB (which carries the full boot
@@ -1998,6 +1991,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         // child app. The raw column rides along in the allowlist; this is
         // the shape clients read.
         releaseStall: require('../services/release-watch').describe(appRow),
+        // Whether changes to this project's code are held while Homeroom
+        // moves off GitHub: its repository is still on GitHub (the
+        // platform's own) and GitHub is paused (services/github-pause.js).
+        // The project page's banner says so; every other project reads
+        // false.
+        codeChangesPaused: require('../services/github-pause').codeChangesPaused(appRow.repo_url),
         ...accessFlags(appRow, req.user, isCollaborator, adminAppIds, contributorCount,
           config.selfAppSlug),
       };
@@ -2378,7 +2377,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // request-time demo-injection pattern routes/issues.js
   // stagingMockGovernance() uses. Strictly a no-op outside staging.
   async function resolveActionsSecrets(app) {
-    const [, owner, repo] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+    const { owner, repo } = repoRef.ownerRepo(app.repo_url) || {};
     let result = null;
     if (!github.isEnabled() || !owner || !repo) {
       result = {
@@ -2467,13 +2466,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // Mirrors the gates POST /secret-declaration-pr enforces so the button's
   // disabled reason and the route's refusal can't disagree.
   async function describeDeclareAbility(app, user) {
-    if (!app.repo_url || !(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/)) {
-      return { canDeclare: false, reason: 'This app has no GitHub repository to open a proposal against.' };
+    if (!repoRef.parse(app.repo_url)) {
+      return { canDeclare: false, reason: 'This app has no repository to open a proposal against.' };
     }
-    if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+    if (!github.hasWriteAccess()) {
       return {
         canDeclare: false,
-        reason: 'Declaring a variable needs GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+        reason: 'Declaring a variable needs a code host configured on the platform.',
       };
     }
     return { canDeclare: true, reason: null };
@@ -2822,15 +2821,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
 
       // GitHub preconditions — same three guards and wording as
       // visibility-pr / governance-pr / admins-pr.
-      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+      if (!github.hasWriteAccess()) {
         return res.status(503).json({
-          error: 'Declaring a variable needs GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+          error: 'Declaring a variable needs a code host configured on the platform.',
         });
       }
       if (!app.repo_url) {
-        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+        return res.status(400).json({ error: 'App has no repository to open a PR against' });
       }
-      if (!(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/)) {
+      if (!repoRef.parse(app.repo_url)) {
         return res.status(400).json({ error: 'Could not parse the app repository URL' });
       }
 
@@ -3013,15 +3012,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(400).json({ error: 'App is already named that' });
       }
 
-      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+      if (!github.hasWriteAccess()) {
         return res.status(503).json({
-          error: 'Renames need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+          error: 'Renames need a code host configured on the platform.',
         });
       }
       if (!app.repo_url) {
-        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+        return res.status(400).json({ error: 'App has no repository to open a PR against' });
       }
-      const repoMatch = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/);
+      const repoMatch = repoRef.parse(app.repo_url);
       if (!repoMatch) {
         return res.status(400).json({ error: 'Could not parse the app repository URL' });
       }
@@ -3168,15 +3167,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         if (identityRefusal) return res.status(403).json(identityRefusal);
       }
 
-      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+      if (!github.hasWriteAccess()) {
         return res.status(503).json({
-          error: 'Visibility changes need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+          error: 'Visibility changes need a code host configured on the platform.',
         });
       }
       if (!app.repo_url) {
-        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+        return res.status(400).json({ error: 'App has no repository to open a PR against' });
       }
-      if (!(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/)) {
+      if (!repoRef.parse(app.repo_url)) {
         return res.status(400).json({ error: 'Could not parse the app repository URL' });
       }
 
@@ -3261,13 +3260,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         if (identityRefusal) return res.status(403).json(identityRefusal);
       }
 
-      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+      if (!github.hasWriteAccess()) {
         return res.status(503).json({
-          error: 'Changes to who decides need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+          error: 'Changes to who decides need a code host configured on the platform.',
         });
       }
-      if (!app.repo_url || !(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/)) {
-        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+      if (!repoRef.parse(app.repo_url)) {
+        return res.status(400).json({ error: 'App has no repository to open a PR against' });
       }
 
       // Competing access changes are allowed (#4960): more than one change
@@ -3497,15 +3496,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(400).json({ error: 'The app already declares those admins' });
       }
 
-      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+      if (!github.hasWriteAccess()) {
         return res.status(503).json({
-          error: 'Admin changes need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+          error: 'Admin changes need a code host configured on the platform.',
         });
       }
       if (!app.repo_url) {
-        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+        return res.status(400).json({ error: 'App has no repository to open a PR against' });
       }
-      if (!(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/)) {
+      if (!repoRef.parse(app.repo_url)) {
         return res.status(400).json({ error: 'Could not parse the app repository URL' });
       }
 
@@ -3596,15 +3595,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(400).json({ error: 'The app already has those approval settings' });
       }
 
-      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+      if (!github.hasWriteAccess()) {
         return res.status(503).json({
-          error: 'Governance changes need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+          error: 'Governance changes need a code host configured on the platform.',
         });
       }
       if (!app.repo_url) {
-        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+        return res.status(400).json({ error: 'App has no repository to open a PR against' });
       }
-      if (!(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/)) {
+      if (!repoRef.parse(app.repo_url)) {
         return res.status(400).json({ error: 'Could not parse the app repository URL' });
       }
 
@@ -3688,15 +3687,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (!(await appAccess.checkAppAccess(pool, app, req.user, 'collab'))) {
         return res.status(403).json({ error: 'Only people who can build here can propose a change to its topics' });
       }
-      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+      if (!github.hasWriteAccess()) {
         return res.status(503).json({
-          error: 'Topic changes need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+          error: 'Topic changes need a code host configured on the platform.',
         });
       }
       if (!app.repo_url) {
-        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+        return res.status(400).json({ error: 'App has no repository to open a PR against' });
       }
-      if (!(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/)) {
+      if (!repoRef.parse(app.repo_url)) {
         return res.status(400).json({ error: 'Could not parse the app repository URL' });
       }
       const result = await topicsPr.createTopicsPR(

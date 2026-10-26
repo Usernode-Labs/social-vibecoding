@@ -117,6 +117,17 @@ spec:
         - protocol: TCP
           port: {{ .Values.networkPolicy.explorer.port }}
     {{- end }}
+    {{- if .Values.networkPolicy.gitHost.enabled }}
+    # Homeroom's git host: app repositories, through its in-cluster Service.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ required "networkPolicy.gitHost.namespace is required when git host access is enabled" .Values.networkPolicy.gitHost.namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.gitHost.podSelector | nindent 14 }}
+      ports: [{protocol: TCP, port: {{ .Values.networkPolicy.gitHost.port }}}]
+    {{- end }}
     - ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
     - to: [{ipBlock: {cidr: 0.0.0.0/0}}]
       ports: [{protocol: TCP, port: 443}]

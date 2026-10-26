@@ -31,6 +31,7 @@ const { getPool } = require('../db/pool');
 const github = require('./github');
 const releaseWatch = require('./release-watch');
 const githubBudget = require('./github-budget');
+const repoRef = require('./repo-ref');
 
 // MAIN_DRIFT_POLL_MS: how often the clock looks (5 minutes). GitHub's rest
 // API has a 5000 req/hr limit per token. A plain read of every running
@@ -41,9 +42,10 @@ const githubBudget = require('./github-budget');
 // the budget is nearly gone (scan below).
 const POLL_INTERVAL_MS = parseInt(process.env.MAIN_DRIFT_POLL_MS, 10) || 5 * 60 * 1000;
 
-// Whether the clock runs: GitHub, with the bot's token.
+// Whether the clock runs: the git host's service account, or GitHub with
+// the bot's token.
 function enabled() {
-  return !!(github.isEnabled() && process.env.GITHUB_BOT_TOKEN);
+  return github.isEnabled() && (require('./git-host').isConfigured() || !!process.env.GITHUB_BOT_TOKEN);
 }
 
 // The last answer per repo, for conditional reads: "owner/repo" (lowercased)
@@ -67,6 +69,13 @@ const headCache = new Map();
 // but it is a subprocess per app per tick, it cannot give the self-hosted
 // row its commit date and subject, and a 304 already costs nothing.
 async function fetchRemoteHead(owner, repo) {
+  // An app on Homeroom's git host: its mirror's tip, no GitHub involved
+  // (services/hosted-git.js). Only the platform's own row reads GitHub.
+  if (require('./repo-ref').hostOfOwner(owner) === 'git_host') {
+    const head = await require('./hosted-git').headOf(owner, repo, 'main');
+    if (!head) throw Object.assign(new Error(`main not found on ${owner}/${repo}`), { status: 404 });
+    return { ...head, octokit: null };
+  }
   // A read: through the App installation when GITHUB_READS_VIA_APP says so,
   // with the bot token behind it (services/github.js getReadOctokit). A 304
   // is passed through as itself, never retried with the bot token.
@@ -137,7 +146,7 @@ const movementOf = (app, sha) =>
 
 async function checkOne(config, pool, app, { byHand = false } = {}) {
   const platform = require('../workflow/platform.ts');
-  const parsed = github.parseGithubUrl(app.repo_url);
+  const parsed = repoRef.ownerRepo(app.repo_url);
   if (!parsed) {
     log.warn('drift-poller', 'Skipping app with unparseable repo_url', { slug: app.slug, repoUrl: app.repo_url });
     return { status: 'invalid_repo', slug: app.slug, repoUrl: app.repo_url };

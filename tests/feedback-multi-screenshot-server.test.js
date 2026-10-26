@@ -36,20 +36,19 @@ const github = require('../src/services/github');
 github.isEnabled = () => true;
 github.noteIssueCreated = () => {};
 
-process.env.GITHUB_BOT_TOKEN = 'test-pat';
+// Platform-target feedback files a request row on the platform's own board
+// (services/requests.js, through github.createIssue); an in-memory store
+// stands in for it, fresh for each test, and records what was filed.
+const { installFakeRequests } = require('./helpers/fake-requests');
+let fakeRequests = null;
 let ghCreates = [];
+function freshRequests() {
+  if (fakeRequests) fakeRequests.restore();
+  fakeRequests = installFakeRequests(null, { 'plat/repo': [] }, { firstNumber: 42 });
+  ghCreates = fakeRequests.filed;
+}
+freshRequests();
 const realFetch = global.fetch;
-global.fetch = async (url, opts) => {
-  if (String(url).includes('api.github.com')) {
-    ghCreates.push(JSON.parse(opts.body));
-    return {
-      ok: true,
-      status: 201,
-      json: async () => ({ number: 42, html_url: 'https://github.com/plat/repo/issues/42' }),
-    };
-  }
-  return realFetch(url, opts);
-};
 
 const {
   feedbackRoutes,
@@ -74,7 +73,7 @@ function startServer() {
 
 function reset() {
   poolQueries = [];
-  ghCreates = [];
+  freshRequests();
   poolHandler = async () => ({ rows: [] });
 }
 

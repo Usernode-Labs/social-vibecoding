@@ -34,6 +34,7 @@
  */
 
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 
 // Parse a manifest source blob into its platform_env entries. Anything
 // unparseable resolves to [] — the same leniency the deploy reader has,
@@ -212,7 +213,7 @@ async function resolvePlatformEnvCheck({ pool, app, session }) {
   const appManifest = require('./app-manifest');
   if (!github.isEnabled()) return SKIP('GitHub is not configured.');
 
-  const [, owner, repo] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  const { owner, repo } = repoRef.ownerRepo(app.repo_url) || {};
   if (!owner || !repo) return SKIP('Could not parse the repository URL.');
 
   let compare;

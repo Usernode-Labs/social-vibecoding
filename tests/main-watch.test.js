@@ -504,10 +504,12 @@ test('the schema carries the pause column and the backfill for the derived pause
 // The suite's run reads the repository as the main-check machine's claim
 // does (rules/github-url.ts): an app the machine claims is never stored as
 // having no repository (review, 2026-10-17).
-test('parseRepo: the rules\' one parser, the ssh form and a trailing slash included', () => {
+test('parseRepo: the rules\' one parser, the ssh form, a trailing slash and the git host included', () => {
   const { parseRepo } = require('../src/services/main-watch');
   for (const url of ['https://github.com/acme/shop', 'https://github.com/acme/shop/', 'https://www.github.com/acme/shop.git', 'git@github.com:acme/shop.git']) {
     assert.deepEqual(parseRepo(url), { owner: 'acme', repo: 'shop' }, url);
   }
-  assert.equal(parseRepo('https://gitlab.com/acme/shop'), null);
+  // A stored address on Homeroom's git host parses the same way.
+  assert.deepEqual(parseRepo('https://git.onhomeroom.com/apps/shop'), { owner: 'apps', repo: 'shop' });
+  for (const notOne of ['https://github.com/acme', 'not a url', '', null]) assert.equal(parseRepo(notOne), null, String(notOne));
 });

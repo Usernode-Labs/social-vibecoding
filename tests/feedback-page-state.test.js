@@ -28,30 +28,20 @@ llm.generateIssueTitle = async () => ({ title: 'Generated title', usage: undefin
 const github = require('../src/services/github');
 github.isEnabled = () => true;
 github.noteIssueCreated = () => {};
-// App-targeted feedback files through the GitHub App installation path.
+// Both targets file through github.createIssue now: an app's request and
+// one on the platform's own board are both request rows
+// (services/requests.js), so one stub sees both, split by repository.
 let appCreates = [];
+let ghCreates = [];
 github.createIssue = async (owner, repo, { title, body }) => {
+  if (`${owner}/${repo}` === 'plat/repo') {
+    ghCreates.push({ owner, repo, title, body });
+    return { number: 42, html_url: `https://app.example.test/#app/platform/dev/issues/42` };
+  }
   appCreates.push({ owner, repo, title, body });
   return { number: 9, html_url: `https://github.com/${owner}/${repo}/issues/9` };
 };
-
-// Platform-target feedback files via a raw fetch to api.github.com with
-// the PAT — stub it and capture the POSTed body. Local requests to the
-// test server pass through to the real fetch.
-process.env.GITHUB_BOT_TOKEN = 'test-pat';
-let ghCreates = [];
 const realFetch = global.fetch;
-global.fetch = async (url, opts) => {
-  if (String(url).includes('api.github.com')) {
-    ghCreates.push(JSON.parse(opts.body));
-    return {
-      ok: true,
-      status: 201,
-      json: async () => ({ number: 42, html_url: 'https://github.com/plat/repo/issues/42' }),
-    };
-  }
-  return realFetch(url, opts);
-};
 
 const {
   feedbackRoutes,

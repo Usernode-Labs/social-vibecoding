@@ -71,12 +71,21 @@ test('an ordinary staging preview is never given the phone code, and no dapp.jso
   assert.equal('SHOTS_PHONE_TEST_CODE' in merged.env, false);
 });
 
-test('only canonical HTTPS GitHub repositories are accepted', () => {
+test('only a stored repository address is accepted (services/repo-ref.js)', () => {
   assert.deepEqual(environment.repoParts('https://github.com/Usernode-Labs/example.git'), {
     owner: 'Usernode-Labs', repo: 'example',
   });
-  assert.throws(() => environment.repoParts('git@github.com:owner/repo.git'), /HTTPS GitHub/);
-  assert.throws(() => environment.repoParts('https://example.com/owner/repo'), /HTTPS GitHub/);
+  assert.throws(() => environment.repoParts('https://example.com/owner/repo'), /need a repository/);
+  assert.throws(() => environment.repoParts('https://github.com/owner'), /need a repository/);
+  assert.throws(() => environment.repoParts(null), /need a repository/);
+  const prior = process.env.GIT_HOST_URL;
+  process.env.GIT_HOST_URL = 'https://git.example.test';
+  try {
+    assert.deepEqual(environment.repoParts('https://git.example.test/apps/example'), { owner: 'apps', repo: 'example' });
+  } finally {
+    if (prior === undefined) delete process.env.GIT_HOST_URL;
+    else process.env.GIT_HOST_URL = prior;
+  }
 });
 
 test('parallel cleanup waits for every sibling before surfacing a failure', async () => {

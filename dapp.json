@@ -68,6 +68,12 @@
       "description": "Classic PAT with `repo` scope for the bot user. Powers repo creation, branch pushes, PR creation, and the in-app feedback flow (Issues:write on USERNODE_PLATFORM_REPO). `staging_default: \"\"` lets staging boot — every consumer guards on `if (!pat)` and degrades."
     },
     {
+      "key": "GIT_HOST_TOKEN",
+      "private": true,
+      "staging_default": "",
+      "description": "The platform's service account token on Homeroom's git host (GIT_HOST_URL), where app repositories live since GitHub suspended the account that held them (26 Oct 2026). Creates repositories, pushes the platform's commits and merges, and reads private repositories. Never given to workers, agents or people. Empty with GIT_HOST_URL unset: no git host, and app repositories stay where their repo_url says."
+    },
+    {
       "key": "ANTHROPIC_API_KEY",
       "required": false,
       "private": true,
@@ -154,6 +160,30 @@
       "group": "Platform",
       "default": "on",
       "description": "Whether everyday GitHub reads go through the GitHub App installation, which has its own hourly budget, instead of the bot token (GITHUB_BOT_TOKEN). On whenever the App is configured. Writes always use the bot token, and an App read that is refused or out of budget is sent again with it. Set off to read with the bot token only, as before."
+    },
+    {
+      "key": "GIT_HOST_URL",
+      "group": "Platform",
+      "default": "",
+      "description": "Homeroom's own git host (Forgejo), as people and agents reach it, e.g. https://git.onhomeroom.com. App repositories live here (apps.repo_url is the repository's page) since GitHub suspended the account that held them; new apps are made here. Empty: no git host."
+    },
+    {
+      "key": "GIT_HOST_INTERNAL_URL",
+      "group": "Platform",
+      "default": "",
+      "description": "Where the platform, its builds and workers read and write the git host. Empty: GIT_HOST_URL itself, over HTTPS, which needs no network policy."
+    },
+    {
+      "key": "GIT_HOST_ORG",
+      "group": "Platform",
+      "default": "apps",
+      "description": "The organisation on the git host that app repositories are made in."
+    },
+    {
+      "key": "GIT_HOST_USER",
+      "group": "Platform",
+      "default": "",
+      "description": "The platform's service account on the git host, whose token is GIT_HOST_TOKEN."
     },
     {
       "key": "MAX_APPS",

@@ -118,7 +118,7 @@ function flakeRequestsEnabled() {
 }
 
 // The rules' one parser, as the main-check machine's own claim reads it.
-const { parseGithubUrl: parseRepo } = require('../workflow/rules/github-url.ts');
+const { parseRepoAddress: parseRepo } = require('../workflow/rules/github-url.ts');
 
 function sameSha(a, b) {
   return !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase();

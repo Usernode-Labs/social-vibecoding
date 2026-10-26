@@ -45,6 +45,7 @@ const { CAPTURE_MAX_PATHS, normalizeStoredPath, VIEWPORT_MOBILE } = require('./t
 const { sameSha } = require('./pr-vote-revision');
 const { isFrontendFile, isUiAffecting } = require('./visual-file-classifier');
 const { getPool } = require('../db/pool');
+const repoRef = require('./repo-ref');
 const {
   connectionCensus, mentionsConnectionLimit, connectionExhaustionMessage,
 } = require('../db/connection-census');
@@ -1843,7 +1844,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         traceStep('staging_health', 'Preview answered its healthcheck', { durationMs: buildTimings.healthMs });
       }
     }
-    const [, repoOwner, repoName] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+    const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(app.repo_url) || {};
 
     // A provisional manifest from the moment the run asks for its checks
     // slot (launched: false — there is no Job to read yet), so a retry of the
@@ -2818,7 +2819,7 @@ async function settleCaptureRun(config, pool, run) {
     // { runId }: the machine's work item key the media are held under.
     collect,
   } = run;
-  const [, repoOwner, repoName] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(app.repo_url) || {};
   let traceStatus = 'error';
   const { shots, failures } = parseShots(stdout);
   for (const f of failures) {

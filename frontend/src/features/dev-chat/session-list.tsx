@@ -23,6 +23,7 @@
 import { useState, type KeyboardEvent, type ReactNode } from 'react';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { linkAttrs } from '../../lib/repo-link.js';
 import { messageStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { sessionListStore } from './session-list-store';
@@ -119,6 +120,9 @@ function ActionButton({ a }: { a: SessionAction }): ReactNode {
 function Row({ row }: { row: SessionRow }): ReactNode {
   const open = () => { void call('openSessionFromList', [row.id]); };
   const t = useMessages('devchat');
+  // A change kept in Homeroom opens its page in place; a pull request on
+  // GitHub in a new tab (lib/repo-link.js).
+  const prLink = row.pr ? linkAttrs(row.pr.url) : null;
   return (
     <div
       role="button"
@@ -143,11 +147,11 @@ function Row({ row }: { row: SessionRow }): ReactNode {
           {t('devchat:sessions.row.working')}
         </span>
       ) : null}
-      {row.pr ? (
+      {row.pr && prLink ? (
         <a
-          href={row.pr.url}
-          target="_blank"
-          rel="noopener"
+          href={prLink.href}
+          target={prLink.target}
+          rel={prLink.rel}
           className="text-xs text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
           onClick={(e) => e.stopPropagation()}
         >{t('devchat:sessions.row.pr', { number: row.pr.number })}</a>

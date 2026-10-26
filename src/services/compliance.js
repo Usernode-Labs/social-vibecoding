@@ -28,6 +28,7 @@
 const { AREAS, ITEMS } = require('./compliance-items');
 const ipRetention = require('./ip-retention');
 const adminAccessReview = require('./admin-access-review');
+const repoRef = require('./repo-ref');
 
 const STATUSES = Object.freeze(['todo', 'partial', 'done']);
 const NOTE_MAX = 1000;
@@ -69,10 +70,9 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 // them ({ slug, name, reason }). A check that throws is recorded as an
 // error with its message, and the scan goes on to the next.
 
-// A project's repository on GitHub, read from its repo_url.
+// A project's repository, read from its repo_url.
 function repoOf(url) {
-  const m = String(url || '').match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  return m ? { owner: m[1], repo: m[2] } : null;
+  return repoRef.ownerRepo(url);
 }
 
 const LICENSE_PATHS = ['LICENSE', 'LICENSE.md', 'LICENSE.txt'];

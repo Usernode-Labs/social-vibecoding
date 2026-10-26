@@ -42,6 +42,7 @@
 
 const log = require('./logger');
 const explicitApproval = require('./explicit-approval');
+const repoRef = require('./repo-ref');
 
 // Short in-process TTL cache, mirroring the governance cache in
 // services/governance.js: reads happen on every management gate and
@@ -258,7 +259,7 @@ async function detectExplicitApprovalChange(app, { headRef } = {}) {
   });
   if (!headRef) return none(false, null);
   if (!github.isEnabled()) return none(false, null);
-  const [, owner, repo] = (app?.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  const { owner, repo } = repoRef.ownerRepo(app?.repo_url) || {};
   if (!owner || !repo) return none(false, null);
 
   const { mergeBaseSha, files, filesComplete } =

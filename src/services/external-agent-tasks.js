@@ -238,7 +238,7 @@ async function githubPublic(method, path) {
   init.headers['X-GitHub-Api-Version'] = '2022-11-28';
   let resp;
   try {
-    resp = await fetch(`${GITHUB_API}${path}`, init);
+    resp = await githubService.githubFetch(githubService.publicApiCredential(), `${GITHUB_API}${path}`, init);
   } catch (err) {
     log.warn('external-agent-tasks', 'public GitHub read failed', { method, path, err: err.message });
     return { ok: false, status: 0, body: null, networkError: true };

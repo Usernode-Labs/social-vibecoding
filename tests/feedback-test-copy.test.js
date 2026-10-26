@@ -1,9 +1,11 @@
-// #5743: a test copy (a staging preview, or a developer's own machine) has no
-// GitHub credentials, so POST /api/feedback files the request locally under an
-// obviously fake number and answers the way a real filing does — that is what
-// puts the thanks sheet, and everything after it, within reach of the before &
-// after shots. Production, and any server that does not say it is a test copy,
-// keeps today's 503.
+// POST /api/feedback files a request row on Homeroom's own board
+// (github.createIssue, services/requests.js) on every server: production, a
+// test copy (a staging preview, a developer's own machine), with or without a
+// GitHub token. #5743 used to file a test copy's request under a fake number,
+// because a test copy could not reach GitHub; since GitHub suspended the
+// filing account (26 Oct 2026) requests are rows and need no GitHub at all,
+// so a test copy files them for real, and they show on its board. Nothing
+// here may reach GitHub.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -54,9 +56,11 @@ llm.generateIssueTitle = async () => { throw new Error('no model'); };
 const github = require('../src/services/github');
 github.isEnabled = () => githubEnabled;
 github.noteIssueCreated = () => {};
-github.createIssue = async (owner, repo) => {
+github.createIssue = async (owner, repo, { createdBy } = {}) => {
   createIssueCalls.push({ owner, repo });
-  return { number: 41, html_url: `https://github.com/${owner}/${repo}/issues/41` };
+  const number = 40 + createIssueCalls.length;
+  void createdBy;
+  return { number, html_url: `https://app.example.test/#app/x/dev/issues/${number}` };
 };
 
 const wsId = require.resolve('../src/services/ws');
@@ -125,47 +129,46 @@ async function submit(overrides = {}) {
   return { status: response.status, data: await response.json() };
 }
 
-test('a staging copy with no token files the request locally, under a fake number', async () => {
+test('a staging copy with no token files a real request, and nothing reaches GitHub', async () => {
   stagingCopy();
   // No title: the model is unreachable here, so the filing falls back to the
-  // template title — the state that queues a title heal for a real filing.
+  // template title, which queues a title heal (of the row, not of GitHub).
   const { status, data } = await submit({ title: undefined });
   assert.equal(status, 200);
-  assert.equal(data.url, 'https://github.com/platform/repo/issues/970001');
-  assert.equal(platformIssueCalls.length, 0, 'nothing may reach GitHub from a test copy');
+  assert.deepEqual(createIssueCalls, [{ owner: 'platform', repo: 'repo' }]);
+  assert.equal(data.url, 'https://app.example.test/#app/x/dev/issues/41');
+  assert.equal(platformIssueCalls.length, 0, 'nothing may reach GitHub');
   const receipt = queries.find((q) => /INSERT INTO feedback_reports/.test(q.sql));
   assert.ok(receipt, 'the receipt is written');
-  assert.equal(receipt.params[5], 970001);
-  assert.equal(queries.filter((q) => /INSERT INTO title_heal_queue/.test(q.sql)).length, 0,
-    'a test filing queues no title heal, which would PATCH GitHub');
+  assert.equal(receipt.params[5], 41);
   assert.equal(data.titleFallback, true);
 });
 
-test('a second test filing on the same copy takes the next fake number', async () => {
+test('a second filing on the same copy takes the next number', async () => {
   stagingCopy();
-  assert.equal((await submit()).data.url, 'https://github.com/platform/repo/issues/970001');
+  assert.equal((await submit()).data.url, 'https://app.example.test/#app/x/dev/issues/41');
   const second = await submit();
   assert.equal(second.status, 200);
-  assert.equal(second.data.url, 'https://github.com/platform/repo/issues/970002');
+  assert.equal(second.data.url, 'https://app.example.test/#app/x/dev/issues/42');
   assert.equal(platformIssueCalls.length, 0);
 });
 
-test('a staging copy files app-targeted feedback locally when the GitHub app is off', async () => {
+test('a staging copy files app-targeted feedback on the app\'s board when the GitHub app is off', async () => {
   stagingCopy();
   githubEnabled = false;
   const { status, data } = await submit({ target: 'app', appSlug: 'demo-app' });
   assert.equal(status, 200);
-  assert.equal(createIssueCalls.length, 0, 'the GitHub App is never asked');
-  assert.equal(data.url, 'https://github.com/owner/demo/issues/970001');
+  assert.deepEqual(createIssueCalls, [{ owner: 'owner', repo: 'demo' }]);
   assert.ok(data.edit, 'the thanks sheet’s Edit action is offered');
+  assert.equal(platformIssueCalls.length, 0);
 });
 
-test('local development without a token behaves like a test copy', async () => {
+test('local development without a token files the same way', async () => {
   process.env.USERNODE_LOCAL_DEV = '1';
   process.env.NODE_ENV = 'development';
-  const { status, data } = await submit();
+  const { status } = await submit();
   assert.equal(status, 200);
-  assert.equal(data.url, 'https://github.com/platform/repo/issues/970001');
+  assert.equal(createIssueCalls.length, 1);
   assert.equal(platformIssueCalls.length, 0);
 });
 
@@ -174,27 +177,35 @@ test('a staging copy that does have a token files for real', async () => {
   process.env.GITHUB_BOT_TOKEN = 'test-token';
   const { status, data } = await submit({ title: undefined });
   assert.equal(status, 200);
-  assert.equal(platformIssueCalls.length, 1);
-  assert.equal(data.url, 'https://github.com/platform/repo/issues/41');
+  assert.deepEqual(createIssueCalls, [{ owner: 'platform', repo: 'repo' }], 'a request row on the platform board');
+  assert.equal(platformIssueCalls.length, 0, 'filing no longer reaches GitHub');
+  assert.equal(data.url, 'https://app.example.test/#app/x/dev/issues/41');
   assert.equal(queries.filter((q) => /INSERT INTO title_heal_queue/.test(q.sql)).length, 1);
 });
 
-test('production with no token still refuses', async () => {
+// Production with no token used to answer 503 'GitHub token not configured'.
+// A request is a row now and needs no token: it files for real, never under
+// a fake number.
+test('production with no token files the request natively', async () => {
   process.env.USERNODE_ENV = 'production';
   const { status, data } = await submit();
-  assert.equal(status, 503);
-  assert.deepEqual(data, { error: 'GitHub token not configured' });
+  assert.equal(status, 200);
+  assert.deepEqual(createIssueCalls, [{ owner: 'platform', repo: 'repo' }]);
+  assert.equal(data.url, 'https://app.example.test/#app/x/dev/issues/41');
   assert.equal(platformIssueCalls.length, 0);
 });
 
-test('a server that does not say it is a test copy still refuses', async () => {
+test('a server that does not say it is a test copy files for real, never under a fake number', async () => {
   const { status, data } = await submit();
-  assert.equal(status, 503);
-  assert.deepEqual(data, { error: 'GitHub token not configured' });
+  assert.equal(status, 200);
+  assert.equal(data.url, 'https://app.example.test/#app/x/dev/issues/41');
+  assert.equal(createIssueCalls.length, 1);
   assert.equal(platformIssueCalls.length, 0);
 
   process.env.NODE_ENV = 'production';
   process.env.USERNODE_LOCAL_DEV = '1';
   const prod = await submit();
-  assert.equal(prod.status, 503, 'NODE_ENV=production is never a test copy');
+  assert.equal(prod.status, 200);
+  assert.equal(prod.data.url, 'https://app.example.test/#app/x/dev/issues/42', 'NODE_ENV=production files the same way');
+  assert.equal(createIssueCalls.length, 2);
 });

@@ -50,8 +50,8 @@ const created = [];
 const githubStub = {
   isEnabled: () => true,
   async fetchPublicIssue(_owner, _repo, number) { return { issue: { number, title: `Issue ${number}`, state: 'open' } }; },
-  async createIssue(owner, repo, { title, body }) {
-    created.push({ owner, repo, title, body });
+  async createIssue(owner, repo, { title, body, labels, createdBy }) {
+    created.push({ owner, repo, title, body, labels, createdBy });
     return { number: 40 + created.length, title };
   },
   noteIssueCreated() {},
@@ -1998,15 +1998,13 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   });
 
   await t.test('#11: report_problem files one report to the team for her, through the feedback service, a few a day at most', async (tt) => {
-    const token = process.env.GITHUB_BOT_TOKEN;
-    process.env.GITHUB_BOT_TOKEN = 'test-pat';
-    tt.after(() => { if (token === undefined) delete process.env.GITHUB_BOT_TOKEN; else process.env.GITHUB_BOT_TOKEN = token; });
     await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
-    const posted = [];
-    const fetch = async (url, init) => {
-      posted.push({ url, init, body: JSON.parse(init.body) });
-      return { ok: true, json: async () => ({ number: 900 + posted.length, html_url: `https://github.com/o/r/issues/${900 + posted.length}` }) };
-    };
+    // The report is a request on Homeroom's own board, filed through
+    // github.createIssue (the stub at the top of this file) by
+    // feedback.filePlatformReport: it used to be a GitHub issue the bot
+    // token filed with a raw POST.
+    const before = created.length;
+    const posted = { get length() { return created.length - before; }, at: (i) => created.slice(before).at(i) };
     const config = { ...CONFIG, platformRepoUrl: 'https://github.com/usernode-labs/social-vibecoding' };
     const report = async (text, args) => {
       let result = null;
@@ -2018,7 +2016,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
             result = lastToolResult(req, 'report_problem');
             return [['reply', { text: result.ok ? 'I\'ve sent your report to the Homeroom team.' : 'I couldn\'t send it.' }]];
           }]),
-          apiKey: 'sk-test', openMcp, fetch, sleep: async () => {},
+          apiKey: 'sk-test', openMcp, sleep: async () => {},
         },
       });
       return { result, sent };
@@ -2031,10 +2029,10 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(first.result.ok, true);
     assert.equal((await read(first.sent)).content, 'I\'ve sent your report to the Homeroom team.', 'true, and said as written');
     assert.equal(posted.length, 1);
-    assert.equal(posted[0].url, 'https://api.github.com/repos/usernode-labs/social-vibecoding/issues');
-    assert.equal(posted[0].init.headers.Authorization, 'token test-pat');
-    assert.equal(posted[0].body.title, 'Two proposals for one request');
-    const body = posted[0].body.body;
+    assert.deepEqual([posted.at(0).owner, posted.at(0).repo], ['usernode-labs', 'social-vibecoding'], 'on Homeroom\'s own board');
+    assert.equal(posted.at(0).createdBy, ada.id, 'filed for her');
+    assert.equal(posted.at(0).title, 'Two proposals for one request');
+    const body = posted.at(0).body;
     assert.match(body, new RegExp(`^\\*\\*Source:\\*\\* Homeroom user \\(${ada.username}\\), through Homeroom bot\\n\\n`), 'attributed to her');
     assert.equal(require('../src/routes/issues').creatorFromSourceLine(body), ada.username);
     // Plant pal is public: named. Her words, the request, the bot's records.
@@ -2045,7 +2043,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.doesNotMatch(body, /can you tell the team about the duplicate|last messages of their chat/);
     const { rows: reports } = await pool.query('SELECT user_id, target, app_id, source, issue_number, title, description FROM feedback_reports WHERE user_id = $1', [ada.id]);
     assert.deepEqual(reports.map(({ description, ...r }) => r),
-      [{ user_id: ada.id, target: 'platform', app_id: null, source: 'homeroom_bot', issue_number: 901, title: 'Two proposals for one request' }],
+      [{ user_id: ada.id, target: 'platform', app_id: null, source: 'homeroom_bot', issue_number: 40 + before + 1, title: 'Two proposals for one request' }],
       'one receipt, under her name, from the bot');
     // The team's private copy keeps it.
     assert.match(reports[0].description, /Plant pal request #1 got two proposals/);
@@ -2057,7 +2055,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const over = await report('one more', args);
     assert.equal(over.result.ok, false);
     assert.match(over.result.error, new RegExp(`^They have sent ${mayor.MAX_REPORTS_PER_DAY} reports through you in the last day`));
-    assert.equal(posted.length, mayor.MAX_REPORTS_PER_DAY, 'nothing more reached GitHub');
+    assert.equal(posted.length, mayor.MAX_REPORTS_PER_DAY, 'nothing more was filed');
     // Her own feedback, sent from the dialog, is not the bot's to count.
     await pool.query('UPDATE feedback_reports SET source = NULL WHERE user_id = $1', [ada.id]);
     assert.equal((await report('one more now', args)).result.ok, true);
@@ -2073,7 +2071,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     });
     assert.equal(hidden.result.ok, true);
     assert.match(hidden.result.sent, /which anyone can read\. The last few messages of this chat went only to the team, privately\.$/);
-    const privateBody = posted.at(-1).body.body;
+    const privateBody = posted.at(-1).body;
     assert.match(privateBody, new RegExp(`\\*\\*App:\\*\\* a private project \\(app id ${diary.id}\\)\\n\\*\\*Request:\\*\\* #2\\n`));
     assert.match(privateBody, /My request has been building for hours\./);
     assert.doesNotMatch(privateBody, /Secret diary|secret-diary|the diary build is stuck/, 'neither its name nor her chat');

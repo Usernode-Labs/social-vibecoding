@@ -42,26 +42,20 @@ llm.generateIssueTitle = async ({ description }) => {
 const github = require('../src/services/github');
 github.isEnabled = () => true;
 github.noteIssueCreated = () => {};
+// Both targets file through github.createIssue now: an app's request and
+// one on the platform's own board are both request rows
+// (services/requests.js), so one stub sees both, split by repository.
 let appCreates = [];
+let ghCreates = [];
 github.createIssue = async (owner, repo, { title, body }) => {
+  if (`${owner}/${repo}` === 'plat/repo') {
+    ghCreates.push({ owner, repo, title, body });
+    return { number: 42, html_url: `https://app.example.test/#app/platform/dev/issues/42` };
+  }
   appCreates.push({ owner, repo, title, body });
   return { number: 9, html_url: `https://github.com/${owner}/${repo}/issues/9` };
 };
-
-process.env.GITHUB_BOT_TOKEN = 'test-pat';
-let ghCreates = [];
 const realFetch = global.fetch;
-global.fetch = async (url, opts) => {
-  if (String(url).includes('api.github.com')) {
-    ghCreates.push(JSON.parse(opts.body));
-    return {
-      ok: true,
-      status: 201,
-      json: async () => ({ number: 42, html_url: 'https://github.com/plat/repo/issues/42' }),
-    };
-  }
-  return realFetch(url, opts);
-};
 
 const bodyLimit = require('../src/services/issue-body-limit');
 const {

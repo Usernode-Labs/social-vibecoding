@@ -12,6 +12,7 @@
 // fifty any more, and none keeps a cooldown in memory.
 
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 
 const platform = () => require('../workflow/platform.ts');
 
@@ -98,13 +99,13 @@ async function lookMergedByHand(pool, sessionId) {
     `SELECT cs.id, cs.app_id, cs.pr_number, cs.status, a.repo_url
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [sessionId]);
   if (!row || row.status !== 'promoted' || !row.pr_number) return { skipped: 'gone' };
-  const m = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-  if (!m) return { skipped: 'no_repo' };
+  const repo = repoRef.ownerRepo(row.repo_url);
+  if (!repo) return { skipped: 'no_repo' };
   if (!budgetAllows()) return { skipped: 'budget' };
   const githubBudget = require('./github-budget');
   let pr;
   try {
-    pr = await github.getPR(m[1], m[2], row.pr_number);
+    pr = await github.getPR(repo.owner, repo.repo, row.pr_number);
   } catch (err) {
     if (githubBudget.isRateLimitError(err)) return { skipped: 'budget' };
     throw err;

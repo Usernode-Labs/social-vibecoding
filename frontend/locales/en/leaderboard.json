@@ -963,6 +963,10 @@
     "text": "Open on GitHub",
     "description": "Tooltip and accessible name of the ↗ link on a change in a person's page on the Kudos tab: opens the change on GitHub. \"Open\" is a verb."
   },
+  "kudos.person.viewCode": {
+    "text": "View code",
+    "description": "Tooltip and accessible name of the small ↗ link on a change in a person's kudos list, for a change whose code is on Homeroom's own git host: opens that code in a new tab. \"View\" is a verb."
+  },
   "kudos.history.filterKudos": {
     "text": "👏 Kudos",
     "description": "Filter chip on the Kudos tab's \"My history\" list: shows or hides the kudos the viewer gave. Keep the emoji."

@@ -8,6 +8,7 @@
 import type { Tx } from '../kernel/index.ts';
 import { SHOTS_LIVE_STATES, botLookingSql, operationsLiveSql, previewWorkingSql, shotsRunningSql, syncWorkingSql } from '../session-work.ts';
 import { reviewedHeadForSession } from '../rules/bot-readiness.ts';
+import { parseRepoAddress } from '../rules/github-url.ts';
 
 export interface Session {
   id: number;
@@ -134,9 +135,9 @@ export function includedIn(candidates: any[], commitShas: unknown): { id: number
   return out;
 }
 
+// The app's repository, on whichever host (rules/github-url.ts).
 export function parseRepo(url: unknown): { owner: string; repo: string } | null {
-  const m = String(url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  return m ? { owner: m[1]!, repo: m[2]! } : null;
+  return parseRepoAddress(url);
 }
 
 const issueNumbers = (v: unknown): number[] =>

@@ -86,8 +86,7 @@ function findReader(source) {
 }
 
 function parseRepoUrl(repoUrl) {
-  const m = String(repoUrl || '').match(/github\.com\/([^/]+)\/([^/.]+)/);
-  return m ? { owner: m[1], repo: m[2] } : null;
+  return require(path.join('..', 'src', 'services', 'repo-ref')).ownerRepo(repoUrl);
 }
 
 async function main() {

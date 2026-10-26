@@ -1,12 +1,12 @@
 // #1037: POST /api/sessions/:id/platform-issue/:msgId/confirm files the
 // drafted issue where the CARD SAID IT WOULD.
 //
-// A draft now carries `target`. Platform keeps the historical bot-PAT
-// fetch against config.platformRepoUrl; 'app' files into the app's own
-// repo through the GitHub App installation (github.createIssue), the same
-// path routes/feedback.js uses — the platform PAT isn't guaranteed to
-// reach every app repo. A draft with NO target predates #1037 and must
-// behave exactly as before.
+// A draft now carries `target`: the platform's own board
+// (config.platformRepoUrl), or 'app', the app's own. Both file through
+// github.createIssue, which since 26 Oct 2026 writes a request row
+// (services/requests.js) rather than a GitHub issue; the platform target
+// used to POST to GitHub with the bot's token. A draft with NO target
+// predates #1037 and still files on the platform's board.
 //
 // Same harness shape as tests/recheck-route-pending.test.js: override
 // getPool BEFORE requiring the route module, mount the router on a real
@@ -90,23 +90,24 @@ async function confirm(server, action = 'confirm') {
   return { res, body: await res.json().catch(() => ({})) };
 }
 
-// Stub every outbound edge. `fetchCalls` records the hand-rolled bot-PAT
-// POST (the platform path); `createIssueCalls` records the GitHub App
-// path (the app path); `announceCalls` records the panel refresh.
-function withStubs(t, { createIssue, ghFetchOk = true } = {}) {
+// Stub every outbound edge. `createIssueCalls` records each filing (both
+// targets file through github.createIssue); `fetchCalls` records anything
+// sent to GitHub, which must be nothing; `announceCalls` records the panel
+// refresh. The platform's board answers #55, an app's #77.
+function withStubs(t, { createIssue } = {}) {
   const origFetch = global.fetch;
   const origCreate = github.createIssue;
   const origEnabled = github.isEnabled;
   const origAnnounce = issueAnnounce.announceIssueCreated;
-  const origToken = process.env.GITHUB_BOT_TOKEN;
   const rec = { fetchCalls: [], createIssueCalls: [], announceCalls: [] };
 
-  process.env.GITHUB_BOT_TOKEN = 'bot-pat';
   github.isEnabled = () => true;
   github.createIssue = async (owner, repo, payload) => {
     rec.createIssueCalls.push({ owner, repo, payload });
     if (createIssue) return createIssue(owner, repo, payload);
-    return { number: 77, html_url: 'https://github.com/acme/demo/issues/77' };
+    return owner === 'Usernode-Labs'
+      ? { number: 55, html_url: 'https://app.example.test/#app/homeroom/dev/issues/55' }
+      : { number: 77, html_url: 'https://app.example.test/#app/demo/dev/issues/77' };
   };
   issueAnnounce.announceIssueCreated = async (_pool, owner, repo, issue, appCtx) => {
     rec.announceCalls.push({ owner, repo, issue, appCtx });
@@ -116,14 +117,7 @@ function withStubs(t, { createIssue, ghFetchOk = true } = {}) {
     // Let the test's own request to the local express server through.
     if (u.startsWith('http://127.0.0.1:')) return origFetch(url, init);
     rec.fetchCalls.push({ url: u, init });
-    if (!ghFetchOk) return { ok: false, status: 422, text: async () => 'nope' };
-    return {
-      ok: true,
-      json: async () => ({
-        number: 55,
-        html_url: 'https://github.com/Usernode-Labs/social-vibecoding/issues/55',
-      }),
-    };
+    return { ok: false, status: 599, text: async () => 'unexpected', json: async () => ({}) };
   };
 
   t.after(() => {
@@ -131,8 +125,6 @@ function withStubs(t, { createIssue, ghFetchOk = true } = {}) {
     github.createIssue = origCreate;
     github.isEnabled = origEnabled;
     issueAnnounce.announceIssueCreated = origAnnounce;
-    if (origToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = origToken;
   });
   return rec;
 }
@@ -146,7 +138,7 @@ const pending = (over = {}) => ({
   ...over,
 });
 
-test('a legacy draft with NO target files to the platform repo, exactly as before', async (t) => {
+test('a legacy draft with NO target files on the platform\'s board', async (t) => {
   const rec = withStubs(t);
   installPool(pending());
   const server = await startServer();
@@ -157,17 +149,18 @@ test('a legacy draft with NO target files to the platform repo, exactly as befor
   assert.equal(res.status, 200);
   assert.equal(body.status, 'filed');
   assert.equal(body.number, 55);
-  assert.equal(rec.createIssueCalls.length, 0, 'the App installation path is not used');
-  assert.equal(rec.fetchCalls.length, 1, 'one bot-PAT POST');
-  assert.match(rec.fetchCalls[0].url,
-    /repos\/Usernode-Labs\/social-vibecoding\/issues$/);
-  const sent = JSON.parse(rec.fetchCalls[0].init.body);
+  assert.equal(rec.fetchCalls.length, 0, 'nothing is sent to GitHub');
+  assert.equal(rec.createIssueCalls.length, 1, 'one request filed');
+  assert.equal(rec.createIssueCalls[0].owner, 'Usernode-Labs');
+  assert.equal(rec.createIssueCalls[0].repo, 'social-vibecoding');
+  const sent = rec.createIssueCalls[0].payload;
   assert.deepEqual(sent.labels, ['usernode', 'agent-reported'], 'labels unchanged');
+  assert.equal(sent.createdBy, OWNER.id, 'filed for the person who confirmed it');
   assert.match(sent.body, /\*\*Reported while working on:\*\* Demo App \(demo\)/);
   assert.equal(rec.announceCalls[0].appCtx, null, 'platform resolves its app row by repo');
 });
 
-test('an app-target draft files into the app repo through the GitHub App', async (t) => {
+test('an app-target draft files on the app\'s own board', async (t) => {
   const rec = withStubs(t);
   installPool(pending({
     target: 'app', source: 'user_request', owner: 'acme', repo: 'demo',
@@ -179,7 +172,7 @@ test('an app-target draft files into the app repo through the GitHub App', async
 
   assert.equal(res.status, 200);
   assert.equal(body.number, 77);
-  assert.equal(rec.fetchCalls.length, 0, 'the platform PAT is never used for an app repo');
+  assert.equal(rec.fetchCalls.length, 0, 'nothing is sent to GitHub');
   assert.equal(rec.createIssueCalls.length, 1);
   assert.equal(rec.createIssueCalls[0].owner, 'acme');
   assert.equal(rec.createIssueCalls[0].repo, 'demo');
@@ -205,8 +198,8 @@ test('the stamped owner/repo wins, so a card can never file somewhere it did not
     'files where the card displayed, not where repo_url now points');
 });
 
-test('an app-target GitHub failure reverts the draft to pending with an actionable hint', async (t) => {
-  withStubs(t, { createIssue: async () => { throw new Error('not installed'); } });
+test('an app-target filing failure reverts the draft to pending and says where it failed', async (t) => {
+  withStubs(t, { createIssue: async () => { throw new Error('connection refused'); } });
   const updates = installPool(pending({ target: 'app', owner: 'acme', repo: 'demo' }));
   const server = await startServer();
   t.after(() => server.close());
@@ -214,24 +207,26 @@ test('an app-target GitHub failure reverts the draft to pending with an actionab
   const { res, body } = await confirm(server);
 
   assert.equal(res.status, 502);
-  assert.match(body.error, /bot may not be installed/);
+  assert.equal(body.error, "Couldn't file the request on this app's board",
+    'never rerouted to the platform board: the card said where it would file');
   assert.deepEqual(updates.map((u) => u.status), ['filed', 'pending'],
     'claimed then reverted — the card is tappable again');
 });
 
-test('a platform GitHub refusal still reverts the draft to pending', async (t) => {
-  withStubs(t, { ghFetchOk: false });
+test('a platform filing failure still reverts the draft to pending', async (t) => {
+  withStubs(t, { createIssue: async () => { throw Object.assign(new Error('No app has the repository'), { status: 404 }); } });
   const updates = installPool(pending());
   const server = await startServer();
   t.after(() => server.close());
 
-  const { res } = await confirm(server);
+  const { res, body } = await confirm(server);
 
   assert.equal(res.status, 502);
+  assert.equal(body.error, "Couldn't file the request on Homeroom's board");
   assert.deepEqual(updates.map((u) => u.status), ['filed', 'pending']);
 });
 
-test('dismiss never touches GitHub, whatever the target', async (t) => {
+test('dismiss files nothing, whatever the target', async (t) => {
   const rec = withStubs(t);
   const updates = installPool(pending({ target: 'app', owner: 'acme', repo: 'demo' }));
   const server = await startServer();

@@ -34,6 +34,7 @@ const githubBudget = require('../services/github-budget');
 const { drainGuard } = require('../services/lifecycle');
 const { openEnded } = require('../middleware/inflight-requests');
 const log = require('../services/logger');
+const repoRef = require('../services/repo-ref');
 
 const MAX_REASON_CHARS = 500;
 const MAX_SUMMARY_CHARS = 16 * 1024;
@@ -384,7 +385,7 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
       );
       const session = rows[0];
       if (!session) return res.status(409).json({ error: 'session_state_changed' });
-      const repo = github.parseGithubUrl(session.repo_url);
+      const repo = repoRef.ownerRepo(session.repo_url);
       if (!github.isEnabled() || !repo || !session.branch_name) {
         return res.status(400).json({ error: 'repo_unavailable' });
       }

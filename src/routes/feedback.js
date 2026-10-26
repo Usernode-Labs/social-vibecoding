@@ -14,6 +14,7 @@ const { getPool } = require('../db/pool');
 const { sniffImageType, sniffVideoType } = require('../services/attachments');
 const { feedbackTitleLimiter, feedbackSubmitLimiter, issueScreenshotLimiter, feedbackVideoLimiter } = require('../middleware/rate-limits');
 const challengeScorer = require('../services/topochain/challenge-scorer');
+const repoRef = require('../services/repo-ref');
 // #11 (WP3): the platform issue and its receipt, shared with the Homeroom
 // bot's report_problem, which files through the service rather than here.
 const { parseGitHubRepo, createPlatformIssue, recordFeedbackReport } = require('../services/feedback-reports');
@@ -22,7 +23,6 @@ const { parseGitHubRepo, createPlatformIssue, recordFeedbackReport } = require('
 const { GITHUB_ISSUE_BODY_MAX, FEEDBACK_DESCRIPTION_MAX } = require('../services/issue-body-limit');
 const { editInfo, readEditInfo, saveFeedbackEdit } = require('../services/feedback-edit');
 const { pushIssueUpdate } = require('../services/ws');
-const { filesTestRequests } = require('../config');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -417,47 +417,6 @@ async function attachBounty(pool, { app, owner, repo, issueNumber, user }) {
 // receipt for a report that reached GitHub: who on this platform wrote it,
 // which the issue, filed by the platform's bot account, cannot say.
 //
-// #5743: a test copy (a staging preview, or a developer's own machine — see
-// config.filesTestRequests) has no GitHub credentials, so the same receipt is
-// what stands in for the issue there. The number starts well clear of real
-// issue numbers (~5,700 today) and of the staging GitHub mock's list
-// (900001–900006), so a row filed this way is recognisable. A crash between
-// two posts can at worst reuse a number; that is accepted on a test copy.
-const TEST_ISSUE_MIN = 970001;
-const TEST_ISSUE_MAX = 979999;
-
-async function testIssue(pool, { owner, repo, title, body }) {
-  let number = TEST_ISSUE_MIN;
-  try {
-    const { rows } = await pool.query(
-      `SELECT COALESCE(MAX(issue_number), ${TEST_ISSUE_MIN - 1}) + 1 AS next
-         FROM feedback_reports
-        WHERE issue_owner = $1 AND issue_repo = $2
-          AND issue_number BETWEEN ${TEST_ISSUE_MIN} AND ${TEST_ISSUE_MAX}`,
-      [owner, repo]
-    );
-    const next = Number(rows[0]?.next);
-    if (Number.isSafeInteger(next) && next >= TEST_ISSUE_MIN && next <= TEST_ISSUE_MAX) number = next;
-  } catch (err) {
-    log.warn('feedback', 'Test-copy issue number lookup failed', { repo: `${owner}/${repo}`, message: err.message });
-  }
-  const now = new Date().toISOString();
-  log.info('feedback', 'Filed a test-copy request locally', { repo: `${owner}/${repo}`, issueNumber: number });
-  // The shape github.noteIssueCreated reads, so announceIssueCreated seeds the
-  // open-issues panel exactly as it does for a real issue. Never asks GitHub
-  // for the bot's login: nothing on a test copy may reach GitHub.
-  return {
-    number,
-    title,
-    body,
-    html_url: `https://github.com/${owner}/${repo}/issues/${number}`,
-    state: 'open',
-    labels: [{ name: 'usernode' }],
-    user: { login: 'homeroom' },
-    created_at: now,
-    updated_at: now,
-  };
-}
 
 // ── "Your feedback" (#3186) ─────────────────────────────────────────────
 //
@@ -516,10 +475,10 @@ const MY_FEEDBACK_SELF_APP_SQL = `
    LIMIT 1
 `;
 
-// Pure (exported for tests): whether `repoUrl` is github.com/<owner>/<repo>,
+// Pure (exported for tests): whether `repoUrl` is <owner>/<repo>'s address,
 // with the case and `.git` tolerance findAppByRepo applies.
 function repoMatches(repoUrl, owner, repo) {
-  const [, o, r] = String(repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  const { owner: o, repo: r } = repoRef.ownerRepo(repoUrl) || {};
   if (!o || !r || !owner || !repo) return false;
   const norm = (s) => String(s).replace(/\.git$/, '').toLowerCase();
   return norm(o) === norm(owner) && norm(r) === norm(repo);
@@ -865,15 +824,6 @@ function feedbackRoutes(config) {
     // 'app' opt-in falls back to platform feedback (today's behaviour).
     const target = req.body.target === 'app' ? 'app' : 'platform';
 
-    const pat = process.env.GITHUB_BOT_TOKEN;
-    // #5743: on a test copy with no GitHub credentials, filing a request is
-    // done locally (testIssue below) instead of reaching GitHub, so the
-    // thanks sheet and everything after it can be seen there. Production, and
-    // any server that does not say it is staging or local dev, still refuses.
-    const testFiling = filesTestRequests() && (!pat || (target === 'app' && !github.isEnabled()));
-    if (!pat && !testFiling) {
-      return res.status(503).json({ error: 'GitHub token not configured' });
-    }
 
     // Resolve the destination repo up front so we fail fast (before
     // spending a Haiku call on title generation) when the app target is
@@ -888,9 +838,6 @@ function feedbackRoutes(config) {
     if (target === 'app') {
       if (!appSlug || typeof appSlug !== 'string') {
         return res.status(400).json({ error: 'appSlug is required for app feedback' });
-      }
-      if (!github.isEnabled() && !testFiling) {
-        return res.status(503).json({ error: 'GitHub token not configured' });
       }
       let appRow;
       try {
@@ -925,7 +872,7 @@ function feedbackRoutes(config) {
         log.error('feedback', 'Membership check failed', { message: err.message });
         return res.status(500).json({ error: 'Internal server error' });
       }
-      const [, owner, repo] = (appRow.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      const { owner, repo } = repoRef.ownerRepo(appRow.repo_url) || {};
       if (!owner || !repo) {
         return res.status(409).json({ error: 'This app has no repository yet. Try platform feedback instead' });
       }
@@ -1061,23 +1008,19 @@ function feedbackRoutes(config) {
         if (body.length > GITHUB_ISSUE_BODY_MAX) return bodyTooLong(res, body);
         let issue;
         try {
-          issue = testFiling
-            ? await testIssue(pool, { owner: issueOwner, repo: issueRepo, title, body })
-            : await github.createIssue(issueOwner, issueRepo, { title, body });
+          issue = await github.createIssue(issueOwner, issueRepo, { title, body, createdBy: req.user.id });
         } catch (err) {
-          log.error('feedback', 'App GitHub issue creation failed', {
+          log.error('feedback', 'App request filing failed', {
             repo: `${issueOwner}/${issueRepo}`,
             message: err.message,
           });
-          // Never silently reroute to the platform repo — the user
-          // explicitly chose this app. Surface an actionable hint.
+          // Never silently reroute to the platform's board: the user
+          // explicitly chose this app.
           return res.status(502).json({
-            error: "Failed to create GitHub issue: couldn't file to this app's repo. The bot may not be installed on it",
+            error: "Failed to file the request on this app's board",
           });
         }
-        // #5743: a test filing has nothing on GitHub to heal, and the
-        // sweeper would PATCH it there.
-        if (!testFiling) await queueTitleHeal(issueOwner, issueRepo, issue.number);
+        await queueTitleHeal(issueOwner, issueRepo, issue.number);
         await linkScreenshot(issueOwner, issueRepo, issue.number);
         await linkVideo(issueOwner, issueRepo, issue.number);
         await announceIssueCreated(pool, issueOwner, issueRepo, issue, appContext);
@@ -1133,28 +1076,25 @@ function feedbackRoutes(config) {
         });
       }
 
-      // The platform repo, with the bot's token (services/feedback-reports.js
-      // createPlatformIssue): a hand-rolled call that applies safeMention to
-      // the user-typed title and description itself (#723).
+      // The platform's own board (services/feedback-reports.js
+      // createPlatformIssue): a request row, like an app's.
       const bodyPrefix = `**Source:** ${source}\n${queuedLine}\n`;
       const platformBody = `${bodyPrefix}${description.trim()}${screenshotSuffix}${videoSuffix}`;
       if (platformBody.length > GITHUB_ISSUE_BODY_MAX) return bodyTooLong(res, platformBody);
-      const created = testFiling
-        ? { ok: true, issue: await testIssue(pool, { owner: issueOwner, repo: issueRepo, title, body: platformBody }) }
-        : await createPlatformIssue({
+      const created = await createPlatformIssue({
           owner: issueOwner,
           repo: issueRepo,
           title,
           body: platformBody,
-          pat,
+          createdBy: req.user.id,
         });
       // The underlying status is in the client-facing error (the hint), so
       // a 404 (no access to the feedback repo) reads apart from a 401 (PAT
       // revoked) or a 403 (rate limited) without spelunking server logs.
-      if (!created.ok) return res.status(502).json({ error: `Failed to create GitHub issue: ${created.hint}` });
+      if (!created.ok) return res.status(502).json({ error: `Failed to file the request: ${created.hint}` });
 
       const issue = created.issue;
-      if (!testFiling) await queueTitleHeal(issueOwner, issueRepo, issue.number);
+      await queueTitleHeal(issueOwner, issueRepo, issue.number);
       await linkScreenshot(issueOwner, issueRepo, issue.number);
       await linkVideo(issueOwner, issueRepo, issue.number);
       // Platform feedback: the platform repo is itself an app on

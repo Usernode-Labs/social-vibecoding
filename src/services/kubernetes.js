@@ -8,6 +8,7 @@ const { waitForWorkerBootstrap } = require('./kubernetes-worker-bootstrap');
 const buildkit = require('./kubernetes-buildkit');
 const { watchDeployment } = require('./kubernetes-deployment-watch');
 const { readPodStart, mergePodStart } = require('./check-pod-start');
+const repoRef = require('./repo-ref');
 
 // The client is 967 ES modules: about a quarter of a second and 70 MB to
 // load. Most processes that load this file never reach the cluster (341 of
@@ -347,8 +348,8 @@ async function createKpackBuild(config, { app, revision, environment, sessionId,
   if (!/^[a-f0-9]{40}$/i.test(revision || '')) {
     throw new Error('Kubernetes builds require a full 40-character Git commit SHA');
   }
-  if (!/^https:\/\/github\.com\//.test(app.repo_url || '')) {
-    throw new Error('Kubernetes builds require an HTTPS GitHub repository URL');
+  if (!repoRef.parse(app.repo_url)) {
+    throw new Error('Kubernetes builds require a repository URL');
   }
   const cfg = requireBuildConfig(config);
   const suffix = sessionId ? `s${sessionId}-` : '';
@@ -396,7 +397,9 @@ async function createKpackBuild(config, { app, revision, environment, sessionId,
       serviceAccountName: cfg.buildServiceAccount,
       builder: { image: cfg.builderImage },
       cache: { registry: { tag: cacheTag } },
-      source: { git: { url: app.repo_url.replace(/\.git$/, ''), revision } },
+      // A repository on Homeroom's git host is cloned from its clone address
+      // (GIT_HOST_INTERNAL_URL, else the public one); GitHub's as before.
+      source: { git: { url: repoRef.isHosted(app.repo_url) ? repoRef.cloneUrl(app.repo_url) : app.repo_url.replace(/\.git$/, ''), revision } },
       activeDeadlineSeconds: cfg.activeDeadlineSeconds,
       env: buildEnv,
       resources: {

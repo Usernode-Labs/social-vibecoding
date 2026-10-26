@@ -10,66 +10,45 @@
 
 const log = require('./logger');
 const github = require('./github');
+const repoRef = require('./repo-ref');
 
-// Derive `owner/repo` from a github.com URL. The route does this at
+// Derive `owner/repo` from a github.com URL (the platform's own repository:
+// its feedback is filed as GitHub issues). The route does this at
 // route-factory load, so a malformed USERNODE_PLATFORM_REPO fails the
 // platform fast at startup rather than 500-ing the first time a user clicks
 // "Send feedback".
 function parseGitHubRepo(url) {
-  const u = new URL(url);
-  if (u.hostname !== 'github.com' && u.hostname !== 'www.github.com') {
+  const ref = repoRef.parse(url);
+  if (!ref || ref.host !== 'github') {
     throw new Error(`Expected github.com URL, got: ${url}`);
   }
-  const parts = u.pathname.replace(/\.git$/, '').split('/').filter(Boolean);
-  if (parts.length < 2) {
-    throw new Error(`Expected /<owner>/<repo> path, got: ${url}`);
-  }
-  return { owner: parts[0], repo: parts[1] };
+  return { owner: ref.owner, repo: ref.repo };
 }
 
 /**
- * Pure: the words a failed platform-issue call is explained with. The status
- * alone, never GitHub's body (it can leak repo metadata), but enough to tell
- * "bot has no access to the feedback repo" (404) from "PAT revoked" (401)
- * from rate limiting (403) without reading server logs.
+ * Pure: the words a failed platform filing is explained with, from its
+ * status: no app has the platform's repository (404), a request it would
+ * not take (422), anything else.
  */
 function platformIssueHint(status) {
-  if (status === 404) {
-    return 'feedback repo not visible to the bot. Add usernode-bot as a collaborator or install the GitHub App on it';
-  }
-  if (status === 401) return 'GITHUB_BOT_TOKEN is invalid or expired';
-  if (status === 403) return 'bot lacks Issues:write on the feedback repo, or is rate-limited';
-  return `GitHub returned ${status}`;
+  if (status === 404) return 'no app has the platform repository (USERNODE_PLATFORM_REPO)';
+  if (status === 422) return 'the request was refused (it needs a title)';
+  return status ? `the request store answered ${status}` : 'the request store could not be reached';
 }
 
 /**
- * File one issue into the platform's feedback repository with the bot's
- * token. A hand-rolled call that bypasses github.js's write helpers, so the
- * title and body go through safeMention here: they are free text a person
- * (or the bot, for a person) wrote, and could carry live @mentions (#723).
+ * File one request on the platform's own board: a request row, like an
+ * app's (services/requests.js, through github.createIssue).
  * Resolves { ok: true, issue } or { ok: false, status, hint }.
  */
-async function createPlatformIssue({ owner, repo, title, body, pat = process.env.GITHUB_BOT_TOKEN, fetchImpl = null }) {
-  const send = fetchImpl || globalThis.fetch;
-  const ghRes = await send(`https://api.github.com/repos/${owner}/${repo}/issues`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `token ${pat}`,
-      'User-Agent': 'usernode-social-vibecoding',
-    },
-    body: JSON.stringify({
-      title: github.safeMention(title),
-      body: github.safeMention(body),
-      labels: ['usernode'],
-    }),
-  });
-  if (!ghRes.ok) {
-    const err = await ghRes.text();
-    log.error('feedback', 'GitHub API error', { status: ghRes.status, body: err });
-    return { ok: false, status: ghRes.status, hint: platformIssueHint(ghRes.status) };
+async function createPlatformIssue({ owner, repo, title, body, labels = ['usernode'], createdBy = null }) {
+  try {
+    const issue = await github.createIssue(owner, repo, { title, body, labels, createdBy });
+    return { ok: true, issue };
+  } catch (err) {
+    log.error('feedback', 'Could not file a platform request', { status: err.status || null, message: err.message });
+    return { ok: false, status: err.status || 0, hint: platformIssueHint(err.status || 0) };
   }
-  return { ok: true, issue: await ghRes.json() };
 }
 
 // A local receipt for a report that reached GitHub.
@@ -130,15 +109,14 @@ async function recentReports(pool, { userId, source, hours = 24 }) {
  * { ok: false, error } ('not_configured', 'github', 'failed'). Never throws.
  */
 async function filePlatformReport(pool, config, {
-  user, title, body, description, source, via = null, fetchImpl = null,
+  user, title, body, description, source, via = null,
 }) {
-  const pat = process.env.GITHUB_BOT_TOKEN;
-  if (!user?.id || !pat || !config?.platformRepoUrl) return { ok: false, error: 'not_configured' };
+  if (!user?.id || !config?.platformRepoUrl) return { ok: false, error: 'not_configured' };
   try {
     const { owner, repo } = parseGitHubRepo(config.platformRepoUrl);
     const who = user.isAdmin ? `Homeroom admin (${user.username})` : `Homeroom user (${user.username})`;
     const created = await createPlatformIssue({
-      owner, repo, title, body: `**Source:** ${who}${via ? `, ${via}` : ''}\n\n${body}`, pat, fetchImpl,
+      owner, repo, title, body: `**Source:** ${who}${via ? `, ${via}` : ''}\n\n${body}`, createdBy: user.id,
     });
     if (!created.ok) return { ok: false, error: 'github', hint: created.hint };
     const issue = created.issue;

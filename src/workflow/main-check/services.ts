@@ -3,7 +3,7 @@
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import { parseGithubUrl } from '../rules/github-url.ts';
+import { parseRepoAddress } from '../rules/github-url.ts';
 import { WORK } from './machine.ts';
 
 interface Deps { config: any; pool: Pool }
@@ -96,7 +96,7 @@ export function mainCheckServices({ config, pool }: Deps): Record<string, WorkHa
         const { input } = ctx;
         const row = await app(Number(input.appId));
         if (!row) return { gone: true };
-        const parsed = parseGithubUrl(row.repo_url);
+        const parsed = parseRepoAddress(row.repo_url);
         if (!parsed) return { skipped: 'no_repo' };
         const issueNumber = await legacy('services/main-red-fix').fileFixRequest(config, pool, {
           app: row, parsed, redSha: input.sha, prNumber: input.prNumber ?? null, detail: input.detail || {},

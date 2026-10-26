@@ -352,7 +352,7 @@ test('repo-less app is rejected with 400 before any session INSERT', async () =>
     });
     assert.strictEqual(res.status, 400);
     const body = await res.json();
-    assert.match(body.error, /No GitHub repo configured/);
+    assert.match(body.error, /No repository configured/);
     assert.strictEqual(getInsert(), null, 'no chat_sessions INSERT was issued');
   } finally {
     appRow = prior;

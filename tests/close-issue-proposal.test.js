@@ -237,11 +237,16 @@ test('CLI API cannot mutate an existing secret-change proposal', async () => {
   } finally { restore(); }
 });
 
-test('create general issue requires configured GitHub before local writes', async () => {
+// Requests are Homeroom's own rows now, so only a staging copy without
+// GitHub (which serves its fixtures) refuses one.
+test('a staging copy without GitHub refuses a general request before local writes', async () => {
   const pool = makePool([]);
+  const priorEnv = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
   const { router, spies, restore } = loadIssues(pool, {
     gh: { isEnabled: () => false },
   });
+  if (priorEnv === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = priorEnv;
   try {
     const handler = routeHandler(router, '/api/apps/:slug/issues');
     const res = mockRes();
@@ -252,7 +257,7 @@ test('create general issue requires configured GitHub before local writes', asyn
     }, res);
 
     assert.equal(res.statusCode, 422);
-    assert.match(res.body.error, /no issue was created/i);
+    assert.match(res.body.error, /nothing was filed/i);
     assert.ok(!pool.issued(/INSERT INTO issues/));
     assert.equal(spies.systemMessages.length, 0);
     assert.equal(spies.issueUpdates.length, 0);

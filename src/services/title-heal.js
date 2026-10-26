@@ -28,6 +28,7 @@ const limits = require('./limits');
 const { getPool } = require('../db/pool');
 const { pushVoteUpdate, pushIssueUpdate } = require('./ws');
 const { withFeedbackIssueLock } = require('./feedback-edit');
+const repoRef = require('./repo-ref');
 
 // Give up on a queued issue title after this many failed attempts (~2
 // weeks at the backoff cap). The issue keeps its fallback title forever at
@@ -39,9 +40,7 @@ const BACKOFF_BASE_MS = 15 * 60 * 1000;
 const BACKOFF_CAP_MS = 24 * 60 * 60 * 1000;
 
 function parseRepo(repoUrl) {
-  const m = (repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+)/);
-  if (!m) return null;
-  return { owner: m[1], repo: m[2].replace(/\.git$/, '') };
+  return repoRef.ownerRepo(repoUrl);
 }
 
 // Retry PR title generation for sessions still marked pr_title_fallback.

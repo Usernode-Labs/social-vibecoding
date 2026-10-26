@@ -141,7 +141,7 @@ test('repo-less turn persists a turnError status row and emits done', async (t) 
     const status = events.find((e) => e.type === 'status');
     assert.ok(status, 'a status event was streamed');
     assert.equal(status.turnError, true);
-    assert.match(status.text, /no GitHub repository/);
+    assert.match(status.text, /the app has no repository/);
     assert.ok(events.some((e) => e.type === 'done'), 'the turn ends with done');
 
     // The user's message row was stored (pre-existing behavior)…
@@ -151,7 +151,7 @@ test('repo-less turn persists a turnError status row and emits done', async (t) 
     const systemInsert = capturedQueries.find((q) =>
       /INSERT INTO chat_session_messages/.test(q.sql) && /'system'/.test(q.sql));
     assert.ok(systemInsert, 'a system status row was persisted');
-    assert.match(systemInsert.params[1], /no GitHub repository/);
+    assert.match(systemInsert.params[1], /the app has no repository/);
     assert.equal(JSON.parse(systemInsert.params[2]).turnError, true);
   } finally {
     t.mock.timers.runAll();

@@ -13,6 +13,7 @@
 // deadline, ChecksDue: preview/machine.ts.)
 
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 
 const DEFAULT_CHECKS_STALE_MS = 10 * 60 * 1000;
 
@@ -401,7 +402,7 @@ async function rebuildSessionStaging({ config, pool, session, reason, headSha = 
     return 'handed_off';
   }
 
-  const [, owner, repo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  const { owner, repo } = repoRef.ownerRepo(session.repo_url) || {};
   if (!owner || !repo) {
     // #461: every no-op below used to return silently, leaving check_state
     // NULL — the merge gate blocks NULL as "still running its tests" and the
@@ -414,8 +415,8 @@ async function rebuildSessionStaging({ config, pool, session, reason, headSha = 
     return 'skipped';
   }
 
-  const pat = process.env.GITHUB_BOT_TOKEN;
-  if (!pat) {
+  // The git host's service account, or GitHub's bot token.
+  if (!require('./git-host').isConfigured() && !process.env.GITHUB_BOT_TOKEN) {
     await recordChecksSkipped({
       session, commitSha: session.checks_commit_sha || null,
       reason: 'checks unavailable: GitHub is not configured',
@@ -452,11 +453,16 @@ async function rebuildSessionStaging({ config, pool, session, reason, headSha = 
     // one (services/github.js getReadOctokit), and is recorded and counted
     // like every other GitHub request. It used to be a bot-token client of
     // its own that the budget never saw.
-    const ok = await require('./github').getReadOctokit(owner);
-    const { data } = await ok.rest.repos.compareCommits({
-      owner, repo, base: 'main', head: compareHead,
-    });
-    compare = data;
+    if (require('./repo-ref').hostOfOwner(owner) === 'git_host') {
+      // On Homeroom's git host: the mirror answers (services/hosted-git.js).
+      compare = await require('./hosted-git').compareCommits(owner, repo, 'main', compareHead);
+    } else {
+      const ok = await require('./github').getReadOctokit(owner);
+      const { data } = await ok.rest.repos.compareCommits({
+        owner, repo, base: 'main', head: compareHead,
+      });
+      compare = data;
+    }
   } catch (err) {
     // The machine builds the head the row knows; a branch that is gone
     // fails its build, which its error lane bounds.

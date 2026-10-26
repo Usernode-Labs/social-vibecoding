@@ -202,7 +202,7 @@ export type BadgeSpec =
   | { t: 'chat'; key: string; count: number }
   /** A metadata chip (priority / assignee / category). */
   | { t: 'attr'; key: string; field: 'priority' | 'assignee' | 'category'; targetType: string; targetRef: string | number; cls: string; hover: string; title: string; count: number; readonly: boolean; label: AttrLabel }
-  /** Closes #N — in-app (button) or on GitHub (anchor). */
+  /** Closes #N — a button that opens the request's topic, or an anchor to the request's page. */
   | { t: 'issueChip'; key: string; n: number; label: string; cls: string; title: string }
   | { t: 'issueLink'; key: string; n: number; href: string; label: string; cls: string; title: string }
   /** MergeStatus.badgeHtml's descriptor, as data. */

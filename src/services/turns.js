@@ -35,6 +35,7 @@
 
 const log = require('./logger');
 const { turnOwner } = require('../workflow/rules/turn-stop.ts');
+const repoRef = require('./repo-ref');
 
 async function loadUser(pool, userId) {
   const { rows: [u] } = await pool.query('SELECT id, username FROM users WHERE id = $1', [Number(userId)]);
@@ -349,9 +350,9 @@ async function runHeadless(ctx, { config, pool }, input) {
   // Stopped, failed or finished meanwhile: nothing to run.
   if (!session || session.headless_status !== 'generating') return { ended: 'gone' };
   const owner = turnOwner(ctx, 'turn', input.instanceKey);
-  const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(session.repo_url) || {};
   if (!repoOwner || !repoName) {
-    await sessions.failHeadlessRun(pool, session, 'Auto session failed: no GitHub repo configured.');
+    await sessions.failHeadlessRun(pool, session, 'Auto session failed: no repository configured.');
     return { ended: 'failed' };
   }
   // What the run is asked with is ids only: the request is read here, as a

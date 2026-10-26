@@ -65,10 +65,21 @@ const I18N_IMPORT = /^import \{[^}]*\} from '\.\.\/\.\.\/lib\/i18n\/runtime';$/m
 const I18N_BINDINGS = 'var message = (...args) => PlatformI18n.t(...args);'
   + ' var htmlText = (...args) => PlatformI18n.htmlText(...args);';
 
+// It also imports `linkKind` from the shared link reader
+// (frontend/src/lib/repo-link.js), which has no import of its own either. Its
+// text stands in the same way, its `export default` line and its `export`
+// keywords stripped, so the menu's code row decides by the shipped reader.
+// (Its guarded `window.RepoLink` publication runs too, onto the sandbox.)
+const REPO_LINK_PATH = path.join(FEATURE_DIR, '..', '..', 'lib', 'repo-link.js');
+const REPO_LINK_SRC = fs.readFileSync(REPO_LINK_PATH, 'utf8')
+  .replace(/^export default .*;$/m, '')
+  .replace(/^export\s+/gm, '');
+
 // Classic-script form: the `import` lines removed. See the note above.
 const HOME_SRC = HOME_RAW
   .replace(I18N_IMPORT, () => I18N_BINDINGS)
   .replace(/^import .* from '\.\.\/first-session\/build-line-words\.js';$/m, () => BUILD_LINE_WORDS_SRC)
+  .replace(/^import .* from '\.\.\/\.\.\/lib\/repo-link\.js';$/m, () => REPO_LINK_SRC)
   .replace(/^import .*;$/gm, '');
 const PANELS_SRC = PANELS_RAW
   .replace(I18N_IMPORT, () => I18N_BINDINGS)
@@ -77,4 +88,5 @@ const PANELS_SRC = PANELS_RAW
 module.exports = {
   HOME_PATH, PANELS_PATH, LAYOUT_PATH,
   HOME_RAW, HOME_SRC, PANELS_RAW, PANELS_SRC, LAYOUT_SRC,
+  REPO_LINK_SRC,
 };

@@ -51,6 +51,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
+const repoRef = require('./repo-ref');
 
 const log = require('./logger');
 const githubBudget = require('./github-budget');
@@ -1501,8 +1502,7 @@ function classifyIssue({ issue, threadLastAt = null, busy = false, lastRun = nul
 }
 
 function parseRepo(url) {
-  const m = String(url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  return m ? { owner: m[1], repo: m[2] } : null;
+  return repoRef.ownerRepo(url);
 }
 
 // ── The queue ───────────────────────────────────────────────────────────
@@ -4266,11 +4266,7 @@ const DEFAULT_PLATFORM_REPO_URL = 'https://github.com/Usernode-Labs/social-vibec
 
 /** True when `app` is the platform's own repository. */
 function isPlatformRepo(app, config = {}) {
-  const platform = parseRepo(config.platformRepoUrl || DEFAULT_PLATFORM_REPO_URL);
-  const repo = parseRepo(app?.repo_url);
-  if (!platform || !repo) return false;
-  return platform.owner.toLowerCase() === repo.owner.toLowerCase()
-    && platform.repo.toLowerCase() === repo.repo.toLowerCase();
+  return repoRef.sameRepo(app?.repo_url, config.platformRepoUrl || DEFAULT_PLATFORM_REPO_URL);
 }
 
 /**
@@ -8481,12 +8477,13 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
 
 /**
  * A shadow build's branch against the repository's default branch, on
- * GitHub, for a spot check. Built from the app's own repo_url and the
+ * its host, for a spot check. Built from the app's own repo_url and the
  * branch the platform named; null when either is missing.
  */
 function buildUrlFor(row) {
-  if (!row.repo_url || !row.build_branch) return null;
-  return `${String(row.repo_url).replace(/\.git$/, '')}/compare/${encodeURIComponent(row.build_branch).replace(/%2F/g, '/')}`;
+  const page = repoRef.webUrl(row.repo_url);
+  if (!page || !row.build_branch) return null;
+  return `${page}/compare/${encodeURIComponent(row.build_branch).replace(/%2F/g, '/')}`;
 }
 
 /** The issue this run triaged, on GitHub. Null when the app has no repo. */

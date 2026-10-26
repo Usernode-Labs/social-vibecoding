@@ -7,6 +7,7 @@ const log = require('./logger');
 const github = require('./github');
 const docker = require('./docker');
 const { getConnectorScaffoldFiles, getCanonicalRepoFile } = require('./template');
+const repoRef = require('./repo-ref');
 
 // Rewrite (or create) the top-level `name` in the forked working tree's
 // dapp.json to the forker's chosen name. dapp.json's `name` is the
@@ -145,13 +146,17 @@ async function stripGitEntries(dir) {
 }
 
 async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDir }) {
-  const botToken = process.env.GITHUB_BOT_TOKEN || '';
-  if (!botToken) {
+  // The copy is made where new repositories are: Homeroom's git host
+  // (botUsername is its organisation, services/github.js getBotUsername),
+  // pushed as its service account; else GitHub with the bot token, as before.
+  const hosted = repoRef.hostOfOwner(botUsername) === 'git_host';
+  const botToken = hosted ? '' : (process.env.GITHUB_BOT_TOKEN || '');
+  if (!hosted && !botToken) {
     throw new Error('GITHUB_BOT_TOKEN required to fork a repo');
   }
 
   // Resolve the source clone URL from repo_url (fall back to bot/<slug>).
-  const parsed = github.parseGithubUrl(sourceApp.repo_url || '');
+  const parsed = repoRef.ownerRepo(sourceApp.repo_url);
   const srcOwner = parsed ? parsed.owner : botUsername;
   const srcRepo = parsed ? parsed.repo : sourceApp.slug;
   const cloneUrl = await github.getCloneUrl(srcOwner, srcRepo);
@@ -204,7 +209,7 @@ async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDi
     adoptExisting: true,
   });
   const repoUrl = repo.html_url;
-  const pushUrl = `https://github.com/${botUsername}/${forkSlug}.git`;
+  const pushUrl = hosted ? null : `https://github.com/${botUsername}/${forkSlug}.git`;
   // Only now is the fork's own URL known; still before the commit below.
   writeCanonicalRepoPointer(tempDir, repoUrl);
 
@@ -227,18 +232,24 @@ async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDi
   try {
     await git(['init', '-q', '-b', 'main']);
     await git(['add', '-A']);
+    const author = hosted ? require('./git-host').defaultAuthor() : { name: 'usernode-bot', email: 'bot@usernode' };
     await git([
-      '-c', 'user.email=bot@usernode', '-c', 'user.name=usernode-bot',
+      '-c', `user.email=${author.email}`, '-c', `user.name=${author.name}`,
       'commit', '-q', '-m', `Forked from ${sourceApp.slug}`,
     ]);
-    await git([
-      '-c', PUSH_CREDENTIAL_HELPER,
-      'push', '-q', '--force', pushUrl, 'HEAD:main',
-    ], { env: { ...process.env, PAT: botToken } });
+    if (hosted) {
+      const gitHost = require('./git-host');
+      await gitHost.git(['-C', tempDir, 'push', '-q', '--force', gitHost.cloneUrl(forkSlug), 'HEAD:main'], { auth: true });
+    } else {
+      await git([
+        '-c', PUSH_CREDENTIAL_HELPER,
+        'push', '-q', '--force', pushUrl, 'HEAD:main',
+      ], { env: { ...process.env, PAT: botToken } });
+    }
     const { stdout } = await git(['rev-parse', 'HEAD']);
     mainSha = (stdout || '').trim() || null;
   } catch (err) {
-    const clean = String(err.message || '').replace(botToken, '***');
+    const clean = botToken ? String(err.message || '').replace(botToken, '***') : String(err.message || '');
     const pushError = new Error(`fork repo push failed: ${clean}`);
     pushError.repoFailed = true;
     throw pushError;

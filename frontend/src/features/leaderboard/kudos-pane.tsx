@@ -70,6 +70,7 @@ import {
 } from '@/components/ui/tabs';
 
 import { useMessages } from '../../lib/i18n/react';
+import { linkKind } from '../../lib/repo-link.js';
 import { useScrollFade } from '../../lib/use-scroll-fade';
 import { useStoreState } from '../../lib/use-store-state';
 import { MessageButton } from '../profile/message-button';
@@ -493,11 +494,22 @@ function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
   );
 }
 
+/** 'github' or 'code' for an address that leaves Homeroom, else null. */
+function outbound(url: string | null | undefined): 'github' | 'code' | null {
+  const kind = url ? linkKind(url) : null;
+  return kind === 'github' || kind === 'code' ? kind : null;
+}
+
 /**
  * A profile PR row is a `div[role=button]`, not a `<button>`, because the
  * GitHub link nests inside it and an `<a>` may not sit inside a `<button>`.
  * That costs the native Enter/Space activation, so the keydown handler puts it
  * back — and the link stops its own click from also routing the row.
+ *
+ * The ↗ is drawn only where the change leaves Homeroom (lib/repo-link.js): a
+ * pull request on GitHub ("Open on GitHub") or code on the git host ("View
+ * code"). A change kept in Homeroom has its own page as its address, which is
+ * where the row itself goes, so it gets none.
  */
 function ProfileRows({ rows }: { rows: ProfileRow[] }): ReactNode {
   const t = useMessages('leaderboard');
@@ -528,18 +540,18 @@ function ProfileRows({ rows }: { rows: ProfileRow[] }): ReactNode {
               <span>{row.when}</span>
             </div>
           </div>
-          {row.extUrl ? (
+          {outbound(row.extUrl) ? (
             <a
-              href={row.extUrl}
+              href={row.extUrl!}
               target="_blank"
               rel="noopener"
               data-lb-ext=""
-              title={t('leaderboard:kudos.person.openOnGithub')}
+              title={outbound(row.extUrl) === 'github' ? t('leaderboard:kudos.person.openOnGithub') : t('leaderboard:kudos.person.viewCode')}
               className="shrink-0 px-1.5 py-0.5 rounded text-sm text-zinc-500 hover:text-violet-600 dark:hover:text-violet-400 dark:text-zinc-400"
               onClick={(e) => e.stopPropagation()}
             >
               <span aria-hidden="true">↗</span>
-              <span className="sr-only">{t('leaderboard:kudos.person.openOnGithub')}</span>
+              <span className="sr-only">{outbound(row.extUrl) === 'github' ? t('leaderboard:kudos.person.openOnGithub') : t('leaderboard:kudos.person.viewCode')}</span>
             </a>
           ) : null}
           {row.kudos == null ? null : (

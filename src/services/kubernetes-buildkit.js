@@ -155,6 +155,7 @@ const stream = require('stream');
 const log = require('./logger');
 const { parseDockerBuildLine } = require('./docker');
 const appTemplates = require('./app-templates');
+const repoRef = require('./repo-ref');
 
 // Loaded on first use, as in kubernetes.js: most processes that load this
 // file never patch a Job.
@@ -692,8 +693,8 @@ function jobManifest(cfg, runtime, {
 }
 
 function repoOwnerAndName(repoUrl) {
-  const m = /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(repoUrl || '');
-  return m ? { owner: m[1], name: m[2] } : null;
+  const ref = repoRef.ownerRepo(repoUrl);
+  return ref ? { owner: ref.owner, name: ref.repo } : null;
 }
 
 function jobFailed(job) {
@@ -916,7 +917,7 @@ async function createBuild(config, {
     throw new Error('Kubernetes builds require a full 40-character Git commit SHA');
   }
   const repo = repoOwnerAndName(app.repo_url);
-  if (!repo) throw new Error('Kubernetes builds require an HTTPS GitHub repository URL');
+  if (!repo) throw new Error('Kubernetes builds require a repository URL');
   const cfg = requireConfig(config);
   const dockerfile = selectDockerfile(config, sourceDir);
   if (!dockerfile) {

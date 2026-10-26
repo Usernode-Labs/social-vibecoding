@@ -1,11 +1,12 @@
 const log = require('./logger');
 const github = require('./github');
 const { pushIssueUpdate } = require('./ws');
+const repoRef = require('./repo-ref');
 // ACCESS_COLUMNS only; app-access.js depends on nothing but the logger, so
 // there is no cycle back through here.
 const { ACCESS_COLUMNS } = require('./app-access');
 
-// Resolve the app row backed by a given GitHub repo, or undefined. The
+// Resolve the app row backed by a given repo, or undefined. The
 // platform repo is itself an app on self-hosted instances, which is why a
 // caller that only knows `owner/repo` can still find a target. Matching is
 // case-insensitive and tolerant of a trailing `.git`, mirroring how repo_url
@@ -23,10 +24,10 @@ const { ACCESS_COLUMNS } = require('./app-access');
 async function findAppByRepo(pool, owner, repo) {
   const { rows } = await pool.query(`SELECT ${ACCESS_COLUMNS}, repo_url FROM apps`);
   return rows.find((r) => {
-    const [, o, rp] = (r.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-    return o && rp
-      && o.toLowerCase() === owner.toLowerCase()
-      && rp.replace(/\.git$/, '').toLowerCase() === repo.replace(/\.git$/, '').toLowerCase();
+    const ref = repoRef.ownerRepo(r.repo_url);
+    return ref
+      && ref.owner.toLowerCase() === owner.toLowerCase()
+      && ref.repo.toLowerCase() === repo.replace(/\.git$/, '').toLowerCase();
   });
 }
 

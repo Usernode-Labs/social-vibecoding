@@ -62,6 +62,7 @@ const externalAgentHead = require('./external-agent-head');
 const visibleChangesContract = require('./visible-changes');
 const shotsState = require('./shots-state');
 const { PROPOSAL_UPDATE_LOCK } = require('./advisory-locks');
+const repoRef = require('./repo-ref');
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
 
@@ -106,13 +107,11 @@ function normalizeRepoName(value) {
   return m ? `${m[1]}/${m[2]}` : null;
 }
 
-// 'owner/repo' for an app's GitHub URL, in the same lowercase shape
+// 'owner/repo' for an app's repo URL, in the same lowercase shape
 // `normalizeRepoName` produces, so the two are comparable with `===`.
 function repoNameFromUrl(url) {
-  const raw = String(url == null ? '' : url).trim();
-  if (!raw) return null;
-  const m = /github\.com[/:]([^/]+)\/([^/#?]+?)(?:\.git)?\/?$/i.exec(raw);
-  return m ? normalizeRepoName(`${m[1]}/${m[2]}`) : null;
+  const ref = repoRef.ownerRepo(url);
+  return ref ? normalizeRepoName(`${ref.owner}/${ref.repo}`) : null;
 }
 
 function platformOwnedBranch(name) {

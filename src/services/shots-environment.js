@@ -21,6 +21,7 @@ const stagingEnv = require('./staging-env');
 const shotsFixtures = require('./shots-fixtures');
 const shotsDemoStates = require('./shots-demo-states');
 const { getPool } = require('../db/pool');
+const repoRef = require('./repo-ref');
 
 const IMAGE_RECIPE = 'v1';
 const SHOTS_LABEL = 'social.usernode.io/shots-run';
@@ -56,9 +57,9 @@ function exactSha(value, label = 'revision') {
 }
 
 function repoParts(repoUrl) {
-  const match = String(repoUrl || '').match(/^https:\/\/github\.com\/([^/]+)\/([^/#]+?)(?:\.git)?$/i);
-  if (!match) throw new ShotsEnvironmentError('invalid_shots_repository', 'Before/after shots need an HTTPS GitHub repository.');
-  return { owner: match[1], repo: match[2] };
+  const ref = repoRef.ownerRepo(repoUrl);
+  if (!ref) throw new ShotsEnvironmentError('invalid_shots_repository', 'Before/after shots need a repository.');
+  return ref;
 }
 
 function runtimeName(runId, side, kind = 'docker') {
@@ -261,7 +262,11 @@ async function checkoutExactRevision({ app, session, sha, side, parentDir }) {
   await cloneWithRetry(cloneUrl, checkoutDir);
 
   const refs = [];
-  if (side === 'head' && Number(session?.pr_number) > 0) refs.push(`refs/pull/${Number(session.pr_number)}/head`);
+  // GitHub's pull ref first; a repository on Homeroom's git host has none,
+  // and its commits are fetched by sha.
+  if (side === 'head' && Number(session?.pr_number) > 0 && !repoRef.isHosted(app.repo_url)) {
+    refs.push(`refs/pull/${Number(session.pr_number)}/head`);
+  }
   refs.push(revision);
   let checkedOut = false;
   let lastError = null;

@@ -34,3 +34,19 @@ export function parseGithubUrl(input: unknown): { owner: string; repo: string } 
   if (!/^[\w.\-]+$/.test(owner) || !/^[\w.\-]+$/.test(repo)) return null;
   return { owner, repo };
 }
+
+// A STORED repository address (apps.repo_url) as { owner, repo }, on any
+// host: app repositories live on Homeroom's own git host since GitHub
+// suspended the account that held them (25 Oct 2026), and only the
+// platform's own repository is still on GitHub. Pure, so the workflow's
+// deciders can use it (services/repo-ref.js is the services' twin, which
+// also knows which host is which). A person's import input still goes
+// through parseGithubUrl, which accepts GitHub alone.
+export function parseRepoAddress(input: unknown): { owner: string; repo: string } | null {
+  const github = parseGithubUrl(input);
+  if (github) return github;
+  if (typeof input !== 'string') return null;
+  const m = input.trim().match(/^https?:\/\/[A-Za-z0-9.-]+(?::\d+)?\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/);
+  if (!m || !/^[\w.\-]+$/.test(m[1]) || !/^[\w.\-]+$/.test(m[2])) return null;
+  return { owner: m[1], repo: m[2] };
+}

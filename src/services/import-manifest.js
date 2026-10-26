@@ -19,6 +19,7 @@ const log = require('./logger');
 const github = require('./github');
 const appManifest = require('./app-manifest');
 const { governanceBlock } = require('./create-options');
+const repoRef = require('./repo-ref');
 
 /**
  * The repo's manifest object with the creator's answers added where it has
@@ -46,7 +47,7 @@ function mergeCreateAnswers(existing, { description = null, governance = null } 
  * failure; the caller treats that as non-fatal.
  */
 async function commitCreateAnswers({ repoUrl, description = null, governance = null }) {
-  const parsed = github.parseGithubUrl(repoUrl || '');
+  const parsed = repoRef.ownerRepo(repoUrl);
   if (!parsed || !github.isEnabled()) return [];
   const raw = await github.getFileContent(parsed.owner, parsed.repo, appManifest.MANIFEST_FILENAME, 'main');
   let existing = null;

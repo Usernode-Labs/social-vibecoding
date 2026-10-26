@@ -52,6 +52,7 @@ import { RequestHead } from './request-head';
 import { ChangeThreadHead } from './change-head';
 import { DescriptionEditor } from './description-editor';
 import { ISSUE_BODY_MAX } from '../../../lib/issue-body-limit';
+import { linkKind } from '../../../lib/repo-link.js';
 import type {
   ChecksExplainView,
   ChecksVerdict,
@@ -1507,9 +1508,13 @@ function StepsSheet({ s, help }: { s: StepsView; help: boolean }): ReactNode {
 
 /**
  * B10b: what a builder reviews, one tap down from the page: the pull request
- * and its GitHub link, the steps with their checks (the sheet that sat under
- * the hero, whole: every id, data-note and control is as it was), and the
- * description, or the spec a change under way is built from.
+ * and a link to its code, the steps with their checks (the sheet that sat
+ * under the hero, whole: every id, data-note and control is as it was), and
+ * the description, or the spec a change under way is built from.
+ *
+ * The link follows the address (lib/repo-link.js): "Open on GitHub" for a
+ * pull request on GitHub, "View code" for code on the git host, and none for
+ * a change kept in Homeroom, whose pull-request address is this very page.
  */
 export function DetailsBody({ prRef, steps, help, html }: {
   prRef: HeroView['ref'];
@@ -1518,12 +1523,14 @@ export function DetailsBody({ prRef, steps, help, html }: {
   html: string;
 }): ReactNode {
   const t = useMessages('project');
+  const kind = prRef ? linkKind(prRef.href) : null;
   return (
     <>
       {prRef ? (
         <p className="dev-details-pr" data-details-part="pr">
           <span>{prRef.s}</span>
-          {prRef.href ? <a href={prRef.href} target="_blank" rel="noopener">{t('project:topic.details.openOnGitHub')}</a> : null}
+          {kind === 'github' && prRef.href ? <a href={prRef.href} target="_blank" rel="noopener">{t('project:topic.details.openOnGitHub')}</a> : null}
+          {kind === 'code' && prRef.href ? <a href={prRef.href} target="_blank" rel="noopener">{t('project:topic.details.viewCode')}</a> : null}
         </p>
       ) : null}
       {steps ? <StepsSheet s={steps} help={help} /> : null}

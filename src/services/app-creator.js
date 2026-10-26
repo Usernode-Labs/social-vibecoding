@@ -28,6 +28,7 @@ const creationTiming = require('./app-creation-timing');
 const starterImages = require('./starter-images');
 const repoQueue = require('./repo-create-queue');
 const { pushAppCreationPhase } = require('./ws');
+const repoRef = require('./repo-ref');
 
 // Tell connected clients which step creation is on (the frame the made
 // screen and the create dialog follow). Display only: never throws.
@@ -208,7 +209,7 @@ async function seedStarter(config, pool, row, sketch, ctx) {
 async function scaffoldImport(row) {
   const repoUrl = row.repo_url;
   try {
-    const parsed = github.parseGithubUrl(repoUrl);
+    const parsed = repoRef.ownerRepo(repoUrl);
     if (github.isEnabled() && parsed) {
       const existing = await github.getFileContent(parsed.owner, parsed.repo, '.claude/settings.json', 'main');
       if (existing === null) {

@@ -36,6 +36,7 @@ const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const { botRequestedBySql } = require('../services/bot-requested-by');
 const { firstVersionSql, isFirstVersion } = require('../services/first-version-rule');
+const repoRef = require('../services/repo-ref');
 const {
   reviewedHeadForSession,
   visualHeadForSession,
@@ -1764,8 +1765,7 @@ async function annotateDeploymentState(config, pool, app, rows) {
 // unchanged.
 function nativeGithubTarget(session) {
   if (!session || session.source === 'imported' || !session.pr_number) return null;
-  const [, owner, repo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-  return owner && repo ? { owner, repo: repo.replace(/\.git$/, '') } : null;
+  return repoRef.ownerRepo(session.repo_url);
 }
 
 // The preview machine builds and checks a native proposal's reviewed head.
@@ -1898,7 +1898,7 @@ async function reconcileNativeReviewedHead({
     }
     return {
       enforced: true, blocked: true,
-      reason: 'This proposal has no GitHub repository to verify.',
+      reason: 'This proposal has no repository to verify.',
     };
   }
   if (!session.branch_name) {
@@ -1917,7 +1917,7 @@ async function reconcileNativeReviewedHead({
   if (!parsed) {
     return {
       enforced: true, blocked: true,
-      reason: 'This proposal has no valid GitHub repository to verify.',
+      reason: 'This proposal has no valid repository to verify.',
     };
   }
 
@@ -2702,9 +2702,9 @@ function voteRoutes(config) {
       // machine's work, once the proposal is claimed for review (R4).
       let pr = null;
       if (github.isEnabled() && session.repo_url && session.pr_number) {
-        const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        const { owner, repo } = repoRef.ownerRepo(session.repo_url) || {};
         if (!owner || !repo) {
-          return res.status(409).json({ error: 'This proposal has no valid GitHub repository to verify.' });
+          return res.status(409).json({ error: 'This proposal has no valid repository to verify.' });
         }
         try {
           const live = await github.getPR(owner, repo.replace(/\.git$/, ''), session.pr_number);
@@ -2754,10 +2754,7 @@ function voteRoutes(config) {
   // may explicitly request the historical straight-to-vote result.
   //
   // Parse owner/repo from an app's repo_url, or null.
-  const parseRepo = (url) => {
-    const [, owner, repo] = (url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-    return owner && repo ? { owner, repo } : null;
-  };
+  const parseRepo = (url) => repoRef.ownerRepo(url);
 
   // Fire-and-forget: build the imported PR's staging preview pinned to its
   // exact head SHA (Slice 1 clone fix) and run its checks, mirroring the
@@ -6237,13 +6234,24 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
   const isImported = session.source === 'imported';
   const useMockMerge = isImported && usesMockGithubForImports();
   const client = useMockMerge ? githubMock : github;
-  if (!(client.isEnabled() || useMockMerge) || !session.repo_url || !session.pr_number) {
-    // No GitHub, or no pull request (a local stack): nothing to ask.
+  if (!session.repo_url || !session.pr_number) {
+    // No repository or no pull request (a local stack): nothing to ask.
     return { outcome: 'merged', sha: null, noGithub: true };
+  }
+  // A repository with a pull request is never merged without being asked:
+  // one on the git host is merged by Homeroom (services/native-merge.js);
+  // one on GitHub (the platform's own) needs GitHub, which may be paused or
+  // not configured, and then it is refused, not reported merged.
+  const onGitHost = require('../services/repo-ref').isHosted(session.repo_url);
+  if (!onGitHost && !useMockMerge && (!client.isEnabled() || require('../services/github-pause').isPaused())) {
+    return {
+      outcome: 'refused', kind: 'blocked',
+      message: `${sessionLabel(session)} was not merged: code changes on GitHub are paused. It is tried again when GitHub is back.`,
+    };
   }
   // GitHub is there and the proposal has a pull request: a repository this
   // cannot read is a refusal, never a merge nobody asked GitHub for.
-  const [, owner, repo] = String(session.repo_url).match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/) || [];
+  const { owner, repo } = repoRef.ownerRepo(session.repo_url) || {};
   if (!owner || !repo) {
     return { outcome: 'refused', kind: 'blocked', message: `${sessionLabel(session)} was not merged: its repository address (${String(session.repo_url).slice(0, 200)}) could not be read.` };
   }
@@ -6413,21 +6421,15 @@ async function checkAndOpenRevert(config, pool, session, decider) {
     } else if (!session.pr_number) {
       backfillReason = 'session has no pr_number';
     } else {
-      const bm = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      const bm = repoRef.ownerRepo(session.repo_url);
       if (!bm) {
         backfillReason = `unparseable repo_url ${session.repo_url}`;
       } else {
-        const [, bOwner, bRepo] = bm;
+        const { owner: bOwner, repo: bRepo } = bm;
         try {
-          // Use octokit.request rather than octokit.rest.pulls.get —
-          // @octokit/app's installation octokit is a bare @octokit/core
-          // instance and does not include the rest-endpoint-methods
-          // plugin, so .rest is undefined.
-          const octokit = await github.getInstallationOctokit(bOwner);
-          const { data: pr } = await octokit.request(
-            'GET /repos/{owner}/{repo}/pulls/{pull_number}',
-            { owner: bOwner, repo: bRepo, pull_number: session.pr_number }
-          );
+          // The pull request on whichever host (services/github.js getPR:
+          // a native one on the git host, GitHub's for the platform).
+          const pr = await github.getPR(bOwner, bRepo, session.pr_number);
           if (pr.merged && pr.merge_commit_sha) {
             // Not on a row the merge-followups machine holds while it is
             // on: the column is the machine's (it recorded the merge as it
@@ -6481,15 +6483,16 @@ async function checkAndOpenRevert(config, pool, session, decider) {
     return { reverted: false, error: 'no repo_url' };
   }
 
-  const m = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-  if (!m) {
+  // Either host: createRevertPR opens a hosted repository's revert natively.
+  const parsedRepo = repoRef.ownerRepo(session.repo_url);
+  if (!parsedRepo) {
     await pool.query(
       `UPDATE chat_sessions SET revert_of_session_id = NULL WHERE id = $1`,
       [session.id]
     ).catch(() => {});
     return { reverted: false, error: 'unparseable repo_url' };
   }
-  const [, repoOwner, repoName] = m;
+  const { owner: repoOwner, repo: repoName } = parsedRepo;
 
   log.info('votes', 'Opening revert PR', {
     sessionId: session.id, needed: majority, requestedBy: decider.username,
@@ -6575,7 +6578,39 @@ async function checkAndOpenRevert(config, pool, session, decider) {
 // push, open a PR. Returns { branch, prNumber, prUrl, prTitle }.
 // Throws on revert conflict or network errors; caller surfaces the
 // failure to chat.
+// What a revert proposal says, on either host.
+function revertText(session, mergeSha, deciderUsername) {
+  const origLabel = session.pr_title
+    ? `${session.pr_title} (PR #${session.pr_number || session.id})`
+    : `PR #${session.pr_number || session.id}`;
+  const prTitle = `Revert: ${session.pr_title || `PR #${session.pr_number || session.id}`}`.slice(0, 200);
+  const prBody =
+    `Automated revert of ${origLabel}.\n\n` +
+    `Undo vote reached majority on the original PR; deciding vote cast by \`${deciderUsername}\`. ` +
+    `This PR still needs a regular merge vote to land. Vote in the app's group chat panel.\n\n` +
+    `Reverts commit ${mergeSha}.`;
+  return { prTitle, prBody };
+}
+
+// A repository on Homeroom's git host: the revert is made on the app's
+// mirror and pushed to a new branch as the service account
+// (services/hosted-git.js revertOnto); its proposal is a native pull
+// request. No clone, no token in a URL.
+async function createHostedRevertPR({ session, mergeSha, repoOwner, repoName, deciderUsername }) {
+  const safeBase = (session.branch_name || `pr-${session.pr_number || session.id}`).replace(/[^a-zA-Z0-9._/-]/g, '-');
+  const revertBranch = `revert/${safeBase}-${Date.now()}`;
+  const { prTitle, prBody } = revertText(session, mergeSha, deciderUsername);
+  await require('../services/hosted-git').revertOnto(repoOwner, repoName, mergeSha, {
+    branch: revertBranch, message: `${prTitle}\n\nThis reverts commit ${mergeSha}.`,
+  });
+  const prData = await github.createPR(repoOwner, repoName, { branch: revertBranch, title: prTitle, body: prBody });
+  return { branch: revertBranch, prNumber: prData.number, prUrl: prData.html_url, prTitle };
+}
+
 async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderUsername }) {
+  if (require('../services/repo-ref').hostOfOwner(repoOwner) === 'git_host') {
+    return createHostedRevertPR({ session, mergeSha, repoOwner, repoName, deciderUsername });
+  }
   const token = process.env.GITHUB_BOT_TOKEN;
   if (!token) throw new Error('GITHUB_BOT_TOKEN not set');
 
