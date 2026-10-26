@@ -12,6 +12,11 @@
 //   const fake = installFakeRequests(t, { 'o/r': [{ number: 3, title: 'x' }] });
 //   ... fake.filed  // every create, as { owner, repo, title, body, labels, createdBy }
 //   ... fake.board('o', 'r')
+//   ... fake.reads  // every read, as { fn, owner, repo, number }
+//   fake.setComments('o', 'r', 3, [{ id, author, body, createdAt }])
+//
+// `opts.pulls` ({ 'o/r': [7] }) names numbers that are proposals, which a
+// single read answers as 'not an issue (pull request)', as the store does.
 
 const requests = require('../../src/services/requests');
 
@@ -22,13 +27,16 @@ function key(owner, repo) {
   return `${owner}/${String(repo || '').replace(/\.git$/, '')}`.toLowerCase();
 }
 
-function installFakeRequests(t, boards = {}, { firstNumber = 1, slugFor = (o, r) => r } = {}) {
+function installFakeRequests(t, boards = {}, { firstNumber = 1, slugFor = (o, r) => r, pulls = {} } = {}) {
   const saved = {};
   for (const n of NAMES) saved[n] = requests[n];
   const repos = new Map();
   const filed = [];
   const commented = [];
   const closed = [];
+  const reads = [];
+  const pullNumbers = new Map(Object.entries(pulls).map(([name, ns]) => [key(...name.split('/')), new Set(ns.map(Number))]));
+  const read = (fn, owner, repo, number = null) => reads.push({ fn, owner, repo, number: number == null ? null : Number(number) });
   let clock = Date.parse('2026-10-26T12:00:00Z');
   const now = () => new Date(clock += 1000).toISOString();
 
@@ -71,6 +79,7 @@ function installFakeRequests(t, boards = {}, { firstNumber = 1, slugFor = (o, r)
   Object.assign(requests, {
     async appFor(owner, repo) { return repoState(owner, repo, false) ? { id: 1, slug: slugFor(owner, repo) } : null; },
     async listOpen(owner, repo) {
+      read('listOpen', owner, repo);
       const st = repoState(owner, repo, false);
       if (!st) return { issues: [], truncatedList: false, note: 'issues unavailable' };
       const open = [...st.rows.values()].filter((r) => r.state === 'open')
@@ -78,12 +87,17 @@ function installFakeRequests(t, boards = {}, { firstNumber = 1, slugFor = (o, r)
       return { issues: open.map((r) => normalized(owner, repo, r)), truncatedList: false };
     },
     async getOne(owner, repo, n) {
+      read('getOne', owner, repo, n);
+      if (!Number.isInteger(Number(n)) || Number(n) <= 0) return { issue: null, note: 'bad issue number' };
       const st = repoState(owner, repo, false);
       const r = st && st.rows.get(Number(n));
-      return r ? { issue: normalized(owner, repo, r) } : { issue: null, note: 'not found' };
+      if (r) return { issue: normalized(owner, repo, r) };
+      if ((pullNumbers.get(key(owner, repo)) || new Set()).has(Number(n))) return { issue: null, note: 'not an issue (pull request)' };
+      return { issue: null, note: 'not found' };
     },
-    async getRaw(owner, repo, n) { return raw(owner, repo, rowOr404(owner, repo, n)); },
+    async getRaw(owner, repo, n) { read('getRaw', owner, repo, n); return raw(owner, repo, rowOr404(owner, repo, n)); },
     async comments(owner, repo, n, { max = 300 } = {}) {
+      read('comments', owner, repo, n);
       const st = repoState(owner, repo, false);
       const list = (st && st.comments.get(Number(n))) || [];
       return { comments: list.slice(0, max), truncated: list.length > max };
@@ -132,8 +146,13 @@ function installFakeRequests(t, boards = {}, { firstNumber = 1, slugFor = (o, r)
   const restore = () => Object.assign(requests, saved);
   if (t && typeof t.after === 'function') t.after(restore);
   return {
-    filed, commented, closed, restore,
+    filed, commented, closed, reads, restore,
     board: (owner, repo) => [...((repoState(owner, repo, false) || { rows: new Map() }).rows.values())],
+    setComments(owner, repo, n, list) {
+      repoState(owner, repo).comments.set(Number(n), list.map((c, i) => ({
+        author: c.author || '', body: c.body || '', createdAt: c.createdAt || '', id: c.id == null ? i + 1 : c.id,
+      })));
+    },
   };
 }
 

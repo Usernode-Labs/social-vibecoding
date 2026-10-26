@@ -1,15 +1,19 @@
-// Tests for src/services/github.js noteIssueCreated() — the open-issues
-// cache seeding used by routes/feedback.js (#125) so a just-submitted
-// feedback issue shows up in the "Open Issues" panel without waiting out
-// the 5-minute cache TTL or re-hitting GitHub's anonymous rate limit —
-// plus the #192 recently-created overlay (which makes noteIssueCreated
-// work even with no live cache entry / a stale fresh fetch) and
-// refreshPublicIssues (the panel's throttled manual refresh).
+// Tests for src/services/github.js's request reads: the board
+// (fetchPublicIssues, refreshPublicIssues), one request (fetchPublicIssue),
+// its comments (fetchIssueComments), and the clipping helpers the agent
+// surfaces use (truncateIssueBodies, clipIssueComments).
 //
-// fetchPublicIssues talks to api.github.com via global fetch, so we stub
-// fetch with a canned issues payload to populate the cache, then assert
-// that noteIssueCreated prepends into the cached result (visible through
-// a second, fetch-free fetchPublicIssues call).
+// Until 26 Oct 2026 requests were GitHub issues, and this file pinned the
+// in-memory cache in front of GitHub's issue API: the 5-minute list cache,
+// the #125 seeding and #192 overlay of a just-created issue, the #144
+// suppression of a just-closed one, the #2261 stale fallback and back-off,
+// the ETag revalidation, the single-issue cache, and the Link-header paging
+// of comment threads. GitHub suspended the account that filed every request;
+// requests are rows now (services/requests.js), github.js's helpers are a
+// facade over them, and a board is a query. None of that machinery exists,
+// so its cases are gone; what each pinned is stated below as what holds now.
+// services/requests.js itself (shapes, ordering, notes, numbering) is pinned
+// against PostgreSQL in tests/requests-postgres.test.js.
 //
 // Run with: node --test tests/github-issues-cache.test.js
 
@@ -17,226 +21,141 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 
 const github = require('../src/services/github');
-const budget = require('../src/services/github-budget');
+const requests = require('../src/services/requests');
+const { installFakeRequests } = require('./helpers/fake-requests');
 
-function fakeIssue(number, title, updatedAt) {
-  return {
-    number,
-    title,
-    body: `body of #${number}`,
-    labels: [{ name: 'usernode' }],
-    created_at: `2026-06-0${(number % 9) + 1}T00:00:00Z`,
-    updated_at: updatedAt,
-    html_url: `https://github.com/o/r/issues/${number}`,
-    user: { login: `gh-user-${number}` },
-  };
+/** Swap one of services/requests.js's functions for the length of `t`. */
+function stubRequests(t, name, fn) {
+  const real = requests[name];
+  requests[name] = fn;
+  t.after(() => { requests[name] = real; });
 }
 
-function stubFetch(issues) {
+/** Nothing here may reach GitHub: requests are not there any more. */
+function refuseGithub(t) {
   const calls = [];
-  global.fetch = async (url) => {
-    calls.push(String(url));
-    return {
-      ok: true,
-      status: 200,
-      headers: { get: () => null }, // no Link header, no rate-limit header
-      json: async () => issues,
-    };
-  };
+  const real = global.fetch;
+  global.fetch = async (url) => { calls.push(String(url)); throw new Error(`unexpected fetch ${url}`); };
+  t.after(() => { global.fetch = real; });
   return calls;
 }
 
-test('noteIssueCreated records into the overlay even with no cache entry (#192)', () => {
-  // Pre-#192 this returned false (the cache seeding was a no-op); the
-  // overlay now records the issue regardless, so any valid input is true.
-  assert.strictEqual(
-    github.noteIssueCreated('nobody', 'nothing-cached', fakeIssue(1, 'x', '2026-06-10T00:00:00Z')),
-    true
-  );
+// ── A filed request is on the board at once ─────────────────────────────
+// Was: noteIssueCreated seeded the cached list (#125) and kept an overlay
+// (#192) so a just-created issue showed before GitHub's list had it, keyed
+// case-insensitively, deduped by number, surviving the stale fallbacks and
+// expiring after a TTL. Now the board is read from the rows each time.
+
+test('a request filed through createIssue is on the next board read and single read, nothing recorded', async (t) => {
+  installFakeRequests(t, { 'o/r': [{ number: 1, title: 'older', updatedAt: '2026-06-09T00:00:00Z' }] });
+  const calls = refuseGithub(t);
+  const created = await github.createIssue('o', 'r', { title: 'just filed', body: 'what it says', labels: ['usernode'] });
+  assert.strictEqual(created.number, 2);
+
+  const board = await github.fetchPublicIssues('o', 'r');
+  assert.deepStrictEqual(board.issues.map((i) => i.number), [2, 1], 'newest first, at once');
+  const one = await github.fetchPublicIssue('o', 'r', 2);
+  assert.strictEqual(one.issue.title, 'just filed');
+  assert.deepStrictEqual(calls, [], 'without asking GitHub');
 });
 
-test('noteIssueCreated rejects malformed input', () => {
-  assert.strictEqual(github.noteIssueCreated(null, 'r', fakeIssue(1, 'x')), false);
-  assert.strictEqual(github.noteIssueCreated('o', null, fakeIssue(1, 'x')), false);
+test('noteIssueCreated is a no-op kept for its callers: true for a well-formed issue, false otherwise', async (t) => {
+  const fake = installFakeRequests(t, { 'o/r': [] });
+  assert.strictEqual(github.noteIssueCreated('o', 'r', { number: 1, title: 'x' }), true);
+  assert.strictEqual(github.noteIssueCreated(null, 'r', { number: 1 }), false);
+  assert.strictEqual(github.noteIssueCreated('o', null, { number: 1 }), false);
   assert.strictEqual(github.noteIssueCreated('o', 'r', null), false);
   assert.strictEqual(github.noteIssueCreated('o', 'r', { title: 'no number' }), false);
+  assert.deepStrictEqual((await github.fetchPublicIssues('o', 'r')).issues, [], 'it puts nothing on the board');
+  assert.deepStrictEqual(fake.filed, []);
 });
 
-test('seeds a cached repo so the next fetchPublicIssues sees the new issue without a network call', async () => {
-  const origFetch = global.fetch;
-  try {
-    const calls = stubFetch([fakeIssue(1, 'first', '2026-06-09T00:00:00Z')]);
+// ── A closed request leaves the board at once ───────────────────────────
+// Was: noteIssuesClosed suppressed a just-closed issue from cached AND
+// fresh lists (#144), until unsuppressIssues or a TTL brought it back. Now
+// closing the row is what takes it off, and reopening it puts it back.
 
-    const before = await github.fetchPublicIssues('SeedOwner', 'seed-repo');
-    assert.strictEqual(before.issues.length, 1);
-    assert.strictEqual(calls.length, 1);
-
-    const created = fakeIssue(2, 'fresh feedback', '2026-06-10T00:00:00Z');
-    assert.strictEqual(github.noteIssueCreated('SeedOwner', 'seed-repo', created), true);
-
-    const after = await github.fetchPublicIssues('SeedOwner', 'seed-repo');
-    assert.strictEqual(calls.length, 1, 'second read must come from cache');
-    assert.strictEqual(after.issues.length, 2);
-    assert.strictEqual(after.issues[0].number, 2, 'new issue is prepended');
-    assert.strictEqual(after.issues[0].title, 'fresh feedback');
-    assert.strictEqual(after.issues[0].htmlUrl, 'https://github.com/o/r/issues/2');
-    // #133: the GitHub-side creator login rides along so the Open Issues
-    // panel's creator fallback chain works for seeded issues too.
-    assert.strictEqual(after.issues[0].user, 'gh-user-2');
-    // #1221: BOTH timestamps survive normalization — dropping created_at
-    // here is what made every agent surface report createdAt: null.
-    assert.strictEqual(after.issues[0].createdAt, '2026-06-03T00:00:00Z');
-    assert.strictEqual(after.issues[0].updatedAt, '2026-06-10T00:00:00Z');
-  } finally {
-    global.fetch = origFetch;
-  }
+test('a request closed through closeIssue is off the next board read; reopened, it is back', async (t) => {
+  installFakeRequests(t, { 'o/r': [{ number: 1, title: 'one' }, { number: 2, title: 'two' }] });
+  refuseGithub(t);
+  await github.closeIssue('o', 'r', 2);
+  assert.deepStrictEqual((await github.fetchPublicIssues('o', 'r')).issues.map((i) => i.number), [1]);
+  const closed = await github.fetchPublicIssue('o', 'r', 2);
+  assert.strictEqual(closed.issue.state, 'closed', 'still readable by its address');
+  await github.reopenIssue('o', 'r', 2);
+  assert.deepStrictEqual((await github.fetchPublicIssues('o', 'r')).issues.map((i) => i.number).sort(), [1, 2]);
 });
 
-test('matches the cache key case-insensitively and ignores a trailing .git', async () => {
-  const origFetch = global.fetch;
-  try {
-    stubFetch([fakeIssue(10, 'existing', '2026-06-09T00:00:00Z')]);
-    await github.fetchPublicIssues('CaseOwner', 'case-repo');
-
-    assert.strictEqual(
-      github.noteIssueCreated('caseowner', 'Case-Repo.git', fakeIssue(11, 'new', '2026-06-10T00:00:00Z')),
-      true
-    );
-    const after = await github.fetchPublicIssues('CaseOwner', 'case-repo');
-    assert.strictEqual(after.issues[0].number, 11);
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('dedupes by issue number instead of double-inserting', async () => {
-  const origFetch = global.fetch;
-  try {
-    stubFetch([fakeIssue(5, 'already listed', '2026-06-09T00:00:00Z')]);
-    await github.fetchPublicIssues('DupOwner', 'dup-repo');
-
-    assert.strictEqual(
-      github.noteIssueCreated('DupOwner', 'dup-repo', fakeIssue(5, 'already listed (updated)', '2026-06-10T00:00:00Z')),
-      true
-    );
-    const after = await github.fetchPublicIssues('DupOwner', 'dup-repo');
-    assert.strictEqual(after.issues.length, 1);
-    assert.strictEqual(after.issues[0].title, 'already listed (updated)');
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-// ------------------------------------------------------------------
-// #144: noteIssuesClosed / unsuppressIssues — the known-closed
-// suppression list that keeps just-closed issues out of every
-// fetchPublicIssues result (cached AND fresh), defeating GitHub's
-// eventually-consistent anonymous list endpoint re-reporting a
-// `Closes #N`-closed issue as open right after a merge.
-// ------------------------------------------------------------------
-
-test('noteIssuesClosed hides suppressed issues from cached results without a network call', async () => {
-  const origFetch = global.fetch;
-  try {
-    const calls = stubFetch([
-      fakeIssue(1, 'stays open', '2026-06-09T00:00:00Z'),
-      fakeIssue(2, 'closed by merge', '2026-06-09T01:00:00Z'),
-    ]);
-
-    const before = await github.fetchPublicIssues('SupOwner', 'sup-repo');
-    assert.strictEqual(before.issues.length, 2);
-    assert.strictEqual(calls.length, 1);
-
-    assert.strictEqual(github.noteIssuesClosed('SupOwner', 'sup-repo', [2]), 1);
-
-    const after = await github.fetchPublicIssues('SupOwner', 'sup-repo');
-    assert.strictEqual(calls.length, 1, 'must come from cache');
-    assert.deepStrictEqual(after.issues.map((i) => i.number), [1]);
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('suppression also filters a FRESH fetch whose payload is stale (still lists the closed issue)', async () => {
-  const origFetch = global.fetch;
-  try {
-    // No prior cache entry: suppression recorded first (merge path order),
-    // then GitHub's stale list still carries the closed issue.
-    assert.strictEqual(github.noteIssuesClosed('FreshOwner', 'fresh-repo', [7]), 1);
-    stubFetch([
-      fakeIssue(6, 'open', '2026-06-09T00:00:00Z'),
-      fakeIssue(7, 'closed but list is stale', '2026-06-09T01:00:00Z'),
-    ]);
-
-    const res = await github.fetchPublicIssues('FreshOwner', 'fresh-repo');
-    assert.deepStrictEqual(res.issues.map((i) => i.number), [6]);
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('unsuppressIssues resurfaces the issue from the (unfiltered) cache', async () => {
-  const origFetch = global.fetch;
-  try {
-    const calls = stubFetch([fakeIssue(3, 'maybe closed', '2026-06-09T00:00:00Z')]);
-    await github.fetchPublicIssues('UnsupOwner', 'unsup-repo');
-
-    github.noteIssuesClosed('UnsupOwner', 'unsup-repo', [3]);
-    const hidden = await github.fetchPublicIssues('UnsupOwner', 'unsup-repo');
-    assert.strictEqual(hidden.issues.length, 0);
-
-    assert.strictEqual(github.unsuppressIssues('UnsupOwner', 'unsup-repo', [3]), 1);
-    const back = await github.fetchPublicIssues('UnsupOwner', 'unsup-repo');
-    assert.strictEqual(calls.length, 1, 'all reads served from cache');
-    assert.deepStrictEqual(back.issues.map((i) => i.number), [3]);
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('suppression expires after its TTL, resurfacing the issue without a refetch', async () => {
-  const origFetch = global.fetch;
-  try {
-    const calls = stubFetch([fakeIssue(4, 'wrongly suppressed', '2026-06-09T00:00:00Z')]);
-    await github.fetchPublicIssues('TtlOwner', 'ttl-repo');
-
-    // ttlMs 0 → expiresAt === now → treated as already expired.
-    github.noteIssuesClosed('TtlOwner', 'ttl-repo', [4], 0);
-    const res = await github.fetchPublicIssues('TtlOwner', 'ttl-repo');
-    assert.strictEqual(calls.length, 1);
-    assert.deepStrictEqual(res.issues.map((i) => i.number), [4]);
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('noteIssuesClosed/unsuppressIssues reject malformed input', () => {
-  assert.strictEqual(github.noteIssuesClosed(null, 'r', [1]), 0);
-  assert.strictEqual(github.noteIssuesClosed('o', null, [1]), 0);
-  assert.strictEqual(github.noteIssuesClosed('o', 'r', []), 0);
+test('noteIssuesClosed, unsuppressIssues and invalidateIssuesCache are no-ops kept for their callers', async (t) => {
+  installFakeRequests(t, { 'o/r': [{ number: 1, title: 'one' }] });
+  assert.strictEqual(github.noteIssuesClosed('o', 'r', [1, 2]), 2, 'it still counts what it was told');
   assert.strictEqual(github.noteIssuesClosed('o', 'r', 'not-an-array'), 0);
-  assert.strictEqual(github.noteIssuesClosed('o', 'r', ['junk', -3, 0]), 0);
-  assert.strictEqual(github.unsuppressIssues('o', 'r', [99]), 0);
+  assert.strictEqual(github.unsuppressIssues('o', 'r', [1]), undefined);
+  assert.strictEqual(github.invalidateIssuesCache('o', 'r'), false, 'there is no entry to expire');
+  assert.doesNotThrow(() => github.applyIssuesChange({ owner: 'o', repo: 'r' }));
+  assert.doesNotThrow(() => github.expireIssuesCachesHere());
+  assert.deepStrictEqual((await github.fetchPublicIssues('o', 'r')).issues.map((i) => i.number), [1],
+    'a request told closed but still open stays listed');
 });
 
-// ------------------------------------------------------------------
-// #158: full issue bodies. fetchPublicIssues must NOT truncate bodies
-// (the web route / "Create PR" seeding needs the whole text); the
-// agent surfaces clip via truncateIssueBodies instead.
-// ------------------------------------------------------------------
+// ── The board read ──────────────────────────────────────────────────────
 
-test('fetchPublicIssues keeps the full issue body untruncated (#158)', async () => {
-  const origFetch = global.fetch;
-  try {
-    const longBody = 'x'.repeat(5000);
-    stubFetch([{ ...fakeIssue(20, 'verbose', '2026-06-09T00:00:00Z'), body: longBody }]);
-
-    const res = await github.fetchPublicIssues('FullOwner', 'full-repo');
-    assert.strictEqual(res.issues[0].body, longBody);
-  } finally {
-    global.fetch = origFetch;
-  }
+// #158: the web route / "Create PR" seeding needs the whole text; the agent
+// surfaces clip via truncateIssueBodies instead.
+test('fetchPublicIssues keeps the full issue body untruncated (#158)', async (t) => {
+  const longBody = 'x'.repeat(5000);
+  installFakeRequests(t, { 'FullOwner/full-repo': [{ number: 20, title: 'verbose', body: longBody }] });
+  const res = await github.fetchPublicIssues('FullOwner', 'full-repo');
+  assert.strictEqual(res.issues[0].body, longBody);
 });
+
+test('fetchPublicIssues hands back the store\'s answer for owner and repo as given', async (t) => {
+  const asked = [];
+  stubRequests(t, 'listOpen', async (owner, repo) => {
+    asked.push([owner, repo]);
+    return { issues: [{ number: 3 }], truncatedList: true };
+  });
+  assert.deepStrictEqual(await github.fetchPublicIssues('Some', 'Repo.git'), { issues: [{ number: 3 }], truncatedList: true });
+  assert.deepStrictEqual(asked, [['Some', 'Repo.git']]);
+});
+
+// Was #2261: a refused refetch served the last list flagged `stale`, and
+// later reads backed off (5xx, network errors, secondary and primary rate
+// limits, invalidation, closed issues hidden from the fallback). There is
+// no last list now: every read is the store's, and a failed one is an
+// empty list with a note, never thrown, and never remembered.
+test('a failed board read is an empty list with a note, never stale, and the next read asks again', async (t) => {
+  let fail = true;
+  let reads = 0;
+  stubRequests(t, 'listOpen', async () => {
+    reads += 1;
+    if (fail) throw new Error('connection refused');
+    return { issues: [{ number: 1 }], truncatedList: false };
+  });
+  assert.deepStrictEqual(await github.fetchPublicIssues('o', 'r'), { issues: [], truncatedList: false, note: 'fetch failed' });
+  fail = false;
+  assert.deepStrictEqual(await github.fetchPublicIssues('o', 'r'), { issues: [{ number: 1 }], truncatedList: false });
+  assert.strictEqual(reads, 2, 'no back-off: the second read was asked for');
+});
+
+// Was: refreshPublicIssues bypassed the TTL, then a 60-second cooldown
+// served the cache with a retry hint. A read is always current now.
+test('refreshPublicIssues is a fresh read every time, with no cooldown', async (t) => {
+  installFakeRequests(t, { 'RefOwner/ref-repo': [{ number: 1, title: 'v1' }] });
+  const first = await github.refreshPublicIssues('RefOwner', 'ref-repo');
+  assert.strictEqual(first.refreshed, true);
+  assert.strictEqual(first.retryInMs, 0);
+  await github.createIssue('RefOwner', 'ref-repo', { title: 'created since' });
+  const second = await github.refreshPublicIssues('RefOwner', 'ref-repo');
+  assert.strictEqual(second.refreshed, true, 'never throttled');
+  assert.strictEqual(second.retryInMs, 0);
+  assert.deepStrictEqual(second.issues.map((i) => i.number), [2, 1]);
+});
+
+// The ETag cases (a one-page list kept its ETag, a 304 was free, several
+// pages kept none, If-None-Match on the installation and bot-token reads,
+// invalidation and seeding dropped it) went with the GitHub list read:
+// the board is read from PostgreSQL.
 
 test('truncateIssueBodies clips long bodies at 500 chars with an explicit marker, leaving short ones alone', () => {
   const longBody = 'y'.repeat(5000);
@@ -278,534 +197,101 @@ test('truncateIssueBodies passes through degenerate inputs', () => {
   assert.strictEqual(github.truncateIssueBodies(noIssues), noIssues);
 });
 
-// ------------------------------------------------------------------
-// #158: fetchPublicIssue — single-issue, full-body lookup backing the
-// Mayor's get_github_issue tool and `usernode-issues <number>`.
-// ------------------------------------------------------------------
+// ── One request ─────────────────────────────────────────────────────────
+// #158/#2365: fetchPublicIssue backs the Mayor's get_github_issue tool,
+// `usernode-issues <number>` and the single-issue route, open or closed.
+// Was: it served an open issue from the list cache, kept a single-issue
+// cache (and a minute-long memory of a failed read, forgotten on a merge),
+// shared one GitHub read between two callers at once, asked GitHub with
+// { fresh: true }, and mapped GitHub's 404 / pull-request / rate-limit
+// answers. Each read is the store's now; its notes ('not found', 'not an
+// issue (pull request)', 'bad issue number') and the row's shape are
+// requests.getOne's, pinned in tests/requests-postgres.test.js.
 
-test('fetchPublicIssue serves a cached open issue without a network call, full body intact', async () => {
-  const origFetch = global.fetch;
-  try {
-    const longBody = 'w'.repeat(3000);
-    const calls = stubFetch([{ ...fakeIssue(30, 'cached', '2026-06-09T00:00:00Z'), body: longBody }]);
-
-    await github.fetchPublicIssues('OneOwner', 'one-repo'); // warm the cache
-    assert.strictEqual(calls.length, 1);
-
-    const res = await github.fetchPublicIssue('OneOwner', 'one-repo', 30);
-    assert.strictEqual(calls.length, 1, 'must come from cache');
-    assert.strictEqual(res.issue.number, 30);
-    assert.strictEqual(res.issue.body, longBody);
-    assert.strictEqual(res.note, undefined);
-  } finally {
-    global.fetch = origFetch;
-  }
+test('fetchPublicIssue reads one request, open or closed, full body intact, from the store each time', async (t) => {
+  const longBody = 'w'.repeat(3000);
+  const fake = installFakeRequests(t, { 'OneOwner/one-repo': [
+    { number: 30, title: 'open one', body: longBody },
+    { number: 31, title: 'closed one', state: 'closed', closedAt: '2026-06-09T00:00:00Z' },
+  ] });
+  refuseGithub(t);
+  const res = await github.fetchPublicIssue('OneOwner', 'one-repo', 30);
+  assert.strictEqual(res.issue.number, 30);
+  assert.strictEqual(res.issue.body, longBody);
+  assert.strictEqual(res.note, undefined);
+  const closed = await github.fetchPublicIssue('OneOwner', 'one-repo', 31);
+  assert.strictEqual(closed.issue.state, 'closed');
+  assert.strictEqual(closed.issue.closedAt, '2026-06-09T00:00:00Z');
+  await github.fetchPublicIssue('OneOwner', 'one-repo', 30);
+  assert.strictEqual(fake.reads.filter((r) => r.fn === 'getOne').length, 3, 'nothing is remembered between reads');
 });
 
-test('fetchPublicIssue { fresh: true } asks GitHub even with the issue cached (#4530)', async () => {
-  // The Homeroom bot reads the issue's updated_at right after commenting on
-  // it (homeroom-bot-live.js advanceSeen); the cached list still has the
-  // time from before its comment.
-  const origFetch = global.fetch;
-  try {
-    const calls = stubFetch([fakeIssue(31, 'cached', '2026-06-09T00:00:00Z')]);
-    await github.fetchPublicIssues('StampOwner', 'stamp-repo'); // warm the cache
-    global.fetch = async (url) => {
-      calls.push(String(url));
-      return {
-        ok: true, status: 200, headers: { get: () => null },
-        json: async () => fakeIssue(31, 'cached', '2026-06-09T00:00:07Z'),
-      };
-    };
-    assert.strictEqual((await github.fetchPublicIssue('StampOwner', 'stamp-repo', 31)).issue.updatedAt,
-      '2026-06-09T00:00:00Z', 'the cache answers an ordinary read');
-    assert.strictEqual(calls.length, 1);
-    const res = await github.fetchPublicIssue('StampOwner', 'stamp-repo', 31, { fresh: true });
-    assert.strictEqual(calls.length, 2);
-    assert.ok(calls[1].endsWith('/repos/StampOwner/stamp-repo/issues/31'));
-    assert.strictEqual(res.issue.updatedAt, '2026-06-09T00:00:07Z');
-
-    // Rate limited, a fresh read answers nothing rather than the cached copy.
-    global.fetch = async () => ({
-      ok: false, status: 429, headers: { get: () => null }, json: async () => ({}),
-    });
-    assert.deepStrictEqual(await github.fetchPublicIssue('StampOwner', 'stamp-repo', 31, { fresh: true }),
-      { issue: null, note: 'rate limited' });
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('fetchPublicIssue falls through to the single-issue endpoint on a cache miss', async () => {
-  const origFetch = global.fetch;
-  try {
-    const calls = [];
-    global.fetch = async (url) => {
-      calls.push(String(url));
-      return {
-        ok: true,
-        status: 200,
-        headers: { get: () => null },
-        json: async () => ({
-          ...fakeIssue(77, 'closed but fetchable', '2026-06-09T00:00:00Z'),
-          state: 'closed',
-          closed_at: '2026-06-09T12:00:00Z',
-        }),
-      };
-    };
-    const res = await github.fetchPublicIssue('MissOwner', 'miss-repo', 77);
-    assert.strictEqual(calls.length, 1);
-    assert.ok(calls[0].endsWith('/repos/MissOwner/miss-repo/issues/77'));
-    assert.strictEqual(res.issue.number, 77);
-    assert.strictEqual(res.issue.title, 'closed but fetchable');
-    assert.strictEqual(res.issue.body, 'body of #77');
-    // #2365: the normalized shape says which it is, so the topic view can
-    // tell a closed issue from an open one.
-    assert.strictEqual(res.issue.state, 'closed');
-    assert.strictEqual(res.issue.closedAt, '2026-06-09T12:00:00Z');
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('normalized issues default to open with no close time (#2365)', async () => {
-  const origFetch = global.fetch;
-  try {
-    stubFetch([fakeIssue(60, 'plain open', '2026-06-09T00:00:00Z')]);
-    const res = await github.fetchPublicIssues('StateOwner', 'state-repo');
-    assert.strictEqual(res.issues[0].state, 'open');
-    assert.strictEqual(res.issues[0].closedAt, null);
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('fetchPublicIssue asks GitHub about a known-closed number the open cache still holds (#2365)', async () => {
-  const origFetch = global.fetch;
-  try {
-    stubFetch([fakeIssue(61, 'merged away', '2026-06-09T00:00:00Z')]);
-    await github.fetchPublicIssues('KcOwner', 'kc-repo');
-
-    // Before the merge path records it, the cache answers without a call.
-    let calls = 0;
-    global.fetch = async () => {
-      calls += 1;
-      return {
-        ok: true, status: 200, headers: { get: () => null },
-        json: async () => ({
-          ...fakeIssue(61, 'merged away', '2026-06-09T00:00:00Z'),
-          state: 'closed', closed_at: '2026-06-10T00:00:00Z',
-        }),
-      };
-    };
-    assert.strictEqual((await github.fetchPublicIssue('KcOwner', 'kc-repo', 61)).issue.state, 'open');
-    assert.strictEqual(calls, 0);
-
-    // Once it is known closed, the stale OPEN cache row is not the answer.
-    github.noteIssuesClosed('KcOwner', 'kc-repo', [61]);
-    const res = await github.fetchPublicIssue('KcOwner', 'kc-repo', 61);
-    assert.strictEqual(calls, 1, 'the single-issue endpoint was asked');
-    assert.strictEqual(res.issue.state, 'closed');
-  } finally {
-    github.unsuppressIssues('KcOwner', 'kc-repo', [61]);
-    global.fetch = origFetch;
-  }
-});
-
-test('fetchPublicIssue maps 404, PR numbers, and bad input to well-formed notes', async () => {
-  const origFetch = global.fetch;
-  try {
-    global.fetch = async () => ({
-      ok: false, status: 404, headers: { get: () => null }, json: async () => ({}),
-    });
-    assert.deepStrictEqual(
-      await github.fetchPublicIssue('NfOwner', 'nf-repo', 999),
-      { issue: null, note: 'not found' }
-    );
-
-    // The /issues/:n endpoint resolves PR numbers too — refuse those.
-    global.fetch = async () => ({
-      ok: true, status: 200, headers: { get: () => null },
-      json: async () => ({ ...fakeIssue(12, 'a PR', '2026-06-09T00:00:00Z'), pull_request: { url: 'x' } }),
-    });
-    assert.deepStrictEqual(
-      await github.fetchPublicIssue('PrOwner', 'pr-repo', 12),
-      { issue: null, note: 'not an issue (pull request)' }
-    );
-
-    // Bad input never reaches the network.
-    global.fetch = async () => { throw new Error('must not fetch'); };
-    assert.deepStrictEqual(await github.fetchPublicIssue('o', 'r', 'junk'), { issue: null, note: 'bad issue number' });
-    assert.deepStrictEqual(await github.fetchPublicIssue('o', 'r', -1), { issue: null, note: 'bad issue number' });
-    assert.deepStrictEqual(await github.fetchPublicIssue(null, 'r', 1), { issue: null, note: 'bad issue number' });
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('fetchPublicIssue reports rate limiting when the issue is nowhere in cache', async () => {
-  const origFetch = global.fetch;
-  try {
-    // Cache holds issue 50 only; asking for 51 misses it, goes to network,
-    // and hits the 429 — the stale-cache fallback has no #51 either, so a
-    // clean rate-limited note comes back instead of a throw or empty body.
-    stubFetch([fakeIssue(50, 'cached neighbor', '2026-06-09T00:00:00Z')]);
-    await github.fetchPublicIssues('RlOwner', 'rl-repo');
-
-    global.fetch = async () => ({
-      ok: false,
-      status: 429,
-      headers: { get: (h) => (h === 'x-ratelimit-remaining' ? '0' : null) },
-      json: async () => ({}),
-    });
-    assert.deepStrictEqual(
-      await github.fetchPublicIssue('RlOwner', 'rl-repo', 51),
-      { issue: null, note: 'rate limited' }
-    );
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('suppression matches owner/repo case-insensitively and ignores a trailing .git', async () => {
-  const origFetch = global.fetch;
-  try {
-    stubFetch([fakeIssue(8, 'closed via other casing', '2026-06-09T00:00:00Z')]);
-    await github.fetchPublicIssues('CaseSup', 'case-sup-repo');
-
-    github.noteIssuesClosed('casesup', 'Case-Sup-Repo.git', [8]);
-    const res = await github.fetchPublicIssues('CaseSup', 'case-sup-repo');
-    assert.strictEqual(res.issues.length, 0);
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-// ------------------------------------------------------------------
-// #192: recently-created overlay — the create-side mirror of #144.
-// noteIssueCreated records every created issue in a TTL'd per-repo
-// overlay that is merged into EVERY fetchPublicIssues result, so a
-// just-created issue renders even when there is no live cache entry
-// and GitHub's eventually-consistent anonymous list still omits it.
-// ------------------------------------------------------------------
-
-function rateLimitedStub() {
-  global.fetch = async () => ({
-    ok: false,
-    status: 429,
-    headers: { get: (h) => (h === 'x-ratelimit-remaining' ? '0' : null) },
-    json: async () => ({}),
+test('fetchPublicIssue passes the store\'s notes through, and a failed read is a note, never a throw', async (t) => {
+  let answer = { issue: null, note: 'not an issue (pull request)' };
+  stubRequests(t, 'getOne', async () => {
+    if (answer instanceof Error) throw answer;
+    return answer;
   });
-}
-
-test('overlay surfaces a just-created issue when the fresh fetch payload omits it (the #192 repro)', async () => {
-  const origFetch = global.fetch;
-  try {
-    // No cache entry at creation time; GitHub's list lags the create.
-    assert.strictEqual(
-      github.noteIssueCreated('OvOwner', 'ov-repo', fakeIssue(31, 'created via platform', '2026-06-10T00:00:00Z')),
-      true
-    );
-    const calls = stubFetch([fakeIssue(30, 'older', '2026-06-09T00:00:00Z')]);
-
-    const fresh = await github.fetchPublicIssues('OvOwner', 'ov-repo');
-    assert.strictEqual(calls.length, 1);
-    assert.deepStrictEqual(fresh.issues.map((i) => i.number), [31, 30], 'overlay issue is prepended');
-    assert.strictEqual(fresh.issues[0].title, 'created via platform');
-    assert.strictEqual(fresh.note, undefined);
-
-    // The (stale) fetched payload was cached; a cache-hit read still
-    // shows the overlay issue.
-    const cachedRead = await github.fetchPublicIssues('OvOwner', 'ov-repo');
-    assert.strictEqual(calls.length, 1, 'second read must come from cache');
-    assert.deepStrictEqual(cachedRead.issues.map((i) => i.number), [31, 30]);
-  } finally {
-    global.fetch = origFetch;
-  }
+  assert.deepStrictEqual(await github.fetchPublicIssue('o', 'r', 7), { issue: null, note: 'not an issue (pull request)' });
+  answer = new Error('connection refused');
+  assert.deepStrictEqual(await github.fetchPublicIssue('o', 'r', 7), { issue: null, note: 'fetch failed' });
 });
 
-test('overlay survives the rate-limited EMPTY fallback (nothing cached)', async () => {
-  const origFetch = global.fetch;
-  try {
-    github.noteIssueCreated('RlovOwner', 'rlov-repo', fakeIssue(2, 'fresh feedback', '2026-06-10T00:00:00Z'));
-    rateLimitedStub();
+// ── #396: comment threads ───────────────────────────────────────────────
+// Was: fetchIssueComments followed GitHub's Link pages oldest-first up to
+// ISSUE_COMMENTS_MAX_PAGES and mapped rate limits and 404s to notes. Now a
+// thread is the request's rows (request_comments), read in one query with
+// the same `max` and `since`; clipIssueComments keeps the most-recent N and
+// clips long bodies.
 
-    const res = await github.fetchPublicIssues('RlovOwner', 'rlov-repo');
-    assert.strictEqual(res.note, 'rate limited');
-    assert.deepStrictEqual(res.issues.map((i) => i.number), [2]);
-  } finally {
-    global.fetch = origFetch;
-  }
+test('fetchIssueComments asks the store for the thread, with its ceiling and since', async (t) => {
+  const asked = [];
+  stubRequests(t, 'comments', async (owner, repo, n, opts) => {
+    asked.push({ owner, repo, n, opts });
+    return { comments: [{ author: 'a', body: 'b', createdAt: '2026-06-02T00:00:00Z', id: 1 }], truncated: true };
+  });
+  const res = await github.fetchIssueComments('O', 'r', 9, { since: '2026-10-07T09:50:00.000Z' });
+  assert.deepStrictEqual(res, { comments: [{ author: 'a', body: 'b', createdAt: '2026-06-02T00:00:00Z', id: 1 }], truncated: true });
+  assert.strictEqual(asked[0].n, 9);
+  assert.strictEqual(asked[0].opts.since, '2026-10-07T09:50:00.000Z');
+  assert.ok(asked[0].opts.max >= 300, 'the same page ceiling as before');
+  await github.fetchIssueComments('O', 'r', 9);
+  assert.strictEqual(asked[1].opts.since, null, 'no since unless given one');
 });
 
-test('overlay survives the rate-limited STALE-cache fallback', async () => {
-  const origFetch = global.fetch;
-  try {
-    stubFetch([fakeIssue(1, 'pre-existing', '2026-06-09T00:00:00Z')]);
-    await github.fetchPublicIssues('RlstOwner', 'rlst-repo');
-
-    github.noteIssueCreated('RlstOwner', 'rlst-repo', fakeIssue(3, 'fresh', '2026-06-10T00:00:00Z'));
-    rateLimitedStub();
-
-    // Force past the still-valid cache; the refetch 429s and falls back
-    // to the stale entry — the new issue must still be there.
-    const res = await github.refreshPublicIssues('RlstOwner', 'rlst-repo');
-    assert.strictEqual(res.note, 'rate limited');
-    assert.deepStrictEqual(res.issues.map((i) => i.number), [3, 1]);
-  } finally {
-    global.fetch = origFetch;
-  }
+test('fetchIssueComments returns a short thread without truncation', async (t) => {
+  const fake = installFakeRequests(t, { 'O/r': [{ number: 8, title: 'x' }] });
+  fake.setComments('O', 'r', 8, [1, 2, 3].map((k) => ({ author: `commenter-${k}`, body: `comment ${k}`, createdAt: `2026-06-0${k}T00:00:00Z` })));
+  const res = await github.fetchIssueComments('O', 'r', 8);
+  assert.strictEqual(res.comments.length, 3);
+  assert.strictEqual(res.comments[0].author, 'commenter-1', 'oldest first');
+  assert.strictEqual(res.truncated, false);
 });
 
-test('a fresh fetch that contains the issue prunes the overlay (fetched copy wins)', async () => {
-  const origFetch = global.fetch;
-  try {
-    github.noteIssueCreated('PruneOwner', 'prune-repo', fakeIssue(9, 'local copy', '2026-06-10T00:00:00Z'));
-    stubFetch([fakeIssue(9, 'from github', '2026-06-10T01:00:00Z')]);
-
-    const res = await github.fetchPublicIssues('PruneOwner', 'prune-repo');
-    assert.strictEqual(res.issues.length, 1, 'no duplicate');
-    assert.strictEqual(res.issues[0].title, 'from github', 'fetched copy wins over the overlay copy');
-
-    // Pruned for real: a later forced fetch whose payload no longer
-    // lists #9 must NOT resurface it from the overlay.
-    stubFetch([]);
-    const after = await github.refreshPublicIssues('PruneOwner', 'prune-repo');
-    assert.strictEqual(after.refreshed, true);
-    assert.deepStrictEqual(after.issues, []);
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('suppression wins over the overlay — created then quickly closed stays hidden', async () => {
-  const origFetch = global.fetch;
-  try {
-    github.noteIssueCreated('CcOwner', 'cc-repo', fakeIssue(12, 'created then closed', '2026-06-10T00:00:00Z'));
-    github.noteIssuesClosed('CcOwner', 'cc-repo', [12]);
-    stubFetch([]);
-
-    const res = await github.fetchPublicIssues('CcOwner', 'cc-repo');
-    assert.deepStrictEqual(res.issues, []);
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('overlay entries expire after their TTL', async () => {
-  const origFetch = global.fetch;
-  try {
-    // ttlMs 0 → expiresAt === now → treated as already expired (same
-    // convention as the suppression TTL test above).
-    github.noteIssueCreated('ExpOwner', 'exp-repo', fakeIssue(13, 'expired overlay', '2026-06-10T00:00:00Z'), 0);
-    stubFetch([]);
-
-    const res = await github.fetchPublicIssues('ExpOwner', 'exp-repo');
-    assert.deepStrictEqual(res.issues, []);
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('fetchPublicIssue resolves a just-created issue from the overlay without a network call', async () => {
-  const origFetch = global.fetch;
-  try {
-    const longBody = 'v'.repeat(3000);
-    github.noteIssueCreated('SingleOwner', 'single-repo', {
-      ...fakeIssue(14, 'overlaid', '2026-06-10T00:00:00Z'),
-      body: longBody,
-    });
-    global.fetch = async () => { throw new Error('must not fetch'); };
-
-    const res = await github.fetchPublicIssue('SingleOwner', 'single-repo', 14);
-    assert.strictEqual(res.issue.number, 14);
-    assert.strictEqual(res.issue.body, longBody, 'overlay carries the FULL body');
-    assert.strictEqual(res.note, undefined);
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-// ------------------------------------------------------------------
-// #192: refreshPublicIssues — the throttled force-refresh behind the
-// Open Issues panel's manual refresh button.
-// ------------------------------------------------------------------
-
-test('refreshPublicIssues bypasses a valid cache TTL, caches the result, then honors the cooldown', async () => {
-  const origFetch = global.fetch;
-  try {
-    stubFetch([fakeIssue(1, 'v1', '2026-06-09T00:00:00Z')]);
-    await github.fetchPublicIssues('RefOwner', 'ref-repo'); // warm, still-valid cache
-
-    const calls = stubFetch([
-      fakeIssue(2, 'created on github', '2026-06-10T00:00:00Z'),
-      fakeIssue(1, 'v1', '2026-06-09T00:00:00Z'),
-    ]);
-
-    const forced = await github.refreshPublicIssues('RefOwner', 'ref-repo');
-    assert.strictEqual(forced.refreshed, true);
-    assert.strictEqual(forced.retryInMs, 60 * 1000);
-    assert.strictEqual(calls.length, 1, 'force must refetch past the valid cache');
-    assert.deepStrictEqual(forced.issues.map((i) => i.number), [2, 1]);
-
-    // The forced result replaced the cache entry: a plain read is fetch-free.
-    const cached = await github.fetchPublicIssues('RefOwner', 'ref-repo');
-    assert.strictEqual(calls.length, 1);
-    assert.deepStrictEqual(cached.issues.map((i) => i.number), [2, 1]);
-
-    // Within the cooldown a second refresh serves the cache with a retry hint.
-    const second = await github.refreshPublicIssues('RefOwner', 'ref-repo');
-    assert.strictEqual(second.refreshed, false);
-    assert.ok(second.retryInMs > 0 && second.retryInMs <= 60 * 1000);
-    assert.strictEqual(calls.length, 1, 'throttled refresh must not hit the network');
-    assert.deepStrictEqual(second.issues.map((i) => i.number), [2, 1]);
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-// ── #396: issue comment threads ─────────────────────────────────────────
-// fetchIssueComments follows the Link header (oldest-first), caps at
-// ISSUE_COMMENTS_MAX_PAGES, and flags `truncated`; clipIssueComments keeps
-// the most-recent N and clips long bodies.
-
-function fakeComment(id) {
-  return {
-    user: { login: `commenter-${id}` },
-    body: `comment ${id}`,
-    created_at: `2026-06-${String((id % 28) + 1).padStart(2, '0')}T00:00:00Z`,
-  };
-}
-
-// Stub fetch with a page sequence. Each entry is { body, next } — `next`
-// becomes the Link header's rel="next" URL (null = last page). Records the
-// URLs requested so we can assert pagination stopped at the ceiling.
-function stubCommentPages(pages) {
-  const calls = [];
-  let i = 0;
-  global.fetch = async (url) => {
-    calls.push(String(url));
-    const page = pages[i] || { body: [], next: null };
-    i += 1;
-    return {
-      ok: true,
-      status: 200,
-      headers: {
-        get: (h) => (h && h.toLowerCase() === 'link' && page.next
-          ? `<${page.next}>; rel="next"`
-          : null),
-      },
-      json: async () => page.body,
-    };
-  };
-  return calls;
-}
-
-test('fetchIssueComments follows Link pages oldest-first and caps at the page ceiling', async () => {
-  const origFetch = global.fetch;
-  try {
-    // 4 pages of 100 available, but ISSUE_COMMENTS_MAX_PAGES is 3 → stop
-    // after 3 pages with a next link still pending → truncated.
-    const mk = (start) => Array.from({ length: 100 }, (_, k) => fakeComment(start + k));
-    const calls = stubCommentPages([
-      { body: mk(0), next: 'https://api.github.com/p2' },
-      { body: mk(100), next: 'https://api.github.com/p3' },
-      { body: mk(200), next: 'https://api.github.com/p4' },
-      { body: mk(300), next: null },
-    ]);
-    const res = await github.fetchIssueComments('O', 'r', 7);
-    assert.strictEqual(calls.length, 3, 'must stop at ISSUE_COMMENTS_MAX_PAGES');
-    assert.strictEqual(res.comments.length, 300);
-    assert.strictEqual(res.truncated, true);
-    // Oldest-first, normalized shape.
-    assert.strictEqual(res.comments[0].author, 'commenter-0');
-    assert.deepStrictEqual(Object.keys(res.comments[0]).sort(), ['author', 'body', 'createdAt']);
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('fetchIssueComments asks GitHub for the comments since a time, when given one', async () => {
-  const origFetch = global.fetch;
-  try {
-    const calls = stubCommentPages([{ body: [fakeComment(1)], next: null }]);
-    await github.fetchIssueComments('O', 'r', 9, { since: '2026-10-07T09:50:00.000Z' });
-    assert.match(calls[0], /\/issues\/9\/comments\?per_page=100&since=2026-10-07T09%3A50%3A00\.000Z$/);
-    await github.fetchIssueComments('O', 'r', 9);
-    assert.doesNotMatch(calls[1], /since=/);
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('fetchIssueComments returns a short thread without truncation', async () => {
-  const origFetch = global.fetch;
-  try {
-    const calls = stubCommentPages([
-      { body: [fakeComment(1), fakeComment(2), fakeComment(3)], next: null },
-    ]);
-    const res = await github.fetchIssueComments('O', 'r', 8);
-    assert.strictEqual(calls.length, 1);
-    assert.strictEqual(res.comments.length, 3);
-    assert.strictEqual(res.truncated, false);
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('#3693: fetchIssueComments carries GitHub\'s comment id, and clipIssueComments does not', async () => {
+test('#3693: fetchIssueComments carries the comment id, and clipIssueComments does not', async (t) => {
   // The id is what the Homeroom bot recorded for each comment it posted
   // (homeroom_bot_posts.github_comment_id), so the request page can leave
   // out the ones its Homeroom thread already shows. The clipped thread the
   // UI and the models read keeps its three fields.
-  const origFetch = global.fetch;
-  try {
-    stubCommentPages([{ body: [{ ...fakeComment(1), id: 2950123456 }, fakeComment(2)], next: null }]);
-    const res = await github.fetchIssueComments('O', 'r', 9);
-    assert.deepStrictEqual(res.comments[0], {
-      author: 'commenter-1', body: 'comment 1', createdAt: '2026-06-02T00:00:00Z', id: 2950123456,
-    });
-    assert.ok(!('id' in res.comments[1]), 'no id from GitHub, no id field');
-    const clipped = github.clipIssueComments(res.comments);
-    assert.deepStrictEqual(Object.keys(clipped.comments[0]).sort(), ['author', 'body', 'createdAt']);
-  } finally {
-    global.fetch = origFetch;
-  }
+  const fake = installFakeRequests(t, { 'O/r': [{ number: 9, title: 'x' }] });
+  fake.setComments('O', 'r', 9, [
+    { id: 2950123456, author: 'commenter-1', body: 'comment 1', createdAt: '2026-06-02T00:00:00Z' },
+    { id: 2950123457, author: 'commenter-2', body: 'comment 2', createdAt: '2026-06-03T00:00:00Z' },
+  ]);
+  const res = await github.fetchIssueComments('O', 'r', 9);
+  assert.deepStrictEqual(res.comments[0], {
+    author: 'commenter-1', body: 'comment 1', createdAt: '2026-06-02T00:00:00Z', id: 2950123456,
+  });
+  const clipped = github.clipIssueComments(res.comments);
+  assert.deepStrictEqual(Object.keys(clipped.comments[0]).sort(), ['author', 'body', 'createdAt']);
 });
 
-test('fetchIssueComments maps rate-limit, 404, non-array, and bad input to empty + note', async () => {
-  const origFetch = global.fetch;
-  try {
-    global.fetch = async () => ({
-      ok: false, status: 403,
-      headers: { get: (h) => (h === 'x-ratelimit-remaining' ? '0' : null) },
-      json: async () => [],
-    });
-    assert.deepStrictEqual(
-      await github.fetchIssueComments('O', 'r', 1),
-      { comments: [], truncated: false, note: 'rate limited' }
-    );
-
-    global.fetch = async () => ({ ok: false, status: 404, headers: { get: () => null }, json: async () => ({}) });
-    assert.deepStrictEqual(
-      await github.fetchIssueComments('O', 'r', 1),
-      { comments: [], truncated: false, note: 'not found' }
-    );
-
-    global.fetch = async () => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => ({ not: 'an array' }) });
-    assert.deepStrictEqual(
-      await github.fetchIssueComments('O', 'r', 1),
-      { comments: [], truncated: false, note: 'fetch failed' }
-    );
-
-    // Bad input never touches the network.
-    assert.deepStrictEqual(
-      await github.fetchIssueComments('O', 'r', 'junk'),
-      { comments: [], truncated: false, note: 'bad issue number' }
-    );
-  } finally {
-    global.fetch = origFetch;
-  }
+test('fetchIssueComments maps a failed read to an empty thread with a note, never a throw', async (t) => {
+  stubRequests(t, 'comments', async () => { throw new Error('connection refused'); });
+  assert.deepStrictEqual(
+    await github.fetchIssueComments('O', 'r', 1),
+    { comments: [], truncated: false, note: 'fetch failed' }
+  );
 });
 
 test('clipIssueComments keeps the most-recent max, clips long bodies, and flags truncation', () => {
@@ -833,603 +319,4 @@ test('clipIssueComments carries through upstream truncation even under the keep 
 test('clipIssueComments on an empty/absent thread is a clean no-op', () => {
   assert.deepStrictEqual(github.clipIssueComments([]), { comments: [], truncated: false });
   assert.deepStrictEqual(github.clipIssueComments(undefined), { comments: [], truncated: false });
-});
-
-// ── #2261: a failed refetch never empties the list ──────────────────────
-// The Dev board's Issues column — and the issue cards in Underway — draw
-// from fetchPublicIssues through GET /github-issues. Only the rate-limited
-// exit used to fall back to the cached list: a timeout, a 5xx, an unflagged
-// 403 (a secondary rate limit) or a bad payload answered with an EMPTY
-// list, and invalidateIssuesCache (every platform merge) deleted the entry
-// outright — so one refused GitHub answer painted the board as "no open
-// issues" until GitHub came back. Now every failure serves the last list,
-// flagged `stale`, and the ordinary read path backs off before asking
-// GitHub again; a forced refresh never waits.
-
-// A GitHub answer with `status`, optional lowercase headers, no usable body.
-function refusingStub(status, headers = {}) {
-  const calls = [];
-  global.fetch = async (url) => {
-    calls.push(String(url));
-    return {
-      ok: status >= 200 && status < 300,
-      status,
-      headers: { get: (h) => (Object.hasOwn(headers, String(h).toLowerCase()) ? headers[String(h).toLowerCase()] : null) },
-      json: async () => ({ message: `status ${status}` }),
-    };
-  };
-  return calls;
-}
-
-function throwingStub(message) {
-  const calls = [];
-  global.fetch = async (url) => {
-    calls.push(String(url));
-    throw new Error(message);
-  };
-  return calls;
-}
-
-// Pin Date.now so a test can walk past the cache TTL and the retry window
-// without waiting. Restored by the caller.
-function fakeClock() {
-  const real = Date.now;
-  let now = real();
-  Date.now = () => now;
-  return { tick: (ms) => { now += ms; }, restore: () => { Date.now = real; } };
-}
-
-const CACHE_TTL_MS = 5 * 60 * 1000;   // ISSUES_CACHE_TTL_MS
-const RETRY_AFTER_MS = 30 * 1000;     // ISSUES_RETRY_AFTER_MS
-
-test('#2261 a refetch GitHub refuses (5xx) serves the last list past its TTL, flagged stale', async () => {
-  const origFetch = global.fetch;
-  const clock = fakeClock();
-  try {
-    stubFetch([fakeIssue(1, 'still open', '2026-06-09T00:00:00Z')]);
-    await github.fetchPublicIssues('DegOwner', 'deg-repo');
-    clock.tick(CACHE_TTL_MS + 1);
-
-    const calls = refusingStub(502);
-    const res = await github.fetchPublicIssues('DegOwner', 'deg-repo');
-    assert.strictEqual(calls.length, 1, 'the expired entry is refetched');
-    assert.deepStrictEqual(res.issues.map((i) => i.number), [1], 'the last list, not an empty one');
-    assert.strictEqual(res.note, 'fetch failed');
-    assert.strictEqual(res.stale, true);
-  } finally {
-    clock.restore();
-    global.fetch = origFetch;
-  }
-});
-
-test('#2261 a refetch that throws (network error / timeout) serves the last list', async () => {
-  const origFetch = global.fetch;
-  const clock = fakeClock();
-  try {
-    stubFetch([fakeIssue(1, 'still open', '2026-06-09T00:00:00Z'), fakeIssue(2, 'also open', '2026-06-08T00:00:00Z')]);
-    await github.fetchPublicIssues('ThrowOwner', 'throw-repo');
-    clock.tick(CACHE_TTL_MS + 1);
-
-    const calls = throwingStub('This operation was aborted');
-    const res = await github.fetchPublicIssues('ThrowOwner', 'throw-repo');
-    assert.strictEqual(calls.length, 1);
-    assert.deepStrictEqual(res.issues.map((i) => i.number), [1, 2]);
-    assert.strictEqual(res.note, 'fetch failed');
-    assert.strictEqual(res.stale, true);
-  } finally {
-    clock.restore();
-    global.fetch = origFetch;
-  }
-});
-
-test('#2261 after a failure the ordinary read backs off; a forced refresh never waits', async () => {
-  const origFetch = global.fetch;
-  const clock = fakeClock();
-  try {
-    stubFetch([fakeIssue(1, 'still open', '2026-06-09T00:00:00Z')]);
-    await github.fetchPublicIssues('BackOwner', 'back-repo');
-    clock.tick(CACHE_TTL_MS + 1);
-
-    const calls = refusingStub(500);
-    await github.fetchPublicIssues('BackOwner', 'back-repo');
-    assert.strictEqual(calls.length, 1);
-
-    // Within the window: the fallback again, and GitHub is left alone.
-    clock.tick(RETRY_AFTER_MS - 1);
-    const held = await github.fetchPublicIssues('BackOwner', 'back-repo');
-    assert.strictEqual(calls.length, 1, 'no refetch inside the retry window');
-    assert.deepStrictEqual(held.issues.map((i) => i.number), [1]);
-    assert.strictEqual(held.note, 'fetch failed');
-    assert.strictEqual(held.stale, true);
-
-    // The panel's manual refresh is a forced read: it tries regardless.
-    const forced = await github.refreshPublicIssues('BackOwner', 'back-repo');
-    assert.strictEqual(calls.length, 2, 'a forced refresh ignores the backoff');
-    assert.strictEqual(forced.refreshed, true);
-    assert.strictEqual(forced.stale, true, 'still refused, still the fallback');
-
-    // Past the window (re-stamped by the forced failure) the read tries again.
-    clock.tick(RETRY_AFTER_MS + 1);
-    await github.fetchPublicIssues('BackOwner', 'back-repo');
-    assert.strictEqual(calls.length, 3, 'refetched once the window passed');
-  } finally {
-    clock.restore();
-    global.fetch = origFetch;
-  }
-});
-
-test('#2261 an unflagged 403 (secondary rate limit) serves the last list and honours Retry-After', async () => {
-  const origFetch = global.fetch;
-  const clock = fakeClock();
-  try {
-    stubFetch([fakeIssue(1, 'still open', '2026-06-09T00:00:00Z')]);
-    await github.fetchPublicIssues('SecOwner', 'sec-repo');
-    clock.tick(CACHE_TTL_MS + 1);
-
-    // GitHub's secondary limit: 403, budget NOT exhausted, Retry-After set.
-    const calls = refusingStub(403, { 'retry-after': '120', 'x-ratelimit-remaining': '4000' });
-    const res = await github.fetchPublicIssues('SecOwner', 'sec-repo');
-    assert.strictEqual(calls.length, 1);
-    assert.deepStrictEqual(res.issues.map((i) => i.number), [1]);
-    assert.strictEqual(res.note, 'fetch failed');
-    assert.strictEqual(res.stale, true);
-
-    clock.tick(119 * 1000);
-    await github.fetchPublicIssues('SecOwner', 'sec-repo');
-    assert.strictEqual(calls.length, 1, 'Retry-After is honoured past the default window');
-    clock.tick(2 * 1000);
-    await github.fetchPublicIssues('SecOwner', 'sec-repo');
-    assert.strictEqual(calls.length, 2, 'retried once Retry-After elapsed');
-  } finally {
-    clock.restore();
-    global.fetch = origFetch;
-  }
-});
-
-test('#2261 an exhausted primary budget backs off until the reset, capped at ten minutes', async () => {
-  const origFetch = global.fetch;
-  const clock = fakeClock();
-  try {
-    stubFetch([fakeIssue(1, 'still open', '2026-06-09T00:00:00Z')]);
-    await github.fetchPublicIssues('ResetOwner', 'reset-repo');
-    clock.tick(CACHE_TTL_MS + 1);
-
-    const reset = Math.floor((Date.now() + 40 * 60 * 1000) / 1000); // 40 min away
-    const calls = refusingStub(403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) });
-    const res = await github.fetchPublicIssues('ResetOwner', 'reset-repo');
-    assert.strictEqual(calls.length, 1);
-    assert.strictEqual(res.note, 'rate limited');
-    assert.strictEqual(res.stale, true);
-    assert.deepStrictEqual(res.issues.map((i) => i.number), [1]);
-
-    clock.tick(9 * 60 * 1000 + 59 * 1000);
-    await github.fetchPublicIssues('ResetOwner', 'reset-repo');
-    assert.strictEqual(calls.length, 1, 'held for the whole capped window');
-    clock.tick(2 * 1000);
-    await github.fetchPublicIssues('ResetOwner', 'reset-repo');
-    assert.strictEqual(calls.length, 2, 'the cap, not the reset, decides when to try again');
-  } finally {
-    clock.restore();
-    global.fetch = origFetch;
-  }
-});
-
-test('#2261 a successful refetch after the outage replaces the list and clears the flag', async () => {
-  const origFetch = global.fetch;
-  const clock = fakeClock();
-  try {
-    stubFetch([fakeIssue(1, 'old', '2026-06-09T00:00:00Z')]);
-    await github.fetchPublicIssues('RecOwner', 'rec-repo');
-    clock.tick(CACHE_TTL_MS + 1);
-    refusingStub(500);
-    const during = await github.fetchPublicIssues('RecOwner', 'rec-repo');
-    assert.strictEqual(during.stale, true);
-
-    clock.tick(RETRY_AFTER_MS + 1);
-    const calls = stubFetch([fakeIssue(2, 'new', '2026-06-10T00:00:00Z')]);
-    const after = await github.fetchPublicIssues('RecOwner', 'rec-repo');
-    assert.strictEqual(calls.length, 1);
-    assert.deepStrictEqual(after.issues.map((i) => i.number), [2]);
-    assert.strictEqual(after.note, undefined);
-    assert.strictEqual(after.stale, undefined);
-
-    // The fresh entry is a normal one again: fetch-free within its TTL.
-    const again = await github.fetchPublicIssues('RecOwner', 'rec-repo');
-    assert.strictEqual(calls.length, 1);
-    assert.deepStrictEqual(again.issues.map((i) => i.number), [2]);
-  } finally {
-    clock.restore();
-    global.fetch = origFetch;
-  }
-});
-
-test('#2261 invalidateIssuesCache expires the entry but keeps it as the fallback', async () => {
-  const origFetch = global.fetch;
-  try {
-    stubFetch([fakeIssue(1, 'first', '2026-06-09T00:00:00Z')]);
-    await github.fetchPublicIssues('InvOwner', 'inv-repo');
-    assert.strictEqual(github.invalidateIssuesCache('InvOwner', 'inv-repo'), true);
-
-    // Expired: the next read goes to GitHub right away and takes its answer.
-    const calls = stubFetch([fakeIssue(1, 'first', '2026-06-09T00:00:00Z'), fakeIssue(2, 'second', '2026-06-10T00:00:00Z')]);
-    const fresh = await github.fetchPublicIssues('InvOwner', 'inv-repo');
-    assert.strictEqual(calls.length, 1, 'an invalidated entry is refetched on the next read');
-    assert.deepStrictEqual(fresh.issues.map((i) => i.number), [1, 2]);
-
-    // Invalidated again — the way a platform merge does — and GitHub refuses:
-    // the list it was holding is what the board gets, not nothing.
-    assert.strictEqual(github.invalidateIssuesCache('InvOwner', 'inv-repo'), true);
-    const refused = refusingStub(503);
-    const held = await github.fetchPublicIssues('InvOwner', 'inv-repo');
-    assert.strictEqual(refused.length, 1);
-    assert.deepStrictEqual(held.issues.map((i) => i.number), [1, 2]);
-    assert.strictEqual(held.note, 'fetch failed');
-    assert.strictEqual(held.stale, true);
-
-    // An invalidation also drops the failure backoff: a merge must be
-    // reflected by the very next read, not after the window.
-    assert.strictEqual(github.invalidateIssuesCache('InvOwner', 'inv-repo'), true);
-    const retried = refusingStub(503);
-    await github.fetchPublicIssues('InvOwner', 'inv-repo');
-    assert.strictEqual(retried.length, 1, 'refetched straight after the invalidation');
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('#2261 the fallback still hides issues the platform closed since the entry was taken', async () => {
-  const origFetch = global.fetch;
-  try {
-    stubFetch([fakeIssue(1, 'open', '2026-06-09T00:00:00Z'), fakeIssue(2, 'about to merge', '2026-06-10T00:00:00Z')]);
-    await github.fetchPublicIssues('ClOwner', 'cl-repo');
-    // The merge path: suppress the closed numbers, then invalidate.
-    github.noteIssuesClosed('ClOwner', 'cl-repo', [2]);
-    github.invalidateIssuesCache('ClOwner', 'cl-repo');
-
-    refusingStub(500);
-    const res = await github.fetchPublicIssues('ClOwner', 'cl-repo');
-    assert.deepStrictEqual(res.issues.map((i) => i.number), [1], 'the closed issue stays hidden');
-    assert.strictEqual(res.stale, true);
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('#2261 nothing cached: a failed fetch is an empty list with a note, never stale, and retried next read', async () => {
-  const origFetch = global.fetch;
-  try {
-    const calls = refusingStub(500);
-    const first = await github.fetchPublicIssues('ColdOwner', 'cold-repo');
-    assert.deepStrictEqual(first.issues, []);
-    assert.strictEqual(first.note, 'fetch failed');
-    assert.strictEqual(first.stale, undefined, 'nothing to be stale relative to');
-    const second = await github.fetchPublicIssues('ColdOwner', 'cold-repo');
-    assert.strictEqual(calls.length, 2, 'with nothing to serve there is nothing to back off for');
-    assert.deepStrictEqual(second.issues, []);
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-// ------------------------------------------------------------------
-// An issue read on its own (a closed request's card) is remembered: the
-// chat with Homeroom bot asked GitHub for the same closed issues, one after
-// another, every time it opened.
-// ------------------------------------------------------------------
-
-function stubSingle(state = 'closed', { delayMs = 0, status = 200 } = {}) {
-  const calls = [];
-  global.fetch = async (url) => {
-    calls.push(String(url));
-    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
-    const n = Number(String(url).split('/').pop());
-    return {
-      ok: status === 200, status, headers: { get: () => null },
-      json: async () => ({ ...fakeIssue(n, `Request ${n}`, '2026-06-09T00:00:00Z'), state }),
-    };
-  };
-  return calls;
-}
-
-test('fetchPublicIssue remembers an issue it read on its own; a fresh read asks again', async () => {
-  const origFetch = global.fetch;
-  try {
-    github._resetSingleIssueCache();
-    const calls = stubSingle('closed');
-    const first = await github.fetchPublicIssue('KeepOwner', 'keep-repo', 40);
-    assert.strictEqual(first.issue.title, 'Request 40');
-    assert.strictEqual((await github.fetchPublicIssue('KeepOwner', 'keep-repo', 40)).issue.title, 'Request 40');
-    assert.strictEqual((await github.fetchPublicIssue('keepowner', 'KEEP-REPO', 40)).issue.title, 'Request 40', 'whatever the casing');
-    assert.strictEqual(calls.length, 1, 'asked GitHub once');
-    await github.fetchPublicIssue('KeepOwner', 'keep-repo', 40, { fresh: true });
-    assert.strictEqual(calls.length, 2, 'a fresh read always asks');
-    await github.fetchPublicIssue('KeepOwner', 'keep-repo', 41);
-    assert.strictEqual(calls.length, 3, 'another issue is its own read');
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('two reads of one issue at once ask GitHub once', async () => {
-  const origFetch = global.fetch;
-  try {
-    github._resetSingleIssueCache();
-    const calls = stubSingle('closed', { delayMs: 20 });
-    const [a, b] = await Promise.all([
-      github.fetchPublicIssue('PairOwner', 'pair-repo', 50),
-      github.fetchPublicIssue('PairOwner', 'pair-repo', 50),
-    ]);
-    assert.strictEqual(calls.length, 1);
-    assert.strictEqual(a.issue.title, 'Request 50');
-    assert.strictEqual(b.issue.title, 'Request 50');
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('a failed single read is remembered for a minute only; a merge forgets the repo\'s reads', async () => {
-  const origFetch = global.fetch;
-  const realNow = Date.now;
-  try {
-    github._resetSingleIssueCache();
-    let calls = stubSingle('closed', { status: 500 });
-    assert.strictEqual((await github.fetchPublicIssue('FailOwner', 'fail-repo', 60)).note, 'fetch failed');
-    await github.fetchPublicIssue('FailOwner', 'fail-repo', 60);
-    assert.strictEqual(calls.length, 1, 'not asked again at once');
-    const start = realNow();
-    Date.now = () => start + 61 * 1000;
-    calls = stubSingle('closed');
-    assert.strictEqual((await github.fetchPublicIssue('FailOwner', 'fail-repo', 60)).issue.title, 'Request 60', 'asked again after the minute');
-    assert.strictEqual(calls.length, 1);
-    await github.fetchPublicIssue('FailOwner', 'fail-repo', 60);
-    assert.strictEqual(calls.length, 1, 'and that answer is kept');
-    github.invalidateIssuesCache('failowner', 'fail-repo');
-    await github.fetchPublicIssue('FailOwner', 'fail-repo', 60);
-    assert.strictEqual(calls.length, 2, 'the merge path forgets the repo\'s single reads');
-  } finally {
-    Date.now = realNow;
-    global.fetch = origFetch;
-  }
-});
-
-// ------------------------------------------------------------------
-// Conditional reads of the open-issues list. The Homeroom bot refreshes
-// every project's list every five minutes, the cache's own TTL, so each
-// refresh was a full read: about 1,500 GitHub requests an hour on 19 Oct
-// 2026. A list that came back as one page keeps its ETag, the read after
-// the TTL asks with If-None-Match, and GitHub's 304 costs nothing.
-// ------------------------------------------------------------------
-
-// A GitHub for the list endpoint. `answer(call, n)` gives { status, body,
-// etag, next } for the n-th request; every call is kept with the
-// If-None-Match and Authorization it was sent with. Every answer carries
-// rate-limit headers for one fixed window, so the budget records it.
-function etagGithub(answer) {
-  const calls = [];
-  const reset = String(Math.floor(Date.now() / 1000) + 30 * 60);
-  global.fetch = async (url, init = {}) => {
-    const headers = (init && init.headers) || {};
-    const call = {
-      url: String(url),
-      ifNoneMatch: headers['If-None-Match'] || null,
-      auth: headers.Authorization || null,
-    };
-    calls.push(call);
-    const { status = 200, body = [], etag = null, next = null } = answer(call, calls.length) || {};
-    const out = {
-      'content-type': 'application/json',
-      'x-ratelimit-limit': '5000',
-      'x-ratelimit-remaining': '4000',
-      'x-ratelimit-reset': reset,
-      'x-ratelimit-resource': 'core',
-    };
-    if (etag) out.etag = etag;
-    if (next) out.link = `<${next}>; rel="next"`;
-    return new Response(status === 304 ? null : JSON.stringify(body), { status, headers: out });
-  };
-  return calls;
-}
-
-// What the budget counted and what it let through free, over every credential.
-function spent() {
-  let counted = 0;
-  let free = 0;
-  for (const row of budget.snapshot().credentials) {
-    if (!row.spend) continue;
-    counted += row.spend.counted;
-    free += row.spend.free;
-  }
-  return { counted, free };
-}
-
-test('a one-page list keeps its ETag; the read after the TTL asks with it, and a 304 serves the list free', async () => {
-  const origFetch = global.fetch;
-  const clock = fakeClock();
-  budget._resetForTests();
-  try {
-    // Created before anything was cached: the overlay alone carries it.
-    github.noteIssueCreated('EtagOwner', 'etag-repo', fakeIssue(9, 'created here', '2026-06-11T00:00:00Z'));
-    const list = [fakeIssue(1, 'one', '2026-06-09T00:00:00Z'), fakeIssue(2, 'two', '2026-06-08T00:00:00Z')];
-    const calls = etagGithub((call) => (call.ifNoneMatch === 'W/"list-1"'
-      ? { status: 304, etag: 'W/"list-1"' }
-      : { body: list, etag: 'W/"list-1"' }));
-
-    const first = await github.fetchPublicIssues('EtagOwner', 'etag-repo');
-    assert.deepStrictEqual(first.issues.map((i) => i.number), [9, 1, 2]);
-    assert.strictEqual(calls[0].ifNoneMatch, null, 'nothing to revalidate on the first read');
-
-    github.noteIssuesClosed('EtagOwner', 'etag-repo', [2]);
-    clock.tick(CACHE_TTL_MS + 1);
-    const again = await github.fetchPublicIssues('EtagOwner', 'etag-repo');
-    assert.strictEqual(calls.length, 2);
-    assert.strictEqual(calls[1].ifNoneMatch, 'W/"list-1"', 'asked with the ETag it was answered with');
-    assert.deepStrictEqual(again.issues.map((i) => i.number), [9, 1],
-      'the cached list, with the created issue added and the closed one hidden');
-    assert.strictEqual(again.note, undefined);
-    assert.strictEqual(again.stale, undefined, 'a 304 is an answer, not a failure');
-
-    // The 304 re-stamped the entry: the next read inside the TTL asks nobody.
-    clock.tick(CACHE_TTL_MS - 1);
-    await github.fetchPublicIssues('EtagOwner', 'etag-repo');
-    assert.strictEqual(calls.length, 2, 'served from the cache again');
-
-    assert.deepStrictEqual(spent(), { counted: 1, free: 1 }, 'only the first, full read counted against the budget');
-  } finally {
-    github.unsuppressIssues('EtagOwner', 'etag-repo', [2]);
-    budget._resetForTests();
-    clock.restore();
-    global.fetch = origFetch;
-  }
-});
-
-test('a 200 with a new ETag replaces the list, and the next read asks with the new one', async () => {
-  const origFetch = global.fetch;
-  const clock = fakeClock();
-  try {
-    const calls = etagGithub((call, n) => {
-      if (n === 1) return { body: [fakeIssue(1, 'one', '2026-06-09T00:00:00Z')], etag: '"a"' };
-      if (call.ifNoneMatch === '"a"') {
-        return { body: [fakeIssue(3, 'filed on GitHub', '2026-06-10T00:00:00Z'), fakeIssue(1, 'one', '2026-06-09T00:00:00Z')], etag: '"b"' };
-      }
-      return call.ifNoneMatch === '"b"' ? { status: 304, etag: '"b"' } : { body: [] };
-    });
-    await github.fetchPublicIssues('NewTagOwner', 'new-tag-repo');
-    clock.tick(CACHE_TTL_MS + 1);
-    const changed = await github.fetchPublicIssues('NewTagOwner', 'new-tag-repo');
-    assert.strictEqual(calls[1].ifNoneMatch, '"a"');
-    assert.deepStrictEqual(changed.issues.map((i) => i.number), [3, 1], 'the new list');
-
-    clock.tick(CACHE_TTL_MS + 1);
-    const held = await github.fetchPublicIssues('NewTagOwner', 'new-tag-repo');
-    assert.strictEqual(calls[2].ifNoneMatch, '"b"', 'the new ETag replaced the old one');
-    assert.deepStrictEqual(held.issues.map((i) => i.number), [3, 1], 'and its 304 serves the new list');
-  } finally {
-    clock.restore();
-    global.fetch = origFetch;
-  }
-});
-
-test('a list of more than one page keeps no ETag, so nothing is asked with one', async () => {
-  const origFetch = global.fetch;
-  const clock = fakeClock();
-  try {
-    const page2 = 'https://api.github.com/repositories/1/issues?state=open&page=2';
-    // One page with an ETag, then the list grows past a page, then the next read.
-    let grown = false;
-    const calls = etagGithub((call) => {
-      if (!grown) return { body: [fakeIssue(1, 'one', '2026-06-09T00:00:00Z')], etag: '"single"' };
-      if (call.url === page2) return { body: [fakeIssue(1, 'one', '2026-06-09T00:00:00Z')], etag: '"p2"' };
-      return { body: [fakeIssue(4, 'four', '2026-06-10T00:00:00Z')], etag: '"p1"', next: page2 };
-    });
-    await github.fetchPublicIssues('PagesOwner', 'pages-repo');
-    grown = true;
-    clock.tick(CACHE_TTL_MS + 1);
-    const two = await github.fetchPublicIssues('PagesOwner', 'pages-repo');
-    assert.deepStrictEqual(two.issues.map((i) => i.number), [4, 1]);
-    assert.deepStrictEqual(calls.slice(1).map((c) => c.ifNoneMatch), ['"single"', null],
-      'page one asks with the one-page ETag; page two never asks with one');
-
-    clock.tick(CACHE_TTL_MS + 1);
-    await github.fetchPublicIssues('PagesOwner', 'pages-repo');
-    assert.strictEqual(calls.length, 5);
-    assert.deepStrictEqual(calls.slice(3).map((c) => c.ifNoneMatch), [null, null],
-      'a two-page list is read whole, with no If-None-Match');
-  } finally {
-    clock.restore();
-    global.fetch = origFetch;
-  }
-});
-
-test('If-None-Match goes out with the installation read and with the bot-token read it falls back to', async () => {
-  const origFetch = global.fetch;
-  const clock = fakeClock();
-  const priorToken = process.env.GITHUB_BOT_TOKEN;
-  const priorMode = process.env.GITHUB_READS_VIA_APP;
-  process.env.GITHUB_BOT_TOKEN = 'bot-token';
-  process.env.GITHUB_READS_VIA_APP = '';
-  budget._resetForTests();
-  github._setReadClientsForTests({
-    appConfigured: true,
-    installationToken: async (owner) => (owner === 'AppOwner' ? 'inst-token' : null),
-  });
-  try {
-    // The installation cannot see this repository (404), so every read is
-    // asked again with the bot token.
-    const calls = etagGithub((call) => {
-      if (call.auth === 'Bearer inst-token') return { status: 404, body: { message: 'Not Found' } };
-      return call.ifNoneMatch === '"fb"'
-        ? { status: 304, etag: '"fb"' }
-        : { body: [fakeIssue(5, 'five', '2026-06-09T00:00:00Z')], etag: '"fb"' };
-    });
-    await github.fetchPublicIssues('AppOwner', 'fallback-repo');
-    assert.deepStrictEqual(calls.map((c) => c.auth), ['Bearer inst-token', 'Bearer bot-token']);
-
-    clock.tick(CACHE_TTL_MS + 1);
-    const res = await github.fetchPublicIssues('AppOwner', 'fallback-repo');
-    assert.deepStrictEqual(calls.slice(2).map((c) => [c.auth, c.ifNoneMatch]), [
-      ['Bearer inst-token', '"fb"'],
-      ['Bearer bot-token', '"fb"'],
-    ]);
-    assert.deepStrictEqual(res.issues.map((i) => i.number), [5]);
-    assert.strictEqual(res.stale, undefined);
-  } finally {
-    github._setReadClientsForTests(null);
-    budget._resetForTests();
-    if (priorToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = priorToken;
-    if (priorMode === undefined) delete process.env.GITHUB_READS_VIA_APP;
-    else process.env.GITHUB_READS_VIA_APP = priorMode;
-    clock.restore();
-    global.fetch = origFetch;
-  }
-});
-
-test('an invalidation, and an expiry of every list, drop the ETag', async () => {
-  const origFetch = global.fetch;
-  try {
-    const calls = etagGithub((call) => (call.ifNoneMatch
-      ? { status: 304, etag: '"inv"' }
-      : { body: [fakeIssue(1, 'one', '2026-06-09T00:00:00Z')], etag: '"inv"' }));
-
-    // The merge path's invalidation (on this process, or heard over the bus).
-    await github.fetchPublicIssues('DropOwner', 'drop-repo');
-    assert.strictEqual(github.invalidateIssuesCache('DropOwner', 'drop-repo'), true);
-    await github.fetchPublicIssues('DropOwner', 'drop-repo');
-    assert.strictEqual(calls[1].ifNoneMatch, null, 'the read after an invalidation is a full one');
-
-    github.applyIssuesChange('DropOwner', 'drop-repo', { invalidate: true });
-    await github.fetchPublicIssues('DropOwner', 'drop-repo');
-    assert.strictEqual(calls[2].ifNoneMatch, null, 'so is the one after an invalidation another process shared');
-
-    // A bus reconnect expires every list.
-    github.expireIssuesCachesHere();
-    await github.fetchPublicIssues('DropOwner', 'drop-repo');
-    assert.strictEqual(calls[3].ifNoneMatch, null, 'and the one after every list was expired');
-    assert.strictEqual(calls.length, 4);
-  } finally {
-    global.fetch = origFetch;
-  }
-});
-
-test('an issue seeded into the list drops the ETag, so a closed one does not stay listed', async () => {
-  const origFetch = global.fetch;
-  const clock = fakeClock();
-  try {
-    const calls = etagGithub((call) => (call.ifNoneMatch
-      ? { status: 304, etag: '"seed"' }
-      : { body: [fakeIssue(1, 'one', '2026-06-09T00:00:00Z')], etag: '"seed"' }));
-    await github.fetchPublicIssues('SeedTagOwner', 'seed-tag-repo');
-
-    // Filed here (overlay gone at once, so the cached list alone is read),
-    // then closed on GitHub before GitHub's list ever showed it: GitHub's
-    // list is the one the ETag names again.
-    github.noteIssueCreated('SeedTagOwner', 'seed-tag-repo', fakeIssue(2, 'filed, then closed', '2026-06-10T00:00:00Z'), 0);
-    clock.tick(CACHE_TTL_MS + 1);
-    const res = await github.fetchPublicIssues('SeedTagOwner', 'seed-tag-repo');
-    assert.strictEqual(calls[1].ifNoneMatch, null, 'the seeded list is not revalidated');
-    assert.deepStrictEqual(res.issues.map((i) => i.number), [1], 'a 304 would have kept #2 open');
-  } finally {
-    clock.restore();
-    global.fetch = origFetch;
-  }
 });

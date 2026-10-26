@@ -16,9 +16,9 @@
 //      still goes out with the bot token; no installation, a refusal (401,
 //      403, 404, 429, a used-up budget) or a budget already known to be
 //      used up sends the read with the bot token; a 304 or a 5xx does not.
-//   3. The raw fetch reads (fetchPublicIssue and friends) follow the same
-//      rule.
-//   4. No write path moved.
+//   3. (gone) The raw fetch reads (fetchPublicIssue and friends) followed
+//      the same rule; they read request rows now, not GitHub.
+//   4. No write path moved, and requests reach no GitHub client at all.
 //
 // Never calls GitHub.
 //
@@ -245,47 +245,11 @@ test('checkRepoPublic asks the bot token when the installation cannot see a repo
 });
 
 // ─── 3. The raw fetch reads ─────────────────────────────────────────────
-
-function stubFetch(t, answer) {
-  const real = global.fetch;
-  const calls = [];
-  global.fetch = async (url, init = {}) => {
-    const auth = init.headers && init.headers.Authorization;
-    calls.push({ url: String(url), auth });
-    const { status = 200, body = { number: 4, title: 't', state: 'open' } } = answer({ url: String(url), auth }) || {};
-    return new Response(JSON.stringify(body), {
-      status,
-      headers: { 'content-type': 'application/json', ...rateHeaders(auth === 'Bearer inst-token' ? 12500 : 5000, 100) },
-    });
-  };
-  t.after(() => { global.fetch = real; });
-  return calls;
-}
-
-test('fetchPublicIssue reads through the installation, and falls back on a refusal', async (t) => {
-  setup(t);
-  const calls = stubFetch(t, ({ auth, url }) => (auth === 'Bearer inst-token' && url.endsWith('/issues/5')
-    ? { status: 404, body: { message: 'Not Found' } }
-    : {}));
-  const four = await github.fetchPublicIssue('usernode-bot', 'reads-a', 4);
-  assert.equal(four.issue.number, 4);
-  assert.deepEqual(calls.map((c) => c.auth), ['Bearer inst-token']);
-  assert.equal(budget.core('installation:usernode-bot').limit, 12500);
-
-  calls.length = 0;
-  await github.fetchPublicIssue('usernode-bot', 'reads-a', 5);
-  assert.deepEqual(calls.map((c) => c.auth), ['Bearer inst-token', 'Bearer bot-token'],
-    'a 404 from the installation is asked again with the bot token');
-});
-
-test('switched off, the raw reads use the bot token exactly as before', async (t) => {
-  setup(t, { mode: 'off' });
-  const calls = stubFetch(t, () => ({}));
-  await github.fetchPublicIssue('usernode-bot', 'reads-b', 4);
-  await github.fetchIssueComments('usernode-bot', 'reads-b', 4);
-  assert.deepEqual(calls.map((c) => c.auth), ['Bearer bot-token', 'Bearer bot-token']);
-  assert.deepEqual(budget.snapshot().reads, { installation: 0, pat: 0, patReasons: {}, noInstallation: {} }, 'nothing is routed');
-});
+// Removed: fetchPublicIssue and fetchIssueComments were the raw reads that
+// went through the installation and fell back to the bot token (and, with
+// the switch off, used the bot token). Since 26 Oct 2026 they read request
+// rows (services/requests.js), so no raw GitHub read is left to route; the
+// Octokit reads above keep the rule.
 
 // ─── 4. No write path moved ─────────────────────────────────────────────
 
@@ -300,8 +264,7 @@ test('every write keeps the bot token; only standalone reads moved', () => {
   const writes = [
     'pushFiles', 'createRootCommit', 'createBranch', 'ensureBranchAtSha', 'advanceBranchToSha',
     'forceBranchToSha', 'createProposalCommit', 'createPR', 'updatePR', 'closePR', 'reopenPR',
-    'mergePR', 'deleteBenchBranch', 'updateIssueTitle', 'updateIssueBody', 'closeIssue',
-    'createIssue', 'createIssueComment', 'createRepo',
+    'mergePR', 'deleteBenchBranch', 'createRepo',
   ];
   for (const name of writes) {
     assert.doesNotMatch(body(name), /getReadOctokit|installationReadOctokit|publicReadFetch/, `${name} must not move`);
@@ -316,12 +279,24 @@ test('every write keeps the bot token; only standalone reads moved', () => {
   const reads = [
     'getFileContent', 'compareCommitAncestry', 'getCommitParents', 'getCommitTree', 'getBranchSha',
     'getRepoHead', 'getCommitAt', 'findOpenPrByBranch', 'listOpenPulls', 'getPR', 'listChangedFiles',
-    'compareRefs', 'getProposalDiff', 'compareFiles', 'getIssue', 'checkRepoPublic',
+    'compareRefs', 'getProposalDiff', 'compareFiles', 'checkRepoPublic',
     'compareCommitSubjects',
   ];
   for (const name of reads) {
     assert.match(body(name), /await getReadOctokit\(owner\)/, `${name} reads through getReadOctokit`);
     assert.doesNotMatch(body(name), /\.(create|update|merge|delete)\w*\(/, `${name} writes nothing`);
+  }
+
+  // Requests are rows (services/requests.js): their helpers reach no GitHub
+  // client, for reading or for writing.
+  const requestHelpers = [
+    'getIssue', 'createIssue', 'createIssueComment', 'updateIssueTitle', 'updateIssueBody', 'closeIssue',
+    'reopenIssue', 'patchIssueTitle', 'patchIssueBody', 'patchIssueContent', 'findIssueByMarker',
+    'fetchPublicIssues', 'fetchPublicIssue', 'fetchIssueComments',
+  ];
+  for (const name of requestHelpers) {
+    assert.match(body(name), /requests\(\)\.\w+\(/, `${name} is the request store's`);
+    assert.doesNotMatch(body(name), /Octokit|githubFetch|publicReadFetch/, `${name} reaches no GitHub client`);
   }
 });
 

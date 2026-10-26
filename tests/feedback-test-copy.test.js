@@ -3,7 +3,9 @@
 // obviously fake number and answers the way a real filing does — that is what
 // puts the thanks sheet, and everything after it, within reach of the before &
 // after shots. Production, and any server that does not say it is a test copy,
-// keeps today's 503.
+// files a real request: since GitHub suspended the filing account (26 Oct
+// 2026) that is a request row on Homeroom's own board (github.createIssue,
+// services/requests.js), which needs no token, so the old 503 is gone.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -174,27 +176,35 @@ test('a staging copy that does have a token files for real', async () => {
   process.env.GITHUB_BOT_TOKEN = 'test-token';
   const { status, data } = await submit({ title: undefined });
   assert.equal(status, 200);
-  assert.equal(platformIssueCalls.length, 1);
+  assert.deepEqual(createIssueCalls, [{ owner: 'platform', repo: 'repo' }], 'a request row on the platform board');
+  assert.equal(platformIssueCalls.length, 0, 'filing no longer reaches GitHub');
   assert.equal(data.url, 'https://github.com/platform/repo/issues/41');
   assert.equal(queries.filter((q) => /INSERT INTO title_heal_queue/.test(q.sql)).length, 1);
 });
 
-test('production with no token still refuses', async () => {
+// Production with no token used to answer 503 'GitHub token not configured'.
+// A request is a row now and needs no token: it files for real, never under
+// a fake number.
+test('production with no token files the request natively', async () => {
   process.env.USERNODE_ENV = 'production';
   const { status, data } = await submit();
-  assert.equal(status, 503);
-  assert.deepEqual(data, { error: 'GitHub token not configured' });
+  assert.equal(status, 200);
+  assert.deepEqual(createIssueCalls, [{ owner: 'platform', repo: 'repo' }]);
+  assert.equal(data.url, 'https://github.com/platform/repo/issues/41');
   assert.equal(platformIssueCalls.length, 0);
 });
 
-test('a server that does not say it is a test copy still refuses', async () => {
+test('a server that does not say it is a test copy files for real, never under a fake number', async () => {
   const { status, data } = await submit();
-  assert.equal(status, 503);
-  assert.deepEqual(data, { error: 'GitHub token not configured' });
+  assert.equal(status, 200);
+  assert.equal(data.url, 'https://github.com/platform/repo/issues/41');
+  assert.equal(createIssueCalls.length, 1);
   assert.equal(platformIssueCalls.length, 0);
 
   process.env.NODE_ENV = 'production';
   process.env.USERNODE_LOCAL_DEV = '1';
   const prod = await submit();
-  assert.equal(prod.status, 503, 'NODE_ENV=production is never a test copy');
+  assert.equal(prod.status, 200);
+  assert.equal(prod.data.url, 'https://github.com/platform/repo/issues/41', 'NODE_ENV=production is never a test copy');
+  assert.equal(createIssueCalls.length, 2);
 });

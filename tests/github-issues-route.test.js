@@ -5,7 +5,7 @@
 // response builder at the bottom of the handler still referenced it —
 // a ReferenceError on EVERY request, so the route 500'd and the Dev
 // view rendered zero open issues. This exercises the route end-to-end
-// (express + mocked pool + stubbed GitHub fetch) on both the plain and
+// (express + mocked pool + an in-memory request store) on both the plain and
 // ?refresh=1 paths so a scoping break like that fails loudly again.
 //
 // Run with: node --test tests/github-issues-route.test.js
@@ -35,30 +35,40 @@ appAccess.getAppForUser = async () => ({
 const { issueRoutes } = require('../src/routes/issues');
 const express = require('express');
 
-const GH_ISSUES = Array.from({ length: 5 }, (_, i) => ({
+// Requests are rows (services/requests.js), and the board is a query of
+// them; an in-memory store stands in (tests/helpers/fake-requests.js): five
+// open requests, newest first so the board reads #1..#5, and #142, closed,
+// which only the single-issue route returns. #144 is a proposal's number.
+const { installFakeRequests } = require('./helpers/fake-requests');
+const BOARD = Array.from({ length: 5 }, (_, i) => ({
   number: i + 1,
   title: `issue ${i + 1}`,
   body: `body of #${i + 1}`,
-  labels: [{ name: 'usernode' }],
-  updated_at: '2026-06-10T00:00:00Z',
-  html_url: `https://github.com/o/r/issues/${i + 1}`,
-  user: { login: 'someone' },
+  labels: ['usernode'],
+  updatedAt: `2026-06-10T00:00:0${5 - i}Z`,
+  user: 'someone',
 }));
-
-// Stub only the api.github.com calls fetchPublicIssues makes; local
-// requests to the test server pass through to the real fetch.
-const realFetch = global.fetch;
-global.fetch = async (url, opts) => {
-  if (String(url).includes('api.github.com')) {
-    return {
-      ok: true,
-      status: 200,
-      headers: { get: () => null },
-      json: async () => GH_ISSUES,
-    };
-  }
-  return realFetch(url, opts);
+const CLOSED_142 = {
+  number: 142,
+  title: 'Toggle resets after refresh',
+  body: 'Steps.\n\n**Source:** usernode user (reporter)',
+  labels: ['usernode'],
+  createdAt: '2026-06-01T00:00:00Z',
+  updatedAt: '2026-06-09T00:00:00Z',
+  closedAt: '2026-06-09T00:00:00Z',
+  state: 'closed',
+  user: 'usernode-bot',
 };
+const store = installFakeRequests(null, { 'o/r': [...BOARD, CLOSED_142] }, { pulls: { 'o/r': [144] } });
+const realFetch = global.fetch;
+
+/** The reads of `fn` made since `mark` (an index into store.reads). */
+const readsSince = (mark, fn) => store.reads.slice(mark).filter((r) => r.fn === fn);
+
+/** Empty again every thread the tests below give comments to. */
+function clearThreads() {
+  for (const n of [142, 1585]) store.setComments('o', 'r', n, []);
+}
 
 function startServer() {
   const app = express();
@@ -572,25 +582,14 @@ test('production never synthesizes headless state', async () => {
 // It calls github.fetchIssueComments + clipIssueComments and returns
 // { comments, truncated, note? }. In staging an empty/unavailable live
 // thread falls back to stagingMockIssueComments so the section is
-// reviewable. The module-level fetch stub above answers api.github.com
-// list calls; these tests override global.fetch to shape the COMMENTS
-// response, restoring it afterwards.
-
-const baselineFetch = global.fetch;
+// reviewable. These tests give the store's thread its comments
+// (store.setComments), emptying it again afterwards.
 
 test('comments endpoint returns the clipped live thread (collab-gated, merged shape)', async () => {
-  global.fetch = async (url, opts) => {
-    if (String(url).includes('api.github.com') && String(url).includes('/comments')) {
-      return {
-        ok: true, status: 200, headers: { get: () => null },
-        json: async () => [
-          { user: { login: 'reporter' }, body: 'It only happens on mobile.', created_at: '2026-06-10T00:00:00Z' },
-          { user: { login: 'usernode-bot' }, body: 'Per-device, then?', created_at: '2026-06-11T00:00:00Z' },
-        ],
-      };
-    }
-    return baselineFetch(url, opts);
-  };
+  store.setComments('o', 'r', 142, [
+    { author: 'reporter', body: 'It only happens on mobile.', createdAt: '2026-06-10T00:00:00Z' },
+    { author: 'usernode-bot', body: 'Per-device, then?', createdAt: '2026-06-11T00:00:00Z' },
+  ]);
   const server = await startServer();
   try {
     const port = server.address().port;
@@ -602,7 +601,7 @@ test('comments endpoint returns the clipped live thread (collab-gated, merged sh
     assert.strictEqual(body.comments[1].author, 'usernode-bot');
     assert.strictEqual(body.truncated, false);
   } finally {
-    global.fetch = baselineFetch;
+    clearThreads();
     server.close();
   }
 });
@@ -622,13 +621,7 @@ test('comments endpoint 404s when the app is not accessible to the viewer', asyn
 });
 
 test('staging comments endpoint serves mock thread (with a bot comment) on an empty live fetch', async () => {
-  // Live thread comes back empty → staging falls back to the mocks.
-  global.fetch = async (url, opts) => {
-    if (String(url).includes('api.github.com') && String(url).includes('/comments')) {
-      return { ok: true, status: 200, headers: { get: () => null }, json: async () => [] };
-    }
-    return baselineFetch(url, opts);
-  };
+  // The store's thread is empty → staging falls back to the mocks.
   const server = await startStagingServer();
   try {
     const port = server.address().port;
@@ -650,7 +643,7 @@ test('staging comments endpoint serves mock thread (with a bot comment) on an em
     assert.ok(days(body.comments[2].createdAt) < 7,
       'and the third is inside it');
   } finally {
-    global.fetch = baselineFetch;
+    clearThreads();
     server.close();
   }
 });
@@ -661,14 +654,8 @@ test('staging demo mode serves a MOCK issue’s thread without the live round tr
   // immediate; on staging the route first asked GitHub about an issue that
   // does not exist, and from a preview container whose outbound fetch hangs
   // that wait outlived the runner's five-second presence poll.
-  let liveCalls = 0;
-  global.fetch = async (url, opts) => {
-    if (String(url).includes('api.github.com') && String(url).includes('/comments')) {
-      liveCalls += 1;
-      return { ok: true, status: 200, headers: { get: () => null }, json: async () => [] };
-    }
-    return baselineFetch(url, opts);
-  };
+  const mark = store.reads.length;
+  const liveCalls = () => readsSince(mark, 'comments').length;
   const server = await startStagingServer();
   try {
     const port = server.address().port;
@@ -677,15 +664,15 @@ test('staging demo mode serves a MOCK issue’s thread without the live round tr
     const body = await res.json();
     assert.ok(body.comments.length > 0, 'the mock row gets its stand-in thread');
     assert.ok(body.comments.some((c) => c.author === 'usernode-bot'));
-    assert.strictEqual(liveCalls, 0, 'no live fetch for a number no real issue has');
+    assert.strictEqual(liveCalls(), 0, 'no live read for a number no real issue has');
 
     // Without ?demo=1 the same row still goes through the live fetch first
     // (and falls back): demo mode is the only thing that short-circuits.
     const plain = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900008/comments`);
     assert.strictEqual(plain.status, 200);
-    assert.strictEqual(liveCalls, 1, 'the live fetch is skipped ONLY in demo mode');
+    assert.strictEqual(liveCalls(), 1, 'the live read is skipped ONLY in demo mode');
   } finally {
-    global.fetch = baselineFetch;
+    clearThreads();
     server.close();
   }
 });
@@ -702,12 +689,6 @@ test('staging substitutes a thread for a REAL issue number too, with dated comme
   // `createdAt` on every comment is the load-bearing part: AppView's
   // _feedCommentsHtml emits `.dev-feed-comment-time` only when relTime()
   // returns something, so a thread without dates would still render no age.
-  global.fetch = async (url, opts) => {
-    if (String(url).includes('api.github.com') && String(url).includes('/comments')) {
-      return { ok: true, status: 200, headers: { get: () => null }, json: async () => [] };
-    }
-    return baselineFetch(url, opts);
-  };
   const server = await startStagingServer();
   try {
     const port = server.address().port;
@@ -734,18 +715,12 @@ test('staging substitutes a thread for a REAL issue number too, with dated comme
       'the stand-in thread carries a comment long enough to be clamped');
     assert.ok(/^\[Mock\]/.test(last.body), 'and it is marked like every other row');
   } finally {
-    global.fetch = baselineFetch;
+    clearThreads();
     server.close();
   }
 });
 
 test('production never substitutes a thread for a real issue number either', async () => {
-  global.fetch = async (url, opts) => {
-    if (String(url).includes('api.github.com') && String(url).includes('/comments')) {
-      return { ok: true, status: 200, headers: { get: () => null }, json: async () => [] };
-    }
-    return baselineFetch(url, opts);
-  };
   const server = await startServer();
   try {
     const port = server.address().port;
@@ -754,18 +729,12 @@ test('production never substitutes a thread for a real issue number either', asy
     const body = await res.json();
     assert.deepStrictEqual(body.comments, [], 'the broadened stand-in stays staging-only');
   } finally {
-    global.fetch = baselineFetch;
+    clearThreads();
     server.close();
   }
 });
 
 test('production comments endpoint never substitutes mocks (empty stays empty)', async () => {
-  global.fetch = async (url, opts) => {
-    if (String(url).includes('api.github.com') && String(url).includes('/comments')) {
-      return { ok: true, status: 200, headers: { get: () => null }, json: async () => [] };
-    }
-    return baselineFetch(url, opts);
-  };
   const server = await startServer();
   try {
     const port = server.address().port;
@@ -775,7 +744,7 @@ test('production comments endpoint never substitutes mocks (empty stays empty)',
     assert.deepStrictEqual(body.comments, []);
     assert.strictEqual(body.truncated, false);
   } finally {
-    global.fetch = baselineFetch;
+    clearThreads();
     server.close();
   }
 });
@@ -788,19 +757,14 @@ test('production comments endpoint never substitutes mocks (empty stays empty)',
 // whose thread copy it recorded (homeroom_bot_posts), by comment id.
 
 const BOT_THREAD = [
-  { id: 3001, user: { login: 'reporter' }, body: 'Dark mode please.', created_at: '2026-10-02T18:20:00Z' },
-  { id: 3002, user: { login: 'usernode-bot' }, body: 'Homeroom bot is looking at this request.', created_at: '2026-10-02T18:24:00Z' },
-  { id: 3003, user: { login: 'usernode-bot' }, body: 'Homeroom bot wrote a plan for this request.', created_at: '2026-10-02T18:27:00Z' },
-  { id: 3004, user: { login: 'usernode-bot' }, body: 'Thanks for the report.', created_at: '2026-10-02T18:30:00Z' },
+  { id: 3001, author: 'reporter', body: 'Dark mode please.', createdAt: '2026-10-02T18:20:00Z' },
+  { id: 3002, author: 'usernode-bot', body: 'Homeroom bot is looking at this request.', createdAt: '2026-10-02T18:24:00Z' },
+  { id: 3003, author: 'usernode-bot', body: 'Homeroom bot wrote a plan for this request.', createdAt: '2026-10-02T18:27:00Z' },
+  { id: 3004, author: 'usernode-bot', body: 'Thanks for the report.', createdAt: '2026-10-02T18:30:00Z' },
 ];
 
-function stubBotThread(comments = BOT_THREAD) {
-  global.fetch = async (url, opts) => {
-    if (String(url).includes('api.github.com') && String(url).includes('/comments')) {
-      return { ok: true, status: 200, headers: { get: () => null }, json: async () => comments };
-    }
-    return baselineFetch(url, opts);
-  };
+function stubBotThread(comments = BOT_THREAD, number = 142) {
+  store.setComments('o', 'r', number, comments);
 }
 
 test('#3693: the bot\'s comments its Homeroom thread already carries are left out, by id', async () => {
@@ -836,7 +800,7 @@ test('#3693: the bot\'s comments its Homeroom thread already carries are left ou
     assert.match(asked[0].sql, /m\.deleted_at IS NULL/);
     assert.match(asked[0].sql, /p\.github_comment_id IS NOT NULL/);
   } finally {
-    global.fetch = baselineFetch;
+    clearThreads();
     poolQueryHandler = async () => ({ rows: [] });
     server.close();
   }
@@ -846,7 +810,7 @@ test('#3693: the bot\'s posts are left out BEFORE the clip, so they never take a
   // One bot post, then the 30 people's comments the clip keeps: had the
   // bot post been counted, the clip would report earlier comments dropped.
   const people = Array.from({ length: 30 }, (_, k) => ({
-    id: 4000 + k, user: { login: `person-${k}` }, body: `reply ${k}`, created_at: '2026-10-02T19:00:00Z',
+    id: 4000 + k, author: `person-${k}`, body: `reply ${k}`, createdAt: '2026-10-02T19:00:00Z',
   }));
   stubBotThread([BOT_THREAD[1], ...people]);
   poolQueryHandler = async (sql) => (/FROM homeroom_bot_posts/.test(String(sql))
@@ -860,7 +824,7 @@ test('#3693: the bot\'s posts are left out BEFORE the clip, so they never take a
     assert.strictEqual(body.comments.length, 30);
     assert.strictEqual(body.truncated, false, 'nothing a reader could want was dropped');
   } finally {
-    global.fetch = baselineFetch;
+    clearThreads();
     poolQueryHandler = async () => ({ rows: [] });
     server.close();
   }
@@ -880,17 +844,17 @@ test('#3693: a failed lookup shows the whole thread, as before', async () => {
     const body = await res.json();
     assert.strictEqual(body.comments.length, BOT_THREAD.length);
   } finally {
-    global.fetch = baselineFetch;
+    clearThreads();
     poolQueryHandler = async () => ({ rows: [] });
     server.close();
   }
 });
 
 test('#3693: staging does not fill a thread emptied by the dedupe with fixtures', async () => {
-  // The staging fallback is for a thread GitHub sent back empty. A thread
+  // The staging fallback is for a thread that was empty as read. A thread
   // that only held the bot's thread copies is exactly what a reviewer of
   // this fix has to see empty.
-  stubBotThread([BOT_THREAD[1], BOT_THREAD[2]]);
+  stubBotThread([BOT_THREAD[1], BOT_THREAD[2]], 1585);
   poolQueryHandler = async (sql) => (/FROM homeroom_bot_posts/.test(String(sql))
     ? { rows: [{ github_comment_id: '3002' }, { github_comment_id: '3003' }] }
     : { rows: [] });
@@ -902,7 +866,7 @@ test('#3693: staging does not fill a thread emptied by the dedupe with fixtures'
     const body = await res.json();
     assert.deepStrictEqual(body.comments, []);
   } finally {
-    global.fetch = baselineFetch;
+    clearThreads();
     poolQueryHandler = async () => ({ rows: [] });
     server.close();
   }
@@ -1311,39 +1275,32 @@ test('production never synthesizes in_progress state', async () => {
   }
 });
 
-// ── #2261: a refused GitHub read is not an empty board ─────────────────
-// The route hands the client whatever fetchPublicIssues answers. When the
-// refetch behind an expired (or merge-invalidated) entry is refused, that
-// answer is now the last list with `note` and `stale: true` — and the route
-// passes both through, so the board can keep what it has and say why.
-test('#2261 a refused GitHub read serves the last list with note + stale instead of an empty one', async () => {
+// ── #2261: a failed read ─────────────────────────────────────────────────
+// #2261 served the last list, flagged `stale`, when GitHub refused the
+// refetch behind an expired entry. That cache is gone with the move to rows:
+// the board is a query, with no list kept to fall back on, so a failed read
+// is an empty board that says why, and the next read is the store's answer.
+test('a failed board read is an empty list with a note, never a stale one', async () => {
+  const requests = require('../src/services/requests');
+  const listOpen = requests.listOpen;
+  requests.listOpen = async () => { throw new Error('connection refused'); };
   const server = await startServer();
-  const stubbed = global.fetch;
   try {
     const port = server.address().port;
-    // Warm the entry through the route (the stub answers five issues), then
-    // expire it the way a platform merge does and make GitHub refuse.
     let res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
     assert.strictEqual(res.status, 200);
-    assert.strictEqual((await res.json()).issues.length, 5);
-    assert.strictEqual(github.invalidateIssuesCache('o', 'r'), true);
-    global.fetch = async (url, opts) => (String(url).includes('api.github.com')
-      ? { ok: false, status: 503, headers: { get: () => null }, json: async () => ({}) }
-      : realFetch(url, opts));
-
-    res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
-    assert.strictEqual(res.status, 200);
     const body = await res.json();
-    assert.strictEqual(body.issues.length, 5, 'the last list is served, not an empty one');
-    assert.strictEqual(body.issues[0].number, 1);
+    assert.deepStrictEqual(body.issues, []);
     assert.strictEqual(body.note, 'fetch failed');
-    assert.strictEqual(body.stale, true);
+    assert.ok(!('stale' in body), 'nothing is served stale');
+
+    requests.listOpen = listOpen;
+    res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+    const again = await res.json();
+    assert.strictEqual(again.issues.length, 5, 'the next read is the store again');
+    assert.ok(!('note' in again));
   } finally {
-    global.fetch = stubbed;
-    // Leave the shared entry fresh for whatever runs next: expire it and let
-    // the restored stub re-warm it.
-    github.invalidateIssuesCache('o', 'r');
-    await realFetch(`http://127.0.0.1:${server.address().port}/api/apps/demo/github-issues`);
+    requests.listOpen = listOpen;
     server.close();
   }
 });
@@ -1353,39 +1310,11 @@ test('#2261 a refused GitHub read serves the last list with note + stale instead
 // The list above is OPEN issues only, so the issue a merged proposal closed
 // — which that proposal still links to — had no page. This route resolves
 // one issue, open or closed, through github.fetchPublicIssue, in the list's
-// row shape. Each test scripts the single-issue response itself; number 142
-// is nowhere in the shared o/r list cache, so the endpoint is really asked.
-
-const closedGhIssue = (over) => ({
-  number: 142,
-  title: 'Toggle resets after refresh',
-  body: 'Steps.\n\n**Source:** usernode user (reporter)',
-  labels: [{ name: 'usernode' }],
-  created_at: '2026-06-01T00:00:00Z',
-  updated_at: '2026-06-09T00:00:00Z',
-  closed_at: '2026-06-09T00:00:00Z',
-  state: 'closed',
-  html_url: 'https://github.com/o/r/issues/142',
-  user: { login: 'usernode-bot' },
-  ...over,
-});
-
-function stubSingleIssue(answer) {
-  const calls = [];
-  global.fetch = async (url, opts) => {
-    if (String(url).includes('api.github.com')) {
-      calls.push(String(url));
-      return answer(url);
-    }
-    return baselineFetch(url, opts);
-  };
-  return calls;
-}
+// row shape. #142 is a closed request in the store (CLOSED_142 above), so
+// the board never lists it and only this route can return it.
 
 test('single-issue endpoint returns a CLOSED issue in the list row shape', async () => {
-  const calls = stubSingleIssue(() => ({
-    ok: true, status: 200, headers: { get: () => null }, json: async () => closedGhIssue(),
-  }));
+  const mark = store.reads.length;
   poolQueryHandler = async (sql) => {
     const s = String(sql);
     if (/FROM issue_bounties/.test(s)) return { rows: [{ cnt: 2, mine: true }] };
@@ -1398,7 +1327,7 @@ test('single-issue endpoint returns a CLOSED issue in the list row shape', async
     const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142`);
     assert.strictEqual(res.status, 200);
     const { issue } = await res.json();
-    assert.ok(calls.some((u) => u.endsWith('/repos/o/r/issues/142')), 'the single-issue endpoint was asked');
+    assert.ok(readsSince(mark, 'getOne').some((r) => r.number === 142), 'the store was asked for it');
     assert.strictEqual(issue.number, 142);
     assert.strictEqual(issue.state, 'closed');
     assert.strictEqual(issue.closedAt, '2026-06-09T00:00:00Z');
@@ -1414,7 +1343,7 @@ test('single-issue endpoint returns a CLOSED issue in the list row shape', async
     assert.ok(issue.priority && 'top' in issue.priority, 'attribute summary rides along');
   } finally {
     poolQueryHandler = async () => ({ rows: [] });
-    global.fetch = baselineFetch;
+    clearThreads();
     server.close();
   }
 });
@@ -1423,27 +1352,21 @@ test('single-issue endpoint 404s on a missing issue and on a pull request number
   const server = await startServer();
   try {
     const port = server.address().port;
-    stubSingleIssue(() => ({ ok: false, status: 404, headers: { get: () => null }, json: async () => ({}) }));
     let res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/143`);
     assert.strictEqual(res.status, 404);
     assert.ok((await res.json()).error);
 
-    stubSingleIssue(() => ({
-      ok: true, status: 200, headers: { get: () => null },
-      json: async () => closedGhIssue({ number: 144, pull_request: { url: 'x' } }),
-    }));
     res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/144`);
     assert.strictEqual(res.status, 404, 'a PR is not an issue');
   } finally {
-    global.fetch = baselineFetch;
+    clearThreads();
     server.close();
   }
 });
 
-test('single-issue endpoint is view-gated and validates the number before asking GitHub', async () => {
-  const calls = stubSingleIssue(() => ({
-    ok: true, status: 200, headers: { get: () => null }, json: async () => closedGhIssue(),
-  }));
+test('single-issue endpoint is view-gated and validates the number before reading the store', async () => {
+  const mark = store.reads.length;
+  const calls = { get length() { return readsSince(mark, 'getOne').length; } };
   const server = await startServer();
   const prev = appAccess.getAppForUser;
   try {
@@ -1453,7 +1376,7 @@ test('single-issue endpoint is view-gated and validates the number before asking
     let res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142`);
     assert.strictEqual(res.status, 404);
     assert.strictEqual(level, 'view');
-    assert.strictEqual(calls.length, 0, 'an inaccessible app never reaches GitHub');
+    assert.strictEqual(calls.length, 0, 'an inaccessible app never reads the store');
 
     appAccess.getAppForUser = prev;
     for (const bad of ['0', 'abc', '12x']) {
@@ -1463,15 +1386,14 @@ test('single-issue endpoint is view-gated and validates the number before asking
     assert.strictEqual(calls.length, 0);
   } finally {
     appAccess.getAppForUser = prev;
-    global.fetch = baselineFetch;
+    clearThreads();
     server.close();
   }
 });
 
 test('staging demo mode serves a MOCK issue by number without the live round trip', async () => {
-  const calls = stubSingleIssue(() => ({
-    ok: false, status: 404, headers: { get: () => null }, json: async () => ({}),
-  }));
+  const mark = store.reads.length;
+  const calls = { get length() { return readsSince(mark, 'getOne').length; } };
   const server = await startStagingServer();
   try {
     const port = server.address().port;
@@ -1480,9 +1402,9 @@ test('staging demo mode serves a MOCK issue by number without the live round tri
     const { issue } = await res.json();
     assert.strictEqual(issue.number, 900008);
     assert.strictEqual(issue.state, 'open');
-    assert.strictEqual(calls.length, 0, 'no live fetch for a number no real issue has');
+    assert.strictEqual(calls.length, 0, 'no live read for a number no real issue has');
 
-    // Without ?demo=1 the live fetch goes first, and the mock backs its miss.
+    // Without ?demo=1 the live read goes first, and the mock backs its miss.
     res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900008`);
     assert.strictEqual(res.status, 200);
     assert.strictEqual(calls.length, 1);
@@ -1491,7 +1413,7 @@ test('staging demo mode serves a MOCK issue by number without the live round tri
     res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/424242?demo=1`);
     assert.strictEqual(res.status, 404);
   } finally {
-    global.fetch = baselineFetch;
+    clearThreads();
     server.close();
   }
 });
@@ -1506,9 +1428,6 @@ test('staging demo mode serves a MOCK issue by number without the live round tri
 // #4244: a closed issue no merged change closed says whether a vote or an
 // admin closed it, read off the applied close_issue row's audit payload.
 test('a closed issue carries closed_via from the applied close_issue row', async () => {
-  stubSingleIssue(() => ({
-    ok: true, status: 200, headers: { get: () => null }, json: async () => closedGhIssue(),
-  }));
   let appliedBy = 'group-vote';
   let closeParams = null;
   poolQueryHandler = async (sql, params) => {
@@ -1528,10 +1447,10 @@ test('a closed issue carries closed_via from the applied close_issue row', async
     appliedBy = 'admin:evan';
     assert.strictEqual((await read()).closed_via, 'admin');
     appliedBy = null;
-    assert.strictEqual((await read()).closed_via, null, 'closed on GitHub, no vote: says nothing');
+    assert.strictEqual((await read()).closed_via, null, 'closed with no vote: says nothing');
   } finally {
     poolQueryHandler = async () => ({ rows: [] });
-    global.fetch = baselineFetch;
+    clearThreads();
     server.close();
   }
 });
@@ -1567,9 +1486,6 @@ test('#4244: staging serves two closed mock requests by address only, never on t
 });
 
 test('both issue routes carry addressed_by, resolved in one extra query', async () => {
-  stubSingleIssue(() => ({
-    ok: true, status: 200, headers: { get: () => null }, json: async () => closedGhIssue(),
-  }));
   let sessionReads = 0;
   poolQueryHandler = async (sql) => {
     const s = String(sql);
@@ -1611,7 +1527,7 @@ test('both issue routes carry addressed_by, resolved in one extra query', async 
     assert.strictEqual(byNumber.get(2).addressed_by, null, 'an unlinked issue says nothing');
   } finally {
     poolQueryHandler = async () => ({ rows: [] });
-    global.fetch = baselineFetch;
+    clearThreads();
     server.close();
   }
 });

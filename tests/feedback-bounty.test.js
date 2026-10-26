@@ -99,9 +99,14 @@ llm.generateIssueTitle = async () => ({ title: 'Generated title', usage: undefin
 const github = require('../src/services/github');
 github.isEnabled = () => true;
 github.noteIssueCreated = () => {};
-github.createIssue = async (owner, repo) => (issuesCreated++, {
-  number: 9, html_url: `https://github.com/${owner}/${repo}/issues/9`,
-});
+// Both targets file through github.createIssue: an app's request and one on
+// the platform's own board are both request rows (services/requests.js).
+// The platform's answers #42, an app's #9.
+github.createIssue = async (owner, repo) => {
+  issuesCreated++;
+  const number = `${owner}/${repo}` === 'plat/repo' ? 42 : 9;
+  return { number, html_url: `https://github.com/${owner}/${repo}/issues/${number}` };
+};
 
 // ws.js is required lazily inside placeBounty; stub it before the service
 // loads so the chat posts and WS push are observable no-ops.
@@ -122,19 +127,7 @@ require.cache[wsPath] = {
 const events = require('../src/services/events');
 events.record = () => {};
 
-// Platform-target feedback files via a raw fetch with the PAT.
-process.env.GITHUB_BOT_TOKEN = 'test-pat';
 const realFetch = global.fetch;
-global.fetch = async (url, opts) => {
-  if (String(url).includes('api.github.com')) {
-    return {
-      ok: true,
-      status: 201,
-      json: async () => ({ number: 42, html_url: 'https://github.com/plat/repo/issues/42' }),
-    };
-  }
-  return realFetch(url, opts);
-};
 
 const { feedbackRoutes } = require('../src/routes/feedback');
 const { feedbackSubmitLimiter } = require('../src/middleware/rate-limits');

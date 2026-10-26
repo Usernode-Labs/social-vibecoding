@@ -10,8 +10,11 @@
 //
 //   - the project files its first version right after its repository is
 //     made, beside its first deploy (src/workflow/app-creation/);
-//   - an issue one process files reaches every other process's open-issues
-//     copy over the bus (github.js noteIssueCreated, applyIssuesChange);
+//   - an issue one process files is in every other process's board read at
+//     once: it is a request row (services/requests.js) that every process
+//     reads, so nothing is passed over the bus any more (it was, through
+//     github.js noteIssueCreated and applyIssuesChange, until requests left
+//     GitHub on 26 Oct 2026);
 //   - a first version just filed has its project refreshed at once, not
 //     after the settle (the bot's lane, RefreshAsked `now`);
 //   - a first version filed while its project is set up waits for the
@@ -27,8 +30,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-
-const settle = (ms = 10) => new Promise((r) => setTimeout(r, ms));
 
 function stub(id, exports) {
   require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
@@ -62,71 +63,41 @@ function otherProcess(t) {
   return other;
 }
 
-function rawIssue(number, title, body) {
-  return {
-    number, title, body, labels: [], state: 'open',
-    created_at: '2026-10-15T10:00:00Z', updated_at: '2026-10-15T10:00:00Z',
-    html_url: `https://github.com/usernode-bot/club-votes/issues/${number}`, user: { login: 'usernode-bot' },
-  };
-}
-
-/** GitHub as a process reading it sees it: the open list lags behind the create; one issue can be asked for. */
-function stubGithubFetch(t, singles = {}) {
+/** Any read of GitHub's API is a failure here: requests are not there any more. */
+function refuseGithubFetch(t) {
   const calls = [];
   const real = global.fetch;
   global.fetch = async (url) => {
     calls.push(String(url));
-    const one = String(url).match(/\/issues\/(\d+)$/);
-    const body = one ? singles[one[1]] : [];
-    return { ok: !!body, status: body ? 200 : 404, headers: { get: () => null }, json: async () => body };
+    return { ok: false, status: 404, headers: { get: () => null }, json: async () => null };
   };
   t.after(() => { global.fetch = real; });
   return calls;
 }
 
-test('an issue one process files is in every other process\'s open-issues copy at once, and never passed on again', async (t) => {
+// The second case this section had ("one too big for the bus carries its
+// number, and the other process reads it from GitHub once") went with the
+// bus message: the long request below is read from the store like any other.
+test('an issue one process files is in every other process\'s board read at once, with nothing on the bus', async (t) => {
+  const { installFakeRequests } = require('./helpers/fake-requests');
+  installFakeRequests(t, { 'usernode-bot/club-votes': [] });
   require('../src/services/github').isEnabled(); // loaded before it is swapped
   const sent = capturePublishes(t);
+  const calls = refuseGithubFetch(t);
   const github = require('../src/services/github');
-  const body = '**Source:** Homeroom user (evan)\n\nPolls for our club, so we can decide things together.';
-  assert.equal(github.noteIssueCreated('usernode-bot', 'club-votes', rawIssue(1, 'First version of Club Votes', body)), true);
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0].kind, 'issues_cache');
-  assert.deepEqual(sent[0].routing, { owner: 'usernode-bot', repo: 'club-votes' });
-  assert.equal(sent[0].data.created.number, 1, 'the issue itself rides along');
-  assert.equal(sent[0].data.created.body, body);
+  const body = `**Source:** Homeroom user (evan)\n\nPolls for our club. ${'Every member votes once on each poll, and sees who won. '.repeat(150)}`;
+  const filed = await github.createIssue('usernode-bot', 'club-votes', { title: 'First version of Club Votes', body });
+  assert.equal(filed.number, 1);
+  github.noteIssueCreated('usernode-bot', 'club-votes', filed);
+  assert.deepEqual(sent, [], 'nothing is passed on: every process reads the same rows');
 
-  // The conductor: nothing of this repository's, and GitHub's list does not
-  // have the issue yet.
+  // The conductor: another process, which never saw the filing.
   const conductor = otherProcess(t);
-  const calls = stubGithubFetch(t);
-  const ws = require('../src/services/ws');
-  ws._onBusMessage({ kind: 'issues_cache', routing: sent[0].routing, data: sent[0].data });
-  assert.equal(sent.length, 1, 'applied here only');
   const list = await conductor.fetchPublicIssues('usernode-bot', 'club-votes');
   assert.deepEqual(list.issues.map((i) => i.number), [1], 'its refresh finds the request');
-  const before = calls.length;
   const one = await conductor.fetchPublicIssue('usernode-bot', 'club-votes', 1);
   assert.equal(one.issue.body, body, 'and its read has the whole request');
-  assert.equal(calls.length, before, 'without asking GitHub');
-});
-
-test('one too big for the bus carries its number, and the other process reads it from GitHub once', async (t) => {
-  require('../src/services/github').isEnabled();
-  const sent = capturePublishes(t);
-  const github = require('../src/services/github');
-  const body = `Polls for our club. ${'Every member votes once on each poll, and sees who won. '.repeat(150)}`;
-  github.noteIssueCreated('usernode-bot', 'club-votes-big', rawIssue(2, 'First version of Club Votes', body));
-  assert.deepEqual(sent.map((m) => m.data), [{ createdNumber: 2 }], 'never a NOTIFY too big to send');
-
-  const conductor = otherProcess(t);
-  const calls = stubGithubFetch(t, { 2: rawIssue(2, 'First version of Club Votes', body) });
-  require('../src/services/ws')._onBusMessage({ kind: 'issues_cache', routing: sent[0].routing, data: sent[0].data });
-  await settle();
-  assert.equal(calls.filter((u) => /\/issues\/2$/.test(u)).length, 1, 'read once, by its number');
-  const list = await conductor.fetchPublicIssues('usernode-bot', 'club-votes-big');
-  assert.deepEqual(list.issues.map((i) => i.number), [2]);
-  assert.equal(list.issues[0].body, body);
+  assert.deepEqual(calls, [], 'without asking GitHub');
 });
 
 // ── A first version filed is read at once ───────────────────────────────
