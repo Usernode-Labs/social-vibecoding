@@ -15892,3 +15892,109 @@ CREATE TABLE IF NOT EXISTS notification_asks (
   PRIMARY KEY (user_id, surface, moment)
 );
 COMMENT ON TABLE notification_asks IS 'staging:private';
+
+-- ── Off GitHub (docs/plans/github-independence-build.md) ─────────────────
+-- GitHub suspended the account that owned every app repository and filed
+-- every request (25 Oct 2026). App code moved to Homeroom's own git host
+-- (services/git-host.js); requests and proposals are rows here.
+
+-- The address an app's repository had on GitHub, kept when it moved to the
+-- git host: older rows key on it (services/requests.js appFor), and it says
+-- where GitHub's archive would connect.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS github_repo_url VARCHAR(512);
+
+-- One number sequence per app for its requests and proposals, continuing
+-- from GitHub's (services/app-numbers.js): `next_number` is the next one
+-- to hand out.
+CREATE TABLE IF NOT EXISTS app_numbers (
+  app_id      INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  next_number INTEGER NOT NULL CHECK (next_number > 0)
+);
+
+-- Requests (services/requests.js). `author_login` is who GitHub showed as
+-- the author of one that was a GitHub issue (usually the suspended bot);
+-- null for one filed here, whose person is `created_by`. `source` says
+-- where the row came from: 'homeroom' (filed here), 'twin' (copied from the
+-- issues table at the move, `recovered_partial`: the text as first filed),
+-- 'board' (the board's text rescued from the platform's memory, 26 Oct).
+CREATE TABLE IF NOT EXISTS requests (
+  id                BIGSERIAL PRIMARY KEY,
+  app_id            INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  number            INTEGER NOT NULL CHECK (number > 0),
+  title             TEXT NOT NULL,
+  body              TEXT NOT NULL DEFAULT '',
+  state             VARCHAR(8) NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'closed')),
+  state_reason      VARCHAR(16) CHECK (state_reason IS NULL OR state_reason IN ('completed', 'not_planned', 'reopened')),
+  labels            TEXT[] NOT NULL DEFAULT '{}',
+  author_login      VARCHAR(255),
+  created_by        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at         TIMESTAMPTZ,
+  closed_by         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  source            VARCHAR(16) NOT NULL DEFAULT 'homeroom',
+  recovered_partial BOOLEAN NOT NULL DEFAULT FALSE,
+  UNIQUE (app_id, number)
+);
+CREATE INDEX IF NOT EXISTS idx_requests_open
+  ON requests (app_id, updated_at DESC) WHERE state = 'open';
+
+-- What used to be a request's GitHub comments: the bot's posts, specs, close
+-- notes. People's discussion of a request is chat_messages thread 'issue'.
+CREATE TABLE IF NOT EXISTS request_comments (
+  id           BIGSERIAL PRIMARY KEY,
+  app_id       INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  number       INTEGER NOT NULL,
+  author_login VARCHAR(255),
+  user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  body         TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_request_comments_request
+  ON request_comments (app_id, number, id);
+
+-- A proposal's "pull request", for an app on the git host
+-- (services/native-pulls.js): what GitHub's PR object held, so the proposal
+-- machine's reads and writes keep their shapes. The branch is on the git
+-- host; a merge is Homeroom's own (services/native-merge.js), and
+-- `merge_commit_sha` is the commit it put on `base_branch`.
+CREATE TABLE IF NOT EXISTS native_pulls (
+  app_id           INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  number           INTEGER NOT NULL CHECK (number > 0),
+  title            TEXT NOT NULL DEFAULT '',
+  body             TEXT NOT NULL DEFAULT '',
+  head_branch      TEXT NOT NULL,
+  base_branch      TEXT NOT NULL DEFAULT 'main',
+  draft            BOOLEAN NOT NULL DEFAULT FALSE,
+  state            VARCHAR(8) NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'closed')),
+  merged           BOOLEAN NOT NULL DEFAULT FALSE,
+  merged_at        TIMESTAMPTZ,
+  merge_commit_sha VARCHAR(40),
+  merged_head_sha  VARCHAR(40),
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at        TIMESTAMPTZ,
+  PRIMARY KEY (app_id, number)
+);
+CREATE INDEX IF NOT EXISTS idx_native_pulls_open_head
+  ON native_pulls (app_id, head_branch) WHERE state = 'open';
+
+-- Each app's move to the git host, written by the recovery tool
+-- (scripts/github-recovery/) once its repository there holds main, and
+-- applied by the boot migration (services/github-move.js): `repo_url` and
+-- `main_sha` become these, the old address goes to apps.github_repo_url.
+-- `outcome`: 'exact' (main kept its GitHub commit), 'recovered' (one new
+-- commit rebuilt from the running image), 'mirrored' (cloned from GitHub,
+-- which still served it). `applied_at` is set when the boot applied it.
+CREATE TABLE IF NOT EXISTS git_host_moves (
+  app_id          INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  repo_url        VARCHAR(512) NOT NULL,
+  github_repo_url VARCHAR(512),
+  main_sha        VARCHAR(40) NOT NULL,
+  github_main_sha VARCHAR(40),
+  outcome         VARCHAR(16) NOT NULL CHECK (outcome IN ('exact', 'recovered', 'mirrored')),
+  source_image    VARCHAR(512),
+  missing_files   TEXT[] NOT NULL DEFAULT '{}',
+  recorded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  applied_at      TIMESTAMPTZ
+);
