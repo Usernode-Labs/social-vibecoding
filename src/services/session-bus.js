@@ -33,7 +33,7 @@
 // loses that event (logged), as a dropped socket would.
 
 const log = require('./logger');
-const { waitForStreamDrain } = require('./http-stream-access');
+const { writeStreamChunk, writeStreamHeartbeat } = require('./http-stream-access');
 const pushes = require('../workflow/pushes.ts');
 const { holderAliveSql } = require('../workflow/rules/presence.ts');
 
@@ -435,7 +435,7 @@ function relay(req, res, key, { afterId = 0, turnId = null, heartbeatMs = 15000 
   return new Promise((resolve) => {
     let ended = false;
     let off = () => {};
-    const heartbeat = setInterval(() => { try { res.write(':heartbeat\n\n'); } catch { /* client gone */ } }, heartbeatMs);
+    const heartbeat = setInterval(() => { void writeStreamHeartbeat(res, ':heartbeat\n\n').catch(() => {}); }, heartbeatMs);
     const end = () => {
       if (ended) return;
       ended = true;
@@ -447,7 +447,7 @@ function relay(req, res, key, { afterId = 0, turnId = null, heartbeatMs = 15000 
     off = subscribe(key, async (event) => {
       if (ended) return;
       try {
-        if (res.write(`data: ${JSON.stringify(event)}\n\n`) === false) await waitForStreamDrain(res);
+        await writeStreamChunk(res, `data: ${JSON.stringify(event)}\n\n`);
       } catch { /* client gone */ }
       // Its own turn's end (services/turns.js, turn/machine.ts
       // turnEndEvent): never an earlier turn's, still ending as this one is

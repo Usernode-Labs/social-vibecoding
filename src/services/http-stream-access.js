@@ -1,6 +1,7 @@
 'use strict';
 const { nativeWebSessionIsLive } = require('./web-session-auth');
 const SESSION = Symbol('authenticated-stream-session');
+const WRITES = Symbol('stream-frame-writes');
 const positiveId = value => {
     try {
         value = decodeURIComponent(value);
@@ -16,18 +17,61 @@ function bindStreamSession(req, token) { req[SESSION] = token; }
 // Call only after write() returns false. Also release a producer when the
 // response is closed by a failed authority check, rather than leaving its
 // durable-stream subscription waiting forever for a drain that cannot come.
-function waitForStreamDrain(res) {
-    if (res.writableEnded || res.destroyed)
-        return Promise.resolve();
+function waitForStreamDrain(res, { timeoutMs = 5000, signal } = {}) {
+    if (res.writableEnded || res.destroyed) return Promise.resolve(false);
+    if (signal?.aborted) { res.destroy?.(); return Promise.resolve(false); }
     return new Promise(resolve => {
-        const done = () => {
-            for (const event of ['drain', 'finish', 'close', 'error'])
-                res.removeListener(event, done);
-            resolve();
+        let settled = false, timer;
+        const done = (canWrite) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            res.removeListener('drain', drained);
+            signal?.removeEventListener('abort', aborted);
+            for (const event of ['finish', 'close', 'error']) res.removeListener(event, closed);
+            resolve(canWrite);
         };
-        for (const event of ['drain', 'finish', 'close', 'error'])
-            res.once(event, done);
+        const drained = () => done(true);
+        const closed = () => done(false);
+        const aborted = () => { res.destroy?.(); done(false); };
+        res.once('drain', drained);
+        for (const event of ['finish', 'close', 'error']) res.once(event, closed);
+        signal?.addEventListener('abort', aborted, { once: true });
+        // A stalled reader must not hold a request's durable turn indefinitely.
+        timer = setTimeout(() => { res.destroy?.(); done(false); }, timeoutMs);
+        timer.unref?.();
     });
+}
+// One event may be larger than the pending queue (for example, a stored tool
+// result). Split its bytes and wait for transport/authorization backpressure;
+// SSE framing and UTF-8 are reconstructed by the receiving byte stream.
+async function writeStreamBytes(res, chunk, { signal } = {}) {
+    const pieceBytes = 64 * 1024;
+    if (typeof chunk === 'string' && Buffer.byteLength(chunk) <= pieceBytes) {
+        if (res.writableEnded || res.destroyed) return false;
+        if (res.write(chunk) === false && !(await waitForStreamDrain(res, { signal }))) return false;
+    } else {
+        const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        for (let offset = 0; offset < data.length; offset += pieceBytes) {
+            if (res.writableEnded || res.destroyed) return false;
+            if (res.write(data.subarray(offset, offset + pieceBytes)) === false && !(await waitForStreamDrain(res, { signal }))) return false;
+        }
+    }
+    return !res.writableEnded && !res.destroyed;
+}
+// Await each frame at the producer. Serialize heartbeats too, so none can
+// land inside a large frame while it is waiting for drain.
+function writeStreamChunk(res, chunk, options) {
+    const written = (res[WRITES] || Promise.resolve()).catch(() => {}).then(() => writeStreamBytes(res, chunk, options));
+    res[WRITES] = written;
+    const settled = () => { if (res[WRITES] === written) delete res[WRITES]; };
+    written.then(settled, settled);
+    return written;
+}
+// An in-progress frame is itself keep-alive traffic. Skip a heartbeat while
+// it waits for drain instead of accumulating promises behind a slow reader.
+function writeStreamHeartbeat(res, chunk, options) {
+    return res[WRITES] ? Promise.resolve(false) : writeStreamChunk(res, chunk, options);
 }
 function streamResource(method, path) {
     path = path.replace(/\/$/, '');
@@ -104,4 +148,4 @@ function captureStreamAuthority(req, pool) {
         return check(pool);
     };
 }
-module.exports = { bindStreamSession, captureStreamAuthority, streamResource, waitForStreamDrain };
+module.exports = { bindStreamSession, captureStreamAuthority, streamResource, waitForStreamDrain, writeStreamChunk, writeStreamHeartbeat };

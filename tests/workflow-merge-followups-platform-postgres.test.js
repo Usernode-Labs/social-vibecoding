@@ -120,8 +120,10 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
 
   let seq = 0;
   const { rows: [author] } = await pool.query(`INSERT INTO users (username, password) VALUES ('author', 'x') RETURNING id`);
+  // This is an existing app. The default 'creating' status also starts an
+  // unrelated first deploy, which can move main after the merge deploy.
   const { rows: [app] } = await pool.query(
-    `INSERT INTO apps (name, slug, created_by, repo_url) VALUES ('Shop', 'shop', $1, 'https://github.com/acme/shop') RETURNING *`,
+    `INSERT INTO apps (name, slug, created_by, repo_url, status) VALUES ('Shop', 'shop', $1, 'https://github.com/acme/shop', 'running') RETURNING *`,
     [author.id]);
   const proposal = async (status = 'merging') => (await pool.query(
     `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title) VALUES ($1, $2, $3, $4, 'Change') RETURNING *`,
@@ -179,10 +181,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_settings WHERE key = 'ownership_mode'`)).rows[0].n, 0);
   });
 
-  await t.test('a confirmed merge goes live through the real handlers', async (t) => {
-    // A concurrent deploy of main must model the same merged repository revision.
-    deploys.sha = SHA('a');
-    t.after(() => { deploys.sha = null; });
+  await t.test('a confirmed merge goes live through the real handlers', async () => {
     const s = await botProposal();
     await confirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('a') });
     await until(async () => (await state(s)) === 'live', 'live');
@@ -283,7 +282,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   // platform) left open lost its close proposal anyway.
   await t.test('a close proposal for a request the merge closes is superseded once the close is seen, not before', async () => {
     const { rows: [shop] } = await pool.query(
-      `INSERT INTO apps (name, slug, created_by, repo_url, approvals_required) VALUES ('Shop 2', 'shop-2', $1, 'https://github.com/acme/shop-2', 5) RETURNING *`,
+      `INSERT INTO apps (name, slug, created_by, repo_url, approvals_required, status) VALUES ('Shop 2', 'shop-2', $1, 'https://github.com/acme/shop-2', 5, 'running') RETURNING *`,
       [author.id]);
     looked.add(shop.id);
     const n = 41;

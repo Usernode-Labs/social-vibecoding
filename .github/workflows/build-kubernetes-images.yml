@@ -110,14 +110,15 @@ jobs:
           rm -rf "$image_npm_root/npm/node_modules/undici"
           mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      # HTTP authentication regressions exercise the real password/login module.
-      - run: npm rebuild bcrypt --build-from-source
       - run: node --test --test-timeout=60000 tests/platform-preview-schema-compatibility.test.js
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports[5432] }}/postgres
           TEST_PREVIEW_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres18.ports[5432] }}/postgres
 
-      - run: node --require ./tests/lib/test-net.js --test --test-timeout=60000 --test-concurrency=1 tests/private-streams-postgres.test.js tests/notification-current-access-postgres.test.js
+      # Keep HTTP setup separate from the shared schema/authority command.
+      - run: |
+          npm rebuild bcrypt --build-from-source
+          node --require ./tests/lib/test-net.js --test --test-timeout=60000 --test-concurrency=1 tests/private-streams-postgres.test.js tests/notification-current-access-postgres.test.js tests/global-chat-turn-routes.test.js
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports[5432] }}/postgres
 

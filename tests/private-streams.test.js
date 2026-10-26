@@ -214,3 +214,87 @@ test('backpressure preserves a legitimate replay larger than the pending-output 
     assert.equal(await r.text(), frame.repeat(256));
     assert.ok(s.calls() < 40, 'coalesce frames rather than querying once per frame');
 });
+
+
+test('a large SSE frame and concurrent heartbeat remain ordered without exceeding the pending budget', async (t) => {
+    const { writeStreamChunk } = require('../src/services/http-stream-access');
+    const body = 'data: ' + JSON.stringify({ text: '🙂'.repeat(300000) }) + '\n\n';
+    const heartbeat = ': heartbeat\n\n';
+    const next = 'data: {"done":true}\n\n';
+    const s = await server(t, async (_req, res) => {
+        sse(res);
+        await Promise.all([writeStreamChunk(res, body), writeStreamChunk(res, heartbeat), writeStreamChunk(res, next)]);
+        res.end();
+    }, { options: { batchMs: 2 } });
+    const r = await fetch(s.base + '/api/sessions/1/events');
+    assert.equal(await r.text(), body + heartbeat + next);
+    assert.ok(s.calls() > 1);
+});
+
+test('revocation during a large frame stops its remaining bytes and releases the producer', async (t) => {
+    const { writeStreamChunk } = require('../src/services/http-stream-access');
+    const prefix = 'data: ' + 'x'.repeat(150000);
+    let delivered;
+    const s = await server(t, async (_req, res) => {
+        sse(res);
+        delivered = await writeStreamChunk(res, prefix + 'FORBIDDEN_AFTER_REVOCATION\n\n');
+        res.end();
+    }, { query: async n => n === 1, options: { batchMs: 2 } });
+    const r = await fetch(s.base + '/api/sessions/1/events');
+    const body = await r.text();
+    assert.ok(body.length > 0 && body.length < prefix.length);
+    assert.ok(!body.includes('FORBIDDEN_AFTER_REVOCATION'));
+    await tick();
+    assert.equal(delivered, false);
+});
+
+
+test('heartbeats are skipped while a frame waits for drain, without extending the output queue', async (t) => {
+    const { writeStreamChunk, writeStreamHeartbeat } = require('../src/services/http-stream-access');
+    const entered = gate(), release = gate();
+    const frame = 'data: ' + 'x'.repeat(120000) + '\n\n';
+    let response;
+    const s = await server(t, async (_req, res) => {
+        response = res; sse(res);
+        await writeStreamChunk(res, frame);
+        res.end();
+    }, { query: async n => { if (n === 1) { entered.resolve(); await release.promise; } return true; }, options: { batchMs: 2 } });
+    const request = fetch(s.base + '/api/sessions/1/events');
+    await entered.promise;
+    const heartbeatResults = await Promise.all(Array.from({ length: 20 }, () => writeStreamHeartbeat(response, ': heartbeat\n\n')));
+    assert.ok(heartbeatResults.every(value => value === false));
+    release.resolve();
+    assert.equal(await (await request).text(), frame);
+});
+
+
+test('a missing drain has a deadline and releases its producer and listeners', async () => {
+    const { EventEmitter } = require('node:events');
+    const { waitForStreamDrain } = require('../src/services/http-stream-access');
+    const res = new EventEmitter();
+    res.destroyed = false;
+    res.destroy = () => { res.destroyed = true; res.emit('close'); };
+    const keepAlive = setTimeout(() => {}, 1000);
+    try {
+        assert.equal(await waitForStreamDrain(res, { timeoutMs: 5 }), false);
+        assert.equal(res.destroyed, true);
+        for (const event of ['drain', 'finish', 'close', 'error']) assert.equal(res.listenerCount(event), 0);
+    } finally { clearTimeout(keepAlive); }
+});
+
+
+test('explicit cancellation releases a heartbeat waiting on a slow response', async () => {
+    const { EventEmitter } = require('node:events');
+    const { writeStreamHeartbeat } = require('../src/services/http-stream-access');
+    const controller = new AbortController();
+    const res = new EventEmitter();
+    res.destroyed = false;
+    res.write = () => false;
+    res.destroy = () => { res.destroyed = true; res.emit('close'); };
+    const pending = writeStreamHeartbeat(res, ': heartbeat\n\n', { signal: controller.signal });
+    await tick();
+    controller.abort();
+    assert.equal(await pending, false);
+    assert.equal(res.destroyed, true);
+    for (const event of ['drain', 'finish', 'close', 'error']) assert.equal(res.listenerCount(event), 0);
+});

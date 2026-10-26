@@ -25,7 +25,7 @@ const actions = require('../services/agent-session-actions');
 const agentTurn = require('../services/mayor/agent-turn');
 const agentStop = require('../services/agent-session-stop');
 const sessionBus = require('../services/session-bus');
-const { waitForStreamDrain } = require('../services/http-stream-access');
+const { writeStreamChunk, writeStreamHeartbeat } = require('../services/http-stream-access');
 
 function platform() {
   return require('../workflow/platform.ts');
@@ -658,9 +658,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     const write = async (event) => {
       const { _id, ...shown } = event;
       try {
-        const idReady = res.write(`id: ${shown._seq}\n`);
-        const dataReady = res.write(`data: ${JSON.stringify(shown)}\n\n`);
-        if (idReady === false || dataReady === false) await waitForStreamDrain(res);
+        await writeStreamChunk(res, `id: ${shown._seq}\ndata: ${JSON.stringify(shown)}\n\n`);
       } catch { /* client gone */ }
     };
     // A screen that opens mid-turn gets what the running turn has said so
@@ -680,7 +678,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     if (closed || res.writableEnded || res.destroyed) return;
     const unsubscribe = sessionBus.subscribe(agentTurn.busKey(id), write, since);
     const heartbeat = setInterval(() => {
-      try { res.write(':heartbeat\n\n'); } catch { /* client gone */ }
+      void writeStreamHeartbeat(res, ':heartbeat\n\n').catch(() => {});
     }, 15000);
     const close = () => {
       clearInterval(heartbeat);
