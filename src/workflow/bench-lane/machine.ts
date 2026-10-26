@@ -91,11 +91,32 @@ const gateFresh = (d: Data, ctx: TransitionContext) => !!d.gate.at && ctx.now.ge
 interface Extra { writes?: any[]; messages?: MessageRequest[]; sides?: number[] }
 
 // Grant what may start now, oldest run first, and set the clock.
-function decide(d0: Data, f: Facts, ctx: TransitionContext, extra: Extra = {}): Outcome<LState> {
+function decide(d0: Data, f0: Facts, ctx: TransitionContext, extra: Extra = {}): Outcome<LState> {
   let d = d0;
+  let f = f0;
   const writes: any[] = [...(extra.writes || [])];
   const messages: MessageRequest[] = [...(extra.messages || [])];
   const work: WorkRequest[] = [];
+  // A skipped comparison no longer needs its trial. The periodic look must
+  // recover cleanup lost during a rollout without admitting an old human
+  // command: use the same cancellation write/build message as a fresh cancel.
+  // Keep running trials charged to their slots until their builds record them.
+  if (f.abandoned.length) {
+    const waiting = new Map(f.waiting);
+    const pendingCount = new Map(f.pendingCount);
+    for (const t of f.abandoned) {
+      if (t.status === 'running') {
+        if (t.buildKey && !messages.some((m) => m.to.machine === BOT_BUILD && m.to.key === t.buildKey && m.event.type === 'StopRequested')) {
+          messages.push(stopTo(t.buildKey, 'Homeroom'));
+        }
+      } else {
+        waiting.set(t.runId, (waiting.get(t.runId) || []).filter((x) => x.id !== t.id));
+        if (t.status === 'pending') pendingCount.set(t.runId, Math.max((pendingCount.get(t.runId) || 1) - 1, 0));
+        writes.push({ type: 'trialCancelled', trialId: t.id, error: t.error || 'the build it was compared with was given up' });
+      }
+    }
+    f = { ...f, waiting, pendingCount };
+  }
   const running: Trial[] = f.running.slice();
   let blocked: 'live' | 'gate' | 'provider' | null = null;
   let stop = false;
@@ -194,7 +215,7 @@ function trialCancelled(s: LState, e: Event<any>, f: Facts, ctx: TransitionConte
   waiting.set(t.runId, (f.waiting.get(t.runId) || []).filter((x) => x.id !== t.id));
   const pendingCount = new Map(f.pendingCount);
   if (t.status === 'pending') pendingCount.set(t.runId, Math.max((pendingCount.get(t.runId) || 1) - 1, 0));
-  return decide(live(s), { ...f, waiting, pendingCount }, ctx, {
+  return decide(live(s), { ...f, waiting, pendingCount, abandoned: f.abandoned.filter((x) => x.id !== t.id) }, ctx, {
     writes: [{ type: 'trialCancelled', trialId: t.id, error: p.why || (p.by ? `cancelled by ${p.by}` : 'cancelled by an admin') }],
     sides: [t.runId],
   });

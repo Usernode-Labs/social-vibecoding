@@ -12,6 +12,9 @@ const { authorizePlatformEvent, createPlatformRuntime, ADMIN_EVENTS } = require(
 const { clock, clockKey } = require('../src/workflow/clock/machine.ts');
 const { proposal, sessionKey } = require('../src/workflow/proposal/machine.ts');
 const { governanceProposal, issueKey } = require('../src/workflow/governance-proposal/machine.ts');
+const { benchLane } = require('../src/workflow/bench-lane/machine.ts');
+const { botBuild } = require('../src/workflow/bot-build/machine.ts');
+const { botBuildServices } = require('../src/workflow/bot-build/services.ts');
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -84,6 +87,185 @@ test('platform workflow commands require current authority', { timeout: 30000 },
     } finally { await client.query('ROLLBACK'); client.release(); }
   };
   const denied = (result) => assert.deepEqual(result, { reject: 'not_authorized' });
+
+  await t.test('abandoned side builds recover from durable comparison state without admitting actor labels', async (st) => {
+    const runner = require('../src/services/bench/runner');
+    const graders = require('../src/services/bench/graders');
+    const realEnsureUser = runner.ensureBenchUser;
+    const realGrade = graders.gradeTrial;
+    runner.ensureBenchUser = async () => member;
+    graders.gradeTrial = async () => {};
+    st.after(() => { runner.ensureBenchUser = realEnsureUser; graders.gradeTrial = realGrade; });
+    // Run only the real stopped-build finisher; no build pipeline, key
+    // provisioning, worker, or external grader runs in this fixture.
+    const lane = make([benchLane(), botBuild()], { services: {
+      'build.lost': botBuildServices({ pool, config: {} })['build.lost'],
+    } });
+    const configs = require('../src/services/bot-configs');
+    const one = async (sql, values = []) => (await pool.query(sql, values)).rows[0];
+    const send = (machine, key, type, payload, extra = {}) => lane.append(machine, key, { type, payload }, {
+      requestKey: `side-authority:${++n}`, source: { kind: 'system', name: 'synthetic-side' }, ...extra,
+    });
+    const tick = async () => { await send('bench-lane', 'lane', 'Tick', {}); await lane.drain(); };
+    const side = async ({ scope = 'later', status = 'running', resultStatus = 'pending', source = 'trial', startBuild = true } = {}) => {
+      const version = await one(`INSERT INTO bot_config_versions (key, label, recipe, scope)
+        VALUES ($1, 'Synthetic side', '{}'::jsonb, $2) RETURNING id`, [`authority-side-${++n}`, scope]);
+      const live = await one(`INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, bot_config_version_id)
+        VALUES ($1, $2, 'live', 'ready', $3) RETURNING id`, [a.id, ++n, version.id]);
+      const suite = await one('INSERT INTO bench_suites (name) VALUES ($1) RETURNING id', [`Synthetic side ${++n}`]);
+      const stage = scope === 'later' ? 'build' : 'first_version';
+      const snapshot = await one(`INSERT INTO homeroom_bot_run_snapshots (run_id, stage, app_id, issue_number)
+        VALUES ($1, 'build', $2, $3) RETURNING id`, [live.id, a.id, n]);
+      const task = await one(`INSERT INTO bench_tasks (suite_id, stage, snapshot_id, app_id, label_token)
+        VALUES ($1, $2, $3, $4, $5) RETURNING id`, [suite.id, stage, snapshot.id, a.id, `side-task-${++n}`]);
+      const run = await one(`INSERT INTO bench_runs (suite_id, models, stages, status, kind)
+        VALUES ($1, ARRAY['synthetic'], ARRAY[$2::text], 'running', $3) RETURNING id`,
+      [suite.id, stage, scope === 'later' ? 'bot_config_later' : 'bot_config']);
+      const trial = await one(`INSERT INTO bench_trials
+        (run_id, task_id, model, status, item_token, bot_run_id, bot_config_version_id, started_at)
+        VALUES ($1, $2, 'synthetic', $3, $4, $5, $6, NOW()) RETURNING id`,
+      [run.id, task.id, status, `side-item-${++n}`, live.id, version.id]);
+      const key = `trial:${trial.id}@c1.g1`;
+      await pool.query('UPDATE bench_trials SET build_key = $2 WHERE id = $1', [trial.id, key]);
+      const result = await one(`INSERT INTO bot_config_results (bot_run_id, config_version_id, source, trial_id, status)
+        VALUES ($1, $2, $3, $4, $5) RETURNING id`, [live.id, version.id, source, trial.id, resultStatus]);
+      if (status === 'running') {
+        await send('bot-build', key, 'Requested', { target: 'trial', id: trial.id, nonce: 'c1.g1', input: {}, replyTo: { machine: 'bench-lane', key: 'lane' } });
+        if (startBuild) await lane.drain();
+      }
+      return { botRunId: live.id, trialId: trial.id, runId: run.id, resultId: result.id, key };
+    };
+    const stops = async (s) => Number((await one(`SELECT COUNT(*) FROM wf_events
+      WHERE machine = 'bot-build' AND key = $1 AND type = 'StopRequested'`, [s.key])).count);
+    const trialStatus = async (s) => (await one('SELECT status FROM bench_trials WHERE id = $1', [s.trialId])).status;
+
+    await st.test('the old cleanup is refused, then a periodic look stops both scopes from their skipped results', async () => {
+      for (const scope of ['first_version', 'later']) {
+        const s = await side({ scope });
+        let oldEvent;
+        // Exact serialization of benchCancelTrial before actor admission.
+        // The real cleanup still performs its durable comparison write.
+        assert.equal(await configs.abandonSideBuilds(pool, s.botRunId, 'given up', { lane: {
+          async cancelTrial(_pool, trialId, o) {
+            oldEvent = await send('bench-lane', 'lane', 'TrialCancelled', { trialId, by: o.by, why: o.why },
+              { source: { kind: 'admin', name: 'bench' }, actor: o.by });
+          },
+        } }), 1);
+        await lane.drain();
+        assert.deepEqual(await outcome(oldEvent), { result: 'rejected', reason: 'not_authorized' });
+        assert.equal((await one('SELECT status FROM bot_config_results WHERE id = $1', [s.resultId])).status, 'skipped');
+        assert.equal((await instance('bot-build', s.key)).state, 'building');
+        assert.equal(await trialStatus(s), 'running');
+        assert.equal(await stops(s), 0);
+        await tick();
+        assert.equal((await instance('bot-build', s.key)).state, 'failed');
+        const stop = await one(`SELECT source, result FROM wf_events
+          WHERE machine = 'bot-build' AND key = $1 AND type = 'StopRequested'`, [s.key]);
+        assert.equal(stop.result, 'accepted');
+        assert.equal(stop.source.kind, 'message');
+        assert.equal(stop.source.from.machine, 'bench-lane');
+        const work = await one(`SELECT status, result FROM wf_work
+          WHERE machine = 'bot-build' AND key = $1 AND kind = 'build.run'`, [s.key]);
+        assert.equal(work.status, 'settled');
+        assert.equal(work.result.cancelled, true);
+        assert.equal(Number((await one(`SELECT COUNT(*) FROM wf_work
+          WHERE machine = 'bot-build' AND key = $1 AND kind = 'build.lost'`, [s.key])).count), 1);
+        for (let i = 0; i < 3; i++) await tick();
+        assert.equal(await stops(s), 1, 'an ended build is not stopped again while its finisher waits');
+        await lane.runServices();
+        await lane.drain();
+        assert.equal(await trialStatus(s), 'cancelled', 'the real finisher records the stopped trial');
+        await tick();
+        assert.equal((await one('SELECT status FROM bench_runs WHERE id = $1', [s.runId])).status, 'done');
+        assert.deepEqual(await outcome(oldEvent), { result: 'rejected', reason: 'not_authorized' });
+      }
+    });
+    await st.test('a claimed build whose request is still queued is stopped when it starts', async () => {
+      const s = await side({ resultStatus: 'skipped', startBuild: false });
+      const laneOnly = make([benchLane()]);
+      await laneOnly.append('bench-lane', 'lane', { type: 'Tick', payload: {} },
+        { requestKey: `side-authority:${++n}`, source: { kind: 'system' } });
+      await laneOnly.drain();
+      assert.equal(await instance('bot-build', s.key), undefined);
+      assert.equal(await stops(s), 1);
+      await lane.drain();
+      assert.equal((await instance('bot-build', s.key)).state, 'failed');
+      await tick();
+      assert.equal(await stops(s), 1);
+    });
+    await st.test('skipped waiting trials are cancelled before a grant, and settled trials are left alone', async () => {
+      const waiting = await side({ status: 'pending', resultStatus: 'skipped' });
+      const awaiting = await side({ status: 'awaiting', resultStatus: 'skipped' });
+      const settled = await side({ status: 'ok', resultStatus: 'skipped' });
+      await tick();
+      assert.equal(await trialStatus(waiting), 'cancelled');
+      assert.equal(await trialStatus(awaiting), 'cancelled');
+      assert.equal(await trialStatus(settled), 'ok');
+      assert.equal(await instance('bot-build', waiting.key), undefined);
+      assert.equal(await instance('bot-build', awaiting.key), undefined);
+      assert.equal(await stops(settled), 0);
+    });
+    await st.test('active comparisons, other result sources and mismatched links do not authorize cleanup', async () => {
+      const active = await side();
+      const done = await side({ resultStatus: 'done' });
+      const round0 = await side({ resultStatus: 'skipped', source: 'round0' });
+      const wrongConfig = await side();
+      const wrongRun = await side();
+      await pool.query(`UPDATE bot_config_results SET status = 'skipped', config_version_id =
+        (SELECT config_version_id FROM bot_config_results WHERE id = $2) WHERE id = $1`, [wrongConfig.resultId, active.resultId]);
+      await pool.query('UPDATE bot_config_results SET status = \'skipped\', bot_run_id = $2 WHERE id = $1', [wrongRun.resultId, active.botRunId]);
+      await tick();
+      for (const s of [active, done, round0, wrongConfig, wrongRun]) {
+        assert.equal((await instance('bot-build', s.key)).state, 'building');
+        assert.equal(await trialStatus(s), 'running');
+        assert.equal(await stops(s), 0);
+      }
+    });
+    await st.test('forged human cancels stay refused and a current full administrator can still cancel', async () => {
+      const s = await side();
+      const deniedEvents = [];
+      for (const actor of [undefined, 'Homeroom', `user:${member.id}`, `user:${readonly.id}`]) {
+        deniedEvents.push(await send('bench-lane', 'lane', 'TrialCancelled', { trialId: s.trialId, by: 'Homeroom' }, { source: { kind: 'admin', name: 'bench' }, actor }));
+        deniedEvents.push(await send('bench-lane', 'lane', 'RunCancelled', { runId: s.runId, by: 'Homeroom' }, { source: { kind: 'admin', name: 'bench' }, actor }));
+      }
+      await lane.drain();
+      for (const id of deniedEvents) assert.deepEqual(await outcome(id), { result: 'rejected', reason: 'not_authorized' });
+      await tick();
+      assert.equal((await instance('bot-build', s.key)).state, 'building');
+      assert.equal(await trialStatus(s), 'running');
+      assert.equal(await stops(s), 0);
+      const id = await send('bench-lane', 'lane', 'TrialCancelled', { trialId: s.trialId, by: full.username },
+        { source: { kind: 'admin', name: 'bench' }, actor: `user:${full.id}` });
+      await lane.drain();
+      assert.equal((await outcome(id)).result, 'accepted');
+      assert.equal((await instance('bot-build', s.key)).state, 'failed');
+      assert.equal(await stops(s), 1);
+    });
+    await st.test('the current real cleanup producer sends an admitted system command once', async () => {
+      const s = await side();
+      const platform = require('../src/workflow/platform.ts');
+      const dbPool = require('../src/db/pool');
+      const realGetPool = dbPool.getPool;
+      dbPool.getPool = () => pool;
+      try {
+        await platform.startWorkflow({ databaseUrl: String(url), wfPoolMax: 3, wfSlots: 0, dataEncryptionKey: 'synthetic-authority-key' }, { loops: false });
+        assert.equal(await configs.abandonSideBuilds(pool, s.botRunId, 'given up'), 1);
+      } finally {
+        await platform.stopWorkflow();
+        dbPool.getPool = realGetPool;
+      }
+      const event = await one(`SELECT id, source, actor FROM wf_events
+        WHERE machine = 'bench-lane' AND type = 'TrialCancelled' AND payload->>'trialId' = $1
+        ORDER BY id DESC LIMIT 1`, [String(s.trialId)]);
+      assert.equal(event.source.kind, 'system');
+      assert.equal(event.actor, null);
+      await lane.drain();
+      assert.equal((await outcome(event.id)).result, 'accepted');
+      assert.equal((await instance('bot-build', s.key)).state, 'failed');
+      await tick();
+      assert.equal(await stops(s), 1, 'the explicit cancel and reconciliation share one stop');
+    });
+  });
 
   for (const [machine, types] of ADMIN_EVENTS) for (const type of types) {
     if (type === 'AdminApply') continue; // Target-bound matrix below.
