@@ -383,13 +383,6 @@
     {
       "source": "src/routes/feedback.js",
       "kind": "structural-template",
-      "fingerprint": "332bf2700d8550670d53",
-      "count": 1,
-      "preview": "`SELECT COALESCE(MAX(issue_number), ${TEST_ISSUE_MIN - 1}) + 1 AS next FROM feedback_reports WHERE issue_owner = $1 AND issue_repo = $2 AND issue_number BETWEEN"
-    },
-    {
-      "source": "src/routes/feedback.js",
-      "kind": "structural-template",
       "fingerprint": "d15136901fbcf6a52a60",
       "count": 1,
       "preview": "`SELECT name, repo_url, ${appAccess.ACCESS_COLUMNS} FROM apps WHERE slug = $1`"

@@ -445,7 +445,7 @@ test('a repo-less app disables the input and Propose with the no-repo hint', () 
   const l = h.live();
   assert.equal(l.input.disabled, true);
   assert.equal(l.propose.disabled, true);
-  assert.match(l.status.textContent, /no GitHub repository/);
+  assert.match(l.status.textContent, /this app has no repository/);
   // And a later app WITH a repo clears the disabled state (set, not add).
   h.AppView.appData.repo_url = 'https://github.com/o/r';
   h.AppView._appAdminsDraft = null;
