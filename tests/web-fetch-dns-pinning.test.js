@@ -22,7 +22,7 @@ const PUBLIC_V6 = '2606:4700:4700::1111';
 const HOST = 'public.web-fetch.test';
 const NEXT_HOST = 'next.web-fetch.test';
 
-async function fixture(t, handler, { pair, unreachable, onLookup } = {}) {
+async function fixture(t, handler, { pair, unreachable, onLookup, stallLookup } = {}) {
   const requests = [], lookups = [], ambient = [], handshakes = [], literalDials = [];
   const onRequest = (req, res) => {
     requests.push({ host: req.headers.host, url: req.url });
@@ -79,6 +79,7 @@ async function fixture(t, handler, { pair, unreachable, onLookup } = {}) {
       const records = Array.isArray(result) ? result : [{ address: result, family }];
       lookups.push({ host, addresses: records.map(record => ({ ...record })) });
       onLookup?.();
+      if (stallLookup) return; // a connector still waiting when its deadline expires
       // The security decision is already made: observe it before translating
       // the selected address to our fixture. Keep the real HTTP/TLS stack.
       if (Array.isArray(result)) callback(null, records.map(record => ({ address: record.address === unreachable ? '127.0.0.2' : '127.0.0.1', family: 4 })));
@@ -229,12 +230,13 @@ test('a timed-out approved address cannot retry against the ambient private DNS 
   let timer;
   t.after(() => clearTimeout(timer));
   const f = await fixture(t, null, {
-    unreachable: PUBLIC,
+    stallLookup: true,
     onLookup: () => { timer = setTimeout(() => controller.abort(new DOMException('Fixture deadline', 'TimeoutError')), 75); },
   });
   webFetch._setLookup(async () => [{ address: PUBLIC, family: 4 }]);
   const result = await webFetch.fetchUrl(`http://${HOST}:${f.port}/unavailable`);
   assert.equal(result.content, null);
+  assert.match(result.note, /timed out/);
   assert.equal(f.lookups.length, 1, 'the timer covers an actual connection attempt');
   assert.deepEqual(f.ambient, []);
   assert.deepEqual(f.requests, []);
