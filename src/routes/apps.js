@@ -2947,7 +2947,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (!app.repo_url) {
         return res.status(400).json({ error: 'This app is not backed by a GitHub repo' });
       }
-      await require('../workflow/platform.ts').requestDeploy(app.id, 'redeploy');
+      await require('../workflow/platform.ts').requestDeploy(app.id, 'redeploy', { userId: req.user.id });
       res.json({ ok: true });
     } catch (err) {
       log.error('apps', 'Redeploy kickoff failed', { slug: req.params.slug, message: err.message });
@@ -2975,7 +2975,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (!app.repo_url) {
         return res.status(400).json({ error: 'This app is not backed by a GitHub repo' });
       }
-      const result = await driftPoller.checkByHand(config, pool, app);
+      const result = await driftPoller.checkByHand(config, pool, app, { userId: req.user.id });
       res.json(result);
     } catch (err) {
       log.error('apps', 'Manual drift check failed', { slug: req.params.slug, message: err.message });

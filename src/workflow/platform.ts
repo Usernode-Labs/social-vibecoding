@@ -9,7 +9,8 @@
 
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
-import { appendEvent, createRuntime, inspect } from './kernel/index.ts';
+import { appendEvent, inspect } from './kernel/index.ts';
+import { ADMIN_EVENTS, createPlatformRuntime } from './event-authority.ts';
 import type { EventOutcome, Json, Logger, Pool, Push, Queryable, Runtime } from './kernel/index.ts';
 import { legacy } from './legacy.ts';
 import { GOVERNANCE_KINDS } from './governance-proposal/facts.ts';
@@ -252,7 +253,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     ...releaseServices({ adoptions: ADOPTIONS }),
     ...clockServices(CLOCK_JOBS, { config, pool: appPool }),
   };
-  const started = createRuntime({
+  const started = createPlatformRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, release: bootRelease(),
     publish: (q, pushes) => publishPushes(q, pushes, { badges: !!config.mobilePushEnabled }),
   });
@@ -401,10 +402,10 @@ export async function evalLook(): Promise<void> {
 }
 
 // An admin's cancel of an eval: what the machine decided.
-export async function evalCancel(evalId: number): Promise<EventOutcome> {
+export async function evalCancel(evalId: number, userId: number): Promise<EventOutcome> {
   if (!runtime) throw new Error('The workflow runtime is not running in this process');
   return runtime.appendAndWait(SHOTS_EVAL, EVAL_KEY, { type: 'EvalCancelled', payload: { evalId } as any },
-    { requestKey: `cancel-eval:${evalId}:${randomUUID()}`, source: { kind: 'admin', name: 'shots-eval' } });
+    { requestKey: `cancel-eval:${evalId}:${randomUUID()}`, source: { kind: 'admin', name: 'shots-eval' }, actor: `user:${userId}` });
 }
 
 // ── The App bench's lane (bench-lane) ──────────────────────────────────
@@ -424,15 +425,15 @@ export async function benchLook(p: { runId?: number | null } = {}): Promise<void
 }
 
 // An admin's cancel of a run, or of one trial: what the lane decided.
-export async function benchCancelRun(runId: number, o: { by?: string | null } = {}): Promise<EventOutcome> {
+export async function benchCancelRun(runId: number, o: { by?: string | null; userId?: number | null } = {}): Promise<EventOutcome> {
   if (!runtime) throw new Error('The workflow runtime is not running in this process');
   return runtime.appendAndWait(BENCH_LANE, BENCH_LANE_KEY, { type: 'RunCancelled', payload: { runId, by: o.by ?? null } as any },
-    { requestKey: `cancel-run:${runId}:${randomUUID()}`, source: { kind: 'admin', name: 'bench' }, actor: o.by ?? undefined });
+    { requestKey: `cancel-run:${runId}:${randomUUID()}`, source: { kind: 'admin', name: 'bench' }, actor: o.userId ? `user:${o.userId}` : undefined });
 }
-export async function benchCancelTrial(trialId: number, o: { by?: string | null; why?: string | null } = {}): Promise<EventOutcome> {
+export async function benchCancelTrial(trialId: number, o: { by?: string | null; why?: string | null; userId?: number | null; system?: boolean } = {}): Promise<EventOutcome> {
   if (!runtime) throw new Error('The workflow runtime is not running in this process');
   return runtime.appendAndWait(BENCH_LANE, BENCH_LANE_KEY, { type: 'TrialCancelled', payload: { trialId, by: o.by ?? null, why: o.why ?? null } as any },
-    { requestKey: `cancel-trial:${trialId}:${randomUUID()}`, source: { kind: 'admin', name: 'bench' }, actor: o.by ?? undefined });
+    { requestKey: `cancel-trial:${trialId}:${randomUUID()}`, source: { kind: o.system ? 'system' : 'admin', name: 'bench' }, actor: o.userId ? `user:${o.userId}` : undefined });
 }
 
 // The lane as the bench console shows it: on, how many trials run, and its
@@ -512,6 +513,7 @@ export async function askClockRun(job: string, admin: { id: number; username?: s
   if (await olderBuildServes(kernelPool!)) return 'rollout';
   const outcome = await runtime.appendAndWait(CLOCK, clockKey(job), { type: 'RunNow', payload: { by: admin.username ?? null, userId: admin.id, onDemand: true } },
     { requestKey: `admin:${randomUUID()}`, source: { kind: 'admin', name: 'console' }, actor: `user:${admin.id}`, waitMs: 3000 });
+  if (outcome.reason === 'not_authorized') throw new AdminActionError(403, 'Current admin access required');
   if (outcome.status === 'rejected') return outcome.reason === 'running' ? 'running' : 'not_armed';
   return outcome.status === 'pending' ? 'pending' : 'asked';
 }
@@ -619,7 +621,7 @@ export async function runClockNow(job: string, admin: { id: number }, { timeoutM
     { requestKey: `admin:${randomUUID()}`, source: { kind: 'admin', name: 'console' }, actor: `user:${admin.id}` });
   if (outcome.status === 'rejected') {
     // A job no release armed here (a staging preview): the caller decides.
-    throw Object.assign(new AdminActionError(409, `The job ${job} cannot run now (${outcome.reason})`), { code: outcome.reason });
+    throw Object.assign(new AdminActionError(outcome.reason === 'not_authorized' ? 403 : 409, `The job ${job} cannot run now (${outcome.reason})`), { code: outcome.reason });
   }
   if (outcome.status !== 'accepted' && outcome.status !== 'replayed') return null;
   const read = async () => (await kernelPool!.query(
@@ -1223,6 +1225,7 @@ async function appendFiled(issue: { id: number; app_id: number; status?: string 
 export interface Reply { status: number; body: Record<string, unknown> }
 
 const REJECTIONS = new Map<string, Reply>([
+  ['not_authorized', { status: 403, body: { error: 'Current permission required' } }],
   ['not_open', { status: 409, body: { error: 'Issue is not open' } }],
   ['no_issue', { status: 404, body: { error: 'Issue not found' } }],
   ['no_instance', { status: 404, body: { error: 'Issue not found' } }],
@@ -1369,7 +1372,7 @@ export async function stopBuilds(target: BuildTarget, ids: number[], by: string 
         AND data->>'target' = $2 AND (data->>'id')::int = ANY($3::int[])`, [BUILD, target, ids.map(Number)]);
   for (const r of rows) {
     await runtime.append(BUILD, r.key, { type: 'StopRequested', payload: { by } as any },
-      { requestKey: `stop:${r.key}`, source: { kind: 'admin', name: 'bench' }, actor: by ?? undefined });
+      { requestKey: `stop:${r.key}`, source: { kind: 'system', name: 'build-stop' } });
   }
   return rows.length;
 }
@@ -1437,20 +1440,22 @@ export async function reportUnreachable(appId: number, requestKey: string): Prom
 // the movement: what production ran when it was seen, and the commit; an
 // admin's Check for updates, by hand): what app delivery decided. Main
 // moving back to a commit production ran before is a movement of its own.
-export async function reportMainMoved(appId: number, sha: string, { byHand = false, movement = null }: { byHand?: boolean; movement?: string | null } = {}): Promise<EventOutcome> {
+export async function reportMainMoved(appId: number, sha: string, { byHand = false, movement = null, userId = null }: { byHand?: boolean; movement?: string | null; userId?: number | null } = {}): Promise<EventOutcome> {
   if (!runtime) throw new Error('The workflow runtime is not running in this process');
   const s = String(sha).toLowerCase();
   return runtime.appendAndWait(DELIVERY, appKey(appId), { type: 'MainMoved', payload: { appId, sha: s, byHand } },
     { requestKey: byHand || !movement ? `check:${appId}:${s}:${randomUUID()}` : `drift:${appId}:${movement}`,
-      source: { kind: 'system', name: byHand ? 'check_updates' : 'drift' }, appId });
+      source: { kind: byHand ? 'admin' : 'system', name: byHand ? 'check_updates' : 'drift' },
+      actor: byHand && userId ? `user:${userId}` : undefined, appId });
 }
 
 export async function requestDeploy(appId: number, reason: string, o: {
-  prNumber?: number | null; revision?: string | null; reuse?: unknown; requestKey?: string;
+  prNumber?: number | null; revision?: string | null; reuse?: unknown; requestKey?: string; userId?: number | null;
 } = {}): Promise<number> {
   return runtime!.append(DELIVERY, appKey(appId), { type: 'DeployRequested', payload: {
     appId, reason, prNumber: o.prNumber ?? null, revision: o.revision ?? null, reuse: o.reuse ?? null,
-  } }, { requestKey: o.requestKey ?? `deploy:${reason}:${randomUUID()}`, source: { kind: 'system', name: reason }, appId });
+  } }, { requestKey: o.requestKey ?? `deploy:${reason}:${randomUUID()}`, source: { kind: o.userId ? 'admin' : 'system', name: reason },
+    actor: o.userId ? `user:${o.userId}` : undefined, appId });
 }
 
 // ── Previews and required checks ────────────────────────────────────────
@@ -1966,17 +1971,6 @@ export function clearProposalApprovals(p: { sessionId: number; appId?: number | 
 
 // ── The admin console ───────────────────────────────────────────────────
 
-// The events an admin may append from the console, per machine, and the
-// payload each needs beyond the admin's own identity.
-const ADMIN_EVENTS = new Map<string, ReadonlySet<string>>([
-  [MACHINE, new Set(['Evaluate', 'AdminApply', 'RetryFollowup'])],
-  [MERGE, new Set(['RetryDelivery', 'RetryFollowup'])],
-  [DELIVERY, new Set(['EndDeploy'])],
-  [PREVIEW, new Set(['AdminRetry', 'AdminRetire', 'AdminEnd'])],
-  [BOT_CHANGE, new Set(['RetryFollowup'])],
-  [CLOCK, new Set(['RunNow'])],
-]);
-
 // The states a machine names as waiting on something outside (its
 // `attention`), for Admin → Workflows' "Needs a person". Read from the
 // machines' own declarations, so it answers with the runtime off too.
@@ -2008,5 +2002,7 @@ export async function adminEvent(
 
 export async function adminRelease(machineName: string, key: string, mode: 'retry' | 'skip', admin: { id: number }) {
   if (!runtime) throw new AdminActionError(409, 'The workflow runtime is not running here');
-  return runtime.release(machineName, key, { mode, actor: `user:${admin.id}` });
+  const out = await runtime.release(machineName, key, { mode, actor: `user:${admin.id}` });
+  if (out.reason === 'not_authorized') throw new AdminActionError(403, 'Current admin access required');
+  return out;
 }

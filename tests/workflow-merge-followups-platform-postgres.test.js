@@ -118,6 +118,8 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   });
   await platform.startWorkflow(config, { loops: true });
 
+  const { rows: [operator] } = await pool.query(
+    `INSERT INTO users (username, password, is_admin) VALUES ('operator', 'x', TRUE) RETURNING id, username`);
   let seq = 0;
   const { rows: [author] } = await pool.query(`INSERT INTO users (username, password) VALUES ('author', 'x') RETURNING id`);
   const { rows: [app] } = await pool.query(
@@ -252,10 +254,10 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     await confirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('e') });
     await until(async () => (await state(s)) === 'deploy_failed', 'deploy failed');
     deploys.fail = false;
-    const out = await platform.adminEvent('merge-followups', `session:${s.id}`, 'RetryDelivery', {}, { id: author.id, username: 'author' });
+    const out = await platform.adminEvent('merge-followups', `session:${s.id}`, 'RetryDelivery', {}, operator);
     assert.ok(['accepted', 'pending'].includes(out.status), out.status);
     await until(async () => (await state(s)) === 'live', 'live after the retry');
-    await assert.rejects(platform.adminEvent('merge-followups', `session:${s.id}`, 'Merged', {}, { id: author.id, username: 'author' }),
+    await assert.rejects(platform.adminEvent('merge-followups', `session:${s.id}`, 'Merged', {}, operator),
       /not an admin action/);
   });
 

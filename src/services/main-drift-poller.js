@@ -143,7 +143,7 @@ async function fetchRemoteHead(owner, repo) {
 const movementOf = (app, sha) =>
   `${app.main_sha}@${app.last_deploy_at ? new Date(app.last_deploy_at).getTime() : 'never'}:${sha}`;
 
-async function checkOne(config, pool, app, { byHand = false } = {}) {
+async function checkOne(config, pool, app, { byHand = false, userId = null } = {}) {
   const platform = require('../workflow/platform.ts');
   const parsed = repoRef.ownerRepo(app.repo_url);
   if (!parsed) {
@@ -204,7 +204,7 @@ async function checkOne(config, pool, app, { byHand = false } = {}) {
   }
 
   const movement = movementOf(app, remoteSha);
-  const outcome = await platform.reportMainMoved(app.id, remoteSha, { byHand, movement });
+  const outcome = await platform.reportMainMoved(app.id, remoteSha, { byHand, movement, userId });
   // Unless app delivery refused it (no drift, a commit that waits for a new
   // one): accepted, answered before (a replay), or not yet answered within
   // the wait (it will be).
@@ -265,7 +265,7 @@ module.exports = {
   scan,
   checkOne,
   // The admin "Check for updates" button: one app, now, by hand.
-  checkByHand: (config, pool, app) => checkOne(config, pool, app, { byHand: true }),
+  checkByHand: (config, pool, app, { userId = null } = {}) => checkOne(config, pool, app, { byHand: true, userId }),
   _forTest: {
     resetHeadCache: () => headCache.clear(),
     POLL_INTERVAL_MS,

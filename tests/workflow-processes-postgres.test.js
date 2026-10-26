@@ -102,10 +102,11 @@ test('workflow machines in a process of their own, and through its crash', { tim
   await listener.query('LISTEN usernode_ws');
 
   let seq = 0;
-  const user = async () => (await pool.query(
-    `INSERT INTO users (username, password, has_platform_access) VALUES ($1, 'x', TRUE) RETURNING id, username`,
-    [`proc_${++seq}`])).rows[0];
+  const user = async (isAdmin = false) => (await pool.query(
+    `INSERT INTO users (username, password, has_platform_access, is_admin) VALUES ($1, 'x', TRUE, $2) RETURNING id, username`,
+    [`proc_${++seq}`, isAdmin])).rows[0];
   const author = await user();
+  const operator = await user(true);
   // The child skips migrations, including seedSelfApp. Mirror that row so
   // the real startup retirement can resolve the platform before serving.
   await pool.query(
@@ -920,7 +921,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
     const a = await app();
     await workflow.kill();
     // The admin's Redeploy, on the web side, with no workflow process running.
-    await platform.requestDeploy(a.id, 'redeploy');
+    await platform.requestDeploy(a.id, 'redeploy', { userId: operator.id });
     await procs.arm(pool, cloneOf(a));
     await startWorkflow();
     await procs.reached(pool, cloneOf(a));
@@ -1119,9 +1120,9 @@ test('workflow machines in a process of their own, and through its crash', { tim
     const b = await app();
     await pool.query(`UPDATE apps SET main_check_state = 'failing', main_check_sha = $2, main_check_paused_sha = $2, main_check_at = now(),
                              main_check_detail = '{}'::jsonb WHERE id = $1`, [b.id, SHA('8')]);
-    assert.equal(await platform.resumeMainCheck(b.id, { id: author.id, username: author.username }), 'resumed');
+    assert.equal(await platform.resumeMainCheck(b.id, operator), 'resumed');
     assert.deepEqual(await mainCheckOf(b), { state: 'failing', sha: SHA('8'), paused: null });
-    assert.equal(await platform.resumeMainCheck(b.id, { id: author.id, username: author.username }), 'not_paused');
+    assert.equal(await platform.resumeMainCheck(b.id, operator), 'not_paused');
   });
 
   // ── The conductor is the process production runs ───────────────────

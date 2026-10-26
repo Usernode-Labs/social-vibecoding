@@ -96,7 +96,7 @@ function adminWorkflowRoutes(config) {
     try {
       const outcome = await platform().adminEvent(machine, key, type,
         payload && typeof payload === 'object' ? payload : {}, req.user);
-      res.status(outcome.status === 'pending' ? 202 : 200).json(outcome);
+      res.status(outcome.reason === 'not_authorized' ? 403 : outcome.status === 'pending' ? 202 : 200).json(outcome);
     } catch (err) { fail(res, err, 'Workflow admin event'); }
   });
 
