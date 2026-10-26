@@ -163,7 +163,8 @@ test('the CLI handoff commit: the tested tree, only from the expected parent', {
   assert.equal(await gitHost.readRef('cli-1', 'proposal/x'), made.sha);
   sh(local, 'fetch', '-q', 'origin');
   assert.equal(sh(local, 'rev-parse', `${made.sha}^{tree}`), expectedTree, 'exactly the tested tree');
-  assert.equal(sh(local, 'log', '-1', '--format=%an|%aI', made.sha), 'Homeroom CLI|2026-10-26T10:00:00Z');
+  // The author date as a number: the worker image's git writes UTC as +00:00, a newer one as Z.
+  assert.equal(sh(local, 'log', '-1', '--format=%an|%at', made.sha), `Homeroom CLI|${Date.parse('2026-10-26T10:00:00Z') / 1000}`);
   // Sent again after a lost answer: the same commit.
   assert.deepEqual(await github.createProposalCommit('apps', 'cli-1', args), { ...made, created: false });
   // From a parent the branch has left: refused.
