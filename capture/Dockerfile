@@ -16,7 +16,10 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \
 # platform sets its text in the reader's system face, which this image does
 # not have, and the Liberation/DejaVu fallback made every capture look like
 # a different product from the one on a phone.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# The base image's own packages are upgraded first, as in worker/Dockerfile
+# (OpenSSL CVE-2026-84782, 26 Oct 2026).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+  && apt-get install -y --no-install-recommends \
     chromium ffmpeg ca-certificates \
     fonts-inter fonts-liberation fonts-noto-color-emoji \
   && rm -rf /var/lib/apt/lists/*
