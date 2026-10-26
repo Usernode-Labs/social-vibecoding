@@ -146,6 +146,11 @@ async function refreshRevision(config, pool, sessionId) {
     });
     return { skipped: 'blocked', transient: !!revision.transient };
   }
+  // Its branch is not on the git host: the code did not come across when
+  // Homeroom moved off GitHub (services/code-missing.js). There is no head to
+  // diff the protected settings of, so the pass moves on without a word,
+  // and looks again next time (a branch pushed back is picked up then).
+  if (revision.codeMissing) return { skipped: 'code_missing' };
   await require('./app-admins').sweepExplicitApproval(pool, session);
   return { refreshed: true };
 }

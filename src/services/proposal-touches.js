@@ -106,7 +106,11 @@ async function refreshOne(pool, { sessionId, repoUrl, headSha, baseRef = 'main' 
     );
     return true;
   } catch (err) {
-    log.warn('proposal-touches', 'Could not read the files a change touches', { sessionId, err: err.message });
+    // A head that is not on the git host (services/code-missing.js) is not
+    // news: it fails the same way on every read until it is pushed back.
+    if (!require('./code-missing').isError(err)) {
+      log.warn('proposal-touches', 'Could not read the files a change touches', { sessionId, err: err.message });
+    }
     return false;
   } finally {
     inFlight.delete(key);

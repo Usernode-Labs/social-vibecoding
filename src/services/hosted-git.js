@@ -288,6 +288,13 @@ async function compareData(owner, repo, basehead) {
   const dir = await mirror(owner, repo, { refs: [base, head] });
   const baseSha = await resolve(dir, base);
   const headSha = await resolve(dir, head);
+  // Main is here and the head is not: a proposal whose code did not come
+  // across when Homeroom moved off GitHub (services/code-missing.js). Still a
+  // 404 for every caller that reads one, and coded, so a sweep can pass over
+  // it quietly instead of warning about it on every pass.
+  if (baseSha && !headSha) {
+    throw require('./code-missing').error(`Cannot compare ${basehead}: ${head} is not on the git host`, { status: 404 });
+  }
   if (!baseSha || !headSha) throw notFound(`Cannot compare ${basehead}`);
   const mergeBaseSha = await repoMirror.mergeBase(dir, baseSha, headSha);
   const from = threeDot ? (mergeBaseSha || baseSha) : baseSha;
@@ -483,7 +490,13 @@ async function revertOnto(owner, repo, sha, { onto = 'main', branch, message }) 
   const main = await resolve(dir, onto);
   if (!main) throw notFound(`Branch ${onto} not found`);
   const parent = (await run(dir, ['rev-parse', `${sha}^`])).trim();
-  const out = await gitHost.git(['-C', dir, 'merge-tree', '--write-tree', '--name-only', '--merge-base', sha, main, parent])
+  // The change undone, as a commit on top of it: its parent's tree. Merged
+  // with main, its merge base is the change itself, so the result is main
+  // without the change: a revert. `merge-tree --merge-base` would say the
+  // same directly, but it needs git 2.40, and the unit suite runs on the
+  // worker image's git 2.39.
+  const inverse = await commitTree(dir, `${parent}^{tree}`, [sha], `Undo ${sha}`);
+  const out = await gitHost.git(['-C', dir, 'merge-tree', '--write-tree', '--name-only', main, inverse])
     .catch((err) => { if (err.exitCode === 1) return { conflict: true }; throw err; });
   if (out.conflict) throw new Error('Revert produced merge conflicts');
   const tree = out.stdout.split('\n')[0].trim();

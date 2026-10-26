@@ -70,6 +70,12 @@ export type NeedsFeedItem = {
   advisory?: boolean;
   uncounted?: boolean;
   /**
+   * The change's code did not come across when Homeroom moved off GitHub
+   * (src/services/code-missing.js): the item says "Code missing", as its
+   * project's own card does. A vote on it is still recorded.
+   */
+  codeMissing?: boolean;
+  /**
    * #4490: the card's picture, as a project's Needs you draws it: the
    * change's before & after shots run and legacy capture pair (shaped by
    * `AppView._workshopVisuals`, as there), its author's diagram, "What it
@@ -174,6 +180,7 @@ export function reelRows(
         }
         : null,
       no: change ? { label: translate('communities:reel.no'), act: { fn: 'castVote', args: [item.id, 'no', ...rev] } } : null,
+      ...(change && item.codeMissing ? { codeMissing: true } : {}),
       who: item.author || null,
       ago: item.at ? agoStamp(item.at).text : '',
       number: item.number,

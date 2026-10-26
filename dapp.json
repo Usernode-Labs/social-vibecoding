@@ -2738,7 +2738,7 @@
       "name": "Own private sessions say Only you, with the line the divider carried as their tooltip (#4486)",
       "path": "/?demo=1#app/usernode-2d5619/board",
       "expectText": "Only you",
-      "expectSelector": "#dev-kanban .dev-ws-wrow .dev-ws-tag[title=\"Only you can see your active sessions here. Their code is on public GitHub.\"]"
+      "expectSelector": "#dev-kanban .dev-ws-wrow .dev-ws-tag[title=\"Only you can see your active sessions here. Their code is public.\"]"
     },
     {
       "name": "Shared session cards show the owner subtitle",

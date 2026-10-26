@@ -542,3 +542,13 @@ test('canonical platform preview tokens cannot fetch production directory data',
     assert.equal(response.body.code,'preview_directory_unavailable');
   } finally { state.apps[0].slug=savedSlug; }
 });
+
+
+test('marked preview identities cannot read the production directory through either auth path', async () => {
+  const userToken = platformJwt.signAppIdentityToken({ appId: APP_A_ID, user: { id: 7, username: 'tester' }, environment: 'preview' });
+  for (const token of [APP_A_TOKEN, null]) {
+    const result = await lookup({ token, userToken, qs: '?username=alice' });
+    assert.equal(result.status, 401);
+    assert.equal(result.body.code, 'bad_user_token');
+  }
+});

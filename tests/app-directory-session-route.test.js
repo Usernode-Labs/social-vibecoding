@@ -99,7 +99,7 @@ test.before(async () => {
 });
 test.after(() => server?.close());
 
-async function call(path, qs = '', headers = { 'X-Usernode-Directory-Bridge': 'platform-isolated-v1' }) {
+async function call(path, qs = '', headers = { 'X-Usernode-App-Bridge': 'isolated-v2' }) {
   const res = await fetch(
     `http://127.0.0.1:${server.address().port}/api/app-directory/users/${path}${qs}`, { headers }
   );
@@ -201,7 +201,7 @@ test('legacy or unknown parent protocols cannot read either production directory
     for (const headers of [{}, {'X-Usernode-Directory-Bridge':'old'}, {'X-Usernode-Directory-Bridge':'platform-isolated-v1, old'}]) {
       const response = await call(route,query,headers);
       assert.equal(response.status,403);
-      assert.equal(response.body.code,'directory_bridge_upgrade_required');
+      assert.equal(response.body.code,'bridge_refresh_required');
       assert.match(response.headers.get('cache-control'),/no-store/);
       assert.equal(JSON.stringify(response.body).includes('private-person'),false);
     }
@@ -212,20 +212,22 @@ test('legacy or unknown parent protocols cannot read either production directory
 test('the actual guarded parent relay works against the protocol fence and blocks platform previews', async () => {
   const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
   const source=fs.readFileSync(path.join(__dirname,'../public/js/app-view.js'),'utf8');
-  const start=source.indexOf('  async handleDirectoryBridgeMessage(e) {');
-  const end=source.indexOf('\n  },',start);
-  assert.ok(start>0 && end>start);
-  const method=source.slice(start,end+4);
   state.users=[user(42,'private-person@example.invalid')];
   for(const slug of ['usernode-2d5619','authored-control']) {
     for(const type of ['lookup','search']) {
       const replies=[],frame={postMessage:value=>replies.push(value)};
       const before=state.queries;
-      const sandbox={AppView:{_stagingPreview:{slug}},URL,URLSearchParams,
-        document:{getElementById:id=>id==='staging-iframe'?{contentWindow:frame}:null},
+      const origin=`https://${slug}--s77.apps.example`;
+      const element={src:origin+'/',contentWindow:frame};
+      const sandbox={URL,URLSearchParams,console,setTimeout,clearTimeout,setInterval,clearInterval,
+        location:{href:'https://platform.invalid/'},addEventListener(){},localStorage:{getItem:()=>null,setItem(){}},
+        document:{getElementById:id=>id==='staging-iframe'?element:null,addEventListener(){}},
         fetch:(url,options)=>fetch(`http://127.0.0.1:${server.address().port}${url}`,options)};
-      const handler=vm.runInNewContext(`({${method}}).handleDirectoryBridgeMessage`,sandbox);
-      await handler({source:frame,origin:`https://${slug}--s77.apps.example`,
+      sandbox.window=sandbox;
+      vm.createContext(sandbox);
+      const AppView=vm.runInContext(source+'\nAppView;',sandbox);
+      AppView._stagingPreview={slug};
+      await AppView.handleDirectoryBridgeMessage({source:frame,origin,
         data:{id:'protocol-control',__usernode_directory:type,username:'private-person@example.invalid',q:'private'}});
       const reply=replies.find(r=>r.__usernode_directory==='response');
       assert.ok(reply);assert.equal(reply.error,null);

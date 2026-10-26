@@ -263,14 +263,14 @@ const CAPTURE_TEST_DEVICE_SCALE = process.env.CAPTURE_TEST_DEVICE_SCALE || '1';
 // Delegates to platformJwt.signAppIdentityToken, so a capture token is the
 // SAME kind of credential /api/iframe-token mints — RS256, issuer
 // `usernode`, audience `usernode:app:<appId>`, `pur: 'iframe'` — just with
-// a shorter life (it only has to outlive one screenshot run). That
-// sameness is the point: child apps verify it with the one code path they
-// already have, and the self-app staging clone exchanges it for a local
+// a shorter life. Homeroom's own captures also carry `env: 'preview'`
+// so production platform consumers refuse them. Authored apps retain their
+// existing preview integrations. The self-app clone exchanges its token for a local
 // session via middleware/auth.js.
 //
 // Returns '' when the row is absent so callers degrade to unauthenticated
 // capture — never throws on a missing user.
-function mintCaptureToken(user, appId) {
+function mintCaptureToken(user, appId, { previewOnly = false } = {}) {
   if (!user) return '';
   return platformJwt.signAppIdentityToken({
     appId,
@@ -281,6 +281,7 @@ function mintCaptureToken(user, appId) {
       locale: user.locale ?? null,
     },
     ttl: platformJwt.CAPTURE_TTL,
+    environment: previewOnly || process.env.USERNODE_ENV === 'staging' ? 'preview' : 'production',
   });
 }
 
@@ -1979,7 +1980,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       );
       captureUser = rows[0] || null;
       if (captureUser) {
-        captureToken = mintCaptureToken(captureUser, app.id);
+        captureToken = mintCaptureToken(captureUser, app.id, { previewOnly: app.slug === config.selfAppSlug });
       } else {
         log.warn('visuals', 'Capture user missing — capturing unauthenticated', {
           sessionId: session.id, username: CAPTURE_USERNAME,
@@ -2009,7 +2010,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       );
       const adminUser = rows[0] || null;
       if (adminUser) {
-        adminToken = mintCaptureToken(adminUser, app.id);
+        adminToken = mintCaptureToken(adminUser, app.id, { previewOnly: app.slug === config.selfAppSlug });
       } else {
         log.warn('visuals', 'Capture admin user missing — tests run as non-admin capture user', {
           sessionId: session.id, username: CAPTURE_ADMIN_USERNAME,

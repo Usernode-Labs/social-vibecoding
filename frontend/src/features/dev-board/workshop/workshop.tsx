@@ -1254,7 +1254,7 @@ function legendFor(end: boolean): Array<{ id: string; keys: number }> {
  * most. `topic` is the category or priority, which the line sets apart from
  * the vote's words on a wide window.
  */
-type Fact = { key: string; tone: string | undefined; text: string; topic?: boolean };
+type Fact = { key: string; tone: string | undefined; text: string; topic?: boolean; title?: string };
 /**
  * The pill states the facts line already says: the count itself ("1 / 2",
  * an at-least-N rule's "1 of 2 approvals") is the tally in words, and the
@@ -1288,7 +1288,16 @@ export function factsFor(row: QueueRow, voted: string | null): Fact[] {
     ]);
     if (said) out.push({ key: 'tally', tone: undefined, text: said });
   }
-  if (!voted && lastYes(row)) out.push({ key: 'last', tone: undefined, text: translate('project:needsYou.fact.yourYesPutsItLive') });
+  // Its code did not come across from GitHub (src/services/code-missing.js):
+  // said in red, with the whole sentence on hover. The vote still counts, so
+  // the count above stays; no Yes puts it live until the code is back.
+  if (row.codeMissing) {
+    out.push({
+      key: 'code_missing', tone: 'blocked',
+      text: translate('project:needsYou.fact.codeMissing'),
+      title: translate('project:needsYou.fact.codeMissingTitle'),
+    });
+  } else if (!voted && lastYes(row)) out.push({ key: 'last', tone: undefined, text: translate('project:needsYou.fact.yourYesPutsItLive') });
   if (st && st.label && !st.plainVote && !SAID_ELSEWHERE.has(st.key)) out.push({ key: 'state', tone: st.tone, text: st.label });
   for (const b of row.card.badges) {
     if (b.t === 'attr' && (b.field === 'category' || b.field === 'priority') && b.label.text) {
@@ -1343,7 +1352,7 @@ function FactsLine({ facts }: { facts: Fact[] }): ReactNode {
       {vote.length ? (
         <span className="dev-ws-item-facts-vote">
           <UserIcon className="dev-ws-item-facts-icon" aria-hidden="true" />
-          {vote.map((f) => <span key={f.key} className={factTone(f.tone)}>{f.text}</span>)}
+          {vote.map((f) => <span key={f.key} className={factTone(f.tone)} title={f.title}>{f.text}</span>)}
         </span>
       ) : null}
       {topic.map((f) => <span key={f.key} className="dev-ws-fact dev-ws-fact-topic">{f.text}</span>)}

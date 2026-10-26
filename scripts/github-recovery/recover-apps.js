@@ -38,6 +38,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const oci = require('./oci');
+const commitIdentity = require('../../src/services/commit-identity');
 
 function args() {
   const out = { apps: null, all: false, push: false };
@@ -174,9 +175,12 @@ function buildCommit({ app, filesDir, repoDir, mirror, manifest, imageRef, newRe
     missing.length ? `Not in the image, so not here: ${missing.slice(0, 40).join(', ')}${missing.length > 40 ? ', ...' : ''}` : null,
     restored.length ? `Restored from the template: ${restored.join(', ')}` : null,
   ].filter((l) => l !== null).join('\n');
-  // Fixed dates: the same files make the same commit on every run, so a
-  // re-run finds its own commit already on the git host.
-  execFileSync('git', ['-C', repoDir, '-c', 'user.name=Homeroom', '-c', 'user.email=homeroom@users.noreply.onhomeroom.com',
+  // Fixed dates and Homeroom's default identity (services/commit-identity.js,
+  // never an override from this machine's environment): the same files make
+  // the same commit on every run, so a re-run finds its own commit already on
+  // the git host.
+  const identity = commitIdentity.gitConfigArgs({ name: commitIdentity.DEFAULT_NAME, email: commitIdentity.DEFAULT_EMAIL });
+  execFileSync('git', ['-C', repoDir, ...identity,
     'commit', '-q', '--no-verify', '--allow-empty', '-m', message],
   { env: { ...process.env, GIT_AUTHOR_DATE: RECOVERED_AT, GIT_COMMITTER_DATE: RECOVERED_AT } });
   return { sha: git(repoDir, 'rev-parse', 'HEAD'), tree, missing, extra, treeMatches, restored };

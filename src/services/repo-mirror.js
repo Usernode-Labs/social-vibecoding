@@ -407,6 +407,16 @@ async function resolveBranch(dir, branchName) {
   return text(r.stdout).trim().toLowerCase() || null;
 }
 
+/**
+ * Every branch the mirror has, by name. One local read answers "is this
+ * proposal's branch there?" for every proposal on the app at once
+ * (services/code-missing.js), where resolveBranch is one process a branch.
+ */
+async function listBranches(dir) {
+  const { stdout } = await git(dir, ['for-each-ref', '--format=%(refname:strip=2)', 'refs/heads/']);
+  return text(stdout).split('\n').map((line) => line.trim()).filter(Boolean);
+}
+
 /** Does the mirror know this commit at all? */
 async function hasCommit(dir, committish) {
   const r = await git(dir, ['cat-file', '-e', `${safeSha(committish)}^{commit}`], { allowFail: true });
@@ -446,6 +456,7 @@ module.exports = {
   mergeTree,
   changedPaths,
   resolveBranch,
+  listBranches,
   hasCommit,
   commitsBetween,
   // Exported for the unit tests, which drive the plumbing against a real

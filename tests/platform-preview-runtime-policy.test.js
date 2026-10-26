@@ -56,7 +56,9 @@ function cluster({ pending = false, orphan = false, failInventory = false } = {}
 
 test('a current desired template cannot attest old actual Pods; restrict endpoints then retire the whole runtime', async () => {
   const c=cluster();
-  const result=await kube.retirePlatformPreviewPolicy(config,10,policy.DIGEST,{timeoutMs:10,pollMs:0});
+  // A deadline a busy test run can meet: the fake cluster retires at once,
+  // but 10 ms ran out on the checks' own run with thousands of tests beside it.
+  const result=await kube.retirePlatformPreviewPolicy(config,10,policy.DIGEST,{timeoutMs:5000,pollMs:0});
   assert.equal(result.retired,1);
   assert.deepEqual(c.calls,['restrict-service','delete-deployment']);
   assert.equal(c.store.service.spec.selector[policy.LABEL],policy.DIGEST);
@@ -207,22 +209,25 @@ test('synthetic preview identity preserves only exact capture names and resets o
 
 test('platform preview cannot use the parent cookie directory relay, including Messages and stale context', async () => {
   const source=fs.readFileSync(path.join(__dirname,'../public/js/app-view.js'),'utf8');
-  const start=source.indexOf('  async handleDirectoryBridgeMessage(e) {');
-  const end=source.indexOf('\n  },',start);
-  assert.ok(start>0 && end>start);
-  const method=source.slice(start,end+4);
   for (const context of [
     {preview:{slug:policy.PLATFORM_SLUG},origin:'http://localhost:8888',blocked:true},
     {preview:null,origin:'https://usernode-2d5619--s123.apps.example.test',blocked:true},
     {preview:{slug:'another-app'},origin:'https://another-app--s123.apps.example.test',blocked:false},
   ]) {
     const responses=[], frame={postMessage:(x)=>responses.push(x)};
-    const AppView={_stagingPreview:context.preview,appData:{slug:'unrelated-open-app'}};
+    const element={src:context.origin+'/',contentWindow:frame};
     let fetched=0;
-    const sandbox={AppView,URL,URLSearchParams,document:{getElementById:id=>id==='staging-iframe'?{contentWindow:frame}:null},
-      fetch:async(_url,options)=>{assert.equal(options.headers['X-Usernode-Directory-Bridge'],'platform-isolated-v1');fetched++;return{ok:true,json:async()=>({users:[{id:99,username:'production-secret-handle'}]})};}};
-    const handler=vm.runInNewContext(`({${method}}).handleDirectoryBridgeMessage`,sandbox);
-    await handler({source:frame,origin:context.origin,data:{id:'probe',__usernode_directory:'search',q:'a'}});
+    const sandbox={URL,URLSearchParams,console,setTimeout,clearTimeout,setInterval,clearInterval,
+      location:{href:'https://platform.invalid/'},addEventListener(){},
+      localStorage:{getItem:()=>null,setItem(){}},
+      document:{getElementById:id=>id==='staging-iframe'?element:null,addEventListener(){}},
+      fetch:async(_url,options)=>{assert.equal(options.headers['X-Usernode-App-Bridge'],'isolated-v2');fetched++;return{ok:true,json:async()=>({users:[{id:99,username:'production-secret-handle'}]})};}};
+    sandbox.window=sandbox;
+    vm.createContext(sandbox);
+    const AppView=vm.runInContext(source+'\nAppView;',sandbox);
+    AppView._stagingPreview=context.preview;
+    AppView.appData={slug:'unrelated-open-app'};
+    await AppView.handleDirectoryBridgeMessage({source:frame,origin:context.origin,data:{id:'probe',__usernode_directory:'search',q:'a'}});
     assert.equal(fetched,context.blocked?0:1);
     if(context.blocked) assert.equal(JSON.stringify(responses).includes('production-secret-handle'),false);
   }

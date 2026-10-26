@@ -16,6 +16,7 @@ const llmTelemetry = require('./llm-telemetry');
 const liveAgentSpend = require('./live-agent-spend');
 const workerProgress = require('./worker-progress');
 const repoRef = require('./repo-ref');
+const commitIdentity = require('./commit-identity');
 // The invited fixtures' fixed ids, for the listed persona's private-home key.
 const fixtures = require('./shots-fixtures');
 
@@ -3029,10 +3030,11 @@ async function _bootstrapWarmContainer(sessionId, {
   if (!usesKubernetesWorkers()) await docker.ensureVolume(ccVolume);
 
   const safeEnv = {
-    GIT_AUTHOR_NAME: 'usernode-bot',
-    GIT_AUTHOR_EMAIL: 'usernode-bot@users.noreply.github.com',
-    GIT_COMMITTER_NAME: 'usernode-bot',
-    GIT_COMMITTER_EMAIL: 'usernode-bot@users.noreply.github.com',
+    // Who the worker's commits are by: Homeroom's one identity
+    // (services/commit-identity.js). git reads it from the container's
+    // environment on every commit (worker/session-branch.sh, run-cc.sh), and
+    // the image sets none of its own.
+    ...commitIdentity.gitIdentityEnv(),
     BRANCH: branchName,
     // MODE=warm tells worker-run.sh to clone + checkout + sleep
     // infinity, so subsequent `docker exec` calls drive per-turn work.

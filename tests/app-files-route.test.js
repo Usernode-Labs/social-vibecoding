@@ -217,7 +217,7 @@ test('shell upload stores the file and returns the stored shape', async () => {
   try {
     const res = await fetch(
       `http://127.0.0.1:${server.address().port}/api/apps/demo/files?filename=dish.png`,
-      { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: PNG }
+      { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'X-Usernode-App-Bridge': 'isolated-v2' }, body: PNG }
     );
     assert.equal(res.status, 200);
     const j = await res.json();
@@ -239,7 +239,7 @@ test('shell upload with staging=1 stamps the row', async () => {
   try {
     const res = await fetch(
       `http://127.0.0.1:${server.address().port}/api/apps/demo/files?filename=dish.png&staging=1`,
-      { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: PNG }
+      { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'X-Usernode-App-Bridge': 'isolated-v2' }, body: PNG }
     );
     assert.equal(res.status, 200);
     assert.equal(handler.inserts[0][7], true);
@@ -255,7 +255,7 @@ test('shell upload is view-gated: 404 when access denied', async () => {
   try {
     const res = await fetch(
       `http://127.0.0.1:${server.address().port}/api/apps/demo/files?filename=dish.png`,
-      { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: PNG }
+      { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'X-Usernode-App-Bridge': 'isolated-v2' }, body: PNG }
     );
     assert.equal(res.status, 404);
   } finally {
@@ -270,7 +270,7 @@ test('shell upload surfaces quota codes', async () => {
   try {
     const res = await fetch(
       `http://127.0.0.1:${server.address().port}/api/apps/demo/files?filename=dish.png`,
-      { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: PNG }
+      { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'X-Usernode-App-Bridge': 'isolated-v2' }, body: PNG }
     );
     assert.equal(res.status, 400);
     assert.equal((await res.json()).code, 'user_quota_exceeded');
@@ -287,7 +287,7 @@ test('shell upload with MinIO down → 503 storage_unavailable', async () => {
   try {
     const res = await fetch(
       `http://127.0.0.1:${server.address().port}/api/apps/demo/files?filename=dish.png`,
-      { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: PNG }
+      { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'X-Usernode-App-Bridge': 'isolated-v2' }, body: PNG }
     );
     assert.equal(res.status, 503);
     assert.equal((await res.json()).code, 'storage_unavailable');
@@ -302,7 +302,7 @@ test('shell delete is uploader-only (stored row belongs to user 5)', async () =>
   try {
     const res = await fetch(
       `http://127.0.0.1:${otherUser.address().port}/api/apps/demo/files/${GOOD_ID}`,
-      { method: 'DELETE' }
+      { method: 'DELETE', headers: { 'X-Usernode-App-Bridge': 'isolated-v2' } }
     );
     assert.equal(res.status, 404);
   } finally {
@@ -312,7 +312,7 @@ test('shell delete is uploader-only (stored row belongs to user 5)', async () =>
   try {
     const res = await fetch(
       `http://127.0.0.1:${owner.address().port}/api/apps/demo/files/${GOOD_ID}`,
-      { method: 'DELETE' }
+      { method: 'DELETE', headers: { 'X-Usernode-App-Bridge': 'isolated-v2' } }
     );
     assert.equal(res.status, 200);
   } finally {
@@ -324,7 +324,7 @@ test('shell usage reports sums and caps', async () => {
   poolQueryHandler = shellPoolHandler({ appBytes: 1234, userBytes: 234 });
   const server = await startShellServer(fakeStore());
   try {
-    const res = await fetch(`http://127.0.0.1:${server.address().port}/api/apps/demo/files/usage`);
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/api/apps/demo/files/usage`, { headers: { 'X-Usernode-App-Bridge': 'isolated-v2' } });
     assert.equal(res.status, 200);
     const j = await res.json();
     assert.equal(j.appBytes, 1234);
@@ -333,4 +333,24 @@ test('shell usage reports sums and caps', async () => {
   } finally {
     server.close();
   }
+});
+
+
+test('a preview identity can serve preview private files but never production private files', async () => {
+  let staging = false;
+  poolQueryHandler = async () => ({ rows: [{
+    app_id: 7, filename: 'fixture.png', content_type: 'image/png', visibility: 'private', staging,
+  }] });
+  const server = await startServeServer(fakeStore());
+  try {
+    const user = { id: 5, username: 'fixture-user' };
+    const preview = platformJwt.signAppIdentityToken({ appId: 7, user, environment: 'preview' });
+    const production = platformJwt.signAppIdentityToken({ appId: 7, user, environment: 'production' });
+    const base = `http://127.0.0.1:${server.address().port}/app-files/${GOOD_ID}?token=`;
+    assert.equal((await fetch(base + preview)).status, 404);
+    assert.equal((await fetch(base + production)).status, 200);
+    staging = true;
+    assert.equal((await fetch(base + preview)).status, 200);
+    assert.equal((await fetch(base + production)).status, 200);
+  } finally { server.close(); }
 });

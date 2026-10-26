@@ -57,6 +57,7 @@
 // HOMEROOM_BOT_SPEC_SCREENS=0 turns it off.
 
 const log = require('./logger');
+const commitIdentity = require('./commit-identity');
 
 const NOTICE = 'usernode-starter-notice@1';
 const SENTINEL = 'usernode-spec-screens@1';
@@ -93,12 +94,9 @@ const MARKER = '__USERNODE_SPEC_SCREENS__';
 const READ_SCRIPT_PATH = '/tmp/usernode-spec-screens-read.js';
 const WRITE_SCRIPT_PATH = '/tmp/usernode-spec-screens-write.js';
 const COMMIT_MESSAGE = 'Homeroom: start from the screens the spec drew';
-const GIT_ENV = Object.freeze({
-  GIT_AUTHOR_NAME: 'usernode-bot',
-  GIT_AUTHOR_EMAIL: 'usernode-bot@users.noreply.github.com',
-  GIT_COMMITTER_NAME: 'usernode-bot',
-  GIT_COMMITTER_EMAIL: 'usernode-bot@users.noreply.github.com',
-});
+// The commit is Homeroom's own, under its one identity
+// (services/commit-identity.js), read from the same environment as the rest.
+const gitEnv = (env) => commitIdentity.gitIdentityEnv(commitIdentity.homeroomAuthor(env));
 
 /** Whether the build starts from the spec's screens (HOMEROOM_BOT_SPEC_SCREENS=0 turns it off). */
 function enabled(env = process.env) {
@@ -561,7 +559,7 @@ async function startFromScreens({
     }
     if (mapped.already) return { screens: mapped.screens, already: true };
     const wrote = readMarker(await worker.runBenchCapture(containerName, {
-      source: writeSource(mapped.files, branchName), env: { ...GIT_ENV }, timeoutMs, scriptPath: WRITE_SCRIPT_PATH,
+      source: writeSource(mapped.files, branchName), env: gitEnv(env), timeoutMs, scriptPath: WRITE_SCRIPT_PATH,
     }));
     if (!wrote || !wrote.ok) {
       log.warn('spec-screens-start', 'Could not write the spec\'s screens into the repository', { sessionId, why: wrote?.why || 'no answer' });

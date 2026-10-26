@@ -503,9 +503,9 @@ test('the seam is published before hydration and drives the store synchronously'
 });
 
 test('the legacy module makes no DOM write into the React-owned overlay', async () => {
-  // Every write goes through _staging() / _visualCompare(). What is left is the
-  // reads two bridge-message handlers make to compare `event.source` against
-  // the frame's contentWindow — reads, on a node they do not mutate.
+  // Overlay writes go through _staging() / _visualCompare(). Bridge identity
+  // checks may resolve the frame to read its contentWindow and URL, including
+  // through the shared resolver, without mutating the React-owned element.
   const code = SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   // The two fallback DOM adapters sit next to each other; everything before and
   // after them is the module proper.
@@ -531,9 +531,8 @@ test('the legacy module makes no DOM write into the React-owned overlay', async 
   // there at all (the vm tests, and a browser whose bundle failed to load).
   assert.ok(adapters.includes("getElementById(id)"), 'the DOM adapter resolves ids itself');
 
-  // #staging-iframe keeps exactly the contentWindow reads, and no write.
-  const frameLookups = outside.match(/getElementById\('staging-iframe'\)/g) || [];
-  assert.ok(frameLookups.length > 0, 'the bridge-message handlers still resolve the frame');
+  // Any remaining inline lookup is a contentWindow read. Shared lookups use
+  // a frame id parameter and are exercised against a read-only element below.
   for (const m of outside.matchAll(/getElementById\('staging-iframe'\)([\s\S]{0,120})/g)) {
     assert.ok(
       /contentWindow/.test(m[1]),
@@ -549,6 +548,34 @@ test('the legacy module makes no DOM write into the React-owned overlay', async 
   h.AppView.closeStagingOverlay();
   const leaked = h.asked.filter((id) => overlayIds.includes(id) || id === 'staging-iframe');
   assert.deepEqual(leaked, [], 'the module asked the document for no overlay-owned node');
+
+  const writes = [], lookedUp = [];
+  h.iframe.src = 'https://preview.example/';
+  const frame = new Proxy(h.iframe, {
+    get(target, key) {
+      assert.ok(['contentWindow', 'src'].includes(key), `bridge reads only frame identity, got ${String(key)}`);
+      return Reflect.get(target, key);
+    },
+    set(_target, key) { writes.push(String(key)); return true; },
+  });
+  h.sandbox.document.getElementById = (id) => {
+    lookedUp.push(id);
+    return id === 'staging-iframe' ? frame : null;
+  };
+  h.AppView._stagingPreview = { slug: 'preview-project', sessionId: 12 };
+  const replies = [];
+  h.iframe.contentWindow.postMessage = (value, origin) => replies.push({ value, origin });
+  h.sandbox.App.user.locale = 'en';
+  const event = { source: h.iframe.contentWindow, origin: 'https://preview.example',
+    data: { __usernode_locale: 'get', id: 'frame-ownership' } };
+  assert.equal(h.AppView.ownedFrameFor(event.source), 'staging-iframe', 'the shared resolver finds the current preview');
+  assert.equal(h.AppView.ownedFrameFor({}), null, 'an unrelated window is not the preview');
+  h.AppView.handleLocaleBridgeMessage(event);
+  assert.equal(replies.length, 1, 'the bridge reads the current frame and answers its document');
+  assert.equal(replies[0].origin, event.origin);
+  assert.equal(replies[0].value.value.locale, 'en');
+  assert.ok(lookedUp.includes('staging-iframe'), 'the bridge resolves the real preview element');
+  assert.deepEqual(writes, [], 'bridge resolution never mutates the React-owned frame');
 });
 
 test('preview background changes do not navigate and clear with the preview', async () => {

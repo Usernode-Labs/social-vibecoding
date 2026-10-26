@@ -991,6 +991,14 @@
     "text": "your yes puts it live",
     "description": "On the line of facts under a Needs-you card's caption, after its approval count (\"0 of 1 approval · your yes puts it live\"), when exactly one more Yes meets the change's rule and the viewer's Yes counts. Lower case: it continues the line."
   },
+  "needsYou.fact.codeMissing": {
+    "text": "Code missing",
+    "description": "Red fact on the line under a Needs-you card's caption, after its approval count: the proposed change's code (its branch) did not come across when Homeroom moved off GitHub, so it cannot go live until the code is back. Votes on it are still recorded."
+  },
+  "needsYou.fact.codeMissingTitle": {
+    "text": "This proposal’s code didn’t come across when Homeroom moved off GitHub. Its creator can submit it again, or Homeroom restores it when GitHub’s copy of the code arrives.",
+    "description": "Tooltip of the \"Code missing\" fact on a Needs-you card. GitHub is a product name; Homeroom is the product's own name. \"GitHub's copy of the code\" is the export of the old repositories that GitHub is sending to Homeroom. \"Submit it again\" means put the same change up again."
+  },
   "needsYou.answered.votedYes": {
     "text": "Voted yes",
     "description": "Confirmation at the top of an item in the Needs you feed once this person has voted Yes on the change. A hint on how to reach the next item follows it after a middle dot. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
@@ -2530,6 +2538,10 @@
   "topic.change.summaryStale": {
     "text": "Written for an earlier version of this change.",
     "description": "Note under a change's summary on its page when the change was updated after the summary was written, so the summary may no longer describe it."
+  },
+  "topic.change.codeMissing": {
+    "text": "This proposal’s code didn’t come across when Homeroom moved off GitHub. Its creator can submit it again, or Homeroom restores it when GitHub’s copy of the code arrives.",
+    "description": "Amber notice on a change's page, above its Votes and Testing cards, when the change's code (its branch) is not on Homeroom's own code host because it did not come across when Homeroom moved off GitHub. GitHub is a product name; Homeroom is the product's own name. \"GitHub's copy of the code\" is the export of the old repositories that GitHub is sending to Homeroom. \"Submit it again\" means put the same change up again."
   },
   "topic.change.gate.noteSeeFailed": {
     "text": "{{note}} <0>See what failed</0>",

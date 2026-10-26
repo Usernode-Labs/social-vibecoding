@@ -29,6 +29,7 @@
 // Mounted AFTER authMiddleware in server.js: req.user is guaranteed.
 
 const { Router } = require('express');
+const { currentAppBridge } = require('../middleware/app-bridge');
 const { getPool } = require('../db/pool');
 const userDirectory = require('../services/user-directory');
 const { userDirectoryLimiter } = require('../middleware/rate-limits');
@@ -49,11 +50,8 @@ function appDirectoryRoutes(config) {
   // the parent relay's scope rules change.
   router.use('/api/app-directory/users', (req, res, next) => {
     res.set('Cache-Control', NO_STORE);
-    if (req.get('X-Usernode-Directory-Bridge') !== 'platform-isolated-v1') {
-      return res.status(403).json({ code: 'directory_bridge_upgrade_required', error: 'Reload Homeroom to use the directory.' });
-    }
     next();
-  });
+  }, currentAppBridge);
 
   // Exact-handle existence check. 200 { found:false, user:null } for a
   // miss; 400 only for input that cannot be a username at all.
