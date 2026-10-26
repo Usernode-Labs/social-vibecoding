@@ -613,7 +613,8 @@ test('the merge\'s head-moved 409 announces the cleared votes itself, so the rec
 // `madeBy`, and its description was marked "Written for an earlier version
 // of this change." Both are decided by the reconciler now, from the commits
 // the move added (services/homeroom-commits.js), whichever caller claims it.
-function commitOnFeature(r, file, body, message, { email = 'usernode-bot@users.noreply.github.com', name = 'usernode-bot' } = {}) {
+// By default under Homeroom's one identity (services/commit-identity.js).
+function commitOnFeature(r, file, body, message, { email = 'homeroom@users.noreply.onhomeroom.com', name = 'Homeroom' } = {}) {
   git(r.dir, 'checkout', '-q', 'feature');
   fs.writeFileSync(path.join(r.dir, file), body);
   git(r.dir, 'add', '-A');
@@ -661,6 +662,21 @@ test('a fix round of the bot\'s leaves the description as it stands', async () =
       assert.equal(posted[0].content, 'Updated. Earlier votes were cleared, so take another look.');
     } finally { restore(); r.cleanup(); }
   }
+});
+
+test('a fix round committed before 26 Oct 2026, under usernode-bot\'s address, is still the bot\'s', async () => {
+  // Recognition only: Homeroom no longer commits under it, but its old
+  // commits keep it (services/commit-identity.js LEGACY_EMAIL).
+  const r = commitOnFeature(repo(), 'a.txt', 'PROPOSAL FIXED\nl2\nl3\n', 'Homeroom bot: fix the failing checks on #12',
+    { email: 'usernode-bot@users.noreply.github.com', name: 'usernode-bot' });
+  const posted = [];
+  const { votes, restore } = load(r, posted);
+  try {
+    const pool = makePool({ epoch: 3, voters: 1 });
+    await votes.reconcileNativeReviewedHead({ config: {}, pool, session: session(r, { approval_epoch: 3 }), notify: true });
+    assert.equal(claimOf(pool).fixOnly, true);
+    assert.equal(posted[0].content, 'Updated. Earlier votes were cleared, so take another look.');
+  } finally { restore(); r.cleanup(); }
 });
 
 test('a person\'s push, or a fix message somebody else committed, is said and treated as before', async () => {

@@ -6630,10 +6630,11 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
     // the deployProduction shallow-clone pattern doesn't apply here.
     await docker.execFileAsync('git', ['clone', cloneUrl, tmpDir], { timeout: 180000 });
 
-    // Committer identity for the revert commit. Matches the
-    // usernode-bot convention used elsewhere.
-    await docker.execFileAsync('git', ['-C', tmpDir, 'config', 'user.name', 'usernode-bot']);
-    await docker.execFileAsync('git', ['-C', tmpDir, 'config', 'user.email', 'usernode-bot@users.noreply.github.com']);
+    // Committer identity for the revert commit: Homeroom's one identity
+    // (services/commit-identity.js), as on the git host.
+    const author = require('../services/commit-identity').homeroomAuthor();
+    await docker.execFileAsync('git', ['-C', tmpDir, 'config', 'user.name', author.name]);
+    await docker.execFileAsync('git', ['-C', tmpDir, 'config', 'user.email', author.email]);
 
     // Branch off the current main. main has already been updated by
     // the original merge + any subsequent merges by the time we get
