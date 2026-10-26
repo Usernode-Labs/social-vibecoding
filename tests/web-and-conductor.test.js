@@ -3,8 +3,9 @@
 // What a process that never leads needs from the one that does, and what
 // each process does for itself (docs/plans/web-and-conductor.md): statuses
 // the leader keeps in memory, published for the others; the leader's loops
-// woken over the bus from wherever a request landed; the open-issues copy
-// kept in step across processes; DM answers asked again exactly once;
+// woken over the bus from wherever a request landed; the boards every
+// process reads alike, with no copy to keep in step since requests became
+// rows; DM answers asked again exactly once;
 // workers warm in one process left alone by the others; and a web process
 // that never stands for election. The other process is played by the
 // registry's copy of its holds (a fake database answers the mirror's read)
@@ -98,24 +99,28 @@ test('neither the bench lane nor the shots evals need a wake: each is a machine 
 
 // ── The open-issues copy ──────────────────────────────────────────────
 
-test('issues one process closes leave every process\'s open-issues copy, and are never passed on again', (t) => {
+// Until requests left GitHub (26 Oct 2026) every process kept its own copy
+// of each board, and a close, an invalidation or a reopen was passed over
+// the bus (issues_cache) to the others. Requests are rows now
+// (services/requests.js): every process reads the same ones, so nothing is
+// passed on, and a message an older process still sends changes nothing.
+test('issues one process closes leave every process\'s board read, with nothing passed over the bus', async (t) => {
+  const { installFakeRequests } = require('./helpers/fake-requests');
+  installFakeRequests(t, { 'Acme/board': [{ number: 4, title: 'four' }, { number: 5, title: 'five' }, { number: 6, title: 'six' }] });
   const sent = capturePublishes(t);
   const github = require('../src/services/github');
+  await github.closeIssue('Acme', 'board', 4);
+  await github.closeIssue('Acme', 'board', 5);
   github.noteIssuesClosed('Acme', 'board', [4, 'x', 5]);
   github.invalidateIssuesCache('Acme', 'board');
   github.unsuppressIssues('Acme', 'board', [5]);
-  assert.deepEqual(sent, [
-    { kind: 'issues_cache', routing: { owner: 'Acme', repo: 'board' }, data: { closed: [4, 5] } },
-    { kind: 'issues_cache', routing: { owner: 'Acme', repo: 'board' }, data: { invalidate: true } },
-    { kind: 'issues_cache', routing: { owner: 'Acme', repo: 'board' }, data: { open: [5] } },
-  ]);
-  sent.length = 0;
+  assert.deepEqual(sent, [], 'nothing is passed on');
   const ws = require('../src/services/ws');
-  ws._onBusMessage({ kind: 'issues_cache', routing: { owner: 'Acme', repo: 'other' }, data: { closed: [7] } });
-  ws._onBusMessage({ kind: 'issues_closed', routing: { owner: 'Acme', repo: 'other' }, data: { numbers: [8] }, fromWorkflow: true });
-  assert.deepEqual(sent, [], 'what another process shared is applied here only');
-  // Applied: the closed numbers are suppressed here, as noteIssuesClosed does.
-  assert.equal(github.unsuppressIssues('Acme', 'other', [7, 8]), 2);
+  ws._onBusMessage({ kind: 'issues_cache', routing: { owner: 'Acme', repo: 'board' }, data: { open: [5] } });
+  ws._onBusMessage({ kind: 'issues_closed', routing: { owner: 'Acme', repo: 'board' }, data: { numbers: [6] }, fromWorkflow: true });
+  assert.deepEqual(sent, []);
+  assert.deepEqual((await github.fetchPublicIssues('Acme', 'board')).issues.map((i) => i.number), [6],
+    'the rows decide: the two closed are gone, and the bus messages changed nothing');
 });
 
 // ── DM answers asked again ────────────────────────────────────────────
