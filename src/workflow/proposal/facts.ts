@@ -27,7 +27,7 @@ import type { ClaimFacts } from '../rules/merge-claim.ts';
 import type { GovernedGate } from '../rules/governance-gate.ts';
 import { appMetaFromRow, governanceFromRow } from '../rules/governance-gate.ts';
 import { electorate, getApproverSet } from '../rules/electorate.ts';
-import { parseGithubUrl } from '../rules/github-url.ts';
+import { parseRepoAddress } from '../rules/github-url.ts';
 import { NOT_MOVING_KINDS, botLookingSql, buildHoldSql, movingTurnSql, operationsLiveSql, shotsRunningSql, syncWorkingSql } from '../session-work.ts';
 
 export interface Row {
@@ -187,7 +187,7 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
   const imported = r.source === 'imported';
   return {
     id: r.id, appId: r.app_id, appSlug: r.app_slug, selfHosted: !!r.self_hosted,
-    repo: r.repo_url ? parseGithubUrl(r.repo_url) : null,
+    repo: r.repo_url ? parseRepoAddress(r.repo_url) : null,
     userId: r.user_id ?? null, ownerName: r.owner_name ?? null, ownerSynthetic: !!r.owner_synthetic,
     status: r.status, imported, platform: r.source === 'maintenance', headless: !!r.is_headless,
     prNumber: r.pr_number ?? null, prTitle: r.pr_title ?? null, branch: r.branch_name ?? null,

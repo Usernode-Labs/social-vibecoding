@@ -4,7 +4,7 @@
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import { parseGithubUrl } from '../rules/github-url.ts';
+import { parseRepoAddress } from '../rules/github-url.ts';
 import { permanent } from '../work-errors.ts';
 import { MACHINE, WORK, sessionKey } from './machine.ts';
 import { turnOwner } from '../rules/turn-stop.ts';
@@ -44,7 +44,7 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
         const row = await session(Number(input.sessionId));
         if (!row) throw refused('not_found', 'The proposal is gone');
         const imported = row.source === 'imported';
-        const repo = parseGithubUrl(row.repo_url || '');
+        const repo = parseRepoAddress(row.repo_url || '');
         const gh = github();
 
         // #2500 / #2537: the originating request of a session older than the
@@ -304,7 +304,7 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
       backoffMs: () => 10000,
       async run({ input }): Promise<Json> {
         const row = await session(Number(input.sessionId));
-        const repo = row?.repo_url ? parseGithubUrl(row.repo_url) : null;
+        const repo = row?.repo_url ? parseRepoAddress(row.repo_url) : null;
         if (!row || !repo || !row.pr_number) return { merged: false, gone: true };
         const mock = row.source === 'imported' && legacy('config').usesMockGithubForImports();
         const gh = mock ? legacy('services/github-mock') : github();

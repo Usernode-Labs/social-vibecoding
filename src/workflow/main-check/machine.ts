@@ -36,7 +36,7 @@ import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type { Check, DomainWrite, Event, Json, Machine, MessageRequest, Outcome, TransitionContext, Tx, WorkRequest, WorkResultPayload } from '../kernel/index.ts';
 import { NO_FACTS, readFacts, testKey } from './facts.ts';
 import type { Facts, Row } from './facts.ts';
-import { parseGithubUrl as parseRepo } from '../rules/github-url.ts';
+import { parseRepoAddress as parseRepo } from '../rules/github-url.ts';
 
 export const MACHINE = 'main-check';
 export const appKey = (appId: number) => `app:${appId}`;

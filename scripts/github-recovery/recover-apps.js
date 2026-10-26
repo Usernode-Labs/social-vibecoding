@@ -74,6 +74,8 @@ function tryGit(cwd, ...a) {
 }
 
 const PLATFORM = /github\.com\/usernode-labs\/social-vibecoding(\.git)?\/?$/i;
+// When the account went: the date every recovered commit carries.
+const RECOVERED_AT = '2026-10-25T00:00:00Z';
 // services/template.js's .gitignore: build output and secrets never in git.
 const STANDARD_EXCLUDES = ['node_modules/', 'public/tailwind.css', '.env', '.env.*', '.playwright-mcp/', 'test-results/', 'playwright-report/'];
 const GITHUB = /github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/;
@@ -143,8 +145,11 @@ function buildCommit({ app, filesDir, repoDir, mirror, manifest, imageRef }) {
     treeMatches ? 'The tree is exactly GitHub main\'s tree.' : null,
     missing.length ? `Not in the image, so not here: ${missing.slice(0, 40).join(', ')}${missing.length > 40 ? ', ...' : ''}` : null,
   ].filter((l) => l !== null).join('\n');
+  // Fixed dates: the same files make the same commit on every run, so a
+  // re-run finds its own commit already on the git host.
   execFileSync('git', ['-C', repoDir, '-c', 'user.name=Homeroom', '-c', 'user.email=homeroom@users.noreply.onhomeroom.com',
-    'commit', '-q', '--no-verify', '--allow-empty', '-m', message]);
+    'commit', '-q', '--no-verify', '--allow-empty', '-m', message],
+  { env: { ...process.env, GIT_AUTHOR_DATE: RECOVERED_AT, GIT_COMMITTER_DATE: RECOVERED_AT } });
   return { sha: git(repoDir, 'rev-parse', 'HEAD'), tree, missing, extra, treeMatches };
 }
 
@@ -177,6 +182,9 @@ async function main() {
   if (opt.push && !gitHost.isConfigured()) throw new Error('--push needs GIT_HOST_URL, GIT_HOST_USER and GIT_HOST_TOKEN');
   if (opt.push && !process.env.GIT_HOST_INTERNAL_URL) process.env.GIT_HOST_INTERNAL_URL = process.env.GIT_HOST_URL;
 
+  // Every move recorded so far, across runs: the SQL is written from all of them.
+  const movesFile = path.join(opt.out, 'moves.json');
+  const moves = fs.existsSync(movesFile) ? JSON.parse(fs.readFileSync(movesFile, 'utf8')) : {};
   const report = [['slug', 'outcome', 'github_repo', 'github_main_sha', 'new_main_sha', 'tree_matches', 'missing', 'extra', 'image', 'note'].join('\t')];
   const sql = ['\\set ON_ERROR_STOP on', 'BEGIN;'];
   for (const app of chosen) {
@@ -212,8 +220,12 @@ async function main() {
       if (opt.push) {
         await gitHost.createRepo(repo, { description: `Recovered ${app.slug}`, adoptExisting: true });
         const there = await gitHost.readRef(repo, 'main');
-        if (there && there !== row.sha && tryGit(row.dir, 'rev-parse', `${there}^{tree}`) !== (row.tree || tryGit(row.dir, 'rev-parse', `${row.sha}^{tree}`))) {
-          throw new Error(`apps/${repo} already has a different main (${there.slice(0, 8)}); not overwritten`);
+        if (there && there !== row.sha) {
+          // Already pushed by an earlier run: the same tree is the same app.
+          await gitHost.git(['-C', row.dir, 'fetch', '-q', gitHost.cloneUrl(repo), there], { auth: true }).catch(() => {});
+          const theirs = tryGit(row.dir, 'rev-parse', `${there}^{tree}`);
+          const ours = row.tree || tryGit(row.dir, 'rev-parse', `${row.sha}^{tree}`);
+          if (!theirs || theirs !== ours) throw new Error(`apps/${repo} already has a different main (${there.slice(0, 8)}); not overwritten`);
         }
         if (!there) {
           if (row.outcome === 'mirrored') {
@@ -225,12 +237,10 @@ async function main() {
           row.sha = there;
           row.note = `${row.note || ''} (already there)`;
         }
-        sql.push(`INSERT INTO git_host_moves (app_id, repo_url, github_repo_url, main_sha, github_main_sha, outcome, source_image, missing_files)
-VALUES (${Number(app.id)}, ${sqlString(gitHost.repoUrl(repo))}, ${sqlString(app.repo_url)}, ${sqlString(row.sha)}, ${sqlString(app.main_sha || null)},
-        ${sqlString(row.outcome)}, ${sqlString(row.image || null)}, ${sqlArray(row.missing)})
-ON CONFLICT (app_id) DO UPDATE SET repo_url = EXCLUDED.repo_url, main_sha = EXCLUDED.main_sha, outcome = EXCLUDED.outcome,
-  source_image = EXCLUDED.source_image, missing_files = EXCLUDED.missing_files, recorded_at = NOW()
-WHERE git_host_moves.applied_at IS NULL;`);
+        moves[app.slug] = {
+          appId: Number(app.id), repoUrl: gitHost.repoUrl(repo), githubRepoUrl: app.repo_url, mainSha: row.sha,
+          githubMainSha: app.main_sha || null, outcome: row.outcome, image: row.image || null, missing: row.missing,
+        };
       }
       report.push([app.slug, row.outcome, `${owner}/${repo}`, app.main_sha || '', row.sha, row.treeMatches ? 'yes' : 'no',
         row.missing.join(' '), row.extra.join(' '), row.image || '', row.note || ''].join('\t'));
@@ -240,9 +250,20 @@ WHERE git_host_moves.applied_at IS NULL;`);
       console.log(`${app.slug}: FAILED ${err.message}`);
     }
   }
+  for (const [, mv] of Object.entries(moves).sort((x, y) => x[1].appId - y[1].appId)) {
+    sql.push(`INSERT INTO git_host_moves (app_id, repo_url, github_repo_url, main_sha, github_main_sha, outcome, source_image, missing_files)
+VALUES (${mv.appId}, ${sqlString(mv.repoUrl)}, ${sqlString(mv.githubRepoUrl)}, ${sqlString(mv.mainSha)}, ${sqlString(mv.githubMainSha)},
+        ${sqlString(mv.outcome)}, ${sqlString(mv.image)}, ${sqlArray(mv.missing || [])})
+ON CONFLICT (app_id) DO UPDATE SET repo_url = EXCLUDED.repo_url, main_sha = EXCLUDED.main_sha, outcome = EXCLUDED.outcome,
+  source_image = EXCLUDED.source_image, missing_files = EXCLUDED.missing_files, recorded_at = NOW()
+WHERE git_host_moves.applied_at IS NULL;`);
+  }
   sql.push('COMMIT;');
   fs.writeFileSync(path.join(opt.out, 'report.tsv'), `${report.join('\n')}\n`, { mode: 0o600 });
-  if (opt.push) fs.writeFileSync(path.join(opt.out, 'git-host-moves.sql'), `${sql.join('\n')}\n`, { mode: 0o600 });
+  if (opt.push) {
+    fs.writeFileSync(movesFile, JSON.stringify(moves, null, 1), { mode: 0o600 });
+    fs.writeFileSync(path.join(opt.out, 'git-host-moves.sql'), `${sql.join('\n')}\n`, { mode: 0o600 });
+  }
   console.log(`report: ${path.join(opt.out, 'report.tsv')}${opt.push ? `, sql: ${path.join(opt.out, 'git-host-moves.sql')}` : ' (dry run: nothing sent)'}`);
 }
 

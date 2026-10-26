@@ -7,7 +7,7 @@ import { electorate } from '../rules/electorate.ts';
 import { appMetaFromRow, governanceFromRow } from '../rules/governance-gate.ts';
 import { GOVERNANCE_KINDS as KINDS } from '../rules/governance-kinds.ts';
 import type { RulesFacts } from '../rules/governance-rules.ts';
-import { parseGithubUrl } from '../rules/github-url.ts';
+import { parseRepoAddress } from '../rules/github-url.ts';
 import { missingProposalImage } from '../rules/illustrations.ts';
 import { isWritableKey, normalizeValue, validateValue } from '../rules/platform-vars.ts';
 import { decrypt } from '../rules/secrets.ts';
@@ -38,7 +38,7 @@ export interface Facts {
 
 // The platform's own parser: https, ssh, a .git suffix, and dotted names.
 function parseRepo(url: string | null): Issue['app']['repo'] {
-  return parseGithubUrl(url || '');
+  return parseRepoAddress(url || '');
 }
 
 // One vote on the proposal, as the facts read it.
