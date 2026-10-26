@@ -1991,6 +1991,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         // child app. The raw column rides along in the allowlist; this is
         // the shape clients read.
         releaseStall: require('../services/release-watch').describe(appRow),
+        // Whether changes to this project's code are held while Homeroom
+        // moves off GitHub: its repository is still on GitHub (the
+        // platform's own) and GitHub is paused (services/github-pause.js).
+        // The project page's banner says so; every other project reads
+        // false.
+        codeChangesPaused: require('../services/github-pause').codeChangesPaused(appRow.repo_url),
         ...accessFlags(appRow, req.user, isCollaborator, adminAppIds, contributorCount,
           config.selfAppSlug),
       };

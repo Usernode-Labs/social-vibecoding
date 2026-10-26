@@ -82,6 +82,18 @@ function pausedError() {
   return new GithubPausedError(reason());
 }
 
+/**
+ * Whether code changes to the repository at `repoUrl` are held by the pause:
+ * it is on GitHub (only the platform's own repository is, since the move to
+ * the git host) and GitHub is paused, so nothing can be proposed, pushed or
+ * merged to it from Homeroom (the worker push and the merge refuse). The
+ * project page says so (GET /api/apps/:slug `codeChangesPaused`); requests
+ * and discussions are Homeroom's own and carry on.
+ */
+function codeChangesPaused(repoUrl) {
+  return isPaused() && require('./repo-ref').isGithub(repoUrl);
+}
+
 /** Throws GithubPausedError when paused. Logs the first refusal per process. */
 function assertNotPaused(context = null) {
   if (!isPaused()) return;
@@ -219,6 +231,7 @@ module.exports = {
   isPaused,
   state,
   pausedError,
+  codeChangesPaused,
   assertNotPaused,
   isPausedError,
   isDeadCredential,

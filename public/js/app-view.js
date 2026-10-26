@@ -10403,6 +10403,7 @@ const AppView = {
     }
     AppView._renderMainPauseNotice();
     AppView._renderReleaseStallNotice();
+    AppView._renderCodePauseNotice();
     AppView._repaintDevBodyKeepingPosition();
     // The themes ride in behind the board's own data: the Workshop paints
     // first from what it has (every item under "Everything on the board")
@@ -10562,6 +10563,19 @@ const AppView = {
       canResume: paused && !AppView.readOnly
         && !!(typeof App !== 'undefined' && App.user && App.user.canAdminWrite),
       slug: (AppView.appData && AppView.appData.slug) || null,
+    });
+  },
+
+  // The "code changes are paused" banner (features/dev-board/
+  // code-pause-store.ts), from the app record's `codeChangesPaused`: the
+  // project's code is still on GitHub (the platform's own) and GitHub is
+  // paused, so no change to it can be proposed, pushed or merged here.
+  // Project state, said once above the cards. False for every other project.
+  _renderCodePauseNotice() {
+    const app = AppView.appData;
+    AppView._reactDevBoard()?.publishCodePause?.({
+      paused: !!(app && app.codeChangesPaused === true),
+      slug: (app && app.slug) || null,
     });
   },
 

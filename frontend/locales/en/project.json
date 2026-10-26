@@ -4063,6 +4063,10 @@
     "text": "Commit (unknown) landed on main but is not running yet, and no release workflow run could be found for it. The platform is still running {{running}}.",
     "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch is not live and no run of the automated release job was found for it. Used when the commit is not known; \"(unknown)\" is written as the banner has always shown it. {{running}} is the build still serving."
   },
+  "codePause.notice": {
+    "text": "Changes to this project’s code are paused while Homeroom moves off GitHub. Requests and discussions still work.",
+    "description": "Amber banner above the cards on the page of a project whose code is still on GitHub, while Homeroom has stopped using GitHub: nobody can propose, build or merge a change to its code for now. Requests (what members ask for) and discussions are unaffected. GitHub is a product name; Homeroom is the product’s own name."
+  },
   "clamp.showMore": {
     "text": "Show more",
     "description": "Button under a long comment that is cut off after four lines, on a request's or proposal's card and page: shows the whole comment."
