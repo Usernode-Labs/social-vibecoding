@@ -56,7 +56,9 @@ function cluster({ pending = false, orphan = false, failInventory = false } = {}
 
 test('a current desired template cannot attest old actual Pods; restrict endpoints then retire the whole runtime', async () => {
   const c=cluster();
-  const result=await kube.retirePlatformPreviewPolicy(config,10,policy.DIGEST,{timeoutMs:10,pollMs:0});
+  // A deadline a busy test run can meet: the fake cluster retires at once,
+  // but 10 ms ran out on the checks' own run with thousands of tests beside it.
+  const result=await kube.retirePlatformPreviewPolicy(config,10,policy.DIGEST,{timeoutMs:5000,pollMs:0});
   assert.equal(result.retired,1);
   assert.deepEqual(c.calls,['restrict-service','delete-deployment']);
   assert.equal(c.store.service.spec.selector[policy.LABEL],policy.DIGEST);
