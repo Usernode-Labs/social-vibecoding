@@ -14,7 +14,11 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \
 # died with a raw gyp stack, failing the unit-suite check's `npm ci` for
 # any repo with a native dep. The toolchain makes the fallback actually
 # work, for the unit-suite one-shot and for agent build turns alike.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# The base image's own packages are upgraded first: the release's image scan
+# refuses a fixed advisory left unpatched (OpenSSL CVE-2026-84782, 26 Oct
+# 2026), and a cached layer would otherwise keep the old package.
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+  && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates unzip python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 

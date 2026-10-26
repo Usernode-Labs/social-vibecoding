@@ -80,7 +80,10 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \
 
 # Kubernetes mode talks to the Kubernetes and PostgreSQL APIs over the
 # network. It deliberately contains no Docker CLI or container-runtime tools.
-RUN apk add --no-cache git postgresql-client
+# The base image's own packages are upgraded first: the release's image scan
+# refuses a fixed advisory left unpatched (libcurl CVE-2026-92392, 26 Oct
+# 2026), and a cached layer would otherwise keep the old package.
+RUN apk upgrade --no-cache && apk add --no-cache git postgresql-client
 
 WORKDIR /app
 COPY --chown=node:node package.json package-lock.json ./
