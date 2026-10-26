@@ -909,8 +909,12 @@ async function backfillLinkedIssuesFromPrBodies(pool) {
   const github = require('../services/github');
   const prMetadata = require('../services/pr-metadata');
 
-  if (typeof github.isEnabled === 'function' && !github.isEnabled()) {
-    log.debug('db', 'linked-issues backfill skipped (github disabled)');
+  // The GitHub App itself, not isEnabled(): with the git host configured
+  // isEnabled() is true in the migration Job too, which never sets the App
+  // up and may not reach GitHub, and this read every GitHub-hosted
+  // proposal's body there, each one timing out (release of 26 Oct 2026).
+  if (typeof github.hasApp === 'function' && !github.hasApp()) {
+    log.debug('db', 'linked-issues backfill skipped (no GitHub App in this process)');
     return;
   }
 
@@ -15691,6 +15695,7 @@ module.exports = {
   followPlatformDefaultModel,
   seedStagingHelperCalls,
   clearAutomatedChannelLines,
+  backfillLinkedIssuesFromPrBodies,
   backfillPlanRows,
   backfillProposalIssuerAssignments, backfillVotesRequired,
   backfillSettingsProposalSource,

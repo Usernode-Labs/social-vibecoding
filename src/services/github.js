@@ -317,6 +317,13 @@ function isEnabled() {
   return !!app || require('./git-host').isConfigured();
 }
 
+// Whether this process set up the GitHub App (init): what isEnabled meant
+// before the git host. A process that never calls init, the migration Job
+// among them, has none.
+function hasApp() {
+  return !!app;
+}
+
 // Whether Homeroom can write app repositories, which branches and proposals
 // need: the git host's service account, or on GitHub the bot's token. A
 // repository still on GitHub is refused while paused. isEnabled is read
@@ -2151,6 +2158,7 @@ module.exports = {
   expireIssuesCachesHere,
   init,
   isEnabled,
+  hasApp,
   hasWriteAccess,
   getBotUsername,
   getOctokit,
