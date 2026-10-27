@@ -57,6 +57,7 @@ const { Router } = require('express');
 const { getPool } = require('../../db/pool');
 const log = require('../../services/logger');
 const { partnerApiKey } = require('../../middleware/topochain-auth');
+const { parseActivityAt } = require('../../services/topochain/activity-time');
 const {
   partnerActivityLimiter, partnerActivityParticipantLimiter,
 } = require('../../middleware/rate-limits');
@@ -150,14 +151,16 @@ function topochainPartnerRoutes(config) {
       }
 
       let activityAt = null;
+      let activityPrecision = null;
       if (body.activity_at === undefined || body.activity_at === null || body.activity_at === '') {
         details.activity_at = ['The activity_at field is required and must be a valid date.'];
       } else {
-        const parsed = new Date(body.activity_at);
-        if (Number.isNaN(parsed.getTime())) {
+        const parsed = parseActivityAt(body.activity_at);
+        if (!parsed) {
           details.activity_at = ['The activity_at field is required and must be a valid date.'];
         } else {
-          activityAt = parsed;
+          activityAt = parsed.at;
+          activityPrecision = parsed.precision;
         }
       }
 
@@ -233,6 +236,13 @@ function topochainPartnerRoutes(config) {
       // same LEFT JOIN shape.
       const storedActivityType = challenge.category || activityType;
 
+      // A bare date is stored at noon UTC marked 'day', so the activity list
+      // shows the date alone instead of a made-up midnight. The partner's own
+      // metadata is otherwise stored exactly as it sent it.
+      const storedMetadata = activityPrecision === 'day'
+        ? { ...(metadata || {}), timestamp_precision: 'day' }
+        : metadata;
+
       const { rows: insertRows } = await pool.query(
         `INSERT INTO user_activities
            (user_id, season_event_id, activity_type, points, description, metadata,
@@ -240,7 +250,7 @@ function topochainPartnerRoutes(config) {
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'api', $8, NOW(), NOW())
          RETURNING id, user_id, season_event_id, activity_type, points`,
         [userId, seasonEventId, storedActivityType, points, description,
-          metadata ? JSON.stringify(metadata) : null, activityAt, challengeId]
+          storedMetadata ? JSON.stringify(storedMetadata) : null, activityAt, challengeId]
       );
       const row = insertRows[0];
 

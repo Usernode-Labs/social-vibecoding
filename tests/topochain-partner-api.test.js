@@ -296,6 +296,23 @@ test("POST /user-activities: source is hard-set to the literal 'api' and challen
   assert.ok(lastUserActivityInsertSql.includes("'api'"));
 });
 
+test('POST /user-activities: a bare activity_at date is stored at noon UTC marked day-only, keeping the partner metadata', async () => {
+  const res = await postJson('/api/v4/user-activities', validActivityBody({ activity_at: '2026-10-20' }));
+  assert.equal(res.status, 201);
+  const row = userActivities[userActivities.length - 1];
+  assert.equal(new Date(row.activity_at).toISOString(), '2026-10-20T12:00:00.000Z');
+  assert.deepEqual(JSON.parse(row.metadata), { foo: 'bar', timestamp_precision: 'day' });
+});
+
+test('POST /user-activities: a full timestamp is stored unchanged with no precision added', async () => {
+  const at = '2026-10-20T15:42:13.000Z';
+  const res = await postJson('/api/v4/user-activities', validActivityBody({ activity_at: at }));
+  assert.equal(res.status, 201);
+  const row = userActivities[userActivities.length - 1];
+  assert.equal(new Date(row.activity_at).toISOString(), at);
+  assert.deepEqual(JSON.parse(row.metadata), { foo: 'bar' });
+});
+
 test('POST /user-activities: season-wide enrollment (season_event_id NULL) counts as enrolled — also proves telegram resolution', async () => {
   const res = await postJson('/api/v4/user-activities', validActivityBody({
     participant_identifier: 'bobtg', identifier_type: 'telegram', challenge_id: 500,

@@ -632,13 +632,13 @@ test("the viewer loop credits the finished numeric all the way to its target", (
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
   // Five rows on 900514 — one short and the bar stops at 4/5 and the glyph
   // stays a hollow ring, which is the state that is ALREADY covered.
-  assert.equal((block.match(/, 900514\)/g) || []).length, 5,
+  assert.equal((block.match(/, 900514(?:, DEFAULT)?\)/g) || []).length, 5,
     'a target of five needs five ledger rows to read as done');
   // …and the other two numeric fixtures stay part-filled, so "in progress"
   // and "finished" are both on screen.
-  assert.equal((block.match(/, 900512\)/g) || []).length, 3, '900512 stays at 3 of 8');
-  assert.equal((block.match(/, 900513\)/g) || []).length, 3, '900513 stays at 3 of 5');
-  // Every id must stay inside the viewer's own block — base+14..base+19 is
+  assert.equal((block.match(/, 900512(?:, DEFAULT)?\)/g) || []).length, 3, '900512 stays at 3 of 8');
+  assert.equal((block.match(/, 900513(?:, DEFAULT)?\)/g) || []).length, 3, '900513 stays at 3 of 5');
+  // Every id must stay inside the viewer's own block — base+15..base+19 is
   // the remaining slack, and overflowing into the next viewer's block is
   // swallowed by ON CONFLICT (id) rather than failing.
   const offsets = (block.match(/\$\{base \+ (\d+)\}/g) || [])
