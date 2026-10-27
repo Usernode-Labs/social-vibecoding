@@ -125,6 +125,10 @@ const EVENT_TYPES = Object.freeze({
   // outcome Firebase gave, including `refused` and `unreachable`. No
   // backfill — the button didn't exist before this shipped.
   SMS_TEST_SENT: 'sms_test_sent',
+  // An admin switched who sends texts (src/routes/admin.js PUT
+  // /api/admin/sms/provider). Metadata carries { from, to }, provider names,
+  // never a credential.
+  SMS_PROVIDER_CHANGED: 'sms_provider_changed',
   // An admin ran the bulk container rollover (src/services/app-rollover.js
   // via POST /api/admin/rollover): every running child-app container
   // recreated with freshly assembled env. Metadata carries the tally

@@ -26,6 +26,7 @@
 const log = require('./logger');
 const github = require('./github');
 const sessionBus = require('./session-bus');
+const repoRef = require('./repo-ref');
 // Called through the module object (ws.broadcastGlobal) rather than
 // destructured, so tests can monkey-patch the live push — the same
 // pattern the route suites use for worker.isInFlight / statusSvc.gather.
@@ -67,19 +68,18 @@ function normTitle(s) {
 }
 
 function parseRepoUrl(url) {
-  const m = String(url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-  return m ? { owner: m[1], repo: m[2] } : null;
+  return repoRef.ownerRepo(url);
 }
 
 // Resolve where a draft with this target would be filed. Kept separate
 // from createDraft so the Mayor turn can decide whether to OFFER the tool
 // at all without writing anything.
 //
-//   platform → the platform's own repo, filed with the bot PAT (the
-//              platform repo is not behind the per-app GitHub App
-//              installation).
-//   app      → the session app's own repo, filed through the GitHub App
-//              installation, exactly like routes/feedback.js's app path.
+//   platform → the platform's own board.
+//   app      → the session app's own board, exactly like
+//              routes/feedback.js's app path.
+// Both are request rows (services/requests.js), so neither needs GitHub's
+// bot token; an app's board needs its repository's address to name it.
 function resolveTarget(config, target, appRepoUrl) {
   if (target === 'app') {
     if (!github.isEnabled()) return { ok: false, code: 'not_configured' };
@@ -87,7 +87,6 @@ function resolveTarget(config, target, appRepoUrl) {
     if (!parsed) return { ok: false, code: 'no_repo' };
     return { ok: true, target: 'app', ...parsed };
   }
-  if (!process.env.GITHUB_BOT_TOKEN) return { ok: false, code: 'not_configured' };
   const parsed = parseRepoUrl(config && config.platformRepoUrl);
   if (!parsed) return { ok: false, code: 'no_repo' };
   return { ok: true, target: 'platform', ...parsed };

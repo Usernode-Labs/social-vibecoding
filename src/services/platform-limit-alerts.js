@@ -14,15 +14,16 @@
 //             nothing is idle. Set in Admin → Limits, else
 //             MAX_GLOBAL_SESSIONS (services/session-limit.js).
 //
-// and two that are GitHub's rather than ours, its hourly REST budget as the
+// and one that is GitHub's rather than ours, its hourly REST budget as the
 // last response reported it (services/github-budget.js):
 //
-//   github      the bot token's (GITHUB_BOT_TOKEN), which nearly every
-//               GitHub call spends. Used up, new proposals and before/after
-//               shots fail until the hour resets.
 //   github_app  the GitHub App installation's (the most-used one).
 //
-// GitHub's lines are fixed rather than PLATFORM_LIMIT_WARN_PERCENT: warn
+// A `github` line watched the bot token's budget until GitHub suspended that
+// account (25 Oct 2026) and the platform dropped its token. Its detail token
+// still parses, so a notification it sent before still reads.
+//
+// GitHub's line is fixed rather than PLATFORM_LIMIT_WARN_PERCENT: warn
 // when a fifth of the hour's budget is left (GITHUB_WARN_PERCENT used), and
 // again when it is used up. A new hour re-arms both, so each window pages
 // at most once per level. The figures are in memory on the leader, which is
@@ -107,18 +108,6 @@ const LIMITS = Object.freeze([
     // The count every start, resume and reopen asks
     // (session-caps.countGlobalSessions), so the alert and the refusal agree.
     count: (pool) => require('./session-caps').countGlobalSessions(pool),
-  }),
-  Object.freeze({
-    key: 'github',
-    // Read off GitHub's answers to this process: unknown (no cap) until it
-    // has made a call, which says nothing about the level.
-    fromAnswers: true,
-    envKey: 'GITHUB_BOT_TOKEN',
-    enabled: () => !!process.env.GITHUB_BOT_TOKEN,
-    percent: () => GITHUB_WARN_PERCENT,
-    cap: async () => githubBudget.alertFigures('pat').cap,
-    count: async () => githubBudget.alertFigures('pat').used,
-    window: () => githubBudget.alertFigures('pat').resetAt,
   }),
   Object.freeze({
     key: 'github_app',

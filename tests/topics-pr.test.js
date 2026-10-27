@@ -42,7 +42,6 @@ github.createPR = async (owner, repo, { branch, title, body }) => {
   ghCalls.push({ op: 'pr', branch, title, body });
   return { number: 777, html_url: 'https://github.com/o/r/pull/777' };
 };
-process.env.GITHUB_BOT_TOKEN = process.env.GITHUB_BOT_TOKEN || 'test-token';
 
 const topicsPr = require('../src/services/topics-pr');
 const { appRoutes } = require('../src/routes/apps');
@@ -193,10 +192,10 @@ test('members only: a non-member is asked to join, and nothing is opened', async
   assert.deepEqual(ghCalls, []);
 });
 
-test('without GitHub configured the route says so, plainly', async () => {
+test('without a code host configured the route says so, plainly', async () => {
   ghEnabled = false;
   const res = await propose({ op: 'archive', id: 'homeroom-bot' });
   assert.equal(res.status, 503);
-  assert.match((await res.json()).error, /GitHub configured/);
+  assert.match((await res.json()).error, /code host configured/);
   assert.deepEqual(ghCalls, []);
 });

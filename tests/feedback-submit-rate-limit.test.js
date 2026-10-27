@@ -35,22 +35,13 @@ const github = require('../src/services/github');
 github.isEnabled = () => true;
 github.noteIssueCreated = () => {};
 
-// Platform-target feedback files through a raw fetch to api.github.com —
-// stub that and count the creations, passing local requests through.
-process.env.GITHUB_BOT_TOKEN = 'test-pat';
-let ghCreates = 0;
+// Platform-target feedback files a request row on the platform's own board
+// (services/requests.js, through github.createIssue); an in-memory store
+// stands in for it and counts the filings.
+const { installFakeRequests } = require('./helpers/fake-requests');
+const fakeRequests = installFakeRequests(null, { 'plat/repo': [] }, { firstNumber: 77 });
+const filedCount = () => fakeRequests.filed.length;
 const realFetch = global.fetch;
-global.fetch = async (url, opts) => {
-  if (String(url).includes('api.github.com')) {
-    ghCreates++;
-    return {
-      ok: true,
-      status: 201,
-      json: async () => ({ number: 77, html_url: 'https://github.com/plat/repo/issues/77' }),
-    };
-  }
-  return realFetch(url, opts);
-};
 
 const { feedbackRoutes } = require('../src/routes/feedback');
 // #2669: read the cap, never restate it. The number the limiter enforces
@@ -85,18 +76,18 @@ async function post(server, body) {
 
 test('feedbackSubmitLimiter is mounted: one past the cap is a 429 that files nothing', async () => {
   currentUserId = 25201;
-  ghCreates = 0;
+  fakeRequests.filed.length = 0;
   const server = await startServer();
   try {
     for (let i = 0; i < LIMIT; i++) {
       const res = await post(server, { description: `report number ${i}` });
       assert.equal(res.status, 200, `submission ${i + 1} passes the limiter`);
     }
-    assert.equal(ghCreates, LIMIT, 'every accepted submission filed an issue');
+    assert.equal(filedCount(), LIMIT, 'every accepted submission filed an issue');
 
     const res = await post(server, { description: 'one too many' });
     assert.equal(res.status, 429);
-    assert.equal(ghCreates, LIMIT, 'the throttled submission files no issue');
+    assert.equal(filedCount(), LIMIT, 'the throttled submission files no issue');
 
     const body = await res.json();
     // The number the person reads must be the number enforced.

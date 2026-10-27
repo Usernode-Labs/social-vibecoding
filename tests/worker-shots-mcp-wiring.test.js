@@ -32,6 +32,20 @@ test('only the platform-owned hosted app for this exact run enters the shots cat
   assert.equal(trustedHostedAppOrigins([{ ...fixture, id: 42 }], 'https://platform.example.invalid', runId).size, 0);
 });
 
+test('a public app with a repository on either host and a deployed revision is a versioned runtime', () => {
+  const app = (repoUrl, sha = 'a'.repeat(40)) => ({
+    slug: 'notes', status: 'running', view_visibility: 'public', self_hosted: false,
+    url: 'https://notes.apps.example.invalid', repo_url: repoUrl, main_sha: sha,
+  });
+  const origins = (a) => [...trustedHostedAppOrigins([a], 'https://platform.example.invalid')];
+  const admitted = [['https://notes.apps.example.invalid', 'notes']];
+  assert.deepEqual(origins(app('https://github.com/usernode-bot/notes')), admitted);
+  assert.deepEqual(origins(app('https://git.example.invalid/apps/notes')), admitted);
+  assert.deepEqual(origins(app('https://git.example.invalid/apps/notes', null)), [], 'no deployed revision');
+  assert.deepEqual(origins(app('https://git.example.invalid/apps')), [], 'not a repository address');
+  assert.deepEqual(origins(app(null)), [], 'no repository');
+});
+
 test('planner origin list rejects stale or malformed hosted-app catalogs', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-origins-test-'));
   const file = path.join(dir, 'hosted.json');

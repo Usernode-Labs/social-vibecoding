@@ -35,6 +35,7 @@ const appManifest = require('./app-manifest');
 const events = require('./events');
 const topicAttrs = require('./topic-attributes');
 const explicitApprovalReasons = require('./explicit-approval');
+const repoRef = require('./repo-ref');
 
 function renamePrTitle(newName) {
   return `Rename to "${newName}"`;
@@ -72,7 +73,7 @@ function renamePrTitle(newName) {
  * `{ sessionId, prNumber, prUrl, branch }`.
  */
 async function createManifestPR(config, pool, app, actor, opts) {
-  const [, owner, repo] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  const { owner, repo } = repoRef.ownerRepo(app.repo_url) || {};
   if (!owner || !repo) throw new Error('Could not parse the app repository URL');
 
   // Build the updated dapp.json. Preserve existing fields when the file

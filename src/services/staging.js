@@ -16,6 +16,7 @@ const { appIdentityEnv } = require('./app-identity-env');
 const stagingEnv = require('./staging-env');
 const events = require('./events');
 const { getPool } = require('../db/pool');
+const repoRef = require('./repo-ref');
 
 // Custom error thrown by both staging + prod build paths when the cloned
 // repo's `dapp.json` declares required secrets that have no stored value. Callers (votes.js merge path, drift poller, dev-chat
@@ -224,7 +225,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
 
   try {
     // 1. Clone the PR branch
-    const [, owner, repo] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+    const { owner, repo } = repoRef.ownerRepo(app.repo_url) || {};
     if (!owner || !repo) throw new Error('Could not parse repo URL');
 
     const cloneUrl = await github.getCloneUrl(owner, repo);
@@ -255,7 +256,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
     // Native sessions (branches the platform itself owns and pushed) keep the
     // historical branch clone untouched — same behaviour, same timings.
     const prNumber = Number(session.pr_number) || null;
-    const viaPullRef = !!(pinnedSha && prNumber);
+    // GitHub's pull refs only: a repository on Homeroom's git host has none
+    // (its proposals are branches there), so it keeps the branch clone.
+    const viaPullRef = !!(pinnedSha && prNumber && !repoRef.isHosted(app.repo_url));
 
     // #1350: a native session gets its branch on its first turn, so a
     // session that has never run one has nothing to clone. Refuse with a
@@ -571,6 +574,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
       cpus: docker.STAGING_CPUS,
       labels: {
         [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint(platformEnv),
+        ...require('./platform-preview-data-policy').runtimeLabels(cloned),
         // Which database this runtime was given, and on which server: what
         // the heal pass checks when a preview database server can be wiped
         // or drained. Empty, so nothing is added, without such a server.
@@ -889,7 +893,7 @@ async function rebuildProductionInner(config, app, options = {}) {
           .then((r) => (r && r.status === 'ready' ? r : null), () => null),
       }));
     } else {
-      const [, owner, repo] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      const { owner, repo } = repoRef.ownerRepo(app.repo_url) || {};
       if (!owner || !repo) throw new Error('Could not parse repo URL');
 
       const cloneUrl = await github.getCloneUrl(owner, repo);

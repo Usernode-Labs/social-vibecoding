@@ -7,9 +7,10 @@
 //
 //   pat                    the bot's personal access token (GITHUB_BOT_TOKEN):
 //                          5,000 requests an hour, shared by everything the
-//                          platform does with it. On 2026-10-04 it ran out,
+//                          platform did with it. On 2026-10-04 it ran out,
 //                          and new proposals and before/after shots failed
-//                          until the hour reset.
+//                          until the hour reset. Never sent since GitHub
+//                          suspended the bot (25 Oct 2026).
 //   installation:<owner>   a GitHub App installation token: its own budget,
 //                          5,000 an hour and more for a larger installation.
 //   anonymous              an unauthenticated read: 60 an hour per IP.
@@ -52,9 +53,14 @@
 
 const path = require('node:path');
 const log = require('./logger');
+const pause = require('./github-pause');
 
 // Background work waits once less than this share of the limit is left.
 const RESERVE_RATIO = 0.15;
+
+// How soon background work held by a GitHub pause asks again.
+const PAUSE_RECHECK_MS = 60 * 1000;
+
 // Two responses whose reset times are closer than this are the same window.
 // A new window resets about an hour after the previous one, so a minute is
 // a wide margin either way.
@@ -63,8 +69,8 @@ const SAME_WINDOW_MS = 60 * 1000;
 // credential -> Map<resource, { limit, remaining, used, resetAt, observedAt }>
 const state = new Map();
 // Which credential answered the reads routed by services/github.js
-// getReadOctokit (GITHUB_READS_VIA_APP), since this process started: the
-// App installation, or the bot token, and why the bot token. `noInstallation`
+// getReadOctokit, since this process started: the App installation, or (until
+// the bot token stopped being sent, 26 Oct 2026) the bot token, and why. `noInstallation`
 // names the owners whose reads went to the bot token because the App is not
 // installed on them: installing it there is the fix, and only an owner of
 // that account can do it.
@@ -415,12 +421,10 @@ function installationCredentials() {
   return [...state.keys()].filter((c) => c.startsWith('installation:'));
 }
 
-// The credential(s) background work spends: the bot token when one is
-// configured (services/github.js getOctokit prefers it), else the App
-// installation for `owner`, or every known installation when no owner is
-// named.
+// The credential(s) background work spends: the App installation for
+// `owner`, or every known installation when no owner is named. The bot
+// token is never sent again (services/github.js "Who Homeroom is on GitHub").
 function backgroundCredentials(owner) {
-  if (process.env.GITHUB_BOT_TOKEN) return ['pat'];
   if (owner) return [normalizeCredential(`installation:${owner}`)].filter(Boolean);
   return installationCredentials();
 }
@@ -435,6 +439,14 @@ function reserveFor(limit) {
  * Logs once per credential per window when it first holds.
  */
 function backgroundHold({ credential = null, owner = null, now = Date.now() } = {}) {
+  // GitHub paused (services/github-pause.js): everything waits, whatever
+  // the budget says. Asked again a minute later, as a budget hold would be.
+  if (pause.isPaused()) {
+    return {
+      credential: 'pat', paused: true, remaining: 0, limit: 0, reserve: 0,
+      resetAt: now + PAUSE_RECHECK_MS, retryInMs: PAUSE_RECHECK_MS,
+    };
+  }
   const creds = credential ? [normalizeCredential(credential)].filter(Boolean) : backgroundCredentials(owner);
   for (const cred of creds) {
     const c = core(cred, { now });

@@ -75,6 +75,7 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
+const repoRef = require('../services/repo-ref');
 
 const CACHE_TTL_MS = 60 * 1000;
 
@@ -125,7 +126,7 @@ function shapeAbout(row, { config = {}, gitSha = null } = {}) {
   return {
     name: (typeof r.name === 'string' && r.name.trim()) || 'Homeroom',
     tagline: tagline || null,
-    repoUrl: r.repo_url || config.platformRepoUrl || null,
+    repoUrl: repoRef.webUrl(r.repo_url) || repoRef.webUrl(config.platformRepoUrl) || null,
     version: sha ? String(sha).slice(0, 7) : null,
     updatedAt: r.last_deploy_at ? new Date(r.last_deploy_at).toISOString() : null,
     stats: {

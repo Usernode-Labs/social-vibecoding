@@ -436,9 +436,14 @@ test('the gate runs before the push in the source, and the push re-runs it itsel
   const push = SRC.indexOf('head.pushForkBranchToAppBranch(');
   assert.ok(linkRead > 0 && verify > linkRead, 'the link is read before the fork is verified');
   assert.ok(push > verify, 'and the fork is verified before anything is pushed');
-  // Both fork-shaped arguments come from the verified link, textually.
-  assert.match(SRC, /forkOwner: link\.login/);
-  assert.match(SRC, /expectedLogin: link\.login/);
+  // Both fork-shaped arguments come from the verified link, textually. The
+  // one case with no link is an app on Homeroom's own git host, which reads
+  // no fork at all: a branch is refused for it before anything is read.
+  assert.match(SRC, /forkOwner: link \? link\.login : null/);
+  assert.match(SRC, /expectedLogin: link \? link\.login : null/);
+  assert.match(SRC, /const link = hostedRepo \? null : await githubLink\.linkStatus\(/);
+  assert.ok(SRC.indexOf("fail(\n      'patch_required'") < SRC.indexOf('githubLink.linkStatus('),
+    'a hosted app refuses a branch before the link is consulted');
   // And the second, load-bearing run lives inside the head service.
   const HEAD_SRC = fs.readFileSync(
     path.join(__dirname, '../src/services/external-agent-head.js'), 'utf8'

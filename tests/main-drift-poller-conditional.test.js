@@ -163,15 +163,10 @@ test('a 304 for a repo with nothing cached is still an error, never a guess', as
   }
 });
 
-test('a pass is held while the budget is under the reserve, and the admin check is not', async (t) => {
-  const prior = process.env.GITHUB_BOT_TOKEN;
-  process.env.GITHUB_BOT_TOKEN = 'test-token';
-  t.after(() => {
-    if (prior === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = prior;
-  });
+test('a pass is held while the budget is under the reserve, and the admin check is not', async () => {
   pollRows = [{ ...APP }, { ...APP, id: 6, slug: 'other', repo_url: 'https://github.com/usernode-bot/other' }];
-  budget.record('pat', {
+  // The App installation's figures: the credential background work spends.
+  budget.record('installation:usernode-labs', {
     'x-ratelimit-limit': '5000',
     'x-ratelimit-remaining': '400',
     'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 1800),

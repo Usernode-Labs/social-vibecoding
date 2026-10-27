@@ -235,6 +235,18 @@
     "text": "Start an agent session",
     "description": "Button in the banner on a read-only older dev chat session: starts a new conversation with the coding agent on the same app."
   },
+  "banner.codeMissing.text": {
+    "text": "This change’s code didn’t come across when Homeroom moved off GitHub, so it can’t be continued here. Nothing was changed. Start a new change from the current version (its plan comes with it), or wait: Homeroom restores the code when GitHub’s copy arrives.",
+    "description": "Amber banner at the top of a dev chat session whose code (its branch) is not on Homeroom's own code host, because it did not come across when Homeroom moved off GitHub. Nothing can be built or synced on it. GitHub is a product name; Homeroom is the product's own name. 'The current version' is the app as it is live now. 'Its plan' is the change's spec. \"GitHub's copy\" is the export of the old repositories that GitHub is sending to Homeroom."
+  },
+  "banner.codeMissing.start": {
+    "text": "Start a new change",
+    "description": "Button in the banner on a dev chat session whose code did not come across from GitHub, shown to the session's owner: opens a new conversation with the coding agent on the same app, ready to start a new change from the app's current version with this change's plan. 'Change' is a noun, a piece of work on the app."
+  },
+  "banner.codeMissing.seed": {
+    "text": "Start a new change from the current version, with the plan from change {{id}}.",
+    "description": "The first message, ready to send and editable, in the new conversation with the coding agent opened from the banner on a change whose code did not come across from GitHub. It asks the agent to start a new change on the app as it is now, using the old change's plan (its spec). {{id}} is the old change's number, for example 4223."
+  },
   "runner.pastTitle": {
     "text": "The last turn ran on {{machine}}. That machine has detached, so the next turn runs on Homeroom.",
     "description": "Tooltip on the 'Last turn' chip above the dev chat message box. {{machine}} is the name of the person's own computer that ran the coding agent's last request and has since disconnected."
@@ -477,7 +489,7 @@
   },
   "sessions.row.pr": {
     "text": "PR#{{number}}",
-    "description": "Link on a row in the list of dev chat sessions to the session's pull request on GitHub. PR is short for pull request; {{number}} is its number."
+    "description": "Link on a row in the list of dev chat sessions to the session's pull request: on GitHub, or the change's own page in Homeroom. PR is short for pull request; {{number}} is its number."
   },
   "sessions.empty.title": {
     "text": "Want to change this app? Just ask.",
@@ -697,7 +709,7 @@
   },
   "card.changes.prLink": {
     "text": "PR #{{number}}",
-    "description": "Link at the top of the changes card in the dev chat to the pull request on GitHub. PR is short for pull request; {{number}} is its number."
+    "description": "Link at the top of the changes card in the dev chat to the change's pull request: on GitHub, or the change's own page in Homeroom. PR is short for pull request; {{number}} is its number."
   },
   "card.changes.ready": {
     "text": "Changes ready",
@@ -725,7 +737,15 @@
   },
   "card.changes.viewOnGithub": {
     "text": "View on GitHub",
-    "description": "Link on the changes card in the dev chat: opens the change's pull request on GitHub."
+    "description": "Link on the changes card in the dev chat, for a change whose pull request is on GitHub: opens it on GitHub."
+  },
+  "card.changes.viewCode": {
+    "text": "View code",
+    "description": "Link on the changes card in the dev chat, for a change whose code is on Homeroom's own git host rather than GitHub: opens that code in a new tab. \"View\" is a verb."
+  },
+  "card.changes.openChange": {
+    "text": "Open change",
+    "description": "Link on the changes card in the dev chat, for a change that has its own page in Homeroom: opens that page, where its code, checks and vote are. \"Open\" is a verb; a change is the set of edits the coding agent made."
   },
   "card.changes.proposing": {
     "text": "Proposing…",

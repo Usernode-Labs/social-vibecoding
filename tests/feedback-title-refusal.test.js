@@ -43,22 +43,13 @@ const github = require('../src/services/github');
 github.isEnabled = () => true;
 github.noteIssueCreated = () => {};
 
-// Platform-target feedback files via a raw fetch to api.github.com with
-// the PAT; stub it and capture the POSTed body.
-process.env.GITHUB_BOT_TOKEN = 'test-pat';
-let ghCreates = [];
+// Platform-target feedback files a request row on the platform's own board
+// (services/requests.js, through github.createIssue); an in-memory store
+// stands in for it and records what was filed.
+const { installFakeRequests } = require('./helpers/fake-requests');
+const fakeRequests = installFakeRequests(null, { 'plat/repo': [] }, { firstNumber: 88 });
+const ghCreates = fakeRequests.filed;
 const realFetch = global.fetch;
-global.fetch = async (url, opts) => {
-  if (String(url).includes('api.github.com')) {
-    ghCreates.push(JSON.parse(opts.body));
-    return {
-      ok: true,
-      status: 201,
-      json: async () => ({ number: 88, html_url: 'https://github.com/plat/repo/issues/88' }),
-    };
-  }
-  return realFetch(url, opts);
-};
 
 const { feedbackRoutes } = require('../src/routes/feedback');
 const express = require('express');
@@ -109,7 +100,7 @@ const queuedHeal = () => poolQueries.some((q) => /INSERT INTO title_heal_queue/.
 
 beforeEach(() => {
   poolQueries = [];
-  ghCreates = [];
+  ghCreates.length = 0;
   spendCalls = [];
   modelCalls = 0;
   reply = null;

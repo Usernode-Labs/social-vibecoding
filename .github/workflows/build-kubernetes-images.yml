@@ -1,6 +1,8 @@
 name: Build Kubernetes images
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main, feat/k8s]
   schedule:
@@ -25,7 +27,219 @@ concurrency:
   queue: max
 
 jobs:
+  security-lockfiles:
+    name: Audit all three lockfiles
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
+      - run: node scripts/security-audit.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-security
+          path: security-reports/
+          if-no-files-found: error
+          retention-days: 30
+
+  security-regressions:
+    name: Security regressions (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
+      - run: npm ci
+      # Deliberately no --test-force-exit: open handles must fail the check.
+      - run: node --require ./tests/lib/test-net.js --test --test-timeout=180000 tests/build-stop-hook.test.js tests/inloop-launch.test.js tests/security-update.test.js tests/web-fetch.test.js tests/web-fetch-dns-pinning.test.js
+        timeout-minutes: 6
+
+      - run: node --require ./tests/lib/test-net.js --test --test-timeout=60000 tests/private-streams.test.js
+        timeout-minutes: 2
+
+  preview-schema-compatibility:
+    name: Preview schema compatibility (PostgreSQL 17/18)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    services:
+      postgres17:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: [5432/tcp]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+      postgres18:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: [5432/tcp]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      # Authority fixtures load real workflow handlers that depend on bcrypt.
+      - run: |
+          npm rebuild bcrypt --build-from-source
+          node --test --test-timeout=60000 tests/platform-preview-schema-compatibility.test.js tests/workflow-event-authority-postgres.test.js tests/worker-push-workflow-postgres.test.js tests/worker-release-workflow-postgres.test.js
+          node --test --test-timeout=60000 tests/worker-eviction-postgres.test.js
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports[5432] }}/postgres
+          TEST_PREVIEW_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres18.ports[5432] }}/postgres
+
+      # A preceding database regression may already have built authentication.
+      - run: |
+          node -e "require('bcrypt')" || npm rebuild bcrypt --build-from-source
+          node --require ./tests/lib/test-net.js --test --test-timeout=60000 --test-concurrency=1 tests/private-streams-postgres.test.js tests/notification-current-access-postgres.test.js tests/global-chat-turn-routes.test.js
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports[5432] }}/postgres
+
+  security-images:
+    name: Build and scan ${{ matrix.component }}
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { component: platform, dockerfile: Dockerfile.kubernetes, context: '.' }
+          - { component: standalone, dockerfile: Dockerfile, context: '.' }
+          - { component: worker, dockerfile: worker/Dockerfile, context: worker }
+          - { component: capture, dockerfile: capture/Dockerfile, context: '.' }
+          - { component: starter, dockerfile: '', context: '' }
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
+      - uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+      - name: Build and scan the finished image
+        shell: bash
+        env:
+          COMPONENT: ${{ matrix.component }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          CONTEXT: ${{ matrix.context }}
+        run: |
+          set -euo pipefail
+          if [ "$COMPONENT" = starter ]; then
+            node scripts/security-starter.js "$RUNNER_TEMP/starter-source"
+            CONTEXT="$RUNNER_TEMP/starter-source"
+            DOCKERFILE="$CONTEXT/Dockerfile"
+          fi
+          docker buildx build --load --pull --platform linux/amd64 -t "security-$COMPONENT" -f "$DOCKERFILE" "$CONTEXT"
+          out="$RUNNER_TEMP/security-$COMPONENT"
+          mkdir -p "$out"
+          sh scripts/create-image-sbom.sh "security-$COMPONENT" "$out/sbom.spdx.json"
+          sh scripts/check-image-security.sh "security-$COMPONENT" "$out" "$out/sbom.spdx.json" "$COMPONENT"
+      - name: Verify capture browser and media
+        if: matrix.component == 'capture'
+        timeout-minutes: 2
+        run: |
+          docker run --rm -i --network none --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint node security-capture < scripts/verify-capture-image.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr-image-security-${{ matrix.component }}
+          path: ${{ runner.temp }}/security-${{ matrix.component }}/
+          if-no-files-found: error
+          retention-days: 30
+
+  scheduled-image-audit:
+    name: Audit reused ${{ matrix.component }} image
+    if: github.event_name == 'schedule'
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [platform, worker, capture]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v4
+      - name: Resolve the existing image
+        id: reuse
+        env:
+          COMPONENT: ${{ matrix.component }}
+          FORCE_REBUILD: none
+          REUSE_CURRENT_PLATFORM: ${{ matrix.component == 'platform' }}
+          CLAUDE_CODE_VERSION: ${{ needs.plan.outputs.claude_code_version }}
+        run: node scripts/resolve-kubernetes-image.js
+      # A missing worker is built and checked by the ordinary build job in
+      # this same run. Existing images are scanned even when no release runs.
+      - name: Scan existing immutable image
+        if: steps.reuse.outputs.digest != ''
+        env:
+          IMAGE: ${{ steps.reuse.outputs.image }}@${{ steps.reuse.outputs.digest }}
+          REPORT: ${{ runner.temp }}/scheduled-security-${{ matrix.component }}
+        run: sh scripts/check-published-image.sh "$IMAGE" "$REPORT" "${{ matrix.component }}"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.reuse.outputs.digest != ''
+        with:
+          name: scheduled-image-security-${{ matrix.component }}
+          path: ${{ runner.temp }}/scheduled-security-${{ matrix.component }}/
+          if-no-files-found: error
+          retention-days: 30
+
   plan:
+    if: github.event_name != 'pull_request'
     name: Plan image release
     runs-on: ubuntu-latest
     outputs:
@@ -34,6 +248,14 @@ jobs:
       should_release: ${{ steps.release.outputs.should_release }}
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
 
       - name: Resolve Claude Code version
         id: claude
@@ -203,7 +425,7 @@ jobs:
 
   build:
     name: Resolve ${{ matrix.component }} image
-    needs: plan
+    needs: [plan, security-lockfiles, security-regressions, preview-schema-compatibility]
     if: needs.plan.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     strategy:
@@ -211,6 +433,14 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
 
       - name: Normalize GHCR owner
         id: registry
@@ -293,6 +523,21 @@ jobs:
           provenance: mode=max
           sbom: true
 
+      - name: Verify runtime and scan the exact image SBOM
+        env:
+          IMAGE: ${{ steps.reuse.outputs.image }}@${{ steps.reuse.outputs.digest || steps.build.outputs.digest }}
+          REPORT: ${{ runner.temp }}/security-${{ matrix.component }}
+        run: sh scripts/check-published-image.sh "$IMAGE" "$REPORT" "${{ matrix.component }}"
+
+      - name: Upload image security evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-security-${{ matrix.component }}
+          path: ${{ runner.temp }}/security-${{ matrix.component }}/
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Record immutable reference
         env:
           IMAGE_DIGEST: ${{ steps.reuse.outputs.digest || steps.build.outputs.digest }}
@@ -326,7 +571,13 @@ jobs:
 
   release:
     name: Publish atomic Helm release
-    needs: build
+    needs: [build, scheduled-image-audit]
+    # Schedule-only audits skip on pushes/dispatches. Override the default
+    # success() dependency check while still refusing a failed/skipped build,
+    # failed scheduled scans, or cancellation.
+    if: >-
+      ${{ !cancelled() && needs.build.result == 'success'
+          && (github.event_name != 'schedule' || needs['scheduled-image-audit'].result == 'success') }}
     runs-on: ubuntu-latest
     permissions:
       # Reads this workflow's own runs: when the newest release went out, and
@@ -344,6 +595,14 @@ jobs:
       ARGOCD_REFRESH_TOKEN: ${{ secrets.ARGOCD_REFRESH_TOKEN }}
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+      - run: |
+          npm install --global npm@11.21.1 undici@6.29.1
+          image_npm_root="$(npm root --global)"
+          rm -rf "$image_npm_root/npm/node_modules/undici"
+          mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
 
       - uses: azure/setup-helm@v4
         with:

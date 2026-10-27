@@ -628,7 +628,7 @@
     "description": "Label of a divider in the Workshop board's \"Underway\" column, above the viewer's own agent sessions that nobody else can see."
   },
   "board.divider.privateTitle": {
-    "text": "Only you can see your active sessions here. Their code is on public GitHub.",
+    "text": "Only you can see your active sessions here. Their code is public.",
     "description": "Tooltip of the \"Yours · not shared\" divider in the Workshop board's \"Underway\" column."
   },
   "board.divider.visible": {
@@ -993,7 +993,7 @@
   },
   "page.menu.openOnGitHub": {
     "text": "Open on GitHub",
-    "description": "Row in the ⋯ menu of a request's page: opens the issue on GitHub in a new tab. \"Open\" is a verb."
+    "description": "Row in the ⋯ menu of a request's page, for a request that is an issue on GitHub: opens the issue on GitHub in a new tab. \"Open\" is a verb."
   },
   "page.build.continueInSession": {
     "text": "Continue in agent session",
@@ -1024,7 +1024,7 @@
     "description": "Shown in place of the summary on a change that has no summary and no description. \"Change\" is a noun."
   },
   "page.discussion.shareFirst": {
-    "text": "Make this change visible to the group to start a discussion. Only you can see the agent workspace here unless you share it. Its code is on public GitHub.",
+    "text": "Make this change visible to the group to start a discussion. Only you can see the agent workspace here unless you share it. Its code is public.",
     "description": "Shown in place of the discussion on a person's own change that they have not shared with the project's members yet. \"Change\" is a noun."
   },
   "page.steps.actor.auto": {
@@ -1373,7 +1373,11 @@
   },
   "explore.seed.prLink": {
     "text": "PR link: {{url}}",
-    "description": "Line in the message written for a coding agent about a proposal, giving the address of its pull request. {{url}} is that address."
+    "description": "Line in the message written for a coding agent about a proposal, giving the address of its pull request on GitHub. {{url}} is that address."
+  },
+  "explore.seed.changeLink": {
+    "text": "Change page: {{url}}",
+    "description": "Line in the message written for a coding agent about a proposal that has no pull request on GitHub, giving the address of the change's own page in Homeroom. {{url}} is that address."
   },
   "explore.seed.linkedIssues": {
     "text": "Linked issues: {{issues}}.",
@@ -1585,7 +1589,11 @@
   },
   "session.menu.viewPr": {
     "text": "View PR on GitHub",
-    "description": "Item in the ⋯ menu of an agent session's card: opens the session's pull request on GitHub in a new tab."
+    "description": "Item in the ⋯ menu of an agent session's card, for a session whose pull request is on GitHub: opens it on GitHub in a new tab."
+  },
+  "session.menu.viewCode": {
+    "text": "View code",
+    "description": "Item in the ⋯ menu of an agent session's card, for a session whose code is on Homeroom's own git host rather than GitHub: opens that code in a new tab. \"View\" is a verb."
   },
   "session.menu.stopSharingChat": {
     "text": "Chat shared. Stop sharing",
@@ -1652,7 +1660,7 @@
     "description": "Line under the title of the viewer's own agent session card when everyone can see the session but not read its chat."
   },
   "session.mine.private": {
-    "text": "Only you can see this here. Code is on public GitHub.",
+    "text": "Only you can see this here. Its code is public.",
     "description": "Line under the title of the viewer's own agent session card when the session is not shared with the group."
   },
   "session.mine.workingTitle": {
@@ -2361,11 +2369,19 @@
   },
   "proposal.menu.viewPr": {
     "text": "View PR on GitHub",
-    "description": "Item in a proposal's ⋯ menu: opens the proposal's pull request on GitHub in a new tab."
+    "description": "Item in a proposal's ⋯ menu, for a proposal whose pull request is on GitHub: opens it on GitHub in a new tab."
+  },
+  "proposal.menu.viewCode": {
+    "text": "View code",
+    "description": "Item in a proposal's ⋯ menu, for a proposal whose code is on Homeroom's own git host rather than GitHub: opens that code in a new tab. \"View\" is a verb."
   },
   "proposal.details.viewPr": {
     "text": "View PR on GitHub",
-    "description": "Link in the details section of a proposal's page: opens the proposal's pull request on GitHub."
+    "description": "Link in the details section of a proposal's page, for a proposal whose pull request is on GitHub: opens it on GitHub."
+  },
+  "proposal.details.viewCode": {
+    "text": "View code",
+    "description": "Link in the details section of a proposal's page, for a proposal whose code is on Homeroom's own git host rather than GitHub: opens that code. \"View\" is a verb."
   },
   "proposal.details.importedBy": {
     "text": "imported by <0>{{username}}</0>",
@@ -5211,6 +5227,14 @@
     "text": "The staging preview failed to start, so automated checks couldn’t run.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: the preview failed to start and no error text was recorded."
   },
+  "badge.reason.codeMissing.label": {
+    "text": "Code missing",
+    "description": "Red status tag on a proposal's card and row label in the ledger on its page: the proposal's code (its branch) is not on Homeroom's own code host, because it did not come across when Homeroom moved off GitHub. It cannot be built, tested or merged until the code is back; votes on it are still recorded."
+  },
+  "badge.reason.codeMissing.detail": {
+    "text": "This proposal’s code didn’t come across when Homeroom moved off GitHub. Its creator can submit it again, or Homeroom restores it when GitHub’s copy of the code arrives.",
+    "description": "Tooltip of the \"Code missing\" status tag on a proposal's card, and text of the matching ledger row on its page. GitHub is a product name; Homeroom is the product's own name. \"GitHub's copy of the code\" is the export of the old repositories that GitHub is sending to Homeroom. \"Submit it again\" means put the same change up again."
+  },
   "badge.reason.checksRetry.label": {
     "text": "Checks will run again",
     "description": "Status tag on a proposal's card and row label in the ledger on its page: beside a spinner; a run of the automated checks was interrupted and starts again by itself."
@@ -7365,19 +7389,19 @@
   },
   "chips.issue.closesLink": {
     "text": "Closes #{{number}}",
-    "description": "Link on a proposal's page to the request on GitHub that it will close when it goes live. A verb: this proposal closes that request. {{number}} is the request's number; keep the \"#\"."
+    "description": "Link on a proposal's page to the request it will close when it goes live; it opens that request's page. A verb: this proposal closes that request. {{number}} is the request's number; keep the \"#\"."
   },
   "chips.issue.closedLink": {
     "text": "Closed #{{number}}",
-    "description": "Link on a merged proposal's page to the request on GitHub that it closed. A verb in the past. {{number}} is the request's number; keep the \"#\"."
+    "description": "Link on a merged proposal's page to the request it closed; it opens that request's page. A verb in the past. {{number}} is the request's number; keep the \"#\"."
   },
-  "chips.issue.closesTitle": {
-    "text": "Closes issue #{{number}} on GitHub",
-    "description": "Tooltip of the \"Closes #N\" link on a proposal's page: the proposal will close that issue (request) on GitHub. {{number}} is the issue's number."
+  "chips.issue.closesRequestTitle": {
+    "text": "Open request #{{number}}, which this change closes",
+    "description": "Tooltip of the \"Closes #N\" link on a proposal's page: pressing it opens the request inside Homeroom, and the proposal will close that request when it goes live. \"Open\" is a verb. {{number}} is the request's number."
   },
-  "chips.issue.closedTitle": {
-    "text": "Closed issue #{{number}} on GitHub",
-    "description": "Tooltip of the \"Closed #N\" link on a merged proposal's page: the proposal closed that issue (request) on GitHub. {{number}} is the issue's number."
+  "chips.issue.closedRequestTitle": {
+    "text": "Open request #{{number}}, which this change closed",
+    "description": "Tooltip of the \"Closed #N\" link on a merged proposal's page: pressing it opens the request inside Homeroom, which the proposal closed. \"Open\" is a verb. {{number}} is the request's number."
   },
   "vote.row.votedYes": {
     "text": "You voted Yes",
@@ -7578,6 +7602,10 @@
   "vote.toast.notSent": {
     "text": "Your vote did not go through. Check your connection and try again.",
     "description": "Brief notice when a vote on a proposal could not reach the server."
+  },
+  "vote.toast.codeMissing": {
+    "text": "Your vote is saved. This proposal can’t go live until its code is back.",
+    "description": "Brief notice after a vote on a proposal whose code did not come across when Homeroom moved off GitHub: the vote was recorded, but nothing can be merged until the code (its branch) is restored or submitted again."
   },
   "vote.toast.undoFailedHttp": {
     "text": "Couldn't take your vote back (HTTP {{status}}).",
@@ -8005,7 +8033,11 @@
   },
   "page.menu.viewPr": {
     "text": "View PR on GitHub",
-    "description": "Row in the ⋯ menu of a change's page: opens the change's pull request on GitHub in a new tab. \"PR\" is short for pull request."
+    "description": "Row in the ⋯ menu of a change's page, for a change whose pull request is on GitHub: opens it on GitHub in a new tab. \"PR\" is short for pull request."
+  },
+  "page.menu.viewCode": {
+    "text": "View code",
+    "description": "Row in the ⋯ menu of a change's page, for a change whose code is on Homeroom's own git host rather than GitHub: opens that code in a new tab. \"View\" is a verb."
   },
   "shots.details.builds": {
     "text": "Taken on the exact before and after builds of this change:",

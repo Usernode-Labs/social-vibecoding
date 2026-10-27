@@ -202,7 +202,7 @@ export type BadgeSpec =
   | { t: 'chat'; key: string; count: number }
   /** A metadata chip (priority / assignee / category). */
   | { t: 'attr'; key: string; field: 'priority' | 'assignee' | 'category'; targetType: string; targetRef: string | number; cls: string; hover: string; title: string; count: number; readonly: boolean; label: AttrLabel }
-  /** Closes #N — in-app (button) or on GitHub (anchor). */
+  /** Closes #N — a button that opens the request's topic, or an anchor to the request's page. */
   | { t: 'issueChip'; key: string; n: number; label: string; cls: string; title: string }
   | { t: 'issueLink'; key: string; n: number; href: string; label: string; cls: string; title: string }
   /** MergeStatus.badgeHtml's descriptor, as data. */
@@ -596,6 +596,12 @@ export interface DevWorkshopView {
      * and the end card "Your yes put it over the line" once it is cast.
      */
     lastYes?: boolean;
+    /**
+     * The change's code did not come across when Homeroom moved off GitHub
+     * (src/services/code-missing.js): the facts line says "Code missing",
+     * with the sentence as its tooltip. A vote is still recorded.
+     */
+    codeMissing?: boolean;
     /**
      * The project the row belongs to, on the Communities screen's Needs you
      * (#3488), which mixes every project's. Unset inside a project, whose

@@ -734,7 +734,8 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
     'load() publishes before its own fetch — render() does not run until it lands');
   // Session residue, cleared with the rest of it: the next account may not be
   // served the self-hosted row at all.
-  assert.ok(/_dropCachedSession\(\)[\s\S]{0,900}Home\.IMPROVE_TARGET_KEY/.test(src),
+  const dropAt = src.indexOf('  _dropCachedSession(');
+  assert.ok(dropAt > -1 && src.slice(dropAt, src.indexOf('\n  },', dropAt)).includes('Home.IMPROVE_TARGET_KEY'),
     'the remembered target is dropped with the session');
 });
 

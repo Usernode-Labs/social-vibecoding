@@ -153,11 +153,8 @@ test('a branch response without commit details still yields the sha; the rest is
   assert.equal(observed[0].head.subject, null);
 });
 
-test('the clock\'s look reads self_hosted and release_stall so the watch has what it needs', async (t) => {
+test('the clock\'s look reads self_hosted and release_stall so the watch has what it needs', async () => {
   reset();
-  const prior = process.env.GITHUB_BOT_TOKEN;
-  process.env.GITHUB_BOT_TOKEN = 'test-token';
-  t.after(() => { if (prior === undefined) delete process.env.GITHUB_BOT_TOKEN; else process.env.GITHUB_BOT_TOKEN = prior; });
   pollRows = [SELF, CHILD];
   await poller.scan({}, pool);
   const select = queries.find((q) => /FROM apps\s+WHERE repo_url IS NOT NULL/.test(q.sql));

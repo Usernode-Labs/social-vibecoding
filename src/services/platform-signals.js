@@ -50,6 +50,7 @@
 
 const log = require('./logger');
 const evidenceText = require('./platform-signal-evidence');
+const repoRef = require('./repo-ref');
 
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 const MINUTE = 60 * 1000;
@@ -355,8 +356,7 @@ async function platformAppRow(pool) {
 }
 
 function parseRepo(url) {
-  const m = String(url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  return m ? { owner: m[1], repo: m[2] } : null;
+  return repoRef.ownerRepo(url);
 }
 
 // ── Filing, updating, closing ───────────────────────────────────────────

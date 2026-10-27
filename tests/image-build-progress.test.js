@@ -429,17 +429,10 @@ test('the finished image step names its phases so a slow build says where the ti
   assert.match(read('public/css/app.css'), /\.dev-ledger-build-detail \{/);
 });
 
-test('the platform image installs buildx, without which BuildKit is refused outright', () => {
-  // `docker-cli` on Alpine is the CLI alone. buildx ships as its own
-  // package (the `docker` meta-package depends on docker-engine +
-  // docker-cli + docker-cli-buildx), so an image with only the CLI answers
-  // every DOCKER_BUILDKIT=1 build with "BuildKit is enabled but the buildx
-  // component is missing or broken" — which is exactly what the fleet did,
-  // and what #1746 taught buildImage to fall back from. The fallback keeps
-  // previews building; this line is what makes them build with BuildKit.
-  const apkLines = read('Dockerfile').split('\n').filter((l) => l.startsWith('RUN apk add'));
-  assert.equal(apkLines.length, 1, 'the runtime stage installs its packages in one apk line');
-  const pkgs = apkLines[0].replace(/^RUN apk add/, '').split(/\s+/).filter((t) => t && !t.startsWith('--'));
-  assert.ok(pkgs.includes('docker-cli'), 'the platform shells out to docker');
-  assert.ok(pkgs.includes('docker-cli-buildx'), 'BuildKit needs the plugin, not just the CLI');
+test('the platform image ships both the CLI and buildx from the upstream Go security rebuild', () => {
+  const source = read('Dockerfile');
+  assert.match(source, /FROM docker:29\.9\.2-cli AS docker-tools/);
+  assert.match(source, /COPY --from=docker-tools \/usr\/local\/bin\/docker \/usr\/local\/bin\/docker/);
+  assert.match(source, /COPY --from=docker-tools \/usr\/local\/libexec\/docker\/cli-plugins\/docker-buildx/);
+  assert.doesNotMatch(source, /^RUN apk add[^\n]*docker-cli/m, 'do not also ship the older Go binaries');
 });

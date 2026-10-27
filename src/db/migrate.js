@@ -53,6 +53,10 @@ async function migrate(config) {
   // The verified-identity rule's one-time production rollout: on, with $20
   // a week for new members who have not verified (services/identity-rollout.js).
   await require('../services/identity-rollout').applyIdentityRollout(pool);
+  // The move off GitHub (services/github-move.js): requests from their
+  // twins, each app whose repository is now on the git host repointed, and
+  // its proposals' GitHub links turned into their change pages.
+  await require('../services/github-move').migrate(pool);
   log.info('db', 'Schema up to date');
   finishPhase('schemaMs');
 
@@ -103,6 +107,7 @@ async function migrate(config) {
   // #5803: a change an admin voted No on, nobody voting Yes, so the card's
   // week-long "Set aside in …" pill is reviewable on a fresh staging copy.
   await seedStagingAdminNoPr(pool, config);
+  await seedStagingApproverNoPr(pool, config);
   await seedStagingImportedPrProposal(pool, config);
   await seedStagingChecksAdvisoryCard(pool, config);
   await seedStagingExternalAgentProposal(pool, config);
@@ -156,6 +161,9 @@ async function migrate(config) {
   // that seed's first attempt hung in the quiet app, and owns the
   // vote-card app instead. Needs the capture member (seedCaptureAdminUser).
   await seedStagingVoteCardChat(pool);
+  // #5877: the bot's "Ready to try" row about a project, for the bell's
+  // leading tile. Needs the capture member (seedCaptureAdminUser).
+  await seedStagingBotProjectNotification(pool);
   await seedStagingYourApps(pool, config);
   await require('../services/staging-apps').seedCatalog(pool, config);
   await seedStagingBrowseCardBranches(pool, config);
@@ -182,6 +190,8 @@ async function migrate(config) {
   // Must run AFTER seedStagingVisuals: it owns the gallery demo app this
   // fixture's proposal belongs to.
   await seedStagingShotsNoticed(pool);
+  // After seedStagingDemoAppCard, whose demo app it belongs to.
+  await seedStagingShotsScreens(pool);
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
   await seedStagingCloneQuestionSuggestions(pool, config);
@@ -904,8 +914,12 @@ async function backfillLinkedIssuesFromPrBodies(pool) {
   const github = require('../services/github');
   const prMetadata = require('../services/pr-metadata');
 
-  if (typeof github.isEnabled === 'function' && !github.isEnabled()) {
-    log.debug('db', 'linked-issues backfill skipped (github disabled)');
+  // The GitHub App itself, not isEnabled(): with the git host configured
+  // isEnabled() is true in the migration Job too, which never sets the App
+  // up and may not reach GitHub, and this read every GitHub-hosted
+  // proposal's body there, each one timing out (release of 26 Oct 2026).
+  if (typeof github.hasApp === 'function' && !github.hasApp()) {
+    log.debug('db', 'linked-issues backfill skipped (no GitHub App in this process)');
     return;
   }
 
@@ -7227,6 +7241,128 @@ async function seedStagingVoteCardChat(pool) {
   }
 }
 
+// #5877's shots: the Homeroom bot's "Ready to try" row about one project,
+// so the bell's leading tile can be seen wearing that project's icon (a
+// picture, an emoji, or the name's letter) instead of the Homeroom mark. A
+// fresh copy has no such row: the bot writes one only after it has built
+// something, and there is no bot here.
+//
+// Display data only. The app is a made-up one ("Staging demo notes", an
+// emoji icon), its maker a fixture account that cannot log in, and the
+// notification is a plain unread row for the capture member whose detail is
+// the same one the bot's own copy builds. The conversation is a real direct
+// thread between the bot's account and that member, because the bell reads a
+// conversation row only while its recipient is still in the conversation.
+// Idempotent through fixed ids, ON CONFLICT DO NOTHING, and an existence
+// check on the notification row; a no-op outside staging.
+async function seedStagingBotProjectNotification(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    const viewer = await pool.query(
+      `SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1`
+    );
+    const member = viewer.rows[0];
+    if (!member) {
+      log.warn('db', 'Staging bot-project notification skipped: fixture member missing');
+      return;
+    }
+
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES (900112, 'staging-demo-notes-maker', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    // The bot's account, in the posture botAccount() reads: the username
+    // with is_synthetic on top, sentinel password, never a login.
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`
+    );
+    const bot = (await pool.query(
+      `SELECT id FROM users WHERE username = 'homeroom_bot' LIMIT 1`
+    )).rows[0];
+
+    // Private, with a membership for the capture member: the row belongs to
+    // that one account's bell, and a public fixture app would add itself to
+    // Discover, which this change does not touch.
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, icon_emoji, created_by)
+       VALUES (900112, 'Staging demo notes', 'staging-demo-notes', 'running',
+               'private', 'private', '📝', 900112)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at)
+       VALUES (900112, $1, 'member', 900112, NOW())
+       ON CONFLICT (app_id, user_id) DO NOTHING`,
+      [member.id]
+    );
+
+    // One direct conversation per pair (conversation_direct_pairs is unique
+    // on it), found rather than created twice.
+    const low = Math.min(member.id, bot.id);
+    const high = Math.max(member.id, bot.id);
+    const found = await pool.query(
+      `SELECT c.id FROM conversations c
+         JOIN conversation_direct_pairs p ON p.conversation_id = c.id
+        WHERE p.user_low_id = $1 AND p.user_high_id = $2
+        LIMIT 1`,
+      [low, high]
+    );
+    let conversationId = found.rows[0]?.id;
+    if (!conversationId) {
+      const created = await pool.query(
+        `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`,
+        [bot.id]
+      );
+      conversationId = created.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs
+           (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high]
+      );
+    }
+    // Both sides as members, re-asserted on an existing thread so a partial
+    // earlier boot self-heals.
+    await pool.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, responded_at, joined_at)
+       SELECT $1, u.id, 'member', 'member', NOW(), NOW()
+         FROM users u WHERE u.id IN ($2, $3)
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [conversationId, member.id, bot.id]
+    );
+
+    // The bot's ready moment over a request, worded by the service that
+    // words the real one, so the fixture cannot drift from what production
+    // writes.
+    const { botNotificationDetail } = require('../services/homeroom-bot-notify-copy');
+    const detail = botNotificationDetail({
+      moment: 'ready',
+      said: 'ready',
+      appName: 'Staging demo notes',
+      requestTitle: 'Solarized light/dark theming that follows the platform theme',
+    });
+
+    await pool.query(
+      `INSERT INTO notifications
+         (user_id, app_id, conversation_id, source_user_id, kind, detail, read_at, created_at)
+       SELECT $1::int, 900112, $2::int, $3::int, 'build_ready', $4::varchar, NULL, NOW() - INTERVAL '1 hour'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM notifications n
+           WHERE n.user_id = $1 AND n.kind = 'build_ready' AND n.conversation_id = $2
+        )`,
+      [member.id, conversationId, bot.id, detail]
+    );
+    log.info('db', 'Staging bot-project notification fixture seeded');
+  } catch (err) {
+    log.warn('db', 'Staging bot-project notification seeding failed', { message: err.message });
+  }
+}
+
 // Fixtures for the home screen's "Your apps" section + search bar
 // (homepage restructure). The section is the union of membership
 // (app_collaborators status='member') and manual favorites
@@ -8356,6 +8492,153 @@ async function seedStagingShotsNoticed(pool) {
     log.info('db', 'Staging shots "Also noticed" fixture seeded', { sessionId: id });
   } catch (err) {
     log.warn('db', 'Staging shots "Also noticed" seeding failed', { message: err.message });
+  }
+}
+
+// A proposal waiting on the shots member's vote whose published before &
+// after shots hold THREE phone screens, so a preview's Needs you can draw a
+// change with several screens (the new review flow's row of screens under
+// its picture, features/review-flow/). The demo PR seedStagingDemoAppCard
+// makes has only the old one-picture capture, and seedStagingShotsNoticed's
+// two screens are on a merged proposal, so nothing in a fresh copy showed
+// more than one screen to vote on. One promoted proposal on the demo app
+// (900001, where usernode-capture is a member), owned by staging-demo-user,
+// its run verified on its reviewed head. Each screen is plain bars
+// (services/bench/demo.js demoPng), light only, with its change at a
+// different height: near the top, in the middle, near the foot. Every word
+// is an obviously fake "Staging demo" line; fixed ids, idempotent, and a
+// strict no-op outside staging.
+const STAGING_SHOTS_SCREENS_SESSION_ID = 900160;
+
+async function seedStagingShotsScreens(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const crypto = require('crypto');
+  const { demoPng } = require('../services/bench/demo');
+  const planContract = require('../services/visible-changes');
+  const shotsState = require('../services/shots-state');
+  const id = STAGING_SHOTS_SCREENS_SESSION_ID;
+  const runId = `${id}`.padEnd(32, 'e');
+  const baseSha = 'e'.repeat(40);
+  const headSha = 'f'.repeat(40);
+  const phone = { name: 'phone', width: 390, height: 844 };
+  // Where each screen changed: the accent bar its after side adds.
+  const SCREENS = [
+    { story: 'top-filter', y: 96, h: 32, claim: 'Staging demo: the list gains a filter row under its heading.' },
+    { story: 'middle-badge', y: 392, h: 40, claim: 'Staging demo: each row in the middle of the list shows a badge.' },
+    { story: 'foot-action', y: 704, h: 48, claim: 'Staging demo: a Save button sits at the foot of the form.' },
+  ];
+  try {
+    const intent = planContract.parseIntent({
+      version: 1,
+      impact: 'ui',
+      rationale: 'Staging demo: three screens, each changed in a different place.',
+      stories: SCREENS.map((screen) => ({
+        id: screen.story,
+        claim: screen.claim,
+        persona: 'member',
+        viewports: [phone],
+        intent: {
+          startPath: '/',
+          steps: ['Open the screen'],
+          checkpoint: 'The change is on the screen',
+          focus: 'The changed bar',
+          baseState: 'not_present',
+          animation: 'none',
+        },
+      })),
+    });
+    const ground = [250, 250, 249];
+    const ink = [214, 211, 209];
+    const accent = [37, 99, 235];
+    // A header, then rows; the after side adds the screen's accent bar.
+    const draw = (screen, side) => demoPng(phone.width, phone.height, ground, [
+      { y: 32, h: 40, rgb: ink },
+      ...(side === 'head' ? [{ y: screen.y, h: screen.h, rgb: accent }] : []),
+      ...[0, 1, 2, 3, 4, 5].map((i) => ({ y: 152 + i * 96, h: 64, rgb: ink }))
+        .filter((bar) => side !== 'head' || bar.y + bar.h <= screen.y || bar.y >= screen.y + screen.h),
+    ]);
+    const files = [];
+    for (const screen of SCREENS) {
+      for (const side of ['base', 'head']) {
+        const data = draw(screen, side);
+        files.push({
+          id: crypto.createHash('sha256').update(`staging-shots-screens:${screen.story}:${side}`).digest('hex').slice(0, 32),
+          story: screen.story, side, data,
+          sha256: crypto.createHash('sha256').update(data).digest('hex'),
+        });
+      }
+    }
+    const verdict = {
+      passed: true, mode: 'shots', runs: 1,
+      stories: SCREENS.map((screen) => ({ id: screen.story, status: 'ready', files: 2 })),
+      notices: [],
+      screens: SCREENS.map((screen) => ({
+        viewport: 'phone',
+        shot: screen.story,
+        stories: [screen.story],
+        width: phone.width,
+        heightBefore: phone.height,
+        heightAfter: phone.height,
+        regions: [{ story: screen.story, b: null, a: [0, screen.y, phone.width, screen.h], bMark: null, aMark: null }],
+      })),
+    };
+    const planHash = crypto.createHash('sha256')
+      .update(`staging-shots-screens:${files.map((file) => file.sha256).join(':')}`).digest('hex');
+    const detail = {
+      ...shotsState.runSummary({
+        id: runId, state: 'verified', intent, base_sha: baseSha, head_sha: headSha,
+        plan_hash: planHash, hard_verdict: verdict,
+      }),
+      intent,
+    };
+
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status,
+          promoted_at, reviewed_head_sha,
+          shots_state, shots_run_id, shots_detail, shots_updated_at)
+       SELECT $1::int, 900001, u.id, 'staging-demo/three-screens', $1::int,
+              '[Mock] Staging demo: three screens to compare', 'promoted',
+              NOW() - interval '1 hour', $2::varchar,
+              'verified', $3::varchar, $4::jsonb, NOW()
+         FROM users u
+        WHERE u.username = 'staging-demo-user'
+          AND EXISTS (SELECT 1 FROM apps WHERE id = 900001)
+       ON CONFLICT (id) DO NOTHING`,
+      [id, headSha, runId, JSON.stringify(detail)]
+    );
+    const cleaned = {
+      cleanupComplete: true,
+      cleanupVersion: require('../services/shots-environment').RESOURCE_CLEANUP_VERSION,
+    };
+    await pool.query(
+      `INSERT INTO shot_runs
+         (id, session_id, base_sha, head_sha, plan_hash, intent, hard_verdict,
+          trace_summary, state, trigger, started_at, completed_at)
+       SELECT $1::varchar, $2::int, $3::varchar, $4::varchar, $5::varchar, $6::jsonb, $7::jsonb, $8::jsonb,
+              'verified', 'staging-fixture', NOW() - interval '2 hours', NOW() - interval '2 hours'
+        WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $2::int AND app_id = 900001)
+          AND NOT wf_holds('shots', 'session:' || $2::int)
+       ON CONFLICT (id) DO NOTHING`,
+      [runId, id, baseSha, headSha, planHash, JSON.stringify(intent), JSON.stringify(verdict),
+        JSON.stringify(cleaned)]
+    );
+    for (const file of files) {
+      await pool.query(
+        `INSERT INTO shot_artifacts
+           (id, run_id, story_id, viewport, side, variant, media, content_type,
+            data, width, height, bytes, sha256, theme)
+         SELECT $1::varchar, $2::varchar, $3::varchar, 'phone', $4::varchar, 'context', 'png', 'image/png',
+                $5::bytea, $6::int, $7::int, $8::int, $9::varchar, 'light'
+          WHERE EXISTS (SELECT 1 FROM shot_runs WHERE id = $2::varchar)
+         ON CONFLICT (id) DO NOTHING`,
+        [file.id, runId, file.story, file.side, file.data, phone.width, phone.height,
+          file.data.length, file.sha256]
+      );
+    }
+    log.info('db', 'Staging three-screen shots fixture seeded', { sessionId: id });
+  } catch (err) {
+    log.warn('db', 'Staging three-screen shots seeding failed', { message: err.message });
   }
 }
 
@@ -11769,6 +12052,87 @@ async function seedStagingAdminNoPr(pool, config) {
   );
 
   log.info('db', 'Staging admin-No fixture seeded', { appId, sessionId });
+}
+
+// #5947: an approver's lone No sets a change aside two days after it. One
+// fixture on the self-app shows the countdown: a promoted change one of the
+// project's approvers voted No on a day ago, with an advisory Yes from a
+// person who is not an approver, so its card reads "Set aside in 1d". The
+// approver and the supporter are fake people; the author is the capture
+// account the shots sign in as. Idempotent (the branch name), obviously
+// fake, strictly a no-op outside staging.
+async function seedStagingApproverNoPr(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    "SELECT id FROM apps WHERE slug = $1 AND approver_policy = 'invited'",
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging approver-No fixture skipped: no invited self-app row', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+  const { rows: captureRows } = await pool.query(
+    "SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1"
+  );
+  if (!captureRows.length) {
+    log.warn('db', 'Staging approver-No fixture skipped: capture user missing');
+    return;
+  }
+  const authorId = captureRows[0].id;
+  await pool.query(
+    `INSERT INTO users (id, username, password)
+     VALUES
+       (900330, 'staging-demo-approver-no', 'staging-demo-not-a-login'),
+       (900331, 'staging-demo-supporter', 'staging-demo-not-a-login')
+     ON CONFLICT DO NOTHING`
+  );
+  await pool.query(
+    `INSERT INTO app_approvers (app_id, user_id, status, accepted_at)
+     VALUES ($1, 900330, 'member', NOW())
+     ON CONFLICT (app_id, user_id) DO NOTHING`,
+    [appId]
+  );
+
+  const branch = 'staging-fixture/approver-no';
+  let sessionId;
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, branch]
+  );
+  if (existing.length) {
+    sessionId = existing[0].id;
+  } else {
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
+          promoted_at, created_at)
+       VALUES
+         ($1, $2, $3, 9230, '[staging fixture] An approver voted No, and no approver said Yes',
+          $4, 'promoted', NOW() - INTERVAL '3 days', NOW() - INTERVAL '4 days')
+       RETURNING id`,
+      [appId, authorId, branch,
+       'In plain terms: this proposed change shows what a change looks like after one of the project\'s approvers voted No and no approver has voted Yes yet.']
+    );
+    sessionId = rows[0].id;
+  }
+
+  // The approver's No, a day old: one of the two days is left. The
+  // supporter's Yes is advisory (not an approver), so the countdown is armed.
+  await pool.query(
+    `INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch, created_at)
+     SELECT $1, v.user_id, v.vote, cs.approval_epoch, NOW() - INTERVAL '1 day'
+       FROM chat_sessions cs, (VALUES (900330, 'no'), (900331, 'yes')) AS v(user_id, vote)
+      WHERE cs.id = $1
+     ON CONFLICT (session_id, user_id) DO UPDATE
+       SET vote = EXCLUDED.vote, approval_epoch = EXCLUDED.approval_epoch, created_at = EXCLUDED.created_at`,
+    [sessionId]
+  );
+
+  log.info('db', 'Staging approver-No fixture seeded', { appId, sessionId });
 }
 
 async function seedStagingMyOpenPr(pool, config) {
@@ -15534,15 +15898,17 @@ async function seedStagingPlatformMail(pool) {
 module.exports = {
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingProfileCustomization,
   seedStagingBotChatRequest,
+  seedStagingBotProjectNotification,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
   followPlatformDefaultModel,
   seedStagingHelperCalls,
   clearAutomatedChannelLines,
+  backfillLinkedIssuesFromPrBodies,
   backfillPlanRows,
   backfillProposalIssuerAssignments, backfillVotesRequired,
   backfillSettingsProposalSource,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
-  seedStagingGeneralChannel, seedStagingShotsNoticed,
+  seedStagingGeneralChannel, seedStagingShotsNoticed, seedStagingShotsScreens,
 };

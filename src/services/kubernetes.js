@@ -8,6 +8,7 @@ const { waitForWorkerBootstrap } = require('./kubernetes-worker-bootstrap');
 const buildkit = require('./kubernetes-buildkit');
 const { watchDeployment } = require('./kubernetes-deployment-watch');
 const { readPodStart, mergePodStart } = require('./check-pod-start');
+const repoRef = require('./repo-ref');
 
 // The client is 967 ES modules: about a quarter of a second and 70 MB to
 // load. Most processes that load this file never reach the cluster (341 of
@@ -347,8 +348,8 @@ async function createKpackBuild(config, { app, revision, environment, sessionId,
   if (!/^[a-f0-9]{40}$/i.test(revision || '')) {
     throw new Error('Kubernetes builds require a full 40-character Git commit SHA');
   }
-  if (!/^https:\/\/github\.com\//.test(app.repo_url || '')) {
-    throw new Error('Kubernetes builds require an HTTPS GitHub repository URL');
+  if (!repoRef.parse(app.repo_url)) {
+    throw new Error('Kubernetes builds require a repository URL');
   }
   const cfg = requireBuildConfig(config);
   const suffix = sessionId ? `s${sessionId}-` : '';
@@ -396,7 +397,9 @@ async function createKpackBuild(config, { app, revision, environment, sessionId,
       serviceAccountName: cfg.buildServiceAccount,
       builder: { image: cfg.builderImage },
       cache: { registry: { tag: cacheTag } },
-      source: { git: { url: app.repo_url.replace(/\.git$/, ''), revision } },
+      // A repository on Homeroom's git host is cloned from its clone address
+      // (GIT_HOST_INTERNAL_URL, else the public one); GitHub's as before.
+      source: { git: { url: repoRef.isHosted(app.repo_url) ? repoRef.cloneUrl(app.repo_url) : app.repo_url.replace(/\.git$/, ''), revision } },
       activeDeadlineSeconds: cfg.activeDeadlineSeconds,
       env: buildEnv,
       resources: {
@@ -1270,6 +1273,12 @@ async function deployApplication(config, {
   if (name !== dnsName(name) || name.length > 63) throw new Error('Invalid Kubernetes runtime name');
   const resourceLabels = { ...extraLabels, ...labels({ appId: app.id, sessionId, environment }) };
   const selectorLabels = { 'social.usernode.io/runtime-name': name };
+  // Service endpoints must come from this data-policy generation, including
+  // while RollingUpdate still has the old ReplicaSet alive. The Deployment
+  // selector stays immutable so an existing preview can roll forward.
+  const dataPolicyLabel = require('./platform-preview-data-policy').LABEL;
+  const serviceSelector = extraLabels[dataPolicyLabel]
+    ? { ...selectorLabels, [dataPolicyLabel]: extraLabels[dataPolicyLabel] } : selectorLabels;
   const secretName = attempt ? attemptSecretName(name, attempt) : withSuffix(name, 'env');
   const hostname = environment === 'production'
     ? `${app.slug}.${cfg.appDomain}`
@@ -1295,7 +1304,7 @@ async function deployApplication(config, {
   else await upsert(core, 'readNamespacedSecret', 'createNamespacedSecret', 'replaceNamespacedSecret', namespace, secretBody);
   await upsert(core, 'readNamespacedService', 'createNamespacedService', 'replaceNamespacedService', namespace, {
     apiVersion: 'v1', kind: 'Service', metadata: { name, namespace, labels: resourceLabels },
-    spec: { selector: selectorLabels, ports: [{ name: 'http', port: 3000, targetPort: 3000 }], type: 'ClusterIP' },
+    spec: { selector: serviceSelector, ports: [{ name: 'http', port: 3000, targetPort: 3000 }], type: 'ClusterIP' },
   });
   const deploymentBody = {
     apiVersion: 'apps/v1', kind: 'Deployment',
@@ -1537,11 +1546,18 @@ async function servingTemplate(apps, namespace, name, secret, previous) {
 async function restoreTemplate(apps, namespace, name, attempt, claim, servingSecret, previous) {
   const template = await servingTemplate(apps, namespace, name, servingSecret, previous);
   if (!template) return 'missing';
+  const dataPolicy = require('./platform-preview-data-policy');
+  // A current preview can fall back only to the same accepted export policy.
+  // Restoring an older generation must never reopen its private clone.
+  const currentPolicy = previous?.spec?.template?.metadata?.labels?.[dataPolicy.LABEL];
+  if (currentPolicy && template.metadata?.labels?.[dataPolicy.LABEL] !== currentPolicy) return 'missing';
   for (let i = 0; ; i++) {
     const current = await apps.readNamespacedDeployment({ name, namespace });
     // A newer attempt, or a later claim of this one, owns the Deployment
     // now; its template is not ours to undo.
     if (fenceNewer(fenceOf(current), attempt, claim)) return 'superseded';
+    const requiredPolicy = current.spec?.template?.metadata?.labels?.[dataPolicy.LABEL];
+    if (requiredPolicy && template.metadata?.labels?.[dataPolicy.LABEL] !== requiredPolicy) return 'missing';
     current.spec.template = template;
     try {
       await apps.replaceNamespacedDeployment({ name, namespace, body: current });
@@ -2370,6 +2386,72 @@ const PREVIEW_NAME_RE = /^sv-preview-(\d+)-s(\d+)$/;
 // say about it. This is the Kubernetes counterpart of `docker ps -a` for the
 // stale-preview sweep (services/staging-reap.js): a preview whose row was
 // nulled, or whose row is gone, is visible only from this side.
+// Security retirement is independent of preview availability and the optional
+// ingress gate. Constrain Services first, then remove stale controllers and
+// actual Pods (including old ReplicaSets during a rolling replacement).
+async function retirePlatformPreviewPolicy(config, appId, digest, { timeoutMs = 30000, pollMs = 200 } = {}) {
+  const { LABEL } = require('./platform-preview-data-policy');
+  const namespace = config.kubernetes.appNamespace;
+  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/app-id=${appId},social.usernode.io/environment=staging`;
+  const { apps, core } = getClients();
+  // Use the runtime's existing get/update-Service, list Deployment/RS/Pod,
+  // and foreground-delete-Deployment permissions. It deliberately cannot
+  // list Services or directly delete ReplicaSets/Pods.
+  const ours = object => object.metadata?.labels?.['social.usernode.io/app-id'] === String(appId)
+    && object.metadata.labels['social.usernode.io/environment'] === 'staging'
+    && object.metadata.labels['app.kubernetes.io/managed-by'] === MANAGED_BY;
+  const runtimeName = object => object.metadata.labels['social.usernode.io/runtime-name'] || object.metadata.name;
+  const unsafeController = object => object.spec?.template?.metadata?.labels?.[LABEL] !== digest;
+  const retired = new Set(), examined = new Set();
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const [deployments, sets, pods] = await Promise.all([
+      apps.listNamespacedDeployment({ namespace, labelSelector: selector }),
+      apps.listNamespacedReplicaSet({ namespace, labelSelector: selector }),
+      core.listNamespacedPod({ namespace, labelSelector: selector }),
+    ]);
+    const ds = (deployments.items || []).filter(ours);
+    const rs = (sets.items || []).filter(ours);
+    const ps = (pods.items || []).filter(ours);
+    ds.forEach(d => examined.add(d.metadata.name));
+    const unsafeNames = new Set([
+      ...ds.filter(unsafeController).map(d => d.metadata.name),
+      ...rs.filter(unsafeController).map(runtimeName),
+      ...ps.filter(p => p.metadata.labels[LABEL] !== digest).map(runtimeName),
+    ]);
+    // Constrain every known Service first. Desired labels alone cannot
+    // attest the endpoints during a rolling replacement. Read by trusted
+    // runtime names so an unavailable Service list is never treated as empty.
+    const names = new Set([...ds.map(d => d.metadata.name), ...rs.map(runtimeName), ...ps.map(runtimeName)]);
+    for (const name of names) {
+      let service;
+      try { service = await core.readNamespacedService({ name, namespace }); }
+      catch (err) { if (isNotFound(err)) continue; throw err; }
+      if (!ours(service)) throw new Error('Preview Service identity changed during data-policy retirement');
+      if (service.spec?.selector?.[LABEL] === digest) continue;
+      service.spec.selector = { ...service.spec.selector, [LABEL]: digest };
+      await core.replaceNamespacedService({ name, namespace, body: service });
+    }
+    if (!unsafeNames.size) return { examined: examined.size, retired: retired.size };
+    // Retire the entire runtime even when its desired template is current
+    // but an older ReplicaSet/Pod still serves. Foreground garbage collection
+    // stops all controllers and waits for kubelet-confirmed Pod termination.
+    for (const deployment of ds.filter(d => unsafeNames.has(d.metadata.name))) {
+      if (deployment.metadata.deletionTimestamp) continue;
+      if (!await deleteAttemptDeployment(config, deployment.metadata.name, deployment)) {
+        throw new Error('Preview changed during data-policy retirement; retry inventory');
+      }
+      retired.add(deployment.metadata.name);
+    }
+    // Re-inventory controllers as well as actual Pods. An orphan controller,
+    // disconnected node or failed removal cannot be declared safe. Services
+    // remain restricted; an operator must remove/isolate an orphan if the
+    // normal foreground deletion cannot retire it.
+    if (Date.now() >= deadline) throw new Error('Unsafe platform preview controllers or Pods are still retiring');
+    await new Promise(resolve => setTimeout(resolve, pollMs));
+  }
+}
+
 async function listPreviews(config) {
   const namespace = config.kubernetes.appNamespace;
   const deployments = await getClients().apps.listNamespacedDeployment({
@@ -3634,16 +3716,15 @@ function attachLineObserver(readable, onLine, { skipBytes = 0 } = {}) {
   readable.on('error', () => {});
 }
 
-async function execInWorker(config, runtimeName, command, stdinText = null, { timeoutMs = 30000 } = {}) {
+async function execInWorker(config, runtimeName, command, stdinText = null, { timeoutMs = 30000, maxBuffer = null } = {}) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Worker exec timeout must be a positive finite number');
+  if (maxBuffer !== null && (!Number.isFinite(maxBuffer) || maxBuffer <= 0)) throw new Error('Worker exec maxBuffer must be a positive finite number');
   const namespace = config.kubernetes.workerNamespace;
   const stdout = new stream.PassThrough();
   const stderr = new stream.PassThrough();
   let out = ''; let err = '';
   stdout.setEncoding('utf8');
   stderr.setEncoding('utf8');
-  stdout.on('data', (chunk) => { out += chunk; });
-  stderr.on('data', (chunk) => { err += chunk; });
   const input = stdinText === null ? null : stream.Readable.from([stdinText]);
   return new Promise((resolve, reject) => {
     let socket;
@@ -3674,6 +3755,23 @@ async function execInWorker(config, runtimeName, command, stdinText = null, { ti
       error.code = 'ETIMEDOUT';
       finish(error);
     }, timeoutMs);
+    let outputBytes = 0;
+    const collect = (isStdout) => (chunk) => {
+      if (settled) return;
+      outputBytes += Buffer.byteLength(chunk);
+      if (maxBuffer !== null && outputBytes > maxBuffer) {
+        const error = new Error('Worker exec output exceeds maxBuffer');
+        error.code = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+        finish(error);
+        return;
+      }
+      if (isStdout) out += chunk;
+      else err += chunk;
+    };
+    stdout.on('data', collect(true));
+    stderr.on('data', collect(false));
+    stdout.on('error', finish);
+    stderr.on('error', finish);
     const onClose = () => {
       if (status?.status === 'Success') return finish();
       const error = new Error(status?.status === 'Failure'
@@ -3725,7 +3823,7 @@ module.exports = {
   execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker,
   workerIdentity, deleteWorkerIdentity, workerIdentityGone, listWorkers, cloneWorkerVolume,
-  listWorkerVolumes, listPreviews, listShotsRuntimes, isQuotaExceeded,
+  listWorkerVolumes, retirePlatformPreviewPolicy, listPreviews, listShotsRuntimes, isQuotaExceeded,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   readPlatformPod, stopCheckJobs,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum, _upsertForTest: upsert,

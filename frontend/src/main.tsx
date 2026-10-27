@@ -72,6 +72,7 @@ import { installFirstPaintReserve } from './lib/first-paint-reserve';
 import { installJoinRequired } from './lib/join-required';
 import { installAdultGate } from './features/auth/adult-gate';
 import { installSessionRenewalRetry } from './lib/session-renewal-retry';
+import { installApiCacheIdentity } from './lib/api-cache-identity';
 // Publishes window.UsernodeReact.devBoard at module scope. Imported for the
 // side effect, and imported HERE (rather than reached from a Shell island)
 // because the Dev surfaces are runtime-injected into an empty #app-content and
@@ -131,6 +132,9 @@ import './lib/wallpaper-scroll';
 // …and where the on-screen keyboard has panned the screen to, so a centred
 // dialog stays inside what is visible above the keys (#2765).
 import './lib/visual-viewport';
+// …and whether the screen has a column of system chrome down one side
+// (iPhone Duo): the tab bar and the back button move into it (app.css).
+import './lib/side-strip';
 // …and whether the keyboard is open on a phone at all, including in the
 // Homeroom app, whose web view is resized for it so the kit never sees it
 // covered: the tab bar and the Resume strip step aside (app.css).
@@ -152,6 +156,10 @@ import './lib/reset-time';
 // app goes live, in the one sentence every surface says it in, for the board
 // and the change page's classic script (public/js/app-view.js).
 import './lib/release-eta';
+// Publishes window.RepoLink: whether a repository, change, request or commit
+// link is GitHub's, a Homeroom page or the git host's code, for the classic
+// scripts that label those links (public/js/app-view.js, group-chat.js).
+import './lib/repo-link.js';
 // #4177: the one place that re-reads what is on screen after a gap
 // (window.UsernodeReact.liveReads). Before DOMContentLoaded, because the
 // group chat registers with it the first time a channel connects.
@@ -204,6 +212,8 @@ import './features/auth/communities-first-run.js';
 // why it records rather than console.error-ing.
 bootStep('registerServiceWorker', registerServiceWorker);
 bootStep('initOffline', initOffline);
+// Innermost fetch owner: retries must obtain a new identity/cache context.
+bootStep('installApiCacheIdentity', () => installApiCacheIdentity());
 // Before hydration, so no island's first write can slip past it: a write
 // refused with `join_required` becomes a Join prompt and a retry
 // (./lib/join-required.ts), for every caller in both bundles.

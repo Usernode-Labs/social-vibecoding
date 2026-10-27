@@ -18,6 +18,7 @@
 // Resolves what it found.
 
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 
 async function audit(pool, { shouldStop = () => false } = {}) {
   const github = require('./github');
@@ -46,9 +47,9 @@ async function audit(pool, { shouldStop = () => false } = {}) {
     while (queue.length && !shouldStop()) {
       if (!githubBudget.budgetAllows('background')) { held = true; return; }
       const row = queue.shift();
-      const m = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-      if (!m) continue;
-      const [, owner, repo] = m;
+      const parsed = repoRef.ownerRepo(row.repo_url);
+      if (!parsed) continue;
+      const { owner, repo } = parsed;
       try {
         const result = await github.checkRepoPublic(owner, repo);
         if (!result.ok) {

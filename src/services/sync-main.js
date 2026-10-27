@@ -27,6 +27,7 @@ const log = require('./logger');
 const worker = require('./worker');
 const limits = require('./limits');
 const events = require('./events');
+const repoRef = require('./repo-ref');
 
 // The worker's "[sync_*]" phase markers, as the timeline's progress lines
 // and as the banner's coarse phases (merging → resolving → pushing).
@@ -181,6 +182,7 @@ async function runSyncWork(config, pool, {
   const deps = {
     worker, limits, events, integration: require('./integration'), durableTurn: require('./durable-turn'),
     votes: () => require('../routes/votes'), prImportSync: () => require('./pr-import-sync'),
+    codeMissing: require('./code-missing'),
     sessionBusy, sleep: (ms) => new Promise((r) => setTimeout(r, ms)), now: Date.now,
     ...injected,
   };
@@ -199,9 +201,16 @@ async function runSyncWork(config, pool, {
   let session = await loadSession(pool, id);
   if (!session) return { outcome: 'gone' };
   if (!session.repo_url || !session.branch_name) return { outcome: 'gone' };
-  const m = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+  const m = repoRef.ownerRepo(session.repo_url);
   if (!m) return { outcome: 'gone' };
-  const [, repoOwner, repoName] = m;
+  const { owner: repoOwner, repo: repoName } = m;
+  // Its branch did not come across when Homeroom moved off GitHub
+  // (code-missing.js branchGone, read live): there is nothing to merge main
+  // into, so nothing runs and nothing is recorded about conflicts. Asked
+  // only before the turn starts; a sync a restart picks up goes on.
+  if (!steps.has('started') && await deps.codeMissing.branchGone(pool, session) === true) {
+    return { outcome: deps.codeMissing.CODE, message: deps.codeMissing.BRANCH_GONE };
+  }
 
   // The platform's own syncs for a failure main may have caused: only a head
   // behind main that merges with it cleanly is synced (boot-failure-sync.js,
@@ -340,6 +349,18 @@ async function runSyncWork(config, pool, {
     // so what the stopped turn left is never read as a conflict.
     if (typeof routed.error === 'string') throw new Error(routed.error.replace(/^dispatch: /, ''));
     const result = routed.result || {};
+    // A conflict is the runner's own verdict: run-cc.sh writes
+    // sync_result=conflict with the files git could not merge. A turn that
+    // ended without one (a fatal worker error such as "branch missing
+    // upstream", a worker that died) merged nothing and decided nothing: it
+    // failed, and is never recorded as a conflict with no files. What it
+    // spent is still billed, once.
+    if (!result.syncResult && (result.fatalError || (result.exitCode != null && result.exitCode !== 0))) {
+      await steps.once('after:spend', () => deps.limits.recordSystemSpend(pool, Math.round((result.costUsd || 0) * 100)));
+      throw Object.assign(new Error(result.fatalError
+        ? `The sync could not run: ${String(result.fatalError).slice(0, 200)}`
+        : `The sync turn ended without a result (exit ${result.exitCode}).`), { code: 'sync_turn_failed' });
+    }
 
     return await steps.once('after', async () => {
       session = (await loadSession(pool, id)) || session;

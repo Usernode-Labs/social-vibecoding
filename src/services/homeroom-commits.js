@@ -9,11 +9,16 @@
 // the description "Written for an earlier version of this change."
 //
 // WHO. Every commit Homeroom writes is committed under one of its own
-// identities: a hosted coding turn's, the Homeroom bot's included
-// (services/worker.js), the platform's own git work (external-agent-head.js,
-// external-agent-patch.js), and a commit uploaded from someone's own agent
-// (github.js, "Homeroom CLI"). A person pushing to the branch on GitHub
-// commits as themselves, or as GitHub for an edit made on its website.
+// identities: Homeroom's one identity (services/commit-identity.js) for a
+// hosted coding turn's, the Homeroom bot's included (services/worker.js),
+// and the platform's own git work (external-agent-head.js,
+// external-agent-patch.js); and 'Homeroom CLI' for a commit uploaded from
+// someone's own agent (github.js, hosted-git.js). A person pushing to the
+// branch commits as themselves, or as GitHub for an edit made on its website.
+//
+// Recognition accepts the address commits carried before 26 Oct 2026 as well
+// (usernode-bot's, commit-identity.js LEGACY_EMAIL): those commits keep it
+// forever, and a move that adds one is still Homeroom's.
 //
 // WHAT. The bot's fix rounds commit with the fixed messages below
 // (homeroom-bot.js runChecksFix, homeroom-bot-live.js reviewLanded): a fix of
@@ -23,12 +28,24 @@
 // it. A round whose agent committed under its own message is not recognised,
 // and reads as any other update did.
 //
-// Pure.
+// Pure, but for the configured identity (GIT_HOST_COMMIT_EMAIL), read when
+// a move is classified.
 
+const commitIdentity = require('./commit-identity');
+
+// Homeroom's identity by default, the one from before 26 Oct 2026
+// (recognition only: commits made then keep it), and the CLI upload's.
 const HOMEROOM_COMMITTERS = Object.freeze([
-  'usernode-bot@users.noreply.github.com',
+  commitIdentity.DEFAULT_EMAIL,
+  commitIdentity.LEGACY_EMAIL,
   'cli@usernodelabs.org',
 ]);
+
+/** Whether `email` is an address Homeroom commits under, now or before. */
+function isHomeroomCommitter(email, env = process.env) {
+  const e = String(email || '').trim().toLowerCase();
+  return !!e && (HOMEROOM_COMMITTERS.includes(e) || commitIdentity.homeroomCommitterEmails(env).includes(e));
+}
 
 /** The messages the bot's fix rounds commit with. */
 const FIX_COMMIT_MESSAGES = Object.freeze({
@@ -48,9 +65,9 @@ const FIX_SUBJECT = /^Homeroom bot: (?:fix the failing checks on #\d+|fix what d
  */
 function classify(commits) {
   if (!Array.isArray(commits) || !commits.length) return { madeByHomeroom: false, fixOnly: false };
-  const madeByHomeroom = commits.every((c) => HOMEROOM_COMMITTERS.includes(String(c && c.committer || '').trim().toLowerCase()));
+  const madeByHomeroom = commits.every((c) => isHomeroomCommitter(c && c.committer));
   const fixOnly = madeByHomeroom && commits.every((c) => FIX_SUBJECT.test(String(c && c.subject || '').trim()));
   return { madeByHomeroom, fixOnly };
 }
 
-module.exports = { HOMEROOM_COMMITTERS, FIX_COMMIT_MESSAGES, FIX_SUBJECT, classify };
+module.exports = { HOMEROOM_COMMITTERS, FIX_COMMIT_MESSAGES, FIX_SUBJECT, isHomeroomCommitter, classify };

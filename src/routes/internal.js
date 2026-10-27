@@ -12,6 +12,7 @@ const kubernetes = require('../services/kubernetes');
 const statusSvc = require('../services/status');
 const debugAccess = require('../services/debug-access');
 const github = require('../services/github');
+const repoRef = require('../services/repo-ref');
 // #945: the issue's Homeroom-side Discussion thread, merged into the
 // by-number issue response the worker's usernode-issues CLI prints.
 const threadContext = require('../services/thread-context');
@@ -411,64 +412,22 @@ function internalRoutes(_config) {
         return res.status(403).json({ ok: false, code: 'session_mismatch' });
       }
 
-      let session;
       try {
-        const { rows } = await pool.query(
-          `SELECT cs.id, cs.branch_name, cs.status, a.repo_url
-           FROM chat_sessions cs
-           JOIN apps a ON a.id = cs.app_id
-           WHERE cs.id = $1`,
-          [sessionId]
-        );
-        if (!rows.length) {
-          return res.status(404).json({ ok: false, code: 'session_not_found' });
-        }
-        session = rows[0];
-      } catch (err) {
-        log.error('internal-api', 'Session lookup failed', { sessionId, err: err.message });
-        return res.status(500).json({ ok: false, code: 'db_error' });
-      }
-
-      if (!session.branch_name) {
-        return res.status(400).json({ ok: false, code: 'no_branch' });
-      }
-      if (['closed', 'archived', 'merged', 'failed'].includes(session.status)) {
-        return res.status(409).json({ ok: false, code: 'session_inactive', status: session.status });
-      }
-
-      // Defensive: re-confirm the repo is public before pushing. The
-      // worker bootstrap guard catches most cases, but a user could
-      // flip the repo to private mid-session. Keeping the worker's
-      // push proxy public-only matches the import-time enforcement.
-      const parsed = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-      if (!parsed) {
-        return res.status(400).json({ ok: false, code: 'bad_repo_url' });
-      }
-      const [, owner, repo] = parsed;
-      const privacy = await github.checkRepoPublic(owner, repo);
-      if (!privacy.ok) {
-        return res.status(502).json({ ok: false, code: privacy.code, message: privacy.message });
-      }
-      if (privacy.private) {
-        return res.status(403).json({
-          ok: false, code: 'private_repo',
-          message: `${owner}/${repo} is private; Homeroom supports public repos only.`,
-        });
-      }
-
-      try {
-        const { sha } = await worker.execPushFromWorker(sessionId, session.branch_name);
-        return res.json({ ok: true, branch: session.branch_name, sha });
+        // The conductor rechecks the current session and repository privacy
+        // immediately before it runs the trusted pusher.
+        const { sha, branch } = await require('../workflow/platform.ts').requestWorkerPush(sessionId);
+        return res.json({ ok: true, branch, sha });
       } catch (err) {
         // #1376: `message` is the raw failure; `detail`/`permanent` carry the
         // operator-readable version so the worker's __USERNODE_WARN__ line
         // (and anything reading this response) says why, not just that.
-        return res.status(502).json({
+        return res.status(err.httpStatus || 502).json({
           ok: false,
           code: err.code || 'push_failed',
           message: err.message,
           detail: err.userMessage || null,
           permanent: err.permanent === true,
+          ...(err.sessionStatus ? { status: err.sessionStatus } : {}),
         });
       }
     }
@@ -520,11 +479,11 @@ function internalRoutes(_config) {
 
       // Same .git-tolerant parse the push route uses. No repo → return the
       // well-formed empty-with-note shape so the agent gets a clean answer.
-      const parsed = repoUrl.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      const parsed = repoRef.ownerRepo(repoUrl);
       if (!parsed) {
         return res.json({ ok: true, issues: [], truncatedList: false, note: 'no repo' });
       }
-      const [, owner, repo] = parsed;
+      const { owner, repo } = parsed;
       // Clip verbose bodies for the agent's context — the cache carries
       // full bodies for the web route / Create-PR seeding (#158). The
       // marker names the CLI form that returns the full text on demand.
@@ -597,11 +556,11 @@ function internalRoutes(_config) {
         ? { usernodeThread: thread.messages, usernodeThreadTruncated: thread.truncated }
         : {};
 
-      const parsed = repoUrl.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      const parsed = repoRef.ownerRepo(repoUrl);
       if (!parsed) {
         return res.json({ ok: true, issue: null, ...threadFields, note: 'no repo' });
       }
-      const [, owner, repo] = parsed;
+      const { owner, repo } = parsed;
       // fetchPublicIssue validates the number itself ('bad issue number').
       // #396: merge the issue's comment thread (clipped) so the worker CLI
       // surfaces the discussion, not just the body. Both fetchers never
@@ -760,9 +719,9 @@ function internalRoutes(_config) {
       if (!session.branch_name) {
         return res.status(400).json({ ok: false, code: 'no_branch' });
       }
-      const parsed = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      const parsed = repoRef.ownerRepo(session.repo_url);
       if (!parsed) return res.status(400).json({ ok: false, code: 'bad_repo_url' });
-      const [, owner, repo] = parsed;
+      const { owner, repo } = parsed;
 
       try {
         const pr = await github.createPR(owner, repo, {

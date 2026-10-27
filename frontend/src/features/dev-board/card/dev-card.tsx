@@ -58,6 +58,7 @@ import { t as translate } from '../../../lib/i18n/runtime';
 import { useStoreState } from '../../../lib/use-store-state';
 import { clampPopoverHeight, placeUnderAnchor } from '../../../lib/anchor-popover';
 import { anchorRectOf, useAnchoredDismiss } from '../../../lib/popover-dismiss';
+import { linkAttrs } from '../../../lib/repo-link.js';
 import { cardTintClass } from '../../home/panels/ui';
 import type { NoChoice } from '../../review-flow/vote-sheet';
 import { aiEnabledStore, cardNowStore, voteSendingStore } from './cards-store';
@@ -465,12 +466,15 @@ export function Badge({ b }: { b: BadgeSpec }): ReactNode {
           onClick={() => call({ fn: 'openTopic', args: ['issue', b.n] })}
         >{b.label}</button>
       );
-    case 'issueLink':
+    case 'issueLink': {
+      // A request's page in Homeroom opens in place (closesPillSpecs).
+      const link = linkAttrs(b.href) || { href: b.href, target: '_blank', rel: 'noopener' };
       return (
-        <a href={b.href} target="_blank" rel="noopener" className={b.cls} title={b.title}>
+        <a href={link.href} target={link.target} rel={link.rel} className={b.cls} title={b.title}>
           {b.label}
         </a>
       );
+    }
     case 'ms':
       // MergeStatus.badgeHtml's shell; the descriptor comes from
       // MergeStatus.lifecycle, resolved by the builder.
@@ -1184,9 +1188,15 @@ function Rail({ rail }: { rail: RailSpec }): ReactNode {
   return rail.chevron ? <Chevron /> : null;
 }
 
+/**
+ * A meta-line link opens where its address is (lib/repo-link.js): a page of
+ * Homeroom (a request's, another change's) in place, at its route; a pull
+ * request on GitHub or code on the git host in a new tab, as they always did.
+ */
 function MetaPartView({ p }: { p: MetaPart }): ReactNode {
   if (p.t === 'link') {
-    return <a href={p.href} target="_blank" rel="noopener" className={p.cls} title={p.title}>{p.s}</a>;
+    const link = linkAttrs(p.href) || { href: p.href, target: '_blank', rel: 'noopener' };
+    return <a href={link.href} target={link.target} rel={link.rel} className={p.cls} title={p.title}>{p.s}</a>;
   }
   if (p.t === 'span') {
     return <span className={p.cls} title={p.title}>{p.s}</span>;

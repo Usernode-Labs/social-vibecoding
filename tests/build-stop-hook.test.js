@@ -839,9 +839,9 @@ test('run-cc.sh: a server the agent left running is stopped as its turn ends, an
   const ran = await runRunCc(fx, { STUB_WORK: 'commit_and_serve' });
   assert.equal(ran.code, 0, ran.out);
   assert.ok(Number.isInteger(ran.claude.server));
-  // Gone, or a zombie its exited parent left for init to reap: not serving.
-  const state0 = (() => { try { const st = fs.readFileSync(`/proc/${ran.claude.server}/stat`, 'utf8'); return st.slice(st.lastIndexOf(')') + 2, st.lastIndexOf(')') + 3); } catch { return 'gone'; } })();
-  assert.ok(['gone', 'Z', 'X'].includes(state0), `the server is stopped (state ${state0})`);
+  const ownership = require('../worker/process-ownership');
+  const state0 = ownership.readProcess(ran.claude.server)?.state || 'gone';
+  assert.ok(state0 === 'gone' || /^[ZX]/.test(state0), `the server is stopped (state ${state0})`);
   assert.match(resultLine(ran.out), / stop_hook_blocks=0 stop_hook_servers_stopped=1$/);
   assert.match(ran.out, /__USERNODE_WARN__ The agent left servers running in its workspace; the stop guard stopped them as the turn ended \(stop_hook_servers_stopped=1\)/);
   const state = worker.newWatchState();

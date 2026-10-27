@@ -328,6 +328,80 @@ async function applySchema(connectionUrl) {
   }
 }
 
+// Reuse lint:sql's complete shadow schema: no second server or schema load.
+// A fresh, isolated role avoids touching any role used outside this fixture.
+async function validatePlatformPreviewPolicy(connectionUrl) {
+  const started = performance.now();
+  const preview = require('../src/services/platform-preview-data-policy');
+  const client = new Client({ connectionString: connectionUrl });
+  await client.connect();
+  try {
+    await client.query('SET search_path = pg_catalog');
+    const { rows } = await client.query(preview.CATALOG_SQL);
+    const catalog = JSON.parse(rows[0].inventory);
+    preview.verifyCatalog(catalog);
+    return { tables: catalog.relations.length, durationMs: Math.round(performance.now() - started) };
+  } finally { await client.end(); }
+}
+
+async function validateDebugAccess(connectionUrl) {
+  const started = performance.now();
+  const { buildGrantStatements, READABLE_COLUMNS } = require('../src/services/debug-access');
+  const { verifyDebugRole } = require('../src/services/debug-role-policy');
+  const role = `debug_check_${crypto.randomBytes(8).toString('hex')}`;
+  const password = crypto.randomBytes(24).toString('hex');
+  const admin = new Client({ connectionString: connectionUrl, connectionTimeoutMillis: 5000 });
+  const options = new URL(connectionUrl);
+  options.username = role;
+  options.password = password;
+  const reader = new Client({ connectionString: options.href, connectionTimeoutMillis: 5000 });
+  let created = false;
+  let result;
+  await admin.connect();
+  try {
+    await admin.query(`CREATE ROLE ${quoteIdentifier(role)} LOGIN NOINHERIT PASSWORD '${password}'`);
+    created = true;
+    await admin.query(`GRANT USAGE ON SCHEMA public TO ${quoteIdentifier(role)}`);
+    const { rows } = await admin.query(`SELECT c.relname AS table, c.relkind AS kind,
+        array_agg(a.attname::text ORDER BY a.attnum) AS columns
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      JOIN pg_attribute a ON a.attrelid = c.oid
+      WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
+        AND a.attnum > 0 AND NOT a.attisdropped GROUP BY c.relname, c.relkind`);
+    for (const sql of buildGrantStatements(rows, role)) await admin.query(sql);
+    result = await verifyDebugRole(admin, { role, readableColumns: READABLE_COLUMNS, requireAllColumns: true });
+
+    await reader.connect();
+    const { rows: [identity] } = await reader.query('SELECT current_user AS role');
+    if (identity.role !== role) throw new Error('debug policy probe did not use its restricted login');
+    await reader.query('SELECT id, slug, status FROM public.apps LIMIT 0');
+    for (const sql of [
+      'SELECT password FROM public.users LIMIT 0',
+      'SELECT row_to_json(u) FROM public.users u LIMIT 0',
+      'SELECT content FROM public.conversation_messages LIMIT 0',
+      'SELECT payload FROM public.wf_events LIMIT 0',
+      'UPDATE public.apps SET status = status WHERE FALSE',
+    ]) {
+      try {
+        await reader.query(sql);
+      } catch (error) {
+        if (error.code === '42501') continue;
+        throw error;
+      }
+      throw new Error(`debug role unexpectedly permitted: ${sql}`);
+    }
+  } finally {
+    await reader.end();
+    try {
+      if (created) {
+        await admin.query(`DROP OWNED BY ${quoteIdentifier(role)}`);
+        await admin.query(`DROP ROLE ${quoteIdentifier(role)}`);
+      }
+    } finally { await admin.end(); }
+  }
+  return { ...result, durationMs: Math.round(performance.now() - started) };
+}
+
 async function mapConcurrent(items, concurrency, fn) {
   let next = 0;
   const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
@@ -423,6 +497,10 @@ async function main() {
   const shadow = await createShadowDatabase(baseUrl);
   try {
     await applySchema(shadow.shadowUrl);
+    const previewPolicy = await validatePlatformPreviewPolicy(shadow.shadowUrl);
+    console.log(`Platform preview policy verified for ${previewPolicy.tables} tables (${previewPolicy.durationMs} ms).`);
+    const debugPolicy = await validateDebugAccess(shadow.shadowUrl);
+    console.log(`Debug SQL policy verified for ${debugPolicy.columns} reviewed columns (${debugPolicy.durationMs} ms).`);
     const uniqueCount = await validateQueries(inventory, shadow.shadowUrl);
     console.log(
       `PostgreSQL validation passed for ${uniqueCount} unique statements `
@@ -445,5 +523,7 @@ module.exports = {
   checkDynamicBaseline,
   collectQueryInventory,
   inventorySummary,
+  validateDebugAccess,
+  validatePlatformPreviewPolicy,
   validateQueries,
 };

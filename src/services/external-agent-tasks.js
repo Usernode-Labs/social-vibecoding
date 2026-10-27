@@ -54,10 +54,22 @@
 // the linked login and the commit must descend from the recorded base — and
 // the exemption is keyed to "this call performed the copy, in this request".
 // It never applies to a `prNumber` the caller merely named.
+//
+// AN APP ON HOMEROOM'S OWN GIT HOST (since 26 Oct 2026, every app but the
+// platform itself; services/git-host.js) has no GitHub repository, so none of
+// the fork machinery above applies to it. Its repository is publicly
+// readable, so the work order clones it straight from the git host, and the
+// change comes back as a PATCH and nothing else: applied at the recorded
+// base in the app's repository (external-agent-patch.js, which writes there
+// with the git host's service account) and opened as a native proposal (the
+// same createPR and pr-import, which answer from services/native-pulls.js for
+// that repository). No fork, no push, and no GitHub link: the patch arrives
+// in a call made as the Homeroom user, which is the attribution.
 
 const crypto = require('crypto');
 const log = require('./logger');
 const githubService = require('./github');
+const repoRef = require('./repo-ref');
 const githubBudget = require('./github-budget');
 const externalAgentHead = require('./external-agent-head');
 const externalAgentPatch = require('./external-agent-patch');
@@ -221,6 +233,40 @@ function linkUnavailable() {
   );
 }
 
+// ── An app on Homeroom's own git host ──────────────────────────────────
+//
+// Where the work order sends the coding agent for such an app: the
+// repository's page, and the PUBLIC clone address (git-host.js cloneUrl with
+// `internal: false`, never the in-cluster one the platform itself reads). Null
+// for an app on GitHub, which is what every caller branches on.
+function gitHostRepoFor(repoUrl) {
+  if (!repoRef.isHosted(repoUrl)) return null;
+  const parsed = repoRef.ownerRepo(repoUrl);
+  const cloneUrl = repoRef.cloneUrl(repoUrl, { internal: false });
+  let host = null;
+  try { host = new URL(cloneUrl).host; } catch { host = null; }
+  return {
+    webUrl: repoRef.webUrl(repoUrl),
+    cloneUrl,
+    host: host || cloneUrl,
+    dir: parsed.repo,
+  };
+}
+
+// The refusal for the two shapes such an app cannot take: a branch pushed to
+// a fork (there is no GitHub repository to fork) and a pull request number
+// (its proposals are Homeroom's own). Says what does work instead.
+function patchRequired(what) {
+  return fail(
+    'patch_required',
+    `${what} This app's code is on Homeroom's own git host, not on GitHub, so there is no fork or pull request `
+    + 'to submit: hand the change in as a patch instead. For new work, call submit_work with the taskId from prepare_work '
+    + 'and the output of `git format-patch <baseSha>..HEAD --stdout` as `patch`; to revise a proposal, call '
+    + 'prepare_work with its proposalId and submit that work order\'s taskId with the patch.',
+    { retryable: false }
+  );
+}
+
 // ── PUBLIC GitHub reads ────────────────────────────────────────────────
 //
 // Deliberately plain fetch rather than the platform's Octokit: the Octokit
@@ -238,7 +284,7 @@ async function githubPublic(method, path) {
   init.headers['X-GitHub-Api-Version'] = '2022-11-28';
   let resp;
   try {
-    resp = await fetch(`${GITHUB_API}${path}`, init);
+    resp = await githubService.githubFetch(githubService.publicApiCredential(), `${GITHUB_API}${path}`, init);
   } catch (err) {
     log.warn('external-agent-tasks', 'public GitHub read failed', { method, path, err: err.message });
     return { ok: false, status: 0, body: null, networkError: true };
@@ -450,7 +496,7 @@ function buildDuplicateNotice({ issueNumber, issueNumbers, openProposals }) {
 // really is the likely setting.
 function buildGuidance({
   agent, forkOwner, forkRepo, repo, forkPageUrl, forkStatus, issueNumber,
-  issueNumbers, openProposals,
+  issueNumbers, openProposals, gitHost = null,
 }) {
   const forkRef = `${forkOwner}/${forkRepo}`;
   const justCreated = forkStatus !== 'ready';
@@ -464,6 +510,35 @@ function buildGuidance({
   // decision this raises is whether that work should happen at all.
   const duplicate = buildDuplicateNotice({ issueNumber, issueNumbers, openProposals });
   if (duplicate) steps.push(duplicate);
+
+  // An app on Homeroom's own git host: no copy to make and none to pick,
+  // since its code is not on GitHub. What the person may have to do instead
+  // is let the coding agent's sandbox reach that host, which the hosted
+  // agents' default network settings may not allow.
+  if (gitHost) {
+    const reach = `If its network access is limited, allow ${gitHost.host} first: that is where the work order `
+      + 'fetches the app\'s code from.';
+    if (agent === 'claude-code') {
+      steps.push(`Open ${CLAUDE_CODE_URL} and start a new session. This app's code is on Homeroom, not on GitHub, `
+        + 'so it is not in the repository picker: choose any repository there.');
+      steps.push(reach);
+    } else if (agent === 'codex') {
+      steps.push(`Open ${CODEX_URL} and start a new task. This app's code is on Homeroom, not on GitHub, so `
+        + 'choose any environment.');
+      steps.push(reach);
+    } else {
+      steps.push(`Open your coding agent somewhere it can reach ${gitHost.host}: the work order fetches the `
+        + 'app\'s code from there, and there is no copy to make first.');
+    }
+    steps.push('Paste the work order below into it, exactly as written.');
+    steps.push(agent === 'codex'
+      ? 'It\'ll submit the change to Homeroom itself when it\'s done if it has the connector, and you can ask me any time to check. '
+        + 'Codex can\'t add the Homeroom connector today, so if it says it can\'t submit, give me the patch file it saves and I\'ll submit it.'
+      : 'It\'ll submit the change to Homeroom itself when it\'s done, and you can ask me any time to check. '
+        + 'If it says it has no Homeroom tools, add the connector on claude.ai (Settings → Connectors on Homeroom shows how) and start a new session. '
+        + 'If it says it can\'t submit, come back and tell me.');
+    return steps;
+  }
 
   if (forkStatus === 'name_conflict') {
     steps.push(
@@ -565,8 +640,15 @@ function buildWorkOrder({
   appName, appSlug, upstreamUrl, upstreamSlug, forkUrl, forkCloneUrl, forkRepo,
   forkPageUrl, forkStatus, branch, baseSha, issueNumber, issueNumbers, brief, webPath,
   taskId, agentLabelText, platformRules, targetProposal, startedFromWalkthrough, specs = [],
-  patchUpload = null,
+  patchUpload = null, gitHost = null,
 }) {
+  // An app on Homeroom's own git host (gitHostRepoFor): cloned from there,
+  // handed in as a patch, no fork anywhere. The fork-shaped sections below
+  // each say what they become for it; everything else is shared. Its clone's
+  // only remote is `origin`, the app's own repository, where a fork's clone
+  // reads the app as `upstream`.
+  const hosted = !!(gitHost && gitHost.cloneUrl);
+  const remote = hosted ? 'origin' : 'upstream';
   // Where the connector is added, for the agent that finds it has none. The
   // page carries the connector URL and the click-by-click steps for both
   // chat products; the work order only has to point at it.
@@ -598,7 +680,9 @@ function buildWorkOrder({
     ...connectorUrlLine,
     '   - Codex: there is no way to add it today. Codex on the web has no custom',
     '     MCP setting, and the Codex CLI\'s sign-in uses a localhost callback the',
-    '     hosted connector refuses, so hand the branch back as below.',
+    hosted
+      ? '     hosted connector refuses, so hand the patch back as below.'
+      : '     hosted connector refuses, so hand the branch back as below.',
     '   Settings → Connectors on Homeroom has the click-by-click steps:',
     ...connectorsPage,
   ];
@@ -607,7 +691,14 @@ function buildWorkOrder({
   // GitHub page comes FIRST: an agent with no `gh` is exactly the reader who
   // needs it, and it used to be a footnote below the command it replaces.
   const setup = [];
-  if (forkStatus !== 'ready') {
+  if (hosted) {
+    setup.push(
+      'This app\'s code is on Homeroom\'s own git host, not on GitHub, and anyone can',
+      'read it. There is no fork to make and nothing to push: clone it, build the',
+      'change on a local branch, and hand it in as a patch.',
+      ''
+    );
+  } else if (forkStatus !== 'ready') {
     if (forkStatus === 'name_conflict') {
       setup.push(
         'FIRST, make the fork. Your GitHub account already has a repository with the',
@@ -660,37 +751,75 @@ function buildWorkOrder({
   // already cut at the right commit. That happened in production, and the
   // work order's "exactly as named above" made the agent rewrite a finished
   // commit onto a differently-named branch for no benefit. Check first.
+  // A hosted app's repository is not on GitHub, so a hosted agent cannot be
+  // started rooted in it (its picker lists GitHub repositories): it starts
+  // somewhere else and clones this one, and the instructions that apply are
+  // the clone's own.
   setup.push(
-    'Before editing, make sure this agent context is rooted in this app repository',
-    '(or its fork) and has loaded this repository\'s own instructions. Some coding',
-    'agents retain instructions from the project where a task started, so cloning',
-    'this repository or changing directory from an unrelated project may not',
-    'replace them. If unrelated repository instructions are still active, start a',
-    'fresh task rooted in this repository and use this same work order there.',
-    '',
-    'If your harness has already put you in a clone of the fork, do not re-clone.',
+    ...(hosted
+      ? [
+        'Work inside your clone of this app\'s repository and follow its own',
+        'instructions (its CLAUDE.md or AGENTS.md, if it has one). If your session',
+        'started in another repository, that repository\'s instructions do not apply',
+        'to this app: once you have cloned it, read this repository\'s own.',
+        '',
+        'If your harness has already put you in a clone of this repository, do not',
+        're-clone.',
+      ]
+      : [
+        'Before editing, make sure this agent context is rooted in this app repository',
+        '(or its fork) and has loaded this repository\'s own instructions. Some coding',
+        'agents retain instructions from the project where a task started, so cloning',
+        'this repository or changing directory from an unrelated project may not',
+        'replace them. If unrelated repository instructions are still active, start a',
+        'fresh task rooted in this repository and use this same work order there.',
+        '',
+        'If your harness has already put you in a clone of the fork, do not re-clone.',
+      ]),
     'Check where you are and keep the branch you are on if it starts at the right',
     'commit:',
     `${CMD}git rev-parse HEAD`,
     `${CMD}git rev-parse --abbrev-ref HEAD`,
     `If HEAD is already ${baseSha}, you are set — start writing code on the branch`,
-    'you are on, whatever it is called. If it is not, run only the last checkout',
-    'line from the block below, with any branch name you like.',
+    ...(hosted
+      ? ['you are on, whatever it is called. If it is not, run only the last two lines',
+        'of the block below, with any branch name you like.']
+      : ['you are on, whatever it is called. If it is not, run only the last checkout',
+        'line from the block below, with any branch name you like.']),
     '',
     'If you are not already in a clone, clone it yourself:'
   );
 
   // The same four commands whatever the fork's state — only the fork's own
   // address changes. Nothing above this block clones, so `git remote add
-  // upstream` is unconditional.
-  setup.push(
-    `${CMD}git clone ${forkCloneUrl} ${forkRepo}`,
-    `${CMD}cd ${forkRepo}`,
-    `${CMD}git remote add upstream ${upstreamUrl}`,
-    `${CMD}git fetch upstream`,
-    `${CMD}git checkout -b ${branch} ${baseSha}`
-  );
-  if (forkStatus === 'ready') {
+  // upstream` is unconditional. A hosted app is cloned from the git host
+  // itself, so its one remote is the app's repository.
+  if (hosted) {
+    setup.push(
+      `${CMD}git clone ${gitHost.cloneUrl} ${gitHost.dir}`,
+      `${CMD}cd ${gitHost.dir}`,
+      `${CMD}git fetch origin ${baseSha}`,
+      `${CMD}git checkout -b ${branch} ${baseSha}`,
+      '',
+      // The likeliest failure on this path, and one the change cannot fix: a
+      // hosted agent's sandbox allows a short list of hosts by default.
+      `If the clone is refused (could not resolve host, a 403 from a proxy, a`,
+      `timeout), your sandbox cannot reach ${gitHost.host}. The repository is public,`,
+      'so that is your container\'s network policy, not a permission. Tell the user',
+      `once, in one line, that this session needs network access to ${gitHost.host}`,
+      '(the coding agent\'s environment settings allow it), and stop rather than',
+      'writing the change without the code.'
+    );
+  } else {
+    setup.push(
+      `${CMD}git clone ${forkCloneUrl} ${forkRepo}`,
+      `${CMD}cd ${forkRepo}`,
+      `${CMD}git remote add upstream ${upstreamUrl}`,
+      `${CMD}git fetch upstream`,
+      `${CMD}git checkout -b ${branch} ${baseSha}`
+    );
+  }
+  if (forkStatus === 'ready' && !hosted) {
     setup.push('', 'Your fork already exists — start at the clone.');
   }
 
@@ -739,14 +868,14 @@ function buildWorkOrder({
     'If `git checkout` answers `fatal: not a valid object name` or',
     '`reference is not a tree`, that commit is simply not in your clone yet.',
     'Fetch it and repeat the checkout:',
-    `${CMD}git fetch upstream ${baseSha}`,
+    `${CMD}git fetch ${remote} ${baseSha}`,
     `${CMD}git checkout -b ${branch} ${baseSha}`,
     'Do not shorten that commit id, do not retype it from memory, and do not',
-    'substitute `upstream/main` or `HEAD` — starting anywhere else produces a diff',
+    `substitute \`${remote}/main\` or \`HEAD\` — starting anywhere else produces a diff`,
     'nobody asked for. If it still fails after the fetch, the id was copied wrongly:',
     'ask for the work order again rather than guessing a starting point.'
   );
-  if (forkStatus === 'ready') {
+  if (forkStatus === 'ready' && !hosted) {
     setup.push(
       '',
       'If the clone fails because the fork is not actually there, it can be made in',
@@ -790,7 +919,18 @@ function buildWorkOrder({
   // already exist (a proposal whose head is in the fork has exactly one), and
   // the starting commit may not be in the fork at all (a bot-owned proposal
   // branch lives only in the app's repository).
-  if (forkIsHome) {
+  if (update && hosted) {
+    // The clone block above already fetches the starting commit by its id,
+    // so all that is left to say is which commit it is.
+    setup.push(
+      '',
+      continuing
+        ? 'THE STARTING COMMIT IS THE SESSION\'S OWN HEAD, on a branch only Homeroom'
+        : 'THE STARTING COMMIT IS THE PROPOSAL\'S OWN HEAD, on a branch only Homeroom',
+      'writes, NOT the app\'s main branch. The block above fetches it by its id:',
+      'start from it.'
+    );
+  } else if (forkIsHome) {
     setup.push(
       '',
       'THIS PROPOSAL ALREADY HAS A BRANCH IN YOUR FORK. Use it — do not cut a new',
@@ -872,7 +1012,11 @@ function buildWorkOrder({
           'Its code lives on a branch in YOUR OWN fork, so your push IS the update:',
           `commit on ${branch}, push it, and tell Homeroom with the call below.`,
         ]
-        : [
+        : hosted ? [
+          'Its code lives on a branch in the app\'s own repository that only Homeroom',
+          'can write. You do NOT need access to it: hand the change in as a patch, and',
+          'Homeroom moves the proposal onto it.',
+        ] : [
           'Its code lives on a branch in the app\'s own repository that only Homeroom',
           'can write. You do NOT need access to it — hand the change in exactly as you',
           'would for new work, as a patch (no push needed) or a branch pushed to your',
@@ -901,19 +1045,30 @@ function buildWorkOrder({
 
   lines.push(
     'WHERE TO WORK',
-    `- Upstream repository (read-only to you): ${upstreamUrl}`,
-    `- Your fork, which you can push to:      ${forkUrl}`,
-    ...(forkIsHome
+    ...(hosted
       ? [
-        `- The branch this proposal follows:       ${branch}`,
-        '  (NOT a suggestion — an open pull request cannot be repointed at another',
-        '   branch, so this proposal only accepts new commits on this one.)',
+        `- The app's repository (public):         ${gitHost.webUrl}`,
+        `- Clone it from:                         ${gitHost.cloneUrl}`,
+        '  (read-only to you: there is no fork and nothing to push, and you hand',
+        '   the change in as a patch.)',
+        `- Suggested local branch name:           ${branch}`,
+        '  (a SUGGESTION — any name works, and it never leaves your machine.)',
       ]
       : [
-        `- Suggested branch name:                 ${branch}`,
-        '  (a SUGGESTION — any branch name is accepted. If your harness already made',
-        '   a branch at the right commit, keep it. All that matters is that you name',
-        '   the branch you actually pushed when you submit.)',
+        `- Upstream repository (read-only to you): ${upstreamUrl}`,
+        `- Your fork, which you can push to:      ${forkUrl}`,
+        ...(forkIsHome
+          ? [
+            `- The branch this proposal follows:       ${branch}`,
+            '  (NOT a suggestion — an open pull request cannot be repointed at another',
+            '   branch, so this proposal only accepts new commits on this one.)',
+          ]
+          : [
+            `- Suggested branch name:                 ${branch}`,
+            '  (a SUGGESTION — any branch name is accepted. If your harness already made',
+            '   a branch at the right commit, keep it. All that matters is that you name',
+            '   the branch you actually pushed when you submit.)',
+          ]),
       ]),
     ...(continuing
       ? [
@@ -930,7 +1085,9 @@ function buildWorkOrder({
           '   commits already under review. See SETUP if git rejects it.)',
         ]
         : [
-          `- It must start at upstream commit:      ${baseSha}`,
+          hosted
+            ? `- It must start at commit:               ${baseSha}`
+            : `- It must start at upstream commit:      ${baseSha}`,
           '  (all 40 characters, exactly as written — see SETUP if git rejects it)',
         ]),
   );
@@ -947,27 +1104,38 @@ function buildWorkOrder({
     ...setup,
     '',
     'RULES',
-    ...(patchAccepted
+    ...(hosted
       ? [
-        '- Hand the change in as a branch pushed to YOUR FORK when you can push,',
-        '  and as a patch when you cannot; step 1 under WHEN YOU ARE DONE says how.',
-        '  The choice is yours, never the user\'s. Do not push to the upstream',
-        '  repository — you do not have access to it, and Homeroom opens the pull',
-        '  request for you.',
-        '- A fork is needed only to push a branch. Homeroom has no write access to',
-        '  your GitHub account and will not make one for you.',
+        '- Hand the change in as a PATCH of your commits; step 1 under WHEN YOU ARE',
+        '  DONE says how. There is no fork to push to and no pull request to open:',
+        '  this app\'s repository is on Homeroom\'s own git host, only Homeroom writes',
+        '  it, and Homeroom opens the proposal for you.',
+        '- Commit on any local branch. Its name never leaves your machine, so it is',
+        '  never a reason to rewrite, rebase or redo a commit you have finished.',
       ]
       : [
-        '- Commit and push to a branch on YOUR FORK, and nothing else. Do not push to',
-        '  the upstream repository — you do not have access to it, and Homeroom opens',
-        '  the pull request for you.',
-        '- Create the fork yourself if you do not have one:',
-        '  Homeroom has no write access to your GitHub account and will not make it',
-        '  for you.',
+        ...(patchAccepted
+          ? [
+            '- Hand the change in as a branch pushed to YOUR FORK when you can push,',
+            '  and as a patch when you cannot; step 1 under WHEN YOU ARE DONE says how.',
+            '  The choice is yours, never the user\'s. Do not push to the upstream',
+            '  repository — you do not have access to it, and Homeroom opens the pull',
+            '  request for you.',
+            '- A fork is needed only to push a branch. Homeroom has no write access to',
+            '  your GitHub account and will not make one for you.',
+          ]
+          : [
+            '- Commit and push to a branch on YOUR FORK, and nothing else. Do not push to',
+            '  the upstream repository — you do not have access to it, and Homeroom opens',
+            '  the pull request for you.',
+            '- Create the fork yourself if you do not have one:',
+            '  Homeroom has no write access to your GitHub account and will not make it',
+            '  for you.',
+          ]),
+        '- Any branch name works. A branch name that differs from the suggestion above',
+        '  is never a reason to rewrite, rebase or redo a commit you have already',
+        '  finished — just report the name you pushed.',
       ]),
-    '- Any branch name works. A branch name that differs from the suggestion above',
-    '  is never a reason to rewrite, rebase or redo a commit you have already',
-    '  finished — just report the name you pushed.',
     '- Keep the change scoped to what was asked. It will be reviewed and voted',
     '  on by the app\'s group, and it runs against the app\'s automated checks.',
     '- Do not add, move or print secrets, tokens or credentials, and do not',
@@ -1060,8 +1228,11 @@ function buildWorkOrder({
         continuing
           ? 'it at all: Homeroom only advances a session for the account that owns it,'
           : 'it at all: Homeroom only advances a proposal for the account that opened it,',
-        'from that account\'s own patch or from a fork owned by the GitHub account it',
-        'linked. Nobody else\'s work can move it, and yours cannot move anybody else\'s.'
+        ...(hosted
+          ? ['from that account\'s own patch. Nobody else\'s work can move it, and yours',
+            'cannot move anybody else\'s.']
+          : ['from that account\'s own patch or from a fork owned by the GitHub account it',
+            'linked. Nobody else\'s work can move it, and yours cannot move anybody else\'s.'])
       );
     }
   }
@@ -1074,7 +1245,10 @@ function buildWorkOrder({
   // GitHub at all — its documentation_url points at Anthropic's docs — and
   // taking it literally sent a whole conversation hunting for an
   // organisation admin who was never needed.
-  lines.push(
+  //
+  // Nothing on a hosted app's path pushes or calls GitHub, so it has none of
+  // this; its one network refusal (the clone) is under SETUP.
+  if (!hosted) lines.push(
     '',
     'IF A PUSH OR GITHUB CALL IS REFUSED',
     'First work out WHOSE refusal it is. If the response\'s `documentation_url`',
@@ -1136,8 +1310,33 @@ function buildWorkOrder({
   const uploadLimit = uploadBytes % (1024 * 1024) === 0
     ? `${uploadBytes / (1024 * 1024)} MB`
     : `${Math.round(uploadBytes / 1024)} KB`;
+  // Both step 1s (a hosted app's and a fork's fallback) hand the patch in the
+  // same way, so they share these lines.
+  const patchHandIn = upload
+    ? [
+      '   For a patch over a few KB, UPLOAD it instead of copying it into the',
+      '   tool call: nothing gets retyped. It needs your sandbox to reach',
+      '   Homeroom, which not every sandbox can, so try it once, from your',
+      '   checkout:',
+      `${CMD}git format-patch ${baseSha}..HEAD --stdout | curl -sS --max-time 120 -X PUT \\`,
+      `${CMD}  -H 'Authorization: Bearer ${upload.token}' \\`,
+      `${CMD}  --data-binary @- ${upload.url}`,
+      `   Its token works only for this task's patch, until ${uploadExpiry}:`,
+      '   never print, commit or share it. If it answers "ok":true, pass its',
+      '   `uploadId` as `patchUploadId` in step 2 instead of `patch`; otherwise',
+      `   send the patch inline. Uploads take up to ${uploadLimit}, inline patches`,
+      '   about 250 KB.',
+    ]
+    : ['   Patches over about 250 KB are refused.'];
   lines.push('', 'WHEN YOU ARE DONE', '');
-  if (patchAccepted) {
+  if (hosted) {
+    lines.push(
+      '1. COMMIT, THEN EXPORT A PATCH of your commits. That is the one way in for',
+      '   this app: there is no fork and nothing to push.',
+      `${CMD}git format-patch ${baseSha}..HEAD --stdout`,
+      ...patchHandIn
+    );
+  } else if (patchAccepted) {
     lines.push(
       '1. COMMIT, THEN PUSH A BRANCH to your fork. When you can push, this is the',
       '   way to hand the change in: nothing is retyped, whatever its size. Any',
@@ -1149,22 +1348,7 @@ function buildWorkOrder({
       '   and do not wait: hand the change in as a PATCH of your commits instead.',
       '   You do NOT need GitHub write access, a fork or a push for it.',
       `${CMD}git format-patch ${baseSha}..HEAD --stdout`,
-      ...(upload
-        ? [
-          '   For a patch over a few KB, UPLOAD it instead of copying it into the',
-          '   tool call: nothing gets retyped. It needs your sandbox to reach',
-          '   Homeroom, which not every sandbox can, so try it once, from your',
-          '   checkout:',
-          `${CMD}git format-patch ${baseSha}..HEAD --stdout | curl -sS --max-time 120 -X PUT \\`,
-          `${CMD}  -H 'Authorization: Bearer ${upload.token}' \\`,
-          `${CMD}  --data-binary @- ${upload.url}`,
-          `   Its token works only for this task's patch, until ${uploadExpiry}:`,
-          '   never print, commit or share it. If it answers "ok":true, pass its',
-          '   `uploadId` as `patchUploadId` in step 2 instead of `patch`; otherwise',
-          `   send the patch inline. Uploads take up to ${uploadLimit}, inline patches`,
-          '   about 250 KB.',
-        ]
-        : ['   Patches over about 250 KB are refused.']),
+      ...patchHandIn,
       '   Branch or patch is YOUR decision, by the rule above. Make it yourself and',
       '   never ask the user which to use: most users are not developers, and the',
       '   question only confuses them.'
@@ -1199,7 +1383,14 @@ function buildWorkOrder({
     // reports as `headSha` and the task now records as its base.
     const againSteps = forkIsHome
       ? ['   again the same way: push to the same branch and call `submit_work` again.']
-      : [
+      : hosted ? [
+        '   the same way again: fetch the `headSha` submit_work answered with, rebase',
+        `   onto it, and send the patch made from it with the same taskId ${taskRef}.`,
+        `   Each one is applied on the ${noun}'s newest commit:`,
+        `${CMD}git fetch origin <headSha>`,
+        `${CMD}git rebase <headSha>`,
+        `${CMD}git format-patch <headSha>..HEAD --stdout`,
+      ] : [
         '   the same way again. A branch: push to your fork, then call `submit_work`',
         `   with the same proposalId ${updateRef}. Pushing to your fork alone does NOT`,
         `   move the ${noun}: its head is in the app's repository, and \`submit_work\``,
@@ -1213,7 +1404,15 @@ function buildWorkOrder({
     lines.push(
       '',
       `2. SUBMIT THE UPDATE, through the Homeroom connector. Call \`submit_work\``,
-      ...(patchAccepted
+      ...(hosted
+        ? [
+          `   with taskId ${taskRef} and the patch text from step 1 as \`patch\`, agent`,
+          `   "${agentValue}" and source "work_order". The patch is applied ON THE`,
+          `   ${noun.toUpperCase()}'S CURRENT COMMIT in the app's own repository, and this same`,
+          `   ${noun} moves onto the result. Nothing is overwritten: if the ${noun} moved`,
+          '   in the meantime the call is refused, and it never opens a second proposal.',
+        ]
+        : patchAccepted
         ? [
           `   with proposalId ${updateRef} and \`branch\` set to the branch you pushed (or,`,
           `   if you handed in a patch, taskId ${taskRef} and the patch text from step 1`,
@@ -1268,7 +1467,28 @@ function buildWorkOrder({
       '   connector traffic goes out through your chat product\'s own',
       '   infrastructure, not through your container.',
       '',
-      ...(patchAccepted
+      ...(hosted
+        ? [
+          `3. IF submit_work ANSWERS \`branch_moved\`, somebody advanced the ${noun}`,
+          '   while you were working. Its new commit is the error\'s `headSha` (or',
+          '   `get_proposal`\'s `branch.headSha`). Fetch it, rebase your work onto it',
+          '   and send the patch made from that commit again, with `expectedHeadSha`',
+          '   set to it.',
+          `${CMD}git fetch origin <headSha>`,
+          `${CMD}git rebase <headSha>`,
+          `${CMD}git format-patch <headSha>..HEAD --stdout`,
+          '   IF IT ANSWERS `patch_did_not_apply`, the patch was not made from the',
+          `   ${noun}'s current commit: rebase onto that commit and export it again.`,
+          '   Neither is a reason to start over or to open a second proposal.',
+          '',
+          '4. IF THE PATCH IS REFUSED as too large, there is no other way in for this',
+          '   app: an update\'s patch goes inline, up to about 250 KB. Tell the user it',
+          '   is too big to hand in in one piece, and land it as smaller updates.',
+          '   Do not call `prepare_work` for a new change: that opens a SECOND',
+          `   proposal ${secondProposal},`,
+          '   which is the one outcome to avoid.',
+        ]
+        : patchAccepted
         ? [
           `3. IF submit_work ANSWERS \`branch_moved\`, somebody advanced the ${noun}`,
           '   while you were working. Its new commit is the error\'s `headSha` (or',
@@ -1319,8 +1539,10 @@ function buildWorkOrder({
       '   `insufficient_scope` — ask the user to reconnect Homeroom and approve',
       '   "Propose changes". `join_required` — the user has not joined that',
       '   project; ask them to open its page, tap Join, and then retry.',
-      '   `github_not_linked` — give them the settings link the',
-      '   tool returns. `not_your_proposal` — your connector is signed in as',
+      ...(hosted
+        ? ['   `not_your_proposal` — your connector is signed in as']
+        : ['   `github_not_linked` — give them the settings link the',
+          '   tool returns. `not_your_proposal` — your connector is signed in as']),
       '   somebody else; say so rather than rewriting the change. Anything',
       '   transient, or one authentication failure: retry once.',
       '',
@@ -1333,7 +1555,15 @@ function buildWorkOrder({
       ...noToolsRemedy,
       '   Once they have, retry `submit_work` as in step 2 — in a fresh session',
       '   if the tools still do not appear in this one.',
-      ...(startedFromWalkthrough
+      // A hosted app's work order is answered with a patch, which nothing but
+      // a connector call can carry, so it is handed back whoever started it.
+      ...(hosted
+        ? [
+          '   Otherwise hand it back: save the patch from step 1 to a `.patch` file and',
+          `   tell the user to give it, with task id ${taskRef}, to the assistant that`,
+          '   started this. It can submit the update for you.',
+        ]
+        : startedFromWalkthrough
         ? (patchAccepted
           ? [
             '   Otherwise finish from Homeroom: push the branch as in step 1. The',
@@ -1394,10 +1624,14 @@ function buildWorkOrder({
           'it onto your new commit for you.'])
     );
   } else if (hasTask) {
-    lines.push(
-      '',
-      '2. SUBMIT IT YOURSELF, through the Homeroom connector. Call `submit_work`',
-      ...(upload
+    // What step 2 hands in, and what Homeroom then does with it: a branch or
+    // a patch, or for a hosted app the patch alone.
+    const handIn = hosted
+      ? (upload
+        ? [`   with taskId ${taskRef} and the patch text from step 1 as \`patch\` (or the`,
+          '   `patchUploadId` its upload printed),']
+        : [`   with taskId ${taskRef} and the patch text from step 1 as \`patch\`,`])
+      : upload
         ? [
           `   with taskId ${taskRef} and \`branch\` set to the name you actually pushed`,
           '   (or, if you handed in a patch, the patch text from step 1 as `patch` or',
@@ -1406,11 +1640,20 @@ function buildWorkOrder({
         : [
           `   with taskId ${taskRef} and \`branch\` set to the name you actually pushed`,
           '   (or, if you handed in a patch, the patch text from step 1 as `patch`),',
-        ]),
+        ];
+    const lands = hosted
+      ? ['   BOTH pieces of prose described next. Homeroom applies the patch at that',
+        '   exact commit in the app\'s own repository and opens the proposal itself. It',
+        '   answers with a link to the new']
+      : ['   BOTH pieces of prose described next. Homeroom brings the branch, or',
+        '   applies the patch at that exact commit, into the app\'s own repository',
+        '   and opens the pull request itself. It answers with a link to the new'];
+    lines.push(
+      '',
+      '2. SUBMIT IT YOURSELF, through the Homeroom connector. Call `submit_work`',
+      ...handIn,
       `   agent "${agentValue}", source "work_order", and a short title, plus`,
-      '   BOTH pieces of prose described next. Homeroom brings the branch, or',
-      '   applies the patch at that exact commit, into the app\'s own repository',
-      '   and opens the pull request itself. It answers with a link to the new',
+      ...lands,
       '   proposal — give that link to the user and tell them it is up for the',
       '   group\'s vote.',
       // The two-audience rule, at the moment it is acted on. An agent that
@@ -1487,14 +1730,35 @@ function buildWorkOrder({
       '   connector traffic goes out through Claude\'s own infrastructure, not',
       '   through your container.',
       '',
-      '3. IF YOU PUSHED A BRANCH and submit_work answers `pr_open_failed`, relay',
-      '   GitHub\'s status and the field it named word for word, and give the user',
-      '   the `compareUrl` the error returns — it opens a pre-filled pull request',
-      '   they can create in one click. When they give you the pull request',
-      '   number, call `submit_work`',
-      `   again with slug "${appSlug}" and prNumber set to it.`,
+      ...(hosted
+        ? [
+          '3. IF submit_work ANSWERS `patch_did_not_apply`, the patch was not made from',
+          `   ${baseSha}. Rebase your commits onto it, export the`,
+          '   patch again and submit it with the same taskId.',
+        ]
+        : [
+          '3. IF YOU PUSHED A BRANCH and submit_work answers `pr_open_failed`, relay',
+          '   GitHub\'s status and the field it named word for word, and give the user',
+          '   the `compareUrl` the error returns — it opens a pre-filled pull request',
+          '   they can create in one click. When they give you the pull request',
+          '   number, call `submit_work`',
+          `   again with slug "${appSlug}" and prNumber set to it.`,
+        ]),
       '',
-      ...(upload
+      ...(hosted
+        ? (upload
+          ? [
+            '4. IF THE PATCH IS REFUSED as too large, upload it as in step 1. If the',
+            '   upload cannot reach Homeroom or is too large as well, there is no other',
+            '   way in for this app: tell the user it is too big to hand in in one piece,',
+            '   and split it into smaller changes.',
+          ]
+          : [
+            '4. IF THE PATCH IS REFUSED as too large, there is no other way in for this',
+            '   app: tell the user it is too big to hand in in one piece, and split it',
+            '   into smaller changes.',
+          ])
+        : upload
         ? [
           '4. IF THE PATCH IS REFUSED as too large, upload it as in step 1. If the',
           '   upload cannot reach Homeroom or is too large as well, the branch in',
@@ -1513,8 +1777,10 @@ function buildWorkOrder({
       '   `insufficient_scope` — ask the user to reconnect Homeroom and approve',
       '   "Propose changes". `join_required` — the user has not joined that',
       '   project; ask them to open its page, tap Join, and then retry.',
-      '   `github_not_linked` — give them the settings link the',
-      '   tool returns. Anything transient, or one authentication failure: retry',
+      ...(hosted
+        ? ['   Anything transient, or one authentication failure: retry']
+        : ['   `github_not_linked` — give them the settings link the',
+          '   tool returns. Anything transient, or one authentication failure: retry']),
       '   once (access tokens are short-lived and your client refreshes them).',
       '',
       '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom',
@@ -1528,8 +1794,15 @@ function buildWorkOrder({
       // connector: the browser walkthrough polls for the pushed branch and
       // its own Submit button does the rest, while a chat assistant has to
       // be handed the branch (or a patch) back. Both are stated; the one
-      // that applies comes first.
-      ...(startedFromWalkthrough
+      // that applies comes first. A hosted app's patch only a connector call
+      // can carry, so it is handed back whoever started it.
+      ...(hosted
+        ? [
+          '   Otherwise hand it back: save the patch from step 1 to a `.patch` file and',
+          `   tell the user to give it, with task id ${taskRef}, to the assistant that`,
+          '   started this. It finishes the same way.',
+        ]
+        : startedFromWalkthrough
         ? [
           '   Otherwise finish from Homeroom: push the branch as in step 1. The',
           '   walkthrough that produced this work order checks for the pushed branch',
@@ -1559,13 +1832,18 @@ function buildWorkOrder({
       // repository, so a push alone does not move the proposal. #4263: an
       // update work order takes a patch the way this one does, so an agent
       // that could not push needs no push to revise either.
-      '   fix them and revise THIS proposal. If you pushed a branch,',
-      '   push again to the SAME branch and call `submit_work` with the proposal',
-      '   id and that branch: Homeroom usually copies a pushed branch into the',
-      '   app\'s own repository, so pushing alone does not move it. If you handed',
-      '   in a patch, call `prepare_work` with that id as `proposalId`: the update',
-      '   work order it returns takes your fix as a patch, just like this one,',
-      '   and Homeroom applies it on the proposal\'s current commit.',
+      ...(hosted
+        ? ['   fix them and revise THIS proposal: call `prepare_work` with that id as',
+          '   `proposalId`. The update work order it returns takes your fix as a patch,',
+          '   just like this one, and Homeroom applies it on the proposal\'s current',
+          '   commit.']
+        : ['   fix them and revise THIS proposal. If you pushed a branch,',
+          '   push again to the SAME branch and call `submit_work` with the proposal',
+          '   id and that branch: Homeroom usually copies a pushed branch into the',
+          '   app\'s own repository, so pushing alone does not move it. If you handed',
+          '   in a patch, call `prepare_work` with that id as `proposalId`: the update',
+          '   work order it returns takes your fix as a patch, just like this one,',
+          '   and Homeroom applies it on the proposal\'s current commit.']),
       '   Do not call',
       '   `submit_work` again with this taskId and do not call `prepare_work`',
       '   without that id — the pull request already exists, and a second',
@@ -1739,6 +2017,17 @@ function describeTargetProposal(session, user, app, origin) {
 
   const branchHome = proposalUpdate.branchHomeOf(session);
   const branchName = String(session.branch_name || '');
+  // On an app on Homeroom's own git host the only head Homeroom follows is a
+  // branch in the app's repository there. A fork home is a proposal imported
+  // from a GitHub fork before the app moved, whose code nobody can hand in
+  // from here now: say so before any work is done on it.
+  if (branchHome === 'user_fork' && repoRef.isHosted(app.repo_url)) {
+    return fail(
+      'code_missing',
+      `Proposal ${id} followed a branch in a GitHub fork, and since this app moved to Homeroom's own git host `
+      + 'Homeroom no longer follows GitHub forks, so it cannot be revised from here. Start a new change instead.'
+    );
+  }
   // #1350: a native session created but never given a turn has no branch
   // yet, and that is a normal state rather than a fault. It used to fall
   // into the platform_unavailable checks below, which tell the caller to
@@ -1831,7 +2120,12 @@ async function prepareWork(deps, params) {
   const issues = normalizeIssueNumbers(params.issueNumbers, params.issueNumber);
   const issueNumber = issues[0] || null;
 
-  const parsed = gh.parseGithubUrl(app.repo_url);
+  // An app on Homeroom's own git host is built against its public repository
+  // there and handed in as a patch, so the GitHub half of this (the link, the
+  // fork) is not asked for: the work is the Homeroom user's own by the call
+  // it arrives in.
+  const hosted = repoRef.isHosted(app.repo_url);
+  const parsed = hosted ? repoRef.ownerRepo(app.repo_url) : gh.parseGithubUrl(app.repo_url);
   if (!parsed) {
     return fail('no_repository', 'That app does not have a GitHub repository yet, so there is nothing to build against.');
   }
@@ -1842,10 +2136,10 @@ async function prepareWork(deps, params) {
   // Unconfigured deployment vs. unlinked user: two different refusals. Check
   // the deployment first — otherwise an operator's missing value is reported
   // as the user's missing click.
-  if (!githubLink.isEnabled(config)) return linkUnavailable();
+  if (!hosted && !githubLink.isEnabled(config)) return linkUnavailable();
 
-  const link = await githubLink.linkStatus(pool, user.id);
-  if (!link || !link.linked || !link.login) {
+  const link = hosted ? null : await githubLink.linkStatus(pool, user.id);
+  if (!hosted && (!link || !link.linked || !link.login)) {
     return fail(
       'github_not_linked',
       'Connect your GitHub account first: Homeroom needs to know which GitHub account is yours before work '
@@ -1973,6 +2267,17 @@ async function prepareWork(deps, params) {
         log.warn('external-agent-tasks', 'proposal head lookup failed', {
           app: app.slug, sessionId: update.proposalId, err: err.message,
         });
+        // On the git host a missing branch is not a hiccup: it is a change
+        // whose code did not come across from GitHub (services/code-missing.js),
+        // and no retry brings it back.
+        if (hosted && err && err.status === 404) {
+          return fail(
+            'code_missing',
+            `${update.targetKind === 'session' ? `Session ${update.proposalId}` : `Proposal ${update.proposalId}`}'s `
+            + 'code is not on Homeroom\'s git host: it did not come across when Homeroom moved off GitHub, so it '
+            + 'cannot be revised from here. Start a new change instead.'
+          );
+        }
         baseErr = err;
         baseSha = null;
       }
@@ -2011,18 +2316,22 @@ async function prepareWork(deps, params) {
   // Advisory only. A missing fork, a same-named repo in the way, or a GitHub
   // read that simply failed all still produce a work order — the fork is the
   // agent's job now, and refusing here would strand the user on a step the
-  // platform cannot take for them.
-  const fork = await inspectFork(link.login, { owner, repo });
+  // platform cannot take for them. A hosted app has no fork at all.
+  const fork = hosted ? { state: 'not_needed', fork: null } : await inspectFork(link.login, { owner, repo });
   // `unknown` is carried through now rather than collapsed into `missing`:
   // a GitHub read that simply failed used to produce copy asserting the user
   // has no fork, which in one run told someone to create a fork they already
   // had. inspectFork has always returned all four states.
-  const forkStatus = ['ready', 'name_conflict', 'unknown'].includes(fork.state)
+  const forkStatus = ['ready', 'name_conflict', 'unknown', 'not_needed'].includes(fork.state)
     ? fork.state
     : 'missing';
   const forkRepo = forkStatus === 'name_conflict'
     ? `${repo}${CONFLICT_FORK_SUFFIX}`
     : ((fork.fork && fork.fork.name) || repo);
+  // The task row's fork columns are required. For a hosted app they name the
+  // app's own repository, which is where its patch lands; nothing reads them
+  // as a fork, because the branch shapes that would are refused for it.
+  const forkOwner = hosted ? owner : link.login;
 
   // The branch the work order suggests. In UPDATE mode against a fork-home
   // proposal it is not a suggestion at all: an open pull request cannot be
@@ -2051,7 +2360,7 @@ async function prepareWork(deps, params) {
       [
         user.id, app.id,
         issueNumber,
-        link.login, forkRepo, branch, baseSha, trimmedBrief, clientId || null,
+        forkOwner, forkRepo, branch, baseSha, trimmedBrief, clientId || null,
         requestKey,
         // Which proposal this job revises, when it revises one. Recorded so a
         // submission can be checked against the job it came from rather than
@@ -2120,7 +2429,7 @@ async function prepareWork(deps, params) {
     task: {
       ...row,
       id: row.id,
-      fork_owner: link.login,
+      fork_owner: forkOwner,
       fork_repo: forkRepo,
       branch_name: branch,
       base_sha: baseSha,
@@ -2311,10 +2620,13 @@ function renderPreparedTask({
     ...p,
     webPath: origin ? changeWebPath(origin, app.slug, p.proposalId) : null,
   }));
-  const forkPageUrl = `https://github.com/${owner}/${repo}/fork`;
+  // An app on Homeroom's own git host: no fork, cloned from there, a patch
+  // back. Null for an app on GitHub.
+  const gitHost = gitHostRepoFor(app.repo_url);
+  const forkPageUrl = gitHost ? null : `https://github.com/${owner}/${repo}/fork`;
   // A reused task did not re-read GitHub, so its fork state is genuinely
   // unknown — and `unknown` is now a first-class state with hedged wording.
-  const status = forkStatus || 'unknown';
+  const status = gitHost ? 'not_needed' : (forkStatus || 'unknown');
   // An explicit choice (the in-platform flow picker, #1049) wins over
   // sniffing the calling client's name; with none supplied this is
   // byte-for-byte the old inference.
@@ -2330,6 +2642,7 @@ function renderPreparedTask({
     issueNumber: task.issue_number,
     issueNumbers: linkedIssuesFor(task),
     openProposals: duplicates,
+    gitHost,
   });
   const workOrder = buildWorkOrder({
     appName: app.name || app.slug,
@@ -2360,11 +2673,16 @@ function renderPreparedTask({
     specs,
     // #4264: minted by prepareWork for this rendering only, never stored.
     patchUpload,
+    gitHost,
   });
 
   return {
     ok: true,
     taskId: Number(task.id),
+    // Where the app's code is: 'git_host' (Homeroom's own; no fork, a patch
+    // back, `cloneUrl` to clone) or 'github' (the fork fields below).
+    repoHost: gitHost ? 'git_host' : 'github',
+    cloneUrl: gitHost ? gitHost.cloneUrl : null,
     // Present only in UPDATE mode (#1054), so a caller can tell the two kinds
     // of work order apart without re-deriving it from the text.
     proposalId: targetProposal ? targetProposal.proposalId : null,
@@ -2378,9 +2696,9 @@ function renderPreparedTask({
     // Every request this work order implements — what its pull request will
     // carry a `Closes #N` line for, and what the proposal will be linked to.
     requestNumbers: linkedIssuesFor(task),
-    forkOwner,
-    forkRepo,
-    forkUrl: `https://github.com/${forkOwner}/${forkRepo}`,
+    forkOwner: gitHost ? null : forkOwner,
+    forkRepo: gitHost ? null : forkRepo,
+    forkUrl: gitHost ? null : `https://github.com/${forkOwner}/${forkRepo}`,
     forkPageUrl,
     forkStatus: status,
     branch: task.branch_name,
@@ -2445,6 +2763,34 @@ async function loadAnyTask(pool, userId, taskId) {
   } catch {
     return null;
   }
+}
+
+// Whether a submission is for an app on Homeroom's own git host, read before
+// the GitHub link is asked about (submitWorkLocked's first gate). By its task
+// when it names one, else by the proposal it updates, else by the repository
+// the caller resolved. Quiet like loadAnyTask: a lookup that fails answers
+// no, which leaves the GitHub refusals exactly as they were.
+async function submitsToGitHost(pool, params) {
+  if (params && params.taskId) {
+    const task = await loadAnyTask(pool, params.user && params.user.id, params.taskId);
+    return !!(task && repoRef.isHosted(task.repo_url));
+  }
+  const proposalId = Number(params && params.proposalId);
+  if (Number.isSafeInteger(proposalId) && proposalId > 0) {
+    try {
+      const { rows } = await pool.query(
+        `SELECT a.repo_url
+           FROM chat_sessions s
+           JOIN apps a ON a.id = s.app_id
+          WHERE s.id = $1`,
+        [proposalId]
+      );
+      return repoRef.isHosted(rows[0] && rows[0].repo_url);
+    } catch {
+      return false;
+    }
+  }
+  return repoRef.isHosted(params && params.repoUrl);
 }
 
 // The app a proposal is on. Routing information only: every gate that
@@ -3187,6 +3533,12 @@ async function submitUpdate(deps, params, proposalId) {
       + 'Submit it against the proposal it was prepared for, or ask for a work order for this one.'
     );
   }
+  // A proposal on an app on Homeroom's own git host moves by patch only. The
+  // update route refuses a branch for it too (proposal-update.js); a task in
+  // hand says so without the round trip.
+  if (branch && task && repoRef.isHosted(task.repo_url)) {
+    return patchRequired('A pushed branch cannot update a proposal on this app.');
+  }
   // #4263. A patch is applied AT a commit, and only an update task records
   // the proposal's: a new-work task's base is the main branch it was cut
   // from, which the proposal has long since moved past.
@@ -3499,8 +3851,10 @@ async function submitWithUploadedPatch(deps, params) {
     return fail(
       'invalid_request',
       `Task ${Number(open.id)} revises proposal ${Number(open.target_session_id)}, and an update's patch is sent `
-      + 'inline as `patch`, not uploaded. Send it as `patch` with the same taskId, or push a branch to your fork '
-      + 'and submit it with proposalId and branch.'
+      + (repoRef.isHosted(open.repo_url)
+        ? 'inline as `patch`, not uploaded. Send it as `patch` with the same taskId.'
+        : 'inline as `patch`, not uploaded. Send it as `patch` with the same taskId, or push a branch to your fork '
+          + 'and submit it with proposalId and branch.')
     );
   }
   const upload = await patchUploads.loadUploadForSubmit(deps.pool, {
@@ -3582,8 +3936,10 @@ async function submitWorkLocked(deps, params) {
   // Before anything is read: with no OAuth app there is no verified GitHub
   // login to check the PR's head owner against, and the attribution gate is
   // the reason this path is stricter than the browser's import button. The
-  // gate is never skipped — the submission is refused instead.
-  if (!githubLink.isEnabled(config)) return linkUnavailable();
+  // gate is never skipped — the submission is refused instead. The one
+  // submission it does not concern is a patch for an app on Homeroom's own
+  // git host, which has no GitHub head to attribute (see submitsToGitHost).
+  if (!githubLink.isEnabled(config) && !(await submitsToGitHost(pool, params))) return linkUnavailable();
 
   // A caller-supplied branch or fork name reaches a git argv and a GitHub
   // `head`, so both are validated before anything else touches them.
@@ -3658,8 +4014,27 @@ async function submitWorkLocked(deps, params) {
     );
   }
 
-  const link = await githubLink.linkStatus(pool, user.id);
-  if (!link || !link.linked || !link.login) {
+  // ── An app on Homeroom's own git host ────────────────────────────────
+  //
+  // Its work comes back as a patch and nothing else: there is no GitHub
+  // repository to fork, so a pushed branch (the fork shapes, sharing
+  // included) and a pull request number cannot mean anything for it, and
+  // each is refused with what does. A patch needs no GitHub link: it is
+  // applied in the app's own repository by Homeroom, from a call made as
+  // this Homeroom user, which is what the proposal is attributed to.
+  const hosted = repoRef.isHosted(task ? task.repo_url : params.repoUrl);
+  if (hosted) {
+    if (prNumber) return patchRequired('A pull request number cannot be submitted for this app.');
+    if (!patch) {
+      return patchRequired(params.share
+        ? 'Work on this app cannot be shared as a pushed branch.'
+        : 'A pushed branch cannot be submitted for this app.');
+    }
+    if (params.share) return patchRequired('A patch goes up for the vote; it cannot be shared to the in-progress area.');
+  }
+
+  const link = hosted ? null : await githubLink.linkStatus(pool, user.id);
+  if (!hosted && (!link || !link.linked || !link.login)) {
     return fail('github_not_linked', 'Connect your GitHub account in Settings before submitting work.');
   }
 
@@ -3707,8 +4082,9 @@ async function submitWorkLocked(deps, params) {
 
   const slug = task ? task.app_slug : params.slug;
   const repoUrl = task ? task.repo_url : null;
-  let parsed = repoUrl ? gh.parseGithubUrl(repoUrl) : null;
-  if (!parsed && params.repoUrl) parsed = gh.parseGithubUrl(params.repoUrl);
+  const parseRepo = (url) => (repoRef.isHosted(url) ? repoRef.ownerRepo(url) : gh.parseGithubUrl(url));
+  let parsed = repoUrl ? parseRepo(repoUrl) : null;
+  if (!parsed && params.repoUrl) parsed = parseRepo(params.repoUrl);
   if (!parsed) {
     return fail('no_repository', 'That app does not have a GitHub repository, so there is nothing to submit.');
   }
@@ -3717,7 +4093,8 @@ async function submitWorkLocked(deps, params) {
   // `fork_owner` is ALWAYS the linked GitHub login and is never taken from
   // input — that is the attribution gate's anchor. Only the repository NAME
   // and the branch may come from the caller, because an agent may well have
-  // forked under a name the platform did not predict.
+  // forked under a name the platform did not predict. (A hosted app's task
+  // names its own repository there, and takes no fork shape.)
   const forkOwner = task ? task.fork_owner : link.login;
   const forkRepo = callerForkRepo || (task ? task.fork_repo : repo);
   const branch = callerBranch || (task ? task.branch_name : null);
@@ -4447,6 +4824,8 @@ module.exports = {
   findOpenProposalsForRequest,
   MAX_OPEN_PROPOSALS,
   buildWorkOrder,
+  // An app on Homeroom's own git host: where its work order clones from.
+  gitHostRepoFor,
   headOwnerOf,
   attributionError,
   loadOpenTask,

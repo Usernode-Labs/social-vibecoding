@@ -29,6 +29,35 @@ export const RECENT_PEOPLE_SQL = `(
                 AND c.accepted_at >= CURRENT_DATE - 10
            )`;
 
+// A self-hosted app's electorate, one row per person (user_id), as a derived
+// table over $1 (the app id): the union across every app's activity (see
+// services/active-users.js's header), filtered as the per-app electorate is.
+// The recent people are listed MATERIALIZED, so the filters run once per
+// person rather than once per activity row: per row, Homeroom's own count
+// ran counts_toward_outcome 648 times for 71 people, 300 ms a call and half
+// of the platform's database time (22 Oct 2026); per person it took 33 ms.
+export const SELF_HOSTED_PEOPLE_SQL = `(
+             WITH recent AS MATERIALIZED (
+               SELECT DISTINCT x.user_id FROM app_activity x
+                WHERE x.date >= CURRENT_DATE - 10
+             )
+             SELECT r.user_id FROM recent r
+              WHERE EXISTS (
+                  SELECT 1 FROM app_activity b
+                  WHERE b.user_id = r.user_id
+                    AND b.seconds_spent >= 60
+                )
+                AND counts_toward_outcome(r.user_id, $1)
+                AND EXISTS (
+                  SELECT 1 FROM apps ap
+                   WHERE ap.id = $1
+                     AND (ap.community_id IS NULL OR EXISTS (
+                       SELECT 1 FROM community_members cm
+                        WHERE cm.community_id = ap.community_id AND cm.user_id = r.user_id
+                     ))
+                )
+           )`;
+
 // The Private community floor, as a scalar subquery over $1 (the app id).
 // A community whose audience is 'invited' (a private project with more than
 // its creator) counts at least min(people who can vote in it, 2), so two
@@ -70,26 +99,7 @@ export async function activeUserStats(db: Queryable, appId: number, meta: AppMet
   const { selfHosted, collabPrivate } = meta;
 
   const { rows } = selfHosted
-    ? await db.query(
-        `SELECT COUNT(DISTINCT a.user_id) AS cnt
-           FROM app_activity a
-           WHERE a.date >= CURRENT_DATE - 10
-             AND EXISTS (
-               SELECT 1 FROM app_activity b
-               WHERE b.user_id = a.user_id
-                 AND b.seconds_spent >= 60
-             )
-             AND counts_toward_outcome(a.user_id, $1)
-             AND EXISTS (
-               SELECT 1 FROM apps ap
-                WHERE ap.id = $1
-                  AND (ap.community_id IS NULL OR EXISTS (
-                    SELECT 1 FROM community_members cm
-                     WHERE cm.community_id = ap.community_id AND cm.user_id = a.user_id
-                  ))
-             )`,
-        [appId],
-      )
+    ? await db.query(`SELECT COUNT(*) AS cnt FROM ${SELF_HOSTED_PEOPLE_SQL} a`, [appId])
     : await db.query(
         `SELECT COUNT(DISTINCT a.user_id) AS cnt,
                 (${INVITED_FLOOR_SQL}) AS invited_floor
@@ -131,26 +141,7 @@ export async function activeUserIds(db: Queryable, appId: number, meta: AppMeta)
   const { selfHosted, collabPrivate } = meta;
 
   const { rows } = selfHosted
-    ? await db.query(
-        `SELECT DISTINCT a.user_id AS id
-           FROM app_activity a
-           WHERE a.date >= CURRENT_DATE - 10
-             AND EXISTS (
-               SELECT 1 FROM app_activity b
-               WHERE b.user_id = a.user_id
-                 AND b.seconds_spent >= 60
-             )
-             AND counts_toward_outcome(a.user_id, $1)
-             AND EXISTS (
-               SELECT 1 FROM apps ap
-                WHERE ap.id = $1
-                  AND (ap.community_id IS NULL OR EXISTS (
-                    SELECT 1 FROM community_members cm
-                     WHERE cm.community_id = ap.community_id AND cm.user_id = a.user_id
-                  ))
-             )`,
-        [appId],
-      )
+    ? await db.query(`SELECT a.user_id AS id FROM ${SELF_HOSTED_PEOPLE_SQL} a`, [appId])
     : await db.query(
         `SELECT DISTINCT a.user_id AS id
            FROM ${RECENT_PEOPLE_SQL} a

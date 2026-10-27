@@ -283,11 +283,13 @@ test('each way a change closes reads plainly', () => {
   assert.equal(sentence('merged'), 'PR #9 merged. It is part of the app now.');
   assert.equal(sentence('rejected'), 'PR #9 was set aside by the group\'s vote.');
   assert.equal(sentence('admin-no'), 'PR #9 was set aside: an admin voted No and nobody voted Yes within a week.');
+  assert.equal(sentence('approver-no'), 'PR #9 was set aside: an approver voted No and nobody voted Yes within 2 days.');
   assert.equal(sentence('withdrawn'), 'PR #9 was withdrawn.');
   assert.equal(sentence('closed', null), 'The change was closed.');
   assert.equal(agentSessions.outcomeForArchiveReason('manual'), 'withdrawn');
   assert.equal(agentSessions.outcomeForArchiveReason('auto-rejected'), 'rejected');
   assert.equal(agentSessions.outcomeForArchiveReason('admin-no'), 'admin-no');
+  assert.equal(agentSessions.outcomeForArchiveReason('approver-no'), 'approver-no');
   assert.equal(agentSessions.outcomeForArchiveReason('proposal-replaced'), 'replaced');
   assert.equal(agentSessions.outcomeForArchiveReason('stale-pr'), 'closed');
 });

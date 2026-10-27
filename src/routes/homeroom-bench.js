@@ -272,7 +272,7 @@ function homeroomBenchRoutes(config) {
   router.post('/api/admin/homeroom-bot/bench/runs/:id/cancel', requireAdminWrite, handler('Cancel bench run', async (req) => {
     const id = idParam(req.params.id);
     if (!id) return { ok: false, status: 400, error: 'Invalid run id' };
-    const out = await lane.cancelRun(pool, id, { by: req.user.username });
+    const out = await lane.cancelRun(pool, id, { by: req.user.username, userId: req.user.id });
     if (out.ok) log.info('bench', 'Run cancelled', { by: req.user.username, runId: id });
     return out;
   }));
@@ -463,7 +463,7 @@ function homeroomBenchRoutes(config) {
   router.post('/api/bot-bench/runs/:id/cancel', requireAdminWrite, benchRunLimiter, sameOriginBrowserOnly, handler('Cancel bench run (connector)', async (req) => {
     const id = idParam(req.params.id);
     if (!id) return { ok: false, status: 400, error: 'Invalid run id' };
-    const out = await lane.cancelRun(pool, id, { by: req.user.username });
+    const out = await lane.cancelRun(pool, id, { by: req.user.username, userId: req.user.id });
     if (out.ok) log.info('bench', 'Run cancelled', { by: req.user.username, via: 'connector', runId: id });
     return out;
   }));

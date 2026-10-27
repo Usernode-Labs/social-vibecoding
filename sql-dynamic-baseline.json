@@ -383,13 +383,6 @@
     {
       "source": "src/routes/feedback.js",
       "kind": "structural-template",
-      "fingerprint": "332bf2700d8550670d53",
-      "count": 1,
-      "preview": "`SELECT COALESCE(MAX(issue_number), ${TEST_ISSUE_MIN - 1}) + 1 AS next FROM feedback_reports WHERE issue_owner = $1 AND issue_repo = $2 AND issue_number BETWEEN"
-    },
-    {
-      "source": "src/routes/feedback.js",
-      "kind": "structural-template",
       "fingerprint": "d15136901fbcf6a52a60",
       "count": 1,
       "preview": "`SELECT name, repo_url, ${appAccess.ACCESS_COLUMNS} FROM apps WHERE slug = $1`"
@@ -1172,6 +1165,13 @@
       "preview": "`SELECT ${firstVersionSql('cs')} AS first_version FROM chat_sessions cs WHERE cs.id = $1`"
     },
     {
+      "source": "src/services/github-move.js",
+      "kind": "structural-template",
+      "fingerprint": "50ce080a7f2db9164a94",
+      "count": 1,
+      "preview": "`UPDATE ${table} SET ${ownerCol} = $3, ${repoCol} = $4 WHERE LOWER(${ownerCol}) = LOWER($1) AND LOWER(${repoCol}) = LOWER($2)`"
+    },
+    {
       "source": "src/services/governance.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
@@ -1181,16 +1181,16 @@
     {
       "source": "src/services/governance.js",
       "kind": "structural-template",
-      "fingerprint": "00a0deb9c40c8b970d1a",
+      "fingerprint": "4dec172022c4fb9d2f64",
       "count": 1,
-      "preview": "`SELECT cs.id, ${adminNoAtSql('cs')} AS admin_no_at FROM chat_sessions cs WHERE cs.id = ANY($1::int[])`"
+      "preview": "`SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${yesVal}'${epochClause}`"
     },
     {
       "source": "src/services/governance.js",
       "kind": "structural-template",
-      "fingerprint": "4dec172022c4fb9d2f64",
+      "fingerprint": "5338f7531504dacd79bd",
       "count": 1,
-      "preview": "`SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${yesVal}'${epochClause}`"
+      "preview": "`SELECT cs.id, ${adminNoAtSql('cs')} AS admin_no_at, ${approverNoAtSql('cs')} AS approver_no_at FROM chat_sessions cs WHERE cs.id = ANY($1::int[])`"
     },
     {
       "source": "src/services/governance.js",
@@ -1282,6 +1282,13 @@
       "fingerprint": "f5edec0605c15fed7729",
       "count": 1,
       "preview": "`SELECT ${workedOnSql()} AS busy FROM chat_sessions cs WHERE cs.id = $1`"
+    },
+    {
+      "source": "src/services/http-stream-access.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "d5ae5ffe9033211a5089",
+      "count": 1,
+      "preview": "AUTHORIZE_SQL"
     },
     {
       "source": "src/services/issue-announce.js",
@@ -1410,11 +1417,11 @@
       "preview": "`DELETE FROM notifications WHERE ${c.target_type === 'app_message' ? 'chat_message_id' : 'conversation_message_id'} = $1`"
     },
     {
-      "source": "src/services/notifications.js",
+      "source": "src/services/native-pulls.js",
       "kind": "structural-template",
-      "fingerprint": "0aa31d0b7f4b61518c80",
+      "fingerprint": "18c4dc2179776baa4c0f",
       "count": 1,
-      "preview": "`SELECT (COUNT(*) FILTER (WHERE ${PLAIN_MESSAGE_SQL}))::int AS m, COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT "
+      "preview": "`UPDATE native_pulls SET ${sets}, updated_at = NOW() WHERE app_id = $1 AND number = $2 RETURNING ${COLUMNS}`"
     },
     {
       "source": "src/services/notifications.js",
@@ -1426,14 +1433,7 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "2d0d87933561ba11fb65",
-      "count": 1,
-      "preview": "`SELECT COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT ${DECIDED_ASK_SETTLED_SQL} AND ${CONVERSATION_ACCESS_SQL} "
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
-      "fingerprint": "8748f0da3801293ac993",
+      "fingerprint": "34de1508494b840c3dda",
       "count": 1,
       "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
     },
@@ -1447,9 +1447,16 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "b56e0e4f868a305aeb53",
+      "fingerprint": "8e93c851e1c9586cfcda",
       "count": 1,
-      "preview": "`UPDATE notifications n SET read_at = NOW() WHERE n.user_id = $1 AND n.conversation_id = $2 AND n.read_at IS NULL AND ${CONVERSATION_ACCESS_SQL}`"
+      "preview": "`SELECT (COUNT(*) FILTER (WHERE ${PLAIN_MESSAGE_SQL}))::int AS m, COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT "
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "a2887d78f8c7ca35824d",
+      "count": 1,
+      "preview": "`UPDATE notifications n SET read_at = NOW() WHERE n.user_id = $1 AND n.conversation_id = $2 AND n.read_at IS NULL AND ${CONVERSATION_ACCESS_SQL} AND ${APP_ACCES"
     },
     {
       "source": "src/services/notifications.js",
@@ -1457,6 +1464,13 @@
       "fingerprint": "b83117b670d097e6e2dc",
       "count": 1,
       "preview": "`UPDATE notifications SET read_at = NOW() WHERE user_id = $1 AND ${def.scope} = $2 AND kind = ANY($3) AND read_at IS NULL`"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "c0e1b23c12ecb0050fdd",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
     },
     {
       "source": "src/services/notifications.js",
@@ -1475,9 +1489,9 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "d8dc2e39961da9c6101b",
+      "fingerprint": "f5070aa3a2bc604cdc21",
       "count": 1,
-      "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
+      "preview": "`SELECT COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT ${DECIDED_ASK_SETTLED_SQL} AND ${CONVERSATION_ACCESS_SQL} "
     },
     {
       "source": "src/services/onboarding.js",
@@ -1534,6 +1548,13 @@
       "fingerprint": "e94738fd834c57530f33",
       "count": 1,
       "preview": "`SELECT cs.pr_number, cs.pr_title, u.username, cs.created_at FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id WHERE cs.app_id = $1 AND cs.status = '"
+    },
+    {
+      "source": "src/services/requests.js",
+      "kind": "structural-template",
+      "fingerprint": "4073a4a5c7eb9ce48732",
+      "count": 1,
+      "preview": "`UPDATE requests SET ${sets}, updated_at = NOW() WHERE app_id = $1 AND number = $2 RETURNING ${COLUMNS}`"
     },
     {
       "source": "src/services/server-budget.js",
@@ -1916,9 +1937,16 @@
     {
       "source": "src/services/worker-eviction.js",
       "kind": "structural-template",
-      "fingerprint": "45d5221ce0b9c759fbb8",
+      "fingerprint": "420c49cd61d8e0ca08ca",
       "count": 1,
-      "preview": "`DELETE FROM session_workers sw USING chat_sessions cs WHERE sw.session_id = $1 AND cs.id = sw.session_id AND sw.last_used_at = $2::timestamptz AND NOT ${worked"
+      "preview": "`SELECT sw.session_id FROM session_workers sw JOIN chat_sessions cs ON cs.id = sw.session_id WHERE sw.session_id = $1 AND sw.last_used_at = $2::timestamptz AND "
+    },
+    {
+      "source": "src/services/worker-eviction.js",
+      "kind": "structural-template",
+      "fingerprint": "891abd0132c75b3509c5",
+      "count": 1,
+      "preview": "`SELECT cs.status, cs.agent_config_version, cs.active_turn IS NOT NULL AS active, cs.active_turn->>'turnId' AS turn_id, COALESCE(sw.last_used_at > $4::timestamp"
     },
     {
       "source": "src/services/worker-eviction.js",
@@ -1935,11 +1963,18 @@
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_title, cs.pr_summary_md, cs.linked_issues, cs.status, cs.created_at, u.username, (SELECT COUNT(*) FROM pr_votes pv WHERE pv.s"
     },
     {
+      "source": "src/services/ws-delivery.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "d5ae5ffe9033211a5089",
+      "count": 1,
+      "preview": "AUTHORIZE_SQL"
+    },
+    {
       "source": "src/services/ws.js",
       "kind": "structural-template",
-      "fingerprint": "47c0995a68c0e5f4afc4",
+      "fingerprint": "9a9b2cea4075890798c7",
       "count": 1,
-      "preview": "`SELECT s.user_id, s.expires_at, u.username, u.is_admin FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = $1 AND ${nativeWebSessionIsLive('s')}`"
+      "preview": "`SELECT s.user_id, s.expires_at, u.username, u.is_admin FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = $1 AND u.anonymised_at IS NULL AND ${na"
     },
     {
       "source": "src/workflow/bench-lane/facts.ts",

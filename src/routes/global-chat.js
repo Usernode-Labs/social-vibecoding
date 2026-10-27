@@ -6,6 +6,7 @@
 
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
+const { writeStreamChunk, writeStreamHeartbeat } = require('../services/http-stream-access');
 const { chatLimiter } = require('../middleware/rate-limits');
 const log = require('../services/logger');
 const credentialStore = require('../services/credential-store');
@@ -220,10 +221,10 @@ function sseHeaders(res) {
   res.write(': connected\n\n');
 }
 
-function sseWrite(res, event) {
+function sseWrite(res, event, signal) {
   if (!event?.type || res.writableEnded || res.destroyed) return;
   const { type, ...data } = event;
-  res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+  return writeStreamChunk(res, `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`, { signal });
 }
 
 function requestErrorStatus(error) {
@@ -628,13 +629,13 @@ function globalChatRoutes(config) {
         });
         if (directPage) {
           sseHeaders(res);
-          sseWrite(res, {
+          await sseWrite(res, {
             type: 'turn.started',
             turnId: directPage.turnId,
             threadId: req.params.id,
             kind,
           });
-          sseWrite(res, {
+          await sseWrite(res, {
             type: 'turn.completed',
             turnId: directPage.turnId,
             message: directPage.message,
@@ -680,7 +681,7 @@ function globalChatRoutes(config) {
     controllers.add(controller);
     activeTurnControllers.set(activeKey, controllers);
     const heartbeat = setInterval(() => {
-      if (!res.writableEnded && !res.destroyed) res.write(': keep-alive\n\n');
+      void writeStreamHeartbeat(res, ': keep-alive\n\n', { signal: controller.signal }).catch(() => {});
     }, 15_000);
     let terminalSent = false;
     // A Stop or a delete from any process (the thread's stamp, or the thread
@@ -732,7 +733,7 @@ function globalChatRoutes(config) {
           if (event?.type === 'turn.completed' || event?.type === 'turn.failed') {
             terminalSent = true;
           }
-          sseWrite(res, event);
+          await sseWrite(res, event, controller.signal);
         },
       });
     } catch (error) {
@@ -746,7 +747,7 @@ function globalChatRoutes(config) {
       // Pre-claim failures (notably a durable turn already in progress) have
       // no turn id there, so finish this SSE with one typed terminal event
       // instead of making the browser interpret a clean EOF as truncation.
-      if (!terminalSent) sseWrite(res, turnFailureEvent(error));
+      if (!terminalSent) await sseWrite(res, turnFailureEvent(error), controller.signal);
     } finally {
       clearInterval(cancelWatch);
       controllers.delete(controller);

@@ -58,6 +58,23 @@ test('removeWorker deletes nothing when proceed says no (the session came back, 
   assert.equal(deleted, false);
 });
 
+test('removeWorker finishes its last-use cleanup before a new worker can take the session lock', async t => {
+  runtime('kubernetes', t);
+  swap(kubernetes, 'workerIdentity', async () => ({ deployment: 'old-d', secret: null, pvc: null }), t);
+  swap(kubernetes, 'deleteWorkerIdentity', async () => {}, t);
+  swap(kubernetes, 'workerIdentityGone', async () => true, t);
+  let resolveDelete; let reached;
+  const started = new Promise(resolve => { reached = resolve; });
+  const deleted = new Promise(resolve => { resolveDelete = resolve; });
+  t.mock.method(require('../src/db/pool'), 'getPool', () => ({ query: async () => { reached(); return deleted; } }));
+  let finished = false;
+  const removing = worker.removeWorker(41).then(result => { finished = true; return result; });
+  try {
+    await started; assert.equal(finished, false);
+    resolveDelete({ rows: [] }); assert.deepEqual(await removing, { removed: true });
+  } finally { resolveDelete({ rows: [] }); await removing; }
+});
+
 test('removeWorker throws when the resources outlast its wait, or when Kubernetes refuses the deletion', async (t) => {
   runtime('kubernetes', t);
   swap(kubernetes, 'workerIdentity', async () => ({ deployment: 'uid-d', secret: null, pvc: null }), t);

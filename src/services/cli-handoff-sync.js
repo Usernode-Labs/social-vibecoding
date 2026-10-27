@@ -7,6 +7,7 @@
 
 const log = require('./logger');
 const summaryFreshness = require('./summary-freshness');
+const repoRef = require('./repo-ref');
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
 
@@ -15,9 +16,7 @@ function sameSha(a, b) {
 }
 
 function repoOf(session) {
-  const match = String(session?.repo_url || '')
-    .match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-  return match ? { owner: match[1], repo: match[2] } : null;
+  return repoRef.ownerRepo(session?.repo_url);
 }
 
 function pinsCurrent(session, headSha) {

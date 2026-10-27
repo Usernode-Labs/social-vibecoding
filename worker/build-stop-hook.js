@@ -118,7 +118,6 @@ const STDIN_WAIT_MS = 500;
 // Leftover servers: how long a SIGTERM is given before SIGKILL, how often the
 // hook looks whether they are gone, and commands it never stops.
 const STOP_WAIT_MS = 2000;
-const STOP_POLL_MS = 100;
 const NEVER_STOP_RE = /(?:^|[\/\s@-])(?:mcp|playwright|chrom(?:e|ium)|headless_shell|postgres|claude)(?:$|[\/\s.@-])/i;
 const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
@@ -296,18 +295,7 @@ function readBlocks(file) {
   return /^\d+$/.test(text) ? Number(text) : null;
 }
 
-/** The inodes of the listening TCP sockets in /proc/net/tcp and tcp6 text. Pure. */
-function listeningInodes(texts) {
-  const out = new Set();
-  for (const text of texts) {
-    for (const line of String(text || '').split('\n').slice(1)) {
-      const cols = line.trim().split(/\s+/);
-      // sl local remote st tx:rx tr:tm retrnsmt uid timeout inode
-      if (cols.length > 9 && cols[3] === '0A' && /^\d+$/.test(cols[9]) && cols[9] !== '0') out.add(cols[9]);
-    }
-  }
-  return out;
-}
+const { listeningInodes, listeningProcesses: readProcs, readProcess, stopOwnedSync } = require('./process-ownership');
 
 /**
  * Which processes are servers the agent left running in `repo` (see the
@@ -329,78 +317,21 @@ function leftoverServers({ repo, spare, listening, procs }) {
     .map((p) => p.pid);
 }
 
-// What /proc says of the running processes, for leftoverServers. Anything
-// unreadable is skipped. Never throws.
-function readProcs({ fsImpl = fs, procRoot = '/proc', selfPid = process.pid } = {}) {
-  const read = (file) => { try { return fsImpl.readFileSync(file, 'utf8'); } catch { return null; } };
-  const link = (file) => { try { return fsImpl.readlinkSync(file); } catch { return null; } };
-  const parentOf = (pid) => {
-    const stat = read(`${procRoot}/${pid}/stat`);
-    // pid (comm) state ppid ...; comm may hold spaces and parentheses.
-    const m = stat && /\)\s+\S+\s+(\d+)/.exec(stat.slice(stat.lastIndexOf(')')));
-    return m ? Number(m[1]) : null;
-  };
-  const spare = new Set();
-  for (let pid = selfPid, hops = 0; pid && pid > 0 && hops < 64; hops += 1) {
-    spare.add(pid);
-    pid = parentOf(pid);
-  }
-  let names = [];
-  try { names = fsImpl.readdirSync(procRoot); } catch { names = []; }
-  const procs = [];
-  for (const name of names) {
-    if (!/^\d+$/.test(name)) continue;
-    const pid = Number(name);
-    let fds = [];
-    try { fds = fsImpl.readdirSync(`${procRoot}/${pid}/fd`); } catch { continue; }
-    const sockets = [];
-    for (const fd of fds) {
-      const m = /^socket:\[(\d+)\]$/.exec(link(`${procRoot}/${pid}/fd/${fd}`) || '');
-      if (m) sockets.push(m[1]);
-    }
-    if (!sockets.length) continue;
-    procs.push({
-      pid, cwd: link(`${procRoot}/${pid}/cwd`), sockets,
-      cmd: String(read(`${procRoot}/${pid}/cmdline`) || '').split('\0').join(' ').trim(),
-    });
-  }
-  const listening = listeningInodes([read(`${procRoot}/net/tcp`), read(`${procRoot}/net/tcp6`)]);
-  return { spare, listening, procs };
-}
-
-function sleepMs(ms) {
-  try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch { /* no wait */ }
-}
-
-/**
- * Stop the servers the agent left running in `repo` (see the header):
- * SIGTERM each, SIGKILL whatever is still there after `waitMs`. Resolves how
- * many it stopped. Never throws.
- */
+/** Stop only listeners whose ownership is still the same before each signal. */
 function stopLeftovers({
   repo, fsImpl = fs, procRoot = '/proc', selfPid = process.pid, kill = process.kill.bind(process),
-  waitMs = STOP_WAIT_MS, sleep = sleepMs,
+  waitMs = STOP_WAIT_MS, platform = process.platform,
 } = {}) {
   try {
-    // As /proc names working directories: with every symlink resolved.
-    let root = repo;
-    try { root = fsImpl.realpathSync(repo); } catch { root = repo; }
-    const pids = leftoverServers({ repo: root, ...readProcs({ fsImpl, procRoot, selfPid }) });
-    // Gone, or a zombie nobody has reaped yet (its sockets are closed).
-    const alive = (pid) => {
-      try {
-        const stat = fsImpl.readFileSync(`${procRoot}/${pid}/stat`, 'utf8');
-        if (/^\s*Z\b/.test(stat.slice(stat.lastIndexOf(')') + 1))) return false;
-      } catch { /* no stat: ask the kernel */ }
-      try { kill(pid, 0); return true; } catch { return false; }
-    };
-    const sent = pids.filter((pid) => { try { kill(pid, 'SIGTERM'); return true; } catch { return false; } });
-    for (let waited = 0; waited < waitMs && sent.some(alive); waited += STOP_POLL_MS) sleep(STOP_POLL_MS);
-    for (const pid of sent) if (alive(pid)) { try { kill(pid, 'SIGKILL'); } catch { /* gone */ } }
-    return sent.length;
-  } catch {
-    return 0;
-  }
+    // lsof and /proc both name the real working directory.
+    const root = fsImpl.realpathSync(repo);
+    const opts = { fsImpl, procRoot, selfPid, platform };
+    const found = readProcs(opts);
+    const pids = new Set(leftoverServers({ repo: root, ...found }));
+    return stopOwnedSync(found.procs.filter((p) => pids.has(p.pid)), {
+      waitMs, kill, read: (pid) => readProcess(pid, opts),
+    });
+  } catch { return 0; }
 }
 
 // The servers stopped so far this turn, added to its file. Never throws.

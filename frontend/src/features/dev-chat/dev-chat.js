@@ -4632,7 +4632,8 @@ const DevChat = {
           // runClaudeCodeTool) rather than incidentally by stagingUrl, so it
           // rehydrates the same whether or not a preview built. When staging
           // failed the disabled-Preview note reads stagingErrorName /
-          // stagingMissingKeys; prNumber/prUrl back the header + GitHub link.
+          // stagingMissingKeys; prNumber/prUrl back the header + the link to
+          // the change (on GitHub, or its page in Homeroom).
           if (m.metadata.changesReady) m.changesReady = true;
           if (m.metadata.stagingFailed) m.stagingFailed = true;
           if (m.metadata.stagingErrorName) m.stagingErrorName = m.metadata.stagingErrorName;
@@ -10008,15 +10009,45 @@ const DevChat = {
     // down. The sync banner stays: syncing a proposal with main is proposal
     // upkeep, not new work.
     const classicReadOnly = session ? DevChat._classicReadOnlyView(session) : null;
-    const live = !!session && !classicReadOnly;
+    // A change whose code did not come across from GitHub can neither be
+    // continued nor synced, so its strip is the one that speaks: it says why
+    // and starts the next change itself.
+    const codeMissing = session ? DevChat._codeMissingView(session) : null;
+    const live = !!session && !classicReadOnly && !codeMissing;
     return {
-      sync: session ? DevChat._syncBannerView(session) : null,
+      sync: session && !codeMissing ? DevChat._syncBannerView(session) : null,
       newChange: live ? DevChat._newChangeBannerView(session) : null,
       credits: live ? DevChat._creditsBannerView() : null,
       creditsLow: live ? DevChat._creditsLowBannerView() : null,
-      agentSession: session ? DevChat._agentSessionBannerView(session) : null,
-      classicReadOnly,
+      agentSession: session && !codeMissing ? DevChat._agentSessionBannerView(session) : null,
+      classicReadOnly: codeMissing ? null : classicReadOnly,
+      codeMissing,
     };
+  },
+
+  // Its code did not come across when Homeroom moved off GitHub: the server
+  // says so (`code_missing` on GET /api/sessions/:id, decided by
+  // src/services/code-missing.js) and refuses every turn and sync on it, so
+  // here it only decides what the strip offers. Its owner gets the way on.
+  _codeMissingView(session) {
+    if (!session || session.code_missing !== true) return null;
+    const mine = typeof App !== 'undefined' && !!App.user && Number(session.user_id) === Number(App.user.id);
+    return { canStart: mine && !!DevChat._sessionAppSlug(session) };
+  },
+
+  // The code-missing strip's button: a new change from the current version,
+  // carrying this one's plan. The same door as startNewChange (an unsent
+  // agent session on the same app), with its first message ready to send:
+  // the agent starts the change from this one's plan (start_change
+  // fromChangeId) on a new branch. Nothing is created until it is sent.
+  startNewChangeFromPlan() {
+    const session = DevChat.currentSession;
+    const slug = DevChat._sessionAppSlug(session);
+    if (!slug || !session) return;
+    const message = PlatformI18n.t('devchat:banner.codeMissing.seed', { id: Number(session.id) });
+    const agent = window.UsernodeReact?.agentSession;
+    if (agent) void agent.start({ slug, entry: 'banner', message });
+    else window.location.hash = '#agent/new';
   },
 
   // #2779: a change its owner started from an agent session is revised in

@@ -21,6 +21,7 @@ const { getPool } = require('../../../db/pool');
 const log = require('../../../services/logger');
 const waitlist = require('../../../services/waitlist');
 const firstSession = require('../../../services/first-session');
+const releaseMailSetting = require('../../../services/release-mail-setting');
 const { signalsFor } = require('../../../services/waitlist-signals');
 const { sendWaitlistReleaseMail } = require('../../../services/topochain/mailer');
 const releaseLinks = require('../../../services/release-links');
@@ -304,6 +305,11 @@ function waitlistAdminRoutes(config) {
     // (#4096, services/waitlist.js sendReleaseText).
     if (!released.email) {
       await waitlist.sendReleaseText(pool, released);
+      return;
+    }
+    // #5971: an admin can switch the email off; the release itself stands.
+    if (!(await releaseMailSetting.releaseMailEnabled(pool))) {
+      log.info('topochain-admin', 'Release email switched off; not sent', { signupId: released.id });
       return;
     }
     const hasAccount = released.linked_user_id != null;
@@ -792,6 +798,32 @@ function waitlistAdminRoutes(config) {
       return ok(res, { data: formatStory(await firstSession.readStorySetting(pool)) });
     } catch (err) {
       log.error('topochain-admin', 'PUT /admin/story-landing failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  // ── GET / PUT /api/v4/admin/release-email ────────────────────────────
+  // Whether admitting somebody sends them the "You're in" email
+  // (services/release-mail-setting.js, #5971). On unless switched off here.
+  const formatReleaseMail = (s) => ({ enabled: s.enabled, updated_at: iso(s.updatedAt), updated_by: s.updatedBy });
+  router.get('/api/v4/admin/release-email', async (req, res) => {
+    try {
+      return ok(res, { data: formatReleaseMail(await releaseMailSetting.readReleaseMailSetting(pool)) });
+    } catch (err) {
+      log.error('topochain-admin', 'GET /admin/release-email failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  router.put('/api/v4/admin/release-email', adminWriteGate, async (req, res) => {
+    const enabled = req.body?.enabled;
+    if (typeof enabled !== 'boolean') return fail(res, 422, 'Provide enabled: true or false.');
+    try {
+      await releaseMailSetting.setReleaseMail(pool, { enabled, actorId: req.user?.id ?? null });
+      log.info('topochain-admin', 'Release email switched', { enabled, adminId: req.user?.id });
+      return ok(res, { data: formatReleaseMail(await releaseMailSetting.readReleaseMailSetting(pool)) });
+    } catch (err) {
+      log.error('topochain-admin', 'PUT /admin/release-email failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
   });

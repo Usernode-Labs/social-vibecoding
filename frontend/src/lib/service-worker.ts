@@ -43,6 +43,7 @@
  */
 
 import { isEmbeddedPanel } from './side-panel-mode';
+import { readApiCacheScope } from './api-cache-identity';
 
 /**
  * Fired when the worker reports that a cached API answer it already served
@@ -85,8 +86,9 @@ function swContainer(): ServiceWorkerContainer | null {
  */
 function listenForApiUpdates(container: ServiceWorkerContainer): void {
   container.addEventListener('message', (event: MessageEvent) => {
-    const data = event.data as { type?: string; url?: string } | null;
+    const data = event.data as { type?: string; url?: string; scope?: string } | null;
     if (!data || data.type !== 'api-updated') return;
+    if (!data.scope || data.scope !== readApiCacheScope()) return;
     try {
       window.dispatchEvent(new CustomEvent(API_UPDATED_EVENT, {
         detail: { url: data.url },

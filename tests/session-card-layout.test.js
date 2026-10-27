@@ -80,6 +80,9 @@ function makeCtx(over) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  // The ⋯ rows and meta links to GitHub decide by the address
+  // (frontend/src/lib/repo-link.js, published as window.RepoLink).
+  require('./lib/repo-link').installRepoLink(sandbox);
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return sandbox;
@@ -162,8 +165,8 @@ test('a PRIVATE own session carries the muted shell; a visible one does not', ()
   AppView._sharedById = {};
   const priv = mySessionCardHtml(AppView, mySess({}));
   assert.match(priv, /dev-card-muted/, 'the muted/draft treatment IS the "only you" signal');
-  assert.match(priv, /Only you can see this here\. Code is on public GitHub\./,
-    'and the subtitle says so, and that its code is on public GitHub all the same');
+  assert.match(priv, /Only you can see this here\. Its code is public\./,
+    'and the subtitle says so, and that its code is public all the same');
   const vis = mySessionCardHtml(AppView, mySess({ shared_at: '2026-06-01T03:00:00Z' }));
   assert.doesNotMatch(vis, /dev-card-muted/, 'a visible session is not muted');
 });
@@ -201,7 +204,7 @@ test('an owned imported PR shows proposal metadata with one promotion action', (
     source: 'imported',
     imported_pr_author: 'octo-contributor',
     pr_number: 1165,
-    pr_url: 'https://github.example/pull/1165',
+    pr_url: 'https://github.com/example/app/pull/1165',
     priority: { top: 'high', count: 2, myValue: 'high' },
     assignee: { top: 'tester', count: 1, myValue: 'tester' },
     category: { top: 'bug', count: 1, myValue: 'bug' },
@@ -232,7 +235,7 @@ test('another user’s imported PR names its people and exposes proposal attribu
   const AppView = makeAppView();
   const html = sharedSessionCardHtml(AppView, sharedSess({
     source: 'imported', imported_pr_author: 'octo-contributor', username: 'maya',
-    pr_url: 'https://github.example/pull/1165',
+    pr_url: 'https://github.com/example/app/pull/1165',
     assignee: { top: 'sam', count: 1, myValue: null },
   }));
   assert.match(html, /Imported PR/);
@@ -356,7 +359,7 @@ test('private own card offers NO chat-sharing row (nowhere to read it from yet)'
   const html = mySessionCardHtml(AppView, mySess({}));
   assert.ok(!menuHas(AppView, html, /Share chat|Chat shared/));
   assert.doesNotMatch(html, /chat readable/);
-  assert.match(html, /Only you can see this here\. Code is on public GitHub\./, 'subtitle names the unshared state');
+  assert.match(html, /Only you can see this here\. Its code is public\./, 'subtitle names the unshared state');
 });
 
 test('visible own card offers "Share chat"; the subtitle stays plain', () => {
@@ -522,7 +525,7 @@ test('kanban In progress: private → visible → issues → shared → archived
   const own = rows.find((r) => r.key === 'my-session:1');
   assert.equal(own.brief.tags[0].label, 'Only you');
   assert.equal(own.brief.tags[0].glyph, 'lock');
-  assert.equal(own.brief.tags[0].title, 'Only you can see your active sessions here. Their code is on public GitHub.');
+  assert.equal(own.brief.tags[0].title, 'Only you can see your active sessions here. Their code is public.');
   assert.ok(!rows.find((r) => r.key === 'my-session:2').brief.tags.some((t) => t.label === 'Only you'), 'a visible one says nothing of the kind');
   assert.match(html, /dev-col-divider/, 'the other groups keep their hairline dividers');
 });

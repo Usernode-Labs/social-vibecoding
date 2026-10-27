@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const nodeAppPackage = require('../templates/node-app/package.json');
 const nodeAppLock = require('../templates/node-app/package-lock.json');
+const repoRef = require('./repo-ref');
 // The packages a starter may add on top of the template's (an entry's
 // `dependencies` in services/app-templates.js), with their lockfile entries.
 const extraPackages = require('../templates/node-app/extra-packages.json');
@@ -359,13 +360,11 @@ const LIVE_FILES = LIVE_PATHS.map((rel) => ({
 // ALWAYS rewrites it, since the copy it inherits names the parent.
 const CANONICAL_REPO_PATH = '.claude/homeroom-canonical-repo';
 
-// https://github.com/<owner>/<repo>, or null for anything else (no GitHub,
-// a local build). The hook reads this file as data, so only this one shape
-// is ever written.
+// The repository's page (https://<host>/<owner>/<repo>, which git reads
+// too), or null for anything else (no repository, a local build). The hook
+// reads this file as data, so only this one shape is ever written.
 function canonicalRepoUrl(repoUrl) {
-  const match = String(repoUrl || '').trim()
-    .match(/^https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?\/?$/);
-  return match ? `https://github.com/${match[1]}/${match[2]}` : null;
+  return repoRef.webUrl(repoUrl);
 }
 
 function getCanonicalRepoFile(repoUrl) {
@@ -657,9 +656,9 @@ ${withLive ? '    changes.close();\n' : ''}    server.close(() => {});
   };
 }
 
-// repoUrl is the app's canonical GitHub repository; with it the scaffold
-// includes the pointer file the freshness check reads. A local build with no
-// GitHub has none, and gets no pointer.
+// repoUrl is the app's canonical repository; with it the scaffold includes
+// the pointer file the freshness check reads. A local build with no
+// repository has none, and gets no pointer.
 //
 // `governance` is the approval rule chosen on the create screen
 // ({ approverPolicy, approvalsRequired }, the apps row's two columns). A
@@ -907,7 +906,12 @@ Once the real app exists, rewrite this README to describe it.
 # rebuild step for you to remember: add a class, push, it is in the next
 # build. tailwindcss lives only in this stage, so the runtime image below
 # stays exactly as small as it was.
-FROM node:22-alpine AS css
+FROM node:22.23.4-alpine AS css
+# Pin npm and replace its affected Undici bundle until npm ships the patch.
+RUN npm install --global npm@11.21.1 undici@6.29.1 \\
+  && rm -rf /usr/local/lib/node_modules/npm/node_modules/undici \\
+  && mv /usr/local/lib/node_modules/undici /usr/local/lib/node_modules/npm/node_modules/undici \\
+  && npm cache clean --force
 WORKDIR /build
 COPY package.json package-lock.json ./
 RUN npm ci --include=dev
@@ -917,7 +921,12 @@ COPY public ./public
 RUN npm run build
 
 # Stage 2 — the app itself (unchanged apart from the one COPY at the end).
-FROM node:22-alpine
+FROM node:22.23.4-alpine
+# Pin npm and replace its affected Undici bundle until npm ships the patch.
+RUN npm install --global npm@11.21.1 undici@6.29.1 \\
+  && rm -rf /usr/local/lib/node_modules/npm/node_modules/undici \\
+  && mv /usr/local/lib/node_modules/undici /usr/local/lib/node_modules/npm/node_modules/undici \\
+  && npm cache clean --force
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev

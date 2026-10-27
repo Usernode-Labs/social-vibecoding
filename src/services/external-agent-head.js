@@ -21,13 +21,12 @@
 //
 // TWO PROPERTIES THIS FILE IS RESPONSIBLE FOR.
 //
-// 1. The write credential is resolved PAT-FIRST — `GITHUB_BOT_TOKEN`, then
-//    an App installation token, matching services/github.js getOctokit. This
-//    is not cosmetic: the conflict resolver (now gone) recorded that the
-//    installation path THROWS for `Usernode-Labs` (the self-app's owner has
-//    no installation), and `getInstallationToken` has no other caller in the
-//    tree. An installation-first helper would break on the platform's own
-//    app and nowhere else, which is the worst possible place to find out.
+// 1. The write credential is the one services/github.js getOctokit uses: on
+//    GitHub, an installation token of the GitHub App on the platform
+//    repository's owner, and never the bot's token, which is not sent again
+//    (services/github.js "Who Homeroom is on GitHub"). Before 26 Oct 2026 it
+//    was the bot token first, because the App had no installation on
+//    `Usernode-Labs`; without one, this throws for the platform's own app.
 //
 // 2. PROVENANCE IS VERIFIED BEFORE ANYTHING IS COPIED. The attribution gate
 //    in external-agent-tasks compares a pull request's head-repo owner to
@@ -40,8 +39,8 @@
 //
 // Nothing here takes a user credential. The fetch from the user's fork is
 // unauthenticated (app forks are public); the only secret in the file is the
-// platform's own bot token, and it appears only inside a remote URL passed
-// to git as an argv element, never logged.
+// platform's own write credential, and it appears only inside a remote URL
+// passed to git as an argv element, never logged.
 
 const crypto = require('crypto');
 const fs = require('fs/promises');
@@ -52,6 +51,7 @@ const { promisify } = require('util');
 
 const log = require('./logger');
 const githubService = require('./github');
+const commitIdentity = require('./commit-identity');
 
 const execFileAsync = promisify(execFile);
 
@@ -127,19 +127,32 @@ function validRef(value) {
 
 // ── The write credential ───────────────────────────────────────────────
 //
-// PAT-first, matching services/github.js getOctokit. Returns
-// { token, source } so the caller can log WHICH credential ran without ever
-// touching the value; `source` is the same vocabulary listActionsSecrets
-// reports ('pat' | 'installation').
+// The one services/github.js getOctokit uses. Returns { token, source } so
+// the caller can log WHICH credential ran without ever touching the value;
+// `source` is 'git_host' or 'installation', the vocabulary
+// listActionsSecrets reports.
 async function resolveWriteCredential(owner) {
-  const pat = process.env.GITHUB_BOT_TOKEN;
-  if (pat) return { token: pat, source: 'pat' };
+  // An app repository on Homeroom's git host: its service account
+  // (services/git-host.js), the only credential that writes there.
+  if (require('./repo-ref').hostOfOwner(owner) === 'git_host') {
+    const { token } = require('./git-host').settings();
+    if (!token) throw new Error('no git host write credential is configured');
+    return { token, source: 'git_host' };
+  }
   const token = await githubService.getInstallationToken(owner);
   if (!token) throw new Error('no GitHub write credential is configured');
   return { token, source: 'installation' };
 }
 
 function authenticatedRemote(token, owner, repo) {
+  if (require('./repo-ref').hostOfOwner(owner) === 'git_host') {
+    // The git host's address, as its service account.
+    const gitHost = require('./git-host');
+    const url = new URL(gitHost.cloneUrl({ owner, name: repo }));
+    url.username = encodeURIComponent(gitHost.settings().user);
+    url.password = encodeURIComponent(token);
+    return url.toString();
+  }
   return `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
 }
 
@@ -175,8 +188,12 @@ async function withScratchRepo(label, fn) {
   });
   try {
     await git(['init', '--quiet']);
-    await git(['config', 'user.name', 'usernode-bot']);
-    await git(['config', 'user.email', 'usernode-bot@users.noreply.github.com']);
+    // Homeroom's one identity (services/commit-identity.js): the committer
+    // of every commit made here, a submitted patch's (external-agent-patch.js
+    // `git am`) included, whose author stays the patch's own.
+    const author = commitIdentity.homeroomAuthor();
+    await git(['config', 'user.name', author.name]);
+    await git(['config', 'user.email', author.email]);
     return await fn({ dir, git });
   } finally {
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
@@ -533,8 +550,8 @@ async function deleteBranch({ owner, repo, branch, token }) {
 }
 
 // git puts the whole remote URL in its error text, and the URL carries the
-// bot token. Nothing from a git failure reaches a log without going through
-// this first.
+// write credential. Nothing from a git failure reaches a log without going
+// through this first.
 function redactToken(message, token) {
   const text = String(message || '');
   if (!token) return text.slice(0, 500);

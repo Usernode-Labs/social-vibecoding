@@ -991,6 +991,14 @@
     "text": "your yes puts it live",
     "description": "On the line of facts under a Needs-you card's caption, after its approval count (\"0 of 1 approval · your yes puts it live\"), when exactly one more Yes meets the change's rule and the viewer's Yes counts. Lower case: it continues the line."
   },
+  "needsYou.fact.codeMissing": {
+    "text": "Code missing",
+    "description": "Red fact on the line under a Needs-you card's caption, after its approval count: the proposed change's code (its branch) did not come across when Homeroom moved off GitHub, so it cannot go live until the code is back. Votes on it are still recorded."
+  },
+  "needsYou.fact.codeMissingTitle": {
+    "text": "This proposal’s code didn’t come across when Homeroom moved off GitHub. Its creator can submit it again, or Homeroom restores it when GitHub’s copy of the code arrives.",
+    "description": "Tooltip of the \"Code missing\" fact on a Needs-you card. GitHub is a product name; Homeroom is the product's own name. \"GitHub's copy of the code\" is the export of the old repositories that GitHub is sending to Homeroom. \"Submit it again\" means put the same change up again."
+  },
   "needsYou.answered.votedYes": {
     "text": "Voted yes",
     "description": "Confirmation at the top of an item in the Needs you feed once this person has voted Yes on the change. A hint on how to reach the next item follows it after a middle dot. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
@@ -1341,7 +1349,7 @@
   },
   "needsYou.rail.label": {
     "text": "This item",
-    "description": "Accessible name of the column of buttons beside the item on screen in the Needs you feed (Vote, Description, Comments, Ask, Try it, More)."
+    "description": "Accessible name of the column of buttons beside the item on screen in the Needs you feed (Vote, Skip, Comments, Ask, Try it, More)."
   },
   "needsYou.rail.endLabel": {
     "text": "The end of the feed",
@@ -1358,6 +1366,14 @@
   "needsYou.rail.vote": {
     "text": "Vote",
     "description": "Button beside an item in the Needs you feed: opens the sheet where this person votes Yes or No on the change. A verb."
+  },
+  "needsYou.rail.skip": {
+    "text": "Skip",
+    "description": "Button beside an item in the Needs you feed: moves on to the next item without voting, leaving this one in the feed to vote on later. A verb."
+  },
+  "needsYou.rail.skipThis": {
+    "text": "Skip this change for now",
+    "description": "Accessible name of the Skip button beside an item in the Needs you feed: moves on without voting and leaves the change in the feed."
   },
   "needsYou.rail.comments": {
     "text": "Comments",
@@ -2531,6 +2547,10 @@
     "text": "Written for an earlier version of this change.",
     "description": "Note under a change's summary on its page when the change was updated after the summary was written, so the summary may no longer describe it."
   },
+  "topic.change.codeMissing": {
+    "text": "This proposal’s code didn’t come across when Homeroom moved off GitHub. Its creator can submit it again, or Homeroom restores it when GitHub’s copy of the code arrives.",
+    "description": "Amber notice on a change's page, above its Votes and Testing cards, when the change's code (its branch) is not on Homeroom's own code host because it did not come across when Homeroom moved off GitHub. GitHub is a product name; Homeroom is the product's own name. \"GitHub's copy of the code\" is the export of the old repositories that GitHub is sending to Homeroom. \"Submit it again\" means put the same change up again."
+  },
   "topic.change.gate.noteSeeFailed": {
     "text": "{{note}} <0>See what failed</0>",
     "description": "The line under the Testing card on a change's page when its checks failed. {{note}} is one or more whole sentences, already worded, saying what happened. <0></0> is a link-style button that opens the Details sheet at the failed checks."
@@ -3181,7 +3201,11 @@
   },
   "topic.details.openOnGitHub": {
     "text": "Open on GitHub",
-    "description": "Link in the Details sheet of a change, beside its pull-request number: opens that pull request on GitHub in a new tab. \"Open\" is a verb; GitHub is a product name."
+    "description": "Link in the Details sheet of a change whose pull request is on GitHub, beside its pull-request number: opens that pull request on GitHub in a new tab. \"Open\" is a verb; GitHub is a product name."
+  },
+  "topic.details.viewCode": {
+    "text": "View code",
+    "description": "Link in the Details sheet of a change whose code is on Homeroom's own git host rather than GitHub, beside its number: opens that code in a new tab. \"View\" is a verb."
   },
   "topic.details.description": {
     "text": "Description",
@@ -3633,7 +3657,7 @@
   },
   "kanban.footer.moreRequests": {
     "text": "More open requests →",
-    "description": "Link under the board's Requests column: opens the rest of the project's open requests (issues) on GitHub. Keep the arrow last."
+    "description": "Link under the board's Requests column of a project whose code is on GitHub: opens the rest of the project's open requests (issues) on GitHub. Keep the arrow last."
   },
   "kanban.footer.moreCompleted_one": {
     "text": "+{{count}} more completed",
@@ -4058,6 +4082,10 @@
   "releaseStall.noRun.commitUnknownRunning": {
     "text": "Commit (unknown) landed on main but is not running yet, and no release workflow run could be found for it. The platform is still running {{running}}.",
     "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch is not live and no run of the automated release job was found for it. Used when the commit is not known; \"(unknown)\" is written as the banner has always shown it. {{running}} is the build still serving."
+  },
+  "codePause.notice": {
+    "text": "Changes to this project’s code are paused while Homeroom moves off GitHub. Requests and discussions still work.",
+    "description": "Amber banner above the cards on the page of a project whose code is still on GitHub, while Homeroom has stopped using GitHub: nobody can propose, build or merge a change to its code for now. Requests (what members ask for) and discussions are unaffected. GitHub is a product name; Homeroom is the product’s own name."
   },
   "clamp.showMore": {
     "text": "Show more",

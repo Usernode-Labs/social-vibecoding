@@ -42,6 +42,7 @@
 
 const log = require('./logger');
 const explicitApproval = require('./explicit-approval');
+const repoRef = require('./repo-ref');
 
 // Short in-process TTL cache, mirroring the governance cache in
 // services/governance.js: reads happen on every management gate and
@@ -258,7 +259,7 @@ async function detectExplicitApprovalChange(app, { headRef } = {}) {
   });
   if (!headRef) return none(false, null);
   if (!github.isEnabled()) return none(false, null);
-  const [, owner, repo] = (app?.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  const { owner, repo } = repoRef.ownerRepo(app?.repo_url) || {};
   if (!owner || !repo) return none(false, null);
 
   const { mergeBaseSha, files, filesComplete } =
@@ -334,9 +335,14 @@ async function refreshExplicitApproval(pool, app, session) {
     await stampExplicitApproval(pool, session.id, changed, reason);
     return changed;
   } catch (err) {
-    log.warn('app-admins', 'Explicit-approval detection failed (leaving flag as-is)', {
-      sessionId: session?.id, err: err.message,
-    });
+    // A head that is not on the git host: the proposal's code did not come
+    // across from GitHub (services/code-missing.js). Nothing to diff, and
+    // the same every time until it is pushed back, so not a warning.
+    if (!require('./code-missing').isError(err)) {
+      log.warn('app-admins', 'Explicit-approval detection failed (leaving flag as-is)', {
+        sessionId: session?.id, err: err.message,
+      });
+    }
     return null;
   }
 }
@@ -372,9 +378,14 @@ async function sweepExplicitApproval(pool, session) {
     }
     return detected.changed;
   } catch (err) {
-    log.warn('app-admins', 'Explicit-approval re-verify failed (keeping stored flag)', {
-      sessionId: session?.id, err: err.message,
-    });
+    // The sweep's "Cannot compare main...<branch>" every pass, for a
+    // proposal whose code did not come across from GitHub
+    // (services/code-missing.js): the stored flag stands, quietly.
+    if (!require('./code-missing').isError(err)) {
+      log.warn('app-admins', 'Explicit-approval re-verify failed (keeping stored flag)', {
+        sessionId: session?.id, err: err.message,
+      });
+    }
     return stored ?? null;
   }
 }

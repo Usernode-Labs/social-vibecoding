@@ -1,5 +1,7 @@
 'use strict';
 
+// test:changed: when worker/inloop-app-supervisor.js (real wrapper-exit, title-change and launcher-disconnect cleanup)
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -272,11 +274,11 @@ test('end to end: the launcher builds, boots the app behind the front proxy, and
   fs.writeFileSync(path.join(dir, 'build.js'),
     "require('fs').mkdirSync('public',{recursive:true});require('fs').writeFileSync('public/tailwind.css','.flex{display:flex}');");
   fs.writeFileSync(path.join(dir, 'server.js'), [
-    "const http = require('http'); const fs = require('fs');",
+    "const http = require('http'); const fs = require('fs'); process.title = 'fixture app';",
     'http.createServer((req, res) => {',
     "  if (req.url === '/tailwind.css') return res.end(fs.readFileSync('public/tailwind.css'));",
     "  res.end('port=' + process.env.PORT + ' env=' + process.env.USERNODE_ENV);",
-    '}).listen(Number(process.env.PORT));',
+    "}).listen(Number(process.env.PORT), '127.0.0.1');",
     "process.on('SIGTERM', () => process.exit(0));",
   ].join('\n'));
   const { spawn } = require('node:child_process');
@@ -307,6 +309,7 @@ test('end to end: the launcher builds, boots the app behind the front proxy, and
     child.kill('SIGTERM');
     assert.equal(await exited, 0);
   } finally {
+    await require('../worker/usernode-run-inloop').stopLaunch(publicPort);
     child.kill('SIGKILL');
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -344,7 +347,7 @@ test('a launch on a port stops the launch it made there before, and --stop stops
   await close(reserved);
   fs.writeFileSync(path.join(dir, 'server.js'), [
     "const http = require('http');",
-    "http.createServer((req, res) => res.end('launch=' + process.env.LAUNCH)).listen(Number(process.env.PORT));",
+    "http.createServer((req, res) => res.end('launch=' + process.env.LAUNCH)).listen(Number(process.env.PORT), '127.0.0.1');",
     "process.on('SIGTERM', () => process.exit(0));",
   ].join('\n'));
   const { spawn, spawnSync } = require('node:child_process');
@@ -385,6 +388,7 @@ test('a launch on a port stops the launch it made there before, and --stop stops
     assert.equal(again.status, 0);
     assert.match(again.stderr, new RegExp(`no app it launched is running on ${port}`));
   } finally {
+    await require('../worker/usernode-run-inloop').stopLaunch(port);
     first.kill('SIGKILL');
     if (second) second.kill('SIGKILL');
     fs.rmSync(dir, { recursive: true, force: true });
@@ -459,7 +463,7 @@ test('end to end: the launched app gets the public half, the printed link opens 
     "const http = require('http');",
     'http.createServer((req, res) => res.end(JSON.stringify({',
     '  key: process.env.USERNODE_JWT_PUBLIC_KEY || null, app: process.env.USERNODE_APP_ID || null,',
-    '}))).listen(Number(process.env.PORT));',
+    "}))).listen(Number(process.env.PORT), '127.0.0.1');",
     "process.on('SIGTERM', () => process.exit(0));",
   ].join('\n'));
   const { spawn, spawnSync } = require('node:child_process');
@@ -503,6 +507,111 @@ test('end to end: the launched app gets the public half, the printed link opens 
     assert.equal(none.status, 2);
     assert.match(none.stderr, /no app it launched is running/);
   } finally {
+    await require('../worker/usernode-run-inloop').stopLaunch(port);
+    child.kill('SIGKILL');
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A shell/npm command can exit while its server continues in the inherited
+// process group. Also exercise an ignored TERM and a failed spawn on each OS.
+test('failed commands and wrapper exits leave no app listener behind', { timeout: 20000 }, async () => {
+  const { spawn, spawnSync } = require('node:child_process');
+  const { readProcess, processGroup, stopOwned } = require('../worker/process-ownership');
+  const launcher = path.join(__dirname, '../worker/usernode-run-inloop');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'un-inloop-failures-'));
+  const probe = http.createServer();
+  const port = await listen(probe);
+  await close(probe);
+  const env = { ...process.env, INLOOP_BROWSER: '1', INLOOP_ENV: 'staging', INLOOP_PORT: String(port),
+    INLOOP_DATABASE_URL: 'postgres://postgres:postgres@127.0.0.1:5432/inloop', INLOOP_SKIP_BUILD: '1', PLATFORM_URL: '' };
+  fs.writeFileSync(path.join(dir, 'grandchild.js'), `
+    const fs = require('fs');
+    const server = require('http').createServer((_q, r) => r.end('ok'));
+    process.on('SIGTERM', () => {});
+    server.listen(0, '127.0.0.1', () => fs.writeFileSync('grandchild.json', JSON.stringify({pid: process.pid, port: server.address().port})));
+  `);
+  fs.writeFileSync(path.join(dir, 'wrapper.js'), `
+    require('child_process').spawn(process.execPath, ['grandchild.js'], { stdio: 'ignore' }).unref();
+    const timer = setInterval(() => { if (require('fs').existsSync('grandchild.json')) { clearInterval(timer); process.exit(1); } }, 50);
+  `);
+  let child;
+  let identity;
+  try {
+    const missing = spawnSync(process.execPath, [launcher, '/a-command-that-does-not-exist'], { cwd: dir, env, encoding: 'utf8', timeout: 10000 });
+    assert.equal(missing.status, 2, missing.stderr);
+    // The failed spawn closed the front socket as well as its launch record.
+    await assert.rejects(request(port), /ECONNREFUSED/);
+    child = spawn(process.execPath, [launcher, process.execPath, 'wrapper.js'], { cwd: dir, env, stdio: ['ignore', 'ignore', 'pipe'] });
+    identity = readProcess(child.pid);
+    let stderr = '';
+    child.stderr.on('data', (c) => { stderr += c; });
+    const code = await new Promise((r) => child.once('exit', r));
+    assert.equal(code, 1, stderr);
+    const grandchild = JSON.parse(fs.readFileSync(path.join(dir, 'grandchild.json'), 'utf8'));
+    const state = readProcess(grandchild.pid)?.state;
+    assert.ok(!state || /^[ZX]/.test(state), `grandchild ${grandchild.pid} is still alive: ${state}`);
+    await assert.rejects(request(grandchild.port), /ECONNREFUSED/);
+    await assert.rejects(request(port), /ECONNREFUSED/);
+  } finally {
+    if (identity) await stopOwned(processGroup(identity), { waitMs: 0 });
+    if (child) child.kill('SIGKILL');
+    // If an assertion fails, still clean only the exact fixture process.
+    const file = path.join(dir, 'grandchild.json');
+    if (fs.existsSync(file)) {
+      const grandchild = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const p = readProcess(grandchild.pid);
+      if (p?.cmd.includes('grandchild.js')) await stopOwned([p], { waitMs: 0 });
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test('the live supervisor cleans its app group if the launcher is killed', { timeout: 20000 }, async () => {
+  const { spawn } = require('node:child_process');
+  const { readProcess, stopOwned } = require('../worker/process-ownership');
+  const launcher = path.join(__dirname, '../worker/usernode-run-inloop');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'un-inloop-disconnect-'));
+  const probe = http.createServer();
+  const port = await listen(probe);
+  await close(probe);
+  const env = { ...process.env, INLOOP_BROWSER: '1', INLOOP_ENV: 'staging', INLOOP_PORT: String(port),
+    INLOOP_DATABASE_URL: 'postgres://postgres:postgres@127.0.0.1:5432/inloop', INLOOP_SKIP_BUILD: '1', PLATFORM_URL: '' };
+  fs.writeFileSync(path.join(dir, 'server.js'), `
+    const fs = require('fs');
+    const server = require('http').createServer((_q, r) => r.end('ok'));
+    process.on('SIGTERM', () => {});
+    server.listen(Number(process.env.PORT), '127.0.0.1', () => fs.writeFileSync('app.json', JSON.stringify({
+      pid: process.pid, port: server.address().port, ipc: typeof process.send, ipcFd: process.env.NODE_CHANNEL_FD || null
+    })));
+  `);
+  const child = spawn(process.execPath, [launcher, process.execPath, 'server.js'], { cwd: dir, env, stdio: 'ignore' });
+  const exited = new Promise((resolve) => child.once('exit', resolve));
+  let appIdentity;
+  try {
+    for (let i = 0; i < 100 && !fs.existsSync(path.join(dir, 'app.json')); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const app = JSON.parse(fs.readFileSync(path.join(dir, 'app.json'), 'utf8'));
+    appIdentity = readProcess(app.pid);
+    assert.equal(app.ipc, 'undefined', 'the app does not inherit the supervisor IPC channel');
+    assert.equal(app.ipcFd, null);
+    assert.equal((await request(port)).status, 200);
+    child.kill('SIGKILL');
+    await exited;
+    for (let i = 0; i < 120; i += 1) {
+      const state = readProcess(app.pid)?.state;
+      if (!state || /^[ZX]/.test(state)) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const state = readProcess(app.pid)?.state;
+    assert.ok(!state || /^[ZX]/.test(state), `app ${app.pid} survived supervisor cleanup: ${state}`);
+    await assert.rejects(request(app.port), /ECONNREFUSED/);
+    await assert.rejects(request(port), /ECONNREFUSED/);
+  } finally {
+    await require('../worker/usernode-run-inloop').stopLaunch(port, { waitMs: 0 });
+    if (appIdentity) await stopOwned([appIdentity], { waitMs: 0 });
     child.kill('SIGKILL');
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -229,12 +229,15 @@ export const JOBS: readonly Job[] = Object.freeze([
   },
   {
     // The per-route request and server-error counts past their 14 days (the
-    // Server errors figure and the server_errors signal read them).
+    // Server errors figure and the server_errors signal read them), the
+    // route costs past their 7, and each process's health past its 14.
     name: 'server-error-prune', everyMs: 24 * HOUR,
     run: async (_ctx: WorkContext, { pool }: JobDeps) => {
       const n = await legacy('services/server-error-counts').prune(pool);
-      if (n && (n.requests || n.errors)) legacy('services/logger').info('server-errors', 'Pruned old server error counts', n);
-      return n;
+      if (n && (n.requests || n.errors || n.routes)) legacy('services/logger').info('server-errors', 'Pruned old server error counts', n);
+      const h = await legacy('services/process-health').prune(pool);
+      if (h && h.processes) legacy('services/logger').info('process-health', 'Pruned old process health', h);
+      return n && h ? { ...n, ...h } : n || h;
     },
   },
   {
@@ -554,6 +557,10 @@ export const JOBS: readonly Job[] = Object.freeze([
     // previews by its own environment, so its run looks at nothing.
     name: 'preview-env', everyMs: 15 * MIN, leaseMs: 10 * MIN, newestOnly: true,
     run: (_ctx: WorkContext, { config }: JobDeps) => legacy('services/staging-reap').tellStaleEnv(config),
+  },
+  {
+    name: 'preview-data-policy', everyMs: MIN, leaseMs: 10 * MIN, newestOnly: true,
+    run: (_ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/platform-preview-retirement').retire(config, pool),
   },
   {
     // Staging databases nothing can reach any more (no session, build or

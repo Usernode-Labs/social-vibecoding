@@ -2,8 +2,8 @@
 
 // #5823: `loadContributedAppIds` against the FULL PostgreSQL schema.
 //
-// Home's All / Contributing switch shows the apps the viewer helps build, and
-// the definition has to agree exactly with the Contributors list: apps you
+// It reports the apps the viewer helps build, and the definition has to agree
+// exactly with the Contributors list: apps you
 // made, apps where you were accepted as a builder, apps where your change was
 // voted in (a merged chat_session). That union and its user join live in SQL,
 // so the contract is pinned here, through the real planner, rather than by

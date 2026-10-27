@@ -21,6 +21,7 @@
 const log = require('./logger');
 const appAccess = require('./app-access');
 const models = require('./models');
+const repoRef = require('./repo-ref');
 
 const TITLE_MAX = 256;
 const LIST_LIMIT_MAX = 50;
@@ -461,8 +462,7 @@ async function renameAgentSession(pool, { userId, id, title }) {
 // message's name stays too.
 
 function parseRepoUrl(url) {
-  const m = String(url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  return m ? { owner: m[1], repo: m[2] } : null;
+  return repoRef.ownerRepo(url);
 }
 
 // The request's title, or null when it cannot be read.
@@ -785,6 +785,7 @@ async function linkChange(pool, { agentSessionId, userId, change }) {
 function outcomeForArchiveReason(reason) {
   if (reason === 'auto-rejected') return 'rejected';
   if (reason === 'admin-no') return 'admin-no';
+  if (reason === 'approver-no') return 'approver-no';
   if (reason === 'proposal-replaced') return 'replaced';
   if (reason === 'manual') return 'withdrawn';
   return 'closed';

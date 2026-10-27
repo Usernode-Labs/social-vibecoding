@@ -693,7 +693,8 @@ function mcpPreAuthRoutes(config) {
       const kind = auth.delegation ? auth.delegation.kind : 'external';
       const server = new McpServer(
         { name: SERVER_NAME, version: SERVER_VERSION },
-        { instructions: mcpTools.instructionsFor(kind) }
+        // Count collections before Zod validation can allocate for them.
+        { instructions: mcpTools.instructionsFor(kind), maxToolInputElements: 10_000 }
       );
       mcpTools.registerTools(server, {
         accessToken: bearer.token,

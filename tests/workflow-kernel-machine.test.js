@@ -139,6 +139,30 @@ test('a sleeper can take only the notifications it wants', async () => {
   await signals.stop();
 });
 
+// Any outcome wakes a waiter on an instance. A burst of them elsewhere (here
+// every sleep returns at once, the worst case) must not turn the wait into a
+// read per wake-up: it re-reads at most every INSTANCE_REREAD_MS, still
+// answers as soon as a read sees the instance done, and keeps its deadline.
+test('a wait on an instance re-reads it at most every INSTANCE_REREAD_MS, however often it is woken', async () => {
+  const { waitForInstance, INSTANCE_REREAD_MS } = require('../src/workflow/kernel/stream.ts');
+  const flood = { listening: true, sleep: () => Promise.resolve() };
+  let reads = 0;
+  const db = { query: async () => { reads += 1; return { rows: [{ state: 'pushing', data: null, version: 1 }] }; } };
+  const started = Date.now();
+  const last = await waitForInstance(db, flood, 'worker-push', 'k', (i) => i.state === 'done', 1000);
+  const took = Date.now() - started;
+  assert.equal(last.state, 'pushing', 'the deadline answers with the instance as last read');
+  assert.ok(took >= 1000 && took < 1400, `kept its deadline (${took} ms)`);
+  assert.ok(reads <= Math.ceil(1000 / INSTANCE_REREAD_MS) + 2, `${reads} reads in a second of wake-ups`);
+
+  let n = 0;
+  const moving = { query: async () => ({ rows: [{ state: ++n >= 3 ? 'done' : 'pushing', data: { result: 'ok' }, version: n }] }) };
+  const t0 = Date.now();
+  const doneNow = await waitForInstance(moving, flood, 'worker-push', 'k', (i) => i.state === 'done', 10_000);
+  assert.equal(doneNow.state, 'done');
+  assert.ok(Date.now() - t0 < 3 * INSTANCE_REREAD_MS + 200, 'answers on the read that sees it done');
+});
+
 // The LISTEN connection goes back to the pool once. A listener of ours left
 // on it after stop() released it again when the idle connection errored (a
 // test database dropped under it), and pg-pool throws on that, from inside

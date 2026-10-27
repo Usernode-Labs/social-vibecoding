@@ -190,6 +190,10 @@ async function platform() {
 /** `node server.js` in `dir`, resolved once it is listening. */
 async function boot(dir, dbUrl, env, extra = {}) {
   const port = await freePort();
+  // This is an isolated generated fixture, never a deployment listener.
+  const entry = path.join(dir, 'server.js');
+  fs.writeFileSync(entry, fs.readFileSync(entry, 'utf8').replaceAll(
+    'app.listen(port, ()', "app.listen(port, '127.0.0.1', ()"));
   const child = spawn(process.execPath, ['server.js'], {
     cwd: dir,
     env: {
@@ -207,11 +211,26 @@ async function boot(dir, dbUrl, env, extra = {}) {
   let out = '';
   child.stdout.on('data', (d) => { out += d; });
   child.stderr.on('data', (d) => { out += d; });
-  await new Promise((resolve, reject) => {
+  async function stop() {
+    if (child.exitCode !== null || child.signalCode !== null) return child.exitCode;
+    const exited = new Promise((resolve) => child.once('exit', resolve));
+    let timer;
+    child.kill('SIGTERM');
+    const code = await Promise.race([exited, new Promise((r) => { timer = setTimeout(() => r('timeout'), 2000); })]);
+    clearTimeout(timer);
+    if (code === 'timeout') { child.kill('SIGKILL'); return await exited; }
+    return code;
+  }
+  try {
+    await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`server did not start:\n${out}`)), 20000);
     child.stdout.on('data', () => { if (out.includes('Listening on :')) { clearTimeout(timer); resolve(); } });
     child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`server exited ${code}:\n${out}`)); });
   });
+  } catch (err) {
+    await stop();
+    throw err;
+  }
   const base = `http://127.0.0.1:${port}`;
   async function call(method, url, { as, body, raw, now } = {}) {
     const headers = {};
@@ -221,14 +240,6 @@ async function boot(dir, dbUrl, env, extra = {}) {
     const res = await fetch(base + url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
     if (raw) return res;
     return { status: res.status, data: await res.json().catch(() => null) };
-  }
-  async function stop() {
-    if (child.exitCode !== null) return child.exitCode;
-    const exited = new Promise((resolve) => child.once('exit', (code) => resolve(code)));
-    child.kill('SIGTERM');
-    const code = await Promise.race([exited, new Promise((r) => setTimeout(() => r('timeout'), 8000))]);
-    if (code === 'timeout') child.kill('SIGKILL');
-    return code;
   }
   return { call, stop, base, output: () => out };
 }
@@ -329,6 +340,23 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       ]);
       assert.equal((await app.call('GET', '/api/items/999999', { as: ada })).status, 404);
       assert.equal((await app.call('GET', '/api/items/900001')).status, 401, 'no token, no names');
+
+      // Who else is here: the names of the signed-in people seen lately,
+      // never the viewer's own. Grace listens before Ada's first look, so
+      // Ada's arrival is heard; a screen looking again is not an arrival, so
+      // a check-in never sets every open board off again.
+      const presence = await listen(app, grace);
+      await presence.until((x) => x.text().includes(':ok'));
+      assert.deepEqual((await app.call('GET', '/api/presence', { as: ada })).data, { here: [], more: 0 });
+      await presence.until((x) => x.events() >= 1);
+      const arrivals = presence.events();
+      assert.deepEqual((await app.call('GET', '/api/presence', { as: ada })).data, { here: [], more: 0 });
+      await new Promise((r) => setTimeout(r, 400));
+      assert.equal(presence.events(), arrivals, 'a repeat check-in says nothing');
+      assert.deepEqual((await app.call('GET', '/api/presence', { as: grace })).data, { here: ['ada'], more: 0 });
+      assert.deepEqual((await app.call('GET', '/api/presence', { as: ada })).data, { here: ['grace'], more: 0 });
+      assert.equal((await app.call('GET', '/api/presence')).status, 401, 'no token, no names');
+      await presence.close();
 
       // Grace's screen is open while Ada adds and ranks: each change reaches it.
       const graces = await listen(app, grace);

@@ -86,7 +86,7 @@ test('the input stylesheet ships all three layers and stays out of public/', () 
 
 test('the Dockerfile compiles the stylesheet in a builder stage', () => {
   const dockerfile = file(files(), 'Dockerfile');
-  assert.match(dockerfile, /FROM node:22-alpine AS css/, 'needs a named builder stage');
+  assert.match(dockerfile, /FROM node:22.23.4-alpine AS css/, 'needs a named builder stage');
   assert.match(dockerfile, /COPY package.json package-lock.json/);
   assert.match(dockerfile, /npm ci --include=dev/,
     'the builder installs the locked compiler and dependencies');

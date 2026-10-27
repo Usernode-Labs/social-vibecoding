@@ -10,11 +10,14 @@
     "build:css": "tailwindcss -c tailwind.config.js -i styles/tailwind-input.css -o public/tailwind.css --minify"
   },
   "dependencies": {
-    "express": "^4.21.0",
+    "express": "^4.22.3",
     "pg": "^8.13.0",
     "jsonwebtoken": "^9.0.2"
   },
   "devDependencies": {
     "tailwindcss": "3.4.17"
+  },
+  "overrides": {
+    "postcss-selector-parser": "7.1.7"
   }
 }

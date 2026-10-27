@@ -1868,7 +1868,7 @@
     "description": "Small note in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app: changing the approval settings is itself decided by a vote."
   },
   "members.governance.noRepository": {
-    "text": "Approval-settings changes are proposed as a dapp.json pull request, and this app has no GitHub repository, so they're unavailable.",
+    "text": "Approval-settings changes are proposed as a dapp.json pull request, and this app has no repository, so they're unavailable.",
     "description": "Note in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app when the settings cannot be changed. dapp.json is a file name and stays as it is."
   },
   "members.governance.setNumber": {
@@ -2076,7 +2076,7 @@
     "description": "Status in the \"App admins\" section of the \"Members & approvals\" dialog of an app when an earlier proposal about the admins is undecided. The Workshop is a tab of the app's page; keep it as a name."
   },
   "members.appAdmins.noRepository": {
-    "text": "Admin changes are proposed as a dapp.json pull request, and this app has no GitHub repository, so they're unavailable.",
+    "text": "Admin changes are proposed as a dapp.json pull request, and this app has no repository, so they're unavailable.",
     "description": "Status in the \"App admins\" section of the \"Members & approvals\" dialog of an app when the list cannot be changed. dapp.json is a file name and stays as it is."
   },
   "members.appAdmins.tooMany": {

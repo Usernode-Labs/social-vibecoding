@@ -187,7 +187,7 @@ import { t as translate } from '../../lib/i18n/runtime';
 import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
 import { NativeLoginDetailsLink } from './native-login-details';
 import { PhoneInput, readPhone } from './phone-input';
-import { phoneRecaptchaToken, RECAPTCHA_LINE } from './recaptcha';
+import { phoneRecaptchaInUse, phoneRecaptchaToken, RECAPTCHA_LINE } from './recaptcha';
 import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
 import {
   blockedOffline,
@@ -248,6 +248,25 @@ function nativeError(code: unknown): string {
 }
 
 /**
+ * #5960: the app's own sheet failed, and the person sees only the generic
+ * line. What the app said (an app build ends its bridge error with the
+ * provider SDK's own code) goes to the platform's log instead, with the
+ * start's state, which the report spends. Fire and forget: the sheet's
+ * answer never waits on it.
+ */
+function reportNativeFailure(provider: SignInProvider, state: string, reason: unknown): void {
+  try {
+    void fetch(`/api/auth/oauth/${provider}/native/failed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      keepalive: true,
+      body: JSON.stringify({ state, reason: typeof reason === 'string' ? reason.slice(0, 300) : null }),
+    }).catch(() => {});
+  } catch { /* a report is a convenience */ }
+}
+
+/**
  * Inside the Homeroom app: a state and a nonce from the server, the app's
  * own sheet with that nonce (the bridge's signInWithProvider), and the ID
  * token it returns back to the server (routes/sign-in-providers.js).
@@ -274,9 +293,13 @@ export async function signInNatively(provider: SignInProvider, { from, followInv
     idToken = answer?.idToken;
   } catch (err) {
     if ((err as { usernodeCode?: unknown } | null)?.usernodeCode === 'cancelled') return { error: null };
+    reportNativeFailure(provider, start.state, (err as { message?: unknown } | null)?.message);
     return { error: translate(RESUME_FALLBACK) };
   }
-  if (typeof idToken !== 'string' || !idToken) return { error: translate(RESUME_FALLBACK) };
+  if (typeof idToken !== 'string' || !idToken) {
+    reportNativeFailure(provider, start.state, 'The app answered without an ID token.');
+    return { error: translate(RESUME_FALLBACK) };
+  }
   const res = await fetchSessionMint(`/api/auth/oauth/${provider}/native`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -542,8 +565,27 @@ export async function checkUsername(handle: string, signal?: AbortSignal): Promi
 // How long the field waits after the last keystroke before it asks.
 export const USERNAME_CHECK_MS = 350;
 
+/**
+ * Whether the reCAPTCHA line belongs under the phone steps. It starts true,
+ * so the first render and the prerender draw it as they always have, and
+ * then says what the server says: with Brevo sending the texts it serves no
+ * site key, no script is fetched and the line goes (#5840).
+ */
+export function useRecaptchaLine(active: boolean): boolean {
+  const [inUse, setInUse] = useState(true);
+  useEffect(() => {
+    if (!active) return undefined;
+    let live = true;
+    void phoneRecaptchaInUse().then((yes) => { if (live) setInUse(yes); });
+    return () => { live = false; };
+  }, [active]);
+  return inUse;
+}
+
 /** The line Google asks for where its reCAPTCHA badge is not shown (./recaptcha.ts). */
 export function RecaptchaNotice() {
+  const inUse = useRecaptchaLine(true);
+  if (!inUse) return null;
   return <RecaptchaLine notice={RECAPTCHA_LINE} data={{ 'data-sign-in-sheet-recaptcha': '' }} />;
 }
 
@@ -802,6 +844,9 @@ export function SignInSheet({
   const otherWays: Step = providers.length ? 'choose' : 'email';
   const firstStep: Step = phone ? 'phone' : otherWays;
   const [step, setStep] = useState<Step>(firstStep);
+  // Google's check runs on the two phone steps, and the line under them is
+  // dropped while Brevo sends the texts and no check is used (#5840).
+  const recaptchaInUse = useRecaptchaLine(step === 'phone' || step === 'phone-code');
   const [email, setEmail] = useState('');
   // The number a code went to, as sent (E.164), and the verify leg's handle.
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -1857,7 +1902,7 @@ export function SignInSheet({
         ) : null}
         {/* The first step's terms sit in its group (above); every later step that can make an account keeps them here. */}
         {step === 'choose' || step === 'email' || !stepSaysTerms(step) ? null : (
-          <TermsNotice className="mt-3" recaptcha={step === 'phone' || step === 'phone-code' ? RECAPTCHA_LINE : null} />
+          <TermsNotice className="mt-3" recaptcha={recaptchaInUse ? RECAPTCHA_LINE : null} />
         )}
       </div>
     </div>

@@ -22,6 +22,7 @@ const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
 const agentSessions = require('../services/agent-sessions');
 const classicSessions = require('../services/classic-sessions');
+const codeMissing = require('../services/code-missing');
 const { claimIssueForUser } = require('../services/issue-claims');
 const visuals = require('../services/visuals');
 const sessionCost = require('../services/session-cost');
@@ -42,9 +43,11 @@ const sessionLifecycle = require('../services/session-lifecycle');
 const stagingRecovery = require('../services/staging-recovery');
 const previewWorkflow = require('../services/preview-workflow');
 const sessionBus = require('../services/session-bus');
+const { writeStreamChunk, writeStreamHeartbeat } = require('../services/http-stream-access');
 const chatDelivery = require('../services/chat-delivery');
 const { drainGuard } = require('../services/lifecycle');
 const unitSuiteRow = require('../services/unit-suite-row');
+const repoRef = require('../services/repo-ref');
 const {
   getAppConventions,
   getSelfHostedRefuseList,
@@ -1834,13 +1837,13 @@ async function resolveExplicitAgentPreference(client, userId, config, {
   };
 }
 
-// The switch behind POST /api/sessions/:id/reset-agent-context (its phases
-// 2-5), for any caller that has already resolved `pref`: the route, and an
+// The switch behind POST /api/sessions/:id/reset-agent-context, for any
+// caller that has already resolved `pref`: the route, and an
 // agent session's dispatch, which applies the conversation's model choice to
 // its active change right before the next build (services/mayor/
 // agent-dispatch.js). Under a row lock: refuses a closed or busy change,
 // switches the backend, model and effort, drops both resume ids, records the
-// reset in the change's transcript, then evicts the warm worker.
+// reset in the change's transcript and queues its worker release atomically.
 async function switchSessionAgent(pool, { sessionId, userId, pref }) {
   const resolved = pref.backend;
   const isCodex = resolved === 'codex_openrouter';
@@ -1929,21 +1932,15 @@ async function switchSessionAgent(pool, { sessionId, userId, pref }) {
     );
     contextMessage = msg.rows[0] || null;
 
+    await require('../workflow/platform.ts').appendWorkerRelease(client, {
+      sessionId, appId: updatedRow.app_id, userId, reason: 'agent-reset', configVersion: updatedRow.agent_config_version,
+    });
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
   } finally {
     client.release();
-  }
-
-  // ── Phase 5: commit before worker eviction ── (plan 8.6)
-  // After Commit 1 the warm container no longer holds provider secrets,
-  // so eviction is best-effort (a failure still leaves a consistent DB).
-  if (typeof worker.evictWorker === 'function') {
-    await worker.evictWorker(sessionId).catch((evErr) => {
-      log.warn('sessions', 'reset-agent-context eviction warning', { sessionId, err: evErr.message });
-    });
   }
 
   return { ok: true, session: updatedRow, message: contextMessage };
@@ -2037,7 +2034,12 @@ async function resumePausedSession({ pool, config, user, sessionId }) {
     'SELECT COALESCE(integration_behind_by, behind_main) AS behind FROM chat_sessions WHERE id = $1',
     [sessionId]
   );
-  if ((driftRows[0]?.behind || 0) > 0) {
+  // Not for a change whose branch did not come across from GitHub
+  // (services/code-missing.js): there is nothing to merge main into.
+  if ((driftRows[0]?.behind || 0) > 0
+      && await codeMissing.branchGone(pool, { id: Number(sessionId) }) === true) {
+    log.info('sessions', 'Sync-on-resume skipped: the change\'s branch did not come across from GitHub', { sessionId });
+  } else if ((driftRows[0]?.behind || 0) > 0) {
     // Asked of the proposal machine, not waited for: the sync is its work,
     // and a refusal (somebody working on it) is logged. The user clicking
     // "Sync with main" later asks again with the answer in front of them.
@@ -2210,7 +2212,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             error: 'invalid_request', message: 'A proposal can link at most 50 issues.',
           } } };
         }
-        const repo = github.parseGithubUrl(session.repo_url);
+        const repo = repoRef.ownerRepo(session.repo_url);
         const result = await proposalUpdate.updateLinkedIssues({
           pool,
           gh: github,
@@ -3000,8 +3002,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // is disabled platform-wide): a clear 400 beats a session whose
       // every turn dies, and on GitHub-enabled deployments the app-heal
       // sweep makes this state short-lived.
-      if (!(app.repo_url || '').match(/github\.com\/[^/]+\/[^/]+/)) {
-        return res.status(400).json({ error: 'No GitHub repo configured for this app' });
+      if (!repoRef.parse(app.repo_url)) {
+        return res.status(400).json({ error: 'No repository configured for this app' });
       }
 
       // #2779: an optional name, as the user would call the change. The
@@ -3022,6 +3024,27 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             error: `Title must be 1 to ${MANUAL_SESSION_TITLE_MAX} characters`,
           });
         }
+      }
+
+      // A plan carried from another of the user's changes on this app: the
+      // Mayor's start_change `fromChangeId`, offered when a change's code
+      // did not come across from GitHub (services/code-missing.js). Its spec
+      // becomes the new change's plan; the new change's branch is its own,
+      // made from the current version at its first turn like every change's.
+      // Nothing else comes across. Read before anything is parked or claimed.
+      let carriedPlan = null;
+      if (req.body && req.body.fromChangeId != null) {
+        const fromId = Number(req.body.fromChangeId);
+        if (!Number.isSafeInteger(fromId) || fromId <= 0 || fromId > 2147483647) {
+          return res.status(400).json({ error: 'fromChangeId must be a change id' });
+        }
+        const { rows: [from] } = await pool.query(
+          `SELECT id, spec_md, spec_html FROM chat_sessions
+            WHERE id = $1 AND app_id = $2 AND user_id = $3 AND is_headless = FALSE`,
+          [fromId, app.id, req.user.id]
+        );
+        if (!from) return res.status(404).json({ error: 'That change was not found among yours on this app.' });
+        carriedPlan = from;
       }
 
       // #2779: the new change becomes the Mayor's session's active change,
@@ -3169,6 +3192,26 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          initialTitle]
       );
       await topicAttrs.selfAssignProposal(pool, app.id, rows[0].id, req.user);
+      // The carried plan (above): the spec and its versions, so the plan
+      // viewer reads as the old change's did. Best effort: the change stands
+      // without it, as a copy's spec history does (clone-headless).
+      if (carriedPlan && String(carriedPlan.spec_md || '').trim()) {
+        try {
+          await pool.query('UPDATE chat_sessions SET spec_md = $2, spec_html = $3 WHERE id = $1',
+            [rows[0].id, carriedPlan.spec_md, carriedPlan.spec_html || null]);
+          rows[0].spec_md = carriedPlan.spec_md;
+          rows[0].spec_html = carriedPlan.spec_html || null;
+          await pool.query(
+            `INSERT INTO chat_session_specs (session_id, version, content, content_html)
+             SELECT $1, version, content, content_html FROM chat_session_specs WHERE session_id = $2`,
+            [rows[0].id, carriedPlan.id]
+          );
+        } catch (err) {
+          log.warn('sessions', 'The carried plan did not come across in full (continuing)', {
+            sessionId: rows[0].id, from: carriedPlan.id, err: err.message,
+          });
+        }
+      }
       if (agentSessionId) {
         await agentSessions.linkChange(pool, {
           agentSessionId,
@@ -3177,7 +3220,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         });
       }
 
-      log.info('sessions', 'Session created (branch deferred to first turn)', { sessionId: rows[0].id });
+      log.info('sessions', 'Session created (branch deferred to first turn)', {
+        sessionId: rows[0].id, ...(carriedPlan ? { planFrom: carriedPlan.id } : {}),
+      });
 
       // #2364: "Start work" on an issue card lands here, and starting work
       // on an issue is taking it — so claim it for the starter (claim row +
@@ -3190,7 +3235,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // just filled that cache) and never throws. Best-effort — a failed
       // claim never fails the session it rides on.
       if (issueNumber) {
-        const [, repoOwner, repoName] = String(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(app.repo_url) || {};
         if (github.isEnabled() && repoOwner && repoName) {
           try {
             const { issue } = await github.fetchPublicIssue(repoOwner, repoName.replace(/\.git$/, ''), issueNumber);
@@ -3252,9 +3297,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.status(400).json({ error: 'Invalid issue number' });
       }
 
-      const [, repoOwner, repoName] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(app.repo_url) || {};
       if (!github.isEnabled() || !repoOwner || !repoName) {
-        return res.status(400).json({ error: 'No GitHub repo configured for this app' });
+        return res.status(400).json({ error: 'No repository configured for this app' });
       }
 
       // Resolve the actual saved backend before any provider-specific gate.
@@ -3480,6 +3525,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             : 'This auto session is not in a cloneable state.',
         });
       }
+      // The run's branch did not come across when Homeroom moved off GitHub
+      // (services/code-missing.js branchGone, read live). A copy would fall
+      // back to a branch off main below and lose the run's code, so it is
+      // refused before a slot is taken or a branch is made.
+      if (await codeMissing.branchGone(pool, src) === true) {
+        return res.status(409).json({ error: codeMissing.BRANCH_GONE, code: codeMissing.CODE });
+      }
 
       // The clone is an ordinary dev-chat session, so the usual caps apply.
       // Per-user cap counts only 'active' sessions (#193) — promoted ones
@@ -3534,7 +3586,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // branch off main instead, silently discarding the work the clone
       // was created to continue.
       const branchName = branchNames.devBranchName(req.user.username, Date.now(), src.session_title);
-      const [, repoOwner, repoName] = (src.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(src.repo_url) || {};
       let inheritedCodeBranch = false;
       if (github.isEnabled() && repoOwner && repoName) {
         try {
@@ -4068,6 +4120,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // Decided here, beside the routes that refuse, so the screen and the
       // server cannot disagree about which sessions take no new message.
       session.classic_read_only = classicSessions.isClassicSession(session);
+      // Its code did not come across when Homeroom moved off GitHub
+      // (services/code-missing.js): a proposal's pull request branch, or a
+      // change underway's own branch when it predates its app's move. Read as
+      // the lists read it (cached a minute), so a branch pushed back clears
+      // it by itself; the turns and the sync read it live before they run.
+      session.code_missing = await codeMissing.forSession(pool, session);
       // #1650: a managed local handoff cannot be proposed merely because it
       // is active. Its exact submitted head must have live staging and a
       // terminal passing verdict, and the in-memory build/check/capture gates
@@ -4283,8 +4341,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const stamped = draft.owner && draft.repo
         ? { owner: draft.owner, repo: draft.repo }
         : issueDraft.parseRepoUrl(isAppTarget ? row.app_repo_url : config.platformRepoUrl);
-      const pat = process.env.GITHUB_BOT_TOKEN;
-      if (!stamped || (!isAppTarget && !pat) || (isAppTarget && !github.isEnabled())) {
+      if (!stamped) {
         await revert();
         return res.status(503).json({ error: 'Issue reporting not configured' });
       }
@@ -4304,46 +4361,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           + (draft.body || '(no detail provided)');
       let issue;
       try {
-        if (isAppTarget) {
-          // The app's own repo is reached through the GitHub App
-          // installation (same path as routes/feedback.js and
-          // routes/issues.js) — the platform PAT isn't guaranteed to have
-          // access to every app repo. createIssue applies safeMention
-          // internally.
-          issue = await github.createIssue(owner, repo, {
-            title: draft.title,
-            body: issueBody,
-          });
-        } else {
-          // Bot PAT + hand-rolled fetch mirrors routes/feedback.js's
-          // platform-feedback path (the platform repo isn't behind the
-          // per-app GitHub App installation). This bypasses github.js's
-          // write helpers, so apply safeMention here — the model-drafted
-          // title/body are free-form text that could carry live
-          // @mentions (#723).
-          const ghRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `token ${pat}`,
-              'User-Agent': 'usernode-social-vibecoding',
-            },
-            body: JSON.stringify({
-              title: github.safeMention(draft.title),
-              body: github.safeMention(issueBody),
-              labels: ['usernode', 'agent-reported'],
-            }),
-          });
-          if (!ghRes.ok) {
-            const text = await ghRes.text();
-            log.error('sessions', 'Platform issue create failed', {
-              sessionId, msgId, status: ghRes.status, body: text.slice(0, 300),
-            });
-            await revert();
-            return res.status(502).json({ error: 'GitHub refused the issue' });
-          }
-          issue = await ghRes.json();
-        }
+        // A request row on the app's board or the platform's
+        // (services/requests.js, through github.createIssue).
+        issue = await github.createIssue(owner, repo, {
+          title: draft.title,
+          body: issueBody,
+          labels: isAppTarget ? [] : ['usernode', 'agent-reported'],
+          createdBy: req.user.id,
+        });
       } catch (err) {
         log.error('sessions', 'Issue create threw', {
           sessionId, msgId, target: draft.target || 'platform', err: err.message,
@@ -4351,10 +4376,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         await revert();
         return res.status(502).json({
           error: isAppTarget
-            // Never silently reroute to the platform repo — the card said
-            // where it would file. Surface the actionable hint instead.
-            ? "Couldn't file to this app's repo. The bot may not be installed on it"
-            : 'GitHub unreachable',
+            // Never silently reroute to the platform's board: the card said
+            // where it would file.
+            ? "Couldn't file the request on this app's board"
+            : "Couldn't file the request on Homeroom's board",
         });
       }
 
@@ -4497,8 +4522,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // POST /api/sessions/:id/reset-agent-context
   //   Switch a session's coding-agent backend/model (plan.md §11.3).
   //   Keeps the Git branch + working tree but starts a fresh agent
-  //   thread: clears agent_thread_id, bumps agent_config_version, evicts
-  //   the warm worker. Only allowed on an idle, owned, non-archived
+  //   thread: clears agent_thread_id, bumps agent_config_version, queues
+  //   release of the warm worker. Only allowed on an idle, owned, non-archived
   //   session. For codex_openrouter the caller must have a valid
   //   OpenRouter credential.
   router.post('/api/sessions/:id/reset-agent-context', drainGuard, sameOriginBrowserOnly, async (req, res) => {
@@ -4555,7 +4580,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const resolved = pref.backend;
       const isCodex = resolved === 'codex_openrouter';
 
-      // ── Phases 2-5: the switch itself ──
+      // The checked switch and its durable worker release.
       // Shared with an agent session's dispatch, which applies the
       // conversation's model choice to its active change the same way
       // (switchSessionAgent, below the resolvers).
@@ -4971,7 +4996,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const sessionId = parseInt(req.params.id, 10);
 
       const { rows: [own] } = await pool.query(
-        'SELECT id, status FROM chat_sessions WHERE id = $1 AND user_id = $2', [sessionId, req.user.id]);
+        'SELECT id, app_id, status, agent_config_version, active_turn FROM chat_sessions WHERE id = $1 AND user_id = $2', [sessionId, req.user.id]);
       if (!own) return res.status(404).json({ error: 'Session not found or cannot be paused' });
       // Soft 200 if it's already paused so the UI can no-op the button click.
       if (own.status === 'paused') return res.json({ ok: true, alreadyPaused: true });
@@ -4988,7 +5013,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // move, only the worker.
       if (own.status === 'promoted') {
         workerProgress.clear(sessionId);
-        await worker.destroyWorker(worker.workerContainerName(sessionId)).catch(() => {});
+        await require('../workflow/platform.ts').appendWorkerRelease(pool, {
+          sessionId, appId: own.app_id, userId: req.user.id, reason: 'promoted-pause',
+          configVersion: own.agent_config_version, turnId: own.active_turn?.turnId ?? null,
+        });
         return res.json({ ok: true, keptPromoted: true });
       }
       if (own.status !== 'active') return res.status(404).json({ error: 'Session not found or cannot be paused' });
@@ -5106,6 +5134,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // under way as far as this answer knows, never "done".
       const done = out.status === 'pending' ? null : out.lastSync;
       if (!done) return res.status(202).json({ ok: false, pending: true, message: 'The sync with main is still running.' });
+      // Its branch did not come across from GitHub: nothing ran.
+      if (done.outcome === codeMissing.CODE) {
+        return res.status(409).json({ error: done.message || codeMissing.BRANCH_GONE, code: codeMissing.CODE });
+      }
       if (done.outcome === 'error' || done.outcome === 'over_budget' || done.outcome === 'gone') {
         return res.status(done.outcome === 'gone' ? 409 : 500).json({ error: done.message || 'Sync with main failed' });
       }
@@ -6233,12 +6265,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // but fall back to an explicit query arg for the first connect.
     const sinceSeq = req.headers['last-event-id'] || req.query.since || null;
 
-    const write = (event) => {
+    const write = async (event) => {
       try {
         // `id:` makes EventSource remember this _seq and echo it back as
         // Last-Event-Id on reconnect, driving the ring-buffer replay.
-        res.write(`id: ${event._seq}\n`);
-        res.write(`data: ${JSON.stringify(event)}\n\n`);
+        await writeStreamChunk(res, `id: ${event._seq}\ndata: ${JSON.stringify(event)}\n\n`);
       } catch {}
     };
 
@@ -6246,13 +6277,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
     // Keep idle proxies/load balancers from dropping the connection.
     const hb = setInterval(() => {
-      try { res.write(`:heartbeat\n\n`); } catch {}
+      void writeStreamHeartbeat(res, ':heartbeat\n\n').catch(() => {});
     }, 15000);
 
     const close = () => {
       clearInterval(hb);
       try { unsubscribe(); } catch {}
     };
+    res.on('close', close);
     req.on('close', close);
     req.on('error', close);
   });
@@ -6362,21 +6394,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
       // Get latest commit hash from the branch
       let commitHash = 'latest';
-      if (github.isEnabled() && app.repo_url) {
+      if (app.repo_url && (github.isEnabled() || repoRef.isHosted(app.repo_url))) {
         try {
-          const [, owner, repo] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-          if (owner && repo) {
-            // octokit.request, not .rest.git.getRef — @octokit/app's
-            // installation Octokit lacks the rest-endpoint-methods
-            // plugin. {+ref} preserves the `/` in `heads/<branch>`;
-            // plain {ref} would percent-encode it and 404.
-            const octokit = await github.getInstallationOctokit(owner);
-            const { data: ref } = await octokit.request(
-              'GET /repos/{owner}/{repo}/git/ref/{+ref}',
-              { owner, repo, ref: `heads/${session.branch_name}` }
-            );
-            commitHash = ref.object.sha;
-          }
+          const { owner, repo } = repoRef.ownerRepo(app.repo_url) || {};
+          // On the git host, or GitHub for the platform's own repository
+          // (services/github.js getBranchSha follows the host).
+          if (owner && repo) commitHash = await github.getBranchSha(owner, repo, session.branch_name);
         } catch {}
       }
 
@@ -8641,9 +8664,9 @@ async function resumeOneHeadlessRunInner({ pool, config, session, owner = null, 
   }
   const issueNumber = session.headless_issue_number;
   const user = { id: session.user_id, username: session.username };
-  const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(session.repo_url) || {};
   if (!repoOwner || !repoName) {
-    return failHeadlessRun(pool, session, 'Auto session failed: no GitHub repo configured.');
+    return failHeadlessRun(pool, session, 'Auto session failed: no repository configured.');
   }
 
   // Limit-first (#212): every newly issued recovery call must have a
@@ -9282,13 +9305,49 @@ async function finishToolTurnCleanup(sessionId, turnId, { required = false } = {
 //
 // Deliberately unconditional on runLocally: a local agent commits on the
 // user's machine but pushes through the platform, so it needs the ref too.
+//
+// A stored branch is read on the git host first, live: one that did not come
+// across when Homeroom moved off GitHub (services/code-missing.js
+// branchGone) rejects with the code-missing error, so the tools refuse the
+// dispatch before the spin-up row, the worker image, the worker or a model
+// turn (codeMissingDispatchResult). Every dispatch comes through here (an
+// agent session's, a classic one's, a headless run's), scout and build alike.
+// A branch pushed back under its name reads as there and the turn runs; a
+// read that fails says nothing and the turn runs as before.
 async function ensureBranchForDispatch(pool, session) {
-  if (session.branch_name) return session.branch_name;
+  if (session.branch_name) {
+    if (await codeMissing.branchGone(pool, session) === true) {
+      throw codeMissing.error(codeMissing.BRANCH_GONE, { branchGone: true, branch: session.branch_name });
+    }
+    return session.branch_name;
+  }
   const ensured = await sessionLifecycle.ensureSessionBranch({
     pool, sessionId: session.id,
   });
   session.branch_name = ensured.branchName;
   return ensured.branchName;
+}
+
+// A dispatch refused because the change's branch did not come across from
+// GitHub (ensureBranchForDispatch). Nothing ran: no worker, no turn record,
+// no spend. One status row says so in the change, and the Mayor is told not
+// to offer a retry, as the permanent push failure tells it, and what to offer
+// instead: a new change from the current version, carrying this one's plan.
+async function codeMissingDispatchResult({ session, sendStatus, statusMeta = {} }) {
+  log.info('sessions', 'Dispatch refused: the change\'s branch did not come across from GitHub', {
+    sessionId: session.id, branch: session.branch_name || null,
+  });
+  await sendStatus(codeMissing.BRANCH_GONE, {
+    ...statusMeta, codeMissing: true, error: codeMissing.BRANCH_GONE,
+  });
+  activeWorkers.delete(session.id);
+  workerProgress.clear(session.id);
+  return {
+    toolResultText: codeMissing.dispatchRefusal(session.id),
+    isError: true,
+    codeMissing: true,
+    turnId: null,
+  };
 }
 
 async function runScoutTool({
@@ -9376,6 +9435,17 @@ async function runScoutTool({
   // deciding (or in the awaited gap between the end of its stream and
   // `setPhase('cc')`) must not buy the user a whole scout run.
   if (stopPendingFor(stopHandle)) return stoppedResult();
+
+  // The branch, before anything is started: minted on a first turn (#1350),
+  // refused with nothing run when it did not come across from GitHub.
+  try {
+    await ensureBranchForDispatch(pool, session);
+  } catch (err) {
+    if (!codeMissing.isError(err)) throw err;
+    return codeMissingDispatchResult({
+      session, sendStatus, statusMeta: { ...agentIdentity.metadata, durationMs: Date.now() - turnStartedMs },
+    });
+  }
 
   // #616: read-only prod-debug access for admin-owned sessions on the
   // self-edit app. Checked fresh per turn (admin revocation takes effect
@@ -9544,8 +9614,8 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
   // it. Cold-start cost (clone + checkout + sleep wrapper) is paid here on
   // the first dispatch of a session; subsequent ensures are sub-second.
   // Bootstrap progress (clone/checkout/warm-ready) flows through onProgress
-  // to the dev-chat UI just like the legacy single-shot path used to.
-  await ensureBranchForDispatch(pool, session);
+  // to the dev-chat UI just like the legacy single-shot path used to. The
+  // branch is already on the row (ensureBranchForDispatch, at the entry).
   let containerName = null;
   if (!runLocally) {
     try {
@@ -10057,6 +10127,16 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       if (split.byokCents > 0) send('usage', { costCents: split.byokCents, model: `scout/${selectedModel}`, byok: true });
     }
     durableTailComplete = true;
+  } catch (err) {
+    if (!err?.unpushedCommit) throw err;
+    // The final dispatch guard refused before any paid execution. Its own
+    // pending record has gone; there is no tail to retain or summarize.
+    durableTailComplete = true;
+    durableTurnId = null;
+    return await workerBootstrapFailureResult(err, {
+      session, send, sendStatus,
+      statusMeta: { ...agentIdentity.metadata, durationMs: Date.now() - turnStartedMs },
+    });
   } finally {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
@@ -11038,7 +11118,7 @@ async function waitForTurnStopped(sessionId, containerName, { timeoutMs = 30000 
 // the Mayor never finds out anything went wrong, the user sees a bare
 // "Chat error" toast, and the next turn has no idea the dispatch never
 // happened. The difference from a staging failure is what it can promise —
-// nothing ran, so the branch is exactly as it was.
+// no new coding work ran. Preparation may have pushed an earlier commit.
 async function workerBootstrapFailureResult(err, {
   session, send, sendStatus, statusMeta = {}, durableTurnId = null,
 }) {
@@ -11051,15 +11131,22 @@ async function workerBootstrapFailureResult(err, {
     containerName: (err && err.bootstrapContainerName) || null,
     bootstrapLog: Array.isArray(err && err.bootstrapLog) ? err.bootstrapLog.join('\n') : null,
   });
-  await sendStatus(friendly, statusMeta);
+  const refusal = err?.unpushedCommit ? {
+    permanent: err.permanent === true, pushFailureCode: err.code || 'push_failed',
+  } : null;
+  await sendStatus(friendly, { ...statusMeta, ...(refusal ? {
+    pushFailureCode: refusal.pushFailureCode, pushFailurePermanent: refusal.permanent,
+  } : {}) });
   activeWorkers.delete(session.id);
   workerProgress.clear(session.id);
   if (typeof send === 'function') send('error', { error: friendly });
   return {
     toolResultText:
-      `The coding agent could not be started, so this dispatch never ran and the branch is unchanged.\n\n${friendly}`,
+      `The coding agent could not be started, so this dispatch never ran and made no code changes.\n\n${friendly}`
+      + (refusal?.permanent ? '\n\nThis push failure is permanent for this session. Do NOT retry the coding agent or tell the user to retry; the push problem must be resolved first. Their committed work is kept in this session.' : ''),
     isError: true,
     turnId: durableTurnId,
+    ...(refusal || {}),
   };
 }
 
@@ -11652,6 +11739,17 @@ async function runClaudeCodeTool({
   // round trip) must not buy the user a whole build.
   if (stopPendingFor(stopHandle)) return stoppedResult();
 
+  // The branch, before anything is started: minted on a first turn (#1350),
+  // refused with nothing run when it did not come across from GitHub.
+  try {
+    await ensureBranchForDispatch(pool, session);
+  } catch (err) {
+    if (!codeMissing.isError(err)) throw err;
+    return codeMissingDispatchResult({
+      session, sendStatus, statusMeta: { ...executionAgentMeta, durationMs: Date.now() - turnStartedMs },
+    });
+  }
+
   // #616: read-only prod-debug access for admin-owned sessions on the
   // self-edit app. Checked fresh per turn; the internal prod-debug
   // routes re-check per request, so this flag only controls env + prompt
@@ -11907,8 +12005,8 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
   // #907: no container at all for a local run. The platform holds no model
   // credential for it either — the user's own `claude` login on their own
   // machine does the work, so neither their BYOK key nor the platform's proxy
-  // JWT is created, sent, or needed on this path.
-  await ensureBranchForDispatch(pool, session);
+  // JWT is created, sent, or needed on this path. The branch is already on
+  // the row (ensureBranchForDispatch, at the entry).
   let containerName = null;
   if (!runLocally) {
     try {
@@ -13187,6 +13285,16 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
       summaryParts.unshift(directChatReply ? ccText : `What the agent did:\n${ccText}`);
     }
     durableTailComplete = true;
+  } catch (err) {
+    if (!err?.unpushedCommit) throw err;
+    // The final dispatch guard refused before any paid execution. Its own
+    // pending record has gone; there is no tail to retain or summarize.
+    durableTailComplete = true;
+    durableTurnId = null;
+    return await workerBootstrapFailureResult(err, {
+      session, send, sendStatus,
+      statusMeta: { ...executionAgentMeta, durationMs: Date.now() - turnStartedMs },
+    });
   } finally {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
@@ -13388,7 +13496,7 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, forceStopSession, resolveClassicPayer, runHeadlessSessionInner, resumeOneHeadlessRun, reloadRecoverableHeadlessSession, failHeadlessRun, changePlanFor, attachChangePlans, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, forceStopSession, resolveClassicPayer, runHeadlessSessionInner, resumeOneHeadlessRun, reloadRecoverableHeadlessSession, failHeadlessRun, changePlanFor, attachChangePlans, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, workerBootstrapFailureResult, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
 // #4524: the topic page's fast open asks GET /api/apps/:slug/proposals/:id
 // for its item beside the board load, and production serves an active or
 // paused session there when it is the viewer's own or shared. The demo rows

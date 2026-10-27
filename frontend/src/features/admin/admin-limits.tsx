@@ -381,7 +381,7 @@ interface GithubBudgetPayload {
   reservePercent: number;
   credentials: GithubBudgetRow[];
   reads?: GithubReads;
-  configured?: { botToken: boolean; app: boolean };
+  configured?: { app: boolean };
   demo?: boolean;
 }
 
@@ -479,7 +479,7 @@ function GithubBudgetFigures({ data }: { data: GithubBudgetPayload }) {
   const patReasons = reads ? Object.entries(reads.patReasons).sort((a, b) => b[1] - a[1]) : [];
   let empty = '';
   if (!rows.length) {
-    empty = data.configured && !data.configured.botToken && !data.configured.app
+    empty = data.configured && !data.configured.app
       ? 'GitHub is not configured on this server.'
       : 'No GitHub response since this server started. The figures appear after its next request.';
   }

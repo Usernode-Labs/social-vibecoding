@@ -9,6 +9,7 @@ const shellRelease = loadShellRelease(path.join(__dirname, 'public'));
 // loadShellRelease rejects an explicitly different runtime revision.
 if (shellRelease && shellRelease.revision !== 'dev') process.env.GIT_SHA = shellRelease.revision;
 const { load: loadConfig, runsClusterMaintenance } = require('./src/config');
+const platformPreviewPolicy = require('./src/services/platform-preview-data-policy');
 const { migrate } = require('./src/db/migrate');
 const {
   shellAssetCacheControl,
@@ -235,6 +236,10 @@ app.use(explorerProxyRoutes(config));
 // no secret is configured. src/routes/github-webhook.js carries the rest.
 app.use(githubWebhookRoutes(config));
 app.use(require('./src/routes/mail-webhooks').mailWebhookRoutes(config));
+// Brevo's and Twilio's SMS webhooks (STOP replies and delivery receipts),
+// HERE for the same reasons: neither has a session, and the token or the
+// signature is the whole check.
+app.use(require('./src/routes/sms-webhooks').smsWebhookRoutes(config));
 // Alertmanager's webhook (src/routes/alerts-webhook.js): HERE for the same
 // second reason, a caller with no session, authenticated by its own token.
 // It parses its own JSON body.
@@ -331,6 +336,7 @@ app.use((req, res, next) => {
   express.json()(req, res, next);
 });
 app.use(cookieParser());
+app.use(require('./src/services/browser-api-cache').browserApiCachePolicy);
 
 app.get('/health', (_req, res) => {
   // `topochain: true` (plan Task 3; SPEC 815-818 "merge into the platform's
@@ -620,6 +626,7 @@ app.use(topochainMobileRoutes(config));
 // can never be confused for one of those distinct credentials.
 app.use(cliApiBearerAuth(config));
 app.use(authMiddleware(config));
+app.use(require('./src/middleware/private-streams').privateStreamDelivery(config));
 // Every admin write, on whichever router declares it, answers only the
 // Homeroom page itself (middleware/same-site-browser.js). Mounted ahead of
 // all of them; the CLI's bearer calls carry no Sec-Fetch-Site and pass.
@@ -908,7 +915,15 @@ app.get('/api/iframe-token', async (req, res) => {
   let token = null;
   let signErr = null;
   try {
-    token = platformJwt.signAppIdentityToken({ appId: appRow.id, user: tokenUser });
+    token = platformJwt.signAppIdentityToken({
+      appId: appRow.id,
+      user: appRow.slug === config.selfAppSlug ? platformPreviewPolicy.previewIdentity(tokenUser) : tokenUser,
+      // The platform itself is entered through cookies in production; its
+      // app identity is only for the sanitized preview. Nested identities
+      // minted by a preview also stay preview-only.
+      environment: appRow.slug === config.selfAppSlug || process.env.USERNODE_ENV === 'staging'
+        ? 'preview' : 'production',
+    });
   } catch (err) {
     signErr = err;
   }
@@ -1138,6 +1153,11 @@ async function start() {
     });
   }
   const servicesStartedAt = Date.now();
+  // Prime the SMS provider choice once, so the synchronous offer gate
+  // (firebase-phone-auth.js offered()) sees an admin's saved switch before
+  // the first phone-auth request. Never fatal: an unreadable setting falls
+  // back to the deploy's default.
+  await require('./src/services/sms/select').selection(getPool(config)).catch(() => {});
   // This process, and what it holds, for every other one to see
   // (docs/plans/draining-releases.md): before anything here can start work.
   // Never fatal: holds stay this process's own until the database takes them.
@@ -1149,6 +1169,9 @@ async function start() {
   // (processes.js waitForRoom).
   const room = await processes.waitForRoom();
   if (room.waitedMs > 0) log.info('server', 'Older processes gave back their connections; starting', room);
+  // Security retirement precedes serving and starting preview work. A failed
+  // inventory/removal fails boot; the newest-build clock retries thereafter.
+  if (runsClusterMaintenance()) await require('./src/services/platform-preview-retirement').retire(config, getPool(config));
   // The limiters that gate a send, a bill or a guess count in Postgres: one
   // budget for every process, kept across a deploy (services/rate-limit-store.js).
   require('./src/services/rate-limit-store').setPool(getPool(config));
@@ -1216,6 +1239,9 @@ async function start() {
   // minute (services/server-error-counts.js), on an unref'd timer; a minute
   // with nothing answered sends nothing.
   require('./src/services/server-error-counts').start({ pool: getPool(config) });
+  // And how busy it was each minute, with a warning when its event loop
+  // stalls (services/process-health.js), on unref'd timers too.
+  require('./src/services/process-health').start({ pool: getPool(config), role: ownRole });
 
   // ── The workflow's loops ─────────────────────────────────────────────
   // A conductor (any number of replicas) or an 'all' runs every machine's
@@ -1522,8 +1548,11 @@ async function cleanup() {
   // worker wait below, so the two run together.
   const startingRequests = inflightRequests.pending();
   const startingWork = inflightWork.snapshot();
+  // Which requests, by route: a process stopped for a failed liveness probe
+  // says here what it was answering.
   log.info('server', 'Draining in-flight requests and background work', {
     requests: startingRequests,
+    ...(startingRequests ? { inflight: inflightRequests.snapshot().slice(0, 20) } : {}),
     background: startingWork.slice(0, 20),
     deadlineMs: drainMs,
   });
@@ -1597,6 +1626,10 @@ async function cleanup() {
     const serverErrorCounts = require('./src/services/server-error-counts');
     serverErrorCounts.stop();
     await boundedStep(serverErrorCounts.flush(shutdownPool, { all: true }), BUILD_SHUTDOWN_MARK_TIMEOUT_MS).catch(() => {});
+    // The process's health up to now, with the minute still going.
+    const processHealth = require('./src/services/process-health');
+    processHealth.stop();
+    await boundedStep(processHealth.flush(shutdownPool, { all: true }), BUILD_SHUTDOWN_MARK_TIMEOUT_MS).catch(() => {});
   }
 
   // Close the pg pool so in-flight queries settle instead of being severed

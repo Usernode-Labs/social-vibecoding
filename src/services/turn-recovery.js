@@ -25,6 +25,7 @@ const limits = require('./limits');
 const events = require('./events');
 const ws = require('./ws');
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 
 let config = null;
 function sharedConfig() {
@@ -628,7 +629,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     return;
   }
 
-  const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(session.repo_url) || {};
 
   const emit = (event, data) => {
     broadcastGlobal({ type: 'session_event', sessionId, event, ...data });
@@ -1459,7 +1460,7 @@ async function resumeDetachedTurnInner({
   config, pool, staging, broadcastGlobal, session, sessionId,
   containerName, activeTurn, stopHandle = null,
 }) {
-  const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(session.repo_url) || {};
   // #1378: the adopted turn's stop handle owns the fan-out (see
   // buildRecoveryStopHandle). Callers that drive this directly get an
   // unregistered handle so the narration still works.

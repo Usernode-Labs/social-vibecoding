@@ -22,6 +22,7 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const providers = require('../src/services/sign-in-providers');
+const log = require('../src/services/logger');
 
 const CONFIG = Object.freeze({ cliAuthOrigin: 'https://app.example', dataEncryptionKey: 'sign-in-test-key' });
 
@@ -365,7 +366,6 @@ test('the native ID token: an app audience, the nonce as given or hashed, and sp
   assert.equal((await providers.verifyNativeIdToken(db, CONFIG, 'google', await google({ nonce: 'raw-nonce-1' }), state, { jwks })).subject, 'g-1');
   assert.equal((await providers.verifyNativeIdToken(db, CONFIG, 'google',
     await google({ nonce: 'raw-nonce-1' }, '123-abc.apps.googleusercontent.com'), state, { jwks })).subject, 'g-1');
-  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', await google({ nonce: 'x' }), state, { jwks }), { code: 'bad_token' });
   await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', await google({}, 'someone-else'), state, { jwks }), { code: 'bad_token' });
   // A Google sheet that carried no nonce: only while the token is fresh.
   const plain = await google({});
@@ -373,8 +373,41 @@ test('the native ID token: an app audience, the nonce as given or hashed, and sp
   const later = Date.now() + (providers.NATIVE_FRESH_S + 30) * 1000;
   await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', await google({}), state, { jwks, now: later }),
     { code: 'bad_token' }, 'too old to take without a nonce');
+  // #5960: a nonce that is not ours (Google's iOS SDK writes a random one
+  // when the app passed none) is refused, for every client.
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', await google({ nonce: 'sdk-random' }), state, { jwks }),
+    { code: 'bad_token' }, 'another nonce, from the app client');
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google',
+    await google({ nonce: 'sdk-random' }, '123-abc.apps.googleusercontent.com'), state, { jwks }),
+  { code: 'bad_token' }, 'another nonce, from the web client');
   await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', 'not.a.token', state, { jwks }), { code: 'bad_token' });
   await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', 'x'.repeat(9000), state, { jwks }), { code: 'bad_token' });
+});
+
+test('every refused native ID token is one log line with its reason', async () => {
+  const db = new FakeDb();
+  await setUpNative(db);
+  const { jwks, sign } = await idTokenKit();
+  const state = { nonce: 'raw-nonce-1' };
+  const apple = await sign({ sub: '000.abc', email: 'x@privaterelay.appleid.com', email_verified: 'true', nonce: 'other' },
+    { issuer: 'https://appleid.apple.com', audience: 'com.onhomeroom.app' });
+  const lastReason = () => {
+    const entry = log.tail(20).find((e) => e.category === 'sign-in-providers' && e.message === 'Native ID token refused');
+    return entry && entry.data.reason;
+  };
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'apple', apple, state, { jwks }), { code: 'bad_token' });
+  assert.equal(lastReason(), 'nonce_mismatch');
+  const foreign = await sign({ sub: 'g-1', email: 'ada@example.com', email_verified: true, nonce: 'sdk-random' },
+    { audience: '123-ios.apps.googleusercontent.com' });
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', foreign, state, { jwks }), { code: 'bad_token' });
+  assert.equal(lastReason(), 'nonce_mismatch');
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', 'not-a-token-at-all', state, { jwks }), { code: 'bad_token' });
+  assert.notEqual(lastReason(), 'nonce_mismatch');
+  const stale = await sign({ sub: 'g-1', email: 'ada@example.com', email_verified: true },
+    { audience: '123-ios.apps.googleusercontent.com' });
+  const later = Date.now() + (providers.NATIVE_FRESH_S + 30) * 1000;
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', stale, state, { jwks, now: later }), { code: 'bad_token' });
+  assert.equal(lastReason(), 'stale_without_nonce');
 });
 
 test('the exchange sends the code, the verifier and the client secret, and returns the verified claims', async () => {
@@ -452,6 +485,24 @@ test('the routes: public, guarded against a live session, admin-gated, and Apple
     'the web callback and the app do the same once the account is found or made');
   assert.match(mint, /'\/api\/auth\/oauth\/:provider\/native',/);
   assert.match(read('src/routes/public-api.js'), /native_sign_in_providers: await signInProviders\.offeredNativeProviders\(pool, config\),/);
+  // #5960: a failed app sheet's report spends a live native state and logs
+  // one line; it answers 204 whatever it was sent, and mints nothing.
+  const failed = routes.slice(routes.indexOf("'/api/auth/oauth/:provider/native/failed'"), routes.indexOf("'/api/auth/oauth/finish'"));
+  assert.match(routes, /router\.post\('\/api\/auth\/oauth\/:provider\/native\/failed', oauthSignInLimiter,/);
+  assert.match(failed, /providers\.consumeState\(pool, provider, req\.body\.state, binder, \{ native: true \}\)/);
+  assert.match(failed, /if \(state && !state\.mismatch\) \{\n\s+log\.warn\('sign-in-providers', 'App sheet failed', \{ provider, reason: providers\.nativeFailureReason\(req\.body\.reason\) \}\);/);
+  assert.equal((failed.match(/res\.status\(204\)\.end\(\)/g) || []).length, 2);
+  assert.doesNotMatch(failed, /createSession|afterSignIn/);
+  assert.doesNotMatch(mint, /native\/failed/, 'it mints no session, so it needs no live-session refusal');
+});
+
+test('a failed app sheet\'s reason is one log line', () => {
+  assert.equal(providers.nativeFailureReason(undefined), null);
+  assert.equal(providers.nativeFailureReason({ code: 'x' }), null);
+  assert.equal(providers.nativeFailureReason('  \n '), null);
+  assert.equal(providers.nativeFailureReason('Google sign-in did not finish\n(clientConfigurationError:\tbad)'),
+    'Google sign-in did not finish (clientConfigurationError: bad)');
+  assert.equal(providers.nativeFailureReason('x'.repeat(1000)).length, 300);
 });
 
 test('the secrets stay out of the debug role, the SQL console, staging and a merge', () => {
@@ -550,6 +601,19 @@ test('inside the app: the app\'s own sheet, offered where the server lists it an
     assert.deepEqual(await sheet.signInNatively('apple', { from: 'story', followInvite: false }), { error: null });
     replies.push([409, { code: 'logout_required' }]);
     assert.match((await sheet.signInNatively('apple', { from: 'story', followInvite: false })).error, /already signed in/);
+    // #5960: any other failure of the app's sheet shows the generic line and
+    // reports what the app said, with the start's state, for the log.
+    calls.length = 0;
+    bridgeAnswer = async () => { const err = new Error('Google sign-in did not finish (clientConfigurationError: bad).'); err.usernodeCode = 'failed'; throw err; };
+    replies.push([200, { state: 's5', nonce: 'n5' }], [204, {}]);
+    assert.match((await sheet.signInNatively('google', { from: 'signin', followInvite: false })).error, /That did not work/);
+    assert.deepEqual(calls.at(-1), ['fetch', '/api/auth/oauth/google/native/failed',
+      { state: 's5', reason: 'Google sign-in did not finish (clientConfigurationError: bad).' }]);
+    bridgeAnswer = async () => ({});
+    replies.push([200, { state: 's6', nonce: 'n6' }], [204, {}]);
+    assert.match((await sheet.signInNatively('google', { from: 'signin', followInvite: false })).error, /That did not work/);
+    assert.deepEqual(calls.at(-1), ['fetch', '/api/auth/oauth/google/native/failed',
+      { state: 's6', reason: 'The app answered without an ID token.' }]);
   } finally {
     globalThis.window = priorWindow;
     globalThis.fetch = priorFetch;

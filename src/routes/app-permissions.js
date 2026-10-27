@@ -1,6 +1,7 @@
 'use strict';
 
 const { Router } = require('express');
+const { currentAppBridge } = require('../middleware/app-bridge');
 const { getPool } = require('../db/pool');
 const appPermissions = require('../services/app-permissions');
 const log = require('../services/logger');
@@ -171,7 +172,7 @@ function appPermissionsRoutes(config) {
   // Prompt bootstrap: what this app declares, what the user has already
   // granted it, and the catalogue entry for the capability being asked
   // about. The shell calls this when the frame requests a capability.
-  router.get('/api/apps/:slug/permissions', async (req, res) => {
+  router.get('/api/apps/:slug/permissions', currentAppBridge, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
     try {

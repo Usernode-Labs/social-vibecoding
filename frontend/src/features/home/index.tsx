@@ -85,7 +85,6 @@
 
 import { useRef } from 'react';
 
-import { Chip } from '@/components/ui/chip';
 import { SearchIcon } from '@/components/ui/icons';
 
 import { AppGrid } from './app-grid';
@@ -115,53 +114,13 @@ export function HomeScreen() {
   const t = useMessages('home');
   const screenRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'home-screen', true);
-  // EDIT MODE's (#4669) one read here: the "Done" that ends it, beside the
-  // heading. The store's initial value is false, so the prerender and the
-  // first client render render no action at all — the markup is unchanged
-  // until a hold actually starts edit mode.
+  // EDIT MODE (#4669) is read here for the heading's doors: "Edit" that
+  // starts it (#5871) and "Done" that ends it. The store starts not ready,
+  // with no items and editing off, so the prerender and the first client
+  // render draw no action at all.
   const grid = useStoreState(gridStore);
-
-  // ALL / CONTRIBUTING (#5823). The switch is the HEADING'S, not the row's
-  // action: it sits immediately after the words "My apps" and names which of
-  // them the grid is showing, so it is drawn small and in the heading's own
-  // muted greys rather than as a right-hand control. Home.render() decides
-  // whether it shows at all (only when My apps mixes the two kinds, or
-  // Contributing is on and there must be a way back); a search and edit mode
-  // hide it. The action seat keeps exactly what it carries on main: Done and
-  // Add apps while arranging, otherwise the compact New project entry when
-  // the folded grid holds its trailing tile back.
-  const appsFilter = grid.filterable ? (
-    <span
-      role="group"
-      aria-label={t('home:grid.filter.group')}
-      className="home-apps-filter inline-flex shrink-0 items-center gap-0.5 rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800"
-    >
-      {(['all', 'contributing'] as const).map((key) => {
-        const selected = grid.filter === key;
-        return (
-          <Chip
-            key={key}
-            size="bar"
-            className={
-              'home-apps-filter-chip h-6 px-2.5 text-[12px] font-medium '
-              + (selected
-                // The selected half is a quiet raised segment, not the dark
-                // inversion the browse directory's header chips wear: at this
-                // size beside a 16px label, a filled pill would outrank the
-                // name it belongs to.
-                ? 'bg-white text-zinc-800 hover:bg-white dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-700'
-                : 'bg-transparent text-zinc-500 hover:bg-transparent hover:text-zinc-700 dark:bg-transparent dark:text-zinc-400 dark:hover:bg-transparent dark:hover:text-zinc-200')
-            }
-            data-filter={key}
-            selected={selected}
-            onClick={() => { (window as any).Home?.setAppsFilter?.(key); }}
-          >
-            {t(key === 'all' ? 'home:grid.filter.all' : 'home:grid.filter.contributing')}
-          </Chip>
-        );
-      })}
-    </span>
-  ) : null;
+  const canEdit = grid.ready && grid.view === 'grid' && !grid.editing
+    && grid.items.some((item) => !item.app.demo);
 
   return (
     <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="">
@@ -310,12 +269,11 @@ export function HomeScreen() {
               because two names for one collection is worse than either.
           */}
           <SectionHeading
-            beside={appsFilter}
             action={grid.editing ? (
               /* The screen's one job while the tiles wiggle is arranging them,
                  and "Done" is its primary action. The treatment is BrowseLink's
                  own: 14px semibold in the accent, riding the heading row the way
-                 Discover's link does. "Add apps" rides beside it (#4669): the
+                 Discover's link does. "Add other apps" rides beside it (#4669; #5959 named it): the
                  mode's second entry, opening the same sheet the tile menu's
                  "Add to My apps" opens, so growing the shelf does not cost the
                  trailing tile its place.
@@ -345,8 +303,25 @@ export function HomeScreen() {
                   <span className="whitespace-nowrap">{t('home:edit.done')}</span>
                 </button>
               </span>
-            ) : grid.create?.heldBack ? (
-              <CreateCompact view={grid.create} />
+            ) : (canEdit || grid.create?.heldBack) ? (
+              /* #5871: "Edit" is edit mode's own door. A hold on a tile used
+                 to start it beside the tile's menu, so one press showed both;
+                 a hold is the menu alone now, and arranging is asked for
+                 here (or from the menu's "Edit My apps"). Shown only on the
+                 grid view with a tile of your own to arrange. */
+              <span className="flex items-center gap-4">
+                {canEdit ? (
+                  <button
+                    type="button"
+                    className="home-edit-start shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+                    aria-label={t('home:edit.startLabel')}
+                    onClick={() => { (window as any).Home?.setEditing?.(true); }}
+                  >
+                    <span className="whitespace-nowrap">{t('home:edit.start')}</span>
+                  </button>
+                ) : null}
+                {grid.create?.heldBack ? <CreateCompact view={grid.create} /> : null}
+              </span>
             ) : null}
           >
             {t('home:grid.heading')}

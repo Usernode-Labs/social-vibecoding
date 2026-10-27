@@ -53,6 +53,7 @@
 // a partial unique index behind the read).
 
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 
 const EXCLUDED_MANIFEST_KEYS = Object.freeze(['name', 'visibility', 'admins', 'governance']);
 const EXCLUDED_PATHS = Object.freeze(['.claude/homeroom-canonical-repo']);
@@ -331,7 +332,7 @@ function proposalHref(slug, sessionId, prNumber = null) {
 }
 
 function repoOf(deps, app) {
-  return deps.github.parseGithubUrl(app && app.repo_url ? app.repo_url : '');
+  return repoRef.ownerRepo(app && app.repo_url);
 }
 
 /**

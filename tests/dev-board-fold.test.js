@@ -67,13 +67,16 @@ function makeAppView({ search = '' } = {}) {
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
   sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  // The ⋯ rows and meta links to GitHub decide by the address
+  // (frontend/src/lib/repo-link.js, published as window.RepoLink).
+  require('./lib/repo-link').installRepoLink(sandbox);
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'demo-app', can_collaborate: true };
   AppView._ghIssues = [
-    { number: 1575, title: 'Replace the oversized Game Corner header with bottom tabs', createdAt: at(4), updatedAt: at(2), lastMessageAt: at(2), user: 'sam', htmlUrl: 'x', assignee: { top: 'priya' } },
-    { number: 1574, title: 'Cut the Game Corner header’s self-explanation', createdAt: at(4), updatedAt: at(3), lastMessageAt: null, user: 'sam', htmlUrl: 'x' },
+    { number: 1575, title: 'Replace the oversized Game Corner header with bottom tabs', createdAt: at(4), updatedAt: at(2), lastMessageAt: at(2), user: 'sam', htmlUrl: 'https://github.com/acme/app/issues/1575', assignee: { top: 'priya' } },
+    { number: 1574, title: 'Cut the Game Corner header’s self-explanation', createdAt: at(4), updatedAt: at(3), lastMessageAt: null, user: 'sam', htmlUrl: 'https://github.com/acme/app/issues/1574' },
   ];
   AppView._proposals = [{
     id: 34, pr_number: 1540, pr_title: 'Rewrite the email-confirmation email around one clear CTA',
@@ -1677,7 +1680,17 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 739);
+  //
+  // 739 → 740: +1: Admin → SMS delivery shows the provider switch, the
+  // Sender IDs and the recent texts (?demo=1#admin/sms), a route no other
+  // check reaches. 740 leaves 140 slots.
+  //
+  // 740 → 741: +1: iPhone Duo's side strip (?demo=1&side-strip=right): the
+  // shell in strip mode with the strip's back controls and the tab bar's
+  // Apps section. `side-strip` is a boot parameter, so the check has a page
+  // load of its own and no other check's route can carry it. 741 leaves
+  // 139 slots.
+  checkCap.assertPinned(DAPP.tests.length, 741);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

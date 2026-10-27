@@ -199,9 +199,8 @@ test('shell side handles the same directory message family', () => {
     shell.indexOf('── Issue-state snapshots')
   );
   assert.ok(relay.length > 0);
-  assert.match(relay, /getElementById\('app-iframe'\)/);
-  assert.match(relay, /getElementById\('staging-iframe'\)/);
-  assert.match(relay, /if \(!fromApp && !fromStaging\) return;/);
+  assert.match(relay, /frameId !== 'app-iframe' && frameId !== 'staging-iframe'/);
+  assert.match(relay, /AppView\._bridgeRequest\(e, frameId\)/);
   // Session-authenticated, same-origin — the bridge holds no credential.
   assert.match(relay, /credentials: 'same-origin'/);
   // Wired into the single top-level message listener.
@@ -240,12 +239,13 @@ test('the LLM relay answers every frame the shell owns, and always answers', () 
   assert.match(shell, /ownedFrameFor\(source\) \{[\s\S]{0,400}?AppView\.SAFE_AREA_FRAME_IDS\.find/);
   // The app is named per FRAME: appData is the App tab's record and is null
   // on the landing screen, which keeps its own (see mountViewerCover).
-  assert.match(relay, /AppView\.appSlugForFrame\(frameId\)/);
+  assert.match(relay, /AppView\._bridgeRequest\(e, frameId\)/);
+  assert.match(relay, /const slug = bridge\.slug/);
   assert.match(shell, /AppView\._viewerApp = \{ frame: iframe, slug:/);
   // Ack BEFORE anything that can decline to answer: a request the shell has
   // recognised must never be left to time out as "there is no shell here".
-  assert.ok(relay.indexOf("__usernode_llm: 'ack'") < relay.indexOf('appSlugForFrame'),
-    'the ack precedes the slug resolution');
+  assert.ok(relay.indexOf("__usernode_llm: 'ack'") < relay.indexOf('const slug = bridge.slug'),
+    'the ack precedes refusing an unidentified app');
   assert.match(relay, /reply\(null, PlatformI18n\.t\('changes:bridge\.appNotIdentified'\)\)/);
   assert.equal(message('changes:bridge.appNotIdentified'), 'This app could not be identified. Reopen it and try again.');
   assert.match(relay, /PlatformI18n\.t\('changes:bridge\.llmSignedOut'\)/);

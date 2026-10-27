@@ -47,6 +47,7 @@ import { Fragment, memo, useCallback, useEffect, useId, useInsertionEffect, useL
 import { Button } from '@/components/ui/button';
 import { SectionHeader } from '@/components/ui/grouped-list';
 import {
+  ArrowRightIcon,
   ArrowUpIcon,
   BallotIcon,
   BoardIcon,
@@ -1128,13 +1129,14 @@ export function sinceWeekStateKey(week: Pick<SinceWeek, 'startMs'>): string {
  *
  * ONE rail, for the item in view, rather than one per item: the buttons stay
  * where the thumb learned they are while the items move under them. Vote,
- * Comments (with its count), Ask, Try it, More, top to bottom. Vote is one
- * control that opens the question — Yes and No live on its sheet, with the
- * tally — because a thumbs-up on a rail reads as "like", and this is not
+ * Skip, Comments (with its count), Ask, Try it, More, top to bottom. Vote
+ * is one control that opens the question — Yes and No live on its sheet, with
+ * the tally — because a thumbs-up on a rail reads as "like", and this is not
  * that. More is the card's own ⋯ menu: the same `data-card-menu` hook the
  * Board's cards carry, so `_openCardMenu` finds it and the entries are
  * exactly the card's. Try it is the card's Preview affordance under a name
- * that says what it does.
+ * that says what it does. Skip is the feed's forward move (`go(1)`): it
+ * records no answer and leaves the row in the feed for later.
  *
  * ── Comments and Ask share one sheet ─────────────────────────────────
  *
@@ -1254,7 +1256,7 @@ function legendFor(end: boolean): Array<{ id: string; keys: number }> {
  * most. `topic` is the category or priority, which the line sets apart from
  * the vote's words on a wide window.
  */
-type Fact = { key: string; tone: string | undefined; text: string; topic?: boolean };
+type Fact = { key: string; tone: string | undefined; text: string; topic?: boolean; title?: string };
 /**
  * The pill states the facts line already says: the count itself ("1 / 2",
  * an at-least-N rule's "1 of 2 approvals") is the tally in words, and the
@@ -1288,7 +1290,16 @@ export function factsFor(row: QueueRow, voted: string | null): Fact[] {
     ]);
     if (said) out.push({ key: 'tally', tone: undefined, text: said });
   }
-  if (!voted && lastYes(row)) out.push({ key: 'last', tone: undefined, text: translate('project:needsYou.fact.yourYesPutsItLive') });
+  // Its code did not come across from GitHub (src/services/code-missing.js):
+  // said in red, with the whole sentence on hover. The vote still counts, so
+  // the count above stays; no Yes puts it live until the code is back.
+  if (row.codeMissing) {
+    out.push({
+      key: 'code_missing', tone: 'blocked',
+      text: translate('project:needsYou.fact.codeMissing'),
+      title: translate('project:needsYou.fact.codeMissingTitle'),
+    });
+  } else if (!voted && lastYes(row)) out.push({ key: 'last', tone: undefined, text: translate('project:needsYou.fact.yourYesPutsItLive') });
   if (st && st.label && !st.plainVote && !SAID_ELSEWHERE.has(st.key)) out.push({ key: 'state', tone: st.tone, text: st.label });
   for (const b of row.card.badges) {
     if (b.t === 'attr' && (b.field === 'category' || b.field === 'priority') && b.label.text) {
@@ -1343,7 +1354,7 @@ function FactsLine({ facts }: { facts: Fact[] }): ReactNode {
       {vote.length ? (
         <span className="dev-ws-item-facts-vote">
           <UserIcon className="dev-ws-item-facts-icon" aria-hidden="true" />
-          {vote.map((f) => <span key={f.key} className={factTone(f.tone)}>{f.text}</span>)}
+          {vote.map((f) => <span key={f.key} className={factTone(f.tone)} title={f.title}>{f.text}</span>)}
         </span>
       ) : null}
       {topic.map((f) => <span key={f.key} className="dev-ws-fact dev-ws-fact-topic">{f.text}</span>)}
@@ -3536,6 +3547,18 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
           >
             <span className="dev-ws-rail-ic">{voted ? <CheckIcon aria-hidden="true" /> : <BallotIcon aria-hidden="true" />}</span>
             <span className="dev-ws-rail-lab">{voted ? answeredWords(row, voted, 'rail') : (sending[row.key] ? t('project:needsYou.rail.sending') : (approves(row) ? t('project:needsYou.rail.approve') : t('project:needsYou.rail.vote')))}</span>
+          </button>
+          {/* Skip: the feed's forward move. It records no answer, so the row
+              stays in the feed and can be voted on later. */}
+          <button
+            type="button"
+            className="dev-ws-rail-btn dev-ws-rail-skip"
+            data-ws-rail-btn="skip"
+            aria-label={t('project:needsYou.rail.skipThis')}
+            onClick={() => go(1)}
+          >
+            <span className="dev-ws-rail-ic"><ArrowRightIcon aria-hidden="true" /></span>
+            <span className="dev-ws-rail-lab">{t('project:needsYou.rail.skip')}</span>
           </button>
           {/* Comments and Ask: the two tabs of one sheet (see the header). */}
           <button

@@ -30,6 +30,16 @@ test('the generated Classic inventory is current and fully reviewed', () => {
   ));
 });
 
+test('the auth namespace classification exemption cannot hide an unmatched call from another client', () => {
+  const extra = new Map(clientRefs);
+  extra.set('/api/auth', new Set([
+    'frontend/src/lib/api-cache-identity.ts',
+    'frontend/src/features/imagined/new-screen.tsx',
+  ]));
+  const result = generator.buildInventory({ declaredRoutes, clientRefs: extra });
+  assert.ok(result.unmatchedClientReferences.some(ref => ref.path === '/api/auth'));
+});
+
 test('client calls are checked against the routes but never recorded, so a client change and a route change merge cleanly', () => {
   // #3346 added a screen whose one call the generator counted against every
   // /api/me route; it regenerated on a base without #2976, which added

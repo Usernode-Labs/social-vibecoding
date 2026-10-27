@@ -160,6 +160,12 @@ test('every card opens its project\'s page, no card is locked, and Featured is n
   assert.ok(words.includes('Classic games, fresh every day.'));
   assert.ok(words.includes(message('auth:guest.card.latest', { title: 'Add a dark theme' })));
   assert.ok(!words.some((w) => /^0 /.test(w)), 'no zero is printed');
+  // What a card says about itself stops at two lines: a display utility
+  // beside line-clamp-2 undoes the clamp (#5851).
+  const about = html.match(/data-guest-card-about="" class="([^"]+)"/);
+  assert.ok(about, 'a card shows what it is');
+  assert.ok(about[1].split(' ').includes('line-clamp-2'));
+  assert.ok(!about[1].split(' ').some((c) => /^(block|inline|inline-block|flex|grid)$/.test(c)), about[1]);
 });
 
 // What a card says, by its numbers (the 21 Oct 2026 review: the median
@@ -501,12 +507,13 @@ test('a project page\'s sheets are titled for what the visitor tried, and come b
   assert.equal(intentTitle({ kind: 'ask', app }, t, false), 'Sign up to ask for something');
   assert.equal(intentTitle({ kind: 'chat', app }, t, false), 'Sign up to chat in Game Corner');
   assert.equal(intentTitle({ kind: 'use', app }, t, false), 'Sign in to use Game Corner');
-  // While new accounts wait, taking part says so in the title, not a line
-  // under it (#4037); Try it does not, since a waiting account can use an app.
-  assert.equal(intentTitle({ kind: 'join', app }, t, true), 'Join the waitlist to be part of Game Corner');
-  assert.equal(intentTitle({ kind: 'vote', app, change: 'Practice mode' }, t, true), 'Join the waitlist to vote on changes');
-  assert.equal(intentTitle({ kind: 'ask', app }, t, true), 'Join the waitlist to ask for something');
-  assert.equal(intentTitle({ kind: 'chat', app }, t, true), 'Join the waitlist to chat in Game Corner');
+  // While new accounts wait, taking part asks for an account in the title,
+  // not in a line under it (#4037); Try it does not, since a waiting account
+  // can use an app (#5848).
+  assert.equal(intentTitle({ kind: 'join', app }, t, true), 'Create your account to be part of Game Corner');
+  assert.equal(intentTitle({ kind: 'vote', app, change: 'Practice mode' }, t, true), 'Create your account to vote on changes');
+  assert.equal(intentTitle({ kind: 'ask', app }, t, true), 'Create your account to ask for something');
+  assert.equal(intentTitle({ kind: 'chat', app }, t, true), 'Create your account to chat in Game Corner');
   assert.equal(intentTitle({ kind: 'use', app }, t, true), 'Sign in to use Game Corner');
   const src = read(LANDING);
   assert.match(src, /export function intentTitle\(intent: GuestIntent, t: Translate, waitlist: boolean = NEW_ACCOUNTS_WAIT\): string \{/);

@@ -8,30 +8,66 @@ import { phoneRecaptchaToken, RECAPTCHA_NOTICE } from '../auth/recaptcha';
 
 // SMS delivery section of the admin console (#admin/sms).
 //
-// Homeroom sends texts only one way: Firebase Phone Auth texts a sign-in
-// code (src/services/firebase-phone-auth.js). Nothing else in the platform
-// tells an operator whether that works, so this section answers it the way
-// Email delivery answers it for mail, and looks like that section on
-// purpose:
+// Homeroom texts sign-in codes. Until this section grew a switch those texts
+// went out one way: Firebase Phone Auth (src/services/firebase-phone-auth.js).
+// Now a full admin chooses who sends them — Firebase, today's path, Brevo or
+// Twilio (src/services/sms/) — and this section shows whether the choice is
+// ready, which countries the gateway may text and with which Sender ID, and
+// what the last texts did. It looks like Email delivery on purpose:
 //
-//   1. Is phone sign-in set up?        (status card, GET /api/admin/sms/status)
-//   2. Does a text go out right now?   (send a test, POST /api/admin/sms/test)
-//   3. What has been failing, and why? (failure log, GET /api/admin/sms/failures)
+//   1. Who sends texts, and is it ready?  (provider card, PUT /api/admin/sms/provider)
+//   2. Is phone sign-in set up?           (status card, GET /api/admin/sms/status)
+//   3. Which countries may it text?       (Sender IDs card, from the same read)
+//   4. Does a text go out right now?      (send a test, POST /api/admin/sms/test)
+//   5. What did the latest texts do?      (Recent texts, GET /api/admin/sms/deliveries)
+//   6. What has been failing, and why?    (failure log, GET /api/admin/sms/failures)
 //
-// The test is the real send: the same Identity Toolkit call, with the same
-// invisible reCAPTCHA token the sign-in sheet earns (auth/recaptcha.ts), so
-// what arrives is Firebase's own code message. The answer is Firebase's own
-// code, which the user-facing routes deliberately hide.
+// The test is the real send through the selected provider. With Firebase it
+// is the Identity Toolkit call with the invisible reCAPTCHA the sign-in
+// sheet earns; with Brevo or Twilio it is a plain test message, so nobody
+// enters a code. The answer names the provider's own code, which users never see.
 //
-// The failure log is the historical side of the same question: every failed
-// code request, verification and link attempt real callers made is one row
-// (routes/phone-auth.js fail(), services/phone-failure-log.js), with
-// Firebase's own code beside this API's mapped one and the number kept to
-// its last four digits.
-//
-// PERMISSIONS: visible to any admin, the log read included. The send is
-// full-admin-only; a view-only admin gets a note where the form would be.
-// The server enforces that independently via requireAdminWrite.
+// PERMISSIONS: visible to any admin. Changing the provider and sending the
+// test are full-admin-only; a view-only admin sees why. The server enforces
+// both independently.
+
+interface ProviderOption {
+  name: string;
+  label: string;
+  ready: boolean;
+  missing: string[];
+}
+
+interface ProviderInfo {
+  selected: string;
+  source: 'admin' | 'env' | 'default';
+  options: ProviderOption[];
+}
+
+interface SenderRow {
+  country: string;
+  countryName: string;
+  sender: string;
+  needsRegistration: boolean;
+  registered: boolean;
+  ready: boolean;
+}
+
+interface DeliveryRow {
+  id: number;
+  kind: string;
+  provider: string;
+  country: string | null;
+  sender_id: string | null;
+  phone_last4: string | null;
+  status: string;
+  error_code: string | null;
+  provider_code: string | null;
+  provider_message_id: string | null;
+  attempts: number;
+  delivery_status: string | null;
+  created_at: string;
+}
 
 interface SmsStatus {
   offered?: boolean;
@@ -41,11 +77,19 @@ interface SmsStatus {
   projectId?: string | null;
   missing?: string[];
   canSendTest?: boolean;
+  provider?: ProviderInfo;
+  senders?: SenderRow[];
+  senderProvider?: string;
+  stagingLogOnly?: boolean;
 }
 
 interface Outcome {
-  status?: 'sent' | 'refused' | 'unreachable';
+  status?: 'sent' | 'refused' | 'unreachable' | 'logged';
+  provider?: string;
   phoneNumber?: string;
+  country?: string;
+  senderId?: string;
+  messageId?: string | null;
   providerCode?: string | null;
   httpStatus?: number | null;
   durationMs?: number;
@@ -77,6 +121,25 @@ const KIND_LABELS: Record<string, string> = {
   link_verify: 'Link number',
 };
 
+const DELIVERY_KINDS: Record<string, string> = {
+  otp: 'Sign-in code',
+  marketing: 'Marketing',
+  test: 'Test',
+};
+
+const DELIVERY_RESULTS: Record<string, string> = {
+  sent: 'Sent',
+  logged: 'Logged only',
+  refused: 'Refused',
+  failed: 'Failed',
+};
+
+const SOURCE_NOTES: Record<string, string> = {
+  admin: 'Saved by an admin. That choice wins over the deploy’s default.',
+  env: 'The deploy’s default, from PLATFORM_SMS_PROVIDER. An admin can change it here.',
+  default: 'The deploy’s default, which is Firebase until an admin saves a choice.',
+};
+
 const canWrite = () => !!(typeof window !== 'undefined'
   && (window as any).AdminConsole && (window as any).AdminConsole.canWrite());
 
@@ -95,7 +158,19 @@ async function fetchJson(url: string, opts?: RequestInit): Promise<{ status: num
   }
 }
 
-// One plain sentence per Firebase code an operator is likely to meet.
+// The providers that only carry a text (Homeroom makes and checks the code),
+// with the registry variable each one's Sender IDs live in.
+const GATEWAYS: Record<string, { label: string; registry: string }> = {
+  brevo: { label: 'Brevo', registry: 'BREVO_SMS_SENDER_IDS' },
+  twilio: { label: 'Twilio', registry: 'TWILIO_SMS_SENDER_IDS' },
+};
+
+function providerLabel(name: string | undefined): string {
+  if (name && GATEWAYS[name]) return GATEWAYS[name].label;
+  return 'Firebase';
+}
+
+// One plain sentence per provider code an operator is likely to meet.
 const PROVIDER_HINTS: Record<string, string> = {
   INVALID_PHONE_NUMBER: 'Firebase could not read the number. Enter it with its country code, starting with +.',
   TOO_MANY_ATTEMPTS_TRY_LATER: 'Firebase is throttling this number or this server. Wait before trying again: real sign-in to this number is held back too.',
@@ -108,18 +183,149 @@ const PROVIDER_HINTS: Record<string, string> = {
   INVALID_RECAPTCHA_TOKEN: 'Firebase did not accept the “I’m not a robot” answer. Check that this site is an authorised domain in the Firebase project.',
   CAPTCHA_CHECK_FAILED: 'Firebase did not accept the “I’m not a robot” answer. Try again.',
   NO_SESSION_INFO: 'Firebase answered without confirming the send.',
+  unsupported_country: 'That number’s calling code is not in the supported country list.',
+  invalid_phone: 'Enter the number with its country code, starting with +.',
+  not_enough_credits: 'The Brevo account has no SMS credits left.',
+  unauthorized: 'Brevo did not accept the API key. Check BREVO_API_KEY.',
+  // Twilio's numeric error codes.
+  '20003': 'Twilio did not accept the credentials. Check TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN.',
+  '21211': 'Twilio could not read the number. Enter it with its country code, starting with +.',
+  '21408': 'That country is not enabled in the Twilio account’s Geo Permissions.',
+  '21610': 'That number replied STOP to this sender, so Twilio will not text it until it replies START.',
+  '21612': 'Twilio cannot send from this Sender ID to that number. Check the country’s Sender ID rules.',
+  '21614': 'That number cannot receive text messages.',
+  '21606': 'The Sender ID is not a Twilio number or approved sender for this account.',
 };
+
+// The same answer means the same thing from either gateway, so these are
+// written once and name the one that sent.
+function providerHint(code: string, name: string): string | undefined {
+  if (PROVIDER_HINTS[code]) return PROVIDER_HINTS[code];
+  const gateway = Object.values(GATEWAYS).find((g) => g.label === name);
+  const registry = gateway ? gateway.registry : 'the Sender ID registry';
+  switch (code) {
+    case 'no_sender_id':
+      return `No Sender ID is registered for that country. Register one in ${name}, then add it to ${registry}.`;
+    case 'country_not_registered':
+      return `That country needs its registration recorded first: a numeric sender and registered: true in ${registry}.`;
+    case 'provider_refused':
+      return `${name} refused the message. Its code says why.`;
+    case 'provider_unreachable':
+      return `${name} could not be reached after three attempts, so no text was sent.`;
+    case 'timeout':
+      return `${name} did not answer in time. It may already have sent the text, so it was not retried.`;
+    default:
+      return undefined;
+  }
+}
 
 function Mono({ children }: { children: React.ReactNode }) {
   return <code className="font-mono text-xs">{children}</code>;
+}
+
+function MissingList({ missing }: { missing: string[] }) {
+  return (
+    <>
+      {(missing || []).map((k, i) => <span key={k}>{i ? ', ' : ''}<Mono>{k}</Mono></span>)}
+    </>
+  );
+}
+
+function ProviderCard({ provider, write, onSaved }: {
+  provider: ProviderInfo; write: boolean; onSaved: () => void;
+}) {
+  const [picked, setPicked] = useState(provider.selected);
+  const [saving, setSaving] = useState(false);
+  const [note, setNote] = useState<{ text: string; bad?: boolean } | null>(null);
+  useEffect(() => { setPicked(provider.selected); }, [provider.selected]);
+
+  const option = provider.options.find((o) => o.name === picked);
+  const changed = picked !== provider.selected;
+
+  const save = async () => {
+    if (!write || saving || !option || !option.ready) return;
+    setSaving(true);
+    setNote(null);
+    const res = await fetchJson('/api/admin/sms/provider', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: picked }),
+    });
+    setSaving(false);
+    if (res.status === 0) {
+      setNote({ text: 'Could not reach the platform. The provider was not changed.', bad: true });
+      return;
+    }
+    if (!res.ok) {
+      const missing = res.data && Array.isArray(res.data.missing) ? res.data.missing : [];
+      setNote({
+        text: `${(res.data && res.data.error) || 'The platform refused the change.'}${missing.length ? ` Missing: ${missing.join(', ')}.` : ''}`,
+        bad: true,
+      });
+      return;
+    }
+    setNote({ text: `Saved. Texts are now sent by ${option.label}.` });
+    onSaved();
+  };
+
+  return (
+    <div id="admin-sms-provider" className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 mb-4">
+      <h3 className="text-sm font-semibold mb-2">Text messages are sent by</h3>
+      {provider.options.map((o) => (
+        <label key={o.name} className="flex items-start gap-2 text-sm py-1">
+          <input
+            type="radio"
+            name="admin-sms-provider"
+            value={o.name}
+            checked={picked === o.name}
+            disabled={!write || !o.ready}
+            onChange={() => setPicked(o.name)}
+            className="mt-1"
+          />
+          <span>
+            <span className="font-medium">{o.label}</span>
+            {o.ready ? (
+              <span className="text-xs text-emerald-700 dark:text-emerald-400">{' Ready'}</span>
+            ) : (
+              <span className="text-xs text-amber-700 dark:text-amber-400">
+                {'Needs '}<MissingList missing={o.missing} />
+              </span>
+            )}
+          </span>
+        </label>
+      ))}
+      <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+        {SOURCE_NOTES[provider.source] || SOURCE_NOTES.default}
+        {' A provider that is not ready cannot be chosen.'}
+      </p>
+      {!write ? (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-2">
+          Changing who sends texts needs full admin access. Any admin can read this section.
+        </p>
+      ) : (
+        <button
+          id="admin-sms-provider-save"
+          type="button"
+          className={`${AdminUI.btn.primary} mt-2`}
+          disabled={saving || !changed || !option || !option.ready}
+          onClick={save}
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      )}
+      {note ? (
+        <p className={`text-sm mt-2 ${note.bad ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+          {note.text}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function StatusCard({ status, failed }: { status: SmsStatus | null; failed: boolean }) {
   if (failed) return <p className="text-sm text-zinc-500 dark:text-zinc-400">Could not load the SMS configuration.</p>;
   if (!status) return <p className={AdminUI.loading}>Loading…</p>;
 
-  // Test numbers (PHONE_TEST_CODE, never in production): the fictional
-  // +1 … 555 01xx numbers sign in with one code and are never texted.
   const testLine = status.testNumbers ? (
     <p className="text-zinc-500 dark:text-zinc-400 mt-1">
       {'Test numbers are on: +1, any area code, then 555 0100 to 0199, sign in with the code in '}
@@ -128,15 +334,31 @@ function StatusCard({ status, failed }: { status: SmsStatus | null; failed: bool
     </p>
   ) : null;
 
+  const stagingLine = status.stagingLogOnly ? (
+    <p className="text-zinc-500 dark:text-zinc-400 mt-1">
+      This is a staging preview: no text is ever sent. Sign-in codes are written to the preview’s log instead.
+    </p>
+  ) : null;
+
+  const provider = status.provider;
+  const selected = provider ? provider.options.find((o) => o.name === provider.selected) : null;
+
   if (status.offered && status.texts !== false) {
     return (
       <div className={`${AdminUI.card} px-4 py-3 text-sm`}>
         <span className="font-semibold text-emerald-700 dark:text-emerald-400">SMS is set up:</span>
         <span className="text-zinc-500 dark:text-zinc-400">
-          {' phone sign-in is offered, and its codes are texted by Firebase project '}
-          <Mono>{status.projectId || 'unknown'}</Mono>{'.'}
+          {provider && GATEWAYS[provider.selected] ? (
+            ` phone sign-in is offered, and its codes are texted by ${GATEWAYS[provider.selected].label} to the countries listed under Sender IDs.`
+          ) : (
+            <>
+              {' phone sign-in is offered, and its codes are texted by Firebase project '}
+              <Mono>{status.projectId || 'unknown'}</Mono>{'.'}
+            </>
+          )}
         </span>
         {testLine}
+        {stagingLine}
       </div>
     );
   }
@@ -149,6 +371,7 @@ function StatusCard({ status, failed }: { status: SmsStatus | null; failed: bool
           {' phone sign-in is offered, but SMS is not set up, so no text is ever sent and any other number is refused.'}
         </span>
         {testLine}
+        {stagingLine}
       </div>
     );
   }
@@ -160,42 +383,169 @@ function StatusCard({ status, failed }: { status: SmsStatus | null; failed: bool
       </div>
       <p className="text-amber-800/80 dark:text-amber-300/80 mt-1">
         {'Set '}
-        {(status.missing || []).map((k, i) => <span key={k}>{i ? ', ' : ''}<Mono>{k}</Mono></span>)}
+        <MissingList missing={(selected && selected.missing && selected.missing.length
+          ? selected.missing
+          : (status.missing || []))} />
         {' in the platform’s Platform variables panel, then redeploy. Until then no text can be sent, and the test below stays off.'}
       </p>
+      {stagingLine}
+    </div>
+  );
+}
+
+function SendersCard({ senders, selected, gateway }: {
+  senders: SenderRow[]; selected: string; gateway: string;
+}) {
+  const g = GATEWAYS[gateway] || GATEWAYS.brevo;
+  return (
+    <div id="admin-sms-senders" className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 mb-4">
+      <h3 className="text-sm font-semibold mb-2">Sender IDs</h3>
+      <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+        {`${g.label} texts only these countries. Register a Sender ID in ${g.label} first, then add it to `}
+        <Mono>{g.registry}</Mono>
+        {'. A country that is not on this list is refused.'}
+      </p>
+      {senders.length === 0 ? (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          {`No Sender IDs are registered, so ${g.label} texts no country.`}
+          {selected === gateway ? ' Phone sign-in cannot text a real number until one is added.' : ''}
+        </p>
+      ) : (
+        <div className={AdminUI.tableWrap}>
+          <table className={AdminUI.table}>
+            <thead className={AdminUI.thead}>
+              <tr>
+                <th className={AdminUI.th}>Country</th>
+                <th className={AdminUI.th}>Sender ID</th>
+                <th className={AdminUI.th}>Ready</th>
+              </tr>
+            </thead>
+            <tbody>
+              {senders.map((s) => (
+                <tr key={s.country}>
+                  <td className={AdminUI.td}>{`${s.countryName} (${s.country})`}</td>
+                  <td className={`${AdminUI.td} font-mono text-xs`}>{s.sender}</td>
+                  <td className={AdminUI.td}>
+                    {s.ready ? (
+                      <span className="text-emerald-700 dark:text-emerald-400">Yes</span>
+                    ) : (
+                      <span className="text-rose-600 dark:text-rose-400">
+                        {s.needsRegistration && !s.registered
+                          ? 'No: needs registration marked'
+                          : 'No'}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
 
 function OutcomeLine({ outcome }: { outcome: Outcome }) {
   const at = outcome.sentAt ? `${outcome.sentAt.replace('T', ' ').slice(11, 16)} UTC` : '';
-  if (outcome.status === 'sent') {
+  const gateway = !!(outcome.provider && GATEWAYS[outcome.provider]);
+  const name = providerLabel(outcome.provider);
+  const place = [
+    outcome.country ? `country ${outcome.country}` : '',
+    outcome.senderId ? `Sender ID ${outcome.senderId}` : '',
+    outcome.messageId ? `message ${outcome.messageId}` : '',
+  ].filter(Boolean).join(', ');
+
+  if (outcome.status === 'sent' || outcome.status === 'logged') {
     return (
       <div className="mt-3">
         <p className="text-sm text-emerald-700 dark:text-emerald-400">
-          {`Sent: Firebase accepted the text for ${outcome.phoneNumber || 'that number'}${at ? ` at ${at}` : ''}.`}
+          {outcome.status === 'logged'
+            ? `Logged only: this staging preview did not send the text to ${outcome.phoneNumber || 'that number'}${at ? ` at ${at}` : ''}.`
+            : `Sent: ${name} accepted the text for ${outcome.phoneNumber || 'that number'}${at ? ` at ${at}` : ''}${place ? ` (${place})` : ''}.`}
         </p>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-          Accepted means Firebase took the send; it does not report when the phone receives it. A number
-          set up as a test number in the Firebase console is answered the same way and gets no text.
+          {gateway
+            ? `Accepted means ${name} took the send; a delivery receipt arrives at the webhook when its carrier reports one.`
+            : 'Accepted means Firebase took the send; it does not report when the phone receives it. A number set up as a test number in the Firebase console is answered the same way and gets no text.'}
         </p>
       </div>
     );
   }
   if (outcome.status === 'refused') {
     const code = outcome.providerCode || 'no code given';
-    const hint = (outcome.providerCode && PROVIDER_HINTS[outcome.providerCode])
-      || 'Firebase refused the send. Its code says why.';
+    const hint = (outcome.providerCode && providerHint(outcome.providerCode, name))
+      || `${name} refused the send. Its code says why.`;
     return (
       <p className="text-sm mt-3 text-rose-600 dark:text-rose-400">
-        {'Not sent: Firebase refused the text ('}<Mono>{code}</Mono>{`). ${hint}`}
+        {'Not sent: '}{name}{' refused the text ('}<Mono>{code}</Mono>{`). ${hint}`}
       </p>
     );
   }
   return (
     <p className="text-sm mt-3 text-rose-600 dark:text-rose-400">
-      Could not reach Firebase: the request timed out or the network failed, so no text was sent.
+      {`Could not reach ${name}: the request timed out or the network failed, so no text was sent.`}
     </p>
+  );
+}
+
+function DeliveriesCard({ deliveries, failed }: { deliveries: DeliveryRow[] | null; failed: boolean }) {
+  return (
+    <div id="admin-sms-deliveries" className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 mb-4">
+      <h3 className="text-sm font-semibold mb-2">Recent texts</h3>
+      {failed ? (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">Could not load the delivery log.</p>
+      ) : deliveries === null ? (
+        <p className={AdminUI.loading}>Loading…</p>
+      ) : deliveries.length === 0 ? (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          No texts have been sent yet. Each send, whatever its outcome, appears here.
+        </p>
+      ) : (
+        <div className={AdminUI.tableWrap}>
+          <table className={AdminUI.table}>
+            <thead className={AdminUI.thead}>
+              <tr>
+                <th className={AdminUI.th}>When (UTC)</th>
+                <th className={AdminUI.th}>Kind</th>
+                <th className={AdminUI.th}>Country</th>
+                <th className={AdminUI.th}>Sender ID</th>
+                <th className={AdminUI.th}>Number</th>
+                <th className={AdminUI.th}>Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {deliveries.map((d) => {
+                const result = DELIVERY_RESULTS[d.status] || d.status;
+                const bad = d.status === 'refused' || d.status === 'failed';
+                return (
+                  <tr key={d.id}>
+                    <td className={`${AdminUI.td} whitespace-nowrap text-zinc-500 dark:text-zinc-400`}>
+                      {d.created_at ? d.created_at.replace('T', ' ').slice(0, 16) : ''}
+                    </td>
+                    <td className={AdminUI.td}>{DELIVERY_KINDS[d.kind] || d.kind}</td>
+                    <td className={AdminUI.td}>{d.country || ''}</td>
+                    <td className={`${AdminUI.td} font-mono text-xs`}>{d.sender_id || ''}</td>
+                    <td className={`${AdminUI.td} font-mono text-xs`}>{d.phone_last4 ? `…${d.phone_last4}` : ''}</td>
+                    <td className={AdminUI.td}>
+                      <span className={bad ? 'text-rose-600 dark:text-rose-400' : undefined}>{result}</span>
+                      {d.error_code ? <span className="text-xs text-zinc-500 dark:text-zinc-400"> <Mono>{d.error_code}</Mono></span> : null}
+                      {d.provider_code && d.provider_code !== d.error_code ? (
+                        <span className="text-xs text-zinc-500 dark:text-zinc-400"> (<Mono>{d.provider_code}</Mono>)</span>
+                      ) : null}
+                      {d.provider_message_id ? (
+                        <span className="font-mono text-xs text-zinc-500 dark:text-zinc-400">{` id ${d.provider_message_id}`}</span>
+                      ) : null}
+                      {d.delivery_status ? <div className="text-xs text-zinc-500 dark:text-zinc-400">{d.delivery_status}</div> : null}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -210,7 +560,7 @@ function FailuresCard({ failures, total7d, failed }: { failures: PhoneFailure[] 
       ) : failures.length === 0 ? (
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
           No failures recorded. Every failed code request, verification and link attempt
-          would appear here with the reason Firebase gave.
+          would appear here with the reason the provider gave.
         </p>
       ) : (
         <>
@@ -249,7 +599,7 @@ function FailuresCard({ failures, total7d, failed }: { failures: PhoneFailure[] 
                       <Mono>{f.error_code}</Mono>
                       {f.provider_code && f.provider_code !== f.error_code ? (
                         <span className="text-zinc-500 dark:text-zinc-400">
-                          {' (Firebase: '}<Mono>{f.provider_code}</Mono>{')'}
+                          {' (Provider: '}<Mono>{f.provider_code}</Mono>{')'}
                         </span>
                       ) : null}
                       <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{f.message}</div>
@@ -272,19 +622,24 @@ function SmsSection() {
   const [failures, setFailures] = useState<PhoneFailure[] | null>(null);
   const [total7d, setTotal7d] = useState<number | null>(null);
   const [failuresFailed, setFailuresFailed] = useState(false);
+  const [deliveries, setDeliveries] = useState<DeliveryRow[] | null>(null);
+  const [deliveriesFailed, setDeliveriesFailed] = useState(false);
   const [to, setTo] = useState('');
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<Result>({ kind: 'none' });
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
+  const loadStatus = async () => {
+    const { ok, data } = await fetchJson('/api/admin/sms/status');
+    if (!alive.current) return;
+    if (!ok || !data) { setStatusFailed(true); return; }
+    setStatusFailed(false);
+    setStatus(data);
+  };
+
   useEffect(() => {
-    (async () => {
-      const { ok, data } = await fetchJson('/api/admin/sms/status');
-      if (!alive.current) return;
-      if (!ok || !data) { setStatusFailed(true); return; }
-      setStatus(data);
-    })();
+    loadStatus();
     (async () => {
       const { ok, data } = await fetchJson('/api/admin/sms/failures');
       if (!alive.current) return;
@@ -292,9 +647,19 @@ function SmsSection() {
       setFailures(data.failures);
       setTotal7d(typeof data.total7d === 'number' ? data.total7d : null);
     })();
+    (async () => {
+      const { ok, data } = await fetchJson('/api/admin/sms/deliveries');
+      if (!alive.current) return;
+      if (!ok || !data || !Array.isArray(data.deliveries)) { setDeliveriesFailed(true); return; }
+      setDeliveries(data.deliveries);
+    })();
   }, []);
 
-  // The test is a real text, so it needs Firebase, not just test numbers.
+  const provider = status?.provider || null;
+  const gateway = provider && GATEWAYS[provider.selected] ? provider.selected : null;
+  const isGateway = !!gateway;
+
+  // The test is a real text, so it needs a ready provider, not just test numbers.
   const offered = !!status && (status.texts ?? !!status.offered);
 
   const sendTest = async () => {
@@ -304,10 +669,10 @@ function SmsSection() {
     setSending(true);
     setResult({ kind: 'note', text: 'Sending…' });
 
-    // Firebase texts a web caller only with a reCAPTCHA answer, the same
-    // one the sign-in sheet earns. A null token still goes: the server
-    // answers with Firebase's refusal code, which is the diagnostic.
-    const recaptchaToken = await phoneRecaptchaToken();
+    // Firebase texts a web caller only with a reCAPTCHA answer. Brevo and
+    // Twilio need none, so it is earned only when Firebase is the selected
+    // provider.
+    const recaptchaToken = isGateway ? undefined : await phoneRecaptchaToken();
     if (!alive.current) return;
 
     const res = await fetchJson('/api/admin/sms/test', {
@@ -331,6 +696,7 @@ function SmsSection() {
       return;
     }
     setResult({ kind: 'outcome', outcome: res.data.outcome });
+    loadStatus();
   };
 
   const n = RECAPTCHA_NOTICE;
@@ -341,12 +707,19 @@ function SmsSection() {
         <h2 className={AdminUI.cardTitle}>SMS delivery</h2>
       </div>
       <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-        Sign-in codes by text are sent by Firebase, not by Homeroom.
-        This is where you check that a text actually goes out.
+        Sign-in codes by text are sent by the provider chosen below, not by Homeroom.
+        This is where you choose it and check that a text actually goes out.
       </p>
+      {provider ? (
+        <ProviderCard provider={provider} write={write} onSaved={loadStatus} />
+      ) : null}
       <div id="admin-sms-status" className="mb-4">
         <StatusCard status={status} failed={statusFailed} />
       </div>
+      {status && status.senders && (isGateway || (provider && provider.options.some((o) => GATEWAYS[o.name] && o.ready))) ? (
+        <SendersCard senders={status.senders} selected={provider ? provider.selected : 'firebase'}
+          gateway={status.senderProvider || gateway || 'brevo'} />
+      ) : null}
       <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 mb-4">
         <h3 className="text-sm font-semibold mb-2">Send a test SMS</h3>
         {write ? (
@@ -368,17 +741,22 @@ function SmsSection() {
               </button>
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
-              Sends one sign-in code text to this number through Firebase and shows exactly what
-              Firebase answered. The text is Firebase’s own code message, and nobody has to enter
-              the code. Up to 5 per hour, and one per number per minute.
+              {gateway ? (
+                `Sends one test text to this number through ${GATEWAYS[gateway].label}, from the Sender ID for its country, and shows exactly what ${GATEWAYS[gateway].label} answered. It is a plain test message, so nobody has to enter a code.`
+              ) : (
+                'Sends one sign-in code text to this number through Firebase and shows exactly what Firebase answered. The text is Firebase’s own code message, and nobody has to enter the code.'
+              )}
+              {' Up to 5 per hour, and one per number per minute.'}
             </p>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              {n.lead}
-              <a href={n.privacy.href} target="_blank" rel="noopener noreferrer" className="underline">{n.privacy.label}</a>
-              {n.and}
-              <a href={n.terms.href} target="_blank" rel="noopener noreferrer" className="underline">{n.terms.label}</a>
-              {n.tail}
-            </p>
+            {!isGateway ? (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                {n.lead}
+                <a href={n.privacy.href} target="_blank" rel="noopener noreferrer" className="underline">{n.privacy.label}</a>
+                {n.and}
+                <a href={n.terms.href} target="_blank" rel="noopener noreferrer" className="underline">{n.terms.label}</a>
+                {n.tail}
+              </p>
+            ) : null}
           </>
         ) : (
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -394,6 +772,7 @@ function SmsSection() {
           ) : null}
         </div>
       </div>
+      <DeliveriesCard deliveries={deliveries} failed={deliveriesFailed} />
       <div id="admin-sms-failures" className="mb-4">
         <FailuresCard failures={failures} total7d={total7d} failed={failuresFailed} />
       </div>

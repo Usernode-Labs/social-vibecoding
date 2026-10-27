@@ -117,3 +117,30 @@ export function setParked(app) {
 
 /** Exported for the test that pins the key, so it cannot drift silently. */
 export const PARKED_KEY = KEY;
+
+/**
+ * THE APP ON SCREEN, beside the one you left (iPhone Duo, 24 Oct 2026).
+ *
+ * The side strip (./side-apps.tsx) keeps its tabs up over a running app and
+ * shows that app among them, lit, the way a tab is: so it needs the app you
+ * are IN as well as the one you left. app.js captures it while the app is on
+ * screen (`App._runningApp`, the same record it parks on the way out) and
+ * publishes it here through the nav bridge (./mount.ts `running`). Not
+ * persisted: a reload re-enters the app and publishes it again. Empty at
+ * first, which is what the prerender shows.
+ */
+export const runningAppStore = createStore({ app: null });
+
+/** @param {ParkedApp|null} app */
+export function setRunningApp(app) {
+  runningAppStore.set({
+    app: app && app.slug
+      ? {
+        slug: String(app.slug),
+        name: String(app.name || app.slug),
+        iconUrl: app.iconUrl || null,
+        iconEmoji: app.iconEmoji || null,
+      }
+      : null,
+  });
+}

@@ -5,8 +5,8 @@
 # the only path by which the worker can affect anything outside its
 # own filesystem: it POSTs to the platform's internal API, which
 # validates the session, looks up the canonical branch name from the
-# DB, and runs the actual `git push` from a docker-exec back into
-# this container with the bot token injected for that one call.
+# DB, and queues a conductor-owned push. The conductor exports Git objects
+# from this container and authenticates only in its fresh trusted repository.
 #
 # The endpoint contract: POST /api/internal/sessions/$SESSION_ID/push
 # with `Authorization: Bearer $WORKER_JWT`. No body fields — the

@@ -11,15 +11,20 @@
  * Back always leaves the run, for Communities or the project's hub. Next
  * PUSHES the next change in from the side; it goes only to a change you have
  * not voted on or skipped, and carries how many are left after this one (the
- * same number the Communities tab's badge shows). With none left the button
- * says Done, and Done takes the page down onto the end: that nothing else is
- * waiting, and how many you skipped.
+ * same number the Communities tab's badge shows). Before you answer, Skip
+ * holds Next's place: it turns the page at once and records nothing. With
+ * none left the button says Done, and Done takes the page down onto the end.
+ * When everything had your vote, the end says so. When you skipped some, it
+ * is not done: the skipped changes wait as a small stack, with one way to
+ * look at them again and a quiet way back.
  *
  * ── A change's page ─────────────────────────────────────────────────────
  * Under the bar, what the change does, in one or two lines of body text
  * (what the open screen shows, once one is open). ⌄, the title or that line
  * opens the change in full: the bar grows to the whole title, and a card
- * under it holds the description and the way on to the change's page.
+ * under it holds the description, who made it, the way on to the change's
+ * page, and help: Ask privately, Discussion and Try it, each opened over the
+ * page by the vote sheet.
  *
  * Its picture is its sheet (model.ts composeSheet): every screen it shows,
  * one plate each, on the ground that says how much it changes. A tap on a
@@ -47,7 +52,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
-import { CheckIcon, ChevronDownIcon, ChevronLeftIcon } from '@/components/ui/icons';
+import { ChatIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlayIcon, SparklesIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { changeHref } from '../../lib/change-href';
@@ -649,6 +654,16 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   };
   // Done on the last change: the page comes down onto the end.
   const finishAll = () => { stop(); setDone(true); };
+  // From the end: the skipped changes again, from the first one waiting.
+  const again = () => {
+    const first = run.findIndex((it) => it.kind !== 'governance' && !votes[it.key]);
+    if (first < 0) return;
+    setSkipped({});
+    setIndex(first);
+    setDone(false);
+  };
+  // A help sheet over the page, from the card: the card folds first.
+  const help = (to: SheetState) => { setDesc(false); setSheet(to); };
 
   // Going anywhere else (a link on the page, a tab, Back) takes the page
   // down at once: it is fixed over the shell, and the screen under it may
@@ -715,19 +730,34 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   if (!items && !list) {
     return <div ref={anchorRef} className="rf-run rf-loading" data-review-flow="" aria-busy="true" aria-label={t('communities:reel.loading')} />;
   }
-  const skippedCount = Object.keys(skipped).filter((k) => !votes[k]).length;
+  const waiting = run.filter((it) => skipped[it.key] && !votes[it.key]);
   if (done || (list && !item && Object.keys(votes).length)) {
-    // Everything here had your vote or was skipped: the end, where the run was.
+    // Everything here had your vote or was skipped: the end, where the run
+    // was. Skipped changes still wait, so then it is not done: they show as
+    // a small stack, with one way to look at them again.
     return (
       <div ref={anchorRef} className="rf-run rf-feed-done" data-review-flow="">
-        <div className="rf-end rf-end-alone" data-rf-end="">
-          <span className="rf-end-mark" aria-hidden="true">
+        {waiting.length ? (
+          <div className="rf-end rf-end-alone" data-rf-end="" data-rf-end-waiting={waiting.length}>
+            <span className="rf-end-stack" aria-hidden="true">
+              {waiting.slice(0, 3).map((it, i, all) => (
+                <span key={it.key} className="rf-end-tile" data-n={all.length > 1 ? i - (all.length - 1) / 2 : 0} style={{ background: it.ground }}><i /></span>
+              ))}
+            </span>
+            <p className="rf-end-title">{t('communities:review.end.throughAll')}</p>
+            <p className="rf-end-line rf-end-line-tight">{t('communities:review.end.waiting', { count: waiting.length })}</p>
+            <button type="button" className="rf-end-btn rf-end-btn-go" onClick={again} data-rf-again="">{t('communities:review.end.again', { count: waiting.length })}</button>
+            <button type="button" className="rf-end-back" onClick={onDone}>{doneLabel || t('communities:reel.done')}</button>
+          </div>
+        ) : (
+          <div className="rf-end rf-end-alone" data-rf-end="">
+            <span className="rf-end-mark" aria-hidden="true">
 <CheckIcon width={24} height={24} strokeWidth="2.2" />
-          </span>
-          <p className="rf-end-line">{t('communities:review.end.line')}</p>
-          {skippedCount ? <p className="rf-end-skipped" data-rf-skipped="">{t('communities:review.end.skipped', { count: skippedCount })}</p> : null}
-          <button type="button" className="rf-end-btn" onClick={onDone}>{doneLabel || t('communities:reel.done')}</button>
-        </div>
+            </span>
+            <p className="rf-end-line">{t('communities:review.end.line')}</p>
+            <button type="button" className="rf-end-btn" onClick={onDone}>{doneLabel || t('communities:reel.done')}</button>
+          </div>
+        )}
         {capped ? <p className="rf-capped" data-needs-capped="">{t('communities:reel.capped', { count: run.length })}</p> : null}
       </div>
     );
@@ -765,11 +795,17 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
           <div className="rf-desc-dim" onClick={() => setDesc(false)} />
           <div className="rf-desc" id="rf-desc" data-rf-desc="">
             <p className="rf-desc-text">{item.summary || item.line}</p>
+            {item.author ? <p className="rf-desc-by">{t('communities:review.desc.by', { name: item.author })}</p> : null}
             <div className="rf-desc-foot">
               {item.app ? (
                 <a className="rf-desc-go" href={changeHref(item.app.slug, item.id, item.number)}>{t('communities:review.more.open')}</a>
               ) : null}
             </div>
+            <nav className="rf-desc-help" aria-label={t('communities:review.help.label')} data-rf-desc-help="">
+              <button type="button" className="rf-help-row" data-rf-help="askq" onClick={() => help('askq')}><SparklesIcon aria-hidden="true" width={20} height={20} /><span>{t('communities:review.help.ask')}</span><ChevronRightIcon aria-hidden="true" width={18} height={18} /></button>
+              <button type="button" className="rf-help-row" data-rf-help="talk" onClick={() => help('talk')}><ChatIcon aria-hidden="true" width={20} height={20} /><span>{t('communities:review.help.talk')}</span><ChevronRightIcon aria-hidden="true" width={18} height={18} /></button>
+              <button type="button" className="rf-help-row" data-rf-help="try" onClick={() => help('try')}><PlayIcon aria-hidden="true" width={20} height={20} /><span>{t('communities:review.help.try')}</span><ChevronRightIcon aria-hidden="true" width={18} height={18} /></button>
+            </nav>
           </div>
         </div>
         <div ref={stageRef} className="rf-stage">

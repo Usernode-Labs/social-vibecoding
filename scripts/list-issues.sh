@@ -13,7 +13,7 @@ set -euo pipefail
 #
 # Auth resolution order:
 #   1. `gh` CLI if `gh auth status` succeeds
-#   2. $GH_TOKEN / $GITHUB_TOKEN / $GITHUB_BOT_TOKEN (auto-loaded from ./.env)
+#   2. $GH_TOKEN / $GITHUB_TOKEN (auto-loaded from ./.env)
 #      via curl against api.github.com
 #
 # Override the repo with REPO=owner/name (defaults to the `origin` remote).
@@ -40,18 +40,18 @@ done
 script_dir=$(cd "$(dirname "$0")" && pwd)
 repo_root=$(cd "$script_dir/.." && pwd)
 
-# Pull GITHUB_BOT_TOKEN (and friends) out of the repo's .env if present,
+# Pull GH_TOKEN / GITHUB_TOKEN out of the repo's .env if present,
 # without leaking everything else into the environment.
-if [ -f "$repo_root/.env" ] && [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}${GITHUB_BOT_TOKEN:-}" ]; then
+if [ -f "$repo_root/.env" ] && [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then
   while IFS='=' read -r key val; do
     case "$key" in
-      GH_TOKEN|GITHUB_TOKEN|GITHUB_BOT_TOKEN)
+      GH_TOKEN|GITHUB_TOKEN)
         val=${val%\"}; val=${val#\"}
         val=${val%\'}; val=${val#\'}
         export "$key=$val"
         ;;
     esac
-  done < <(grep -E '^(GH_TOKEN|GITHUB_TOKEN|GITHUB_BOT_TOKEN)=' "$repo_root/.env" || true)
+  done < <(grep -E '^(GH_TOKEN|GITHUB_TOKEN)=' "$repo_root/.env" || true)
 fi
 
 # Resolve repo from $REPO, else the origin remote.
@@ -77,8 +77,8 @@ if [ -n "$SHOW_ONE" ]; then
   if [ "$use_gh" = 1 ]; then
     gh issue view "$SHOW_ONE" --repo "$REPO"
   else
-    token="${GH_TOKEN:-${GITHUB_TOKEN:-${GITHUB_BOT_TOKEN:-}}}"
-    [ -z "$token" ] && { echo "Need gh login or GH_TOKEN/GITHUB_TOKEN/GITHUB_BOT_TOKEN." >&2; exit 1; }
+    token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+    [ -z "$token" ] && { echo "Need gh login or GH_TOKEN/GITHUB_TOKEN." >&2; exit 1; }
     curl -fsSL -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" \
       "https://api.github.com/repos/${REPO}/issues/${SHOW_ONE}" |
       python3 -c '
@@ -105,9 +105,9 @@ if [ "$use_gh" = 1 ]; then
   exit 0
 fi
 
-token="${GH_TOKEN:-${GITHUB_TOKEN:-${GITHUB_BOT_TOKEN:-}}}"
+token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 if [ -z "$token" ]; then
-  echo "gh is not authed and no GH_TOKEN/GITHUB_TOKEN/GITHUB_BOT_TOKEN found." >&2
+  echo "gh is not authed and no GH_TOKEN/GITHUB_TOKEN found." >&2
   echo "Run: gh auth login -h github.com   (or export GH_TOKEN=...)" >&2
   exit 1
 fi

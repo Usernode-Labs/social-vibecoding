@@ -238,6 +238,12 @@ function appPlatformAuth(pool, opts = {}) {
       if (!claims || typeof claims.id !== 'number' || claims.scope) {
         return res.status(403).json({ ok: false, code: 'bad_user_token' });
       }
+      // The canonical platform's app-scoped identities are for previews.
+      // They must not turn a sanitized clone into a production directory
+      // client. Production Homeroom uses its normal cookie-authenticated API.
+      if (userTokenOnly && app.slug === require('../services/platform-preview-data-policy').PLATFORM_SLUG) {
+        return res.status(403).json({ ok: false, code: 'preview_directory_unavailable' });
+      }
       userId = claims.id;
       try {
         const live = await pool.query('SELECT id FROM users WHERE id = $1', [userId]);

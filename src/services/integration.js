@@ -38,6 +38,7 @@
 
 const log = require('./logger');
 const mirror = require('./repo-mirror');
+const repoRef = require('./repo-ref');
 
 // The preview machine's instance of a session (preview/machine.ts MACHINE,
 // sessionKey), which a measurement tells when a deferred head merges cleanly.
@@ -64,8 +65,7 @@ function intOrNull(value) {
 }
 
 function parseRepo(repoUrl) {
-  const m = String(repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-  return m ? { owner: m[1], repo: m[2] } : null;
+  return repoRef.ownerRepo(repoUrl);
 }
 
 // ── The pure read ──────────────────────────────────────────────────────

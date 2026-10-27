@@ -142,17 +142,16 @@ test('the search and graphql budgets are kept apart from core', () => {
 
 // ─── 2. budgetAllows ────────────────────────────────────────────────────
 
-test('background work is held under 15% left while the reset is ahead, and only background work', (t) => {
-  withEnv(t, 'GITHUB_BOT_TOKEN', 'test-token');
+test('background work is held under 15% left while the reset is ahead, and only background work', () => {
   assert.equal(budget.budgetAllows('background', { now: NOW }), true, 'nothing known reads as allowed');
 
-  budget.record('pat', headers({ remaining: 750 }), { now: NOW });
+  budget.record('installation:acme', headers({ remaining: 750 }), { now: NOW });
   assert.equal(budget.budgetAllows('background', { now: NOW }), true, '750 is exactly the 15% reserve');
 
-  budget.record('pat', headers({ remaining: 749 }), { now: NOW });
+  budget.record('installation:acme', headers({ remaining: 749 }), { now: NOW });
   assert.equal(budget.budgetAllows('background', { now: NOW }), false);
   const hold = budget.backgroundHold({ now: NOW });
-  assert.equal(hold.credential, 'pat');
+  assert.equal(hold.credential, 'installation:acme');
   assert.equal(hold.reserve, 750);
   assert.equal(hold.retryInMs, 30 * 60 * 1000);
 
@@ -160,26 +159,27 @@ test('background work is held under 15% left while the reset is ahead, and only 
   assert.equal(budget.budgetAllows('background', { now: NOW + 31 * 60 * 1000 }), true, 'the reset passed');
 });
 
-test('a hold logs once per credential per window, not once per caller', (t) => {
-  withEnv(t, 'GITHUB_BOT_TOKEN', 'test-token');
-  budget.record('pat', headers({ remaining: 100 }), { now: NOW });
+test('a hold logs once per credential per window, not once per caller', () => {
+  budget.record('installation:acme', headers({ remaining: 100 }), { now: NOW });
   for (let i = 0; i < 40; i += 1) budget.budgetAllows('background', { now: NOW + i });
   const holds = warned.filter((w) => w[0] === 'github-budget');
   assert.equal(holds.length, 1);
   assert.match(holds[0][1], /Holding background GitHub work/);
   assert.deepEqual(
     { credential: holds[0][2].credential, remaining: holds[0][2].remaining, resetInMinutes: holds[0][2].resetInMinutes },
-    { credential: 'pat', remaining: 100, resetInMinutes: 30 }
+    { credential: 'installation:acme', remaining: 100, resetInMinutes: 30 }
   );
-  budget.record('pat', headers({ remaining: 50, reset: inMin(90) }), { now: NOW + 3600 * 1000 });
+  budget.record('installation:acme', headers({ remaining: 50, reset: inMin(90) }), { now: NOW + 3600 * 1000 });
   budget.budgetAllows('background', { now: NOW + 3600 * 1000 });
   assert.equal(warned.filter((w) => w[0] === 'github-budget').length, 2, 'the next window logs again');
 });
 
-test('without a bot token, background work asks the App installation it would use', (t) => {
-  withEnv(t, 'GITHUB_BOT_TOKEN', undefined);
+test('background work asks the App installation it would use, never the bot token', (t) => {
+  // Set or not, the bot token is never sent (services/github.js "Who
+  // Homeroom is on GitHub"), so its figures are not what background work spends.
+  withEnv(t, 'GITHUB_BOT_TOKEN', 'test-token');
   budget.record('pat', headers({ remaining: 0 }), { now: NOW });
-  assert.equal(budget.budgetAllows('background', { now: NOW }), true, 'no token: its figures are not what background work spends');
+  assert.equal(budget.budgetAllows('background', { now: NOW }), true, 'the bot token\'s figures hold nothing back');
   budget.record('installation:acme', headers({ limit: 12500, remaining: 1000 }), { now: NOW });
   assert.equal(budget.budgetAllows('background', { now: NOW }), false, '1,000 of 12,500 is under 15%');
   assert.equal(budget.budgetAllows('background', { owner: 'other', now: NOW }), true);
@@ -220,8 +220,7 @@ test('a rate-limit refusal is said in plain words, with when it resets', () => {
   assert.equal(budget.rateLimitRetryAfterSeconds(rateLimited(), { now: NOW }), 720);
 });
 
-test('an error that lost its headers still reads, from the recorded window or "within the hour"', (t) => {
-  withEnv(t, 'GITHUB_BOT_TOKEN', 'test-token');
+test('an error that lost its headers still reads, from the recorded window or "within the hour"', () => {
   const bare = new Error('API rate limit exceeded for user ID 276401300.');
   assert.equal(budget.rateLimitNotice(bare, { now: NOW }),
     "GitHub's hourly limit for Homeroom is used up. It resets within the hour.");
@@ -309,14 +308,12 @@ test('the installation client is recorded as its own credential', async () => {
   await octokit.request('GET /repos/{owner}/{repo}', { owner: 'o', repo: 'r' });
   assert.equal(budget.core('installation:usernode-labs').remaining, 12499);
   assert.equal(budget.core('pat'), null);
-  // The real wiring: both clients are built through instrument().
+  // The real wiring: the one client github.js builds, the App installation's,
+  // goes through instrument(); there is no bot-token client any more.
   const src = read('src/services/github.js');
-  assert.match(src, /return instrument\(await app\.getInstallationOctokit\(id\), `installation:\$\{owner\}`\);/);
-  assert.match(src, /return instrument\(new Octokit\(\{ auth: pat \}\), 'pat'\);/);
-  assert.match(src, /return instrument\(new Octokit\(\{ auth: token, log: octokitLog \}\), `installation:\$\{owner\}`\);/,
-    'and the REST client reads go through (services/github.js getReadOctokit)');
-  assert.equal((src.match(/new Octokit\(/g) || []).length, 2,
-    'every client github.js builds is one of those two, both recorded');
+  assert.match(src, /return instrument\(new Octokit\(\{ auth: token \}\), `installation:\$\{owner\}`\);/);
+  assert.equal((src.match(/new Octokit\(/g) || []).length, 1, 'every client github.js builds is that one, recorded');
+  assert.doesNotMatch(src, /'pat'\)/, 'no client is recorded as the bot token');
 });
 
 test('a test double without the hook API passes through untouched', () => {
@@ -324,18 +321,30 @@ test('a test double without the hook API passes through untouched', () => {
   assert.equal(github._instrumentForTests(fake, 'pat'), fake);
 });
 
-test('the raw fetch reads record against the bot token, or anonymous without one', async (t) => {
+// The raw reads this used to drive (fetchPublicIssue, fetchIssueComments)
+// left GitHub with requests on 26 Oct 2026. The raw path other services
+// take (services/external-agent-tasks.js: publicApiHeaders,
+// publicApiCredential and githubFetch) and the repository-name prefill
+// (fetchPublicRepoInfo) still read GitHub raw.
+test('the raw fetch reads are anonymous, and recorded so, even with a bot token set', async (t) => {
   const realFetch = global.fetch;
   t.after(() => { global.fetch = realFetch; });
   withEnv(t, 'GITHUB_BOT_TOKEN', 'test-token');
-  global.fetch = fakeFetch([{ status: 200, body: { number: 7, title: 'x', state: 'open' }, headers: headers({ remaining: 4321, reset: liveReset() }) }]);
-  await github.fetchPublicIssue('o', 'budget-a', 7);
-  assert.equal(budget.core('pat').remaining, 4321);
+  global.fetch = fakeFetch([{ status: 200, body: { name: 'budget-a' }, headers: headers({ limit: 60, remaining: 59, reset: liveReset() }) }]);
+  const credential = github.publicApiCredential();
+  assert.equal(credential, 'anonymous');
+  assert.equal(github.publicApiHeaders().Authorization, undefined, 'the bot token is never sent');
+  const url = 'https://api.github.com/repos/o/budget-a';
+  const resp = await github.githubFetch(credential, url, { headers: github.publicApiHeaders() });
+  github.recordFetchResponse(credential, resp, { url });
+  assert.equal(budget.core('anonymous').remaining, 59);
+  assert.equal(budget.core('pat'), null);
 
   delete process.env.GITHUB_BOT_TOKEN;
-  global.fetch = fakeFetch([{ status: 200, body: [], headers: headers({ limit: 60, remaining: 59, reset: liveReset() }) }]);
-  await github.fetchIssueComments('o', 'budget-b', 7);
-  assert.equal(budget.core('anonymous').remaining, 59);
+  assert.equal(github.publicApiCredential(), 'anonymous');
+  global.fetch = fakeFetch([{ status: 200, body: { name: 'budget-b' }, headers: headers({ limit: 60, remaining: 58, reset: liveReset() }) }]);
+  assert.equal((await github.fetchPublicRepoInfo('o', 'budget-b')).name, 'budget-b');
+  assert.equal(budget.core('anonymous').remaining, 58);
 });
 
 test('checkRepoPublic says the budget is used up instead of passing GitHub\'s words on', async (t) => {
@@ -433,8 +442,7 @@ test('a release does not re-run the privacy audit or the merged-by-hand lookup',
 // The bot's refresh, a look and a build's start read GitHub, and they are
 // background work: each waits for the reset, says when (its lane pauses its
 // grants and its refresh until then), and reads nothing meanwhile.
-test('the Homeroom bot\'s refresh, looks and builds wait for the reset, and say when', async (t) => {
-  withEnv(t, 'GITHUB_BOT_TOKEN', 'test-token');
+test('the Homeroom bot\'s refresh, looks and builds wait for the reset, and say when', async () => {
   const bot = require('../src/services/homeroom-bot');
   const queries = [];
   const pool = {
@@ -444,7 +452,7 @@ test('the Homeroom bot\'s refresh, looks and builds wait for the reset, and say 
       return { rows: [] };
     },
   };
-  budget.record('pat', headers({ remaining: 20 }), { now: NOW });
+  budget.record('installation:usernode-labs', headers({ remaining: 20 }), { now: NOW });
   const deps = { now: () => NOW };
   const resetAt = new Date(NOW + 30 * 60 * 1000).toISOString();
   assert.deepEqual(await bot.refresh({}, pool, { n: 1, deps }), { github: resetAt });

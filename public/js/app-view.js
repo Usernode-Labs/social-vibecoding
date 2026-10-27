@@ -4370,7 +4370,13 @@ const AppView = {
         </span>`;
     }
 
-    const href = version.prUrl || version.commitUrl || '#';
+    // The change that made this the live version: its page in Homeroom opens
+    // in place; its pull request on GitHub, or the commit on the git host,
+    // in a new tab (lib/repo-link.js). Nothing usable leaves a dead '#'.
+    const link = AppView._repoLink()?.linkAttrs(version.prUrl || version.commitUrl) || null;
+    const hrefAttrs = link
+      ? `href="${escapeAttr(link.href)}"${link.target ? ` target="${link.target}" rel="${link.rel}"` : ''}`
+      : 'href="#"';
     const parts = [];
     if (includePrContext && version.prTitle) parts.push(version.prTitle);
     if (includePrContext && version.mergedBy) parts.push(PlatformI18n.t('changes:versionPill.mergedBy', { username: version.mergedBy }));
@@ -4388,10 +4394,10 @@ const AppView = {
     // commit chip.
     if (plain) {
       return `
-        <a href="${href}" target="_blank" rel="noopener" class="${cls.base}" title="${escapeAttr(tip)}">${escapeHtml(sha)}</a>`;
+        <a ${hrefAttrs} class="${cls.base}" title="${escapeAttr(tip)}">${escapeHtml(sha)}</a>`;
     }
     return `
-      <a href="${href}" target="_blank" rel="noopener" class="app-version-pill" title="${escapeAttr(tip)}">
+      <a ${hrefAttrs} class="app-version-pill" title="${escapeAttr(tip)}">
         ${quiet ? '' : '<span class="app-version-pill-dot"></span>'}
         <span class="app-version-pill-label">
           ${slugPart}
@@ -6160,7 +6166,9 @@ const AppView = {
     // marked `pageShortcut` where it is built (the session and proposal
     // menus), so this reads the mark and never the row's words. The same
     // goes for the rows it looks for below: `sessionDoor` (Open session),
-    // `githubPr` (View PR on GitHub) and `githubIssue` (Open on GitHub).
+    // `githubPr` (View PR on GitHub), `codePr` (View code) and `githubIssue`
+    // (Open on GitHub). The address decides which, if any (_prMenuItem): a
+    // change's or a request's own Homeroom page is this page, so it gets none.
     const menu = [...(AppView._cardMenus[card.rail.menuKey] || [])]
       .filter((a) => !body.changeId || !a.pageShortcut);
     for (const action of card.actions || []) {
@@ -6174,7 +6182,8 @@ const AppView = {
       // header's ⋯ (here). So the rows the band used to carry come back to
       // the menu: asking Homeroom bot for changes, the Build door, editing
       // the requests it addresses, the shots' details and a retake, the
-      // change's tags, and the pull request on GitHub.
+      // change's tags, and its code where it is kept: the pull request on
+      // GitHub, or the code on the git host.
       const proposal = kind === 'proposal';
       const ro = AppView.readOnly;
       const rows = [];
@@ -6226,8 +6235,9 @@ const AppView = {
       // Thank is on the page (the Addresses row); Explore and Share stay rows.
       for (let i = menu.length - 1; i >= 0; i -= 1) if (menu[i].icon === 'kudos') menu.splice(i, 1);
       menu.push(...rows);
-      if (gh && !menu.some((a) => a.githubPr)) {
-        menu.push({ label: PlatformI18n.t('changes:page.menu.viewPr'), githubPr: true, icon: 'github', title: gh, act: () => window.open(gh, '_blank', 'noopener') });
+      if (gh && !menu.some((a) => a.githubPr || a.codePr)) {
+        const code = AppView._prMenuItem(gh, PlatformI18n.t('changes:page.menu.viewPr'), PlatformI18n.t('changes:page.menu.viewCode'));
+        if (code) menu.push(code);
       }
       card.actions = (card.actions || []).filter((a) => a.explore == null && a.kudos == null);
     }
@@ -6249,7 +6259,9 @@ const AppView = {
         act: () => window.dispatchEvent(new CustomEvent('change-description-edit', { detail: Number(item.id) })),
       });
     }
-    if (gh && !body.changeId && !menu.some((a) => a.githubIssue)) {
+    // A request that is an issue on GitHub links there; a request's own page
+    // in Homeroom is this page.
+    if (gh && !body.changeId && !menu.some((a) => a.githubIssue) && AppView._linkKind(gh) === 'github') {
       menu.push({ label: PlatformI18n.t('changes:page.menu.openOnGitHub'), githubIssue: true, icon: 'github', act: () => window.open(gh, '_blank', 'noopener') });
     }
     card.rail.menuKey = AppView._registerCardMenu(`detail:${kind}:${item.id || item.number}`, menu);
@@ -7122,6 +7134,9 @@ const AppView = {
       testing: AppView._changeTestingView(item),
       shots: AppView._changeShotsView(kind, item),
       thanks: !AppView.readOnly && AppView._kudosOffered(item) && !['active', 'paused'].includes(item.status),
+      // Its code did not come across from GitHub (_codeMissing): the page
+      // says so in a notice above Votes and Testing (change-head.tsx).
+      codeMissing: kind !== 'gov' && AppView._codeMissing(item),
     };
   },
 
@@ -7267,7 +7282,9 @@ const AppView = {
     if (AppView.thresholdWasNote(item, maj)) {
       note.push(PlatformI18n.t('changes:page.votes.note.thresholdWas', { now: maj, was: parseInt(item.votes_required_at_promote, 10) }));
     }
-    if (reached && item.check_state !== 'passing' && item.check_state !== 'skipped') {
+    // Not for a change whose code is missing: testing is not what it waits
+    // on, and the page's notice says what is (_changeThreadView codeMissing).
+    if (reached && item.check_state !== 'passing' && item.check_state !== 'skipped' && !AppView._codeMissing(item)) {
       note.push(item.check_state === 'failing' ? PlatformI18n.t('changes:page.votes.note.liveOnceFixed') : PlatformI18n.t('changes:page.votes.note.liveOnceTested'));
     }
     const fill = Math.min(yes, maj);
@@ -8080,7 +8097,8 @@ const AppView = {
     retry: '↻',            // ↻
     checks: '✓',          // check results
     visuals: '🖼',    // 🖼 before/after captures
-    github: '↗',           // ↗ leaves the platform
+    github: '↗',           // ↗ leaves the platform, for GitHub
+    code: '‹›',            // ‹› the code, on Homeroom's own git host
     priority: '⚑',         // ⚑ the same flag the priority chip uses
     category: '🏷',   // 🏷
     assignee: '@',              // the assignee chip renders "@name"
@@ -8114,6 +8132,55 @@ const AppView = {
   // Two spaces, not one: the sheet has no leading column to align against.
   _menuSheetLabel(it) {
     return `${AppView._menuIconGlyph(it)}  ${it.label}`;
+  },
+
+  // ── What a link is: GitHub's, a Homeroom page, or the git host's code ──
+  //
+  // Repository, pull request, request and commit links all used to be
+  // GitHub's and said so. Since the move to Homeroom's own git host
+  // (docs/plans/github-independence-build.md) a request's `htmlUrl` is its
+  // own page here, a proposal's `pr_url` its change page (GitHub only for the
+  // platform's own repository and old rows), and an app's repository and
+  // commits are on the git host. frontend/src/lib/repo-link.js reads which
+  // from the address and is published as window.RepoLink before anything
+  // renders; every site below asks it instead of matching `github.com`
+  // itself. Without it (a sandbox that did not load it) the answer is null,
+  // and a site draws no link rather than guessing GitHub.
+  _repoLink() {
+    return (typeof window !== 'undefined' && window.RepoLink) || null;
+  },
+
+  _linkKind(url) {
+    const links = AppView._repoLink();
+    return links ? links.linkKind(url) : null;
+  },
+
+  // A ⋯ row to a change's code outside Homeroom: the caller's "View PR on
+  // GitHub" for a github.com pull request, its "View code" for the git
+  // host's. None for a Homeroom page, the change's own, which the card or
+  // page carrying the menu already opens.
+  _prMenuItem(url, githubLabel, codeLabel) {
+    const kind = AppView._linkKind(url);
+    if (kind !== 'github' && kind !== 'code') return null;
+    const github = kind === 'github';
+    return {
+      label: github ? githubLabel : codeLabel,
+      ...(github ? { githubPr: true } : { codePr: true }),
+      icon: github ? 'github' : 'code',
+      title: url,
+      act: () => window.open(url, '_blank', 'noopener'),
+    };
+  },
+
+  // The "PR#12" or "#5" on a card's meta line. A link while it leaves for
+  // GitHub or the git host; plain text when it is the Homeroom page the card
+  // itself opens (the change's page, the request's page), which a link would
+  // only open again.
+  _ownRefPart(url, s, cls) {
+    const kind = AppView._linkKind(url);
+    return (kind === 'github' || kind === 'code')
+      ? { t: 'link', href: String(url).trim(), s, cls }
+      : { t: 'span', s, cls: 'font-mono' };
   },
 
   // Hand one card to Share to… (#3660) by identity, plus its title to show.
@@ -8466,7 +8533,16 @@ const AppView = {
       const values = { title: title || PlatformI18n.t('changes:explore.seed.proposalUntitled'), author };
       lines.push(author ? PlatformI18n.t('changes:explore.seed.proposalBy', values) : PlatformI18n.t('changes:explore.seed.proposal', values));
     }
-    if (row.pr_url) lines.push(PlatformI18n.t('changes:explore.seed.prLink', { url: row.pr_url }));
+    // A pull request on GitHub is a PR link; a change kept in Homeroom is
+    // named by its own page, written out whole for the agent.
+    const prKind = row.pr_url ? AppView._linkKind(row.pr_url) : null;
+    if (prKind === 'homeroom') {
+      const route = AppView._repoLink().homeroomRoute(row.pr_url);
+      const origin = typeof location !== 'undefined' && location.origin ? location.origin : '';
+      lines.push(PlatformI18n.t('changes:explore.seed.changeLink', { url: /^https?:/i.test(row.pr_url) ? row.pr_url : `${origin}/${route}` }));
+    } else if (prKind) {
+      lines.push(PlatformI18n.t('changes:explore.seed.prLink', { url: row.pr_url }));
+    }
     const issues = Array.isArray(row.linked_issues)
       ? row.linked_issues.filter((n) => Number.isInteger(n))
       : [];
@@ -10332,6 +10408,7 @@ const AppView = {
     }
     AppView._renderMainPauseNotice();
     AppView._renderReleaseStallNotice();
+    AppView._renderCodePauseNotice();
     AppView._repaintDevBodyKeepingPosition();
     // The themes ride in behind the board's own data: the Workshop paints
     // first from what it has (every item under "Everything on the board")
@@ -10491,6 +10568,19 @@ const AppView = {
       canResume: paused && !AppView.readOnly
         && !!(typeof App !== 'undefined' && App.user && App.user.canAdminWrite),
       slug: (AppView.appData && AppView.appData.slug) || null,
+    });
+  },
+
+  // The "code changes are paused" banner (features/dev-board/
+  // code-pause-store.ts), from the app record's `codeChangesPaused`: the
+  // project's code is still on GitHub (the platform's own) and GitHub is
+  // paused, so no change to it can be proposed, pushed or merged here.
+  // Project state, said once above the cards. False for every other project.
+  _renderCodePauseNotice() {
+    const app = AppView.appData;
+    AppView._reactDevBoard()?.publishCodePause?.({
+      paused: !!(app && app.codeChangesPaused === true),
+      slug: (app && app.slug) || null,
     });
   },
 
@@ -10860,9 +10950,13 @@ const AppView = {
         // on the change's page, off the row. A change that cannot land
         // says so in its bar.
         if (s.data && s.data['data-status-tag'] === 'behind') continue;
+        // Code missing carries its sentence as the tag's tooltip: the label
+        // alone does not say what happened or who can bring it back.
         const tag = s.progress
           ? { label: s.label, tone: tagTone(s.cls), title: s.title, progress: s.progress }
-          : { label: s.label, tone: tagTone(s.cls) };
+          : (s.data && s.data['data-status-tag'] === 'code_missing'
+            ? { label: s.label, tone: tagTone(s.cls), title: s.title }
+            : { label: s.label, tone: tagTone(s.cls) });
         const short = shortOf(s, p);
         tags.push(short ? { ...tag, short } : tag);
       }
@@ -13086,6 +13180,9 @@ const AppView = {
         // The facts line's "your yes puts it live", and the end card's "Your
         // yes put it over the line": exactly one more Yes meets the rule.
         ...(x.kind === 'proposal' && AppView._yesPutsItLive(x.item) ? { lastYes: true } : {}),
+        // Its code did not come across from GitHub (_codeMissing): the facts
+        // line says "Code missing" (and no Yes puts it live, _yesPutsItLive).
+        ...(x.kind === 'proposal' && AppView._codeMissing(x.item) ? { codeMissing: true } : {}),
       });
     }
 
@@ -14827,8 +14924,10 @@ const AppView = {
 
     // "More open issues on GitHub" — the Issues column inherits the list
     // footer's link when the repo has more open issues than the fetch
-    // ceiling, so the cap is never silent.
-    const issuesFooter = (meta.truncatedList && meta.repoUrl)
+    // ceiling, so the cap is never silent. Only for a repository on GitHub:
+    // a project on the git host keeps its requests in Homeroom, where a
+    // board is a query and no `/issues` page exists.
+    const issuesFooter = (meta.truncatedList && meta.repoUrl && AppView._linkKind(meta.repoUrl) === 'github')
       ? { kind: 'github', href: `${meta.repoUrl.replace(/\.git$/, '').replace(/\/$/, '')}/issues` }
       : null;
 
@@ -15211,10 +15310,8 @@ const AppView = {
 
   _sessionCardMeta(s, subtitle) {
     const meta = [{ t: 'text', s: subtitle }];
-    if (s?.pr_url && s?.pr_number) meta.push({
-      t: 'link', href: s.pr_url, s: `PR#${s.pr_number}`,
-      cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400',
-    });
+    if (s?.pr_url && s?.pr_number) meta.push(AppView._ownRefPart(s.pr_url, `PR#${s.pr_number}`,
+      'font-mono text-violet-700 hover:underline dark:text-violet-400'));
     const f = s && s.failing_checks;
     if (!f || !f.total || !Array.isArray(f.rows) || !f.rows.length) return meta;
     const shown = f.rows.slice(0, 2).map((r) => r.name).filter(Boolean);
@@ -15282,7 +15379,8 @@ const AppView = {
 
   // Imported Underway rows are proposal-shaped, but deliberately have no
   // voting controls until promotion. Their menu therefore exposes only the
-  // metadata editors and permanent GitHub destination that survive the
+  // metadata editors and the permanent destination of their code (the pull
+  // request on GitHub, or the code on the git host) that survive the
   // lifecycle transition.
   _importedUnderwayMenuItems(s) {
     const items = AppView._attrMenuItems('proposal', s.id, s);
@@ -15296,15 +15394,10 @@ const AppView = {
           AppView._renderTopicHead();
         } });
     }
-    if (s.pr_url) {
-      items.push({
-        label: PlatformI18n.t('changes:session.menu.viewPr'),
-        githubPr: true,
-        icon: 'github',
-        title: s.pr_url,
-        act: () => window.open(s.pr_url, '_blank', 'noopener'),
-      });
-    }
+    const code = s.pr_url
+      ? AppView._prMenuItem(s.pr_url, PlatformI18n.t('changes:session.menu.viewPr'), PlatformI18n.t('changes:session.menu.viewCode'))
+      : null;
+    if (code) items.push(code);
     return items;
   },
 
@@ -15367,10 +15460,10 @@ const AppView = {
     }
 
     const menu = imported ? AppView._importedUnderwayMenuItems(s) : [];
-    if (!imported && s.pr_url) menu.push({
-      label: PlatformI18n.t('changes:session.menu.viewPr'), githubPr: true, icon: 'github', title: s.pr_url,
-      act: () => window.open(s.pr_url, '_blank', 'noopener'),
-    });
+    const code = !imported && s.pr_url
+      ? AppView._prMenuItem(s.pr_url, PlatformI18n.t('changes:session.menu.viewPr'), PlatformI18n.t('changes:session.menu.viewCode'))
+      : null;
+    if (code) menu.push(code);
     // The SECOND opt-in, offered only once the session is visible (there is
     // nowhere for a reader to reach an invisible session's chat from).
     if (shared && !imported) {
@@ -15498,10 +15591,10 @@ const AppView = {
     const editingTitle = canEditTitle && AppView._editingSessionTitle === Number(s.id);
     const preview = AppView._cardPreviewSpec(s, { kind: 'shared-session', sessionId: s.id });
     const menu = imported ? AppView._importedUnderwayMenuItems(s).filter((a) => !noNav || a.icon === 'archive') : [];
-    if (!imported && s.pr_url) menu.push({
-      label: PlatformI18n.t('changes:session.menu.viewPr'), githubPr: true, icon: 'github', title: s.pr_url,
-      act: () => window.open(s.pr_url, '_blank', 'noopener'),
-    });
+    const code = !imported && s.pr_url
+      ? AppView._prMenuItem(s.pr_url, PlatformI18n.t('changes:session.menu.viewPr'), PlatformI18n.t('changes:session.menu.viewCode'))
+      : null;
+    if (code) menu.push(code);
     menu.push({ label: PlatformI18n.t('changes:session.menu.viewChecks'), pageShortcut: true, icon: 'checks', act: () => AppView.openSessionChecks(s.id) });
     const recheck = AppView._recheckAction(s);
     if (recheck && !recheck.disabled) {
@@ -15531,10 +15624,8 @@ const AppView = {
         s: imported
           ? PlatformI18n.t(AppView.SHARED_IMPORT_LINE_IDS[(s.imported_pr_author ? 'author' : 'unknown') + (s.username ? 'Owner' : 'Someone')], { author: s.imported_pr_author, owner: s.username })
           : (s.username ? PlatformI18n.t('changes:session.shared.working', { owner: s.username }) : PlatformI18n.t('changes:session.shared.workingSomeone')),
-      }, ...(s.pr_url && s.pr_number ? [{
-        t: 'link', href: s.pr_url, s: `PR#${s.pr_number}`,
-        cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400',
-      }] : [])],
+      }, ...(s.pr_url && s.pr_number ? [AppView._ownRefPart(s.pr_url, `PR#${s.pr_number}`,
+        'font-mono text-violet-700 hover:underline dark:text-violet-400')] : [])],
       pill: null,
       linked: [],
       badges: [
@@ -15550,7 +15641,7 @@ const AppView = {
       // dense band renders reserved-and-empty.
       actions: [],
       actionPreview: null,
-      // A shared session with a PR exposes its GitHub destination here.
+      // A shared session with a PR exposes its code's destination here.
       rail: {
         menuKey: AppView._registerCardMenu(`session:${s.id}`, menu),
         chevron: !noNav,
@@ -16460,10 +16551,8 @@ const AppView = {
     // "Auto-title pending" were four badges competing for the four badge
     // slots with the signals that actually change what you'd do next; as
     // meta words they cost no slot and still read at a glance.
-    const meta = [{
-      t: 'link', href: pr.pr_url || '#', s: `PR#${pr.pr_number || pr.id}`,
-      cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400',
-    }];
+    const meta = [AppView._ownRefPart(pr.pr_url, `PR#${pr.pr_number || pr.id}`,
+      'font-mono text-violet-700 hover:underline dark:text-violet-400')];
     const provenance = AppView._proposalProvenanceWords(pr);
     if (provenance) meta.push({ t: 'text', s: provenance });
     if (pr.username) meta.push({ t: 'text', s: pr.username });
@@ -17137,6 +17226,8 @@ const AppView = {
     if (!pr || pr.status !== 'promoted' || pr.my_vote || pr.my_vote_uncounted === true || pr.my_vote_advisory === true || AppView.readOnly) return false;
     // A first version goes live without anybody's yes (D1).
     if (pr.first_version === true) return false;
+    // Nor does a change whose code is missing, until it is back.
+    if (AppView._codeMissing(pr)) return false;
     if (AppView._approveSolo(pr)) return true;
     if (pr.approval_policy === 'invited') return false;
     const st = AppView.statusPillState(pr);
@@ -17303,15 +17394,10 @@ const AppView = {
         type: 'proposal', sessionId: pr.id, title: pr.session_title || pr.pr_title || null,
       }),
     });
-    if (pr.pr_url) {
-      items.push({
-        label: PlatformI18n.t('changes:proposal.menu.viewPr'),
-        githubPr: true,
-        icon: 'github',
-        title: pr.pr_url,
-        act: () => window.open(pr.pr_url, '_blank', 'noopener'),
-      });
-    }
+    const code = pr.pr_url
+      ? AppView._prMenuItem(pr.pr_url, PlatformI18n.t('changes:proposal.menu.viewPr'), PlatformI18n.t('changes:proposal.menu.viewCode'))
+      : null;
+    if (code) items.push(code);
     // #4270: B7's "Don't approve" item is gone from here. Since #3977 a
     // Just-you change's Approve opens the vote picker, whose other side is
     // Don't approve with its line in the box; this was a second way to the
@@ -17328,7 +17414,11 @@ const AppView = {
     const imported = pr.source === 'imported';
 
     const meta = [];
-    if (pr.pr_url) meta.push({ href: pr.pr_url, parts: [PlatformI18n.t('changes:proposal.details.viewPr')] });
+    // The code, where it is kept outside Homeroom; none for the change's own
+    // page, which this is.
+    const prKind = pr.pr_url ? AppView._linkKind(pr.pr_url) : null;
+    if (prKind === 'github') meta.push({ href: pr.pr_url, parts: [PlatformI18n.t('changes:proposal.details.viewPr')] });
+    else if (prKind === 'code') meta.push({ href: pr.pr_url, parts: [PlatformI18n.t('changes:proposal.details.viewCode')] });
     meta.push({
       parts: AppView._boldLeadText(
         imported ? 'changes:proposal.details.importedBy' : 'changes:proposal.details.proposedBy',
@@ -21313,8 +21403,9 @@ const AppView = {
   },
 
   // #130/#194: reveal a PR / issue reference (from a chat chip or a
-  // notification) — opens the matching full-screen topic view. Falls
-  // back to GitHub for PR numbers that aren't resolvable locally.
+  // notification) — opens the matching full-screen topic view. A PR
+  // number that isn't resolvable locally opens on GitHub for a repository
+  // there, and as the change's own page (`dev/changes/<N>`) otherwise.
   revealInDrawer(type, number) {
     const n = parseInt(number, 10);
     if (!n || typeof App === 'undefined') return;
@@ -21336,11 +21427,14 @@ const AppView = {
       return;
     }
 
-    // GitHub fallback — same repo_url normalization as before.
     const repo = AppView.appData && AppView.appData.repo_url;
-    if (!repo) return;
-    const base = repo.replace(/\.git$/, '').replace(/\/$/, '');
-    window.open(`${base}/pull/${n}`, '_blank', 'noopener');
+    if (repo && AppView._linkKind(repo) === 'github') {
+      const base = repo.replace(/\.git$/, '').replace(/\/$/, '');
+      window.open(`${base}/pull/${n}`, '_blank', 'noopener');
+      return;
+    }
+    const slug = AppView.appData && AppView.appData.slug;
+    if (slug) window.location.hash = `#app/${encodeURIComponent(slug)}/dev/changes/${n}`;
   },
 
   // #16: undo a merged PR. A single click opens a revert PR (like
@@ -21475,13 +21569,14 @@ const AppView = {
   _issueCardModel(issue, opts) {
     const noNav = !!(opts && opts.noNav);
     const n = issue.number;
-    const href = issue.htmlUrl || '#';
     // ── Meta line ──
     // #N, the creator, and the facts that used to be badges: the ★ bounty
     // count and the auto-title marker. Both cost a badge slot each and
-    // neither changes what you'd do next, so they read as meta words.
+    // neither changes what you'd do next, so they read as meta words. The
+    // #N links out only to an issue on GitHub: a request's own page is
+    // where this card goes (_ownRefPart).
     const meta = [
-      { t: 'link', href, s: `#${n}`, cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400' },
+      AppView._ownRefPart(issue.htmlUrl, `#${n}`, 'font-mono text-violet-700 hover:underline dark:text-violet-400'),
     ];
     if (issue.created_by_username) meta.push({ t: 'text', s: issue.created_by_username });
     // How long ago it was asked, in the same "3h ago" form the Done
@@ -22153,7 +22248,9 @@ const AppView = {
       title: PlatformI18n.t('changes:issue.menu.shareTitle'),
       act: () => AppView._shareCardToMessages({ type: 'issue', issueNumber: n, title: issue.title || null }),
     });
-    if (issue.htmlUrl) {
+    // Only an issue on GitHub leaves: a request's own page in Homeroom is
+    // what this card (or page) already opens.
+    if (issue.htmlUrl && AppView._linkKind(issue.htmlUrl) === 'github') {
       items.push({
         label: PlatformI18n.t('changes:issue.menu.openOnGithub'),
         githubIssue: true,
@@ -22423,10 +22520,8 @@ const AppView = {
     // ── Meta line ──
     // The revert relationship reads here rather than as an action pill: on a
     // merged card it is a FACT about the change, not something to do.
-    const meta = [{
-      t: 'link', href: pr.pr_url || '#', s: `PR#${pr.pr_number || pr.id}`,
-      cls: 'font-mono text-emerald-700 hover:underline dark:text-emerald-400',
-    }];
+    const meta = [AppView._ownRefPart(pr.pr_url, `PR#${pr.pr_number || pr.id}`,
+      'font-mono text-emerald-700 hover:underline dark:text-emerald-400')];
     if (pr.username) meta.push({ t: 'text', s: pr.username });
     if (date) meta.push(date);
     if (pr.revert_of_session_id) {
@@ -22535,14 +22630,13 @@ const AppView = {
         title: stamp.title,
       }
       : null;
-    // GitHub link for the closed target, normalized like the kanban Issues
-    // footer's repo link.
-    const repo = (AppView.appData && AppView.appData.repo_url) || '';
-    const base = repo ? repo.replace(/\.git$/, '').replace(/\/$/, '') : '';
+    // The closed request's own page, in Homeroom: requests are Homeroom's
+    // rows for every project, whichever host its code is on.
+    const requestHref = AppView._repoLink()?.requestRoute(AppView.appData && AppView.appData.slug, issueN) || '';
     const meta = [{ t: 'text', s: PlatformI18n.t('changes:governance.done.kind') }];
     if (issueN) {
-      meta.push(base
-        ? { t: 'link', href: `${base}/issues/${issueN}`, s: `#${issueN}`, cls: 'font-mono text-emerald-700 hover:underline dark:text-emerald-400' }
+      meta.push(requestHref
+        ? { t: 'link', href: requestHref, s: `#${issueN}`, cls: 'font-mono text-emerald-700 hover:underline dark:text-emerald-400' }
         : { t: 'span', cls: 'font-mono', s: `#${issueN}` });
     }
     meta.push(date || { t: 'text', s: how });
@@ -23231,9 +23325,27 @@ const AppView = {
     return !!g && g.state === 'active';
   },
 
+  // A change whose code did not come across when Homeroom moved off GitHub:
+  // its branch is not on the git host (services/code-missing.js, the
+  // server's `code_missing`, derived on every read). Only while it is open.
+  _codeMissing(pr) {
+    const p = pr || {};
+    return p.code_missing === true && ['active', 'paused', 'promoted', 'merging'].includes(p.status);
+  },
+
   blockReasons(pr) {
     const p = pr || {};
     const out = [];
+    // Code missing is the one thing to say about such a change: every other
+    // reason (its checks, its conflicts, how far behind main it is) is about
+    // a head that is not there, so the card says this alone, in red.
+    if (AppView._codeMissing(p)) {
+      return [{
+        key: 'code_missing',
+        label: PlatformI18n.t('changes:badge.reason.codeMissing.label'),
+        detail: PlatformI18n.t('changes:badge.reason.codeMissing.detail'),
+      }];
+    }
     const fresh = AppView._freshnessOf(p);
     // Merge-pipeline conflicts: a real attempt failed and a human is needed.
     if (p.merge_conflict_state === 'failed') {
@@ -23595,6 +23707,15 @@ const AppView = {
     // A governance proposal has no branch, no staging build and no checks, so
     // none of this applies to it — the same guard statusPillState carries.
     if ((o.kind || 'proposal') === 'gov') return [];
+    // Its code is missing (_codeMissing): the one tag is that, and nothing
+    // is running on it, so no checks chip spins beside it.
+    if (AppView._codeMissing(p)) {
+      return AppView.blockReasons(p).map((r) => ({
+        t: 'chip', key: `tag-${r.key}`, cls: AppView.STATUS_TAG_CLS.blocking,
+        label: r.label, title: r.detail, meta: true,
+        data: { 'data-status-tag': r.key },
+      }));
+    }
     const out = [];
     const isOpenRow = p.status !== 'merged' && p.status !== 'merging';
     // Merge-conflict resolution: in flight, nobody need act, so it reads like
@@ -25453,27 +25574,15 @@ const AppView = {
     AppView._renderTopicHead();
   },
 
-  // #80: derive the GitHub issue URL for issue #N from a PR's html_url
-  // (https://github.com/<owner>/<repo>/pull/<prNumber>) by swapping the
-  // `/pull/<n>` segment for `/issues/<issueNumber>`. Returns '' when the
-  // PR url is missing or doesn't look like a GitHub PR url so callers can
-  // skip rendering a dead link.
-  issueUrlFromPrUrl(prUrl, issueNumber) {
-    if (!prUrl || !Number.isInteger(issueNumber) || issueNumber <= 0) return '';
-    const out = prUrl.replace(/\/pull\/\d+(?=$|[/?#])/, `/issues/${issueNumber}`);
-    // No substitution happened → not a recognizable PR url; bail rather
-    // than linking to a /pull/ page for an issue.
-    return out === prUrl ? '' : out;
-  },
-
-  // #80: "Closes #N" / "Closed #N" pills for the GitHub issues a PR closes.
-  // Reads `linked_issues` (Postgres INTEGER[], populated in #75 and written
-  // into the PR body as `Closes #N` by src/services/pr-metadata.js). Wording
-  // follows the canonical merge check used elsewhere: status === 'merged'
-  // is the only merged state, everything else ('promoted'/'merging'/'active'/
-  // 'paused') reads as still-open. One independently-clickable pill per
-  // issue, each opening the issue on GitHub in a new tab (#61). Renders
-  // nothing when there are no linked issues or no usable PR url.
+  // #80: "Closes #N" / "Closed #N" pills for the requests a change closes
+  // (closesPillSpecs, below). Reads `linked_issues` (Postgres INTEGER[],
+  // populated in #75 and written into the PR body as `Closes #N` by
+  // src/services/pr-metadata.js). Wording follows the canonical merge check
+  // used elsewhere: status === 'merged' is the only merged state, everything
+  // else ('promoted'/'merging'/'active'/'paused') reads as still-open. One
+  // independently-clickable pill per request. They used to open the issue on
+  // GitHub in a new tab (#61), derived from the PR's URL; a request is
+  // Homeroom's own row now, for every project, so each opens its page here.
   // ── "In progress" status on issue cards ──────────────────────────────
   //
   // An issue is in progress while ANY live signal exists: a live linked
@@ -25985,7 +26094,7 @@ const AppView = {
 
   // Mirror prMetadata.sanitizeIssueNumbers: drop anything that isn't a
   // positive integer, dedupe, sort ascending. Shared by the in-app chips
-  // above and the GitHub links below, which used to each carry a copy.
+  // above and the request links below, which used to each carry a copy.
   _sanitizeIssueNumbers(linkedIssues) {
     const raw = Array.isArray(linkedIssues) ? linkedIssues : [];
     const seen = new Set();
@@ -25998,13 +26107,15 @@ const AppView = {
     return nums;
   },
 
-  // The GitHub "Closes #N" links, as SPECS. The merged proposal DETAIL head
-  // uses these as explicit external links (the dev-chat session card opens
-  // its requests in-app since #3605);
-  // Board cards use issueChipSpecs so their linked issues stay in-platform.
+  // The "Closes #N" links, as SPECS. The merged proposal DETAIL head uses
+  // these as links to each request's page (they were GitHub issue links
+  // until requests moved into Homeroom; the dev-chat session card opens its
+  // requests in-app since #3605); Board cards use issueChipSpecs.
   closesPillSpecs(pr) {
     if (!pr || !pr.pr_url) return [];
     const merged = pr.status === 'merged';
+    const links = AppView._repoLink();
+    const slug = (AppView.appData && AppView.appData.slug) || pr.app_slug || '';
 
     // Match the PR-number link tint at each site: emerald for merged,
     // violet for open.
@@ -26013,12 +26124,12 @@ const AppView = {
       : 'dev-badge font-mono bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-400';
     const out = [];
     for (const n of AppView._sanitizeIssueNumbers(pr.linked_issues)) {
-      const href = AppView.issueUrlFromPrUrl(pr.pr_url, n);
+      const href = links ? links.requestRoute(slug, n) : '';
       if (!href) continue;
       out.push({
         t: 'issueLink', key: `closes:${n}`, n, href, cls,
         label: merged ? PlatformI18n.t('changes:chips.issue.closedLink', { number: n }) : PlatformI18n.t('changes:chips.issue.closesLink', { number: n }),
-        title: merged ? PlatformI18n.t('changes:chips.issue.closedTitle', { number: n }) : PlatformI18n.t('changes:chips.issue.closesTitle', { number: n }),
+        title: merged ? PlatformI18n.t('changes:chips.issue.closedRequestTitle', { number: n }) : PlatformI18n.t('changes:chips.issue.closesRequestTitle', { number: n }),
       });
     }
     return out;
@@ -26530,6 +26641,12 @@ const AppView = {
         return false;
       }
       AppView._seenEpoch.delete(sessionId);
+      // Its code did not come across from GitHub (services/code-missing.js):
+      // the vote is saved, and the voter hears it cannot go live yet. The
+      // server says so when it knows; the row's own flag says it otherwise.
+      if (data.codeMissing === true || AppView._codeMissing(pr) || AppView._codeMissing(live)) {
+        window.PlatformUI?.toast?.(PlatformI18n.t('changes:vote.toast.codeMissing'));
+      }
       // A first version's App tab must not ask this voter for the Yes they
       // just gave (_noteOwnVote), and every Needs you surface this page did
       // not cast the vote on hears that it is saved (#5463) — the epoch that
@@ -28654,21 +28771,13 @@ const AppView = {
     const data = e.data;
     if (!data || !data.id || data.__usernode_locale !== 'get') return;
 
-    // Only the app iframes this shell owns may ask — same source gate
-    // as the LLM consent family above.
-    const appIframe = document.getElementById('app-iframe');
-    const stagingIframe = document.getElementById('staging-iframe');
-    const fromApp = appIframe && e.source === appIframe.contentWindow;
-    const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
-    if (!fromApp && !fromStaging) return;
-
-    const locale = (typeof App !== 'undefined' && App.user) ? (App.user.locale || null) : null;
-    try {
-      e.source.postMessage(
-        { __usernode_locale: 'response', id: data.id, value: { locale } },
-        '*'
-      );
-    } catch {}
+    const frameId = AppView.ownedFrameFor(e.source);
+    if (frameId !== 'app-iframe' && frameId !== 'staging-iframe') return;
+    const bridge = AppView._bridgeRequest(e, frameId);
+    if (!bridge) return;
+    const locale = bridge.platformPreview ? null
+      : (typeof App !== 'undefined' ? App.user?.locale || null : null);
+    bridge.post({ __usernode_locale: 'response', id: data.id, value: { locale } });
   },
 
   // Push a locale change into any open app/staging iframe so the bridge
@@ -28679,14 +28788,12 @@ const AppView = {
   notifyLocaleChanged(locale) {
     ['app-iframe', 'staging-iframe'].forEach((id) => {
       const iframe = document.getElementById(id);
-      if (iframe && iframe.contentWindow) {
-        try {
-          iframe.contentWindow.postMessage(
-            { __usernode_locale: 'changed', locale: locale || null },
-            '*'
-          );
-        } catch {}
-      }
+      if (!iframe?.contentWindow) return;
+      try {
+        const origin = new URL(iframe.src, window.location.href).origin;
+        const bridge = AppView._bridgeRequest({ source: iframe.contentWindow, origin }, id);
+        bridge?.post({ __usernode_locale: 'changed', locale: bridge.platformPreview ? null : locale || null });
+      } catch {}
     });
   },
 
@@ -28958,9 +29065,8 @@ const AppView = {
 
   /**
    * The slug of the app running in `frameId`, or null when the shell cannot
-   * name it. `AppView.appData` is the App tab's record — it covers
-   * #app-iframe and the staging preview opened from that app's Dev screen,
-   * and is null on the landing screen, which has its own record above.
+   * name it. The mounted frame, Messages preview and landing viewer each
+   * keep their own identity. `appData` can describe an unrelated project.
    */
   appSlugForFrame(frameId) {
     if (frameId === 'app-viewer-frame') {
@@ -28969,7 +29075,39 @@ const AppView = {
       if (!rec || !frame || rec.frame !== frame) return null;
       return rec.slug || null;
     }
-    return (AppView.appData && AppView.appData.slug) || null;
+    if (frameId === 'staging-iframe') return AppView._stagingPreview?.slug || null;
+    if (frameId === 'app-iframe') return AppView._appFrame().slug() || null;
+    return null;
+  },
+
+  // A WindowProxy survives navigation. Bind privileged bridge work to the
+  // parent's frame/app record and its expected origin, then fence every
+  // reply and consent write after an await against that same document.
+  _bridgeRequest(e, frameId) {
+    const frame = document.getElementById(frameId);
+    if (!frame || frame.contentWindow !== e.source) return null;
+    const src = frame.src;
+    let frameUrl;
+    try { frameUrl = new URL(src, window.location.href); } catch { return null; }
+    const origin = frameUrl.origin;
+    if (origin === 'null' || e.origin !== origin) return null;
+    const slug = AppView.appSlugForFrame(frameId);
+    const userId = typeof App !== 'undefined' ? App.user?.id : null;
+    const preview = frameId === 'staging-iframe' ? AppView._stagingPreview : null;
+    const viewer = frameId === 'app-viewer-frame' ? AppView._viewerApp : null;
+    const platformPreview = frameId === 'staging-iframe' && (preview?.slug === 'usernode-2d5619'
+      || preview?.self_hosted || /^usernode-2d5619--s[0-9]+\./.test(frameUrl.hostname));
+    const current = () => document.getElementById(frameId) === frame
+      && frame.contentWindow === e.source && frame.src === src
+      && AppView.appSlugForFrame(frameId) === slug
+      && (typeof App !== 'undefined' ? App.user?.id : null) === userId
+      && (frameId !== 'staging-iframe' || AppView._stagingPreview === preview)
+      && (frameId !== 'app-viewer-frame' || AppView._viewerApp === viewer);
+    const post = value => {
+      if (!current()) return false;
+      try { e.source.postMessage(value, origin); return true; } catch { return false; }
+    };
+    return { slug, current, post, platformPreview };
   },
 
   // Last value posted per frame id, so an unchanged recompute posts
@@ -29250,12 +29388,13 @@ const AppView = {
     // and the landing viewer is in it because an app runs there too (#1909).
     const frameId = AppView.ownedFrameFor(e.source);
     if (!frameId) return;
+    const bridge = AppView._bridgeRequest(e, frameId);
+    if (!bridge) return;
 
     const reply = (value, error) => {
       try {
-        e.source.postMessage(
+        bridge.post(
           { __usernode_llm: 'response', id: data.id, value: value ?? null, error: error ?? null },
-          '*'
         );
       } catch {}
     };
@@ -29264,9 +29403,9 @@ const AppView = {
     // can decline to answer, too: the shell has RECOGNISED this request, so
     // every path from here owes the app a reply rather than the silence that
     // leaves it waiting out the bridge's 15s "there is no shell" timeout.
-    try { e.source.postMessage({ __usernode_llm: 'ack', id: data.id }, '*'); } catch {}
+    try { bridge.post({ __usernode_llm: 'ack', id: data.id }); } catch {}
 
-    const slug = AppView.appSlugForFrame(frameId);
+    const slug = bridge.slug;
     if (!slug) {
       reply(null, PlatformI18n.t('changes:bridge.appNotIdentified'));
       return;
@@ -29274,7 +29413,8 @@ const AppView = {
 
     let info;
     try {
-      const r = await fetch(`/api/apps/${slug}/llm-grant`, { credentials: 'same-origin' });
+      const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/llm-grant`, { credentials: 'same-origin',
+        headers: { 'X-Usernode-App-Bridge': 'isolated-v2' } });
       // The bootstrap is session-authenticated, and the landing viewer is the
       // one owned frame a SIGNED-OUT visitor can reach. Say so, rather than
       // reporting the sign-in wall as a failure the user can do nothing about.
@@ -29288,6 +29428,7 @@ const AppView = {
       return;
     }
 
+    if (!bridge.current()) return;
     const active = info.grant && info.grant.status === 'active';
 
     // Read-only usage meter (issue #655) — never opens the consent
@@ -29316,6 +29457,7 @@ const AppView = {
     }
 
     const decision = await AppView.showLlmConsentModal(info);
+    if (!bridge.current()) return;
     if (!decision) {
       reply({ granted: false, declined: true });
       return;
@@ -29416,12 +29558,13 @@ const AppView = {
     // said no" from "not available on this surface".
     const frameId = AppView.ownedFrameFor(e.source);
     if (!frameId) return;
+    const bridge = AppView._bridgeRequest(e, frameId);
+    if (!bridge) return;
 
     const reply = (value, error) => {
       try {
-        e.source.postMessage(
+        bridge.post(
           { __usernode_permission: 'response', id: data.id, value: value ?? null, error: error ?? null },
-          '*'
         );
       } catch {}
     };
@@ -29430,9 +29573,9 @@ const AppView = {
     // rather than the silence that leaves it waiting out the bridge's 15s
     // "there is no shell" timeout. The user may sit on the dialog for
     // minutes.
-    try { e.source.postMessage({ __usernode_permission: 'ack', id: data.id }, '*'); } catch {}
+    try { bridge.post({ __usernode_permission: 'ack', id: data.id }); } catch {}
 
-    const slug = AppView.appSlugForFrame(frameId);
+    const slug = bridge.slug;
     if (!slug) {
       reply(null, PlatformI18n.t('changes:bridge.appNotIdentified'));
       return;
@@ -29457,7 +29600,8 @@ const AppView = {
 
     let info;
     try {
-      const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/permissions`, { credentials: 'same-origin' });
+      const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/permissions`, { credentials: 'same-origin',
+        headers: { 'X-Usernode-App-Bridge': 'isolated-v2' } });
       // The bootstrap is session-authenticated, and the landing viewer is
       // the one owned frame a SIGNED-OUT visitor can reach. Say which it is.
       if (r.status === 401) throw new Error('signed-out');
@@ -29470,6 +29614,7 @@ const AppView = {
       return;
     }
 
+    if (!bridge.current()) return;
     const declared = (info.declared || []).map((d) => d.capability);
     const effective = info.effective || [];
 
@@ -29522,6 +29667,7 @@ const AppView = {
       needsReload: frameId === 'app-iframe' && !isActive,
       surfaced: frameId !== 'app-iframe',
     });
+    if (!bridge.current()) return;
     if (!decision) {
       reply({ capability, state: 'denied', active: false, reason: 'declined' });
       return;
@@ -29570,12 +29716,12 @@ const AppView = {
     const type = data.__usernode_storage;
     if (type !== 'upload' && type !== 'delete' && type !== 'get-usage') return;
 
-    const appIframe = document.getElementById('app-iframe');
-    const stagingIframe = document.getElementById('staging-iframe');
-    const fromApp = appIframe && e.source === appIframe.contentWindow;
-    const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
-    if (!fromApp && !fromStaging) return;
-    const slug = AppView.appData?.slug;
+    const frameId = AppView.ownedFrameFor(e.source);
+    if (frameId !== 'app-iframe' && frameId !== 'staging-iframe') return;
+    const bridge = AppView._bridgeRequest(e, frameId);
+    if (!bridge) return;
+    const fromStaging = frameId === 'staging-iframe';
+    const slug = bridge.slug;
     if (!slug) return;
 
     // `code` is the server's structured error code (file_too_large,
@@ -29583,18 +29729,17 @@ const AppView = {
     // the bridge can hand it to the app on the rejection (#5028).
     const reply = (value, error, code) => {
       try {
-        e.source.postMessage(
+        bridge.post(
           {
             __usernode_storage: 'response', id: data.id, value: value ?? null, error: error ?? null,
             code: typeof code === 'string' && code ? code : null,
           },
-          '*'
         );
       } catch {}
     };
     // Ack immediately so the bridge stops its "no shell here" timer —
     // a multi-MB upload POST can take a while on a slow link.
-    try { e.source.postMessage({ __usernode_storage: 'ack', id: data.id }, '*'); } catch {}
+    try { bridge.post({ __usernode_storage: 'ack', id: data.id }); } catch {}
 
     try {
       if (type === 'upload') {
@@ -29609,7 +29754,7 @@ const AppView = {
         const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/files?${params}`, {
           method: 'POST',
           credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/octet-stream' },
+          headers: { 'Content-Type': 'application/octet-stream', 'X-Usernode-App-Bridge': 'isolated-v2' },
           body: bytes,
         });
         const j = await r.json().catch(() => ({}));
@@ -29627,8 +29772,9 @@ const AppView = {
           reply(null, PlatformI18n.t('changes:bridge.fileNotFound'));
           return;
         }
-        const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/files/${fileId}`, {
+        const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/files/${fileId}?staging=${fromStaging ? '1' : '0'}`, {
           method: 'DELETE',
+          headers: { 'X-Usernode-App-Bridge': 'isolated-v2' },
           credentials: 'same-origin',
         });
         const j = await r.json().catch(() => ({}));
@@ -29641,7 +29787,8 @@ const AppView = {
       }
 
       // get-usage
-      const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/files/usage`, {
+      const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/files/usage?staging=${fromStaging ? '1' : '0'}`, {
+        headers: { 'X-Usernode-App-Bridge': 'isolated-v2' },
         credentials: 'same-origin',
       });
       const j = await r.json().catch(() => ({}));
@@ -29666,10 +29813,9 @@ const AppView = {
   // /api/app-platform/users/*, and this relay is the only way handle
   // lookup is exercisable in a PR preview.
   //
-  // The relay does NOT gate on AppView.appData?.slug the way the storage
-  // relay above does: these endpoints address the platform's user
-  // directory, not the app's own files, so there is no slug in the URL
-  // and nothing to scope by.
+  // These endpoints address the platform's user directory. The frame's
+  // identity still matters: platform previews must use their synthetic
+  // directory rather than this production relay.
 
   async handleDirectoryBridgeMessage(e) {
     const data = e.data;
@@ -29677,21 +29823,26 @@ const AppView = {
     const type = data.__usernode_directory;
     if (type !== 'lookup' && type !== 'search') return;
 
-    const appIframe = document.getElementById('app-iframe');
-    const stagingIframe = document.getElementById('staging-iframe');
-    const fromApp = appIframe && e.source === appIframe.contentWindow;
-    const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
-    if (!fromApp && !fromStaging) return;
+    const frameId = AppView.ownedFrameFor(e.source);
+    if (frameId !== 'app-iframe' && frameId !== 'staging-iframe') return;
+    const bridge = AppView._bridgeRequest(e, frameId);
+    if (!bridge || !bridge.slug) return;
 
     const reply = (value, error) => {
       try {
-        e.source.postMessage(
+        bridge.post(
           { __usernode_directory: 'response', id: data.id, value: value ?? null, error: error ?? null },
-          '*'
         );
       } catch {}
     };
-    try { e.source.postMessage({ __usernode_directory: 'ack', id: data.id }, '*'); } catch {}
+    try { bridge.post({ __usernode_directory: 'ack', id: data.id }); } catch {}
+
+    // The platform preview uses its synthetic directory; the parent cookie
+    // must not reintroduce the production handles its export removed.
+    if (bridge.platformPreview) {
+      reply(type === 'search' ? { users: [], has_more: false } : { found: false, user: null, ambiguous: false });
+      return;
+    }
 
     try {
       let url;
@@ -29713,7 +29864,8 @@ const AppView = {
         if (Number.isFinite(limit)) params.set('limit', String(limit));
         url = `/api/app-directory/users/search?${params}`;
       }
-      const r = await fetch(url, { credentials: 'same-origin' });
+      const r = await fetch(url, { credentials: 'same-origin',
+        headers: { 'X-Usernode-App-Bridge': 'isolated-v2' } });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
         reply(null, j.error || PlatformI18n.t('changes:bridge.directoryLookupFailed', { status: r.status }));

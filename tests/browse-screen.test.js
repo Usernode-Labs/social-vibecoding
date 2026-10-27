@@ -36,7 +36,9 @@ const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 // these tests read app-card.js's shared chip decision directly.
 const BROWSE_SRC = read('frontend/src/features/apps/browse.js')
   .replace(/^import .*;$/gm, '');
+const BROWSE_LIST_SRC = read('frontend/src/features/apps/browse-list.tsx');
 const APP_SRC = read('public/js/app.js');
+const APP_CSS = read('public/css/app.css');
 const INDEX = read('public/index.html');
 
 // Load home.js + browse.js into one context (Browse leans on Home) with a
@@ -106,6 +108,9 @@ function makeBrowse(opts = {}) {
       // The kit wrapper runs fn directly when the kit is absent; do the
       // same and record the animation type the level change asked for.
       transition: (fn, o) => { chrome.transitions.push(o?.type); fn(); },
+      // The kit's action sheet, only when a test hands one in: without it
+      // there is no sheet to ask with, as in a shell whose kit failed.
+      ...(opts.actionSheet ? { actionSheet: opts.actionSheet, hasKit: () => true } : {}),
     },
     // Only when a test hands one in: the default is a browser with no Web
     // Share API, which is what most desktops are.
@@ -1939,6 +1944,49 @@ test('leaving asks first, and a No leaves everything as it was', async () => {
   assert.deepEqual(fetchCalls[0].body, { joined: false });
 });
 
+test('the Joined view offers Leave beside Open, never to the creator or outside Joined (#5953)', async () => {
+  const { Browse, Home, fetchCalls, win, state } = makeBrowse({ user: { id: 7 } });
+  const theirs = app({ slug: 'theirs', name: 'Theirs', is_member: true, is_favorited: true, created_by: 3 });
+  const made = app({ slug: 'made', name: 'Made', is_member: true, is_favorited: true, created_by: 7 });
+  const fresh = app({ slug: 'fresh', name: 'Fresh' });
+  Home._apps = [theirs, made, fresh];
+  Browse._apps = [theirs, made, fresh];
+
+  Browse.setView('browse');
+  assert.equal(rowFor(state, 'theirs').canLeave, false, 'Browse keeps its one button: Open');
+  Browse.setView('joined');
+  assert.equal(rowFor(state, 'theirs').canLeave, true, 'a member who did not make it can leave');
+  assert.equal(rowFor(state, 'theirs').canOpen, true, 'and Open stays beside it');
+  assert.equal(rowFor(state, 'made').canLeave, false, 'the creator cannot leave what they started');
+
+  // Leave goes through setMembership, so it asks first and a No sends nothing.
+  const asked = [];
+  win.ConfirmModal = { show: async (o) => { asked.push(o); return false; } };
+  Browse.leaveRow(rowFor(state, 'theirs'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0].title, 'Leave Theirs?');
+  assert.equal(fetchCalls.length, 0);
+
+  win.ConfirmModal = { show: async () => true };
+  Browse.leaveRow(rowFor(state, 'theirs'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(fetchCalls[0], { url: '/api/apps/theirs/membership', method: 'POST', body: { joined: false } });
+  assert.equal(theirs.is_member, false);
+  assert.deepEqual(slugs(state), ['made'], 'the left app drops out of Joined');
+
+  // A row that cannot leave never sends anything.
+  Browse.leaveRow(rowFor(state, 'made'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(fetchCalls.length, 1);
+  assert.match(BROWSE_LIST_SRC, /data-action="leave"/);
+  assert.match(BROWSE_LIST_SRC, /\.browse-leave-btn/, 'the row click skips the button');
+  // On a phone the row is a grid that seats only what app.css names: Open and
+  // Leave go in one box that takes Open's cell, or Leave lands under the icon.
+  assert.match(BROWSE_LIST_SRC, /<span className="browse-row-actions [^"]*">\s*\{primary\}\s*\{leave\}/);
+  assert.match(APP_CSS, /\.browse-row > \.browse-row-actions \{ grid-column: 3; grid-row: 2; \}/);
+});
+
 test('leaving a private app says it costs access', async () => {
   const { Home, win } = makeBrowse();
   Home._apps = [app({ slug: 'priv', name: 'Priv', is_member: true, view_visibility: 'private' })];
@@ -1957,37 +2005,75 @@ test('with no confirm dialog there is no leaving', async () => {
   assert.equal(fetchCalls.length, 0);
 });
 
-test('unpinning a member app asks, once, whether to leave too', async () => {
-  const { Home, fetchCalls, win } = makeBrowse();
+// #5962: the question comes BEFORE anything moves, in one sheet, so Cancel
+// leaves Home exactly as it was. It used to be asked after the unpin had
+// landed, and the tile was gone whichever button was pressed.
+function sheetAnswering(choice, asked) {
+  return async (o) => {
+    asked.push(o);
+    return choice ? o.actions.find((a) => a.choice === choice) : null;
+  };
+}
+
+test('removing a member app asks first, and Cancel changes nothing (#5962)', async () => {
+  const asked = [];
+  const { Home, fetchCalls } = makeBrowse({ actionSheet: sheetAnswering(null, asked) });
   const mine = app({ slug: 'mine', name: 'Mine', is_member: true, is_favorited: true, created_by: 77 });
   Home._apps = [mine];
-  const asked = [];
-  win.ConfirmModal = { show: async (o) => { asked.push(o); return true; } };
   await Home.toggleAdded('mine', false, () => {});
-  assert.equal(asked.length, 1, 'one question, the leave question — not a second confirm after it');
-  assert.equal(asked[0].title, 'Leave Mine too?');
-  assert.equal(asked[0].cancelLabel, 'Stay a member');
-  assert.deepEqual(fetchCalls.map((c) => [c.url, c.body]), [
-    ['/api/apps/mine/favorite', { favorited: false }],
-    ['/api/apps/mine/membership', { joined: false }],
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0].title, 'Remove Mine from your Home screen? You can stay a member, or leave it too and stop proposing and voting on its changes.');
+  assert.deepEqual(JSON.parse(JSON.stringify(asked[0].actions.map((a) => [a.label, !!a.destructive]))), [
+    ['Remove from Home', false],
+    ['Remove and leave Mine', true],
   ]);
-  assert.equal(mine.is_member, false);
+  assert.equal(mine.is_favorited, true, 'the tile is still on Home');
+  assert.equal(mine.is_member, true);
+  assert.equal(fetchCalls.length, 0, 'nothing is sent');
 });
 
-test('"Stay a member" keeps the membership; nobody is asked who is not in it, or who started it', async () => {
-  const { Home, fetchCalls, win } = makeBrowse({ user: { id: 5 } });
+test('"Remove from Home" unpins and keeps the membership; "Remove and leave" does both (#5962)', async () => {
   const asked = [];
-  win.ConfirmModal = { show: async (o) => { asked.push(o); return false; } };
-  const stay = app({ slug: 'stay', is_member: true, is_favorited: true, created_by: 77 });
+  let answer = 'remove';
+  const { Home, fetchCalls } = makeBrowse({
+    actionSheet: async (o) => { asked.push(o); return o.actions.find((a) => a.choice === answer); },
+  });
+  const keep = app({ slug: 'keep', name: 'Keep', is_member: true, is_favorited: true, created_by: 77 });
+  const gone = app({ slug: 'gone', name: 'Gone', is_member: true, is_favorited: true, created_by: 77, view_visibility: 'private' });
+  Home._apps = [keep, gone];
+  await Home.toggleAdded('keep', false, () => {});
+  assert.equal(keep.is_favorited, false);
+  assert.equal(keep.is_member, true, 'still a member');
+  answer = 'leave';
+  await Home.toggleAdded('gone', false, () => {});
+  assert.match(asked[1].title, /ends your access until someone invites you back/, 'a private app says what leaving costs');
+  assert.deepEqual(fetchCalls.map((c) => [c.url, c.body]), [
+    ['/api/apps/keep/favorite', { favorited: false }],
+    ['/api/apps/gone/favorite', { favorited: false }],
+    ['/api/apps/gone/membership', { joined: false }],
+  ], 'one question each, and no second confirm before the leave');
+  assert.equal(gone.is_member, false);
+});
+
+test('nobody is asked who is not in it, who started it, or when there is no kit', async () => {
+  const asked = [];
+  const { Home, fetchCalls } = makeBrowse({ user: { id: 5 }, actionSheet: sheetAnswering('leave', asked) });
   const outsider = app({ slug: 'pinned', is_favorited: true });
   const mine = app({ slug: 'mine', is_member: true, is_favorited: true, created_by: 5 });
-  Home._apps = [stay, outsider, mine];
-  await Home.toggleAdded('stay', false, () => {});
-  assert.equal(stay.is_member, true, 'Stay a member');
+  Home._apps = [outsider, mine];
   await Home.toggleAdded('pinned', false, () => {});
   await Home.toggleAdded('mine', false, () => {});
-  assert.equal(asked.length, 1, 'only the member who could leave was asked');
+  assert.equal(asked.length, 0);
+  assert.equal(outsider.is_favorited, false);
+  assert.equal(mine.is_favorited, false, 'the creator\'s tile goes, unasked');
   assert.ok(fetchCalls.every((c) => !/membership/.test(c.url)));
+
+  const bare = makeBrowse();
+  const member = app({ slug: 'm', is_member: true, is_favorited: true, created_by: 77 });
+  bare.Home._apps = [member];
+  await bare.Home.toggleAdded('m', false, () => {});
+  assert.equal(member.is_favorited, false, 'no kit, no sheet: the unpin goes ahead');
+  assert.equal(member.is_member, true);
 });
 
 test('pinning marks the app joined at once, because the pin joins it', async () => {

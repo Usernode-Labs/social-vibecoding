@@ -57,6 +57,8 @@ function load({ session, github: gh = {}, reconcileImported = null }) {
   });
   stub(ids.github, {
     isEnabled: () => true,
+    // Homeroom can act on the repository's owner through the App.
+    canActOn: () => true,
     HeadMovedError,
     async mergePR(owner, repo, n, sha) { calls.merge.push(sha); return gh.mergePR ? gh.mergePR(sha, calls.merge.length) : { sha: 'squash' }; },
     async getPR() { calls.get++; if (gh.getPR) return gh.getPR(calls.get); return { state: 'open', merged: false }; },

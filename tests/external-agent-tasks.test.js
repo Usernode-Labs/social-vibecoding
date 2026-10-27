@@ -341,11 +341,10 @@ test('inspecting the fork is one PUBLIC read and never a write', async () => {
   });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].key, 'GET /repos/someuser/recipe-box');
-  // No user credential exists to send. The bot PAT may authenticate the read
-  // for rate-limit headroom, but nothing user-scoped is ever attached.
+  // No user credential exists to send, and the platform attaches none of its
+  // own: the read is anonymous (services/github.js publicApiHeaders).
   const auth = calls[0].headers.Authorization || calls[0].headers.authorization;
-  assert.ok(!auth || /^Bearer /.test(auth) === false || auth === `Bearer ${process.env.GITHUB_BOT_TOKEN}`,
-    'only the platform’s own public-read credential, if any');
+  assert.ok(!auth, 'the public read carries no credential');
 });
 
 test('a same-named repo that is not our fork is a named conflict, never touched', async () => {
@@ -1346,7 +1345,9 @@ const logger = require('../src/services/logger');
 function ghWithDiagnostics(overrides = {}) {
   return baseGh({
     describeGithubError: require('../src/services/github').describeGithubError,
-    credentialClass: () => (process.env.GITHUB_BOT_TOKEN ? 'pat' : 'installation'),
+    // The App's installation is the only credential (services/github.js
+    // "Who Homeroom is on GitHub").
+    credentialClass: () => 'installation',
     ...overrides,
   });
 }
@@ -1456,43 +1457,35 @@ test('a PR-open failure is never opaque again — it names status, field and a w
 });
 
 test('a failed create logs the diagnosis — status, request id, credential, scopes — and no token', async () => {
-  const realToken = process.env.GITHUB_BOT_TOKEN;
-  process.env.GITHUB_BOT_TOKEN = 'ghp_testtokenvaluethatmustnotbelogged00';
-  try {
-    const gh = ghWithDiagnostics({
-      findOpenPrByBranch: async () => null,
-      createPR: async () => { throw validationFailed({ scopes: 'repo, read:org' }); },
-      compareCommitAncestry: async () => { throw new Error('offline'); },
-    });
-    await withFetch({
-      ...PUSHED_BRANCH,
-      'GET /repos/someuser/recipe-box': {
-        status: 200, body: { fork: true, name: 'recipe-box', owner: { login: 'someuser' } },
-      },
-    }, [], () => svc.submitWork(
-      { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
-      { user: { id: 3 }, taskId: 31, importProposal: async () => ({ ok: true, body: {} }) }
-    ));
+  const gh = ghWithDiagnostics({
+    findOpenPrByBranch: async () => null,
+    createPR: async () => { throw validationFailed({ scopes: 'repo, read:org' }); },
+    compareCommitAncestry: async () => { throw new Error('offline'); },
+  });
+  await withFetch({
+    ...PUSHED_BRANCH,
+    'GET /repos/someuser/recipe-box': {
+      status: 200, body: { fork: true, name: 'recipe-box', owner: { login: 'someuser' } },
+    },
+  }, [], () => svc.submitWork(
+    { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+    { user: { id: 3 }, taskId: 31, importProposal: async () => ({ ok: true, body: {} }) }
+  ));
 
-    const entry = logger.tail(40).find((e) => /PR creation failed on both attempts/.test(e.message));
-    assert.ok(entry, 'the failure is logged at all');
-    assert.equal(entry.data.status, 422);
-    assert.equal(entry.data.requestId, 'ABCD:1234:5678');
-    assert.equal(entry.data.credential, 'pat');
-    // The header STRING — the one fact that turns "what can this token do?"
-    // from an argument into a fact, and the piece whose absence forced a
-    // production audit to even frame the question.
-    assert.equal(entry.data.oauthScopes, 'repo, read:org');
-    assert.equal(entry.data.headRepoSent, 'someuser/recipe-box');
+  const entry = logger.tail(40).find((e) => /PR creation failed on both attempts/.test(e.message));
+  assert.ok(entry, 'the failure is logged at all');
+  assert.equal(entry.data.status, 422);
+  assert.equal(entry.data.requestId, 'ABCD:1234:5678');
+  assert.equal(entry.data.credential, 'installation');
+  // The header STRING — the one fact that turns "what can this token do?"
+  // from an argument into a fact, and the piece whose absence forced a
+  // production audit to even frame the question.
+  assert.equal(entry.data.oauthScopes, 'repo, read:org');
+  assert.equal(entry.data.headRepoSent, 'someuser/recipe-box');
 
-    // Never the token itself, on any path.
-    const serialized = JSON.stringify(entry);
-    assert.ok(!serialized.includes('testtokenvaluethatmustnotbelogged'),
-      'no part of the bot token reaches a log payload');
-  } finally {
-    if (realToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = realToken;
-  }
+  // Never a token itself, on any path: the class of credential, not one.
+  const serialized = JSON.stringify(entry);
+  assert.doesNotMatch(serialized, /gh[pousr]_[A-Za-z0-9]/, 'no token reaches a log payload');
 });
 
 test('describeGithubError carries the scope header and never invents one', () => {
@@ -1646,28 +1639,21 @@ test('a mirror the platform wrote skips the PR-level owner check — a named PR 
   assert.doesNotMatch(prBranch, /platformOwnedHead =/);
 });
 
-test('the mirror and patch helpers prefer the bot PAT and only then an installation token', async () => {
-  // Not cosmetic: conflict-resolver records that the installation path
-  // THROWS for the self-app's owner, which has no installation at all. An
-  // installation-first helper would break on the platform's own app and
-  // nowhere else.
+test('the mirror and patch helpers write with the App\'s installation token, never the bot token', async () => {
+  // The bot account behind GITHUB_BOT_TOKEN was suspended (25 Oct 2026) and
+  // its token is never sent again (services/github.js "Who Homeroom is on
+  // GitHub"): whatever the environment holds, the installation answers.
   const headSvc = require('../src/services/external-agent-head');
   const github = require('../src/services/github');
   const realToken = process.env.GITHUB_BOT_TOKEN;
   const realInstall = github.getInstallationToken;
-  let installationCalls = 0;
-  github.getInstallationToken = async () => { installationCalls += 1; return 'ghs_installationtoken'; };
+  const asked = [];
+  github.getInstallationToken = async (owner) => { asked.push(owner); return 'ghs_installationtoken'; };
   try {
     process.env.GITHUB_BOT_TOKEN = 'ghp_thepat';
-    const withPat = await headSvc.resolveWriteCredential('usernode-bot');
-    assert.equal(withPat.source, 'pat');
-    assert.equal(withPat.token, 'ghp_thepat');
-    assert.equal(installationCalls, 0, 'the installation path is not even consulted');
-
-    delete process.env.GITHUB_BOT_TOKEN;
-    const withApp = await headSvc.resolveWriteCredential('usernode-bot');
-    assert.equal(withApp.source, 'installation');
-    assert.equal(installationCalls, 1);
+    const credential = await headSvc.resolveWriteCredential('Usernode-Labs');
+    assert.deepEqual(credential, { token: 'ghs_installationtoken', source: 'installation' });
+    assert.deepEqual(asked, ['Usernode-Labs']);
   } finally {
     github.getInstallationToken = realInstall;
     if (realToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
@@ -1840,17 +1826,18 @@ async function applyToLocalApp(app, patch, taskId) {
   const patchSvc = require('../src/services/external-agent-patch');
   const headSvc = require('../src/services/external-agent-head');
   const realRemote = headSvc.authenticatedRemote;
-  const realToken = process.env.GITHUB_BOT_TOKEN;
+  // The write credential: the GitHub App's installation token (services/github.js).
+  const githubSvc = require('../src/services/github');
+  const realInstallationToken = githubSvc.getInstallationToken;
   headSvc.authenticatedRemote = () => `file://${app.bare}`;
-  process.env.GITHUB_BOT_TOKEN = 'local-test-token';
+  githubSvc.getInstallationToken = async () => 'local-test-token';
   try {
     return await patchSvc.applyPatch({
       owner: 'usernode-bot', repo: 'recipe-box', patch, baseSha: app.base, userId: 3, taskId,
     });
   } finally {
     headSvc.authenticatedRemote = realRemote;
-    if (realToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = realToken;
+    githubSvc.getInstallationToken = realInstallationToken;
   }
 }
 
@@ -1928,7 +1915,9 @@ test('a patch lands ON an existing proposal branch under a lease, and a moved br
   const headSvc = require('../src/services/external-agent-head');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-patch-onto-'));
   const realRemote = headSvc.authenticatedRemote;
-  const realToken = process.env.GITHUB_BOT_TOKEN;
+  // The write credential: the GitHub App's installation token (services/github.js).
+  const githubSvc = require('../src/services/github');
+  const realInstallationToken = githubSvc.getInstallationToken;
   try {
     const work = path.join(root, 'work');
     const bare = path.join(root, 'app.git');
@@ -1948,7 +1937,7 @@ test('a patch lands ON an existing proposal branch under a lease, and a moved br
     const patch = gitIn(work, ['format-patch', '--stdout', `${base}..HEAD`]);
 
     headSvc.authenticatedRemote = () => `file://${bare}`;
-    process.env.GITHUB_BOT_TOKEN = 'local-test-token';
+    githubSvc.getInstallationToken = async () => 'local-test-token';
     const refsBefore = gitIn(bare, ['for-each-ref', '--format=%(refname)']);
     const landed = await patchSvc.applyPatch({
       owner: 'usernode-bot', repo: 'recipe-box', patch, baseSha: base, userId: 3, taskId: 44,
@@ -1989,8 +1978,7 @@ test('a patch lands ON an existing proposal branch under a lease, and a moved br
     assert.equal(bad.code, 'invalid_request');
   } finally {
     headSvc.authenticatedRemote = realRemote;
-    if (realToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = realToken;
+    githubSvc.getInstallationToken = realInstallationToken;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

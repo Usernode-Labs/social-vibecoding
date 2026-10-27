@@ -211,7 +211,7 @@ async function addTask(pool, {
   if (suite.frozen_at) return httpError(409, 'The suite is frozen: make a new version to add tasks');
   const { rows: [app] } = await pool.query('SELECT id, slug, name, repo_url FROM apps WHERE slug = $1', [String(appSlug || '')]);
   if (!app) return httpError(404, 'App not found');
-  if (!require('../homeroom-bot').parseRepo(app.repo_url)) return httpError(409, `${app.slug} has no GitHub repository`);
+  if (!require('../homeroom-bot').parseRepo(app.repo_url)) return httpError(409, `${app.slug} has no repository`);
   let raw = { appName, brief, template, description, sha };
   if (kind === 'capture' && (!String(brief || '').trim() || !String(appName || '').trim())) {
     const paired = await pairedInput(pool, suite.id, app.id);

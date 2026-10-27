@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // React bundle the dependency is explicit (#1082 chunk E).
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { linkAttrs } from '../../lib/repo-link.js';
 
 // Maintenance campaigns section of the admin console (#860, #853) — the one
 // block on the retired standalone /admin page that the console never picked
@@ -217,13 +218,16 @@ function AppRow({
   const showRecheck = write && app.state === 'pr_open' && app.sessionId
     && (app.checkState === 'failing' || app.checkState === 'error');
 
+  // A change kept in Homeroom opens its page here; a pull request on GitHub
+  // in a new tab (lib/repo-link.js).
+  const prLink = app.prUrl ? linkAttrs(app.prUrl) : null;
   return (
     <li className="p-2 rounded bg-white dark:bg-zinc-900">
       <div className="flex items-center justify-between gap-3">
         <span className="font-mono text-sm truncate">{app.slug}</span>
         <span className="flex items-center gap-2">
-          {app.prUrl ? (
-            <a href={app.prUrl} target="_blank" rel="noopener"
+          {prLink ? (
+            <a href={prLink.href} target={prLink.target} rel={prLink.rel}
               className="text-violet-700 dark:text-violet-400 hover:underline text-xs">
               {`PR #${app.prNumber || '?'}`}
             </a>

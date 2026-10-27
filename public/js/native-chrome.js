@@ -2035,6 +2035,13 @@
     statusBarToneFor(state) {
       const s = state || {};
       if (s.previewFullscreen === true || s.compareOpen === true) return 'dark';
+      // iPhone Duo: the clock is in the column of chrome down the screen's
+      // edge, over the wallpaper, not over the header or the app, which both
+      // stop at it (app.css, THE SIDE STRIP). So neither's colour is the
+      // ground there, and white glyphs from a navy community bar sat on the
+      // pale wallpaper where nobody could read them. The two overlays above
+      // do run under the column, and keep their dark.
+      if (s.sideStrip === true) return null;
       // Polish board #6: black clock and battery on the navy community bar.
       if (s.communityTint === true) return 'dark';
       return s.appTone === 'dark' || s.appTone === 'light' ? s.appTone : null;
@@ -2046,7 +2053,7 @@
     // mid-page, and under a session's chrome the platform header is what
     // the status bar is over.
     _statusBarToneState() {
-      const state = { previewFullscreen: false, compareOpen: false, communityTint: false, appTone: null };
+      const state = { previewFullscreen: false, compareOpen: false, communityTint: false, appTone: null, sideStrip: false };
       try {
         const shown = (el) => !!el && !el.classList.contains('hidden');
         const preview = document.getElementById('staging-overlay');
@@ -2056,6 +2063,7 @@
         state.compareOpen = shown(document.getElementById('visual-compare-overlay'));
         state.communityTint = document.documentElement.getAttribute('data-community-tint') !== null;
         state.appTone = document.documentElement.getAttribute('data-app-tone');
+        state.sideStrip = document.documentElement.getAttribute('data-side-strip') !== null;
       } catch (_) { /* no document to read: the theme's bar */ }
       return state;
     },
@@ -2146,7 +2154,7 @@
           NativeChrome.publishStatusBarTone();
         });
         observer.observe(document.documentElement,
-          { attributes: true, attributeFilter: ['data-app-tone', 'data-community-tint'] });
+          { attributes: true, attributeFilter: ['data-app-tone', 'data-community-tint', 'data-side-strip'] });
         // Both overlays are in the shell's static markup ahead of this
         // script, and their islands never unmount (the staging one holds
         // the preview iframe, whose identity is pinned).
@@ -2181,7 +2189,11 @@
     //     failed), so the challenge art is there when the cover lifts.
     // …and, inside the app, `env(safe-area-inset-top)` is no longer 0. The
     // web view can lay the page out before it knows the inset, which drew
-    // the header under the clock; the cover stays until it does.
+    // the header under the clock; the cover stays until it does. On an
+    // iPhone Duo's cover the clock is in a column down the right edge and
+    // the top inset IS 0, for good (the right one is 84px), so a side inset
+    // says the same thing: without it every cold launch there held the
+    // cover to the cap.
     //
     // Then it waits for the next paint (two animation frames), so what the
     // app fades to is on screen, and calls `shellPainted` once for this
@@ -2236,19 +2248,36 @@
 
     // `env(safe-area-inset-top)` as the page resolves it now, off a probe on
     // <html> (the body is React's to hydrate, so nothing is added there).
+    // The same probe carries the two side insets, for _safeSideInset.
+    _insetProbeStyle(doc, win) {
+      let probe = NativeChrome._insetProbe;
+      if (!probe) {
+        probe = doc.createElement('div');
+        probe.setAttribute('aria-hidden', 'true');
+        probe.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;'
+          + 'visibility:hidden;pointer-events:none;'
+          + 'padding-top:env(safe-area-inset-top,0px);'
+          + 'padding-left:env(safe-area-inset-left,0px);'
+          + 'padding-right:env(safe-area-inset-right,0px)';
+        doc.documentElement.appendChild(probe);
+        NativeChrome._insetProbe = probe;
+      }
+      return win.getComputedStyle(probe);
+    },
+
     _safeTopInset(doc, win) {
       try {
-        let probe = NativeChrome._insetProbe;
-        if (!probe) {
-          probe = doc.createElement('div');
-          probe.setAttribute('aria-hidden', 'true');
-          probe.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;'
-            + 'visibility:hidden;pointer-events:none;'
-            + 'padding-top:env(safe-area-inset-top,0px)';
-          doc.documentElement.appendChild(probe);
-          NativeChrome._insetProbe = probe;
-        }
-        return parseFloat(win.getComputedStyle(probe).paddingTop) || 0;
+        return parseFloat(NativeChrome._insetProbeStyle(doc, win).paddingTop) || 0;
+      } catch (_) {
+        return 0;
+      }
+    },
+
+    // The wider of the two side insets: the Duo's column of chrome.
+    _safeSideInset(doc, win) {
+      try {
+        const cs = NativeChrome._insetProbeStyle(doc, win);
+        return Math.max(parseFloat(cs.paddingLeft) || 0, parseFloat(cs.paddingRight) || 0);
       } catch (_) {
         return 0;
       }
@@ -2265,7 +2294,7 @@
     shellPaintedDue(state) {
       const s = state || {};
       if (s.elapsed != null && s.elapsed >= NativeChrome._SHELL_PAINTED_CAP_MS) return 'cap';
-      if (s.drawn === true && Number(s.insetTop) > 0) return 'drawn';
+      if (s.drawn === true && (Number(s.insetTop) > 0 || Number(s.insetSide) > 0)) return 'drawn';
       return null;
     },
 
@@ -2339,6 +2368,7 @@
           elapsed: dcl == null ? null : performance.now() - dcl,
           drawn: NativeChrome.firstScreenDrawn(document, window),
           insetTop: NativeChrome._safeTopInset(document, window),
+          insetSide: NativeChrome._safeSideInset(document, window),
         });
         if (due === 'cap') { NativeChrome._sendShellPainted('cap'); return; }
         if (due === 'drawn') { NativeChrome._afterNextPaint(() => NativeChrome._sendShellPainted('drawn')); return; }

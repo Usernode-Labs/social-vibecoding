@@ -1,4 +1,9 @@
-FROM node:22-bookworm-slim
+FROM node:22.23.4-bookworm-slim
+# Pin npm and replace its affected Undici bundle until npm ships the patch.
+RUN npm install --global npm@11.21.1 undici@6.29.1 \
+  && rm -rf /usr/local/lib/node_modules/npm/node_modules/undici \
+  && mv /usr/local/lib/node_modules/undici /usr/local/lib/node_modules/npm/node_modules/undici \
+  && npm cache clean --force
 
 # Distro Chromium + ffmpeg + fonts is the smallest reliable combo for
 # headless capture: Playwright's official image is ~2 GB and Alpine is
@@ -11,7 +16,10 @@ FROM node:22-bookworm-slim
 # platform sets its text in the reader's system face, which this image does
 # not have, and the Liberation/DejaVu fallback made every capture look like
 # a different product from the one on a phone.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# The base image's own packages are upgraded first, as in worker/Dockerfile
+# (OpenSSL CVE-2026-84782, 26 Oct 2026).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+  && apt-get install -y --no-install-recommends \
     chromium ffmpeg ca-certificates \
     fonts-inter fonts-liberation fonts-noto-color-emoji \
   && rm -rf /var/lib/apt/lists/*
@@ -22,7 +30,9 @@ WORKDIR /app
 
 # puppeteer-core only — the browser comes from the distro package above,
 # so no Chromium download at npm-install time.
-RUN npm install puppeteer-core@^23 \
+COPY capture/package.json ./
+# Current browser client uses patched Zod 4; retain the FTP parser fix.
+RUN npm install --omit=dev \
   && chown -R node:node /app
 
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium

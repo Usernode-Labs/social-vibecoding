@@ -403,13 +403,25 @@
     "text": "That's everything for now",
     "description": "Quiet line at the end of the new Needs you feed (an experiment), under a check mark, once every waiting change has been shown."
   },
-  "review.end.skipped_one": {
-    "text": "You skipped 1, and it's still in Needs you",
-    "description": "Second quiet line at the end of the new Needs you run (an experiment), under \"That's everything for now\", when the person skipped one change without voting on it. The change keeps waiting."
+  "review.end.throughAll": {
+    "text": "You've been through them all",
+    "description": "Title at the end of the new Needs you run (an experiment) when the person skipped some changes without voting, so not everything is done. Shown over a small stack of the skipped changes."
   },
-  "review.end.skipped_other": {
-    "text": "You skipped {{count}}, and they're still in Needs you",
-    "description": "Second quiet line at the end of the new Needs you run (an experiment), when the person skipped several changes without voting on them. {{count}} is how many. They keep waiting."
+  "review.end.waiting_one": {
+    "text": "1 is still waiting for your vote.",
+    "description": "Line under \"You've been through them all\" at the end of the new Needs you run (an experiment), when the person skipped one change without voting."
+  },
+  "review.end.waiting_other": {
+    "text": "{{count}} are still waiting for your vote.",
+    "description": "Line under \"You've been through them all\" at the end of the new Needs you run (an experiment), when the person skipped several changes without voting. {{count}} is how many."
+  },
+  "review.end.again_one": {
+    "text": "Look at it again",
+    "description": "Main button at the end of the new Needs you run (an experiment) when one change was skipped: opens that change again so the person can vote."
+  },
+  "review.end.again_other": {
+    "text": "Look at the {{count}} again",
+    "description": "Main button at the end of the new Needs you run (an experiment) when several changes were skipped: goes through them again so the person can vote. {{count}} is how many."
   },
   "review.thumbs.label": {
     "text": "Screens",
@@ -471,10 +483,6 @@
     "text": "Close",
     "description": "Accessible name of the small handle at the top of the vote sheet while it is open: tapping it folds the sheet back."
   },
-  "review.sheet.backToHelp": {
-    "text": "Back to help",
-    "description": "Accessible name of the back button beside a help page's title in the vote sheet (Ask privately, Discussion, Try it, About)."
-  },
   "review.vote.yes": {
     "text": "Yes",
     "description": "Button in the vote sheet on a change's page: vote for the change going live."
@@ -491,57 +499,13 @@
     "text": "Don't approve",
     "description": "No button in the vote sheet on a change to a project that is just yours."
   },
-  "review.unsure.line": {
-    "text": "Your vote counts once. If most members say yes, it goes live for everyone.",
-    "description": "Short line in the vote sheet's help, under Yes and No, saying how a change is decided."
+  "review.vote.skip": {
+    "text": "Skip",
+    "description": "Button beside the Yes | No pair at the foot of a change's page in the new Needs you run (an experiment). It moves on to the next change at once without a vote; nothing is recorded and the change keeps waiting in Needs you. After a vote the same place shows Next. One word."
   },
-  "review.unsure.skip": {
-    "text": "Skip for now",
-    "description": "Button at the foot of the vote sheet's help (new Needs you flow, an experiment): moves on to the next change without voting. The skipped change keeps waiting in Needs you."
-  },
-  "review.unsure.label": {
-    "text": "Help with this change",
-    "description": "Accessible name of the list of help rows in the vote sheet (Ask privately, Discussion, Try it, About)."
-  },
-  "review.unsure.ask.title": {
-    "text": "Ask privately",
-    "description": "Help row in the vote sheet, and the title of its page: ask questions about the change that only you see."
-  },
-  "review.unsure.ask.line": {
-    "text": "Only you see the answers",
-    "description": "Second line of the Ask privately help row in the vote sheet."
-  },
-  "review.unsure.talk.title": {
-    "text": "Discussion",
-    "description": "Help row in the vote sheet, and the title of its page: the change's conversation."
-  },
-  "review.unsure.talk.line": {
-    "text": "What others said about it",
-    "description": "Second line of the Discussion help row in the vote sheet."
-  },
-  "review.unsure.try.title": {
-    "text": "Try it",
-    "description": "Help row in the vote sheet, and the title of its page: open a live copy with this change."
-  },
-  "review.unsure.try.line": {
-    "text": "A live copy with this change",
-    "description": "Second line of the Try it help row in the vote sheet, when the change has a live preview."
-  },
-  "review.unsure.try.none": {
-    "text": "No live copy right now",
-    "description": "Second line of the Try it help row in the vote sheet, when the change has no live preview at the moment."
-  },
-  "review.unsure.about.title": {
-    "text": "About this change",
-    "description": "Help row in the vote sheet, and the title of its page: what the change does, who made it, and how deciding works."
-  },
-  "review.unsure.about.line": {
-    "text": "What it does, who made it",
-    "description": "Second line of the About this change help row in the vote sheet."
-  },
-  "review.unsure.page.line": {
-    "text": "Its whole page in the project",
-    "description": "Second line of the \"Open the change page\" row in the vote sheet's help (new Needs you flow, an experiment): the row leaves the run for the change's own page in its project."
+  "review.vote.skipLabel": {
+    "text": "Skip this change for now",
+    "description": "Screen-reader name of the Skip button beside the Yes | No pair in the new Needs you run (an experiment). It moves on without a vote; the change keeps waiting in Needs you."
   },
   "review.no.placeholder": {
     "text": "One line for {{name}}",
@@ -615,6 +579,26 @@
     "text": "Hide what this change does",
     "description": "Accessible name of the same button while the change's full description is open (new Needs you flow, an experiment): folds it away."
   },
+  "review.desc.by": {
+    "text": "Made by {{name}}",
+    "description": "Small line under a change's description in the card that opens from the bar of the new Needs you run (an experiment). {{name}} is the person who made the change."
+  },
+  "review.help.label": {
+    "text": "Help with this change",
+    "description": "Screen-reader name of the help rows (Ask privately, Discussion, Try it) at the foot of the card that opens from the bar of the new Needs you run (an experiment)."
+  },
+  "review.help.ask": {
+    "text": "Ask privately",
+    "description": "Help row in the card that opens from the bar of the new Needs you run (an experiment). Opens a private question to the AI about this change; only the person sees the answers."
+  },
+  "review.help.talk": {
+    "text": "Discussion",
+    "description": "Help row in the card that opens from the bar of the new Needs you run (an experiment). Opens the change's discussion thread: what others said about it."
+  },
+  "review.help.try": {
+    "text": "Try it",
+    "description": "Help row in the card that opens from the bar of the new Needs you run (an experiment). Opens a live copy of the app with this change, when one is running."
+  },
   "review.back.label": {
     "text": "Back to {{place}}",
     "description": "Accessible name of the back control at the top of the new Needs you flow (an experiment). {{place}} is the place it goes back to: all of the person's communities, or the project's name."
@@ -682,34 +666,6 @@
   "review.try.none": {
     "text": "There's no live copy of this change right now. Its page may be able to start one.",
     "description": "Line on the Try it page of the vote sheet when the change has no live preview."
-  },
-  "review.about.what": {
-    "text": "What it does",
-    "description": "Small heading on the About this change page of the vote sheet, over the change's summary."
-  },
-  "review.about.who": {
-    "text": "Who and when",
-    "description": "Small heading on the About this change page of the vote sheet, over who made it and where."
-  },
-  "review.about.builtBy": {
-    "text": "Made by {{name}}",
-    "description": "Row on the About this change page. {{name}} is the username of the person who made the change."
-  },
-  "review.about.inApp": {
-    "text": "In {{app}}",
-    "description": "Row on the About this change page: the project the change is for. {{app}} is its name."
-  },
-  "review.about.number": {
-    "text": "Change #{{number}}",
-    "description": "Small line under the project row on the About this change page. {{number}} is the change's number."
-  },
-  "review.about.deciding": {
-    "text": "How deciding works",
-    "description": "Small heading on the About this change page of the vote sheet."
-  },
-  "review.about.decidingLine": {
-    "text": "Each member votes once and can change their vote while voting is open. If most say yes, the change goes live for everyone.",
-    "description": "Paragraph on the About this change page explaining how a change is decided."
   },
   "review.more.open": {
     "text": "Open the change page",

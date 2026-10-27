@@ -119,6 +119,7 @@ function tierList(id, { plural, one, example, want, title, change }) {
       '**The group\'s ranking**: the same board, with every item in the tier its average lands in (a tie goes up). One tap switches between the two.',
       `**Want to ${want}**: a row below F for ${plural} you have not got to yet. It counts toward no tier, and the group's board shows how many people want to ${want}, for each one.`,
       `**Who ranked it what**: tap any of the ${plural}, on either board, to see the group's tier and the tier each person gave it, live as people rank.`,
+      '**Who else is here**: a line under the title names the people who have the tier list open right now.',
     ]),
     tables: '`tier_items` and `tier_votes`',
     tests: Object.freeze([
@@ -135,6 +136,7 @@ function tierList(id, { plural, one, example, want, title, change }) {
       { name: 'The board switches to the group\'s ranking', path: '/', expectSelector: '#view-toggle button[data-view="group"]' },
       { name: 'Below F, a Want to row takes the ones not got to yet', path: '/', expectSelector: '#board ~ #want[data-drop="W"]' },
       { name: 'A new item can be added', path: '/', expectSelector: '#add-form input[name="name"]' },
+      { name: 'The page has a line for who else is here', path: '/', expectSelector: 'header #presence[aria-live="polite"]' },
     ]),
   });
 }

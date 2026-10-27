@@ -147,26 +147,62 @@ test('worker exec rejects setup failures and invalid deadlines', async (t) => {
   assert.equal(fx.calls.length, 0);
 });
 
+test('worker exec bounds combined stdout and stderr in bytes and closes an oversized export', async (t) => {
+  const fx = setup(t);
+  const pending = kubernetes.execInWorker(config, 'test-worker', ['export'], null, { maxBuffer: 8 });
+  const rejected = assert.rejects(pending, error => {
+    assert.equal(error.code, 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER');
+    assert.equal(error.stdout, 'café');
+    assert.equal(error.stderr, 'ok');
+    return true;
+  });
+  await flush();
+  fx.calls[0].stdout.write('café'); // five bytes
+  fx.calls[0].stderr.write('ok');
+  fx.calls[0].stdout.write('too much');
+  await rejected;
+  assert.equal(fx.socket.terminations, 1);
+  assert.equal(fx.calls[0].stdout.destroyed, true);
+  assert.equal(fx.calls[0].stderr.destroyed, true);
+});
+
+test('worker exec rejects invalid output bounds before connecting', async (t) => {
+  const fx = setup(t);
+  for (const maxBuffer of [0, -1, NaN, Infinity]) {
+    await assert.rejects(kubernetes.execInWorker(config, 'test-worker', ['export'], null, { maxBuffer }), /positive finite/);
+  }
+  assert.equal(fx.calls.length, 0);
+});
+
 test('Kubernetes probes and push proxy preserve Docker operation deadlines', async (t) => {
   const originalRuntime = process.env.WORKER_RUNTIME;
-  const originalToken = process.env.GITHUB_BOT_TOKEN;
   process.env.WORKER_RUNTIME = 'kubernetes';
-  process.env.GITHUB_BOT_TOKEN = 'fake-test-token';
   t.after(() => {
     if (originalRuntime === undefined) delete process.env.WORKER_RUNTIME;
     else process.env.WORKER_RUNTIME = originalRuntime;
-    if (originalToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = originalToken;
   });
+  // The GitHub App's installation token, the push's only GitHub credential.
+  const github = require('../src/services/github');
+  t.mock.method(github, 'canActOn', () => true);
+  t.mock.method(github, 'getInstallationToken', async () => 'fake-test-token');
   const deadlines = [];
+  t.mock.method(require('../src/db/pool'), 'getPool', () => ({
+    query: async () => ({ rows: [{ branch_name: 'test-branch', repo_url: 'https://github.com/test/repo' }] }),
+  }));
+  const workerGitPush = require('../src/services/worker-git-push');
+  const sha = 'a'.repeat(40);
+  t.mock.method(workerGitPush, 'push', async ({ exportWorker }) => {
+    await exportWorker('export commits without credentials');
+    return { sha, stderr: '' };
+  });
   t.mock.method(kubernetes, 'execInWorker', async (_config, _runtime, command, _input, options) => {
     deadlines.push(options.timeoutMs);
     return { stdout: command[0] === 'bash' ? 'abcdef\n' : 'busy', stderr: '' };
   });
   assert.equal(await worker.isWorkerExecuting('test-worker'), true);
   assert.equal(await worker.isWorkerExecuting('test-worker', { timeoutMs: 12345 }), true);
-  assert.equal((await worker.execPushFromWorker(70003, 'test-branch')).sha, 'abcdef');
-  assert.deepEqual(deadlines, [5000, 12345, 60000]);
+  assert.equal((await worker.execPushFromWorker(70003, 'test-branch')).sha, sha);
+  assert.deepEqual(deadlines, [5000, 12345, 60000, 10000]);
 });
 
 

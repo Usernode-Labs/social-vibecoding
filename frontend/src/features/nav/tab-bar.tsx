@@ -89,6 +89,8 @@ import {
 import { CommunitySwitcher } from '../workshop/community-switcher';
 import { pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
+import { runningAppStore } from './parked-store.js';
+import { SideApps } from './side-apps';
 import { RailCommunities, useRailCommunities } from './rail-communities';
 import { RailConversations } from './rail-conversations';
 import { RailPinned } from './rail-pinned';
@@ -446,10 +448,17 @@ export type ContentRect = { left: number; top: number; width: number; height: nu
  * out inside) the box falls back to the cell inset 4px, the old geometry.
  * Integers, so a re-measure that lands on the same pixel keeps the previous
  * box (useTabMarker compares them) rather than restarting a slide.
+ *
+ * `inCell`: the pill keeps to its cell's width, inset 4px a side, and hugs
+ * the contents only up and down. That is the bar stood up in an iPhone
+ * Duo's side strip (../../lib/side-strip.ts), a 64px column whose cells are
+ * the pill's whole width: sized by its label there, the pill ran past the
+ * column's sides ("Communities" made it 71px).
  */
 export function markerBoxFor(
   el: { offsetLeft: number; offsetTop: number; offsetWidth: number; offsetHeight: number },
   content?: ContentRect | null,
+  inCell = false,
 ): Omit<TabMarkerBox, 'slide'> | null {
   // A bar that is not laid out (hidden, or the keyboard is up) has nothing to
   // say about where the tab is; keep the last box rather than collapse it.
@@ -462,12 +471,21 @@ export function markerBoxFor(
       h: Math.max(0, el.offsetHeight - MARKER_INSET * 2),
     };
   }
-  const w = Math.round(Math.max(MARKER_MIN_W, content.width + MARKER_PAD.x * 2));
   const h = Math.round(content.height + MARKER_PAD.top + MARKER_PAD.bottom);
+  const y = Math.round(el.offsetTop + content.top - MARKER_PAD.top);
+  if (inCell) {
+    return {
+      x: el.offsetLeft + MARKER_INSET,
+      y,
+      w: Math.max(0, el.offsetWidth - MARKER_INSET * 2),
+      h,
+    };
+  }
+  const w = Math.round(Math.max(MARKER_MIN_W, content.width + MARKER_PAD.x * 2));
   const centre = el.offsetLeft + content.left + content.width / 2;
   return {
     x: Math.round(centre - w / 2),
-    y: Math.round(el.offsetTop + content.top - MARKER_PAD.top),
+    y,
     w,
     h,
   };
@@ -624,9 +642,17 @@ function canSlide(bar: HTMLElement): boolean {
   return motionWelcome();
 }
 
+/**
+ * What the marker lights while no tab is: the app on screen, in iPhone Duo's
+ * side strip (./side-apps.tsx). Off the strip that element is never drawn,
+ * so the marker finds nothing to measure there and keeps out of it.
+ */
+const APP_TARGET = 'app';
+
 function useTabMarker(
   barRef: React.RefObject<HTMLElement | null>,
   tab: string | null,
+  appLit = false,
 ): {
   box: TabMarkerBox | null;
   lit: string | null;
@@ -643,12 +669,14 @@ function useTabMarker(
   // so the first render is the prerender's.
   const [pressed, setPressed] = useState<string | null>(null);
   const lit = pressed ?? tab;
+  const target = lit ?? (appLit ? APP_TARGET : null);
   // The press waiting for its route. A ref, not state: nothing renders from
   // it, and the callbacks that read it outlive the render they came from.
   const pending = useRef<PendingPress | null>(null);
 
   const place = (el: HTMLElement, selectionChanged: boolean) => {
-    const next = markerBoxFor(el, tabContentRect(el));
+    const inStrip = document.documentElement.hasAttribute('data-side-strip');
+    const next = markerBoxFor(el, tabContentRect(el), inStrip);
     if (!next) return;
     setBox((prev) => {
       if (prev && prev.x === next.x && prev.y === next.y
@@ -669,14 +697,15 @@ function useTabMarker(
   useLayoutEffect(() => {
     const bar = barRef.current;
     if (!bar) return;
-    if (!lit) {
+    if (!target) {
       setBox(null);
       return;
     }
     // A slide waiting for the swap's frame to be painted (see afterNextFrame).
     let cancelSlide: (() => void) | null = null;
+    const selector = target === APP_TARGET ? '.platform-side-app[aria-current="page"]' : '.platform-tab[aria-current="page"]';
     const measure = (selectionChanged: boolean) => {
-      const el = bar.querySelector<HTMLElement>('.platform-tab[aria-current="page"]');
+      const el = bar.querySelector<HTMLElement>(selector);
       if (!el) return;
       place(el, selectionChanged);
     };
@@ -703,13 +732,13 @@ function useTabMarker(
     // The pill is sized by the lit tab's label now, and a label can change
     // width with the bar standing still (the Me tab takes the viewer's name
     // once it has loaded), so the label is watched as well.
-    const label = bar.querySelector('.platform-tab[aria-current="page"] .platform-tab-label');
+    const label = bar.querySelector(`${selector} .platform-tab-label`);
     if (label) ro.observe(label);
     return () => {
       ro.disconnect();
       cancelSlide?.();
     };
-  }, [barRef, lit]);
+  }, [barRef, target]);
 
   // THE SLIDE (MARKER_SLIDE). React has just laid the marker out at `box`;
   // a selection change plays it in from the box it left, or from wherever a
@@ -884,7 +913,9 @@ export function PlatformTabs() {
   // so they are not this. The hot zone below needs it since the rail stays
   // beside a running app on the desktop.
   const runningApp = screen === 'app-view' && !tab;
-  const { box: marker, lit, markerRef, press } = useTabMarker(barRef, tab);
+  // …which iPhone Duo's strip shows among its tabs, lit (./side-apps.tsx).
+  const onScreenApp = useStoreState(runningAppStore).app;
+  const { box: marker, lit, markerRef, press } = useTabMarker(barRef, tab, runningApp && !!onScreenApp);
   // A plain press on another tab lights it and slides the pill first, and
   // navigates a frame later (useTabMarker's `press`, #3259). A modified click
   // stays the browser's, a second press on a tab still waiting for its route
@@ -991,6 +1022,16 @@ export function PlatformTabs() {
         onPointerEnter={enter}
         onPointerLeave={leave}
       >
+      {/*
+          iPhone Duo's side strip: the app on screen and the app you left,
+          under their Apps heading (./side-apps.tsx). First in the bar, even
+          before the marker, so the sibling chain the declared checks pin
+          (the marker, then Home, through to the settings row last) is
+          untouched; app.css draws it under Communities, and only on the
+          strip. Its tiles stand a step above the marker, which still
+          paints behind them.
+      */}
+      <SideApps />
       {/*
           THE LIT TAB'S MARKER (#2824). Before the tabs so it paints behind
           them (app.css raises each tab one step), `aria-hidden` because

@@ -335,6 +335,11 @@ test('the questions: the heading, the line, each question with its suggested ans
   const html = renderToHtml(createElement(QuickQuestions, { name: 'Club Votes', questions: QS, onSubmit() {} }));
   assert.match(html, /data-first-session-questions="2"/);
   assert.match(html, /<h2 [^>]*>Two quick questions<\/h2>/);
+  // #5846: the block the screen waits on wears the screen's "Needs you"
+  // label, and its heading is drawn in the accent.
+  assert.match(html, /data-first-session-questions-label=""[^>]*uppercase[^>]*>Needs you<\/p>/);
+  assert.ok(html.indexOf('data-first-session-questions-label=""') < html.indexOf('>Two quick questions</h2>'), 'the label over the heading');
+  assert.match(html, /<h2 [^>]*text-violet-600 dark:text-violet-400[^>]*>Two quick questions<\/h2>/);
   assert.match(html, />Homeroom bot builds Club Votes from your answers\.<\/p>/);
   // The suggested answers chosen: the first of each, as the plan card does it.
   assert.equal((html.match(/checked=""/g) || []).length, 2);

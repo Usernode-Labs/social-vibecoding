@@ -14,6 +14,7 @@
 
 import type { Tx } from '../kernel/index.ts';
 import { readPrGate } from '../rules/pr-gate.ts';
+import { parseRepoAddress } from '../rules/github-url.ts';
 
 const SHA = /^[0-9a-f]{40}$/;
 const sha = (v: unknown) => (SHA.test(String(v || '').toLowerCase()) ? String(v).toLowerCase() : null);
@@ -71,8 +72,8 @@ function repoName(v: unknown): string | null {
 function forkOf(r: any): boolean {
   if (r.source !== 'imported') return false;
   const head = repoName(r.imported_pr_head_repo);
-  const m = /github\.com[/:]([^/]+)\/([^/#?]+?)(?:\.git)?\/?$/i.exec(String(r.repo_url ?? ''));
-  const app = m ? repoName(`${m[1]}/${m[2]}`) : null;
+  const parsed = parseRepoAddress(r.repo_url);
+  const app = parsed ? repoName(`${parsed.owner}/${parsed.repo}`) : null;
   if (head && app) return head !== app;
   return !PLATFORM_BRANCHES.some((p) => String(r.branch_name ?? '').startsWith(p));
 }

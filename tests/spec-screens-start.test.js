@@ -241,7 +241,9 @@ test('startFromScreens commits the starting files on the session branch and push
   });
   assert.deepEqual(out.screens, [1, 2]);
   assert.equal(out.sha, git('rev-parse', 'HEAD'));
-  assert.equal(git('log', '-1', '--format=%s %an'), `${start.COMMIT_MESSAGE} usernode-bot`);
+  // Homeroom's one identity (services/commit-identity.js), author and committer.
+  assert.equal(git('log', '-1', '--format=%s|%an|%ae|%cn|%ce'),
+    `${start.COMMIT_MESSAGE}|Homeroom|homeroom@users.noreply.onhomeroom.com|Homeroom|homeroom@users.noreply.onhomeroom.com`);
   assert.deepEqual(git('show', '--name-only', '--format=', 'HEAD').split('\n').sort(),
     [start.INDEX_PATH, start.SCREENS_CSS_PATH, start.INPUT_CSS_PATH].sort());
   assert.equal(git('status', '--porcelain'), '');

@@ -45,6 +45,8 @@ type RowView = {
   added: boolean;
   /** A joined row's Open: the app can run, and it is not an inert fixture. */
   canOpen?: boolean;
+  /** The Joined view's Leave (#5953): a member who did not make the app. */
+  canLeave?: boolean;
   /** In "Recommended for you", the default list's first section (#5267). */
   recommended?: boolean;
   addTitle: string;
@@ -65,6 +67,12 @@ const ADD_BASE = 'browse-add-btn shrink-0 inline-flex items-center gap-1 rounded
 // the `neutral` variant in @/components/ui/button.tsx).
 const ADD_FILL = 'border-transparent bg-zinc-100 dark:bg-zinc-800 text-zinc-900 '
   + 'dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700';
+// Leave (#5953) is the quiet one beside Open: no fill, muted words that
+// darken under the pointer. Leaving asks first (Home.setMembership, whose
+// confirm is the red one), so the button itself does not need to shout.
+const LEAVE = 'browse-leave-btn shrink-0 inline-flex items-center rounded-full px-2.5 py-1.5 '
+  + 'text-xs font-medium text-zinc-500 dark:text-zinc-400 transition-colors '
+  + 'hover:text-zinc-900 dark:hover:text-zinc-100';
 
 /**
  * The label a Discover row shows under its name, from the API's
@@ -116,12 +124,12 @@ function Row({ view, eager = false }: {
     const nav = (window as any).NavLink;
     const hrefFor = (e: MouseEvent) => {
       const view = latest.current;
-      if ((e.target as Element)?.closest?.('.browse-add-btn, .app-icon-link')) return null;
+      if ((e.target as Element)?.closest?.('.browse-add-btn, .browse-leave-btn, .app-icon-link')) return null;
       return controller()?.rowHref(view) ?? null;
     };
     const activate = (e: MouseEvent) => {
       const view = latest.current;
-      if ((e.target as Element)?.closest?.('.browse-add-btn, .app-icon-link')) return;
+      if ((e.target as Element)?.closest?.('.browse-add-btn, .browse-leave-btn, .app-icon-link')) return;
       controller()?.openRow(view);
     };
     if (nav) nav.wireModified(node, hrefFor, activate);
@@ -133,6 +141,64 @@ function Row({ view, eager = false }: {
 
   const warm = () => controller()?.warmRow(view);
   const label = rowDirectoryLabel(view.app.directory);
+
+  // No `type` on Join / Open: the hand-written row shipped a bare <button>,
+  // and it sits in no form, so the default submit type is inert either way.
+  // Both keep `browse-add-btn` and `data-added`: the row's own click skips
+  // that class, and the declared checks select on the pair.
+  const primary = !view.added ? (
+    <button
+      className={ADD_BASE + ADD_FILL}
+      data-slug={view.slug}
+      data-added="false"
+      data-action="join"
+      aria-label={t('discover:list.join.named', { app: view.name })}
+      title={view.addTitle}
+      onClick={(e) => {
+        e.stopPropagation();
+        controller()?.toggleRowAdded(view);
+      }}
+    >
+      <PlusIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />
+      {/* JOIN, not Add (communities, stage 1): it puts YOU in the app's
+          community, which is what lets you propose and vote, and it
+          still pins the app. QA 2026-09-24 Q10's width rule holds: the
+          visible label is one short word and the accessible name
+          carries the rest, "Join <app>". */}
+      {t('discover:list.join.action')}
+    </button>
+  ) : view.canOpen ? (
+    <button
+      className={ADD_BASE + ADD_FILL}
+      data-slug={view.slug}
+      data-added="true"
+      data-action="open"
+      aria-label={t('discover:list.open.named', { app: view.name })}
+      title={view.addTitle}
+      onClick={(e) => {
+        e.stopPropagation();
+        controller()?.openRowApp(view);
+      }}
+    >
+      {t('discover:list.open.action')}
+    </button>
+  ) : null;
+  const leave = view.canLeave ? (
+    <button
+      type="button"
+      className={LEAVE}
+      data-slug={view.slug}
+      data-action="leave"
+      aria-label={t('discover:list.leave.named', { app: view.name })}
+      title={t('discover:list.leave.named', { app: view.name })}
+      onClick={(e) => {
+        e.stopPropagation();
+        controller()?.leaveRow(view);
+      }}
+    >
+      {t('discover:list.leave.action')}
+    </button>
+  ) : null;
 
   return (
     <ListRow
@@ -189,51 +255,14 @@ function Row({ view, eager = false }: {
           ) : null}
         </>
       )}
-      trailing={(
-        <>
-      {/* No `type` — the hand-written row shipped a bare <button>, and it sits
-          in no form, so the default submit type is inert either way. Both
-          buttons keep `browse-add-btn` and `data-added`: the row's own click
-          skips that class, and the declared checks select on the pair. */}
-      {!view.added ? (
-        <button
-          className={ADD_BASE + ADD_FILL}
-          data-slug={view.slug}
-          data-added="false"
-          data-action="join"
-          aria-label={t('discover:list.join.named', { app: view.name })}
-          title={view.addTitle}
-          onClick={(e) => {
-            e.stopPropagation();
-            controller()?.toggleRowAdded(view);
-          }}
-        >
-          <PlusIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />
-          {/* JOIN, not Add (communities, stage 1): it puts YOU in the app's
-              community, which is what lets you propose and vote, and it
-              still pins the app. QA 2026-09-24 Q10's width rule holds: the
-              visible label is one short word and the accessible name
-              carries the rest, "Join <app>". */}
-          {t('discover:list.join.action')}
-        </button>
-      ) : view.canOpen ? (
-        <button
-          className={ADD_BASE + ADD_FILL}
-          data-slug={view.slug}
-          data-added="true"
-          data-action="open"
-          aria-label={t('discover:list.open.named', { app: view.name })}
-          title={view.addTitle}
-          onClick={(e) => {
-            e.stopPropagation();
-            controller()?.openRowApp(view);
-          }}
-        >
-          {t('discover:list.open.action')}
-        </button>
-      ) : null}
-        </>
-      )}
+      trailing={view.canLeave ? (
+        // #5953: Open and Leave share one box, so the phone grid (.browse-row
+        // in app.css) seats them together where Open sits alone elsewhere.
+        <span className="browse-row-actions shrink-0 inline-flex items-center gap-1">
+          {primary}
+          {leave}
+        </span>
+      ) : primary}
     />
   );
 }

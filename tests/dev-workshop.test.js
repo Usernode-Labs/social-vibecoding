@@ -130,6 +130,9 @@ function makeAppView(over) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  // The ⋯ rows and meta links to GitHub decide by the address
+  // (frontend/src/lib/repo-link.js, published as window.RepoLink).
+  require('./lib/repo-link').installRepoLink(sandbox);
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -2205,6 +2208,9 @@ test('the Workshop renders its strips, its themes and their rows', () => {
 test('a folded row wears the card\u2019s own edge, number and glyph, and no chevron', () => {
   const AppView = makeAppView();
   seed(AppView);
+  // A pull request on GitHub, so its number is a link out (a change kept in
+  // Homeroom draws it as text: the row already opens its page).
+  AppView._proposals[0].pr_url = 'https://github.com/x/y/pull/41';
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12', 'session:34'] }]);
   AppView._workshopShot = 'themes';
   const page = workshopHtml(AppView, 'all');
@@ -5891,6 +5897,26 @@ test('the ask box is a sheet on a phone and a panel on a wide window', () => {
   assert.ok(!/\.dev-ws-needs > \.dev-ws-ask/.test(CSS), 'nothing pins an ask box to the floor');
   // Both now measure 10px above the bar — `.dev-ws`'s own column gap, which is
   // the floor for anything sitting directly above the rail.
+});
+
+test('#5916: Skip on the rail moves on to the next change without voting', () => {
+  // One press moves on, the way a swipe or Next does: Skip calls the feed's
+  // own forward move, so the row is marked seen but stays in the feed.
+  const start = WORKSHOP.indexOf('<aside className="dev-ws-rail" data-ws-rail="" aria-label={t(\'project:needsYou.rail.label\')}>');
+  assert.ok(start >= 0, 'the item rail is found');
+  const rail = WORKSHOP.slice(start, WORKSHOP.indexOf('</aside>', start));
+  const vote = rail.indexOf('data-ws-rail-btn="vote"');
+  const skip = rail.indexOf('data-ws-rail-btn="skip"');
+  const comments = rail.indexOf('data-ws-rail-btn="comments"');
+  assert.ok(vote >= 0 && skip > vote && comments > skip, 'Skip sits between Vote and Comments');
+  const button = rail.slice(rail.lastIndexOf('<button', skip), comments);
+  assert.match(button, /className="dev-ws-rail-btn dev-ws-rail-skip"/);
+  assert.match(button, /aria-label=\{t\('project:needsYou\.rail\.skipThis'\)\}/);
+  assert.match(button, /onClick=\{\(\) => go\(1\)\}/, 'the feed\'s own forward move');
+  assert.match(button, /\{t\('project:needsYou\.rail\.skip'\)\}/);
+  assert.ok(!/answer\(|castVote|toggleSheet|submitVote/.test(button), 'no answer, no vote, no sheet');
+  assert.equal(message('project:needsYou.rail.skip'), 'Skip');
+  assert.equal(message('project:needsYou.rail.skipThis'), 'Skip this change for now');
 });
 
 test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', () => {

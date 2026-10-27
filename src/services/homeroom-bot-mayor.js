@@ -85,6 +85,7 @@
 const log = require('./logger');
 const { withoutEmDashes } = require('./em-dashes');
 const progressSvc = require('./homeroom-bot-progress');
+const repoRef = require('./repo-ref');
 
 const MAX_HISTORY = 24;
 const MAX_ROUNDS = 6;
@@ -2993,14 +2994,14 @@ async function fileRequest(pool, config, {
     }
   }
   if (!recovered) {
-    const m = String(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+    const m = repoRef.ownerRepo(app.repo_url);
     if (!m || !github.isEnabled()) throw new Error('github_unavailable');
-    const created = await github.createIssue(m[1], m[2], {
+    const created = await github.createIssue(m.owner, m.repo, {
       title, body: typeof github.safeMention === 'function' ? github.safeMention(body) : body,
     });
     issueNumber = Number(created?.number);
     if (!Number.isInteger(issueNumber) || issueNumber <= 0) throw new Error('invalid issue number');
-    try { github.noteIssueCreated?.(m[1], m[2], created); } catch {}
+    try { github.noteIssueCreated?.(m.owner, m.repo, created); } catch {}
     const { rows: issueRows } = await pool.query(
       `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
        VALUES ($1, $2, $3, $4, 'general', $6, $5) RETURNING id`,
@@ -4111,7 +4112,6 @@ async function reportProblem(pool, ctx, args) {
     description: reportReceipt({ details, about, chat: await recentChat(pool, ctx) }),
     source: REPORT_SOURCE,
     via: 'through Homeroom bot',
-    fetchImpl: deps.fetch || null,
   });
   // Filed once per answer: a retry of the answer's work after a restart
   // (deps.once, its checkpoint) gets the report it filed, not a second one.

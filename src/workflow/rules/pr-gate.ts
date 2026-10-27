@@ -51,12 +51,32 @@ export const adminNoAtSql = (cs: string): string => `(SELECT MAX(pv.created_at) 
             AND pv.approval_epoch = ${cs}.approval_epoch
             AND counts_toward_session_outcome(pv.user_id, pv.session_id))`;
 
+/**
+ * When one of an invited project's approvers last cast a counted No on the
+ * change's current approval epoch, or NULL (#5947). An approver is a member
+ * of the project's `app_approvers` roster or, while that roster is empty,
+ * a full admin: the same set electorate.ts getApproverSet counts. NULL on a
+ * project whose votes all count (`approver_policy` 'anyone'); computeGate
+ * also ignores it on a rules project. `cs` is the chat_sessions alias.
+ */
+export const approverNoAtSql = (cs: string): string => `(SELECT MAX(pv.created_at) FROM pr_votes pv
+           JOIN apps ap ON ap.id = ${cs}.app_id AND ap.approver_policy = 'invited'
+          WHERE pv.session_id = ${cs}.id AND pv.vote = 'no'
+            AND pv.approval_epoch = ${cs}.approval_epoch
+            AND counts_toward_session_outcome(pv.user_id, pv.session_id)
+            AND (EXISTS (SELECT 1 FROM app_approvers ar
+                          WHERE ar.app_id = ${cs}.app_id AND ar.user_id = pv.user_id AND ar.status = 'member')
+                 OR (NOT EXISTS (SELECT 1 FROM app_approvers ar
+                                  WHERE ar.app_id = ${cs}.app_id AND ar.status = 'member')
+                     AND EXISTS (SELECT 1 FROM users u
+                                  WHERE u.id = pv.user_id AND u.is_admin = TRUE AND u.admin_readonly = FALSE))))`;
+
 // One statement for everything the gate reads about the app and the
 // proposal: the governance columns and rules, the app meta the electorate
 // needs, what a project's own rules read (creator, community size, admins),
 // the counted votes on the current epoch, whether the change is the
 // project's first version, whether its author is an account the platform
-// runs, and when an admin last voted No.
+// runs, and when an admin and an approver last voted No.
 const GATE_SQL = `
   SELECT a.approver_policy, a.approvals_required, a.governance_rules, a.self_hosted, a.collab_visibility, a.created_by,
          (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS member_count,
@@ -69,6 +89,7 @@ const GATE_SQL = `
              AND pv.approval_epoch = cs.approval_epoch) AS votes,
          ${firstVersionSql('cs')} AS first_version,
          ${adminNoAtSql('cs')} AS admin_no_at,
+         ${approverNoAtSql('cs')} AS approver_no_at,
          COALESCE((SELECT u.is_synthetic FROM users u WHERE u.id = $3::int), FALSE) AS author_is_bot
     FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
    WHERE cs.id = $1 AND a.id = $2`;
@@ -122,5 +143,6 @@ export async function readPrGate(db: Queryable, g: PrGateInputs): Promise<Govern
     memberCount: g.explicitApproval ? Number(r.member_count) || 0 : undefined,
     firstVersion,
     adminNoAt: r.admin_no_at ?? null,
+    approverNoAt: r.approver_no_at ?? null,
   });
 }

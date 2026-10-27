@@ -354,7 +354,7 @@ async function openGroup(pool, userId, settings) {
 
 // What routes/conversations.js does after a create and a send, done here
 // because the service itself pushes nothing.
-async function pushLive(pool, result, conversationId) {
+async function pushLive(pool, result, conversationId, actorUserId) {
   const ws = require('./ws');
   const notificationSvc = require('./notifications');
   for (const row of result.notifications || []) await notificationSvc.hydrateAndPush(pool, row);
@@ -364,7 +364,7 @@ async function pushLive(pool, result, conversationId) {
     conversationId,
     messageId: result.message?.id ?? result.messageId,
     threadRootId: null,
-  });
+  }, { actorUserId });
 }
 
 /**
@@ -404,7 +404,7 @@ async function processOne(pool, userId, settings) {
   await finish(pool, userId, 'sent');
   if (!result.duplicate) {
     try {
-      await pushLive(pool, result, step.conversationId);
+      await pushLive(pool, result, step.conversationId, step.senderId);
     } catch (err) {
       // The message is in and the bell row is written (a phone push rides
       // on its trigger); a missed live refresh catches up on the next load.

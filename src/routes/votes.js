@@ -36,6 +36,8 @@ const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const { botRequestedBySql } = require('../services/bot-requested-by');
 const { firstVersionSql, isFirstVersion } = require('../services/first-version-rule');
+const repoRef = require('../services/repo-ref');
+const codeMissing = require('../services/code-missing');
 const {
   reviewedHeadForSession,
   visualHeadForSession,
@@ -1764,8 +1766,7 @@ async function annotateDeploymentState(config, pool, app, rows) {
 // unchanged.
 function nativeGithubTarget(session) {
   if (!session || session.source === 'imported' || !session.pr_number) return null;
-  const [, owner, repo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-  return owner && repo ? { owner, repo: repo.replace(/\.git$/, '') } : null;
+  return repoRef.ownerRepo(session.repo_url);
 }
 
 // The preview machine builds and checks a native proposal's reviewed head.
@@ -1898,7 +1899,7 @@ async function reconcileNativeReviewedHead({
     }
     return {
       enforced: true, blocked: true,
-      reason: 'This proposal has no GitHub repository to verify.',
+      reason: 'This proposal has no repository to verify.',
     };
   }
   if (!session.branch_name) {
@@ -1917,7 +1918,7 @@ async function reconcileNativeReviewedHead({
   if (!parsed) {
     return {
       enforced: true, blocked: true,
-      reason: 'This proposal has no valid GitHub repository to verify.',
+      reason: 'This proposal has no valid repository to verify.',
     };
   }
 
@@ -1971,12 +1972,23 @@ async function reconcileNativeReviewedHead({
     // The branch is not in the mirror: deleted, renamed, never pushed, or an
     // imported head that lives on a fork. Not a head move, and nothing here
     // may clear approvals over an absence. Same fail-open reasoning as above.
-    log.info('votes', 'Branch not present in the mirror; revision left as it stands', {
-      sessionId: session.id, branch: session.branch_name,
-    });
+    //
+    // On the git host, with main there, a proposal with a pull request whose
+    // branch is not is one whose code did not come across from GitHub
+    // (services/code-missing.js). That is said once, as `codeMissing`, for
+    // the callers to stand down on: the merge gate refuses with the reason,
+    // the review sweep and a vote ask for no merge. It stays that way every
+    // pass until the branch is pushed back, so it is not logged as news.
+    const missing = !!(mainSha && session.pr_number && repoRef.isHosted(session.repo_url));
+    if (!missing) {
+      log.info('votes', 'Branch not present in the mirror; revision left as it stands', {
+        sessionId: session.id, branch: session.branch_name,
+      });
+    }
     return {
       enforced: true, headSha: oldHead, epoch: epochOf(session),
       unchanged: true, measurementUnavailable: true,
+      ...(missing ? { codeMissing: true } : {}),
     };
   }
   if (sameSha(liveHead, oldHead)) {
@@ -2463,6 +2475,9 @@ async function settleVoteInBackground({ config, pool, session, revision }) {
         // The approvals were just cleared; there is nothing to count.
         return { merged: false, headMoved: !!live.changed, reviewReset: true };
       }
+      // Its code is not on the git host (services/code-missing.js): the vote
+      // is recorded, and no merge is asked for, as there is nothing to merge.
+      if (live?.codeMissing) return { merged: false, codeMissing: true };
     } catch (err) {
       log.warn('votes', 'Post-vote revision read failed (non-fatal)', {
         sessionId: session.id, err: err.message,
@@ -2702,9 +2717,9 @@ function voteRoutes(config) {
       // machine's work, once the proposal is claimed for review (R4).
       let pr = null;
       if (github.isEnabled() && session.repo_url && session.pr_number) {
-        const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        const { owner, repo } = repoRef.ownerRepo(session.repo_url) || {};
         if (!owner || !repo) {
-          return res.status(409).json({ error: 'This proposal has no valid GitHub repository to verify.' });
+          return res.status(409).json({ error: 'This proposal has no valid repository to verify.' });
         }
         try {
           const live = await github.getPR(owner, repo.replace(/\.git$/, ''), session.pr_number);
@@ -2754,10 +2769,7 @@ function voteRoutes(config) {
   // may explicitly request the historical straight-to-vote result.
   //
   // Parse owner/repo from an app's repo_url, or null.
-  const parseRepo = (url) => {
-    const [, owner, repo] = (url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-    return owner && repo ? { owner, repo } : null;
-  };
+  const parseRepo = (url) => repoRef.ownerRepo(url);
 
   // Fire-and-forget: build the imported PR's staging preview pinned to its
   // exact head SHA (Slice 1 clone fix) and run its checks, mirroring the
@@ -3426,7 +3438,15 @@ function voteRoutes(config) {
       const goesLive = vote === 'yes'
         ? await require('../services/homeroom-bot-dm').noteApproved(pool, session.id, req.user.id)
         : null;
-      const readyCard = goesLive ? { goesLive } : {};
+      // And a proposal whose code did not come across from GitHub
+      // (services/code-missing.js): the vote is recorded and counted, and
+      // every answer to it says it cannot go live until the code is back.
+      // Read from what this process already knows of the branches, never a
+      // git read in front of the answer (#2782); the background settle asks
+      // for no merge either way once its own read finds the branch missing.
+      const codeMissingNote = await codeMissing.forSession(pool, session, { waitMs: 0 })
+        ? { codeMissing: true, message: codeMissing.VOTE_NOTE } : {};
+      const readyCard = { ...(goesLive ? { goesLive } : {}), ...codeMissingNote };
 
       if (unchanged) {
         log.debug('votes', 'Vote unchanged, skipping broadcast+merge', {
@@ -3845,9 +3865,10 @@ function voteRoutes(config) {
       }
 
       const proposals = [];
-      // #5803: an admin's lone No arms the week-long takedown; the card's
-      // countdown must show the clock the proposal machine acts on.
-      const adminNoBySession = await governanceSvc.adminNoTimes(pool, sessions.map((s) => s.id));
+      // #5803: an admin's lone No arms the week-long takedown, and #5947 an
+      // approver's its shorter one; the card's countdown must show the clock
+      // the proposal machine acts on.
+      const loneNoBySession = await governanceSvc.loneNoTimes(pool, sessions.map((s) => s.id));
       for (const s of sessions) {
         const gov = govByApp[s.app_id];
         const electorate = electorateByApp[s.app_id];
@@ -3868,7 +3889,7 @@ function voteRoutes(config) {
             explicitApproval: !!s.requires_explicit_approval,
             otherYes: q.otherYes,
             memberCount: membersByApp[s.app_id],
-            adminNoAt: adminNoBySession.get(Number(s.id)) || null,
+            ...loneNoBySession.get(Number(s.id)),
             // These are the viewer's own proposals: they are the author.
             ...(rulesByApp[s.app_id] ? governanceSvc.rulesGateOpts(rulesByApp[s.app_id], s.id, req.user.id, s.explicit_approval_reason || null) : {}),
           }
@@ -4238,12 +4259,25 @@ function voteRoutes(config) {
         : new Map();
       for (const row of rows) row.shots = shotsBySession.get(Number(row.id)) || null;
 
+      // A proposal whose branch is not on the git host: its code did not
+      // come across when Homeroom moved off GitHub (services/code-missing.js).
+      // Derived on every read, one query and one cached branch list for the
+      // whole panel, so pushing the branch back clears it with nothing to
+      // undo. The card says "Code missing" (AppView.blockReasons).
+      const missing = await codeMissing.missingIds(pool, rows.map((row) => ({
+        id: row.id, app_id: gatedApp.id, pr_number: row.pr_number, status: row.status, repo_url: gatedApp.repo_url,
+      })));
+      for (const row of rows) row.code_missing = missing.has(Number(row.id));
+
       // #4490: the picture a card falls back to. The diagram is the
       // author's, validated again on the way out; "What it touches" is
       // shown only for the head it was read at, and a moved head is read
-      // again in the background for the next view.
+      // again in the background for the next view. Not for a head whose
+      // code is missing (no head is no read): there is nothing on the git
+      // host to read, and the read warned on every view.
       proposalTouches.scheduleRefresh(pool, rows.map((row) => ({
-        id: row.id, repo_url: gatedApp.repo_url, pr_touches_sha: row.pr_touches_sha, head: visualHeadForSession(row),
+        id: row.id, repo_url: gatedApp.repo_url, pr_touches_sha: row.pr_touches_sha,
+        head: row.code_missing ? null : visualHeadForSession(row),
       })));
       for (const row of rows) {
         row.diagram = diagramContract.storedDiagram(row.pr_diagram);
@@ -4321,9 +4355,9 @@ function voteRoutes(config) {
         ? await governance.rulesContext(pool, appRows[0].id, gov, 'pr',
           rows.filter((r) => r.votes_required == null).map((r) => r.id))
         : null;
-      // #5803: the admin-No clock each row's card shows, one query for the
-      // whole panel.
-      const adminNoByRow = await governance.adminNoTimes(pool,
+      // #5803 / #5947: the admin-No and approver-No clocks each row's card
+      // shows, one query for the whole panel.
+      const loneNoByRow = await governance.loneNoTimes(pool,
         rows.filter((r) => r.votes_required == null).map((r) => r.id));
       for (const row of rows) {
         if (row.votes_required != null) continue;
@@ -4342,7 +4376,7 @@ function voteRoutes(config) {
             explicitApproval: !!row.requires_explicit_approval,
             otherYes: q.otherYes,
             memberCount,
-            adminNoAt: adminNoByRow.get(Number(row.id)) || null,
+            ...loneNoByRow.get(Number(row.id)),
             ...(rulesCtx ? governance.rulesGateOpts(rulesCtx, row.id, row.user_id ?? null, row.explicit_approval_reason || null) : {}),
             firstVersion: row.first_version === true,
           }
@@ -4898,9 +4932,10 @@ function voteRoutes(config) {
   router.get('/api/apps/:slug/proposals/:id', async (req, res) => {
     try {
       // View-level (#621): read-only viewers can open a proposal's
-      // topic view (my_vote resolves to null for them).
+      // topic view (my_vote resolves to null for them). `repo_url` for
+      // whether its code is on the git host (services/code-missing.js).
       const gatedApp = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, repo_url`
       );
       if (!gatedApp) return res.status(404).json({ error: 'App not found' });
 
@@ -4944,6 +4979,13 @@ function voteRoutes(config) {
         // #4479: the plan it was built from, for the page's plan card.
         proposal.plan = await require('./sessions')
           .changePlanFor(pool, proposal.id, proposal.user_id, userId).catch(() => null);
+        // Its code did not come across from GitHub (services/code-missing.js):
+        // the page's notice and the card's "Code missing", read as the list
+        // reads it. Always written, as the board merges this read into its
+        // held row key by key.
+        proposal.code_missing = await codeMissing.forSession(pool, {
+          ...proposal, app_id: gatedApp.id, repo_url: gatedApp.repo_url,
+        });
       }
 
       // #3669: the proposal page's own read must carry the same per-row
@@ -4973,8 +5015,9 @@ function voteRoutes(config) {
         // 13 Oct 2026, D1: the project's first version, whose vote the gate
         // waives; the change page says it goes live without one.
         proposal.first_version = await isFirstVersion(pool, proposal.id);
-        // #5803: the week an admin's lone No arms, for the page's pill.
-        const adminNoByProposal = await governance.adminNoTimes(pool, [proposal.id]);
+        // #5803 / #5947: the clock an admin's or approver's lone No arms, for
+        // the page's pill.
+        const loneNoByProposal = await governance.loneNoTimes(pool, [proposal.id]);
         const gate = governance.computeGate(
           gov, electorate.active, q.yes, q.no,
           proposal.promoted_at || proposal.created_at, null,
@@ -4983,7 +5026,7 @@ function voteRoutes(config) {
             otherYes: q.otherYes,
             memberCount: flagged
               ? await governance.communityMemberCount(pool, gatedApp.id) : undefined,
-            adminNoAt: adminNoByProposal.get(Number(proposal.id)) || null,
+            ...loneNoByProposal.get(Number(proposal.id)),
             // #4666: who voted, on a project with rules of its own.
             ...(rulesCtx ? governance.rulesGateOpts(
               rulesCtx,
@@ -5293,6 +5336,13 @@ function voteRoutes(config) {
         });
       }
 
+      // Nothing to merge: its code did not come across from GitHub
+      // (services/code-missing.js). Refused here, in its own words, rather
+      // than answered `queued` for a merge the gate is sure to refuse.
+      if (await codeMissing.forSession(pool, session)) {
+        return res.status(409).json({ error: codeMissing.MERGE_REFUSAL, code: codeMissing.CODE });
+      }
+
       log.info('votes', 'Admin force-merge requested', {
         sessionId: session.id, by: req.user.username,
       });
@@ -5300,7 +5350,7 @@ function voteRoutes(config) {
         sessionId: session.id, appId: session.app_id, from: session.status, userId: req.user.id, username: req.user.username,
       });
       if (out.status === 'rejected') {
-        return res.status(409).json({ error: out.reason || 'not_in_review' });
+        return res.status(out.reason === 'not_authorized' ? 403 : 409).json({ error: out.reason || 'not_in_review' });
       }
       res.json({ ok: true, queued: true });
     } catch (err) {
@@ -5347,6 +5397,21 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
       revisionBlocked: true,
       transient: !!revision.transient,
       error: revision.reason,
+    };
+  }
+  // Its branch is not on the git host: the code did not come across when
+  // Homeroom moved off GitHub (services/code-missing.js). There is nothing to
+  // merge, forced or not, so the gate refuses with that reason before it
+  // diffs a head that is not there (the explicit-approval re-verify below)
+  // or asks for a merge. Its votes stand; the proposal machine tells the
+  // queue `code_missing`, and nothing is logged, as it is the same every pass
+  // until the branch is pushed back.
+  if (revision.codeMissing) {
+    return {
+      merged: false,
+      codeMissing: true,
+      blockReason: codeMissing.CODE,
+      error: codeMissing.MERGE_REFUSAL,
     };
   }
   // #955: a revision the PLATFORM advanced (its own sync/conflict-resolution
@@ -5470,9 +5535,14 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
       }
     }
   } catch (err) {
-    log.warn('votes', 'Explicit-approval re-verify failed; using stored flag', {
-      sessionId: session.id, stored: explicitApproval, err: err.message,
-    });
+    // A head whose code is not on the git host (services/code-missing.js)
+    // keeps the stored flag without a warning: it fails the same way every
+    // pass until the branch is pushed back.
+    if (!codeMissing.isError(err)) {
+      log.warn('votes', 'Explicit-approval re-verify failed; using stored flag', {
+        sessionId: session.id, stored: explicitApproval, err: err.message,
+      });
+    }
   }
   if (!explicitApproval) explicitApprovalReason = null;
 
@@ -6237,13 +6307,25 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
   const isImported = session.source === 'imported';
   const useMockMerge = isImported && usesMockGithubForImports();
   const client = useMockMerge ? githubMock : github;
-  if (!(client.isEnabled() || useMockMerge) || !session.repo_url || !session.pr_number) {
-    // No GitHub, or no pull request (a local stack): nothing to ask.
+  if (!session.repo_url || !session.pr_number) {
+    // No repository or no pull request (a local stack): nothing to ask.
     return { outcome: 'merged', sha: null, noGithub: true };
+  }
+  // A repository with a pull request is never merged without being asked:
+  // one on the git host is merged by Homeroom (services/native-merge.js);
+  // one on GitHub (the platform's own) needs GitHub through the App, which
+  // may be paused, not configured or not installed, and then it is refused,
+  // not reported merged.
+  const onGitHost = require('../services/repo-ref').isHosted(session.repo_url);
+  if (!onGitHost && !useMockMerge && (!client.isEnabled() || require('../services/github-pause').codeChangesPaused(session.repo_url))) {
+    return {
+      outcome: 'refused', kind: 'blocked',
+      message: `${sessionLabel(session)} was not merged: code changes on GitHub are paused. It is tried again when GitHub is back.`,
+    };
   }
   // GitHub is there and the proposal has a pull request: a repository this
   // cannot read is a refusal, never a merge nobody asked GitHub for.
-  const [, owner, repo] = String(session.repo_url).match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/) || [];
+  const { owner, repo } = repoRef.ownerRepo(session.repo_url) || {};
   if (!owner || !repo) {
     return { outcome: 'refused', kind: 'blocked', message: `${sessionLabel(session)} was not merged: its repository address (${String(session.repo_url).slice(0, 200)}) could not be read.` };
   }
@@ -6293,6 +6375,13 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
     return await merge();
   } catch (err) {
     if (throttled(err)) return limited(err);
+    // The branch is not on the git host (services/code-missing.js; the gate
+    // refuses this first, so only a branch deleted since reaches here). Its
+    // own reason, as a refusal of this head, never read as a conflict for the
+    // queue to resolve.
+    if (codeMissing.isError(err)) {
+      return { outcome: 'refused', kind: 'blocked', codeMissing: true, message: `${label} wasn't merged. ${codeMissing.REASON}` };
+    }
     if (err && err.headMoved) {
       // GitHub answers 409 for a moved head and for a merge it will not make:
       // a fresh read of the branch says which.
@@ -6413,21 +6502,15 @@ async function checkAndOpenRevert(config, pool, session, decider) {
     } else if (!session.pr_number) {
       backfillReason = 'session has no pr_number';
     } else {
-      const bm = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      const bm = repoRef.ownerRepo(session.repo_url);
       if (!bm) {
         backfillReason = `unparseable repo_url ${session.repo_url}`;
       } else {
-        const [, bOwner, bRepo] = bm;
+        const { owner: bOwner, repo: bRepo } = bm;
         try {
-          // Use octokit.request rather than octokit.rest.pulls.get —
-          // @octokit/app's installation octokit is a bare @octokit/core
-          // instance and does not include the rest-endpoint-methods
-          // plugin, so .rest is undefined.
-          const octokit = await github.getInstallationOctokit(bOwner);
-          const { data: pr } = await octokit.request(
-            'GET /repos/{owner}/{repo}/pulls/{pull_number}',
-            { owner: bOwner, repo: bRepo, pull_number: session.pr_number }
-          );
+          // The pull request on whichever host (services/github.js getPR:
+          // a native one on the git host, GitHub's for the platform).
+          const pr = await github.getPR(bOwner, bRepo, session.pr_number);
           if (pr.merged && pr.merge_commit_sha) {
             // Not on a row the merge-followups machine holds while it is
             // on: the column is the machine's (it recorded the merge as it
@@ -6481,15 +6564,16 @@ async function checkAndOpenRevert(config, pool, session, decider) {
     return { reverted: false, error: 'no repo_url' };
   }
 
-  const m = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-  if (!m) {
+  // Either host: createRevertPR opens a hosted repository's revert natively.
+  const parsedRepo = repoRef.ownerRepo(session.repo_url);
+  if (!parsedRepo) {
     await pool.query(
       `UPDATE chat_sessions SET revert_of_session_id = NULL WHERE id = $1`,
       [session.id]
     ).catch(() => {});
     return { reverted: false, error: 'unparseable repo_url' };
   }
-  const [, repoOwner, repoName] = m;
+  const { owner: repoOwner, repo: repoName } = parsedRepo;
 
   log.info('votes', 'Opening revert PR', {
     sessionId: session.id, needed: majority, requestedBy: decider.username,
@@ -6575,9 +6659,43 @@ async function checkAndOpenRevert(config, pool, session, decider) {
 // push, open a PR. Returns { branch, prNumber, prUrl, prTitle }.
 // Throws on revert conflict or network errors; caller surfaces the
 // failure to chat.
+// What a revert proposal says, on either host.
+function revertText(session, mergeSha, deciderUsername) {
+  const origLabel = session.pr_title
+    ? `${session.pr_title} (PR #${session.pr_number || session.id})`
+    : `PR #${session.pr_number || session.id}`;
+  const prTitle = `Revert: ${session.pr_title || `PR #${session.pr_number || session.id}`}`.slice(0, 200);
+  const prBody =
+    `Automated revert of ${origLabel}.\n\n` +
+    `Undo vote reached majority on the original PR; deciding vote cast by \`${deciderUsername}\`. ` +
+    `This PR still needs a regular merge vote to land. Vote in the app's group chat panel.\n\n` +
+    `Reverts commit ${mergeSha}.`;
+  return { prTitle, prBody };
+}
+
+// A repository on Homeroom's git host: the revert is made on the app's
+// mirror and pushed to a new branch as the service account
+// (services/hosted-git.js revertOnto); its proposal is a native pull
+// request. No clone, no token in a URL.
+async function createHostedRevertPR({ session, mergeSha, repoOwner, repoName, deciderUsername }) {
+  const safeBase = (session.branch_name || `pr-${session.pr_number || session.id}`).replace(/[^a-zA-Z0-9._/-]/g, '-');
+  const revertBranch = `revert/${safeBase}-${Date.now()}`;
+  const { prTitle, prBody } = revertText(session, mergeSha, deciderUsername);
+  await require('../services/hosted-git').revertOnto(repoOwner, repoName, mergeSha, {
+    branch: revertBranch, message: `${prTitle}\n\nThis reverts commit ${mergeSha}.`,
+  });
+  const prData = await github.createPR(repoOwner, repoName, { branch: revertBranch, title: prTitle, body: prBody });
+  return { branch: revertBranch, prNumber: prData.number, prUrl: prData.html_url, prTitle };
+}
+
 async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderUsername }) {
-  const token = process.env.GITHUB_BOT_TOKEN;
-  if (!token) throw new Error('GITHUB_BOT_TOKEN not set');
+  if (require('../services/repo-ref').hostOfOwner(repoOwner) === 'git_host') {
+    return createHostedRevertPR({ session, mergeSha, repoOwner, repoName, deciderUsername });
+  }
+  // On GitHub (the platform's own repository): as the GitHub App, with an
+  // installation token made for this revert (services/github.js "Who
+  // Homeroom is on GitHub"); refused for any other owner.
+  const token = await github.getInstallationToken(repoOwner);
 
   const cloneUrl = `https://x-access-token:${token}@github.com/${repoOwner}/${repoName}.git`;
   const tmpDir = `/tmp/usernode-revert-${session.id}-${Date.now()}`;
@@ -6592,10 +6710,11 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
     // the deployProduction shallow-clone pattern doesn't apply here.
     await docker.execFileAsync('git', ['clone', cloneUrl, tmpDir], { timeout: 180000 });
 
-    // Committer identity for the revert commit. Matches the
-    // usernode-bot convention used elsewhere.
-    await docker.execFileAsync('git', ['-C', tmpDir, 'config', 'user.name', 'usernode-bot']);
-    await docker.execFileAsync('git', ['-C', tmpDir, 'config', 'user.email', 'usernode-bot@users.noreply.github.com']);
+    // Committer identity for the revert commit: Homeroom's one identity
+    // (services/commit-identity.js), as on the git host.
+    const author = require('../services/commit-identity').homeroomAuthor();
+    await docker.execFileAsync('git', ['-C', tmpDir, 'config', 'user.name', author.name]);
+    await docker.execFileAsync('git', ['-C', tmpDir, 'config', 'user.email', author.email]);
 
     // Branch off the current main. main has already been updated by
     // the original merge + any subsequent merges by the time we get

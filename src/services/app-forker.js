@@ -7,6 +7,8 @@ const log = require('./logger');
 const github = require('./github');
 const docker = require('./docker');
 const { getConnectorScaffoldFiles, getCanonicalRepoFile } = require('./template');
+const repoRef = require('./repo-ref');
+const commitIdentity = require('./commit-identity');
 
 // Rewrite (or create) the top-level `name` in the forked working tree's
 // dapp.json to the forker's chosen name. dapp.json's `name` is the
@@ -101,22 +103,25 @@ async function findForkSource(pool, forkApp) {
   return null;
 }
 
-// Copy the SOURCE app's current `main` tree into a brand-new bot-owned
-// repo as a single, history-free commit — preserving binary assets
-// (icon images, etc.) that github.pushFiles would corrupt. NOT a
-// GitHub fork: both repos are bot-owned (GitHub disallows self-forks)
-// and we want an independent app with its own issues/PRs. Leaves the
-// fork's working tree on disk at `tempDir` (the caller removes it), and returns { repoUrl, mainSha, sourceSha }: the copy's own first
-// commit, and the source commit that was actually cloned. That is read
-// from the clone itself rather than from the source's `main_sha`, which
-// lags the repository while a deploy of a newer merge is still running.
+// Copy the SOURCE app's current `main` tree into a brand-new repository on
+// Homeroom's git host as a single, history-free commit — preserving binary
+// assets (icon images, etc.) that github.pushFiles would corrupt. NOT a
+// fork on the host: we want an independent app with its own requests and
+// proposals. Leaves the fork's working tree on disk at `tempDir` (the
+// caller removes it), and returns { repoUrl, mainSha, sourceSha }: the
+// copy's own first commit, and the source commit that was actually cloned.
+// That is read from the clone itself rather than from the source's
+// `main_sha`, which lags the repository while a deploy of a newer merge is
+// still running.
 
-// The credential helper the push runs with: an inline shell function git
-// itself executes under /bin/sh, reading the PAT from the environment.
-// Same pattern as services/worker.js execPushFromWorker. Kept literal —
-// no template interpolation — so the secret is never in an argument.
-const PUSH_CREDENTIAL_HELPER =
-  'credential.helper=!f() { echo username=x-access-token; echo password=$PAT; }; f';
+// A copy is refused, before anything is cloned, where the git host is not
+// set up: with createRepo's own error (services/github.js), which is where
+// it would otherwise be refused, after the clone.
+function gitHostNotConfigured() {
+  return Object.assign(new Error('New repositories are made on Homeroom\'s git host, and it is not configured'), {
+    code: 'git_host_not_configured',
+  });
+}
 
 // Strip every `.git` under `dir` — the top-level repository directory and
 // the `.git` FILE a submodule checkout leaves in its place — without
@@ -145,13 +150,16 @@ async function stripGitEntries(dir) {
 }
 
 async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDir }) {
-  const botToken = process.env.GITHUB_BOT_TOKEN || '';
-  if (!botToken) {
-    throw new Error('GITHUB_BOT_TOKEN required to fork a repo');
-  }
+  // The copy is made where new repositories are: Homeroom's git host
+  // (botUsername is its organisation, services/github.js getBotUsername),
+  // pushed as its service account. Without a git host, botUsername is a
+  // GitHub account, where Homeroom makes no repository any more: copies were
+  // pushed there with the bot's token, and GitHub suspended the bot
+  // (services/github.js "Who Homeroom is on GitHub").
+  if (repoRef.hostOfOwner(botUsername) !== 'git_host') throw gitHostNotConfigured();
 
   // Resolve the source clone URL from repo_url (fall back to bot/<slug>).
-  const parsed = github.parseGithubUrl(sourceApp.repo_url || '');
+  const parsed = repoRef.ownerRepo(sourceApp.repo_url);
   const srcOwner = parsed ? parsed.owner : botUsername;
   const srcRepo = parsed ? parsed.repo : sourceApp.slug;
   const cloneUrl = await github.getCloneUrl(srcOwner, srcRepo);
@@ -191,20 +199,18 @@ async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDi
   rewriteDappName(tempDir, forkName);
   writeConnectorScaffold(tempDir);
 
-  // Create the fork's repo (bot PAT, public, auto_init) then force-push
-  // our single squashed commit over the auto-init commit. The bot PAT is
-  // supplied via an inline credential helper scoped to this one push
-  // (same pattern as services/worker.js execPushFromWorker) and passed
-  // through the process env so it never lands in argv.
+  // Create the fork's repository, then force-push our single squashed
+  // commit over whatever it starts with. The git host's service account
+  // answers that one push (services/git-host.js git, auth: true), and its
+  // token never lands in argv or in an error.
   // adoptExisting: a fork retry after a partial failure re-uses the same
-  // fork slug, so the repo may already exist on the bot account — adopt
-  // it rather than 422ing; the force-push below overwrites its content.
+  // fork slug, so the repo may already exist — adopt it rather than
+  // refusing; the force-push below overwrites its content.
   const repo = await github.createRepo(botUsername, forkSlug, {
     description: `${forkName}: forked on Homeroom`,
     adoptExisting: true,
   });
   const repoUrl = repo.html_url;
-  const pushUrl = `https://github.com/${botUsername}/${forkSlug}.git`;
   // Only now is the fork's own URL known; still before the commit below.
   writeCanonicalRepoPointer(tempDir, repoUrl);
 
@@ -213,13 +219,6 @@ async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDi
   // postgresql-client, Dockerfile.kubernetes), so the `bash -c` script that
   // used to run these five commands failed with "spawn bash ENOENT" before
   // it wrote anything, and every fork with it.
-  //
-  // The PAT reaches git the way the comment above promises: through the
-  // environment, read by the inline credential helper when git runs it
-  // under its own /bin/sh. The old script did not actually keep that
-  // promise — its helper string sat inside bash double quotes, so bash
-  // expanded $PAT into git's argument list. Passed as a literal argument
-  // here, $PAT is expanded by nothing but the helper.
   const git = (args, extra = {}) => docker.execFileAsync('git', args, {
     cwd: tempDir, timeout: 120000, ...extra,
   });
@@ -227,19 +226,18 @@ async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDi
   try {
     await git(['init', '-q', '-b', 'main']);
     await git(['add', '-A']);
+    // Homeroom's one identity (services/commit-identity.js).
     await git([
-      '-c', 'user.email=bot@usernode', '-c', 'user.name=usernode-bot',
+      ...commitIdentity.gitConfigArgs(),
       'commit', '-q', '-m', `Forked from ${sourceApp.slug}`,
     ]);
-    await git([
-      '-c', PUSH_CREDENTIAL_HELPER,
-      'push', '-q', '--force', pushUrl, 'HEAD:main',
-    ], { env: { ...process.env, PAT: botToken } });
+    const gitHost = require('./git-host');
+    await gitHost.git(['-C', tempDir, 'push', '-q', '--force', gitHost.cloneUrl(forkSlug), 'HEAD:main'], { auth: true });
     const { stdout } = await git(['rev-parse', 'HEAD']);
     mainSha = (stdout || '').trim() || null;
   } catch (err) {
-    const clean = String(err.message || '').replace(botToken, '***');
-    const pushError = new Error(`fork repo push failed: ${clean}`);
+    // git-host.git redacts its token from the message already.
+    const pushError = new Error(`fork repo push failed: ${String(err.message || '')}`);
     pushError.repoFailed = true;
     throw pushError;
   }

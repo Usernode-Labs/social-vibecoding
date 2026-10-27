@@ -298,10 +298,11 @@ export function questionsTitle(count: number): string {
 
 /**
  * The made screen's questions, with Submit, in place of the invite line and
- * its buttons until they are answered: the heading, "Homeroom bot builds
- * <project> from your answers.", then each question on the plane's card
- * (the plan card's own choices, ../messages/bot-plan-view.tsx PlanChoices),
- * its suggested answer chosen.
+ * its buttons until they are answered: the "Needs you" label the screen's
+ * other waiting cards carry (PLAN_LABEL, centred here), the heading in the
+ * accent, "Homeroom bot builds <project> from your answers.", then each
+ * question on the plane's card (the plan card's own choices,
+ * ../messages/bot-plan-view.tsx PlanChoices), its suggested answer chosen.
  */
 export function QuickQuestions({ name, questions, busy = false, error = null, onSubmit }: {
   name: string;
@@ -317,7 +318,8 @@ export function QuickQuestions({ name, questions, busy = false, error = null, on
   const pick = (index: number, answer: string) => setPicked((now) => questions.map((_, i) => (i === index ? answer : now[i] ?? null)));
   return (
     <section data-first-session-questions={questions.length} aria-labelledby={`${uid}-title`} className="flex flex-col">
-      <h2 id={`${uid}-title`} className="text-center text-[17px] font-semibold leading-snug">{questionsTitle(questions.length)}</h2>
+      <p data-first-session-questions-label="" className="px-1 pb-1.5 text-center text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t(PLAN_LABEL)}</p>
+      <h2 id={`${uid}-title`} className="text-center text-[17px] font-semibold leading-snug text-violet-600 dark:text-violet-400">{questionsTitle(questions.length)}</h2>
       <p className="mt-1 text-center text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.made.questions.line', { project: name })}</p>
       <div className="mt-3 rounded-[20px] bg-white px-4 pb-1.5 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
         <PlanChoices questions={questions} picked={picked} onPick={pick} idBase={uid} top="plain" />
@@ -340,7 +342,7 @@ export function QuickQuestions({ name, questions, busy = false, error = null, on
   );
 }
 
-/** Over the plan's card: it is the one thing on the screen that waits on them. A message id, as the labels below are. */
+/** Over the plan's card and the questions: the one thing on the screen that waits on them. A message id, as the labels below are. */
 export const PLAN_LABEL = 'onboarding:firstSession.made.needsYou';
 
 /** The plan's card: that there is one, never what to tap in it (that is the chat's). */

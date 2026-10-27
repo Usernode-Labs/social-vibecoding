@@ -58,6 +58,7 @@ const { listActiveUserIds } = require('./active-users');
 const notificationPreferences = require('./notification-preferences');
 const notificationBookmarks = require('./notification-bookmarks');
 const { PARKED_NOTIFICATION_KINDS } = require('./kudos-parked');
+const repoRef = require('./repo-ref');
 
 // #5249: a parked feature's rows (kudos, while it is parked) are neither
 // listed nor counted. Built from the frozen constant in kudos-parked.js,
@@ -98,6 +99,30 @@ const CONVERSATION_NOTIFICATION_KINDS = new Set([
 ]);
 const CONVERSATION_KIND_SQL = [...CONVERSATION_NOTIFICATION_KINDS]
   .map((kind) => `'${kind}'`).join(', ');
+
+// A notification belongs to its recipient, but that does not grant enduring
+// access to the project it hydrates. Share this fresh predicate across exact
+// reads, feeds, saved rows, badge counts and live hydration. Invitations are
+// a narrow metadata-only exception while the actual invitation is pending.
+const APP_ACCESS_SQL = `EXISTS (
+ SELECT 1 FROM users notification_viewer
+ WHERE notification_viewer.id = n.user_id AND notification_viewer.anonymised_at IS NULL
+  AND (n.kind NOT IN ('openrouter_key_review', 'platform_limit', 'platform_incident')
+       OR (notification_viewer.is_admin AND NOT notification_viewer.admin_readonly))
+  AND (n.app_id IS NULL OR EXISTS (
+   SELECT 1 FROM apps notification_app WHERE notification_app.id = n.app_id
+    AND notification_app.moderation_suspended_at IS NULL
+    AND NOT EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.app_id = notification_app.id AND b.user_id = n.user_id)
+    AND (notification_app.view_visibility = 'public' OR notification_viewer.is_admin
+     OR EXISTS (SELECT 1 FROM app_collaborators m WHERE m.app_id = notification_app.id AND m.user_id = n.user_id AND m.status = 'member')
+     OR (n.chat_message_id IS NULL AND n.session_id IS NULL AND n.conversation_id IS NULL AND n.conversation_message_id IS NULL
+      AND ((n.kind = 'collab_invite' AND EXISTS (
+       SELECT 1 FROM app_collaborators m WHERE m.app_id = notification_app.id AND m.user_id = n.user_id AND m.status = 'invited'))
+      OR (n.kind = 'approver_invite' AND EXISTS (
+       SELECT 1 FROM app_approvers m WHERE m.app_id = notification_app.id AND m.user_id = n.user_id AND m.status = 'invited'))))
+    )
+  ))
+)`;
 
 // Conversation notification rows are useful only while their recipient may
 // still open the referenced conversation. Invite history remains visible
@@ -486,10 +511,9 @@ async function createIssueThreadNotifications(pool, {
     'SELECT repo_url FROM apps WHERE id = $1',
     [appId]
   );
-  const m = String(appRows[0]?.repo_url || '')
-    .match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  const owner = m ? m[1] : null;
-  const repo = m ? m[2] : null;
+  const m = repoRef.ownerRepo(appRows[0]?.repo_url);
+  const owner = m ? m.owner : null;
+  const repo = m ? m.repo : null;
 
   const { rows: candidates } = await pool.query(
     `SELECT i.created_by AS user_id
@@ -1226,6 +1250,7 @@ const HYDRATE_SELECT_SQL = `SELECT n.id, n.kind, n.user_id,
                  ELSE n.read_at END AS read_at,
             n.created_at,
             n.app_id, a.slug AS app_slug, a.name AS app_name,
+            a.icon_image_id AS app_icon_image_id, a.icon_emoji AS app_icon_emoji,
             n.chat_message_id,
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
@@ -1268,7 +1293,7 @@ const HYDRATE_SELECT_SQL = `SELECT n.id, n.kind, n.user_id,
 // next read of the feed: on 21 Oct 2026 a notification showed in the opened
 // sheet for a moment and then disappeared. The phone push is the
 // mobile_push_deliveries trigger's, at the insert, and is unchanged.
-const HYDRATE_LISTED_SQL = `${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+const HYDRATE_LISTED_SQL = `${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL} AND ${APP_ACCESS_SQL}
        AND ${PARKED_KINDS_SQL}
        AND NOT (n.kind = ANY($2::text[]) AND cs.status IS NOT DISTINCT FROM 'merged')`;
 
@@ -1712,6 +1737,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
                  ELSE n.read_at END AS read_at,
             n.created_at,
             n.app_id, a.slug AS app_slug, a.name AS app_name,
+            a.icon_image_id AS app_icon_image_id, a.icon_emoji AS app_icon_emoji,
             n.chat_message_id,
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
@@ -1749,7 +1775,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
      LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
      ${FILED_MESSAGE_JOIN_SQL}
      ${savedJoin}
-     WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+     WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL} AND ${APP_ACCESS_SQL}
        AND ${PARKED_KINDS_SQL}
      ${mergedHiddenClause}
      ${cursorClause}
@@ -1773,6 +1799,7 @@ async function getForUser(pool, userId, id) {
                  ELSE n.read_at END AS read_at,
             n.created_at,
             n.app_id, a.slug AS app_slug, a.name AS app_name,
+            a.icon_image_id AS app_icon_image_id, a.icon_emoji AS app_icon_emoji,
             n.chat_message_id,
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
@@ -1808,7 +1835,7 @@ async function getForUser(pool, userId, id) {
        LEFT JOIN users su ON su.id = n.source_user_id
        LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
        ${FILED_MESSAGE_JOIN_SQL}
-      WHERE n.id = $1 AND n.user_id = $2 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+      WHERE n.id = $1 AND n.user_id = $2 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL} AND ${APP_ACCESS_SQL}
         AND ${PARKED_KINDS_SQL}`,
     [id, userId]
   );
@@ -1841,7 +1868,7 @@ async function countUnread(pool, userId) {
     `SELECT COUNT(*)::int AS c FROM notifications AS n
       WHERE n.user_id = $1 AND n.read_at IS NULL
         AND NOT ${DECIDED_ASK_SETTLED_SQL}
-        AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+        AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL} AND ${APP_ACCESS_SQL}
         AND ${PARKED_KINDS_SQL}
         AND NOT (n.kind = ANY($2::text[]) AND EXISTS (
               SELECT 1 FROM chat_sessions s
@@ -1874,7 +1901,7 @@ async function countUnreadSplit(pool, userId) {
             COUNT(*)::int AS c FROM notifications AS n
       WHERE n.user_id = $1 AND n.read_at IS NULL
         AND NOT ${DECIDED_ASK_SETTLED_SQL}
-        AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+        AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL} AND ${APP_ACCESS_SQL}
         AND ${PARKED_KINDS_SQL}
         AND NOT (n.kind = ANY($2::text[]) AND EXISTS (
               SELECT 1 FROM chat_sessions s
@@ -2132,7 +2159,7 @@ async function markReadForConversation(pool, userId, conversationId) {
     `UPDATE notifications n
         SET read_at = NOW()
       WHERE n.user_id = $1 AND n.conversation_id = $2 AND n.read_at IS NULL
-        AND ${CONVERSATION_ACCESS_SQL}`,
+        AND ${CONVERSATION_ACCESS_SQL} AND ${APP_ACCESS_SQL}`,
     [userId, conversationId]
   );
   return rowCount || 0;
@@ -2239,7 +2266,9 @@ function serialize(row) {
   // #5580: the Homeroom bot's news about a project carries that project
   // (conversations.sendMessage's notificationAppId), so the bell files it
   // there. Only the project's name and id come through: it still routes,
-  // reads and pushes as the conversation row it is.
+  // reads and pushes as the conversation row it is. Its icon comes through
+  // too (#5877), so the row wears the project's own tile rather than the
+  // Homeroom mark when it is about one.
   const botProject = isConversation && row.app_id != null && row.source_username === HOMEROOM_BOT_USERNAME;
   return {
     id: row.id,
@@ -2252,6 +2281,13 @@ function serialize(row) {
     appId: isConversation ? (botProject ? row.app_id : null) : row.app_id,
     appSlug: isConversation ? (botProject ? row.app_slug : null) : row.app_slug,
     appName: isConversation ? (botProject ? row.app_name : null) : row.app_name,
+    // #5877: the project's icon, in the same image-then-emoji order its tile
+    // draws it (`frontend/src/features/apps/app-card.js` iconViewFor). Only
+    // a bot row about a project carries them; every other row, a person's
+    // conversation with a stray app_id included, gets null and keeps what
+    // it drew before.
+    appIconUrl: botProject && row.app_icon_image_id ? `/app-icons/${row.app_icon_image_id}` : null,
+    appIconEmoji: botProject ? (row.app_icon_emoji || null) : null,
     // #5580: the request and proposal this row is about (STORY_COLUMNS_SQL),
     // which the sheet folds one story's news by. The bot's own rows name
     // their request in `detail`, or, for a reply in a request's thread, by
@@ -2369,6 +2405,10 @@ module.exports = {
   hydrateAndPush,
   hydrateNotification,
   hydrateNotifications,
+  // Shared by the WebSocket delivery query so hydration and its access
+  // predicates run in the same snapshot as the recipient's live session.
+  HYDRATE_SELECT_SQL,
+  HYDRATE_LISTED_SQL,
   createPrProposedNotifications,
   createChangeReadyNotifications,
   createAppDeleteAttemptNotifications,

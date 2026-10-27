@@ -19,7 +19,11 @@ const { execFileSync } = require('node:child_process');
 const commits = require('../src/services/homeroom-commits');
 const mirror = require('../src/services/repo-mirror');
 
-const BOT = 'usernode-bot@users.noreply.github.com';
+const identity = require('../src/services/commit-identity');
+
+const BOT = identity.DEFAULT_EMAIL;
+// Recognition only: what Homeroom's commits carried before 26 Oct 2026.
+const OLD_BOT = identity.LEGACY_EMAIL;
 const c = (subject, committer = BOT) => ({ committer, subject });
 
 test('Homeroom made a move when it committed every commit; a fix round when each is a fix round\'s', () => {
@@ -33,7 +37,28 @@ test('Homeroom made a move when it committed every commit; a fix round when each
   assert.deepEqual(classify([c(m.checks(12), 'noreply@github.com')]), { madeByHomeroom: false, fixOnly: false }, 'the words alone are not enough');
   assert.deepEqual(classify([c(`${m.checks(12)} and more`)]), { madeByHomeroom: true, fixOnly: false });
   for (const none of [null, undefined, []]) assert.deepEqual(classify(none), { madeByHomeroom: false, fixOnly: false });
+  assert.deepEqual(classify([c(m.checks(12), ' HOMEROOM@users.noreply.onhomeroom.com ')]), { madeByHomeroom: true, fixOnly: true });
+});
+
+test('a commit Homeroom made before 26 Oct 2026, under usernode-bot\'s address, is still Homeroom\'s', () => {
+  const { classify, FIX_COMMIT_MESSAGES: m } = commits;
+  assert.equal(OLD_BOT, 'usernode-bot@users.noreply.github.com');
+  assert.deepEqual(classify([c(m.checks(12), OLD_BOT)]), { madeByHomeroom: true, fixOnly: true });
   assert.deepEqual(classify([c(m.checks(12), ' USERNODE-BOT@users.noreply.github.com ')]), { madeByHomeroom: true, fixOnly: true });
+  assert.deepEqual(classify([c(m.checks(12), OLD_BOT), c('Changes via Homeroom')]), { madeByHomeroom: true, fixOnly: false },
+    'one move may carry commits from before and after');
+  assert.ok(commits.HOMEROOM_COMMITTERS.includes(BOT) && commits.HOMEROOM_COMMITTERS.includes(OLD_BOT));
+});
+
+test('a commit under a configured identity (GIT_HOST_COMMIT_EMAIL) is Homeroom\'s, and the defaults still are', () => {
+  const env = { GIT_HOST_COMMIT_EMAIL: 'Commits@Homeroom.example' };
+  assert.equal(commits.isHomeroomCommitter('commits@homeroom.example', env), true);
+  assert.equal(commits.isHomeroomCommitter(BOT, env), true);
+  assert.equal(commits.isHomeroomCommitter(OLD_BOT, env), true);
+  assert.equal(commits.isHomeroomCommitter('commits@homeroom.example', {}), false, 'only while it is configured');
+  for (const nobody of ['', null, undefined, 'ada@example.com', 'noreply@github.com']) {
+    assert.equal(commits.isHomeroomCommitter(nobody, env), false, String(nobody));
+  }
 });
 
 test('the bot\'s fix rounds commit with these messages', () => {

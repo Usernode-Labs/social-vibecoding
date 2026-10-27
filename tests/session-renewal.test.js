@@ -59,12 +59,15 @@ test('a due session renews its database lease and protected cookie together', as
   assert.match(h.queries[0].sql, /expires_at = \$3 AND expires_at > NOW\(\)/);
   assert.deepEqual(h.queries[0].params.slice(1), ['token', previousExpiry]);
 
-  assert.equal(h.cookies.length, 1);
+  assert.equal(h.cookies.length, 2);
   assert.equal(h.cookies[0].name, 'session');
   assert.equal(h.cookies[0].value, 'token');
   assert.equal(h.cookies[0].options.httpOnly, true);
   assert.equal(h.cookies[0].options.sameSite, 'lax');
   assert.deepEqual(h.cookies[0].options.expires, result);
+  assert.equal(h.cookies[1].name, 'usernode_api_scope');
+  assert.equal(h.cookies[1].options.httpOnly, false);
+  assert.deepEqual(h.cookies[1].options.expires, result, 'the non-credential hint follows the credential lease');
 
   const remaining = result.getTime() - Date.now();
   assert.ok(remaining > (SESSION_IDLE_DAYS - 1) * DAY_MS);
@@ -81,7 +84,7 @@ test('renewal is clamped to the absolute lifetime cap', async () => {
 
   assert.ok(result instanceof Date);
   assert.equal(result.getTime(), createdAt.getTime() + SESSION_MAX_DAYS * DAY_MS);
-  assert.equal(h.cookies.length, 1);
+  assert.equal(h.cookies.length, 2);
 });
 
 test('a session already at its absolute cap is left to expire', async () => {

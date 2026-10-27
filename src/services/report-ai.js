@@ -17,6 +17,7 @@ const { GOVERNANCE_KINDS } = require('./governance-kinds');
 const limits = require('./limits');
 const llm = require('./llm');
 const log = require('./logger');
+const repoRef = require('./repo-ref');
 
 // Caps keep the prompt bounded on huge apps; overflow is disclosed to the
 // model via `truncated` so the narrative can say "and more" honestly.
@@ -36,8 +37,7 @@ const day = (v) => {
 };
 
 function parseOwnerRepo(repoUrl) {
-  const m = String(repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  return m ? { owner: m[1], repo: m[2] } : null;
+  return repoRef.ownerRepo(repoUrl);
 }
 
 // opts.since (ISO string or null) scopes the report period: merged work

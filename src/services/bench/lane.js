@@ -457,8 +457,11 @@ async function look(runId = null, deps = {}) {
  * builds wherever they run, recorded cancelled when they end.
  */
 async function cancelRun(pool, runId, deps = {}) {
-  const out = await (deps.platform || platform()).benchCancelRun(Number(runId), { by: deps.by || 'an admin' });
-  if (out.status === 'rejected') return httpError(out.reason === 'no_run' ? 404 : 409, 'The run is not running');
+  const out = await (deps.platform || platform()).benchCancelRun(Number(runId), { by: deps.by || 'an admin', userId: deps.userId });
+  if (out.status === 'rejected') {
+    if (out.reason === 'not_authorized') return httpError(403, 'Your current permissions do not allow that action');
+    return httpError(out.reason === 'no_run' ? 404 : 409, 'The run is not running');
+  }
   if (out.status === 'faulted') return httpError(503, 'The run could not be cancelled just now. Try again.');
   return { ok: true };
 }
@@ -470,8 +473,9 @@ async function cancelRun(pool, runId, deps = {}) {
  * refusal.
  */
 async function cancelTrial(pool, trialId, deps = {}) {
-  const out = await (deps.platform || platform()).benchCancelTrial(Number(trialId), { by: deps.by || 'an admin', why: deps.why || null });
+  const out = await (deps.platform || platform()).benchCancelTrial(Number(trialId), { by: deps.by || 'an admin', why: deps.why || null, userId: deps.userId, system: !!deps.system });
   if (out.status === 'rejected') {
+    if (out.reason === 'not_authorized') return httpError(403, 'Your current permissions do not allow that action');
     if (out.reason === 'no_trial') return httpError(404, 'No such trial');
     return httpError(409, `That trial is already ${String(out.reason || '').replace(/^already_/, '')}`);
   }
@@ -733,7 +737,7 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
     if (!row) throw new Error('the trial is gone');
     if (!row.app_id) throw new Error('the task\'s app is gone');
     const repo = bot.parseRepo(row.repo_url);
-    if (!repo) throw new Error('the app has no GitHub repository');
+    if (!repo) throw new Error('the app has no repository');
     const snapshot = await snapshots.readSnapshot(pool, row.snapshot_id);
     if (!snapshot) throw new Error('the task\'s snapshot is gone');
     user = deps.user || await runner.ensureBenchUser(pool, config);

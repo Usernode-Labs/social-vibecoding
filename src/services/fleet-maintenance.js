@@ -30,6 +30,7 @@ const crypto = require('crypto');
 const log = require('./logger');
 const github = require('./github');
 const llm = require('./llm');
+const repoRef = require('./repo-ref');
 
 const PLATFORM_USERNAME = 'usernode-platform';
 // A failure retrying cannot mend (the change is too big or the model went
@@ -62,8 +63,7 @@ const MAX_SEARCH_MATCHES = 50;
 const MAX_SEARCH_LINE_CHARS = 300;
 
 function parseRepo(url) {
-  const [, owner, repo] = (url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-  return owner && repo ? { owner, repo: repo.replace(/\.git$/, '') } : null;
+  return repoRef.ownerRepo(url);
 }
 
 /**

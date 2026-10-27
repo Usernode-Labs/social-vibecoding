@@ -85,6 +85,7 @@
 const crypto = require('crypto');
 const log = require('./logger');
 const stageCosts = require('./stage-costs');
+const repoRef = require('./repo-ref');
 
 const GLM = 'z-ai/glm-5.3-flash';
 const OPUS = 'anthropic/claude-opus-5.5';
@@ -1363,7 +1364,7 @@ async function diffSummary({ github = null, repoUrl, base, sha, stored = null })
     files: files.length,
     insertions: files.reduce((n, f) => n + (Number(f.additions) || 0), 0),
     deletions: files.reduce((n, f) => n + (Number(f.deletions) || 0), 0),
-    compareUrl: `${String(repoUrl).replace(/\.git$/, '')}/compare/${base}...${sha}`,
+    compareUrl: repoRef.compareUrl(repoUrl, base, sha),
   };
 }
 
@@ -2063,7 +2064,7 @@ async function abandonSideBuilds(pool, botRunId, why, deps = {}) {
     const lane = deps.lane || require('./bench/lane');
     for (const t of running) {
       // eslint-disable-next-line no-await-in-loop
-      await Promise.resolve(lane.cancelTrial(pool, t.id, { ...deps, by: 'Homeroom', why: reason })).catch(() => null);
+      await Promise.resolve(lane.cancelTrial(pool, t.id, { ...deps, by: 'Homeroom', why: reason, system: true })).catch(() => null);
     }
     await pool.query(
       `UPDATE bot_config_results SET status = 'skipped', error = $2, finished_at = NOW()

@@ -15,7 +15,9 @@
  *
  * The badge is not shown (`badge: 'inline'` in a see-through box); the
  * sheet carries the notice Google asks for in its place (RECAPTCHA_LINE).
- * A challenge, when Google wants one, draws over the page on its own.
+ * A challenge, when Google wants one, draws over the page on its own. With
+ * no site key neither the script nor the notice is used at all
+ * (phoneRecaptchaInUse).
  *
  * Never throws: anything that goes wrong is a null token, the request goes
  * without one, and the server answers recaptcha_required, which the sheet
@@ -81,13 +83,12 @@ let widget: { id: number; resolve: ((token: string | null) => void) | null } | n
 /** A fresh reCAPTCHA token for one phone code request, or null. */
 export async function phoneRecaptchaToken(): Promise<string | null> {
   try {
-    // Both start at once; with no site key (a server with test numbers
-    // only, services/firebase-phone-auth.js) the request goes now, without
-    // waiting on Google's script.
-    const script = loadScript();
+    // The site key comes first: with none (Brevo sends the texts, or a
+    // server with test numbers only, services/firebase-phone-auth.js) the
+    // request goes now, without Google's script being fetched at all.
     const siteKey = await readSiteKey();
     if (!siteKey) return null;
-    const g = await script;
+    const g = await loadScript();
     if (!g) return null;
     if (!widget) {
       const box = document.createElement('div');
@@ -125,6 +126,17 @@ export async function phoneRecaptchaToken(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether a phone code request answers Google's check at all. False while
+ * the server serves no site key (Brevo sends the texts; see
+ * services/firebase-phone-auth.js), so the screens drop the notice line.
+ * Never throws, and never keeps an empty answer: a later switch back to
+ * Firebase is picked up on the next read.
+ */
+export function phoneRecaptchaInUse(): Promise<boolean> {
+  return readSiteKey().then((key) => !!key).catch(() => false);
 }
 
 /**

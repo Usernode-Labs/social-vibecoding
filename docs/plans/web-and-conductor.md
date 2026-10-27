@@ -84,6 +84,61 @@ machine whose work runs the turn, and a worker's callbacks (the model proxy,
 BYOK spend, a shots eval's bill) read a turn that is not in their process
 from the database.
 
+Worker push callbacks use the `worker-push` machine
+(`src/workflow/worker-push/`). The HTTP handler authenticates the worker and
+reads its stored branch, then waits for a separate request instance. The
+conductor rechecks the session, account, app, branch, repository and public
+visibility before exporting Git objects and running authenticated Git in the
+trusted pusher. No JWT, Git credential or Git bundle enters the event or work
+input. A request not started within 80 seconds expires; an HTTP wait that
+times out returns a retryable 503. There is no direct web-side push fallback.
+The handler has its own work kind and concurrency, so a turn waiting for its
+worker's callback does not occupy the push queue. Local `all` processes run
+the same machine and handler.
+
+Agent-context reset and a promoted proposal's Pause queue `worker-release`
+requests (`src/workflow/worker-release/`). Reset writes its release intent in
+the same transaction as the model/context change and transcript message;
+Pause leaves the proposal up for voting. The conductor checks the current
+owner, account, configuration, turn and last use, takes the worker eviction
+lock shared with startup, then deletes only captured runtime identities and
+waits for them to be gone. A later use or context reset makes stale work skip.
+Pause still releases an idle worker when its captured turn has just finished;
+a different running turn is spared. A later turn that also finishes before
+Pause executes can lose its warm worker.
+The work lease and session lock are checked before deletion. An unpushed commit
+is recorded durably in `session_workers` before the turn is released, so
+another conductor or a restarted process can rescue it. Worker preparation
+rescues it under the eviction lock on every image, and the dispatch guard
+checks again before any runner can reset the checkout. A caller whose own
+attempt is already registered supplies its `turnId`; only that matching
+`dispatch_pending` attempt may see through the active-turn guard. A different
+running turn is left alone. A new turn never supersedes an unpushed commit.
+Failed rescue or a failed database read prevents a new turn, agent-reset or
+promoted-Pause removal, idle eviction and stale-worker replacement. A refused
+turn starts no agent, charges no coding turn, and releases only its own
+pending record. The refusal names the commit, branch and push failure;
+permanent failures are passed through to the Mayor and agent dispatch.
+On a GitHub-hosted app during the GitHub pause, a build whose push failed
+blocks further builds in that session until its commit can be pushed.
+Failed record writes retain the turn and journal for recovery.
+The context volume stays. Agent dispatch records an operation immediately
+after switching agents, so its reset release will often skip; reusing that
+warm worker is safe because its setup does not depend on the agent backend.
+A separate machine lets older conductors leave these intents for the new
+build during rollout. The idempotent schema migration adds nullable
+`unpushed_sha` and `unpushed_branch_name` columns to the private table;
+no new runtime configuration is needed. Existing unpushed commits held only
+in an older conductor's memory are not backfilled by this migration.
+
+These move web dependencies behind durable commands. Web Pods still need
+their current Kubernetes and database permissions for other callers, including
+force-stop fallback, volume copies, repository operations and startup work. Moving
+those callers, then splitting service accounts, Secret inputs and actual
+database login privileges, remains SEC-09 work. The event's source metadata
+also remains a convention among trusted processes; it does not authenticate
+a compromised producer.
+
 ## Successors
 
 A release replaces a process with one that can do what it did
@@ -136,6 +191,6 @@ round, is less detailed than what it shows of its own:
   one image and rolls both Deployments; the release pipeline decides that,
   not the chart. With the drain, a conductor release no longer cuts the work
   it was doing, so the gain is smaller than it was.
-- Routes recording work for the conductor instead of starting it in their
-  own process. A web Pod finishes what it starts; nothing has to move for
-  that.
+- Migrating all remaining infrastructure calls from routes. The push
+  callback above now queues conductor work; other web-side calls still
+  finish in their own process and need to move before privileges are split.

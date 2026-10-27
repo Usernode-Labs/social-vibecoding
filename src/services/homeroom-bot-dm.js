@@ -47,6 +47,7 @@
 
 const log = require('./logger');
 const conversations = require('./conversations');
+const repoRef = require('./repo-ref');
 // Newcomer run five: a first version's stages, as they happen.
 const timeline = require('./first-version-timeline');
 const notifyCopy = require('./homeroom-bot-notify-copy');
@@ -251,7 +252,7 @@ function firstLiveActions({ slug }) {
 
 // What routes/conversations.js does after a send, done here because the
 // service pushes nothing (the welcome DM does the same).
-async function pushLive(pool, result, conversationId, { opened = false, threadRootId = null } = {}) {
+async function pushLive(pool, result, conversationId, { opened = false, threadRootId = null, actorUserId } = {}) {
   const ws = require('./ws');
   const notificationSvc = require('./notifications');
   for (const row of result.notifications || []) await notificationSvc.hydrateAndPush(pool, row);
@@ -261,7 +262,7 @@ async function pushLive(pool, result, conversationId, { opened = false, threadRo
     conversationId,
     messageId: result.message?.id ?? result.messageId,
     threadRootId: threadRootId || null,
-  });
+  }, { actorUserId });
 }
 
 /**
@@ -697,7 +698,7 @@ async function sendDm(pool, {
       about: stored, kind: metadata?.kind || null,
     });
     try {
-      await pushLive(pool, result, opened.conversationId, { opened: opened.created, threadRootId: root });
+      await pushLive(pool, result, opened.conversationId, { opened: opened.created, threadRootId: root, actorUserId: bot.id });
     } catch (err) {
       // The message and its bell row are in; a missed live refresh catches
       // up on the next load.
@@ -743,7 +744,7 @@ async function pushTyping(pool, botId, conversationId, typing, ws) {
     await conversations.withLockedAudience(pool, { id: botId }, conversationId, (audience) => {
       ws.pushConversationEvent(audience, {
         type: 'conversation_typing', conversationId, userId: botId, typing,
-      }, { excludeUserId: botId });
+      }, { excludeUserId: botId, actorUserId: botId });
     });
   } catch (err) {
     // Ephemeral: a missed typing event costs nothing the answer needs.
@@ -923,8 +924,7 @@ async function requestTitleFor(pool, app, issueNumber, deps = {}) {
         const { rows: found } = await pool.query('SELECT repo_url FROM apps WHERE id = $1', [app.id]);
         repoUrl = found[0]?.repo_url || null;
       }
-      const repo = repoUrl && typeof github.parseGithubUrl === 'function' && github.isEnabled?.() !== false
-        ? github.parseGithubUrl(repoUrl) : null;
+      const repo = repoUrl && github.isEnabled?.() !== false ? repoRef.ownerRepo(repoUrl) : null;
       if (repo && typeof github.fetchPublicIssue === 'function') {
         const fetched = await github.fetchPublicIssue(repo.owner, repo.repo, n);
         title = fetched?.issue?.title || null;
@@ -1569,7 +1569,7 @@ async function setQuestionState(pool, messageId, patch, { ws = null, conversatio
     type: 'conversation_message_updated', conversationId: conversationId || rows[0].conversation_id, messageId,
     // In a request's thread, the open thread reads it again too.
     threadRootId: rows[0].thread_root_id ? Number(rows[0].thread_root_id) : null,
-  });
+  }, { actorUserId: rows[0].sender_id });
 }
 
 // News the request's card and the tray above the DM show, and that the
@@ -4408,8 +4408,7 @@ async function botWaitingOn(pool, app, n, deps = {}) {
     const { rows } = await pool.query('SELECT repo_url FROM apps WHERE id = $1', [app.id]).catch(() => ({ rows: [] }));
     repoUrl = rows[0]?.repo_url || null;
   }
-  const repo = repoUrl && typeof github.parseGithubUrl === 'function' && github.isEnabled?.() !== false
-    ? github.parseGithubUrl(repoUrl) : null;
+  const repo = repoUrl && github.isEnabled?.() !== false ? repoRef.ownerRepo(repoUrl) : null;
   return require('./homeroom-bot-addressed').waitingOnRequest(pool, {
     appId: app.id, issueNumber: n, botId: bot.id, github, repo,
   });
@@ -5178,11 +5177,7 @@ async function fileFirstRequest(pool, config, appId, { steps, last = false, deps
       const { rows: [now] } = await pool.query('SELECT status FROM homeroom_bot_first_versions WHERE app_id = $1', [appId]);
       throw Object.assign(new Error(`it is ${now?.status ?? 'gone'}`), { settled: now?.status ?? 'none' });
     });
-    const parsed = (typeof github.parseGithubUrl === 'function' && row.repo_url && github.parseGithubUrl(row.repo_url))
-      || (() => {
-        const m = String(row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-        return m ? { owner: m[1], repo: m[2] } : null;
-      })();
+    const parsed = repoRef.ownerRepo(row.repo_url);
     if (!parsed || !github.isEnabled()) throw new Error('github_unavailable');
     const marker = firstRequestMarker(appId);
     const issueNumber = await steps.once('issue', async () => {

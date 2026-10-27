@@ -174,7 +174,8 @@ test('the .env keys the platform cannot boot without are still all written', () 
   for (const key of [
     'USERNODE_DOMAIN', 'ADMIN_USERNAME', 'ADMIN_PASSWORD', 'SESSION_SECRET',
     'USERNODE_DB_PASSWORD', 'GITHUB_APP_ID', 'GITHUB_PRIVATE_KEY',
-    'GITHUB_BOT_TOKEN', 'ANTHROPIC_API_KEY', 'GIT_SHA', 'LOG_LEVEL',
+    // Not GITHUB_BOT_TOKEN: nothing reads it since GitHub suspended the bot.
+    'ANTHROPIC_API_KEY', 'GIT_SHA', 'LOG_LEVEL',
     // config.js REQUIRED_PROD — boot exits 1 without any of these.
     'DATA_ENCRYPTION_KEY', 'IFRAME_JWT_PRIVATE_KEY', 'IFRAME_JWT_PUBLIC_KEY',
     'WORKER_JWT_SECRET', 'EDGE_JWT_SECRET',

@@ -27,6 +27,7 @@
 
 const log = require('../logger');
 const registry = require('../../agents/registry');
+const repoRef = require('../repo-ref');
 
 const DISPATCH_KINDS = Object.freeze({ dispatch_scout: 'scout', dispatch_coding_agent: 'build' });
 const LIVE_STATUSES = new Set(['active', 'promoted']);
@@ -100,6 +101,7 @@ function defaults(deps = {}) {
     callPlatform: deps.callPlatform || require('../mcp-tools').callPlatform,
     loopbackBaseUrl: deps.loopbackBaseUrl || require('./mcp-shim').loopbackBaseUrl,
     attachments: deps.attachments || require('../attachments'),
+    codeMissing: deps.codeMissing || require('../code-missing'),
     // A run of the change's shots under way, and the wait for its end: read
     // from the shots machine, so they answer for every process.
     shotsRunning: deps.shotsRunning || ((id) => require('../shots-state').shotsRunning(id)),
@@ -152,7 +154,7 @@ async function canDispatch(change, deps = {}) {
   const d = defaults(deps);
   if (!change) return false;
   if (!LIVE_STATUSES.has(change.status) && !RESUMABLE_STATUSES.has(change.status)) return false;
-  if (!/github\.com\/[^/]+\/[^/]+/.test(change.repo_url || '')) return false;
+  if (!repoRef.parse(change.repo_url)) return false;
   const id = Number(change.id);
   // What works on the change, on any process (a sync, another turn).
   if (!(await d.activeWorkers.isSessionBusyAnywhere(id))) return true;
@@ -265,12 +267,22 @@ async function runDispatch({
   if (!LIVE_STATUSES.has(change.status) && !RESUMABLE_STATUSES.has(change.status)) {
     return refusal(`change_closed: change ${change.id} is ${change.status}, so the coding agent cannot run on it.`);
   }
-  const [, repoOwner, repoName] = (change.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(change.repo_url) || {};
   if (!repoOwner || !repoName) {
-    return refusal('no_repository: the app has no GitHub repository yet. The platform repairs this automatically; '
+    return refusal('no_repository: the app has no repository yet. The platform repairs this automatically; '
       + 'try again in a few minutes.');
   }
   const changeId = Number(change.id);
+  // Its branch did not come across when Homeroom moved off GitHub
+  // (code-missing.js branchGone, read live): refused here, before a parked
+  // change is reopened (which takes a slot) or switched to another model,
+  // and before anything starts. The change says so in one row; the coding
+  // tools refuse the same way for every other caller.
+  if (await d.codeMissing.branchGone(pool, change) === true) {
+    await d.codeMissing.noteRefused(pool, changeId);
+    sendAgent('status', { text: d.codeMissing.BRANCH_GONE, changeId, codeMissing: true });
+    return refusal(d.codeMissing.dispatchRefusal(changeId));
+  }
   if (await d.activeWorkers.isSessionBusyAnywhere(changeId)) {
     const waited = await waitOutShotsRun(d, changeId, sendAgent);
     if (waited === 'timeout') return refusal(SHOTS_BUSY_TEXT);
@@ -435,6 +447,7 @@ async function runDispatch({
     isError: !!(result && result.isError),
     stopped: false,
     toolResultText: String((result && result.toolResultText) || ''),
+    ...(typeof result?.permanent === 'boolean' ? { permanent: result.permanent, pushFailureCode: result.pushFailureCode } : {}),
     stagingUrl: (result && result.stagingUrl) || null,
     turnId: (result && result.turnId) || null,
     finish: async ({ wrapUpPosted = true } = {}) => {

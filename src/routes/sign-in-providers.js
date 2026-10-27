@@ -11,6 +11,7 @@
  *
  *   POST /api/auth/oauth/:provider/native/start  inside the Homeroom app: a state and a nonce
  *   POST /api/auth/oauth/:provider/native        the ID token the app's own sheet returned
+ *   POST /api/auth/oauth/:provider/native/failed what the app's sheet said when it failed, for the log
  *
  *   GET  /api/admin/sign-in-providers                 the console's view
  *   PUT  /api/admin/sign-in-providers/:provider       save one provider
@@ -291,11 +292,15 @@ function signInProviderRoutes(config) {
     try {
       const state = await providers.consumeState(pool, provider, req.body?.state, binder, { native: true });
       if (!state || state.mismatch) {
+        log.warn('sign-in-providers', 'App sign-in refused', { provider, reason: state ? 'started_elsewhere' : 'expired' });
         return res.status(422).json({ error: 'That sign-in took too long, or started somewhere else. Try again.', code: 'expired' });
       }
       const claims = await providers.verifyNativeIdToken(pool, config, provider, req.body?.idToken, state);
       const result = await providers.signIn(pool, provider, claims, { createSession });
-      if (result.refuse) return res.status(422).json({ error: 'Not signed in.', code: result.refuse });
+      if (result.refuse) {
+        log.info('sign-in-providers', 'App sign-in refused', { provider, reason: result.refuse });
+        return res.status(422).json({ error: 'Not signed in.', code: result.refuse });
+      }
       await afterSignIn(req, res, provider, state, result);
       if (result.next === 'signed-in') {
         createSessionCookie(res, result.session.token, result.session.expiresAt);
@@ -316,6 +321,30 @@ function signInProviderRoutes(config) {
     } catch (err) {
       return nativeFail(res, err, 'Native sign-in', provider);
     }
+  });
+
+  // The app's own sheet failed before there was an ID token to send (#5960).
+  // The sheet on the page shows only its generic line, and the reason (what
+  // the provider's SDK said, which an app build carries at the end of its
+  // bridge error) was kept on the phone, so nothing told a setup problem
+  // from a broken hand-off. The page reports it here, with the state its
+  // start was given: the state is spent, so one start is one line in the
+  // log at most, and a report without a live one is dropped unread.
+  router.post('/api/auth/oauth/:provider/native/failed', oauthSignInLimiter, async (req, res) => {
+    const provider = req.params.provider;
+    const binder = req.cookies?.[BINDER_COOKIE];
+    clearPrivateCookie(res, BINDER_COOKIE);
+    res.set('Cache-Control', 'no-store');
+    if (!providers.isProvider(provider) || typeof req.body?.state !== 'string') return res.status(204).end();
+    try {
+      const state = await providers.consumeState(pool, provider, req.body.state, binder, { native: true });
+      if (state && !state.mismatch) {
+        log.warn('sign-in-providers', 'App sheet failed', { provider, reason: providers.nativeFailureReason(req.body.reason) });
+      }
+    } catch (err) {
+      log.error('sign-in-providers', 'Native failure report failed', { provider, err: err.message });
+    }
+    return res.status(204).end();
   });
 
   router.post('/api/auth/oauth/finish', otpVerifyLimiter, async (req, res) => {

@@ -3346,6 +3346,7 @@
       if (!isTouch && handleSel && !onHandle) return;
       drag = {
         pointerId: e.pointerId,
+        pointerType: e.pointerType,
         seq: gestureSeq(e),
         item: item,
         startX: e.clientX,
@@ -3408,6 +3409,39 @@
       release(true);
     }
 
+    // A gesture whose end never reached the list (#5870). On an iPhone a
+    // touch hold that lifted a tile AND opened the host's menu over the
+    // finger could lose its pointerup: the drag then stayed lifted for good.
+    // Every later tap carries a new pointerId, which onPointerUp ignores and
+    // onPointerDown refuses (`if (drag) return`), so the ghost floated over
+    // every screen and the host's onLift deferral held its re-renders until
+    // a reload. The window watches the same gesture as a safety net:
+    //   - this pointer ending anywhere (capture lost, or the target gone);
+    //   - the touch sequence ending (touchend with no touches left), deferred
+    //     a task so a pointerup that is merely late still decides the drop;
+    //   - the next PRIMARY press of the same pointer type, which a live
+    //     gesture cannot be followed by. A second finger during a real drag
+    //     is not primary and leaves it alone.
+    function onWindowPointerEnd(e) {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      release(e.type === 'pointercancel');
+    }
+
+    function onWindowTouchEnd(e) {
+      if (!drag || drag.pointerType !== 'touch') return;
+      if (e.touches && e.touches.length > 0) return;
+      var ended = drag;
+      setTimeout(function () {
+        if (drag === ended) release(e.type === 'touchcancel');
+      }, 0);
+    }
+
+    function onWindowPointerDown(e) {
+      if (!drag || e.isPrimary === false || e.pointerType !== drag.pointerType) return;
+      if (gestures.owner(drag.seq) === token) gestures.release(drag.seq);
+      release(true);
+    }
+
     function onTouchMove(e) {
       if (drag && drag.lifted) e.preventDefault();
     }
@@ -3425,6 +3459,11 @@
     listEl.addEventListener('pointercancel', onPointerCancel);
     listEl.addEventListener('touchmove', onTouchMove, { passive: false });
     listEl.addEventListener('click', onClickCapture, true);
+    window.addEventListener('pointerdown', onWindowPointerDown, true);
+    window.addEventListener('pointerup', onWindowPointerEnd, true);
+    window.addEventListener('pointercancel', onWindowPointerEnd, true);
+    window.addEventListener('touchend', onWindowTouchEnd, true);
+    window.addEventListener('touchcancel', onWindowTouchEnd, true);
 
     return {
       detach: function () {
@@ -3434,6 +3473,11 @@
         listEl.removeEventListener('pointercancel', onPointerCancel);
         listEl.removeEventListener('touchmove', onTouchMove);
         listEl.removeEventListener('click', onClickCapture, true);
+        window.removeEventListener('pointerdown', onWindowPointerDown, true);
+        window.removeEventListener('pointerup', onWindowPointerEnd, true);
+        window.removeEventListener('pointercancel', onWindowPointerEnd, true);
+        window.removeEventListener('touchend', onWindowTouchEnd, true);
+        window.removeEventListener('touchcancel', onWindowTouchEnd, true);
         if (drag) {
           if (drag.pressTimer) clearTimeout(drag.pressTimer);
           var wasLifted = drag.lifted;

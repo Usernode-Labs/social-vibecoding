@@ -25,6 +25,7 @@
 // every read happens at call time, long after the bundle has evaluated.
 import { t as message, htmlText } from '../../lib/i18n/runtime';
 import { AppCard } from '../apps/app-card.js';
+import { linkKind } from '../../lib/repo-link.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
@@ -193,11 +194,6 @@ const Home = {
       // most common reason this fetch throws. "Failed to load apps" in
       // red reads like the platform is broken; say what actually happened
       // and offer the retry. Anything already cached stays on screen.
-      //
-      // Both notices below are the grid's whole answer, so each clears the
-      // filter state: no filter note or chips over an empty error grid (the
-      // chip selection itself is kept, so the next successful paint still
-      // honours it — #5823).
       let offline = false;
       try { offline = !!(window.Offline && Offline.isOffline()); } catch (_) { offline = false; }
       if (!Home._appsLoaded) {
@@ -213,7 +209,6 @@ const Home = {
             resultsHeading: null, emptyQuery: null, create: null,
             // load() has already cleared edit mode; the merge would keep it.
             editing: false,
-            filtered: false, filterEmpty: false,
             notice: {
               text: message('home:grid.notice.offline'),
               tone: 'muted',
@@ -230,7 +225,6 @@ const Home = {
         resultsHeading: null, emptyQuery: null, create: null,
         // load() has already cleared edit mode; the merge would keep it.
         editing: false,
-        filtered: false, filterEmpty: false,
         // #1899: the grid draws this as the shared error card
         // (features/apps/load-error.tsx) with a Retry that re-runs load().
         notice: { text: message('home:grid.notice.loadFailed'), tone: 'error' },
@@ -259,12 +253,17 @@ const Home = {
 
   // ── Edit mode (#4669) ──────────────────────────────────────────────
   //
-  // Long-pressing a tile of your own puts My apps into edit mode, like a
-  // phone's home screen: the tiles wiggle, each one grows a remove button,
-  // and the trailing tile becomes "Add apps". The menu the hold opens is
-  // unchanged — edit mode rides along with it. Pure UI state, per visit:
-  // load() clears it, so it is never remembered between visits, and nothing
-  // here writes a preference.
+  // Edit mode arranges My apps, like a phone's home screen: the tiles
+  // wiggle, each one grows a remove button, and "Add other apps" and "Done" ride
+  // the heading. Pure UI state, per visit: load() clears it, so it is never
+  // remembered between visits, and nothing here writes a preference.
+  //
+  // #5871: a hold is the tile's menu and nothing else. It used to start edit
+  // mode as well, so one press put the menu AND the wiggle on screen and
+  // neither said which one the press had meant. Edit mode now has doors of
+  // its own that say so: "Edit" beside the My apps heading (index.tsx) and
+  // "Edit My apps" at the foot of a tile's menu (openCardMenu). While it is
+  // on, a hold on a tile of your own is a drag and opens no menu.
   _editing: false,
 
   // The one setter. Render is the same call every other path funnels through,
@@ -274,13 +273,13 @@ const Home = {
   // onSettle already drains — so on touch, where the lift happens mid-gesture,
   // the wiggle starts when the finger comes up.
   //
-  // The paint is also held back while the hold's own menu is up. The mouse
-  // hold opens the card menu and THEN starts edit mode; a synchronous render
+  // The paint is also held back while a tile's menu is up. Its "Edit My
+  // apps" item starts edit mode from inside the menu; a synchronous render
   // here would expand the grid (edit mode shows every tile), re-run the
   // placement effect whose deps include items.length, and the detach that
-  // cleanup calls is closeCardMenu — killing the menu the same press opened.
-  // The paint waits for the menu's dismiss instead, so the popover finishes
-  // its life anchored to the tile that opened it.
+  // cleanup calls is closeCardMenu — killing the menu mid-dismiss. The paint
+  // waits for the menu's dismiss instead, so the popover finishes its life
+  // anchored to the tile that opened it.
   setEditing(on) {
     const next = !!on;
     if (Home._editing === next) return;
@@ -302,43 +301,12 @@ const Home = {
   // The remove button's action. It is the tile menu's own "Remove from My
   // apps" by another door: _menuToggleFavorite(app, false) unfavourites a
   // pinned app and, for a collaborator, hides the member pin — exactly the
-  // two branches the menu's item passes (line ~3679). The toast and the
-  // "Leave … too?" prompt for members come from toggleAdded unchanged.
+  // two branches the menu's item passes (line ~3679). The toast and, for a
+  // member, the "Remove … from Home?" question come from toggleAdded.
   _editRemove(slug) {
     const app = (Home._apps || []).find((a) => a && a.slug === slug);
     if (!app) return;
     return Home._menuToggleFavorite(app, false);
-  },
-
-  // ── All / Contributing (#5823) ──────────────────────────────────────
-  //
-  // Which apps the launcher grid shows: everything on your shelf, or only
-  // the ones you help build — made them, were accepted to build them, or had
-  // a change voted in. The server's is_contributor flag carries the same
-  // three-source set the Contributors list counts (services/contributors.js),
-  // so the two can never mean different people.
-  //
-  // Per visit: load() does NOT reset it, so moving to another tab and back
-  // keeps the choice; reloading the page starts on All. The Contributing
-  // view is packed in memory and never written to the stored arrangement —
-  // switching back to All restores exactly where things were.
-  _appsFilter: 'all',
-
-  isContributing(app) {
-    return !!app?.is_contributor;
-  },
-
-  // The chips' one setter. Same deferral as setEditing: render() must not run
-  // mid-drag, so the settle flush picks the change up instead.
-  setAppsFilter(key) {
-    const next = key === 'contributing' ? 'contributing' : 'all';
-    if (Home._appsFilter === next) return;
-    Home._appsFilter = next;
-    if (Home._dragActive) {
-      Home._rerenderPending = true;
-      return;
-    }
-    Home.render();
   },
 
   // Escape ends edit mode. Wired once, lazily, from render() like the search
@@ -960,23 +928,10 @@ const Home = {
     // remove button. The flag itself is cleared by the search input's own
     // listener (see _wireSearch) the moment it is given a value.
     const editing = !!Home._editing && !query;
-    // ALL / CONTRIBUTING (#5823). A search is always a search of ALL of My
-    // apps, and edit mode is the real arrangement, so neither can be filtered.
-    const filtered = Home._appsFilter === 'contributing' && !query && !editing;
-    let filterEmpty = false;
     // Home is "Your apps" only now — every other app lives on the
     // #apps browse screen (public/js/browse.js), so the old All Apps
     // section and its drag-to-add gesture are gone.
     const { yours } = Home.partitionApps(apps);
-    // The chips only appear when they would change something: My apps holds
-    // both kinds of app. Contributing itself keeps them visible so there is a
-    // way back to All. Demo tiles are not the viewer's apps, so they do not
-    // bring the switch out.
-    const counted = yours.filter((a) => !a.demo);
-    const filterable = !query && !editing && (
-      Home._appsFilter === 'contributing'
-      || (counted.some(Home.isContributing) && counted.some((a) => !Home.isContributing(a)))
-    );
     let items = [];
     let view = 'grid';
     let resultsHeading = null;
@@ -1013,24 +968,9 @@ const Home = {
       // flow: a tile's position comes from the layout model, never from its
       // order in this array.
       const cols = Home.currentCols();
-      // Read the real arrangement first in BOTH views: currentLayout repairs
-      // it, caches it for the drag maths and persists a repair. The
-      // Contributing view is then derived from it in memory — its packed
-      // cells are never assigned to _layoutCache or _layouts and never sent
-      // to PUT /api/home-layout, so All comes back exactly as it was.
-      let layout = Home.currentLayout(cols);
-      if (filtered) {
-        const ordered = [
-          ...HomeLayout.canvasItems(layout),
-          ...HomeLayout.overflowItems(layout),
-        ];
-        const bySlug = new Map(apps.map((a) => [a.slug, a]));
-        const slugs = ordered
-          .filter((it) => it && Home.isContributing(bySlug.get(it.slug)))
-          .map((it) => it.slug);
-        layout = slugs.length ? HomeLayout.deriveDefault({ apps: slugs, cols }) : [];
-        filterEmpty = !slugs.length;
-      }
+      // Read the real arrangement: currentLayout repairs it, caches it for
+      // the drag maths and persists a repair.
+      const layout = Home.currentLayout(cols);
       // THE STRIP'S PINNED PART (#5323): Home no longer publishes anything
       // here. The strip's pins are the viewer's own list now — a My apps
       // tile dropped on the "Pin here" slot pins through the drag recognizer
@@ -1066,7 +1006,7 @@ const Home = {
       // feedback, which is the reload complaint again in a smaller form.
       // Same flag "Show all N apps" sets, so the rest of the visit behaves
       // as if it had been pressed.
-      if (!filtered && Home._revealSlug) {
+      if (Home._revealSlug) {
         const landed = canvas.find((it) => it && it.slug === Home._revealSlug);
         if (landed && landed.row > rowBound) Home._appsExpanded = true;
       }
@@ -1138,7 +1078,7 @@ const Home = {
       };
       // A private member makes no apps until they are let in off the
       // waitlist (their Home's waitlist card says so), so no tile at all —
-      // in edit mode too (#4669): the mode's own entry, "Add apps", is the
+      // in edit mode too (#4669): the mode's own entry, "Add other apps", is the
       // button beside the heading, not this tile, so the trailing tile keeps
       // exactly the presence it has at rest.
       if (App.user?.privateMember) create = null;
@@ -1155,8 +1095,6 @@ const Home = {
     // first layout of the new children already has its tracks.
     gridStore.set({
       ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null, create, editing,
-      filter: Home._appsFilter === 'contributing' ? 'contributing' : 'all',
-      filterable, filtered, filterEmpty,
     });
     // ...and, in the same push, the two hosts outside it: "Show all N apps"
     // and the iOS widget-editing strip. The strip renders ABOVE the grid, in
@@ -1406,15 +1344,12 @@ const Home = {
         // #5323: the "Pin here" slot goes up for the whole drag, so an empty
         // strip has somewhere to drop onto. Cleared on every settle.
         try { window.UsernodeReact?.nav?.setPinDrop?.('idle'); } catch { /* the slot is a convenience */ }
-        if (Home._cardPointerType === 'touch') {
+        // #5871: a touch hold opens the menu and does not start edit mode.
+        // While edit mode is on the lift is the drag itself, with no menu,
+        // so arranging never puts a menu over the tile being moved.
+        if (Home._cardPointerType === 'touch' && !Home._editing) {
           Home._contextLift = { item, origin: null };
           Home.openCardMenu(item.dataset.slug, item);
-          // EDIT MODE (#4669). The recognizer's itemSelector is
-          // `.app-card[data-yours]:not([data-demo])`, so the hold that reaches
-          // here is already on a tile of the viewer's own. The flag goes down
-          // while `_dragActive` holds and setEditing defers the paint to the
-          // settle flush — the wiggle starts when the finger comes up.
-          Home.setEditing(true);
         } else {
           Home.closeCardMenu();
           Home._showGridOverlay(listEl, cols, item);
@@ -2480,6 +2415,14 @@ const Home = {
     // answered by a toast rather than by silence.
     if (app && app.demo) return;
     if (!app) return Home._favoriteUnknown(slug, desired, onChange);
+    // #5962: a member is asked BEFORE the tile moves, so Cancel leaves Home
+    // exactly as it was. The leave, when chosen, follows the unpin below.
+    let leaveToo = false;
+    if (!desired) {
+      const choice = await Home._askBeforeUnpin(app);
+      if (choice === 'cancel') return;
+      leaveToo = choice === 'leave';
+    }
     const prev = { is_favorited: app.is_favorited, your_apps_hidden: app.your_apps_hidden, is_member: app.is_member };
     // Asked BEFORE the flip, while the answer still describes where the card
     // is: an app currently in a rail stays in it for the rest of the visit.
@@ -2512,7 +2455,7 @@ const Home = {
       // does, so Home's Challenges block reads again now rather than on its
       // next refresh.
       if (desired && data && data.joined === true) Home._announceMembership(slug, true);
-      if (!desired) await Home._offerLeaveAfterUnpin(app);
+      if (leaveToo) await Home.setMembership(app.slug, false, undefined, { confirmed: true });
     } catch (err) {
       app.is_favorited = prev.is_favorited;
       app.your_apps_hidden = prev.your_apps_hidden;
@@ -2528,29 +2471,36 @@ const Home = {
   },
 
   // Taking an app off Home is not leaving it (a pin is a shortcut), but it is
-  // the moment someone might MEAN to, so it is asked, once, after the unpin
-  // has landed: "Leave <app> too?". A yes goes through setMembership with its
-  // own confirm skipped — this question already was the confirm. Asked only
-  // of a member who could leave: never of the creator (the server refuses),
-  // never of someone who is not in it, and not during the ?shot=discover-add
-  // round trip, whose unpin is a fixture's, not a person's.
-  async _offerLeaveAfterUnpin(app) {
-    if (!app || !app.is_member || app.demo || Home._quietLeaveOffer) return false;
+  // the moment someone might MEAN to, so a member is asked first, in one
+  // sheet: Remove from Home, Remove and leave, or Cancel (#5962). It used to
+  // be asked after the unpin had landed, as "Leave <app> too?", so the tile
+  // was gone whichever button was pressed. A leave goes through setMembership
+  // with its own confirm skipped: this question already was the confirm.
+  //
+  // Resolves 'remove', 'leave' or 'cancel'. Nothing is asked ('remove') of
+  // someone who could not leave: never the creator (the server refuses),
+  // never someone who is not in it, nor during the ?shot=discover-add round
+  // trip, whose unpin is a fixture's, not a person's. With no native kit
+  // there is no sheet, and the unpin goes ahead unasked, as a pin always did.
+  async _askBeforeUnpin(app) {
+    if (!app || !app.is_member || app.demo || Home._quietLeaveOffer) return 'remove';
     const me = typeof App !== 'undefined' && App.user ? App.user.id : null;
-    if (me != null && app.created_by === me) return false;
-    const confirmModal = typeof window !== 'undefined' ? window.ConfirmModal : null;
+    if (me != null && app.created_by === me) return 'remove';
+    const ui = typeof PlatformUI !== 'undefined' ? PlatformUI : null;
+    if (!ui || typeof ui.actionSheet !== 'function' || (typeof ui.hasKit === 'function' && !ui.hasKit())) {
+      return 'remove';
+    }
     const name = app.name || app.slug;
-    const ok = await confirmModal?.show?.({
-      title: message('home:leave.afterUnpin.title', { community: name }),
-      message: app.view_visibility === 'private'
-        ? message('home:leave.afterUnpin.private')
-        : message('home:leave.afterUnpin.public'),
-      confirmLabel: message('home:leave.afterUnpin.confirm'),
-      cancelLabel: message('home:leave.afterUnpin.stay'),
-      danger: true,
+    const picked = await ui.actionSheet({
+      title: app.view_visibility === 'private'
+        ? message('home:unpin.ask.private', { community: name })
+        : message('home:unpin.ask.public', { community: name }),
+      actions: [
+        { label: message('home:unpin.ask.remove'), choice: 'remove' },
+        { label: message('home:unpin.ask.leave', { community: name }), destructive: true, choice: 'leave' },
+      ],
     });
-    if (!ok) return false;
-    return Home.setMembership(app.slug, false, undefined, { confirmed: true });
+    return picked && (picked.choice === 'remove' || picked.choice === 'leave') ? picked.choice : 'cancel';
   },
 
   // Join or leave the community `slug` belongs to — Discover's Join pill,
@@ -4010,11 +3960,18 @@ const Home = {
     // reachable while the app was open.
     //
     // ?demo=1 tiles carry no repository, so the gate never fires for them.
-    if (app.repo_url) {
+    //
+    // Where the code is decides the row (lib/repo-link.js): "View on GitHub"
+    // for a repository still on GitHub (the platform's own), "View code" for
+    // one on Homeroom's git host, where app code lives since the move; an
+    // address that is neither is no row at all.
+    const repoKind = app.repo_url ? linkKind(app.repo_url) : null;
+    if (repoKind === 'github' || repoKind === 'code') {
+      const github = repoKind === 'github';
       items.push({
-        key: 'github',
-        label: message('home:menu.github.label'),
-        title: message('home:menu.github.tip'),
+        key: github ? 'github' : 'code',
+        label: github ? message('home:menu.github.label') : message('home:menu.code.label'),
+        title: github ? message('home:menu.github.tip') : message('home:menu.code.tip'),
         // `noopener` explicitly: the target document must not get a handle on
         // this window, and repo_url is app-supplied.
         run: () => window.open(app.repo_url, '_blank', 'noopener'),
@@ -4246,6 +4203,21 @@ const Home = {
     if (!app) return;
     const items = Home.menuItemsFor(app);
     if (!items.length) return;
+    const anchorIsEl = !!(anchor && typeof anchor.getBoundingClientRect === 'function');
+    const anchorEl = anchorIsEl && anchor.nodeType === 1 ? anchor : null;
+    // #5871: the menu of a tile on My apps ends with the way into edit mode,
+    // the way a phone's home screen menu does. Only there: menuItemsFor also
+    // fills the app's own page, search results and demo tiles carry no
+    // data-yours, and while edit mode is on there is nothing to start.
+    if (!Home._editing && anchorEl && typeof anchorEl.closest === 'function'
+        && anchorEl.closest('.app-card[data-yours]:not([data-demo])')) {
+      items.push({
+        key: 'edit-my-apps',
+        label: message('home:menu.editMyApps.label'),
+        title: message('home:menu.editMyApps.tip'),
+        run: () => Home.setEditing(true),
+      });
+    }
 
     // A tile's context stays anchored to the tile on every platform.
     // The kit owns clamping/flipping, dismissal, focus and menu navigation;
@@ -4253,8 +4225,6 @@ const Home = {
     const headerEl = document.createElement('div');
     headerEl.className = 'card-menu-header';
     headerEl.innerHTML = Home.renderMenuHeaderHtml(app);
-    const anchorIsEl = !!(anchor && typeof anchor.getBoundingClientRect === 'function');
-    const anchorEl = anchorIsEl && anchor.nodeType === 1 ? anchor : null;
     const menu = PlatformUI.popover({
       anchorEl: anchorIsEl ? anchor : undefined,
       anchorRect: anchorIsEl ? undefined : anchor,
@@ -5531,6 +5501,10 @@ const Home = {
       // the hold.
       if (e.pointerType === 'touch' && card.hasAttribute('data-yours')
           && !card.hasAttribute('data-demo') && Home._placementHandle) return;
+      // #5871: in edit mode a hold on a tile of your own is a drag (the kit's
+      // mouse path lifts it once it moves), never a menu.
+      if (Home._editing && card.hasAttribute('data-yours')
+          && !card.hasAttribute('data-demo')) return;
       const isMouse = e.pointerType === 'mouse';
       const startX = e.clientX;
       const startY = e.clientY;
@@ -5544,13 +5518,6 @@ const Home = {
         Home._suppressClick = true;
         opened = true;
         Home.openCardMenu(card.dataset.slug, card);
-        // EDIT MODE (#4669): the same hold starts it, for mouse and pen (touch
-        // enters through the kit recognizer's onLift above). Search results,
-        // demo tiles and Discover cards carry no data-yours, and a hold on
-        // them is a menu and nothing else, exactly as before.
-        if (card.hasAttribute('data-yours') && !card.hasAttribute('data-demo')) {
-          Home.setEditing(true);
-        }
       }, 400);
       cleanup = () => {
         if (timer) { clearTimeout(timer); timer = null; }

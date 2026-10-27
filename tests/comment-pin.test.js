@@ -1492,8 +1492,12 @@ test('comment mode opens on demand into a host of its own, once, and C asks it t
     .filter(([key]) => key.startsWith('commentPin.')).map(([, entry]) => entry.text)), /Detailed/);
   assert.doesNotMatch(read('frontend/src/features/dialogs/feedback.tsx'), />\s*Detailed\s*</);
   // The dialog's rule for when a request can go to the app, read the same way.
-  assert.match(src, /!\/github\\\.com\\\/\[\^\/\]\+\\\/\[\^\/\]\+\/\.test\(data\.repo_url \|\| ''\) \|\| data\.self_hosted/);
-  assert.match(read('frontend/src/features/dialogs/feedback-controller.js'), /const hasRepo = \/github\\\.com\\\/\[\^\/\]\+\\\/\[\^\/\]\+\/\.test\(repoUrl\);/);
+  // #5940: any repository address with an owner and a name, not only
+  // github.com (app repositories are on Homeroom's own git host now).
+  const REPO_RULE = String.raw`/^https?:\/\/[^/\s]+\/[^/\s]+\/[^/\s]+/`;
+  assert.ok(src.includes(`!${REPO_RULE}.test(data.repo_url || '') || data.self_hosted`));
+  assert.ok(read('frontend/src/features/dialogs/feedback-controller.js').includes(`const hasRepo = ${REPO_RULE}.test(repoUrl);`));
+  assert.doesNotMatch(src, /github\\\.com/);
 });
 
 test('posting a comment shows a sent card on the screen (#5008), not only the toast', () => {

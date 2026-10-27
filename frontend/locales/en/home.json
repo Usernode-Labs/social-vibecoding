@@ -39,26 +39,6 @@
     "text": "Show all {{count}} apps",
     "description": "Button under the grid of app tiles on Home: reveals the rows of tiles that are folded away. {{count}} is the total number of the viewer's apps."
   },
-  "grid.filter.group": {
-    "text": "Which apps to show",
-    "description": "Accessible name of the pair of chips beside Home's \"My apps\" heading. One chip shows every app on the shelf, the other only the apps this person helps build."
-  },
-  "grid.filter.all": {
-    "text": "All",
-    "description": "Chip beside Home's \"My apps\" heading: shows every app the person keeps on their shelf, where they arranged them. The pair is \"All\" and \"Contributing\"."
-  },
-  "grid.filter.contributing": {
-    "text": "Contributing",
-    "description": "Chip beside Home's \"My apps\" heading: shows only the apps this person helps build (they made the app, were accepted to build it, or had a change voted in). The pair is \"All\" and \"Contributing\"."
-  },
-  "grid.filter.empty": {
-    "text": "You're not contributing to any of your apps yet.",
-    "description": "Shown in place of Home's app tiles when the \"Contributing\" chip is selected and none of the person's apps is one they help build. A \"Show all apps\" link below it goes back to every app."
-  },
-  "grid.filter.showAll": {
-    "text": "Show all apps",
-    "description": "Link under the line that says the person is not contributing to any of their apps (Home, \"Contributing\" chip): goes back to showing every app."
-  },
   "grid.notice.offline": {
     "text": "You're offline. Apps you've opened before will appear here once this device has loaded them.",
     "description": "Shown in place of Home's app tiles when the device has no connection and no apps are stored yet."
@@ -139,25 +119,21 @@
     "text": "Update failed: {{reason}}",
     "description": "Brief notice when adding an app to My apps, or removing it, did not go through. {{reason}} is the server's own error message, or a code such as \"HTTP 500\"."
   },
-  "leave.afterUnpin.title": {
-    "text": "Leave {{community}} too?",
-    "description": "Title of the question asked right after someone removed an app from My apps while still a member of its community. {{community}} is the app's name. \"Leave\" means stop being a member."
+  "unpin.ask.private": {
+    "text": "Remove {{community}} from your Home screen? Leaving it too ends your access until someone invites you back.",
+    "description": "Title of the sheet asked before an app's tile is taken off Home, when the viewer is a member of the app's private community. {{community}} is the app's name. Its choices are Remove from Home, Remove and leave, and Cancel."
   },
-  "leave.afterUnpin.private": {
-    "text": "It’s off your Home screen. Leaving also ends your access until someone invites you back.",
-    "description": "Body of the \"Leave … too?\" question when the app's community is private."
+  "unpin.ask.public": {
+    "text": "Remove {{community}} from your Home screen? You can stay a member, or leave it too and stop proposing and voting on its changes.",
+    "description": "Title of the sheet asked before an app's tile is taken off Home, when the viewer is a member of the app's public community. {{community}} is the app's name. \"Changes\" is a noun."
   },
-  "leave.afterUnpin.public": {
-    "text": "It’s off your Home screen. You can stay a member, or leave and stop proposing and voting on its changes.",
-    "description": "Body of the \"Leave … too?\" question when the app's community is public. \"Changes\" is a noun."
+  "unpin.ask.remove": {
+    "text": "Remove from Home",
+    "description": "Choice in the sheet asked before an app's tile is taken off Home: take the tile off Home and stay a member of the app's community."
   },
-  "leave.afterUnpin.confirm": {
-    "text": "Leave",
-    "description": "Confirming button of the \"Leave … too?\" question: stop being a member of the app's community. A verb."
-  },
-  "leave.afterUnpin.stay": {
-    "text": "Stay a member",
-    "description": "The other button of the \"Leave … too?\" question: keep the membership and close the question."
+  "unpin.ask.leave": {
+    "text": "Remove and leave {{community}}",
+    "description": "Destructive choice in the sheet asked before an app's tile is taken off Home: take the tile off Home and stop being a member of the app's community. {{community}} is the app's name."
   },
   "leave.confirm.title": {
     "text": "Leave {{community}}?",
@@ -203,13 +179,29 @@
     "text": "Version, status and everything you can do with this app",
     "description": "Tooltip of the \"App details\" item in an app tile's menu."
   },
+  "menu.editMyApps.label": {
+    "text": "Edit My apps",
+    "description": "Last item in the menu of an app tile in the My apps grid on Home: puts the grid into edit mode, where tiles can be moved and removed. \"Edit\" is a verb; \"My apps\" is the name of the section."
+  },
+  "menu.editMyApps.tip": {
+    "text": "Move and remove the apps in My apps",
+    "description": "Tooltip of the \"Edit My apps\" item in an app tile's menu on Home. \"Move\" and \"remove\" are verbs."
+  },
   "menu.github.label": {
     "text": "View on GitHub",
-    "description": "Item in an app's menu: opens the app's source code repository on GitHub in a new tab."
+    "description": "Item in an app's menu, for an app whose code is on GitHub: opens the app's source code repository on GitHub in a new tab."
   },
   "menu.github.tip": {
     "text": "Open this app’s repository",
     "description": "Tooltip of the \"View on GitHub\" item in an app's menu. \"Open\" is a verb."
+  },
+  "menu.code.label": {
+    "text": "View code",
+    "description": "Item in an app's menu, for an app whose code is on Homeroom's own git host rather than GitHub: opens the app's source code in a new tab. \"View\" is a verb."
+  },
+  "menu.code.tip": {
+    "text": "Open this app’s code",
+    "description": "Tooltip of the \"View code\" item in an app's menu. \"Open\" is a verb."
   },
   "menu.myApps.add": {
     "text": "Add to My apps",
@@ -811,17 +803,25 @@
     "text": "Gray",
     "description": "Name of a card colour, a neutral grey: tooltip and accessible name of its swatch in the featured illustration editor."
   },
+  "edit.start": {
+    "text": "Edit",
+    "description": "Button beside the My apps heading on Home: puts the grid into edit mode, where tiles can be moved and removed. \"Edit\" is a verb."
+  },
+  "edit.startLabel": {
+    "text": "Edit My apps",
+    "description": "Accessible name of the Edit button beside the My apps heading on Home. \"Edit\" is a verb; \"My apps\" is the name of the section."
+  },
   "edit.done": {
     "text": "Done",
-    "description": "Button beside the My apps heading on Home while the grid is in edit mode after a long press: ends edit mode."
+    "description": "Button beside the My apps heading on Home while the grid is in edit mode: ends edit mode."
   },
   "edit.removeNamed": {
     "text": "Remove {{app}} from My apps",
     "description": "Accessible name of the small round remove button on an app tile while the My apps grid on Home is in edit mode. {{app}} is the app's name."
   },
   "edit.addTile": {
-    "text": "Add apps",
-    "description": "Button beside the My apps heading on Home while the grid is in edit mode after a long press, next to Done: it opens the sheet of apps to add."
+    "text": "Add other apps",
+    "description": "Button beside the My apps heading on Home while the grid is in edit mode, next to Done: it opens the sheet of apps not yet in My apps, to add some."
   },
   "addSheet.title": {
     "text": "Add to My apps",

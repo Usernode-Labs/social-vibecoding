@@ -18,6 +18,7 @@ const branchNames = require('../services/branch-names');
 const externalAgentHead = require('../services/external-agent-head');
 const topicAttrs = require('../services/topic-attributes');
 const visibleChangesContract = require('../services/visible-changes');
+const repoRef = require('../services/repo-ref');
 // The connector-error → HTTP status map. It lives in routes/dev-flow.js
 // because tests/dev-flow-routes.test.js scrapes the services' emitted codes
 // against it in both directions; importing it here rather than restating it is
@@ -538,7 +539,7 @@ function parseUpdateFromForkBody(body) {
 }
 
 function repoCoordinates(app) {
-  return github.parseGithubUrl(app && app.repo_url);
+  return repoRef.ownerRepo(app && app.repo_url);
 }
 
 function accessRow(session) {
@@ -1507,6 +1508,13 @@ function proposalHandoffRoutes(config) {
                 error: 'parent_tree_mismatch',
                 message: 'The local commit parent does not match the current proposal tree. Upload local commits in order or rebase onto the current proposal branch.',
               });
+            }
+            // The proposal's branch did not come across when Homeroom moved
+            // off GitHub (services/code-missing.js, read live): said so, not
+            // as GitHub being unavailable, which invites a retry.
+            const codeMissing = require('../services/code-missing');
+            if (err.status === 404 && await codeMissing.branchGone(pool, session) === true) {
+              return res.status(409).json({ error: codeMissing.CODE, message: codeMissing.BRANCH_GONE });
             }
             const detail = github.describeGithubError(err);
             // Never log GitHub's response data on this endpoint: a provider

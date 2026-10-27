@@ -17,6 +17,9 @@ function context(user = { id: 42, username: 'Builder' }, extra = {}) {
     location: extra.location || { search: '', hash: '' }, URLSearchParams };
   c.window = c;
   c.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  // The change's ⋯ row to its pull request decides by the address
+  // (frontend/src/lib/repo-link.js, published as window.RepoLink).
+  require('./lib/repo-link').installRepoLink(c);
   vm.createContext(c);
   for (const path of ['public/js/merge-status.js', 'public/js/app-view.js']) {
     vm.runInContext(fs.readFileSync(path, 'utf8'), c);
@@ -311,7 +314,7 @@ test('unshared changes retain sharing controls and do not pretend to have a disc
   // Not shared hides the workspace here, never the code: every repository
   // is public on GitHub, so the line says so rather than "stays private".
   assert.equal(v.body.discussion, 'Make this change visible to the group to start a discussion. '
-    + 'Only you can see the agent workspace here unless you share it. Its code is on public GitHub.');
+    + 'Only you can see the agent workspace here unless you share it. Its code is public.');
   assert.doesNotMatch(v.body.discussion, /private/);
   assert.ok(v.card.meta.some((m) => m.t === 'text' && m.s === 'Not shared yet'), 'the card says Not shared yet');
 });

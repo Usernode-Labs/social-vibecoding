@@ -349,6 +349,69 @@ CREATE INDEX IF NOT EXISTS idx_phone_auth_failures_created
   ON phone_auth_failures (created_at DESC);
 COMMENT ON TABLE phone_auth_failures IS 'staging:private';
 
+-- Homeroom's own sign-in codes, used when Brevo is the selected SMS
+-- provider (services/sms/otp.js): Brevo carries the text but cannot check
+-- the code. Only hashes are stored — of the session handed to the client
+-- and of `session:code` — and the row expires after ten minutes, allows
+-- five tries and is consumed once. The Firebase path never writes here.
+CREATE TABLE IF NOT EXISTS sms_otp_codes (
+  id            BIGSERIAL PRIMARY KEY,
+  session_hash  VARCHAR(64) NOT NULL UNIQUE CHECK (session_hash ~ '^[0-9a-f]{64}$'),
+  phone_e164    VARCHAR(16) NOT NULL CHECK (phone_e164 ~ '^\+[1-9][0-9]{1,14}$'),
+  code_hash     VARCHAR(64) NOT NULL CHECK (code_hash ~ '^[0-9a-f]{64}$'),
+  attempts      INTEGER NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 5),
+  expires_at    TIMESTAMPTZ NOT NULL,
+  consumed_at   TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_sms_otp_codes_phone
+  ON sms_otp_codes (phone_e164);
+CREATE INDEX IF NOT EXISTS idx_sms_otp_codes_expires
+  ON sms_otp_codes (expires_at);
+COMMENT ON TABLE sms_otp_codes IS 'staging:private';
+
+-- One row per outbound SMS attempt (services/sms/index.js): what kind, the
+-- provider, the recipient country and Sender ID, the outcome, Brevo's own
+-- code and message id, and the number's last four digits only. Read by
+-- Admin → SMS delivery (routes/admin.js GET /api/admin/sms/deliveries);
+-- reaped after 30 days by firebase-phone-auth.js cleanupExpired.
+CREATE TABLE IF NOT EXISTS sms_deliveries (
+  id                  BIGSERIAL PRIMARY KEY,
+  kind                TEXT NOT NULL CHECK (kind IN ('otp', 'marketing', 'test')),
+  provider            TEXT NOT NULL,
+  country             CHAR(2),
+  sender_id           TEXT,
+  phone_last4         VARCHAR(4) CHECK (phone_last4 ~ '^[0-9]{4}$'),
+  status              TEXT NOT NULL CHECK (status IN ('sent', 'logged', 'refused', 'failed')),
+  error_code          TEXT,
+  provider_code       TEXT,
+  provider_message_id TEXT,
+  attempts            INTEGER NOT NULL DEFAULT 0,
+  delivery_status     TEXT,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_sms_deliveries_created
+  ON sms_deliveries (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sms_deliveries_provider_message
+  ON sms_deliveries (provider, provider_message_id)
+  WHERE provider_message_id IS NOT NULL;
+COMMENT ON TABLE sms_deliveries IS 'staging:private';
+
+-- Marketing-SMS consent, keyed by number so it outlives an account: a
+-- deletion nulls user_id but keeps the opt-out, which is the compliance
+-- record. No screen records opt-ins yet (services/sms/index.js
+-- recordConsent/recordOptOut have no caller UI).
+CREATE TABLE IF NOT EXISTS sms_marketing_consents (
+  phone_e164      VARCHAR(16) PRIMARY KEY CHECK (phone_e164 ~ '^\+[1-9][0-9]{1,14}$'),
+  user_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  opted_in_at     TIMESTAMPTZ,
+  opt_in_source   TEXT,
+  opted_out_at    TIMESTAMPTZ,
+  opt_out_source  TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE sms_marketing_consents IS 'staging:private';
+
 -- Global CLI device authorization and opaque access tokens. These are
 -- deliberately independent from browser sessions and iframe/app identity.
 CREATE TABLE IF NOT EXISTS cli_device_authorizations (
@@ -3014,10 +3077,11 @@ COMMENT ON COLUMN users.wallet_link_expires_at IS 'staging:private';
 -- prod app's credential.
 COMMENT ON COLUMN apps.db_password IS 'staging:private';
 
--- Public by omission (no comment): apps, app_activity, issues, the
--- users table itself, chat_messages, issue_votes, pr_votes. These
--- carry no per-row secrets and the aggregates are already visible
--- to anyone the staging clone would be spun up for.
+-- These comments remain the generic authored-app clone convention.
+-- Platform self-previews use services/platform-preview-data-policy.js instead:
+-- exported columns are explicit, unlisted data is empty, and the schema
+-- comes from deployed code. Absence of a staging:private comment never
+-- approves platform data for export.
 
 -- PR kudos. A platform-wide appreciation signal that's orthogonal to
 -- `pr_votes` (which is a yes/no merge gate). Every user gets a weekly
@@ -15394,6 +15458,55 @@ CREATE TABLE IF NOT EXISTS server_error_minutes (
 CREATE INDEX IF NOT EXISTS idx_server_error_minutes_minute ON server_error_minutes (minute DESC);
 COMMENT ON COLUMN server_error_minutes.sample IS 'staging:private';
 
+-- What each route cost each process, per minute (the same flush): every
+-- response, /api/ or not, by route TEMPLATE (`(non-api)` for a static file
+-- or page no route declared): how many; how many were held open by design
+-- (`streams`: event streams and long polls, whose time is left out, as they
+-- wait at no cost for as long as their client likes); how many ended with
+-- the client gone first (`aborted`, their time counted); their total and
+-- longest time; and the bytes their sockets were handed. Only a minute's 40
+-- costliest routes keep their names; the rest are `(other)`. The primary
+-- key leads with `minute`, which is all the prune and a time range need.
+-- Pruned after 7 days.
+CREATE TABLE IF NOT EXISTS server_route_minutes (
+  minute    TIMESTAMPTZ NOT NULL,
+  pod       VARCHAR(64) NOT NULL,
+  method    VARCHAR(8) NOT NULL,
+  route     VARCHAR(160) NOT NULL,
+  requests  INTEGER NOT NULL DEFAULT 0,
+  streams   INTEGER NOT NULL DEFAULT 0,
+  aborted   INTEGER NOT NULL DEFAULT 0,
+  total_ms  DOUBLE PRECISION NOT NULL DEFAULT 0,
+  max_ms    DOUBLE PRECISION NOT NULL DEFAULT 0,
+  bytes     BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (minute, pod, method, route)
+);
+
+-- How busy each process was, per minute (services/process-health.js): its
+-- CPU time, how much of the minute its event loop was busy, the loop's
+-- delays (beyond the histogram's 20 ms sampling interval), how often and
+-- how long it stalled (the longest gap between the watcher's wake-ups), its
+-- garbage collection, and its memory's peaks. Read beside
+-- server_route_minutes when a Pod was slow or failed its liveness probe.
+-- Pruned after 14 days.
+CREATE TABLE IF NOT EXISTS server_process_minutes (
+  minute             TIMESTAMPTZ NOT NULL,
+  pod                VARCHAR(64) NOT NULL,
+  role               VARCHAR(16) NOT NULL DEFAULT '',
+  cpu_ms             DOUBLE PRECISION NOT NULL DEFAULT 0,
+  loop_utilization   REAL NOT NULL DEFAULT 0,
+  loop_delay_p99_ms  REAL NOT NULL DEFAULT 0,
+  loop_delay_max_ms  REAL NOT NULL DEFAULT 0,
+  stalls             INTEGER NOT NULL DEFAULT 0,
+  stall_max_ms       REAL NOT NULL DEFAULT 0,
+  gc_ms              REAL NOT NULL DEFAULT 0,
+  gc_count           INTEGER NOT NULL DEFAULT 0,
+  gc_max_ms          REAL NOT NULL DEFAULT 0,
+  rss_mb             REAL NOT NULL DEFAULT 0,
+  heap_used_mb       REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (minute, pod)
+);
+
 -- ── Deleted apps' data, purged (#5121) ──────────────────────────────────
 --
 -- One receipt per deleted app, written by the teardown
@@ -15706,6 +15819,10 @@ CREATE TABLE IF NOT EXISTS session_workers (
   last_used_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- A finished build's commit whose push failed, available to every conductor
+-- before it removes/replaces the worker containing the only copy.
+ALTER TABLE session_workers ADD COLUMN IF NOT EXISTS unpushed_sha TEXT;
+ALTER TABLE session_workers ADD COLUMN IF NOT EXISTS unpushed_branch_name TEXT;
 CREATE INDEX IF NOT EXISTS idx_session_workers_used ON session_workers (last_used_at);
 COMMENT ON TABLE session_workers IS 'staging:private';
 
@@ -15828,3 +15945,109 @@ CREATE TABLE IF NOT EXISTS notification_asks (
   PRIMARY KEY (user_id, surface, moment)
 );
 COMMENT ON TABLE notification_asks IS 'staging:private';
+
+-- ── Off GitHub (docs/plans/github-independence-build.md) ─────────────────
+-- GitHub suspended the account that owned every app repository and filed
+-- every request (25 Oct 2026). App code moved to Homeroom's own git host
+-- (services/git-host.js); requests and proposals are rows here.
+
+-- The address an app's repository had on GitHub, kept when it moved to the
+-- git host: older rows key on it (services/requests.js appFor), and it says
+-- where GitHub's archive would connect.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS github_repo_url VARCHAR(512);
+
+-- One number sequence per app for its requests and proposals, continuing
+-- from GitHub's (services/app-numbers.js): `next_number` is the next one
+-- to hand out.
+CREATE TABLE IF NOT EXISTS app_numbers (
+  app_id      INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  next_number INTEGER NOT NULL CHECK (next_number > 0)
+);
+
+-- Requests (services/requests.js). `author_login` is who GitHub showed as
+-- the author of one that was a GitHub issue (usually the suspended bot);
+-- null for one filed here, whose person is `created_by`. `source` says
+-- where the row came from: 'homeroom' (filed here), 'twin' (copied from the
+-- issues table at the move, `recovered_partial`: the text as first filed),
+-- 'board' (the board's text rescued from the platform's memory, 26 Oct).
+CREATE TABLE IF NOT EXISTS requests (
+  id                BIGSERIAL PRIMARY KEY,
+  app_id            INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  number            INTEGER NOT NULL CHECK (number > 0),
+  title             TEXT NOT NULL,
+  body              TEXT NOT NULL DEFAULT '',
+  state             VARCHAR(8) NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'closed')),
+  state_reason      VARCHAR(16) CHECK (state_reason IS NULL OR state_reason IN ('completed', 'not_planned', 'reopened')),
+  labels            TEXT[] NOT NULL DEFAULT '{}',
+  author_login      VARCHAR(255),
+  created_by        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at         TIMESTAMPTZ,
+  closed_by         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  source            VARCHAR(16) NOT NULL DEFAULT 'homeroom',
+  recovered_partial BOOLEAN NOT NULL DEFAULT FALSE,
+  UNIQUE (app_id, number)
+);
+CREATE INDEX IF NOT EXISTS idx_requests_open
+  ON requests (app_id, updated_at DESC) WHERE state = 'open';
+
+-- What used to be a request's GitHub comments: the bot's posts, specs, close
+-- notes. People's discussion of a request is chat_messages thread 'issue'.
+CREATE TABLE IF NOT EXISTS request_comments (
+  id           BIGSERIAL PRIMARY KEY,
+  app_id       INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  number       INTEGER NOT NULL,
+  author_login VARCHAR(255),
+  user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  body         TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_request_comments_request
+  ON request_comments (app_id, number, id);
+
+-- A proposal's "pull request", for an app on the git host
+-- (services/native-pulls.js): what GitHub's PR object held, so the proposal
+-- machine's reads and writes keep their shapes. The branch is on the git
+-- host; a merge is Homeroom's own (services/native-merge.js), and
+-- `merge_commit_sha` is the commit it put on `base_branch`.
+CREATE TABLE IF NOT EXISTS native_pulls (
+  app_id           INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  number           INTEGER NOT NULL CHECK (number > 0),
+  title            TEXT NOT NULL DEFAULT '',
+  body             TEXT NOT NULL DEFAULT '',
+  head_branch      TEXT NOT NULL,
+  base_branch      TEXT NOT NULL DEFAULT 'main',
+  draft            BOOLEAN NOT NULL DEFAULT FALSE,
+  state            VARCHAR(8) NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'closed')),
+  merged           BOOLEAN NOT NULL DEFAULT FALSE,
+  merged_at        TIMESTAMPTZ,
+  merge_commit_sha VARCHAR(40),
+  merged_head_sha  VARCHAR(40),
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at        TIMESTAMPTZ,
+  PRIMARY KEY (app_id, number)
+);
+CREATE INDEX IF NOT EXISTS idx_native_pulls_open_head
+  ON native_pulls (app_id, head_branch) WHERE state = 'open';
+
+-- Each app's move to the git host, written by the recovery tool
+-- (scripts/github-recovery/) once its repository there holds main, and
+-- applied by the boot migration (services/github-move.js): `repo_url` and
+-- `main_sha` become these, the old address goes to apps.github_repo_url.
+-- `outcome`: 'exact' (main kept its GitHub commit), 'recovered' (one new
+-- commit rebuilt from the running image), 'mirrored' (cloned from GitHub,
+-- which still served it). `applied_at` is set when the boot applied it.
+CREATE TABLE IF NOT EXISTS git_host_moves (
+  app_id          INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  repo_url        VARCHAR(512) NOT NULL,
+  github_repo_url VARCHAR(512),
+  main_sha        VARCHAR(40) NOT NULL,
+  github_main_sha VARCHAR(40),
+  outcome         VARCHAR(16) NOT NULL CHECK (outcome IN ('exact', 'recovered', 'mirrored')),
+  source_image    VARCHAR(512),
+  missing_files   TEXT[] NOT NULL DEFAULT '{}',
+  recorded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  applied_at      TIMESTAMPTZ
+);

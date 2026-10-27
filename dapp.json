@@ -61,11 +61,10 @@
       "description": "PEM private key for the GitHub App. Single-line with literal \\n escape sequences; the loader un-escapes at startup. `staging_default: \"\"` pairs with GITHUB_APP_ID — both empty means github.init() takes the disabled branch and staging boots without GitHub features."
     },
     {
-      "key": "GITHUB_BOT_TOKEN",
-      "required": true,
+      "key": "GIT_HOST_TOKEN",
       "private": true,
       "staging_default": "",
-      "description": "Classic PAT with `repo` scope for the bot user. Powers repo creation, branch pushes, PR creation, and the in-app feedback flow (Issues:write on USERNODE_PLATFORM_REPO). `staging_default: \"\"` lets staging boot — every consumer guards on `if (!pat)` and degrades."
+      "description": "The platform's service account token on Homeroom's git host (GIT_HOST_URL), where app repositories live since GitHub suspended the account that held them (26 Oct 2026). Creates repositories, pushes the platform's commits and merges, and reads private repositories. Never given to workers, agents or people. Empty with GIT_HOST_URL unset: no git host, and app repositories stay where their repo_url says."
     },
     {
       "key": "ANTHROPIC_API_KEY",
@@ -150,10 +149,28 @@
       "description": "Emergency kill switch for before/after shots of each proposal's declared changes. On by default; set exactly false only to stop collecting the declared changes, taking the shots, and showing them together. Proposal checks and previews continue, and legacy default-route screenshots are not restored."
     },
     {
-      "key": "GITHUB_READS_VIA_APP",
+      "key": "GIT_HOST_URL",
       "group": "Platform",
-      "default": "on",
-      "description": "Whether everyday GitHub reads go through the GitHub App installation, which has its own hourly budget, instead of the bot token (GITHUB_BOT_TOKEN). On whenever the App is configured. Writes always use the bot token, and an App read that is refused or out of budget is sent again with it. Set off to read with the bot token only, as before."
+      "default": "",
+      "description": "Homeroom's own git host (Forgejo), as people and agents reach it, e.g. https://git.onhomeroom.com. App repositories live here (apps.repo_url is the repository's page) since GitHub suspended the account that held them; new apps are made here. Empty: no git host."
+    },
+    {
+      "key": "GIT_HOST_INTERNAL_URL",
+      "group": "Platform",
+      "default": "",
+      "description": "Where the platform, its builds and workers read and write the git host. Empty: GIT_HOST_URL itself, over HTTPS, which needs no network policy."
+    },
+    {
+      "key": "GIT_HOST_ORG",
+      "group": "Platform",
+      "default": "apps",
+      "description": "The organisation on the git host that app repositories are made in."
+    },
+    {
+      "key": "GIT_HOST_USER",
+      "group": "Platform",
+      "default": "",
+      "description": "The platform's service account on the git host, whose token is GIT_HOST_TOKEN."
     },
     {
       "key": "MAX_APPS",
@@ -420,6 +437,54 @@
       "key": "FIREBASE_WEB_API_KEY",
       "group": "Phone sign-in",
       "description": "The Firebase project's Identity Toolkit web API key, used by the server for the send-verification-code and verify-phone-number REST calls. Required only while FIREBASE_PHONE_AUTH_ENABLED is true. Not private: a web API key is a public-in-client identifier."
+    },
+    {
+      "key": "PLATFORM_SMS_PROVIDER",
+      "group": "Phone sign-in",
+      "default": "firebase",
+      "description": "Who sends Homeroom's text messages until an admin saves a choice in Admin → SMS delivery: firebase (default, today's Firebase Phone Auth path), brevo or twilio. An admin's saved choice wins. An unknown value is logged and falls back to firebase. A staging preview never sends a real text whatever this says."
+    },
+    {
+      "key": "BREVO_API_KEY",
+      "group": "Phone sign-in",
+      "private": true,
+      "description": "Brevo API key, sent as the api-key header on POST https://api.brevo.com/v3/transactionalSMS/send. Private: it can send texts and is never returned by any API — the admin status card reports only whether it is present. Not needed on staging, which logs instead of sending."
+    },
+    {
+      "key": "BREVO_SMS_SENDER_IDS",
+      "group": "Phone sign-in",
+      "default": "{}",
+      "description": "Country-to-Sender-ID registry: a JSON object keyed by ISO 3166 alpha-2 country, each value a sender string or {sender, registered, optOut}. Example: {\"FR\":\"Homeroom\",\"US\":{\"sender\":\"18885550100\",\"registered\":true}}. Register Sender IDs in Brevo's dashboard. An unlisted country is refused; US and Canada need registered:true with a numeric sender. Empty or malformed means Brevo is not ready."
+    },
+    {
+      "key": "BREVO_SMS_WEBHOOK_TOKEN",
+      "group": "Phone sign-in",
+      "private": true,
+      "required": false,
+      "description": "Bearer token Brevo's SMS webhook must send to POST /api/sms/webhooks/brevo. Private: it authorizes STOP replies and delivery receipts. Unset leaves the webhook answering 404."
+    },
+    {
+      "key": "TWILIO_ACCOUNT_SID",
+      "group": "Phone sign-in",
+      "description": "Twilio Account SID (AC…), the user half of the Basic credential on POST https://api.twilio.com/2010-04-01/Accounts/{AccountSid}/Messages.json. Not needed on staging, which logs instead of sending."
+    },
+    {
+      "key": "TWILIO_AUTH_TOKEN",
+      "group": "Phone sign-in",
+      "private": true,
+      "description": "Twilio Auth Token, the password half of the Basic credential, and the key Twilio signs its webhooks with. Private: it can send texts and is never returned by any API — the admin status card reports only whether it is present. Not needed on staging, which logs instead of sending."
+    },
+    {
+      "key": "TWILIO_SMS_SENDER_IDS",
+      "group": "Phone sign-in",
+      "default": "{}",
+      "description": "Twilio's own country-to-Sender-ID registry, shaped like BREVO_SMS_SENDER_IDS: JSON keyed by ISO 3166 alpha-2 country, each value a sender string or {sender, registered, optOut}. List only Sender IDs Twilio approved. An unlisted country is refused; US and Canada need registered:true with a numeric sender, sent as an E.164 From. Empty or malformed means Twilio is not ready."
+    },
+    {
+      "key": "TWILIO_STATUS_CALLBACK_URL",
+      "group": "Phone sign-in",
+      "required": false,
+      "description": "This server's public URL for POST /api/sms/webhooks/twilio, e.g. https://app.onhomeroom.com/api/sms/webhooks/twilio. Sent as each message's StatusCallback, and the exact URL Twilio's X-Twilio-Signature is checked against. Unset leaves the webhook answering 404 and sends no StatusCallback."
     },
     {
       "key": "PLATFORM_MAIL_PROVIDER",
@@ -700,7 +765,7 @@
       "password": "staging-code-password"
     }
   },
-  "bootParams": ["shot", "details"],
+  "bootParams": ["shot", "details", "side-strip"],
   "routingBoundaries": [
     {
       "route": "#app/*",
@@ -2666,7 +2731,7 @@
       "name": "Own private sessions say Only you, with the line the divider carried as their tooltip (#4486)",
       "path": "/?demo=1#app/usernode-2d5619/board",
       "expectText": "Only you",
-      "expectSelector": "#dev-kanban .dev-ws-wrow .dev-ws-tag[title=\"Only you can see your active sessions here. Their code is on public GitHub.\"]"
+      "expectSelector": "#dev-kanban .dev-ws-wrow .dev-ws-tag[title=\"Only you can see your active sessions here. Their code is public.\"]"
     },
     {
       "name": "Shared session cards show the owner subtitle",
@@ -5017,6 +5082,17 @@
       "expectSelector": "#auth-landing-screen:not(.hidden):has([data-landing-story]:not([data-landing-story-compact]) [data-landing-story-start]):not(:has([data-guest-discover])) [data-landing-story] a[data-landing-story-look][href=\"#apps\"]",
       "expectText": "Look around first",
       "allowConsoleErrors": true
+    },
+    {
+      "name": "SMS delivery section shows the provider switch, Sender IDs and recent texts (22 Oct 2026)",
+      "path": "/?demo=1#admin/sms",
+      "expectSelector": "#admin-sms-provider, #admin-sms-deliveries",
+      "expectText": "Text messages are sent by"
+    },
+    {
+      "name": "iPhone Duo: a one-sided column of system chrome (?side-strip=right paints the Duo's 84pt column) puts the shell in strip mode, with the strip's back controls and the Apps section in the markup (24 Oct 2026)",
+      "path": "/?demo=1&side-strip=right",
+      "expectSelector": "html[data-side-strip=\"right\"]:has(#platform-tabs > .platform-side-apps:first-child + .platform-tabs-marker + #platform-tab-home) .platform-side-strip-ground + .platform-side-strip-frost + #platform-side-strip-top > #platform-side-strip-back"
     }
   ],
   "governance": {

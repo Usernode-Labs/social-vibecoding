@@ -10,7 +10,7 @@
 import { NONE, WORK_EVENTS, assertJson, canonicalHash, isIgnored, isRejection, jsonText } from './machine.ts';
 import type { Machine, WorkResultPayload } from './machine.ts';
 import type {
-  Event, Json, Logger, MessageRequest, Outcome, Pool, PoolClient, Push, Queryable, State, TransitionContext, Tx,
+  Event, EventAuthorizer, Json, Logger, MessageRequest, Outcome, Pool, PoolClient, Push, Queryable, State, TransitionContext, Tx,
 } from './types.ts';
 
 export interface PipelineOptions {
@@ -19,6 +19,7 @@ export interface PipelineOptions {
   log: Logger;
   lockTimeoutMs: number;
   statementTimeoutMs: number;
+  authorizeEvent?: EventAuthorizer;
   stallAfter: number;     // consecutive timeouts before the instance is flagged stalled
   // Publishes an accepted event's pushes on the transition's connection,
   // before its COMMIT (a NOTIFY is delivered only if the transaction commits).
@@ -69,7 +70,7 @@ export async function enterPipeline(client: PoolClient, opts: Pick<PipelineOptio
 // Machine code gets queries only: no transaction control, one statement per
 // call, and the first failure poisons the handle so a swallowed error still
 // fails the event.
-function machineTx(client: PoolClient): Tx & { poisoned: unknown } {
+export function machineTx(client: PoolClient): Tx & { poisoned: unknown } {
   const tx = {
     poisoned: null as unknown,
     async query(text: string, values: unknown[] = []) {
@@ -223,7 +224,7 @@ async function processOne(opts: PipelineOptions, names: string[], versions: numb
     // Nothing runs after COMMIT: everything an event sets off committed with
     // it (state, writes, work, messages, pushes).
     try {
-      await applyEvent(client, machine, row, opts.publish);
+      await applyEvent(client, machine, row, opts.publish, opts.authorizeEvent);
       await client.query('COMMIT');
     } catch (err) {
       // Nothing of the event's transaction survives, the machine's writes
@@ -368,7 +369,7 @@ const CANCEL_WORK = `
 const json = (v: Json | undefined) => (v == null ? null : jsonText(v));
 
 async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: Picked,
-  publish?: PipelineOptions['publish']): Promise<void> {
+  publish?: PipelineOptions['publish'], authorizeEvent?: EventAuthorizer): Promise<void> {
   const eventId = Number(row.id);
   const inst = row.instance;
   // A '(none)' row is left by a creating event that timed out or faulted.
@@ -392,7 +393,17 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
     await finishUnchanged({ result: 'rejected', reason });
   };
 
-  // 1. Replay before anything else: no facts, flags, authority or guard.
+  const tx = machineTx(client);
+  if (authorizeEvent) {
+    const admission = await authorizeEvent(tx, deepFreeze({
+      id: eventId, type: row.type, payload: row.payload, source: row.source, actor: row.actor,
+      requestKey: row.request_key, appId: row.app_id, causedBy: row.caused_by == null ? null : Number(row.caused_by),
+    }), ctx);
+    if (tx.poisoned) throw tx.poisoned;
+    if (isRejection(admission)) return rejectWith(admission.reject);
+  }
+
+  // 1. Replay before machine facts or guards; current admission still applies.
   const hash = canonicalHash({ type: row.type, payload: row.payload, actor: row.actor });
   const receipt = row.receipt;
   if (receipt) {
@@ -422,7 +433,6 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
   }
 
   // 3. Facts, authority, guard, transition: machine code, on a guarded handle.
-  const tx = machineTx(client);
   const facts = deepFreeze(machine.facts ? await machine.facts(tx, state, event, ctx) : undefined);
   const authority = machine.check(event, facts, state);
   if (tx.poisoned) throw tx.poisoned;

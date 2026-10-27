@@ -279,6 +279,7 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
       assert.equal((await fetch(url,{method:'DELETE',headers,body:JSON.stringify({confirmation:'DELETE',password:'wrong'})})).status,403);
       const response=await fetch(url,{method:'DELETE',headers,body:JSON.stringify({confirmation:'DELETE',password})});
       assert.equal(response.status,200); assert.match(response.headers.get('set-cookie'),/session=;/);
+      assert.match(response.headers.get('set-cookie'),/usernode_api_scope=;/);
       assert.equal(await count('sessions','token',target.token),0);
     } finally { await new Promise(resolve=>server.close(resolve)); }
   });

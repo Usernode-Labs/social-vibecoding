@@ -40,7 +40,7 @@ stub(require.resolve('../src/services/app-creator'), { createApp: async () => {}
 stub(require.resolve('../src/services/app-forker'), { forkApp: async () => {} });
 stub(require.resolve('../src/services/caddy'), { productionHostname: (slug) => `${slug}.example.test`, USERNODE_DOMAIN: 'example.test' });
 stub(require.resolve('../src/services/docker'), { getHostPort: async () => null });
-stub(require.resolve('../src/services/github'), { parseGithubUrl: () => null, isEnabled: () => false });
+stub(require.resolve('../src/services/github'), { parseGithubUrl: () => null, isEnabled: () => false, canActOn: () => false });
 stub(require.resolve('../src/services/main-drift-poller'), { checkAndRedeployOne: async () => ({}) });
 stub(require.resolve('../src/services/app-secrets'), {});
 stub(require.resolve('../src/services/rename-pr'), {});

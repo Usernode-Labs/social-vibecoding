@@ -43,11 +43,13 @@ function loadWorker({ scripts = [], repoPrivate = false, dockerLogs = '' } = {})
     docker: require.resolve('../src/services/docker'),
     github: require.resolve('../src/services/github'),
     logger: require.resolve('../src/services/logger'),
+    pool: require.resolve('../src/db/pool'),
     childProcess: require.resolve('child_process'),
     subject: require.resolve('../src/services/worker'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
+  stub(ids.pool, { getPool: () => ({ query: async () => ({ rows: [] }) }) });
 
   const calls = [];
   const logs = [];
@@ -289,13 +291,13 @@ test('classification keys off the stable marker prefix, never git\'s wording', (
 
 // ── 4. Concurrent ensures still share one bootstrap ─────────────────────
 
-test('a second ensure joins the in-flight bootstrap instead of retrying alongside it', async () => {
-  const { worker, restore, spawns } = loadWorker({ scripts: [CLONE_FAILURE] });
+test('concurrent ensures share a failed bootstrap and a later call can retry', async () => {
+  const { worker, restore, spawns } = loadWorker({ scripts: [
+    CLONE_FAILURE, CLONE_FAILURE, CLONE_FAILURE,
+    { lines: ['__USERNODE_PHASE__ warm-ready'], close: false },
+  ] });
   try {
     const first = worker.ensureWorker(10, ENSURE_ARGS);
-    // Let the first caller past its Docker status check, which is where the
-    // registry entry carrying the shared `bootstrap` promise is written.
-    await new Promise((r) => setTimeout(r, 20));
     const second = worker.ensureWorker(10, ENSURE_ARGS);
     const results = await Promise.allSettled([first, second]);
     assert.equal(results[0].status, 'rejected');
@@ -304,7 +306,10 @@ test('a second ensure joins the in-flight bootstrap instead of retrying alongsid
     // live INSIDE the shared promise, so a second caller adds no load and
     // gets the same error the first one did.
     assert.equal(spawns(), 3);
+    assert.strictEqual(results[1].reason, results[0].reason);
     assert.match(results[1].reason.message, /^clone failed: /);
+    assert.equal(await worker.ensureWorker(10, ENSURE_ARGS), 'usernode-worker-10');
+    assert.equal(spawns(), 4, 'a later call starts fresh after the failed attempt is released');
   } finally { restore(); }
 });
 

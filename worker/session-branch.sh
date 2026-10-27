@@ -39,10 +39,9 @@
 #     the trial's own commits and nothing names a later one;
 #   - origin's fetch URL points at nothing, so `git fetch` and `git pull`
 #     fail; it pushes to GitHub (url.<clone URL>.pushInsteadOf, which no
-#     rewrite below applies to), so the platform's push proxy
-#     (worker.js buildPushScript, `git push -u origin "$BRANCH"`) still
-#     lands the trial's branch. A push updates origin/$BRANCH through the
-#     fetch refspec, which names the session branch alone;
+#     rewrite below applies to). The platform exports Git objects and pushes
+#     from its own trusted repository, then updates origin/$BRANCH here
+#     without credentials so the next turn starts on the published commit;
 #   - the repository's own address on GitHub, typed out, reaches a stand-in
 #     inside .git whose main is the base (url.<stand-in>.insteadOf). The
 #     repository's AGENTS.md tells an agent to `git fetch

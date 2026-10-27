@@ -39,8 +39,8 @@ const _state = require('./processes').heldMap('deploy');
 // the import lazy to be safe.
 function broadcast(payload) {
   try {
-    const { broadcastGlobal } = require('./ws');
-    broadcastGlobal(payload);
+    const { broadcastGlobalScoped } = require('./ws');
+    broadcastGlobalScoped(payload, { appSlug: payload.appSlug });
   } catch (err) {
     log.warn('app-deploy-status', 'broadcast failed', { err: err.message });
   }

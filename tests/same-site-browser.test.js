@@ -117,6 +117,9 @@ const EXEMPT = new Map([
   // the ID token, each in a JSON body.
   ['sign-in-providers.js POST /api/auth/oauth/:provider/native/start', JSON_FIELD],
   ['sign-in-providers.js POST /api/auth/oauth/:provider/native', JSON_FIELD],
+  // …and a failed app sheet's report, the state again in a JSON body; it
+  // writes one log line for a state that is still live, and nothing else.
+  ['sign-in-providers.js POST /api/auth/oauth/:provider/native/failed', JSON_FIELD],
   // WP-E: a mail client's one-click unsubscribe (RFC 8058) is a cross-site
   // POST by design. It carries no session; the HMAC token in its query is
   // the whole of the check, and all it can do is turn activity mail off.
@@ -218,6 +221,8 @@ const EXEMPT = new Map([
   // upload token in Authorization; no cookie is read.
   ['external-agent-patch-upload.js POST /api/external-tasks/:taskId/patch', TOKEN],
   ['mail-webhooks.js POST /api/mail/webhooks/resend', 'Resend raw-body Svix signature; no cookie or browser session authorizes a callback'],
+  ['sms-webhooks.js POST /api/sms/webhooks/brevo', 'Brevo\'s SMS webhook bearer token (BREVO_SMS_WEBHOOK_TOKEN); no cookie or browser session authorizes a callback'],
+  ['sms-webhooks.js POST /api/sms/webhooks/twilio', 'Twilio\'s X-Twilio-Signature HMAC keyed by TWILIO_AUTH_TOKEN over TWILIO_STATUS_CALLBACK_URL; no cookie or browser session authorizes a callback'],
   ['alerts-webhook.js POST /api/internal/alerts', 'Alertmanager\'s bearer token (ALERTMANAGER_WEBHOOK_TOKEN); no cookie or browser session authorizes a call'],
   ['global-chat.js POST /api/global-chat/threads/:id/direct-actions', JSON_FIELD],
   ['global-chat.js POST /api/global-chat/threads/:id/inline-actions', JSON_FIELD],

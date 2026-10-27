@@ -1,4 +1,6 @@
 const { nativeWebSessionIsLive } = require('../services/web-session-auth');
+const { bindStreamSession } = require('../services/http-stream-access');
+const { setSessionCacheCookie, stampApiIdentity } = require('../services/browser-api-cache');
 const crypto = require('crypto');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
@@ -349,6 +351,7 @@ async function renewCookieSession(pool, res, token, row) {
       sameSite: 'lax',
       expires: persistedExpiry,
     });
+    setSessionCacheCookie(res, token, persistedExpiry);
     return persistedExpiry;
   } catch (err) {
     log.warn('auth', 'Session renewal failed', { message: err.message });
@@ -412,7 +415,7 @@ function authMiddleware(config) {
               );
               if (payload && typeof payload.id === 'number') tokenUserId = payload.id;
               if (tokenUserId != null && tokenUserId !== rows[0].user_id) {
-                const minted = await tryMintSessionFromIframeJwt(pool, config, switchTok, res);
+                const minted = await tryMintSessionFromIframeJwt(pool, config, switchTok, res, req);
                 if (minted) {
                   req.user = minted;
                   log.debug('auth', 'Staging iframe-JWT switched session identity', {
@@ -462,7 +465,9 @@ function authMiddleware(config) {
           // Placed after the staging identity-switch block: that path replaces
           // the cookie outright, so renewing the credential it is discarding
           // would both waste a write and set competing cookies on one response.
-          await renewCookieSession(pool, res, cookieToken, rows[0]);
+          const renewedExpiry = await renewCookieSession(pool, res, cookieToken, rows[0]);
+          stampApiIdentity(req, res, cookieToken, renewedExpiry || rows[0].expires_at);
+          bindStreamSession(req, cookieToken);
           log.debug('auth', 'Session validated', { userId: req.user.id });
           if (enforcePlatformAccessGate(req, res, req.user)) return;
           return next();
@@ -489,7 +494,7 @@ function authMiddleware(config) {
       const headerToken = req.headers['x-usernode-token'];
       const jwtToken = queryToken || (typeof headerToken === 'string' ? headerToken : null);
       if (jwtToken) {
-        const minted = await tryMintSessionFromIframeJwt(pool, config, jwtToken, res);
+        const minted = await tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req);
         if (minted) {
           req.user = minted;
           log.debug('auth', 'Staging iframe-JWT auth succeeded', { userId: minted.id });
@@ -507,7 +512,7 @@ function authMiddleware(config) {
 // (cloned) users table, mint a session row + set the cookie. Returns the
 // resolved req.user shape on success, null on any failure (caller falls
 // through to redirectOrReject).
-async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
+async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = null) {
   // App-identity (RS256) pinned to THIS clone's app id, and nothing else.
   // Fail-closed with no fallback branch anywhere: the token must carry the
   // right algorithm, issuer, audience and `pur` claim or no session is
@@ -528,9 +533,9 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     return null;
   }
 
-  // The cloned users table preserves row identity (id, username, is_admin)
-  // and only column-scrubs password / api keys / wallet tokens, so we can
-  // resolve is_admin from the local DB. Username match is defense-in-depth
+  // The clone keeps stable IDs with synthetic handles for iframe sign-in. Its
+  // trusted export policy resets profiles and production roles; synthetic
+  // capture personas receive their fixture roles locally. Username match is defense-in-depth
   // against a token whose id was renumbered between clone and now.
   let userRow;
   try {
@@ -575,6 +580,9 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     sameSite: 'lax',
     expires: expiresAt,
   });
+  setSessionCacheCookie(res, sessionToken, expiresAt);
+  if (req) bindStreamSession(req, sessionToken);
+  res.setHeader?.('Cache-Control', 'private, no-store');
 
   log.info('auth', 'Staging iframe-JWT minted local session', {
     userId: userRow.id, username: userRow.username,

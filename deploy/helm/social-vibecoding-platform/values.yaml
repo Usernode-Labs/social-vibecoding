@@ -208,6 +208,18 @@ config:
   # Firebase phone authentication flag; enable in the cluster's plaintext values.
   firebasePhoneAuthEnabled: false
   platformRepository: https://github.com/replace-me/social-vibecoding
+  # Homeroom's own git host, where app repositories live
+  # (services/git-host.js; docs/plans/github-independence-build.md). Empty
+  # url: none, and app repositories stay where their repo_url says. The
+  # platform, its builds and its workers read and write through internalUrl
+  # (empty: url itself), the in-cluster Service, which the platform reaches
+  # through networkPolicy.gitHost; user is the service account whose token
+  # is secrets.gitHostToken.
+  gitHost:
+    url: ""
+    internalUrl: ""
+    org: apps
+    user: ""
   nodeRpcUrl: http://replace-me.invalid:3000
   # Explorer host[:port] without a scheme. Public hosts use HTTPS; private
   # numeric addresses use HTTP, matching the platform's existing proxy logic.
@@ -218,6 +230,14 @@ config:
   # deploying a different genesis; the application validates the exact value.
   nativeSessionV2TestnetChainId: "utc1rq8tql3wr5w8u6nvkwepu7dazq89kv2838xwf02xmg2w5vzgly3s6xf63v"
   internalUrl: http://social-vibecoding.social-platform.svc.cluster.local:3000
+  # The media store's S3-compatible bucket (screenshots, videos and other
+  # files kept out of PostgreSQL), as MEDIA_STORAGE_ENDPOINT and
+  # MEDIA_STORAGE_BUCKET. Empty endpoint: off. The key pair is
+  # secrets.mediaStorageAccessKey / mediaStorageSecretKey. App file uploads
+  # (MINIO_*, src/services/app-files.js) are a separate store and stay off.
+  mediaStorage:
+    endpoint: ""
+    bucket: ""
   logLevel: INFO
   workerMemory: 2g
   # A worker on the platform's own repository (its agent boots the whole
@@ -283,7 +303,8 @@ secrets:
   topochainPartnerApiKey: ""
   githubAppId: ""
   githubPrivateKey: ""
-  githubBotToken: ""
+  # The git host's service account token (config.gitHost). Supply through SOPS.
+  gitHostToken: ""
   # Optional signed pull_request webhook; supply through encrypted external values.
   githubWebhookSecret: ""
   # Optional GitHub account-linking OAuth credentials. Set both in encrypted external values.
@@ -307,6 +328,9 @@ secrets:
   gmailOauthRefreshToken: ""
   # Optional engagement tracking with the existing sender. Supply through SOPS.
   platformMailTrackingSecret: ""
+  # The media store's key pair for config.mediaStorage. Supply both through SOPS.
+  mediaStorageAccessKey: ""
+  mediaStorageSecretKey: ""
   # Optional mobile push settings. Supply all four through encrypted external values.
   mobilePushEnabled: false
   pushEnv: ""
@@ -314,6 +338,17 @@ secrets:
   firebaseServiceAccountJsonB64: ""
   # Optional Firebase web API key, supplied through encrypted external values.
   firebaseWebApiKey: ""
+  # Optional Brevo SMS credentials and country-to-Sender-ID JSON registry.
+  # Supply through SOPS; an empty key and registry leave Brevo unavailable.
+  brevoApiKey: ""
+  brevoSmsSenderIds: "{}"
+  # Optional Twilio SMS credentials, its own country-to-Sender-ID JSON
+  # registry and the public webhook URL. Supply through SOPS; an empty
+  # account, token and registry leave Twilio unavailable.
+  twilioAccountSid: ""
+  twilioAuthToken: ""
+  twilioSmsSenderIds: "{}"
+  twilioStatusCallbackUrl: ""
 
 ingress:
   enabled: true
@@ -343,6 +378,14 @@ networkPolicy:
     namespace: ""
     port: 3080
     podSelector: {}
+  # The git host's in-cluster Service (config.gitHost.internalUrl), which
+  # the HTTPS-to-the-internet rule does not cover.
+  gitHost:
+    enabled: false
+    namespace: social-git
+    port: 3000
+    podSelector:
+      app.kubernetes.io/name: forgejo
   # Generated apps and workers call authenticated internal platform APIs.
   internalCallerNamespaces:
     - social-apps

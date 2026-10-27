@@ -1236,7 +1236,9 @@ test('what the top window owns stands down in the panel\'s document', () => {
 
 test('the shell snapshot really is not written from the panel\'s document', () => {
   const SNAPSHOT = read('frontend/src/lib/shell-snapshot.ts');
+  const { readApiCacheScope } = require('./lib/render-tsx').loadTsx('frontend/src/lib/api-cache-identity.ts');
   const js = SNAPSHOT
+    .replace(/^import .* from ['"].*['"];\n/gm, '')
     .replace(/export interface [\s\S]*?\n\}\n/g, '')
     .replace(/: Partial<Omit<ShellSnapshot, 'savedAt'>>/g, '')
     .replace(/: ShellSnapshot \| null/g, '')
@@ -1246,9 +1248,10 @@ test('the shell snapshot really is not written from the panel\'s document', () =
   for (const embedded of [false, true]) {
     const store = {};
     const ctx = {
-      Date, JSON,
+      Date, JSON, readApiCacheScope,
       window: { localStorage: { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; }, removeItem: (k) => { delete store[k]; } } },
-      document: { documentElement: { classList: { contains: (c) => embedded && c === 'in-side-panel' } } },
+      document: { cookie: 'usernode_api_scope=' + 'a'.repeat(64),
+        documentElement: { classList: { contains: (c) => embedded && c === 'in-side-panel' } } },
     };
     vm.createContext(ctx);
     vm.runInContext(`${js}\n;globalThis.__api = { saveShellSnapshot };`, ctx);

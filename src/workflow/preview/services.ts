@@ -22,6 +22,7 @@ import type { Json, Pool, WorkContext, WorkHandler } from '../kernel/index.ts';
 import { LeaseLost } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { PREPARE_CLAIMS, WORK } from './machine.ts';
+import { parseRepoAddress } from '../rules/github-url.ts';
 
 interface Deps { config: any; pool: Pool }
 
@@ -39,10 +40,7 @@ const RUN_ATTEMPTS = 3;
 // The per-process limits [main] has for builds and check runs.
 const CONCURRENCY = 10;
 
-const repoOf = (url: unknown) => {
-  const m = String(url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  return m ? { owner: m[1]!, repo: m[2]! } : null;
-};
+const repoOf = (url: unknown) => parseRepoAddress(url);
 const cancelled = (ctx: WorkContext, err: unknown) => ctx.signal.aborted || err instanceof LeaseLost;
 
 // A UUID derived from `text` (version 4's layout, as check_runs' key and the

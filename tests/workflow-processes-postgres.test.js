@@ -18,6 +18,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Client, Pool } = require('pg');
 const procs = require('./lib/workflow-processes');
+const { PLATFORM_SLUG } = require('../src/services/platform-preview-data-policy');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const FAKES = path.join(__dirname, 'fixtures', 'workflow-outside-fakes.js');
@@ -101,10 +102,17 @@ test('workflow machines in a process of their own, and through its crash', { tim
   await listener.query('LISTEN usernode_ws');
 
   let seq = 0;
-  const user = async () => (await pool.query(
-    `INSERT INTO users (username, password, has_platform_access) VALUES ($1, 'x', TRUE) RETURNING id, username`,
-    [`proc_${++seq}`])).rows[0];
+  const user = async (isAdmin = false) => (await pool.query(
+    `INSERT INTO users (username, password, has_platform_access, is_admin) VALUES ($1, 'x', TRUE, $2) RETURNING id, username`,
+    [`proc_${++seq}`, isAdmin])).rows[0];
   const author = await user();
+  const operator = await user(true);
+  // The child skips migrations, including seedSelfApp. Mirror that row so
+  // the real startup retirement can resolve the platform before serving.
+  await pool.query(
+    `INSERT INTO apps (name, slug, created_by, repo_url, self_hosted)
+     VALUES ('Homeroom', $1, $2, 'https://github.com/acme/platform', TRUE)`,
+    [PLATFORM_SLUG, author.id]);
   const app = async (o = {}) => (await pool.query(
     `INSERT INTO apps (name, slug, created_by, approvals_required, repo_url, self_hosted)
      VALUES ($1::text, $1::text, $2, 1, 'https://github.com/acme/' || $1::text, $3) RETURNING *`,
@@ -139,6 +147,8 @@ test('workflow machines in a process of their own, and through its crash', { tim
 
   await platform.startWorkflow({ ...flags, databaseUrl, wfSlots: 0 }, { loops: false });
   await startWorkflow();
+  assert.ok((await procs.effects(pool, 'docker.ps')).length > 0,
+    'startup retirement verified the outside runtime inventory before becoming ready');
 
   // ── Governance: a close proposal decided by a vote ──────────────────
   const govKey = (i) => `issue:${i.id}`;
@@ -816,7 +826,8 @@ test('workflow machines in a process of their own, and through its crash', { tim
     try {
       await procs.reached(pool, cloneOf(a));
       await procs.until(async () => deploying(a), 'the row to say the deploy is under way');
-      await procs.until(() => heard.some((e) => e.k === 'global' && e.d?.type === 'app_redeploy_status' && e.d.appSlug === a.slug
+      await procs.until(() => heard.some((e) => e.k === 'scoped' && e.r?.appSlug === a.slug
+        && e.d?.type === 'app_redeploy_status' && e.d.appSlug === a.slug
         && e.d.deploying === true), 'browsers to hear it started');
     } finally {
       await procs.release(pool, cloneOf(a));
@@ -910,7 +921,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
     const a = await app();
     await workflow.kill();
     // The admin's Redeploy, on the web side, with no workflow process running.
-    await platform.requestDeploy(a.id, 'redeploy');
+    await platform.requestDeploy(a.id, 'redeploy', { userId: operator.id });
     await procs.arm(pool, cloneOf(a));
     await startWorkflow();
     await procs.reached(pool, cloneOf(a));
@@ -1109,9 +1120,9 @@ test('workflow machines in a process of their own, and through its crash', { tim
     const b = await app();
     await pool.query(`UPDATE apps SET main_check_state = 'failing', main_check_sha = $2, main_check_paused_sha = $2, main_check_at = now(),
                              main_check_detail = '{}'::jsonb WHERE id = $1`, [b.id, SHA('8')]);
-    assert.equal(await platform.resumeMainCheck(b.id, { id: author.id, username: author.username }), 'resumed');
+    assert.equal(await platform.resumeMainCheck(b.id, operator), 'resumed');
     assert.deepEqual(await mainCheckOf(b), { state: 'failing', sha: SHA('8'), paused: null });
-    assert.equal(await platform.resumeMainCheck(b.id, { id: author.id, username: author.username }), 'not_paused');
+    assert.equal(await platform.resumeMainCheck(b.id, operator), 'not_paused');
   });
 
   // ── The conductor is the process production runs ───────────────────

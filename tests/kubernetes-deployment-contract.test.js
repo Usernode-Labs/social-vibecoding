@@ -29,11 +29,11 @@ test('Kubernetes hosted-app evidence image declares a numeric non-root user', ()
 
 test('Kubernetes platform image builds and contains the generated shell assets', () => {
   const dockerfile = read('Dockerfile.kubernetes');
-  assert.match(dockerfile, /FROM node:22-alpine AS asset-deps/);
-  assert.match(dockerfile, /FROM node:22-alpine AS shell/);
+  assert.match(dockerfile, /FROM node:22.23.4-alpine AS asset-deps/);
+  assert.match(dockerfile, /FROM node:22.23.4-alpine AS shell/);
   assert.match(dockerfile, /from=asset-deps[^\n]+node_modules[^\n]+\\\n\s+node frontend\/scripts\/build-shell\.mjs/);
   assert.match(dockerfile, /from=asset-deps[^\n]+node_modules[^\n]+\\\n\s+node scripts\/build-tailwind\.js/);
-  assert.doesNotMatch(dockerfile, /FROM node:22-alpine AS css/,
+  assert.doesNotMatch(dockerfile, /FROM node:22.23.4-alpine AS css/,
     'a second dependency-bearing asset stage makes rootless BuildKit restore it separately');
 
   const shellBuild = dockerfile.indexOf('node frontend/scripts/build-shell.mjs');
@@ -43,8 +43,8 @@ test('Kubernetes platform image builds and contains the generated shell assets',
     'Tailwind must scan the shell generated earlier in the same stage');
 
   const shellStage = dockerfile.slice(
-    dockerfile.indexOf('FROM node:22-alpine AS shell'),
-    dockerfile.lastIndexOf('\nFROM node:22-alpine\n'),
+    dockerfile.indexOf('FROM node:22.23.4-alpine AS shell'),
+    dockerfile.lastIndexOf('\nFROM node:22.23.4-alpine\n'),
   );
   assert.doesNotMatch(shellStage, /RUN npm ci/,
     'asset dependencies must stay outside the generated-output snapshot');
@@ -78,7 +78,7 @@ test('Kubernetes platform image builds and contains the generated shell assets',
   assert.match(shellStage, /from=asset-deps[^\n]+node_modules[^\n]+\\\n\s+node frontend\/scripts\/build-shell\.mjs --document/,
     'the document step renders with the prerender bundle, which loads react from the dependency stage');
 
-  const runtime = dockerfile.slice(dockerfile.lastIndexOf('\nFROM node:22-alpine\n'));
+  const runtime = dockerfile.slice(dockerfile.lastIndexOf('\nFROM node:22.23.4-alpine\n'));
   assert.doesNotMatch(runtime, /^COPY --chown=node:node \. \.$/m,
     'the runtime image must not ship tests, docs, or builder sources');
   for (const source of [
@@ -103,7 +103,7 @@ test('Kubernetes platform image ships every directory the server reads beside sr
   // starter failed to create with "ENOENT: scandir '/app/app-templates/…'"
   // while Dockerfile, which copies everything, and every test were fine.
   const dockerfile = read('Dockerfile.kubernetes');
-  const runtime = dockerfile.slice(dockerfile.lastIndexOf('\nFROM node:22-alpine\n'));
+  const runtime = dockerfile.slice(dockerfile.lastIndexOf('\nFROM node:22.23.4-alpine\n'));
   const shipped = new Set();
   for (const [, args] of runtime.matchAll(/^COPY (.+)$/gm)) {
     const parts = args.split(/\s+/).filter((a) => !a.startsWith('--'));
@@ -252,7 +252,7 @@ test('Kubernetes workflow resolves all three images before publishing a release'
   assert.match(workflow, /IMAGE_DIGEST: \$\{\{ steps\.reuse\.outputs\.digest \|\| steps\.build\.outputs\.digest \}\}/);
   assert.match(workflow, /no-cache: \$\{\{ steps\.reuse\.outputs\.refresh == 'true' \}\}/);
   assert.match(workflow, /pull: true/);
-  assert.match(workflow, /needs: build/);
+  assert.match(workflow, /needs: \[build, scheduled-image-audit\]/);
   assert.match(workflow, /schedule:[\s\S]*cron: '23 5 \* \* \*'/);
   assert.match(workflow, /npm view @anthropic-ai\/claude-code@latest version/);
   assert.equal((workflow.match(/npm view @anthropic-ai\/claude-code@latest version/g) || []).length, 1,
@@ -397,6 +397,25 @@ test('Kubernetes chart preserves both social account-linking credential pairs', 
     assert.match(secret, new RegExp(`${provider.env}_CLIENT_ID: \\{\\{ \\.Values\\.secrets\\.${provider.value}ClientId \\| quote \\}\\}`));
     assert.match(secret, new RegExp(`${provider.env}_CLIENT_SECRET: \\{\\{ \\.Values\\.secrets\\.${provider.value}ClientSecret \\| quote \\}\\}`));
     assert.match(readme, new RegExp(`/api/me/${provider.callback}/callback`));
+  }
+});
+
+// GitHub suspended the bot account (25 Oct 2026). The GitHub App is the
+// platform's only GitHub credential, so the chart requires its two values and
+// nothing of the bot's token: an environment can delete that value, and one
+// still set is ignored.
+test('Kubernetes chart requires the GitHub App and nothing of the retired bot token', () => {
+  const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
+  const secret = read('deploy/helm/social-vibecoding-platform/templates/secret.yaml');
+  const helpers = read('deploy/helm/social-vibecoding-platform/templates/_helpers.tpl');
+  assert.match(helpers, /\.Values\.secrets\.create \(or \(empty \.Values\.secrets\.githubAppId\) \(empty \.Values\.secrets\.githubPrivateKey\)\) -\}\}/);
+  assert.match(helpers, /fail "secrets\.githubAppId and secrets\.githubPrivateKey are required when platform is enabled"/);
+  assert.match(secret, /GITHUB_APP_ID: \{\{ \.Values\.secrets\.githubAppId \| quote \}\}/);
+  assert.match(secret, /GITHUB_PRIVATE_KEY: \{\{ \.Values\.secrets\.githubPrivateKey \| quote \}\}/);
+  assert.doesNotMatch(values, /githubBotToken|GITHUB_BOT_TOKEN/, 'values.yaml');
+  // No template reads it either, so a value still set is inert.
+  for (const file of fs.readdirSync('deploy/helm/social-vibecoding-platform/templates')) {
+    assert.doesNotMatch(read(`deploy/helm/social-vibecoding-platform/templates/${file}`), /githubBotToken|GITHUB_BOT_TOKEN/, file);
   }
 });
 

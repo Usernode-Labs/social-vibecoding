@@ -165,20 +165,6 @@ export interface HomeGridState {
    * so the prerendered document is unchanged.
    */
   editing: boolean;
-  /**
-   * ALL / CONTRIBUTING (#5823): which apps the grid shows. `filter` is the
-   * chip selection; `filtered` says this paint IS the Contributing view (a
-   * packed, in-memory subset — never the saved arrangement). `filterable`
-   * shows the chips at all: only when My apps mixes the two kinds, or when
-   * Contributing is already chosen so there is a way back. `filterEmpty` is
-   * the Contributing view with nothing in it — the grid says so and offers
-   * All. All four are false/'all' in INITIAL_GRID, so the prerender is
-   * unchanged.
-   */
-  filter: 'all' | 'contributing';
-  filterable: boolean;
-  filtered: boolean;
-  filterEmpty: boolean;
 }
 
 export const INITIAL_GRID: HomeGridState = {
@@ -191,10 +177,6 @@ export const INITIAL_GRID: HomeGridState = {
   notice: null,
   create: null,
   editing: false,
-  filter: 'all',
-  filterable: false,
-  filtered: false,
-  filterEmpty: false,
 };
 
 export const gridStore = createStore<HomeGridState>(INITIAL_GRID);

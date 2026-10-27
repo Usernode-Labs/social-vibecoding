@@ -380,8 +380,8 @@ const WORKER_SRC = fs.readFileSync(
 );
 
 test('execInWorker keeps the journal and the record when holdTurnRecord is set', () => {
-  assert.match(WORKER_SRC, /if \(!holdTurnRecord && state\.execExitSeen && !state\.fatalError\)/,
-    'the journal delete is skipped for a tail-holding caller');
+  assert.doesNotMatch(WORKER_SRC, /execWorkerCommand\(containerName, \['rm', '-f', journal\]/,
+    'finishTurn owns journal deletion after the rescue record is saved');
   assert.match(WORKER_SRC, /if \(holdTurnRecord\) \{[\s\S]{0,600}await markTurnTail\(sessionId,/,
     'the tail branch stamps the record instead of clearing it');
   assert.match(WORKER_SRC, /\} else \{\s*\n\s*await finishTurn\(sessionId, \{ turnId: durableTurnId, journal \}\);/,

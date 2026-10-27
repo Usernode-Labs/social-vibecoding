@@ -314,25 +314,18 @@ test('the clone path never asks GitHub for heads/null', () => {
 // ── the null-branch edge cases ──────────────────────────────────────────
 
 test('the push proxy refuses a branchless session permanently, with advice', async () => {
-  const prev = process.env.GITHUB_BOT_TOKEN;
-  process.env.GITHUB_BOT_TOKEN = 'ghp_test_token';
-  try {
-    const worker = require('../src/services/worker');
-    for (const empty of [null, undefined, '']) {
-      await assert.rejects(
-        () => worker.execPushFromWorker(1, empty),
-        (err) => {
-          assert.equal(err.code, 'no_branch');
-          assert.equal(err.permanent, true);
-          assert.match(err.userMessage, /Send a message in the session first/i);
-          return true;
-        },
-        `branch ${JSON.stringify(empty)} must be refused`
-      );
-    }
-  } finally {
-    if (prev === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = prev;
+  const worker = require('../src/services/worker');
+  for (const empty of [null, undefined, '']) {
+    await assert.rejects(
+      () => worker.execPushFromWorker(1, empty),
+      (err) => {
+        assert.equal(err.code, 'no_branch');
+        assert.equal(err.permanent, true);
+        assert.match(err.userMessage, /Send a message in the session first/i);
+        return true;
+      },
+      `branch ${JSON.stringify(empty)} must be refused`
+    );
   }
 });
 
@@ -533,4 +526,76 @@ test('the null-branch error messages read as instructions, not as diagnostics', 
   }
   assert.match(worker, /Send a message in the session first/);
   assert.match(staging, /Send a message in the session first/);
+});
+
+// ── A stored branch that did not come across from GitHub ───────────────
+//
+// The other half of the backstop. A change made before its app moved to
+// Homeroom's git host names a branch that may only ever have existed on
+// GitHub (services/code-missing.js branchGone). Dispatching it used to warm
+// a worker, start the agent on main and die on "branch missing upstream".
+// ensureBranchForDispatch reads the stored branch live, at the entry of both
+// tools, and the tools refuse with nothing run.
+
+test('every dispatch reads its branch at the entry, before the spin-up row, the image or the worker', () => {
+  const src = read('src/routes/sessions.js');
+  for (const [name, spinUp] of [['runScoutTool', 'Scouting the repo for context'], ['runClaudeCodeTool', 'Spinning up coding agent']]) {
+    const at = src.indexOf(`async function ${name}({`);
+    assert.ok(at > 0, name);
+    const body = src.slice(at, src.indexOf('\nasync function ', at + 10));
+    const ensure = body.indexOf('await ensureBranchForDispatch(pool, session);');
+    assert.ok(ensure > 0, `${name} ensures the branch`);
+    assert.equal(body.indexOf('await ensureBranchForDispatch(', ensure + 1), -1, `${name}: once per dispatch`);
+    for (const later of [spinUp, 'worker.ensureWorkerImage()', 'worker.ensureWorker(']) {
+      const where = body.indexOf(later);
+      assert.ok(where > ensure, `${name}: the branch is read before ${later}`);
+    }
+  }
+  // A branchless change still mints (#1350); only a stored name is read.
+  const fn = src.slice(src.indexOf('async function ensureBranchForDispatch('), src.indexOf('async function codeMissingDispatchResult('));
+  assert.ok(fn.indexOf('codeMissing.branchGone(pool, session) === true') < fn.indexOf('sessionLifecycle.ensureSessionBranch('));
+  assert.match(fn, /if \(session\.branch_name\) \{/);
+});
+
+test('a dispatch on a change whose branch did not come across runs nothing, says so once, and tells the Mayor not to retry', async () => {
+  const codeMissing = require('../src/services/code-missing');
+  const worker = require('../src/services/worker');
+  const { activeWorkers } = require('../src/services/active-workers');
+  const real = { gone: codeMissing.branchGone, image: worker.ensureWorkerImage, ensure: worker.ensureWorker };
+  const touched = [];
+  worker.ensureWorkerImage = async () => { touched.push('image'); };
+  worker.ensureWorker = async () => { touched.push('worker'); return 'container'; };
+  const asked = [];
+  codeMissing.branchGone = async (_pool, s) => { asked.push([s.id, s.branch_name]); return true; };
+  try {
+    const { MAYOR_TURN_DEPS } = require('../src/routes/sessions');
+    for (const tool of ['runClaudeCodeTool', 'runScoutTool']) {
+      const statuses = [];
+      const session = { id: 9100, user_id: 3, app_id: 2, branch_name: 'dev/ada-old-1', agent_backend: 'claude_code', app_slug: 'todo' };
+      const out = await MAYOR_TURN_DEPS[tool]({
+        pool: { query: async () => ({ rows: [] }) },
+        config: {}, req: { user: { id: 3, username: 'ada' } }, res: { write() {} },
+        session, selectedModel: 'claude-sonnet-5-5', userMessage: 'Add dark mode', toolPromptArg: 'Add dark mode',
+        repoOwner: 'apps', repoName: 'todo', send: () => {},
+        sendStatus: async (text, meta) => { statuses.push({ text, meta }); },
+        stopHandle: null, userApiKey: null,
+      });
+      assert.equal(out.isError, true, tool);
+      assert.equal(out.codeMissing, true);
+      assert.equal(out.turnId, null, 'no turn record was made');
+      assert.match(out.toolResultText, /^code_missing: change 9100's code didn't come across when Homeroom moved off GitHub/);
+      assert.match(out.toolResultText, /Nothing ran and nothing was changed\. Do not suggest retrying\./);
+      assert.match(out.toolResultText, /start_change with fromChangeId 9100/);
+      assert.equal(statuses.length, 1, `${tool}: one status row, and no spin-up row before it`);
+      assert.equal(statuses[0].text, codeMissing.BRANCH_GONE);
+      assert.equal(statuses[0].meta.codeMissing, true);
+      assert.equal(activeWorkers.has(9100), false, 'the change is not left looking busy');
+    }
+    assert.deepEqual(touched, [], 'no worker image, no worker');
+    assert.deepEqual(asked, [[9100, 'dev/ada-old-1'], [9100, 'dev/ada-old-1']], 'read live, once per dispatch');
+  } finally {
+    codeMissing.branchGone = real.gone;
+    worker.ensureWorkerImage = real.image;
+    worker.ensureWorker = real.ensure;
+  }
 });

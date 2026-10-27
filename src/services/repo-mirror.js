@@ -41,15 +41,19 @@
 //
 // ── What this module does NOT do ───────────────────────────────────────
 //
-// It never writes to a repository and never authenticates. Homeroom app
-// repositories are public by contract (services/github.js rejects a private
-// import outright), so plain unauthenticated HTTPS is enough to read them —
-// the same assumption the build worker already runs on. Nothing here can
-// push, merge, or mutate GitHub state.
+// It never writes to a repository. A GitHub repository (only the platform's
+// own, since app repositories moved to Homeroom's git host on 26 Oct 2026)
+// is public, so plain unauthenticated HTTPS reads it, blobless. A repository
+// on the git host (services/git-host.js) is read with the platform's
+// service account and kept whole, blobs included: it is ours, there is no
+// rate limit to spare, and a native merge (services/native-merge.js) writes
+// its merge commit into this mirror and pushes it from here.
 
 const path = require('path');
 const docker = require('./docker');
 const log = require('./logger');
+const gitHost = require('./git-host');
+const repoRef = require('./repo-ref');
 
 const MIRROR_ROOT = process.env.USERNODE_MIRROR_ROOT || '/tmp';
 
@@ -128,7 +132,15 @@ const _inFlight = new Map();
 
 async function ensureMirrorInner(owner, repo, { refs = [] } = {}) {
   const dir = mirrorPath(owner, repo);
-  const url = `https://github.com/${safeName(owner, 'owner')}/${safeName(repo, 'repo')}.git`;
+  const hosted = repoRef.hostOfOwner(owner) === 'git_host';
+  const url = hosted
+    ? gitHost.cloneUrl({ owner: safeName(owner, 'owner'), name: safeName(repo, 'repo') })
+    : `https://github.com/${safeName(owner, 'owner')}/${safeName(repo, 'repo')}.git`;
+  // The git host answers the service account (services/git-host.js); GitHub
+  // is read anonymously.
+  const remote = (args, timeout) => (hosted
+    ? gitHost.git(args, { auth: true, timeout })
+    : docker.execFileAsync('git', args, { timeout }));
 
   // `rev-parse --git-dir` is the cheapest honest "is there a usable mirror
   // here?". A half-written directory from a killed clone fails it, which is
@@ -141,10 +153,7 @@ async function ensureMirrorInner(owner, repo, { refs = [] } = {}) {
 
   if (!usable) {
     await docker.execFileAsync('rm', ['-rf', dir]).catch(() => {});
-    await docker.execFileAsync(
-      'git', ['clone', '--bare', '--filter=blob:none', url, dir],
-      { timeout: CLONE_TIMEOUT_MS }
-    );
+    await remote(['clone', '--bare', '--quiet', ...(hosted ? [] : ['--filter=blob:none']), url, dir], CLONE_TIMEOUT_MS);
     log.info('repo-mirror', 'Mirror created', { owner, repo, dir });
   }
 
@@ -156,9 +165,13 @@ async function ensureMirrorInner(owner, repo, { refs = [] } = {}) {
   // actually needs on demand, which for merge-tree is only the files both
   // sides touched.
   const wanted = ['HEAD', ...refs.filter((r) => SHA_RE.test(String(r || '')))];
-  await git(dir, ['fetch', '--quiet', '--prune', 'origin', '+refs/heads/*:refs/heads/*'], {
-    timeout: FETCH_TIMEOUT_MS,
-  });
+  if (hosted) {
+    await remote(['-C', dir, 'fetch', '--quiet', '--prune', 'origin', '+refs/heads/*:refs/heads/*'], FETCH_TIMEOUT_MS);
+  } else {
+    await git(dir, ['fetch', '--quiet', '--prune', 'origin', '+refs/heads/*:refs/heads/*'], {
+      timeout: FETCH_TIMEOUT_MS,
+    });
+  }
 
   // Proposal heads live on branches the mirror already fetched above, but a
   // head can also be a commit on a fork (an imported PR) or one that has just
@@ -169,7 +182,9 @@ async function ensureMirrorInner(owner, repo, { refs = [] } = {}) {
     if (sha === 'HEAD') continue;
     const have = await git(dir, ['cat-file', '-e', `${sha}^{commit}`], { allowFail: true });
     if (have.code === 0) continue;
-    await git(dir, ['fetch', '--quiet', 'origin', sha], { timeout: FETCH_TIMEOUT_MS })
+    await (hosted
+      ? remote(['-C', dir, 'fetch', '--quiet', 'origin', sha], FETCH_TIMEOUT_MS)
+      : git(dir, ['fetch', '--quiet', 'origin', sha], { timeout: FETCH_TIMEOUT_MS }))
       .catch((err) => log.debug('repo-mirror', 'Could not fetch commit by sha', {
         owner, repo, sha, err: err.message,
       }));
@@ -392,6 +407,16 @@ async function resolveBranch(dir, branchName) {
   return text(r.stdout).trim().toLowerCase() || null;
 }
 
+/**
+ * Every branch the mirror has, by name. One local read answers "is this
+ * proposal's branch there?" for every proposal on the app at once
+ * (services/code-missing.js), where resolveBranch is one process a branch.
+ */
+async function listBranches(dir) {
+  const { stdout } = await git(dir, ['for-each-ref', '--format=%(refname:strip=2)', 'refs/heads/']);
+  return text(stdout).split('\n').map((line) => line.trim()).filter(Boolean);
+}
+
 /** Does the mirror know this commit at all? */
 async function hasCommit(dir, committish) {
   const r = await git(dir, ['cat-file', '-e', `${safeSha(committish)}^{commit}`], { allowFail: true });
@@ -431,6 +456,7 @@ module.exports = {
   mergeTree,
   changedPaths,
   resolveBranch,
+  listBranches,
   hasCommit,
   commitsBetween,
   // Exported for the unit tests, which drive the plumbing against a real

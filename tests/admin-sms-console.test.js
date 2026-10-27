@@ -176,7 +176,9 @@ test('a full admin sends one real code request and gets "sent" back', async () =
     assert.deepEqual(toolkitCalls[0].body, { phoneNumber: '+447700900123', recaptchaToken: 'tok' });
     assert.equal(recorded.length, 1);
     assert.equal(recorded[0].type, 'sms_test_sent');
-    assert.deepEqual(recorded[0].metadata, { status: 'sent', providerCode: null, phoneLast4: '0123' });
+    assert.deepEqual(recorded[0].metadata, {
+      status: 'sent', provider: 'firebase', country: null, providerCode: null, phoneLast4: '0123',
+    });
   } finally { server.close(); }
 });
 
@@ -313,6 +315,83 @@ test('any admin reads the failure log; a non-admin is refused', async () => {
   } finally { server.close(); }
 });
 
+// ── the provider switch and the delivery log ───────────────────────────
+
+const smsSelect = require('../src/services/sms/select');
+const BREVO_CONFIG = {
+  ...FULL_CONFIG,
+  brevoApiKey: 'brevo-key',
+  brevoSmsSenderIds: { FR: { sender: 'Homeroom', registered: false, optOut: null } },
+};
+
+test('status lists every provider and the Sender ID registry without values', async () => {
+  const server = await startServer(BREVO_CONFIG);
+  try {
+    currentUser = { id: 5, username: 'viewer', isAdmin: true, canAdminWrite: false };
+    const res = await call(server, 'GET', '/api/admin/sms/status');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.provider.selected, 'firebase');
+    const names = res.body.provider.options.map((o) => o.name);
+    assert.deepEqual(names, ['firebase', 'brevo', 'twilio']);
+    assert.equal(res.body.provider.options.find((o) => o.name === 'brevo').ready, true);
+    assert.deepEqual(res.body.senders, [{
+      country: 'FR', countryName: 'France', sender: 'Homeroom',
+      needsRegistration: false, registered: false, ready: true,
+    }]);
+    assert.equal(res.body.senderProvider, 'brevo', 'while Firebase sends, the ready gateway\'s registry is shown');
+    assert.ok(!JSON.stringify(res.body).includes('brevo-key'), 'the key never leaves the server');
+  } finally { server.close(); }
+});
+
+test('only a full admin switches providers, and a provider that is not ready is 409', async () => {
+  reset();
+  const server = await startServer(BREVO_CONFIG);
+  try {
+    currentUser = { id: 6, username: 'viewer', isAdmin: true, canAdminWrite: false };
+    const denied = await call(server, 'PUT', '/api/admin/sms/provider', { provider: 'brevo' });
+    assert.equal(denied.status, 403);
+
+    currentUser = fullAdmin();
+    const unknown = await call(server, 'PUT', '/api/admin/sms/provider', { provider: 'carrier-pigeon' });
+    assert.equal(unknown.status, 400);
+    assert.equal(unknown.body.code, 'unknown_provider');
+
+    const switched = await call(server, 'PUT', '/api/admin/sms/provider', { provider: 'brevo' });
+    assert.equal(switched.status, 200);
+    assert.equal(switched.body.provider.selected, 'brevo');
+  } finally {
+    smsSelect.invalidate();
+    server.close();
+  }
+});
+
+test('choosing a provider that is not ready answers 409 with what is missing', async () => {
+  reset();
+  const server = await startServer(FULL_CONFIG);
+  try {
+    currentUser = fullAdmin();
+    const res = await call(server, 'PUT', '/api/admin/sms/provider', { provider: 'brevo' });
+    assert.equal(res.status, 409);
+    assert.equal(res.body.code, 'not_ready');
+    assert.ok(res.body.missing.includes('BREVO_API_KEY'));
+    assert.ok(res.body.missing.includes('BREVO_SMS_SENDER_IDS'));
+  } finally { server.close(); }
+});
+
+test('any admin reads the delivery log; non-admins do not', async () => {
+  reset();
+  const server = await startServer(FULL_CONFIG);
+  try {
+    currentUser = { id: 7, username: 'viewer', isAdmin: true, canAdminWrite: false };
+    const res = await call(server, 'GET', '/api/admin/sms/deliveries');
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.deliveries, []);
+
+    currentUser = { id: 8, username: 'pleb', isAdmin: false };
+    assert.equal((await call(server, 'GET', '/api/admin/sms/deliveries')).status, 403);
+  } finally { server.close(); }
+});
+
 // ── console wiring ─────────────────────────────────────────────────────
 
 test('the console lists SMS delivery in Platform, right after Email delivery', () => {
@@ -347,5 +426,5 @@ test('the section renders the failure log table with loading, empty and error st
   assert.match(src, /No failures recorded\./);
   assert.match(src, /Loading…/);
   assert.match(src, /KIND_LABELS\[f\.kind\] \|\| f\.kind/, 'an unknown kind still renders');
-  assert.match(src, /Firebase: /, 'Firebase\'s own code is shown beside this API\'s');
+  assert.match(src, /Provider: /, 'the provider\'s own code is shown beside this API\'s');
 });

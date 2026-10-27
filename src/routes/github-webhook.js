@@ -5,6 +5,7 @@ const express = require('express');
 const crypto = require('crypto');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
+const repoRef = require('../services/repo-ref');
 
 // POST /api/github/webhook — GitHub tells us a pull request moved (#2737).
 //
@@ -65,8 +66,8 @@ function signatureMatches(secret, rawBody, header) {
 
 /** `https://github.com/owner/repo(.git)` → `owner/repo`, lowercased. */
 function repoKey(url) {
-  const [, owner, repo] = (String(url || '').match(/github\.com\/([^/]+)\/([^/.]+)/) || []);
-  return owner && repo ? `${owner}/${repo}`.toLowerCase() : null;
+  const ref = repoRef.ownerRepo(url);
+  return ref ? `${ref.owner}/${ref.repo}`.toLowerCase() : null;
 }
 
 /**

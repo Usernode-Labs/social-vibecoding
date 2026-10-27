@@ -79,6 +79,7 @@ import { skeletonKanbanHtml, skeletonListHtml } from './card/skeleton';
 import { isChannelPlace } from './workshop/places';
 import { mainPauseStore, mainPauseText, type MainPauseState } from './main-pause-store';
 import { releaseStallStore, releaseStallText, type ReleaseStallState } from './release-stall-store';
+import { codePauseStore, type CodePauseState } from './code-pause-store';
 
 /** `AppView.DEV_CARD_CLS`, unchanged. Passed in so there is one source of truth. */
 export interface DevBoardFrameProps {
@@ -321,6 +322,24 @@ function ReleaseStallNotice(): ReactNode {
   );
 }
 
+/**
+ * The "code changes are paused" banner (./code-pause-store.ts), for a project
+ * whose code is still on GitHub while Homeroom is not using GitHub. Amber like
+ * the two above: it is the one fact that applies to every change of the
+ * project at once, and it says what still works, so a member does not read
+ * the whole project as stopped.
+ */
+function CodePauseNotice(): ReactNode {
+  const t = useMessages('project');
+  const s = useStoreState<CodePauseState>(codePauseStore);
+  if (!s.paused) return null;
+  return (
+    <Alert variant="notice" density="compact" data-code-pause="github">
+      <span>{t('project:codePause.notice')}</span>
+    </Alert>
+  );
+}
+
 export function DevBoardFrame({
   illustrationApp,
   canManageIllustration,
@@ -333,6 +352,7 @@ export function DevBoardFrame({
 }: DevBoardFrameProps) {
   const mainPaused = useStoreState<MainPauseState>(mainPauseStore).paused;
   const releaseStalled = useStoreState<ReleaseStallState>(releaseStallStore).stalled;
+  const codePaused = useStoreState<CodePauseState>(codePauseStore).paused;
   // The toolbar's home depends on the surface — see the DevActionsRow render
   // below. Subscribing the frame to the mode is safe for the one node this
   // file hands to the module: `#dev-body`'s `dangerouslySetInnerHTML` object
@@ -409,6 +429,14 @@ export function DevBoardFrame({
         */}
         <div id="dev-release-stall-notice" className={releaseStalled ? 'px-3 pt-2' : 'px-3 pt-2 hidden'}>
           <ReleaseStallNotice />
+        </div>
+        {/*
+            The code-changes-paused banner (services/github-pause.js), for a
+            project still on GitHub while GitHub is paused. Same arrangement
+            again; every other project draws nothing.
+        */}
+        <div id="dev-code-pause-notice" className={codePaused ? 'px-3 pt-2' : 'px-3 pt-2 hidden'}>
+          <CodePauseNotice />
         </div>
         <DiscussionCard cardCls={cardCls} cardHoverCls={cardHoverCls} />
         {/* Body region: the Workshop mounts #dev-workshop here; Kanban mounts

@@ -15,7 +15,7 @@ import { Signals, append, refuseIfPending, waitForInstance, waitForOutcome } fro
 import type { AppendOptions } from './stream.ts';
 import { release } from './inspect.ts';
 import type { Machine } from './machine.ts';
-import type { EventOutcome, Logger, Pool, Push, Queryable, WorkHandler } from './types.ts';
+import type { EventAuthorizer, EventOutcome, Logger, Pool, Push, Queryable, WorkHandler } from './types.ts';
 
 export { NONE, WORK_EVENTS, WorkflowInputError, defineMachine, ok, reject, canonicalHash } from './machine.ts';
 export type { Machine, WorkResultPayload } from './machine.ts';
@@ -45,6 +45,8 @@ export interface RuntimeOptions {
   // The build this process runs: work of a kind marked `ownRelease` is
   // claimed only by a process whose release its input names.
   release?: string;
+  // Current application authority, checked before replay or machine code.
+  authorizeEvent?: EventAuthorizer;
   // Publishes what browsers should hear, inside the transition's transaction.
   publish?: (q: Queryable, pushes: Push[]) => Promise<void>;
 }
@@ -64,7 +66,7 @@ export function createRuntime(opts: RuntimeOptions) {
   // Handlers are authored as an object and used as a Map, like machine tables.
   const handlers = new Map(Object.entries(opts.services || {}));
   const timeouts = { lockTimeoutMs: opts.lockTimeoutMs ?? 2000, statementTimeoutMs: opts.statementTimeoutMs ?? 5000 };
-  const pipeline = { pool: opts.pool, machines, log, ...timeouts, stallAfter: opts.stallAfter ?? 5, publish: opts.publish };
+  const pipeline = { pool: opts.pool, machines, log, ...timeouts, stallAfter: opts.stallAfter ?? 5, publish: opts.publish, authorizeEvent: opts.authorizeEvent };
   const service = { pool: opts.pool, handlers, log, serviceId: opts.serviceId || `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`,
     versions: new Map([...machines].map(([name, m]) => [name, m.version])), ...timeouts,
     release: opts.release ?? null,
@@ -230,7 +232,7 @@ export function createRuntime(opts: RuntimeOptions) {
       purge(opts.pool, { ...timeouts, ...o, machines }),
 
     release: (machine: string, key: string, o: { mode: 'retry' | 'skip'; actor: string }) =>
-      release(opts.pool, machine, key, { ...o, ...timeouts }),
+      release(opts.pool, machine, key, { ...o, ...timeouts, authorizeEvent: opts.authorizeEvent }),
 
     // Every process starts signals (so appendAndWait wakes on outcomes).
     // With `slots`, it also runs pipeline slots: any process may, since an

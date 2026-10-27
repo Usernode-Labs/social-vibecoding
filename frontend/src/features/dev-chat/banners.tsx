@@ -24,6 +24,7 @@ import {
   bannersStore,
   type AgentSessionBannerView,
   type ClassicReadOnlyBannerView,
+  type CodeMissingBannerView,
   type CreditsBannerView,
   type NewChangeBannerView,
   type SyncBannerView,
@@ -52,6 +53,8 @@ const SHELL = {
   // the paragraph surrender almost half of a 320px screen to the button.
   // `sm:flex` restores the compact strip byte-for-byte at desktop widths.
   violet: 'grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-2 gap-y-3 px-3 py-3 bg-violet-50 dark:bg-violet-950/30 border-b border-violet-200 dark:border-violet-900/50 text-xs sm:flex sm:items-center sm:gap-2 sm:py-2',
+  // The violet strip's two-row phone layout, in the amber of a problem.
+  amberAction: 'grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-2 gap-y-3 px-3 py-3 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs sm:flex sm:items-center sm:gap-2 sm:py-2',
   creditsAmber: 'flex flex-wrap items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs',
   creditsRed: 'flex flex-wrap items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-900/50 text-xs',
 } as const;
@@ -286,6 +289,33 @@ function ClassicReadOnlyBanner({ b }: { b: ClassicReadOnlyBannerView }): ReactNo
   );
 }
 
+// This change's code did not come across when Homeroom moved off GitHub
+// (src/services/code-missing.js). Nothing can run on it, so the strip says
+// why and, for its owner, offers the way on: a new change from the current
+// version carrying this one's plan (`DevChat.startNewChangeFromPlan`). Its
+// primary routes through <Button> as "Start a new change" does.
+function CodeMissingBanner({ b }: { b: CodeMissingBannerView }): ReactNode {
+  const t = useMessages('devchat');
+  return (
+    <div id="dc-code-missing-banner" className={SHELL.amberAction} role="status">
+      <WarningTriangleIcon className="w-4 h-4 text-amber-800 dark:text-amber-400 shrink-0" />
+      <span className="text-amber-900 dark:text-amber-200 flex-1">
+        {t('devchat:banner.codeMissing.text')}
+      </span>
+      {b.canStart ? (
+        <Button
+          id="dc-code-missing-start" type="button"
+          variant="pill" disabledStyle="dim60" size="xsText" ink="solid"
+          className="col-start-2 justify-self-start sm:col-auto sm:justify-self-auto shrink-0"
+          onClick={() => controller()?.startNewChangeFromPlan?.()}
+        >
+          {t('devchat:banner.codeMissing.start')}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 export function DevChatBanners(): ReactNode {
   const s = useStoreState(bannersStore);
   // Subscribed: the store's own lines are worded by dev-chat.js, which
@@ -293,6 +323,7 @@ export function DevChatBanners(): ReactNode {
   useMessages('devchat');
   return (
     <>
+      {s.codeMissing ? <CodeMissingBanner b={s.codeMissing} /> : null}
       {s.classicReadOnly ? <ClassicReadOnlyBanner b={s.classicReadOnly} /> : null}
       {s.agentSession ? <AgentSessionBanner b={s.agentSession} /> : null}
       {s.sync ? <SyncBanner b={s.sync} /> : null}
@@ -303,4 +334,4 @@ export function DevChatBanners(): ReactNode {
   );
 }
 
-export { SyncBanner, NewChangeBanner, CreditsBanner, ClassicReadOnlyBanner };
+export { SyncBanner, NewChangeBanner, CreditsBanner, ClassicReadOnlyBanner, CodeMissingBanner };

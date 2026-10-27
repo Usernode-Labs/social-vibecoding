@@ -125,7 +125,7 @@ function shotsEvalRoutes(config) {
   router.post('/api/shots-evals/:id/cancel', requireAdminWrite, benchStudioLimiter, sameOriginBrowserOnly, handler('Shots eval cancel', async (req) => {
     const id = idParam(req.params.id);
     if (!id) return bad('Invalid eval id');
-    const out = await evals.cancelRun(pool, id);
+    const out = await evals.cancelRun(pool, id, { userId: req.user.id });
     if (out.ok) {
       log.info('shots-eval', 'Eval cancelled', { by: req.user.username, id, trials: out.cancelled });
     }

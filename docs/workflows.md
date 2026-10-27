@@ -50,7 +50,7 @@ The workflow kernel answers each one with a rule:
             │ wf_events │ ──▶ │ pipeline slots (any number, any process)     │
             │ (stream)  │     │ one event per transaction, under the         │
             └───────────┘     │ instance's row lock:                         │
-                  ▲           │ replay check → facts → authorise → guard →   │
+                  ▲           │ admit → replay → facts → authorise → guard →   │
                   │           │ transition → persist                         │
                   │           └───────────────┬──────────────────────────────┘
                   │                           │ work items
@@ -109,7 +109,7 @@ afterwards. A machine that answers routes defines `reply(tx, event, after, ctx, 
   gets the facts the transition decided on, so an answer they already hold needs no
   query.
 - **Where it is stored.** With the event and its receipt.
-- **On a replay.** A replayed request returns the stored reply. A route that reads the
+- **On a replay.** Current application admission is checked first; an authorized replay returns the stored reply. A route that reads the
   tables later would describe today's state instead (a vote since retracted, counts
   that moved on).
 
@@ -126,20 +126,41 @@ afterwards. A machine that answers routes defines `reply(tx, event, after, ctx, 
 3. leaves it alone if a newer machine version last wrote the instance (old and new code
    overlap during a deploy);
 4. runs one transaction for that event:
-   1. **Replay check.** If a receipt exists for this request key with the same payload, the
-      event is `replayed` with the original outcome. Nothing else is evaluated. A
-      different payload under the same key is `rejected: request_key_conflict`.
-   2. **Facts.** The machine's read-only queries.
-   3. **Authorise, then guard.** A rejection marks the event `rejected` with its reason
+   1. **Application admission.** The runtime's optional `authorizeEvent` checks current
+      application authority on the serialized event, inside this transaction. A denial
+      writes no receipt, domain change, work or message. Database errors fault the event.
+   2. **Replay check.** If a receipt exists for this request key with the same payload, the
+      event is `replayed` with the original outcome. Machine facts and guards are skipped.
+      A different payload under the same key is `rejected: request_key_conflict`.
+   3. **Facts.** The machine's read-only queries.
+   4. **Authorise, then guard.** A rejection marks the event `rejected` with its reason
       and writes **no receipt**, so a later retry with the same key can still succeed.
-   4. **Transition.** It returns the outcome, and the next state must be declared.
-   5. **Persist,** in this order: domain writes, projection, the machine's reply, the
+   5. **Transition.** It returns the outcome, and the next state must be declared.
+   6. **Persist,** in this order: domain writes, projection, the machine's reply, the
       pushes, work items, messages, then the instance row, receipt and the event's own
       result in one statement. A placeholder row whose event is rejected is deleted again.
 5. commits, then wakes whoever waits for the outcome. Nothing else runs after COMMIT:
    the kernel has no post-commit kicks (a crash between the commit and a kick lost it),
    and a transition that returns one faults. What an event sets off is a push, work or
    a message, all committed with it.
+
+**Platform command authority.** Production creates its runtime through
+`createPlatformRuntime` in `src/workflow/event-authority.ts`. Human admin commands
+carry the authenticated numeric `user:<id>` actor. Admission rereads `users` and, for
+project overrides, the actual target proposal and `app_admins`; it holds share locks
+through the decision's commit. A producer label or a username grants no permission.
+Project admins keep their existing powers on their own project, with protected changes
+and fleet campaigns restricted to full platform admins. Shots waivers also retain the
+project creator's management power. Faulted-instance release uses the same check.
+Internal cleanup reports itself as `system`, not as a human admin. The HTTP permission
+checks remain necessary: ordinary commands still depend on their callers and their
+machine's rules. Admission does not cancel external work already authorized and queued.
+
+This admission boundary does not authenticate an arbitrary process that can forge
+actors or write workflow rows. `PROCESS_ROLE` separates loops, not credentials; database
+login privileges, migration/provisioning credentials and Kubernetes service accounts
+need independent isolation. All deciding processes must run the updated code before a
+new admission rule applies across the fleet.
 
 **Pushes.** What browsers should hear is part of the transition. A transition returns
 `push`, and a domain write adds what it inserted with `ctx.push` (a thread line with its
@@ -594,7 +615,7 @@ reviewed, `--all` everything).
 ### In production (Kubernetes)
 
 - **The workloads.** The `social-vibecoding` Deployment serves people (`PROCESS_ROLE=web`,
-  `platform.replicas`) and decides nothing; the `social-vibecoding-conductor` Deployment
+  `platform.replicas`) and appends workflow commands without running their loops; the `social-vibecoding-conductor` Deployment
   runs the workflow (`platform.conductor.replicas`, two in production), deployed by Argo
   CD from the Helm chart in `deploy/helm/` with values from the infra repository. The
   conductor's replicas spread across nodes, and its PodDisruptionBudget lets a node drain

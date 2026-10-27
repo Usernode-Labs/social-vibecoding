@@ -286,10 +286,10 @@ test('the sweep checks every cap and one failure does not stop the others', asyn
   const { calls, deps } = recorder();
   const out = await limits.sweep(pool, CONFIG, deps);
   assert.deepEqual(out.errors, ['apps: db down']);
-  assert.deepEqual(out.results.map((r) => r.key), ['sessions', 'github', 'github_app']);
+  assert.deepEqual(out.results.map((r) => r.key), ['sessions', 'github_app']);
   // A process that has not heard from GitHub yet records nothing: "ok"
   // would re-arm a crossing already told (each new leader used to).
-  assert.deepEqual(out.results.slice(1).map((r) => [r.level, r.unknown]), [[null, true], [null, true]],
+  assert.deepEqual(out.results.slice(1).map((r) => [r.level, r.unknown]), [[null, true]],
     'nothing known about GitHub records nothing');
   assert.ok(!pool.state.queries.some((q) => /platform_limit_alerts/.test(q.sql) && /github/.test(JSON.stringify(q.params))),
     'no GitHub level is written');
@@ -298,7 +298,7 @@ test('the sweep checks every cap and one failure does not stop the others', asyn
 
 // ─── GitHub's hourly budget (services/github-budget.js) ─────────────────
 
-function githubWindow(remaining, { limit = 5000, resetMin = 30, credential = 'pat' } = {}) {
+function githubWindow(remaining, { limit = 5000, resetMin = 30, credential = 'installation:a' } = {}) {
   githubBudget.record(credential, {
     'x-ratelimit-limit': String(limit),
     'x-ratelimit-remaining': String(remaining),
@@ -306,11 +306,11 @@ function githubWindow(remaining, { limit = 5000, resetMin = 30, credential = 'pa
   });
 }
 
-test('the bot token warns at a fifth left and again when used up, once per window', async () => {
+test('the App warns at a fifth left and again when used up, once per window', async () => {
   githubBudget._resetForTests();
   const pool = fakePool();
   const { calls, deps } = recorder();
-  const run = () => limits.evaluate(pool, CONFIG, 'github', deps);
+  const run = () => limits.evaluate(pool, CONFIG, 'github_app', deps);
 
   githubWindow(1001);
   assert.equal((await run()).level, 'ok', '1,001 left is still over a fifth');
@@ -322,7 +322,7 @@ test('the bot token warns at a fifth left and again when used up, once per windo
   const full = await run();
   assert.deepEqual([full.level, full.notified], ['full', 'full']);
   assert.equal((await run()).notified, null);
-  assert.deepEqual(calls.create, [{ detail: 'github_warn:4000:5000' }, { detail: 'github_full:5000:5000' }]);
+  assert.deepEqual(calls.create, [{ detail: 'github_app_warn:4000:5000' }, { detail: 'github_app_full:5000:5000' }]);
 
   // The next hour: a fresh window re-arms both lines, and its own crossing
   // pages again.
@@ -340,7 +340,7 @@ test('a GitHub level is its quota window\'s: it only rises within it, an older w
   githubBudget._resetForTests();
   const pool = fakePool();
   const { calls, deps } = recorder();
-  const run = () => limits.evaluate(pool, CONFIG, 'github', deps);
+  const run = () => limits.evaluate(pool, CONFIG, 'github_app', deps);
   githubWindow(900, { resetMin: 30 });
   assert.equal((await run()).notified, 'warn');
   const window = pool.state.windowMs;
@@ -348,7 +348,7 @@ test('a GitHub level is its quota window\'s: it only rises within it, an older w
 
   // The same window read lower (another process's older answer in it): held.
   githubWindow(4000, { resetMin: 30 });
-  githubBudget.record('pat', { 'x-ratelimit-limit': '5000', 'x-ratelimit-remaining': '4000', 'x-ratelimit-reset': String(Math.floor(window / 1000)) });
+  githubBudget.record('installation:a', { 'x-ratelimit-limit': '5000', 'x-ratelimit-remaining': '4000', 'x-ratelimit-reset': String(Math.floor(window / 1000)) });
   assert.equal((await run()).level, 'warn', 'held within its window');
 
   // Another process recorded a later window; this one's answer is about the
@@ -364,7 +364,7 @@ test('a GitHub level is its quota window\'s: it only rises within it, an older w
   assert.equal((await run()).level, 'ok');
   githubWindow(900, { resetMin: 90 });
   assert.equal((await run()).notified, 'warn');
-  assert.deepEqual(calls.create.map((c) => c.detail), ['github_warn:4100:5000', 'github_warn:4100:5000']);
+  assert.deepEqual(calls.create.map((c) => c.detail), ['github_app_warn:4100:5000', 'github_app_warn:4100:5000']);
 
   // A new window whose first reading is already used up: told, though the
   // last window ended full too.
@@ -383,7 +383,7 @@ test('the warning line is GitHub\'s own, not PLATFORM_LIMIT_WARN_PERCENT', async
   });
   process.env.PLATFORM_LIMIT_WARN_PERCENT = '95';
   githubWindow(1000);
-  const out = await limits.evaluate(fakePool(), CONFIG, 'github', recorder().deps);
+  const out = await limits.evaluate(fakePool(), CONFIG, 'github_app', recorder().deps);
   assert.equal(out.notified, 'warn');
 });
 
@@ -397,9 +397,15 @@ test('the App is measured on its most-used installation', async () => {
   assert.deepEqual(calls.create, [{ detail: 'github_app_full:12500:12500' }]);
   assert.deepEqual(limits.parseDetail('github_app_full:12500:12500'),
     { limit: 'github_app', level: 'full', used: 12500, cap: 12500 });
+  // The bot token's line is gone with the token; what it sent still reads.
   assert.deepEqual(limits.parseDetail('github_warn:4000:5000'),
     { limit: 'github', level: 'warn', used: 4000, cap: 5000 });
   githubBudget._resetForTests();
+});
+
+test('the bot token has no line: nothing measures a budget the platform no longer has', async () => {
+  assert.equal(limits.LIMITS.some((l) => l.key === 'github' || l.envKey === 'GITHUB_BOT_TOKEN'), false);
+  await assert.rejects(limits.evaluate(fakePool(), CONFIG, 'github', {}), /unknown platform limit: github/);
 });
 
 test('an unknown cap is refused, and a nudge for a cap that is off does nothing', async () => {
@@ -436,7 +442,7 @@ test('the detail format is spelled identically wherever it is parsed', () => {
   ]) {
     assert.ok(read(rel).includes(literal), `${rel} parses the same token`);
   }
-  assert.deepEqual(limits.LIMITS.map((l) => l.key), ['apps', 'sessions', 'github', 'github_app'],
+  assert.deepEqual(limits.LIMITS.map((l) => l.key), ['apps', 'sessions', 'github_app'],
     'a new cap must be added to the token pattern in all three places');
 });
 
