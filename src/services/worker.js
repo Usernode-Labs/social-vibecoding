@@ -6011,45 +6011,6 @@ async function listWorkerVolumes() {
   return kubernetes.listWorkerVolumes(kubernetesWorkerConfig());
 }
 
-// #155: copy one session's CC memory volume (~/.claude) into another
-// session's volume, so a dev chat cloned from a headless auto session can
-// `--resume` the auto session's Claude Code conversation. Uses the worker
-// image (always present locally — staging/CC builds keep it warm) for the
-// one-shot copy container, so no registry pull is needed. Throws when the
-// source volume doesn't exist or the copy fails; callers treat a clone
-// failure as "start with fresh CC memory" (cc_session_id stays NULL).
-async function cloneCcVolume(srcSessionId, destSessionId) {
-  if (usesKubernetesWorkers()) {
-    await kubernetes.cloneWorkerVolume(kubernetesWorkerConfig(), srcSessionId, destSessionId);
-    log.info('worker', 'CC PVC cloned', { from: srcSessionId, to: destSessionId });
-    return;
-  }
-  const src = ccVolumeName(srcSessionId);
-  const dest = ccVolumeName(destSessionId);
-  // Throws if the source volume was never created (e.g. the headless run
-  // failed before its first worker bootstrap).
-  await docker.execFileAsync('docker', ['volume', 'inspect', src], { timeout: 5000 });
-  await docker.ensureVolume(dest);
-  // Run the copy as root (`--user 0:0`). A freshly-created named volume is
-  // owned root:root (0755), but the worker image's default user is non-root,
-  // so a non-root copy container can't create entries under /to — the exact
-  // failures seen cloning chat 735 ("cp: cannot create directory
-  // '/to/./backups': Permission denied", "cp: preserving times for '/to/.':
-  // Operation not permitted"), which left the clone with fresh CC memory.
-  // `cp -a` still preserves each source entry's original uid/gid, so the
-  // worker user can read its own ~/.claude files afterward.
-  await docker.execFileAsync('docker', [
-    'run', '--rm',
-    '--user', '0:0',
-    '-v', `${src}:/from:ro`,
-    '-v', `${dest}:/to`,
-    '--entrypoint', 'sh',
-    WORKER_IMAGE,
-    '-c', 'cp -a /from/. /to/',
-  ], { timeout: 60000 });
-  log.info('worker', 'CC volume cloned', { from: src, to: dest });
-}
-
 // ──────────────────────────────────────────────────────────────────────
 // Platform-side git push proxy
 // ──────────────────────────────────────────────────────────────────────
@@ -6338,7 +6299,6 @@ module.exports = {
   listWorkerVolumes,
   eraseAccountWorkspace,
   setAccountDeletionGuard,
-  cloneCcVolume,
   parseClaudeResponse,
   // exposed for unit tests (watchdog strike policy + line parsing)
   newWatchState,

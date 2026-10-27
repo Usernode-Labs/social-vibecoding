@@ -1443,9 +1443,9 @@ CREATE INDEX IF NOT EXISTS chat_sessions_activity_idx ON chat_sessions(status, l
 -- A headless session is NOT connected to any user's dev chat: it runs one
 -- unattended Mayor turn (scout / build / question) against the issue, may
 -- push a branch, but never opens a PR or builds staging. It is billed to
--- the user who clicked the button (user_id), and any collaborator can later
--- clone its state (messages + spec + branch + CC memory) into their own
--- dev-chat session via POST /api/sessions/:id/clone-headless.
+-- the user who clicked the button (user_id). The hosted connector can later
+-- clone its messages, spec and pushed branch into the caller's own proposal
+-- via POST /api/sessions/:id/clone-headless. Agent memory is not copied.
 --   is_headless            = marks the row as an auto session; excluded from
 --                            per-user session lists, the 3-slot cap, and chat.
 --   headless_status        = 'generating' (run in flight) | 'ready' | 'failed'.
