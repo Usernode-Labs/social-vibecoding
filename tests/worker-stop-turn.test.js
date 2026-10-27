@@ -286,6 +286,19 @@ test('the web stop gate records intent without runtime I/O or a last-use write',
   } finally { restore(); }
 });
 
+test('a reserved memory copy refuses a runner before it can mount partial data and releases its own pending turn', async () => {
+  const { worker, calls, restore, activeTurns } = loadWorker({ queryAnswer: sql =>
+    sql.includes("mc.machine = 'worker-memory-copy'") ? { rows: [{}] } : null });
+  try {
+    warmSession(worker, 7781);
+    activeTurns.set(7781, { turnId: 'memory-pending', phase: 'dispatch_pending' });
+    await assert.rejects(worker.execInWorker(7781, { ...DISPATCH_ARGS, logicalTurnId: 'memory-pending' }),
+      err => err.code === 'memory_copy_pending');
+    assert.equal(calls.some(isDispatch), false);
+    assert.equal(activeTurns.has(7781), false, 'a refused start must not leave the session busy');
+  } finally { restore(); }
+});
+
 test('stopTurn swallows docker failures — the watchdog is the fallback', async () => {
   const ids = {
     docker: require.resolve('../src/services/docker'),

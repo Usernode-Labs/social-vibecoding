@@ -2741,46 +2741,118 @@ async function listNamespaceCapacity(config) {
   }));
 }
 
-async function cloneWorkerVolume(config, sourceSessionId, targetSessionId) {
-  const cfg = config.kubernetes;
-  const namespace = cfg.workerNamespace;
-  const sourceRuntime = dnsName(`sv-worker-s${sourceSessionId}`);
-  const sourcePvc = withSuffix(sourceRuntime, 'state');
-  const targetPvc = withSuffix(dnsName(`sv-worker-s${targetSessionId}`), 'state');
+// Memory clones use a suspended Job until authority and both PVC identities
+// have been rechecked. Creation arriving after a lost claim cannot copy data.
+async function cloneWorkerVolume(config, sourceSessionId, targetSessionId, {
+  requestId, proceed, renew, timeoutMs = 300000, pollMs = 1000,
+}) {
+  const { copyIdentity, COPY_LABEL } = require('../workflow/worker-memory-copy/identity.ts');
+  const id = copyIdentity(sourceSessionId, targetSessionId, requestId);
+  const cfg = config.kubernetes; const namespace = cfg.workerNamespace;
   const { core, batch } = getClients();
-  const source = await core.readNamespacedPersistentVolumeClaim({ name: sourcePvc, namespace });
-  try {
-    const body = {
-      apiVersion: 'v1', kind: 'PersistentVolumeClaim',
-      metadata: { name: targetPvc, namespace, labels: labels({ sessionId: targetSessionId, environment: 'worker' }) },
-      spec: {
-        accessModes: source.spec.accessModes || ['ReadWriteOnce'],
-        resources: { requests: { storage: source.spec.resources?.requests?.storage || cfg.workerStorageSize } },
-      },
-    };
-    if (source.spec.storageClassName) body.spec.storageClassName = source.spec.storageClassName;
-    await core.createNamespacedPersistentVolumeClaim({ namespace, body });
-  } catch (err) { if (err?.code !== 409 && err?.response?.statusCode !== 409) throw err; }
-
-  const sourcePods = await core.listNamespacedPod({ namespace, labelSelector: `social.usernode.io/runtime-name=${sourceRuntime}` });
-  const sourceNode = sourcePods.items?.[0]?.spec?.nodeName;
-  const name = dnsName(`sv-worker-copy-${sourceSessionId}-${targetSessionId}-${Date.now().toString(36)}`);
+  const sourcePvc = withSuffix(dnsName(`sv-worker-s${sourceSessionId}`), 'state');
+  const targetPvc = withSuffix(dnsName(`sv-worker-s${targetSessionId}`), 'state');
+  const read = async (name) => {
+    try { return await core.readNamespacedPersistentVolumeClaim({ name, namespace }); }
+    catch (err) { if (isNotFound(err)) return null; throw err; }
+  };
+  const source = await read(sourcePvc);
+  if (!source?.metadata?.uid) throw new Error('Source memory volume is missing');
+  if (await read(targetPvc)) throw new Error('Destination memory volume already exists');
+  if (!(await proceed())) throw new Error('Memory copy target changed');
+  const body = {
+    apiVersion: 'v1', kind: 'PersistentVolumeClaim',
+    metadata: { name: targetPvc, namespace, labels: { ...labels({ sessionId: targetSessionId, environment: 'worker' }), [COPY_LABEL]: requestId } },
+    spec: { accessModes: source.spec.accessModes || ['ReadWriteOnce'],
+      resources: { requests: { storage: source.spec.resources?.requests?.storage || cfg.workerStorageSize } } },
+  };
+  if (source.spec.storageClassName) body.spec.storageClassName = source.spec.storageClassName;
+  const target = await core.createNamespacedPersistentVolumeClaim({ namespace, body });
+  if (!target?.metadata?.uid) throw new Error('Destination volume has no identity');
+  const checkpoint = async () => {
+    await renew();
+    if (!(await proceed()) || (await read(sourcePvc))?.metadata?.uid !== source.metadata.uid
+        || (await read(targetPvc))?.metadata?.uid !== target.metadata.uid) throw new Error('Memory copy target changed');
+  };
+  await checkpoint();
+  const sourcePods = await core.listNamespacedPod({ namespace, labelSelector: `social.usernode.io/runtime-name=sv-worker-s${sourceSessionId}` });
   const podSpec = {
     restartPolicy: 'Never', serviceAccountName: cfg.workerServiceAccount, automountServiceAccountToken: false,
     securityContext: nodePodSecurityContext(),
-    containers: [{ name: 'copy', image: cfg.workerImage, command: ['sh', '-c', 'cp -a /from/. /to/'], volumeMounts: [{ name: 'from', mountPath: '/from', readOnly: true }, { name: 'to', mountPath: '/to' }], securityContext: containerSecurityContext(), resources: { requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: '1', memory: '1Gi' } } }],
+    containers: [{ name: 'copy', image: cfg.workerImage, command: ['sh', '-c', 'cp -a /from/. /to/'],
+      volumeMounts: [{ name: 'from', mountPath: '/from', readOnly: true }, { name: 'to', mountPath: '/to' }],
+      securityContext: containerSecurityContext(), resources: { requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: '1', memory: '1Gi' } } }],
     volumes: [{ name: 'from', persistentVolumeClaim: { claimName: sourcePvc, readOnly: true } }, { name: 'to', persistentVolumeClaim: { claimName: targetPvc } }],
   };
+  const sourceNode = sourcePods.items?.[0]?.spec?.nodeName;
   if (sourceNode) podSpec.nodeName = sourceNode;
-  await batch.createNamespacedJob({ namespace, body: { apiVersion: 'batch/v1', kind: 'Job', metadata: { name, namespace, labels: labels({ sessionId: targetSessionId, environment: 'worker' }) }, spec: { backoffLimit: 0, activeDeadlineSeconds: 300, ttlSecondsAfterFinished: 3600, template: { metadata: { labels: labels({ sessionId: targetSessionId, environment: 'worker' }) }, spec: podSpec } } } });
-  const deadline = Date.now() + 5 * 60 * 1000;
-  while (Date.now() < deadline) {
-    const job = await batch.readNamespacedJob({ name, namespace });
-    if (job.status?.succeeded) return;
-    if (job.status?.failed) throw new Error(`Worker PVC copy Job ${name} failed`);
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+  const job = await batch.createNamespacedJob({ namespace, body: { apiVersion: 'batch/v1', kind: 'Job',
+    metadata: { name: id.job, namespace, labels: { ...labels({ sessionId: targetSessionId, environment: 'worker' }), [COPY_LABEL]: requestId } },
+    spec: { suspend: true, backoffLimit: 0, activeDeadlineSeconds: Math.max(1, Math.ceil(timeoutMs / 1000)), ttlSecondsAfterFinished: 3600,
+      template: { metadata: { labels: labels({ sessionId: targetSessionId, environment: 'worker' }) }, spec: podSpec } } } });
+  if (!job?.metadata?.uid || !job.metadata.resourceVersion) throw new Error('Memory copy Job has no identity');
+  try {
+    await checkpoint();
+    // resourceVersion fences a delayed start against deletion/replacement.
+    await batch.replaceNamespacedJob({ name: id.job, namespace, body: { ...job,
+      spec: { ...job.spec, suspend: false } } });
+    const until = Date.now() + timeoutMs;
+    for (;;) {
+      await checkpoint();
+      const current = await batch.readNamespacedJob({ name: id.job, namespace });
+      if (current?.metadata?.uid !== job.metadata.uid) throw new Error('Memory copy Job changed');
+      if (current.status?.succeeded) break;
+      if (current.status?.failed) throw new Error('Memory copy Job failed');
+      if (Date.now() >= until) throw new Error('Memory copy Job timed out');
+      await new Promise(resolve => setTimeout(resolve, pollMs));
+    }
+    await checkpoint();
+  } finally {
+    await removeMemoryCopyResource(batch, 'Job', id.job, namespace, job.metadata.uid, renew, pollMs);
   }
-  throw new Error(`Timed out waiting for worker PVC copy Job ${name}`);
+}
+
+// Strict identity-fenced cleanup: neither another request's target volume
+// nor its Job is removed. Failure leaves the workflow's reservation in place.
+async function removeMemoryCopyResource(api, kind, name, namespace, uid, renew, pollMs = 1000) {
+  try {
+    await api[`deleteNamespaced${kind}`]({ name, namespace, body: { preconditions: { uid }, propagationPolicy: 'Foreground' } });
+  } catch (err) { if (!isNotFound(err) && !isConflict(err)) throw err; }
+  const until = Date.now() + 30000;
+  for (;;) {
+    await renew();
+    try {
+      const current = await api[`readNamespaced${kind}`]({ name, namespace });
+      if (current?.metadata?.uid !== uid) return;
+    } catch (err) { if (isNotFound(err)) return; throw err; }
+    if (Date.now() >= until) throw new Error('Memory copy cleanup is still pending');
+    await new Promise(resolve => setTimeout(resolve, pollMs));
+  }
+}
+async function cleanupWorkerVolumeClone(config, sourceId, sessionId, { requestId, renew, pollMs = 1000 }) {
+  const { copyIdentity, COPY_LABEL } = require('../workflow/worker-memory-copy/identity.ts');
+  const id = copyIdentity(sourceId, sessionId, requestId); const namespace = config.kubernetes.workerNamespace;
+  const { core, batch } = getClients();
+  for (const [api, kind, name] of [[batch, 'Job', id.job], [core, 'PersistentVolumeClaim', `sv-worker-s${sessionId}-state`]]) {
+    let current;
+    try { current = await api[`readNamespaced${kind}`]({ name, namespace }); }
+    catch (err) { if (isNotFound(err)) continue; throw err; }
+    if (current?.metadata?.labels?.[COPY_LABEL] !== requestId) continue;
+    if (!current.metadata.uid) throw new Error('Memory copy resource has no identity');
+    await removeMemoryCopyResource(api, kind, name, namespace, current.metadata.uid, renew, pollMs);
+  }
+}
+
+async function listMemoryCopyJobs(config) {
+  const { COPY_LABEL } = require('../workflow/worker-memory-copy/identity.ts');
+  const { batch } = getClients();
+  const out = await batch.listNamespacedJob({ namespace: config.kubernetes.workerNamespace, labelSelector: COPY_LABEL });
+  return (out.items || []).filter(j => j.metadata?.uid).map(j => ({ name: j.metadata.name, uid: j.metadata.uid,
+    requestId: j.metadata.labels?.[COPY_LABEL], createdAt: j.metadata.creationTimestamp }));
+}
+async function removeMemoryCopyJob(config, job) {
+  const { batch } = getClients();
+  await removeMemoryCopyResource(batch, 'Job', job.name, config.kubernetes.workerNamespace, job.uid, async () => {});
 }
 
 // `onStdoutLine(line)`: the same observer contract as docker.runOneShot —
@@ -3822,7 +3894,8 @@ module.exports = {
   deleteSettledCheckJobs, listCheckLeftovers, deleteCheckLeftover, MANAGED_BY, CHECK_JOB_TTL_SECONDS,
   execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker,
-  workerIdentity, deleteWorkerIdentity, workerIdentityGone, listWorkers, cloneWorkerVolume,
+  workerIdentity, deleteWorkerIdentity, workerIdentityGone, listWorkers, cloneWorkerVolume, cleanupWorkerVolumeClone,
+  listMemoryCopyJobs, removeMemoryCopyJob,
   listWorkerVolumes, retirePlatformPreviewPolicy, listPreviews, listShotsRuntimes, isQuotaExceeded,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   readPlatformPod, stopCheckJobs,

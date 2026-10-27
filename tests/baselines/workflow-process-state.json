@@ -297,6 +297,9 @@
       "services | uses src/services/process-role.js:runsWorkflow": "a pure role check permitting the release handler on conductor and local all processes, with no session state in memory",
       "services | uses src/services/worker-eviction.js:releaseRequested": "removes a requested worker under the shared eviction lock after checking current ownership, configuration, turn and last use from PostgreSQL; deletion is by captured resource identity and waits for it to be gone, holding no decision outside the work item"
     },
+    "worker-memory-copy": {
+      "services | uses src/services/worker-memory-copy.js:perform": "copies or cleans request-owned worker memory under ordered session locks with current PostgreSQL access and identity checks; it keeps no required process memory, reserves both sessions durably across restart, and leaves conversation-id publication to the machine transition"
+    },
     "worker-stop": {
       "services | uses src/services/worker-interrupt.js:perform": "ordinary Stop's single signal, probe or captured-identity runtime stop, rechecking current PostgreSQL authority and job under the startup lock; attempts and timers live in the interrupt machine, not in process memory, as the restart and separate-conductor tests exercise",
       "services | uses src/services/process-role.js:processRole": "reads the immutable boot role before stop I/O, refusing execution on a web process; no decision or per-session state is held in memory",

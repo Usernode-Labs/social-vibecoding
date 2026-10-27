@@ -68,6 +68,9 @@ import { workerStop } from './worker-stop/machine.ts';
 import { workerStopServices, workerInterruptServices } from './worker-stop/services.ts';
 import { workerInterrupt, requestWorkerInterrupt as askWorkerInterrupt } from './worker-stop/interrupt.ts';
 import { requestWorkerStop as askWorkerStop } from './worker-stop/request.ts';
+import { workerMemoryCopy } from './worker-memory-copy/machine.ts';
+import { workerMemoryCopyServices } from './worker-memory-copy/services.ts';
+import { requestWorkerMemoryCopy as askWorkerMemoryCopy } from './worker-memory-copy/request.ts';
 import { JOBS as CLOCK_JOBS, JOB_NAMES as CLOCK_JOB_NAMES } from './clock/services.ts';
 import { requestKey as botRequestKey } from './rules/bot-loop.ts';
 import { DM as BOT_DM, VOICE as BOT_VOICE, dmKey, placeOf, voiceKey } from './rules/bot-replies.ts';
@@ -251,7 +254,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const trials = shotsEval(evalDeps(config));
   // People's turns: a conversation's, a change's (turn/).
   const turns = turnMachine();
-  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, trials, turns, releases, clocks, workerPush(), workerRelease(), workerStop(), workerInterrupt()];
+  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, trials, turns, releases, clocks, workerPush(), workerRelease(), workerStop(), workerInterrupt(), workerMemoryCopy()];
   knownEvents = new Map(machines.map((m) => [m.name, new Set(m.events.keys())]));
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
@@ -264,6 +267,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     ...workerReleaseServices({ pool: appPool }),
     ...workerStopServices({ pool: appPool }),
     ...workerInterruptServices({ pool: appPool }),
+    ...workerMemoryCopyServices({ pool: appPool }),
     ...releaseServices({ adoptions: ADOPTIONS }),
     ...clockServices(CLOCK_JOBS, { config, pool: appPool }),
   };
@@ -1188,6 +1192,10 @@ export function requestWorkerStop(p: Parameters<typeof askWorkerStop>[2]) {
 
 export function requestWorkerInterrupt(p: Parameters<typeof askWorkerInterrupt>[2]) {
   return askWorkerInterrupt(running(), kernelPool!, p);
+}
+
+export function requestWorkerMemoryCopy(p: Parameters<typeof askWorkerMemoryCopy>[1]) {
+  return askWorkerMemoryCopy(running(), p);
 }
 
 // Called in the context reset's transaction, or once for a promoted Pause.

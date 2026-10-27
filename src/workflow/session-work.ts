@@ -219,7 +219,17 @@ export const TURN_OWNER_SQL = `
 // operations of one process: the reader's own, which it answers from memory.
 // The same in every process and after a restart (the Homeroom bot's voice
 // reads it to say whether a run is going on a change).
-export function workedOnSql({ turns = true, exceptHolder = null }: { turns?: boolean; exceptHolder?: string | null } = {}): string {
+// A memory copy reserves both sessions through publication or confirmed
+// cleanup. A restarted conductor must not start a runner on a partial copy.
+export function memoryCopyingSql(sessionId: string): string {
+  return `EXISTS (SELECT 1 FROM wf_instances mc WHERE mc.machine = 'worker-memory-copy'
+    AND mc.state IN ('copying', 'cleaning', 'waiting_cleanup')
+    AND (mc.data->'target'->>'sourceId' = (${sessionId})::text OR mc.data->'target'->>'sessionId' = (${sessionId})::text))`;
+}
+
+export function workedOnSql({ turns = true, exceptHolder = null, memoryCopies = true }: {
+  turns?: boolean; exceptHolder?: string | null; memoryCopies?: boolean;
+} = {}): string {
   return `(cs.active_turn IS NOT NULL
            OR EXISTS (SELECT 1 FROM local_agent_turns t
                        WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))
@@ -227,7 +237,8 @@ export function workedOnSql({ turns = true, exceptHolder = null }: { turns?: boo
            OR ${operationsLiveSql('cs.id', null, [], exceptHolder)}
            OR ${buildHoldSql('cs')}
            OR ${syncWorkingSql('cs.id')}
-           OR ${botLookingSql('cs.id')}${turns ? `
+           OR ${botLookingSql('cs.id')}${memoryCopies ? `
+           OR ${memoryCopyingSql('cs.id')}` : ''}${turns ? `
            OR EXISTS (SELECT 1 FROM wf_instances tm
                        WHERE tm.machine = 'turn' AND tm.key = 'session:' || cs.id AND tm.state = 'running')` : ''})`;
 }

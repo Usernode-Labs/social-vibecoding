@@ -105,7 +105,7 @@ function heldBy(t, state) {
     async query(sql, params) {
       // What a worker's use notes for every process (session_workers) is not
       // the hold this asks about.
-      if (/session_workers/.test(String(sql))) return { rows: [] };
+      if (/session_workers/.test(String(sql)) || String(sql).includes("mc.machine = 'worker-memory-copy'")) return { rows: [] };
       asked.push({ sql: String(sql), params });
       return { rows: [{ held: state.building }] };
     },

@@ -39,6 +39,10 @@ const IDLE_MS = (() => {
 
 async function sweep(pool, { idleMs = IDLE_MS, deps = {} } = {}) {
   const worker = deps.worker || require('./worker');
+  if (worker.cleanupAbandonedMemoryCopies) {
+    await worker.cleanupAbandonedMemoryCopies(pool).catch(err =>
+      log.warn('worker-eviction', 'Abandoned memory-copy cleanup failed', { err: err.message }));
+  }
   const running = (await worker.listOrphanWorkers())
     .filter((w) => Number.isInteger(Number(w.sessionId)) && Number(w.sessionId) > 0 && w.state === 'running');
   const listed = running.map((w) => Number(w.sessionId));

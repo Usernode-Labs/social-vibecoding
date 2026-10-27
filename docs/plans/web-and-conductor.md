@@ -186,9 +186,26 @@ Older conductors leave this separate machine pending, so rollout can temporarily
 return retryable 503s, with no web-side runtime fallback. This needs no schema
 or runtime configuration change.
 
+Headless-clone memory copying is owned by `worker-memory-copy`. The route
+waits for this best-effort command, with no web-side Docker/Kubernetes fallback.
+Admission, execution and publication check current project collaboration and
+membership, source ownership/configuration and ready state, and the new session's
+owner, origin, configuration and idleness. Existing destination volumes are
+spared. Both sessions are reserved through copy/publication or confirmed cleanup;
+worker startup and the shared busy queries read that reservation from PostgreSQL.
+The machine publishes the inherited conversation id in the same transaction as
+completion, so a lost conductor cannot expose a partial copy or publish late
+over another turn. Kubernetes starts a suspended Job using its resource version;
+Docker starts a created container by id. Only this request's tagged resources
+are cleaned up, and the worker sweep removes abandoned copy Jobs/containers
+that arrived late after a dead process's create. A failed copy retains the fresh-memory fallback; cleanup that
+cannot be confirmed retries while keeping the reservation. Older conductors leave
+admission pending, which is refused before fallback, rather than copied later.
+No schema or runtime configuration change is needed.
+
 These move web dependencies behind durable commands. Web Pods still need
 their current Kubernetes and database permissions for other callers, including
-volume copies, repository operations and startup work. Moving
+repository operations, provisioning and startup work. Moving
 those callers, then splitting service accounts, Secret inputs and actual
 database login privileges, remains SEC-09 work. The event's source metadata
 also remains a convention among trusted processes; it does not authenticate

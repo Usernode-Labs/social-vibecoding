@@ -24,6 +24,7 @@ const SHA = 'a'.repeat(40);
 function stubTrustedPush(t, branches, calls = [], { turn = null } = {}) {
   const commits = new Map();
   const pool = { query: async (sql, [id, sha, branchName]) => {
+    if (sql.includes("mc.machine = 'worker-memory-copy'")) return { rows: [] };
     if (sql.includes('INSERT INTO session_workers (session_id, unpushed_sha')) commits.set(id, sha ? { sha, branchName } : null);
     if (sql.includes('UPDATE session_workers SET unpushed_sha = NULL')
         && commits.get(id)?.sha === sha && commits.get(id)?.branchName === branchName) commits.delete(id);

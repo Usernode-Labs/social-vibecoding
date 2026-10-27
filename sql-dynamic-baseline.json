@@ -1956,6 +1956,13 @@
       "preview": "`SELECT sw.session_id, sw.last_used_at::text AS last_used_at FROM session_workers sw JOIN chat_sessions cs ON cs.id = sw.session_id WHERE sw.last_used_at < NOW("
     },
     {
+      "source": "src/services/worker-memory-copy.js",
+      "kind": "structural-template",
+      "fingerprint": "f7d0e4d348be248fc952",
+      "count": 1,
+      "preview": "`SELECT 1 WHERE ${memoryCopyingSql('$1::int')}`"
+    },
+    {
       "source": "src/services/workshop-themes.js",
       "kind": "structural-template",
       "fingerprint": "64f5704bd705d843a9c5",
@@ -2185,6 +2192,20 @@
       "fingerprint": "9d44871cf656aeabb6da",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, (cs.shared_at IS NOT NULL) AS shared, cs.is_headless, cs.headless_status, cs.headless_outcome, cs.headless_issu"
+    },
+    {
+      "source": "src/workflow/worker-memory-copy/target.ts",
+      "kind": "structural-template",
+      "fingerprint": "00e2fd6ec1762c9242fd",
+      "count": 1,
+      "preview": "`SELECT 1 FROM apps a JOIN users u ON u.id = $2 WHERE a.id = $1 AND u.anonymised_at IS NULL AND u.has_platform_access AND NOT EXISTS (SELECT 1 FROM user_app_blo"
+    },
+    {
+      "source": "src/workflow/worker-memory-copy/target.ts",
+      "kind": "structural-template",
+      "fingerprint": "6e10ed73024910c03f08",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.is_headless, cs.headless_status, cs.cloned_from_session_id, cs.cc_session_id, cs.agent_thread_id, cs.agent_c"
     }
   ]
 }

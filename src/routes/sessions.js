@@ -3682,9 +3682,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // fresh CC memory (chat history + spec still carry the context).
       if (src.cc_session_id) {
         try {
-          await worker.cloneCcVolume(src.id, session.id);
-          await pool.query(`UPDATE chat_sessions SET cc_session_id = $1 WHERE id = $2`, [src.cc_session_id, session.id]);
-          session.cc_session_id = src.cc_session_id;
+          const copied = await require('../workflow/platform.ts').requestWorkerMemoryCopy({
+            sourceId: src.id, sessionId: session.id, appId: src.app_id, userId: req.user.id,
+            sourceOwnerId: src.user_id, sourceVersion: src.agent_config_version,
+            configVersion: session.agent_config_version, ccSessionId: src.cc_session_id,
+          });
+          if (copied.copied) session.cc_session_id = src.cc_session_id;
         } catch (err) {
           log.warn('sessions', 'CC volume clone failed — clone starts with fresh CC memory', { src: src.id, dest: session.id, err: err.message });
         }

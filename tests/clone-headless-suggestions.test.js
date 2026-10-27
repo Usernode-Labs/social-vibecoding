@@ -43,6 +43,11 @@ notifications.markReadForAction = async () => 0;
 const github = require('../src/services/github');
 github.isEnabled = () => false;
 
+const platformPath = require.resolve('../src/workflow/platform.ts');
+const platform = require(platformPath);
+let copyMemory = async () => { throw new Error('Unexpected memory copy'); };
+require.cache[platformPath].exports = { ...platform, requestWorkerMemoryCopy: p => copyMemory(p) };
+
 const { sessionRoutes } = require('../src/routes/sessions');
 const express = require('express');
 
@@ -71,7 +76,7 @@ const SUGGESTIONS = [
 // A programmable pool stub that walks the clone-headless query sequence.
 // `outcome` sets src.headless_outcome; `suggestionsRow` is what the
 // "most recent assistant message with suggestions" lookup returns.
-function makeHandler({ outcome, suggestionsRow, repoUrl = null }) {
+function makeHandler({ outcome, suggestionsRow, repoUrl = null, ccSessionId = null }) {
   return async (sql) => {
     if (/FROM chat_sessions cs\s+JOIN apps a/.test(sql)) {
       return {
@@ -95,7 +100,8 @@ function makeHandler({ outcome, suggestionsRow, repoUrl = null }) {
           testing_md: null,
           testing_path: null,
           testing_paths: null,
-          cc_session_id: null,
+          cc_session_id: ccSessionId,
+          user_id: 17, agent_config_version: 0,
           session_title: '#42 · Make the header nicer',
         }],
       };
@@ -104,7 +110,7 @@ function makeHandler({ outcome, suggestionsRow, repoUrl = null }) {
       return { rows: [{ cnt: '0' }] };
     }
     if (/INSERT INTO chat_sessions/.test(sql)) {
-      return { rows: [{ id: 99, app_id: 11, app_slug: 'demo', user_id: 7 }] };
+      return { rows: [{ id: 99, app_id: 11, app_slug: 'demo', user_id: 7, agent_config_version: 0 }] };
     }
     if (/INSERT INTO chat_session_messages[\s\S]*SELECT/.test(sql)) {
       return { rows: [] }; // convo copy
@@ -326,4 +332,36 @@ test('#2779: only the hosted connector clones a run; a browser or a delegated gr
       server.close();
     }
   }
+});
+
+// The route copies chat/spec metadata, but infrastructure and publication are
+// the conductor's. A failed command retains the existing fresh-memory fallback.
+test('clone memory is requested through the conductor, with no web runtime calls or conversation-id publication', async t => {
+  const worker = require('../src/services/worker');
+  t.mock.method(worker, 'cloneCcVolume', () => { throw new Error('web performed a volume copy'); });
+  t.mock.method(worker, 'cleanupCcVolumeClone', () => { throw new Error('web performed volume cleanup'); });
+  for (const result of [{ copied: true }, { copied: false }, new Error('conductor unavailable')]) {
+    captured = []; handler = makeHandler({ outcome: 'question', ccSessionId: 'source-conversation' });
+    const requests = [];
+    copyMemory = async p => { requests.push(p); if (result instanceof Error) throw result; return result; };
+    const server = await startServer();
+    try {
+      const { res, body } = await clone(server); assert.equal(res.status, 201);
+      assert.deepEqual(requests, [{ sourceId: 1, sessionId: 99, appId: 11, userId: VIEWER.id,
+        sourceOwnerId: 17, sourceVersion: 0, configVersion: 0, ccSessionId: 'source-conversation' }]);
+      assert.equal(body.session.cc_session_id || null, result.copied ? 'source-conversation' : null);
+      assert.equal(captured.some(c => /UPDATE chat_sessions SET cc_session_id/.test(c.sql)), false);
+    } finally { server.close(); }
+  }
+});
+
+test('the clone HTTP path contains no memory runtime operation or durable conversation-id publication', () => {
+  const source = require('node:fs').readFileSync(require.resolve('../src/routes/sessions'), 'utf8');
+  const start = source.indexOf("router.post('/api/sessions/:id/clone-headless'");
+  const end = source.indexOf("router.get(['/api/sessions/:id/checks'", start);
+  assert.ok(start > 0 && end > start);
+  const clone = source.slice(start, end);
+  assert.doesNotMatch(clone, /\.cloneCcVolume\(|\.cloneWorkerVolume\(|\.cleanupCcVolumeClone\(|worker-memory-runtime/);
+  assert.doesNotMatch(clone, /UPDATE chat_sessions SET cc_session_id/);
+  assert.match(clone, /requestWorkerMemoryCopy/);
 });

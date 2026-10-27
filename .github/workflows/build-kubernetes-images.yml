@@ -115,7 +115,7 @@ jobs:
           npm rebuild bcrypt --build-from-source
           node --test --test-timeout=60000 tests/platform-preview-schema-compatibility.test.js tests/workflow-event-authority-postgres.test.js tests/worker-push-workflow-postgres.test.js tests/worker-release-workflow-postgres.test.js
           node --test --test-timeout=60000 tests/worker-eviction-postgres.test.js
-          node --test --test-timeout=60000 tests/worker-stop-workflow-postgres.test.js
+          node --test --test-timeout=60000 tests/worker-stop-workflow-postgres.test.js tests/worker-memory-copy-postgres.test.js
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports[5432] }}/postgres
           TEST_PREVIEW_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres18.ports[5432] }}/postgres
