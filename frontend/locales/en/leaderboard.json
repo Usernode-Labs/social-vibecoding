@@ -131,6 +131,14 @@
     "text": "{{challenge}}: {{state}}",
     "description": "Accessible name of a challenge's progress bar. {{challenge}} is the challenge's title and {{state}} what the bar shows (\"Done\", \"3/5 changes\")."
   },
+  "challenges.minutesThisWeek_one": {
+    "text": "{{minutes}} min used this week",
+    "description": "Small line under the progress bar of a challenge about spending time in apps. {{minutes}} is how many minutes the viewer has used apps since Monday, already formatted (\"12\"); {{count}} is the same number, for the plural; \"min\" abbreviates minutes."
+  },
+  "challenges.minutesThisWeek_other": {
+    "text": "{{minutes}} min used this week",
+    "description": "Small line under the progress bar of a challenge about spending time in apps. {{minutes}} is how many minutes the viewer has used apps since Monday, already formatted (\"12\"); {{count}} is the same number, for the plural; \"min\" abbreviates minutes."
+  },
   "challenges.rail.count": {
     "text": "{{current}}/{{target}} {{unit}}",
     "description": "Label in the progress bar of a challenge counted in steps, e.g. \"1/3 apps tried\". {{current}} is how many the viewer has, {{target}} how many it takes, {{unit}} the organiser's own word for what is counted, shown as written."

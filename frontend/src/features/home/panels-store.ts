@@ -126,6 +126,8 @@ export interface ChallengeRowView {
   counted: boolean;
   /** "Earned N pts" on a finished challenge the viewer scored on. */
   earned: string | null;
+  /** A "use apps" challenge's minutes in apps this week (0 with none); null on any other. */
+  minutesThisWeek: number | null;
 }
 
 /**

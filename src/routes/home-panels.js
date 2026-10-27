@@ -10,6 +10,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
+const { USES_APP_MINUTES_SQL, attachAppMinutes } = require('../services/topochain/challenge-scorer');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -342,6 +343,7 @@ async function buildChallengesPanel(pool, user, opts) {
             ${doneExpr} AS my_done,
             se.ends_at AS event_ends_at,
             (${OPEN_ONLY_WHERE}) AS is_open,
+            ${USES_APP_MINUTES_SQL} AS uses_app_minutes,
             ck.icon AS kind_icon
        FROM challenges c
        JOIN season_events se ON se.id = c.season_event_id
@@ -423,11 +425,16 @@ async function buildChallengesPanel(pool, user, opts) {
   // A challenge whose template row vanished is skipped rather than 500ing
   // the panel — the same guard public.js applies to its own challenge
   // list (the FK should make it unreachable in practice).
-  const challenges = rows.filter((r) => r.t_id != null).map(buildChallengeRow);
+  const kept = rows.filter((r) => r.t_id != null);
+  const challenges = kept.map(buildChallengeRow);
   for (const c of challenges) {
     c.label = challengeCategory(c.id, c.label, onboarding);
     if (onboarding?.progress.has(c.id)) c.progress = onboarding.progress.get(c.id);
   }
+  // The viewer's minutes in apps this week, which a "use apps" card shows
+  // under its rail: the scorer's own read of app_activity, only on the rows a
+  // USE_APPS_MINUTES rule scores (`uses_app_minutes`), null on every other.
+  await attachAppMinutes(pool, user.id, challenges, kept);
 
   // "Points still on the table": only when EVERY open row's reward parses
   // as a plain number. One "½ of your final credits" and the whole figure

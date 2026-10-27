@@ -98,6 +98,8 @@ type CardView = {
   fill: number | null;
   counted: boolean;
   earned: string | null;
+  // A "use apps" challenge's minutes this week (0 with none), else null.
+  minutesThisWeek: number | null;
 };
 
 // One of TopochainChallenges.gridView's groups: First challenges, Next
