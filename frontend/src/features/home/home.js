@@ -253,12 +253,17 @@ const Home = {
 
   // ── Edit mode (#4669) ──────────────────────────────────────────────
   //
-  // Long-pressing a tile of your own puts My apps into edit mode, like a
-  // phone's home screen: the tiles wiggle, each one grows a remove button,
-  // and the trailing tile becomes "Add apps". The menu the hold opens is
-  // unchanged — edit mode rides along with it. Pure UI state, per visit:
-  // load() clears it, so it is never remembered between visits, and nothing
-  // here writes a preference.
+  // Edit mode arranges My apps, like a phone's home screen: the tiles
+  // wiggle, each one grows a remove button, and "Add apps" and "Done" ride
+  // the heading. Pure UI state, per visit: load() clears it, so it is never
+  // remembered between visits, and nothing here writes a preference.
+  //
+  // #5871: a hold is the tile's menu and nothing else. It used to start edit
+  // mode as well, so one press put the menu AND the wiggle on screen and
+  // neither said which one the press had meant. Edit mode now has doors of
+  // its own that say so: "Edit" beside the My apps heading (index.tsx) and
+  // "Edit My apps" at the foot of a tile's menu (openCardMenu). While it is
+  // on, a hold on a tile of your own is a drag and opens no menu.
   _editing: false,
 
   // The one setter. Render is the same call every other path funnels through,
@@ -268,13 +273,13 @@ const Home = {
   // onSettle already drains — so on touch, where the lift happens mid-gesture,
   // the wiggle starts when the finger comes up.
   //
-  // The paint is also held back while the hold's own menu is up. The mouse
-  // hold opens the card menu and THEN starts edit mode; a synchronous render
+  // The paint is also held back while a tile's menu is up. Its "Edit My
+  // apps" item starts edit mode from inside the menu; a synchronous render
   // here would expand the grid (edit mode shows every tile), re-run the
   // placement effect whose deps include items.length, and the detach that
-  // cleanup calls is closeCardMenu — killing the menu the same press opened.
-  // The paint waits for the menu's dismiss instead, so the popover finishes
-  // its life anchored to the tile that opened it.
+  // cleanup calls is closeCardMenu — killing the menu mid-dismiss. The paint
+  // waits for the menu's dismiss instead, so the popover finishes its life
+  // anchored to the tile that opened it.
   setEditing(on) {
     const next = !!on;
     if (Home._editing === next) return;
@@ -1339,15 +1344,12 @@ const Home = {
         // #5323: the "Pin here" slot goes up for the whole drag, so an empty
         // strip has somewhere to drop onto. Cleared on every settle.
         try { window.UsernodeReact?.nav?.setPinDrop?.('idle'); } catch { /* the slot is a convenience */ }
-        if (Home._cardPointerType === 'touch') {
+        // #5871: a touch hold opens the menu and does not start edit mode.
+        // While edit mode is on the lift is the drag itself, with no menu,
+        // so arranging never puts a menu over the tile being moved.
+        if (Home._cardPointerType === 'touch' && !Home._editing) {
           Home._contextLift = { item, origin: null };
           Home.openCardMenu(item.dataset.slug, item);
-          // EDIT MODE (#4669). The recognizer's itemSelector is
-          // `.app-card[data-yours]:not([data-demo])`, so the hold that reaches
-          // here is already on a tile of the viewer's own. The flag goes down
-          // while `_dragActive` holds and setEditing defers the paint to the
-          // settle flush — the wiggle starts when the finger comes up.
-          Home.setEditing(true);
         } else {
           Home.closeCardMenu();
           Home._showGridOverlay(listEl, cols, item);
@@ -4186,6 +4188,21 @@ const Home = {
     if (!app) return;
     const items = Home.menuItemsFor(app);
     if (!items.length) return;
+    const anchorIsEl = !!(anchor && typeof anchor.getBoundingClientRect === 'function');
+    const anchorEl = anchorIsEl && anchor.nodeType === 1 ? anchor : null;
+    // #5871: the menu of a tile on My apps ends with the way into edit mode,
+    // the way a phone's home screen menu does. Only there: menuItemsFor also
+    // fills the app's own page, search results and demo tiles carry no
+    // data-yours, and while edit mode is on there is nothing to start.
+    if (!Home._editing && anchorEl && typeof anchorEl.closest === 'function'
+        && anchorEl.closest('.app-card[data-yours]:not([data-demo])')) {
+      items.push({
+        key: 'edit-my-apps',
+        label: message('home:menu.editMyApps.label'),
+        title: message('home:menu.editMyApps.tip'),
+        run: () => Home.setEditing(true),
+      });
+    }
 
     // A tile's context stays anchored to the tile on every platform.
     // The kit owns clamping/flipping, dismissal, focus and menu navigation;
@@ -4193,8 +4210,6 @@ const Home = {
     const headerEl = document.createElement('div');
     headerEl.className = 'card-menu-header';
     headerEl.innerHTML = Home.renderMenuHeaderHtml(app);
-    const anchorIsEl = !!(anchor && typeof anchor.getBoundingClientRect === 'function');
-    const anchorEl = anchorIsEl && anchor.nodeType === 1 ? anchor : null;
     const menu = PlatformUI.popover({
       anchorEl: anchorIsEl ? anchor : undefined,
       anchorRect: anchorIsEl ? undefined : anchor,
@@ -5471,6 +5486,10 @@ const Home = {
       // the hold.
       if (e.pointerType === 'touch' && card.hasAttribute('data-yours')
           && !card.hasAttribute('data-demo') && Home._placementHandle) return;
+      // #5871: in edit mode a hold on a tile of your own is a drag (the kit's
+      // mouse path lifts it once it moves), never a menu.
+      if (Home._editing && card.hasAttribute('data-yours')
+          && !card.hasAttribute('data-demo')) return;
       const isMouse = e.pointerType === 'mouse';
       const startX = e.clientX;
       const startY = e.clientY;
@@ -5484,13 +5503,6 @@ const Home = {
         Home._suppressClick = true;
         opened = true;
         Home.openCardMenu(card.dataset.slug, card);
-        // EDIT MODE (#4669): the same hold starts it, for mouse and pen (touch
-        // enters through the kit recognizer's onLift above). Search results,
-        // demo tiles and Discover cards carry no data-yours, and a hold on
-        // them is a menu and nothing else, exactly as before.
-        if (card.hasAttribute('data-yours') && !card.hasAttribute('data-demo')) {
-          Home.setEditing(true);
-        }
       }, 400);
       cleanup = () => {
         if (timer) { clearTimeout(timer); timer = null; }

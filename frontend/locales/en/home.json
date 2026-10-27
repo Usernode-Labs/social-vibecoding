@@ -183,6 +183,14 @@
     "text": "Version, status and everything you can do with this app",
     "description": "Tooltip of the \"App details\" item in an app tile's menu."
   },
+  "menu.editMyApps.label": {
+    "text": "Edit My apps",
+    "description": "Last item in the menu of an app tile in the My apps grid on Home: puts the grid into edit mode, where tiles can be moved and removed. \"Edit\" is a verb; \"My apps\" is the name of the section."
+  },
+  "menu.editMyApps.tip": {
+    "text": "Move and remove the apps in My apps",
+    "description": "Tooltip of the \"Edit My apps\" item in an app tile's menu on Home. \"Move\" and \"remove\" are verbs."
+  },
   "menu.github.label": {
     "text": "View on GitHub",
     "description": "Item in an app's menu, for an app whose code is on GitHub: opens the app's source code repository on GitHub in a new tab."
@@ -799,9 +807,17 @@
     "text": "Gray",
     "description": "Name of a card colour, a neutral grey: tooltip and accessible name of its swatch in the featured illustration editor."
   },
+  "edit.start": {
+    "text": "Edit",
+    "description": "Button beside the My apps heading on Home: puts the grid into edit mode, where tiles can be moved and removed. \"Edit\" is a verb."
+  },
+  "edit.startLabel": {
+    "text": "Edit My apps",
+    "description": "Accessible name of the Edit button beside the My apps heading on Home. \"Edit\" is a verb; \"My apps\" is the name of the section."
+  },
   "edit.done": {
     "text": "Done",
-    "description": "Button beside the My apps heading on Home while the grid is in edit mode after a long press: ends edit mode."
+    "description": "Button beside the My apps heading on Home while the grid is in edit mode: ends edit mode."
   },
   "edit.removeNamed": {
     "text": "Remove {{app}} from My apps",
@@ -809,7 +825,7 @@
   },
   "edit.addTile": {
     "text": "Add apps",
-    "description": "Button beside the My apps heading on Home while the grid is in edit mode after a long press, next to Done: it opens the sheet of apps to add."
+    "description": "Button beside the My apps heading on Home while the grid is in edit mode, next to Done: it opens the sheet of apps to add."
   },
   "addSheet.title": {
     "text": "Add to My apps",
