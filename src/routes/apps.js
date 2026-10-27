@@ -543,13 +543,14 @@ const GITHUB_ACTIONS_GROUP = 'GitHub Actions secrets (platform repo)';
 
 // Staging fixtures for the Actions-secrets group. A self-app staging
 // container has no GitHub credentials at all (GITHUB_APP_ID /
-// GITHUB_BOT_TOKEN carry `staging_default: ""`), so the live fetch always
-// fails there and every PR preview would show only the unavailable line —
-// the group's actual rows, and the exact-name annotation path, would be
-// unreviewable. Three obviously-fake rows cover all three visuals:
+// GITHUB_PRIVATE_KEY are empty there: `default` / `staging_default: ""`),
+// so the live fetch always fails there and every PR preview would show
+// only the unavailable line — the group's actual rows, and the exact-name
+// annotation path, would be unreviewable. Three obviously-fake rows cover
+// all three visuals:
 //   STAGING_DEMO_GH_DEPLOY_KEY — an old secret (updated months ago)
 //   STAGING_DEMO_GH_API_TOKEN  — a fresh one (updated yesterday)
-//   GITHUB_BOT_TOKEN           — an EXACT match with a row the platform's
+//   GITHUB_PRIVATE_KEY         — an EXACT match with a row the platform's
 //                                own `secrets` block declares, so the
 //                                "also a GitHub Actions secret"
 //                                annotation renders on that row instead
@@ -564,7 +565,7 @@ function stagingMockActionsSecrets() {
     secrets: [
       { name: 'STAGING_DEMO_GH_DEPLOY_KEY', createdAt: days(400), updatedAt: days(140) },
       { name: 'STAGING_DEMO_GH_API_TOKEN', createdAt: days(30), updatedAt: days(1) },
-      { name: 'GITHUB_BOT_TOKEN', createdAt: days(220), updatedAt: days(60) },
+      { name: 'GITHUB_PRIVATE_KEY', createdAt: days(220), updatedAt: days(60) },
     ],
   };
 }
@@ -2370,8 +2371,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // state is 'ok' | 'unavailable'.
   //
   // In STAGING the live fetch essentially always fails — a self-app
-  // staging container boots with GITHUB_APP_ID / GITHUB_BOT_TOKEN empty
-  // (their `staging_default: ""` in the platform's own dapp.json) — so the
+  // staging container boots with GITHUB_APP_ID / GITHUB_PRIVATE_KEY empty
+  // (their empty defaults in the platform's own dapp.json) — so the
   // group would only ever render its unavailable state in a PR preview.
   // Fall back to an obviously-fake staged list there, the same
   // request-time demo-injection pattern routes/issues.js

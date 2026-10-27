@@ -180,7 +180,6 @@ test('fetch failures, no drift and first-seen backfills tell app delivery nothin
 
 test('the clock\'s look reads every running app with a repository, one after another, and stops when asked', async () => {
   reset();
-  process.env.GITHUB_BOT_TOKEN = process.env.GITHUB_BOT_TOKEN || 'test-token';
   rows = [app, { ...app, id: 9, slug: 'second', repo_url: 'https://github.com/example/second' }];
   const out = await poller.scan(config, pool);
   assert.equal(out.checked, 2);

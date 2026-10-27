@@ -42,7 +42,6 @@ github.createPR = async (owner, repo, { branch, title, body }) => {
   ghCalls.push({ op: 'pr', branch, title, body });
   return { number: 777, html_url: 'https://github.com/o/r/pull/777' };
 };
-process.env.GITHUB_BOT_TOKEN = process.env.GITHUB_BOT_TOKEN || 'test-token';
 
 const topicsPr = require('../src/services/topics-pr');
 const { appRoutes } = require('../src/routes/apps');

@@ -326,7 +326,11 @@ test('the figures render from the sample payload: spenders, what was not counted
   assert.doesNotMatch(html, /admin-github-spend-installation/, 'a credential nobody counted lists nothing');
   assert.doesNotMatch(html, new RegExp(String.fromCharCode(0x2014)));
 
-  const quiet = renderToHtml(createElement(mod.GithubBudgetFigures, { data: { reservePercent: 15, credentials: [], configured: { botToken: true, app: true } } }));
+  const quiet = renderToHtml(createElement(mod.GithubBudgetFigures, { data: { reservePercent: 15, credentials: [], configured: { app: true } } }));
   assert.match(quiet, /id="admin-github-budget-empty"/);
   assert.doesNotMatch(quiet, /admin-github-no-installation|admin-github-spend-/);
+  assert.match(quiet, /No GitHub response since this server started/);
+  // The App is the only GitHub credential: without it, GitHub is not set up.
+  const unset = renderToHtml(createElement(mod.GithubBudgetFigures, { data: { reservePercent: 15, credentials: [], configured: { app: false } } }));
+  assert.match(unset, /GitHub is not configured on this server\./);
 });

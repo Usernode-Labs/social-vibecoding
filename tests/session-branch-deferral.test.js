@@ -314,25 +314,18 @@ test('the clone path never asks GitHub for heads/null', () => {
 // ── the null-branch edge cases ──────────────────────────────────────────
 
 test('the push proxy refuses a branchless session permanently, with advice', async () => {
-  const prev = process.env.GITHUB_BOT_TOKEN;
-  process.env.GITHUB_BOT_TOKEN = 'ghp_test_token';
-  try {
-    const worker = require('../src/services/worker');
-    for (const empty of [null, undefined, '']) {
-      await assert.rejects(
-        () => worker.execPushFromWorker(1, empty),
-        (err) => {
-          assert.equal(err.code, 'no_branch');
-          assert.equal(err.permanent, true);
-          assert.match(err.userMessage, /Send a message in the session first/i);
-          return true;
-        },
-        `branch ${JSON.stringify(empty)} must be refused`
-      );
-    }
-  } finally {
-    if (prev === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = prev;
+  const worker = require('../src/services/worker');
+  for (const empty of [null, undefined, '']) {
+    await assert.rejects(
+      () => worker.execPushFromWorker(1, empty),
+      (err) => {
+        assert.equal(err.code, 'no_branch');
+        assert.equal(err.permanent, true);
+        assert.match(err.userMessage, /Send a message in the session first/i);
+        return true;
+      },
+      `branch ${JSON.stringify(empty)} must be refused`
+    );
   }
 });
 

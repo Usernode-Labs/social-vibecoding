@@ -341,11 +341,10 @@ test('inspecting the fork is one PUBLIC read and never a write', async () => {
   });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].key, 'GET /repos/someuser/recipe-box');
-  // No user credential exists to send. The bot PAT may authenticate the read
-  // for rate-limit headroom, but nothing user-scoped is ever attached.
+  // No user credential exists to send, and the platform attaches none of its
+  // own: the read is anonymous (services/github.js publicApiHeaders).
   const auth = calls[0].headers.Authorization || calls[0].headers.authorization;
-  assert.ok(!auth || /^Bearer /.test(auth) === false || auth === `Bearer ${process.env.GITHUB_BOT_TOKEN}`,
-    'only the platform’s own public-read credential, if any');
+  assert.ok(!auth, 'the public read carries no credential');
 });
 
 test('a same-named repo that is not our fork is a named conflict, never touched', async () => {
@@ -1346,7 +1345,9 @@ const logger = require('../src/services/logger');
 function ghWithDiagnostics(overrides = {}) {
   return baseGh({
     describeGithubError: require('../src/services/github').describeGithubError,
-    credentialClass: () => (process.env.GITHUB_BOT_TOKEN ? 'pat' : 'installation'),
+    // The App's installation is the only credential (services/github.js
+    // "Who Homeroom is on GitHub").
+    credentialClass: () => 'installation',
     ...overrides,
   });
 }
@@ -1456,43 +1457,35 @@ test('a PR-open failure is never opaque again — it names status, field and a w
 });
 
 test('a failed create logs the diagnosis — status, request id, credential, scopes — and no token', async () => {
-  const realToken = process.env.GITHUB_BOT_TOKEN;
-  process.env.GITHUB_BOT_TOKEN = 'ghp_testtokenvaluethatmustnotbelogged00';
-  try {
-    const gh = ghWithDiagnostics({
-      findOpenPrByBranch: async () => null,
-      createPR: async () => { throw validationFailed({ scopes: 'repo, read:org' }); },
-      compareCommitAncestry: async () => { throw new Error('offline'); },
-    });
-    await withFetch({
-      ...PUSHED_BRANCH,
-      'GET /repos/someuser/recipe-box': {
-        status: 200, body: { fork: true, name: 'recipe-box', owner: { login: 'someuser' } },
-      },
-    }, [], () => svc.submitWork(
-      { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
-      { user: { id: 3 }, taskId: 31, importProposal: async () => ({ ok: true, body: {} }) }
-    ));
+  const gh = ghWithDiagnostics({
+    findOpenPrByBranch: async () => null,
+    createPR: async () => { throw validationFailed({ scopes: 'repo, read:org' }); },
+    compareCommitAncestry: async () => { throw new Error('offline'); },
+  });
+  await withFetch({
+    ...PUSHED_BRANCH,
+    'GET /repos/someuser/recipe-box': {
+      status: 200, body: { fork: true, name: 'recipe-box', owner: { login: 'someuser' } },
+    },
+  }, [], () => svc.submitWork(
+    { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+    { user: { id: 3 }, taskId: 31, importProposal: async () => ({ ok: true, body: {} }) }
+  ));
 
-    const entry = logger.tail(40).find((e) => /PR creation failed on both attempts/.test(e.message));
-    assert.ok(entry, 'the failure is logged at all');
-    assert.equal(entry.data.status, 422);
-    assert.equal(entry.data.requestId, 'ABCD:1234:5678');
-    assert.equal(entry.data.credential, 'pat');
-    // The header STRING — the one fact that turns "what can this token do?"
-    // from an argument into a fact, and the piece whose absence forced a
-    // production audit to even frame the question.
-    assert.equal(entry.data.oauthScopes, 'repo, read:org');
-    assert.equal(entry.data.headRepoSent, 'someuser/recipe-box');
+  const entry = logger.tail(40).find((e) => /PR creation failed on both attempts/.test(e.message));
+  assert.ok(entry, 'the failure is logged at all');
+  assert.equal(entry.data.status, 422);
+  assert.equal(entry.data.requestId, 'ABCD:1234:5678');
+  assert.equal(entry.data.credential, 'installation');
+  // The header STRING — the one fact that turns "what can this token do?"
+  // from an argument into a fact, and the piece whose absence forced a
+  // production audit to even frame the question.
+  assert.equal(entry.data.oauthScopes, 'repo, read:org');
+  assert.equal(entry.data.headRepoSent, 'someuser/recipe-box');
 
-    // Never the token itself, on any path.
-    const serialized = JSON.stringify(entry);
-    assert.ok(!serialized.includes('testtokenvaluethatmustnotbelogged'),
-      'no part of the bot token reaches a log payload');
-  } finally {
-    if (realToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
-    else process.env.GITHUB_BOT_TOKEN = realToken;
-  }
+  // Never a token itself, on any path: the class of credential, not one.
+  const serialized = JSON.stringify(entry);
+  assert.doesNotMatch(serialized, /gh[pousr]_[A-Za-z0-9]/, 'no token reaches a log payload');
 });
 
 test('describeGithubError carries the scope header and never invents one', () => {

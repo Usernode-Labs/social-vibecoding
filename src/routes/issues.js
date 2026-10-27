@@ -2299,7 +2299,7 @@ function issueRoutes(config) {
         // the ★ pill and the "★ Bountied" button state would be unreviewable,
         // and the Send Feedback dialog's new create-with-bounty checkbox
         // couldn't be seen to have done anything (staging also has no
-        // GITHUB_BOT_TOKEN, so no issue is really filed there). Attach
+        // GitHub credential, so no issue is really filed there). Attach
         // synthetic bounty state to two dedicated [Mock] rows — only where no
         // real row already claimed the number, so prod-cloned data is never
         // overridden. Request-time, read-only, no-op in production.

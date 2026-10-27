@@ -61,13 +61,6 @@
       "description": "PEM private key for the GitHub App. Single-line with literal \\n escape sequences; the loader un-escapes at startup. `staging_default: \"\"` pairs with GITHUB_APP_ID — both empty means github.init() takes the disabled branch and staging boots without GitHub features."
     },
     {
-      "key": "GITHUB_BOT_TOKEN",
-      "required": true,
-      "private": true,
-      "staging_default": "",
-      "description": "Classic PAT with `repo` scope for the bot user. Powers repo creation, branch pushes, PR creation, and the in-app feedback flow (Issues:write on USERNODE_PLATFORM_REPO). `staging_default: \"\"` lets staging boot — every consumer guards on `if (!pat)` and degrades."
-    },
-    {
       "key": "GIT_HOST_TOKEN",
       "private": true,
       "staging_default": "",

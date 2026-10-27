@@ -400,6 +400,25 @@ test('Kubernetes chart preserves both social account-linking credential pairs', 
   }
 });
 
+// GitHub suspended the bot account (25 Oct 2026). The GitHub App is the
+// platform's only GitHub credential, so the chart requires its two values and
+// nothing of the bot's token: an environment can delete that value, and one
+// still set is ignored.
+test('Kubernetes chart requires the GitHub App and nothing of the retired bot token', () => {
+  const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
+  const secret = read('deploy/helm/social-vibecoding-platform/templates/secret.yaml');
+  const helpers = read('deploy/helm/social-vibecoding-platform/templates/_helpers.tpl');
+  assert.match(helpers, /\.Values\.secrets\.create \(or \(empty \.Values\.secrets\.githubAppId\) \(empty \.Values\.secrets\.githubPrivateKey\)\) -\}\}/);
+  assert.match(helpers, /fail "secrets\.githubAppId and secrets\.githubPrivateKey are required when platform is enabled"/);
+  assert.match(secret, /GITHUB_APP_ID: \{\{ \.Values\.secrets\.githubAppId \| quote \}\}/);
+  assert.match(secret, /GITHUB_PRIVATE_KEY: \{\{ \.Values\.secrets\.githubPrivateKey \| quote \}\}/);
+  assert.doesNotMatch(values, /githubBotToken|GITHUB_BOT_TOKEN/, 'values.yaml');
+  // No template reads it either, so a value still set is inert.
+  for (const file of fs.readdirSync('deploy/helm/social-vibecoding-platform/templates')) {
+    assert.doesNotMatch(read(`deploy/helm/social-vibecoding-platform/templates/${file}`), /githubBotToken|GITHUB_BOT_TOKEN/, file);
+  }
+});
+
 test('platform node RPC egress is restricted to the configured namespace and Pod labels', () => {
   const policy = read('deploy/helm/social-vibecoding-platform/templates/networkpolicy.yaml');
   const platformPolicy = policy.split('kind: NetworkPolicy')[2].split('---')[0];

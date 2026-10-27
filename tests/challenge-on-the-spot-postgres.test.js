@@ -370,7 +370,6 @@ test('the First challenges count on the spot, against the full PostgreSQL schema
     // records the report the measure reads. Nothing here reaches GitHub.
     const github = require('../src/services/github');
     const real = { isEnabled: github.isEnabled, createIssue: github.createIssue, noteIssueCreated: github.noteIssueCreated };
-    const priorToken = process.env.GITHUB_BOT_TOKEN;
     let issueNumber = 100;
     github.isEnabled = () => true;
     github.createIssue = async (o, r) => {
@@ -378,11 +377,8 @@ test('the First challenges count on the spot, against the full PostgreSQL schema
       return { number: issueNumber, html_url: `https://github.com/${o}/${r}/issues/${issueNumber}` };
     };
     github.noteIssueCreated = () => {};
-    process.env.GITHUB_BOT_TOKEN = 'test-token';
     st.after(() => {
       Object.assign(github, real);
-      if (priorToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
-      else process.env.GITHUB_BOT_TOKEN = priorToken;
     });
     // Let the proposal votes above finish settling first: their merge check
     // asks GitHub only when it is switched on.
