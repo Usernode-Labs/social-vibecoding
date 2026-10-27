@@ -6005,6 +6005,10 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   .browse-row .browse-row-name { white-space: normal; overflow-wrap: anywhere; }
   .browse-row .browse-row-meta { grid-column: 2; grid-row: 2; min-width: 0; }
   .browse-row > .browse-add-btn { grid-column: 3; grid-row: 2; min-height: 44px; }
+  /* #5953: the Joined view's Open + Leave pair takes Open's cell as one. */
+  .browse-row > .browse-row-actions { grid-column: 3; grid-row: 2; }
+  .browse-row-actions > .browse-add-btn,
+  .browse-row-actions > .browse-leave-btn { min-height: 44px; }
   .browse-row .browse-row-title > span { align-items: baseline; }
 }
 

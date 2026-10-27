@@ -38,6 +38,7 @@ const BROWSE_SRC = read('frontend/src/features/apps/browse.js')
   .replace(/^import .*;$/gm, '');
 const BROWSE_LIST_SRC = read('frontend/src/features/apps/browse-list.tsx');
 const APP_SRC = read('public/js/app.js');
+const APP_CSS = read('public/css/app.css');
 const INDEX = read('public/index.html');
 
 // Load home.js + browse.js into one context (Browse leans on Home) with a
@@ -1977,6 +1978,10 @@ test('the Joined view offers Leave beside Open, never to the creator or outside 
   assert.equal(fetchCalls.length, 1);
   assert.match(BROWSE_LIST_SRC, /data-action="leave"/);
   assert.match(BROWSE_LIST_SRC, /\.browse-leave-btn/, 'the row click skips the button');
+  // On a phone the row is a grid that seats only what app.css names: Open and
+  // Leave go in one box that takes Open's cell, or Leave lands under the icon.
+  assert.match(BROWSE_LIST_SRC, /<span className="browse-row-actions [^"]*">\s*\{primary\}\s*\{leave\}/);
+  assert.match(APP_CSS, /\.browse-row > \.browse-row-actions \{ grid-column: 3; grid-row: 2; \}/);
 });
 
 test('leaving a private app says it costs access', async () => {
