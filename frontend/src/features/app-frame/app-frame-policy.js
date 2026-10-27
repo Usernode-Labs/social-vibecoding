@@ -13,8 +13,10 @@
  */
 
 export const PENDING_FRAME_SANDBOX = '';
+// allow-downloads (#5837): without it the browser silently blocks every
+// download an app starts, including a blob URL saved by an <a download>.
 export const APP_FRAME_SANDBOX =
-  'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock';
+  'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock allow-downloads';
 
 /**
  * ── The permission policy (#2219) ──────────────────────────────────────
