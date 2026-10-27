@@ -6554,7 +6554,7 @@ function registerTools(server, ctx) {
     // The build ran unattended and is not promotable itself: the platform
     // clones it into a session the user owns (their own branch, forked from
     // the build's, so its commits carry over) and that clone is what gets
-    // proposed. Same two steps the browser takes.
+    // proposed. Submission does not resume the build's agent or copy its memory.
     const cloned = await callPlatform(baseUrl, accessToken, 'POST', `/api/sessions/${buildId}/clone-headless`);
     if (!cloned.ok) return platformError(cloned);
     const clone = (cloned.body && cloned.body.session) || {};

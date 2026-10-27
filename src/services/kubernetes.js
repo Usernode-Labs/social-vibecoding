@@ -2741,48 +2741,6 @@ async function listNamespaceCapacity(config) {
   }));
 }
 
-async function cloneWorkerVolume(config, sourceSessionId, targetSessionId) {
-  const cfg = config.kubernetes;
-  const namespace = cfg.workerNamespace;
-  const sourceRuntime = dnsName(`sv-worker-s${sourceSessionId}`);
-  const sourcePvc = withSuffix(sourceRuntime, 'state');
-  const targetPvc = withSuffix(dnsName(`sv-worker-s${targetSessionId}`), 'state');
-  const { core, batch } = getClients();
-  const source = await core.readNamespacedPersistentVolumeClaim({ name: sourcePvc, namespace });
-  try {
-    const body = {
-      apiVersion: 'v1', kind: 'PersistentVolumeClaim',
-      metadata: { name: targetPvc, namespace, labels: labels({ sessionId: targetSessionId, environment: 'worker' }) },
-      spec: {
-        accessModes: source.spec.accessModes || ['ReadWriteOnce'],
-        resources: { requests: { storage: source.spec.resources?.requests?.storage || cfg.workerStorageSize } },
-      },
-    };
-    if (source.spec.storageClassName) body.spec.storageClassName = source.spec.storageClassName;
-    await core.createNamespacedPersistentVolumeClaim({ namespace, body });
-  } catch (err) { if (err?.code !== 409 && err?.response?.statusCode !== 409) throw err; }
-
-  const sourcePods = await core.listNamespacedPod({ namespace, labelSelector: `social.usernode.io/runtime-name=${sourceRuntime}` });
-  const sourceNode = sourcePods.items?.[0]?.spec?.nodeName;
-  const name = dnsName(`sv-worker-copy-${sourceSessionId}-${targetSessionId}-${Date.now().toString(36)}`);
-  const podSpec = {
-    restartPolicy: 'Never', serviceAccountName: cfg.workerServiceAccount, automountServiceAccountToken: false,
-    securityContext: nodePodSecurityContext(),
-    containers: [{ name: 'copy', image: cfg.workerImage, command: ['sh', '-c', 'cp -a /from/. /to/'], volumeMounts: [{ name: 'from', mountPath: '/from', readOnly: true }, { name: 'to', mountPath: '/to' }], securityContext: containerSecurityContext(), resources: { requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: '1', memory: '1Gi' } } }],
-    volumes: [{ name: 'from', persistentVolumeClaim: { claimName: sourcePvc, readOnly: true } }, { name: 'to', persistentVolumeClaim: { claimName: targetPvc } }],
-  };
-  if (sourceNode) podSpec.nodeName = sourceNode;
-  await batch.createNamespacedJob({ namespace, body: { apiVersion: 'batch/v1', kind: 'Job', metadata: { name, namespace, labels: labels({ sessionId: targetSessionId, environment: 'worker' }) }, spec: { backoffLimit: 0, activeDeadlineSeconds: 300, ttlSecondsAfterFinished: 3600, template: { metadata: { labels: labels({ sessionId: targetSessionId, environment: 'worker' }) }, spec: podSpec } } } });
-  const deadline = Date.now() + 5 * 60 * 1000;
-  while (Date.now() < deadline) {
-    const job = await batch.readNamespacedJob({ name, namespace });
-    if (job.status?.succeeded) return;
-    if (job.status?.failed) throw new Error(`Worker PVC copy Job ${name} failed`);
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-  }
-  throw new Error(`Timed out waiting for worker PVC copy Job ${name}`);
-}
-
 // `onStdoutLine(line)`: the same observer contract as docker.runOneShot —
 // complete stdout lines as the run progresses, on top of the final log the
 // verdict is read from. A Job has no stdout to listen to, so while polling
@@ -3822,7 +3780,7 @@ module.exports = {
   deleteSettledCheckJobs, listCheckLeftovers, deleteCheckLeftover, MANAGED_BY, CHECK_JOB_TTL_SECONDS,
   execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker,
-  workerIdentity, deleteWorkerIdentity, workerIdentityGone, listWorkers, cloneWorkerVolume,
+  workerIdentity, deleteWorkerIdentity, workerIdentityGone, listWorkers,
   listWorkerVolumes, retirePlatformPreviewPolicy, listPreviews, listShotsRuntimes, isQuotaExceeded,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   readPlatformPod, stopCheckJobs,

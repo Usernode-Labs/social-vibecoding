@@ -186,9 +186,14 @@ Older conductors leave this separate machine pending, so rollout can temporarily
 return retryable 503s, with no web-side runtime fallback. This needs no schema
 or runtime configuration change.
 
+The hosted connector's headless-build handoff keeps the pushed branch, chat
+and spec history, but no longer copies agent memory. The clone leaves
+`cc_session_id` unset and creates no worker or memory-copy Job; submission
+promotes it directly. The Docker and Kubernetes copy helpers are removed.
+
 These move web dependencies behind durable commands. Web Pods still need
 their current Kubernetes and database permissions for other callers, including
-volume copies, repository operations and startup work. Moving
+repository operations and startup work. Moving
 those callers, then splitting service accounts, Secret inputs and actual
 database login privileges, remains SEC-09 work. The event's source metadata
 also remains a convention among trusted processes; it does not authenticate
