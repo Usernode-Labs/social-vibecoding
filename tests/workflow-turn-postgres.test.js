@@ -1090,10 +1090,15 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     // The last ask: recovery leaves the record, so it is ended; a record
     // that moved on (another turn's) is not.
     const wasRecover = recovery.recoverOwnedTurn;
-    const wasForce = sessionsRoutes.forceStopSession;
+    const forceStop = require('../src/services/worker-force-stop');
+    const wasForce = forceStop.run;
     const forced = [];
     recovery.recoverOwnedTurn = async () => {};
-    sessionsRoutes.forceStopSession = async (_pool, id, by) => { forced.push([id, by]); };
+    forceStop.run = async (_pool, target) => {
+      assert.equal(target.userId, null, 'system recovery runs on the conductor');
+      assert.equal(target.turnId, 'stuck-job');
+      forced.push([target.sessionId, 'homeroom']);
+    };
     const lastCtx = (identity) => ({ ...classicCtx(c, 'leftover-x'), input: { sessionId: c.id, kind: 'recover', turnId: 'x', instanceKey: c.key, identity, last: true } });
     try {
       assert.deepEqual(await turns.run(lastCtx('stuck-job'), { config: {}, pool }), { ended: 'ended' });
@@ -1106,7 +1111,7 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
         .then(() => 'returned', (err) => err.message), 'the cluster did not answer', 'an earlier ask fails as its item, to be asked again');
     } finally {
       recovery.recoverOwnedTurn = wasRecover;
-      sessionsRoutes.forceStopSession = wasForce;
+      forceStop.run = wasForce;
       await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [c.id]);
     }
   });

@@ -144,6 +144,14 @@ class ActiveWorkerSet extends Set {
     await recorded.get(Number(sessionId))?.get(workerRecords.get(Number(sessionId)));
   }
 
+  generation(sessionId) {
+    return this.has(sessionId) ? workerRecords.get(Number(sessionId)) || null : null;
+  }
+
+  deleteIf(sessionId, generation) {
+    return generation != null && this.generation(sessionId) === generation ? this.delete(sessionId) : false;
+  }
+
   delete(sessionId) {
     const out = super.delete(sessionId);
     if (out) {
