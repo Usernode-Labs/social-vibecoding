@@ -1023,6 +1023,16 @@ export function PlatformTabs() {
         onPointerLeave={leave}
       >
       {/*
+          iPhone Duo's side strip: the app on screen and the app you left,
+          under their Apps heading (./side-apps.tsx). First in the bar, even
+          before the marker, so the sibling chain the declared checks pin
+          (the marker, then Home, through to the settings row last) is
+          untouched; app.css draws it under Communities, and only on the
+          strip. Its tiles stand a step above the marker, which still
+          paints behind them.
+      */}
+      <SideApps />
+      {/*
           THE LIT TAB'S MARKER (#2824). Before the tabs so it paints behind
           them (app.css raises each tab one step), `aria-hidden` because
           `aria-current` already says which tab is lit, and bare until
@@ -1041,13 +1051,6 @@ export function PlatformTabs() {
           height: `${marker.h}px`,
         } : undefined}
       />
-      {/*
-          iPhone Duo's side strip: the app on screen and the app you left,
-          under their Apps heading (./side-apps.tsx). First here, so the
-          tabs' sibling chain the declared checks pin is untouched; app.css
-          draws it under Communities, and only on the strip.
-      */}
-      <SideApps />
       {TABS.flatMap(({ key, label, href, Icon }) => [
         // 18 Oct 2026: THE COMMUNITIES YOU PINNED, under their heading,
         // above your communities (./rail-pinned.tsx). Each community's app

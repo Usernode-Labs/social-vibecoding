@@ -233,8 +233,9 @@ test('the apps section: the app on screen lit, the app you left with its ✕', (
   assert.match(tsx, /window\.App\?\.openAppTab\?\.\(left\.slug, 'app'\)/, 'resume is the router\'s own entry');
   assert.match(tsx, /\(running \|\| left \? '' : ' hidden'\)/, 'nothing drawn, heading included, with neither');
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
-  assert.ok(bar.indexOf('<SideApps />') > bar.indexOf('className="platform-tabs-marker"')
-    && bar.indexOf('<SideApps />') < bar.indexOf('TABS.flatMap('), 'first in the bar, after the marker');
+  assert.ok(bar.indexOf('<SideApps />') > bar.indexOf('id="platform-tabs"')
+    && bar.indexOf('<SideApps />') < bar.indexOf('className="platform-tabs-marker"'),
+    'first in the bar, before the marker: the marker + Home chain #2824 pins stays whole');
   assert.match(bar, /useTabMarker\(barRef, tab, runningApp && !!onScreenApp\)/, 'the marker lights the app while no tab is');
   assert.match(bar, /'\.platform-side-app\[aria-current="page"\]'/);
   // app.js says which app is on screen, beside what it parks.
