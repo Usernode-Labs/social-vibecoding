@@ -1239,6 +1239,9 @@ async function start() {
   // minute (services/server-error-counts.js), on an unref'd timer; a minute
   // with nothing answered sends nothing.
   require('./src/services/server-error-counts').start({ pool: getPool(config) });
+  // And how busy it was each minute, with a warning when its event loop
+  // stalls (services/process-health.js), on unref'd timers too.
+  require('./src/services/process-health').start({ pool: getPool(config), role: ownRole });
 
   // ── The workflow's loops ─────────────────────────────────────────────
   // A conductor (any number of replicas) or an 'all' runs every machine's
@@ -1545,8 +1548,11 @@ async function cleanup() {
   // worker wait below, so the two run together.
   const startingRequests = inflightRequests.pending();
   const startingWork = inflightWork.snapshot();
+  // Which requests, by route: a process stopped for a failed liveness probe
+  // says here what it was answering.
   log.info('server', 'Draining in-flight requests and background work', {
     requests: startingRequests,
+    ...(startingRequests ? { inflight: inflightRequests.snapshot().slice(0, 20) } : {}),
     background: startingWork.slice(0, 20),
     deadlineMs: drainMs,
   });
@@ -1620,6 +1626,10 @@ async function cleanup() {
     const serverErrorCounts = require('./src/services/server-error-counts');
     serverErrorCounts.stop();
     await boundedStep(serverErrorCounts.flush(shutdownPool, { all: true }), BUILD_SHUTDOWN_MARK_TIMEOUT_MS).catch(() => {});
+    // The process's health up to now, with the minute still going.
+    const processHealth = require('./src/services/process-health');
+    processHealth.stop();
+    await boundedStep(processHealth.flush(shutdownPool, { all: true }), BUILD_SHUTDOWN_MARK_TIMEOUT_MS).catch(() => {});
   }
 
   // Close the pg pool so in-flight queries settle instead of being severed

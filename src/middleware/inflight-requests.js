@@ -74,12 +74,23 @@ function surface(req) {
   return `${req.method || 'GET'} /${head}`;
 }
 
-/** The handlers the drain is waiting for, oldest first: [{ surface, ageMs }]. */
+// The route template once a route has matched (`/api/apps/:slug/issues/:n`,
+// services/server-error-counts.js), or null before then.
+function routeOf(req) {
+  const counts = require('../services/server-error-counts');
+  const template = counts.routeTemplate(req);
+  return template === counts.UNMATCHED ? null : template;
+}
+
+/**
+ * The handlers the drain is waiting for, oldest first:
+ * [{ surface, route, ageMs }].
+ */
 function snapshot(now = Date.now()) {
   return [...open]
     .filter(counted)
     .sort((a, b) => a.startedAt - b.startedAt)
-    .map((entry) => ({ surface: surface(entry.req), ageMs: Math.max(0, now - entry.startedAt) }));
+    .map((entry) => ({ surface: surface(entry.req), route: routeOf(entry.req), ageMs: Math.max(0, now - entry.startedAt) }));
 }
 
 module.exports = { inflightRequests, openEnded, pending, snapshot, isEventStream };
