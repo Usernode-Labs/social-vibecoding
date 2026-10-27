@@ -6206,7 +6206,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       return res.status(result.status).json(result.body);
     } catch (err) {
       log.error('sessions', 'Stop failed', { sessionId, message: err.message });
-      return res.status(503).json({ error: 'Could not confirm that the agent stopped. Retry Stop.', code: 'stop_unconfirmed' });
+      return res.status(err.httpStatus || 503).json({ error: err.httpStatus ? err.message : 'Could not confirm that the agent stopped. Retry Stop.', code: err.httpStatus ? err.code : 'stop_unconfirmed' });
     }
   });
 
@@ -10634,6 +10634,10 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
     // (services/turns.js, forwarded). What is left is the durable path
     // below (the stamp, and the kill inside the worker), which reaches a
     // turn from any process.
+    const capturedTurn = force || immediate ? await turnLifecycle.loadActiveTurn(pool, sessionId) : null;
+    const expectedJob = force || immediate ? {
+      active: !!capturedTurn, turnId: turnLifecycle.turnIdentity(capturedTurn), journal: capturedTurn?.journal || null,
+    } : undefined;
     const handle = stopRegistry.get(sessionId);
     if (expectedTurnId) {
       const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
@@ -10707,7 +10711,7 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
       // #907: that bookkeeping now includes a local turn row, which is what
       // a machine that went to sleep mid-turn leaves behind.
       await localAgent.requestStop(pool, { sessionId, userId: null }).catch(() => {});
-      await forceStopSession(pool, sessionId, user.username, null, { immediate, expectedTurnId });
+      await requestForceStop(sessionId, user, null, { expectedTurnId, expectedJob });
       await scheduleRetainedInteractiveTurn({
         pool, sessionId, scheduleInteractiveRecovery,
       });
@@ -10818,6 +10822,16 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
         }));
     }
 
+    if (action === 'force') {
+      // The conductor confirms termination; the web never kills or evicts.
+      try { handle.abort.abort(); } catch {}
+      await requestForceStop(sessionId, user, handle, { expectedTurnId, expectedJob });
+      await scheduleRetainedInteractiveTurn({
+        pool, sessionId, scheduleInteractiveRecovery,
+      });
+      return { status: 200, body: { ok: true, stopped: true, forced: true, phase: handle.phase } };
+    }
+
     if (!handle.localTurnId && stopPolicy.killsWorkerInPhase(handle.phase)) {
       // Detached-turn path: the CC turn runs as a detached exec with no
       // host-side child to signal, so kill run-cc.sh + claude inside
@@ -10854,16 +10868,6 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
     }
 
     try { handle.abort.abort(); } catch {}
-
-    if (action === 'force') {
-      // Immediately terminate the process tree when requested; evict only
-      // if the kill cannot be confirmed. Settle even if the owner is wedged.
-      await forceStopSession(pool, sessionId, user.username, handle, { immediate, expectedTurnId });
-      await scheduleRetainedInteractiveTurn({
-        pool, sessionId, scheduleInteractiveRecovery,
-      });
-      return { status: 200, body: { ok: true, stopped: true, forced: true, phase: handle.phase } };
-    }
 
     return { status: 200, body: { ok: true, stopped: true, phase: handle.phase } };
 }
@@ -10917,164 +10921,18 @@ async function confirmStopLanded(sessionId, handle) {
   }
 }
 
-// Hard cancellation for agent conversations, and the existing classic
-// force-stop escape hatch. Kill the turn in place first, preserving the warm
-// worker. If that fails, evict it while retaining the workspace; only that
-// fallback incurs a cold start on the next dispatch.
-//
-// We announce the stop ourselves rather than waiting for the owning
-// request to do it: that request may be the wedged thing we're rescuing
-// the user from. The duplicate `stopped`/`done` it emits afterwards is
-// harmless — the client's stopping-state helpers are idempotent.
-async function forceStopSession(pool, sessionId, username, handle, { immediate = false, expectedTurnId = null } = {}) {
-  const containerName = handle?.workerName || worker.workerContainerName(sessionId);
-
-  // #1378: the force-orphan path arrives here with `handle === null` (a turn
-  // adopted after a restart never had one, and a handle that already cleared
-  // is the same story), and every announcement below used to be
-  // `handle?.send?.(...)` — a silent no-op precisely when the user most needs
-  // to be told the turn is over. Fall back to the two channels a live turn's
-  // own `send` fans out over, with the `_seq` sessionBus.publish requires.
-  const announce = handle?.send || (() => {
-    const { broadcastGlobal } = require('../services/ws');
-    const seqPrefix = `force-${sessionId}-${Date.now().toString(36)}`;
-    let seq = 0;
-    return (type, data) => {
-      const event = { type, _seq: `${seqPrefix}-${++seq}`, ...(data || {}) };
-      // Spread first, pin the envelope last — same reason as the live send:
-      // an inner `type` must not clobber `type: 'session_event'`.
-      try { broadcastGlobal({ ...event, sessionId, event: type, type: 'session_event' }); } catch {}
-      try { sessionBus.publish(sessionId, event); } catch {}
-    };
-  })();
-
-  // The ordinary stop may be a beat from landing; don't destroy a
-  // container that is already going quietly.
-  let executing;
-  if (immediate) {
-    // No initial probe, TERM grace period, retry timer or second button.
-    // The worker confirms its process tree is gone in the same command.
-    const killed = await worker.stopTurn(sessionId, { force: true }).catch(() => false);
-    // A root-only idle probe cannot rule out a surviving tool child after
-    // an incomplete tree kill. Without confirmation, evict the whole worker.
-    executing = killed ? false : null;
-  } else {
-    executing = await worker.isWorkerExecuting(containerName);
-    if (executing !== false) {
-      await worker.stopTurn(sessionId).catch(() => {});
-      await sleepMs(stopPolicy.STOP_PROBE_INTERVAL_MS);
-      executing = await worker.isWorkerExecuting(containerName);
-    }
+// A force stop's runtime effects are the conductor's. The originating
+// process only releases the exact local handle once termination is confirmed.
+async function requestForceStop(sessionId, user, handle, { expectedTurnId = null, expectedJob } = {}) {
+  const generation = activeWorkers.generation(sessionId);
+  worker.noteStopPending(sessionId);
+  await require('../workflow/platform.ts').requestWorkerStop({ sessionId, userId: user.id, expectedTurnId, expectedJob });
+  const current = stopRegistry.get(sessionId);
+  if (current === handle || (!current && !handle)) {
+    activeWorkers.deleteIf(sessionId, generation);
+    stopRegistry.deleteIf(sessionId, handle);
+    try { handle?.send?.('stopped', { phase: handle.phase, by: user.username, forced: true }); handle?.send?.('done', {}); } catch {}
   }
-  if (executing !== false) {
-    if (expectedTurnId && turnLifecycle.turnIdentity(await turnLifecycle.loadActiveTurn(pool, sessionId)) !== expectedTurnId) {
-      throw Object.assign(new Error('The running job changed. Retry Stop.'), { code: 'turn_changed' });
-    }
-    await worker.evictWorker(sessionId).catch(
-      (err) => log.warn('sessions', 'force stop evict failed', { sessionId, err: err.message })
-    );
-    // Give the owning journal consumer a short chance to terminalize with
-    // any usage it already observed. The fallback below is for the wedged
-    // owner this force path exists to rescue.
-    await sleepMs(250);
-    executing = await worker.isWorkerExecuting(containerName);
-    if (executing !== false) {
-      const error = new Error('Could not confirm that the coding job stopped. Retry Stop.');
-      error.code = 'stop_unconfirmed';
-      throw error;
-    }
-  }
-  try {
-    const activeTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
-    if (activeTurn && expectedTurnId && turnLifecycle.turnIdentity(activeTurn) !== expectedTurnId) {
-      throw Object.assign(new Error('The running job changed. Retry Stop.'), { code: 'turn_changed' });
-    }
-    if (activeTurn) {
-      let ledgerReady = true;
-      if (activeTurn.backend === 'codex_openrouter' && activeTurn.turnUuid) {
-        let attempt = await agentTurn.getCodexAttemptRecoveryState({
-          pool,
-          turnUuid: activeTurn.turnUuid,
-        });
-        if (attempt?.status === 'running') {
-          await sleepMs(250);
-          attempt = await agentTurn.getCodexAttemptRecoveryState({
-            pool,
-            turnUuid: activeTurn.turnUuid,
-          });
-        }
-        if (attempt?.status === 'running' || !attempt) {
-          try {
-            await agentTurn.completeCodexAttempt({
-              pool,
-              turnUuid: activeTurn.turnUuid,
-              status: 'cancelled',
-              errorCode: 'user_cancelled',
-              errorDetail: 'Turn was force-stopped by the user.',
-              telemetryComponent: turnLifecycle.phaseOf(activeTurn) === turnLifecycle.PHASE_DISPATCH_PENDING
-                ? null
-                : activeTurn.telemetryComponent || null,
-              telemetryMetrics: {
-                requestMode: activeTurn.telemetryRequestMode || null,
-                requestMessageCount: activeTurn.telemetryRequestTextCharacters == null ? null : 1,
-                requestUserMessageCount: activeTurn.telemetryRequestTextCharacters == null ? null : 1,
-                requestContentBlockCount: activeTurn.telemetryRequestTextCharacters == null ? null : 1,
-                requestTextCharacters: activeTurn.telemetryRequestTextCharacters ?? null,
-                requestUserTextCharacters: activeTurn.telemetryRequestTextCharacters ?? null,
-                requestPayloadCharacters: activeTurn.telemetryRequestTextCharacters ?? null,
-                modelContextWindowTokens: activeTurn.telemetryModelContextWindowTokens ?? null,
-                modelMaxOutputTokens: activeTurn.telemetryModelMaxOutputTokens ?? null,
-              },
-            });
-          } catch (ledgerErr) {
-            ledgerReady = false;
-            const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
-              pool,
-              sessionId,
-              activeTurn,
-              error: ledgerErr,
-            });
-            log.warn('sessions', disposition.action === 'retry'
-              ? 'Force stop retained durable turn because ledger cancellation failed'
-              : 'Force stop quarantined a turn with a missing ledger attempt', {
-              sessionId, turnUuid: activeTurn.turnUuid, err: ledgerErr.message,
-            });
-          }
-        }
-      }
-      if (ledgerReady) {
-        await worker.clearActiveTurn(sessionId, turnLifecycle.cleanupArgs(activeTurn));
-      }
-    }
-  } catch (err) {
-    if (err.code === 'turn_changed') throw err;
-    log.warn('sessions', 'Force stop could not clear the owned durable turn', {
-      sessionId, err: err.message,
-    });
-  }
-  activeWorkers.delete(sessionId);
-
-  const byStr = username ? ` by @${username}` : '';
-  const text = `Stopped${byStr} (forced).`;
-  log.warn('sessions', 'Turn force-stopped', {
-    sessionId, containerName, by: username, evicted: executing !== false,
-  });
-
-  try {
-    announce('status', { text, quickReplies: turnFallbackQuickReplies({ outcome: 'stopped' }) });
-  } catch {}
-  await pool.query(
-    `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-     VALUES ($1, 'system', $2, $3)`,
-    [sessionId, text, JSON.stringify({ quickReplies: turnFallbackQuickReplies({ outcome: 'stopped' }) })]
-  ).catch(() => {});
-
-  try {
-    announce('stopped', { phase: handle?.phase || null, by: username, forced: true });
-    announce('done', {});
-  } catch {}
-
-  stopRegistry.deleteIf(sessionId, handle);
 }
 
 // Pre-retry safety: kill any zombie turn process and wait (bounded) for
@@ -13496,7 +13354,7 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, forceStopSession, resolveClassicPayer, runHeadlessSessionInner, resumeOneHeadlessRun, reloadRecoverableHeadlessSession, failHeadlessRun, changePlanFor, attachChangePlans, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, workerBootstrapFailureResult, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, resolveClassicPayer, runHeadlessSessionInner, resumeOneHeadlessRun, reloadRecoverableHeadlessSession, failHeadlessRun, changePlanFor, attachChangePlans, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, workerBootstrapFailureResult, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
 // #4524: the topic page's fast open asks GET /api/apps/:slug/proposals/:id
 // for its item beside the board load, and production serves an active or
 // paused session there when it is the viewer's own or shared. The demo rows

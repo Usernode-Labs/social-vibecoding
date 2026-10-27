@@ -8,8 +8,10 @@ const { workerPush } = require('../../src/workflow/worker-push/machine.ts');
 const { workerPushServices } = require('../../src/workflow/worker-push/services.ts');
 const { workerRelease } = require('../../src/workflow/worker-release/machine.ts');
 const { workerReleaseServices } = require('../../src/workflow/worker-release/services.ts');
+const { workerStop } = require('../../src/workflow/worker-stop/machine.ts');
+const { workerStopServices } = require('../../src/workflow/worker-stop/services.ts');
 const spec = JSON.parse(process.env.WORKER_COMMAND_TEST);
-if (!['push', 'release'].includes(spec.kind) || process.env.PROCESS_ROLE !== 'conductor') throw new Error('invalid test conductor');
+if (!['push', 'release', 'stop'].includes(spec.kind) || process.env.PROCESS_ROLE !== 'conductor') throw new Error('invalid test conductor');
 const pool = new Pool({ connectionString: spec.databaseUrl, max: 5 });
 require('../../src/db/pool').getPool = () => pool;
 const worker = require('../../src/services/worker');
@@ -21,6 +23,13 @@ if (spec.kind === 'release') {
     await pool.query('INSERT INTO wf_test_release_effects (pid, session_id) VALUES ($1, $2)', [process.pid, sessionId]);
     return { removed: true };
   };
+} else if (spec.kind === 'stop') {
+  worker.stopTurnByJournal = async (sessionId, journal) => {
+    await pool.query('INSERT INTO wf_test_stop_effects (pid, session_id, journal) VALUES ($1, $2, $3)', [process.pid, sessionId, journal]);
+    return 'stopped';
+  };
+  require('../../src/services/session-bus').publish = () => {};
+  require('../../src/services/ws').broadcastGlobal = () => {};
 } else {
   require('../../src/services/github').checkRepoPublic = async () => ({ ok: true, private: false });
   worker.execPushFromWorker = async sessionId => {
@@ -28,9 +37,9 @@ if (spec.kind === 'release') {
     return { sha: 'c'.repeat(40), stderr: '' };
   };
 }
-const releasing = spec.kind === 'release';
-const rt = createRuntime({ pool, machines: [releasing ? workerRelease() : workerPush()],
-  services: releasing ? workerReleaseServices({ pool }) : workerPushServices({ pool }), slots: 1, pollMs: 10 });
+const commands = { release: [workerRelease, workerReleaseServices], push: [workerPush, workerPushServices], stop: [workerStop, workerStopServices] };
+const [machine, services] = commands[spec.kind];
+const rt = createRuntime({ pool, machines: [machine()], services: services({ pool }), slots: 1, pollMs: 10 });
 let stopping = false;
 async function stop() {
   if (stopping) return;

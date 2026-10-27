@@ -273,6 +273,19 @@ test('stopTurn flags the session so the watchdog tightens its cadence', async ()
   } finally { restore(); }
 });
 
+test('the web stop gate records intent without runtime I/O or a last-use write', async () => {
+  const { worker, calls, dbCalls, restore } = loadWorker();
+  try {
+    worker.noteStopPending(778);
+    assert.ok(worker.getPendingStop(778) > 0);
+    assert.deepEqual(calls, []);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(dbCalls, [], 'does not invalidate the queued stop snapshot by marking the worker used');
+    const state = await worker.execInWorker(778, { ...DISPATCH_ARGS, logicalTurnId: 'stopped-778' });
+    assert.equal(state.exitCode, 143); assert.deepEqual(calls, []);
+  } finally { restore(); }
+});
+
 test('stopTurn swallows docker failures — the watchdog is the fallback', async () => {
   const ids = {
     docker: require.resolve('../src/services/docker'),
