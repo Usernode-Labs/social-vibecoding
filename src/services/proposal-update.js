@@ -42,6 +42,11 @@
 //      somebody else advanced in the meantime produces `branch_moved` rather
 //      than a silently discarded revision.
 //
+// A proposal on an app on Homeroom's own git host has no fork in the picture
+// at all: it takes a patch only, from its author (the ownership gate), applied
+// at the head the lease names, and no GitHub link is read for it (property 2
+// guards a fork branch, which it never has).
+//
 // Deliberately NOT here: any say in what the push costs the approvals. Since
 // #2038 a vote counts while its approval_epoch equals the proposal's
 // chat_sessions.approval_epoch (services/pr-vote-revision.js), and only the
@@ -341,6 +346,20 @@ async function updateProposalFromForkBranch(deps, params) {
   if (patch && branch) {
     return fail('invalid_request', 'Send the new work as a patch or as a branch, not both.');
   }
+  // A proposal on an app on Homeroom's own git host has no GitHub fork to
+  // read a branch from: its revisions arrive as a patch, which needs no
+  // GitHub link either, since it comes from the proposal's author in this
+  // request (ownershipGate, twice).
+  const hostedRepo = repoRef.isHosted(params.session && params.session.repo_url);
+  if (hostedRepo && !patch) {
+    return fail(
+      'patch_required',
+      'This app\'s code is on Homeroom\'s own git host, not on GitHub, so a proposal on it is revised by a patch, '
+      + 'not by a branch pushed to a fork. Call prepare_work with this proposalId for an update work order, then '
+      + 'submit_work with that work order\'s taskId and the patch.',
+      { retryable: false }
+    );
+  }
   if (!patch && !head.validRef(branch)) {
     return fail('invalid_request', 'branch must be the git branch you pushed to your fork.');
   }
@@ -380,8 +399,9 @@ async function updateProposalFromForkBranch(deps, params) {
   }
   // An unconfigured deployment and an unlinked user are two different
   // refusals, and the deployment is checked first — otherwise an operator's
-  // missing value is reported as the user's missing click.
-  if (!githubLink.isEnabled(config)) {
+  // missing value is reported as the user's missing click. Neither concerns
+  // a patch on the git host, which no fork is read for.
+  if (!hostedRepo && !githubLink.isEnabled(config)) {
     return fail(
       'github_link_unavailable',
       'This Homeroom deployment has no GitHub OAuth app configured, so it cannot verify which GitHub account is '
@@ -394,8 +414,8 @@ async function updateProposalFromForkBranch(deps, params) {
   // FRESHLY READ, every time, and the only source of the fork owner. A
   // linked account can be disconnected or re-linked to a different GitHub
   // login between the submission that opened this proposal and this update.
-  const link = await githubLink.linkStatus(pool, user.id);
-  if (!link || !link.linked || !link.login) {
+  const link = hostedRepo ? null : await githubLink.linkStatus(pool, user.id);
+  if (!hostedRepo && (!link || !link.linked || !link.login)) {
     return fail(
       'github_not_linked',
       'Connect your GitHub account first: Homeroom only advances a proposal from a fork it can confirm is yours.',
@@ -411,7 +431,11 @@ async function updateProposalFromForkBranch(deps, params) {
     const reGate = ownershipGate(session, user);
     if (reGate) return reGate;
 
-    const parsed = gh.parseGithubUrl(session.repo_url);
+    // An app on Homeroom's git host is read through repo-ref, as everywhere
+    // else; only a GitHub address goes through the GitHub parser.
+    const parsed = repoRef.isHosted(session.repo_url)
+      ? repoRef.ownerRepo(session.repo_url)
+      : gh.parseGithubUrl(session.repo_url);
     if (!parsed) {
       return fail('no_repository', 'That app has no GitHub repository, so its proposals have no branch to advance.');
     }
@@ -435,8 +459,9 @@ async function updateProposalFromForkBranch(deps, params) {
       const ctx = {
         pool, config, gh, head, votes, prImportSync, githubPublic,
         prMetadata: deps.prMetadata || require('./pr-metadata'), username: user.username,
-        session, owner, repo, forkOwner: link.login, forkRepo, branch,
-        expectedLogin: link.login, expectedHeadSha, sessionId,
+        // No linked login on the git host: nothing there is read from a fork.
+        session, owner, repo, forkOwner: link ? link.login : null, forkRepo, branch,
+        expectedLogin: link ? link.login : null, expectedHeadSha, sessionId,
         // #4263. The new work as a patch instead of a fork branch, and the
         // new-work patch path's own apply, injectable like `head`.
         patch,
@@ -465,6 +490,17 @@ async function updateProposalFromForkBranch(deps, params) {
       // the platform holds no credential for it, so a patch has nowhere to
       // land and the honest answer is the branch route.
       if (patch && branchHomeOf(session) === 'user_fork') {
+        // On the git host that fork is GitHub's, from before the app moved,
+        // and nothing follows it any more.
+        if (repoRef.isHosted(session.repo_url)) {
+          return fail(
+            'code_missing',
+            `This proposal followed ${session.branch_name || 'a branch'} in a GitHub fork, and since this app moved `
+            + 'to Homeroom\'s own git host nothing follows GitHub forks, so it cannot take a patch. Start a new '
+            + 'change instead.',
+            { retryable: false }
+          );
+        }
         return fail(
           'invalid_request',
           `This proposal follows ${session.branch_name || 'a branch'} in your own fork, which only you can push to, `
@@ -1515,6 +1551,17 @@ async function advanceAppRepoBranch(ctx) {
   try {
     liveHead = await gh.getBranchSha(owner, repo, targetBranch);
   } catch (err) {
+    // On the git host a branch that is not there is not a first landing (that
+    // is a share, which a hosted app does not take): it is a change whose code
+    // did not come across from GitHub (services/code-missing.js).
+    if (err && err.status === 404 && repoRef.isHosted(session.repo_url)) {
+      return fail(
+        'code_missing',
+        `This proposal's code is not on Homeroom's git host (${targetBranch} is not there): it did not come across `
+        + 'when Homeroom moved off GitHub, so it cannot take a patch. Start a new change instead.',
+        { retryable: false }
+      );
+    }
     if (err && err.status === 404 && platformOwnedBranch(targetBranch)) {
       firstLanding = true;
     } else {
