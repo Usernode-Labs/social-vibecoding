@@ -117,6 +117,9 @@ const EXEMPT = new Map([
   // the ID token, each in a JSON body.
   ['sign-in-providers.js POST /api/auth/oauth/:provider/native/start', JSON_FIELD],
   ['sign-in-providers.js POST /api/auth/oauth/:provider/native', JSON_FIELD],
+  // …and a failed app sheet's report, the state again in a JSON body; it
+  // writes one log line for a state that is still live, and nothing else.
+  ['sign-in-providers.js POST /api/auth/oauth/:provider/native/failed', JSON_FIELD],
   // WP-E: a mail client's one-click unsubscribe (RFC 8058) is a cross-site
   // POST by design. It carries no session; the HMAC token in its query is
   // the whole of the check, and all it can do is turn activity mail off.

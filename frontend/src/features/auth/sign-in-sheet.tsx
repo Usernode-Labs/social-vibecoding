@@ -248,6 +248,25 @@ function nativeError(code: unknown): string {
 }
 
 /**
+ * #5960: the app's own sheet failed, and the person sees only the generic
+ * line. What the app said (an app build ends its bridge error with the
+ * provider SDK's own code) goes to the platform's log instead, with the
+ * start's state, which the report spends. Fire and forget: the sheet's
+ * answer never waits on it.
+ */
+function reportNativeFailure(provider: SignInProvider, state: string, reason: unknown): void {
+  try {
+    void fetch(`/api/auth/oauth/${provider}/native/failed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      keepalive: true,
+      body: JSON.stringify({ state, reason: typeof reason === 'string' ? reason.slice(0, 300) : null }),
+    }).catch(() => {});
+  } catch { /* a report is a convenience */ }
+}
+
+/**
  * Inside the Homeroom app: a state and a nonce from the server, the app's
  * own sheet with that nonce (the bridge's signInWithProvider), and the ID
  * token it returns back to the server (routes/sign-in-providers.js).
@@ -274,9 +293,13 @@ export async function signInNatively(provider: SignInProvider, { from, followInv
     idToken = answer?.idToken;
   } catch (err) {
     if ((err as { usernodeCode?: unknown } | null)?.usernodeCode === 'cancelled') return { error: null };
+    reportNativeFailure(provider, start.state, (err as { message?: unknown } | null)?.message);
     return { error: translate(RESUME_FALLBACK) };
   }
-  if (typeof idToken !== 'string' || !idToken) return { error: translate(RESUME_FALLBACK) };
+  if (typeof idToken !== 'string' || !idToken) {
+    reportNativeFailure(provider, start.state, 'The app answered without an ID token.');
+    return { error: translate(RESUME_FALLBACK) };
+  }
   const res = await fetchSessionMint(`/api/auth/oauth/${provider}/native`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

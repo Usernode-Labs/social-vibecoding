@@ -649,6 +649,20 @@ function claimsFrom(provider, payload) {
   };
 }
 
+const NATIVE_FAILURE_REASON_MAX = 300;
+
+/**
+ * What an app build said when its own sheet failed (routes/sign-in-providers.js,
+ * native/failed), fit for one log line: a string, control characters and runs
+ * of space folded to one space, at most NATIVE_FAILURE_REASON_MAX characters.
+ * null when it sent none.
+ */
+function nativeFailureReason(value) {
+  if (typeof value !== 'string') return null;
+  const line = value.replace(/[\u0000-\u001f\u007f\s]+/g, ' ').trim();
+  return line ? line.slice(0, NATIVE_FAILURE_REASON_MAX) : null;
+}
+
 /**
  * A native sign-in's ID token, as the app's own sheet returned it: its
  * claims, once the signature, issuer, an app audience and the nonce check
@@ -969,6 +983,7 @@ module.exports = {
   consumeState,
   verifyIdToken,
   verifyNativeIdToken,
+  nativeFailureReason,
   exchangeCode,
   signIn,
   completeUsername,

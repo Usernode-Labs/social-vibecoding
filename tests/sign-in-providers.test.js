@@ -452,6 +452,24 @@ test('the routes: public, guarded against a live session, admin-gated, and Apple
     'the web callback and the app do the same once the account is found or made');
   assert.match(mint, /'\/api\/auth\/oauth\/:provider\/native',/);
   assert.match(read('src/routes/public-api.js'), /native_sign_in_providers: await signInProviders\.offeredNativeProviders\(pool, config\),/);
+  // #5960: a failed app sheet's report spends a live native state and logs
+  // one line; it answers 204 whatever it was sent, and mints nothing.
+  const failed = routes.slice(routes.indexOf("'/api/auth/oauth/:provider/native/failed'"), routes.indexOf("'/api/auth/oauth/finish'"));
+  assert.match(routes, /router\.post\('\/api\/auth\/oauth\/:provider\/native\/failed', oauthSignInLimiter,/);
+  assert.match(failed, /providers\.consumeState\(pool, provider, req\.body\.state, binder, \{ native: true \}\)/);
+  assert.match(failed, /if \(state && !state\.mismatch\) \{\n\s+log\.warn\('sign-in-providers', 'App sheet failed', \{ provider, reason: providers\.nativeFailureReason\(req\.body\.reason\) \}\);/);
+  assert.equal((failed.match(/res\.status\(204\)\.end\(\)/g) || []).length, 2);
+  assert.doesNotMatch(failed, /createSession|afterSignIn/);
+  assert.doesNotMatch(mint, /native\/failed/, 'it mints no session, so it needs no live-session refusal');
+});
+
+test('a failed app sheet\'s reason is one log line', () => {
+  assert.equal(providers.nativeFailureReason(undefined), null);
+  assert.equal(providers.nativeFailureReason({ code: 'x' }), null);
+  assert.equal(providers.nativeFailureReason('  \n '), null);
+  assert.equal(providers.nativeFailureReason('Google sign-in did not finish\n(clientConfigurationError:\tbad)'),
+    'Google sign-in did not finish (clientConfigurationError: bad)');
+  assert.equal(providers.nativeFailureReason('x'.repeat(1000)).length, 300);
 });
 
 test('the secrets stay out of the debug role, the SQL console, staging and a merge', () => {
@@ -550,6 +568,19 @@ test('inside the app: the app\'s own sheet, offered where the server lists it an
     assert.deepEqual(await sheet.signInNatively('apple', { from: 'story', followInvite: false }), { error: null });
     replies.push([409, { code: 'logout_required' }]);
     assert.match((await sheet.signInNatively('apple', { from: 'story', followInvite: false })).error, /already signed in/);
+    // #5960: any other failure of the app's sheet shows the generic line and
+    // reports what the app said, with the start's state, for the log.
+    calls.length = 0;
+    bridgeAnswer = async () => { const err = new Error('Google sign-in did not finish (clientConfigurationError: bad).'); err.usernodeCode = 'failed'; throw err; };
+    replies.push([200, { state: 's5', nonce: 'n5' }], [204, {}]);
+    assert.match((await sheet.signInNatively('google', { from: 'signin', followInvite: false })).error, /That did not work/);
+    assert.deepEqual(calls.at(-1), ['fetch', '/api/auth/oauth/google/native/failed',
+      { state: 's5', reason: 'Google sign-in did not finish (clientConfigurationError: bad).' }]);
+    bridgeAnswer = async () => ({});
+    replies.push([200, { state: 's6', nonce: 'n6' }], [204, {}]);
+    assert.match((await sheet.signInNatively('google', { from: 'signin', followInvite: false })).error, /That did not work/);
+    assert.deepEqual(calls.at(-1), ['fetch', '/api/auth/oauth/google/native/failed',
+      { state: 's6', reason: 'The app answered without an ID token.' }]);
   } finally {
     globalThis.window = priorWindow;
     globalThis.fetch = priorFetch;
