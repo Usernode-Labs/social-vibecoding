@@ -5899,6 +5899,26 @@ test('the ask box is a sheet on a phone and a panel on a wide window', () => {
   // the floor for anything sitting directly above the rail.
 });
 
+test('#5916: Skip on the rail moves on to the next change without voting', () => {
+  // One press moves on, the way a swipe or Next does: Skip calls the feed's
+  // own forward move, so the row is marked seen but stays in the feed.
+  const start = WORKSHOP.indexOf('<aside className="dev-ws-rail" data-ws-rail="" aria-label={t(\'project:needsYou.rail.label\')}>');
+  assert.ok(start >= 0, 'the item rail is found');
+  const rail = WORKSHOP.slice(start, WORKSHOP.indexOf('</aside>', start));
+  const vote = rail.indexOf('data-ws-rail-btn="vote"');
+  const skip = rail.indexOf('data-ws-rail-btn="skip"');
+  const comments = rail.indexOf('data-ws-rail-btn="comments"');
+  assert.ok(vote >= 0 && skip > vote && comments > skip, 'Skip sits between Vote and Comments');
+  const button = rail.slice(rail.lastIndexOf('<button', skip), comments);
+  assert.match(button, /className="dev-ws-rail-btn dev-ws-rail-skip"/);
+  assert.match(button, /aria-label=\{t\('project:needsYou\.rail\.skipThis'\)\}/);
+  assert.match(button, /onClick=\{\(\) => go\(1\)\}/, 'the feed\'s own forward move');
+  assert.match(button, /\{t\('project:needsYou\.rail\.skip'\)\}/);
+  assert.ok(!/answer\(|castVote|toggleSheet|submitVote/.test(button), 'no answer, no vote, no sheet');
+  assert.equal(message('project:needsYou.rail.skip'), 'Skip');
+  assert.equal(message('project:needsYou.rail.skipThis'), 'Skip this change for now');
+});
+
 test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', () => {
   // THE ANSWERS ARE ON THE SHEET. The rail's Vote control opens the question
   // and records nothing by itself — a thumbs-up on a rail reads as "like",

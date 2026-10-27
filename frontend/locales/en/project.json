@@ -1349,7 +1349,7 @@
   },
   "needsYou.rail.label": {
     "text": "This item",
-    "description": "Accessible name of the column of buttons beside the item on screen in the Needs you feed (Vote, Description, Comments, Ask, Try it, More)."
+    "description": "Accessible name of the column of buttons beside the item on screen in the Needs you feed (Vote, Skip, Comments, Ask, Try it, More)."
   },
   "needsYou.rail.endLabel": {
     "text": "The end of the feed",
@@ -1366,6 +1366,14 @@
   "needsYou.rail.vote": {
     "text": "Vote",
     "description": "Button beside an item in the Needs you feed: opens the sheet where this person votes Yes or No on the change. A verb."
+  },
+  "needsYou.rail.skip": {
+    "text": "Skip",
+    "description": "Button beside an item in the Needs you feed: moves on to the next item without voting, leaving this one in the feed to vote on later. A verb."
+  },
+  "needsYou.rail.skipThis": {
+    "text": "Skip this change for now",
+    "description": "Accessible name of the Skip button beside an item in the Needs you feed: moves on without voting and leaves the change in the feed."
   },
   "needsYou.rail.comments": {
     "text": "Comments",
