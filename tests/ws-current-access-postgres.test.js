@@ -62,11 +62,21 @@ test('current WebSocket authority against the full PostgreSQL schema', {
   let outage = false, routeFailure = false, gateQueries = 0;
   let holdNext;
   const heldBatches = new Set();
+  // open() waits for the server to finish authorizing its socket. The check
+  // runs right after joinRoom (or, on /ws/events, right after the client is
+  // added to globalClients), so its query arriving proves the socket is
+  // registered for delivery. A fixed sleep was too short under load.
+  const pendingOpens = [];
   const webPool = {
     connect: (...args) => pool.connect(...args),
     query: async (sql, params) => {
       if (sql === AUTHORIZE_SQL) {
         gateQueries++;
+        for (const d of JSON.parse(params[0])) {
+          const key = `${d.token}|${d.app_required ? 'app' : 'events'}`;
+          const at = pendingOpens.findIndex(w => w.key === key);
+          if (at !== -1) pendingOpens.splice(at, 1)[0].seen = true;
+        }
         if (holdNext) {
           const hold = holdNext;
           holdNext = null;
@@ -95,15 +105,25 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     instances.push({ ws, server, port: server.address().port });
   }
   async function open(i, token, path = '/ws/events') {
-    const sock = new WebSocket(`ws://127.0.0.1:${instances[i].port}${path}`, { headers: { cookie: `session=${token}` } });
-    sockets.push(sock);
-    sock.frames = [];
-    sock.on('message', raw => sock.frames.push(JSON.parse(String(raw))));
-    sock.on('close', code => { sock.closeCode = code; });
-    await new Promise((resolve, reject) => { sock.once('open', resolve); sock.once('error', reject); });
-    if (path === '/ws/events') await until(() => sock.frames.length, 'platform handshake');
-    await wait(20); // allow the post-upgrade authority check to finish
-    return sock;
+    const appRequired = path.startsWith('/ws/chat/');
+    const waiter = { key: `${token}|${appRequired ? 'app' : 'events'}`, seen: false };
+    pendingOpens.push(waiter);
+    try {
+      const sock = new WebSocket(`ws://127.0.0.1:${instances[i].port}${path}`, { headers: { cookie: `session=${token}` } });
+      sockets.push(sock);
+      sock.frames = [];
+      sock.on('message', raw => sock.frames.push(JSON.parse(String(raw))));
+      sock.on('close', code => { sock.closeCode = code; });
+      await new Promise((resolve, reject) => { sock.once('open', resolve); sock.once('error', reject); });
+      if (path === '/ws/events') await until(() => sock.frames.length, 'platform handshake');
+      // The server closes a socket it refuses before it ever authorizes it
+      // (a 4004 reconnect), so a close counts as settled too.
+      await until(() => waiter.seen || sock.readyState >= WebSocket.CLOSING, 'post-upgrade authority check');
+      return sock;
+    } finally {
+      const at = pendingOpens.indexOf(waiter);
+      if (at !== -1) pendingOpens.splice(at, 1);
+    }
   }
   let seq = 0;
   async function fixture() {
