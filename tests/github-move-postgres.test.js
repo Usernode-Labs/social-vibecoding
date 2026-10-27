@@ -158,3 +158,66 @@ test('the move migration repoints recorded apps once and copies twins', { timeou
   assert.deepEqual(result, { twins: 0, applied: [], links: 0 });
   assert.deepEqual((await links()).slice(3), untouched);
 });
+
+// The changes underway at the move (services/code-missing.js): which ones
+// predate their app's move, read from git_host_moves.applied_at, against the
+// real schema. Those are the only ones whose branch is read; one made after
+// has its branch made at its first turn and is never "gone".
+test('a change made before its app moved is read for its branch; one made after, or on an app that never moved, is not', { timeout: 120000 }, async (t) => {
+  const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    return t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check');
+  }
+  const name = 'github_move_gone_' + crypto.randomBytes(6).toString('hex');
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN); url.pathname = '/' + name;
+  const pool = new Pool({ connectionString: String(url), max: 4 });
+  const prior = { GIT_HOST_URL: process.env.GIT_HOST_URL, GIT_HOST_ORG: process.env.GIT_HOST_ORG };
+  process.env.GIT_HOST_URL = 'https://git.example.test';
+  process.env.GIT_HOST_ORG = 'apps';
+  t.after(async () => {
+    for (const [k, v] of Object.entries(prior)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    await pool.end();
+    await admin.query(`DROP DATABASE ${name}`);
+    await admin.end();
+  });
+  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+  const codeMissing = require('../src/services/code-missing');
+
+  await pool.query(`INSERT INTO users (id, username, password) VALUES (1, 'ada', 'x')`);
+  const { rows: [moved] } = await pool.query(
+    `INSERT INTO apps (name, slug, repo_url) VALUES ('Todo', 'todo-1', 'https://git.example.test/apps/todo-1') RETURNING id`);
+  const { rows: [held] } = await pool.query(
+    `INSERT INTO apps (name, slug, repo_url) VALUES ('Held', 'held-1', 'https://git.example.test/apps/held-1') RETURNING id`);
+  await pool.query(
+    `INSERT INTO git_host_moves (app_id, repo_url, main_sha, outcome, applied_at)
+     VALUES ($1, 'https://git.example.test/apps/todo-1', '${'c'.repeat(40)}', 'recovered', NOW() - INTERVAL '1 day')`, [moved.id]);
+  // A move recorded and not applied yet is no move.
+  await pool.query(
+    `INSERT INTO git_host_moves (app_id, repo_url, main_sha, outcome) VALUES ($1, 'https://git.example.test/apps/held-1', '${'d'.repeat(40)}', 'exact')`,
+    [held.id]);
+  const { rows: made } = await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, created_at) VALUES
+       ($1, 1, 'dev/ada-before', 'active', NOW() - INTERVAL '3 days'),
+       ($1, 1, 'dev/ada-after', 'active', NOW()),
+       ($1, 1, NULL, 'paused', NOW() - INTERVAL '3 days'),
+       ($2, 1, 'dev/ada-held', 'active', NOW() - INTERVAL '3 days')
+     RETURNING id`, [moved.id, held.id]);
+  const [before, afterMove, branchless, onHeld] = made.map((r) => Number(r.id));
+
+  const preMove = (await pool.query(codeMissing.PRE_MOVE_IDS_SQL, [[before, afterMove, branchless, onHeld]])).rows.map((r) => Number(r.id));
+  assert.deepEqual(preMove.sort((a, b) => a - b), [before, branchless].sort((a, b) => a - b));
+
+  const reads = [];
+  const readRef = async (repoUrl, ref) => { reads.push(ref); return ref === 'main' ? 'c'.repeat(40) : null; };
+  assert.equal(await codeMissing.branchGone(pool, { id: before }, { readRef }), true, 'main came across, its branch did not');
+  assert.deepEqual(reads, ['dev/ada-before', 'main']);
+  reads.length = 0;
+  assert.equal(await codeMissing.branchGone(pool, { id: afterMove }, { readRef }), false, 'made after the move');
+  assert.equal(await codeMissing.branchGone(pool, { id: branchless }, { readRef }), false, 'no branch yet: minted at its first turn');
+  assert.equal(await codeMissing.branchGone(pool, { id: onHeld }, { readRef }), false, 'its app has not moved');
+  assert.deepEqual(reads, [], 'and none of those is read on the git host');
+});

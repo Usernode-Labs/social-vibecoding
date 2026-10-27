@@ -92,6 +92,18 @@ test('the copy, from the catalogs', () => {
   assert.equal(message('project:needsYou.fact.codeMissing'), 'Code missing');
   assert.equal(message('project:needsYou.fact.codeMissingTitle'), SENTENCE);
   assert.equal(message('changes:vote.toast.codeMissing'), 'Your vote is saved. This proposal can’t go live until its code is back.');
+  // A change underway (its own branch did not come across): the dev chat's
+  // strip, its button, and the first message the button hands the agent.
+  // The server's sentence (code-missing.js BRANCH_GONE) says the same.
+  const UNDERWAY = 'This change’s code didn’t come across when Homeroom moved off GitHub, so it can’t be continued here. '
+    + 'Nothing was changed. Start a new change from the current version (its plan comes with it), '
+    + 'or wait: Homeroom restores the code when GitHub’s copy arrives.';
+  assert.equal(message('devchat:banner.codeMissing.text'), UNDERWAY);
+  assert.equal(require('../src/services/code-missing').BRANCH_GONE, UNDERWAY.replace(/’/g, "'"));
+  assert.equal(message('devchat:banner.codeMissing.start'), 'Start a new change');
+  assert.equal(message('devchat:banner.codeMissing.seed', { id: 4223 }),
+    'Start a new change from the current version, with the plan from change 4223.');
+  for (const key of ['text', 'start', 'seed']) assert.doesNotMatch(message(`devchat:banner.codeMissing.${key}`, { id: 1 }), /—/);
 });
 
 test('the card: one red "Code missing" tag with the sentence on hover, and the vote stays its pill', () => {

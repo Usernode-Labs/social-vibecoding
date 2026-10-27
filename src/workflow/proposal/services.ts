@@ -47,6 +47,15 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
         const repo = parseRepoAddress(row.repo_url || '');
         const gh = github();
 
+        // A change whose branch did not come across when Homeroom moved off
+        // GitHub (services/code-missing.js branchGone, read live) has nothing
+        // to put up for a vote: said in its own words, before any pull request
+        // or title is made for it, rather than as "no committed code".
+        const codeMissing = legacy('services/code-missing');
+        if (!imported && await codeMissing.branchGone(pool, row) === true) {
+          throw refused(codeMissing.CODE, codeMissing.BRANCH_GONE);
+        }
+
         // #2500 / #2537: the originating request of a session older than the
         // creation-time seed, linked before the group reads it (the row's
         // seeded mark is the transition's to write). Best effort.

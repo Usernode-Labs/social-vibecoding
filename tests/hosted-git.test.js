@@ -195,3 +195,37 @@ test('a revert is made on the mirror and pushed to its own branch; a conflict is
   await assert.rejects(hostedGit.revertOnto('apps', 'rv-1', change.sha, { branch: 'revert/y', message: 'm' }), /merge conflicts/);
   assert.equal(await gitHost.readRef('rv-1', 'revert/y'), null);
 });
+
+// A change made before its app moved off GitHub names a branch that may only
+// ever have existed there (services/code-missing.js branchGone). Read live,
+// with git's own answer, before anything runs on the change.
+test('a change\'s branch that did not come across reads as gone, live; pushed back it is there at once; an unreadable host says nothing', async (t) => {
+  stubCreateApi(t);
+  await github.createRepo('apps', 'moved-1');
+  const repoUrl = 'https://git.example.test/apps/moved-1';
+  const codeMissing = require('../src/services/code-missing');
+  // The change predates its app's move: its row, as PRE_MOVE_SQL answers it.
+  const pool = {
+    query: async (sql, params) => ({ rows: Number(params[0]) === 7 ? [{ branch_name: 'dev/ada-old', repo_url: repoUrl }] : [] }),
+  };
+  const change = { id: 7, branch_name: 'dev/ada-old', repo_url: repoUrl };
+  assert.ok(await gitHost.readRef('moved-1', 'main'), 'main came across');
+  assert.equal(await codeMissing.branchGone(pool, change), true);
+
+  // A local agent's or a CLI hand-off's upload to it fails as a 404, which
+  // the routes tell apart from GitHub being unavailable.
+  await assert.rejects(github.createProposalCommit('apps', 'moved-1', {
+    branchName: 'dev/ada-old', expectedRemoteParentSha: 'a'.repeat(40), localParentSha: 'a'.repeat(40),
+    localParentTreeSha: 'b'.repeat(40), expectedTreeSha: 'c'.repeat(40), localCommitSha: 'd'.repeat(40),
+    message: 'x', authoredAt: '2026-10-26T10:00:00Z', committedAt: '2026-10-26T10:00:00Z', files: [],
+  }), (err) => err.status === 404);
+
+  // Pushed back under its name (from GitHub's copy): there at the next read,
+  // with no list cache to wait out.
+  await github.createBranch('apps', 'moved-1', 'dev/ada-old');
+  assert.equal(await codeMissing.branchGone(pool, change), false);
+
+  // A repository the host cannot read: unknown, never gone.
+  const missingRepo = { query: async () => ({ rows: [{ branch_name: 'dev/x', repo_url: 'https://git.example.test/apps/no-such-repo' }] }) };
+  assert.equal(await codeMissing.branchGone(missingRepo, { id: 8 }), null);
+});

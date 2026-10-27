@@ -212,6 +212,9 @@ function makeDevChat() {
     URLSearchParams,
     // Every session would be in a hand-off venue if this answered alone.
     Launchpad: { isLaunchpad: () => true },
+    // The language runtime's global, in English (the code-missing strip's
+    // first message is worded from it).
+    PlatformI18n: require('./lib/platform-i18n').englishPlatformI18n(),
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
@@ -325,6 +328,76 @@ test('the strip says it in words, and its one action routes through <Button>', (
   const bare = renderToHtml(createElement(m.DevChatBanners, {}));
   assert.match(bare, /This is an older session/);
   assert.doesNotMatch(bare, /dc-classic-start-agent/);
+});
+
+// ── 4b. A change whose code did not come across from GitHub ─────────────
+//
+// src/services/code-missing.js: the server says so as `code_missing` on GET
+// /api/sessions/:id, beside `classic_read_only`, and refuses every turn and
+// sync on it. The dev chat's strip says why and, for the owner, starts a new
+// change from the current version carrying this one's plan.
+
+test('GET /api/sessions/:id says which changes are missing their code, beside classic_read_only', () => {
+  const body = routeBody(SESSIONS_SRC, 'get', '/api/sessions/:id');
+  const classicAt = body.indexOf('session.classic_read_only = classicSessions.isClassicSession(session);');
+  const missingAt = body.indexOf('session.code_missing = await codeMissing.forSession(pool, session);');
+  assert.ok(classicAt > 0 && missingAt > classicAt);
+});
+
+test('a change missing its code gets its strip, in place of the strips about continuing or syncing it', () => {
+  const { DevChat, started } = makeDevChat();
+  const MISSING = { ...READ_ONLY, code_missing: true, status: 'active', pr_number: null, agent_session_id: 12, behind_main: 2 };
+  DevChat.currentSession = MISSING;
+  const view = JSON.parse(JSON.stringify(DevChat._bannersView()));
+  assert.deepEqual(view.codeMissing, { canStart: true });
+  assert.equal(view.classicReadOnly, null, 'one strip starts the next change');
+  assert.equal(view.sync, null, 'there is no branch to sync');
+  assert.equal(view.agentSession, null, 'nor a conversation that can continue it');
+  assert.equal(view.newChange, null);
+  assert.equal(view.credits, null);
+
+  // Somebody else's (an admin reading it): the words, no button.
+  DevChat.currentSession = { ...MISSING, user_id: 99 };
+  assert.deepEqual(JSON.parse(JSON.stringify(DevChat._codeMissingView(DevChat.currentSession))), { canStart: false });
+  // A payload without the flag is a change the server did not refuse.
+  assert.equal(DevChat._codeMissingView({ ...MISSING, code_missing: undefined }), null);
+  DevChat.currentSession = { ...READ_ONLY, behind_main: 2 };
+  assert.equal(DevChat._bannersView().codeMissing, null);
+
+  // The button: an unsent agent session on the same app, its first message
+  // ready to send, naming this change so its plan comes across.
+  DevChat.currentSession = MISSING;
+  DevChat.startNewChangeFromPlan();
+  assert.deepEqual(JSON.parse(JSON.stringify(started)), [{
+    slug: 'recipe-box', entry: 'banner',
+    message: 'Start a new change from the current version, with the plan from change 41.',
+  }]);
+});
+
+test('the code-missing strip says it in words, leads the slot, and its one action routes through <Button>', () => {
+  const m = loadTsx('tests/fixtures/dev-banners-api.ts');
+  m.bannersStore.set({
+    sync: null, newChange: null, credits: null, creditsLow: null, agentSession: null, classicReadOnly: null,
+    codeMissing: { canStart: true },
+  });
+  const html = renderToHtml(createElement(m.DevChatBanners, {}));
+  assert.match(html, /<div id="dc-code-missing-banner" class="grid [^"]*bg-amber-50[^"]*" role="status">/);
+  assert.match(html, />This change’s code didn’t come across when Homeroom moved off GitHub, so it can’t be continued here\. Nothing was changed\. Start a new change from the current version \(its plan comes with it\), or wait: Homeroom restores the code when GitHub’s copy arrives\.</);
+  assert.match(html, /<button id="dc-code-missing-start" type="button" class="rounded-md bg-violet-600 [^"]*">Start a new change<\/button>/);
+  assert.ok(html.indexOf('dc-code-missing-banner') === html.indexOf('<div id=') + 9);
+  assert.doesNotMatch(html, /—/);
+
+  m.bannersStore.set({
+    sync: null, newChange: null, credits: null, creditsLow: null, agentSession: null, classicReadOnly: null,
+    codeMissing: { canStart: false },
+  });
+  const bare = renderToHtml(createElement(m.DevChatBanners, {}));
+  assert.match(bare, /This change’s code didn’t come across/);
+  assert.doesNotMatch(bare, /dc-code-missing-start/);
+  // Empty on the first render, as every island's slot is.
+  const STORE = read('frontend', 'src', 'features', 'dev-chat', 'banners-store.ts');
+  assert.match(STORE, /codeMissing\?: CodeMissingBannerView \| null;/);
+  assert.match(STORE, /export const NO_BANNERS: BannersState = \{[^}]*codeMissing: null,/);
 });
 
 // ── 5. The routes, driven ───────────────────────────────────────────────

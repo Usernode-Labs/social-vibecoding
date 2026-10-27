@@ -598,13 +598,24 @@ function dispatchDeps({
   change = CHANGE_ROW, busy = false, tool = null, cleared = true, choice = null, switched = { ok: true },
   // What holds a busy change: a turn, or only a shots run.
   shotsRun = null, shotsWaitMs = undefined,
+  // What the live read of the change's branch answers (code-missing.js
+  // branchGone): true gone, false there, null unknown. Unset: the real one.
+  gone = undefined,
 } = {}) {
   const isBusy = typeof busy === 'function' ? busy : () => busy;
   const log = [];
   const registry = new Map();
+  const realCodeMissing = require('../src/services/code-missing');
   const deps = {
     log,
     registry,
+    ...(gone === undefined ? {} : {
+      codeMissing: {
+        ...realCodeMissing,
+        branchGone: async (_pool, change) => { log.push(['branchGone', Number(change.id)]); return gone; },
+        noteRefused: async (_pool, id) => { log.push(['noteRefused', id]); },
+      },
+    }),
     agentSessions: { getAgentChoice: async () => choice },
     turnDeps: {
       switchSessionAgent: async (_pool, args) => { log.push(['switch', args]); return switched; },
@@ -784,6 +795,35 @@ test('a dispatch is refused when there is nothing to build on', async () => {
   assert.match(busy.outcome.toolResultText, /^busy/);
   assert.ok(!busy.log.some((e) => e[0] === 'begin'), 'a busy change is not claimed');
   assert.equal(await dispatch.canDispatch(null), false);
+});
+
+test('a change whose branch did not come across from GitHub is refused before anything runs, and says so once', async () => {
+  // Parked, so a dispatch would reopen it (a slot) before building.
+  for (const kind of ['build', 'scout']) {
+    const { outcome, log, agentEvents } = await dispatchWith({
+      gone: true, change: { ...CHANGE_ROW, status: 'paused', branch_name: 'dev/ada-1' },
+    }, kind);
+    assert.equal(outcome.ran, false);
+    assert.equal(outcome.isError, true);
+    assert.match(outcome.toolResultText, /^code_missing: change 50's code didn't come across when Homeroom moved off GitHub/);
+    assert.match(outcome.toolResultText, /Nothing ran and nothing was changed\. Do not suggest retrying\./);
+    assert.match(outcome.toolResultText, /start_change with fromChangeId 50/, 'the way on, with this change\'s plan');
+    const did = log.map((e) => e[0]);
+    assert.deepEqual(did.filter((k) => ['branchGone', 'noteRefused'].includes(k)), ['branchGone', 'noteRefused'],
+      'one status row in the change');
+    for (const never of ['grant', 'call', 'switch', 'begin', 'clearPendingStop', 'build', 'scout']) {
+      assert.ok(!did.includes(never), `${never}: not reopened, not claimed, nothing started`);
+    }
+    assert.deepEqual(agentEvents.map((e) => [e.type, e.changeId, e.codeMissing]), [['status', 50, true]]);
+    assert.match(agentEvents[0].text, /^This change's code didn't come across/);
+  }
+
+  // Pushed back (or never gone), and a read that could not tell: it builds.
+  for (const gone of [false, null]) {
+    const { outcome, log } = await dispatchWith({ gone, change: { ...CHANGE_ROW, branch_name: 'dev/ada-1' } });
+    assert.equal(outcome.toolResultText, 'built');
+    assert.ok(!log.some((e) => e[0] === 'noteRefused'));
+  }
 });
 
 test('a change held only by a shots run waits it out, then builds', async () => {

@@ -223,6 +223,107 @@ test('a mirror that cannot be read says nothing is missing, and asks again only 
   }
 });
 
+// ── Changes underway ──────────────────────────────────────────────────
+//
+// Most changes underway at the move had no pull request: their own branch
+// is what did not come across. Labelled from the same cached list, and read
+// live (branchGone) before a turn, a sync, a promote or a copy runs on one.
+
+// A pool that also says which changes predate their app's move.
+function underwayPool(preMove) {
+  return pullsPool(PULLS, (sql, params) => (/FROM chat_sessions cs\s+JOIN git_host_moves m/.test(sql)
+    ? params[0].filter((id) => preMove.includes(id)).map((id) => ({ id }))
+    : undefined));
+}
+
+test('a change underway is labelled by its own branch, and only when it predates its app\'s move', async () => {
+  const r = repo();
+  reads.dir = r.dir; reads.count = 0; reads.fail = false;
+  codeMissing._resetForTests();
+  try {
+    const underway = [
+      { id: 21, app_id: 7, pr_number: null, status: 'active', branch_name: 'dev/gone', repo_url: HOSTED },
+      { id: 22, app_id: 7, pr_number: null, status: 'paused', branch_name: 'dev/gone', repo_url: HOSTED },
+      { id: 23, app_id: 7, pr_number: null, status: 'active', branch_name: 'dev/kept', repo_url: HOSTED },
+      // Made after the move: its branch is made at its first turn.
+      { id: 24, app_id: 7, pr_number: null, status: 'active', branch_name: 'dev/gone', repo_url: HOSTED },
+      // Its pull request is closed: its own branch is read instead.
+      { id: 25, app_id: 7, pr_number: 14, status: 'active', branch_name: 'dev/gone', repo_url: HOSTED },
+      // On GitHub, or without a branch yet: never.
+      { id: 26, app_id: 9, pr_number: null, status: 'active', branch_name: 'dev/gone', repo_url: ON_GITHUB },
+      { id: 27, app_id: 7, pr_number: null, status: 'active', branch_name: null, repo_url: HOSTED },
+    ];
+    assert.equal(codeMissing.applies(underway[0]), true);
+    assert.equal(codeMissing.applies(underway[5]), false);
+    assert.equal(codeMissing.applies(underway[6]), false);
+    assert.equal(codeMissing.applies({ ...underway[0], status: 'promoted' }), false, 'a proposal is read by its pull request');
+    const pool = underwayPool([21, 22, 23, 25]);
+    const missing = await codeMissing.missingIds(pool, [...SESSIONS, ...underway]);
+    assert.deepEqual([...missing].sort((a, b) => a - b), [1, 5, 21, 22, 25]);
+    const asked = pool.seen.filter((q) => /JOIN git_host_moves/.test(q.sql));
+    assert.equal(asked.length, 1, 'one query for the whole list');
+    assert.deepEqual(asked[0].params, [[21, 22, 23, 24, 25]], 'only the changes underway with no open pull request');
+    assert.equal(reads.count, 1, 'still one branch read for the repository');
+    assert.equal(await codeMissing.forSession(pool, underway[0]), true);
+    assert.equal(await codeMissing.forSession(pool, underway[3]), false, 'made after the move');
+  } finally {
+    codeMissing._resetForTests();
+    r.cleanup();
+  }
+});
+
+test('a change underway is read live before anything runs on it: gone, pushed back, made after the move, unknown', async () => {
+  const MAIN = 'b'.repeat(40);
+  const refs = new Map([['main', MAIN]]);
+  const readCalls = [];
+  const readRef = async (repoUrl, ref) => { readCalls.push([repoUrl, ref]); return refs.get(ref) || null; };
+  const queries = [];
+  const pool = {
+    async query(sql, params) {
+      queries.push(String(sql));
+      assert.match(String(sql), /cs\.created_at < m\.applied_at/);
+      return { rows: Number(params[0]) === 41 ? [{ branch_name: 'dev/old', repo_url: HOSTED }] : [] };
+    },
+  };
+  const change = { id: 41, branch_name: 'dev/old', repo_url: HOSTED };
+  assert.equal(await codeMissing.branchGone(pool, change, { readRef }), true, 'main is there and the branch is not');
+  assert.deepEqual(readCalls, [[HOSTED, 'dev/old'], [HOSTED, 'main']]);
+
+  // Pushed back under its name: there at the next read, no minute to wait.
+  refs.set('dev/old', 'c'.repeat(40));
+  assert.equal(await codeMissing.branchGone(pool, change, { readRef }), false);
+
+  // Made after its app moved: no row, and nothing is read on the git host.
+  readCalls.length = 0;
+  assert.equal(await codeMissing.branchGone(pool, { id: 42, branch_name: 'dev/new', repo_url: HOSTED }, { readRef }), false);
+  assert.deepEqual(readCalls, []);
+
+  // No branch yet, or on GitHub: not even a query.
+  queries.length = 0;
+  assert.equal(await codeMissing.branchGone(pool, { id: 41, branch_name: null, repo_url: HOSTED }, { readRef }), false);
+  assert.equal(await codeMissing.branchGone(pool, { id: 41, branch_name: 'dev/old', repo_url: ON_GITHUB }, { readRef }), false);
+  assert.deepEqual(queries, []);
+
+  // A read that cannot tell goes on: unknown, never gone.
+  refs.delete('dev/old');
+  warned.length = 0;
+  assert.equal(await codeMissing.branchGone(pool, change, { readRef: async () => { throw new Error('git host down'); } }), null);
+  assert.equal(await codeMissing.branchGone(pool, change, { readRef: async () => null }), null, 'no main either: nothing to compare with');
+  assert.equal(await codeMissing.branchGone(pool, change, {
+    readRef: () => new Promise((resolve) => setTimeout(resolve, 200, null)), waitMs: 20,
+  }), null, 'too slow');
+  assert.equal(await codeMissing.branchGone({ query: async () => { throw new Error('pool gone'); } }, change, { readRef }), null);
+  assert.ok(warned.length >= 2, 'a failed read is logged');
+
+  // What the Mayor is told, and what the change says.
+  assert.match(codeMissing.dispatchRefusal(41), /^code_missing: change 41's code didn't come across/);
+  assert.match(codeMissing.dispatchRefusal(41), /Do not suggest retrying\. Offer to start a new change from the current version/);
+  assert.equal(codeMissing.BRANCH_GONE, "This change's code didn't come across when Homeroom moved off GitHub, so it can't be continued here. "
+    + 'Nothing was changed. Start a new change from the current version (its plan comes with it), '
+    + "or wait: Homeroom restores the code when GitHub's copy arrives.");
+  assert.doesNotMatch(codeMissing.BRANCH_GONE + codeMissing.dispatchRefusal(41), /—/);
+});
+
 // native-pulls / native-merge with their database stubbed: the app lookup
 // and the pull request's row. The mirror is the real repository above.
 function loadNative(row) {
@@ -490,4 +591,82 @@ test('the lists carry it: the board\'s proposals, a proposal\'s page and the Com
   assert.ok(force.indexOf('codeMissing.forSession') < force.indexOf('forceMerge('), 'before the merge is queued');
   // The merge path's own refusal, for a branch gone after the gate.
   assert.match(src, /if \(codeMissing\.isError\(err\)\) \{\s*return \{ outcome: 'refused', kind: 'blocked', codeMissing: true,/);
+});
+
+// ── The other doors into a change underway, and the way on ─────────────
+
+test('a promote of a change whose branch did not come across says so, before any pull request or title is made', async () => {
+  const { proposalServices } = require('../src/workflow/proposal/services.ts');
+  const { WORK } = require('../src/workflow/proposal/machine.ts');
+  const realGone = codeMissing.branchGone;
+  const row = {
+    id: 61, app_id: 7, user_id: 3, status: 'active', source: null, branch_name: 'dev/gone', repo_url: HOSTED,
+    pr_number: null, pr_title: null, linked_issues: [], issue_link_seeded: true,
+  };
+  const asked = [];
+  const pool = {
+    async query(sql) {
+      asked.push(String(sql));
+      if (/FROM chat_sessions cs JOIN apps a/.test(String(sql))) return { rows: [{ ...row }] };
+      return { rows: [] };
+    },
+  };
+  try {
+    codeMissing.branchGone = async (p, s) => (Number(s.id) === 61 ? true : realGone(p, s));
+    const err = await proposalServices({ config: {}, pool })[WORK.open].run({ input: { sessionId: 61, n: 1, userId: 3 } })
+      .then(() => null, (e) => e);
+    assert.ok(err, 'refused');
+    assert.equal(err.code, 'code_missing');
+    assert.equal(err.message, codeMissing.BRANCH_GONE);
+    assert.equal(err.permanent, true, 'not retried: it is the same every time');
+    assert.doesNotMatch(err.message, /no committed code|Re-run your request/);
+    assert.equal(asked.filter((s) => !/FROM chat_sessions cs JOIN apps a/.test(s)).length, 0,
+      'nothing else read or written: no title generated, no request linked');
+  } finally {
+    codeMissing.branchGone = realGone;
+  }
+  // Answered as a refusal with its code, not as "GitHub unavailable".
+  const platform = read('src/workflow/platform.ts');
+  assert.match(platform, /if \(a\.code === 'code_missing'\) return \{ status: 409, body: \{ error: a\.message, code: 'code_missing' \} \};/);
+  assert.match(platform, /\['session_state_changed', 409\], \['code_missing', 409\],/);
+});
+
+test('a copy of an auto run, a CLI hand-off upload and a local agent\'s upload refuse with code_missing, not a fallback or a 503', () => {
+  const sessions = read('src/routes/sessions.js');
+  const clone = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/clone-headless'"));
+  const refusedAt = clone.indexOf('if (await codeMissing.branchGone(pool, src) === true) {');
+  assert.ok(refusedAt > 0, 'the copy reads the run\'s branch live');
+  for (const later of ['sessionLifecycle.freeUserSlot(', 'sessionLifecycle.claimGlobalSlot(', 'github.createBranch(']) {
+    assert.ok(refusedAt < clone.indexOf(later), `before ${later}: no slot, no branch off main`);
+  }
+  assert.match(clone.slice(refusedAt, refusedAt + 200), /return res\.status\(409\)\.json\(\{ error: codeMissing\.BRANCH_GONE, code: codeMissing\.CODE \}\);/);
+
+  for (const rel of ['src/routes/proposal-handoff.js', 'src/routes/cli-agent.js']) {
+    const src = read(rel);
+    const upload = src.slice(src.indexOf('github.createProposalCommit('));
+    const gone = upload.indexOf('if (err.status === 404 && await codeMissing.branchGone(pool, session) === true) {');
+    assert.ok(gone > 0, `${rel}: a 404 is read for what it is`);
+    assert.ok(gone < upload.indexOf('githubBudget.githubUnavailableBody(err)'), `${rel}: before the 503`);
+    assert.match(upload.slice(gone, gone + 220), /return res\.status\(409\)\.json\(\{ error: codeMissing\.CODE, message: codeMissing\.BRANCH_GONE \}\);/);
+  }
+});
+
+test('the way on: start_change carries a change\'s plan to a new change with its own branch, never the old one', () => {
+  const tools = read('src/services/mcp-tools.js');
+  const start = tools.slice(tools.indexOf("server.registerTool('start_change'"), tools.indexOf("server.registerTool('promote_change'"));
+  assert.match(start, /fromChangeId: z\.number\(\)\.int\(\)\.positive\(\)\.max\(2147483647\)\.optional\(\)/);
+  assert.match(start, /\.\.\.\(fromChangeId \? \{ fromChangeId \} : \{\}\),/);
+  // A refusal's code beside its sentence reaches the Mayor as that code.
+  assert.match(tools, /const besideCode = !coded && typeof body\.code === 'string' && \/\^\[a-z_\]\+\$\/\.test\(body\.code\) \? body\.code : null;/);
+
+  const sessions = read('src/routes/sessions.js');
+  const route = sessions.slice(sessions.indexOf("router.post('/api/apps/:slug/sessions'"),
+    sessions.indexOf("router.post('/api/apps/:slug/issues/:number/headless-session'"));
+  const fromAt = route.indexOf('SELECT id, spec_md, spec_html FROM chat_sessions');
+  assert.ok(fromAt > 0 && fromAt < route.indexOf('agentSessions.prepareChangeStart('),
+    'read, and refused when it is not theirs, before the active change is parked');
+  assert.match(route, /WHERE id = \$1 AND app_id = \$2 AND user_id = \$3 AND is_headless = FALSE/, 'one of theirs, on this app');
+  assert.match(route, /VALUES \(\$1, \$2, NULL, 'active',/, 'a branch of its own, made from the current version at its first turn');
+  assert.match(route, /UPDATE chat_sessions SET spec_md = \$2, spec_html = \$3 WHERE id = \$1/);
+  assert.match(route, /INSERT INTO chat_session_specs \(session_id, version, content, content_html\)\s+SELECT \$1, version, content, content_html FROM chat_session_specs WHERE session_id = \$2/);
 });

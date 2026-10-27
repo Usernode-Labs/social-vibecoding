@@ -411,6 +411,12 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
         if (['branch_moved', 'tree_mismatch', 'parent_tree_mismatch'].includes(err.code)) {
           return res.status(409).json({ error: err.code });
         }
+        // The change's branch did not come across when Homeroom moved off
+        // GitHub (services/code-missing.js, read live): not a GitHub outage.
+        const codeMissing = require('../services/code-missing');
+        if (err.status === 404 && await codeMissing.branchGone(pool, session) === true) {
+          return res.status(409).json({ error: codeMissing.CODE, message: codeMissing.BRANCH_GONE });
+        }
         const detail = github.describeGithubError(err);
         // Never log GitHub's response body here: a provider validation error
         // can echo fields from the uploaded source.

@@ -4479,7 +4479,10 @@ function registerTools(server, ctx) {
     const coded = typeof body.error === 'string' && /^[a-z_]+$/.test(body.error);
     const message = (coded && typeof body.message === 'string' && body.message)
       || body.error || body.message || `Homeroom returned HTTP ${result.status}.`;
-    return toolError(coded ? body.error : 'refused', String(message));
+    // Others send the sentence in `error` and the code beside it (a change
+    // whose code did not come across from GitHub: `code_missing`).
+    const besideCode = !coded && typeof body.code === 'string' && /^[a-z_]+$/.test(body.code) ? body.code : null;
+    return toolError(coded ? body.error : (besideCode || 'refused'), String(message));
   };
 
   const changeSummarySchema = {
@@ -4585,6 +4588,10 @@ function registerTools(server, ctx) {
         .describe('A short name for the change, as the user would call it. Up to 256 characters.'),
       linkedIssues: z.array(z.number().int().positive().max(2147483647)).max(10).optional()
         .describe('Request numbers this change addresses. The first is claimed for the user.'),
+      fromChangeId: z.number().int().positive().max(2147483647).optional()
+        .describe('One of the user\'s own changes on the same app whose plan (its spec) the new change starts with. '
+          + 'The new change gets a new branch from the app\'s current version; nothing else comes across. Use it '
+          + 'when a dispatch answered code_missing for that change.'),
     },
     outputSchema: {
       ...changeSummarySchema,
@@ -4593,7 +4600,7 @@ function registerTools(server, ctx) {
       warnings: z.array(z.string()),
     },
     annotations: writeAnnotations,
-  }, async ({ slug, title, linkedIssues }) => {
+  }, async ({ slug, title, linkedIssues, fromChangeId }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
     if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug, as list_apps returns it.');
@@ -4608,8 +4615,11 @@ function registerTools(server, ctx) {
     // The name rides on the create itself (#2779 step 3), so the change is
     // never briefly nameless and an agent session's "started" note can say
     // what it is.
-    const created = await callPlatform(baseUrl, accessToken, 'POST', `/api/apps/${slug}/sessions`,
-      issues.length ? { issueNumber: issues[0], title: name } : { title: name });
+    const created = await callPlatform(baseUrl, accessToken, 'POST', `/api/apps/${slug}/sessions`, {
+      ...(issues.length ? { issueNumber: issues[0] } : {}),
+      title: name,
+      ...(fromChangeId ? { fromChangeId } : {}),
+    });
     if (!created.ok) return changeRouteError(created);
     const session = (created.body && created.body.session) || {};
     const changeId = Number(session.id);
@@ -4634,7 +4644,9 @@ function registerTools(server, ctx) {
       status: session.status || 'active',
       linkedIssues: linked,
       warnings,
-      nextStep: `Change ${changeId} is open on ${slug}. Nothing is built yet: dispatch the coding agent on it.`,
+      nextStep: `Change ${changeId} is open on ${slug}`
+        + `${fromChangeId && String(session.spec_md || '').trim() ? `, with change ${fromChangeId}'s plan as its spec` : ''}. `
+        + 'Nothing is built yet: dispatch the coding agent on it.',
       webPath: changeWebPath(origin, slug, changeId),
     });
   });

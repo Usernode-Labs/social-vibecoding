@@ -116,6 +116,18 @@ export interface ClassicReadOnlyBannerView {
   canStart: boolean;
 }
 
+/**
+ * This change's code did not come across when Homeroom moved off GitHub
+ * (`code_missing` on GET /api/sessions/:id, src/services/code-missing.js):
+ * nothing can run on it, so the strip says so and, for its owner, starts a
+ * new change from the current version carrying this one's plan
+ * (`DevChat.startNewChangeFromPlan`).
+ */
+export interface CodeMissingBannerView {
+  /** False for anyone but the owner, or when the app cannot be resolved. */
+  canStart: boolean;
+}
+
 export interface BannersState {
   sync: SyncBannerView | null;
   newChange: NewChangeBannerView | null;
@@ -123,10 +135,12 @@ export interface BannersState {
   creditsLow: CreditsBannerView | null;
   agentSession?: AgentSessionBannerView | null;
   classicReadOnly?: ClassicReadOnlyBannerView | null;
+  codeMissing?: CodeMissingBannerView | null;
 }
 
 export const NO_BANNERS: BannersState = {
   sync: null, newChange: null, credits: null, creditsLow: null, agentSession: null, classicReadOnly: null,
+  codeMissing: null,
 };
 
 export const bannersStore = createStore<BannersState>(NO_BANNERS);
