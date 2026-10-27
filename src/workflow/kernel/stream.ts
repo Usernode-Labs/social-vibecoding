@@ -285,9 +285,16 @@ export async function waitForOutcome(
   }
 }
 
+// An instance's own moves have no channel of their own, so any outcome on the
+// platform wakes a waiter, and a burst of activity elsewhere would have it
+// re-read once per outcome (#5904's pushes hold such a wait for up to 80 s).
+// It re-reads at most this often, whatever woke it.
+export const INSTANCE_REREAD_MS = 250;
+
 // Wait up to waitMs for an instance to reach a state `done` accepts (a route
 // that answers once a later event, a work result, has moved it on). Woken by
 // any outcome's notification, else each second; without signals, polled.
+// Never re-read sooner than INSTANCE_REREAD_MS after the last read.
 // Resolves the instance as last read (null: it does not exist).
 export async function waitForInstance(
   db: Queryable, signals: Signals | null, machine: string, key: string,
@@ -295,13 +302,16 @@ export async function waitForInstance(
 ): Promise<{ state: string; data: any; version: number } | null> {
   const deadline = Date.now() + waitMs;
   for (;;) {
+    const readAt = Date.now();
     const { rows: [r] } = await db.query(
       'SELECT state, data, version FROM wf_instances WHERE machine = $1 AND key = $2', [machine, key]);
     const i = r ? { state: r.state, data: r.data, version: Number(r.version) } : null;
     const left = deadline - Date.now();
     if (!i || done(i) || left <= 0) return i;
-    const nap = Math.min(left, signals?.listening ? 1000 : 250);
+    const nap = Math.min(left, signals?.listening ? 1000 : INSTANCE_REREAD_MS);
     if (signals?.listening) await signals.sleep('wf_outcome', nap);
     else await new Promise((resolve) => setTimeout(resolve, nap));
+    const rest = Math.min(INSTANCE_REREAD_MS - (Date.now() - readAt), deadline - Date.now());
+    if (rest > 0) await new Promise((resolve) => setTimeout(resolve, rest));
   }
 }
