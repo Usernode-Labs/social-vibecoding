@@ -51,6 +51,7 @@ function loadWorker({
 } = {}) {
   const ids = {
     docker: require.resolve('../src/services/docker'),
+    publication: require.resolve('../src/services/turn-publication'),
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
     subject: require.resolve('../src/services/worker'),
@@ -78,6 +79,7 @@ function loadWorker({
       return { stdout: '', stderr: '' };
     },
   });
+  stub(ids.publication, { captureTarget: async () => ({}), beforeCleanup: async () => {}, eligible: () => false, publish: async ({ result }) => result });
   const noop = () => {};
   stub(ids.logger, { info: noop, warn: noop, error: noop, debug: noop });
 
@@ -289,6 +291,7 @@ test('the web stop gate records intent without runtime I/O or a last-use write',
 test('stopTurn swallows docker failures — the watchdog is the fallback', async () => {
   const ids = {
     docker: require.resolve('../src/services/docker'),
+    publication: require.resolve('../src/services/turn-publication'),
     logger: require.resolve('../src/services/logger'),
     subject: require.resolve('../src/services/worker'),
   };
@@ -474,12 +477,13 @@ test('a new turn pushes the earlier commit before dispatching its runner', async
     onExec: call => { if (isDispatch(call)) { assert.equal(pending, null); order.push('runner'); } },
     queryAnswer: (sql, params) => {
       if (sql.includes('SELECT sw.unpushed_sha AS sha')) return { rows: pending ? [{ ...pending, active: false }] : [] };
-      if (sql.includes('SELECT cs.app_id, cs.branch_name')) return { rows: [{ branch_name: 'dev/test', repo_url: 'https://github.com/Trusted-Owner/stored-repo.git',
+      if (sql.includes('SELECT cs.app_id, cs.user_id, cs.branch_name')) return { rows: [{ branch_name: 'dev/test', repo_url: 'https://github.com/Trusted-Owner/stored-repo.git',
         unpushed_sha: pending?.sha, unpushed_branch_name: pending?.branchName }] };
       if (sql.includes('UPDATE session_workers SET unpushed_sha = NULL')) { assert.equal(params[1], pending.sha); pending = null; }
     },
   });
   t.mock.method(require('../src/services/github-pause'), 'codeChangesPaused', () => false);
+  t.mock.method(require('../src/services/github'), 'checkRepoPublic', async () => ({ ok: true, private: false }));
   t.mock.method(require('../src/services/github'), 'getInstallationToken', async () => 'fake-rescue-token');
   t.mock.method(require('../src/services/worker-git-push'), 'push', async () => { order.push('push'); return { sha: 'a'.repeat(40), stderr: '' }; });
   try {
@@ -499,12 +503,13 @@ test('an unpushed commit refuses a new turn without a runner, charge or retained
           const active = activeTurns.get(8315);
           return { rows: [{ ...commit, active: !!active, turn_id: active?.turnId, phase: active?.phase }] };
         }
-        if (sql.includes('SELECT cs.app_id, cs.branch_name')) return { rows: [{ branch_name: commit.branchName,
+        if (sql.includes('SELECT cs.app_id, cs.user_id, cs.branch_name')) return { rows: [{ branch_name: commit.branchName,
           repo_url: 'https://github.com/Trusted-Owner/stored-repo.git', unpushed_sha: commit.sha, unpushed_branch_name: commit.branchName }] };
       } });
       ({ activeTurns } = fx);
       t.mock.method(require('../src/services/github-pause'), 'codeChangesPaused', () => cause === 'github_paused');
-      t.mock.method(require('../src/services/github'), 'getInstallationToken', async () => cause === 'no_token' ? null : 'fake-rescue-token');
+      t.mock.method(require('../src/services/github'), 'checkRepoPublic', async () => ({ ok: true, private: false }));
+  t.mock.method(require('../src/services/github'), 'getInstallationToken', async () => cause === 'no_token' ? null : 'fake-rescue-token');
       t.mock.method(require('../src/services/worker-git-push'), 'push', async () => { throw new Error('Synthetic network outage'); });
       try {
         warmSession(fx.worker, 8315);

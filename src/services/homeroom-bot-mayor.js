@@ -3001,7 +3001,6 @@ async function fileRequest(pool, config, {
     });
     issueNumber = Number(created?.number);
     if (!Number.isInteger(issueNumber) || issueNumber <= 0) throw new Error('invalid issue number');
-    try { github.noteIssueCreated?.(m.owner, m.repo, created); } catch {}
     const { rows: issueRows } = await pool.query(
       `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
        VALUES ($1, $2, $3, $4, 'general', $6, $5) RETURNING id`,

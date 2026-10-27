@@ -143,29 +143,8 @@ async function followTurn({ pool, session, activeTurn, onProgress = null, deps =
   if (!Number.isFinite(estimatedCostUsd)) {
     estimatedCostUsd = await ledgerCostOfTurn(pool, activeTurn.logicalTurnId || activeTurn.turnId);
   }
-  let settled = result;
-  // A build's commit the restart kept from being pushed: its worker's push
-  // landed while the platform was down. Pushed now, from the worker, so what
-  // the step reads next is the turn as the live path would have had it.
-  if (activeTurn.mode === 'build' && result.pushOk !== true && Number(result.ahead) > 0 && result.sha
-      && result.branchMismatch !== true && session.branch_name && !failedTurn(result)) {
-    try {
-      const pushed = await worker.execPushFromWorker(session.id, session.branch_name);
-      settled = { ...result, pushOk: true, sha: (pushed && pushed.sha) || result.sha, repushed: true };
-      log.info('durable-turn', 'Pushed the commit of a turn a restart caught mid-push', {
-        sessionId: session.id, branch: session.branch_name,
-      });
-    } catch (err) {
-      const failure = typeof worker.describePushFailure === 'function'
-        ? worker.describePushFailure(err) : { code: err.code || 'push_failed' };
-      settled = { ...result, pushOk: false, pushFailed: String(failure.code || 'push_failed') };
-      log.warn('durable-turn', 'Could not push the commit of a turn a restart caught mid-push', {
-        sessionId: session.id, branch: session.branch_name, err: err.message,
-      });
-    }
-  }
   return {
-    result: settled,
+    result,
     estimatedCostUsd: Number.isFinite(estimatedCostUsd) ? estimatedCostUsd : null,
     logicalTurnId: activeTurn.logicalTurnId || null,
     followed: true,
@@ -175,12 +154,6 @@ async function followTurn({ pool, session, activeTurn, onProgress = null, deps =
 // How a turn's process went with no exit marker (worker.js markerlessCause)
 // that, with no output at all, means it never ran.
 const GONE_BEFORE_IT_RAN = new Set(['container_gone', 'turn_process_gone']);
-
-function failedTurn(result) {
-  return !!(result?.fatalError || result?.ccIsError
-    || (result?.agentExit != null && result?.agentExit !== 0)
-    || (result?.exitCode != null && result?.exitCode !== 0));
-}
 
 async function ledgerCostOfTurn(pool, logicalTurnId) {
   if (!logicalTurnId) return null;

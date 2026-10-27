@@ -512,7 +512,6 @@ async function fileBotIssue(config, pool, app, parsed, { title, body }) {
   });
   const issueNumber = Number(created && created.number);
   if (!Number.isInteger(issueNumber) || issueNumber <= 0) throw new Error('invalid issue number');
-  try { github.noteIssueCreated?.(parsed.owner, parsed.repo, created); } catch {}
   const { rows } = await pool.query(
     `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
      VALUES ($1, $2, $3, $4, 'general', '{}', $5) RETURNING id`,

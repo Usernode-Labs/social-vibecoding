@@ -31,7 +31,6 @@ test('worker image pins the browser server and installs its matching Chromium', 
 function claudeEnvFor(mode, extra = {}) {
   const os = require('node:os');
   const { spawnSync } = require('node:child_process');
-  const { RUNNER_TEST_ENV } = require('./lib/runner-env');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-mcp-timeout-'));
   const bin = path.join(dir, 'bin');
   fs.mkdirSync(bin, { recursive: true });
@@ -54,7 +53,7 @@ exit 0
   const env = {
     ...process.env,
     PATH: `${bin}:${process.env.PATH}`,
-    ...RUNNER_TEST_ENV, PROMPT_FILE: prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
+    PROMPT_FILE: prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
     MODE: mode, WORKSPACE_DIR: ws, WORKER_JWT: 'jwt',
     ...(mode === 'build' ? { SYSTEM_PROMPT_FILE: systemPrompt } : {}),
     BROWSER_MCP_CONFIG: path.join(dir, 'none.json'), BROWSER_ONLY_MCP_CONFIG: path.join(dir, 'none.json'),

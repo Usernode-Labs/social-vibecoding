@@ -89,7 +89,6 @@ function loadIssues(pool) {
       spies.ghCreates.push({ owner, repo, args });
       return { number: 777 };
     },
-    noteIssueCreated: () => {},
   });
   stub(ids.appAccess, {
     ACCESS_COLUMNS: '*',

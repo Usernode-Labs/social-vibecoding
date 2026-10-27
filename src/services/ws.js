@@ -100,18 +100,6 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       void require('./account-deletion-runtime').receive(_pool, r.userId)
         .catch(() => log.warn('ws', 'Account stream cleanup will retry'));
       return;
-    case 'issues_closed':
-      // From a workflow transition only: issues it closed on GitHub, for
-      // this process's own copy of the open-issues list (github.js keeps one
-      // per process). Nothing is sent to sockets; the transition's own
-      // issue_update tells browsers to re-read.
-      // Applied here only: every process hears the transition itself.
-      if (fromWorkflow && r.owner && r.repo) {
-        require('./github').applyIssuesChange(r.owner, r.repo, {
-          closed: payload.numbers, open: payload.open, invalidate: true,
-        });
-      }
-      return;
     case 'app_access':
       // What another process changed about an app's visibility, governance
       // or admins (app-access.js shareAccessChange), for this process's own
@@ -127,12 +115,6 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
         }
       }
       revalidateClients();
-      return;
-    case 'issues_cache':
-      // What another process learned of a repo's issues (github.js
-      // shareIssuesChange), for this process's own copy. Nothing is sent to
-      // sockets: the sender's issue_update tells browsers to re-read.
-      if (!oversize && r.owner && r.repo) require('./github').applyIssuesChange(r.owner, r.repo, payload);
       return;
     // A turn's stream has a new row (services/session-bus.js): this
     // process's subscribers to it read on. Never a socket event.
@@ -154,14 +136,13 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
 // `App.resyncCurrentView`, a chat room with `GroupChat.resyncLoaded`. It says
 // only "re-read", so it leaks nothing to anyone in any room.
 function _onBusListening() {
-  // And what it missed may have invalidated this process's own caches (a
-  // merge's issues_closed, an app made private): they are read again rather
+  // What it missed may have invalidated this process's own caches (an
+  // app made private): they are read again rather
   // than trusted until their TTL.
   try {
     appAccess.invalidateAllVisibility();
     require('./governance').invalidateGovernanceHere(null);
     require('./app-admins').invalidateAppAdminsHere(null);
-    require('./github').expireIssuesCachesHere();
   } catch (err) {
     log.warn('ws', 'Could not clear the caches after the bus came back', { err: err.message });
   }

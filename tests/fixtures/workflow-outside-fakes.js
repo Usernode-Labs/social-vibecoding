@@ -38,10 +38,7 @@ function outside(fakes, rel, { keep = [], overrides = {} }) {
 module.exports = function install(fakes) {
   const comments = async (number) => (await fakes.read('github.comment')).filter((c) => c.number === number);
   outside(fakes, 'services/github', {
-    keep: ['init', 'parseGithubUrl', 'safeMention', 'noteIssuesClosed', 'unsuppressIssues', 'invalidateIssuesCache',
-      'noteIssueCreated', 'describeGithubError', 'credentialClass', 'clipIssueComments',
-      // What the bus tells this process's issues cache (ws.js): memory only.
-      'applyIssuesChange'],
+    keep: ['init', 'parseGithubUrl', 'safeMention', 'describeGithubError', 'credentialClass', 'clipIssueComments'],
     overrides: {
       isEnabled: () => true,
       // Homeroom can act on the fake repositories' owner through the App.

@@ -59,17 +59,6 @@ test('a request filed through createIssue is on the next board read and single r
   assert.deepStrictEqual(calls, [], 'without asking GitHub');
 });
 
-test('noteIssueCreated is a no-op kept for its callers: true for a well-formed issue, false otherwise', async (t) => {
-  const fake = installFakeRequests(t, { 'o/r': [] });
-  assert.strictEqual(github.noteIssueCreated('o', 'r', { number: 1, title: 'x' }), true);
-  assert.strictEqual(github.noteIssueCreated(null, 'r', { number: 1 }), false);
-  assert.strictEqual(github.noteIssueCreated('o', null, { number: 1 }), false);
-  assert.strictEqual(github.noteIssueCreated('o', 'r', null), false);
-  assert.strictEqual(github.noteIssueCreated('o', 'r', { title: 'no number' }), false);
-  assert.deepStrictEqual((await github.fetchPublicIssues('o', 'r')).issues, [], 'it puts nothing on the board');
-  assert.deepStrictEqual(fake.filed, []);
-});
-
 // ── A closed request leaves the board at once ───────────────────────────
 // Was: noteIssuesClosed suppressed a just-closed issue from cached AND
 // fresh lists (#144), until unsuppressIssues or a TTL brought it back. Now
@@ -84,18 +73,6 @@ test('a request closed through closeIssue is off the next board read; reopened, 
   assert.strictEqual(closed.issue.state, 'closed', 'still readable by its address');
   await github.reopenIssue('o', 'r', 2);
   assert.deepStrictEqual((await github.fetchPublicIssues('o', 'r')).issues.map((i) => i.number).sort(), [1, 2]);
-});
-
-test('noteIssuesClosed, unsuppressIssues and invalidateIssuesCache are no-ops kept for their callers', async (t) => {
-  installFakeRequests(t, { 'o/r': [{ number: 1, title: 'one' }] });
-  assert.strictEqual(github.noteIssuesClosed('o', 'r', [1, 2]), 2, 'it still counts what it was told');
-  assert.strictEqual(github.noteIssuesClosed('o', 'r', 'not-an-array'), 0);
-  assert.strictEqual(github.unsuppressIssues('o', 'r', [1]), undefined);
-  assert.strictEqual(github.invalidateIssuesCache('o', 'r'), false, 'there is no entry to expire');
-  assert.doesNotThrow(() => github.applyIssuesChange({ owner: 'o', repo: 'r' }));
-  assert.doesNotThrow(() => github.expireIssuesCachesHere());
-  assert.deepStrictEqual((await github.fetchPublicIssues('o', 'r')).issues.map((i) => i.number), [1],
-    'a request told closed but still open stays listed');
 });
 
 // ── The board read ──────────────────────────────────────────────────────

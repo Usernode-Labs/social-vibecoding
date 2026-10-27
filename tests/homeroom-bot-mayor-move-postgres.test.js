@@ -61,9 +61,6 @@ const githubStub = {
   },
   async createIssueComment(owner, repo, number, body) { gh.comments.push({ repo, number, body }); return { id: 1 }; },
   async closeIssue(owner, repo, number) { gh.closed.push({ repo, number }); return {}; },
-  noteIssueCreated() {},
-  noteIssuesClosed() {},
-  invalidateIssuesCache() {},
   safeMention: (s) => s,
 };
 require.cache[githubId] = {

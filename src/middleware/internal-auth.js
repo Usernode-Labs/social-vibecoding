@@ -8,15 +8,15 @@ const { clientIp, isDirectInternalCall } = require('../services/client-ip');
 // platform's internal API surface (see src/routes/internal.js). Worker
 // JWTs are minted by src/services/worker.js at warm-container bootstrap
 // (and re-minted on every per-turn `docker exec`) and carry a single
-// scope: 'worker:session'. The session id in the claim must match the
+// purpose allowed by the route. The session id in the claim must match the
 // session id in the route param — checked in the route handler, not
 // here, so an obviously-malformed token gets a clean 401 before any
 // route logic runs.
 //
 // The signing key is WORKER_JWT_SECRET, an authority of its own that is
-// never placed in any container. verifyWorkerToken pins HS256, the
-// `usernode` issuer, the `usernode:worker` audience and the
-// `worker:session` purpose, so an app-identity or edge token — or
+// never placed in any container. Verification pins HS256, the
+// `usernode` issuer, the `usernode:worker` audience and the route
+// purpose, so an app-identity or edge token — or
 // anything minted with the old shared secret — cannot be presented here.
 //
 // This middleware mounts BEFORE the global authMiddleware in server.js
@@ -30,11 +30,9 @@ const { clientIp, isDirectInternalCall } = require('../services/client-ip');
 
 // #2506: the predicate is canonical in services/client-ip.js now.
 
-// Accepts one of the given worker purposes. `worker:session` (the general
-// claude_code token) is always allowed for backwards-compat on the legacy
-// push/issues surface; narrow purposes (worker:push, worker:issues-read)
-// are allowed per-route so codex workers never hold a worker:session token
-// (review #2 / #6) yet still reach exactly the endpoints they need.
+// Each route explicitly lists its accepted purposes. Declaration/issues
+// routes also accept the general worker:session token held by Claude Code;
+// OpenRouter workers use narrow purposes and never hold that general token.
 function verifier(purposes) {
   return function internalAuth(req, res, next) {
     // IP gate first — if this somehow leaks externally, fail fast before
@@ -59,9 +57,6 @@ function verifier(purposes) {
       return res.status(500).json({ ok: false, code: 'server_misconfigured' });
     }
 
-    const purposeToVerify = purposes.includes(platformJwt.PUR_WORKER) && purposes.length === 1
-      ? platformJwt.PUR_WORKER
-      : null;
     let claims = null;
     let lastErr = null;
     // Verify against each accepted purpose; accept on the first success.
@@ -95,9 +90,4 @@ function verifier(purposes) {
   };
 }
 
-// Legacy default — worker:session only (the pre-narrow-token behavior).
-function internalAuth(req, res, next) {
-  verifier([platformJwt.PUR_WORKER])(req, res, next);
-}
-
-module.exports = { internalAuth, internalAuthPurpose: verifier };
+module.exports = { internalAuthPurpose: verifier };

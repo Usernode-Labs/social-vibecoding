@@ -1194,7 +1194,6 @@ function feedbackRoutes(config) {
         // The save has committed. A failed refresh never turns that success
         // into an error which could encourage another submission.
         try {
-          github.invalidateIssuesCache(fr.issue_owner, fr.issue_repo);
           const app = await findAppByRepo(pool, fr.issue_owner, fr.issue_repo);
           if (app) pushIssueUpdate({ action: 'updated', source: 'github',
             appSlug: app.slug, appId: app.id, issueNumber: fr.issue_number });

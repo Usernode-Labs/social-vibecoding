@@ -1569,18 +1569,6 @@ function issueRoutes(config) {
             throw new Error('GitHub returned an invalid issue number');
           }
           githubIssueNumber = ghIssue.number;
-          // #125: seed the open-issues cache so the panel refresh the
-          // pushIssueUpdate below triggers (loadVotePanel → GET
-          // /github-issues) shows this issue immediately instead of
-          // waiting out the cache TTL. Cache bookkeeping is non-authoritative
-          // and must not turn a completed remote create into a retry/duplicate.
-          try {
-            github.noteIssueCreated(parsed.owner, parsed.repo, ghIssue);
-          } catch (cacheErr) {
-            log.warn('issues', 'Created GitHub issue but could not seed cache', {
-              err: cacheErr.message,
-            });
-          }
         } catch (err) {
           log.warn('issues', 'GitHub issue creation failed', { err: err.message });
           return res.status(503).json({
@@ -2898,7 +2886,6 @@ function issueRoutes(config) {
         'system', null, { type: 'issue', ref: issueNumber }
       ).catch((err) => log.warn('issues', 'Rename chat message failed', { err: err.message }));
 
-      github.invalidateIssuesCache(parsed.owner, parsed.repo);
       pushIssueUpdate({
         action: 'updated', source: 'github',
         appSlug: app.slug, appId: app.id, issueNumber,
@@ -2993,7 +2980,6 @@ function issueRoutes(config) {
         'system', null, { type: 'issue', ref: issueNumber }
       ).catch((err) => log.warn('issues', 'Issue body chat message failed', { err: err.message }));
 
-      github.invalidateIssuesCache(parsed.owner, parsed.repo);
       pushIssueUpdate({
         action: 'updated', source: 'github',
         appSlug: app.slug, appId: app.id, issueNumber,

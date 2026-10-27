@@ -72,7 +72,6 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     ...realGithub,
     isEnabled: () => true,
     fetchPublicIssues: async () => ({ issues: [{ number: 5, title: 'Stale bug' }] }),
-    noteIssuesClosed: () => {}, invalidateIssuesCache: () => {},
     closeIssue: async () => ({}), createIssueComment: async () => ({}),
     getIssue: async () => ({ state: 'open' }),
   });

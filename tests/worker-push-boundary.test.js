@@ -26,6 +26,7 @@ function setup(t, runtime = 'docker') {
   // GitHub credential the push uses (services/github.js "Who Homeroom is on
   // GitHub"); Homeroom can act on that owner.
   t.mock.method(github, 'canActOn', () => true);
+  t.mock.method(github, 'checkRepoPublic', async () => ({ ok: true, private: false }));
   t.mock.method(github, 'getInstallationToken', async (owner) => {
     assert.equal(owner, 'Trusted-Owner', 'the owner is read from the stored address');
     return token;
@@ -139,36 +140,14 @@ test('push failures redact every occurrence of the credential and preserve unpus
   assert.deepEqual(await worker.rescueUnpushedCommit(sessionId), { attempted: false });
 });
 
-test('web-side push callers queue conductor work and never read a credential or contact a worker', async t => {
+test('web-side callers refuse without a credential, worker I/O or a separate push request', async t => {
   const fx = setup(t);
-  const previousRole = process.env.PROCESS_ROLE;
+  const prior = process.env.PROCESS_ROLE;
   process.env.PROCESS_ROLE = 'web';
-  t.after(() => {
-    if (previousRole === undefined) delete process.env.PROCESS_ROLE;
-    else process.env.PROCESS_ROLE = previousRole;
-  });
-  const Module = require('node:module');
-  const load = Module._load;
-  const asks = [];
-  let unavailable = false;
-  t.mock.method(Module, '_load', function (name, parent, ...rest) {
-    if (name === '../workflow/platform.ts' && parent?.filename === require.resolve('../src/services/worker')) {
-      return { requestWorkerPush: async (...args) => {
-        asks.push(args);
-        if (unavailable) throw new Error('conductor unavailable');
-        return { sha, stderr: '' };
-      } };
-    }
-    return load.call(this, name, parent, ...rest);
-  });
+  t.after(() => { if (prior === undefined) delete process.env.PROCESS_ROLE; else process.env.PROCESS_ROLE = prior; });
   t.mock.method(github, 'getInstallationToken', () => { throw new Error('web accessed the credential'); });
-  assert.deepEqual(await worker.execPushFromWorker(sessionId, branch), { sha, stderr: '' });
-  assert.deepEqual(asks, [[sessionId, branch]]);
-  unavailable = true;
-  await assert.rejects(worker.execPushFromWorker(sessionId, branch), /conductor unavailable/);
-  assert.equal(fx.queries.length, 0);
-  assert.equal(fx.execs.length, 0);
-  assert.equal(fx.pushes.length, 0);
+  await assert.rejects(worker.execPushFromWorker(sessionId, branch), e => e.code === 'workflow_role_required');
+  assert.equal(fx.queries.length, 0); assert.equal(fx.execs.length, 0); assert.equal(fx.pushes.length, 0);
 });
 
 test('a queued push target changed during the privacy check is refused before obtaining a credential', async t => {
@@ -207,4 +186,34 @@ test('a failed or empty target lookup stays retryable and is never reported as a
   }
   assert.equal(fx.execs.length, 0);
   assert.equal(fx.pushes.length, 0);
+});
+
+
+test('publication rechecks owner and repository privacy before fetching a credential', async t => {
+  const fx = setup(t);
+  fx.target.user_id = 8;
+  t.mock.method(github, 'getInstallationToken', () => { throw new Error('credential must not be fetched'); });
+  await assert.rejects(worker.execPushFromWorker(sessionId, branch, { expectedUserId: 9 }), e => e.code === 'session_changed' && e.permanent);
+  t.mock.method(github, 'checkRepoPublic', async () => ({ ok: true, private: true }));
+  await assert.rejects(worker.execPushFromWorker(sessionId, branch), e => e.code === 'private_repo' && e.permanent);
+  t.mock.method(github, 'checkRepoPublic', async () => {
+    fx.target.user_id = 9;
+    return { ok: true, private: false };
+  });
+  await assert.rejects(worker.execPushFromWorker(sessionId, branch, { expectedUserId: 8 }), e => e.code === 'session_changed' && e.permanent);
+  assert.equal(fx.execs.length, 0); assert.equal(fx.pushes.length, 0);
+});
+
+test('inactive-session rescue requires its exact durable saved commit', async t => {
+  const fx = setup(t);
+  Object.assign(fx.target, { status: 'archived', unpushed_sha: sha, unpushed_branch_name: branch });
+  await assert.rejects(worker.execPushFromWorker(sessionId, branch, { expectedSha: sha }), e => e.code === 'session_inactive');
+  await assert.rejects(worker.execPushFromWorker(sessionId, branch, { expectedSha: 'b'.repeat(40), rescueSavedCommit: true }), e => e.code === 'session_inactive');
+  assert.equal(fx.pushes.length, 0);
+  t.mock.method(github, 'checkRepoPublic', async () => {
+    fx.target.unpushed_sha = 'b'.repeat(40);
+    return { ok: true, private: false };
+  });
+  await assert.rejects(worker.execPushFromWorker(sessionId, branch, { expectedSha: sha, rescueSavedCommit: true }), e => e.code === 'session_changed');
+  assert.equal(fx.pushes.length, 0, 'a changed saved record cannot grant rescue authority');
 });

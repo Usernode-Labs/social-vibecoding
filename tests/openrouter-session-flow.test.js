@@ -135,7 +135,7 @@ test('direct OpenRouter prompt supports chat replies as well as repository chang
     'async function runClaudeCodeTool({',
     // #2779: getMayorSystemPrompt, which used to follow the tool, moved
     // to services/mayor/prompt.js.
-    'async function getFilesFromContainer(',
+    'async function resolveClassicPayer(',
   );
   assert.match(tool, /there is no separate chat model/);
   assert.match(tool, /asks for information, analysis, status, or an explanation/);

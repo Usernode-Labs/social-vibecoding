@@ -134,11 +134,12 @@ async function push(options) {
   return pushQueue.run(`${remoteUrl}\0${branchName}`, () => publish(options));
 }
 
-async function publish({ remoteUrl, branchName, token, exportWorker, username = 'x-access-token', authFetch = false }) {
+async function publish({ remoteUrl, branchName, token, exportWorker, expectedSha = null, username = 'x-access-token', authFetch = false }) {
   let dir;
   try {
     const exported = await exportWorker(buildExportScript({ branchName }));
     const { sha, bundle, prerequisites, pack } = parseExport(exported.stdout, branchName);
+    if (expectedSha && sha !== expectedSha) throw Object.assign(new Error('Worker commit changed before publication'), { code: 'commit_changed', permanent: true });
     if (pack) await validatePackBudget(pack);
     dir = await fs.mkdtemp(path.join(os.tmpdir(), 'usernode-worker-push-'));
     // mkdtemp is 0700. No inherited Git env, HOME config, template, hooks,
@@ -208,6 +209,8 @@ async function publish({ remoteUrl, branchName, token, exportWorker, username = 
     // its potentially huge stdout. Preserve a useful redacted Git reason.
     const detail = error.stderr ? `: ${error.stderr}` : '';
     const safe = new Error(redact(`${error.message}${detail}`, token, username).slice(0, 2000));
+    safe.code = error.code;
+    safe.permanent = error.permanent === true;
     safe.stderr = redact(error.stderr, token, username).slice(0, 8000);
     throw safe;
   } finally {

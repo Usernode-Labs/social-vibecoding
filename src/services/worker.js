@@ -155,13 +155,10 @@ function mintWorkerJwt(sessionId) {
   return platformJwt.signWorkerToken({ sessionId });
 }
 
-// Narrow, purpose-bound capabilities. worker:push is used by Codex build's
-// usernode-push; worker:issues-read by usernode-issues / attachments on both
+// Narrow, purpose-bound capabilities: worker:issues-read by
+// usernode-issues / attachments on both
 // backends; worker:anthropic-proxy authenticates Claude itself without also
 // granting the shell every worker:session mutation.
-function mintWorkerPushJwt(sessionId) {
-  return platformJwt.signWorkerPushToken({ sessionId });
-}
 function mintIssuesReadJwt(sessionId) {
   return platformJwt.signIssuesReadToken({ sessionId });
 }
@@ -226,7 +223,7 @@ function requireNonEmptySecret(value, name) {
 // PROD_DEBUG_JWT rides along on build + scout turns only — never sync
 // (bookkeeping, no free-form agent).
 function buildTurnSecretEnv({
-  mode, agentBackend, agentHarness = null, workerSessionJwt, workerPushJwt, issuesReadJwt,
+  mode, agentBackend, agentHarness = null, workerSessionJwt, visibleChangesJwt, issuesReadJwt,
   anthropicProxyJwt, anthropicApiKey, prodDebugJwt, openrouterApiKey,
   shotsJwt, shotsMemberToken, shotsAdminToken, shotsFullAdminToken,
   shotsGuestToken = null, shotsInvitedMemberToken = null, shotsInvitedMemberListedToken = null,
@@ -259,9 +256,7 @@ function buildTurnSecretEnv({
     // worker:session token, and no production-debug grant.
     const env = { OPENROUTER_API_KEY: requireNonEmptySecret(openrouterApiKey, 'openrouterApiKey') };
     env.ISSUES_JWT = requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt');
-    if (mode === 'build') {
-      env.WORKER_JWT = requireNonEmptySecret(workerPushJwt, 'workerPushJwt');
-    }
+    if (mode === 'build') env.WORKER_JWT = requireNonEmptySecret(visibleChangesJwt, 'visibleChangesJwt');
     if (homeroomMcpToken && HOMEROOM_READ_MODES.has(mode)) env.HOMEROOM_MCP_TOKEN = homeroomMcpToken;
     return env;
   }
@@ -272,9 +267,7 @@ function buildTurnSecretEnv({
     // worker:session token, an Anthropic key/base, or a relay token.
     const env = { OPENROUTER_API_KEY: requireNonEmptySecret(openrouterApiKey, 'openrouterApiKey') };
     env.ISSUES_JWT = requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt');
-    if (mode === 'build') {
-      env.WORKER_JWT = requireNonEmptySecret(workerPushJwt, 'workerPushJwt');
-    }
+    if (mode === 'build') env.WORKER_JWT = requireNonEmptySecret(visibleChangesJwt, 'visibleChangesJwt');
     if (homeroomMcpToken && HOMEROOM_READ_MODES.has(mode)) env.HOMEROOM_MCP_TOKEN = homeroomMcpToken;
     return env;
   }
@@ -2428,8 +2421,16 @@ function _getPoolSafe() {
 async function _persistActiveTurn(sessionId, turn) {
   const pool = _getPoolSafe();
   if (!pool) return { ok: false, code: 'db_unavailable' };
+  let db = pool;
+  let transaction = false;
+  let ownsPending = false;
   try {
-    const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    if (turn.mode === 'build' || turn.mode === 'sync') {
+      db = typeof pool.connect === 'function' ? await pool.connect() : pool;
+      await db.query('BEGIN');
+      transaction = true;
+    }
+    const current = await turnLifecycle.loadActiveTurn(db, sessionId);
     if (current) {
       // Codex registers the ledger row and dispatch intent atomically before
       // entering execInWorker. Accept only that exact physical attempt; this
@@ -2444,19 +2445,43 @@ async function _persistActiveTurn(sessionId, turn) {
         && current.phase === turnLifecycle.PHASE_DISPATCH_PENDING
         && String(current.journal || '') === String(turn.journal || '')
       );
-      if (isRegisteredAttempt) return { ok: true };
-      const err = new Error('turn-lifecycle: session already owns a different turn');
-      err.code = 'session_busy';
-      throw err;
+      if (!isRegisteredAttempt) {
+        const err = new Error('turn-lifecycle: session already owns a different turn');
+        err.code = 'session_busy';
+        throw err;
+      }
+    } else {
+      await turnLifecycle.persistNewTurn(db, sessionId, turn);
     }
-    await turnLifecycle.persistNewTurn(pool, sessionId, turn);
+    ownsPending = true;
+    if (transaction) {
+      await require('./turn-publication').captureTarget(db, sessionId, turn.turnId, turn.branchName, turn.journal);
+      await db.query('COMMIT');
+    }
     return { ok: true };
   } catch (err) {
+    if (transaction) await db.query('ROLLBACK').catch(() => {});
+    // Do not hold a pool slot while fenced cleanup needs another one.
+    if (db !== pool) { db.release(); db = pool; }
+    if (ownsPending) {
+      // A pre-registered OpenRouter attempt predates this transaction. An
+      // uncertain COMMIT can also have kept a new record. Neither dispatched:
+      // release only our exact physical, still-pending attempt.
+      await pool.query(`UPDATE chat_sessions SET active_turn = NULL
+        WHERE id = $1 AND active_turn->>'turnId' = $2
+          AND active_turn->>'journal' = $3 AND active_turn->>'phase' = 'dispatch_pending'
+          AND active_turn->>'turnUuid' IS NOT DISTINCT FROM $4::text`,
+      [sessionId, turn.turnId, turn.journal, turn.turnUuid || null]).catch(cleanupErr => {
+        log.warn('worker', 'Failed to release undispatched turn', { sessionId, err: cleanupErr.message });
+      });
+    }
     log.warn('worker', 'Failed to persist active_turn', { sessionId, err: err.message, code: err.code });
     const code = typeof err?.code === 'string' && /^[A-Za-z0-9_]{1,48}$/.test(err.code)
       ? err.code
       : 'persist_error';
     return { ok: false, code };
+  } finally {
+    if (db !== pool) db.release();
   }
 }
 
@@ -2494,6 +2519,10 @@ async function clearActiveTurn(sessionId, { turnId = null, journal = null } = {}
       err.code = 'turn_identity_required';
       throw err;
     }
+    const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    if (current && (turnId ? current.turnId === turnId : current.journal === journal)) {
+      await require('./turn-publication').beforeCleanup(pool, sessionId, current);
+    }
     await turnLifecycle.markCleanupPending(pool, { sessionId, turnId, journal });
     await turnLifecycle.clearCleanupPending(pool, { sessionId, turnId, journal });
     return true;
@@ -2511,8 +2540,8 @@ async function clearActiveTurn(sessionId, { turnId = null, journal = null } = {}
 // durable:
 //
 //   1. the exec — `claude` running in the worker, journalled to disk;
-//   2. the TAIL — everything the platform does afterwards: heal the
-//      push, open/update the PR, build the staging preview, capture
+//   2. the TAIL — everything the platform does after publication:
+//      open/update the PR, build the staging preview, capture
 //      visuals, post the "Claude Code finished" card, and re-issue the
 //      Mayor's wrap-up.
 //
@@ -2655,6 +2684,9 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
         const err = new Error('finishTurn: durable turn identity required');
         err.code = 'turn_identity_required';
         throw err;
+      }
+      if (cleanupTurnId ? current.turnId === cleanupTurnId : current.journal === cleanupJournal) {
+        await require('./turn-publication').beforeCleanup(pool, sessionId, current);
       }
       const cleanup = await turnLifecycle.markCleanupPending(pool, {
         sessionId,
@@ -3042,7 +3074,7 @@ async function _bootstrapWarmContainer(sessionId, {
     MODE: 'warm',
     // CLONE_URL has no token in it now; safe to pass inline.
     CLONE_URL: cloneUrl,
-    // Used by /usr/local/bin/usernode-push to identify the calling
+    // Used by the worker's declaration and request CLIs to identify the calling
     // session and reach the platform's internal API.
     SESSION_ID: String(sessionId),
     PLATFORM_URL: PLATFORM_INTERNAL_URL,
@@ -3825,18 +3857,15 @@ async function execInWorker(sessionId, {
   // mintWorkerJwt() (general worker:session) NEVER runs for a Codex turn —
   // the property is structural, not "hide the already-minted token".
   let workerSessionJwt = null;
-  let workerPushJwt = null;
+  const visibleChangesJwt = isOpenRouter && mode === 'build'
+    ? platformJwt.signVisibleChangesToken({ sessionId }) : null;
   let issuesReadJwt = null;
   let anthropicProxyJwt = null;
   let prodDebugJwt = null;
   let shotsJwt = null;
   if (mode !== 'shots') issuesReadJwt = mintIssuesReadJwt(sessionId);
   else shotsJwt = mintShotsJwt(sessionId, shotsRunId);
-  if (isOpenRouter) {
-    if (mode === 'build') {
-      workerPushJwt = mintWorkerPushJwt(sessionId);
-    }
-  } else {
+  if (!isOpenRouter) {
     // A scout must never mint a general token at all. Hiding WORKER_JWT while
     // placing the same capability in ISSUES_JWT/ANTHROPIC_API_KEY is not an
     // isolation boundary when the agent has Bash.
@@ -3890,9 +3919,7 @@ async function execInWorker(sessionId, {
       mode,
       agentBackend: resolvedBackend,
       agentHarness: resolvedHarness,
-      workerSessionJwt,
-      workerPushJwt,
-      issuesReadJwt,
+      workerSessionJwt, visibleChangesJwt, issuesReadJwt,
       anthropicProxyJwt,
       anthropicApiKey,
       prodDebugJwt,
@@ -3918,9 +3945,6 @@ async function execInWorker(sessionId, {
     COMMIT_MSG: commitMsg || 'Changes via Homeroom',
     SESSION_ID: String(sessionId),
     PLATFORM_URL: PLATFORM_INTERNAL_URL,
-    // usernode-push rides out a platform restart only when asked to: every
-    // real turn asks, and a test or a stray run of the script tries once.
-    USERNODE_PUSH_RETRY: '1',
     ...(mode === 'shots' ? {
       SHOTS_RUN_ID: shotsRunId,
       SHOTS_BASE_ORIGIN: new URL(shotsOrigins.base).origin,
@@ -4124,6 +4148,7 @@ async function execInWorker(sessionId, {
     phase: turnLifecycle.PHASE_DISPATCH_PENDING,
     mode,
     journal,
+    branchName: branchName || undefined,
     backend: resolvedBackend,
     // Restart recovery replays the journal with this harness's parser.
     harness: resolvedHarness || undefined,
@@ -4207,6 +4232,7 @@ async function execInWorker(sessionId, {
   let providerStartedMs = null;
   let providerDispatched = false;
   let providerTerminalObserved = false;
+  let retainPublication = false;
   try {
     // Dispatch. `docker exec -d` returns as soon as the exec is created;
     // secrets travel via the docker CLI's env (bare `-e KEY`), same as
@@ -4354,7 +4380,18 @@ async function execInWorker(sessionId, {
 
     // finishTurn owns journal cleanup, after the finally below has saved
     // any unpushed commit. A failed write must leave this replay source.
-    return finalizeHarnessResult(state);
+    if (require('./turn-publication').eligible(mode, state)) progress(mode === 'sync' ? '[sync_push]' : '[push]');
+    const published = await require('./turn-publication').publish({
+      pool: _getPoolSafe(), sessionId, turnId: durableTurnId, journal, mode, branchName,
+      result: finalizeHarnessResult(state), push: (branch, expected) => execPushFromWorker(sessionId, branch, expected),
+    });
+    Object.assign(state, published);
+    if (['build', 'sync'].includes(mode) && state.resultSeen) progress(state.pushFailure || state.branchMismatch ? '[push_failed]' : '[done]');
+    return state;
+  } catch (err) {
+    retainPublication = err.retainActiveTurn === true;
+    if (retainPublication && execState) err.turnResult = finalizeHarnessResult(execState);
+    throw err;
   } finally {
     // The agent process is done with the platform once its journal has
     // ended: the tail (PR, staging, the wrap-up) never uses this token.
@@ -4386,7 +4423,10 @@ async function execInWorker(sessionId, {
       // to thread the journal path back through its own scope.
       ...(holdTurnRecord ? { finishedJournal: journal, finishedTurnId: durableTurnId } : {}),
     });
-    if (holdTurnRecord) {
+    if (retainPublication) {
+      // Publication has not been recorded yet. Recovery replays this same
+      // journal and retries only its publication, never the paid runner.
+    } else if (holdTurnRecord) {
       // Hand the record to the tail rather than dropping it. Seed the
       // milestone map with what the exec itself established, so a resume
       // knows whether the commit is already on GitHub without having to
@@ -5167,7 +5207,14 @@ async function resumeTurnFromJournal(sessionId, {
     // The recovery caller owns required persistence (thread id + ledger)
     // and calls finishTurn only after it succeeds. Deleting here used to
     // destroy the sole replay source before those writes had landed.
-    return finalizeHarnessResult(state);
+    if (require('./turn-publication').eligible(turnMode, state)) progress(turnMode === 'sync' ? '[sync_push]' : '[push]');
+    const published = await require('./turn-publication').publish({
+      pool: _getPoolSafe(), sessionId, turnId, journal, mode: turnMode, branchName,
+      result: finalizeHarnessResult(state), push: (branch, expected) => execPushFromWorker(sessionId, branch, expected),
+    });
+    Object.assign(state, published);
+    if (['build', 'sync'].includes(turnMode) && state.resultSeen) progress(state.pushFailure || state.branchMismatch ? '[push_failed]' : '[done]');
+    return state;
   } finally {
     if (providerTerminalObserved && state.providerDispatched
         && resolveTurnBackend(agentBackend).isClaude && telemetryComponent && turnId) {
@@ -5187,19 +5234,19 @@ async function resumeTurnFromJournal(sessionId, {
     }
     // execInWorker's teardown, for the adopted turn: the turn is over, and
     // what a finished build committed but could not push is remembered so
-    // the tail's heal, or failing that evictWorker, pushes it before the
+    // publication retry, or failing that evictWorker, pushes it before the
     // workspace goes. A pending stop survives, as it does there (#937).
     await recordFinishedCommit(sessionId, turnMode, state, branchName, turnId);
   }
 }
 
-// A finished build whose runner committed but could not push: the runner
-// printed its RESULT line (a stopped turn is killed before it does, and a
-// stop means its work is dropped), reported commits ahead of main and a sha,
-// and push_ok=0. Anything else is null.
+// A finished build or sync whose commit was not published. A physically
+// stopped runner without a result has no commit to rescue here; explicit
+// first-version partial-work rescue remains its caller's policy.
 function unpushedCommit(mode, state, branchName) {
-  if (mode !== 'build' || !state || !state.resultSeen) return null;
-  if (state.pushOk === true || !(state.ahead > 0) || !state.sha || !branchName) return null;
+  if (!['build', 'sync'].includes(mode) || !state || !state.resultSeen) return null;
+  if (mode === 'sync' && !['clean', 'resolved'].includes(state.syncResult)) return null;
+  if (state.pushOk === true || (mode !== 'sync' && !(state.ahead > 0)) || !state.sha || !branchName) return null;
   return { sha: state.sha, branchName };
 }
 
@@ -5221,7 +5268,7 @@ async function recordFinishedCommit(sessionId, mode, state, branchName, turnId, 
 // The workspace lives on the container's own filesystem, so evicting or
 // replacing a worker (idle, a stale image, a new runtime contract) deletes
 // any commit it still holds. For the one kind the platform means to publish,
-// a finished build's commit whose push and heal both failed, push once more
+// a finished turn's commit whose publication failed, push once more
 // first. The record is durable; a failed rescue prevents every new turn,
 // requested/idle eviction and stale-worker replacement. A new turn never
 // supersedes this commit, even on a current-image worker. Sheep countrr's session
@@ -5235,7 +5282,7 @@ async function rescueUnpushedCommit(sessionId, { turnId = null, forTurnStart = f
   });
   const branch = pending.branchName;
   try {
-    const pushed = await execPushFromWorker(sessionId, branch);
+    const pushed = await execPushFromWorker(sessionId, branch, { expectedSha: pending.sha, rescueSavedCommit: true });
     log.info('worker', 'Preserved a finished build\'s commit', {
       sessionId, branch, sha: String(pushed?.sha || pending.sha).slice(0, 8),
     });
@@ -5288,7 +5335,8 @@ function parsePartialCommit(stdout) {
 /**
  * Commit and push what a failed or stopped build turn left in the session's
  * worker, when it differs from main. Resolves { pushed: true, sha, commits }
- * or { pushed: false, reason }; never throws. Outside any agent turn:
+ * or { pushed: false, reason }. A failed preservation write throws so recovery
+ * retains the work. Outside any agent turn:
  * nothing is journaled and the active-turn record is untouched.
  */
 async function keepPartialWork(sessionId, { branchName, commitMsg = 'Homeroom bot: work so far' } = {}) {
@@ -5305,7 +5353,15 @@ async function keepPartialWork(sessionId, { branchName, commitMsg = 'Homeroom bo
   }
   if (!committed || !(committed.ahead > 0) || !committed.sha) return { pushed: false, reason: 'nothing differs from main' };
   try {
-    const pushed = await execPushFromWorker(sessionId, branchName);
+    await unpushedCommits.record(_getPoolSafe(), sessionId, { sha: committed.sha, branchName });
+  } catch (err) {
+    // The coding step is already kept. Retry this commit/publication step,
+    // not the paid turn, if its preservation record cannot yet be saved.
+    err.retainActiveTurn = true;
+    throw err;
+  }
+  try {
+    const pushed = await execPushFromWorker(sessionId, branchName, { expectedSha: committed.sha });
     log.info('worker', 'Kept a failed build turn\'s work', {
       sessionId, branch: branchName, sha: String(pushed?.sha || committed.sha).slice(0, 8), commits: committed.ahead,
     });
@@ -5905,11 +5961,11 @@ async function destroyWorker(containerName) {
 //     delete is accepted (a Deployment goes after its pods, a volume after
 //     the pod that mounts it), calling `renew()` while it waits; past
 //     `waitMs` it throws, and is tried again.
-// Answers { removed: true } ({ stopped: true } for stopOnly), or
+// Answers { removed: true }, or
 // { skipped: true } when `proceed()` said no.
 // Docker's named volume carries no identity: a local stack's only.
 async function removeSessionRuntime(sessionId, {
-  volume = false, stopOnly = false, proceed = async () => true, renew = async () => {}, waitMs = 90000, pollMs = 2000,
+  volume = false, proceed = async () => true, renew = async () => {}, waitMs = 90000, pollMs = 2000,
 } = {}) {
   if (!Number.isSafeInteger(sessionId) || sessionId <= 0) throw new Error('invalid_session');
   const kubernetesRuntime = usesKubernetesWorkers();
@@ -5932,14 +5988,9 @@ async function removeSessionRuntime(sessionId, {
     const id = await dockerContainerId(workerContainerName(sessionId));
     if (!(await proceed())) return { skipped: true };
     if (id) {
-      if (stopOnly) {
-        await docker.execFileAsync('docker', ['stop', id], { timeout: Math.min(15000, Math.max(1, until - Date.now())) });
-        await settle(async () => ['created', 'exited', 'dead', 'not_found'].includes(await docker.getContainerStatus(id)));
-      } else {
-        const result = await docker.stopAndRemove(id);
-        if (!result.removed) throw new Error('worker_removal_failed');
-        await settle(async () => (await docker.getContainerStatus(id)) === 'not_found');
-      }
+      const result = await docker.stopAndRemove(id);
+      if (!result.removed) throw new Error('worker_removal_failed');
+      await settle(async () => (await docker.getContainerStatus(id)) === 'not_found');
     }
     if (volume) {
       try {
@@ -5949,19 +6000,13 @@ async function removeSessionRuntime(sessionId, {
       }
     }
   }
-  if (!stopOnly || kubernetesRuntime) {
-    _warmRegistry.delete(sessionId);
-    await noteWorkerGone(sessionId);
-  }
-  log.info('worker', stopOnly ? 'Worker stopped' : volume ? 'Worker and its Claude Code volume removed' : 'Worker destroyed', { sessionId });
-  return stopOnly ? { stopped: true } : { removed: true };
+  _warmRegistry.delete(sessionId);
+  await noteWorkerGone(sessionId);
+  log.info('worker', volume ? 'Worker and its Claude Code volume removed' : 'Worker destroyed', { sessionId });
+  return { removed: true };
 }
 const removeWorker = (sessionId, opts = {}) => removeSessionRuntime(sessionId, { ...opts, volume: false });
 const removeCcVolume = (sessionId, opts = {}) => removeSessionRuntime(sessionId, { ...opts, volume: true });
-// Kubernetes removes the captured Deployment; Docker retains the stopped
-// container and its warm/sweeper records, matching the legacy Stop behavior.
-// Neither removes its volume.
-const stopWorkerByIdentity = (sessionId, opts = {}) => removeSessionRuntime(sessionId, { ...opts, volume: false, stopOnly: true });
 
 // A container's id, or null when there is none by that name.
 async function dockerContainerId(name) {
@@ -6012,19 +6057,14 @@ async function listWorkerVolumes() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Platform-side git push proxy
+// Trusted conductor Git publication and saved-work rescue
 // ──────────────────────────────────────────────────────────────────────
 //
-// The worker container carries no GitHub credentials. When CC commits
-// and wants to push, the worker's `usernode-push` shell wrapper hits
-// POST /api/internal/sessions/:id/push (see src/routes/internal.js),
-// which calls this helper.
-//
-// The worker exports a bounded Git bundle without credentials. The trusted
-// platform imports only its objects into a fresh bare repository, then
-// pushes the exact commit with the platform's credential. Worker hooks, remotes,
-// config and executables never run with that credential. Destination and
-// branch are re-read from the DB here, including for recovery callers.
+// The worker carries no Git credential or publication capability. Completed
+// live/replayed turns call turn-publication.js; saved-work and capture helpers
+// also use this pusher. It re-reads the authorized destination and exports a
+// bounded bundle without credentials. Only objects enter the isolated trusted
+// repository: no worker hooks, remotes, config or executable sees the token.
 //
 // #1376: that charset lives in services/branch-names.js now, shared with
 // the routes that MINT the name. It used to be defined only here and
@@ -6043,7 +6083,7 @@ function githubPushTarget(repoUrl) {
   return { owner: match[1], repo };
 }
 
-async function execPushFromWorker(sessionId, branchName, { expectedRepoUrl, expectedAppId } = {}) {
+async function execPushFromWorker(sessionId, branchName, { expectedRepoUrl, expectedAppId, expectedUserId, expectedSha, rescueSavedCommit = false } = {}) {
   // #1350: a session created but never given a turn has no branch at all,
   // so the push proxy has to name that case separately. Left to fall
   // through, isValidBranchName rejects null and the message advises
@@ -6071,11 +6111,10 @@ async function execPushFromWorker(sessionId, branchName, { expectedRepoUrl, expe
     throw err;
   }
 
-  // Web-side salvage callers obey the same boundary as the HTTP callback.
-  // Never fall back to local worker exec/Git when the conductor is absent.
+  // Publication and saved-work rescue belong to the conductor. No HTTP
+  // callback, queued push request or privileged web fallback remains.
   if (require('./process-role').processRole() === 'web') {
-    const { sha, stderr } = await require('../workflow/platform.ts').requestWorkerPush(sessionId, branchName);
-    return { sha, stderr };
+    throw Object.assign(new Error('Worker publication requires a conductor'), { code: 'workflow_role_required' });
   }
 
   const containerName = _registryGet(sessionId)?.containerName || workerRuntimeName(sessionId);
@@ -6086,23 +6125,49 @@ async function execPushFromWorker(sessionId, branchName, { expectedRepoUrl, expe
   // the platform's own repository, services/github.js "Who Homeroom is on
   // GitHub"). Neither credential ever reaches the worker.
   const pool = _getPoolSafe();
-  const { rows: [target] = [] } = pool
-    ? await pool.query(
-      `SELECT cs.app_id, cs.branch_name, cs.status, a.repo_url, u.anonymised_at,
+  const readTarget = async () => {
+    const { rows: [row] = [] } = pool ? await pool.query(
+      `SELECT cs.app_id, cs.user_id, cs.branch_name, cs.status, a.repo_url, u.anonymised_at,
               sw.unpushed_sha, sw.unpushed_branch_name FROM chat_sessions cs
        JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id
        LEFT JOIN session_workers sw ON sw.session_id = cs.id WHERE cs.id = $1`, [sessionId],
-    )
-    : { rows: [] };
+    ) : { rows: [] };
+    return row;
+  };
+  let target = await readTarget();
   if (target && ((expectedRepoUrl !== undefined && target.repo_url !== expectedRepoUrl)
-    || (expectedAppId !== undefined && target.app_id !== expectedAppId))) {
+    || (expectedAppId !== undefined && target.app_id !== expectedAppId)
+    || (expectedUserId !== undefined && target.user_id !== expectedUserId))) {
     throw Object.assign(new Error('The session push target changed'), { code: 'session_changed', permanent: true });
   }
-  if (target && expectedRepoUrl !== undefined && (target.anonymised_at || ['closed', 'archived', 'merged', 'failed'].includes(target.status))) {
+  // Rescue may publish only the exact durable saved commit, even after the
+  // session ended. Ordinary publication still requires an active account
+  // and session. Never discard a finished build just to release its worker.
+  const savedRescue = row => rescueSavedCommit && expectedSha && row?.unpushed_sha === expectedSha
+    && row.unpushed_branch_name === branchName;
+  if (target && !savedRescue(target) && (target.anonymised_at || ['closed', 'archived', 'merged', 'failed'].includes(target.status))) {
     throw Object.assign(new Error('Session is inactive'), { code: 'session_inactive', permanent: true });
   }
   const hosted = !!(target && require('./repo-ref').isHosted(target.repo_url));
   const branchMatches = !!(target && target.branch_name === branchName);
+  const githubTarget = !hosted && branchMatches ? githubPushTarget(target.repo_url) : null;
+  if (branchMatches) {
+    if (!hosted && !githubTarget) throw Object.assign(new Error('Invalid canonical GitHub push destination'), { code: 'bad_repo_url', permanent: true });
+    const parsed = require('./repo-ref').ownerRepo(target.repo_url);
+    const before = { ...target };
+    const privacy = await require('./github').checkRepoPublic(parsed.owner, parsed.repo);
+    if (!privacy.ok || privacy.private) throw Object.assign(new Error(privacy.message || 'Homeroom supports public repositories only.'), {
+      code: privacy.code || 'private_repo', permanent: privacy.private === true,
+    });
+    // The privacy read may wait on a provider. Recheck the actual target and
+    // owner afterwards, as the old conductor command did before obtaining a
+    // credential. A database failure stays retryable.
+    target = await readTarget();
+    if (!target || ['app_id', 'user_id', 'repo_url', 'branch_name', 'status'].some(k => before[k] !== target[k]) || (target.anonymised_at && !savedRescue(target))
+        || (rescueSavedCommit && !savedRescue(target))) {
+      throw Object.assign(new Error('The session push target changed'), { code: 'session_changed', permanent: true });
+    }
+  }
   const gitHost = require('./git-host');
   if (!hosted && branchMatches && require('./github-pause').codeChangesPaused(target.repo_url)) {
     const err = new Error('GitHub is paused');
@@ -6116,7 +6181,6 @@ async function execPushFromWorker(sessionId, branchName, { expectedRepoUrl, expe
   // The GitHub owner, read from the same strict address the push is built
   // from below; any other address is refused there, before a credential is
   // asked for. So is a missing or moved branch.
-  const githubTarget = !hosted && branchMatches ? githubPushTarget(target.repo_url) : null;
   let token = '';
   if (hosted) {
     token = gitHost.settings().token || '';
@@ -6153,7 +6217,7 @@ async function execPushFromWorker(sessionId, branchName, { expectedRepoUrl, expe
       remoteUrl = `https://github.com/${githubTarget.owner}/${githubTarget.repo}.git`;
     }
     const pushed = await workerGitPush.push({
-      remoteUrl, branchName, token,
+      remoteUrl, branchName, token, expectedSha,
       ...(hosted ? { username: gitHost.settings().user, authFetch: true } : {}),
       exportWorker: script => execWorkerCommand(containerName, ['sh', '-c', script], null, {
         timeoutMs: 60000, maxBuffer: workerGitPush.MAX_EXPORT_BYTES,
@@ -6181,7 +6245,8 @@ async function execPushFromWorker(sessionId, branchName, { expectedRepoUrl, expe
     const cleanMsg = scrub(err.message).slice(0, 2000);
     const cleanStderr = scrub(err.stderr).slice(0, 8000);
     const wrapped = new Error(`push proxy failed: ${cleanMsg}`);
-    wrapped.code = 'push_failed';
+    wrapped.code = err.code || 'push_failed';
+    wrapped.permanent = err.permanent === true;
     wrapped.stderr = cleanStderr;
     log.warn('worker', 'Push proxy failed', {
       sessionId, branch: branchName, err: cleanMsg,
@@ -6236,7 +6301,6 @@ module.exports = {
   stopTurn,
   stopTurnByJournal,
   signalLegacyTurn,
-  stopWorkerByIdentity,
   stopOwnedTurn,
   // #937: pending-stop record (survives the dispatch it guards)
   clearPendingStop,

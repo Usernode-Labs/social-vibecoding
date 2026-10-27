@@ -160,9 +160,9 @@ test('stopping a local turn does not go hunting for a container that never exist
     sessions.indexOf('if (handle.localTurnId) {') + 900
   );
   assert.match(stop, /localAgent\.requestStop/);
-  // Both journal confirmation and the legacy whole-worker fallback are
-  // conductor commands, and neither belongs to a local CLI turn.
-  assert.match(sessions, /if \(!handle\.localTurnId && \(stopPolicy\.killsWorkerInPhase\(handle\.phase\) \|\| handle\.workerName\)\)/);
+  // Journal confirmation is a conductor command for coding/pre-build
+  // phases; it never belongs to a local CLI turn.
+  assert.match(sessions, /if \(!handle\.localTurnId && stopPolicy\.killsWorkerInPhase\(handle\.phase\)\)/);
 });
 
 test('the force-orphan stop path also releases a local turn', () => {

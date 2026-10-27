@@ -182,8 +182,6 @@ function loadVotes({ mergeImpl, reconcileImpl = null }) {
       return mergeImpl({ owner, repo, prNumber, sha });
     },
     HeadMovedError: require('../src/services/github').HeadMovedError,
-    invalidateIssuesCache() {},
-    noteIssuesClosed() {},
   });
   // The merge's claim and its releases are the proposal machine's
   // (platform.claimMerge / releaseMerge): granted here, and recorded.

@@ -73,17 +73,6 @@ function loadWithStubs({ gh = {}, calls, ws, closedRequests = null }) {
         if (gh.closeIssue) return gh.closeIssue(owner, repo, issueNumber);
         return { number: issueNumber, state: 'closed' };
       },
-      invalidateIssuesCache: (owner, repo) => {
-        calls.push({ type: 'invalidateIssuesCache', owner, repo });
-      },
-      noteIssuesClosed: (owner, repo, numbers) => {
-        calls.push({ type: 'noteIssuesClosed', owner, repo, numbers: [...numbers] });
-        return numbers.length;
-      },
-      unsuppressIssues: (owner, repo, numbers) => {
-        calls.push({ type: 'unsuppressIssues', owner, repo, numbers: [...numbers] });
-        return numbers.length;
-      },
       ...gh.overrides,
     },
     loaded: true, id: ghPath, filename: ghPath, paths: orig.gh ? orig.gh.paths : [],
@@ -658,7 +647,7 @@ test('the watcher keeps no poll and no deleted entry point', () => {
   const { subject, restore } = loadWithStubs({ calls: [], ws: [] });
   try {
     assert.deepEqual(Object.keys(subject).sort(),
-      ['bustAndBroadcast', 'closeAfterMerge', 'closeIncluded', 'closeTwinRows', 'mergedIntoDefaultBranch', 'resolveIssueNumbers']);
+      ['broadcastClosed', 'closeAfterMerge', 'closeIncluded', 'closeTwinRows', 'mergedIntoDefaultBranch', 'resolveIssueNumbers']);
     const src = require('node:fs').readFileSync(require.resolve('../src/services/issue-close-watcher'), 'utf8');
     assert.doesNotMatch(src, /setTimeout|ISSUE_CLOSE_WATCH_/, 'a look is one pass: the machine times the second');
   } finally { restore(); }

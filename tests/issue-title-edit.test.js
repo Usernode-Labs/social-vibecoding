@@ -52,8 +52,6 @@ github.patchIssueTitle = async (owner, repo, n, title) => {
   if (patchShouldFail) throw new Error('boom');
   patchCalls.push({ owner, repo, n, title });
 };
-let cacheInvalidations = [];
-github.invalidateIssuesCache = (owner, repo) => cacheInvalidations.push(`${owner}/${repo}`);
 
 const appAccess = require('../src/services/app-access');
 appAccess.getAppForUser = async () => ({
@@ -88,7 +86,6 @@ beforeEach(() => {
   issueUpdates = [];
   patchCalls = [];
   patchShouldFail = false;
-  cacheInvalidations = [];
   ghIssuesResult = defaultGhIssues();
 });
 
@@ -134,7 +131,6 @@ test('author via Source line: renames on GitHub, cleans up, records the old and 
     assert.ok(systemMessages[0].content.includes('"New sharper title"'), 'message carries the new title');
     assert.ok(systemMessages[0].content.includes('tester'), 'message names the renamer');
 
-    assert.deepEqual(cacheInvalidations, ['o/r']);
     assert.equal(issueUpdates.length, 1);
     assert.equal(issueUpdates[0].action, 'updated');
     assert.equal(issueUpdates[0].issueNumber, 12);

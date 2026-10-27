@@ -244,7 +244,7 @@ test('a correction during title generation cancels a stale generated title', asy
     const row = { id: 5, owner: 'acme', repo: 'app', issue_number: 12, description: 'Old words', attempts: 0 };
     const { subject, restore } = loadTitleHealWithStubs({
       llm: { generateIssueTitle: async () => { changed = true; return { title: 'Stale generated title' }; } },
-      github: { patchIssueTitle: async () => calls.push('patch'), invalidateIssuesCache() {} },
+      github: { patchIssueTitle: async () => calls.push('patch'), },
       prMetadata: {}, ws: noopWs,
     });
     try {
@@ -276,7 +276,6 @@ test('healIssueTitles: success retitles the issue, deletes the queue row, announ
     github: {
       safeMention: (s) => s,
       patchIssueTitle: async (owner, repo, n, title) => { ghCalls.push({ owner, repo, n, title }); },
-      invalidateIssuesCache: () => {},
     },
     prMetadata: {},
     ws: { pushVoteUpdate: () => {}, pushIssueUpdate: (d) => wsCalls.push(d) },
@@ -326,7 +325,6 @@ test('healIssueTitles: a refusal reply is never PATCHed; the reporter\'s words a
     github: {
       safeMention: (s) => s,
       patchIssueTitle: async (owner, repo, n, title) => { ghCalls.push(title); },
-      invalidateIssuesCache: () => {},
     },
     prMetadata: {},
     ws: noopWs,
@@ -359,7 +357,7 @@ test('healIssueTitles: failure backs off; final attempt abandons the row', async
       isEnabled: () => true,
       generateIssueTitle: async () => { throw new Error('still no credits'); },
     },
-    github: { safeMention: (s) => s, patchIssueTitle: async () => {}, invalidateIssuesCache: () => {} },
+    github: { safeMention: (s) => s, patchIssueTitle: async () => {}, },
     prMetadata: {},
     ws: noopWs,
   });
@@ -407,7 +405,7 @@ test('healPrTitles: re-drives applyPrMetadata and broadcasts when the flag clear
   const wsCalls = [];
   const { subject, restore } = loadTitleHealWithStubs({
     llm: { isEnabled: () => true },
-    github: { safeMention: (s) => s, patchIssueTitle: async () => {}, invalidateIssuesCache: () => {} },
+    github: { safeMention: (s) => s, patchIssueTitle: async () => {}, },
     prMetadata: {
       applyPrMetadata: async ({ session, repoOwner, repoName, username, userId }) => {
         applied.push({ sessionId: session.id, repoOwner, repoName, username, userId });
@@ -451,7 +449,7 @@ test('healPrTitles: no broadcast when the heal attempt falls back again', async 
   const wsCalls = [];
   const { subject, restore } = loadTitleHealWithStubs({
     llm: { isEnabled: () => true },
-    github: { safeMention: (s) => s, patchIssueTitle: async () => {}, invalidateIssuesCache: () => {} },
+    github: { safeMention: (s) => s, patchIssueTitle: async () => {}, },
     prMetadata: {
       applyPrMetadata: async ({ session }) => {
         // LLM still down: the flag stays TRUE (fallback fired again).
@@ -492,7 +490,7 @@ test('title healing preserves a remote correction whose local commit failed', as
     llm: { generateIssueTitle: async () => ({ title: 'Generated from old words' }) },
     github: { safeMention: value => value,
       getIssue: async () => ({ title: 'User correction', body: 'Source\n\nCorrected words\n\nScreenshot' }),
-      patchIssueTitle: async () => calls.push('patch'), invalidateIssuesCache() {} },
+      patchIssueTitle: async () => calls.push('patch'), },
     prMetadata: {}, ws: noopWs,
   });
   try {

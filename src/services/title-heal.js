@@ -192,11 +192,8 @@ async function healIssueTitle(pool, row, { dataKey } = {}) {
     log.info('title-heal', 'Issue title regenerated', {
       repo: `${row.owner}/${row.repo}`, issueNumber: row.issue_number, title,
     });
-    // Bust the open-issues cache + nudge any open panel to refetch, so
-    // the healed title (and the disappearing placeholder chip) show up
-    // without a reload. Best-effort — the cache TTL heals this anyway.
+    // Tell open panels to re-read the healed title and placeholder state.
     try {
-      github.invalidateIssuesCache(row.owner, row.repo);
       const { rows: apps } = await pool.query('SELECT id, slug, repo_url FROM apps');
       const target = apps.find((a) => {
         const r = parseRepo(a.repo_url);

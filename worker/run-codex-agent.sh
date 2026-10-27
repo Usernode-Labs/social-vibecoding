@@ -473,16 +473,6 @@ if usernode_settle_session_branch; then
   usernode_commit_leftovers "$TURN_START_SHA" "$COMMIT_MSG"
 fi
 
-echo "__USERNODE_PHASE__ push"
-PUSH_OK=0
-if [ -n "$USERNODE_BRANCH_MISMATCH" ]; then
-  echo "__USERNODE_WARN__ skipping push"
-elif /usr/local/bin/usernode-push; then
-  PUSH_OK=1
-else
-  echo "__USERNODE_WARN__ push failed"
-fi
-
 git fetch origin main --quiet 2>/dev/null || true
 AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
 BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
@@ -494,10 +484,5 @@ if [ -n "$USERNODE_BRANCH_MISMATCH" ]; then
   BRANCH_MISMATCH_FIELD=" branch_mismatch=1"
 fi
 
-if [ "$PUSH_OK" = "1" ]; then
-  echo "__USERNODE_PHASE__ done"
-else
-  echo "__USERNODE_PHASE__ push_failed"
-fi
-echo "__USERNODE_RESULT__ cc_exit=$CODEX_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id=$AGENT_THREAD_OUT agent_exit=$CODEX_EXIT$BRANCH_MISMATCH_FIELD$MEMORY_FIELDS"
+echo "__USERNODE_RESULT__ cc_exit=$CODEX_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=0 mode=build agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id=$AGENT_THREAD_OUT agent_exit=$CODEX_EXIT$BRANCH_MISMATCH_FIELD$MEMORY_FIELDS"
 exit "$CODEX_EXIT"

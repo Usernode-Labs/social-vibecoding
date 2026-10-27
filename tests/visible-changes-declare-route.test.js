@@ -57,6 +57,28 @@ const declare = async (url, intent) => {
   return { status: response.status, body: await response.json() };
 };
 
+test('in-flight old push tokens can only declare visuals for their own session', async t => {
+  stub(t, shotsState, 'recordIntent', async (_pool, sessionId, intent) => ({
+    accepted: true, unchanged: false, required: false, state: 'not_required', intent, sessionId,
+  }));
+  const url = await serve(t);
+  const token = platformJwt.signWorkerPurpose({ sessionId: 42, purpose: 'worker:push' });
+  const post = path => fetch(path, { method: 'POST', headers: {
+    authorization: `Bearer ${token}`, 'content-type': 'application/json',
+  }, body: JSON.stringify({ intent: { version: 1, impact: 'none', rationale: 'Server only.', stories: [] } }) });
+  const out = await post(url);
+  assert.equal(out.status, 200);
+  assert.equal((await out.json()).ok, true);
+  assert.equal((await post(url.replace('/42/', '/43/'))).status, 403);
+  const issues = await fetch(url.replace('/visible-changes', '/issues'), { headers: { authorization: `Bearer ${token}` } });
+  assert.equal(issues.status, 401, 'compatibility never widens request-read authority');
+  for (const endpoint of ['push', 'pr']) {
+    const retired = await post(url.replace('/visible-changes', `/${endpoint}`));
+    assert.equal(retired.status, 410);
+    assert.equal((await retired.json()).permanent, true);
+  }
+});
+
 test('a recorded declaration carries the persona warnings for its app', async (t) => {
   const intent = { version: 1, impact: 'ui', stories: [{ id: 'summary-line', persona: 'guest', claim: 'A line.' }] };
   stub(t, shotsState, 'recordIntent', async (_pool, sessionId, raw) => ({

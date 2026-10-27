@@ -34,7 +34,6 @@ function fakeDeps(pool, seen) {
       patchIssueBody: async (_o, _r, n) => { calls.patched.push(n); },
       createIssueComment: async (_o, _r, n, body) => { calls.comments.push({ n, body }); },
       closeIssue: async (_o, _r, n, opts) => { calls.closed.push({ n, reason: opts?.reason }); },
-      noteIssueCreated: () => {},
     },
     budget: { budgetAllows: () => true },
     observers: () => ({ observeAll: async () => ({ items: seen.items, ok: new Set(seen.ok) }) }),

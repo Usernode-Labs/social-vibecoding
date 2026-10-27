@@ -369,14 +369,13 @@ test('the First challenges count on the spot, against the full PostgreSQL schema
     // GitHub stubbed for this door only, which files an issue before it
     // records the report the measure reads. Nothing here reaches GitHub.
     const github = require('../src/services/github');
-    const real = { isEnabled: github.isEnabled, createIssue: github.createIssue, noteIssueCreated: github.noteIssueCreated };
+    const real = { isEnabled: github.isEnabled, createIssue: github.createIssue, };
     let issueNumber = 100;
     github.isEnabled = () => true;
     github.createIssue = async (o, r) => {
       issueNumber += 1;
       return { number: issueNumber, html_url: `https://github.com/${o}/${r}/issues/${issueNumber}` };
     };
-    github.noteIssueCreated = () => {};
     st.after(() => {
       Object.assign(github, real);
     });
