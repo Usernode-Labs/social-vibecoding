@@ -1,5 +1,6 @@
 {
   "allowed": {
+    "uses src/services/branch-names.js:isValidBranchName": "the shared pure branch-name validator used by push admission; it reads only its string argument and holds no process state",
     "timer src/workflow/kernel/services.ts#execute setInterval": "the lease heartbeat of a running work item; it dies with the handler, and a lapsed lease lets the next process claim the item",
     "timer src/workflow/kernel/stream.ts#Signals setTimeout": "the LISTEN connection's reconnect and a loop's idle sleep; loops poll while it is down",
     "timer src/workflow/kernel/stream.ts#waitForOutcome setTimeout": "a route's bounded wait for an event's outcome; it answers 202 when it runs out",
@@ -289,6 +290,13 @@
       "services | uses src/services/shots-orchestrator.js:dispatchAgent": "eval.agent: the shots agent's turn on a trial's copies, a durable step over the item's checkpoint, owned by the item (the proxy bills a turn so owned to its trial)",
       "services | uses src/services/shots-orchestrator.js:visibleError": "a step's failure in the words the trial shows (pure)",
       "services | uses src/services/shots-eval.js:trialRecipe": "the arm a trial runs (eval.agent): its configuration's recipe resolved against the deployment's own, its summary kept on the trial's attempt; keeps nothing"
+    },
+    "worker-push": {
+      "services | uses src/services/process-role.js:processRole": "reads this process's immutable boot role before any push I/O, refusing accidental work execution on a web process; keeps no decision or session state",
+      "services | uses src/services/process-role.js:runsWorkflow": "a pure check of the boot role that permits the push handler on conductor and local all processes, holding no process state",
+      "services | uses src/services/repo-ref.js:ownerRepo": "parses the current stored repository address for the public-repository check; pure parsing using deployment Git host configuration, with no session memory",
+      "services | uses src/services/github.js:checkRepoPublic": "checks current repository visibility through the configured GitHub or hosted Git client; no per-session state is kept, and an unavailable check refuses the push",
+      "services | uses src/services/worker.js:execPushFromWorker": "exports Git objects from the session's deterministically named worker and pushes from a fresh trusted repository; rechecks stored app, repository and branch, uses no required registry state, and can be repeated after a lost claim"
     },
     "turn": {
       "services | uses src/services/turns.js:run": "a person's turn, run whole as the turn machine's turn.run item (the Mayor's rounds, the coding run it dispatches in the change's worker or on the person's machine, its tail and wrap-up), or carried on from its record after its process went: the turn's own pipeline (mayor/agent-turn.js, routes/sessions.js, turn-recovery.js), which only those modules know; the machine owns that a turn runs, in order, and that its claim is released; keeps nothing beyond the turn (workflow-foundation/design-turns-and-lock.md 8.1)",

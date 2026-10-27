@@ -6032,7 +6032,7 @@ function githubPushTarget(repoUrl) {
   return { owner: match[1], repo };
 }
 
-async function execPushFromWorker(sessionId, branchName) {
+async function execPushFromWorker(sessionId, branchName, { expectedRepoUrl, expectedAppId } = {}) {
   // #1350: a session created but never given a turn has no branch at all,
   // so the push proxy has to name that case separately. Left to fall
   // through, isValidBranchName rejects null and the message advises
@@ -6060,6 +6060,13 @@ async function execPushFromWorker(sessionId, branchName) {
     throw err;
   }
 
+  // Web-side salvage callers obey the same boundary as the HTTP callback.
+  // Never fall back to local worker exec/Git when the conductor is absent.
+  if (require('./process-role').processRole() === 'web') {
+    const { sha, stderr } = await require('../workflow/platform.ts').requestWorkerPush(sessionId, branchName);
+    return { sha, stderr };
+  }
+
   const containerName = _registryGet(sessionId)?.containerName || workerRuntimeName(sessionId);
 
   // Where the branch goes, and with which credential: the app's repository
@@ -6070,10 +6077,17 @@ async function execPushFromWorker(sessionId, branchName) {
   const pool = _getPoolSafe();
   const { rows: [target] = [] } = pool
     ? await pool.query(
-      `SELECT cs.branch_name, a.repo_url FROM chat_sessions cs
-       JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [sessionId],
-    ).catch(() => ({ rows: [] }))
+      `SELECT cs.app_id, cs.branch_name, cs.status, a.repo_url, u.anonymised_at FROM chat_sessions cs
+       JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1`, [sessionId],
+    )
     : { rows: [] };
+  if (target && ((expectedRepoUrl !== undefined && target.repo_url !== expectedRepoUrl)
+    || (expectedAppId !== undefined && target.app_id !== expectedAppId))) {
+    throw Object.assign(new Error('The session push target changed'), { code: 'session_changed', permanent: true });
+  }
+  if (target && expectedRepoUrl !== undefined && (target.anonymised_at || ['closed', 'archived', 'merged', 'failed'].includes(target.status))) {
+    throw Object.assign(new Error('Session is inactive'), { code: 'session_inactive', permanent: true });
+  }
   const hosted = !!(target && require('./repo-ref').isHosted(target.repo_url));
   const branchMatches = !!(target && target.branch_name === branchName);
   const gitHost = require('./git-host');

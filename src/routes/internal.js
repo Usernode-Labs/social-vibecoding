@@ -412,64 +412,22 @@ function internalRoutes(_config) {
         return res.status(403).json({ ok: false, code: 'session_mismatch' });
       }
 
-      let session;
       try {
-        const { rows } = await pool.query(
-          `SELECT cs.id, cs.branch_name, cs.status, a.repo_url
-           FROM chat_sessions cs
-           JOIN apps a ON a.id = cs.app_id
-           WHERE cs.id = $1`,
-          [sessionId]
-        );
-        if (!rows.length) {
-          return res.status(404).json({ ok: false, code: 'session_not_found' });
-        }
-        session = rows[0];
-      } catch (err) {
-        log.error('internal-api', 'Session lookup failed', { sessionId, err: err.message });
-        return res.status(500).json({ ok: false, code: 'db_error' });
-      }
-
-      if (!session.branch_name) {
-        return res.status(400).json({ ok: false, code: 'no_branch' });
-      }
-      if (['closed', 'archived', 'merged', 'failed'].includes(session.status)) {
-        return res.status(409).json({ ok: false, code: 'session_inactive', status: session.status });
-      }
-
-      // Defensive: re-confirm the repo is public before pushing. The
-      // worker bootstrap guard catches most cases, but a user could
-      // flip the repo to private mid-session. Keeping the worker's
-      // push proxy public-only matches the import-time enforcement.
-      const parsed = repoRef.ownerRepo(session.repo_url);
-      if (!parsed) {
-        return res.status(400).json({ ok: false, code: 'bad_repo_url' });
-      }
-      const { owner, repo } = parsed;
-      const privacy = await github.checkRepoPublic(owner, repo);
-      if (!privacy.ok) {
-        return res.status(502).json({ ok: false, code: privacy.code, message: privacy.message });
-      }
-      if (privacy.private) {
-        return res.status(403).json({
-          ok: false, code: 'private_repo',
-          message: `${owner}/${repo} is private; Homeroom supports public repos only.`,
-        });
-      }
-
-      try {
-        const { sha } = await worker.execPushFromWorker(sessionId, session.branch_name);
-        return res.json({ ok: true, branch: session.branch_name, sha });
+        // The conductor rechecks the current session and repository privacy
+        // immediately before it runs the trusted pusher.
+        const { sha, branch } = await require('../workflow/platform.ts').requestWorkerPush(sessionId);
+        return res.json({ ok: true, branch, sha });
       } catch (err) {
         // #1376: `message` is the raw failure; `detail`/`permanent` carry the
         // operator-readable version so the worker's __USERNODE_WARN__ line
         // (and anything reading this response) says why, not just that.
-        return res.status(502).json({
+        return res.status(err.httpStatus || 502).json({
           ok: false,
           code: err.code || 'push_failed',
           message: err.message,
           detail: err.userMessage || null,
           permanent: err.permanent === true,
+          ...(err.sessionStatus ? { status: err.sessionStatus } : {}),
         });
       }
     }
