@@ -132,6 +132,9 @@ import './lib/wallpaper-scroll';
 // …and where the on-screen keyboard has panned the screen to, so a centred
 // dialog stays inside what is visible above the keys (#2765).
 import './lib/visual-viewport';
+// …and whether the screen has a column of system chrome down one side
+// (iPhone Duo): the tab bar and the back button move into it (app.css).
+import './lib/side-strip';
 // …and whether the keyboard is open on a phone at all, including in the
 // Homeroom app, whose web view is resized for it so the kit never sees it
 // covered: the tab bar and the Resume strip step aside (app.css).

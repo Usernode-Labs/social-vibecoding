@@ -808,6 +808,19 @@ test('the marker hugs the lit tab\'s glyph and label, and an unlaid-out bar keep
   assert.deepEqual({ ...markerBoxFor(cell, { left: 0, top: 0, width: 0, height: 0 }) }, { x: 154, y: 4, w: 64, h: 48 });
   assert.equal(markerBoxFor({ offsetLeft: 0, offsetTop: 0, offsetWidth: 0, offsetHeight: 0 }), null,
     'a hidden bar (an app, the keyboard) has no geometry to report');
+  // iPhone Duo's side strip: a 64px column whose cells are its whole width.
+  // The pill keeps to the cell, inset 4px a side, and hugs only up and down;
+  // sized by "Communities" it was 71px and ran past the column's sides.
+  const stripCell = { offsetLeft: 0, offsetTop: 230, offsetWidth: 64, offsetHeight: 54 };
+  assert.deepEqual(
+    { ...markerBoxFor(stripCell, { left: 4, top: 8, width: 56, height: 36 }, true) },
+    { x: 4, y: 233, w: 56, h: 44 },
+  );
+  assert.deepEqual(
+    { ...markerBoxFor(stripCell, { left: 18, top: 8, width: 28, height: 36 }, true) },
+    { x: 4, y: 233, w: 56, h: 44 },
+    'a short label fills the cell the same',
+  );
 });
 
 test('only a selection change slides, the Workshop\'s way (#2824)', () => {
@@ -815,8 +828,9 @@ test('only a selection change slides, the Workshop\'s way (#2824)', () => {
   assert.match(src, /slide: !!prev && selectionChanged/,
     'the first placement and a re-measure land; only a new tab slides');
   assert.match(src, /new ResizeObserver\(\(\) => \{ if \(!cancelSlide\) measure\(false\); \}\)/);
-  assert.match(src, /querySelector<HTMLElement>\('\.platform-tab\[aria-current="page"\]'\)/,
+  assert.match(src, /const selector = target === APP_TARGET \? '\.platform-side-app\[aria-current="page"\]' : '\.platform-tab\[aria-current="page"\]';/,
     'the marker follows the same attribute the declared checks and screen readers read');
+  assert.match(src, /querySelector<HTMLElement>\(selector\)/);
 });
 
 // #3046: on the phone a tab press swaps the whole screen synchronously, so

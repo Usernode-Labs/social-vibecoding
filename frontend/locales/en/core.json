@@ -75,6 +75,14 @@
     "text": "Channels with unread messages",
     "description": "Accessible name of the number badge on the Communities tab. The number counts community channels that have unread messages."
   },
+  "tabs.stripApps": {
+    "text": "Apps",
+    "description": "Small heading in the column of tabs down the side of an iPhone Duo's screen, over the app the person has open and the one they left: it divides those apps from the places above them (Home, Discover, Messages, Communities)."
+  },
+  "tabs.stripResume": {
+    "text": "Resume {{app}}",
+    "description": "Accessible name of the app the person left, in the Apps section of that side column: pressing it goes back into {{app}} as it was left. {{app}} is the app's name."
+  },
   "tabs.settings": {
     "text": "Settings",
     "description": "Accessible name and tooltip of the cog at the foot of the desktop rail: opens Settings."

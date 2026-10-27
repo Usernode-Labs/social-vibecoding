@@ -6067,10 +6067,14 @@ const App = {
       const running = App._parkRecord(App.currentApp);
       App._runningApp = running;
       if (running) bridge.park(null);
+      // …and say which app is on screen: iPhone Duo's side strip draws it
+      // among its tabs, lit (frontend/src/features/nav/side-apps.tsx).
+      if (typeof bridge.running === 'function') bridge.running(running);
       return;
     }
     const left = App._runningApp;
     App._runningApp = null;
+    if (typeof bridge.running === 'function') bridge.running(null);
     if (!left) return;
     // The platform's own row is never parked. Its App tab is Home, and a cold
     // link to it holds `app` for as long as its record takes to say

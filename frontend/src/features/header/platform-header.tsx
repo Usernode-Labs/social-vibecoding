@@ -210,20 +210,12 @@ function appRouteUpHref(
   return null;
 }
 
-export function PlatformHeader() {
-  const t = useMessages();
-  // The four elements the centering measurement needs. Passing them as refs
-  // replaces the classic script's document.querySelector('header') +
-  // previousElementSibling / nextElementSibling walk.
-  const headerRef = useRef<HTMLElement>(null);
-  const leftGroupRef = useRef<HTMLDivElement>(null);
-  const titleRef = useRef<HTMLHeadingElement>(null);
-  const rightGroupRef = useRef<HTMLDivElement>(null);
-
-  useHeaderLayout(headerRef, leftGroupRef, titleRef, rightGroupRef);
-  // Inside a project, the bar wears its community's colour (./community-tint.ts).
-  useCommunityHeaderTint();
-
+/**
+ * What the back slot shows and where it goes: `#back-btn` here, and the
+ * side strip's copy of it on an iPhone Duo (../nav/strip-back.tsx), which
+ * must never disagree with it.
+ */
+export function useBackSlot() {
   // The back slot's state (see ./back-button-store.js): App.setBackIcon
   // publishes here rather than writing `hidden` into React-owned DOM.
   const { mode: backMode, href: backHref } = useStoreState(backButtonStore);
@@ -236,7 +228,7 @@ export function PlatformHeader() {
   // sites agreeing by convention.
   const {
     slug: backSlug, tab: backTab, subTab: backSubTab,
-    sessionOrigin, boardView, topicOrigin, name: appName,
+    sessionOrigin, boardView, topicOrigin,
   } = useStoreState(improveStore);
   const routeUp = appRouteUpHref(backSlug, backTab, backSubTab, sessionOrigin);
   // #2916: on a Workshop topic the back control is the "‹ Workshop" chip at
@@ -260,10 +252,29 @@ export function PlatformHeader() {
   const mode = backMode === 'close' ? 'close'
     : paneBack ? 'none'
       : (routeUp ? 'arrow' : backMode);
+  const href = routeUp
+    || (mode === 'home' ? homeHref() : backHref);
+  return { mode, href, paneBack };
+}
+
+export function PlatformHeader() {
+  const t = useMessages();
+  // The four elements the centering measurement needs. Passing them as refs
+  // replaces the classic script's document.querySelector('header') +
+  // previousElementSibling / nextElementSibling walk.
+  const headerRef = useRef<HTMLElement>(null);
+  const leftGroupRef = useRef<HTMLDivElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const rightGroupRef = useRef<HTMLDivElement>(null);
+
+  useHeaderLayout(headerRef, leftGroupRef, titleRef, rightGroupRef);
+  // Inside a project, the bar wears its community's colour (./community-tint.ts).
+  useCommunityHeaderTint();
+
+  const { slug: backSlug, name: appName } = useStoreState(improveStore);
+  const { mode, href: resolvedBackHref, paneBack } = useBackSlot();
   const backArrow = mode === 'arrow';
   const backClose = mode === 'close';
-  const resolvedBackHref = routeUp
-    || (mode === 'home' ? homeHref() : backHref);
 
   // A LAYOUT effect, and that is load-bearing: it runs inside main.tsx's
   // flushSync(hydrateRoot), which is after hydration has adopted these nodes
