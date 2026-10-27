@@ -397,8 +397,13 @@ test('#5825: the My apps heading carries the compact entry exactly when the tile
   const source = read(HOME_INDEX);
   // The non-editing branch of the heading's action: `heldBack` decides it,
   // and the button is the same component the grid draws as a tile.
+  // #5871: it shares the seat with "Edit", which starts edit mode, so the
+  // seat is drawn when either is due and each decides for itself.
   assert.match(source,
-    /\) : grid\.create\?\.heldBack \? \(\s*<CreateCompact view=\{grid\.create\} \/>\s*\) : null\}/,
+    /\) : \(canEdit \|\| grid\.create\?\.heldBack\) \? \(/,
+    'the heading has an action when Edit or the held-back tile needs one');
+  assert.match(source,
+    /\{grid\.create\?\.heldBack \? <CreateCompact view=\{grid\.create\} \/> : null\}/,
     'the heading draws the compact entry when the grid holds its tile back');
   assert.match(source, /import \{ CreateCompact \} from '\.\/create-tile';/);
   // Edit mode keeps its own action, checked first — Add apps and Done, never

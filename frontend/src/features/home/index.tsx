@@ -114,11 +114,13 @@ export function HomeScreen() {
   const t = useMessages('home');
   const screenRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'home-screen', true);
-  // EDIT MODE's (#4669) one read here: the "Done" that ends it, beside the
-  // heading. The store's initial value is false, so the prerender and the
-  // first client render render no action at all — the markup is unchanged
-  // until a hold actually starts edit mode.
+  // EDIT MODE (#4669) is read here for the heading's doors: "Edit" that
+  // starts it (#5871) and "Done" that ends it. The store starts not ready,
+  // with no items and editing off, so the prerender and the first client
+  // render draw no action at all.
   const grid = useStoreState(gridStore);
+  const canEdit = grid.ready && grid.view === 'grid' && !grid.editing
+    && grid.items.some((item) => !item.app.demo);
 
   return (
     <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="">
@@ -301,8 +303,25 @@ export function HomeScreen() {
                   <span className="whitespace-nowrap">{t('home:edit.done')}</span>
                 </button>
               </span>
-            ) : grid.create?.heldBack ? (
-              <CreateCompact view={grid.create} />
+            ) : (canEdit || grid.create?.heldBack) ? (
+              /* #5871: "Edit" is edit mode's own door. A hold on a tile used
+                 to start it beside the tile's menu, so one press showed both;
+                 a hold is the menu alone now, and arranging is asked for
+                 here (or from the menu's "Edit My apps"). Shown only on the
+                 grid view with a tile of your own to arrange. */
+              <span className="flex items-center gap-4">
+                {canEdit ? (
+                  <button
+                    type="button"
+                    className="home-edit-start shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+                    aria-label={t('home:edit.startLabel')}
+                    onClick={() => { (window as any).Home?.setEditing?.(true); }}
+                  >
+                    <span className="whitespace-nowrap">{t('home:edit.start')}</span>
+                  </button>
+                ) : null}
+                {grid.create?.heldBack ? <CreateCompact view={grid.create} /> : null}
+              </span>
             ) : null}
           >
             {t('home:grid.heading')}
