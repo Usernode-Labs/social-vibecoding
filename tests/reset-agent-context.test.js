@@ -90,6 +90,7 @@ test('reset-agent-context atomically switches the backend and records the contex
   const calls = [];
   const updated = {
     id: 42,
+    app_id: 5,
     agent_backend: 'claude_code',
     agent_provider: 'anthropic',
     agent_model: null,
@@ -117,6 +118,7 @@ test('reset-agent-context atomically switches the backend and records the contex
       if (/INSERT INTO chat_session_messages/.test(text)) {
         return { rows: [{ id: 91, role: 'system', content: params[1], metadata: JSON.parse(params[2]) }] };
       }
+      if (/INSERT INTO wf_events/.test(text)) return { rows: [{ id: '100' }] };
       return { rows: [] };
     },
   });
@@ -143,10 +145,17 @@ test('reset-agent-context atomically switches the backend and records the contex
   assert.equal(json.message.metadata.previousBackend, 'codex_openrouter');
   assert.equal(json.message.metadata.agentBackend, 'claude_code');
   assert.equal(connectCalls, 1);
-  assert.equal(evicted, 42);
+  assert.equal(evicted, null, 'the web route never evicts a worker');
   const update = calls.find((call) => /UPDATE chat_sessions SET/.test(call.text));
   assert.deepEqual(update.params.slice(1), ['claude_code', 'anthropic', null, null]);
   assert.ok(calls.some((call) => call.text === 'COMMIT'));
+  const intent = calls.find((call) => /INSERT INTO wf_events/.test(call.text));
+  assert.equal(intent.params[0], 'worker-release');
+  assert.deepEqual(JSON.parse(intent.params[4]), {
+    sessionId: 42, appId: 5, userId: 7, reason: 'agent-reset', configVersion: 3,
+    requestId: JSON.parse(intent.params[4]).requestId,
+  });
+  assert.ok(calls.indexOf(intent) < calls.findIndex(call => call.text === 'COMMIT'), 'the release intent commits with the reset');
 });
 
 // ── #1348: "whichever on-platform agent I used last" ─────────────────
@@ -178,6 +187,7 @@ function switchableSession(t, updated) {
       if (/INSERT INTO chat_session_messages/.test(text)) {
         return { rows: [{ id: 91, role: 'system', content: params[1], metadata: JSON.parse(params[2]) }] };
       }
+      if (/INSERT INTO wf_events/.test(text)) return { rows: [{ id: '101' }] };
       return { rows: [] };
     },
   });
@@ -197,6 +207,7 @@ function switchableSession(t, updated) {
 
 const CLAUDE_ROW = {
   id: 42,
+  app_id: 5,
   agent_backend: 'claude_code',
   agent_provider: 'anthropic',
   agent_model: null,
