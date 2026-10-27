@@ -272,7 +272,7 @@ async function teardownStagingForSession({ pool, sessionId, reason = 'idle' }) {
 
 // Close a proposal (status 'archived'), for any reason: withdrawn by its
 // owner ('manual'), voted down ('auto-rejected'), set aside after an admin's
-// lone No ('admin-no'), gone quiet ('stale-pr'),
+// lone No ('admin-no') or an approver's ('approver-no'), gone quiet ('stale-pr'),
 // replaced, superseded, its request closed, red and untouched, the Homeroom
 // bot's or a bench trial's own ending. One path for every close: the
 // machine closes its pull request, retires its preview for good, destroys

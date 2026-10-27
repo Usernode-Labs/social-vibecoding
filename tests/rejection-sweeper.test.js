@@ -123,4 +123,19 @@ test('the proposal machine\'s review check closes a voted-down proposal with the
   assert.equal(adminLines.length, 1);
   assert.match(adminLines[0].content, /was set aside: an admin voted No and nobody voted Yes within a week/);
   assert.doesNotMatch(adminLines[0].content, /more No than Yes/);
+
+  // #5947: one armed by an approver's lone No (applyApproverNo) closes as
+  // 'approver-no', with its own line.
+  const approverNo = run({
+    ...mergeGate(20, 0, 1, opened, openedMs),
+    rejectionArmed: true,
+    rejectionEndsAt: new Date(openedMs + 2 * DAY).toISOString(),
+    rejectable: true,
+    approverNo: true,
+  });
+  assert.equal(approverNo.next.name, 'closed');
+  assert.equal(approverNo.next.data.reason, 'approver-no');
+  const approverLines = approverNo.writes.filter((w) => w.type === 'line');
+  assert.equal(approverLines.length, 1);
+  assert.match(approverLines[0].content, /was set aside: an approver voted No and nobody voted Yes within 2 days/);
 });

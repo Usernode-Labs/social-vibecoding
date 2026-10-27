@@ -5,6 +5,7 @@
 // which must never fail over a conversation note.
 
 import type { Queryable } from './db.ts';
+import { APPROVER_NO_WINDOW_WORDS } from './governance-gate.ts';
 
 const positiveInt = (value: number) => (Number.isSafeInteger(value) && value > 0 && value <= 2147483647 ? value : null);
 
@@ -30,6 +31,7 @@ export function closedSentence({ prNumber, outcome }: { prNumber: number | null;
     case 'merged': return `${ref} merged. It is part of the app now.`;
     case 'rejected': return `${ref} was set aside by the group's vote.`;
     case 'admin-no': return `${ref} was set aside: an admin voted No and nobody voted Yes within a week.`;
+    case 'approver-no': return `${ref} was set aside: an approver voted No and nobody voted Yes within ${APPROVER_NO_WINDOW_WORDS}.`;
     case 'withdrawn': return `${ref} was withdrawn.`;
     case 'replaced': return `${ref} was replaced by a newer proposal.`;
     default: return `${ref} was closed.`;

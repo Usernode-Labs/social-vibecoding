@@ -494,6 +494,40 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     assert.equal((await row(notAdmin)).status, 'promoted', 'a lone No from someone who is not an admin arms nothing');
   });
 
+  await t.test('P11c an approver\'s lone No sets the change aside after two days; only an approver\'s Yes stops it (#5947)', async () => {
+    defaults();
+    const approver = await user();
+    const second = await user();
+    const outsider = await user();
+    const setAside = await session({ status: 'promoted', promotedAgo: 8 * DAY, approvalsRequired: 1 });
+    const approved = await session({ status: 'promoted', promotedAgo: 8 * DAY, approvalsRequired: 1 });
+    const recent = await session({ status: 'promoted', promotedAgo: 8 * DAY, approvalsRequired: 1 });
+    for (const x of [setAside, approved, recent]) {
+      await pool.query(`UPDATE apps SET approver_policy = 'invited' WHERE id = $1`, [x.app_id]);
+      for (const p of [approver, second]) {
+        await pool.query(`INSERT INTO app_approvers (app_id, user_id, status) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING`, [x.app_id, p.id]);
+      }
+      await vote(x, approver, 'no');
+    }
+    // An advisory Yes from someone who is not an approver does not stop it.
+    await vote(setAside, outsider, 'yes');
+    await vote(approved, second, 'yes');
+    for (const x of [setAside, approved]) {
+      await pool.query(`UPDATE pr_votes SET created_at = NOW() - interval '3 days' WHERE session_id = $1`, [x.id]);
+    }
+    await pool.query(`UPDATE pr_votes SET created_at = NOW() - interval '1 day' WHERE session_id = $1`, [recent.id]);
+    for (const x of [setAside, approved, recent]) await send(x, 'Adopted');
+    await settle();
+    for (const x of [setAside, approved, recent]) await fire(x);
+
+    assert.equal((await row(setAside)).status, 'archived', 'no approver said Yes within two days of the No');
+    assert.equal((await instance(setAside)).data.reason, 'approver-no');
+    assert.match((await pool.query(`SELECT content FROM chat_messages WHERE thread_ref = $1 ORDER BY id DESC LIMIT 1`, [setAside.id])).rows[0].content,
+      /was set aside: an approver voted No and nobody voted Yes within 2 days/);
+    assert.notEqual((await row(approved)).status, 'archived', 'an approver\'s Yes stops the clock');
+    assert.equal((await row(recent)).status, 'promoted', 'one day into the two');
+  });
+
   await t.test('P12 gone quiet: warned once, closed three days on, unless somebody voted since the warning (bug 4)', async () => {
     defaults();
     const quiet = await session({ status: 'promoted', promotedAgo: 8 * DAY, approvalsRequired: 3 });
