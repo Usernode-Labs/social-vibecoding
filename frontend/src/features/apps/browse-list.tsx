@@ -45,6 +45,8 @@ type RowView = {
   added: boolean;
   /** A joined row's Open: the app can run, and it is not an inert fixture. */
   canOpen?: boolean;
+  /** The Joined view's Leave (#5953): a member who did not make the app. */
+  canLeave?: boolean;
   /** In "Recommended for you", the default list's first section (#5267). */
   recommended?: boolean;
   addTitle: string;
@@ -65,6 +67,12 @@ const ADD_BASE = 'browse-add-btn shrink-0 inline-flex items-center gap-1 rounded
 // the `neutral` variant in @/components/ui/button.tsx).
 const ADD_FILL = 'border-transparent bg-zinc-100 dark:bg-zinc-800 text-zinc-900 '
   + 'dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700';
+// Leave (#5953) is the quiet one beside Open: no fill, muted words that
+// darken under the pointer. Leaving asks first (Home.setMembership, whose
+// confirm is the red one), so the button itself does not need to shout.
+const LEAVE = 'browse-leave-btn shrink-0 inline-flex items-center rounded-full px-2.5 py-1.5 '
+  + 'text-xs font-medium text-zinc-500 dark:text-zinc-400 transition-colors '
+  + 'hover:text-zinc-900 dark:hover:text-zinc-100';
 
 /**
  * The label a Discover row shows under its name, from the API's
@@ -116,12 +124,12 @@ function Row({ view, eager = false }: {
     const nav = (window as any).NavLink;
     const hrefFor = (e: MouseEvent) => {
       const view = latest.current;
-      if ((e.target as Element)?.closest?.('.browse-add-btn, .app-icon-link')) return null;
+      if ((e.target as Element)?.closest?.('.browse-add-btn, .browse-leave-btn, .app-icon-link')) return null;
       return controller()?.rowHref(view) ?? null;
     };
     const activate = (e: MouseEvent) => {
       const view = latest.current;
-      if ((e.target as Element)?.closest?.('.browse-add-btn, .app-icon-link')) return;
+      if ((e.target as Element)?.closest?.('.browse-add-btn, .browse-leave-btn, .app-icon-link')) return;
       controller()?.openRow(view);
     };
     if (nav) nav.wireModified(node, hrefFor, activate);
@@ -230,6 +238,22 @@ function Row({ view, eager = false }: {
           }}
         >
           {t('discover:list.open.action')}
+        </button>
+      ) : null}
+      {view.canLeave ? (
+        <button
+          type="button"
+          className={LEAVE}
+          data-slug={view.slug}
+          data-action="leave"
+          aria-label={t('discover:list.leave.named', { app: view.name })}
+          title={t('discover:list.leave.named', { app: view.name })}
+          onClick={(e) => {
+            e.stopPropagation();
+            controller()?.leaveRow(view);
+          }}
+        >
+          {t('discover:list.leave.action')}
         </button>
       ) : null}
         </>
