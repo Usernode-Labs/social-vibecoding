@@ -6,7 +6,8 @@
 //   - every dismissal keeps the draft, and so does a reload (localStorage);
 //   - only a successful send (or a save to the offline outbox, which owns the
 //     words from then on) clears it;
-//   - the destination is NOT restored — #2707 leaves that to the person;
+//   - the destination is not restored — reopening picks the open app's
+//     default again (#5992), never the earlier tap;
 //   - the draft belongs to the viewer: one per signed-in account, shared
 //     across apps.
 //
@@ -281,24 +282,20 @@ test('clearing both fields and closing forgets the draft', () => {
   assert.equal(storage.map.size, 0);
 });
 
-test('the destination is not restored (#2707)', () => {
+test('the destination is not restored, the open app is the default again (#5992)', () => {
   const h = makeHarness({ appData: OPEN_APP });
   h.open();
   h.type('Dragging a card scrolls the board back to the top.');
-  h.el('feedback-target-app').fire('click');
-  assert.equal(h.el('feedback-target-app').getAttribute('aria-checked'), 'true');
+  h.el('feedback-target-platform').fire('click');
+  assert.equal(h.el('feedback-target-platform').getAttribute('aria-checked'), 'true');
   h.dismiss();
 
   h.open();
   assert.equal(h.text(), 'Dragging a card scrolls the board back to the top.');
-  assert.equal(h.el('feedback-target-app').getAttribute('aria-checked'), 'false');
+  assert.equal(h.el('feedback-target-app').getAttribute('aria-checked'), 'true',
+    'the open app is picked again, not the earlier platform tap');
   assert.equal(h.el('feedback-target-platform').getAttribute('aria-checked'), 'false');
-  // #2888: the question is asked again, quietly, by the row's own label
-  // (Post request stays pressable and refuses with the row turned red until
-  // a destination is tapped).
-  assert.equal(h.el('feedback-target-hint').classList.contains('hidden'), true, 'no refusal before a submit');
-  h.el('feedback-submit').fire('click');
-  assert.equal(h.el('feedback-target-hint').classList.contains('hidden'), false, 'the person still has to choose');
+  assert.equal(h.el('feedback-target-hint').classList.contains('hidden'), true, 'nothing asks for a choice');
 });
 
 test('an app on Homeroom\'s own git host can be chosen (#5940)', async () => {

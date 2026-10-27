@@ -1690,7 +1690,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Apps section. `side-strip` is a boot parameter, so the check has a page
   // load of its own and no other check's route can carry it. 741 leaves
   // 139 slots.
-  checkCap.assertPinned(DAPP.tests.length, 741);
+  //
+  // 741 → 739: −2: #5992 preselects the open app, so the unchosen row's
+  // Submit check folds into feedback.destination-choice and the
+  // missed-destination state is retired. 739 leaves 141 slots.
+  checkCap.assertPinned(DAPP.tests.length, 739);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

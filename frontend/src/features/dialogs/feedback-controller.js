@@ -666,9 +666,11 @@ export function init() {
       paintTargetError(true);
       try { feedbackTargetApp.focus(); } catch { /* detached in tests */ }
     };
-    // Toggle the active styling between the two buttons — or off both, when
-    // `target` is null and the choice is still open (#2707). Enabled/disabled
-    // state of the "This app" button is owned by the open handler.
+    // Toggle the active styling between the two buttons. `target` is never
+    // null after an open any more (#5992 preselects the open app, or the
+    // platform when no app can take requests); the null case stays supported
+    // as a defensive state. Enabled/disabled state of the "This app" button
+    // is owned by the open handler.
     const setFeedbackTarget = (target) => {
       feedbackTarget = target;
       const onApp = target === 'app';
@@ -710,13 +712,11 @@ export function init() {
     feedbackTargetPlatform.addEventListener('click', () => setFeedbackTarget('platform'));
     // #2707: paint the destination row for the context the dialog opened in.
     //
-    // With BOTH destinations selectable, NONE is selected and Submit waits
-    // for a tap. It used to preselect "This app" as "the most likely intent"
-    // — and a guess about intent is exactly what miscategorises a report:
-    // the person who is reading their own words, not the row above them,
-    // files an app bug against the platform (or the reverse) without ever
-    // making that choice, and the issue lands on a board they will never
-    // look at. Nobody sees their own mistake, so nobody reports it.
+    // #5992: with BOTH destinations selectable, the open app is selected by
+    // default, because that is where the person was when they suggested the
+    // improvement. Both options stay visible and tappable, so Homeroom is
+    // still one tap away, and an explicit earlier pick (a restored draft, a
+    // caller's own `target`) overrides it. Submit is live on open.
     //
     // With only the platform reachable there is nothing to disambiguate, so
     // it stays selected and Submit is live on open. A tap that has exactly
@@ -742,8 +742,8 @@ export function init() {
       if (canTargetApp) {
         labelAppTarget(appData);
         setAppTargetEnabled(true);
-        setFeedbackTarget(null);
-        setAwaitingTarget(true);
+        setAwaitingTarget(false);
+        setFeedbackTarget('app');
       } else {
         // With an app actually open (no repo yet, or self-hosted) keep
         // its name on the grayed label — "No app open" would be wrong
@@ -755,11 +755,11 @@ export function init() {
       }
     };
     // #2707: a destination that comes back with a returned draft is the
-    // person's OWN earlier pick, not a default — handing it back is not the
-    // accidental preselection this change removed, and re-asking for a
-    // decision they already made would quietly lose it. 'platform' is
-    // restored as well as 'app' now: with nothing preselected, dropping it
-    // would leave a rescued draft pointing nowhere.
+    // person's OWN earlier pick, not a default — handing it back is not an
+    // accidental preselection, and re-asking for a decision they already
+    // made would quietly lose it. It still wins over the open app's default
+    // (#5992). 'platform' is restored as well as 'app': dropping it would
+    // leave a rescued draft pointing somewhere other than the person chose.
     const restoreChosenTarget = (target) => {
       if (target === 'app' && !feedbackTargetApp.disabled) setFeedbackTarget('app');
       else if (target === 'platform') setFeedbackTarget('platform');
@@ -2566,8 +2566,8 @@ export function init() {
       // A caller whose own button already named the app opens on it, with
       // `target: 'app'` (Home's Getting started card's Suggest did, until
       // #4635 retired the card). That press was the choice #2707 asks for,
-      // not a guess about intent, so asking again would only be a second tap.
-      // Only when "This app" is really there to choose.
+      // and #5992 makes the open app the default anyway; this stays as the
+      // explicit form, applied only when "This app" is really there.
       if (opts.target === 'app' && canTargetApp) setFeedbackTarget('app');
       // The experimental C comment (features/comment-pin/) hands itself over
       // here when it cannot post on its own (offline, the server failing):
@@ -2665,8 +2665,9 @@ export function init() {
       // #2796: the words this viewer typed and closed the dialog on — by the
       // backdrop, Cancel, back or a reload. Same "empty, editable field only"
       // rule as the two hand-backs above, and restored silently: this is
-      // simply where they left off. The destination is NOT restored — #2707
-      // leaves that choice to the person every time.
+      // simply where they left off. The destination is NOT restored: #5992
+      // opens on the default for the context (the open app, else Homeroom),
+      // so an earlier tap is not carried over.
       if (saved && !feedbackText.readOnly && !feedbackText.value.trim() && !feedbackTitle.value.trim()) {
         feedbackText.value = saved.description;
         feedbackTitle.value = typeof saved.title === 'string' ? saved.title : '';
@@ -2872,22 +2873,13 @@ export function init() {
   // any fetch on an empty description, so this files nothing either.
   App._simulateEmptyFeedbackSubmit = () => { void submitFeedback(); };
 
-  // #2707: the ?shot=feedback-choose reviewable state — the dialog as
-  // somebody with an app open meets it, where both destinations are real and
-  // neither is chosen. It runs the SHIPPED applyTargetAvailability rather
-  // than posing the row by hand, so the photograph is of the branch that
-  // ships. Display-only: it pins a label, nothing else, and files nothing.
+  // #5992: the ?shot=feedback-choose reviewable state — the dialog as
+  // somebody with an app open meets it, where the open app is preselected
+  // and both destinations stay tappable. It runs the SHIPPED
+  // applyTargetAvailability rather than posing the row by hand, so the
+  // photograph is of the branch that ships. Display-only: it pins a label,
+  // nothing else, and files nothing.
   App._simulateFeedbackTargetChoice = (name) => applyTargetAvailability(true, { name });
-
-  // #2888: the ?shot=feedback-choose-missed reviewable state — the same
-  // two-destination dialog after Submit is pressed with neither chosen. It
-  // presses the REAL button, so the photograph is of the shipped refusal;
-  // with no destination that refusal returns before any fetch, so this files
-  // nothing.
-  App._simulateFeedbackTargetMissed = (name) => {
-    applyTargetAvailability(true, { name });
-    feedbackBtn.click();
-  };
 
   // The language changed, or this namespace's text arrived: repaint what
   // this module wrote from the state it already holds, while the dialog is
