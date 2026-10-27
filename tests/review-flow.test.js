@@ -401,14 +401,14 @@ test('Next change goes to the next change with no vote, wraps to an earlier one,
 
 test('the sheet covers the page while its help, menu or reason list is open', () => {
   for (const s of ['ask', 'voted']) assert.equal(sheet.sheetOpen(s), false, s);
-  for (const s of ['reason', 'unsure', 'askq', 'talk', 'try', 'about', 'more']) assert.equal(sheet.sheetOpen(s), true, s);
+  for (const s of ['reason', 'askq', 'talk', 'try']) assert.equal(sheet.sheetOpen(s), true, s);
 });
 
 function sheetHtml(props) {
   const [item] = model.toReviewItems([feedItem()], () => ({ screens: [SCREEN] }));
   return renderToHtml(createElement(sheet.VoteSheet, {
     item, vote: null, state: 'ask', setState() {}, onVote: async () => true, onUndo: async () => true,
-    onNext() {}, hasNext: true, maxHeight: 600, ...props,
+    onNext() {}, onSkip() {}, hasNext: true, maxHeight: 600, ...props,
   }));
 }
 
@@ -417,30 +417,58 @@ test('Next passes the votes and the skips, and Done on the last one shows the ru
   assert.match(src, /const next = item \? nextIndex\(run, index, passed\) : -1;/);
   assert.match(src, /if \(n < 0\) \{ finishAll\(\); return; \}/);
   assert.match(src, /const finishAll = \(\) => \{ stop\(\); setDone\(true\); \};/);
-  // Skip for now moves on without a vote; the end counts what was skipped.
+  // Skip moves on without a vote; nothing is recorded.
   assert.match(src, /goTo\(nextIndex\(run, index, now\)\);/);
   assert.match(src, /if \(done \|\| \(list && !item && Object\.keys\(votes\)\.length\)\) \{[\s\S]*?rf-end rf-end-alone/);
-  assert.match(src, /t\('communities:review\.end\.skipped', \{ count: skippedCount \}\)/);
   assert.match(read('public/css/app.css'), /\.rf-end-alone \{ min-height: 56vh; justify-content: center;/);
 });
-test('at rest the vote is part of the page: Yes | No and ⋯, no sheet', () => {
+
+test('the end is done only when everything had your vote; skipped changes wait as a stack, with a way to look again', () => {
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  assert.match(src, /const waiting = run\.filter\(\(it\) => skipped\[it\.key\] && !votes\[it\.key\]\);/);
+  const from = src.indexOf('{waiting.length ? (');
+  const end = src.slice(from, src.indexOf(') : (', from));
+  assert.doesNotMatch(end, /CheckIcon/, 'not done, so no check');
+  assert.match(end, /waiting\.slice\(0, 3\)\.map/, 'at most three tiles, each on its own ground');
+  assert.match(end, /t\('communities:review\.end\.throughAll'\)/);
+  assert.match(end, /t\('communities:review\.end\.waiting', \{ count: waiting\.length \}\)/);
+  assert.match(end, /onClick=\{again\} data-rf-again="">\{t\('communities:review\.end\.again', \{ count: waiting\.length \}\)\}/);
+  assert.match(end, /className="rf-end-back" onClick=\{onDone\}/, 'and a quiet way back');
+  // Looking again clears the skips and starts from the first change waiting.
+  assert.match(src, /const again = \(\) => \{\s*const first = run\.findIndex\(\(it\) => it\.kind !== 'governance' && !votes\[it\.key\]\);[\s\S]*?setSkipped\(\{\}\);\s*setIndex\(first\);\s*setDone\(false\);/);
+  assert.equal(message('communities:review.end.throughAll'), "You've been through them all");
+  assert.equal(message('communities:review.end.again_other'), 'Look at the {{count}} again');
+});
+test('at rest the vote is part of the page: Yes | No and Skip, no sheet', () => {
   const html = sheetHtml({});
   assert.match(html, /class="rf-sheet rf-sheet-rest"/);
   assert.doesNotMatch(html, /rf-grab/, 'no handle while it rests');
   assert.match(html, /role="radiogroup"/);
   assert.match(html, /data-rf-vote="yes"[\s\S]*rf-pair-div[\s\S]*data-rf-vote="no"/);
-  assert.match(html, /data-rf-morph="help"[^>]*data-rf-unsure=""/);
+  assert.match(html, /data-rf-morph="skip"[^>]*data-rf-skip=""/);
+  assert.ok(html.includes(`aria-label="${message('communities:review.vote.skipLabel')}"`));
+  assert.ok(html.includes(`>${message('communities:review.vote.skip')}</span>`), 'Skip, in the same type as Yes and No');
+  // Skip turns the page: it is the run's skip, not a vote.
+  assert.match(read('frontend/src/features/review-flow/vote-sheet.tsx'), /onClick=\{vote \? onNext : onSkip\}/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.rf-morph \{ position: relative; flex: none; width: 128px;/, 'Skip holds Next\'s place, at Next\'s width');
   assert.match(html, /class="rf-why rf-why-off"/, 'the room for a reason is kept, empty');
 });
 
-test('⋯ opens the four help rows in a sheet', () => {
-  const html = sheetHtml({ state: 'unsure' });
+test('help is in the bar\'s card: Ask privately, Discussion and Try it, each opened over the page', () => {
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  for (const to of ['askq', 'talk', 'try']) assert.match(src, new RegExp(`data-rf-help="${to}" onClick=\\{\\(\\) => help\\('${to}'\\)\\}`));
+  assert.match(src, /const help = \(to: SheetState\) => \{ setDesc\(false\); setSheet\(to\); \};/, 'the card folds, the sheet opens');
+  assert.match(src, /t\('communities:review\.desc\.by', \{ name: item\.author \}\)/, 'who made it, from the old About');
+  const vs = read('frontend/src/features/review-flow/vote-sheet.tsx');
+  assert.doesNotMatch(vs, /'unsure'|'about'/, 'no help sheet and no About of its own');
+  assert.match(vs, /aria-label=\{t\('communities:review\.sheet\.close'\)\} onClick=\{\(\) => setState\(rest\)\}/, 'a help sheet\'s back closes it');
+  const html = sheetHtml({ state: 'talk' });
   assert.match(html, /class="rf-sheet"/);
-  assert.match(html, /rf-grab/);
-  for (const to of ['askq', 'talk', 'try', 'about']) assert.match(html, new RegExp(`data-rf-help="${to}"`));
+  assert.ok(html.includes(message('communities:review.help.talk')));
 });
 
-test('after a vote the row stays: the pair shows the choice, ⋯ becomes Next with how many still wait', () => {
+test('after a vote the row stays: the pair shows the choice, Skip becomes Next with how many still wait', () => {
   const html = sheetHtml({ vote: 'yes', state: 'voted', left: 2 });
   assert.match(html, /data-rf-voted="yes"/);
   assert.match(html, /aria-checked="true"[^>]*data-rf-vote="yes"/);
