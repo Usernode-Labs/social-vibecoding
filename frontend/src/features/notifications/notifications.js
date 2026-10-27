@@ -2811,6 +2811,11 @@ function rowView(n) {
     // files under (`appLine` is what its meta line says, and a bot row's
     // says more than the name).
     appName: n.appName || null,
+    // #5877: that project's icon, so its bot row wears the project's own
+    // tile instead of the Homeroom mark. Null on every row that is not the
+    // bot's news about a project.
+    appIconUrl: n.appIconUrl || null,
+    appIconEmoji: n.appIconEmoji || null,
     // #5580: the request or proposal this row is about. A project's stack
     // folds one story's news into one card by `storyKey`; `storyRef` is what
     // a card about it says it is on ("on #5588") and what its history is.
@@ -2904,7 +2909,8 @@ function rowView(n) {
         appLine: bot.meta || t('notifications:row.source.messages'),
         botMoment: true,
         // Run six: the row wears the bot's own face (the sheet's AvatarChip),
-        // never a letter tile of its handle.
+        // never a letter tile of its handle — unless it is about a project,
+        // which then wears that project's tile (#5877).
         bot: true,
         ...headline(bot.label, bot.subject),
       };

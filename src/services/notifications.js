@@ -1250,6 +1250,7 @@ const HYDRATE_SELECT_SQL = `SELECT n.id, n.kind, n.user_id,
                  ELSE n.read_at END AS read_at,
             n.created_at,
             n.app_id, a.slug AS app_slug, a.name AS app_name,
+            a.icon_image_id AS app_icon_image_id, a.icon_emoji AS app_icon_emoji,
             n.chat_message_id,
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
@@ -1736,6 +1737,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
                  ELSE n.read_at END AS read_at,
             n.created_at,
             n.app_id, a.slug AS app_slug, a.name AS app_name,
+            a.icon_image_id AS app_icon_image_id, a.icon_emoji AS app_icon_emoji,
             n.chat_message_id,
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
@@ -1797,6 +1799,7 @@ async function getForUser(pool, userId, id) {
                  ELSE n.read_at END AS read_at,
             n.created_at,
             n.app_id, a.slug AS app_slug, a.name AS app_name,
+            a.icon_image_id AS app_icon_image_id, a.icon_emoji AS app_icon_emoji,
             n.chat_message_id,
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
@@ -2263,7 +2266,9 @@ function serialize(row) {
   // #5580: the Homeroom bot's news about a project carries that project
   // (conversations.sendMessage's notificationAppId), so the bell files it
   // there. Only the project's name and id come through: it still routes,
-  // reads and pushes as the conversation row it is.
+  // reads and pushes as the conversation row it is. Its icon comes through
+  // too (#5877), so the row wears the project's own tile rather than the
+  // Homeroom mark when it is about one.
   const botProject = isConversation && row.app_id != null && row.source_username === HOMEROOM_BOT_USERNAME;
   return {
     id: row.id,
@@ -2276,6 +2281,13 @@ function serialize(row) {
     appId: isConversation ? (botProject ? row.app_id : null) : row.app_id,
     appSlug: isConversation ? (botProject ? row.app_slug : null) : row.app_slug,
     appName: isConversation ? (botProject ? row.app_name : null) : row.app_name,
+    // #5877: the project's icon, in the same image-then-emoji order its tile
+    // draws it (`frontend/src/features/apps/app-card.js` iconViewFor). Only
+    // a bot row about a project carries them; every other row, a person's
+    // conversation with a stray app_id included, gets null and keeps what
+    // it drew before.
+    appIconUrl: botProject && row.app_icon_image_id ? `/app-icons/${row.app_icon_image_id}` : null,
+    appIconEmoji: botProject ? (row.app_icon_emoji || null) : null,
     // #5580: the request and proposal this row is about (STORY_COLUMNS_SQL),
     // which the sheet folds one story's news by. The bot's own rows name
     // their request in `detail`, or, for a reply in a request's thread, by

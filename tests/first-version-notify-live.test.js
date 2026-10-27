@@ -21,7 +21,9 @@
 //      turns it off and back on, and the server is told each time.
 //   3. The bell (frontend/src/features/notifications/notifications.js,
 //      frontend/src/features/notifications/notifications-sheet.tsx): a row
-//      from Homeroom bot wears the bot's own face, never a letter tile.
+//      from Homeroom bot wears the bot's own face, never a letter tile —
+//      except its news about a project, which wears that project's tile
+//      (#5877): its picture, else its emoji, else its name's letter.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/first-version-notify-live.test.js
 
@@ -384,7 +386,7 @@ test('the API: read and set, and not found is "not theirs"', async (t) => {
 
 // ── 3. The bell ─────────────────────────────────────────────────────────
 
-test('a notification from Homeroom bot wears the bot\'s own face, never a letter tile', (t) => {
+test('a notification from Homeroom bot wears the bot\'s own face, or its project\'s tile, never a letter tile of its handle', (t) => {
   const saved = [globalThis.window, globalThis.addEventListener, globalThis.removeEventListener];
   t.after(() => { [globalThis.window, globalThis.addEventListener, globalThis.removeEventListener] = saved; });
   globalThis.window = globalThis;
@@ -417,4 +419,37 @@ test('a notification from Homeroom bot wears the bot\'s own face, never a letter
   const tile = renderToHtml(createElement(sheet.AvatarChip, { view: person }));
   assert.match(tile, /^<span aria-hidden="true" class="w-11 h-11 shrink-0 rounded-xl text-white flex items-center justify-center text-sm font-semibold" style="background-color:[^"]+">H<\/span>$/);
   assert.doesNotMatch(face, /background-color|>H</, 'not the orange "H"');
+
+  // #5877: the bot's news about a project wears that project's tile, so a
+  // list of "Ready to try" rows names its projects at a glance. The same
+  // picture, emoji, letter order every app surface draws.
+  const aboutApp = (extra) => N._rowView({
+    id: 5, createdAt: AT, readAt: null, kind: 'build_ready',
+    detail: notifyCopy.botNotificationDetail({ moment: 'ready', said: 'ready', appName: 'Plant shelf', requestTitle: 'Water reminders' }),
+    conversationId: 7, conversationKind: 'direct', sourceUsername: 'homeroom_bot',
+    messageContent: 'Ready to try', appId: 42, appName: 'Plant shelf', appSlug: 'plant-shelf', ...extra,
+  });
+  const withPicture = aboutApp({ appIconUrl: '/app-icons/42', appIconEmoji: '🌱' });
+  assert.equal(withPicture.appIconUrl, '/app-icons/42');
+  assert.equal(withPicture.appIconEmoji, '🌱', 'the project rides the row with the bot');
+  const projectFace = renderToHtml(createElement(sheet.AvatarChip, { view: withPicture }));
+  assert.match(projectFace, /data-icon="image" class="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"/,
+    'the same 44px tile Discover and My apps draw, in the row\'s own box');
+  assert.match(projectFace, /<img src="\/app-icons\/42" alt=""/, 'the project\'s picture');
+  assert.doesNotMatch(projectFace, /data-bot-avatar|homeroom-mark/, 'not the Homeroom mark');
+  // Emoji only: the tile holds it; no picture.
+  const emojiFace = renderToHtml(createElement(sheet.AvatarChip, { view: aboutApp({ appIconEmoji: '🌱' }) }));
+  assert.match(emojiFace, /data-icon="emoji"/);
+  assert.match(emojiFace, /<span class="text-3xl leading-none" aria-hidden="true">🌱<\/span>/);
+  assert.doesNotMatch(emojiFace, /data-bot-avatar|<img /);
+  // Neither: the name's letter, on the plain tile every other project screen draws.
+  const letterFace = renderToHtml(createElement(sheet.AvatarChip, { view: aboutApp({}) }));
+  assert.match(letterFace, /^<span aria-hidden="true" data-icon="letter" class="app-icon-tile[^"]*">P<\/span>$/);
+  assert.doesNotMatch(letterFace, /data-bot-avatar/);
+  // A person's row is unchanged even when its serialize names an app (the
+  // fail-closed rule): it keeps its swatch tile.
+  const personWithApp = renderToHtml(createElement(sheet.AvatarChip, {
+    view: { ...person, appId: 42, appName: 'Plant shelf', appIconUrl: '/app-icons/42' },
+  }));
+  assert.match(personWithApp, /background-color/, 'a person keeps the swatch');
 });
