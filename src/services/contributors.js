@@ -86,8 +86,7 @@ async function loadContributorCounts(pool, appIds) {
 }
 
 // Which of `appIds` this viewer contributes to — the same three-source
-// definition, asked the other way round (#5823). Home's All / Contributing
-// switch narrows the launcher to this set, so it has to agree with the
+// definition, asked the other way round (#5823). It has to agree with the
 // Contributors list exactly: same CTE, same join to `users` (an id whose row
 // is gone is not a contributor). One round trip for the whole apps list.
 //

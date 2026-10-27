@@ -70,7 +70,6 @@ import { liveAppLabel, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-app
 import { AppsLoadError } from '../apps/load-error';
 import { TileSkeleton } from '../apps/tile-skeleton';
 import { buildLineTileClass } from '../first-session/build-line-words.js';
-import { MORE_BTN } from './apps-more';
 import { CreateTile } from './create-tile';
 import { gridStore, type GridItem, type GridPlacement, type HomeAppView, type IconView } from './grid-store';
 
@@ -435,11 +434,7 @@ export function AppGrid() {
   // its); this owns only WHEN the attachment happens, which used to be the
   // tail of _wireCards. Detach on unmount so a remount cannot leave two
   // recognizers fighting for the same gesture.
-  // CONTRIBUTING (#5823) paints a packed subset, not the viewer's own
-  // arrangement, so it may not be dragged: those tiles carry no `data-yours`
-  // (the recognizer's selector), and holding one still opens its menu, as a
-  // search result does. Edit mode is unaffected — arranging is its whole job.
-  const canDrag = state.view === 'grid' && state.ready && !state.filtered;
+  const canDrag = state.view === 'grid' && state.ready;
 
   useEffect(() => {
     const el = listRef.current;
@@ -500,22 +495,6 @@ export function AppGrid() {
           />
         </div>
       ) : null}
-      {state.filterEmpty ? (
-        // #5823: Contributing with nothing in it. One line, and the way back
-        // to All — in the same treatment as "Show all N apps". The Create
-        // tile still flows after it, as it does after the empty-launcher
-        // note (its placement is null when the grid holds no tiles).
-        <div className="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
-          <p>{t('home:grid.filter.empty')}</p>
-          <button
-            type="button"
-            className={`mt-2 ${MORE_BTN}`}
-            onClick={() => controller()?.setAppsFilter?.('all')}
-          >
-            {t('home:grid.filter.showAll')}
-          </button>
-        </div>
-      ) : null}
       {state.resultsHeading ? (
         <div className="home-section-header col-span-full">{state.resultsHeading}</div>
       ) : null}
@@ -531,7 +510,7 @@ export function AppGrid() {
           key={`card:${item.app.slug}`}
           app={item.app}
           style={cellStyle(item)}
-          yours={state.view === 'grid' && !state.filtered}
+          yours={state.view === 'grid'}
           live={live.includes(item.app.slug)}
           editing={state.editing}
         />

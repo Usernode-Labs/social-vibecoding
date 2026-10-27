@@ -954,7 +954,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       );
       // #5823: which of these apps THIS viewer helps build — the same
       // three-source set the Contributors list draws from (services/
-      // contributors.js). Home's All / Contributing switch reads it. An
+      // contributors.js). Carried per row for clients that ask. An
       // empty Set when nobody is signed in, with no query.
       const contributed = await contributors.loadContributedAppIds(
         pool, rows.map((a) => a.id), userId

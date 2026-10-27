@@ -194,11 +194,6 @@ const Home = {
       // most common reason this fetch throws. "Failed to load apps" in
       // red reads like the platform is broken; say what actually happened
       // and offer the retry. Anything already cached stays on screen.
-      //
-      // Both notices below are the grid's whole answer, so each clears the
-      // filter state: no filter note or chips over an empty error grid (the
-      // chip selection itself is kept, so the next successful paint still
-      // honours it — #5823).
       let offline = false;
       try { offline = !!(window.Offline && Offline.isOffline()); } catch (_) { offline = false; }
       if (!Home._appsLoaded) {
@@ -214,7 +209,6 @@ const Home = {
             resultsHeading: null, emptyQuery: null, create: null,
             // load() has already cleared edit mode; the merge would keep it.
             editing: false,
-            filtered: false, filterEmpty: false,
             notice: {
               text: message('home:grid.notice.offline'),
               tone: 'muted',
@@ -231,7 +225,6 @@ const Home = {
         resultsHeading: null, emptyQuery: null, create: null,
         // load() has already cleared edit mode; the merge would keep it.
         editing: false,
-        filtered: false, filterEmpty: false,
         // #1899: the grid draws this as the shared error card
         // (features/apps/load-error.tsx) with a Retry that re-runs load().
         notice: { text: message('home:grid.notice.loadFailed'), tone: 'error' },
@@ -309,37 +302,6 @@ const Home = {
     const app = (Home._apps || []).find((a) => a && a.slug === slug);
     if (!app) return;
     return Home._menuToggleFavorite(app, false);
-  },
-
-  // ── All / Contributing (#5823) ──────────────────────────────────────
-  //
-  // Which apps the launcher grid shows: everything on your shelf, or only
-  // the ones you help build — made them, were accepted to build them, or had
-  // a change voted in. The server's is_contributor flag carries the same
-  // three-source set the Contributors list counts (services/contributors.js),
-  // so the two can never mean different people.
-  //
-  // Per visit: load() does NOT reset it, so moving to another tab and back
-  // keeps the choice; reloading the page starts on All. The Contributing
-  // view is packed in memory and never written to the stored arrangement —
-  // switching back to All restores exactly where things were.
-  _appsFilter: 'all',
-
-  isContributing(app) {
-    return !!app?.is_contributor;
-  },
-
-  // The chips' one setter. Same deferral as setEditing: render() must not run
-  // mid-drag, so the settle flush picks the change up instead.
-  setAppsFilter(key) {
-    const next = key === 'contributing' ? 'contributing' : 'all';
-    if (Home._appsFilter === next) return;
-    Home._appsFilter = next;
-    if (Home._dragActive) {
-      Home._rerenderPending = true;
-      return;
-    }
-    Home.render();
   },
 
   // Escape ends edit mode. Wired once, lazily, from render() like the search
@@ -961,23 +923,10 @@ const Home = {
     // remove button. The flag itself is cleared by the search input's own
     // listener (see _wireSearch) the moment it is given a value.
     const editing = !!Home._editing && !query;
-    // ALL / CONTRIBUTING (#5823). A search is always a search of ALL of My
-    // apps, and edit mode is the real arrangement, so neither can be filtered.
-    const filtered = Home._appsFilter === 'contributing' && !query && !editing;
-    let filterEmpty = false;
     // Home is "Your apps" only now — every other app lives on the
     // #apps browse screen (public/js/browse.js), so the old All Apps
     // section and its drag-to-add gesture are gone.
     const { yours } = Home.partitionApps(apps);
-    // The chips only appear when they would change something: My apps holds
-    // both kinds of app. Contributing itself keeps them visible so there is a
-    // way back to All. Demo tiles are not the viewer's apps, so they do not
-    // bring the switch out.
-    const counted = yours.filter((a) => !a.demo);
-    const filterable = !query && !editing && (
-      Home._appsFilter === 'contributing'
-      || (counted.some(Home.isContributing) && counted.some((a) => !Home.isContributing(a)))
-    );
     let items = [];
     let view = 'grid';
     let resultsHeading = null;
@@ -1014,24 +963,9 @@ const Home = {
       // flow: a tile's position comes from the layout model, never from its
       // order in this array.
       const cols = Home.currentCols();
-      // Read the real arrangement first in BOTH views: currentLayout repairs
-      // it, caches it for the drag maths and persists a repair. The
-      // Contributing view is then derived from it in memory — its packed
-      // cells are never assigned to _layoutCache or _layouts and never sent
-      // to PUT /api/home-layout, so All comes back exactly as it was.
-      let layout = Home.currentLayout(cols);
-      if (filtered) {
-        const ordered = [
-          ...HomeLayout.canvasItems(layout),
-          ...HomeLayout.overflowItems(layout),
-        ];
-        const bySlug = new Map(apps.map((a) => [a.slug, a]));
-        const slugs = ordered
-          .filter((it) => it && Home.isContributing(bySlug.get(it.slug)))
-          .map((it) => it.slug);
-        layout = slugs.length ? HomeLayout.deriveDefault({ apps: slugs, cols }) : [];
-        filterEmpty = !slugs.length;
-      }
+      // Read the real arrangement: currentLayout repairs it, caches it for
+      // the drag maths and persists a repair.
+      const layout = Home.currentLayout(cols);
       // THE STRIP'S PINNED PART (#5323): Home no longer publishes anything
       // here. The strip's pins are the viewer's own list now — a My apps
       // tile dropped on the "Pin here" slot pins through the drag recognizer
@@ -1067,7 +1001,7 @@ const Home = {
       // feedback, which is the reload complaint again in a smaller form.
       // Same flag "Show all N apps" sets, so the rest of the visit behaves
       // as if it had been pressed.
-      if (!filtered && Home._revealSlug) {
+      if (Home._revealSlug) {
         const landed = canvas.find((it) => it && it.slug === Home._revealSlug);
         if (landed && landed.row > rowBound) Home._appsExpanded = true;
       }
@@ -1156,8 +1090,6 @@ const Home = {
     // first layout of the new children already has its tracks.
     gridStore.set({
       ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null, create, editing,
-      filter: Home._appsFilter === 'contributing' ? 'contributing' : 'all',
-      filterable, filtered, filterEmpty,
     });
     // ...and, in the same push, the two hosts outside it: "Show all N apps"
     // and the iOS widget-editing strip. The strip renders ABOVE the grid, in

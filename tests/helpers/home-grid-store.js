@@ -52,10 +52,6 @@ const INITIAL_GRID = {
   notice: null,
   create: null,
   editing: false,
-  filter: 'all',
-  filterable: false,
-  filtered: false,
-  filterEmpty: false,
 };
 
 /** Mirrors INITIAL_CHROME in frontend/src/features/home/chrome-store.ts. */
