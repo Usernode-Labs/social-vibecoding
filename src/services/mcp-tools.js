@@ -1157,6 +1157,23 @@ function shapeCheckAdvisories(results) {
 // question is decided in this file.
 function shapeBranch(session) {
   const { branchHomeOf, authorCanPush, headRepoOwnerOf } = require('./proposal-update');
+  // An app on Homeroom's own git host (every app but the platform since 26
+  // Oct 2026): the head is a branch there that only Homeroom writes, and the
+  // one way an author revises it is a patch through an update work order.
+  // Reported as its own home, because "push to your fork" is false for it.
+  if (repoRef.isHosted(session.repo_url)) {
+    return {
+      home: 'git_host',
+      repo: 'the app repository on Homeroom\'s git host',
+      name: session.branch_name || null,
+      headSha: headShaOf(session),
+      youCanPush: false,
+      updateWith: `no push: call prepare_work with proposalId ${session.id} for an update work order, then submit_work with `
+        + 'that work order\'s taskId and the patch of your commits (`git format-patch <its baseSha>..HEAD --stdout`), '
+        + 'which Homeroom applies on the proposal\'s current commit; a dev session that is not yet up for a vote can '
+        + 'also carry propose: true to be promoted the moment the update lands',
+    };
+  }
   const home = branchHomeOf(session);
   // The caller's own linked GitHub login, carried by the session routes for
   // imported rows. Absent (an older platform, or an unlinked account) means
@@ -1319,7 +1336,10 @@ function deferredNextStep(session, checks, branch) {
     : ' Homeroom\'s merge queue resolves a conflict like this itself when it can — at once for an approved '
       + 'proposal or the first conflict of this head, otherwise once the group approves it — by pushing a synced '
       + 'head that gets its own run; poll get_proposal to see whether it has.';
-  const how = branch.youCanPush
+  const how = branch.home === 'git_host'
+    ? 'merge main into this change in a clone of the app\'s repository (or rebase onto it), resolve the conflict, '
+      + `and ${patchRevision(session)}: ${whyYouCannotPush(branch)}`
+    : branch.youCanPush
     ? `merge main into ${branch.name || 'this proposal\'s branch'} in your own fork (or rebase onto it), resolve `
       + `the conflict, push, and call submit_work with proposalId ${session.id} and that branch`
     : 'merge main into this change on a branch in your OWN fork (or rebase onto it), resolve the conflict, push, '
@@ -1357,12 +1377,15 @@ function underwayNextStep(session, branch, viewerId) {
   const push = branch.youCanPush
     ? `push to ${branch.name || 'its branch'} in your fork`
     : 'push to a branch in your own fork';
+  const change = branch.home === 'git_host'
+    ? patchRevision(session)
+    : `${push} and call submit_work with proposalId ${session.id} and that branch`;
   return `${named} is a dev session that is not up for a vote yet (${where}). When the user has asked for it `
     + `to go to the group's vote, call submit_work with proposalId ${session.id} and propose: true and NO branch: `
     + 'it goes up for the vote as it stands, on the commit it already has, the same act as its "Propose to '
     + 'group" button, with nothing to push. If Homeroom refuses, for example because nothing has been '
     + 'submitted to it yet or an agent turn is still moving its branch, it says why. To change its code first, '
-    + `${push} and call submit_work with proposalId ${session.id} and that branch, adding propose: true when the `
+    + `${change}, adding propose: true when the `
     + 'user wants the vote.';
 }
 
@@ -1377,6 +1400,13 @@ function shapeNextStep(session, checks, viewerId = null) {
   // pull request number first — see proposalRef. The `proposalId N` clauses
   // stay exactly as they are: those spell the ARGUMENT the next call takes.
   const ref = proposalRef(session.id, session.pr_number) || 'this proposal';
+  // How a revision goes in, as the clause the sentences below end with: a
+  // push and submit_work with that branch, or on Homeroom's own git host an
+  // update work order and its patch (patchRevision).
+  const pushTo = branch.youCanPush ? (branch.name || 'this proposal\'s branch') + ' in your own fork' : 'a branch in your OWN fork';
+  const revise = branch.home === 'git_host'
+    ? patchRevision(session)
+    : `push to ${pushTo} and call submit_work with proposalId ${session.id} and that branch`;
   // #1258: the stored verdict is 'failing', never 'fail', so the state half of
   // this test had never once matched — the failing path was reached only via
   // the results array. A run that ERRORED (the build broke, no test ever ran)
@@ -1411,6 +1441,10 @@ function shapeNextStep(session, checks, viewerId = null) {
       ? 'These checks last ran on a commit that is no longer this proposal\'s head, so the verdict describes '
         + 'superseded code — a fresh run should follow on its own; poll get_proposal. '
       : '';
+    if (branch.home === 'git_host') {
+      return `${stale}Checks on ${ref} are not reporting a failure. If you revise this proposal anyway, ${revise} `
+        + '— every submission clears the votes it has collected, so only do it for a change worth re-reviewing.';
+    }
     return branch.youCanPush
       ? `${stale}Checks on ${ref} are not reporting a failure. If you revise this proposal anyway, push to `
         + `${branch.name || 'its branch'} in your fork and call submit_work with proposalId and that branch — every `
@@ -1429,9 +1463,7 @@ function shapeNextStep(session, checks, viewerId = null) {
     const unit = rolloutUnitFailures(session);
     if (!unit) return `${rerun} There is nothing to fix yet and nothing to push: poll get_proposal for the new verdict.`;
     return `${rerun} ${unit} checks.failures has their errors and get_check_output the full output. If they fail `
-      + 'locally too, fix them, push to '
-      + `${branch.youCanPush ? (branch.name || 'this proposal\'s branch') + ' in your own fork' : 'a branch in your OWN fork'}`
-      + ` and call submit_work with proposalId ${session.id} and that branch; otherwise poll get_proposal for the `
+      + `locally too, fix them, ${revise}; otherwise poll get_proposal for the `
       + 'new verdict. Do not open a second proposal.';
   }
   // The run errored because the repo unit suite could not run: its Job was
@@ -1446,9 +1478,8 @@ function shapeNextStep(session, checks, viewerId = null) {
       : 'Homeroom will not run them again on its own now; recheck_change re-runs them once the cause has cleared.';
     return `The repo unit suite (npm test) could not run on ${ref}, so there is no verdict yet: `
       + `${untrusted(unitNotRun, MAX_CHECK_ERROR_CHARS)} No test failed. ${again} Only if that reason points at `
-      + 'this change (installing its dependencies failed on its package.json or lockfile) fix it and push to '
-      + `${branch.youCanPush ? (branch.name || 'this proposal\'s branch') + ' in your own fork' : 'a branch in your OWN fork'}`
-      + ` and call submit_work with proposalId ${session.id} and that branch. Do not open a second proposal.`;
+      + `this change (installing its dependencies failed on its package.json or lockfile) fix it and ${revise}. `
+      + 'Do not open a second proposal.';
   }
   // The run errored only because the unit suite a person asked for again
   // came back without a verdict (its runner did not start, or package.json
@@ -1464,9 +1495,7 @@ function shapeNextStep(session, checks, viewerId = null) {
     const failed = checks.failing ? checks.failing.length : 0;
     if (failed) {
       return `${lead}${checks.failingTotal || failed} check(s) did fail in that run: \`failures\` names them and says `
-        + `why. ${again} Fix those checks, then push to `
-        + `${branch.youCanPush ? (branch.name || 'this proposal\'s branch') + ' in your own fork' : 'a branch in your OWN fork'}`
-        + ` and call submit_work with proposalId ${session.id} and that branch. Do not open a second proposal.`;
+        + `why. ${again} Fix those checks, then ${revise}. Do not open a second proposal.`;
     }
     return `${lead}The build did not fail and no test failed, so `
       + `there is nothing to fix in the change. ${again} Do not push a new commit for this.`;
@@ -1478,12 +1507,17 @@ function shapeNextStep(session, checks, viewerId = null) {
     const detail = checks.error ? ` What broke: ${checks.error}` : '';
     return `The checks run for ${ref} ERRORED before any test reported — the staging build or the preview itself failed, so `
       + 'there is no failing test to fix and this cannot merge however the vote goes.'
-      + `${detail} Fix the build, then push a new commit to `
-      + `${branch.youCanPush ? (branch.name || 'this proposal\'s branch') + ' in your own fork' : 'a branch in your OWN fork'}`
-      + ` and call submit_work with proposalId ${session.id} and that branch. Do not open a second proposal.`;
+      + (branch.home === 'git_host'
+        ? `${detail} Fix the build, then ${revise}. Do not open a second proposal.`
+        : `${detail} Fix the build, then push a new commit to ${pushTo}`
+          + ` and call submit_work with proposalId ${session.id} and that branch. Do not open a second proposal.`);
   }
   // The failing-checks path. Checks GATE MERGE, so this is the one answer the
   // agent most needs to be exactly right.
+  if (branch.home === 'git_host') {
+    return `Checks on ${ref} are failing and they gate merge — this cannot land however the vote goes. Fix the named `
+      + `tests, then ${revise}: ${whyYouCannotPush(branch)}. Do not open a second proposal.`;
+  }
   return branch.youCanPush
     ? `Checks on ${ref} are failing and they gate merge — this cannot land however the vote goes. Fix the named tests, commit `
       + `on ${branch.name || 'this proposal\'s branch'} in your own fork, push, and call submit_work with `
@@ -1535,11 +1569,22 @@ function rolloutUnitFailures(session) {
 // below is a branch in the APP repository, and its name — `usernode/from-…` —
 // exists nowhere in the agent's fork.
 function whyYouCannotPush(branch) {
+  if (branch.home === 'git_host') {
+    return 'this app\'s code is on Homeroom\'s own git host, not on GitHub, so there is no fork to push to and a '
+      + 'patch is the way in';
+  }
   return branch.home === 'user_fork'
     ? `this proposal's head is a branch in ${branch.repo}, which your linked GitHub account does not own, so `
       + 'Homeroom will not advance it from your push'
     : 'this proposal\'s head is a branch in the app\'s own repository that only Homeroom can write, so pushing to '
       + 'your fork alone does not move it';
+}
+
+// How a proposal on Homeroom's own git host takes a revision, as the clause a
+// nextStep sentence ends with: no push, an update work order and its patch.
+function patchRevision(session) {
+  return `call prepare_work with proposalId ${session.id} for an update work order, then submit_work with that `
+    + 'work order\'s taskId and the patch of your fix';
 }
 
 // The sentence nextStep adds when the before & after shots of this revision
@@ -1566,14 +1611,18 @@ function shotsSkipStep(session, branch) {
   const where = branch.youCanPush
     ? `${branch.name || 'this proposal\'s branch'} in your own fork`
     : 'a branch in your OWN fork';
+  const resubmit = branch.home === 'git_host'
+    ? `Then call prepare_work with proposalId ${session.id} for an update work order, and submit_work with its taskId, `
+      + 'the patch and the visibleChanges'
+    : `Then push to ${where} and call submit_work with proposalId ${session.id}, that branch and the `
+      + 'visibleChanges';
   return `Before & after shots of this revision could not show ${one ? 'a declared change' : `${skipped.length} declared changes`} `
     + `because the copies they are taken on lack the data: ${named}. Without them the group votes on `
     + `${one ? 'it' : 'them'} with no pictures. ${one ? 'It is' : 'Each is'} new in this change, so add a few obviously fake `
     + 'rows that reach that state to the staging seed in this revision (the app\'s boot-time block gated on '
     + 'IS_STAGING; for Homeroom itself, src/db/migrate.js), which runs only on the after copy, the side that has the '
     + 'change; or, if the state can be made through the app, declare the change again with a hints.setup that says '
-    + `how. Then push to ${where} and call submit_work with proposalId ${session.id}, that branch and the `
-    + 'visibleChanges: the shots are taken again on the new commit.';
+    + `how. ${resubmit}: the shots are taken again on the new commit.`;
 }
 
 // Capture routes reported back on a proposal. The capture step caps its own
@@ -3892,7 +3941,7 @@ function registerTools(server, ctx) {
   // ── get_proposal ─────────────────────────────────────────────────────
   server.registerTool('get_proposal', {
     title: 'Get a proposal',
-    description: "Status of one proposal, by `proposalId` or `prNumber` (the pull request number people see on GitHub); the answer carries both, name it \"PR #2151 (proposal 4223)\". It includes the checks verdict and failing test NAMES with their error excerpts (checks.failures[].details; get_check_output returns the full stored excerpt), staging preview, vote tally and votes still needed. Checks gate merge: if failing, fix the named tests and submit an UPDATE to this proposal — never a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Homeroom can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `nextStep` says the same in one line; follow it. `shots` holds before/after shots of each declared change on this exact revision: a verified state means the shots agent took them (a still per screen size, plus clips for motion) and people look at them to judge the change; `shotResults` says which changes it skipped and why, which failed (the shots agent did the steps and the after build broke, for example a server error: fix the code), and what a ready or unchanged change's shots leave out; `shotNotices`: other problems it saw on the after build, advisory. Pending or failed entries never substitute legacy route captures. `captureRouteSource`, `captureDefaultedToRoot`, and `capturePaths` describe only the backward-compatible legacy capture/check path. `checks.state` 'pending' is NOT a verdict or a reason to push again — read `checks.phase`, `checks.checkedAt`, `checks.stale`, and `baseSha` before writing code; each output field describes itself.",
+    description: "Status of one proposal, by `proposalId` or `prNumber` (the pull request number people see on GitHub); the answer carries both, name it \"PR #2151 (proposal 4223)\". It includes the checks verdict and failing test NAMES with their error excerpts (checks.failures[].details; get_check_output has the full excerpt), staging preview, vote tally and votes still needed. Checks gate merge: if failing, fix the named tests and submit an UPDATE to this proposal — never a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch), 'app_repo' when its head is a branch only Homeroom can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing) or 'git_host' on Homeroom's git host (no push: prepare_work with proposalId, then submit_work with its taskId and a patch). `nextStep` says the same in one line; follow it. `shots` holds before/after shots of each declared change on this exact revision: a verified state means the shots agent took them (a still per screen size, plus clips for motion); `shotResults` says which changes it skipped and why, which failed (the after build broke, for example a server error: fix the code), and what a ready or unchanged change's shots leave out; `shotNotices`: other problems it saw on the after build, advisory. `captureRouteSource`, `captureDefaultedToRoot` and `capturePaths` describe only the legacy capture path, which pending or failed shots never fall back to. `checks.state` 'pending' is NOT a verdict or a reason to push again — read `checks.phase`, `checks.checkedAt`, `checks.stale`, and `baseSha` before writing code; each output field describes itself.",
     inputSchema: {
       proposalId: z.number().int().positive().optional()
         .describe('The proposal id, as list_my_proposals, prepare_work and submit_work report it — also the last number in a proposal\'s webPath. Either this or prNumber; this one wins when both are given, and a pair that names two different proposals is refused rather than answered.'),
@@ -4029,7 +4078,7 @@ function registerTools(server, ctx) {
       }),
       // Where this proposal's head lives, and how its author advances it.
       branch: z.object({
-        home: z.enum(['app_repo', 'user_fork']),
+        home: z.enum(['app_repo', 'user_fork', 'git_host']),
         repo: z.string(),
         name: z.string().nullable(),
         headSha: z.string().nullable(),
@@ -4400,7 +4449,7 @@ function registerTools(server, ctx) {
   // ── list_my_proposals ────────────────────────────────────────────────
   server.registerTool('list_my_proposals', {
     title: 'List your open proposals',
-    description: "List this user's own proposals that are currently open — up for a vote or merging — with their vote tallies and links. Each row carries both of a proposal's numbers: `prNumber`, the pull request number a person sees on GitHub and on the Dev board — lead with it whenever you name a proposal to them, as \"PR #2151 (proposal 4223)\" — and `proposalId`, the id the write tools take; get_proposal accepts either. `branchHome` and `youCanPush` say how each one is revised: 'user_fork' proposals follow a branch in the user's own fork, and 'app_repo' proposals — which is what a proposal opened through submit_work normally is — are advanced by calling submit_work with the proposal id. Includes proposals imported from a pull request, which is how every connector submission is recorded. Call get_proposal for the checks and the exact next step.",
+    description: "List this user's own proposals that are currently open — up for a vote or merging — with their vote tallies and links. Each row carries both of a proposal's numbers: `prNumber`, the pull request number a person sees on GitHub and on the Dev board — lead with it whenever you name a proposal to them, as \"PR #2151 (proposal 4223)\" — and `proposalId`, the id the write tools take; get_proposal accepts either. `branchHome` and `youCanPush` say how each one is revised: 'user_fork' proposals follow a branch in the user's own fork, 'app_repo' proposals — which is what a proposal opened through submit_work normally is — are advanced by calling submit_work with the proposal id, and 'git_host' proposals (an app on Homeroom's own git host) take no push at all: prepare_work with the proposal id, then submit_work with that work order's taskId and a patch. Includes proposals imported from a pull request, which is how every connector submission is recorded. Call get_proposal for the checks and the exact next step.",
     inputSchema: {},
     outputSchema: {
       proposals: z.array(z.object({
@@ -4413,7 +4462,7 @@ function registerTools(server, ctx) {
           .describe('Its pull request number — the number a person finds on GitHub and on the Dev board, so name the proposal by it first: "PR #2151 (proposal 4223)". Null on a card with no pull request yet.'),
         // Where the head lives, so a caller can tell which proposals its own
         // agent can revise without a second call each (#1054).
-        branchHome: z.enum(['app_repo', 'user_fork']),
+        branchHome: z.enum(['app_repo', 'user_fork', 'git_host']),
         youCanPush: z.boolean(),
         webPath: z.string().nullable(),
       })),
@@ -4932,7 +4981,7 @@ function registerTools(server, ctx) {
   // credential in it, nothing the receiving agent has to look up.
   server.registerTool('prepare_work', {
     title: 'Prepare a change for a coding agent',
-    description: "Prepare a change to a Homeroom app for a coding agent. If you have repository, filesystem, shell or code-editing tools, YOU are that agent: execute `workOrder` in this conversation, implement and test the change, then call `submit_work` with your branch (or a patch: your call, never the user's) — do not relay `guidance` or send the user elsewhere. Only if you lack those tools, show `guidance` — the human's next steps, already written for the user — in order, as written, instead of your own summary, and call submit_work yourself once the user says the branch is pushed. Reproduce `workOrder` inside a fenced code block character for character, EXACTLY as returned: do not shorten, tidy or correct it, or retype the branch name or commit id — a single wrong character sends the coding agent to a starting point that does not exist. The work order names the app's repository, the fork, the branch to create and the exact commit to start from; it makes the fork and branch itself, as Homeroom asks for NO write access to the user's GitHub account. Pass `proposalId` to REVISE a proposal that is already up for a vote instead of opening a new one — the work order is then based at that proposal's own head and its submission updates it in place. `openProposals` in the result names any proposals the group is ALREADY voting on for the same request: tell the user before they paste anything, because that work may be built already, and if one of them is theirs, calling prepare_work again with its `proposalId` continues it instead of opening a duplicate. Requires a linked GitHub account (identity only, for attribution). This spends the user's own coding-agent subscription, not their Homeroom credits. Naming a request also marks it as being worked on, so the group can see the work is under way.",
+    description: "Prepare a change to a Homeroom app for a coding agent. If you have repository, filesystem, shell or code-editing tools, YOU are that agent: execute `workOrder` in this conversation, implement and test the change, then call `submit_work` with your branch (or a patch: your call, never the user's) — do not relay `guidance` or send the user elsewhere. Only if you lack those tools, show `guidance` (the human's next steps) in order, as written, instead of your own summary, and call submit_work yourself once the user says the branch is pushed. Reproduce `workOrder` inside a fenced code block character for character, EXACTLY as returned: do not shorten, tidy or correct it, or retype the branch name or commit id: one wrong character breaks it. The work order names the repository, the branch and the exact commit to start from. For an app on GitHub it makes the fork itself (Homeroom has NO write access to the user's GitHub account); for one on Homeroom's git host (`forkStatus` not_needed) it clones the public `cloneUrl` and the change comes back as a patch, no fork. Pass `proposalId` to REVISE a proposal already up for a vote instead of opening a new one: the work order then starts at its head and its submission updates it in place. `openProposals` in the result names any proposals the group is ALREADY voting on for the same request: tell the user before they paste anything, because that work may be built already, and if one of them is theirs, calling prepare_work again with its `proposalId` continues it instead of opening a duplicate. An app on GitHub requires a linked GitHub account (identity only). This spends the user's own coding-agent subscription, not their Homeroom credits. Naming a request also marks it as being worked on, so the group can see the work is under way.",
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       requestNumber: z.number().int().positive().optional()
@@ -4953,15 +5002,21 @@ function registerTools(server, ctx) {
     outputSchema: {
       taskId: z.number(),
       appSlug: z.string(),
-      forkUrl: z.string(),
-      forkPageUrl: z.string(),
+      // Null for an app on Homeroom's own git host, which has no fork.
+      forkUrl: z.string().nullable(),
+      forkPageUrl: z.string().nullable(),
       // 'ready' — the user already has a fork of this app; 'missing' — the
       // coding agent has to create it (the work order's first command);
       // 'name_conflict' — a same-named repo of theirs is in the way, so the
       // work order asks for a differently-named fork; 'unknown' — GitHub
       // could not be read, so the copy is described in hedged wording rather
-      // than asserted either way.
-      forkStatus: z.enum(['ready', 'missing', 'name_conflict', 'unknown']),
+      // than asserted either way; 'not_needed' — the app is on Homeroom's own
+      // git host, cloned from `cloneUrl` and handed in as a patch.
+      forkStatus: z.enum(['ready', 'missing', 'name_conflict', 'unknown', 'not_needed']),
+      repoHost: z.enum(['github', 'git_host']).optional()
+        .describe('Where the app\'s code is. git_host: Homeroom\'s own; no fork and no push, the work order clones `cloneUrl` and the change comes back as a patch.'),
+      cloneUrl: z.string().nullable().optional()
+        .describe('The public clone address of an app on Homeroom\'s git host; null for an app on GitHub.'),
       branch: z.string(),
       baseSha: z.string(),
       // True when this returned a job that was ALREADY open for this
@@ -4981,7 +5036,7 @@ function registerTools(server, ctx) {
       // continued session that has no pull request yet.
       prNumber: z.number().nullable()
         .describe('The pull request number of the proposal this work order revises — name it to the user as "PR #2151 (proposal 4223)". Null when this work order opens a new proposal, or when the continued session has no pull request yet.'),
-      branchHome: z.enum(['app_repo', 'user_fork']).nullable(),
+      branchHome: z.enum(['app_repo', 'user_fork', 'git_host']).nullable(),
       // Only when the caller passed headSha. Null otherwise — which means
       // "not asked", never "fine": a caller that supplies nothing gets the
       // same silence a stale checkout used to get.
@@ -5243,12 +5298,16 @@ function registerTools(server, ctx) {
     // #4263: an update work order takes a patch like new work, except on a
     // proposal whose head is a branch in the author's own fork.
     const updateByPatch = !!result.proposalId && result.branchHome !== 'user_fork';
+    // An app on Homeroom's own git host takes a patch and nothing else.
+    const onHost = result.repoHost === 'git_host';
     return toolResult({
       taskId: result.taskId,
       appSlug: app.slug,
       forkUrl: result.forkUrl,
       forkPageUrl: result.forkPageUrl,
       forkStatus: result.forkStatus,
+      repoHost: onHost ? 'git_host' : 'github',
+      cloneUrl: result.cloneUrl || null,
       branch: result.branch,
       baseSha: result.baseSha,
       reused: !!result.reused,
@@ -5256,7 +5315,8 @@ function registerTools(server, ctx) {
       workOrder: result.workOrder,
       proposalId: result.proposalId || null,
       prNumber: revisedPr,
-      branchHome: result.branchHome || null,
+      // get_proposal's `branch.home`, so the two cannot disagree.
+      branchHome: result.proposalId && onHost ? 'git_host' : (result.branchHome || null),
       checkout,
       claimedRequest,
       claimedRequests,
@@ -5273,11 +5333,17 @@ function registerTools(server, ctx) {
       specs: requestSpecsToBuild,
       nextStep: staleCheckoutWarning(checkout)
         + duplicateWarning(result)
-        + 'First verify that the active agent context is rooted in the app repository or its fork and has loaded that repository\'s own instructions. Some coding agents retain instructions from the project where a task started. If unrelated repository instructions are still active, use guidance to open a fresh task rooted in the app repository even if code-editing tools are available here. '
+        + (onHost
+          ? 'This app\'s code is on Homeroom\'s own git host, not on GitHub: the work order clones it from cloneUrl '
+            + 'and hands the change in as a patch, with no fork, no push and no GitHub link. Work in that clone and '
+            + 'follow its own instructions. '
+          : 'First verify that the active agent context is rooted in the app repository or its fork and has loaded that repository\'s own instructions. Some coding agents retain instructions from the project where a task started. If unrelated repository instructions are still active, use guidance to open a fresh task rooted in the app repository even if code-editing tools are available here. ')
         + (result.proposalId
         ? `This work order REVISES ${proposalRef(result.proposalId, revisedPr)}, and it starts at that proposal's own current `
           + 'commit rather than at the app\'s main branch. Its coding agent submits it with submit_work using '
-          + (updateByPatch
+          + (onHost
+            ? `taskId ${result.taskId} and its patch, which updates that proposal — not as a new proposal. Tell the user that `
+            : updateByPatch
             ? `proposalId ${result.proposalId} and a branch it pushed (or taskId ${result.taskId} and its patch), which `
               + 'updates that proposal — not as a new proposal. Tell the user that '
             : `proposalId ${result.proposalId} and the branch it pushed — not as a new proposal. Tell the user that `)
@@ -5293,7 +5359,9 @@ function registerTools(server, ctx) {
         + 'FIRST inspect the tools available in THIS conversation. If you have repository, filesystem, '
         + 'shell or code-editing tools, YOU are the coding agent: do not render guidance and do not send '
         + 'the user elsewhere. Execute workOrder yourself, implement and test the change here, then call '
-        + (result.proposalId && !updateByPatch
+        + (onHost
+          ? `submit_work with taskId ${result.taskId} and the patch you produced, as the work order says. `
+          : result.proposalId && !updateByPatch
           ? `submit_work with proposalId ${result.proposalId} and the branch you pushed. `
           : (updateByPatch
             ? `submit_work with proposalId ${result.proposalId} and the branch you pushed, or, if the push was refused, `
@@ -5306,14 +5374,14 @@ function registerTools(server, ctx) {
         + 'returned — no re-wrapping, tidying, summarising, retyping the commit id or appended correction. '
         + 'Add no steps of your own. If a paste needs redoing, re-render this result rather than calling '
         + 'prepare_work again. The receiving coding agent submits through its own Homeroom connector; if '
-        + 'the user later says it could not submit, call submit_work with the id above and its branch.',
+        + `the user later says it could not submit, call submit_work with the id above and its ${onHost ? 'patch' : 'branch'}.`,
     });
   });
 
   // ── submit_work ──────────────────────────────────────────────────────
   server.registerTool('submit_work', {
     title: 'Submit finished work — a pushed branch, a patch, or an open PR',
-    description: "Turn finished work into a Homeroom proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. FOUR SHAPES, each complete as written — (1) `taskId` plus the `branch` you pushed to your fork, any name, the default whenever you can push; (2) `taskId` plus `patch` when you cannot: Homeroom applies it at the recorded base commit in the app's own repository and opens the pull request itself, so NO GitHub write access is needed (your call between (1) and (2), never the user's); (3) `slug` plus `prNumber` for an already-open pull request; (4) `proposalId` plus `branch` to UPDATE a proposal of the user's that is already up for a vote, which advances that same proposal onto your new commit instead of opening a second one, and clears the votes it has collected. A task prepare_work made WITH `proposalId` updates that proposal through (1) or (2): its patch is applied on the proposal's current commit, no push needed. Shape (4) needs no `slug`. When shape (4)'s target is a dev SESSION not yet up for a vote, it also takes `propose: true` (see `propose`): Homeroom promotes the session once the update lands, or as it stands with NO `branch` and nothing pushed; pass it only when the user has asked for the vote. TWO DESTINATIONS: by default work goes up for a VOTE; `share: true` on shape (1) lands it in the app's IN-PROGRESS area instead \u2014 a shared session with a preview, no PR, no vote; the charter has the rule. A task belongs to the USER'S USERNODE ACCOUNT, not to one chat — any session connected as that account, including a coding agent's own connector, can submit it, and doing so is the expected path. Only work from the user's own GitHub account is submitted under their name.",
+    description: "Turn finished work into a Homeroom proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. FOUR SHAPES, each complete as written — (1) `taskId` plus the `branch` you pushed to your fork, any name, the default whenever you can push; (2) `taskId` plus `patch` when you cannot: Homeroom applies it at the recorded base commit in the app's own repository and opens the pull request itself, so NO GitHub write access is needed (your call between (1) and (2), never the user's); (3) `slug` plus `prNumber` for an already-open pull request; (4) `proposalId` plus `branch` to UPDATE a proposal of the user's that is already up for a vote, which advances that same proposal onto your new commit instead of opening a second one, and clears the votes it has collected. A task prepare_work made WITH `proposalId` updates that proposal through (1) or (2): its patch is applied on the proposal's current commit, no push needed. Shape (4) needs no `slug`. When shape (4)'s target is a dev SESSION not yet up for a vote, it also takes `propose: true` (see `propose`): Homeroom promotes the session once the update lands, or as it stands with NO `branch` and nothing pushed; pass it only when the user has asked for the vote. TWO DESTINATIONS: by default work goes up for a VOTE; `share: true` on shape (1) lands it in the app's IN-PROGRESS area instead \u2014 a shared session with a preview, no PR, no vote; the charter has the rule. A task belongs to the USER'S USERNODE ACCOUNT, not to one chat — any session connected as that account, including a coding agent's own connector, can submit it, and doing so is the expected path. Only work from the user's own GitHub account is submitted under their name; an app on Homeroom's git host takes (2) alone.",
     inputSchema: {
       taskId: z.number().int().positive().optional()
         .describe('The task id from prepare_work — or printed in the work order text you were handed, which is the usual source when you are the coding agent. It belongs to the user’s Homeroom account, not to the chat that gave it to you, so you can submit it yourself. A task prepare_work made with `proposalId` is an UPDATE task: whatever you submit with it (a patch or a branch) advances that proposal, never a new one.'),

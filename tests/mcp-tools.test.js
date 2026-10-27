@@ -4122,7 +4122,8 @@ test('list_my_proposals carries branch home, so a list is enough to decide', () 
     SRC.indexOf("server.registerTool('prepare_work'")
   );
   assert.ok(block.length > 0);
-  assert.match(block, /branchHome: z\.enum\(\['app_repo', 'user_fork'\]\)/);
+  // 'git_host': an app on Homeroom's own git host, revised by patch.
+  assert.match(block, /branchHome: z\.enum\(\['app_repo', 'user_fork', 'git_host'\]\)/);
   assert.match(block, /youCanPush: z\.boolean\(\)/);
   assert.match(block, /branchHome: shaped\.branch\.home/);
   assert.match(block, /youCanPush: shaped\.branch\.youCanPush/);
@@ -4178,7 +4179,7 @@ test('prepare_work can be aimed at a proposal, and says which one it produced', 
     SRC.indexOf("server.registerTool('submit_work'")
   );
   assert.match(block, /proposalId: z\.number\(\)\.int\(\)\.positive\(\)\.optional\(\)/);
-  assert.match(block, /branchHome: z\.enum\(\['app_repo', 'user_fork'\]\)\.nullable\(\)/);
+  assert.match(block, /branchHome: z\.enum\(\['app_repo', 'user_fork', 'git_host'\]\)\.nullable\(\)/);
   // The proposal is loaded through the ordinary session route — no new query
   // shape and no new access rule — and its refusal is returned as-is.
   assert.match(block, /await fetchSession\(proposalId\)/);
