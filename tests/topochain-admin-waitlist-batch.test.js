@@ -48,6 +48,7 @@ const screenSource = fs.readFileSync(path.join(ROOT, SCREEN), 'utf8');
 
 let signupRows;
 let accountRows;
+let settings;
 const seen = [];
 
 function resetFixtures() {
@@ -60,6 +61,7 @@ function resetFixtures() {
     { email: 'member@example.invalid', username: 'member', has_platform_access: true },
     { email: 'stuck@example.invalid', username: 'stuck', has_platform_access: false },
   ];
+  settings = {};
 }
 
 function collapse(sql) {
@@ -81,6 +83,13 @@ function handleQuery(rawSql, params = []) {
   if (sql.startsWith('SELECT os, update_url FROM app_version_configs')) return { rows: [] };
   if (sql === 'SELECT id FROM users WHERE id = $1') return { rows: params[0] === 404 ? [] : [{ id: params[0] }] };
   if (sql.startsWith('SELECT COUNT(*) FILTER (WHERE invite_generation = 0')) return { rows: [{ roots: 0, through_links: 0 }] };
+  if (sql.startsWith('SELECT s.value, s.updated_at, u.username AS updated_by FROM platform_settings s')) {
+    return { rows: params[0] in settings ? [{ value: settings[params[0]], updated_at: new Date(), updated_by: 'full' }] : [] };
+  }
+  if (sql.startsWith('INSERT INTO platform_settings')) {
+    settings[params[0]] = params[1];
+    return { rows: [] };
+  }
   throw new Error(`Unhandled mock query: ${sql}`);
 }
 
@@ -366,6 +375,48 @@ test('a direct grant whose notice fails still grants', async () => {
   assert.equal(res.body.data.has_platform_access, true);
   assert.equal(calls.grants.length, 1);
   assert.equal(mailed.length, 0);
+});
+
+// #5971: Admin → Waitlist's Release email switch. Off, admitting still lets
+// people in and sends no email; a phone row's text is not the email's switch.
+test('with the release email switched off, admitting lets people in and emails nobody', async () => {
+  settings.waitlist_release_email = 'false';
+  fakeRelease();
+  const one = await call('POST', '/api/v4/admin/waitlist/1/release');
+  assert.equal(one.status, 200);
+  const many = await call('POST', '/api/v4/admin/waitlist/bulk-release', { ids: [2] });
+  assert.deepEqual(many.body.data.admitted, [2]);
+  const calls = fakeGrant({ release: { id: 5, email: 'granted@example.invalid', linked_user_id: 77, more_token: null } });
+  assert.equal((await call('POST', '/api/v4/admin/users/77/grant-access')).status, 200);
+  assert.deepEqual(calls.grants, [[77, { manualRelease: true }]], 'the grant itself stands');
+  assert.equal(mailed.length, 0);
+
+  const phone = fakeGrant({ release: { id: null, email: null, linked_user_id: 79, more_token: null } });
+  assert.equal((await call('POST', '/api/v4/admin/users/79/grant-access')).status, 200);
+  assert.equal(phone.texts.length, 1, 'a phone row is still texted');
+});
+
+test('the release email switch reads on by default and is saved by a write admin only', async () => {
+  const read = await call('GET', '/api/v4/admin/release-email', undefined, 'readonly');
+  assert.equal(read.status, 200);
+  assert.equal(read.body.data.enabled, true);
+
+  assert.equal((await call('PUT', '/api/v4/admin/release-email', { enabled: false }, 'readonly')).status, 403);
+  assert.equal(settings.waitlist_release_email, undefined);
+  assert.equal((await call('PUT', '/api/v4/admin/release-email', { enabled: 'no' })).status, 422);
+
+  const saved = await call('PUT', '/api/v4/admin/release-email', { enabled: false });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.data.enabled, false);
+  assert.equal(saved.body.data.updated_by, 'full');
+  assert.equal(settings.waitlist_release_email, 'false');
+});
+
+test('the Release email panel sits beside Landing, and Admit says when nobody is emailed', () => {
+  assert.match(screenSource, /<StoryLandingPanel \/>\s+<ReleaseEmailPanel \/>/);
+  assert.match(screenSource, /id="admin-topo-wl-release-email-enabled"/);
+  assert.match(screenSource, /They will not be emailed: the release email is switched off\./);
+  assert.match(screenSource, /Nobody is emailed: the release email is switched off\./);
 });
 
 test('bulk-release refuses no ids and more than one batch', async () => {

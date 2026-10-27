@@ -948,6 +948,73 @@ function StoryLandingPanel() {
   );
 }
 
+// ── The release email: whether admitting someone emails them (#5971) ────
+//
+// On (the default), Admit, Batch admit and a direct access grant send the
+// "You're in" email (services/release-mail-setting.js). Off, they still let
+// the person in and send nothing; a phone row's text is not covered.
+
+type ReleaseEmail = { enabled: boolean; updated_at?: string | null; updated_by?: string | null };
+
+// What the Admit confirmations say about the email. Read fresh each time, so
+// a switch made in another tab is what the confirmation describes; a failed
+// read assumes on, as the server does.
+async function releaseEmailOn(): Promise<boolean> {
+  const { ok, data } = await fetchJson('/api/v4/admin/release-email');
+  return !(ok && data?.success && data.data?.enabled === false);
+}
+
+function ReleaseEmailPanel() {
+  const [setting, setSetting] = useState<ReleaseEmail | null>(null);
+  const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
+  const saving = useRef(false);
+
+  const load = useCallback(async () => {
+    setError(null);
+    const { status, ok, data } = await fetchJson('/api/v4/admin/release-email');
+    if (!ok || !data?.success) { setError({ status, message: data?.error || null }); return; }
+    setSetting(data.data);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const toggle = useCallback(async (next: boolean) => {
+    if (!canWrite() || saving.current) return;
+    saving.current = true;
+    const { ok, data } = await send('PUT', '/api/v4/admin/release-email', { enabled: next });
+    saving.current = false;
+    if (!ok || !data?.success) { topo()._alert(data?.error || 'Could not save the release email setting.'); return; }
+    setSetting(data.data);
+  }, []);
+
+  const help = 'Admitting someone emails them a link to sign in or create their account. '
+    + 'Off, they are still let in, but no email is sent.';
+  return (
+    <div id="admin-topo-wl-release-email">
+      <Panel title="Release email">
+        {error ? (
+          <ErrorState title="Couldn't load the release email setting" status={error.status} message={error.message} onRetry={load} />
+        ) : null}
+        {!error && !setting ? <Skeleton rows={1} /> : null}
+        {!error && setting ? (
+          canWrite() ? (
+            <CheckField id="admin-topo-wl-release-email-enabled" label="Email people when they are admitted" help={help} checked={setting.enabled} onChange={toggle} />
+          ) : (
+            <p className="text-xs text-zinc-600 dark:text-zinc-400">
+              <span className="font-medium">{setting.enabled ? 'Admitted people are emailed.' : 'Admitted people are not emailed.'}</span>
+              {` ${help}`}
+            </p>
+          )
+        ) : null}
+        {setting?.updated_at ? (
+          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+            {`Last switched ${fmt(setting.updated_at)}${setting.updated_by ? ` by ${setting.updated_by}` : ''}.`}
+          </p>
+        ) : null}
+      </Panel>
+    </div>
+  );
+}
+
 // ── Batch admit: paste a list, see who is there, admit them together ────
 //
 // For the case the one-row Admit button handles badly: a list of addresses
@@ -1113,14 +1180,18 @@ function BatchAdmitPanel({ onClose, onAdmitted }: { onClose: () => void; onAdmit
     if (!canWrite() || !batch.length || resolvedText === null) return;
     const n = batch.length;
     const unconfirmed = batch.filter((e) => !e.signup?.confirmed_at).length;
+    const mailOn = await releaseEmailOn();
     const okd = await topo()._confirm({
       title: `Admit ${plural(n, 'signup', 'signups')} off the waitlist?`,
       message: `Each gets platform access straight away if they already have an account, `
-        + `otherwise the moment they create one, and is emailed a link to sign in or create `
-        + `their account.${unconfirmed
-          ? ` ${plural(unconfirmed, 'address was', 'addresses were')} never confirmed, so `
-            + `${unconfirmed === 1 ? 'that email' : 'those emails'} may not reach anyone.`
-          : ''} This cannot be undone from here.`,
+        + (mailOn
+          ? `otherwise the moment they create one, and is emailed a link to sign in or create `
+            + `their account.${unconfirmed
+              ? ` ${plural(unconfirmed, 'address was', 'addresses were')} never confirmed, so `
+                + `${unconfirmed === 1 ? 'that email' : 'those emails'} may not reach anyone.`
+              : ''}`
+          : `otherwise the moment they create one. Nobody is emailed: the release email is switched off.`)
+        + ` This cannot be undone from here.`,
       confirmLabel: `Admit ${n}`,
     });
     if (!okd) return;
@@ -1465,11 +1536,13 @@ function WaitlistScreen() {
     const unconfirmed = !w.confirmed_at
       ? ' This address was never confirmed, so the email may not reach anyone.'
       : '';
+    const mailLine = (await releaseEmailOn())
+      ? ` They will be emailed a link to sign in or create their account.${unconfirmed}`
+      : ' They will not be emailed: the release email is switched off.';
     const okd = await topo()._confirm({
       title: `Admit ${signupLabel(w)} off the waitlist?`,
       message: `They get platform access straight away if they already have an account, `
-        + `otherwise the moment they create one. They will be emailed a link to sign in or `
-        + `create their account.${unconfirmed} This cannot be undone from here.`,
+        + `otherwise the moment they create one.${mailLine} This cannot be undone from here.`,
       confirmLabel: 'Admit',
     });
     if (!okd) return;
@@ -1542,6 +1615,7 @@ function WaitlistScreen() {
             ) : null}
             {showAnalytics ? <WaitlistAnalyticsPanel onClose={() => setShowAnalytics(false)} /> : null}
             <StoryLandingPanel />
+            <ReleaseEmailPanel />
           </>
         )}
         exportCsv={write

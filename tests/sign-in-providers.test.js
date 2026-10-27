@@ -22,6 +22,7 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const providers = require('../src/services/sign-in-providers');
+const log = require('../src/services/logger');
 
 const CONFIG = Object.freeze({ cliAuthOrigin: 'https://app.example', dataEncryptionKey: 'sign-in-test-key' });
 
@@ -365,7 +366,6 @@ test('the native ID token: an app audience, the nonce as given or hashed, and sp
   assert.equal((await providers.verifyNativeIdToken(db, CONFIG, 'google', await google({ nonce: 'raw-nonce-1' }), state, { jwks })).subject, 'g-1');
   assert.equal((await providers.verifyNativeIdToken(db, CONFIG, 'google',
     await google({ nonce: 'raw-nonce-1' }, '123-abc.apps.googleusercontent.com'), state, { jwks })).subject, 'g-1');
-  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', await google({ nonce: 'x' }), state, { jwks }), { code: 'bad_token' });
   await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', await google({}, 'someone-else'), state, { jwks }), { code: 'bad_token' });
   // A Google sheet that carried no nonce: only while the token is fresh.
   const plain = await google({});
@@ -373,8 +373,41 @@ test('the native ID token: an app audience, the nonce as given or hashed, and sp
   const later = Date.now() + (providers.NATIVE_FRESH_S + 30) * 1000;
   await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', await google({}), state, { jwks, now: later }),
     { code: 'bad_token' }, 'too old to take without a nonce');
+  // #5960: a nonce that is not ours (Google's iOS SDK writes a random one
+  // when the app passed none) is refused, for every client.
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', await google({ nonce: 'sdk-random' }), state, { jwks }),
+    { code: 'bad_token' }, 'another nonce, from the app client');
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google',
+    await google({ nonce: 'sdk-random' }, '123-abc.apps.googleusercontent.com'), state, { jwks }),
+  { code: 'bad_token' }, 'another nonce, from the web client');
   await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', 'not.a.token', state, { jwks }), { code: 'bad_token' });
   await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', 'x'.repeat(9000), state, { jwks }), { code: 'bad_token' });
+});
+
+test('every refused native ID token is one log line with its reason', async () => {
+  const db = new FakeDb();
+  await setUpNative(db);
+  const { jwks, sign } = await idTokenKit();
+  const state = { nonce: 'raw-nonce-1' };
+  const apple = await sign({ sub: '000.abc', email: 'x@privaterelay.appleid.com', email_verified: 'true', nonce: 'other' },
+    { issuer: 'https://appleid.apple.com', audience: 'com.onhomeroom.app' });
+  const lastReason = () => {
+    const entry = log.tail(20).find((e) => e.category === 'sign-in-providers' && e.message === 'Native ID token refused');
+    return entry && entry.data.reason;
+  };
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'apple', apple, state, { jwks }), { code: 'bad_token' });
+  assert.equal(lastReason(), 'nonce_mismatch');
+  const foreign = await sign({ sub: 'g-1', email: 'ada@example.com', email_verified: true, nonce: 'sdk-random' },
+    { audience: '123-ios.apps.googleusercontent.com' });
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', foreign, state, { jwks }), { code: 'bad_token' });
+  assert.equal(lastReason(), 'nonce_mismatch');
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', 'not-a-token-at-all', state, { jwks }), { code: 'bad_token' });
+  assert.notEqual(lastReason(), 'nonce_mismatch');
+  const stale = await sign({ sub: 'g-1', email: 'ada@example.com', email_verified: true },
+    { audience: '123-ios.apps.googleusercontent.com' });
+  const later = Date.now() + (providers.NATIVE_FRESH_S + 30) * 1000;
+  await assert.rejects(providers.verifyNativeIdToken(db, CONFIG, 'google', stale, state, { jwks, now: later }), { code: 'bad_token' });
+  assert.equal(lastReason(), 'stale_without_nonce');
 });
 
 test('the exchange sends the code, the verifier and the client secret, and returns the verified claims', async () => {
