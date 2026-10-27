@@ -9,7 +9,8 @@
 // reading logs. Here every process keeps its own counts in memory
 // (middleware/request-counts.js records each response as it finishes;
 // middleware/error-handler.js leaves what it caught on res.locals) and
-// flushes the minutes that have ended every 60 seconds:
+// flushes each minute just after it ends, so a process killed outright
+// loses at most the minute it was in:
 //
 //   server_request_minutes  (minute, pod)  requests, errors
 //                           the `infra.server-errors` figure's rate
@@ -18,12 +19,15 @@
 //                           the `server_errors` signal's observer
 //                           (signal-observers/server-errors.js)
 //   server_route_minutes    (minute, pod, method, route)  requests, streams,
-//                           total_ms, max_ms, bytes: what each route cost,
-//                           so a minute whose process was busy says which
-//                           route kept it busy. Every response counts here,
-//                           /api/ or not (the rest as `(non-api)`); an event
-//                           stream counts, but its time does not (it is
-//                           open for as long as its client likes). Only the
+//                           aborted, total_ms, max_ms, bytes: what each
+//                           route cost, so a minute whose process was busy
+//                           says which route kept it busy. Every response
+//                           counts here, /api/ or not (the rest as
+//                           `(non-api)`), and so does a request whose client
+//                           gave up first (aborted). One held open by design
+//                           (an event stream, a long poll) counts in
+//                           `streams`, but its time does not: it waits, as
+//                           long as its client likes, at no cost. Only the
 //                           ROUTE_ROWS costliest routes of a minute are kept
 //                           by name, the rest as `(other)`, for
 //                           ROUTE_RETENTION_DAYS.
@@ -47,7 +51,6 @@ const { scrubText } = require('./platform-signal-evidence');
 const { ownFrames } = require('./platform-signal-observers');
 
 const MINUTE_MS = 60 * 1000;
-const FLUSH_INTERVAL_MS = 60 * 1000;
 const RETENTION_DAYS = 14;
 // A busy minute writes up to ROUTE_ROWS rows per process, so the route costs
 // are kept for an incident's look back, not a trend's.
@@ -76,6 +79,16 @@ const ROOT = path.resolve(__dirname, '..', '..') + path.sep;
 /** Pure: the start of `ms`'s minute, in epoch milliseconds (UTC). */
 function minuteOf(ms) {
   return Math.floor(Number(ms) / MINUTE_MS) * MINUTE_MS;
+}
+
+/**
+ * Pure: how long from `ms` until `slackMs` after the next minute starts.
+ * A per-minute timer re-armed with this after each run stays on the
+ * minute: an interval re-arms from when its callback ran, so one late run
+ * shifts every run after it.
+ */
+function msToNextMinute(ms, slackMs = 50) {
+  return MINUTE_MS - (Number(ms) % MINUTE_MS) + slackMs;
 }
 
 /** Pure: this process's name in the tables. */
@@ -181,23 +194,27 @@ function emptyMinute(minute) {
 }
 
 function emptyRoute(method, route) {
-  return { method, route, requests: 0, streams: 0, totalMs: 0, maxMs: 0, bytes: 0 };
+  return { method, route, requests: 0, streams: 0, aborted: 0, totalMs: 0, maxMs: 0, bytes: 0 };
 }
 
 /** Pure: `cost` added to the route row `into`. */
 function addCost(into, cost) {
   into.requests += cost.requests || 0;
   into.streams += cost.streams || 0;
+  into.aborted += cost.aborted || 0;
   into.totalMs += cost.totalMs || 0;
   into.maxMs = Math.max(into.maxMs, cost.maxMs || 0);
   into.bytes += cost.bytes || 0;
 }
 
-/** Pure: what one response cost: its time (not an event stream's) and its bytes. */
-function costOf({ durationMs = null, bytes = null, stream = false } = {}) {
+/**
+ * Pure: what one response cost: its time (not one held open by design,
+ * `stream`) and its bytes; `aborted` when its client gave up first.
+ */
+function costOf({ durationMs = null, bytes = null, stream = false, aborted = false } = {}) {
   const ms = !stream && Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 0;
   const sent = Number.isFinite(bytes) && bytes > 0 ? Math.round(bytes) : 0;
-  return { requests: 1, streams: stream ? 1 : 0, totalMs: ms, maxMs: ms, bytes: sent };
+  return { requests: 1, streams: stream ? 1 : 0, aborted: aborted ? 1 : 0, totalMs: ms, maxMs: ms, bytes: sent };
 }
 
 /**
@@ -279,18 +296,20 @@ function createCounts({
    * One response that finished: its method, route template and status, and
    * for a 5xx what the error handler saw ({ errType, frame, message }, or
    * nothing when the route answered the 5xx itself). `api: false` for a
-   * response outside /api/: it counts only in the route costs. What it cost
+   * response outside /api/, and `aborted` for one whose client gave up
+   * first: either counts only in the route costs. What it cost
    * (`durationMs`, `bytes`, `stream`) is optional.
    */
   function record({
-    method, route, status, error = null, now = Date.now(), api = true, durationMs = null, bytes = null, stream = false,
+    method, route, status, error = null, now = Date.now(), api = true, durationMs = null, bytes = null,
+    stream = false, aborted = false,
   } = {}) {
     const code = Number(status);
     const b = bucket(minuteOf(Number.isFinite(now) ? now : Date.now()));
     const m = methodOf(method);
     const r = String(route || UNMATCHED).slice(0, WIDTH.route);
-    addRoute(b, m, api || r !== UNMATCHED ? r : NON_API, costOf({ durationMs, bytes, stream }));
-    if (!api) return;
+    addRoute(b, m, api || r !== UNMATCHED ? r : NON_API, costOf({ durationMs, bytes, stream, aborted }));
+    if (!api || aborted) return;
     b.requests += 1;
     if (!(code >= 500 && code <= 599)) return;
     b.errors += 1;
@@ -306,12 +325,12 @@ function createCounts({
 
   // A flush the database refused: its minutes come back to be sent again,
   // less what the database already took.
-  function putBack(taken, { requestsSent, routesSent = false }) {
+  function putBack(taken, { requestsSent = false, routesSent = false, errorsSent = false } = {}) {
     for (const t of taken) {
       const b = bucket(t.minute);
       if (!requestsSent) { b.requests += t.requests; b.errors += t.errors; }
       if (!routesSent) for (const r of t.routes.values()) addRoute(b, r.method, r.route, r);
-      for (const d of t.details.values()) addDetail(b, d, d.count, d.sample);
+      if (!errorsSent) for (const d of t.details.values()) addDetail(b, d, d.count, d.sample);
       b.dropped += t.dropped;
     }
   }
@@ -338,8 +357,8 @@ function createCounts({
     for (const [minute, b] of minutes) {
       if (all || minute < current) { taken.push(b); minutes.delete(minute); }
     }
-    // (A minute put back after its errors were refused has its totals and
-    // routes sent already, and only its errors left to send.)
+    // (A minute put back after its routes or errors were refused has its
+    // totals sent already, and only what was refused left to send.)
     const live = taken.filter((b) => b.requests || b.errors || b.details.size || b.routes.size);
     if (!live.length) return sent;
     const dropped = live.reduce((n, b) => n + b.dropped, 0);
@@ -358,12 +377,16 @@ function createCounts({
           totals.map((b) => b.requests), totals.map((b) => b.errors),
         ]);
       } catch (err) {
-        putBack(live, { requestsSent: false });
+        putBack(live);
         log.warn('server-errors', 'Could not flush request counts; kept for the next flush', { err: err.message });
         return sent;
       }
       sent.minutes = totals.length;
     }
+    // The route costs and the errors are written apart: a refusal of one
+    // never holds back the other (the server_errors signal reads the
+    // errors), and only what was refused is kept for the next flush.
+    let routesSent = true;
     const routes = [];
     for (const b of live) for (const r of costliestRoutes(b.routes, routeRows)) routes.push({ minute: b.minute, ...r });
     if (routes.length) {
@@ -371,31 +394,34 @@ function createCounts({
         await pool.query(ROUTES_UPSERT_SQL, [
           routes.map((r) => minuteIso(r.minute)), pod,
           routes.map((r) => r.method), routes.map((r) => r.route), routes.map((r) => r.requests),
-          routes.map((r) => r.streams), routes.map((r) => Math.round(r.totalMs * 1000) / 1000),
+          routes.map((r) => r.streams), routes.map((r) => r.aborted),
+          routes.map((r) => Math.round(r.totalMs * 1000) / 1000),
           routes.map((r) => Math.round(r.maxMs * 1000) / 1000), routes.map((r) => r.bytes),
         ]);
         sent.routeRows = routes.length;
       } catch (err) {
-        putBack(live, { requestsSent: true });
+        routesSent = false;
         log.warn('server-errors', 'Could not flush route costs; kept for the next flush', { err: err.message });
-        return sent;
       }
     }
+    let errorsSent = true;
     const rows = [];
     for (const b of live) for (const d of b.details.values()) rows.push({ minute: b.minute, ...d });
-    if (!rows.length) return sent;
-    try {
-      await pool.query(ERRORS_UPSERT_SQL, [
-        rows.map((r) => minuteIso(r.minute)), pod,
-        rows.map((r) => r.method), rows.map((r) => r.route), rows.map((r) => r.status),
-        rows.map((r) => r.errType), rows.map((r) => r.frame), rows.map((r) => r.count),
-        rows.map((r) => r.sample),
-      ]);
-      sent.errorRows = rows.length;
-    } catch (err) {
-      putBack(live, { requestsSent: true, routesSent: true });
-      log.warn('server-errors', 'Could not flush server errors; kept for the next flush', { err: err.message });
+    if (rows.length) {
+      try {
+        await pool.query(ERRORS_UPSERT_SQL, [
+          rows.map((r) => minuteIso(r.minute)), pod,
+          rows.map((r) => r.method), rows.map((r) => r.route), rows.map((r) => r.status),
+          rows.map((r) => r.errType), rows.map((r) => r.frame), rows.map((r) => r.count),
+          rows.map((r) => r.sample),
+        ]);
+        sent.errorRows = rows.length;
+      } catch (err) {
+        errorsSent = false;
+        log.warn('server-errors', 'Could not flush server errors; kept for the next flush', { err: err.message });
+      }
     }
+    if (!routesSent || !errorsSent) putBack(live, { requestsSent: true, routesSent, errorsSent });
     return sent;
   }
 
@@ -436,13 +462,14 @@ const ERRORS_UPSERT_SQL = `
          sample = COALESCE(server_error_minutes.sample, EXCLUDED.sample)`;
 
 const ROUTES_UPSERT_SQL = `
-  INSERT INTO server_route_minutes (minute, pod, method, route, requests, streams, total_ms, max_ms, bytes)
-  SELECT t.minute, $2::text, t.method, t.route, t.requests, t.streams, t.total_ms, t.max_ms, t.bytes
-    FROM unnest($1::timestamptz[], $3::text[], $4::text[], $5::int[], $6::int[], $7::float8[],
-                $8::float8[], $9::bigint[]) AS t(minute, method, route, requests, streams, total_ms, max_ms, bytes)
+  INSERT INTO server_route_minutes (minute, pod, method, route, requests, streams, aborted, total_ms, max_ms, bytes)
+  SELECT t.minute, $2::text, t.method, t.route, t.requests, t.streams, t.aborted, t.total_ms, t.max_ms, t.bytes
+    FROM unnest($1::timestamptz[], $3::text[], $4::text[], $5::int[], $6::int[], $7::int[], $8::float8[],
+                $9::float8[], $10::bigint[]) AS t(minute, method, route, requests, streams, aborted, total_ms, max_ms, bytes)
   ON CONFLICT (minute, pod, method, route) DO UPDATE
      SET requests = server_route_minutes.requests + EXCLUDED.requests,
          streams = server_route_minutes.streams + EXCLUDED.streams,
+         aborted = server_route_minutes.aborted + EXCLUDED.aborted,
          total_ms = server_route_minutes.total_ms + EXCLUDED.total_ms,
          max_ms = GREATEST(server_route_minutes.max_ms, EXCLUDED.max_ms),
          bytes = server_route_minutes.bytes + EXCLUDED.bytes`;
@@ -473,24 +500,34 @@ async function prune(pool, { days = RETENTION_DAYS, routeDays = ROUTE_RETENTION_
 
 const counts = createCounts();
 let timer = null;
+let running = false;
 let flushing = null;
+// Just after a minute ends, so its last responses are in.
+const FLUSH_SLACK_MS = 100;
 
 /**
- * Every process, at boot: flush this process's counts every 60 seconds, one
- * flush at a time. The timer is unref'd, so it never holds the process
+ * Every process, at boot: flush this process's counts just after each
+ * minute ends, one flush at a time, re-armed from the clock each time so it
+ * stays on the minute. The timer is unref'd, so it never holds the process
  * open; a flush with nothing to send sends no query.
  */
-function start({ pool, intervalMs = FLUSH_INTERVAL_MS } = {}) {
-  if (timer || !pool) return;
-  timer = setInterval(() => {
-    if (flushing) return;
-    flushing = counts.flush(pool).finally(() => { flushing = null; });
-  }, intervalMs);
-  timer.unref?.();
+function start({ pool } = {}) {
+  if (running || !pool) return;
+  running = true;
+  const arm = () => {
+    timer = setTimeout(() => {
+      if (!running) return;
+      if (!flushing) flushing = counts.flush(pool).finally(() => { flushing = null; });
+      arm();
+    }, msToNextMinute(Date.now(), FLUSH_SLACK_MS));
+    timer.unref?.();
+  };
+  arm();
 }
 
 function stop() {
-  if (timer) clearInterval(timer);
+  running = false;
+  if (timer) clearTimeout(timer);
   timer = null;
 }
 
@@ -504,6 +541,7 @@ module.exports = {
   // Pure parts, and a fresh set of counts, for tests.
   createCounts,
   minuteOf,
+  msToNextMinute,
   podName,
   routeTemplate,
   methodOf,
@@ -523,7 +561,7 @@ module.exports = {
   PRUNE_REQUESTS_SQL,
   PRUNE_ERRORS_SQL,
   PRUNE_ROUTES_SQL,
-  FLUSH_INTERVAL_MS,
+  FLUSH_SLACK_MS,
   RETENTION_DAYS,
   ROUTE_RETENTION_DAYS,
   MAX_ERROR_KEYS,

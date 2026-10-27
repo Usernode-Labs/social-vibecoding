@@ -925,13 +925,15 @@ usage null when measured usage is unavailable.
 
 ### When a platform Pod was slow or failed its liveness probe
 
-Every platform process writes, each minute, how busy it was
-(`server_process_minutes`: CPU time, how much of the minute its event loop
-was busy, the loop's delays, stalls, garbage collection and memory peaks;
-services/process-health.js) and what each route cost it
+Every platform process writes, just after each minute ends, how busy it
+was (`server_process_minutes`: CPU time, how much of the minute its event
+loop was busy, the loop's delays, stalls, garbage collection and memory
+peaks; services/process-health.js) and what each route cost it
 (`server_route_minutes`: requests, total and longest time, bytes, by route
-template; services/server-error-counts.js). Read the minutes around the
-incident, by Pod, then the routes of the busiest minutes:
+template, with the requests whose client gave up first counted as
+`aborted`, and event streams and long polls as `streams`, their waiting
+left out of the time; services/server-error-counts.js). Read the minutes
+around the incident, by Pod, then the routes of the busiest minutes:
 
 ```sql
 SELECT minute, pod, role, round(cpu_ms) AS cpu_ms, loop_utilization, loop_delay_max_ms,
@@ -939,7 +941,7 @@ SELECT minute, pod, role, round(cpu_ms) AS cpu_ms, loop_utilization, loop_delay_
   FROM server_process_minutes
  WHERE minute BETWEEN '<from>' AND '<to>' ORDER BY minute, pod;
 
-SELECT minute, pod, method, route, requests, round(total_ms) AS total_ms,
+SELECT minute, pod, method, route, requests, aborted, round(total_ms) AS total_ms,
        round(max_ms) AS max_ms, bytes
   FROM server_route_minutes
  WHERE minute BETWEEN '<from>' AND '<to>' AND pod = '<pod>'
@@ -947,10 +949,13 @@ SELECT minute, pod, method, route, requests, round(total_ms) AS total_ms,
 ```
 
 A stall of a second or more is also logged as it ends ("The event loop
-stalled"), with the requests still in flight, the slow ones that finished
-across it and the collection time inside it; a stopping process logs the
-requests it was answering ("Draining in-flight requests and background
-work"). Route costs are kept 7 days, process minutes 14.
+stalled": `stallMs` is the gap between the watcher's wake-ups,
+`blockedAtLeastMs` the part of it the loop was surely held), with the
+requests still in flight, the slow ones that finished across it and the
+collection time inside it; a stopping process logs the requests it was
+answering ("Draining in-flight requests and background work"). A process
+killed outright mid-stall logs neither; its minutes up to the one it was in
+are already written. Route costs are kept 7 days, process minutes 14.
 
 ## IP address retention
 

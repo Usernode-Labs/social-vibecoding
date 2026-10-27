@@ -170,7 +170,7 @@ test('flush upserts the minutes that ended, adding to what is there, and keeps t
   assert.equal(pool.calls.length, 3);
   const [totals, routes, errors] = pool.calls;
   assert.equal(routes.sql, counts.ROUTES_UPSERT_SQL);
-  assert.deepEqual(routes.params, [['2026-10-19T10:00:00.000Z'], 'homeroom-web-1', ['GET'], ['/api/a'], [2], [0], [0], [0], [0]],
+  assert.deepEqual(routes.params, [['2026-10-19T10:00:00.000Z'], 'homeroom-web-1', ['GET'], ['/api/a'], [2], [0], [0], [0], [0], [0]],
     'one route row; recorded without a cost, it counts and costs nothing');
   assert.equal(totals.sql, counts.REQUESTS_UPSERT_SQL);
   assert.match(totals.sql, /INSERT INTO server_request_minutes \(minute, pod, requests, errors\)/);
@@ -200,16 +200,10 @@ test('a refused flush keeps its minutes for the next one, and never throws', asy
   assert.equal(down.calls.length, 1, 'the totals were refused, so the rest were not tried');
   assert.deepEqual(c.snapshot().map((b) => [b.requests, b.errors, b.details.length, b.routes.length]), [[1, 1, 1, 1]]);
 
-  // The totals went in and the routes did not: next time the routes and the
-  // errors go, and the totals are not counted twice.
-  const noRoutes = stubPool({ fail: (sql) => (sql === counts.ROUTES_UPSERT_SQL ? new Error('deadlock') : null) });
-  assert.deepEqual(await c.flush(noRoutes, { now: T0 + 2 * MIN }), { minutes: 1, routeRows: 0, errorRows: 0 });
-  assert.deepEqual(noRoutes.calls.map((q) => q.sql), [counts.REQUESTS_UPSERT_SQL, counts.ROUTES_UPSERT_SQL]);
-  assert.deepEqual(c.snapshot().map((b) => [b.requests, b.errors, b.details.length, b.routes.length]), [[0, 0, 1, 1]]);
-
-  // The routes went in and the errors did not: next time only the errors go.
+  // The totals went in and the errors did not: next time only the errors
+  // go, and the totals and routes are not counted twice.
   const half = stubPool({ fail: (sql) => (sql === counts.ERRORS_UPSERT_SQL ? new Error('deadlock') : null) });
-  assert.deepEqual(await c.flush(half, { now: T0 + 2 * MIN }), { minutes: 0, routeRows: 1, errorRows: 0 });
+  assert.deepEqual(await c.flush(half, { now: T0 + 2 * MIN }), { minutes: 1, routeRows: 1, errorRows: 0 });
   assert.deepEqual(c.snapshot().map((b) => [b.requests, b.errors, b.details.length, b.routes.length]), [[0, 0, 1, 0]]);
   const up = stubPool();
   assert.deepEqual(await c.flush(up, { now: T0 + 2 * MIN }), { minutes: 0, routeRows: 0, errorRows: 1 });
@@ -220,6 +214,24 @@ test('a refused flush keeps its minutes for the next one, and never throws', asy
   c.record({ method: 'GET', route: '/api/a', status: 200, now: T0 });
   await assert.doesNotReject(c.flush(throwsSync, { now: T0 + 2 * MIN }));
   assert.deepEqual(await c.flush(null), { minutes: 0, routeRows: 0, errorRows: 0 });
+});
+
+test('a route costs table that refuses every write never holds back the errors', async () => {
+  // (The server_errors signal reads the errors; the route costs are new.)
+  const c = counts.createCounts({ pod: 'p1' });
+  c.record({ method: 'GET', route: '/api/a', status: 500, now: T0, durationMs: 5 });
+  const noRoutes = stubPool({ fail: (sql) => (sql === counts.ROUTES_UPSERT_SQL ? new Error('relation "server_route_minutes" does not exist') : null) });
+  assert.deepEqual(await c.flush(noRoutes, { now: T0 + 2 * MIN }), { minutes: 1, routeRows: 0, errorRows: 1 });
+  assert.deepEqual(noRoutes.calls.map((q) => q.sql), [counts.REQUESTS_UPSERT_SQL, counts.ROUTES_UPSERT_SQL, counts.ERRORS_UPSERT_SQL]);
+  assert.deepEqual(c.snapshot().map((b) => [b.requests, b.errors, b.details.length, b.routes.length]), [[0, 0, 0, 1]],
+    'only the refused routes are kept for the next flush');
+  c.record({ method: 'GET', route: '/api/b', status: 503, now: T0 + MIN });
+  const again = stubPool({ fail: (sql) => (sql === counts.ROUTES_UPSERT_SQL ? new Error('still missing') : null) });
+  assert.deepEqual(await c.flush(again, { now: T0 + 3 * MIN }), { minutes: 1, routeRows: 0, errorRows: 1 }, 'and the next minute\'s errors go too');
+  const fixed = stubPool();
+  const sent = await c.flush(fixed, { now: T0 + 3 * MIN });
+  assert.deepEqual(fixed.calls.map((q) => q.sql), [counts.ROUTES_UPSERT_SQL]);
+  assert.equal(sent.routeRows, 2, 'the held routes go once the table takes them');
 });
 
 test('prune removes counts older than 14 days and route costs older than 7, and never throws', async () => {
@@ -235,11 +247,12 @@ test('prune removes counts older than 14 days and route costs older than 7, and 
 
 // ── What each route cost ────────────────────────────────────────────────
 
-test('a response costs its time (an event stream\'s left out) and its bytes', () => {
-  assert.deepEqual(counts.costOf({ durationMs: 12.5, bytes: 2048 }), { requests: 1, streams: 0, totalMs: 12.5, maxMs: 12.5, bytes: 2048 });
-  assert.deepEqual(counts.costOf({ durationMs: 90_000, bytes: 10, stream: true }), { requests: 1, streams: 1, totalMs: 0, maxMs: 0, bytes: 10 });
-  assert.deepEqual(counts.costOf({ durationMs: -1, bytes: Number.NaN }), { requests: 1, streams: 0, totalMs: 0, maxMs: 0, bytes: 0 });
-  assert.deepEqual(counts.costOf(), { requests: 1, streams: 0, totalMs: 0, maxMs: 0, bytes: 0 });
+test('a response costs its time (one held open by design left out) and its bytes', () => {
+  assert.deepEqual(counts.costOf({ durationMs: 12.5, bytes: 2048 }), { requests: 1, streams: 0, aborted: 0, totalMs: 12.5, maxMs: 12.5, bytes: 2048 });
+  assert.deepEqual(counts.costOf({ durationMs: 90_000, bytes: 10, stream: true }), { requests: 1, streams: 1, aborted: 0, totalMs: 0, maxMs: 0, bytes: 10 });
+  assert.deepEqual(counts.costOf({ durationMs: 300, aborted: true }), { requests: 1, streams: 0, aborted: 1, totalMs: 300, maxMs: 300, bytes: 0 });
+  assert.deepEqual(counts.costOf({ durationMs: -1, bytes: Number.NaN }), { requests: 1, streams: 0, aborted: 0, totalMs: 0, maxMs: 0, bytes: 0 });
+  assert.deepEqual(counts.costOf(), { requests: 1, streams: 0, aborted: 0, totalMs: 0, maxMs: 0, bytes: 0 });
 });
 
 test('every response counts in its route\'s cost; outside /api/ only there, unnamed as (non-api)', () => {
@@ -249,11 +262,13 @@ test('every response counts in its route\'s cost; outside /api/ only there, unna
   c.record({ method: 'GET', route: '/api/events', status: 200, now: T0 + 2, durationMs: 60_000, bytes: 300, stream: true });
   c.record({ method: 'GET', route: counts.UNMATCHED, status: 200, now: T0 + 3, durationMs: 2, bytes: 900, api: false });
   c.record({ method: 'GET', route: '/mcp', status: 200, now: T0 + 4, durationMs: 30, bytes: 100, api: false });
+  c.record({ method: 'GET', route: '/api/apps', status: 200, now: T0 + 5, durationMs: 9000, aborted: true });
   const [m] = c.snapshot();
-  assert.equal(m.requests, 3, 'the /api/ total is unchanged by what is outside it');
+  assert.equal(m.requests, 3, 'the /api/ total is unchanged by what is outside it, or by a request whose client gave up');
   const byRoute = new Map(m.routes.map((r) => [`${r.method} ${r.route}`, r]));
-  assert.deepEqual(byRoute.get('GET /api/apps'), { method: 'GET', route: '/api/apps', requests: 2, streams: 0, totalMs: 440, maxMs: 400, bytes: 20000 });
-  assert.deepEqual(byRoute.get('GET /api/events'), { method: 'GET', route: '/api/events', requests: 1, streams: 1, totalMs: 0, maxMs: 0, bytes: 300 });
+  assert.deepEqual(byRoute.get('GET /api/apps'), { method: 'GET', route: '/api/apps', requests: 3, streams: 0, aborted: 1, totalMs: 9440, maxMs: 9000, bytes: 20000 },
+    'an aborted request still costs what it took');
+  assert.deepEqual(byRoute.get('GET /api/events'), { method: 'GET', route: '/api/events', requests: 1, streams: 1, aborted: 0, totalMs: 0, maxMs: 0, bytes: 300 });
   assert.equal(byRoute.get(`GET ${counts.NON_API}`).bytes, 900, 'a static file or page is one row, never its path');
   assert.equal(byRoute.get('GET /mcp').requests, 1, 'a route declared outside /api/ keeps its template');
 });
@@ -268,7 +283,7 @@ test('a minute writes its costliest routes by name and folds the rest into (othe
   add('POST', '/api/e', 1, 1);
   const rows = counts.costliestRoutes(routes, 2);
   assert.deepEqual(rows.map((r) => `${r.method} ${r.route}`), ['GET /api/b', 'GET /api/c', 'GET (other)', 'POST (other)']);
-  assert.deepEqual(rows.find((r) => r.method === 'POST'), { method: 'POST', route: counts.OTHER, requests: 2, streams: 0, totalMs: 2, maxMs: 1, bytes: 10 });
+  assert.deepEqual(rows.find((r) => r.method === 'POST'), { method: 'POST', route: counts.OTHER, requests: 2, streams: 0, aborted: 0, totalMs: 2, maxMs: 1, bytes: 10 });
 
   const capped = counts.createCounts({ pod: 'p1', maxRouteKeys: 2 });
   for (const route of ['/api/a', '/api/b', '/api/c', '/api/d']) capped.record({ method: 'GET', route, status: 200, now: T0, durationMs: 1 });
@@ -277,13 +292,17 @@ test('a minute writes its costliest routes by name and folds the rest into (othe
 });
 
 test('the route costs\' upsert adds counts, times and bytes, and keeps the longest', () => {
-  assert.match(counts.ROUTES_UPSERT_SQL, /INSERT INTO server_route_minutes \(minute, pod, method, route, requests, streams, total_ms, max_ms, bytes\)/);
+  assert.match(counts.ROUTES_UPSERT_SQL, /INSERT INTO server_route_minutes \(minute, pod, method, route, requests, streams, aborted, total_ms, max_ms, bytes\)/);
   assert.match(counts.ROUTES_UPSERT_SQL, /ON CONFLICT \(minute, pod, method, route\) DO UPDATE/);
+  assert.match(counts.ROUTES_UPSERT_SQL, /aborted = server_route_minutes\.aborted \+ EXCLUDED\.aborted/);
   assert.match(counts.ROUTES_UPSERT_SQL, /total_ms = server_route_minutes\.total_ms \+ EXCLUDED\.total_ms/);
   assert.match(counts.ROUTES_UPSERT_SQL, /max_ms = GREATEST\(server_route_minutes\.max_ms, EXCLUDED\.max_ms\)/);
   assert.match(counts.ROUTES_UPSERT_SQL, /bytes = server_route_minutes\.bytes \+ EXCLUDED\.bytes/);
   const schema = read('src/db/schema.sql');
   assert.match(schema, /CREATE TABLE IF NOT EXISTS server_route_minutes \([\s\S]*?PRIMARY KEY \(minute, pod, method, route\)\n\);/);
+  // The primary key leads with `minute`: a second index on it would only add
+  // writes to a table that takes tens of rows per Pod per minute.
+  assert.doesNotMatch(schema, /CREATE INDEX[^;]*ON server_route_minutes\s*\(\s*minute\b[^,)]*\)/);
 });
 
 // ── The middleware, in a real Express app ───────────────────────────────
@@ -405,6 +424,87 @@ test('the middleware records what every response cost, and hands a slow one to t
   assert.deepEqual(finished.map((e) => e.route).sort(), ['(unmatched)', '/api/big/:id', '/page'],
     'each finished response but an event stream goes to the stall watcher, which keeps the slow ones');
   assert.ok(finished.every((e) => Number.isFinite(e.startedAt) && Number.isFinite(e.durationMs)));
+});
+
+test('a request whose client gave up first still costs what it took, counted as aborted', async () => {
+  const c = counts.createCounts({ pod: 'p1' });
+  const finished = [];
+  const app = express();
+  app.use(requestCounts({ counts: c, health: { noteFinished: (e) => finished.push(e) } }));
+  app.get('/api/slow', (_req, res) => { setTimeout(() => { if (!res.writableEnded) res.json({ late: true }); }, 600); });
+  app.get('/api/events', (_req, res) => { res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.write('data: 1\n\n'); });
+  const server = await listen(app);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    for (const p of ['/api/slow', '/api/events']) {
+      const ac = new AbortController();
+      const r = fetch(`${base}${p}`, { signal: ac.signal }).then((res) => res.body?.getReader().read()).catch(() => null);
+      await new Promise((t) => setTimeout(t, 250));
+      ac.abort();
+      await r;
+    }
+    for (let i = 0; i < 50 && c.snapshot().reduce((n, b) => n + b.routes.length, 0) < 2; i += 1) {
+      await new Promise((t) => setTimeout(t, 10));
+    }
+  } finally {
+    server.close();
+  }
+  const [m] = c.snapshot();
+  assert.equal(m.requests, 0, 'the /api/ totals still count only responses that finished');
+  const byRoute = new Map(m.routes.map((r) => [r.route, r]));
+  const slow = byRoute.get('/api/slow');
+  assert.equal(slow.aborted, 1);
+  assert.ok(slow.totalMs >= 200 && slow.totalMs < 600, `its time until the client went (${slow.totalMs})`);
+  const events = byRoute.get('/api/events');
+  assert.deepEqual([events.requests, events.streams, events.totalMs], [1, 1, 0],
+    'an event stream ended by its client counts as a stream, its time left out');
+  assert.deepEqual(finished.map((e) => [e.route, e.aborted]), [['/api/slow', true]], 'the stall watcher hears of it');
+});
+
+test('a long poll marked open-ended counts as held: no time, and no suspect in a stall', async () => {
+  const { openEnded } = require('../src/middleware/inflight-requests');
+  const c = counts.createCounts({ pod: 'p1' });
+  const finished = [];
+  const app = express();
+  app.use(requestCounts({ counts: c, health: { noteFinished: (e) => finished.push(e) } }));
+  app.get('/api/turns/next', (_req, res) => { openEnded(res); setTimeout(() => res.json({ turn: null }), 300); });
+  const server = await listen(app);
+  try {
+    await (await fetch(`http://127.0.0.1:${server.address().port}/api/turns/next`)).json();
+    for (let i = 0; i < 50 && !c.snapshot().length; i += 1) await new Promise((t) => setTimeout(t, 10));
+  } finally {
+    server.close();
+  }
+  const [r] = c.snapshot()[0].routes;
+  assert.deepEqual([r.route, r.requests, r.streams, r.totalMs], ['/api/turns/next', 1, 1, 0]);
+  assert.equal(c.snapshot()[0].requests, 1, 'it still counts in the /api/ totals');
+  assert.deepEqual(finished, []);
+});
+
+test('pipelined requests each count their own bytes', async () => {
+  const net = require('node:net');
+  const c = counts.createCounts({ pod: 'p1' });
+  const app = express();
+  app.use(requestCounts({ counts: c, health: { noteFinished() {} } }));
+  app.get('/api/big', (_req, res) => setTimeout(() => res.send('x'.repeat(100_000)), 50));
+  app.get('/api/tiny', (_req, res) => res.send('y'));
+  const server = await listen(app);
+  try {
+    await new Promise((resolve, reject) => {
+      const s = net.connect(server.address().port, '127.0.0.1', () => {
+        s.write('GET /api/big HTTP/1.1\r\nHost: x\r\n\r\nGET /api/tiny HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+      });
+      s.on('data', () => {});
+      s.on('end', resolve);
+      s.on('error', reject);
+    });
+    for (let i = 0; i < 50 && c.snapshot()[0]?.routes.length < 2; i += 1) await new Promise((t) => setTimeout(t, 10));
+  } finally {
+    server.close();
+  }
+  const byRoute = new Map(c.snapshot()[0].routes.map((r) => [r.route, r]));
+  assert.ok(byRoute.get('/api/big').bytes > 100_000, `the big one (${byRoute.get('/api/big').bytes})`);
+  assert.ok(byRoute.get('/api/tiny').bytes < 2_000, `the tiny one counts its own response only (${byRoute.get('/api/tiny').bytes})`);
 });
 
 test('the error handler leaves what it caught for a 5xx only', () => {
@@ -563,22 +663,36 @@ test('server.js counts every request and flushes on every process; the prune is 
   assert.match(handler, /if \(status >= 500 && res\.locals\) res\.locals\.serverError = errorFacts\(err\);/);
 });
 
-test('the flush timer is unref\'d and starts once', () => {
-  const real = global.setInterval;
+test('the flush runs just after each minute ends, re-armed from the clock, unref\'d, started once', async () => {
+  // An interval re-arms from when its callback ran, so one late run would
+  // shift every flush after it off the minute; this timer is set again
+  // from the clock after each run.
+  assert.equal(counts.msToNextMinute(T0 + 59_000, 100), 1100);
+  assert.equal(counts.msToNextMinute(T0, 100), MIN + 100);
+  const real = global.setTimeout;
   const made = [];
-  global.setInterval = (fn, ms) => {
+  global.setTimeout = (fn, ms) => {
     const h = { fn, ms, unrefed: false, unref() { this.unrefed = true; return this; } };
     made.push(h);
     return h;
   };
+  const pool = stubPool();
   try {
+    counts.start({ pool });
     counts.start({ pool: stubPool() });
-    counts.start({ pool: stubPool() });
+    assert.equal(made.length, 1, 'started once');
+    assert.ok(made[0].ms > counts.FLUSH_SLACK_MS && made[0].ms <= MIN + counts.FLUSH_SLACK_MS);
+    counts.record({ method: 'GET', route: '/api/a', status: 200, now: Date.now() - MIN });
+    made[0].fn();
+    assert.equal(made.length, 2, 'it re-arms itself after each run');
+    assert.ok(made[1].ms <= MIN + counts.FLUSH_SLACK_MS);
+    await new Promise((r) => real(r, 0));
+    assert.equal(pool.calls[0]?.sql, counts.REQUESTS_UPSERT_SQL, 'the run flushed the minute that ended');
   } finally {
-    global.setInterval = real;
+    global.setTimeout = real;
     counts.stop();
   }
-  assert.equal(made.length, 1);
-  assert.equal(made[0].ms, counts.FLUSH_INTERVAL_MS);
-  assert.equal(made[0].unrefed, true);
+  made[1].fn();
+  assert.equal(made.length, 2, 'stopped, a run already scheduled does nothing and arms nothing');
+  assert.ok(made.every((h) => h.unrefed));
 });

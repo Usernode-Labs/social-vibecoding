@@ -65,12 +65,14 @@ function pending() {
   return n;
 }
 
-// The method and the path's first two segments: enough to say which surface
-// is slow (`POST /api/sessions`) without writing ids, tokens or a query
-// string into the shutdown log.
+// The method and the path's first segment, two under /api/: enough to say
+// which surface is slow (`POST /api/sessions`) without writing ids, tokens
+// or a query string into the shutdown or stall log. Outside /api/ the second
+// segment can be the secret itself (`/invite/<token>`, `/reports/<token>`).
 function surface(req) {
   const path = String(req.originalUrl || req.url || '').split('?')[0];
-  const head = path.split('/').filter(Boolean).slice(0, 2).join('/');
+  const parts = path.split('/').filter(Boolean);
+  const head = parts.slice(0, parts[0] === 'api' ? 2 : 1).join('/');
   return `${req.method || 'GET'} /${head}`;
 }
 

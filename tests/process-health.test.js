@@ -34,10 +34,10 @@ function stubPool({ fail = () => null } = {}) {
 }
 
 // A process whose clocks, CPU, loop and memory the test moves by hand.
-function fakeProcess({ inflight = () => [] } = {}) {
+function fakeProcess({ inflight = () => [], delayResolutionMs = 0 } = {}) {
   const p = {
     wall: T0 + 10_000, mono: 0, cpu: 0, active: 0, idle: 0, rss: 200 * MB, heapUsed: 120 * MB,
-    delay: { p99: 0, max: 0, resets: 0 }, warnings: [],
+    delay: { p99: 0, max: 0, resets: 0 }, warnings: [], deferred: [],
   };
   p.health = health.createHealth({
     pod: 'web-1',
@@ -51,12 +51,16 @@ function fakeProcess({ inflight = () => [] } = {}) {
       get max() { return p.delay.max * 1e6; },
       reset: () => { p.delay.resets += 1; },
     },
+    delayResolutionMs,
     memory: () => ({ rss: p.rss, heapUsed: p.heapUsed }),
     inflight,
     logger: { warn: (scope, message, data) => p.warnings.push({ scope, message, data }) },
+    later: (fn, ms) => p.deferred.push({ fn, ms }),
   });
   // Time passes: the wall and monotonic clocks together.
   p.pass = (ms) => { p.wall += ms; p.mono += ms; };
+  // The deferred warnings run, as the timer would SETTLE_MS later.
+  p.settle = () => { for (const d of p.deferred.splice(0)) d.fn(); };
   return p;
 }
 
@@ -65,7 +69,7 @@ test('the first sample waits for the next minute to start', () => {
   assert.equal(health.msToNextMinute(T0 + 59_000, 50), 1050);
 });
 
-test('a wake-up a second late or more is a stall; it counts and is said once, with what was going on', () => {
+test('a wake-up a second or more after the last is a stall; it counts and is said once, with what was going on', () => {
   const p = fakeProcess({ inflight: () => [{ surface: 'GET /api/apps', route: '/api/apps', ageMs: 3100 }] });
   p.pass(health.TICK_MS);
   assert.equal(p.health.tick(), 0, 'on time');
@@ -74,29 +78,39 @@ test('a wake-up a second late or more is a stall; it counts and is said once, wi
   p.health.noteFinished({ method: 'GET', route: '/api/old', status: 200, startedAt: p.wall - 20_000, durationMs: 900 });
   p.health.noteFinished({ method: 'GET', route: '/api/quick', status: 200, startedAt: p.wall, durationMs: 20 });
   p.health.noteFinished({ method: 'GET', route: '/api/workshop/needs-feed', status: 200, startedAt: p.wall, durationMs: 2500 });
-  p.health.noteGc({ startedAt: p.wall + 1000, durationMs: 300 });
+  p.health.noteFinished({ method: 'GET', route: '/api/apps', status: 200, startedAt: p.wall, durationMs: 1800, aborted: true });
+  p.health.noteGc({ durationMs: 300 });
   p.pass(2600);
-  assert.equal(p.health.tick(), 2600, 'held 2.6 s');
+  assert.equal(p.health.tick(), 2600, 'the gap: 2.6 s');
+  assert.equal(p.warnings.length, 0, 'said once what the stall left behind has been delivered');
+  assert.equal(p.deferred[0].ms, health.SETTLE_MS);
+  p.settle();
   assert.equal(p.warnings.length, 1);
   const [w] = p.warnings;
   assert.equal(w.scope, 'process-health');
   assert.equal(w.message, 'The event loop stalled');
   assert.deepEqual(w.data, {
     stallMs: 2600,
+    blockedAtLeastMs: 2400,
     inflight: [{ surface: 'GET /api/apps', route: '/api/apps', ageMs: 3100 }],
-    finishedDuring: [{ method: 'GET', route: '/api/workshop/needs-feed', status: 200, durationMs: 2500 }],
+    finishedDuring: [
+      { method: 'GET', route: '/api/workshop/needs-feed', status: 200, durationMs: 2500 },
+      { method: 'GET', route: '/api/apps', status: 200, durationMs: 1800, aborted: true },
+    ],
     gcMs: 300,
     heapUsedMb: 120,
     rssMb: 200,
-  }, 'the requests in flight, the slow one that finished across it (not the quick one, not the old one), and its collections');
+  }, 'the requests in flight, the slow ones that finished or were given up across it (not the quick one, not the old one), and its collections');
 
   // Again within ten seconds: counted, not said; the next warning says how
   // many went unsaid.
   p.pass(1500);
   assert.equal(p.health.tick(), 1500);
+  p.settle();
   assert.equal(p.warnings.length, 1);
   p.pass(health.LOG_EVERY_MS);
   p.health.tick();
+  p.settle();
   assert.equal(p.warnings.length, 2);
   assert.equal(p.warnings[1].data.stallsNotLogged, 1);
   const { current } = p.health.snapshot();
@@ -104,11 +118,56 @@ test('a wake-up a second late or more is a stall; it counts and is said once, wi
   assert.equal(current.stallMaxMs, health.LOG_EVERY_MS);
 });
 
+test('a stall of a second is caught from one tick to the next, and said with both bounds', () => {
+  // The loop held for a second starting just after a wake-up: the next
+  // wake-up comes a second after it, only 800 ms past due.
+  const p = fakeProcess();
+  p.pass(999);
+  assert.equal(p.health.tick(), 0, 'just under: not a stall');
+  p.pass(1000);
+  assert.equal(p.health.tick(), 1000);
+  p.settle();
+  assert.deepEqual([p.warnings[0].data.stallMs, p.warnings[0].data.blockedAtLeastMs], [1000, 800]);
+});
+
+test('the stall\'s collections count when Node delivers them after the stall, however many small ones there were', () => {
+  const p = fakeProcess();
+  p.pass(health.TICK_MS);
+  p.health.tick();
+  p.health.noteGc({ durationMs: 40 }); // before the stall: in the tick before, counted with it
+  p.pass(1500);
+  p.health.tick();
+  // Delivered after the watcher woke: one long major collection and three
+  // hundred quick scavenges, as a busy allocating handler leaves behind.
+  p.health.noteGc({ durationMs: 900 });
+  for (let i = 0; i < 300; i += 1) p.health.noteGc({ durationMs: 0.1 });
+  p.settle();
+  assert.equal(p.warnings[0].data.gcMs, 970);
+  assert.equal(Math.round(p.health.snapshot().current.gcMs), 970, 'the minute counts them all too');
+});
+
 test('a warning goes out even when the in-flight list cannot be read', () => {
   const p = fakeProcess({ inflight: () => { throw new Error('gone'); } });
   p.pass(5000);
   p.health.tick();
+  p.settle();
   assert.deepEqual(p.warnings[0].data.inflight, []);
+});
+
+test('the loop\'s delays are what is left after the histogram\'s sampling interval', () => {
+  // An idle process: Node records the 20 ms between samples, plus ~1 ms.
+  const p = fakeProcess({ delayResolutionMs: health.DELAY_RESOLUTION_MS });
+  p.delay.p99 = 21.07; p.delay.max = 21.2;
+  p.pass(50_000);
+  p.health.sample();
+  const [idle] = p.health.snapshot().minutes;
+  assert.deepEqual([Math.round(idle.delayP99Ms * 100) / 100, Math.round(idle.delayMaxMs * 100) / 100], [1.07, 1.2]);
+  // Never below zero.
+  p.delay.p99 = 15; p.delay.max = 2620;
+  p.pass(60_000);
+  p.health.sample();
+  const second = p.health.snapshot().minutes[1];
+  assert.deepEqual([second.delayP99Ms, second.delayMaxMs], [0, 2600]);
 });
 
 test('a minute\'s sample: CPU, how busy the loop was, its delays, collections and memory peaks', () => {
@@ -194,7 +253,7 @@ test('the upsert adds sums and keeps peaks; prune removes rows past 14 days and 
   assert.match(read('src/db/schema.sql'), /CREATE TABLE IF NOT EXISTS server_process_minutes \([\s\S]*?PRIMARY KEY \(minute, pod\)\n\);/);
 });
 
-test('the module is quiet until it starts, and its timers never hold the process open', async () => {
+test('started once: a minute is sampled and flushed just after it ends, re-armed from the clock, and no timer holds the process open', async () => {
   assert.equal(health.noteFinished({ method: 'GET', route: '/x', status: 200, startedAt: 1, durationMs: 5000 }), undefined);
   assert.deepEqual(await health.flush(stubPool()), { minutes: 0 });
   const realInterval = global.setInterval;
@@ -207,16 +266,28 @@ test('the module is quiet until it starts, and its timers never hold the process
   };
   global.setInterval = fake('interval');
   global.setTimeout = fake('timeout');
+  const pool = stubPool();
   try {
+    health.start({ pool, role: 'web' });
     health.start({ pool: stubPool(), role: 'web' });
-    health.start({ pool: stubPool(), role: 'web' });
+    assert.deepEqual(made.map((h) => [h.kind, h.ms === health.TICK_MS || h.ms <= MIN + 50]), [['interval', true], ['timeout', true]],
+      'once: the watcher, and the first sample just after the minute ends');
+    // The sample runs (late, say): the minute is flushed at once, not up to
+    // a minute later, and the next sample is set from the clock, not from
+    // when this one ran.
+    made[1].fn();
+    await new Promise((r) => realTimeout(r, 0));
+    assert.equal(pool.calls[0]?.sql, health.PROCESS_UPSERT_SQL);
+    assert.equal(made.length, 3);
+    assert.equal(made[2].kind, 'timeout');
+    assert.ok(Math.abs(made[2].ms - health.msToNextMinute(Date.now())) < 50, 'set to just after the next minute starts');
   } finally {
     global.setInterval = realInterval;
     global.setTimeout = realTimeout;
     health.stop();
   }
-  assert.deepEqual(made.map((h) => [h.kind, h.ms === health.TICK_MS || h.ms === health.FLUSH_INTERVAL_MS || h.kind === 'timeout']),
-    [['interval', true], ['timeout', true], ['interval', true]], 'once: the watcher, the first sample, the flush');
+  made[2].fn();
+  assert.equal(made.length, 3, 'stopped, a sample already scheduled does nothing and arms nothing');
   assert.ok(made.every((h) => h.unrefed));
 });
 
@@ -230,20 +301,30 @@ test('the in-flight snapshot names a routed request by its template', async () =
   let release;
   const held = new Promise((r) => { release = r; });
   app.get('/api/apps/:slug/slow', async (_req, res) => { await held; res.json({ ok: true }); });
+  // A path whose second segment is the secret, and one no route declared.
+  app.get('/invite/:token', async (_req, res) => { await held; res.send('ok'); });
+  app.use(async (_req, res) => { await held; res.status(404).send('no'); });
   const server = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
   try {
-    const answer = fetch(`http://127.0.0.1:${server.address().port}/api/apps/my-app/slow`);
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const answers = ['/api/apps/my-app/slow', '/invite/SECRETINVITETOKEN123', '/reports/0123456789abcdef0123456789abcdef']
+      .map((p) => fetch(`${base}${p}`));
     let snap = [];
-    for (let i = 0; i < 50 && !snap.length; i += 1) {
+    for (let i = 0; i < 50 && snap.length < 3; i += 1) {
       await new Promise((r) => setTimeout(r, 10));
       snap = inflight.snapshot();
     }
-    assert.equal(snap.length, 1);
-    assert.equal(snap[0].surface, 'GET /api/apps');
-    assert.equal(snap[0].route, '/api/apps/:slug/slow');
-    assert.ok(!JSON.stringify(snap).includes('my-app'), 'never the path requested');
+    assert.equal(snap.length, 3);
+    const bySurface = new Map(snap.map((e) => [e.surface, e]));
+    assert.equal(bySurface.get('GET /api/apps').route, '/api/apps/:slug/slow');
+    assert.equal(bySurface.get('GET /invite').route, '/invite/:token');
+    assert.equal(bySurface.get('GET /reports').route, null, 'no route declared: only its first segment');
+    const text = JSON.stringify(snap);
+    for (const secret of ['my-app', 'SECRETINVITETOKEN123', '0123456789abcdef']) {
+      assert.ok(!text.includes(secret), `never the path requested (${secret})`);
+    }
     release();
-    await (await answer).json();
+    for (const a of answers) await (await a).text();
   } finally {
     server.close();
   }

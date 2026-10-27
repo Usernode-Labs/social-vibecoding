@@ -16,31 +16,40 @@
 //                           stall_max_ms, gc_ms, gc_count, gc_max_ms,
 //                           rss_mb, heap_used_mb (the minute's peaks)
 //
-// and a watcher that wakes every TICK_MS: woken STALL_MS late or more, the
-// loop was held that long, and one warning (at most one per LOG_EVERY_MS)
-// says what was going on: the requests still in flight
+// and a watcher that wakes every TICK_MS: a wake-up STALL_MS or more after
+// the one before means the loop was held for between that gap less one tick
+// and the gap. One warning (at most one per LOG_EVERY_MS) then says what was
+// going on, SETTLE_MS later, once the collections and finished responses of
+// the stall have been delivered: the requests still in flight
 // (middleware/inflight-requests.js), the slow ones that finished across the
 // stall (the one that held it, most often, is done by the time the watcher
-// runs), and how much of the stall was garbage collection. It names route
+// runs), and how much of it was garbage collection. It names route
 // templates and surfaces, never a path a person requested.
 //
-// A minute is sampled just after it ends, on a timer of its own; a sample
-// the loop held late covers its overrun, under the minute it began in.
-// Memory is bounded: MAX_MINUTES minutes held while the database refuses
-// the flush, and RING entries of slow requests and collections.
+// A minute is sampled just after it ends, on a timer re-armed from the
+// clock each time, and flushed at once, so a process killed outright loses
+// at most the minute it was in; a sample the loop held late covers its
+// overrun, under the minute it began in. Memory is bounded: MAX_MINUTES
+// minutes held while the database refuses the flush, and RING slow
+// requests.
 
 const { performance, monitorEventLoopDelay, PerformanceObserver } = require('node:perf_hooks');
 const log = require('./logger');
 const inflightRequests = require('../middleware/inflight-requests');
-const { minuteOf, podName } = require('./server-error-counts');
+const { minuteOf, msToNextMinute, podName } = require('./server-error-counts');
 
-const MINUTE_MS = 60 * 1000;
-const FLUSH_INTERVAL_MS = 60 * 1000;
 const RETENTION_DAYS = 14;
 const MAX_MINUTES = 30;
 const TICK_MS = 200;
 const STALL_MS = 1000;
 const LOG_EVERY_MS = 10 * 1000;
+// Node hands collections to their observer, and finishes responses, a few
+// milliseconds after the loop is let go; the warning waits this long.
+const SETTLE_MS = 50;
+// The event-loop delay histogram samples every this many ms, and records
+// the whole interval between samples: this much of every figure is the
+// sampling itself, not delay.
+const DELAY_RESOLUTION_MS = 20;
 // A request that took this long is kept for the next stall's warning.
 const SLOW_MS = 250;
 const RING = 50;
@@ -55,11 +64,6 @@ const round = (n, places = 1) => {
 };
 
 // ── Pure helpers ────────────────────────────────────────────────────────
-
-/** Pure: how long from `ms` to just after the next minute starts. */
-function msToNextMinute(ms, slackMs = 50) {
-  return MINUTE_MS - (Number(ms) % MINUTE_MS) + slackMs;
-}
 
 function emptyWindow() {
   return {
@@ -105,9 +109,12 @@ function createHealth({
   cpuUsage = (prev) => process.cpuUsage(prev),
   loopUtilization = () => performance.eventLoopUtilization(),
   delay = null,
+  delayResolutionMs = 0,
   memory = () => process.memoryUsage(),
   inflight = () => inflightRequests.snapshot(),
   logger = log,
+  // Runs the warning SETTLE_MS later (tests run it when they choose).
+  later = (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); },
   tickMs = TICK_MS,
   stallMs = STALL_MS,
   logEveryMs = LOG_EVERY_MS,
@@ -115,7 +122,6 @@ function createHealth({
 } = {}) {
   const rows = new Map(); // minute (ms) → window
   const slow = []; // finished slow requests: { method, route, status, durationMs, startedAt, endedAt }
-  const gcs = []; // collections: { startedAt, endedAt, durationMs }
   let window = emptyWindow();
   let windowStartedAt = now();
   let cpuPrev = cpuUsage();
@@ -124,6 +130,11 @@ function createHealth({
   let ticks = 0;
   let lastLogAt = -Infinity;
   let suppressed = 0;
+  // Every collection's time since this process began, and what it was at
+  // the last wake-up: a stall's share is the difference, read once the
+  // stall's collections have been delivered.
+  let gcTotalMs = 0;
+  let gcAtTick = 0;
 
   const push = (ring, entry) => { ring.push(entry); if (ring.length > RING) ring.shift(); };
 
@@ -138,57 +149,68 @@ function createHealth({
     }
   }
 
-  /** A response that finished (middleware/request-counts.js); only a slow one is kept. */
-  function noteFinished({ method, route, status, startedAt, durationMs } = {}) {
+  /**
+   * A response that finished, or whose client gave up first (`aborted`)
+   * (middleware/request-counts.js); only a slow one is kept.
+   */
+  function noteFinished({ method, route, status, startedAt, durationMs, aborted = false } = {}) {
     if (!(Number.isFinite(durationMs) && durationMs >= SLOW_MS && Number.isFinite(startedAt))) return;
-    push(slow, { method, route, status, durationMs, startedAt, endedAt: startedAt + durationMs });
+    push(slow, { method, route, status, aborted: !!aborted, durationMs, startedAt, endedAt: startedAt + durationMs });
   }
 
-  /** A garbage collection: when it began (epoch ms) and how long it took. */
-  function noteGc({ startedAt, durationMs } = {}) {
+  /** A garbage collection: how long it took. */
+  function noteGc({ durationMs } = {}) {
     if (!Number.isFinite(durationMs) || durationMs < 0) return;
     window.gcMs += durationMs;
     window.gcCount += 1;
     window.gcMaxMs = Math.max(window.gcMaxMs, durationMs);
-    if (Number.isFinite(startedAt)) push(gcs, { startedAt, endedAt: startedAt + durationMs, durationMs });
+    gcTotalMs += durationMs;
   }
 
   /**
-   * The watcher's wake-up: how late it woke, and when that is a stall,
-   * counted in the minute and (at most once per logEveryMs) said. Returns
-   * the stall's length in ms, or 0.
+   * The watcher's wake-up: how long since the one before, and when that is
+   * a stall, counted in the minute and (at most once per logEveryMs) said,
+   * SETTLE_MS later. Returns the gap in ms when it is a stall, or 0.
    */
   function tick() {
     const at = clock();
-    const late = at - lastTick - tickMs;
+    const gapMs = at - lastTick;
     lastTick = at;
     ticks += 1;
+    const gcBefore = gcAtTick;
+    gcAtTick = gcTotalMs;
     if (ticks % MEMORY_EVERY === 0) readMemory();
-    if (!(late >= stallMs)) return 0;
-    const heldMs = late + tickMs;
+    if (!(gapMs >= stallMs)) return 0;
     window.stalls += 1;
-    window.stallMaxMs = Math.max(window.stallMaxMs, heldMs);
+    window.stallMaxMs = Math.max(window.stallMaxMs, gapMs);
     const endedAt = now();
-    if (endedAt - lastLogAt < logEveryMs) { suppressed += 1; return heldMs; }
+    if (endedAt - lastLogAt < logEveryMs) { suppressed += 1; return gapMs; }
     lastLogAt = endedAt;
-    const from = endedAt - heldMs;
-    const m = readMemory();
+    const unsaid = suppressed;
+    suppressed = 0;
     let open = [];
     try { open = inflight().slice(0, LISTED); } catch { /* the warning goes out without them */ }
-    logger.warn('process-health', 'The event loop stalled', {
-      stallMs: Math.round(heldMs),
-      ...(suppressed ? { stallsNotLogged: suppressed } : {}),
-      inflight: open,
-      finishedDuring: overlapping(slow, from, endedAt)
-        .sort((a, b) => b.durationMs - a.durationMs)
-        .slice(0, LISTED)
-        .map((e) => ({ method: e.method, route: e.route, status: e.status, durationMs: Math.round(e.durationMs) })),
-      gcMs: Math.round(overlapping(gcs, from, endedAt).reduce((n, e) => n + e.durationMs, 0)),
-      heapUsedMb: m ? Math.round((m.heapUsed || 0) / MB) : null,
-      rssMb: m ? Math.round((m.rss || 0) / MB) : null,
-    });
-    suppressed = 0;
-    return heldMs;
+    later(() => {
+      const from = endedAt - gapMs;
+      const m = readMemory();
+      logger.warn('process-health', 'The event loop stalled', {
+        stallMs: Math.round(gapMs),
+        blockedAtLeastMs: Math.round(Math.max(0, gapMs - tickMs)),
+        ...(unsaid ? { stallsNotLogged: unsaid } : {}),
+        inflight: open,
+        finishedDuring: overlapping(slow, from, endedAt)
+          .sort((a, b) => b.durationMs - a.durationMs)
+          .slice(0, LISTED)
+          .map((e) => ({
+            method: e.method, route: e.route, status: e.status, durationMs: Math.round(e.durationMs),
+            ...(e.aborted ? { aborted: true } : {}),
+          })),
+        gcMs: Math.round(gcTotalMs - gcBefore),
+        heapUsedMb: m ? Math.round((m.heapUsed || 0) / MB) : null,
+        rssMb: m ? Math.round((m.rss || 0) / MB) : null,
+      });
+    }, SETTLE_MS);
+    return gapMs;
   }
 
   /** Close the window that began at the last sample, under that minute. */
@@ -207,10 +229,10 @@ function createHealth({
     } catch { /* nor a utilization */ }
     if (delay) {
       try {
-        const p99 = delay.percentile(99) / 1e6;
-        const max = delay.max / 1e6;
-        window.delayP99Ms = Math.max(window.delayP99Ms, Number.isFinite(p99) ? p99 : 0);
-        window.delayMaxMs = Math.max(window.delayMaxMs, Number.isFinite(max) ? max : 0);
+        // Less the sampling interval the histogram records with each delay.
+        const net = (ns) => (Number.isFinite(ns) ? Math.max(0, ns / 1e6 - delayResolutionMs) : 0);
+        window.delayP99Ms = Math.max(window.delayP99Ms, net(delay.percentile(99)));
+        window.delayMaxMs = Math.max(window.delayMaxMs, net(delay.max));
         delay.reset();
       } catch { /* nor a delay */ }
     }
@@ -328,45 +350,51 @@ async function prune(pool, { days = RETENTION_DAYS } = {}) {
 let health = null;
 let delayHistogram = null;
 let gcObserver = null;
-const timers = [];
+let watcher = null;
+let sampler = null;
+let running = false;
 let flushing = null;
 
 /**
- * Every process, at boot: watch its loop, sample each minute as it ends and
- * flush every 60 seconds, one flush at a time. Every timer is unref'd, so
+ * Every process, at boot: watch its loop, and sample and flush each minute
+ * just after it ends, one flush at a time, the timer re-armed from the
+ * clock each time so it stays on the minute. Every timer is unref'd, so
  * none holds the process open.
  */
-function start({ pool, role = '', intervalMs = FLUSH_INTERVAL_MS } = {}) {
-  if (health || !pool) return;
+function start({ pool, role = '' } = {}) {
+  if (running || !pool) return;
+  running = true;
   try {
-    delayHistogram = monitorEventLoopDelay({ resolution: 20 });
+    delayHistogram = monitorEventLoopDelay({ resolution: DELAY_RESOLUTION_MS });
     delayHistogram.enable();
   } catch { delayHistogram = null; }
-  health = createHealth({ role, delay: delayHistogram });
+  health = createHealth({ role, delay: delayHistogram, delayResolutionMs: DELAY_RESOLUTION_MS });
   try {
     gcObserver = new PerformanceObserver((list) => {
-      for (const e of list.getEntries()) {
-        health?.noteGc({ startedAt: performance.timeOrigin + e.startTime, durationMs: e.duration });
-      }
+      for (const e of list.getEntries()) health?.noteGc({ durationMs: e.duration });
     });
     gcObserver.observe({ entryTypes: ['gc'] });
   } catch { gcObserver = null; }
-  const every = (fn, ms) => { const t = setInterval(fn, ms); t.unref?.(); timers.push(t); };
-  every(() => health?.tick(), TICK_MS);
-  const first = setTimeout(() => {
-    health?.sample();
-    every(() => health?.sample(), MINUTE_MS);
-  }, msToNextMinute(Date.now()));
-  first.unref?.();
-  timers.push(first);
-  every(() => {
-    if (flushing || !health) return;
-    flushing = health.flush(pool).finally(() => { flushing = null; });
-  }, intervalMs);
+  watcher = setInterval(() => health?.tick(), TICK_MS);
+  watcher.unref?.();
+  const arm = () => {
+    sampler = setTimeout(() => {
+      if (!running) return;
+      health.sample();
+      if (!flushing) flushing = health.flush(pool).finally(() => { flushing = null; });
+      arm();
+    }, msToNextMinute(Date.now()));
+    sampler.unref?.();
+  };
+  arm();
 }
 
 function stop() {
-  for (const t of timers.splice(0)) { clearInterval(t); clearTimeout(t); }
+  running = false;
+  if (watcher) clearInterval(watcher);
+  if (sampler) clearTimeout(sampler);
+  watcher = null;
+  sampler = null;
   try { gcObserver?.disconnect(); } catch { /* already gone */ }
   try { delayHistogram?.disable(); } catch { /* already off */ }
   gcObserver = null;
@@ -388,10 +416,11 @@ module.exports = {
   deltaElu,
   PROCESS_UPSERT_SQL,
   PRUNE_PROCESS_SQL,
-  FLUSH_INTERVAL_MS,
   RETENTION_DAYS,
   TICK_MS,
   STALL_MS,
+  SETTLE_MS,
   SLOW_MS,
   LOG_EVERY_MS,
+  DELAY_RESOLUTION_MS,
 };
