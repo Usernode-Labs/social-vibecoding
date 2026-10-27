@@ -252,6 +252,8 @@ async function migrate(config) {
   // After it: it seeds the invite challenge (900504) whose "Your invites"
   // list this fixture fills, and the viewer identities the link belongs to.
   await seedStagingInviteChallengeStatuses(pool);
+  // After seedStagingTopochain too: its challenge hangs off the same event.
+  await seedStagingUseAppsChallenge(pool);
   // After it: the First challenges hang off its season-type event.
   await seedStagingFirstChallenges(pool);
   // Must run AFTER seedStagingTopochain (it decorates the same three viewer
@@ -14936,6 +14938,68 @@ async function seedStagingInviteChallengeStatuses(pool) {
     );
   } catch (err) {
     log.warn('db', 'Invite-challenge status seeding failed', { message: err.message });
+  }
+}
+
+// A "use apps for 10 minutes" challenge, for the line under its card that
+// says how many minutes the viewer used apps this week (challenge-card.tsx,
+// minutes_this_week). The line shows only on a challenge an enabled
+// USE_APPS_MINUTES rule scores, and no other staging challenge has one.
+//
+// DATA ONLY, NO SIGNAL: the capture viewer (usernode-capture, the member the
+// shots sign in as) gets 4 minutes in another person's app this week, on the
+// week's Monday so a reboot on a later day adds nothing. That is under the
+// rule's 10-minute target, so the scorer never credits it and the card stays
+// "Not started"; the 4 minutes are the visible state, not an answer the code
+// decides on.
+//
+// Its own failure domain. Fixed ids (template 900540, challenge 900740, rule
+// 900920) and ON CONFLICT DO NOTHING throughout, so a reboot changes nothing.
+async function seedStagingUseAppsChallenge(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO challenge_templates (id, category, goal, task, reward, description, created_at, updated_at)
+       VALUES (900540, 'WEEKLY', 'Staging demo: use apps for 10 minutes',
+               'Spend 10 minutes this week using apps somebody else made.', '100 pts',
+               'Staging demo: backs the minutes-used-this-week line.', NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+    // On the season-type event a signed-in member lands on, with a schedule
+    // of its own: that event's window is moved to "now" on every boot.
+    await pool.query(
+      `INSERT INTO challenges
+         (id, season_event_id, challenge_template_id, schedule_start,
+          schedule_end, enabled, display_order, completed, created_at, updated_at)
+       VALUES (900740, 900501, 900540, NOW() - INTERVAL '45 days',
+               NOW() + INTERVAL '45 days', TRUE, 6, FALSE, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO challenge_scoring_rules
+         (id, name, measure, challenge_template_id, challenge_id, target,
+          points, enabled, notes, created_at, updated_at)
+       VALUES (900920, 'Staging demo: use apps for 10 minutes',
+               'USE_APPS_MINUTES', NULL, 900740, 10, 100, TRUE,
+               'Staging demo: backs the minutes-used-this-week line.', NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+    const { rows: viewerRows } = await pool.query(
+      "SELECT id FROM users WHERE username = 'usernode-capture'");
+    if (!viewerRows.length) return;
+    const VIEWER = viewerRows[0].id;
+    await pool.query(
+      `INSERT INTO app_activity (app_id, user_id, seconds_spent, date)
+       SELECT a.id, $1, 240, (date_trunc('week', NOW() AT TIME ZONE 'UTC'))::date
+         FROM apps a
+        WHERE a.created_by IS DISTINCT FROM $1
+        ORDER BY a.id LIMIT 1
+       ON CONFLICT (app_id, user_id, date) DO NOTHING`,
+      [VIEWER]
+    );
+    log.info('db', 'Staging use-apps challenge seeded', { challengeId: 900740 });
+  } catch (err) {
+    log.warn('db', 'Staging use-apps challenge seeding failed', { message: err.message });
   }
 }
 
