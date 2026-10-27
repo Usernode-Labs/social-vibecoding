@@ -23,8 +23,8 @@ let rowStatus = 'paused';
 poolMod.getPool = () => ({
   query: async (sql) => {
     const s = String(sql);
-    if (/SELECT id, status FROM chat_sessions WHERE id = \$1 AND user_id = \$2/.test(s)) {
-      return { rows: [{ id: SESSION_ID, status: rowStatus }] };
+    if (/SELECT id, app_id, status, agent_config_version, active_turn FROM chat_sessions WHERE id = \$1 AND user_id = \$2/.test(s)) {
+      return { rows: [{ id: SESSION_ID, app_id: 5, status: rowStatus, agent_config_version: 0, active_turn: null }] };
     }
     if (/SELECT id, app_id, status FROM chat_sessions WHERE id = \$1 AND user_id = \$2/.test(s)) {
       return { rows: [{ id: SESSION_ID, app_id: 5, status: rowStatus }] };

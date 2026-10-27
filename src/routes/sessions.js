@@ -1837,13 +1837,13 @@ async function resolveExplicitAgentPreference(client, userId, config, {
   };
 }
 
-// The switch behind POST /api/sessions/:id/reset-agent-context (its phases
-// 2-5), for any caller that has already resolved `pref`: the route, and an
+// The switch behind POST /api/sessions/:id/reset-agent-context, for any
+// caller that has already resolved `pref`: the route, and an
 // agent session's dispatch, which applies the conversation's model choice to
 // its active change right before the next build (services/mayor/
 // agent-dispatch.js). Under a row lock: refuses a closed or busy change,
 // switches the backend, model and effort, drops both resume ids, records the
-// reset in the change's transcript, then evicts the warm worker.
+// reset in the change's transcript and queues its worker release atomically.
 async function switchSessionAgent(pool, { sessionId, userId, pref }) {
   const resolved = pref.backend;
   const isCodex = resolved === 'codex_openrouter';
@@ -1932,21 +1932,15 @@ async function switchSessionAgent(pool, { sessionId, userId, pref }) {
     );
     contextMessage = msg.rows[0] || null;
 
+    await require('../workflow/platform.ts').appendWorkerRelease(client, {
+      sessionId, appId: updatedRow.app_id, userId, reason: 'agent-reset', configVersion: updatedRow.agent_config_version,
+    });
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
   } finally {
     client.release();
-  }
-
-  // ── Phase 5: commit before worker eviction ── (plan 8.6)
-  // After Commit 1 the warm container no longer holds provider secrets,
-  // so eviction is best-effort (a failure still leaves a consistent DB).
-  if (typeof worker.evictWorker === 'function') {
-    await worker.evictWorker(sessionId).catch((evErr) => {
-      log.warn('sessions', 'reset-agent-context eviction warning', { sessionId, err: evErr.message });
-    });
   }
 
   return { ok: true, session: updatedRow, message: contextMessage };
@@ -4528,8 +4522,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // POST /api/sessions/:id/reset-agent-context
   //   Switch a session's coding-agent backend/model (plan.md §11.3).
   //   Keeps the Git branch + working tree but starts a fresh agent
-  //   thread: clears agent_thread_id, bumps agent_config_version, evicts
-  //   the warm worker. Only allowed on an idle, owned, non-archived
+  //   thread: clears agent_thread_id, bumps agent_config_version, queues
+  //   release of the warm worker. Only allowed on an idle, owned, non-archived
   //   session. For codex_openrouter the caller must have a valid
   //   OpenRouter credential.
   router.post('/api/sessions/:id/reset-agent-context', drainGuard, sameOriginBrowserOnly, async (req, res) => {
@@ -4586,7 +4580,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const resolved = pref.backend;
       const isCodex = resolved === 'codex_openrouter';
 
-      // ── Phases 2-5: the switch itself ──
+      // The checked switch and its durable worker release.
       // Shared with an agent session's dispatch, which applies the
       // conversation's model choice to its active change the same way
       // (switchSessionAgent, below the resolvers).
@@ -5002,7 +4996,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const sessionId = parseInt(req.params.id, 10);
 
       const { rows: [own] } = await pool.query(
-        'SELECT id, status FROM chat_sessions WHERE id = $1 AND user_id = $2', [sessionId, req.user.id]);
+        'SELECT id, app_id, status, agent_config_version, active_turn FROM chat_sessions WHERE id = $1 AND user_id = $2', [sessionId, req.user.id]);
       if (!own) return res.status(404).json({ error: 'Session not found or cannot be paused' });
       // Soft 200 if it's already paused so the UI can no-op the button click.
       if (own.status === 'paused') return res.json({ ok: true, alreadyPaused: true });
@@ -5019,7 +5013,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // move, only the worker.
       if (own.status === 'promoted') {
         workerProgress.clear(sessionId);
-        await worker.destroyWorker(worker.workerContainerName(sessionId)).catch(() => {});
+        await require('../workflow/platform.ts').appendWorkerRelease(pool, {
+          sessionId, appId: own.app_id, userId: req.user.id, reason: 'promoted-pause',
+          configVersion: own.agent_config_version, turnId: own.active_turn?.turnId ?? null,
+        });
         return res.json({ ok: true, keptPromoted: true });
       }
       if (own.status !== 'active') return res.status(404).json({ error: 'Session not found or cannot be paused' });
@@ -10130,6 +10127,16 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       if (split.byokCents > 0) send('usage', { costCents: split.byokCents, model: `scout/${selectedModel}`, byok: true });
     }
     durableTailComplete = true;
+  } catch (err) {
+    if (!err?.unpushedCommit) throw err;
+    // The final dispatch guard refused before any paid execution. Its own
+    // pending record has gone; there is no tail to retain or summarize.
+    durableTailComplete = true;
+    durableTurnId = null;
+    return await workerBootstrapFailureResult(err, {
+      session, send, sendStatus,
+      statusMeta: { ...agentIdentity.metadata, durationMs: Date.now() - turnStartedMs },
+    });
   } finally {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
@@ -11111,7 +11118,7 @@ async function waitForTurnStopped(sessionId, containerName, { timeoutMs = 30000 
 // the Mayor never finds out anything went wrong, the user sees a bare
 // "Chat error" toast, and the next turn has no idea the dispatch never
 // happened. The difference from a staging failure is what it can promise —
-// nothing ran, so the branch is exactly as it was.
+// no new coding work ran. Preparation may have pushed an earlier commit.
 async function workerBootstrapFailureResult(err, {
   session, send, sendStatus, statusMeta = {}, durableTurnId = null,
 }) {
@@ -11124,15 +11131,22 @@ async function workerBootstrapFailureResult(err, {
     containerName: (err && err.bootstrapContainerName) || null,
     bootstrapLog: Array.isArray(err && err.bootstrapLog) ? err.bootstrapLog.join('\n') : null,
   });
-  await sendStatus(friendly, statusMeta);
+  const refusal = err?.unpushedCommit ? {
+    permanent: err.permanent === true, pushFailureCode: err.code || 'push_failed',
+  } : null;
+  await sendStatus(friendly, { ...statusMeta, ...(refusal ? {
+    pushFailureCode: refusal.pushFailureCode, pushFailurePermanent: refusal.permanent,
+  } : {}) });
   activeWorkers.delete(session.id);
   workerProgress.clear(session.id);
   if (typeof send === 'function') send('error', { error: friendly });
   return {
     toolResultText:
-      `The coding agent could not be started, so this dispatch never ran and the branch is unchanged.\n\n${friendly}`,
+      `The coding agent could not be started, so this dispatch never ran and made no code changes.\n\n${friendly}`
+      + (refusal?.permanent ? '\n\nThis push failure is permanent for this session. Do NOT retry the coding agent or tell the user to retry; the push problem must be resolved first. Their committed work is kept in this session.' : ''),
     isError: true,
     turnId: durableTurnId,
+    ...(refusal || {}),
   };
 }
 
@@ -13271,6 +13285,16 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
       summaryParts.unshift(directChatReply ? ccText : `What the agent did:\n${ccText}`);
     }
     durableTailComplete = true;
+  } catch (err) {
+    if (!err?.unpushedCommit) throw err;
+    // The final dispatch guard refused before any paid execution. Its own
+    // pending record has gone; there is no tail to retain or summarize.
+    durableTailComplete = true;
+    durableTurnId = null;
+    return await workerBootstrapFailureResult(err, {
+      session, send, sendStatus,
+      statusMeta: { ...executionAgentMeta, durationMs: Date.now() - turnStartedMs },
+    });
   } finally {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
@@ -13472,7 +13496,7 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, forceStopSession, resolveClassicPayer, runHeadlessSessionInner, resumeOneHeadlessRun, reloadRecoverableHeadlessSession, failHeadlessRun, changePlanFor, attachChangePlans, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, forceStopSession, resolveClassicPayer, runHeadlessSessionInner, resumeOneHeadlessRun, reloadRecoverableHeadlessSession, failHeadlessRun, changePlanFor, attachChangePlans, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, workerBootstrapFailureResult, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
 // #4524: the topic page's fast open asks GET /api/apps/:slug/proposals/:id
 // for its item beside the board load, and production serves an active or
 // paused session there when it is the viewer's own or shared. The demo rows

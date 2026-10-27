@@ -23,6 +23,7 @@ const nameOf = id => `sv-worker-s${id}`;
 function runtime(t, { beforeStatus, beforeBootstrap } = {}) {
   const workers = new Map();
   const boots = [];
+  t.mock.method(require('../src/db/pool'), 'getPool', () => ({ query: async () => ({ rows: [] }) }));
   t.mock.method(kubernetes, 'getWorkerStatus', async (_config, name) => {
     await beforeStatus?.(name);
     return workers.has(name) ? 'running' : 'not_found';

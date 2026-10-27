@@ -682,6 +682,23 @@ async function dispatchWith(opts = {}, kind = 'build') {
   return { outcome, log, registry, agentEvents, handles, pool };
 }
 
+test('agent dispatch preserves a turn-start rescue refusal and its retry policy', async () => {
+  for (const permanent of [true, false]) {
+    const text = 'An earlier build\'s commit abc1234 on dev/x could not be pushed. It is kept in this session.'
+      + (permanent ? ' Do NOT retry the coding agent.' : '');
+    const { outcome, log } = await dispatchWith({ tool: async () => ({
+      isError: true, turnId: null, toolResultText: text, permanent,
+      pushFailureCode: permanent ? 'github_paused' : 'push_failed',
+    }) });
+    assert.equal(outcome.isError, true); assert.equal(outcome.permanent, permanent);
+    assert.equal(outcome.pushFailureCode, permanent ? 'github_paused' : 'push_failed');
+    assert.equal(outcome.toolResultText, text); assert.equal(outcome.turnId, null);
+    assert.equal(log.filter(e => e[0] === 'build').length, 1, 'never repeats the refused dispatch');
+    await outcome.finish({ wrapUpPosted: true });
+    assert.equal(log.some(e => e[0] === 'finishTurn' || e[0] === 'retain'), false, 'no coding turn exists to recover');
+  }
+});
+
 test('a dispatch hands the classic tool exactly what the chat route does', async () => {
   const { outcome, log, registry, handles } = await dispatchWith();
   const [kind, args] = log.find((entry) => entry[0] === 'build');

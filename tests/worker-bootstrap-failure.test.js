@@ -43,11 +43,13 @@ function loadWorker({ scripts = [], repoPrivate = false, dockerLogs = '' } = {})
     docker: require.resolve('../src/services/docker'),
     github: require.resolve('../src/services/github'),
     logger: require.resolve('../src/services/logger'),
+    pool: require.resolve('../src/db/pool'),
     childProcess: require.resolve('child_process'),
     subject: require.resolve('../src/services/worker'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
+  stub(ids.pool, { getPool: () => ({ query: async () => ({ rows: [] }) }) });
 
   const calls = [];
   const logs = [];

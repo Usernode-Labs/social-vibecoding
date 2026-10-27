@@ -15,8 +15,62 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 
-const { describeTurnError } = require('../src/routes/sessions.js');
+const { describeTurnError, workerBootstrapFailureResult } = require('../src/routes/sessions.js');
 const SOURCE = fs.readFileSync('src/routes/sessions.js', 'utf8');
+
+test('rescue refusals tell the Mayor what is kept and preserve permanent/transient causes', async () => {
+  for (const permanent of [true, false]) {
+    const reason = permanent ? 'GitHub is paused.' : 'The remote is unavailable.';
+    const friendly = `An earlier build's commit abc1234 on dev/x could not be pushed: ${reason} It is kept in this session.`;
+    const err = Object.assign(new Error(friendly), { unpushedCommit: true, permanent, code: permanent ? 'github_paused' : 'push_failed', userMessage: friendly });
+    const statuses = []; const events = [];
+    const result = await workerBootstrapFailureResult(err, {
+      session: { id: 91821 }, send: (...event) => events.push(event), sendStatus: async (...row) => statuses.push(row),
+    });
+    assert.equal(result.isError, true); assert.equal(result.turnId, null);
+    assert.equal(result.permanent, permanent); assert.equal(result.pushFailureCode, err.code);
+    assert.equal(statuses[0][1].pushFailurePermanent, permanent);
+    assert.equal(statuses[0][1].pushFailureCode, err.code);
+    assert.ok(result.toolResultText.includes(friendly));
+    if (!permanent) assert.doesNotMatch(result.toolResultText, /GitHub|Retry your request|open the PR/);
+    assert.equal(result.toolResultText.includes('Do NOT retry'), permanent);
+    assert.equal(events[0][0], 'error');
+  }
+});
+
+test('a git-host rescue refusal uses the bare bounded reason without GitHub or PR retry advice', async t => {
+  const worker = require('../src/services/worker');
+  const pusher = require('../src/services/worker-git-push');
+  const prior = Object.fromEntries(['PROCESS_ROLE', 'GIT_HOST_URL', 'GIT_HOST_INTERNAL_URL', 'GIT_HOST_USER', 'GIT_HOST_TOKEN'].map(k => [k, process.env[k]]));
+  Object.assign(process.env, { PROCESS_ROLE: 'conductor', GIT_HOST_URL: 'https://git.example.invalid', GIT_HOST_INTERNAL_URL: 'https://git.example.invalid',
+    GIT_HOST_USER: 'test-git-user', GIT_HOST_TOKEN: 'fake-git-host-token' });
+  t.after(() => {
+    for (const [k, value] of Object.entries(prior)) {
+      if (value === undefined) delete process.env[k]; else process.env[k] = value;
+    }
+  });
+  const sha = 'a'.repeat(40); const branch = 'dev/x';
+  t.mock.method(require('../src/db/pool'), 'getPool', () => ({ query: async sql => ({ rows: [sql.includes('SELECT sw.unpushed_sha AS sha')
+    ? { sha, branchName: branch, active: false }
+    : { branch_name: branch, repo_url: 'https://git.example.invalid/apps/example', unpushed_sha: sha, unpushed_branch_name: branch }] }) }));
+  t.mock.method(require('../src/services/github'), 'getInstallationToken', () => { throw new Error('must not use GitHub'); });
+  const failure = `Temporary storage failure: ${'x'.repeat(250)}`;
+  const push = t.mock.method(pusher, 'push', async options => {
+    assert.equal(options.remoteUrl, 'https://git.example.invalid/apps/example.git');
+    assert.equal(options.username, 'test-git-user');
+    throw new Error(failure);
+  });
+  let refusal;
+  await assert.rejects(worker.rescueUnpushedCommit(91822), err => {
+    refusal = err;
+    assert.equal(err.message, `An earlier build's commit aaaaaaaa on dev/x could not be pushed: ${failure.slice(0, 200)}. It is kept in this session and has to be pushed before another build can start.`);
+    assert.equal(err.permanent, false);
+    return true;
+  });
+  assert.equal(push.mock.callCount(), 1);
+  const result = await workerBootstrapFailureResult(refusal, { session: { id: 91822 }, sendStatus: async () => {} });
+  assert.doesNotMatch(result.toolResultText, /GitHub|push proxy failed:|Retry your request|open the PR/);
+});
 
 // ── describeTurnError: the four bootstrap branches ──────────────────────
 
@@ -132,16 +186,16 @@ test('both dispatch paths catch ensureWorker and return a tool_result', () => {
   const guarded = SOURCE.match(/containerName = await worker\.ensureWorker\(/g) || [];
   assert.equal(guarded.length, 2, 'runScoutTool and runClaudeCodeTool');
   const routed = SOURCE.match(/return await workerBootstrapFailureResult\(err, \{/g) || [];
-  assert.equal(routed.length, 2, 'each one routes its failure back to the Mayor');
+  assert.equal(routed.length, 4, 'both preparation and late dispatch refusals reach the Mayor');
   // And nothing kept the old unguarded const form.
   assert.doesNotMatch(SOURCE, /const containerName = runLocally \? null : await worker\.ensureWorker/);
 });
 
-test('the failure result is an is_error tool_result that states the branch is unchanged', () => {
+test('the failure result is an is_error tool_result that states that this dispatch changed no code', () => {
   const helper = SOURCE.slice(SOURCE.indexOf('async function workerBootstrapFailureResult'));
   const body = helper.slice(0, helper.indexOf('\nasync function describeStagingFailure'));
   assert.match(body, /isError: true/);
-  assert.match(body, /the branch is unchanged/);
+  assert.match(body, /this dispatch never ran and made no code changes/);
   // Same teardown the other pre-dispatch bailouts do, in the same order —
   // these gates fire outside the big try's finally, so nothing else does it.
   const del = body.indexOf('activeWorkers.delete(session.id)');

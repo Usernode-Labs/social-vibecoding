@@ -1937,9 +1937,16 @@
     {
       "source": "src/services/worker-eviction.js",
       "kind": "structural-template",
-      "fingerprint": "45d5221ce0b9c759fbb8",
+      "fingerprint": "420c49cd61d8e0ca08ca",
       "count": 1,
-      "preview": "`DELETE FROM session_workers sw USING chat_sessions cs WHERE sw.session_id = $1 AND cs.id = sw.session_id AND sw.last_used_at = $2::timestamptz AND NOT ${worked"
+      "preview": "`SELECT sw.session_id FROM session_workers sw JOIN chat_sessions cs ON cs.id = sw.session_id WHERE sw.session_id = $1 AND sw.last_used_at = $2::timestamptz AND "
+    },
+    {
+      "source": "src/services/worker-eviction.js",
+      "kind": "structural-template",
+      "fingerprint": "891abd0132c75b3509c5",
+      "count": 1,
+      "preview": "`SELECT cs.status, cs.agent_config_version, cs.active_turn IS NOT NULL AS active, cs.active_turn->>'turnId' AS turn_id, COALESCE(sw.last_used_at > $4::timestamp"
     },
     {
       "source": "src/services/worker-eviction.js",

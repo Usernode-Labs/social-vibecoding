@@ -447,6 +447,7 @@ async function runDispatch({
     isError: !!(result && result.isError),
     stopped: false,
     toolResultText: String((result && result.toolResultText) || ''),
+    ...(typeof result?.permanent === 'boolean' ? { permanent: result.permanent, pushFailureCode: result.pushFailureCode } : {}),
     stagingUrl: (result && result.stagingUrl) || null,
     turnId: (result && result.turnId) || null,
     finish: async ({ wrapUpPosted = true } = {}) => {

@@ -289,7 +289,7 @@ test('writeTurnPrompt materializes the prompt via stdin into the session worker'
     assert.equal(calls[0].opts.label, 'writeTurnPrompt');
   } finally {
     docker.execShellStdin = orig;
-    worker.evictWorker(SID);
+    worker._registryForgetForTests(SID);
   }
 });
 
@@ -319,7 +319,7 @@ test('writeTurnSystemPrompt materializes required system context in the same wor
     assert.equal(calls[0].opts.label, 'writeTurnSystemPrompt');
   } finally {
     docker.execShellStdin = orig;
-    worker.evictWorker(SID);
+    worker._registryForgetForTests(SID);
   }
 });
 
@@ -331,7 +331,6 @@ test('writeTurnSystemPrompt uses Kubernetes exec without invoking Docker', async
   const calls = [];
   const originalRuntime = process.env.WORKER_RUNTIME;
   const originalKubernetesExec = kubernetes.execInWorker;
-  const originalKubernetesDelete = kubernetes.deleteWorker;
   const originalDockerExec = docker.execShellStdin;
   process.env.WORKER_RUNTIME = 'kubernetes';
   kubernetes.execInWorker = async (config, name, command, stdinText) => {
@@ -340,7 +339,6 @@ test('writeTurnSystemPrompt uses Kubernetes exec without invoking Docker', async
   docker.execShellStdin = async () => {
     throw new Error('Docker must not be invoked for a Kubernetes worker');
   };
-  kubernetes.deleteWorker = async () => {};
   try {
     const systemPrompt = `CONVENTIONS ${'k'.repeat(140 * 1024)}`;
     await worker.writeTurnSystemPrompt(SID, systemPrompt);
@@ -351,11 +349,10 @@ test('writeTurnSystemPrompt uses Kubernetes exec without invoking Docker', async
     assert.equal(decodeScriptPayload(calls[0].stdinText), systemPrompt);
     assert.equal(calls[0].config.kubernetes.workerNamespace, 'social-workers');
   } finally {
-    await worker.evictWorker(SID);
+    worker._registryForgetForTests(SID);
     if (originalRuntime === undefined) delete process.env.WORKER_RUNTIME;
     else process.env.WORKER_RUNTIME = originalRuntime;
     kubernetes.execInWorker = originalKubernetesExec;
-    kubernetes.deleteWorker = originalKubernetesDelete;
     docker.execShellStdin = originalDockerExec;
   }
 });
@@ -379,7 +376,7 @@ test('writeTurnResumeFallbackPrompt materializes the complete fallback in the sa
     assert.equal(calls[0].opts.label, 'writeTurnResumeFallbackPrompt');
   } finally {
     docker.execShellStdin = orig;
-    worker.evictWorker(SID);
+    worker._registryForgetForTests(SID);
   }
 });
 

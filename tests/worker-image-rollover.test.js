@@ -24,6 +24,7 @@ function runtimeName(sessionId) {
 function mockWarmWorker(t, { imageRef, storageMode = 'persistent' }) {
   const deleted = [];
   const bootstrapped = [];
+  t.mock.method(require('../src/db/pool'), 'getPool', () => ({ query: async () => ({ rows: [] }) }));
   t.mock.method(kubernetes, 'getWorkerStatus', async () => 'running');
   t.mock.method(kubernetes, 'getWorkerRuntimeMetadata', async () => ({
     contractVersion,
@@ -167,10 +168,21 @@ test('a run keeps its worker only for a newer image: a storage change or a contr
   assert.deepEqual(askedAgain, []);
 });
 
-test('a session no durable build holds, or one that cannot be read, is replaced as before', async (t) => {
+test('a database failure keeps the old worker because an unpushed commit cannot be ruled out', async (t) => {
   const calls = mockWarmWorker(t, { imageRef: `ghcr.io/example/worker@sha256:${'a'.repeat(64)}`, storageMode: 'temporary' });
   t.mock.method(require('../src/db/pool'), 'getPool', () => ({ async query() { throw new Error('connection refused'); } }));
   worker.adoptWarmWorker(9108, runtimeName(9108));
-  await worker.ensureWorker(9108, { ...ensureArgs, temporary: true });
-  assert.equal(calls.bootstrapped.length, 1);
+  await assert.rejects(worker.ensureWorker(9108, { ...ensureArgs, temporary: true }), /connection refused/);
+  assert.deepEqual(calls.bootstrapped, []);
+  assert.deepEqual(calls.deleted, []);
+});
+
+test('a failed durable rescue prevents stale Kubernetes replacement', async t => {
+  const calls = mockWarmWorker(t, { imageRef: `ghcr.io/example/worker@sha256:${'a'.repeat(64)}` });
+  t.mock.method(require('../src/services/worker-unpushed-commit'), 'read', async () => ({ sha: 'a'.repeat(40), branchName: 'dev/test' }));
+  worker.adoptWarmWorker(9109, runtimeName(9109));
+  // No stored push target in this fixture: rescue fails without publishing.
+  await assert.rejects(worker.ensureWorker(9109, ensureArgs), /An earlier build's commit aaaaaaaa on dev\/test could not be pushed/);
+  assert.deepEqual(calls.bootstrapped, []);
+  assert.deepEqual(calls.deleted, []);
 });

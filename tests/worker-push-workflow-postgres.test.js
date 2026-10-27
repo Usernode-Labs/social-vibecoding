@@ -227,8 +227,8 @@ test('conductor-owned worker pushes', { timeout: 60000 }, async t => {
   });
   await t.test('a real separate conductor settles a push requested by a web process with no local I/O', async () => {
     await pool.query('CREATE TABLE wf_test_push_effects (pid integer, session_id integer)');
-    const child = fork(require.resolve('./fixtures/worker-push-conductor'), [], {
-      env: { PATH: process.env.PATH, TZ: 'UTC', PROCESS_ROLE: 'conductor', WORKER_PUSH_TEST_DATABASE_URL: String(url) },
+    const child = fork(require.resolve('./fixtures/worker-command-conductor'), [], {
+      env: { PATH: process.env.PATH, TZ: 'UTC', PROCESS_ROLE: 'conductor', WORKER_COMMAND_TEST: JSON.stringify({ kind: 'push', databaseUrl: String(url) }) },
       stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
     });
     const exited = once(child, 'exit');
