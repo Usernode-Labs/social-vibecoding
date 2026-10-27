@@ -36,7 +36,7 @@ import {
 } from './profile-store.js';
 import { Profile } from './profile.js';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
-import { AccountPanel, AdminPanel, RewardsPanel, SettingsPanel, WorkPanel } from './account-panel';
+import { AccountPanel, AdminPanel, RewardsPanel, SettingsPanel, WeekPanel, WorkPanel } from './account-panel';
 import { FeedbackSheet } from './feedback-sheet';
 import { FriendsSheet } from './friends-sheet';
 import { ProfileEditSheet } from './profile-edit-sheet';
@@ -328,10 +328,11 @@ export function ProfileRoot(): ReactNode {
       ) : null}
       {/*
           Two columns from lg (the navigation review): who you are on the
-          left, with your Account group under it; Your work and Rewards on
-          the right, spanning both rows. Below lg the three blocks stack in
-          this same DOM order: card, stats, Your work, Rewards, Account,
-          Settings. "Your work" (UI overhaul): Your changes, Your requests
+          left, with your Account group under it; Your work, Rewards and
+          This week on the right, spanning both rows. Below lg the blocks stack in
+          this same DOM order: card, stats, Your work, Rewards, This week,
+          Account, Settings. "This week" (#5964): the apps used since Monday
+          and their minutes, drawn only when the week has counted time. "Your work" (UI overhaul): Your changes, Your requests
           and Your votes, each a view of the Your work screen. "Rewards":
           Challenges & standings and Kudos. "Account": Friends and App
           slots. Admin & moderation, the native node / wallet / staking rows
@@ -348,6 +349,7 @@ export function ProfileRoot(): ReactNode {
         <div className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
           <WorkPanel rows={view.rows} />
           <RewardsPanel rows={view.rows} />
+          <WeekPanel week={view.week} />
         </div>
         <div className="lg:col-start-1 lg:row-start-2">
           <AccountPanel rows={view.rows} />

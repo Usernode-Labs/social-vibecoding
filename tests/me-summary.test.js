@@ -44,6 +44,7 @@ test('an account with nothing yet is zeros, not a failure', () => {
     merged: 0, apps: 0, proposalsTotal: 0, inProgress: 0, kudos: 0, memberSince: null,
     challenges: { done: 0, total: 0, season: null },
     contributions: [],
+    week: { weekStart: null, totalSeconds: 0, apps: [] },
   });
 });
 
@@ -126,6 +127,8 @@ function mockPool(state) {
       if (sql.includes('AS direct_kudos')) return { rows: [state.counts || {}] };
       if (sql.includes("cs.status = 'merged' AND cs.live_at IS NOT NULL ORDER BY cs.merged_at")) return { rows: state.contributions || [] };
       if (sql.includes('FROM apps WHERE self_hosted = TRUE')) return { rows: state.selfApp ? [state.selfApp] : [] };
+      if (sql.includes('FROM app_activity aa')) return { rows: state.week || [] };
+      if (sql.includes("WHERE view_visibility = 'public'")) return { rows: state.demoApps || [] };
       if (sql.includes('FROM seasons')) return { rows: state.season ? [state.season] : [] };
       if (sql.includes('COUNT(*)::int AS total')) return { rows: [state.totals || { total: 0, done: 0 }] };
       // The season's First challenges, read so a First challenge done counts
@@ -168,7 +171,7 @@ async function get(app, url) {
   try {
     const { port } = server.address();
     const res = await fetch(`http://127.0.0.1:${port}${url}`);
-    return { status: res.status, body: await res.json().catch(() => null) };
+    return { status: res.status, headers: res.headers, body: await res.json().catch(() => null) };
   } finally {
     server.close();
   }
@@ -213,3 +216,152 @@ test('?demo=1 in staging fills an empty Me from the merged mocks', async () => {
   assert.equal(body.demo, true);
   assert.equal(body.contributions.length, profile.DEMO_CONTRIBUTIONS.length);
 });
+
+// ─── "This week" (#5964) ────────────────────────────────────────────────
+//
+// The apps the viewer was in since Monday and their minutes. It counts the
+// SAME seconds USE_APPS_MINUTES scores and leaves out the same apps — an app
+// the viewer made — so this total can never exceed the minutes challenge's
+// own progress, which was the confusion the request described.
+
+const { weekStartMs } = require('../src/services/topochain/challenge-rules');
+
+test('the week SQL reads the same rows the minutes challenge scores, per app', () => {
+  const week = collapse(profile.SUMMARY_WEEK_SQL);
+  assert.match(week, /FROM app_activity aa JOIN apps a ON a\.id = aa\.app_id/);
+  assert.match(week, /WHERE aa\.user_id = \$1 AND aa\.date >= \$2::date AND aa\.date <= \$3::date/);
+  assert.match(week, /a\.created_by IS DISTINCT FROM aa\.user_id/, 'your own apps are left out, as the challenge leaves them out');
+  assert.match(week, /GROUP BY a\.id, a\.slug, a\.name, a\.icon_emoji, a\.icon_image_id/);
+  assert.match(week, /HAVING SUM\(aa\.seconds_spent\) > 0/);
+  assert.match(week, /ORDER BY seconds DESC, a\.slug ASC/);
+  assert.ok(!/LIMIT/.test(week), 'no LIMIT: the total in the heading covers every app');
+  assert.equal(profile.SUMMARY_WEEK_APPS_LIMIT, 10);
+});
+
+test('shapeWeek sums every row into the total and caps only the list', () => {
+  const rows = Array.from({ length: 12 }, (_, i) => ({
+    slug: `app-${i}`, name: `App ${i}`, icon_emoji: i === 0 ? '🎨' : null,
+    icon_image_id: i === 1 ? 'abc123' : null, seconds: String(600 - i * 10),
+  }));
+  const week = profile.shapeWeek(rows, Date.UTC(2026, 9, 26));
+  assert.equal(week.weekStart, '2026-10-26T00:00:00.000Z');
+  assert.equal(week.apps.length, profile.SUMMARY_WEEK_APPS_LIMIT, 'ten rows at most');
+  assert.equal(week.totalSeconds, rows.reduce((n, r) => n + Number(r.seconds), 0), 'the total counts all twelve');
+  assert.deepEqual(week.apps.slice(0, 2).map((a) => [a.slug, a.seconds]), [['app-0', 600], ['app-1', 590]],
+    'the most used app comes first, as the query ordered them');
+  assert.equal(week.apps[0].iconEmoji, '🎨');
+  assert.equal(week.apps[1].iconUrl, '/app-icons/abc123');
+});
+
+test('a week with nothing in it is a zero and an empty list, never a failure', () => {
+  assert.deepEqual(profile.shapeWeek([], Date.UTC(2026, 9, 26)), {
+    weekStart: '2026-10-26T00:00:00.000Z', totalSeconds: 0, apps: [],
+  });
+  // And the summary always carries one, so the client never has to tell
+  // "not computed" from "nothing this week".
+  const summary = profile.shapeSummary({ counts: {}, contributions: [], challenges: null });
+  assert.deepEqual(summary.week, { weekStart: null, totalSeconds: 0, apps: [] });
+});
+
+test('withDemoWeek fills only an empty week, and never covers real rows', () => {
+  const empty = profile.shapeWeek([], Date.UTC(2026, 9, 26));
+  const demoApps = [
+    { slug: 'pixel-board', name: 'Pixel Board', icon_emoji: '🎨', icon_image_id: null },
+    { slug: 'book-swap', name: 'Book Swap', icon_emoji: '📚', icon_image_id: 'x1' },
+  ];
+  const demo = profile.withDemoWeek(empty, demoApps);
+  assert.equal(demo.demo, true);
+  assert.equal(demo.apps.length, 2);
+  assert.deepEqual(demo.apps.map((a) => a.seconds), profile.DEMO_WEEK_MINUTES.slice(0, 2).map((m) => m * 60));
+  assert.equal(demo.totalSeconds, demo.apps.reduce((n, a) => n + a.seconds, 0));
+  assert.equal(demo.weekStart, empty.weekStart, 'the week it fills is the real one');
+  const real = profile.shapeWeek([{ slug: 'real', name: 'Real', seconds: 60 }], Date.UTC(2026, 9, 26));
+  assert.equal(profile.withDemoWeek(real, demoApps), real, 'REAL DATA WINS');
+});
+
+test('the route asks for that Monday through today, for the session user', async () => {
+  const { app, pool } = makeApp({
+    counts: {},
+    week: [{ slug: 'pixel-board', name: 'Pixel Board', icon_emoji: '🎨', icon_image_id: null, seconds: 840 }],
+    season: null,
+  }, { user: USER });
+  const { status, headers, body } = await get(app, '/api/me/summary');
+  assert.equal(status, 200);
+  const call = pool.calls.find((c) => c.sql.includes('FROM app_activity aa'));
+  assert.ok(call, 'the week is read in the summary round');
+  assert.equal(call.params[0], 7, 'the SESSION user, never a query param');
+  const now = Date.now();
+  assert.equal(call.params[1], new Date(weekStartMs(now)).toISOString().slice(0, 10),
+    'the week starts on Monday 00:00 UTC, the challenge\'s own boundary');
+  assert.equal(call.params[2], new Date(now).toISOString().slice(0, 10));
+  assert.equal(body.week.apps[0].slug, 'pixel-board');
+  assert.equal(body.week.totalSeconds, 840);
+  assert.match(headers.get('cache-control') || '', /no-store/,
+    'per-viewer and now time-dependent: a shared cache would show one week to the next person');
+});
+
+test('?demo=1 fills the week from public apps the viewer did not make', async () => {
+  const demoApps = [{ slug: 'pixel-board', name: 'Pixel Board', icon_emoji: '🎨', icon_image_id: null }];
+  const { app, pool } = makeApp({ counts: {}, season: null, demoApps }, { user: USER, env: 'staging' });
+  const { body } = await get(app, '/api/me/summary?demo=1');
+  assert.equal(body.week.demo, true);
+  assert.equal(body.week.apps[0].slug, 'pixel-board');
+  const demoCall = pool.calls.find((c) => c.sql.includes("WHERE view_visibility = 'public'"));
+  assert.equal(demoCall.params[0], 7, 'never the capture account\'s real usage, and nothing written to app_activity');
+});
+
+test('the week SQL really counts engaged seconds per app on a real database (PostgreSQL)',
+  { timeout: 180000 }, async (t) => {
+    const { Pool } = require('pg');
+    const crypto = require('node:crypto');
+    const DSN = process.env.TEST_DATABASE_URL
+      || process.env.DATABASE_URL
+      || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
+    const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2_000 });
+    try { await admin.query('SELECT 1'); } catch (error) {
+      await admin.end();
+      if (process.env.TEST_DATABASE_URL) throw error;
+      t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check');
+      return;
+    }
+    const name = `me_week_${crypto.randomBytes(6).toString('hex')}`;
+    await admin.query(`CREATE DATABASE ${name}`);
+    const url = new URL(DSN);
+    url.pathname = `/${name}`;
+    const pool = new Pool({ connectionString: String(url), max: 2 });
+    t.after(async () => {
+      await pool.end();
+      await admin.query(`DROP DATABASE ${name}`);
+      await admin.end();
+    });
+    await pool.query(read('src/db/schema.sql'));
+
+    const me = (await pool.query(
+      `INSERT INTO users (username, password) VALUES ('week_me', 'unused') RETURNING id`
+    )).rows[0];
+    const other = (await pool.query(
+      `INSERT INTO users (username, password) VALUES ('week_other', 'unused') RETURNING id`
+    )).rows[0];
+    const makeApp = async (slug, createdBy) => (await pool.query(
+      `INSERT INTO apps (slug, name, created_by, view_visibility, collab_visibility)
+       VALUES ($1, $2, $3, 'public', 'public') RETURNING id`, [slug, slug, createdBy]
+    )).rows[0].id;
+    const pixel = await makeApp('pixel-board', other.id);
+    const mine = await makeApp('my-own-app', me.id);
+    const used = await makeApp('used-once-last-week', other.id);
+    const days = { monday: '2026-10-26', tuesday: '2026-10-27', lastSunday: '2026-10-25' };
+    const put = (appId, date, seconds) => pool.query(
+      `INSERT INTO app_activity (app_id, user_id, date, seconds_spent) VALUES ($1, $2, $3::date, $4)`,
+      [appId, me.id, date, seconds]
+    );
+    await put(pixel, days.monday, 600);
+    await put(pixel, days.tuesday, 300);
+    await put(mine, days.tuesday, 9999);          // an app I made myself: left out
+    await put(used, days.lastSunday, 500);        // before this Monday: out of the week
+
+    const { rows } = await pool.query(profile.SUMMARY_WEEK_SQL, [me.id, days.monday, days.tuesday]);
+    const week = profile.shapeWeek(rows, weekStartMs(Date.parse(`${days.tuesday}T12:00:00Z`)));
+    assert.deepEqual(week.apps.map((a) => [a.slug, a.seconds]), [['pixel-board', 900]]);
+    assert.equal(week.totalSeconds, 900);
+    assert.equal(week.weekStart, '2026-10-26T00:00:00.000Z');
+  });

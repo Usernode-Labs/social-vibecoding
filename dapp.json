@@ -844,10 +844,10 @@
       ]
     },
     {
-      "name": "Me: Your work lists Your changes, Your requests and Your votes, each a way to its list (UI overhaul; it was Your contributions)",
+      "name": "Me: Your work lists Your changes, Your requests and Your votes, each a way to its list (UI overhaul; it was Your contributions); This week lists the apps used since Monday",
       "path": "/?demo=1#profile",
       "expectText": "Your work",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-work #profile-row-proposals[href=\"#profile/your-changes\"] + #profile-row-feedback[href=\"#profile/your-requests\"] + #profile-row-votes[href=\"#profile/your-votes\"]"
+      "expectSelector": "body:has(#profile-screen:not(.hidden) #profile-row-proposals[href=\"#profile/your-changes\"] + #profile-row-feedback[href=\"#profile/your-requests\"] + #profile-row-votes[href=\"#profile/your-votes\"]):has(#profile-rewards + #profile-week [data-week-app])"
     },
     {
       "name": "The retired History address opens the Challenges tab, and the tabs are Challenges and Standings",

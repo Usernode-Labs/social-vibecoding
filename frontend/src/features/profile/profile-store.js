@@ -320,6 +320,44 @@ export function moreRowsView(data) {
 // falls back to saying what is behind it. Null whenever the read failed or
 // has not answered, for the same reason.
 
+/**
+ * "This week" (#5964): the apps the viewer was in since Monday 00:00 UTC and
+ * the minutes in each, from GET /api/me/summary's `week`. Minutes are rounded
+ * DOWN, as the challenge's own credit line rounds them, and the heading's
+ * total comes from the server's seconds rather than from the rounded rows, so
+ * no minute is lost to per-app rounding.
+ *
+ * Null when the read failed or has not answered, and when the week holds
+ * nothing: Me draws no section rather than an empty card.
+ */
+export function weekView(summary) {
+  const w = summary && summary.week;
+  if (!w || typeof w !== 'object') return null;
+  const apps = Array.isArray(w.apps) ? w.apps : [];
+  const totalSeconds = Number(w.totalSeconds) || 0;
+  if (totalSeconds < 60 && apps.length === 0) return null;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  return {
+    totalMinutes,
+    heading: t('profile:week.heading', { count: totalMinutes, number: totalMinutes.toLocaleString() }),
+    apps: apps.map((a) => {
+      const seconds = Number(a.seconds) || 0;
+      const minutes = Math.floor(seconds / 60);
+      return {
+        slug: a.slug,
+        name: a.name || a.slug,
+        iconEmoji: a.iconEmoji || null,
+        iconUrl: a.iconUrl || null,
+        minutes,
+        label: seconds < 60
+          ? t('profile:week.underMinute')
+          : t('profile:week.minutes', { count: minutes, number: minutes.toLocaleString() }),
+      };
+    }),
+    note: t('profile:week.note'),
+  };
+}
+
 /** "12 live · 2 in progress", from GET /api/me/summary. */
 function changesLine(summary) {
   if (!summary || typeof summary !== 'object') return null;
@@ -866,6 +904,7 @@ export function buildProfileView(state, now = Date.now()) {
     publicControls: publicControlsView(state),
     stats: statsView(d.summary || null),
     rows: moreRowsView(d),
+    week: weekView(d.summary || null),
     friends: friendsView(d.friends || null, now),
     feedback: feedbackListView(d.feedback || null, now),
   };

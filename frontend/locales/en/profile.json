@@ -183,6 +183,30 @@
     "text": "Rewards",
     "description": "Heading over Challenges & standings and Kudos on the viewer's own profile."
   },
+  "week.heading_one": {
+    "text": "This week · {{number}} minute",
+    "description": "Heading over the list of apps the viewer used this week, on their own profile. {{number}} is the total minutes since Monday, already formatted; {{count}} is the same number, for the plural. \"This week\" runs Monday to Sunday."
+  },
+  "week.heading_other": {
+    "text": "This week · {{number}} minutes",
+    "description": "Heading over the list of apps the viewer used this week, on their own profile. {{number}} is the total minutes since Monday, already formatted; {{count}} is the same number, for the plural. \"This week\" runs Monday to Sunday."
+  },
+  "week.minutes_one": {
+    "text": "{{number}} minute",
+    "description": "Under an app's name on the viewer's own profile: how long they were in that app this week. {{number}} is the minutes, already formatted; {{count}} is the same number, for the plural."
+  },
+  "week.minutes_other": {
+    "text": "{{number}} minutes",
+    "description": "Under an app's name on the viewer's own profile: how long they were in that app this week. {{number}} is the minutes, already formatted; {{count}} is the same number, for the plural."
+  },
+  "week.underMinute": {
+    "text": "Under a minute",
+    "description": "Under an app's name on the viewer's own profile, in place of a number of minutes: they were in that app for less than one minute this week."
+  },
+  "week.note": {
+    "text": "Counted since Monday. Apps you made yourself are left out, as they are for challenges.",
+    "description": "Small line under the list of apps the viewer used this week, on their own profile. It says when the count starts and that the apps they created themselves are not counted, the same rule the minutes challenge uses."
+  },
   "account.heading": {
     "text": "Account",
     "description": "Heading over Friends and App slots on the viewer's own profile."

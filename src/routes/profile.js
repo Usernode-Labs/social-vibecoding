@@ -67,6 +67,7 @@ const {
 } = require('./home-panels');
 const { loadOnboarding } = require('../services/topochain/challenge-onboarding');
 const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
+const { weekStartMs } = require('../services/topochain/challenge-rules');
 const { MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE } = require('./workshop-overview');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
@@ -161,6 +162,31 @@ const SUMMARY_CONTRIBUTIONS_SQL = `
    LIMIT $2
 `;
 
+// ── "This week" on Me (#5964) ────────────────────────────────────────
+//
+// Minutes spent inside apps since Monday 00:00 UTC, one row per app, plus
+// the week's total. app_activity holds the daily engaged seconds and is the
+// very table USE_APPS_MINUTES scores (challenge-scorer.js): same join, same
+// rule that an app the viewer MADE is not counted. That rule is not an
+// extra: the minutes challenge leaves your own apps out, so including them
+// here would make this total larger than the progress the challenge shows —
+// the confusion the request was filed about. Only the row count is capped
+// (below), never the total: it is summed over every app in SQL's own order.
+const SUMMARY_WEEK_APPS_LIMIT = 10;
+
+const SUMMARY_WEEK_SQL = `
+  SELECT a.slug, a.name, a.icon_emoji, a.icon_image_id,
+         SUM(aa.seconds_spent)::bigint AS seconds
+    FROM app_activity aa
+    JOIN apps a ON a.id = aa.app_id
+   WHERE aa.user_id = $1
+     AND aa.date >= $2::date AND aa.date <= $3::date
+     AND a.created_by IS DISTINCT FROM aa.user_id
+   GROUP BY a.id, a.slug, a.name, a.icon_emoji, a.icon_image_id
+  HAVING SUM(aa.seconds_spent) > 0
+   ORDER BY seconds DESC, a.slug ASC
+`;
+
 // The platform's own app, for the demo rows below.
 const SELF_APP_SQL = `
   SELECT slug, name, icon_emoji, icon_image_id
@@ -188,6 +214,21 @@ const DEMO_CONTRIBUTIONS = [
     title: '[Mock] Completed: split settings into sections' },
 ];
 
+// ?demo=1's "This week" rows: up to three public apps the viewer did not
+// make, paired with made-up minutes. NOTHING is written to app_activity for
+// them — the challenge scorer reads that table, so a seeded row would credit
+// the capture account with real USE_APPS_MINUTES completions. Like the
+// contributions overlay, real data wins.
+const DEMO_WEEK_MINUTES = [14, 9, 4];
+
+const DEMO_WEEK_APPS_SQL = `
+  SELECT slug, name, icon_emoji, icon_image_id
+    FROM apps
+   WHERE view_visibility = 'public' AND created_by IS DISTINCT FROM $1
+   ORDER BY id ASC
+   LIMIT 3
+`;
+
 function appIconUrl(imageId) {
   return typeof imageId === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(imageId)
     ? `/app-icons/${imageId}` : null;
@@ -214,9 +255,47 @@ function shapeContribution(r) {
   };
 }
 
+// Pure (exported for tests): the week's per-app rows → `summary.week`. The
+// total is every app's seconds; the LIST is capped at what one screen reads.
+function shapeWeek(rows, weekStart) {
+  const all = (rows || []).map((r) => ({
+    slug: r.slug,
+    name: r.name || r.slug,
+    iconEmoji: r.icon_emoji || null,
+    iconUrl: appIconUrl(r.icon_image_id),
+    seconds: Number(r.seconds) || 0,
+  }));
+  return {
+    weekStart: weekStart ? new Date(weekStart).toISOString() : null,
+    totalSeconds: all.reduce((n, r) => n + r.seconds, 0),
+    apps: all.slice(0, SUMMARY_WEEK_APPS_LIMIT),
+  };
+}
+
+// Pure (exported for tests): ?demo=1's week overlay. REAL DATA WINS, as
+// withDemoSummary's does: it fills only a week with no counted app at all.
+function withDemoWeek(week, demoApps) {
+  const base = week || { weekStart: null, totalSeconds: 0, apps: [] };
+  if (!Array.isArray(demoApps) || demoApps.length === 0) return base;
+  if (base.apps && base.apps.length > 0) return base;
+  const apps = demoApps.slice(0, DEMO_WEEK_MINUTES.length).map((app, i) => ({
+    slug: app.slug,
+    name: app.name || app.slug,
+    iconEmoji: app.icon_emoji || null,
+    iconUrl: appIconUrl(app.icon_image_id),
+    seconds: DEMO_WEEK_MINUTES[i] * 60,
+  }));
+  return {
+    ...base,
+    totalSeconds: apps.reduce((n, a) => n + a.seconds, 0),
+    apps,
+    demo: true,
+  };
+}
+
 // Pure (exported for tests): the three counts, the contributions and the
 // challenge totals → the response body.
-function shapeSummary({ counts, contributions, challenges }) {
+function shapeSummary({ counts, contributions, challenges, week }) {
   const c = counts || {};
   return {
     merged: Number(c.merged) || 0,
@@ -233,6 +312,9 @@ function shapeSummary({ counts, contributions, challenges }) {
         : null,
     },
     contributions: (contributions || []).map(shapeContribution),
+    // Always present, so a client never has to tell "not computed" from
+    // "nothing this week"; an empty week draws nothing.
+    week: week || { weekStart: null, totalSeconds: 0, apps: [] },
   };
 }
 
@@ -1309,22 +1391,38 @@ function profileRoutes(config) {
   // only the challenge totals wait, on the season they are scoped to.
   router.get('/api/me/summary', requireUser, async (req, res) => {
     try {
-      const [countRows, contributionRows, season] = await Promise.all([
+      // The week's day range: Monday 00:00 UTC (the challenge's own boundary,
+      // so the profile and the 10-minute goal never disagree about the week)
+      // through today, both as UTC calendar dates — the column app_activity
+      // writes with the server's CURRENT_DATE.
+      const now = Date.now();
+      const weekStart = weekStartMs(now);
+      const weekStartDate = new Date(weekStart).toISOString().slice(0, 10);
+      const todayDate = new Date(now).toISOString().slice(0, 10);
+      const [countRows, contributionRows, weekRows, season] = await Promise.all([
         pool.query(SUMMARY_COUNTS_SQL, [req.user.id]),
         pool.query(SUMMARY_CONTRIBUTIONS_SQL, [req.user.id, SUMMARY_CONTRIBUTIONS_LIMIT]),
+        pool.query(SUMMARY_WEEK_SQL, [req.user.id, weekStartDate, todayDate]),
         fetchProfileSeason(pool, IS_STAGING ? 900500 : null),
       ]);
       const totals = season ? await readChallengeTotals(pool, req.user.id, season.id) : null;
+      // Per-viewer and now time-dependent: a shared cache would show one
+      // person's week to the next.
+      res.set('Cache-Control', 'no-store');
       let summary = shapeSummary({
         counts: countRows.rows[0],
         contributions: contributionRows.rows,
         challenges: season
           ? { done: totals ? totals.done : 0, total: totals ? totals.total : 0, season }
           : null,
+        week: shapeWeek(weekRows.rows, weekStart),
       });
       if (IS_STAGING && req.query.demo === '1') {
         const { rows: selfRows } = await pool.query(SELF_APP_SQL);
         summary = withDemoSummary(summary, selfRows[0] || null);
+        // Independent of the contributions overlay: its own empty-week test.
+        const { rows: demoApps } = await pool.query(DEMO_WEEK_APPS_SQL, [req.user.id]);
+        summary = { ...summary, week: withDemoWeek(summary.week, demoApps) };
       }
       return res.json(summary);
     } catch (err) {
@@ -1404,6 +1502,11 @@ module.exports = {
   shapeContribution,
   shapeSummary,
   withDemoSummary,
+  shapeWeek,
+  withDemoWeek,
+  SUMMARY_WEEK_SQL,
+  SUMMARY_WEEK_APPS_LIMIT,
+  DEMO_WEEK_MINUTES,
   DEMO_CONTRIBUTIONS,
   SUMMARY_CONTRIBUTIONS_LIMIT,
   shapeProposals,

@@ -220,6 +220,64 @@ export function RewardsPanel({ rows }: {
   );
 }
 
+type WeekAppView = {
+  slug: string;
+  name: string;
+  iconEmoji: string | null;
+  iconUrl: string | null;
+  minutes: number;
+  label: string;
+};
+
+export type WeekView = {
+  totalMinutes: number;
+  heading: string;
+  apps: WeekAppView[];
+  note: string;
+};
+
+/** An app's face in the week's rows: its picture, else its emoji, else its
+ *  first letter — the three every app tile in the shell draws. */
+function WeekAppIcon({ app }: { app: WeekAppView }): ReactNode {
+  if (app.iconUrl) {
+    // The row's own title says which app it is, so the picture has no text.
+    return <img src={app.iconUrl} alt="" loading="lazy" draggable={false} className="h-full w-full rounded-xl object-cover" />;
+  }
+  if (app.iconEmoji) return <span className="text-xl leading-none" aria-hidden="true">{app.iconEmoji}</span>;
+  return <span className="text-sm font-semibold">{(app.name || '?').charAt(0).toUpperCase()}</span>;
+}
+
+/**
+ * "This week" (#5964): the apps the viewer was in since Monday and their
+ * minutes, under Rewards on their own Me. It is for READING — no row is a
+ * link and none has a chevron — and it draws nothing at all for a week with
+ * no counted time, like the rest of Me does when there is nothing to say.
+ */
+export function WeekPanel({ week }: { week: WeekView | null }): ReactNode {
+  if (!week) return null;
+  return (
+    <section id="profile-week" className="mt-2">
+      <SectionHeader>{week.heading}</SectionHeader>
+      <GroupedList className="mx-0" tone="plane">
+        {week.apps.map((app) => (
+          <ListRow
+            key={app.slug}
+            as="div"
+            chevron={false}
+            data-week-app={app.slug}
+            leading={<IconTile size="sm"><WeekAppIcon app={app} /></IconTile>}
+            title={app.name}
+            titleClassName={TITLE}
+            subtitle={app.label}
+            subtitleClassName={SUBTITLE}
+          />
+        ))}
+      </GroupedList>
+      <p className="px-4 pt-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">{week.note}</p>
+    </section>
+  );
+}
+
 export function AccountPanel({ rows }: {
   rows: ProfileRows;
 }): ReactNode {
