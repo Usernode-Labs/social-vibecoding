@@ -528,8 +528,8 @@ test('scrollers are drawn as clipped boxes in the copy, so WebKit paints them th
   // SnapDOM's map, either way round: original to copy, or copy to original.
   const map = new Map([[rail, railCopy], [cardCopy, card], [feed, feedCopy], [text, { nodeType: 3 }]]);
   assert.equal(picture.flattenScrollers({ nodeMap: map }, styleOf), 2);
-  assert.deepEqual(railCopy.set, { overflow: 'hidden !important', '-webkit-overflow-scrolling': 'auto !important' });
-  assert.deepEqual(feedCopy.set, { overflow: 'hidden !important', '-webkit-overflow-scrolling': 'auto !important' });
+  assert.deepEqual(railCopy.set, { overflow: 'hidden !important', '-webkit-overflow-scrolling': 'auto !important', 'clip-path': 'inset(0) !important' });
+  assert.deepEqual(feedCopy.set, { overflow: 'hidden !important', '-webkit-overflow-scrolling': 'auto !important', 'clip-path': 'inset(0) !important' });
   assert.deepEqual(cardCopy.set, {}, 'a box that does not scroll is left as it is');
   assert.deepEqual(rail.set, {}, 'the page is never written to');
   assert.equal(picture.flattenScrollers({}, styleOf), 0, 'no map, nothing done');

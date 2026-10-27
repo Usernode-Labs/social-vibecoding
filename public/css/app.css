@@ -994,20 +994,30 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 }
 
 /* A CONTINUATION LINE (#2783): the same person again, close behind their
-   last message. No avatar and no name — the time of day sits in the 36px
-   column the avatar would, muted, and only on hover (always on touch), which
-   is Discord's arrangement. */
+   last message. No avatar and no name — the time of day sits in the column
+   the avatar would, muted, and only on hover (always on touch), which is
+   Discord's arrangement.
+   #5965: "9:18 AM" at 11px is about 40px, so a 36px column broke it into
+   "9:18" over "AM" on a phone (and "12:45 PM" is about 45px). The column is
+   now 48px and borrows 12px of the row's own 16px padding: 16 - 12 + 48 +
+   12 = 16 + 36 + 12, so the message body stays exactly where it was under
+   the name above it. The time itself never wraps. */
 .messages-message-grouped { padding-top: 1px; padding-bottom: 1px; }
 .messages-message-gutter {
-  flex: 0 0 36px;
-  width: 36px;
+  flex: 0 0 48px;
+  width: 48px;
+  margin-left: -12px;
   padding-top: 4px;
   text-align: right;
   font-size: 11px;
   line-height: 1.4;
   color: var(--text-muted);
+  white-space: nowrap;
   visibility: hidden;
 }
+/* Your own continuation row runs right to left, so its gutter sits at the
+   right edge and borrows the padding on that side instead. */
+.messages-message-bubble.messages-message-self > .messages-message-gutter { margin-left: 0; margin-right: -12px; }
 .messages-message-grouped:hover .messages-message-gutter { visibility: visible; }
 @media (hover: none) {
   .messages-message-gutter { visibility: visible; }
