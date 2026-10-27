@@ -108,6 +108,9 @@ function makeBrowse(opts = {}) {
       // The kit wrapper runs fn directly when the kit is absent; do the
       // same and record the animation type the level change asked for.
       transition: (fn, o) => { chrome.transitions.push(o?.type); fn(); },
+      // The kit's action sheet, only when a test hands one in: without it
+      // there is no sheet to ask with, as in a shell whose kit failed.
+      ...(opts.actionSheet ? { actionSheet: opts.actionSheet, hasKit: () => true } : {}),
     },
     // Only when a test hands one in: the default is a browser with no Web
     // Share API, which is what most desktops are.
@@ -2002,37 +2005,75 @@ test('with no confirm dialog there is no leaving', async () => {
   assert.equal(fetchCalls.length, 0);
 });
 
-test('unpinning a member app asks, once, whether to leave too', async () => {
-  const { Home, fetchCalls, win } = makeBrowse();
+// #5962: the question comes BEFORE anything moves, in one sheet, so Cancel
+// leaves Home exactly as it was. It used to be asked after the unpin had
+// landed, and the tile was gone whichever button was pressed.
+function sheetAnswering(choice, asked) {
+  return async (o) => {
+    asked.push(o);
+    return choice ? o.actions.find((a) => a.choice === choice) : null;
+  };
+}
+
+test('removing a member app asks first, and Cancel changes nothing (#5962)', async () => {
+  const asked = [];
+  const { Home, fetchCalls } = makeBrowse({ actionSheet: sheetAnswering(null, asked) });
   const mine = app({ slug: 'mine', name: 'Mine', is_member: true, is_favorited: true, created_by: 77 });
   Home._apps = [mine];
-  const asked = [];
-  win.ConfirmModal = { show: async (o) => { asked.push(o); return true; } };
   await Home.toggleAdded('mine', false, () => {});
-  assert.equal(asked.length, 1, 'one question, the leave question — not a second confirm after it');
-  assert.equal(asked[0].title, 'Leave Mine too?');
-  assert.equal(asked[0].cancelLabel, 'Stay a member');
-  assert.deepEqual(fetchCalls.map((c) => [c.url, c.body]), [
-    ['/api/apps/mine/favorite', { favorited: false }],
-    ['/api/apps/mine/membership', { joined: false }],
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0].title, 'Remove Mine from your Home screen? You can stay a member, or leave it too and stop proposing and voting on its changes.');
+  assert.deepEqual(JSON.parse(JSON.stringify(asked[0].actions.map((a) => [a.label, !!a.destructive]))), [
+    ['Remove from Home', false],
+    ['Remove and leave Mine', true],
   ]);
-  assert.equal(mine.is_member, false);
+  assert.equal(mine.is_favorited, true, 'the tile is still on Home');
+  assert.equal(mine.is_member, true);
+  assert.equal(fetchCalls.length, 0, 'nothing is sent');
 });
 
-test('"Stay a member" keeps the membership; nobody is asked who is not in it, or who started it', async () => {
-  const { Home, fetchCalls, win } = makeBrowse({ user: { id: 5 } });
+test('"Remove from Home" unpins and keeps the membership; "Remove and leave" does both (#5962)', async () => {
   const asked = [];
-  win.ConfirmModal = { show: async (o) => { asked.push(o); return false; } };
-  const stay = app({ slug: 'stay', is_member: true, is_favorited: true, created_by: 77 });
+  let answer = 'remove';
+  const { Home, fetchCalls } = makeBrowse({
+    actionSheet: async (o) => { asked.push(o); return o.actions.find((a) => a.choice === answer); },
+  });
+  const keep = app({ slug: 'keep', name: 'Keep', is_member: true, is_favorited: true, created_by: 77 });
+  const gone = app({ slug: 'gone', name: 'Gone', is_member: true, is_favorited: true, created_by: 77, view_visibility: 'private' });
+  Home._apps = [keep, gone];
+  await Home.toggleAdded('keep', false, () => {});
+  assert.equal(keep.is_favorited, false);
+  assert.equal(keep.is_member, true, 'still a member');
+  answer = 'leave';
+  await Home.toggleAdded('gone', false, () => {});
+  assert.match(asked[1].title, /ends your access until someone invites you back/, 'a private app says what leaving costs');
+  assert.deepEqual(fetchCalls.map((c) => [c.url, c.body]), [
+    ['/api/apps/keep/favorite', { favorited: false }],
+    ['/api/apps/gone/favorite', { favorited: false }],
+    ['/api/apps/gone/membership', { joined: false }],
+  ], 'one question each, and no second confirm before the leave');
+  assert.equal(gone.is_member, false);
+});
+
+test('nobody is asked who is not in it, who started it, or when there is no kit', async () => {
+  const asked = [];
+  const { Home, fetchCalls } = makeBrowse({ user: { id: 5 }, actionSheet: sheetAnswering('leave', asked) });
   const outsider = app({ slug: 'pinned', is_favorited: true });
   const mine = app({ slug: 'mine', is_member: true, is_favorited: true, created_by: 5 });
-  Home._apps = [stay, outsider, mine];
-  await Home.toggleAdded('stay', false, () => {});
-  assert.equal(stay.is_member, true, 'Stay a member');
+  Home._apps = [outsider, mine];
   await Home.toggleAdded('pinned', false, () => {});
   await Home.toggleAdded('mine', false, () => {});
-  assert.equal(asked.length, 1, 'only the member who could leave was asked');
+  assert.equal(asked.length, 0);
+  assert.equal(outsider.is_favorited, false);
+  assert.equal(mine.is_favorited, false, 'the creator\'s tile goes, unasked');
   assert.ok(fetchCalls.every((c) => !/membership/.test(c.url)));
+
+  const bare = makeBrowse();
+  const member = app({ slug: 'm', is_member: true, is_favorited: true, created_by: 77 });
+  bare.Home._apps = [member];
+  await bare.Home.toggleAdded('m', false, () => {});
+  assert.equal(member.is_favorited, false, 'no kit, no sheet: the unpin goes ahead');
+  assert.equal(member.is_member, true);
 });
 
 test('pinning marks the app joined at once, because the pin joins it', async () => {
