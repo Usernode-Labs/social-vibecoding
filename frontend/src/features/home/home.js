@@ -301,8 +301,8 @@ const Home = {
   // The remove button's action. It is the tile menu's own "Remove from My
   // apps" by another door: _menuToggleFavorite(app, false) unfavourites a
   // pinned app and, for a collaborator, hides the member pin — exactly the
-  // two branches the menu's item passes (line ~3679). The toast and the
-  // "Leave … too?" prompt for members come from toggleAdded unchanged.
+  // two branches the menu's item passes (line ~3679). The toast and, for a
+  // member, the "Remove … from Home?" question come from toggleAdded.
   _editRemove(slug) {
     const app = (Home._apps || []).find((a) => a && a.slug === slug);
     if (!app) return;
@@ -2415,6 +2415,14 @@ const Home = {
     // answered by a toast rather than by silence.
     if (app && app.demo) return;
     if (!app) return Home._favoriteUnknown(slug, desired, onChange);
+    // #5962: a member is asked BEFORE the tile moves, so Cancel leaves Home
+    // exactly as it was. The leave, when chosen, follows the unpin below.
+    let leaveToo = false;
+    if (!desired) {
+      const choice = await Home._askBeforeUnpin(app);
+      if (choice === 'cancel') return;
+      leaveToo = choice === 'leave';
+    }
     const prev = { is_favorited: app.is_favorited, your_apps_hidden: app.your_apps_hidden, is_member: app.is_member };
     // Asked BEFORE the flip, while the answer still describes where the card
     // is: an app currently in a rail stays in it for the rest of the visit.
@@ -2447,7 +2455,7 @@ const Home = {
       // does, so Home's Challenges block reads again now rather than on its
       // next refresh.
       if (desired && data && data.joined === true) Home._announceMembership(slug, true);
-      if (!desired) await Home._offerLeaveAfterUnpin(app);
+      if (leaveToo) await Home.setMembership(app.slug, false, undefined, { confirmed: true });
     } catch (err) {
       app.is_favorited = prev.is_favorited;
       app.your_apps_hidden = prev.your_apps_hidden;
@@ -2463,29 +2471,36 @@ const Home = {
   },
 
   // Taking an app off Home is not leaving it (a pin is a shortcut), but it is
-  // the moment someone might MEAN to, so it is asked, once, after the unpin
-  // has landed: "Leave <app> too?". A yes goes through setMembership with its
-  // own confirm skipped — this question already was the confirm. Asked only
-  // of a member who could leave: never of the creator (the server refuses),
-  // never of someone who is not in it, and not during the ?shot=discover-add
-  // round trip, whose unpin is a fixture's, not a person's.
-  async _offerLeaveAfterUnpin(app) {
-    if (!app || !app.is_member || app.demo || Home._quietLeaveOffer) return false;
+  // the moment someone might MEAN to, so a member is asked first, in one
+  // sheet: Remove from Home, Remove and leave, or Cancel (#5962). It used to
+  // be asked after the unpin had landed, as "Leave <app> too?", so the tile
+  // was gone whichever button was pressed. A leave goes through setMembership
+  // with its own confirm skipped: this question already was the confirm.
+  //
+  // Resolves 'remove', 'leave' or 'cancel'. Nothing is asked ('remove') of
+  // someone who could not leave: never the creator (the server refuses),
+  // never someone who is not in it, nor during the ?shot=discover-add round
+  // trip, whose unpin is a fixture's, not a person's. With no native kit
+  // there is no sheet, and the unpin goes ahead unasked, as a pin always did.
+  async _askBeforeUnpin(app) {
+    if (!app || !app.is_member || app.demo || Home._quietLeaveOffer) return 'remove';
     const me = typeof App !== 'undefined' && App.user ? App.user.id : null;
-    if (me != null && app.created_by === me) return false;
-    const confirmModal = typeof window !== 'undefined' ? window.ConfirmModal : null;
+    if (me != null && app.created_by === me) return 'remove';
+    const ui = typeof PlatformUI !== 'undefined' ? PlatformUI : null;
+    if (!ui || typeof ui.actionSheet !== 'function' || (typeof ui.hasKit === 'function' && !ui.hasKit())) {
+      return 'remove';
+    }
     const name = app.name || app.slug;
-    const ok = await confirmModal?.show?.({
-      title: message('home:leave.afterUnpin.title', { community: name }),
-      message: app.view_visibility === 'private'
-        ? message('home:leave.afterUnpin.private')
-        : message('home:leave.afterUnpin.public'),
-      confirmLabel: message('home:leave.afterUnpin.confirm'),
-      cancelLabel: message('home:leave.afterUnpin.stay'),
-      danger: true,
+    const picked = await ui.actionSheet({
+      title: app.view_visibility === 'private'
+        ? message('home:unpin.ask.private', { community: name })
+        : message('home:unpin.ask.public', { community: name }),
+      actions: [
+        { label: message('home:unpin.ask.remove'), choice: 'remove' },
+        { label: message('home:unpin.ask.leave', { community: name }), destructive: true, choice: 'leave' },
+      ],
     });
-    if (!ok) return false;
-    return Home.setMembership(app.slug, false, undefined, { confirmed: true });
+    return picked && (picked.choice === 'remove' || picked.choice === 'leave') ? picked.choice : 'cancel';
   },
 
   // Join or leave the community `slug` belongs to — Discover's Join pill,

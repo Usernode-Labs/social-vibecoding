@@ -119,25 +119,21 @@
     "text": "Update failed: {{reason}}",
     "description": "Brief notice when adding an app to My apps, or removing it, did not go through. {{reason}} is the server's own error message, or a code such as \"HTTP 500\"."
   },
-  "leave.afterUnpin.title": {
-    "text": "Leave {{community}} too?",
-    "description": "Title of the question asked right after someone removed an app from My apps while still a member of its community. {{community}} is the app's name. \"Leave\" means stop being a member."
+  "unpin.ask.private": {
+    "text": "Remove {{community}} from your Home screen? Leaving it too ends your access until someone invites you back.",
+    "description": "Title of the sheet asked before an app's tile is taken off Home, when the viewer is a member of the app's private community. {{community}} is the app's name. Its choices are Remove from Home, Remove and leave, and Cancel."
   },
-  "leave.afterUnpin.private": {
-    "text": "It’s off your Home screen. Leaving also ends your access until someone invites you back.",
-    "description": "Body of the \"Leave … too?\" question when the app's community is private."
+  "unpin.ask.public": {
+    "text": "Remove {{community}} from your Home screen? You can stay a member, or leave it too and stop proposing and voting on its changes.",
+    "description": "Title of the sheet asked before an app's tile is taken off Home, when the viewer is a member of the app's public community. {{community}} is the app's name. \"Changes\" is a noun."
   },
-  "leave.afterUnpin.public": {
-    "text": "It’s off your Home screen. You can stay a member, or leave and stop proposing and voting on its changes.",
-    "description": "Body of the \"Leave … too?\" question when the app's community is public. \"Changes\" is a noun."
+  "unpin.ask.remove": {
+    "text": "Remove from Home",
+    "description": "Choice in the sheet asked before an app's tile is taken off Home: take the tile off Home and stay a member of the app's community."
   },
-  "leave.afterUnpin.confirm": {
-    "text": "Leave",
-    "description": "Confirming button of the \"Leave … too?\" question: stop being a member of the app's community. A verb."
-  },
-  "leave.afterUnpin.stay": {
-    "text": "Stay a member",
-    "description": "The other button of the \"Leave … too?\" question: keep the membership and close the question."
+  "unpin.ask.leave": {
+    "text": "Remove and leave {{community}}",
+    "description": "Destructive choice in the sheet asked before an app's tile is taken off Home: take the tile off Home and stop being a member of the app's community. {{community}} is the app's name."
   },
   "leave.confirm.title": {
     "text": "Leave {{community}}?",
