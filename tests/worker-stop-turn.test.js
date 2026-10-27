@@ -370,7 +370,7 @@ test('a pending stop makes execInWorker skip the dispatch entirely', async () =>
   const { worker, calls, restore } = loadWorker();
   try {
     warmSession(worker, 8100);
-    await worker.stopTurn(8100);
+    worker.noteStopPending(8100);
     const afterStop = calls.length;
 
     const state = await worker.execInWorker(8100, {
@@ -599,13 +599,16 @@ test('a stop landing DURING the dispatch re-issues the kill', async () => {
   // in the milliseconds while `docker exec -d` is in flight, so its kill
   // found no turn process. The re-arm fires once the registry knows this
   // turn's journal path, which is what makes the marker land.
-  let worker;
+  let worker; const confirmations = [];
+  const interrupts = require('../src/services/worker-interrupt');
+  const originalConfirm = interrupts.confirmDispatchedStop;
+  interrupts.confirmDispatchedStop = async (_pool, target) => { confirmations.push(target); };
   const { calls, restore, worker: w } = loadWorker({
     journalLines: ['__USERNODE_EXIT__ 143'],
     onExec: async ({ args }) => {
       // Simulate the click landing between `exec -d` being issued and it
       // returning — stamp the record the way POST /stop would.
-      if (args[0] === 'exec' && args[1] === '-d') await worker.stopTurn(8200);
+      if (args[0] === 'exec' && args[1] === '-d') worker.noteStopPending(8200, 'root');
     },
   });
   worker = w;
@@ -630,7 +633,12 @@ test('a stop landing DURING the dispatch re-issues the kill', async () => {
     // the whole point of re-arming after dispatch rather than before.
     assert.match(script, /J='\/home\/node\/\.claude\/turn-[A-Za-z0-9-]+\.log'/,
       'the kill targets this UUID-safe logical turn journal');
-  } finally { restore(); }
+    assert.equal(confirmations.length, 1);
+    assert.equal(confirmations[0].sessionId, 8200);
+    assert.equal(confirmations[0].by, 'root', 'the real stopper reaches the system backstop');
+    assert.equal(confirmations[0].journal, `/home/node/.claude/turn-${confirmations[0].turnId}.log`);
+    assert.ok(script.includes(confirmations[0].journal), 'the durable backstop targets the same dispatched job');
+  } finally { interrupts.confirmDispatchedStop = originalConfirm; restore(); }
 });
 
 test('with no stop pending, a dispatch proceeds and issues no kill', async () => {
@@ -1067,6 +1075,27 @@ test('a stop by journal on a session with no worker stops nothing, and does not 
   try {
     assert.equal(await worker.stopTurnByJournal(8401, JOURNAL), 'not_current');
   } finally { restore(); }
+});
+
+test('ordinary journal stop preserves TERM grace and fences the journal before signalling', async () => {
+  const { worker, calls, restore } = loadWorker();
+  try {
+    assert.equal(await worker.stopTurnByJournal(8402, JOURNAL, { force: false, timeoutMs: 4321 }), 'signalled');
+    const script = calls[0].args[4];
+    assert.ok(script.indexOf(`[ "$N" = '${JOURNAL}' ]`) < script.indexOf('kill -TERM'));
+    assert.ok(script.indexOf('kill -TERM') < script.indexOf('sleep 0.1'));
+    assert.ok(script.indexOf('sleep 0.1') < script.indexOf('kill -KILL'));
+    assert.equal(calls[0].opts.timeout, 4321);
+  } finally { restore(); }
+});
+
+test('retry-time worker cancellation returns false on web without runtime access', async t => {
+  const before = process.env.PROCESS_ROLE; process.env.PROCESS_ROLE = 'web';
+  t.after(() => { if (before == null) delete process.env.PROCESS_ROLE; else process.env.PROCESS_ROLE = before; });
+  const worker = require('../src/services/worker');
+  t.mock.method(worker, 'stopTurn', () => { throw new Error('web signal'); });
+  t.mock.method(worker, 'isWorkerExecuting', () => { throw new Error('web probe'); });
+  assert.equal(await require('../src/services/worker-interrupt').waitForTurnStopped(8402, 'unused'), false);
 });
 
 test('a machine stops only its own turn: another machine\'s, a person\'s or another kind is left alone', async () => {

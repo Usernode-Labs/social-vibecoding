@@ -65,7 +65,8 @@ import { MACHINE as WORKER_RELEASE, WORK as RELEASE_WORKER, releaseKey as worker
 import type { Request as WorkerReleaseRequest } from './worker-release/machine.ts';
 import { workerReleaseServices } from './worker-release/services.ts';
 import { workerStop } from './worker-stop/machine.ts';
-import { workerStopServices } from './worker-stop/services.ts';
+import { workerStopServices, workerInterruptServices } from './worker-stop/services.ts';
+import { workerInterrupt, requestWorkerInterrupt as askWorkerInterrupt } from './worker-stop/interrupt.ts';
 import { requestWorkerStop as askWorkerStop } from './worker-stop/request.ts';
 import { JOBS as CLOCK_JOBS, JOB_NAMES as CLOCK_JOB_NAMES } from './clock/services.ts';
 import { requestKey as botRequestKey } from './rules/bot-loop.ts';
@@ -250,7 +251,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const trials = shotsEval(evalDeps(config));
   // People's turns: a conversation's, a change's (turn/).
   const turns = turnMachine();
-  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, trials, turns, releases, clocks, workerPush(), workerRelease(), workerStop()];
+  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, trials, turns, releases, clocks, workerPush(), workerRelease(), workerStop(), workerInterrupt()];
   knownEvents = new Map(machines.map((m) => [m.name, new Set(m.events.keys())]));
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
@@ -262,6 +263,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     ...workerPushServices({ pool: appPool }),
     ...workerReleaseServices({ pool: appPool }),
     ...workerStopServices({ pool: appPool }),
+    ...workerInterruptServices({ pool: appPool }),
     ...releaseServices({ adoptions: ADOPTIONS }),
     ...clockServices(CLOCK_JOBS, { config, pool: appPool }),
   };
@@ -1182,6 +1184,10 @@ export function requestWorkerPush(sessionId: number, branchName?: string) {
 
 export function requestWorkerStop(p: Parameters<typeof askWorkerStop>[2]) {
   return askWorkerStop(running(), kernelPool!, p);
+}
+
+export function requestWorkerInterrupt(p: Parameters<typeof askWorkerInterrupt>[2]) {
+  return askWorkerInterrupt(running(), kernelPool!, p);
 }
 
 // Called in the context reset's transaction, or once for a promoted Pause.

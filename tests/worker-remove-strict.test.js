@@ -28,6 +28,25 @@ function runtime(mode, t) {
 }
 const NO_WAIT = { pollMs: 1 };
 
+test('legacy Docker Stop targets the captured id and retains the stopped container and volume', async t => {
+  runtime('docker', t); const calls = []; const queries = [];
+  t.mock.method(require('../src/db/pool'), 'getPool', () => ({ query: async sql => { queries.push(sql); return { rows: [] }; } }));
+  worker.adoptWarmWorker(41, 'usernode-worker-41'); worker.noteStopPending(41);
+  const pending = worker.getPendingStop(41);
+  swap(docker, 'execFileAsync', async (_cmd, args) => {
+    calls.push(args);
+    if (args[0] === 'inspect') return { stdout: 'captured-container-id\n' };
+    assert.deepEqual(args, ['stop', 'captured-container-id']); return { stdout: '' };
+  }, t);
+  swap(docker, 'stopAndRemove', async () => { throw new Error('ordinary Docker Stop must retain the container'); }, t);
+  swap(docker, 'getContainerStatus', async id => { assert.equal(id, 'captured-container-id'); return 'exited'; }, t);
+  assert.deepEqual(await worker.stopWorkerByIdentity(41, { ...NO_WAIT, proceed: async () => true }), { stopped: true });
+  assert.equal(calls.some(args => ['rm', 'volume'].includes(args[0])), false);
+  assert.equal(worker.getPendingStop(41), pending, 'the spin-up gate survives a Docker stop');
+  assert.ok(worker.warmRegistrySnapshot().some(e => e.sessionId === 41), 'the stopped container remains tracked');
+  assert.equal(queries.some(sql => /DELETE FROM session_workers/.test(sql)), false, 'the sweeper can still find the container');
+});
+
 // ── worker.js, against the Kubernetes helpers ──────────────────────────
 
 test('removeWorker reads the worker by identity, asks to proceed, deletes those, and answers once they are gone', async (t) => {

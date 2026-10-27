@@ -10,50 +10,10 @@
 // "Stop signal sent". The agent then ran for another 17m51s with the
 // button frozen on "Stopping…".
 //
-// The route now CONFIRMS the stop instead: probe the container, re-issue
-// the kill while a turn process is still (or newly) there, and stop
-// probing on a definite idle, on running out of attempts, or on the
-// deadline. That loop needs docker; the decision it makes does not — so
-// the decision lives here, pure and unit-testable, same pattern as
-// services/turn-watchdog.js.
-
-// How often the confirm loop probes the container.
-const STOP_PROBE_INTERVAL_MS = 2000;
-
-// How long the confirm loop may keep probing. Past this the stop is
-// declared unconfirmed and the user's Force stop is the remaining path.
-const STOP_CONFIRM_TIMEOUT_MS = 30000;
-
-// How many kill signals one stop request may send in total (the initial
-// one plus re-issues). Bounded so a container that is wedged at the
-// docker-daemon level can't have execs piled onto it forever.
-const STOP_MAX_KILL_ATTEMPTS = 3;
-
-// Decide what the confirm loop does after one probe.
-//
-//   executing  — worker.isWorkerExecuting() tri-state: true (a turn
-//                process is present), false (definitely idle), null
-//                (probe failed / unobservable).
-//   attempts   — kill signals sent so far for this stop request (the
-//                initial stopTurn counts as 1).
-//   elapsedMs  — ms since the stop was requested.
-//
-// Returns 'confirmed' (the turn process is gone — stop probing),
-// 'retry' (re-issue the kill and keep probing), or 'giveup' (out of
-// attempts or past the deadline — stop probing, log it).
-//
-// Note the ordering: a definite idle wins over both bounds, so a stop
-// that lands on the very last probe is still recorded as confirmed
-// rather than as a give-up.
-function classifyStopProbe({ executing, attempts, elapsedMs }) {
-  if (executing === false) return 'confirmed';
-  if (!(elapsedMs < STOP_CONFIRM_TIMEOUT_MS)) return 'giveup';
-  if (!(attempts < STOP_MAX_KILL_ATTEMPTS)) return 'giveup';
-  // true = a turn process is running (the kill missed it, or it started
-  // after the kill); null = unobservable, which after a stop request is
-  // more likely a wedged container than a healthy one. Both re-issue.
-  return 'retry';
-}
+// The local pending flag gates dispatch. If Stop crosses an exec already
+// in flight, that dispatcher signals and queues durable confirmation for
+// its own recorded turn. The conductor probes and re-signals within the
+// attempt/deadline budget in workflow/rules/worker-interrupt.ts.
 
 // #937: the pre-dispatch gate. A stop handle whose `stopped` flag is set
 // means the user has already asked for this turn to end, so no further
@@ -105,17 +65,13 @@ function classifyStopRequest({ handle, force = false }) {
 // only the abort ran — and the abort is inert outside the Anthropic
 // stream. The build then dispatched with `stopped === true`.
 //
-// Killing early is harmless: there is nothing to kill yet, and the point
-// of the call is the pending-stop stamp.
+// The local pending-stop stamp precedes admission, even before a process
+// exists to signal.
 function killsWorkerInPhase(phase) {
   return phase === 'cc' || phase === 'mayor1';
 }
 
 module.exports = {
-  STOP_PROBE_INTERVAL_MS,
-  STOP_CONFIRM_TIMEOUT_MS,
-  STOP_MAX_KILL_ATTEMPTS,
-  classifyStopProbe,
   classifyStopRequest,
   killsWorkerInPhase,
   stopPendingFor,

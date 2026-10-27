@@ -30,6 +30,7 @@ const docker = require('../services/docker');
 const applicationRuntime = require('../services/application-runtime');
 const caddy = require('../services/caddy');
 const worker = require('../services/worker');
+const { waitForTurnStopped } = require('../services/worker-interrupt');
 const branchNames = require('../services/branch-names');
 const agentTurn = require('../services/agent-turn');
 const registry = require('../agents/registry');
@@ -446,10 +447,10 @@ const {
 const {
   getMayorSystemPrompt,
 } = require('../services/mayor/prompt');
-// #937: pure stop policy — the pre-dispatch gate predicate and the
-// confirm-loop's retry/give-up decision. Kept out of here so both are
-// unit-testable without docker (same pattern as services/turn-watchdog).
+// #937: pure local stop policy and pre-dispatch gates. Confirmation belongs to the
+// conductor's interrupt machine.
 const stopPolicy = require('../services/stop-policy');
+const { legacyTurnKey } = require('../workflow/worker-stop/target.ts');
 const { stopPendingFor } = stopPolicy;
 
 // A turn can lose its database connection after the detached worker has
@@ -10556,23 +10557,6 @@ async function codexProviderFailureText(pool, userId, result) {
   });
 }
 
-const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// #937: confirm a stop actually landed, instead of firing one kill and
-// assuming. Runs DETACHED from the POST /stop request (the user gets their
-// response immediately; this keeps working behind it).
-//
-// The original defect: during worker spin-up there is no turn process to
-// kill — the container may not even exist — so the single in-container
-// TERM/KILL walk matched nothing and exited 0, `worker.stopTurn` logged
-// "Stop signal sent", and the agent then started and ran to completion.
-// Probing lets us notice that the process is still (or newly) there and
-// send the kill again; combined with the pending-stop record the agent
-// usually never starts at all, and this is the backstop for when it does.
-//
-// The loop exits early when the turn unwinds on its own — the chat handler
-// deletes its stop handle from the registry, so a handle mismatch means
-// there is nothing left to kill.
 // Shared entry point for classic sessions and agent conversations. The caller
 // receives an HTTP-shaped result with common ownership, durable intent and
 // confirmation. Agent conversations request immediate hard cancellation;
@@ -10634,14 +10618,14 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
     // (services/turns.js, forwarded). What is left is the durable path
     // below (the stamp, and the kill inside the worker), which reaches a
     // turn from any process.
-    const capturedTurn = force || immediate ? await turnLifecycle.loadActiveTurn(pool, sessionId) : null;
-    const expectedJob = force || immediate ? {
+    const capturedTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    const expectedJob = {
       active: !!capturedTurn, turnId: turnLifecycle.turnIdentity(capturedTurn), journal: capturedTurn?.journal || null,
-    } : undefined;
+      ...(legacyTurnKey(capturedTurn) ? { legacy: legacyTurnKey(capturedTurn) } : {}),
+    };
     const handle = stopRegistry.get(sessionId);
     if (expectedTurnId) {
-      const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
-      if (turnLifecycle.turnIdentity(current) !== expectedTurnId) {
+      if (turnLifecycle.turnIdentity(capturedTurn) !== expectedTurnId) {
         return { status: 409, body: { error: 'The running job changed. Refresh its status before stopping it.', code: 'turn_changed' } };
       }
     }
@@ -10668,19 +10652,22 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
     }
 
     if (action === 'no_active_turn') {
-      const durable = await turnLifecycle.loadActiveTurn(pool, sessionId);
+      const durable = capturedTurn;
       if (durable && turnLifecycle.RECOVERABLE_PHASES.has(turnLifecycle.phaseOf(durable))) {
-        const marked = await turnLifecycle.markStopRequested(pool, {
-          sessionId, turnId: durable.turnId, journal: durable.journal, by: user.username,
-        });
-        if (turnLifecycle.turnIdentity(marked.activeTurn) !== turnLifecycle.turnIdentity(durable)) {
-          return { status: 409, body: { error: 'The running job changed. Try Stop again.', code: 'turn_changed' } };
+        if (turnLifecycle.turnIdentity(durable) || durable.journal) {
+          const marked = await turnLifecycle.markStopRequested(pool, {
+            sessionId, turnId: turnLifecycle.turnIdentity(durable), journal: durable.journal, by: user.username,
+          });
+          if (turnLifecycle.turnIdentity(marked.activeTurn) !== turnLifecycle.turnIdentity(durable)) {
+            return { status: 409, body: { error: 'The running job changed. Try Stop again.', code: 'turn_changed' } };
+          }
         }
         await pool.query('UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1', [sessionId]);
         // A different process may own the journal consumer. The durable
         // request survives its restart; signalling the worker ends the job,
         // and only its normal cleanup/recovery releases the busy record.
-        await worker.stopTurn(sessionId);
+        worker.noteStopPending(sessionId, user.username);
+        await requestOrdinaryStop(sessionId, user, { expectedTurnId, expectedJob });
         await scheduleRetainedInteractiveTurn({ pool, sessionId, scheduleInteractiveRecovery });
         return { status: 202, body: { stopped: true, stopping: true } };
       }
@@ -10731,6 +10718,8 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
 
     handle.stopped = true;
     handle.stoppedBy = user.username;
+    // Spin-up gates must see the intent before aborting or awaiting admission.
+    if (stopRegistry.get(sessionId) === handle) worker.noteStopPending(sessionId, user.username);
     // #937: stamped once, on the FIRST stop for this turn, so the client's
     // escalation ladder survives a reload (GET /status serves it) and a
     // repeat POST — the 15s retry — doesn't reset the user's clock.
@@ -10780,7 +10769,7 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
     // journal; none of that is a reason to refuse a stop the handle can
     // already honour, so a failure here only warns.
     try {
-      const durableTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+      const durableTurn = capturedTurn;
       if (durableTurn && (durableTurn.turnId || durableTurn.journal)) {
         await turnLifecycle.markStopRequested(pool, {
           sessionId,
@@ -10812,7 +10801,7 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
     // laptop. Mark the turn stopped: awaitTurnResult unblocks immediately
     // (so the tail below unwinds at the same speed as a container kill), and
     // the CLI learns about it on its next progress POST, which now 409s.
-    // The confirm loop below is skipped for these: it probes a worker
+    // Container confirmation is skipped for these: it probes a worker
     // container this turn never had, so every probe would report "idle" and
     // the log line would claim a kill it never sent.
     if (handle.localTurnId) {
@@ -10832,122 +10821,40 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
       return { status: 200, body: { ok: true, stopped: true, forced: true, phase: handle.phase } };
     }
 
-    if (!handle.localTurnId && stopPolicy.killsWorkerInPhase(handle.phase)) {
-      // Detached-turn path: the CC turn runs as a detached exec with no
-      // host-side child to signal, so kill run-cc.sh + claude inside
-      // the container directly. The warm wrapper (sleep infinity)
-      // survives, keeping the next dispatch fast. stopTurn also appends
-      // the journal's exit marker (#889), so the consumer resolves right
-      // away and runClaudeCodeTool's early-return branch fires in ~1s
-      // rather than on the liveness watchdog's 10s cadence.
-      //
-      // #937: this CONFIRMS rather than assumes. One fire-and-forget kill
-      // was the original defect — during spin-up there was nothing to
-      // kill, yet the log still said "Stop signal sent". See
-      // confirmStopLanded; see killsWorkerInPhase for why 'mayor1' counts.
-      //
-      // At most ONE loop per turn. Repeat stops for the same turn are
-      // expected — the client re-POSTs once at its 15s rung, and a force
-      // arrives as a second request — and each starting its own loop would
-      // multiply the bounded kill-attempt budget by the number of clicks.
-      // The force path does its own, more aggressive teardown regardless.
-      if (!handle.confirming && action !== 'force') {
-        handle.confirming = true;
-        confirmStopLanded(sessionId, handle)
-          .catch((err) => log.warn('sessions', 'stop confirm loop failed', { sessionId, err: err.message }))
-          // Cleared on settle, so a stop re-requested AFTER a loop gave up
-          // gets a fresh attempt budget rather than being silently ignored.
-          .finally(() => { handle.confirming = false; });
-      }
-    } else if (handle.workerName) {
-      // Legacy single-shot fallback: stop the whole worker through its
-      // runtime. Kubernetes removes the Deployment and retains the workspace;
-      // Docker keeps the existing stop-only behavior.
-      worker.stopWorker(handle.workerName)
-        .catch((err) => log.warn('sessions', 'Worker stop failed', { err: err.message }));
-    }
-
+    // Disarm above, then cancel the local stream before waiting for admission.
     try { handle.abort.abort(); } catch {}
+    try {
+      if (!handle.localTurnId && (stopPolicy.killsWorkerInPhase(handle.phase) || handle.workerName)) {
+        await requestOrdinaryStop(sessionId, user, {
+          expectedTurnId, expectedJob, strategy: stopPolicy.killsWorkerInPhase(handle.phase) ? 'turn' : 'worker',
+        });
+      }
+    } catch (err) {
+      // The captured local turn is already stopped. A replacement record is
+      // fenced out; its own dispatcher handles a Stop crossing spin-up.
+      if (err.code !== 'turn_changed') throw err;
+    }
 
     return { status: 200, body: { ok: true, stopped: true, phase: handle.phase } };
 }
 
-async function confirmStopLanded(sessionId, handle) {
-  const startedMs = Date.now();
-  const containerName = handle?.workerName || worker.workerContainerName(sessionId);
-  let attempts = 0;
-
-  const sendKill = async () => {
-    attempts += 1;
-    await worker.stopTurn(sessionId).catch(
-      (err) => log.warn('sessions', 'stopTurn failed', { sessionId, attempts, err: err.message })
-    );
-  };
-
-  await sendKill();
-
-  for (;;) {
-    await sleepMs(stopPolicy.STOP_PROBE_INTERVAL_MS);
-    if (stopRegistry.get(sessionId) !== handle) {
-      log.info('sessions', 'Stop confirmed (turn unwound)', {
-        sessionId, attempts, elapsedMs: Date.now() - startedMs,
-      });
-      return 'confirmed';
-    }
-    const executing = await worker.isWorkerExecuting(containerName);
-    const verdict = stopPolicy.classifyStopProbe({
-      executing, attempts, elapsedMs: Date.now() - startedMs,
-    });
-    if (verdict === 'confirmed') {
-      log.info('sessions', 'Stop confirmed (worker idle)', {
-        sessionId, attempts, elapsedMs: Date.now() - startedMs,
-      });
-      return verdict;
-    }
-    if (verdict === 'giveup') {
-      // The one line that makes the next incident of this class
-      // diagnosable from the platform log alone. Force stop is the user's
-      // remaining path, and their UI is already offering it by now.
-      log.warn('sessions', 'Stop NOT confirmed — worker still executing', {
-        sessionId, containerName, attempts, executing,
-        elapsedMs: Date.now() - startedMs,
-      });
-      return verdict;
-    }
-    log.info('sessions', 'Stop unconfirmed — re-issuing kill', {
-      sessionId, containerName, attempts, executing,
-    });
-    await sendKill();
-  }
+// Only admission is awaited. Confirmation's timer and attempts are durable;
+// the owning turn still unwinds and releases its own record and local hold.
+async function requestOrdinaryStop(sessionId, user, { strategy = 'turn', expectedTurnId = null, expectedJob } = {}) {
+  await require('../workflow/platform.ts').requestWorkerInterrupt({ sessionId, userId: user.id, strategy, expectedTurnId, expectedJob });
 }
 
 // A force stop's runtime effects are the conductor's. The originating
 // process only releases the exact local handle once termination is confirmed.
 async function requestForceStop(sessionId, user, handle, { expectedTurnId = null, expectedJob } = {}) {
   const generation = activeWorkers.generation(sessionId);
-  worker.noteStopPending(sessionId);
+  worker.noteStopPending(sessionId, user.username);
   await require('../workflow/platform.ts').requestWorkerStop({ sessionId, userId: user.id, expectedTurnId, expectedJob });
   const current = stopRegistry.get(sessionId);
   if (current === handle || (!current && !handle)) {
     activeWorkers.deleteIf(sessionId, generation);
     stopRegistry.deleteIf(sessionId, handle);
     try { handle?.send?.('stopped', { phase: handle.phase, by: user.username, forced: true }); handle?.send?.('done', {}); } catch {}
-  }
-}
-
-// Pre-retry safety: kill any zombie turn process and wait (bounded) for
-// the container to probe idle, so the re-dispatch can't race two claudes
-// in one container (the new wrapper's `rm -f turn-*.log` only runs once
-// the old turn is confirmed dead). Returns whether idle was confirmed;
-// the caller retries either way — worst case the dispatch itself fails.
-async function waitForTurnStopped(sessionId, containerName, { timeoutMs = 30000 } = {}) {
-  try { await worker.stopTurn(sessionId); } catch {}
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const busy = await worker.isWorkerExecuting(containerName);
-    if (busy === false) return true;
-    if (Date.now() >= deadline) return false;
-    await new Promise((r) => setTimeout(r, 2000));
   }
 }
 

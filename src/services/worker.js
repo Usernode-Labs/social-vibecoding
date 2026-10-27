@@ -4271,6 +4271,11 @@ async function execInWorker(sessionId, {
         sessionId, containerName, journal,
       });
       await stopTurn(sessionId).catch(() => {});
+      // Stop may have captured no record before this exec. Confirm this
+      // dispatch's actual journal durably, without waiting on another work item.
+      await require('./worker-interrupt').confirmDispatchedStop(_getPoolSafe(), {
+        sessionId, turnId: durableTurnId, journal, by: _registryGet(sessionId)?.stopRequestedBy || null,
+      }).catch(err => log.warn('worker', 'Late-dispatch stop confirmation could not be queued', { sessionId, code: err.code }));
     }
 
     const state = newWatchState();
@@ -4893,13 +4898,13 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
 //
 // `stopRequestedAt` on the registry entry tightens the watchdog cadence as
 // a fallback for the case where this append doesn't land at all.
-async function stopTurn(sessionId, { force = false } = {}) {
+async function stopTurn(sessionId, { force = false, timeoutMs = force ? 5000 : 30000 } = {}) {
   const meta = _registryGet(sessionId);
   const containerName = meta?.containerName || workerRuntimeName(sessionId);
   _registryUpsert(sessionId, { stopRequestedAt: Date.now() });
   const command = execWorkerCommand(containerName, ['sh', '-c',
     buildTurnStopScript(meta?.journal || null, { force }),
-  ], null, { timeoutMs: force ? 5000 : 30000 });
+  ], null, { timeoutMs });
   if (force) {
     const result = await command;
     return /__USERNODE_STOP_CONFIRMED__/.test(result?.stdout || '');
@@ -4925,13 +4930,16 @@ async function stopTurn(sessionId, { force = false } = {}) {
 function clearPendingStop(sessionId) {
   const sid = Number(sessionId);
   if (!_warmRegistry.has(sid)) return;
-  _registryUpsert(sid, { stopRequestedAt: null });
+  _registryUpsert(sid, { stopRequestedAt: null, stopRequestedBy: null });
 }
 
 // The originating process's spin-up gate, without worker exec or a last-use
 // write that could invalidate the queued request's captured worker state.
-function noteStopPending(sessionId) {
-  _registryUpsert(Number(sessionId), { stopRequestedAt: Date.now() }, false);
+// Carry known attribution to the dispatch backstop; never infer it from ownership.
+function noteStopPending(sessionId, by = null) {
+  const sid = Number(sessionId);
+  _registryUpsert(sid, { containerName: _registryGet(sid)?.containerName || workerRuntimeName(sid),
+    stopRequestedAt: Date.now(), stopRequestedBy: by ? String(by).slice(0, 100) : null }, false);
 }
 
 // Epoch ms of the pending stop for this session, or null when none is
@@ -4943,12 +4951,14 @@ function getPendingStop(sessionId) {
 // Kill the turn whose journal is `journal`, and only while it is the
 // newest turn on the worker: a turn started after it (its own journal,
 // newer) is never touched, so a Stop meant for one turn cannot end the
-// next. Forced: the turn's processes are frozen, killed and confirmed, and
-// the journal gets its exit marker. Resolves 'stopped', 'not_current' (a
+// next. By default the turn's processes are frozen, killed and confirmed,
+// and the journal gets its exit marker. With force:false it retains the
+// ordinary TERM/grace/KILL script and returns 'signalled'; confirmation
+// belongs to the interrupt machine. Resolves 'stopped', 'not_current' (a
 // newer turn, or no such journal) or throws when the kill could not be
 // confirmed. Touches no registry flag: nothing here is this process's to
 // remember.
-async function stopTurnByJournal(sessionId, journal, { timeoutMs = 15000 } = {}) {
+async function stopTurnByJournal(sessionId, journal, { timeoutMs = 15000, force = true } = {}) {
   if (!journal || !/^\/home\/node\/\.claude\/turn-[A-Za-z0-9-]+\.log$/.test(String(journal))) {
     throw Object.assign(new Error('stopTurnByJournal: a turn journal path is required'), { code: 'journal_required' });
   }
@@ -4956,7 +4966,7 @@ async function stopTurnByJournal(sessionId, journal, { timeoutMs = 15000 } = {})
   const containerName = meta?.containerName || workerRuntimeName(sessionId);
   const fence = `N=$(ls -t /home/node/.claude/turn-*.log 2>/dev/null | head -1); `
     + `[ "$N" = '${journal}' ] || { echo __USERNODE_STOP_NOT_CURRENT__; exit 0; }`;
-  const script = `${fence}; ${buildImmediateTurnStopScript(`J='${journal}'`)}`;
+  const script = `${fence}; ${buildTurnStopScript(journal, { force })}`;
   let result;
   try {
     result = await execWorkerCommand(containerName, ['sh', '-c', script], null, { timeoutMs });
@@ -4967,8 +4977,16 @@ async function stopTurnByJournal(sessionId, journal, { timeoutMs = 15000 } = {})
   }
   const out = String(result?.stdout || '');
   if (/__USERNODE_STOP_NOT_CURRENT__/.test(out)) return 'not_current';
+  if (!force) return 'signalled';
   if (/__USERNODE_STOP_CONFIRMED__/.test(out)) return 'stopped';
   throw Object.assign(new Error('stopTurnByJournal: the stop was not confirmed'), { code: 'stop_unconfirmed' });
+}
+
+// Legacy records have no journal identity. Signal the configured runtime
+// without inventing a warm registry entry or changing its last-use record.
+async function signalLegacyTurn(sessionId, { timeoutMs = 30000 } = {}) {
+  await execWorkerCommand(workerRuntimeName(sessionId), ['sh', '-c', buildTurnStopScript(null)], null, { timeoutMs });
+  return 'signalled';
 }
 
 // A machine's turn.stop work (src/workflow/turn-stop.ts): the turn on the
@@ -5852,13 +5870,6 @@ async function getWorkerStatus(containerName) {
     : docker.getContainerStatus(containerName);
 }
 
-// Legacy stop handles still exist during recovery. Kubernetes has no Docker
-// stop operation: remove the worker Deployment, preserving its workspace.
-async function stopWorker(containerName) {
-  if (usesKubernetesWorkers()) return destroyWorker(containerName);
-  await docker.execFileAsync('docker', ['stop', containerName], { timeout: 15000 });
-}
-
 // Hard teardown of a worker container. Used for session archive, error
 // recovery, and the orphan-adoption legacy path. Removes the registry
 // entry too so a follow-up ensureWorker doesn't trust stale state.
@@ -5894,12 +5905,14 @@ async function destroyWorker(containerName) {
 //     delete is accepted (a Deployment goes after its pods, a volume after
 //     the pod that mounts it), calling `renew()` while it waits; past
 //     `waitMs` it throws, and is tried again.
-// Answers { removed: true }, or { skipped: true } when `proceed()` said no.
+// Answers { removed: true } ({ stopped: true } for stopOnly), or
+// { skipped: true } when `proceed()` said no.
 // Docker's named volume carries no identity: a local stack's only.
 async function removeSessionRuntime(sessionId, {
-  volume = false, proceed = async () => true, renew = async () => {}, waitMs = 90000, pollMs = 2000,
+  volume = false, stopOnly = false, proceed = async () => true, renew = async () => {}, waitMs = 90000, pollMs = 2000,
 } = {}) {
   if (!Number.isSafeInteger(sessionId) || sessionId <= 0) throw new Error('invalid_session');
+  const kubernetesRuntime = usesKubernetesWorkers();
   const until = Date.now() + waitMs;
   const settle = async (gone) => {
     for (;;) {
@@ -5909,7 +5922,7 @@ async function removeSessionRuntime(sessionId, {
       await new Promise((r) => { setTimeout(r, pollMs); });
     }
   };
-  if (usesKubernetesWorkers()) {
+  if (kubernetesRuntime) {
     const config = kubernetesWorkerConfig();
     const ids = await kubernetes.workerIdentity(config, sessionId, { volume });
     if (!(await proceed())) return { skipped: true };
@@ -5919,9 +5932,14 @@ async function removeSessionRuntime(sessionId, {
     const id = await dockerContainerId(workerContainerName(sessionId));
     if (!(await proceed())) return { skipped: true };
     if (id) {
-      const result = await docker.stopAndRemove(id);
-      if (!result.removed) throw new Error('worker_removal_failed');
-      await settle(async () => (await docker.getContainerStatus(id)) === 'not_found');
+      if (stopOnly) {
+        await docker.execFileAsync('docker', ['stop', id], { timeout: Math.min(15000, Math.max(1, until - Date.now())) });
+        await settle(async () => ['created', 'exited', 'dead', 'not_found'].includes(await docker.getContainerStatus(id)));
+      } else {
+        const result = await docker.stopAndRemove(id);
+        if (!result.removed) throw new Error('worker_removal_failed');
+        await settle(async () => (await docker.getContainerStatus(id)) === 'not_found');
+      }
     }
     if (volume) {
       try {
@@ -5931,13 +5949,19 @@ async function removeSessionRuntime(sessionId, {
       }
     }
   }
-  _warmRegistry.delete(sessionId);
-  await noteWorkerGone(sessionId);
-  log.info('worker', volume ? 'Worker and its Claude Code volume removed' : 'Worker destroyed', { sessionId });
-  return { removed: true };
+  if (!stopOnly || kubernetesRuntime) {
+    _warmRegistry.delete(sessionId);
+    await noteWorkerGone(sessionId);
+  }
+  log.info('worker', stopOnly ? 'Worker stopped' : volume ? 'Worker and its Claude Code volume removed' : 'Worker destroyed', { sessionId });
+  return stopOnly ? { stopped: true } : { removed: true };
 }
 const removeWorker = (sessionId, opts = {}) => removeSessionRuntime(sessionId, { ...opts, volume: false });
 const removeCcVolume = (sessionId, opts = {}) => removeSessionRuntime(sessionId, { ...opts, volume: true });
+// Kubernetes removes the captured Deployment; Docker retains the stopped
+// container and its warm/sweeper records, matching the legacy Stop behavior.
+// Neither removes its volume.
+const stopWorkerByIdentity = (sessionId, opts = {}) => removeSessionRuntime(sessionId, { ...opts, volume: false, stopOnly: true });
 
 // A container's id, or null when there is none by that name.
 async function dockerContainerId(name) {
@@ -6238,7 +6262,6 @@ module.exports = {
   usesKubernetesWorkers,
   workerMemoryFor,
   getWorkerStatus,
-  stopWorker,
   describePushFailure,
   ensureWorkerImage,
   // long-lived API
@@ -6251,6 +6274,8 @@ module.exports = {
   execInWorker,
   stopTurn,
   stopTurnByJournal,
+  signalLegacyTurn,
+  stopWorkerByIdentity,
   stopOwnedTurn,
   // #937: pending-stop record (survives the dispatch it guards)
   clearPendingStop,
