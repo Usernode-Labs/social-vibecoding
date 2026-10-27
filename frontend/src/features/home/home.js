@@ -254,7 +254,7 @@ const Home = {
   // ── Edit mode (#4669) ──────────────────────────────────────────────
   //
   // Edit mode arranges My apps, like a phone's home screen: the tiles
-  // wiggle, each one grows a remove button, and "Add apps" and "Done" ride
+  // wiggle, each one grows a remove button, and "Add other apps" and "Done" ride
   // the heading. Pure UI state, per visit: load() clears it, so it is never
   // remembered between visits, and nothing here writes a preference.
   //
@@ -1078,7 +1078,7 @@ const Home = {
       };
       // A private member makes no apps until they are let in off the
       // waitlist (their Home's waitlist card says so), so no tile at all —
-      // in edit mode too (#4669): the mode's own entry, "Add apps", is the
+      // in edit mode too (#4669): the mode's own entry, "Add other apps", is the
       // button beside the heading, not this tile, so the trailing tile keeps
       // exactly the presence it has at rest.
       if (App.user?.privateMember) create = null;

@@ -824,8 +824,8 @@
     "description": "Accessible name of the small round remove button on an app tile while the My apps grid on Home is in edit mode. {{app}} is the app's name."
   },
   "edit.addTile": {
-    "text": "Add apps",
-    "description": "Button beside the My apps heading on Home while the grid is in edit mode, next to Done: it opens the sheet of apps to add."
+    "text": "Add other apps",
+    "description": "Button beside the My apps heading on Home while the grid is in edit mode, next to Done: it opens the sheet of apps not yet in My apps, to add some."
   },
   "addSheet.title": {
     "text": "Add to My apps",

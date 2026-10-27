@@ -273,7 +273,7 @@ export function HomeScreen() {
               /* The screen's one job while the tiles wiggle is arranging them,
                  and "Done" is its primary action. The treatment is BrowseLink's
                  own: 14px semibold in the accent, riding the heading row the way
-                 Discover's link does. "Add apps" rides beside it (#4669): the
+                 Discover's link does. "Add other apps" rides beside it (#4669; #5959 named it): the
                  mode's second entry, opening the same sheet the tile menu's
                  "Add to My apps" opens, so growing the shelf does not cost the
                  trailing tile its place.
