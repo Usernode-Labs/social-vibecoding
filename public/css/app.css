@@ -17415,6 +17415,12 @@ p.dev-change-issue-pointer {
   .dev-change-gate-head { flex-wrap: wrap; row-gap: 2px; }
   .dev-change-gate-name { min-width: 0; }
   .dev-change-gate-figure { white-space: nowrap; }
+  /* #5991: the pinned repeat keeps only the heading, the figure, the bar
+     and the vote; its note stays on the full card in the thread. */
+  .dev-change-gate-repeat { padding: 4px 12px 8px; }
+  .dev-change-gate-repeat .dev-change-gate { padding: 10px 12px; }
+  .dev-change-gate-repeat .dev-change-gate-act { margin-top: 8px; }
+  .dev-change-gate-repeat .dev-change-gate-note { display: none; }
 }
 
 /* ── The Workshop ──────────────────────────────────────────────────
