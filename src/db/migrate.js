@@ -54,7 +54,8 @@ async function migrate(config) {
   // a week for new members who have not verified (services/identity-rollout.js).
   await require('../services/identity-rollout').applyIdentityRollout(pool);
   // The move off GitHub (services/github-move.js): requests from their
-  // twins, and each app whose repository is now on the git host repointed.
+  // twins, each app whose repository is now on the git host repointed, and
+  // its proposals' GitHub links turned into their change pages.
   await require('../services/github-move').migrate(pool);
   log.info('db', 'Schema up to date');
   finishPhase('schemaMs');

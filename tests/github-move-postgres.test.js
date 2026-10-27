@@ -3,8 +3,9 @@
 // The boot migration of the move off GitHub (services/github-move.js)
 // against the full PostgreSQL schema: requests from their twins, each
 // recorded move applied once (the app repointed, its owner/repo keys moved,
-// its proposals given native pull requests), an app without a recorded move
-// left on GitHub, and a second boot that changes nothing. TEST_DATABASE_URL
+// its proposals given native pull requests and their GitHub links turned into
+// change pages), an app without a recorded move left on GitHub, and a second
+// boot that changes nothing. TEST_DATABASE_URL
 // selects a local test database, like the other *-postgres tests.
 
 const test = require('node:test');
@@ -33,9 +34,10 @@ test('the move migration repoints recorded apps once and copies twins', { timeou
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = '/' + name;
   const pool = new Pool({ connectionString: String(url), max: 4 });
-  const prior = { GIT_HOST_URL: process.env.GIT_HOST_URL, GIT_HOST_ORG: process.env.GIT_HOST_ORG };
+  const prior = { GIT_HOST_URL: process.env.GIT_HOST_URL, GIT_HOST_ORG: process.env.GIT_HOST_ORG, USERNODE_DOMAIN: process.env.USERNODE_DOMAIN };
   process.env.GIT_HOST_URL = 'https://git.example.test';
   process.env.GIT_HOST_ORG = 'apps';
+  process.env.USERNODE_DOMAIN = 'homeroom.example.test';
   t.after(async () => {
     for (const [k, v] of Object.entries(prior)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     await pool.end();
@@ -50,6 +52,10 @@ test('the move migration repoints recorded apps once and copies twins', { timeou
        'https://github.com/usernode-bot/todo-list-b91765', '${'a'.repeat(40)}') RETURNING id`);
   const { rows: [stays] } = await pool.query(
     `INSERT INTO apps (name, slug, repo_url) VALUES ('Homeroom', 'usernode-2d5619', 'https://github.com/Usernode-Labs/social-vibecoding')
+     RETURNING id`);
+  // An app held back on GitHub: no recorded move.
+  const { rows: [held] } = await pool.query(
+    `INSERT INTO apps (name, slug, repo_url) VALUES ('DTV', 'dtv-610ccb', 'https://github.com/usernode-bot/dtv-610ccb')
      RETURNING id`);
 
   // Twins: two of one request (the newer wins), a closed one, a governance row (not a request).
@@ -71,12 +77,26 @@ test('the move migration repoints recorded apps once and copies twins', { timeou
   await pool.query(
     `INSERT INTO title_heal_queue (owner, repo, issue_number, description) VALUES ('usernode-bot', 'TODO-LIST-B91765', 7, 'd')`);
 
-  // Its proposals: one up for a vote, one merged, one closed.
+  // Its proposals: one up for a vote, one merged, one closed, each linked to
+  // its pull request on GitHub.
+  const gh = 'https://github.com/usernode-bot/todo-list-b91765/pull';
   await pool.query(
-    `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, pr_number, pr_title, pr_body, merge_commit_sha, merged_at) VALUES
-       ($1, 1, 'dev/open', 'promoted', 20, 'Open one', 'body', NULL, NULL),
-       ($1, 1, 'dev/merged', 'archived', 21, 'Merged one', '', '${'b'.repeat(40)}', NOW()),
-       ($1, 1, 'dev/closed', 'archived', 22, 'Closed one', '', NULL, NULL)`, [moved.id]);
+    `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, pr_number, pr_url, pr_title, pr_body, merge_commit_sha, merged_at) VALUES
+       ($1, 1, 'dev/open', 'promoted', 20, '${gh}/20', 'Open one', 'body', NULL, NULL),
+       ($1, 1, 'dev/merged', 'archived', 21, '${gh}/21', 'Merged one', '', '${'b'.repeat(40)}', NOW()),
+       ($1, 1, 'dev/closed', 'archived', 22, '${gh}/22', 'Closed one', '', NULL, NULL)`, [moved.id]);
+  // The platform's and the held-back app's stay on GitHub.
+  await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, pr_number, pr_url) VALUES
+       ($1, 1, 'dev/platform', 'promoted', 5821, 'https://github.com/Usernode-Labs/social-vibecoding/pull/5821'),
+       ($2, 1, 'dev/held', 'promoted', 4, 'https://github.com/usernode-bot/dtv-610ccb/pull/4')`, [stays.id, held.id]);
+  const links = async () => (await pool.query(
+    `SELECT a.slug, cs.pr_number, cs.pr_url FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id ORDER BY cs.id`)).rows
+    .map((r) => [r.slug, r.pr_number, r.pr_url]);
+  const untouched = [
+    ['usernode-2d5619', 5821, 'https://github.com/Usernode-Labs/social-vibecoding/pull/5821'],
+    ['dtv-610ccb', 4, 'https://github.com/usernode-bot/dtv-610ccb/pull/4'],
+  ];
 
   // Before any move: twins copied, nothing repointed.
   let result = await move.migrate(pool);
@@ -92,6 +112,9 @@ test('the move migration repoints recorded apps once and copies twins', { timeou
   assert.equal(reqs[1].body, 'current text', 'the rescued board text wins over the twin');
   assert.equal((await pool.query('SELECT repo_url FROM apps WHERE id = $1', [moved.id])).rows[0].repo_url,
     'https://github.com/usernode-bot/todo-list-b91765', 'no recorded move: untouched');
+  assert.equal(result.links, 0);
+  assert.deepEqual((await links()).slice(0, 3).map((l) => l[2]), [`${gh}/20`, `${gh}/21`, `${gh}/22`],
+    'no recorded move: its links stay on GitHub');
 
   // The recovery tool records the move; the next boot applies it.
   await pool.query(
@@ -119,8 +142,19 @@ test('the move migration repoints recorded apps once and copies twins', { timeou
   assert.ok((await pool.query('SELECT applied_at FROM git_host_moves WHERE app_id = $1', [moved.id])).rows[0].applied_at);
   assert.equal((await pool.query('SELECT repo_url FROM apps WHERE id = $1', [stays.id])).rows[0].repo_url,
     'https://github.com/Usernode-Labs/social-vibecoding', 'the platform stays on GitHub');
+  // Every one of the moved app's proposals links to its change page, open,
+  // merged or closed; the platform's and the held-back app's are as they were.
+  assert.equal(result.links, 3);
+  const page = 'https://homeroom.example.test/#app/todo-list-b91765/dev/changes';
+  assert.deepEqual(await links(), [
+    ['todo-list-b91765', 20, `${page}/20`],
+    ['todo-list-b91765', 21, `${page}/21`],
+    ['todo-list-b91765', 22, `${page}/22`],
+    ...untouched,
+  ]);
 
   // A second boot changes nothing.
   result = await move.migrate(pool);
-  assert.deepEqual(result, { twins: 0, applied: [] });
+  assert.deepEqual(result, { twins: 0, applied: [], links: 0 });
+  assert.deepEqual((await links()).slice(3), untouched);
 });

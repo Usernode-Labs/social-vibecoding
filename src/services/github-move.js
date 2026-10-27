@@ -23,6 +23,15 @@
 //        path find it by the same number.
 //    An app with no recorded move is left on GitHub, untouched: the order
 //    (repository first, then repoint) cannot be got wrong silently.
+//
+// 3. The proposals' links: a moved app's proposals were opened on GitHub, so
+//    their pr_url still named GitHub's page for the pull request, dead since
+//    the suspension ("Open on GitHub" on the change's Details, `prUrl` from
+//    the connector, open, merged and closed alike). Each becomes the change's
+//    page in Homeroom, the address a proposal opened on the git host has
+//    (native-pulls changeUrl). Only a pull request of the app's own old
+//    repository, on an app whose repository is now on the git host: the
+//    platform's own repository and an app still on GitHub keep theirs.
 
 const log = require('./logger');
 const repoRef = require('./repo-ref');
@@ -58,6 +67,60 @@ const PULLS_SQL = `
    WHERE cs.app_id = $1 AND cs.pr_number > 0
    ORDER BY cs.pr_number, cs.id DESC
   ON CONFLICT (app_id, number) DO NOTHING`;
+
+// Step 3's candidates: proposals with a number on an app whose move was
+// applied, whose link is still a pull request on GitHub (as GitHub wrote
+// it). Once moved they are not candidates again.
+const GITHUB_LINKS_SQL = `
+  SELECT cs.id, cs.pr_number, cs.pr_url, a.slug, a.repo_url,
+         COALESCE(a.github_repo_url, m.github_repo_url) AS github_repo_url
+    FROM git_host_moves m
+    JOIN apps a ON a.id = m.app_id
+    JOIN chat_sessions cs ON cs.app_id = a.id
+   WHERE m.applied_at IS NOT NULL
+     AND cs.pr_number > 0
+     AND cs.pr_url ILIKE 'https://github.com/%/pull/%'
+   ORDER BY cs.id`;
+
+// Unless the link changed since it was read.
+const RELINK_SQL = `
+  UPDATE chat_sessions cs SET pr_url = l.url
+    FROM unnest($1::int[], $2::text[], $3::text[]) AS l(id, was, url)
+   WHERE cs.id = l.id AND cs.pr_url = l.was`;
+
+const GITHUB_PULL = /^(https:\/\/github\.com\/[^/\s]+\/[^/\s]+)\/pull\/\d+(?:[/?#]\S*)?$/i;
+
+/**
+ * Which candidates move, and to where: { id, was, url } for each whose link
+ * is a pull request of the app's old repository on GitHub and whose app's
+ * repository is on the git host now.
+ */
+function changePages(rows) {
+  const out = [];
+  for (const row of rows || []) {
+    const m = String(row.pr_url || '').trim().match(GITHUB_PULL);
+    if (!m || !row.slug || !(Number(row.pr_number) > 0)) continue;
+    if (!repoRef.isHosted(row.repo_url) || !repoRef.isGithub(row.github_repo_url)) continue;
+    if (!repoRef.sameRepo(m[1], row.github_repo_url)) continue;
+    out.push({ id: row.id, was: row.pr_url, url: require('./native-pulls').changeUrl(row.slug, Number(row.pr_number)) });
+  }
+  return out;
+}
+
+// Best effort: a failure logs and boot goes on; the links move next boot.
+async function relinkProposals(pool) {
+  try {
+    const { rows } = await pool.query(GITHUB_LINKS_SQL);
+    const moves = changePages(rows);
+    if (!moves.length) return 0;
+    const r = await pool.query(RELINK_SQL, [moves.map((x) => x.id), moves.map((x) => x.was), moves.map((x) => x.url)]);
+    log.info('github-move', 'Proposal links moved from GitHub to their change pages', { count: r.rowCount });
+    return r.rowCount;
+  } catch (err) {
+    log.warn('github-move', 'Proposal links not moved (query failed); tried again next boot', { err: err.message });
+    return 0;
+  }
+}
 
 const KEYED = [
   ['issue_screenshots', 'issue_owner', 'issue_repo'],
@@ -122,7 +185,9 @@ async function migrate(pool) {
     });
     try { require('./requests').invalidateApps(); } catch (_) { /* not loaded yet */ }
   }
-  return { twins: twins.rowCount, applied };
+  // After the moves, so a move applied on this boot has its links moved too.
+  const links = await relinkProposals(pool);
+  return { twins: twins.rowCount, applied, links };
 }
 
-module.exports = { migrate, TWIN_SQL, PULLS_SQL };
+module.exports = { migrate, changePages, relinkProposals, TWIN_SQL, PULLS_SQL, GITHUB_LINKS_SQL, RELINK_SQL };
