@@ -258,6 +258,7 @@ async function runTurn(steps, key, {
       return { routed: await dispatch({ ...ownerExtra }), stopped, followed: false };
     } catch (err) {
       // The dispatch failing is the turn failing, as a durable step reads it.
+      if (err?.retainActiveTurn) throw err;
       return { routed: { error: `dispatch: ${err.message}` }, stopped, followed: false };
     } finally {
       disarm();
@@ -314,6 +315,7 @@ async function runTurn(steps, key, {
         // restart): the turn failed, as a live turn whose journal broke off
         // does; its record goes with it.
         durableSteps.rethrowStop(err, `turn ${key}`);
+        if (err?.retainActiveTurn) throw err;
         log.warn('durable-turn', 'A turn a restart caught could not be followed', { sessionId: session.id, key, err: err.message });
         disarm();
         return finish({ routed: { error: `the turn could not be followed after a restart (${err.message})` }, stopped }, record);
@@ -369,6 +371,7 @@ async function runTurn(steps, key, {
     // as it always has; kept as the step's result, so a restart after it
     // reads the same failure instead of starting the turn again.
     durableSteps.rethrowStop(err, `turn ${key}`);
+    if (err?.retainActiveTurn) throw err;
     routed = { error: `dispatch: ${err.message}` };
   } finally {
     disarm();

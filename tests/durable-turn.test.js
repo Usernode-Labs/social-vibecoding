@@ -298,6 +298,26 @@ test('a journal that cannot be followed is the turn failing, its record released
   assert.ok(worker.calls.some((c) => c[0] === 'finish' && c[2] === 't-7'));
 });
 
+test('a failed rescue-record write keeps a live or recovered turn available for retry', async () => {
+  for (const path of ['dispatch', 'follow', 'inert']) {
+    const record = { turnId: 't-rescue', journal: '/j/rescue' };
+    const turn = { ...record, mode: 'build', phase: 'executing' };
+    const w = item(path === 'follow' ? { 'turn:build': {
+      phase: 'started', mode: 'build', deadlineAt: Date.now() + 60000, record,
+    } } : null);
+    const worker = fakeWorker();
+    const err = Object.assign(new Error('could not save unpushed commit'), { retainActiveTurn: true });
+    worker.resumeTurnFromJournal = async () => { throw err; };
+    await assert.rejects(durableTurn.runTurn(path === 'inert' ? durableSteps.none() : w.steps, 'build', {
+      pool: pool(path === 'follow' ? turn : null), session: SESSION, mode: 'build', budgetMs: 60000,
+      dispatch: async extra => { if (extra.onTurnRecord) await extra.onTurnRecord(record); throw err; },
+      deps: { worker, agentTurn },
+    }), e => e === err, path);
+    assert.equal(worker.calls.some(c => c[0] === 'finish'), false, path);
+    if (path !== 'inert') assert.equal(w.steps.get('turn:build').phase, 'started', path);
+  }
+});
+
 test('each restart that reaches a turn gives it two minutes back, up to ten', () => {
   assert.equal(durableTurn.allowanceMs(0), 0);
   assert.equal(durableTurn.allowanceMs(1), durableTurn.RESTART_ALLOWANCE_MS);

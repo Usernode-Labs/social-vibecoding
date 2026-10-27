@@ -12,6 +12,7 @@ const registry = require('../agents/registry');
 const turnLifecycle = require('./turn-lifecycle');
 const branchNames = require('./branch-names');
 const workerGitPush = require('./worker-git-push');
+const unpushedCommits = require('./worker-unpushed-commit');
 const llmTelemetry = require('./llm-telemetry');
 const liveAgentSpend = require('./live-agent-spend');
 const workerProgress = require('./worker-progress');
@@ -2773,7 +2774,7 @@ function noteWorkerUsed(sessionId) {
 function noteWorkerGone(sessionId) {
   const pool = _getPoolSafe();
   if (!pool) return;
-  pool.query('DELETE FROM session_workers WHERE session_id = $1', [Number(sessionId)]).catch(() => {});
+  return pool.query('DELETE FROM session_workers WHERE session_id = $1', [Number(sessionId)]).catch(() => {});
 }
 class WarmRegistry extends Map {
   delete(sessionId) { _inFlightHold(sessionId, false); return super.delete(sessionId); }
@@ -3293,6 +3294,17 @@ async function _awaitWarmReady(containerName, { onProgress, timeoutMs = WARM_REA
 // status probe before a bootstrap is registered in the warm registry.
 const _ensuring = new Map();
 
+// Rescue under the same lock as worker use/eviction, before a runner can
+// reset its checkout. Repeat at dispatch for adopted workers and attempts
+// whose own dispatch_pending record was registered after ensureWorker.
+async function prepareWorkerTurn(sessionId, turnId = null) {
+  const pool = _getPoolSafe();
+  if (!pool) throw new Error('Cannot prepare a worker without the database');
+  await require('./worker-eviction').noteUsed(pool, sessionId, {
+    prepare: () => rescueUnpushedCommit(sessionId, { turnId, forTurnStart: true }),
+  });
+}
+
 // Idempotently get a warm worker container ready for `execInWorker`.
 //
 // Cold path: spins up the container (~5-10s docker run + clone +
@@ -3300,14 +3312,16 @@ const _ensuring = new Map();
 // container is running, even across multiple concurrent callers (the
 // in-flight bootstrap promise is shared via `_warmRegistry[i].bootstrap`).
 //
-// Returns the container name. Throws if bootstrap fails — in which case
-// the registry entry is cleared so the next caller retries from scratch.
+// Returns the container name. A failed rescue keeps the worker and commit;
+// a failed bootstrap clears its registry entry so a later call can retry.
 async function ensureWorker(sessionId, {
   repoOwner, repoName, branchName,
   onProgress, temporary = false,
   // A benchmark trial's base commit (services/bench/runner.js sealedWorker):
   // the checkout reaches nothing past it. Null for every other session.
   pinnedBase = null,
+  // A caller that has already registered its own dispatch_pending attempt.
+  turnId = null,
 } = {}) {
   if (pinnedBase != null && !/^[0-9a-f]{40}$/.test(String(pinnedBase))) {
     throw new Error(`ensureWorker: the pinned base must be a full commit id, got ${pinnedBase}`);
@@ -3316,34 +3330,34 @@ async function ensureWorker(sessionId, {
   const containerName = workerRuntimeName(sessionId);
   const key = Number(sessionId);
   let running;
+  const refused = async err => {
+    if (err?.unpushedCommit && turnId != null) await releaseSkippedDispatch(sessionId, turnId);
+    throw err;
+  };
   while ((running = _ensuring.get(key))) {
     // A failed bootstrap is shared, including its bounded retries. After
     // success, inspect again with this caller's options (e.g. storage mode).
-    await running;
+    await running.catch(refused);
     await accountDeletionGuard(sessionId);
   }
   const run = ensureWorkerClaimed(sessionId, containerName, {
-    repoOwner, repoName, branchName, onProgress, temporary, pinnedBase,
+    repoOwner, repoName, branchName, onProgress, temporary, pinnedBase, turnId,
   });
   _ensuring.set(key, run);
   try {
-    return await run;
+    return await run.catch(refused);
   } finally {
     if (_ensuring.get(key) === run) _ensuring.delete(key);
   }
 }
 
 async function ensureWorkerClaimed(sessionId, containerName, {
-  repoOwner, repoName, branchName, onProgress, temporary, pinnedBase,
+  repoOwner, repoName, branchName, onProgress, temporary, pinnedBase, turnId,
 }) {
   // Used from now (services/worker-eviction.js noteUsed): an eviction under
   // way is waited for, so the status read below finds its worker gone, and
   // an eviction about to claim it finds it used.
-  const usedPool = _getPoolSafe();
-  if (usedPool) {
-    await require('./worker-eviction').noteUsed(usedPool, sessionId)
-      .catch((err) => log.warn('worker', 'Could not note a worker as used', { sessionId, err: err.message }));
-  }
+  await prepareWorkerTurn(sessionId, turnId);
 
   // Coalesce concurrent ensures — if one's already racing, await it.
   const existing = _registryGet(sessionId);
@@ -3427,15 +3441,7 @@ async function ensureWorkerClaimed(sessionId, containerName, {
         expectedImage: workerConfig?.kubernetes.workerImage || null,
       });
       if (!kubernetesWorkers) {
-        await evictWorker(sessionId).catch((err) => {
-          log.warn('worker', 'Eviction failed; falling through to bootstrap', {
-            containerName, err: err.message,
-          });
-        });
-      } else {
-        // The Recreate below replaces the Pod, and the workspace with it,
-        // without passing through evictWorker.
-        await rescueUnpushedCommit(sessionId, { branchName });
+        await evictWorker(sessionId);
       }
       // Kubernetes falls through without deleting the Deployment. Its
       // Recreate strategy updates the immutable image and stops the old Pod
@@ -3725,6 +3731,15 @@ async function execInWorker(sessionId, {
     // (change 7490, 9 Oct 2026).
     await releaseSkippedDispatch(sessionId, preRegisteredTurnId, { holdTurnRecord });
     return stopped;
+  }
+
+  try {
+    await prepareWorkerTurn(sessionId, preRegisteredTurnId);
+  } catch (err) {
+    // A refusal ran no agent. Release only this attempt's pending record,
+    // including held-tail callers; another turn's record is never ours.
+    await releaseSkippedDispatch(sessionId, preRegisteredTurnId);
+    throw err;
   }
 
   // Re-mint the JWT on every turn so the worker's auth always has at
@@ -4081,7 +4096,6 @@ async function execInWorker(sessionId, {
     activeTurnId: registryBefore.activeTurnId ?? null,
     turnByokCents: registryBefore.turnByokCents,
     turnByokSwitched: registryBefore.turnByokSwitched,
-    unpushed: registryBefore.unpushed ?? null,
     // A turn this process was already running keeps running.
     inFlight: !!registryBefore.inFlight,
   } : null;
@@ -4104,10 +4118,6 @@ async function execInWorker(sessionId, {
   _registryUpsert(sessionId, {
     inFlight: true, activeTurnMode: mode, journal, activeTurnId: durableTurnId,
     turnByokCents: 0, turnByokSwitched: false,
-    // A new turn starts from GitHub's copy of the branch (the runner resets
-    // to it), so an earlier turn's unpushed commit is no longer this
-    // worker's to rescue.
-    unpushed: null,
   });
   const activeTurnPersist = await _persistActiveTurn(sessionId, {
     turnId: durableTurnId,
@@ -4337,16 +4347,8 @@ async function execInWorker(sessionId, {
     }
     providerTerminalObserved = true;
 
-    // Successful, complete turns don't need their journal anymore; failed
-    // or markerless ones keep it on disk for debugging (the next turn's
-    // wrapper rm's it).
-    //
-    // A tail-holding caller keeps it either way until finishTurn: it is
-    // the only copy of what the turn did, and the boot-adoption resume
-    // replays it to rebuild `result` before running the tail.
-    if (!holdTurnRecord && state.execExitSeen && !state.fatalError) {
-      execWorkerCommand(containerName, ['rm', '-f', journal]).catch(() => {});
-    }
+    // finishTurn owns journal cleanup, after the finally below has saved
+    // any unpushed commit. A failed write must leave this replay source.
     return finalizeHarnessResult(state);
   } finally {
     // The agent process is done with the platform once its journal has
@@ -4371,16 +4373,13 @@ async function execInWorker(sessionId, {
     // turn's own tail (post-run stopped-check, force-stop bookkeeping)
     // still needs to know a stop was requested; clearPendingStop() at the
     // next turn's boundary is what resets it.
-    _registryUpsert(sessionId, {
-      inFlight: false, lastUsedMs: Date.now(), activeTurnMode: null,
-      journal: null, activeTurnId: null,
+    // Persist before making the worker idle or releasing the durable turn.
+    // Another conductor may claim its eviction immediately afterwards.
+    await recordFinishedCommit(sessionId, mode, execState, branchName, durableTurnId, {
+      activeTurnId: null,
       // Remembered for finishTurn so the caller's `finally` doesn't have
       // to thread the journal path back through its own scope.
       ...(holdTurnRecord ? { finishedJournal: journal, finishedTurnId: durableTurnId } : {}),
-      // What a finished build committed but could not push. The tail's heal
-      // re-pushes it (and clears this); if that fails too, evictWorker
-      // tries once more before the workspace is thrown away.
-      unpushed: unpushedCommit(mode, execState, branchName),
     });
     if (holdTurnRecord) {
       // Hand the record to the tail rather than dropping it. Seed the
@@ -5166,10 +5165,7 @@ async function resumeTurnFromJournal(sessionId, {
     // what a finished build committed but could not push is remembered so
     // the tail's heal, or failing that evictWorker, pushes it before the
     // workspace goes. A pending stop survives, as it does there (#937).
-    _registryUpsert(sessionId, {
-      inFlight: false, lastUsedMs: Date.now(), activeTurnMode: null, journal: null,
-      unpushed: unpushedCommit(turnMode, state, branchName),
-    });
+    await recordFinishedCommit(sessionId, turnMode, state, branchName, turnId);
   }
 }
 
@@ -5183,30 +5179,54 @@ function unpushedCommit(mode, state, branchName) {
   return { sha: state.sha, branchName };
 }
 
+async function recordFinishedCommit(sessionId, mode, state, branchName, turnId, patch = {}) {
+  try {
+    await unpushedCommits.record(_getPoolSafe(), sessionId, unpushedCommit(mode, state, branchName), turnId);
+  } catch (err) {
+    // Keep the durable turn and its journal for retry/replay if its rescue
+    // record could not be saved. The physical execution has still ended.
+    err.retainActiveTurn = true;
+    throw err;
+  } finally {
+    _registryUpsert(sessionId, {
+      inFlight: false, lastUsedMs: Date.now(), activeTurnMode: null, journal: null, ...patch,
+    });
+  }
+}
+
 // The workspace lives on the container's own filesystem, so evicting or
 // replacing a worker (idle, a stale image, a new runtime contract) deletes
 // any commit it still holds. For the one kind the platform means to publish,
 // a finished build's commit whose push and heal both failed, push once more
-// first. Best effort: it never blocks the eviction, and a failure is logged
-// with the sha so the commit can still be named. Sheep countrr's session
+// first. The record is durable; a failed rescue prevents every new turn,
+// requested/idle eviction and stale-worker replacement. A new turn never
+// supersedes this commit, even on a current-image worker. Sheep countrr's session
 // 5030 lost a whole feature to a stale-image replacement this way
 // (usernode-bot/sheep-countrr-a08857#48).
-async function rescueUnpushedCommit(sessionId, { branchName = null } = {}) {
-  const meta = _registryGet(sessionId);
-  const pending = meta?.unpushed;
-  if (!pending || meta?.inFlight) return { attempted: false };
-  const branch = branchName || pending.branchName;
+async function rescueUnpushedCommit(sessionId, { turnId = null, forTurnStart = false } = {}) {
+  const pending = await unpushedCommits.read(_getPoolSafe(), sessionId, { turnId, includeActive: forTurnStart });
+  if (!pending) return { attempted: false };
+  if (pending.blocked) throw Object.assign(new Error('Another turn still owns this session. Wait for it to finish before starting another turn.'), {
+    code: 'session_busy', sessionBusy: true,
+  });
+  const branch = pending.branchName;
   try {
     const pushed = await execPushFromWorker(sessionId, branch);
-    log.info('worker', 'Pushed an unpushed commit before the worker was replaced', {
+    log.info('worker', 'Preserved a finished build\'s commit', {
       sessionId, branch, sha: String(pushed?.sha || pending.sha).slice(0, 8),
     });
     return { attempted: true, pushed: true };
   } catch (err) {
-    log.warn('worker', 'Could not push an unpushed commit before the worker was replaced', {
+    log.warn('worker', 'Could not preserve a finished build\'s commit', {
       sessionId, branch, sha: pending.sha, code: err.code || null, err: err.message,
     });
-    return { attempted: true, pushed: false };
+    const reason = err.userMessage || String(err.message || 'The push failed').replace(/^push proxy failed:\s*/, '').trim().slice(0, 200);
+    const message = `An earlier build's commit ${String(pending.sha).slice(0, 8)} on ${branch} could not be pushed: ${reason}`
+      + `${/[.!?]$/.test(reason) ? '' : '.'} It is kept in this session and has to be pushed before another build can start.`;
+    throw Object.assign(new Error(message), {
+      code: err.code || 'push_failed', permanent: err.permanent === true,
+      unpushedCommit: true, userMessage: message,
+    });
   }
 }
 
@@ -5571,7 +5591,7 @@ async function evictWorker(sessionId) {
     await docker.stopAndRemove(containerName).catch(() => {});
   }
   _warmRegistry.delete(sessionId);
-  noteWorkerGone(sessionId);
+  await noteWorkerGone(sessionId);
   log.info('worker', 'Worker evicted (volume preserved)', { containerName });
 }
 
@@ -5906,7 +5926,7 @@ async function removeSessionRuntime(sessionId, {
     }
   }
   _warmRegistry.delete(sessionId);
-  noteWorkerGone(sessionId);
+  await noteWorkerGone(sessionId);
   log.info('worker', volume ? 'Worker and its Claude Code volume removed' : 'Worker destroyed', { sessionId });
   return { removed: true };
 }
@@ -6077,8 +6097,10 @@ async function execPushFromWorker(sessionId, branchName, { expectedRepoUrl, expe
   const pool = _getPoolSafe();
   const { rows: [target] = [] } = pool
     ? await pool.query(
-      `SELECT cs.app_id, cs.branch_name, cs.status, a.repo_url, u.anonymised_at FROM chat_sessions cs
-       JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1`, [sessionId],
+      `SELECT cs.app_id, cs.branch_name, cs.status, a.repo_url, u.anonymised_at,
+              sw.unpushed_sha, sw.unpushed_branch_name FROM chat_sessions cs
+       JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id
+       LEFT JOIN session_workers sw ON sw.session_id = cs.id WHERE cs.id = $1`, [sessionId],
     )
     : { rows: [] };
   if (target && ((expectedRepoUrl !== undefined && target.repo_url !== expectedRepoUrl)
@@ -6159,7 +6181,9 @@ async function execPushFromWorker(sessionId, branchName, { expectedRepoUrl, expe
     log.info('worker', 'Worker commit pushed from the platform', {
       sessionId, branch: branchName, sha: pushed.sha.slice(0, 8),
     });
-    if (_registryGet(sessionId)?.unpushed) _registryUpsert(sessionId, { unpushed: null });
+    if (target.unpushed_branch_name === branchName) {
+      await unpushedCommits.clear(pool, sessionId, target.unpushed_sha, target.unpushed_branch_name);
+    }
     return pushed;
   } catch (err) {
     const scrub = (text) => (token ? String(text || '').split(token).join('***') : String(text || ''));
@@ -6198,8 +6222,8 @@ function describePushFailure(err) {
   const detail = String(err?.message || '').trim();
   const reason = detail ? ` (${detail.substring(0, 200)})` : '';
   return {
-    text: `${lead}${reason} Retry your request to re-push and open the PR.`,
-    permanent: false,
+    text: `${lead}${reason}${permanent ? '' : ' Retry your request to re-push and open the PR.'}`,
+    permanent,
     code,
   };
 }

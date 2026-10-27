@@ -15819,6 +15819,10 @@ CREATE TABLE IF NOT EXISTS session_workers (
   last_used_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- A finished build's commit whose push failed, available to every conductor
+-- before it removes/replaces the worker containing the only copy.
+ALTER TABLE session_workers ADD COLUMN IF NOT EXISTS unpushed_sha TEXT;
+ALTER TABLE session_workers ADD COLUMN IF NOT EXISTS unpushed_branch_name TEXT;
 CREATE INDEX IF NOT EXISTS idx_session_workers_used ON session_workers (last_used_at);
 COMMENT ON TABLE session_workers IS 'staging:private';
 

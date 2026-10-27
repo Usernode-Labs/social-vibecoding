@@ -14,6 +14,7 @@ const fs = require('node:fs');
 const { Pool } = require('pg');
 
 const eviction = require('../src/services/worker-eviction');
+const unpushedCommits = require('../src/services/worker-unpushed-commit');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -49,7 +50,15 @@ test('idle workers are the eviction clock\'s, against the full PostgreSQL schema
   const runtime = { running: [], evicted: [], destroyed: [] };
   const worker = {
     listOrphanWorkers: async () => runtime.running.map((id) => ({ name: `usernode-worker-${id}`, sessionId: id, state: 'running' })),
-    evictWorker: async (id) => { runtime.evicted.push(id); },
+    evictWorker: async (id) => {
+      runtime.evicted.push(id);
+      await pool.query('DELETE FROM session_workers WHERE session_id = $1', [id]);
+    },
+    rescueUnpushedCommit: async () => ({ attempted: false }),
+    removeWorker: async (id, options) => {
+      if (!(await options.proceed())) return { skipped: true };
+      runtime.evicted.push(id); await options.renew(); return { removed: true };
+    },
     destroyWorker: async (n) => { runtime.destroyed.push(n); },
     workerContainerName: (id) => `usernode-worker-${id}`,
   };
@@ -107,7 +116,7 @@ test('idle workers are the eviction clock\'s, against the full PostgreSQL schema
     runtime.running = [raced];
     const realQuery = pool.query.bind(pool);
     pool.query = async (sql, params) => {
-      if (/DELETE FROM session_workers sw USING chat_sessions cs/.test(sql)) {
+      if (/SELECT sw.session_id FROM session_workers sw JOIN chat_sessions cs/.test(sql)) {
         await realQuery('UPDATE session_workers SET last_used_at = NOW() WHERE session_id = $1', [raced]);
       }
       return realQuery(sql, params);
@@ -123,7 +132,7 @@ test('idle workers are the eviction clock\'s, against the full PostgreSQL schema
     runtime.running = [raced];
     const realQuery = pool.query.bind(pool);
     pool.query = async (sql, params) => {
-      if (/DELETE FROM session_workers sw USING chat_sessions cs/.test(sql)) {
+      if (/SELECT sw.session_id FROM session_workers sw JOIN chat_sessions cs/.test(sql)) {
         // Its turn is recorded; its note of use has not come yet.
         await realQuery(`UPDATE chat_sessions SET active_turn = '{"turnId":"t-raced"}'::jsonb WHERE id = $1`, [raced]);
       }
@@ -159,5 +168,196 @@ test('idle workers are the eviction clock\'s, against the full PostgreSQL schema
       worker.evictWorker = realEvict;
       release();
     }
+  });
+
+  async function requested() {
+    const id = await session();
+    const { rows: [r] } = await pool.query(`UPDATE chat_sessions SET agent_config_version = 2,
+      agent_context_reset_at = NOW() - interval '1 minute' WHERE id = $1 RETURNING agent_context_reset_at::text AS at`, [id]);
+    await used(id, '10 minutes');
+    return { sessionId: id, appId: app.id, userId: user.id, configVersion: 2, reason: 'agent-reset', requestedAt: r.at, turnId: null };
+  }
+  const release = target => eviction.releaseRequested(pool, target, { worker });
+  async function until(check) {
+    const deadline = Date.now() + 3000;
+    while (!check()) {
+      if (Date.now() >= deadline) throw new Error('worker release fixture did not reach its gate');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+  await t.test('requested removal checks its claim again after reading runtime identity', async () => {
+    reset(); const target = await requested(); const remove = worker.removeWorker;
+    worker.removeWorker = async (id, options) => {
+      await pool.query('UPDATE session_workers SET last_used_at = NOW() WHERE session_id = $1', [id]);
+      return remove(id, options);
+    };
+    try {
+      assert.deepEqual(await release(target), { skipped: 'changed_or_used' });
+      assert.deepEqual(runtime.evicted, []);
+    } finally { worker.removeWorker = remove; }
+  });
+  await t.test('a new turn waits until requested removal has finished before noting worker use', async () => {
+    reset(); const target = await requested(); const remove = worker.removeWorker;
+    let reached = false; let unblock;
+    const gate = new Promise(resolve => { unblock = resolve; });
+    worker.removeWorker = async (id, options) => { reached = true; await gate; return remove(id, options); };
+    let running; let noting;
+    try {
+      running = release(target); await until(() => reached);
+      let noted = false; noting = eviction.noteUsed(pool, target.sessionId).then(() => { noted = true; });
+      await new Promise(resolve => setTimeout(resolve, 50)); assert.equal(noted, false);
+      unblock(); assert.deepEqual(await running, { released: true }); await noting;
+      assert.deepEqual(runtime.evicted, [target.sessionId]);
+      const { rows: [r] } = await pool.query(`SELECT last_used_at > $2::timestamptz AS fresh FROM session_workers WHERE session_id = $1`, [target.sessionId, target.requestedAt]);
+      assert.equal(r.fresh, true);
+    } finally { unblock(); await Promise.allSettled([running, noting]); worker.removeWorker = remove; }
+  });
+  await t.test('losing the session lock after reading runtime identity prevents deletion', async () => {
+    reset(); const target = await requested(); const remove = worker.removeWorker;
+    const locks = require('../src/db/session-locks');
+    const { WORKER_EVICTION_LOCK } = require('../src/services/advisory-locks');
+    let reached = false; let unblock;
+    const gate = new Promise(resolve => { unblock = resolve; });
+    worker.removeWorker = async (id, options) => { reached = true; await gate; return remove(id, options); };
+    let running;
+    try {
+      running = release(target);
+      const refusal = assert.rejects(running, /lost its session lock/);
+      await until(() => reached);
+      const { rows: [lock] } = await pool.query(`SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND granted
+        AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+        AND classid::bigint = $1 AND objid::bigint = $2`, [WORKER_EVICTION_LOCK, target.sessionId]);
+      assert.ok(lock, 'only the synthetic fixture database lock is targeted');
+      await pool.query('SELECT pg_terminate_backend($1)', [lock.pid]);
+      await until(() => locks.openConnections() === 0);
+      unblock(); await refusal; assert.deepEqual(runtime.evicted, []);
+    } finally { unblock(); await Promise.allSettled([running]); worker.removeWorker = remove; }
+  });
+  await t.test('a lost work claim or failed preservation of unpushed work prevents removal', async () => {
+    reset(); const target = await requested();
+    await assert.rejects(eviction.releaseRequested(pool, target, { worker, renew: async () => { throw new Error('lease lost'); } }), /lease lost/);
+    const rescue = worker.rescueUnpushedCommit;
+    worker.rescueUnpushedCommit = async () => { throw Object.assign(new Error('Could not preserve committed worker changes'), { permanent: true, code: 'github_paused' }); };
+    try { await assert.rejects(release(target), err => /Could not preserve/.test(err.message) && err.permanent !== true && err.code === 'github_paused'); }
+    finally { worker.rescueUnpushedCommit = rescue; }
+    assert.deepEqual(runtime.evicted, []);
+  });
+  await t.test('turn preparation keeps the eviction lock through rescue and notes use before release can proceed', async () => {
+    reset(); const target = await requested(); let reached = false; let unblock;
+    const gate = new Promise(resolve => { unblock = resolve; });
+    const preparing = eviction.noteUsed(pool, target.sessionId, { prepare: async () => { reached = true; await gate; } });
+    let releasing;
+    try {
+      await until(() => reached); let finished = false;
+      releasing = release(target).then(out => { finished = true; return out; });
+      await new Promise(resolve => setTimeout(resolve, 50)); assert.equal(finished, false);
+      unblock(); await preparing;
+      assert.deepEqual(await releasing, { skipped: 'changed_or_used' });
+      assert.deepEqual(runtime.evicted, []);
+    } finally { unblock(); await Promise.allSettled([preparing, releasing]); }
+  });
+  await t.test('another conductor rescues durable commits before reset/idle removal and keeps failed rescues', async t => {
+    const actualWorker = require('../src/services/worker');
+    const kubernetes = require('../src/services/kubernetes');
+    t.mock.method(require('../src/db/pool'), 'getPool', () => pool);
+    t.mock.method(require('../src/services/github'), 'canActOn', () => true);
+    t.mock.method(require('../src/services/github'), 'getInstallationToken', async () => 'fake-rescue-token');
+    const calls = []; let pushFails = true;
+    t.mock.method(require('../src/services/worker-git-push'), 'push', async options => {
+      assert.equal(options.token, 'fake-rescue-token'); calls.push('push');
+      if (pushFails) throw new Error('synthetic push outage');
+      return { sha: 'a'.repeat(40), stderr: '' };
+    });
+    t.mock.method(kubernetes, 'execInWorker', async (_config, _runtime, command) => ({
+      stdout: command[0] === 'tail'
+        ? `__USERNODE_RESULT__ cc_exit=0 ahead=1 sha=${'a'.repeat(40)} push_ok=0\n__USERNODE_EXIT__ 0\n` : '', stderr: '',
+    }));
+    t.mock.method(kubernetes, 'deleteWorker', async () => { calls.push('remove'); });
+    t.mock.method(kubernetes, 'getWorkerStatus', async () => 'running');
+    t.mock.method(kubernetes, 'getWorkerRuntimeMetadata', async config => ({
+      contractVersion: config.workerContractVersion, imageRef: config.kubernetes.workerImage, storageMode: 'persistent',
+    }));
+    const prior = process.env.WORKER_RUNTIME; process.env.WORKER_RUNTIME = 'kubernetes';
+    t.after(() => { if (prior === undefined) delete process.env.WORKER_RUNTIME; else process.env.WORKER_RUNTIME = prior; });
+    await pool.query("UPDATE apps SET repo_url = 'https://github.com/Trusted-Owner/stored-repo.git' WHERE id = $1", [app.id]);
+    for (const kind of ['reset', 'idle', 'promoted-pause', 'turn-start']) {
+      reset(); calls.length = 0; pushFails = true;
+      await pool.query('UPDATE session_workers SET last_used_at = NOW()');
+      const target = await requested(); const id = target.sessionId;
+      await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"finished-build"}'::jsonb WHERE id = $1`, [id]);
+      const commit = { sha: 'a'.repeat(40), branchName: 'b' };
+      const state = await actualWorker.resumeTurnFromJournal(id, {
+        journal: '/home/node/.claude/turn-rescue-test.log', turnId: 'finished-build', mode: 'build', branchName: 'b',
+      });
+      assert.equal(state.pushOk, false);
+      // End the recovered turn before the reset/idle request. The teardown's
+      // use timestamp must precede the reset, just as it does in production.
+      await eviction.noteUsed(pool, id);
+      await used(id, '10 minutes');
+      const { rows: [ended] } = await pool.query(`UPDATE chat_sessions SET active_turn = NULL,
+        agent_context_reset_at = NOW() WHERE id = $1 RETURNING agent_context_reset_at::text AS at`, [id]);
+      target.requestedAt = ended.at;
+      if (kind === 'promoted-pause') {
+        target.reason = 'promoted-pause';
+        await pool.query("UPDATE chat_sessions SET status = 'promoted' WHERE id = $1", [id]);
+      }
+      if (kind === 'reset') await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+      // No registry entry: this process never ran the turn that recorded it.
+      actualWorker._registryForgetForTests(id);
+      const registerNext = () => pool.query(`UPDATE chat_sessions
+        SET active_turn = '{"turnId":"next-turn","phase":"dispatch_pending","journal":"/home/node/.claude/turn-next-turn.log"}'::jsonb WHERE id = $1`, [id]);
+      if (kind === 'turn-start') await registerNext();
+      const otherConductor = { ...worker, rescueUnpushedCommit: actualWorker.rescueUnpushedCommit,
+        evictWorker: actualWorker.evictWorker,
+        removeWorker: async (...args) => { calls.push('remove'); return worker.removeWorker(...args); } };
+      const run = () => kind === 'turn-start' ? actualWorker.ensureWorker(id, { branchName: 'b', turnId: 'next-turn' }) : kind !== 'idle'
+        ? eviction.releaseRequested(pool, target, { worker: otherConductor })
+        : eviction.sweep(pool, { idleMs: 1000, deps: { worker: otherConductor } });
+      runtime.running = [id];
+      if (kind !== 'idle') await assert.rejects(run(), /An earlier build's commit aaaaaaaa/);
+      else assert.equal((await run()).evicted, 0);
+      assert.deepEqual(calls, ['push'], `${kind}: failure prevents deletion`);
+      assert.equal((await unpushedCommits.read(pool, id)).sha, commit.sha);
+      if (kind === 'turn-start') {
+        assert.equal((await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [id])).rows[0].active_turn, null, 'a refused new turn releases its own real PostgreSQL record');
+        await registerNext();
+      }
+      pushFails = false; calls.length = 0;
+      await run(); assert.deepEqual(calls, kind === 'turn-start' ? ['push'] : ['push', 'remove'], `${kind}: push precedes reuse or removal`);
+      if (kind === 'turn-start') {
+        await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [id]);
+        actualWorker._registryForgetForTests(id);
+      }
+      assert.equal(await unpushedCommits.read(pool, id), null, 'successful push clears the durable record');
+    }
+    calls.length = 0;
+    const running = await requested(); running.reason = 'promoted-pause'; running.turnId = 'captured-turn';
+    await pool.query(`UPDATE chat_sessions SET status = 'promoted', active_turn = '{"turnId":"captured-turn","phase":"executing"}'::jsonb WHERE id = $1`, [running.sessionId]);
+    await eviction.releaseRequested(pool, running, { worker: { ...worker, rescueUnpushedCommit: actualWorker.rescueUnpushedCommit,
+      removeWorker: async (...args) => { calls.push('remove'); return worker.removeWorker(...args); } } });
+    assert.deepEqual(calls, ['remove'], 'a captured running turn with no finished commit is still released');
+  });
+  await t.test('only the new attempt itself can see an older commit through its pending active_turn', async () => {
+    const id = await session(); const commit = { sha: 'a'.repeat(40), branchName: 'b' };
+    await unpushedCommits.record(pool, id, commit);
+    await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"new-turn","phase":"dispatch_pending"}'::jsonb WHERE id = $1`, [id]);
+    assert.equal(await unpushedCommits.read(pool, id), null);
+    assert.equal((await unpushedCommits.read(pool, id, { turnId: 'new-turn' })).sha, commit.sha);
+    assert.equal(await unpushedCommits.read(pool, id, { turnId: 'other-turn' }), null);
+    await pool.query(`UPDATE chat_sessions SET active_turn = active_turn || '{"phase":"executing"}'::jsonb WHERE id = $1`, [id]);
+    assert.equal(await unpushedCommits.read(pool, id, { turnId: 'new-turn' }), null, 'even a matching identity cannot rescue over an executing turn');
+  });
+  await t.test('late teardown and push completion cannot clear a newer durable commit', async () => {
+    const id = await session({ turn: { turnId: 'new-turn' } });
+    const old = { sha: 'a'.repeat(40), branchName: 'b' };
+    const next = { sha: 'b'.repeat(40), branchName: 'b' };
+    await unpushedCommits.record(pool, id, next, 'new-turn');
+    await unpushedCommits.record(pool, id, null, 'old-turn');
+    await unpushedCommits.clear(pool, id, old.sha, old.branchName);
+    assert.equal(await unpushedCommits.read(pool, id), null, 'an active turn cannot be rescued');
+    await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [id]);
+    assert.equal((await unpushedCommits.read(pool, id)).sha, next.sha);
+    await unpushedCommits.clear(pool, id, next.sha, next.branchName);
+    assert.equal(await unpushedCommits.read(pool, id), null);
   });
 });

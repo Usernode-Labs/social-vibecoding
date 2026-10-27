@@ -33,6 +33,12 @@ function setup(t, runtime = 'docker') {
   const fx = { target: { app_id: 5, branch_name: branch, repo_url: 'https://github.com/Trusted-Owner/stored-repo.git' }, queries: [], execs: [], pushes: [] };
   t.mock.method(db, 'getPool', () => ({ query: async (sql, params) => {
     fx.queries.push({ sql, params });
+    if (sql.includes('SELECT sw.unpushed_sha AS sha')) return { rows: fx.target?.unpushed_sha
+      ? [{ sha: fx.target.unpushed_sha, branchName: fx.target.unpushed_branch_name }] : [] };
+    if (sql.includes('UPDATE session_workers SET unpushed_sha = NULL') && fx.target?.unpushed_sha === params[1]
+        && fx.target.unpushed_branch_name === params[2]) {
+      fx.target = { ...fx.target, unpushed_sha: null, unpushed_branch_name: null };
+    }
     return { rows: fx.target ? [fx.target] : [] };
   } }));
   t.mock.method(docker, 'execFileAsync', async (command, args, options) => {
@@ -114,8 +120,8 @@ test('a failed worker tracking update still reports the successful trusted push'
 });
 
 test('push failures redact every occurrence of the credential and preserve unpushed state', async t => {
-  setup(t);
-  worker._registryUpsertForTests(sessionId, { unpushed: { sha, branchName: branch } });
+  const fx = setup(t);
+  Object.assign(fx.target, { unpushed_sha: sha, unpushed_branch_name: branch });
   t.mock.method(workerGitPush, 'push', async () => {
     const error = new Error(`${token} twice ${token}`);
     error.stderr = `${token} twice ${token}`;
@@ -127,7 +133,7 @@ test('push failures redact every occurrence of the credential and preserve unpus
     assert.equal(error.stderr.includes(token), false);
     return true;
   });
-  assert.deepEqual(await worker.rescueUnpushedCommit(sessionId), { attempted: true, pushed: false });
+  await assert.rejects(worker.rescueUnpushedCommit(sessionId), e => e.unpushedCommit && !e.permanent && !e.message.includes(token));
   t.mock.method(workerGitPush, 'push', async () => ({ sha, stderr: '' }));
   assert.deepEqual(await worker.rescueUnpushedCommit(sessionId), { attempted: true, pushed: true });
   assert.deepEqual(await worker.rescueUnpushedCommit(sessionId), { attempted: false });

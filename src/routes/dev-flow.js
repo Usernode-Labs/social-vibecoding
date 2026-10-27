@@ -102,6 +102,13 @@ const STATUS_BY_CODE = {
   // connector's close_work_order emits it today; mapped like already_submitted,
   // its sibling, so no service code answers a bare 400 here.
   already_closed: 409,
+  // An app on Homeroom's own git host takes a patch, never a branch or a pull
+  // request number: the caller's request was the wrong shape, as for
+  // invalid_request. And a proposal there whose code did not come across from
+  // GitHub (services/code-missing.js) cannot be revised: a 409, the state of
+  // the world rather than the caller's request.
+  patch_required: 400,
+  code_missing: 409,
 };
 
 // Same-origin guard for the two writes, copied in spirit from

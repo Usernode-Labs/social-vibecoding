@@ -451,6 +451,95 @@ test('a skipped legacy dispatch does not invent a durable turn owner', async () 
   } finally { restore(); }
 });
 
+// A build runner starts by resetting its checkout. Preserve the earlier
+// finished build before any prompt, provider request or runner can run.
+test('a new turn pushes the earlier commit before dispatching its runner', async t => {
+  let pending = { sha: 'a'.repeat(40), branchName: 'dev/test' };
+  const order = [];
+  const { worker, restore } = loadWorker({
+    journalLines: ['__USERNODE_RESULT__ cc_exit=0 ahead=1 sha=abcdef1 push_ok=1', '__USERNODE_EXIT__ 0'],
+    onExec: call => { if (isDispatch(call)) { assert.equal(pending, null); order.push('runner'); } },
+    queryAnswer: (sql, params) => {
+      if (sql.includes('SELECT sw.unpushed_sha AS sha')) return { rows: pending ? [{ ...pending, active: false }] : [] };
+      if (sql.includes('SELECT cs.app_id, cs.branch_name')) return { rows: [{ branch_name: 'dev/test', repo_url: 'https://github.com/Trusted-Owner/stored-repo.git',
+        unpushed_sha: pending?.sha, unpushed_branch_name: pending?.branchName }] };
+      if (sql.includes('UPDATE session_workers SET unpushed_sha = NULL')) { assert.equal(params[1], pending.sha); pending = null; }
+    },
+  });
+  t.mock.method(require('../src/services/github-pause'), 'codeChangesPaused', () => false);
+  t.mock.method(require('../src/services/github'), 'getInstallationToken', async () => 'fake-rescue-token');
+  t.mock.method(require('../src/services/worker-git-push'), 'push', async () => { order.push('push'); return { sha: 'a'.repeat(40), stderr: '' }; });
+  try {
+    warmSession(worker, 8314);
+    await worker.execInWorker(8314, DISPATCH_ARGS);
+    assert.deepEqual(order, ['push', 'runner']);
+  } finally { restore(); }
+});
+
+test('an unpushed commit refuses a new turn without a runner, charge or retained pending turn', async t => {
+  for (const cause of ['github_paused', 'no_token', 'bad_branch', 'transient']) {
+    for (const preRegistered of [false, true]) for (const path of ['ensure', 'dispatch']) await t.test(`${cause}, ${path}, own pending turn: ${preRegistered}`, async t => {
+      const commit = { sha: 'a'.repeat(40), branchName: cause === 'bad_branch' ? 'bad..branch' : 'dev/test' };
+      let activeTurns;
+      const fx = loadWorker({ queryAnswer: sql => {
+        if (sql.includes('SELECT sw.unpushed_sha AS sha')) {
+          const active = activeTurns.get(8315);
+          return { rows: [{ ...commit, active: !!active, turn_id: active?.turnId, phase: active?.phase }] };
+        }
+        if (sql.includes('SELECT cs.app_id, cs.branch_name')) return { rows: [{ branch_name: commit.branchName,
+          repo_url: 'https://github.com/Trusted-Owner/stored-repo.git', unpushed_sha: commit.sha, unpushed_branch_name: commit.branchName }] };
+      } });
+      ({ activeTurns } = fx);
+      t.mock.method(require('../src/services/github-pause'), 'codeChangesPaused', () => cause === 'github_paused');
+      t.mock.method(require('../src/services/github'), 'getInstallationToken', async () => cause === 'no_token' ? null : 'fake-rescue-token');
+      t.mock.method(require('../src/services/worker-git-push'), 'push', async () => { throw new Error('Synthetic network outage'); });
+      try {
+        warmSession(fx.worker, 8315);
+        if (preRegistered) activeTurns.set(8315, { turnId: 'new-turn', phase: 'dispatch_pending', journal: '/home/node/.claude/turn-new-turn.log' });
+        const attempt = path === 'ensure'
+          ? fx.worker.ensureWorker(8315, { branchName: 'dev/test', turnId: 'new-turn' })
+          : fx.worker.execInWorker(8315, { ...DISPATCH_ARGS, logicalTurnId: 'new-turn', holdTurnRecord: true });
+        await assert.rejects(attempt, err => {
+          assert.equal(err.unpushedCommit, true);
+          assert.equal(err.permanent, cause !== 'transient');
+          assert.equal(err.code, cause === 'transient' ? 'push_failed' : cause);
+          assert.match(err.message, /commit aaaaaaaa/);
+          assert.ok(err.message.includes(commit.branchName));
+          assert.match(err.message, /kept in this session/);
+          assert.match(err.message, cause === 'transient' ? /Synthetic network outage/ : cause === 'github_paused' ? /GitHub.*paused/ : cause === 'no_token' ? /no credential/ : /valid git branch/);
+          return true;
+        });
+        assert.equal(activeTurns.has(8315), false, 'only the refused attempt is cleaned up');
+        assert.equal(fx.worker.isInFlight(8315), false);
+        assert.equal(fx.calls.some(isDispatch), false, 'the runner and its reset never run');
+        assert.equal(fx.stdinCalls.length, 0, 'no prompt or paid invocation is prepared');
+        assert.equal(fx.dbCalls.some(c => /INSERT INTO (llm_usage|agent_turns)/.test(c.sql)), false);
+      } finally { fx.restore(); }
+    });
+  }
+});
+
+test('a rescue-record write failure retains the turn and journal without leaving a physical execution in flight', async () => {
+  for (const path of ['dispatch', 'dispatch-held', 'adopt']) {
+    const { worker, calls, activeTurns, restore } = loadWorker({
+      journalLines: ['__USERNODE_RESULT__ cc_exit=0 ahead=1 sha=abcdef1 push_ok=0', '__USERNODE_EXIT__ 0'],
+      queryAnswer: sql => { if (sql.includes('INSERT INTO session_workers (session_id, unpushed_sha')) throw new Error('synthetic record outage'); },
+    });
+    try {
+      const id = 8313; warmSession(worker, id);
+      const turnId = 'rescue-record-turn'; const journal = '/home/node/.claude/turn-rescue-record.log';
+      if (path === 'adopt') activeTurns.set(id, { turnId, journal, phase: 'executing', mode: 'build' });
+      const run = () => path === 'adopt'
+        ? worker.resumeTurnFromJournal(id, { turnId, journal, mode: 'build', branchName: 'dev/test' })
+        : worker.execInWorker(id, { ...DISPATCH_ARGS, holdTurnRecord: path === 'dispatch-held', logicalTurnId: turnId });
+      await assert.rejects(run(), err => err.retainActiveTurn && /synthetic record outage/.test(err.message), path);
+      assert.equal(worker.isInFlight(id), false, path);
+      assert.ok(activeTurns.has(id), 'the durable record survives for replay');
+      assert.equal(calls.some(c => c.args?.includes('rm') && c.args?.includes(activeTurns.get(id).journal)), false, 'the journal survives');
+    } finally { restore(); }
+  }
+});
+
 test('a recovered turn mirrors new BYOK spend onto its exact durable owner', async () => {
   const { worker, dbCalls, restore } = loadWorker({
     journalLines: ['__USERNODE_PHASE__thinking', '__USERNODE_EXIT__ 0'],
@@ -820,13 +909,12 @@ test('a dispatch that loses the session to another turn says why, and leaves the
   try {
     warmSession(worker, 8330);
     // The winner: its durable record, and the in-memory state a previous
-    // turn left on the registry (its journal, an unpushed commit).
+    // turn left on the registry (its journal and mode).
     const winner = { turnId: 'bot-turn-1', phase: 'executing', mode: 'build',
       journal: '/home/node/.claude/turn-bot-turn-1.log' };
     activeTurns.set(8330, winner);
     worker._registryUpsertForTests(8330, {
       activeTurnMode: 'build', journal: winner.journal, activeTurnId: winner.turnId,
-      unpushed: { sha: 'abc' },
     });
 
     await assert.rejects(

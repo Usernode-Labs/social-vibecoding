@@ -292,6 +292,11 @@
       "services | uses src/services/shots-orchestrator.js:visibleError": "a step's failure in the words the trial shows (pure)",
       "services | uses src/services/shots-eval.js:trialRecipe": "the arm a trial runs (eval.agent): its configuration's recipe resolved against the deployment's own, its summary kept on the trial's attempt; keeps nothing"
     },
+    "worker-release": {
+      "services | uses src/services/process-role.js:processRole": "reads the immutable process role before any worker I/O; the web process only appends release requests and keeps no removal state",
+      "services | uses src/services/process-role.js:runsWorkflow": "a pure role check permitting the release handler on conductor and local all processes, with no session state in memory",
+      "services | uses src/services/worker-eviction.js:releaseRequested": "removes a requested worker under the shared eviction lock after checking current ownership, configuration, turn and last use from PostgreSQL; deletion is by captured resource identity and waits for it to be gone, holding no decision outside the work item"
+    },
     "worker-push": {
       "services | uses src/services/process-role.js:processRole": "reads this process's immutable boot role before any push I/O, refusing accidental work execution on a web process; keeps no decision or session state",
       "services | uses src/services/process-role.js:runsWorkflow": "a pure check of the boot role that permits the push handler on conductor and local all processes, holding no process state",

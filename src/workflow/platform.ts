@@ -61,6 +61,9 @@ import { clockServices } from './clock/services.ts';
 import { workerPush } from './worker-push/machine.ts';
 import { workerPushServices } from './worker-push/services.ts';
 import { requestWorkerPush as askWorkerPush } from './worker-push/request.ts';
+import { MACHINE as WORKER_RELEASE, WORK as RELEASE_WORKER, releaseKey as workerReleaseKey, workerRelease } from './worker-release/machine.ts';
+import type { Request as WorkerReleaseRequest } from './worker-release/machine.ts';
+import { workerReleaseServices } from './worker-release/services.ts';
 import { JOBS as CLOCK_JOBS, JOB_NAMES as CLOCK_JOB_NAMES } from './clock/services.ts';
 import { requestKey as botRequestKey } from './rules/bot-loop.ts';
 import { DM as BOT_DM, VOICE as BOT_VOICE, dmKey, placeOf, voiceKey } from './rules/bot-replies.ts';
@@ -244,7 +247,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const trials = shotsEval(evalDeps(config));
   // People's turns: a conversation's, a change's (turn/).
   const turns = turnMachine();
-  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, trials, turns, releases, clocks, workerPush()];
+  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, trials, turns, releases, clocks, workerPush(), workerRelease()];
   knownEvents = new Map(machines.map((m) => [m.name, new Set(m.events.keys())]));
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
@@ -254,6 +257,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     ...shotsEvalServices({ config, pool: appPool }),
     ...turnServices({ config, pool: appPool }),
     ...workerPushServices({ pool: appPool }),
+    ...workerReleaseServices({ pool: appPool }),
     ...releaseServices({ adoptions: ADOPTIONS }),
     ...clockServices(CLOCK_JOBS, { config, pool: appPool }),
   };
@@ -1170,6 +1174,15 @@ function running(): Runtime {
 // no privileged local fallback when the conductor is unavailable.
 export function requestWorkerPush(sessionId: number, branchName?: string) {
   return askWorkerPush(running(), kernelPool!, { sessionId, branchName });
+}
+
+// Called in the context reset's transaction, or once for a promoted Pause.
+// Committing the intent never depends on a conductor being available now.
+export function appendWorkerRelease(db: Queryable, p: WorkerReleaseRequest): Promise<number> {
+  const requestId = randomUUID();
+  return appendEvent(db, WORKER_RELEASE, workerReleaseKey(p.sessionId, requestId),
+    { type: 'Requested', payload: { ...p, requestId } },
+    { appId: p.appId, requestKey: requestId, actor: `user:${p.userId}`, source: { kind: 'route', name: RELEASE_WORKER } });
 }
 
 // Whether this process runs the workflow's loops (the admin console's reads

@@ -16,10 +16,11 @@
 //   3. a worker idle past the window, whose change nothing works on
 //      (session-work.ts workedOnSql: a turn, a local agent's, a shots run, a
 //      durable build, a sync, the bot's look, a recorded operation), is
-//      evicted, under its session's WORKER_EVICTION_LOCK: its row is deleted
-//      only if nobody used it since it was read (its time compared whole, as
+//      evicted, under its session's WORKER_EVICTION_LOCK, only if nobody
+//      used it since it was read (its time compared whole, as
 //      text: a JavaScript Date drops the microseconds) and nothing works on
-//      it still, and the eviction follows. A turn's ensureWorker notes its
+//      it still. Its row, including any unpushed commit, stays until rescue
+//      and removal succeed. A turn's ensureWorker notes its
 //      use under the same lock (noteUsed): one that comes during an
 //      eviction waits for it and then ensures the worker again; one that
 //      comes before the claim makes the claim miss.
@@ -69,9 +70,9 @@ async function sweep(pool, { idleMs = IDLE_MS, deps = {} } = {}) {
     try {
       const done = await withSessionLock(pool, [WORKER_EVICTION_LOCK, Number(r.session_id)], async () => {
         const { rows: [claimed] } = await pool.query(
-          `DELETE FROM session_workers sw USING chat_sessions cs
-            WHERE sw.session_id = $1 AND cs.id = sw.session_id AND sw.last_used_at = $2::timestamptz AND NOT ${workedOnSql()}
-            RETURNING sw.session_id`, [r.session_id, r.last_used_at]);
+          `SELECT sw.session_id FROM session_workers sw JOIN chat_sessions cs ON cs.id = sw.session_id
+            WHERE sw.session_id = $1 AND sw.last_used_at = $2::timestamptz AND NOT ${workedOnSql()}`,
+          [r.session_id, r.last_used_at]);
         if (!claimed) return false;
         await worker.evictWorker(Number(r.session_id));
         return true;
@@ -88,11 +89,62 @@ async function sweep(pool, { idleMs = IDLE_MS, deps = {} } = {}) {
 
 // A worker about to be used (worker.js ensureWorker), noted as used under
 // its session's lock: an eviction under way is waited for, and one about to
-// claim it finds it used. A lock that cannot be asked for notes it anyway.
-async function noteUsed(pool, sessionId) {
-  return withSessionLock(pool, [WORKER_EVICTION_LOCK, Number(sessionId)], () => pool.query(
-    `INSERT INTO session_workers (session_id, last_used_at) SELECT id, NOW() FROM chat_sessions WHERE id = $1
-     ON CONFLICT (session_id) DO UPDATE SET last_used_at = NOW()`, [Number(sessionId)]), { unlockedOnError: true });
+// claim it finds it used. A bare last-use note may degrade to an unlocked
+// write; preparation/rescue must hold the lock and refuses if it is lost.
+async function noteUsed(pool, sessionId, { prepare = null } = {}) {
+  let lost = false;
+  return withSessionLock(pool, [WORKER_EVICTION_LOCK, Number(sessionId)], async () => {
+    await pool.query(
+      `INSERT INTO session_workers (session_id, last_used_at) SELECT id, NOW() FROM chat_sessions WHERE id = $1
+       ON CONFLICT (session_id) DO UPDATE SET last_used_at = NOW()`, [Number(sessionId)]);
+    if (lost) throw new Error('Worker preparation lost its session lock');
+    if (prepare) await prepare();
+    if (lost) throw new Error('Worker preparation lost its session lock');
+  }, { unlockedOnError: !prepare, onLost: () => { lost = true; } });
 }
 
-module.exports = { sweep, noteUsed, IDLE_MS };
+// A requested removal uses the same lock as ensureWorker's noteUsed. A
+// worker used after the request is spared; one starting during removal
+// waits and then boots again. Runtime deletion is by captured identity.
+async function releaseRequested(pool, target, { renew = async () => {}, worker = require('./worker') } = {}) {
+  let lost = false;
+  const checkpoint = async () => {
+    if (lost) throw new Error('Worker release lost its session lock');
+    await renew();
+    if (lost) throw new Error('Worker release lost its session lock');
+  };
+  return withSessionLock(pool, [WORKER_EVICTION_LOCK, target.sessionId], async () => {
+    const eligible = async () => {
+      await checkpoint();
+      const { rows: [s] } = await pool.query(
+        `SELECT cs.status, cs.agent_config_version, cs.active_turn IS NOT NULL AS active,
+                cs.active_turn->>'turnId' AS turn_id,
+                COALESCE(sw.last_used_at > $4::timestamptz, FALSE) AS used_after,
+                ${workedOnSql()} AS busy
+           FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
+           LEFT JOIN session_workers sw ON sw.session_id = cs.id
+          WHERE cs.id = $1 AND cs.app_id = $2 AND cs.user_id = $3 AND u.anonymised_at IS NULL`,
+        [target.sessionId, target.appId, target.userId, target.requestedAt]);
+      await checkpoint();
+      if (!s || s.agent_config_version !== target.configVersion) return false;
+      if (target.reason === 'agent-reset') return !['archived', 'merged'].includes(s.status) && !s.busy && !s.used_after;
+      if (s.status !== 'promoted') return false;
+      if (target.turnId != null && s.turn_id === target.turnId) return true;
+      // The captured turn's own teardown updates last_used_at. Pause still
+      // frees it once it has ended; a different running turn stays safe.
+      return !s.active && !s.busy && (target.turnId != null || !s.used_after);
+    };
+    if (!(await eligible())) return { skipped: 'changed_or_used' };
+    try {
+      await worker.rescueUnpushedCommit(target.sessionId);
+    } catch (err) {
+      // A permanent push cause refuses new paid turns, but queued removal
+      // still retries with backoff: an operator may restore the credential.
+      throw Object.assign(new Error(err.message), { code: err.code });
+    }
+    const out = await worker.removeWorker(target.sessionId, { proceed: eligible, renew: checkpoint });
+    return out.skipped ? { skipped: 'changed_or_used' } : { released: true };
+  }, { onLost: () => { lost = true; } });
+}
+
+module.exports = { sweep, noteUsed, releaseRequested, IDLE_MS };
