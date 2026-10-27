@@ -301,6 +301,32 @@ test('the destination is not restored (#2707)', () => {
   assert.equal(h.el('feedback-target-hint').classList.contains('hidden'), false, 'the person still has to choose');
 });
 
+test('an app on Homeroom\'s own git host can be chosen (#5940)', async () => {
+  // App repositories moved off GitHub; the app's choice was greyed out for
+  // every one of them because the form only knew github.com addresses.
+  const hosted = { name: 'Mountain Trail', repo_url: 'https://git.onhomeroom.com/apps/mountain-trail' };
+  const h = makeHarness({ appData: hosted });
+  h.open();
+  assert.equal(h.el('feedback-target-app').disabled, false);
+  assert.equal(h.el('feedback-target-app').getAttribute('aria-disabled'), 'false');
+  assert.equal(h.el('feedback-target-app-name').textContent, 'Mountain Trail');
+  h.type('The trail map does not load on my phone.');
+  h.el('feedback-target-app').fire('click');
+  assert.equal(h.el('feedback-target-app').getAttribute('aria-checked'), 'true');
+  await h.submit();
+  const [filed] = h.filed();
+  assert.ok(filed, 'the request was posted');
+  const body = JSON.parse(filed.opts.body);
+  assert.equal(body.target, 'app');
+  assert.equal(body.appSlug, 'example-app');
+
+  // An app with no repository still cannot take a request.
+  const bare = makeHarness({ appData: { name: 'Mountain Trail', repo_url: null } });
+  bare.open();
+  assert.equal(bare.el('feedback-target-app').disabled, true);
+  assert.equal(bare.el('feedback-target-platform').getAttribute('aria-checked'), 'true');
+});
+
 test('the draft belongs to the viewer', () => {
   const storage = makeStorage();
   const alice = makeHarness({ storage, userId: 7 });
