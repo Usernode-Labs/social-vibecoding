@@ -30,7 +30,7 @@ function setup(t, runtime = 'docker') {
     assert.equal(owner, 'Trusted-Owner', 'the owner is read from the stored address');
     return token;
   });
-  const fx = { target: { branch_name: branch, repo_url: 'https://github.com/Trusted-Owner/stored-repo.git' }, queries: [], execs: [], pushes: [] };
+  const fx = { target: { app_id: 5, branch_name: branch, repo_url: 'https://github.com/Trusted-Owner/stored-repo.git' }, queries: [], execs: [], pushes: [] };
   t.mock.method(db, 'getPool', () => ({ query: async (sql, params) => {
     fx.queries.push({ sql, params });
     return { rows: fx.target ? [fx.target] : [] };
@@ -131,4 +131,74 @@ test('push failures redact every occurrence of the credential and preserve unpus
   t.mock.method(workerGitPush, 'push', async () => ({ sha, stderr: '' }));
   assert.deepEqual(await worker.rescueUnpushedCommit(sessionId), { attempted: true, pushed: true });
   assert.deepEqual(await worker.rescueUnpushedCommit(sessionId), { attempted: false });
+});
+
+test('web-side push callers queue conductor work and never read a credential or contact a worker', async t => {
+  const fx = setup(t);
+  const previousRole = process.env.PROCESS_ROLE;
+  process.env.PROCESS_ROLE = 'web';
+  t.after(() => {
+    if (previousRole === undefined) delete process.env.PROCESS_ROLE;
+    else process.env.PROCESS_ROLE = previousRole;
+  });
+  const Module = require('node:module');
+  const load = Module._load;
+  const asks = [];
+  let unavailable = false;
+  t.mock.method(Module, '_load', function (name, parent, ...rest) {
+    if (name === '../workflow/platform.ts' && parent?.filename === require.resolve('../src/services/worker')) {
+      return { requestWorkerPush: async (...args) => {
+        asks.push(args);
+        if (unavailable) throw new Error('conductor unavailable');
+        return { sha, stderr: '' };
+      } };
+    }
+    return load.call(this, name, parent, ...rest);
+  });
+  t.mock.method(github, 'getInstallationToken', () => { throw new Error('web accessed the credential'); });
+  assert.deepEqual(await worker.execPushFromWorker(sessionId, branch), { sha, stderr: '' });
+  assert.deepEqual(asks, [[sessionId, branch]]);
+  unavailable = true;
+  await assert.rejects(worker.execPushFromWorker(sessionId, branch), /conductor unavailable/);
+  assert.equal(fx.queries.length, 0);
+  assert.equal(fx.execs.length, 0);
+  assert.equal(fx.pushes.length, 0);
+});
+
+test('a queued push target changed during the privacy check is refused before obtaining a credential', async t => {
+  const fx = setup(t);
+  t.mock.method(github, 'getInstallationToken', () => { throw new Error('credential must not be fetched'); });
+  const expectedRepoUrl = fx.target.repo_url;
+  fx.target.repo_url = 'https://github.com/Trusted-Owner/moved-repo';
+  await assert.rejects(worker.execPushFromWorker(sessionId, branch, { expectedRepoUrl }), e => e.code === 'session_changed');
+  fx.target.repo_url = expectedRepoUrl;
+  await assert.rejects(worker.execPushFromWorker(sessionId, branch, { expectedRepoUrl, expectedAppId: 6 }), e => e.code === 'session_changed');
+  for (const change of [{ status: 'closed' }, { status: 'active', anonymised_at: new Date() }]) {
+    Object.assign(fx.target, change);
+    await assert.rejects(worker.execPushFromWorker(sessionId, branch, { expectedRepoUrl }), e => e.code === 'session_inactive');
+  }
+  assert.equal(fx.execs.length, 0);
+  assert.equal(fx.pushes.length, 0);
+});
+
+test('a failed or empty target lookup stays retryable and is never reported as a permanent target change', async t => {
+  const fx = setup(t);
+  const expectedRepoUrl = fx.target.repo_url;
+  let queryFails = true;
+  t.mock.method(db, 'getPool', () => ({ query: async () => {
+    if (queryFails) throw Object.assign(new Error('Synthetic temporary database outage'), { code: '08006' });
+    return { rows: [] };
+  } }));
+  t.mock.method(github, 'getInstallationToken', () => { throw new Error('credential must not be fetched'); });
+  for (queryFails of [true, false]) {
+    for (const expected of [{}, { expectedRepoUrl }, { expectedAppId: 5 }, { expectedRepoUrl, expectedAppId: 5 }]) {
+      await assert.rejects(worker.execPushFromWorker(sessionId, branch, expected), error => {
+        assert.equal(error.code, queryFails ? '08006' : 'push_failed');
+        assert.notEqual(error.permanent, true);
+        return true;
+      });
+    }
+  }
+  assert.equal(fx.execs.length, 0);
+  assert.equal(fx.pushes.length, 0);
 });

@@ -58,6 +58,9 @@ import { releaseServices } from './release/services.ts';
 import type { Adoption } from './release/services.ts';
 import { MACHINE as CLOCK, clock, clockKey } from './clock/machine.ts';
 import { clockServices } from './clock/services.ts';
+import { workerPush } from './worker-push/machine.ts';
+import { workerPushServices } from './worker-push/services.ts';
+import { requestWorkerPush as askWorkerPush } from './worker-push/request.ts';
 import { JOBS as CLOCK_JOBS, JOB_NAMES as CLOCK_JOB_NAMES } from './clock/services.ts';
 import { requestKey as botRequestKey } from './rules/bot-loop.ts';
 import { DM as BOT_DM, VOICE as BOT_VOICE, dmKey, placeOf, voiceKey } from './rules/bot-replies.ts';
@@ -241,7 +244,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const trials = shotsEval(evalDeps(config));
   // People's turns: a conversation's, a change's (turn/).
   const turns = turnMachine();
-  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, trials, turns, releases, clocks];
+  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, trials, turns, releases, clocks, workerPush()];
   knownEvents = new Map(machines.map((m) => [m.name, new Set(m.events.keys())]));
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
@@ -250,6 +253,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     ...mainCheckServices(deps), ...botRequestServices(deps), ...botLaneServices(deps), ...benchLaneServices({ config, pool: appPool }),
     ...shotsEvalServices({ config, pool: appPool }),
     ...turnServices({ config, pool: appPool }),
+    ...workerPushServices({ pool: appPool }),
     ...releaseServices({ adoptions: ADOPTIONS }),
     ...clockServices(CLOCK_JOBS, { config, pool: appPool }),
   };
@@ -1160,6 +1164,12 @@ export async function stopWorkflow(): Promise<void> {
 function running(): Runtime {
   if (!runtime) throw new Error('The workflow runtime is not running in this process');
   return runtime;
+}
+
+// HTTP and any remaining web-side salvage callers share this seam. There is
+// no privileged local fallback when the conductor is unavailable.
+export function requestWorkerPush(sessionId: number, branchName?: string) {
+  return askWorkerPush(running(), kernelPool!, { sessionId, branchName });
 }
 
 // Whether this process runs the workflow's loops (the admin console's reads

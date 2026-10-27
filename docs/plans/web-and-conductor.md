@@ -84,6 +84,26 @@ machine whose work runs the turn, and a worker's callbacks (the model proxy,
 BYOK spend, a shots eval's bill) read a turn that is not in their process
 from the database.
 
+Worker push callbacks use the `worker-push` machine
+(`src/workflow/worker-push/`). The HTTP handler authenticates the worker and
+reads its stored branch, then waits for a separate request instance. The
+conductor rechecks the session, account, app, branch, repository and public
+visibility before exporting Git objects and running authenticated Git in the
+trusted pusher. No JWT, Git credential or Git bundle enters the event or work
+input. A request not started within 80 seconds expires; an HTTP wait that
+times out returns a retryable 503. There is no direct web-side push fallback.
+The handler has its own work kind and concurrency, so a turn waiting for its
+worker's callback does not occupy the push queue. Local `all` processes run
+the same machine and handler.
+
+This moves one web dependency behind a durable command. Web Pods still need
+their current Kubernetes and database permissions for other callers, including
+worker eviction, volume copies, repository operations and startup work. Moving
+those callers, then splitting service accounts, Secret inputs and actual
+database login privileges, remains SEC-09 work. The event's source metadata
+also remains a convention among trusted processes; it does not authenticate
+a compromised producer.
+
 ## Successors
 
 A release replaces a process with one that can do what it did
@@ -136,6 +156,6 @@ round, is less detailed than what it shows of its own:
   one image and rolls both Deployments; the release pipeline decides that,
   not the chart. With the drain, a conductor release no longer cuts the work
   it was doing, so the gain is smaller than it was.
-- Routes recording work for the conductor instead of starting it in their
-  own process. A web Pod finishes what it starts; nothing has to move for
-  that.
+- Migrating all remaining infrastructure calls from routes. The push
+  callback above now queues conductor work; other web-side calls still
+  finish in their own process and need to move before privileges are split.
