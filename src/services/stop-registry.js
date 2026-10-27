@@ -26,7 +26,6 @@
 //     stopped: boolean,             // the user has asked for this to end
 //     stoppedBy: string|null,
 //     stopRequestedAt: number|null, // ms epoch, for the client's ladder
-//     confirming: boolean,          // a confirmStopLanded loop is running
 //     send: (type, data) => void,   // fan-out to this session's listeners
 //     userMessageId: number|null,   // #3177: the stored message a chat turn
 //                                   // answers (absent on an adopted turn)
@@ -77,7 +76,6 @@ function createHandle({ sessionId, phase = 'mayor1', workerName = null, send = n
     stopped: false,
     stoppedBy: null,
     stopRequestedAt: null,
-    confirming: false,
     send: send || (() => {}),
   };
 }

@@ -28,7 +28,8 @@ const express = require('express');
 const platformPath = require.resolve('../src/workflow/platform.ts');
 const platform = require(platformPath);
 let forceStop;
-require.cache[platformPath].exports = { ...platform, requestWorkerStop: p => forceStop(p) };
+let interrupt;
+require.cache[platformPath].exports = { ...platform, requestWorkerStop: p => forceStop(p), requestWorkerInterrupt: p => interrupt(p) };
 
 const poolMod = require('../src/db/pool');
 let poolQueryHandler = async () => ({ rows: [] });
@@ -106,6 +107,7 @@ function durableTurn(over = {}) {
 
 test.beforeEach(() => {
   forceStop = async () => { throw new Error('unexpected force-stop request'); };
+  interrupt = async () => {};
   capturedQueries = [];
   poolQueryHandler = async () => ({ rows: [] });
   activeWorkers.clear();
@@ -378,7 +380,7 @@ test('with no handle and no turn record, hasDurableTurn is false', async () => {
 // exercised by worker-stop-workflow-postgres.test.js. Here the HTTP producer
 // must never run a privileged fallback, even when the conductor is absent.
 function forbidRuntime(t) {
-  for (const method of ['stopTurn', 'stopTurnByJournal', 'isWorkerExecuting', 'evictWorker', 'removeWorker', 'clearActiveTurn']) {
+  for (const method of ['stopTurn', 'signalLegacyTurn', 'stopTurnByJournal', 'isWorkerExecuting', 'stopWorkerByIdentity', 'evictWorker', 'removeWorker', 'clearActiveTurn']) {
     t.mock.method(workerMod, method, () => { throw new Error(`web called ${method}`); });
   }
 }
@@ -457,4 +459,109 @@ test('an older force-stop response cannot release a replacement handle or local 
     assert.equal(activeWorkers.has(SESSION_ID), true);
     if (withHandle) assert.equal(stopRegistry.get(SESSION_ID), replacement);
   }
+});
+
+
+test('ordinary Stop only queues confirmation, retains the owner and aborts after disarming notifications', async t => {
+  forbidRuntime(t);
+  routeQueries({ activeTurn: durableTurn() }); activeWorkers.add(SESSION_ID);
+  const handle = stopRegistry.createHandle({ sessionId: SESSION_ID, phase: 'cc' }); stopRegistry.set(SESSION_ID, handle);
+  const requests = [];
+  interrupt = async p => {
+    requests.push(p);
+    assert.ok(capturedQueries.some(q => /notify_on_done = FALSE/.test(q.sql)));
+    assert.equal(handle.abort.signal.aborted, true);
+  };
+  const answer = await requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID });
+  assert.equal(answer.status, 200); assert.equal(answer.body.stopped, true);
+  assert.deepEqual(requests, [{ sessionId: SESSION_ID, userId: OWNER.id, strategy: 'turn', expectedTurnId: null,
+    expectedJob: { active: true, turnId: 'turn-xyz', journal: '/journals/turn-xyz.jsonl' } }]);
+  assert.equal(handle.abort.signal.aborted, true); assert.equal(stopRegistry.get(SESSION_ID), handle);
+  assert.equal(activeWorkers.has(SESSION_ID), true);
+});
+
+test('legacy worker Stop queues an identity-scoped stop without trusting the handle worker name', async t => {
+  forbidRuntime(t); routeQueries();
+  const handle = stopRegistry.createHandle({ sessionId: SESSION_ID, phase: 'legacy', workerName: 'untrusted-name' });
+  stopRegistry.set(SESSION_ID, handle); const requests = [];
+  interrupt = async p => requests.push(p);
+  await requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID });
+  assert.equal(requests[0].strategy, 'worker'); assert.equal(requests[0].sessionId, SESSION_ID);
+  assert.equal('workerName' in requests[0], false);
+});
+
+test('local Stop aborts and stamps the spin-up gate while admission is still pending', async t => {
+  forbidRuntime(t); routeQueries();
+  const handle = stopRegistry.createHandle({ sessionId: SESSION_ID, phase: 'mayor1' });
+  stopRegistry.set(SESSION_ID, handle);
+  let entered; let release;
+  const admitting = new Promise(resolve => { entered = resolve; });
+  const pending = new Promise(resolve => { release = resolve; });
+  interrupt = async () => { entered(); await pending; };
+  const stopping = requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID });
+  try {
+    await admitting;
+    assert.equal(handle.abort.signal.aborted, true);
+    assert.ok(workerMod.getPendingStop(SESSION_ID));
+    assert.ok(capturedQueries.some(q => /notify_on_done = FALSE/.test(q.sql)));
+  } finally { release(); }
+  assert.equal((await stopping).status, 200);
+});
+
+test('a locally applied Stop acknowledges a changed admission target without retargeting it', async t => {
+  forbidRuntime(t); routeQueries();
+  const handle = stopRegistry.createHandle({ sessionId: SESSION_ID, phase: 'mayor1' });
+  stopRegistry.set(SESSION_ID, handle); let requests = 0;
+  interrupt = async p => {
+    requests += 1; assert.equal(p.expectedJob.active, false);
+    assert.equal(handle.abort.signal.aborted, true);
+    routeQueries({ activeTurn: durableTurn() });
+    throw Object.assign(new Error('The running job changed'), { code: 'turn_changed', httpStatus: 409 });
+  };
+  const answer = await requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID });
+  assert.equal(answer.status, 200); assert.equal(answer.body.stopped, true);
+  assert.equal(requests, 1); assert.equal(stopRegistry.get(SESSION_ID), handle);
+});
+
+test('ordinary Stop fingerprints an old record with neither journal nor turn id', async t => {
+  forbidRuntime(t); const turn = { phase: 'executing', mode: 'build', startedAt: '2026-10-27T10:00:00Z' };
+  routeQueries({ activeTurn: turn }); let captured;
+  interrupt = async p => { captured = p; };
+  const out = await requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID });
+  assert.equal(out.status, 202);
+  assert.equal(captured.expectedJob.legacy, require('../src/workflow/worker-stop/target.ts').legacyTurnKey(turn));
+});
+
+test('an unavailable conductor still permits local cancellation but never a privileged web fallback', async t => {
+  forbidRuntime(t); routeQueries({ activeTurn: durableTurn() });
+  const handle = stopRegistry.createHandle({ sessionId: SESSION_ID, phase: 'cc' }); stopRegistry.set(SESSION_ID, handle);
+  interrupt = async () => { throw Object.assign(new Error('Could not confirm admission'), { httpStatus: 503 }); };
+  await assert.rejects(requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID }), /Could not confirm admission/);
+  assert.equal(handle.abort.signal.aborted, true); assert.equal(stopRegistry.get(SESSION_ID), handle);
+});
+
+test('a local CLI turn stops without queueing any container operation; wrap-up remains protected', async t => {
+  forbidRuntime(t); let queued = 0; interrupt = async () => { queued += 1; };
+  for (const phase of ['cc', 'mayor2']) {
+    const handle = stopRegistry.createHandle({ sessionId: SESSION_ID, phase, workerName: 'unused' });
+    handle.localTurnId = 'local-turn'; stopRegistry.set(SESSION_ID, handle);
+    const out = await requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID });
+    assert.equal(out.body.stopped, phase !== 'mayor2');
+  }
+  assert.equal(queued, 0);
+});
+
+test('HTTP module contains no worker signal, probe, runtime-stop or confirmation loop', () => {
+  const fs = require('node:fs'); const src = fs.readFileSync(require.resolve('../src/routes/sessions'), 'utf8');
+  const ts = require('typescript'); const calls = [];
+  const file = ts.createSourceFile('sessions.js', src, ts.ScriptTarget.Latest, true);
+  const visit = node => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+        && node.expression.expression.getText(file) === 'worker'
+        && ['stopTurn', 'signalLegacyTurn', 'stopTurnByJournal', 'stopWorker', 'stopWorkerByIdentity', 'isWorkerExecuting',
+          'removeWorker', 'evictWorker', 'destroyWorker'].includes(node.expression.name.text)) calls.push(node.expression.getText(file));
+    ts.forEachChild(node, visit);
+  };
+  visit(file); assert.deepEqual(calls, []);
+  assert.doesNotMatch(src, /function confirmStopLanded|handle\.confirming/);
 });

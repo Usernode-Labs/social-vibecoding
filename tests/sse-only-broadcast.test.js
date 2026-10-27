@@ -142,7 +142,7 @@ test('the turn hands its send() closure to the stop handle', () => {
 });
 
 test('POST /stop emits stopping with the requesting user, before the kill', () => {
-  const route = SRC.slice(SRC.indexOf('async function requestSessionStop('), SRC.indexOf('async function confirmStopLanded('));
+  const route = SRC.slice(SRC.indexOf('async function requestSessionStop('), SRC.indexOf('async function requestOrdinaryStop('));
   const emit = route.search(/handle\.send\?\.\(\s*'stopping'/);
   assert.ok(emit >= 0, 'the stop route emits a stopping event');
   assert.match(route.slice(emit, emit + 200), /by:\s*user\.username/,
@@ -151,7 +151,7 @@ test('POST /stop emits stopping with the requesting user, before the kill', () =
   // Ordering: the announcement is a synchronous write + broadcast, so it
   // must sit ahead of every await in the handler. Being immediate is the
   // entire point — anything in front of it is dead air for the user.
-  const kill = route.indexOf('confirmStopLanded(sessionId, handle)', emit);
+  const kill = route.indexOf('requestOrdinaryStop(sessionId, user,', emit);
   assert.ok(kill > emit, 'stopping is announced before the worker kill is dispatched');
   const disarm = route.indexOf('notify_on_done = FALSE', emit);
   assert.ok(disarm > emit, 'stopping is announced before the notify_on_done write');
@@ -165,7 +165,7 @@ test('the notify_on_done disarm still lands before the abort (#161)', () => {
   // stopping a turn fires a spurious "your session finished" notification.
   const route = SRC.slice(
     SRC.indexOf('async function requestSessionStop('),
-    SRC.indexOf('async function confirmStopLanded(')
+    SRC.indexOf('async function requestOrdinaryStop(')
   );
   const disarmIdx = route.lastIndexOf('notify_on_done = FALSE');
   assert.ok(disarmIdx > 0, 'found the disarm write');
@@ -180,7 +180,7 @@ test('the notify_on_done disarm still lands before the abort (#161)', () => {
 test('the stop route still answers with a stopped flag the client can branch on', () => {
   const route = SRC.slice(
     SRC.indexOf('async function requestSessionStop('),
-    SRC.indexOf('async function confirmStopLanded(')
+    SRC.indexOf('async function requestOrdinaryStop(')
   );
   // The client reads all three of these: `stopped` decides whether a
   // `stopped` event is coming at all, and the two reasons drive the

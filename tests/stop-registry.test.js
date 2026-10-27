@@ -33,7 +33,7 @@ test('createHandle fills the whole shape both call sites rely on', () => {
   assert.equal(handle.stopped, false);
   assert.equal(handle.stoppedBy, null);
   assert.equal(handle.stopRequestedAt, null);
-  assert.equal(handle.confirming, false);
+  assert.equal('confirming' in handle, false, 'confirmation state belongs to the conductor machine');
   assert.ok(handle.abort instanceof AbortController, 'an abort controller is always present');
   // `send` is called unconditionally on the stop path; a missing one would
   // throw inside the handler rather than merely announcing nothing.

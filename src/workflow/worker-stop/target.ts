@@ -1,13 +1,14 @@
 import type { Queryable } from '../kernel/index.ts';
+import { canonicalHash } from '../kernel/index.ts';
 
 export interface Target {
   sessionId: number; appId: number | null; ownerId: number | null; userId: number | null;
   configVersion: number; active: boolean; turnId: string | null; journal: string | null; usedAt: string | null;
 }
-export interface Current extends Target { username: string; turn: any }
+export interface Current extends Target { username: string | null; turn: any }
 
-// A null actor is reserved for the conductor's last recovery attempt. Human
-// requests always carry an actor, whose current authority is read here.
+// A null actor is reserved for conductor recovery and the dispatch backstop.
+// Human requests carry an actor, whose current authority is read here.
 export async function stopTarget(db: Queryable, sessionId: number, userId: number | null): Promise<Current | null> {
   const { rows: [r] } = await db.query(
     `SELECT cs.app_id, cs.user_id, cs.agent_config_version, cs.active_turn,
@@ -26,8 +27,17 @@ export async function stopTarget(db: Queryable, sessionId: number, userId: numbe
 export function sameScope(a: Current | null, b: Target): a is Current {
   return !!a && a.appId === b.appId && a.ownerId === b.ownerId && a.configVersion === b.configVersion;
 }
-export function sameTurn(a: Current, b: Target, removed = false): boolean {
+// Old records without a turn id or journal are bound to their stored
+// contents. Adding stop intent must not change that identity.
+export function legacyTurnKey(turn: any): string | null {
+  if (!turn || typeof turn !== 'object' || Array.isArray(turn)
+      || turn.turnId || turn.logicalTurnId || turn.turnUuid || turn.journal) return null;
+  const { stopRequestedAt: _at, stopRequestedBy: _by, ...record } = turn;
+  return canonicalHash(record);
+}
+export function sameTurn(a: Current, b: Target & { legacy?: string | null }, removed = false): boolean {
   return a.active === b.active && a.turnId === b.turnId && a.journal === b.journal
+    && (!b.legacy || b.legacy === legacyTurnKey(a.turn))
     && (b.active || removed || a.usedAt === b.usedAt);
 }
 export function snapshot(r: Current): Target {

@@ -567,7 +567,6 @@ module.exports = function install(world) {
       await world.record('worker.removeCcVolume', { sessionId: Number(sessionId) });
       return { removed: true };
     },
-    async stopWorker(name) { await world.record('worker.stop', { name }); },
     async retireWorker(sessionId) { await world.record('worker.retire', { sessionId: Number(sessionId) }); },
     holdWorker() { return () => {}; },
     warmRegistrySnapshot: () => [...registry.entries()].map(([sessionId, m]) => ({ sessionId, ...m })),

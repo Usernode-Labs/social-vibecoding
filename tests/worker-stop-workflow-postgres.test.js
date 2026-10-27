@@ -9,9 +9,11 @@ const { fork } = require('node:child_process');
 const { once } = require('node:events');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
 const { workerStop, MACHINE, WORK, WAIT_MS, stopKey } = require('../src/workflow/worker-stop/machine.ts');
-const { stopTarget, snapshot } = require('../src/workflow/worker-stop/target.ts');
+const { stopTarget, snapshot, legacyTurnKey } = require('../src/workflow/worker-stop/target.ts');
 const { requestWorkerStop } = require('../src/workflow/worker-stop/request.ts');
-const { workerStopServices } = require('../src/workflow/worker-stop/services.ts');
+const { workerStopServices, workerInterruptServices } = require('../src/workflow/worker-stop/services.ts');
+const { workerInterrupt, requestWorkerInterrupt, interruptKey, MACHINE: INTERRUPT, WORK: INTERRUPT_WORK, DISPATCH } = require('../src/workflow/worker-stop/interrupt.ts');
+const { asTransition } = require('./lib/as-transition');
 
 test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 }, async t => {
   const admin = new Pool({ connectionString: process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres', connectionTimeoutMillis: 2000 });
@@ -30,11 +32,25 @@ test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 
   let kill = 'stopped'; let beforeDelete = null; let rescueError = null; let afterKill = null; let removalError = null;
   let afterRescue = null;
   const removalWaits = []; const killTimeouts = [];
-  t.mock.method(worker, 'stopTurn', () => { throw new Error('generic process-tree kill is forbidden'); });
+  let ordinary = false; let executing = false; let beforeProbe = null;
+  t.mock.method(worker, 'stopTurn', () => { throw new Error('registry-based signalling is forbidden'); });
+  t.mock.method(worker, 'signalLegacyTurn', async id => {
+    if (!ordinary) throw new Error('generic process-tree kill is forbidden');
+    calls.push(['legacy-signal', id]);
+  });
   t.mock.method(worker, 'evictWorker', () => { throw new Error('unfenced eviction is forbidden'); });
-  t.mock.method(worker, 'isWorkerExecuting', () => { throw new Error('a root-only probe is not stop confirmation'); });
+  t.mock.method(worker, 'isWorkerExecuting', async () => {
+    if (!ordinary) throw new Error('a root-only probe is not force-stop confirmation');
+    calls.push(['probe']); if (beforeProbe) await beforeProbe(); return executing;
+  });
+  t.mock.method(worker, 'stopWorkerByIdentity', async (id, options) => {
+    calls.push(['identity', id]); if (beforeDelete) await beforeDelete(id);
+    if (!(await options.proceed())) return { skipped: true };
+    await options.renew(); if (removalError) throw removalError; calls.push(['runtime', id]);
+    await pool.query('DELETE FROM session_workers WHERE session_id = $1', [id]); return { removed: true };
+  });
   t.mock.method(worker, 'stopTurnByJournal', async (id, journal, options) => {
-    calls.push(['kill', id, journal, process.env.PROCESS_ROLE]);
+    calls.push([options.force === false ? 'signal' : 'kill', id, journal, process.env.PROCESS_ROLE]);
     killTimeouts.push(options.timeoutMs);
     if (afterKill) await afterKill(id);
     if (kill instanceof Error) throw kill;
@@ -58,9 +74,9 @@ test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 
   t.mock.method(require('../src/services/ws'), 'broadcastGlobal', event => announcements.push(event));
   t.mock.method(require('../src/services/session-bus'), 'publish', () => {});
   const role = process.env.PROCESS_ROLE; process.env.PROCESS_ROLE = 'web';
-  const services = workerStopServices({ pool });
-  const web = createRuntime({ pool, machines: [workerStop()], services, slots: 0 });
-  const conductor = createRuntime({ pool, machines: [workerStop()], services, slots: 1 });
+  const services = { ...workerStopServices({ pool }), ...workerInterruptServices({ pool }) };
+  const web = createRuntime({ pool, machines: [workerStop(), workerInterrupt()], services, slots: 0 });
+  const conductor = createRuntime({ pool, machines: [workerStop(), workerInterrupt()], services, slots: 1 });
   t.after(async () => {
     await web.stop(); await conductor.stop(); await pool.end();
     await admin.query(`DROP DATABASE ${name} WITH (FORCE)`); await admin.end();
@@ -88,9 +104,9 @@ test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 
     });
     return { id, key, payload };
   }
-  async function settle() {
+  async function settle(rt = conductor) {
     process.env.PROCESS_ROLE = 'conductor';
-    try { await conductor.runServices(); await conductor.drain(); } finally { process.env.PROCESS_ROLE = 'web'; }
+    try { await rt.runServices(); await rt.drain(); } finally { process.env.PROCESS_ROLE = 'web'; }
   }
   async function result(e) {
     const out = await web.waitFor(MACHINE, e.key, i => i.state === 'done', 1000);
@@ -99,7 +115,30 @@ test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 
   function reset() {
     calls.length = 0; announcements.length = 0; kill = 'stopped'; beforeDelete = null;
     rescueError = null; afterKill = null; removalError = null;
-    afterRescue = null; removalWaits.length = 0; killTimeouts.length = 0;
+    afterRescue = null; removalWaits.length = 0; killTimeouts.length = 0; ordinary = false; executing = false; beforeProbe = null;
+  }
+
+  async function interrupt(s, strategy = 'turn', over = {}, envelope = {}) {
+    const target = await stopTarget(pool, s.sessionId, s.userId); const requestId = randomUUID();
+    const payload = { ...snapshot(target), userId: s.userId, strategy, requestId, legacy: legacyTurnKey(target.turn), ...over };
+    const key = interruptKey(payload);
+    const id = await web.append(INTERRUPT, key, { type: 'Requested', payload }, {
+      appId: s.appId, actor: `user:${s.userId}`, source: { kind: 'route', name: INTERRUPT_WORK }, requestKey: requestId, ...envelope,
+    });
+    return { id, key, payload };
+  }
+  const interruptState = async e => (await pool.query('SELECT state, data, deadline_at FROM wf_instances WHERE machine = $1 AND key = $2', [INTERRUPT, e.key])).rows[0];
+  async function dispatched(s, turn = s.turn, by = null) {
+    let id; process.env.PROCESS_ROLE = 'conductor';
+    try {
+      id = await require('../src/services/worker-interrupt').confirmDispatchedStop(pool, { sessionId: s.sessionId, ...turn, by });
+    } finally { process.env.PROCESS_ROLE = 'web'; }
+    if (id == null) return null;
+    return (await pool.query('SELECT id, key, source, actor, payload FROM wf_events WHERE id = $1', [id])).rows[0];
+  }
+  async function tick(e, rt = conductor) {
+    await asTransition(pool, 'UPDATE wf_instances SET deadline_at = NOW() WHERE machine = $1 AND key = $2 AND deadline_at IS NOT NULL', [INTERRUPT, e.key]);
+    await rt.fireTimers(); await rt.drain();
   }
 
   await t.test('web only appends; the conductor kills the captured journal and confirms before clearing', async () => {
@@ -342,4 +381,261 @@ test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 
       const [code] = await exited; assert.equal(code, 0, stderr);
     }
   });
+  await t.test('ordinary Stop persists one confirmation run across duplicate clicks and conductor restart', async () => {
+    reset(); ordinary = true; const s = await session(); const e = await interrupt(s);
+    assert.deepEqual(calls, []); await conductor.drain(); await settle();
+    assert.deepEqual(calls.map(c => c[0]), ['signal']);
+    assert.ok((await current(s)).stopRequestedAt, 'the conductor records stop intent even without the HTTP producer');
+    const waiting = await interruptState(e); assert.equal(waiting.state, 'waiting'); assert.ok(waiting.deadline_at);
+    const duplicate = await interrupt(s); assert.equal(duplicate.key, e.key);
+    await conductor.drain(); await settle(); assert.equal(calls.length, 1, 'no second signal loop');
+    const fresh = createRuntime({ pool, machines: [workerInterrupt()], services, slots: 1 });
+    try {
+      await tick(e, fresh); await settle(fresh);
+      assert.equal((await interruptState(e)).data.result.confirmed, true);
+      assert.deepEqual(calls.map(c => c[0]), ['signal', 'probe']); assert.ok(await current(s), 'only the turn owner releases its record');
+      await interrupt(s); await fresh.drain(); await settle(fresh);
+      assert.equal(calls.filter(c => c[0] === 'signal').length, 2, 'a completed confirmation may be requested again');
+      await tick(e, fresh); await settle(fresh);
+    } finally { await fresh.stop(); }
+  });
+  await t.test('ordinary confirmation retains the three-signal limit and retries an unknown probe', async () => {
+    for (const busy of [true, null]) {
+      reset(); ordinary = true; executing = busy; const s = await session(); const e = await interrupt(s);
+      await conductor.drain(); await settle();
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        await tick(e); await settle(); if (attempt < 3) await settle();
+      }
+      const state = await interruptState(e); assert.equal(state.state, 'done');
+      assert.equal(state.data.attempts, 3); assert.equal(state.data.result.reason, 'giveup');
+      assert.equal(calls.filter(c => c[0] === 'signal').length, 3); assert.equal(calls.filter(c => c[0] === 'probe').length, 3);
+      assert.ok(await current(s)); assert.equal(calls.some(c => ['delete', 'runtime'].includes(c[0])), false);
+    }
+  });
+  await t.test('repeat requestWorkerInterrupt calls acknowledge the same pending confirmation', async () => {
+    reset(); ordinary = true; const s = await session();
+    const accepting = { ...web, appendAndWait: async (...args) => {
+      const id = await web.append(...args); await conductor.drain(); return web.waitForEvent(id, 1000);
+    } };
+    const p = { ...request(s), strategy: 'turn' };
+    await requestWorkerInterrupt(accepting, pool, p);
+    await requestWorkerInterrupt(accepting, pool, p);
+    await settle();
+    await requestWorkerInterrupt(accepting, pool, p);
+    assert.deepEqual(calls.map(c => c[0]), ['signal']);
+    const raced = { appendAndWait: async () => ({ status: 'pending', eventId: 1 }),
+      refuseIfPending: async () => ({ status: 'rejected', reason: 'already_stopping', eventId: 1 }) };
+    await requestWorkerInterrupt(raced, pool, p);
+    const target = await stopTarget(pool, s.sessionId, s.userId);
+    const e = { key: interruptKey({ ...snapshot(target), strategy: 'turn' }) };
+    await tick(e); await settle();
+    assert.equal((await interruptState(e)).data.result.confirmed, true);
+  });
+  await t.test('a dispatcher queues bounded confirmation for its own late-starting record only', async () => {
+    reset(); ordinary = true; executing = true; const s = await session({ active: false });
+    await requestWorkerInterrupt({ ...web, appendAndWait: async (...args) => {
+      const id = await web.append(...args); await conductor.drain(); return web.waitForEvent(id, 1000);
+    } }, pool, { ...request(s), strategy: 'turn' });
+    await settle(); assert.deepEqual(calls, []);
+    const turn = { turnId: randomUUID(), journal: '/home/node/.claude/turn-late.log', phase: 'executing' };
+    await pool.query('UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1', [s.sessionId, JSON.stringify(turn)]);
+    const e = await dispatched(s, turn, 'root');
+    assert.deepEqual(e.source, { kind: 'system', name: DISPATCH });
+    assert.equal(e.actor, null); assert.equal(e.payload.userId, null); assert.equal(e.payload.by, 'root');
+    const target = await stopTarget(pool, s.sessionId, s.userId);
+    assert.notEqual(e.key, interruptKey({ ...snapshot(target), strategy: 'turn' }), 'system confirmation is independent of owner clicks');
+    await conductor.drain(); await settle();
+    assert.equal((await current(s)).stopRequestedBy, 'root', 'an admin Stop is not attributed to the session owner');
+    for (let n = 0; n < 3; n += 1) { await tick(e); await settle(); await settle(); }
+    assert.equal((await interruptState(e)).data.result.reason, 'giveup');
+    assert.equal(calls.filter(c => c[0] === 'signal').length, 3);
+    await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"newer","journal":"/home/node/.claude/turn-newer.log"}'::jsonb WHERE id = $1`, [s.sessionId]);
+    await assert.rejects(dispatched(s, turn), err => err.code === 'turn_changed');
+    assert.equal(calls.filter(c => c[0] === 'signal').length, 3);
+  });
+  await t.test('system backstops still signal and confirm for anonymised owners, with real or absent attribution', async () => {
+    for (const by of ['root', null]) {
+      reset(); ordinary = true; const s = await session();
+      await pool.query('UPDATE users SET anonymised_at = NOW() WHERE id = $1', [s.ownerId]);
+      await assert.rejects(requestWorkerInterrupt(web, pool, { ...request(s), strategy: 'turn' }), err => err.code === 'not_authorized');
+      const e = await dispatched(s, s.turn, by); await conductor.drain();
+      assert.equal((await web.waitForEvent(e.id, 1000)).status, 'accepted');
+      await settle(); assert.equal((await current(s)).stopRequestedBy, by);
+      const fresh = createRuntime({ pool, machines: [workerInterrupt()], services, slots: 1 });
+      try {
+        await tick(e, fresh); await settle(fresh);
+        assert.equal((await interruptState(e)).data.result.confirmed, true);
+        assert.equal((await current(s)).stopRequestedBy, by, 'attribution survives a conductor restart');
+        assert.deepEqual(calls.map(c => c[0]), ['signal', 'probe']);
+      } finally { await fresh.stop(); }
+    }
+  });
+  await t.test('system admission requires its dedicated source, null actor and exact active journalled job', async () => {
+    reset(); ordinary = true;
+    const source = { kind: 'system', name: DISPATCH };
+    for (const invalid of [
+      { envelope: { source: { kind: 'route', name: INTERRUPT_WORK }, actor: 'user:null' } },
+      { envelope: { actor: 'user:1' } },
+      { over: { userId: 1 } },
+      { envelope: { source: { kind: 'system', name: 'another-producer' } } },
+      { over: { strategy: 'worker' } },
+      { over: { active: false, turnId: null, journal: null } },
+      { over: { turnId: null } }, { over: { journal: null } },
+    ]) {
+      const s = await session(); const e = await interrupt(s, 'turn', { userId: null, ...invalid.over },
+        { source, actor: null, ...invalid.envelope });
+      await conductor.drain(); const out = await web.waitForEvent(e.id, 1000);
+      assert.equal(out.status, 'rejected'); assert.equal(out.reason, 'not_a_producer');
+    }
+    for (const ended of [false, true]) {
+      const s = await session(); const e = await dispatched(s);
+      await pool.query('UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1', [s.sessionId,
+        ended ? null : JSON.stringify({ ...s.turn, turnId: 'replacement' })]);
+      await conductor.drain(); const out = await web.waitForEvent(e.id, 1000);
+      assert.equal(out.status, 'rejected'); assert.equal(out.reason, 'turn_changed');
+    }
+    assert.deepEqual(calls, []);
+  });
+  await t.test('human stop attribution comes from the authenticated actor, ignoring a payload name', async () => {
+    reset(); ordinary = true; const s = await session();
+    const e = await interrupt(s, 'turn', { by: 'somebody_else' });
+    await conductor.drain(); await settle();
+    const { rows: [owner] } = await pool.query('SELECT username FROM users WHERE id = $1', [s.ownerId]);
+    assert.equal((await current(s)).stopRequestedBy, owner.username);
+    await tick(e); await settle();
+  });
+  await t.test('an owner Stop is independent of a queued admin Stop whose authority was revoked', async () => {
+    reset(); ordinary = true; const s = await session();
+    const { rows: [adminUser] } = await pool.query(`INSERT INTO users (username, password, is_admin) VALUES ('interrupt_admin', 'x', TRUE) RETURNING id`);
+    const adminStop = await interrupt({ ...s, userId: adminUser.id }); const ownerStop = await interrupt(s);
+    assert.notEqual(adminStop.key, ownerStop.key, 'commands with different authority must not share pending work');
+    await conductor.drain(); await pool.query('UPDATE users SET is_admin = FALSE WHERE id = $1', [adminUser.id]);
+    await settle();
+    assert.equal((await interruptState(adminStop)).data.result.confirmed, false);
+    assert.equal((await interruptState(ownerStop)).state, 'waiting');
+    await tick(ownerStop); await settle();
+    assert.equal((await interruptState(ownerStop)).data.result.confirmed, true);
+    assert.deepEqual(calls.map(c => c[0]), ['signal', 'probe']);
+  });
+  await t.test('every later confirmation step rechecks job, configuration, owner and current actor authority', async () => {
+    for (const change of ['job', 'context', 'owner', 'actor']) {
+      reset(); ordinary = true; const s = await session(); const e = await interrupt(s); await conductor.drain(); await settle();
+      if (change === 'job') await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"new-job","journal":"/home/node/.claude/turn-new-job.log"}'::jsonb WHERE id = $1`, [s.sessionId]);
+      if (change === 'context') await pool.query('UPDATE chat_sessions SET agent_config_version = agent_config_version + 1 WHERE id = $1', [s.sessionId]);
+      if (change === 'owner') await pool.query('UPDATE chat_sessions SET user_id = NULL WHERE id = $1', [s.sessionId]);
+      if (change === 'actor') await pool.query('UPDATE users SET anonymised_at = NOW() WHERE id = $1', [s.userId]);
+      await tick(e); await settle();
+      assert.equal((await interruptState(e)).data.result.confirmed, false); assert.deepEqual(calls.map(c => c[0]), ['signal'], change);
+    }
+  });
+  await t.test('a finished job or an expired queued request needs no runtime work', async () => {
+    for (const expired of [false, true]) {
+      reset(); ordinary = true; const s = await session(); const e = await interrupt(s); await conductor.drain();
+      if (expired) {
+        await asTransition(pool, `UPDATE wf_work SET input = jsonb_set(input, '{target,expiresAt}', '0'::jsonb) WHERE machine = $1 AND key = $2`, [INTERRUPT, e.key]);
+      } else await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [s.sessionId]);
+      await settle(); assert.equal((await interruptState(e)).state, 'done'); assert.deepEqual(calls, []);
+      assert.equal((await interruptState(e)).data.result.confirmed, !expired);
+    }
+  });
+  await t.test('legacy records retain signalling and worker fallback rescues before identity-scoped stopping', async () => {
+    reset(); ordinary = true; const legacy = await session();
+    await pool.query(`UPDATE chat_sessions SET active_turn = active_turn - 'journal' WHERE id = $1`, [legacy.sessionId]);
+    const l = await interrupt(legacy); await conductor.drain(); await settle(); await tick(l); await settle();
+    assert.deepEqual(calls.map(c => c[0]), ['legacy-signal', 'probe']);
+    reset(); ordinary = true; const s = await session(); const e = await interrupt(s, 'worker'); await conductor.drain(); await settle();
+    assert.deepEqual(calls.map(c => c[0]), ['identity', 'rescue', 'runtime']);
+    assert.equal((await interruptState(e)).data.result.confirmed, true); assert.ok(await current(s));
+    reset(); ordinary = true; rescueError = new Error('keep the saved commit'); const kept = await session(); const k = await interrupt(kept, 'worker');
+    await conductor.drain(); await settle(); assert.equal((await interruptState(k)).data.result.confirmed, false);
+    assert.equal(calls.some(c => c[0] === 'runtime'), false); assert.ok(await current(kept));
+    assert.equal((await pool.query('SELECT 1 FROM session_workers WHERE session_id = $1', [kept.sessionId])).rowCount, 1);
+  });
+  await t.test('identity-less legacy records are signalled and fenced by their stored contents', async () => {
+    for (const replaced of [false, true]) {
+      reset(); ordinary = true; const s = await session();
+      await pool.query(`UPDATE chat_sessions SET active_turn = active_turn - 'journal' - 'turnId' WHERE id = $1`, [s.sessionId]);
+      const e = await interrupt(s); await conductor.drain();
+      if (replaced) await pool.query(`UPDATE chat_sessions SET active_turn = active_turn || '{"startedAt":"replacement"}'::jsonb WHERE id = $1`, [s.sessionId]);
+      await settle();
+      if (replaced) {
+        assert.deepEqual(calls, []); assert.equal((await interruptState(e)).data.result.reason, 'turn_changed');
+      } else {
+        assert.ok((await current(s)).stopRequestedAt);
+        await tick(e); await settle(); assert.deepEqual(calls.map(c => c[0]), ['legacy-signal', 'probe']);
+      }
+    }
+  });
+  await t.test('runtime skips preserve the reason observed just before removal', async () => {
+    for (const reason of ['ended', 'giveup', 'not_authorized', 'turn_changed']) {
+      reset(); ordinary = true; const s = await session(); const e = await interrupt(s, 'worker'); await conductor.drain();
+      let clock;
+      beforeDelete = async id => {
+        if (reason === 'ended') await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [id]);
+        if (reason === 'not_authorized') await pool.query('UPDATE users SET anonymised_at = NOW() WHERE id = $1', [s.userId]);
+        if (reason === 'turn_changed') await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"newer"}'::jsonb WHERE id = $1`, [id]);
+        if (reason === 'giveup') {
+          const now = Date.now(); clock = t.mock.method(Date, 'now', () => now + 31000);
+        }
+      };
+      try { await settle(); } finally { clock?.mock.restore(); }
+      const out = (await interruptState(e)).data.result;
+      assert.equal(out.reason, reason); assert.equal(out.confirmed, reason === 'ended');
+      assert.equal(calls.some(c => c[0] === 'runtime'), false);
+    }
+  });
+  await t.test('admission and legacy deletion refuse changed targets; a web process cannot run interruption work', async () => {
+    reset(); ordinary = true;
+    for (const change of ['actor', 'source', 'scope', 'snapshot']) {
+      const s = await session(); const e = await interrupt(s, 'turn', change === 'snapshot' ? { turnId: 'other-job' } : {},
+        change === 'actor' ? { actor: 'user:99999' } : change === 'source' ? { source: { kind: 'system' } } : change === 'scope' ? { appId: s.appId + 1 } : {});
+      await conductor.drain(); const out = await web.waitForEvent(e.id, 1000);
+      assert.equal(out.status, 'rejected', change);
+      if (change === 'actor' || change === 'source') assert.equal(out.reason, 'not_a_producer');
+    }
+    assert.deepEqual(calls, []);
+    await assert.rejects(services[INTERRUPT_WORK].run({ input: {}, checkpoint: () => { throw new Error('web checkpoint'); } }), /requires a workflow process/);
+    const s = await session(); const e = await interrupt(s, 'worker'); await conductor.drain();
+    beforeDelete = id => pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"replacement"}'::jsonb WHERE id = $1`, [id]);
+    await settle(); assert.equal((await interruptState(e)).data.result.confirmed, false);
+    assert.equal(calls.some(c => c[0] === 'runtime'), false);
+  });
+  await t.test('ordinary admission is asynchronous and unavailable admission never falls back to local runtime access', async () => {
+    reset(); ordinary = true; const s = await session();
+    const unavailable = { appendAndWait: async () => ({ status: 'pending', eventId: 1 }), refuseIfPending: async () => ({ status: 'rejected' }) };
+    await assert.rejects(requestWorkerInterrupt(unavailable, pool, { ...request(s), strategy: 'turn' }), err => err.httpStatus === 503);
+    assert.deepEqual(calls, []);
+    const accepting = { ...web, appendAndWait: async (...args) => {
+      const id = await web.append(...args); await conductor.drain(); return web.waitForEvent(id, 1000);
+    }, waitFor: () => { throw new Error('ordinary Stop must not await confirmation'); } };
+    await requestWorkerInterrupt(accepting, pool, { ...request(s), strategy: 'turn' }); assert.deepEqual(calls, []);
+    await settle();
+    const target = await stopTarget(pool, s.sessionId, s.userId);
+    await tick({ key: interruptKey({ ...snapshot(target), strategy: 'turn' }) }); await settle();
+  });
+
+  await t.test('a separate conductor signals and confirms an ordinary Stop; the web does no runtime I/O', async () => {
+    reset(); ordinary = true; const s = await session();
+    await pool.query('CREATE TABLE wf_test_interrupt_effects (pid integer, session_id integer, action text)');
+    const child = fork(require.resolve('./fixtures/worker-command-conductor'), [], {
+      env: { PATH: process.env.PATH, TZ: 'UTC', PROCESS_ROLE: 'conductor', WORKER_COMMAND_TEST: JSON.stringify({ kind: 'interrupt', databaseUrl: String(url), sessionId: s.sessionId }) },
+      stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+    });
+    const exited = once(child, 'exit'); let stderr = ''; child.stderr.on('data', chunk => { stderr += chunk; });
+    t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
+    try {
+      const [message] = await Promise.race([once(child, 'message'), exited.then(() => { throw new Error(`conductor exited: ${stderr}`); })]);
+      assert.deepEqual(message, { ready: true });
+      const target = await stopTarget(pool, s.sessionId, s.userId);
+      const key = interruptKey({ ...snapshot(target), strategy: 'turn' });
+      await requestWorkerInterrupt(web, pool, { ...request(s), strategy: 'turn' });
+      const done = await web.waitFor(INTERRUPT, key, i => i.state === 'done', 7000);
+      assert.equal(done?.data.result.confirmed, true); assert.deepEqual(calls, []); assert.ok(await current(s));
+      assert.deepEqual((await pool.query('SELECT pid, session_id, action FROM wf_test_interrupt_effects ORDER BY action DESC')).rows,
+        [{ pid: child.pid, session_id: s.sessionId, action: 'signal' }, { pid: child.pid, session_id: s.sessionId, action: 'probe' }]);
+    } finally {
+      if (child.exitCode === null) child.send('stop'); const [code] = await exited; assert.equal(code, 0, stderr);
+    }
+  });
+
 });

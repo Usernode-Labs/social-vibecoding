@@ -152,9 +152,43 @@ and the workflow result. A captured job that already ended succeeds without
 queueing; agent-stop HTTP responses preserve typed 404/409/503 refusals.
 No schema or runtime configuration change is needed.
 
+Ordinary Stop queues the separate `worker-interrupt` machine in the same
+package. It acknowledges admission without waiting for confirmation, keeping
+the existing HTTP responses and local stream cancellation. The originating
+process stamps stop intent and disarms completion notifications before aborting,
+without waiting for conductor admission. A local CLI turn needs no container
+command, and final wrap-up stays protected.
+The conductor retains the TERM/grace/KILL signal, two-second probe cadence,
+three-signal cap and 30-second budget. Timers and attempts are in PostgreSQL;
+an actor's duplicate clicks share an active confirmation, and another conductor can finish
+it; repeat requests acknowledge that pending confirmation. After a confirmation
+ends, a new click can try again. Every work step rechecks current authority,
+configuration and job. Ordinary confirmation never
+clears the owning turn's record or escalates into force-stop deletion.
+The local pending flag gates spin-up. If Stop crosses an exec already in flight,
+its dispatcher signals and appends bounded confirmation for that exact new
+record, without waiting for another work item's result. This backstop has a
+dedicated system source and a null actor, independently of human-click coalescing;
+it checks the active turn id and journal and does not depend on the owner's
+account state. The pending flag carries the real stopper's name when known;
+otherwise the durable stamp has no stopper. A locally applied Stop
+still succeeds when admission finds a changed job; it never retargets that job.
+Old records with neither turn id nor journal are fenced by a fingerprint of
+their stored contents and signalled without writing a conductor-local registry.
+The legacy whole-worker fallback uses captured runtime identities and rescues
+saved commits before stopping: Kubernetes removes its Deployment while Docker
+keeps its stopped container, registry entry and sweeper row; both retain the
+context volume. A skipped removal reports the authority, job, completion or
+expiry check that declined it. Retry-time idle waiting performs I/O only on a
+conductor and returns false without I/O when called on the web. The route-side
+polling loop, local `confirming` flag and name-based stop shim are removed.
+Older conductors leave this separate machine pending, so rollout can temporarily
+return retryable 503s, with no web-side runtime fallback. This needs no schema
+or runtime configuration change.
+
 These move web dependencies behind durable commands. Web Pods still need
 their current Kubernetes and database permissions for other callers, including
-ordinary legacy stop/confirmation paths, volume copies, repository operations and startup work. Moving
+volume copies, repository operations and startup work. Moving
 those callers, then splitting service accounts, Secret inputs and actual
 database login privileges, remains SEC-09 work. The event's source metadata
 also remains a convention among trusted processes; it does not authenticate
