@@ -359,14 +359,17 @@ async function botPaused(pool, { now = Date.now() } = {}) {
 const LIMIT_TITLES = Object.freeze({
   apps: 'Platform limit full: apps',
   sessions: 'Platform limit full: sessions running at once',
-  github: 'GitHub budget used up: the bot token',
   github_app: 'GitHub budget used up: the GitHub App',
 });
 
 async function limitsFull(pool) {
   const { rows } = await pool.query(
     `SELECT limit_key, used, cap, measured_at FROM platform_limit_alerts WHERE level = 'full'`);
-  return rows.map((r) => ({
+  // Only the caps still measured (platform-limit-alerts.js LIMITS). A row
+  // for one that is not (the bot token's `github`, gone with the token)
+  // keeps the level it last had, and says nothing about today.
+  const watched = new Set(require('./platform-limit-alerts').LIMITS.map((l) => l.key));
+  return rows.filter((r) => watched.has(r.limit_key)).map((r) => ({
     kind: 'limit',
     key: r.limit_key,
     subject: { limit: r.limit_key },

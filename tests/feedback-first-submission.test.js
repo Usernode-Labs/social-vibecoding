@@ -62,8 +62,6 @@ github.createIssue = async () => {
 };
 const wsId = require.resolve('../src/services/ws');
 require.cache[wsId] = { id: wsId, filename: wsId, loaded: true, exports: { pushIssueUpdate() {} } };
-const oldToken = process.env.GITHUB_BOT_TOKEN;
-process.env.GITHUB_BOT_TOKEN = 'test-token';
 const realFetch = global.fetch;
 global.fetch = async (url, opts) => String(url).startsWith('https://api.github.com/')
   ? { ok: !githubFails, status: githubFails ? 502 : 201, text: async () => '', json: async () => ({ number: ++issueNumber }) }
@@ -83,8 +81,6 @@ test.before(async () => {
 test.after(() => {
   server.close();
   global.fetch = realFetch;
-  if (oldToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
-  else process.env.GITHUB_BOT_TOKEN = oldToken;
 });
 test.beforeEach(() => {
   // #2520: POST /api/feedback is limited to 10 submissions per hour per

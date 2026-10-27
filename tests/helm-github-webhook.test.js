@@ -11,7 +11,7 @@ test('Helm supplies the webhook secret to the platform and rolls out secret chan
     '--set', 'enabled=true,secrets.create=true',
     '--set-string', `release.sourceRevision=${'a'.repeat(40)}`,
     '--set-string', 'secrets.databasePassword=test-only-password',
-    '--set-string', 'secrets.githubAppId=123,secrets.githubPrivateKey=test-key,secrets.githubBotToken=test-token,secrets.topochainPartnerApiKey=test-partner'];
+    '--set-string', 'secrets.githubAppId=123,secrets.githubPrivateKey=test-key,secrets.topochainPartnerApiKey=test-partner'];
   for (const image of ['image', 'workerImage', 'captureImage']) {
     args.push('--set-string', `platform.${image}.digest=sha256:${'a'.repeat(64)}`);
   }
@@ -29,6 +29,12 @@ test('Helm supplies the webhook secret to the platform and rolls out secret chan
   assert.ok(checksum(enabled));
   assert.notEqual(checksum(disabled), checksum(enabled), 'enabling the webhook rolls out the platform');
   assert.notEqual(checksum(enabled), checksum(rotated), 'rotating the secret rolls out the platform');
+
+  // The bot token is gone: the chart renders without it, never writes it,
+  // and ignores a value an environment's values still carry.
+  assert.doesNotMatch(enabled, /GITHUB_BOT_TOKEN/);
+  const leftover = render(['--set-string', 'secrets.githubBotToken=leftover-test-value']);
+  assert.doesNotMatch(leftover, /GITHUB_BOT_TOKEN|leftover-test-value/);
 
   const external = render(['--set', 'secrets.create=false', '--set-string', 'secrets.existingSecret=external-platform']);
   assert.doesNotMatch(external, /^kind: Secret$/m);

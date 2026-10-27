@@ -17,7 +17,9 @@
 //      is sent, and before the App's installations are even walked.
 //   3. The platform setting still pauses everything; an App not installed on
 //      the owner refuses plainly.
-//   4. Nothing in the platform hands the bot token to a request any more.
+//   4. Nothing in the platform reads the bot token any more, and nothing
+//      declares it: not dapp.json, not the Helm chart. A stale copy in an
+//      environment is read by nobody.
 //
 // Never calls GitHub.
 //
@@ -175,30 +177,41 @@ test('an App not installed on the owner refuses plainly, and canActOn stays fals
   assert.equal(app.walks, 1);
 });
 
-// ─── 4. Nothing hands the bot token to a request ────────────────────────
+// ─── 4. Nothing reads or declares the bot token ─────────────────────────
 
-test('no request is made with the bot token: the only readers of it say whether it is set', () => {
-  const allowed = {
-    // Admin › Limits: whether it is configured, for the empty state.
-    'src/routes/admin.js': /botToken: !!process\.env\.GITHUB_BOT_TOKEN,/,
-    // The platform-limit alert for its budget, which nothing spends now.
-    'src/services/platform-limit-alerts.js': /enabled: \(\) => !!process\.env\.GITHUB_BOT_TOKEN,/,
-    // A remix on GitHub, reached only without a git host, and then refused
-    // by createRepo before the push (pinned above).
-    'src/services/app-forker.js': /const botToken = hosted \? '' : \(process\.env\.GITHUB_BOT_TOKEN \|\| ''\);/,
-  };
+test('nothing in the platform reads the bot token: every mention outside a comment is the console\'s refusal', () => {
   const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const full = path.join(dir, e.name);
-    return e.isDirectory() ? walk(full) : /\.(js|ts)$/.test(e.name) ? [full] : [];
+    if (e.isDirectory()) return e.name === 'node_modules' ? [] : walk(full);
+    return /\.(c|m)?(js|ts)x?$|\.sh$/.test(e.name) ? [full] : [];
   });
-  const readers = walk(path.join(ROOT, 'src'))
-    .filter((f) => /process\.env\.GITHUB_BOT_TOKEN/.test(fs.readFileSync(f, 'utf8')))
-    .map((f) => path.relative(ROOT, f).split(path.sep).join('/'))
-    .sort();
-  assert.deepEqual(readers, Object.keys(allowed).sort());
-  for (const [file, use] of Object.entries(allowed)) {
-    const src = fs.readFileSync(path.join(ROOT, file), 'utf8');
-    assert.equal((src.match(/process\.env\.GITHUB_BOT_TOKEN/g) || []).length, 1, file);
-    assert.match(src, use, file);
+  const files = [
+    ...walk(path.join(ROOT, 'src')),
+    ...walk(path.join(ROOT, 'worker')),
+    ...walk(path.join(ROOT, 'scripts')),
+    path.join(ROOT, 'server.js'),
+  ];
+  const mentions = [];
+  for (const file of files) {
+    const lines = fs.readFileSync(file, 'utf8').split('\n');
+    lines.forEach((line, i) => {
+      if (!/GITHUB_BOT_TOKEN/.test(line)) return;
+      // A comment says what the token was; only code can read it.
+      if (/^\s*(\/\/|\*|\/\*|#)/.test(line)) return;
+      mentions.push(`${path.relative(ROOT, file).split(path.sep).join('/')}:${i + 1}: ${line.trim()}`);
+    });
   }
+  // The one left is a refusal, not a read: the platform-variable console may
+  // never set the retired name (PLATFORM_ENV_UNWRITABLE).
+  assert.deepEqual(mentions.map((m) => m.replace(/:\d+:/, ':')),
+    ["src/workflow/rules/platform-keys.ts: 'GITHUB_BOT_TOKEN',"]);
+});
+
+// The Helm chart's side is pinned in tests/kubernetes-deployment-contract.test.js.
+test('nothing declares the bot token: not dapp.json, nor .env.example', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'dapp.json'), 'utf8'));
+  const declared = [...(manifest.secrets || []), ...(manifest.platform_env || [])].map((s) => s.key);
+  assert.equal(declared.includes('GITHUB_BOT_TOKEN'), false, 'dapp.json');
+  assert.ok(declared.includes('GITHUB_APP_ID') && declared.includes('GITHUB_PRIVATE_KEY'), 'the App stays declared');
+  assert.doesNotMatch(fs.readFileSync(path.join(ROOT, '.env.example'), 'utf8'), /GITHUB_BOT_TOKEN/, '.env.example');
 });

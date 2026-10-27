@@ -13,7 +13,7 @@ function renderer() {
     '--set', 'enabled=true,secrets.create=true',
     '--set-string', `release.sourceRevision=${'a'.repeat(40)}`,
     '--set-string', 'secrets.databasePassword=test-only-password',
-    '--set-string', 'secrets.githubAppId=123,secrets.githubPrivateKey=test-key,secrets.githubBotToken=test-token,secrets.topochainPartnerApiKey=test-partner'];
+    '--set-string', 'secrets.githubAppId=123,secrets.githubPrivateKey=test-key,secrets.topochainPartnerApiKey=test-partner'];
   for (const image of ['image', 'workerImage', 'captureImage']) {
     args.push('--set-string', `platform.${image}.digest=sha256:${'a'.repeat(64)}`);
   }

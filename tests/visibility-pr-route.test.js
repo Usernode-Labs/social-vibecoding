@@ -33,8 +33,6 @@ github.createPR = async (owner, repo, { branch, title, body }) => {
   return { number: 555, html_url: 'https://github.com/o/r/pull/555' };
 };
 
-process.env.GITHUB_BOT_TOKEN = process.env.GITHUB_BOT_TOKEN || 'test-token';
-
 const { appRoutes } = require('../src/routes/apps');
 const express = require('express');
 

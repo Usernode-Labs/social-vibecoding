@@ -218,8 +218,8 @@ administrative connection and a psql).
       {{- end -}}
     {{- end -}}
   {{- end -}}
-  {{- if and .Values.platform.enabled .Values.secrets.create (or (empty .Values.secrets.githubAppId) (empty .Values.secrets.githubPrivateKey) (empty .Values.secrets.githubBotToken)) -}}
-    {{- fail "secrets.githubAppId, secrets.githubPrivateKey and secrets.githubBotToken are required when platform is enabled" -}}
+  {{- if and .Values.platform.enabled .Values.secrets.create (or (empty .Values.secrets.githubAppId) (empty .Values.secrets.githubPrivateKey)) -}}
+    {{- fail "secrets.githubAppId and secrets.githubPrivateKey are required when platform is enabled" -}}
   {{- end -}}
   {{- if and .Values.platform.enabled (or (empty .Values.config.nodeRpcUrl) (empty .Values.config.nativeSessionV2TestnetChainId)) -}}
     {{- fail "config.nodeRpcUrl and config.nativeSessionV2TestnetChainId are required when platform is enabled" -}}

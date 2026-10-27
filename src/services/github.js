@@ -328,7 +328,9 @@ function requireApp() {
 // GitHub suspended usernode-bot, the account behind GITHUB_BOT_TOKEN, on
 // 25 Oct 2026, and Homeroom promised GitHub never to use that account again
 // (docs/plans/github-independence-handoff.md §4). Its token is never sent:
-// whatever the environment still holds, nothing here reads it.
+// nothing in the platform reads it, and neither dapp.json nor the Helm
+// chart declares it any more, so the GitHub App below is the platform's only
+// GitHub credential.
 //
 // What is left on GitHub is the platform's own repository
 // (config.platformRepoUrl), and Homeroom acts on it as the GitHub App,

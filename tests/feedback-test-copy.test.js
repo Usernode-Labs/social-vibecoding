@@ -1,7 +1,6 @@
 // POST /api/feedback files a request row on Homeroom's own board
 // (github.createIssue, services/requests.js) on every server: production, a
-// test copy (a staging preview, a developer's own machine), with or without a
-// GitHub token. #5743 used to file a test copy's request under a fake number,
+// test copy (a staging preview, a developer's own machine). #5743 used to file a test copy's request under a fake number,
 // because a test copy could not reach GitHub; since GitHub suspended the
 // filing account (26 Oct 2026) requests are rows and need no GitHub at all,
 // so a test copy files them for real, and they show on its board. Nothing
@@ -80,7 +79,7 @@ global.fetch = async (url, opts) => {
 const { feedbackRoutes } = require('../src/routes/feedback');
 const { feedbackSubmitLimiter } = require('../src/middleware/rate-limits');
 
-const ENV_KEYS = ['GITHUB_BOT_TOKEN', 'USERNODE_ENV', 'USERNODE_LOCAL_DEV', 'NODE_ENV'];
+const ENV_KEYS = ['USERNODE_ENV', 'USERNODE_LOCAL_DEV', 'NODE_ENV'];
 const savedEnv = {};
 for (const key of ENV_KEYS) savedEnv[key] = process.env[key];
 
@@ -117,7 +116,6 @@ test.beforeEach(() => {
 
 function stagingCopy() {
   process.env.USERNODE_ENV = 'staging';
-  delete process.env.GITHUB_BOT_TOKEN;
 }
 
 async function submit(overrides = {}) {
@@ -129,7 +127,7 @@ async function submit(overrides = {}) {
   return { status: response.status, data: await response.json() };
 }
 
-test('a staging copy with no token files a real request, and nothing reaches GitHub', async () => {
+test('a staging copy files a real request, and nothing reaches GitHub', async () => {
   stagingCopy();
   // No title: the model is unreachable here, so the filing falls back to the
   // template title, which queues a title heal (of the row, not of GitHub).
@@ -163,7 +161,7 @@ test('a staging copy files app-targeted feedback on the app\'s board when the Gi
   assert.equal(platformIssueCalls.length, 0);
 });
 
-test('local development without a token files the same way', async () => {
+test('local development files the same way', async () => {
   process.env.USERNODE_LOCAL_DEV = '1';
   process.env.NODE_ENV = 'development';
   const { status } = await submit();
@@ -172,9 +170,8 @@ test('local development without a token files the same way', async () => {
   assert.equal(platformIssueCalls.length, 0);
 });
 
-test('a staging copy that does have a token files for real', async () => {
+test('a staging copy files for real, and queues the template title\'s heal', async () => {
   process.env.USERNODE_ENV = 'staging';
-  process.env.GITHUB_BOT_TOKEN = 'test-token';
   const { status, data } = await submit({ title: undefined });
   assert.equal(status, 200);
   assert.deepEqual(createIssueCalls, [{ owner: 'platform', repo: 'repo' }], 'a request row on the platform board');

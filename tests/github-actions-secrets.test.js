@@ -245,13 +245,13 @@ test('an exact-name match annotates the existing row instead of duplicating it',
 
 test('a synthesized deploy-owned row (from the `secrets` block) also annotates', () => {
   const view = platformSecretsView([declRow()], {
-    secrets: [{ key: 'GITHUB_BOT_TOKEN', description: 'PAT', required: true, private: true, default: null }],
+    secrets: [{ key: 'GITHUB_PRIVATE_KEY', description: 'App key', required: true, private: true, default: null }],
   }, {
     includeValues: true,
     actionsSecrets: {
       ok: true,
       secrets: [
-        { name: 'GITHUB_BOT_TOKEN', updatedAt: '2025-07-07T00:00:00Z' },
+        { name: 'GITHUB_PRIVATE_KEY', updatedAt: '2025-07-07T00:00:00Z' },
         // The renamed case: deploy.yml maps this onto ADMIN_PASSWORD, so
         // it does NOT match and gets its own row — that's accurate, they
         // are different objects.
@@ -260,9 +260,9 @@ test('a synthesized deploy-owned row (from the `secrets` block) also annotates',
     },
   });
 
-  const bot = view.filter((r) => r.key === 'GITHUB_BOT_TOKEN');
-  assert.equal(bot.length, 1);
-  assert.ok(bot[0].githubSecret);
+  const key = view.filter((r) => r.key === 'GITHUB_PRIVATE_KEY');
+  assert.equal(key.length, 1);
+  assert.ok(key[0].githubSecret);
   assert.ok(view.some((r) => r.key === 'USERNODE_ADMIN_PASSWORD' && r.source === 'github-actions'),
     'a renamed secret is its own row rather than being guessed at');
 });
@@ -310,7 +310,7 @@ test('the staging mock is gated on USERNODE_ENV and covers the annotation path',
   assert.match(mock, /if \(!IS_STAGING\) return null;/, 'strictly a no-op outside staging');
   assert.match(mock, /STAGING_DEMO_GH_DEPLOY_KEY/);
   assert.match(mock, /STAGING_DEMO_GH_API_TOKEN/);
-  assert.match(mock, /GITHUB_BOT_TOKEN/,
+  assert.match(mock, /name: 'GITHUB_PRIVATE_KEY'/,
     'an exact match with a key the platform\'s own secrets block declares, so the '
     + 'annotation path is reviewable in a preview and not only in production');
 });

@@ -1361,15 +1361,18 @@ function adminRoutes(config) {
   // GitHub platform-limit alert opens there. In memory on this process, so
   // empty until the first GitHub response after a restart.
   //
-  // A platform preview boots with no GitHub token (GITHUB_BOT_TOKEN's
+  // A platform preview boots with no GitHub credential (GITHUB_PRIVATE_KEY's
   // staging_default is empty), so it would only ever show the empty state.
   // There it answers fixed, labelled sample figures instead, the same
   // request-time demo injection routes/apps.js resolveActionsSecrets uses.
   // Strictly a no-op outside staging.
+  //
+  // `configured` says whether the GitHub App is set up, the platform's only
+  // GitHub credential since the bot token was retired (services/github.js
+  // "Who Homeroom is on GitHub").
   router.get('/api/admin/github-budget', (_req, res) => {
     const snap = githubBudget.snapshot();
     const configured = {
-      botToken: !!process.env.GITHUB_BOT_TOKEN,
       app: !!(config && config.githubAppId && config.githubPrivateKey),
     };
     if (IS_STAGING && !snap.credentials.length) {

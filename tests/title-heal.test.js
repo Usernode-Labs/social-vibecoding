@@ -354,7 +354,6 @@ test('healIssueTitles: a refusal reply is never PATCHed; the reporter\'s words a
 });
 
 test('healIssueTitles: failure backs off; final attempt abandons the row', async () => {
-  delete process.env.GITHUB_BOT_TOKEN;
   const { subject, restore } = loadTitleHealWithStubs({
     llm: {
       isEnabled: () => true,

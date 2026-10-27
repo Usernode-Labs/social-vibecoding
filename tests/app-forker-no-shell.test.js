@@ -9,8 +9,10 @@
 //
 // Two things are pinned beyond "no bash": the flatten's exact semantics
 // (every .git goes, a nested .gitmodules stays, symlinks are not followed),
-// and that the bot PAT reaches git through the environment only — which the
-// old script promised and, with $PAT inside bash double quotes, did not do.
+// and where the copy is pushed: Homeroom's git host, as its service account
+// (services/git-host.js git, auth: true). The GitHub path, which pushed with
+// the bot's token, is gone with the account GitHub suspended: a copy whose
+// owner is not the git host's is refused before anything is cloned.
 //
 // Run with: node --test tests/app-forker-no-shell.test.js
 
@@ -22,6 +24,13 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = fs.readFileSync(path.join(ROOT, 'src/services/app-forker.js'), 'utf8');
+
+// Homeroom's git host, as services/git-host.js reads it (at call time).
+const HOST_TOKEN = 'test-host-token-9f1c2d';
+process.env.GIT_HOST_URL = 'https://git.homeroom.test';
+process.env.GIT_HOST_ORG = 'apps';
+process.env.GIT_HOST_USER = 'homeroom';
+process.env.GIT_HOST_TOKEN = HOST_TOKEN;
 
 // ── Module stubs, installed before the forker loads ─────────────────────
 function stubModule(rel, exportsObj) {
@@ -35,9 +44,9 @@ stubModule('../src/services/logger', { info() {}, warn() {}, error() {}, debug()
 stubModule('../src/services/github', {
   isEnabled: () => true,
   parseGithubUrl: () => ({ owner: 'source-owner', repo: 'source-app' }),
-  getCloneUrl: async () => 'https://github.com/source-owner/source-app.git',
-  getBotUsername: async () => 'usernode-bot',
-  createRepo: async () => ({ html_url: 'https://github.com/usernode-bot/forked-app' }),
+  getCloneUrl: async () => 'https://git.homeroom.test/apps/source-app.git',
+  getBotUsername: async () => 'apps',
+  createRepo: async () => ({ html_url: 'https://git.homeroom.test/apps/forked-app' }),
 });
 stubModule('../src/services/docker', {
   execFileAsync: async (command, args, options = {}) => {
@@ -63,6 +72,14 @@ stubModule('../src/services/template', {
   getConnectorScaffoldFiles: () => [],
   getCanonicalRepoFile: () => null,
 });
+// The push goes through git-host.git, which runs git with the service
+// account itself: recorded in the same list instead. Its settings and
+// addresses are the real ones, read from the environment above.
+const gitHost = require('../src/services/git-host');
+gitHost.git =async (args, options = {}) => {
+  calls.push({ command: 'git-host', args, options });
+  return { stdout: '', stderr: '' };
+};
 delete require.cache[require.resolve('../src/services/app-forker')];
 const forker = require('../src/services/app-forker');
 
@@ -92,10 +109,9 @@ function clonedTree(dir) {
 test('the fork path spawns no shell', () => {
   assert.doesNotMatch(SRC, /execFileAsync\(\s*'(?:bash|sh)'/, 'no bash -c, no sh -c');
   assert.doesNotMatch(SRC, /shell:\s*true/);
-  // The helper git runs the push with is a literal: $PAT is expanded by
-  // git's own sh at helper time, never by us into an argument.
-  assert.match(SRC, /credential\.helper=!f\(\) \{ echo username=x-access-token; echo password=\$PAT; \}; f'/);
-  assert.doesNotMatch(SRC, /password=\$\{/, 'no template interpolation of the secret');
+  // No credential of its own: the git host's service account answers the
+  // push inside git-host.git, and the bot token is read by nothing.
+  assert.doesNotMatch(SRC, /GITHUB_BOT_TOKEN|\$PAT|credential\.helper/);
 });
 
 test('flattenTree removes every .git and the top-level .gitmodules, and nothing else', async () => {
@@ -125,9 +141,7 @@ test('flattenTree removes every .git and the top-level .gitmodules, and nothing 
   }
 });
 
-test('copyRepoTree: one git process per step, in the fork tree, with the PAT in the environment only', async () => {
-  const previousToken = process.env.GITHUB_BOT_TOKEN;
-  process.env.GITHUB_BOT_TOKEN = 'test-pat-9f1c2d';
+test('copyRepoTree: one git process per step, in the fork tree, pushed to the git host as its service account', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fork-copy-'));
   calls.length = 0;
   try {
@@ -135,18 +149,19 @@ test('copyRepoTree: one git process per step, in the fork tree, with the PAT in 
     // laid down first; the `rm -rf` before it is stubbed too.
     clonedTree(tempDir);
     const result = await forker.copyRepoTree({
-      sourceApp: { slug: 'source-app', repo_url: 'https://github.com/source-owner/source-app' },
-      botUsername: 'usernode-bot', forkSlug: 'forked-app', forkName: 'Forked App', tempDir,
+      sourceApp: { slug: 'source-app', repo_url: 'https://git.homeroom.test/apps/source-app' },
+      botUsername: 'apps', forkSlug: 'forked-app', forkName: 'Forked App', tempDir,
     });
     assert.deepEqual(result, {
-      repoUrl: 'https://github.com/usernode-bot/forked-app',
+      repoUrl: 'https://git.homeroom.test/apps/forked-app',
       mainSha: 'abc123def',
       sourceSha: 'source0sha',
     });
 
     assert.ok(calls.every((c) => c.command !== 'bash' && c.command !== 'sh'), 'no shell was spawned');
-    const git = calls.filter((c) => c.command === 'git');
-    assert.deepEqual(git.map((c) => c.args[0] === '-c' ? c.args.find((a, i) => i > 0 && !git[0].args.includes(a) && !a.includes('=') && !a.startsWith('-') && a !== c.args[i - 1]) : c.args[0]),
+    const git = calls.filter((c) => c.command === 'git' || c.command === 'git-host');
+    const step = (c) => (c.command === 'git-host' ? c.args[2] : c.args.find((a) => !a.startsWith('-') && !a.includes('=')));
+    assert.deepEqual(git.map(step),
       ['clone', 'rev-parse', 'init', 'add', 'commit', 'push', 'rev-parse'], 'the steps, in order');
     const [clone, sourceRev, init, add, commit, push, revParse] = git;
     // The source commit is read from the clone, before the flatten removes
@@ -156,19 +171,22 @@ test('copyRepoTree: one git process per step, in the fork tree, with the PAT in 
     assert.deepEqual(init.args, ['init', '-q', '-b', 'main']);
     assert.deepEqual(add.args, ['add', '-A']);
     assert.ok(commit.args.includes('Forked from source-app'), 'the commit message names the source');
-    assert.deepEqual(push.args.slice(-4), ['-q', '--force', 'https://github.com/usernode-bot/forked-app.git', 'HEAD:main']);
     assert.deepEqual(revParse.args, ['rev-parse', 'HEAD']);
-    for (const step of [init, add, commit, push, revParse]) {
-      assert.equal(step.options.cwd, tempDir, `${step.args[0]} runs in the fork tree`);
+    for (const s of [init, add, commit, revParse]) {
+      assert.equal(s.options.cwd, tempDir, `${s.args[0]} runs in the fork tree`);
     }
     assert.equal(clone.options.cwd, undefined, 'the clone runs from wherever, into the tree');
 
-    // The secret: in the push's environment, in no argument, anywhere.
-    assert.equal(push.options.env.PAT, 'test-pat-9f1c2d');
+    // The push: from the fork tree to the copy's repository on the git
+    // host, answered by its service account (git-host.git, auth: true).
+    assert.equal(push.command, 'git-host');
+    assert.deepEqual(push.args, ['-C', tempDir, 'push', '-q', '--force', 'https://git.homeroom.test/apps/forked-app.git', 'HEAD:main']);
+    assert.equal(push.options.auth, true);
+    // No step carries a credential of its own, in an argument or its env.
     for (const c of calls) {
-      assert.ok(!c.args.some((a) => String(a).includes('test-pat-9f1c2d')), `${c.command} ${c.args[0]}: no argument carries the token`);
+      assert.ok(!JSON.stringify(c).includes(HOST_TOKEN), `${c.command} ${c.args[0]}: no credential passed`);
+      assert.ok(!(c.options.env && 'PAT' in c.options.env), `${c.command} ${c.args[0]}: no PAT`);
     }
-    assert.ok(push.args.some((a) => a.includes('password=$PAT')), 'the helper reads it by name');
 
     // The tree the commit was made from: flattened, renamed, and the
     // original's admins, visibility and governance stripped.
@@ -181,40 +199,63 @@ test('copyRepoTree: one git process per step, in the fork tree, with the PAT in 
     assert.equal(manifest.governance, undefined);
     assert.deepEqual(manifest.icon, { emoji: '📚' }, 'the look comes with the code');
   } finally {
-    process.env.GITHUB_BOT_TOKEN = previousToken;
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
 
-test('a failing step after the clone is reported as the repo push failing, with the token redacted', async () => {
-  const previousToken = process.env.GITHUB_BOT_TOKEN;
-  process.env.GITHUB_BOT_TOKEN = 'test-pat-9f1c2d';
+test('a failing push is reported as the repo push failing, with git-host\'s redacted message', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fork-fail-'));
-  const docker = require('../src/services/docker');
-  const realExec = docker.execFileAsync;
-  docker.execFileAsync = async (command, args) => {
-    if (command === 'git' && args.includes('push')) {
-      throw new Error('remote: Permission denied for x-access-token:test-pat-9f1c2d');
-    }
-    return { stdout: '', stderr: '' };
-  };
+  const stubbedHostGit = gitHost.git;
+  // git-host.git rejects with the service account's token already redacted
+  // (its redact(), tests/worker-git-push.test.js); the reason passes it on.
+  const redacted = 'git push failed: remote: Permission denied for homeroom:***';
+  gitHost.git = async () => { throw new Error(redacted); };
   try {
     clonedTree(tempDir);
     await assert.rejects(
       () => forker.copyRepoTree({
-        sourceApp: { slug: 'source-app', repo_url: null }, botUsername: 'usernode-bot',
+        sourceApp: { slug: 'source-app', repo_url: null }, botUsername: 'apps',
         forkSlug: 'forked-app', forkName: 'Forked App', tempDir,
       }),
       (err) => {
         assert.equal(err.repoFailed, true, 'classified as the repo stage');
-        assert.match(err.message, /fork repo push failed/);
-        assert.doesNotMatch(err.message, /test-pat-9f1c2d/, 'the token is redacted');
+        assert.equal(err.message, `fork repo push failed: ${redacted}`);
+        assert.doesNotMatch(err.message, new RegExp(HOST_TOKEN), 'no token in the reason');
         return true;
       }
     );
   } finally {
-    docker.execFileAsync = realExec;
-    process.env.GITHUB_BOT_TOKEN = previousToken;
+    gitHost.git = stubbedHostGit;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+// GitHub suspended the bot whose token pushed copies to GitHub (25 Oct
+// 2026). Without a git host, the copy's owner is a GitHub account, and the
+// copy is refused with createRepo's own error before anything is cloned.
+test('a copy for an owner that is not the git host\'s is refused before anything runs', async () => {
+  const prior = process.env.GIT_HOST_URL;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fork-github-'));
+  try {
+    for (const [hostUrl, owner] of [['https://git.homeroom.test', 'usernode-bot'], ['', 'apps']]) {
+      process.env.GIT_HOST_URL = hostUrl;
+      calls.length = 0;
+      await assert.rejects(
+        () => forker.copyRepoTree({
+          sourceApp: { slug: 'source-app', repo_url: 'https://github.com/usernode-bot/source-app' },
+          botUsername: owner, forkSlug: 'forked-app', forkName: 'Forked App', tempDir,
+        }),
+        (err) => {
+          assert.equal(err.code, 'git_host_not_configured');
+          assert.match(err.message, /New repositories are made on Homeroom's git host, and it is not configured/);
+          return true;
+        },
+        `${owner} with GIT_HOST_URL=${hostUrl || '(unset)'}`,
+      );
+      assert.deepEqual(calls, [], 'no clone, no git, no push');
+    }
+  } finally {
+    process.env.GIT_HOST_URL = prior;
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });

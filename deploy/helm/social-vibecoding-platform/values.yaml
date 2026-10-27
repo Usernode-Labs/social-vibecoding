@@ -303,7 +303,6 @@ secrets:
   topochainPartnerApiKey: ""
   githubAppId: ""
   githubPrivateKey: ""
-  githubBotToken: ""
   # The git host's service account token (config.gitHost). Supply through SOPS.
   gitHostToken: ""
   # Optional signed pull_request webhook; supply through encrypted external values.

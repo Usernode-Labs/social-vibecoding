@@ -220,8 +220,7 @@ test('a rate-limit refusal is said in plain words, with when it resets', () => {
   assert.equal(budget.rateLimitRetryAfterSeconds(rateLimited(), { now: NOW }), 720);
 });
 
-test('an error that lost its headers still reads, from the recorded window or "within the hour"', (t) => {
-  withEnv(t, 'GITHUB_BOT_TOKEN', 'test-token');
+test('an error that lost its headers still reads, from the recorded window or "within the hour"', () => {
   const bare = new Error('API rate limit exceeded for user ID 276401300.');
   assert.equal(budget.rateLimitNotice(bare, { now: NOW }),
     "GitHub's hourly limit for Homeroom is used up. It resets within the hour.");

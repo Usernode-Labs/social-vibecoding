@@ -26,7 +26,7 @@ const base = ['template', 'two-servers-test', 'deploy/helm/social-vibecoding-pla
   '--set', 'postgresql.enabled=false,postgresql.host=writer.example.test',
   '--set-string', 'postgresql.podSelector.cnpg\\.io/cluster=writer-cluster'];
 const created = ['--set', 'secrets.create=true,secrets.databasePassword=main-pw',
-  '--set', 'secrets.githubAppId=1,secrets.githubPrivateKey=k,secrets.githubBotToken=t,secrets.topochainPartnerApiKey=p'];
+  '--set', 'secrets.githubAppId=1,secrets.githubPrivateKey=k,secrets.topochainPartnerApiKey=p'];
 const on = ['--set', 'previewPostgresql.enabled=true,previewPostgresql.host=previewcopies-rw.previews-ns.svc,previewPostgresql.username=previews',
   '--set', 'previewPostgresql.namespace=previews-ns', '--set-string', 'previewPostgresql.podSelector.cnpg\\.io/cluster=previewcopies'];
 
