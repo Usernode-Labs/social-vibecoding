@@ -369,3 +369,22 @@ test('the card’s corners are 24px and the tile and rail inside it are concentr
   assert.ok(classOf(html, 'role="progressbar"').split(' ').includes('rounded-[0.6875rem]'), 'the rail is 11px');
   assert.match(CARD_SRC, /const TILE_RADIUS = 'rounded-\[0\.6875rem\]';/, 'one complete literal the compiler can find');
 });
+
+// ── Minutes used this week ─────────────────────────────────────────────
+//
+// A "use apps for N minutes" card says how far the viewer is this week, in
+// one muted line under its rail. Zero is a number to show, not a reason to
+// hide the line; a challenge that is not about app time has no line at all.
+test('a "use apps" card shows the viewer’s minutes this week under its rail, 0 included', () => {
+  const base = { goal: 'Use apps for 10 minutes', reward: '200 pts', state: 'new', stateLabel: 'Not started', fill: 0, earned: null };
+  const some = card({ ...base, minutesThisWeek: 12 });
+  assert.match(some, /data-challenge-usage=""[^>]*>12 min used this week</);
+  assert.ok(some.indexOf('data-challenge-usage') > some.indexOf('role="progressbar"'), 'the line sits under the rail');
+  const usage = classOf(some, 'data-challenge-usage').split(' ');
+  assert.ok(usage.includes('truncate') && usage.includes('text-zinc-500'), 'one muted line that never wraps');
+
+  assert.match(card({ ...base, minutesThisWeek: 0 }), />0 min used this week</, 'no use yet still says 0');
+  assert.match(card({ ...base, minutesThisWeek: 1 }), />1 min used this week</);
+  assert.doesNotMatch(card({ ...base, minutesThisWeek: null }), /data-challenge-usage/, 'any other challenge has no line');
+  assert.doesNotMatch(card(base), /data-challenge-usage/);
+});

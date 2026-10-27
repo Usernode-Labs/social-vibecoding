@@ -69,7 +69,9 @@ const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('./challen
 const {
   loadOnboarding, challengeCategory, resolveProgress, loadEventBlocks, COUNTS_THIS_WEEK_SQL,
 } = require('../../services/topochain/challenge-onboarding');
-const { loadRuleFacts, intervalMinutes } = require('../../services/topochain/challenge-scorer');
+const {
+  loadRuleFacts, attachAppMinutes, USES_APP_MINUTES_SQL, intervalMinutes,
+} = require('../../services/topochain/challenge-scorer');
 const events = require('../../services/events');
 const seasonHistory = require('../../services/topochain/season-history');
 
@@ -840,6 +842,7 @@ function topochainPublicRoutes(config) {
                 c.cta_button, c.cta_label, c.cta_link,
                 c.metric_type, c.metric_target, c.metric_label,
                 ${TEMPLATE_JOIN_COLUMNS_SQL},
+                ${USES_APP_MINUTES_SQL} AS uses_app_minutes,
                 ck.icon AS kind_icon
            FROM challenges c
            LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
@@ -965,6 +968,10 @@ function topochainPublicRoutes(config) {
           }
           return item;
         });
+      // `minutes_this_week`: the viewer's whole minutes in apps this week (0
+      // with none) on a challenge a USE_APPS_MINUTES rule scores, for the line
+      // under that card's rail; null on every other and when signed out.
+      await attachAppMinutes(pool, req.user?.id, data, visible);
 
       res.set('Cache-Control', 'private, no-store');
       // No `onboarding` summary any more (#4635): nothing is gated, and every

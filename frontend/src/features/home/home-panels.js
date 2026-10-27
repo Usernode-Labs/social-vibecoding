@@ -840,6 +840,10 @@ const HomePanels = {
       earned: done && points
         ? message('home:challenges.row.earned', { points: points.toLocaleString('en-US'), count: points })
         : null,
+      // A "use apps" challenge's minutes this week (0 with none), drawn under
+      // its rail; null on every other challenge.
+      minutesThisWeek: Number.isFinite(Number(c.minutes_this_week)) && c.minutes_this_week != null
+        ? Math.max(0, Math.floor(Number(c.minutes_this_week))) : null,
     };
   },
 

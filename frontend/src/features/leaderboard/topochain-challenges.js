@@ -707,6 +707,10 @@ const TopochainChallenges = {
       illustration: TopochainChallenges._illustrationOf(cp),
       illustrationTone: TopochainChallenges._illustrationToneOf(cp),
       ...TopochainChallenges._stateOf(c),
+      // A "use apps" challenge's minutes this week (0 with none), drawn under
+      // its rail; null on every other challenge and for a signed-out visitor.
+      minutesThisWeek: c && c.minutes_this_week != null && Number.isFinite(Number(c.minutes_this_week))
+        ? Math.max(0, Math.floor(Number(c.minutes_this_week))) : null,
     };
   },
 

@@ -183,6 +183,47 @@ const USE_APPS_MINUTES_SQL = `
    LIMIT $4
 `;
 
+// The viewer's own minutes in apps this week, for the line under a "use apps
+// for N minutes" card. The same rows and the same rule as USE_APPS_MINUTES_SQL
+// (app_activity, apps the person did not make), from Monday 00:00 UTC, the
+// week COUNTS_THIS_WEEK_SQL and the scorer's weekly cap use. $1 is the viewer.
+const APP_MINUTES_THIS_WEEK_SQL = `
+  SELECT COALESCE(SUM(aa.seconds_spent), 0)::bigint AS seconds
+    FROM app_activity aa
+    JOIN apps a ON a.id = aa.app_id
+   WHERE aa.user_id = $1
+     AND aa.date >= (date_trunc('week', NOW() AT TIME ZONE 'UTC'))::date
+     AND a.created_by IS DISTINCT FROM aa.user_id
+`;
+
+// Whether an enabled USE_APPS_MINUTES rule scores challenge `c`, bound to the
+// challenge itself or to its template: a column a challenge list selects (as
+// `uses_app_minutes`), so it costs no round trip of its own.
+const USES_APP_MINUTES_SQL = `EXISTS (SELECT 1 FROM challenge_scoring_rules r
+              WHERE r.enabled = TRUE AND r.measure = 'USE_APPS_MINUTES'
+                AND (r.challenge_id = c.id OR r.challenge_template_id = c.challenge_template_id))`;
+
+// The viewer's whole minutes in apps this week (0 with none), or null for a
+// signed-out viewer.
+async function appMinutesThisWeek(pool, userId) {
+  if (!userId) return null;
+  const { rows: [sum] } = await pool.query(APP_MINUTES_THIS_WEEK_SQL, [userId]);
+  return Math.max(0, Math.floor((Number(sum && sum.seconds) || 0) / 60));
+}
+
+// Sets `minutes_this_week` on each item of a challenge list: the viewer's
+// minutes this week on a challenge whose query row (`rows[i]` for `items[i]`)
+// says `uses_app_minutes`, null on every other. Reads app_activity only when
+// the list holds such a card and the viewer is signed in.
+async function attachAppMinutes(pool, userId, items, rows) {
+  const scored = (i) => rows[i] != null && rows[i].uses_app_minutes === true;
+  const wants = !!userId && items.some((_, i) => scored(i));
+  const minutes = wants ? await appMinutesThisWeek(pool, userId) : null;
+  items.forEach((item, i) => {
+    item.minutes_this_week = minutes != null && scored(i) ? minutes : null;
+  });
+}
+
 // `promoted_at` is written by the human promote route only, so the rename and
 // fleet-maintenance robots' own proposals are not somebody's first proposal.
 const PROPOSAL_SENT_SQL = `
@@ -1356,6 +1397,10 @@ module.exports = {
   dueRuleIds,
   loadCadence,
   loadRuleFacts,
+  appMinutesThisWeek,
+  attachAppMinutes,
+  APP_MINUTES_THIS_WEEK_SQL,
+  USES_APP_MINUTES_SQL,
   intervalMinutes,
   aggregateHours,
   LAST_AGGREGATE_SQL,

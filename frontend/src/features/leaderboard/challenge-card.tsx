@@ -142,6 +142,9 @@ const TILE_RADIUS = 'rounded-[0.6875rem]';
 const CARD_ACTION = 'relative flex h-9 w-9 shrink-0 items-center justify-center rounded-[0.6875rem] '
   + 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300';
 const RAIL_ROW = 'flex min-w-0 items-center gap-2';
+// The line under a "use apps" card's rail: 13px muted, one line, like a row's
+// subtitle (AGENTS.md: rows are 15 over 13).
+const USAGE = 'min-w-0 truncate text-[0.8125rem] leading-5 text-zinc-500 dark:text-zinc-400';
 
 
 // The three state marks. The board draws an empty ring, a dashed ring and a
@@ -297,6 +300,8 @@ export type ChallengeCardView = {
   counted?: boolean;
   /** "500 pts" on a finished challenge the viewer scored on; drawn in emerald. */
   earned: string | null;
+  /** A "use apps" challenge: the viewer's whole minutes in apps this week (0 with none); null on any other. */
+  minutesThisWeek?: number | null;
 };
 
 // The corners are concentric: the card's 24px (`rounded-3xl`, 1.5rem in
@@ -347,6 +352,9 @@ export function ChallengeCard({ view, className, onClick, onKeyDown, ...rest }: 
   className?: string;
 } & Omit<HTMLAttributes<HTMLDivElement>, 'className'>): ReactNode {
   const reward = view.earned || view.reward;
+  const t = useMessages('leaderboard');
+  const minutes = typeof view.minutesThisWeek === 'number' && Number.isFinite(view.minutesThisWeek)
+    ? Math.max(0, Math.floor(view.minutesThisWeek)) : null;
   const pressable = onClick
     ? {
       role: 'button',
@@ -401,6 +409,11 @@ export function ChallengeCard({ view, className, onClick, onKeyDown, ...rest }: 
             <ArrowRightIcon className="h-4 w-4" aria-hidden="true" />
           </span>
         </div>
+        {minutes == null ? null : (
+          <div className={USAGE} data-challenge-usage="">
+            {t('leaderboard:challenges.minutesThisWeek', { count: minutes, minutes: minutes.toLocaleString('en-US') })}
+          </div>
+        )}
       </div>
     </div>
   );
