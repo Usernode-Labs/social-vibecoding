@@ -277,6 +277,7 @@ async function migrate(config) {
   await backfillProposalIssuerAssignments(pool);
   await backfillUsernameChoiceForEmailHandles(pool);
   await backfillSettingsProposalSource(pool);
+  await markBareDateActivities(pool);
   await migrateWaitlistCountryCodes(pool);
   await followPlatformDefaultModel(pool);
   // After backfillVotesRequired, which reads the merge announcements.
@@ -421,6 +422,42 @@ async function backfillSettingsProposalSource(pool) {
     log.info('db', 'Tagged platform-written settings proposals in flight', {
       count: result.rowCount,
     });
+  }
+  return result.rowCount || 0;
+}
+
+// A partner, the identity check or an admin can send an activity with a
+// calendar date and no time of day. Those were read as midnight UTC and served
+// as an exact moment, so the activity list printed "12:00 AM" (the evening
+// before, west of UTC) for something done in the afternoon. Writers now pin
+// such a value to noon UTC marked `timestamp_precision: 'day'`; this marks the
+// rows written before that, so the list shows the date alone.
+//
+// Only the three writers that could produce a bare-date row are touched, and
+// only a row sitting exactly at midnight UTC with no precision already set.
+// A real action at exactly midnight to the millisecond from one of those
+// sources loses its hour; that is accepted (see the change's spec).
+//
+// `activity_at` is deliberately not moved: the renderer reads a 'day' row's
+// calendar date in UTC, which is the right day, and week caps
+// (`rules.weekStartMs`) do not change. Every boot, and a no-op once clean.
+async function markBareDateActivities(pool) {
+  let result;
+  try {
+    result = await pool.query(
+      `UPDATE user_activities
+          SET metadata = COALESCE(metadata, '{}'::jsonb)
+                         || '{"timestamp_precision":"day"}'::jsonb
+        WHERE source IN ('api', 'zkpassport', 'admin_ui')
+          AND activity_at = (date_trunc('day', activity_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
+          AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'timestamp_precision')`
+    );
+  } catch (err) {
+    log.warn('db', 'Day-only activity backfill skipped (query failed)', { err: err.message });
+    return 0;
+  }
+  if (result.rowCount) {
+    log.info('db', 'Marked activities saved at midnight as day-only', { count: result.rowCount });
   }
   return result.rowCount || 0;
 }
@@ -14737,40 +14774,51 @@ async function seedStagingTopochain(pool, config) {
       // the expanded list, which is where a reviewer can compare the two
       // kinds of "done" side by side.
       //
-      // Ids base+2…base+13 all sit inside the viewer's 20-wide block.
+      // Ids base+2…base+14 all sit inside the viewer's 20-wide block.
+      //
+      // base+14 is a partner-style credit saved at exactly midnight UTC with
+      // no time-of-day mark, from an `api` source — the state the activity
+      // drill-down used to print as "12:00 AM". The day-only backfill marks
+      // it, so the list shows the date alone. It is the row the change's
+      // before/after shots point at; every other row here carries a real
+      // time (or no precision at all, from the default source).
       await pool.query(
         `INSERT INTO user_activities
            (id, user_id, season_event_id, activity_type, points, description,
-            metadata, activity_at, challenge_id)
+            metadata, activity_at, challenge_id, source)
          VALUES
            (${base},     $1, $2, 'challenge_completion', 250, 'Reported a reproducible bug.',
-            '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '4 days', 900500),
+            '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '4 days', 900500, DEFAULT),
            (${base + 1}, $1, $2, 'challenge_completion', 100, 'Sent a testnet transaction.',
-            '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '3 days', 900501),
+            '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '3 days', 900501, DEFAULT),
            (${base + 2}, $1, $2, 'challenge_completion', 50, 'Shared the season announcement.',
-            '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '2 days', 900511),
+            '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '2 days', 900511, DEFAULT),
            (${base + 6}, $1, $2, 'COMMUNITY', 250, 'Gave kudos to a builder (1 of 5).',
-            '{"kind": "kudos_given"}'::jsonb, NOW() - INTERVAL '30 hours', 900513),
+            '{"kind": "kudos_given"}'::jsonb, NOW() - INTERVAL '30 hours', 900513, DEFAULT),
            (${base + 7}, $1, $2, 'COMMUNITY', 250, 'Gave kudos to a builder (2 of 5).',
-            '{"kind": "kudos_given"}'::jsonb, NOW() - INTERVAL '20 hours', 900513),
+            '{"kind": "kudos_given"}'::jsonb, NOW() - INTERVAL '20 hours', 900513, DEFAULT),
            (${base + 8}, $1, $2, 'COMMUNITY', 250, 'Gave kudos to a builder (3 of 5).',
-            '{"kind": "kudos_given"}'::jsonb, NOW() - INTERVAL '10 hours', 900513),
+            '{"kind": "kudos_given"}'::jsonb, NOW() - INTERVAL '10 hours', 900513, DEFAULT),
            (${base + 3}, $1, $2, 'COMMUNITY', 200, 'Tested a demo dApp (1 of 8).',
-            '{"kind": "app_tested"}'::jsonb, NOW() - INTERVAL '2 days', 900512),
+            '{"kind": "app_tested"}'::jsonb, NOW() - INTERVAL '2 days', 900512, DEFAULT),
            (${base + 4}, $1, $2, 'COMMUNITY', 200, 'Tested a demo dApp (2 of 8).',
-            '{"kind": "app_tested"}'::jsonb, NOW() - INTERVAL '1 days', 900512),
+            '{"kind": "app_tested"}'::jsonb, NOW() - INTERVAL '1 days', 900512, DEFAULT),
            (${base + 5}, $1, $2, 'COMMUNITY', 200, 'Tested a demo dApp (3 of 8).',
-            '{"kind": "app_tested"}'::jsonb, NOW() - INTERVAL '6 hours', 900512),
+            '{"kind": "app_tested"}'::jsonb, NOW() - INTERVAL '6 hours', 900512, DEFAULT),
            (${base + 9},  $1, $2, 'COMMUNITY', 180, 'Voted on a proposal (1 of 5).',
-            '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '4 days', 900514),
+            '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '4 days', 900514, DEFAULT),
            (${base + 10}, $1, $2, 'COMMUNITY', 180, 'Voted on a proposal (2 of 5).',
-            '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '3 days', 900514),
+            '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '3 days', 900514, DEFAULT),
            (${base + 11}, $1, $2, 'COMMUNITY', 180, 'Voted on a proposal (3 of 5).',
-            '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '2 days', 900514),
+            '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '2 days', 900514, DEFAULT),
            (${base + 12}, $1, $2, 'COMMUNITY', 180, 'Voted on a proposal (4 of 5).',
-            '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '28 hours', 900514),
+            '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '28 hours', 900514, DEFAULT),
            (${base + 13}, $1, $2, 'COMMUNITY', 180, 'Voted on a proposal (5 of 5).',
-            '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '5 hours', 900514)
+            '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '5 hours', 900514, DEFAULT),
+           (${base + 14}, $1, $2, 'partner_challenge', 100, 'Completed a partner challenge (staging demo).',
+            '{"kind": "partner_challenge"}'::jsonb,
+            (date_trunc('day', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') - INTERVAL '2 days',
+            900500, 'api')
          ON CONFLICT (id) DO NOTHING`,
         [viewerId, EVENT_REGULAR_ID]
       );
@@ -15782,6 +15830,7 @@ module.exports = {
   backfillPlanRows,
   backfillProposalIssuerAssignments, backfillVotesRequired,
   backfillSettingsProposalSource,
+  markBareDateActivities,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
   seedStagingGeneralChannel, seedStagingShotsNoticed, seedStagingShotsScreens,

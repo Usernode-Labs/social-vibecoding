@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const { Pool } = require('pg');
 const activity = require('../src/services/app-activity');
 const scorer = require('../src/services/topochain/challenge-scorer');
+const migrate = require('../src/db/migrate');
 const { activityTimePrecision } = require('../src/services/topochain/activity-time');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
@@ -216,5 +217,51 @@ test('challenge credits retain the qualifying usage time through delayed and con
       assert.equal(credit.activity_at.toISOString(), '2026-10-01T12:00:00.000Z');
       assert.equal(activityTimePrecision({ metadata: { measure: 'TRY_APPS' } }), 'day', 'old scorer metadata remains identifiable');
       assert.equal(activityTimePrecision({ metadata: {}, activity_at: credit.activity_at }), 'instant', 'a clock hour alone never labels other actions date-only');
+    });
+
+    await t.test('the day-only backfill marks midnight rows from the date-only writers and leaves the rest alone', async () => {
+      const user = await person(); const app = await project();
+      // One challenge per source, so each row's own source is what decides.
+      const insert = (source, at, metadata = null) => pool.query(
+        `INSERT INTO user_activities
+           (user_id, season_event_id, activity_type, points, metadata, activity_at, source, challenge_id)
+         VALUES ($1, $2, 'challenge_completion', 1, $3::jsonb, $4, $5, $6) RETURNING id`,
+        [user.id, event.id, metadata ? JSON.stringify(metadata) : null, at, source, TRY]
+      );
+      const midnightApi = (await insert('api', '2026-10-01T00:00:00.000Z')).rows[0].id;
+      const midnightScorer = (await insert('challenge_scorer', '2026-10-01T00:00:00.000Z')).rows[0].id;
+      const afternoonApi = (await insert('api', '2026-10-01T15:42:00.000Z')).rows[0].id;
+      const alreadyMarked = (await insert('api', '2026-10-01T00:00:00.000Z',
+        { timestamp_precision: 'instant' })).rows[0].id;
+      const midnightAdmin = (await insert('admin_ui', '2026-10-01T00:00:00.000Z')).rows[0].id;
+      const midnightMobile = (await insert('zkpassport', '2026-10-01T00:00:00.000Z')).rows[0].id;
+
+      const precisionOf = async (id) => (await pool.query(
+        'SELECT metadata FROM user_activities WHERE id = $1', [id]
+      )).rows[0].metadata;
+
+      const first = await migrate.markBareDateActivities(pool);
+      assert.equal(first, 3, 'the two midnight date-only writers rows are marked, and the row already carrying a precision is not');
+
+      for (const id of [midnightApi, midnightAdmin, midnightMobile]) {
+        assert.deepEqual(await precisionOf(id), { timestamp_precision: 'day' });
+      }
+      assert.equal(await precisionOf(midnightScorer), null, 'the scorer writes a real instant, never a bare date');
+      assert.equal(await precisionOf(afternoonApi), null, 'an afternoon row keeps its hour');
+      assert.deepEqual(await precisionOf(alreadyMarked), { timestamp_precision: 'instant' },
+        'a row that already says when it happened is left exactly as it is');
+
+      const activityAt = (await pool.query(
+        'SELECT activity_at FROM user_activities WHERE id = $1', [midnightApi]
+      )).rows[0].activity_at;
+      assert.equal(activityAt.toISOString(), '2026-10-01T00:00:00.000Z', 'the backfill does not move the time');
+
+      assert.equal(await migrate.markBareDateActivities(pool), 0, 'a second run matches nothing');
+      // The read path is unchanged: the marked row now reads as day-only,
+      // and the afternoon row still reads as an exact time.
+      const marked = (await pool.query('SELECT metadata, activity_at FROM user_activities WHERE id = $1', [midnightApi])).rows[0];
+      assert.equal(activityTimePrecision(marked), 'day');
+      const afternoon = (await pool.query('SELECT metadata, activity_at FROM user_activities WHERE id = $1', [afternoonApi])).rows[0];
+      assert.equal(activityTimePrecision(afternoon), 'instant');
     });
   });

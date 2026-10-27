@@ -752,6 +752,24 @@ test('zkpassport: happy path -> 201, activity row with points/metadata, source=z
       assert.equal(stored.metadata.kind, 'challenge_completion');
       assert.equal(stored.metadata.session_id, 'sess-heidi-7');
       assert.equal(stored.metadata.wallet_address, 'wallet_heidi_100');
+      assert.equal(stored.metadata.timestamp_precision, undefined,
+        'the bridge\'s own instant carries no day-only mark');
+    });
+  });
+});
+
+test('zkpassport: a bare completed_at date is stored at noon UTC marked day-only', async () => {
+  await withServer({ topochainZkBridgeUrl: BRIDGE_URL }, async (base) => {
+    await withFetchMock(async () => bridgeResponse({ verified: true }), async () => {
+      const res = await postJson(base, '/api/v4/mobile/zkpassport/complete', {
+        challenge_id: 7, session_id: 'sess-heidi-8', nullifier_hex: '0xdead1008', wallet_address: 'wallet_heidi_100',
+        completed_at: '2026-10-20',
+      }, HEIDI);
+      assert.equal(res.status, 201);
+      const body = await res.json();
+      const stored = userActivities.find((a) => a.id === body.data.activity_id);
+      assert.equal(new Date(stored.activity_at).toISOString(), '2026-10-20T12:00:00.000Z');
+      assert.equal(stored.metadata.timestamp_precision, 'day');
     });
   });
 });
