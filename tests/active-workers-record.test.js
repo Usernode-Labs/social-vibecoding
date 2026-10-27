@@ -43,6 +43,18 @@ test('each turn on a session is a record of its own', async () => {
   assert.deepEqual(sent.filter((s) => s[0] === 'end').map((s) => s[2]), starts.map((s) => s[2]), 'each ended, in order');
 });
 
+test('an earlier stop response cannot release a newer local hold', async () => {
+  await activeWorkers.enter(43);
+  const first = activeWorkers.generation(43);
+  activeWorkers.delete(43);
+  await activeWorkers.enter(43);
+  assert.notEqual(activeWorkers.generation(43), first);
+  assert.equal(activeWorkers.deleteIf(43, first), false);
+  assert.equal(activeWorkers.has(43), true);
+  assert.equal(activeWorkers.deleteIf(43, activeWorkers.generation(43)), true);
+  assert.equal(activeWorkers.generation(43), null);
+});
+
 test('an operation is recorded before its caller goes on, and ends even when the wait for its start failed', async () => {
   sent.length = 0;
   answer.start = async () => { throw new Error('timed out waiting'); };

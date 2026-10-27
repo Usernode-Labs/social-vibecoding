@@ -2789,7 +2789,7 @@ function _registryGet(sessionId) {
   return _warmRegistry.get(sessionId) || null;
 }
 
-function _registryUpsert(sessionId, patch) {
+function _registryUpsert(sessionId, patch, noteUse = true) {
   const existing = _warmRegistry.get(sessionId);
   const prev = existing || {
     containerName: workerContainerName(sessionId),
@@ -2801,7 +2801,7 @@ function _registryUpsert(sessionId, patch) {
   const next = { ...prev, ...patch };
   _warmRegistry.set(sessionId, next);
   _inFlightHold(sessionId, !!next.inFlight);
-  if (patch.lastUsedMs != null || !!prev.inFlight !== !!next.inFlight || !existing) noteWorkerUsed(sessionId);
+  if (noteUse && (patch.lastUsedMs != null || !!prev.inFlight !== !!next.inFlight || !existing)) noteWorkerUsed(sessionId);
   // #1038: the inner docker-exec window is one of the two signals
   // isSessionBusy() ORs together, so a change here can flip a session's
   // working state for every client. Only the actual transition notifies —
@@ -4928,6 +4928,12 @@ function clearPendingStop(sessionId) {
   _registryUpsert(sid, { stopRequestedAt: null });
 }
 
+// The originating process's spin-up gate, without worker exec or a last-use
+// write that could invalidate the queued request's captured worker state.
+function noteStopPending(sessionId) {
+  _registryUpsert(Number(sessionId), { stopRequestedAt: Date.now() }, false);
+}
+
 // Epoch ms of the pending stop for this session, or null when none is
 // pending. Synchronous by design — the dispatch gate reads it inline.
 function getPendingStop(sessionId) {
@@ -6248,6 +6254,7 @@ module.exports = {
   stopOwnedTurn,
   // #937: pending-stop record (survives the dispatch it guards)
   clearPendingStop,
+  noteStopPending,
   getPendingStop,
   syncUserAgentFiles,
   resumeTurnFromJournal,

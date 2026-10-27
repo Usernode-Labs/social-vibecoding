@@ -297,6 +297,11 @@
       "services | uses src/services/process-role.js:runsWorkflow": "a pure role check permitting the release handler on conductor and local all processes, with no session state in memory",
       "services | uses src/services/worker-eviction.js:releaseRequested": "removes a requested worker under the shared eviction lock after checking current ownership, configuration, turn and last use from PostgreSQL; deletion is by captured resource identity and waits for it to be gone, holding no decision outside the work item"
     },
+    "worker-stop": {
+      "services | uses src/services/process-role.js:processRole": "reads the immutable boot role before stop I/O, refusing execution on a web process; no decision or per-session state is held in memory",
+      "services | uses src/services/process-role.js:runsWorkflow": "a pure role check permitting force-stop work only on conductor and local all processes, without keeping session state",
+      "services | uses src/services/worker-force-stop.js:run": "confirms termination of the captured journal or removes captured runtime identities under the shared eviction lock, rechecking current authority and job identity in PostgreSQL before side effects; retains failed ledger settlement and uses no required process registry state, as the separate-conductor test exercises"
+    },
     "worker-push": {
       "services | uses src/services/process-role.js:processRole": "reads this process's immutable boot role before any push I/O, refusing accidental work execution on a web process; keeps no decision or session state",
       "services | uses src/services/process-role.js:runsWorkflow": "a pure check of the boot role that permits the push handler on conductor and local all processes, holding no process state",

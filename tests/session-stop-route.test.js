@@ -25,6 +25,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+const platformPath = require.resolve('../src/workflow/platform.ts');
+const platform = require(platformPath);
+let forceStop;
+require.cache[platformPath].exports = { ...platform, requestWorkerStop: p => forceStop(p) };
 
 const poolMod = require('../src/db/pool');
 let poolQueryHandler = async () => ({ rows: [] });
@@ -39,7 +43,6 @@ poolMod.getPool = () => ({
 const { activeWorkers } = require('../src/services/active-workers');
 const stopRegistry = require('../src/services/stop-registry');
 const workerMod = require('../src/services/worker');
-const wsMod = require('../src/services/ws');
 const sessionBus = require('../src/services/session-bus');
 // Its streams kept in this process: no database here (services/session-bus.js).
 sessionBus.init({ memory: true });
@@ -102,6 +105,7 @@ function durableTurn(over = {}) {
 }
 
 test.beforeEach(() => {
+  forceStop = async () => { throw new Error('unexpected force-stop request'); };
   capturedQueries = [];
   poolQueryHandler = async () => ({ rows: [] });
   activeWorkers.clear();
@@ -370,150 +374,87 @@ test('with no handle and no turn record, hasDurableTurn is false', async () => {
 
 // ── force-orphan: the turn nobody holds a handle for ────────────────────
 
-test('force-stopping a handle-less turn still announces it on both channels', async () => {
-  // The force rung exists for exactly the turn this issue is about: one
-  // this process never had a handle for. Every announcement on that path
-  // used to be `handle?.send?.(...)`, so it went out to nobody — the user
-  // pressed Force stop, the turn ended, and the screen kept spinning.
-  routeQueries({ activeTurn: null });
-
-  const broadcasts = [];
-  const busEvents = [];
-  const realBroadcast = wsMod.broadcastGlobal;
-  const realExecuting = workerMod.isWorkerExecuting;
-  wsMod.broadcastGlobal = (msg) => broadcasts.push(msg);
-  workerMod.isWorkerExecuting = async () => false;
-  const unsub = sessionBus.subscribe(SESSION_ID, (e) => busEvents.push(e));
-
-  const server = await startServer(OWNER);
-  let body;
-  try {
-    ({ body } = await call(server, `/api/sessions/${SESSION_ID}/stop`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ force: true }),
-    }));
-  } finally {
-    wsMod.broadcastGlobal = realBroadcast;
-    workerMod.isWorkerExecuting = realExecuting;
-    await sessionBus.settle();
-    if (typeof unsub === 'function') unsub();
-    server.close();
+// Actual termination, journal fencing and cross-process announcements are
+// exercised by worker-stop-workflow-postgres.test.js. Here the HTTP producer
+// must never run a privileged fallback, even when the conductor is absent.
+function forbidRuntime(t) {
+  for (const method of ['stopTurn', 'stopTurnByJournal', 'isWorkerExecuting', 'evictWorker', 'removeWorker', 'clearActiveTurn']) {
+    t.mock.method(workerMod, method, () => { throw new Error(`web called ${method}`); });
   }
+}
 
-  assert.equal(body.stopped, true);
-  assert.equal(body.forced, true);
-
-  const events = broadcasts.filter((b) => b.type === 'session_event').map((b) => b.event);
-  for (const want of ['status', 'stopped', 'done']) {
-    assert.ok(events.includes(want), `${want} reached the WS broadcast (got ${events.join(',')})`);
-  }
-  const busTypes = busEvents.map((e) => e.type);
-  for (const want of ['status', 'stopped', 'done']) {
-    assert.ok(busTypes.includes(want), `${want} reached the session bus (got ${busTypes.join(',')})`);
-  }
-
-  // Envelope shape: an inner `type` must not clobber `type: 'session_event'`
-  // or the client's switch never routes it to handleSessionEvent (#437).
-  const stopped = broadcasts.find((b) => b.event === 'stopped');
-  assert.equal(stopped.type, 'session_event');
-  assert.equal(stopped.sessionId, SESSION_ID);
-  assert.equal(stopped.forced, true);
-  assert.equal(stopped.by, 'alice');
-  // sessionBus.publish drops anything without a _seq, so the fallback has
-  // to mint one — the reason the bus half of this is easy to get wrong.
-  assert.ok(busEvents.every((e) => e._seq), 'every bus event carries a _seq');
-
-  const row = capturedQueries.find((q) => /INSERT INTO chat_session_messages/.test(q.sql));
-  assert.ok(row, 'the forced stop is persisted too, for the reloading tab');
-  assert.match(row.params[1], /Stopped by @alice \(forced\)\./);
-});
-
-
-test('force stop reports an error and preserves ownership when termination cannot be confirmed', async () => {
-  routeQueries({ activeTurn: durableTurn() });
-  activeWorkers.add(SESSION_ID);
-  const originals = { stop: workerMod.stopTurn, executing: workerMod.isWorkerExecuting, evict: workerMod.evictWorker };
-  workerMod.stopTurn = async () => false;
-  workerMod.isWorkerExecuting = async () => null;
-  workerMod.evictWorker = async () => { throw new Error('Runtime unavailable'); };
+test('a force stop of a handle-less worker queues the actor and returns the confirmed result', async t => {
+  forbidRuntime(t);
+  const calls = [];
+  forceStop = async p => { calls.push(p); return { ok: true, stopped: true }; };
   const server = await startServer(OWNER);
   try {
     const { status, body } = await call(server, `/api/sessions/${SESSION_ID}/stop`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ force: true }),
     });
-    assert.equal(status, 503);
-    assert.equal(body.code, 'stop_unconfirmed');
-    assert.equal(activeWorkers.has(SESSION_ID), true);
-    assert.equal(capturedQueries.some((q) => /SET active_turn = NULL/.test(q.sql)), false);
-  } finally {
-    workerMod.stopTurn = originals.stop;
-    workerMod.isWorkerExecuting = originals.executing;
-    workerMod.evictWorker = originals.evict;
-    server.close();
-  }
+    assert.equal(status, 200); assert.equal(body.stopped, true); assert.equal(body.forced, true);
+    assert.deepEqual(calls, [{ sessionId: SESSION_ID, userId: OWNER.id, expectedTurnId: null, expectedJob: { active: false, turnId: null, journal: null } }]);
+    assert.ok(workerMod.getPendingStop(SESSION_ID), 'keeps the local pre-dispatch stop gate');
+    assert.equal(capturedQueries.some(q => /INSERT INTO chat_session_messages|SET active_turn = NULL/.test(q.sql)), false,
+      'only the conductor settles the durable turn and announces completion');
+  } finally { server.close(); }
 });
 
+test('force stop reports an error and preserves ownership when termination cannot be confirmed', async t => {
+  forbidRuntime(t);
+  routeQueries({ activeTurn: durableTurn() }); activeWorkers.add(SESSION_ID);
+  forceStop = async () => { throw Object.assign(new Error('Could not confirm termination'), { httpStatus: 503, code: 'stop_unconfirmed' }); };
+  const server = await startServer(OWNER);
+  try {
+    const { status, body } = await call(server, `/api/sessions/${SESSION_ID}/stop`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ force: true }),
+    });
+    assert.equal(status, 503); assert.equal(body.code, 'stop_unconfirmed');
+    assert.equal(activeWorkers.has(SESSION_ID), true);
+    assert.equal(capturedQueries.some(q => /SET active_turn = NULL/.test(q.sql)), false);
+  } finally { server.close(); }
+});
 
-test('the agent-session first Stop goes straight to a hard kill, including a recovered job with no handle', async () => {
+test('the agent-session first Stop queues an immediate command, including a recovered job with no handle', async t => {
+  forbidRuntime(t);
   for (const withHandle of [false, true]) {
-    routeQueries({ activeTurn: durableTurn() });
-    stopRegistry._reset();
-    if (withHandle) stopRegistry.set(SESSION_ID, stopRegistry.createHandle({ sessionId: SESSION_ID, phase: 'cc' }));
-    const original = { stop: workerMod.stopTurn, probe: workerMod.isWorkerExecuting, evict: workerMod.evictWorker, clear: workerMod.clearActiveTurn };
+    routeQueries({ activeTurn: durableTurn() }); stopRegistry._reset();
+    const abort = new AbortController();
+    if (withHandle) stopRegistry.set(SESSION_ID, stopRegistry.createHandle({ sessionId: SESSION_ID, phase: 'cc', abort }));
     const calls = [];
-    workerMod.stopTurn = async (id, options) => { calls.push(['kill', id, options]); return true; };
-    workerMod.isWorkerExecuting = async () => { throw new Error('No initial probe or polling needed after an acknowledged kill'); };
-    workerMod.evictWorker = async () => { throw new Error('Keep the warm worker after a successful kill'); };
-    workerMod.clearActiveTurn = async () => true;
-    try {
-      const answer = await requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID,
-        immediate: true, force: true, expectedTurnId: 'turn-xyz' });
-      assert.equal(answer.status, 200);
-      assert.equal(answer.body.stopped, true);
-      assert.deepEqual(calls, [['kill', SESSION_ID, { force: true }]]);
-      assert.ok(capturedQueries.some((q) => /stopRequestedAt/.test(q.sql)));
-    } finally {
-      workerMod.stopTurn = original.stop; workerMod.isWorkerExecuting = original.probe;
-      workerMod.evictWorker = original.evict; workerMod.clearActiveTurn = original.clear;
-    }
-  }
-});
-
-test('a failed immediate kill escalates automatically and keeps ownership if termination is unconfirmed', async () => {
-  routeQueries({ activeTurn: durableTurn() });
-  activeWorkers.add(SESSION_ID);
-  const original = { stop: workerMod.stopTurn, probe: workerMod.isWorkerExecuting, evict: workerMod.evictWorker };
-  const calls = [];
-  workerMod.stopTurn = async (_id, opts) => { calls.push(['kill', opts]); throw new Error('Exec failed'); };
-  workerMod.isWorkerExecuting = async () => null;
-  workerMod.evictWorker = async () => { calls.push(['evict']); throw new Error('Unavailable'); };
-  try {
-    await assert.rejects(requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID,
-      immediate: true, force: true, expectedTurnId: 'turn-xyz' }), /Could not confirm/);
-    assert.deepEqual(calls, [['kill', { force: true }], ['evict']]);
-    assert.equal(activeWorkers.has(SESSION_ID), true);
-  } finally {
-    workerMod.stopTurn = original.stop; workerMod.isWorkerExecuting = original.probe; workerMod.evictWorker = original.evict;
-  }
-});
-
-test('an unacknowledged hard kill still evicts when a root-only probe would say idle', async () => {
-  routeQueries({ activeTurn: durableTurn() });
-  stopRegistry._reset();
-  const original = { stop: workerMod.stopTurn, probe: workerMod.isWorkerExecuting, evict: workerMod.evictWorker, clear: workerMod.clearActiveTurn };
-  const calls = [];
-  workerMod.stopTurn = async () => { calls.push('kill'); return false; };
-  workerMod.isWorkerExecuting = async () => { calls.push('probe'); return false; };
-  workerMod.evictWorker = async () => { calls.push('evict'); };
-  workerMod.clearActiveTurn = async () => true;
-  try {
+    forceStop = async p => { calls.push(p); return { ok: true, stopped: true }; };
     const answer = await requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID,
       immediate: true, force: true, expectedTurnId: 'turn-xyz' });
-    assert.equal(answer.body.stopped, true);
-    assert.deepEqual(calls, ['kill', 'evict', 'probe'], 'unconfirmed tool children require whole-worker cancellation');
-  } finally {
-    workerMod.stopTurn = original.stop; workerMod.isWorkerExecuting = original.probe;
-    workerMod.evictWorker = original.evict; workerMod.clearActiveTurn = original.clear;
+    assert.equal(answer.status, 200); assert.equal(answer.body.stopped, true);
+    assert.deepEqual(calls, [{ sessionId: SESSION_ID, userId: OWNER.id, expectedTurnId: 'turn-xyz', expectedJob: { active: true, turnId: 'turn-xyz', journal: '/journals/turn-xyz.jsonl' } }]);
+    assert.ok(capturedQueries.some(q => /stopRequestedAt/.test(q.sql)));
+    if (withHandle) assert.equal(abort.signal.aborted, true);
+  }
+});
+
+test('a failed immediate command keeps ownership and never falls back to runtime I/O', async t => {
+  forbidRuntime(t);
+  routeQueries({ activeTurn: durableTurn() }); activeWorkers.add(SESSION_ID);
+  forceStop = async () => { throw new Error('Could not confirm termination'); };
+  await assert.rejects(requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID,
+    immediate: true, force: true, expectedTurnId: 'turn-xyz' }), /Could not confirm/);
+  assert.equal(activeWorkers.has(SESSION_ID), true);
+});
+
+test('an older force-stop response cannot release a replacement handle or local hold', async t => {
+  forbidRuntime(t);
+  for (const withHandle of [false, true]) {
+    routeQueries({ activeTurn: durableTurn() }); stopRegistry._reset(); activeWorkers.add(SESSION_ID);
+    if (withHandle) stopRegistry.set(SESSION_ID, stopRegistry.createHandle({ sessionId: SESSION_ID, phase: 'cc' }));
+    const replacement = stopRegistry.createHandle({ sessionId: SESSION_ID, phase: 'cc' });
+    forceStop = async () => {
+      activeWorkers.delete(SESSION_ID); activeWorkers.add(SESSION_ID);
+      if (withHandle) stopRegistry.set(SESSION_ID, replacement);
+      return { ok: true, stopped: true };
+    };
+    await requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID,
+      immediate: true, force: true, expectedTurnId: 'turn-xyz' });
+    assert.equal(activeWorkers.has(SESSION_ID), true);
+    if (withHandle) assert.equal(stopRegistry.get(SESSION_ID), replacement);
   }
 });

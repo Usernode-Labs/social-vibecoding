@@ -131,9 +131,30 @@ build during rollout. The idempotent schema migration adds nullable
 no new runtime configuration is needed. Existing unpushed commits held only
 in an older conductor's memory are not backfilled by this migration.
 
+Force-stop fallback uses `worker-stop` requests (`src/workflow/worker-stop/`).
+The web captures the actor, app, owner, configuration and running job, then
+waits for the conductor to confirm termination. The conductor rechecks current
+authority and job identity under the worker eviction lock. It hard-kills only
+the captured journal; if that cannot confirm termination, it rescues any saved
+commit and removes only captured runtime identities, retaining the volume.
+A missing journal on an unchanged executing record also uses fenced removal,
+so both Force stop and last-attempt recovery can end that stranded record.
+A newer job or a worker used after an orphan-stop request is spared. Ledger
+settlement failure retains the stopped turn for recovery. Announcements and
+durable cleanup run on the conductor; the web releases only its captured local
+handle and hold. Last-attempt turn recovery uses that same conductor I/O core.
+Older conductors leave the separate machine's requests pending during rollout;
+unavailable or unconfirmed stops return a retryable 503 with no web-side runtime
+fallback. Work not started within 30 seconds expires; journal-kill and removal
+waits use only the remaining request budget, with expiry rechecked after commit
+rescue before deletion. The HTTP wait allows five extra seconds for settlement
+and the workflow result. A captured job that already ended succeeds without
+queueing; agent-stop HTTP responses preserve typed 404/409/503 refusals.
+No schema or runtime configuration change is needed.
+
 These move web dependencies behind durable commands. Web Pods still need
 their current Kubernetes and database permissions for other callers, including
-force-stop fallback, volume copies, repository operations and startup work. Moving
+ordinary legacy stop/confirmation paths, volume copies, repository operations and startup work. Moving
 those callers, then splitting service accounts, Secret inputs and actual
 database login privileges, remains SEC-09 work. The event's source metadata
 also remains a convention among trusted processes; it does not authenticate
