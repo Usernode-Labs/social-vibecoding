@@ -1131,6 +1131,138 @@ test('attachGridPlacement fires onSettle on every teardown path', () => {
   assert.match(detach, /pendingFinish/, 'a ghost settle stopped mid-spring still owes its callbacks');
 });
 
+// #5870: on an iPhone a touch hold that lifted a home tile and opened its
+// menu could lose its pointerup. The drag then stayed lifted: every later
+// tap had a new pointerId, so the ghost stayed over every screen and the
+// host's onLift deferral held the home grid still until a reload. Run the
+// recognizer itself in a sandbox and replay that sequence.
+function placementHarness() {
+  const listeners = (owner) => {
+    owner.handlers = {};
+    owner.addEventListener = (type, fn) => { (owner.handlers[type] ||= []).push(fn); };
+    owner.removeEventListener = (type, fn) => {
+      owner.handlers[type] = (owner.handlers[type] || []).filter((f) => f !== fn);
+    };
+    owner.fire = (type, e) => { for (const fn of [...(owner.handlers[type] || [])]) fn({ type, ...e }); };
+    return owner;
+  };
+  const classes = () => {
+    const set = new Set();
+    return { add: (c) => set.add(c), remove: (c) => set.delete(c), contains: (c) => set.has(c) };
+  };
+  const ghosts = [];
+  const item = listeners({
+    nodeType: 1, classList: classes(), style: {},
+    contains: (t) => t === item,
+    getBoundingClientRect: () => ({ left: 10, top: 10, width: 80, height: 80 }),
+    cloneNode: () => {
+      const ghost = { classList: classes(), style: {}, parentNode: null };
+      ghosts.push(ghost);
+      return ghost;
+    },
+  });
+  const listEl = listeners({
+    nodeType: 1, classList: classes(), parentNode: null,
+    children: [item], querySelectorAll: () => [item], setPointerCapture: () => {},
+  });
+  const body = {
+    nodeType: 1,
+    appendChild: (g) => { g.parentNode = body; },
+    removeChild: (g) => { g.parentNode = null; },
+  };
+  const timers = [];
+  const win = listeners({ innerHeight: 800 });
+  const context = vm.createContext({
+    window: win,
+    document: { body },
+    getComputedStyle: () => ({ overflowY: 'visible', backgroundColor: 'white', getPropertyValue: () => '' }),
+    requestAnimationFrame: () => 1,
+    cancelAnimationFrame: () => {},
+    setTimeout: (fn) => { timers.push(fn); return timers.length; },
+    clearTimeout: () => {},
+    console,
+  });
+  vm.runInContext(`
+    var REORDER_LONG_PRESS_MS = 400, REORDER_SLOP = 8, REORDER_EDGE = 48, REORDER_MAX_SCROLL = 14;
+    var prefersReducedMotion = true;
+    function haptic() {}
+    function autoScrollVelocity() { return 0; }
+    function glideGhost() { throw new Error('reduced motion settles at once'); }
+    ${NATIVE_JS.slice(NATIVE_JS.indexOf('  function createArbiter() {'), NATIVE_JS.indexOf('  // Toast slot state machine'))}
+    var gestures = createArbiter();
+    ${NATIVE_JS.slice(NATIVE_JS.indexOf('  function gestureSeq(e) {'), NATIVE_JS.indexOf("  window.addEventListener('pointerup', function (e) { gestures.release"))}
+    ${NATIVE_JS.slice(NATIVE_JS.indexOf('  function attachGridPlacement(listEl, options) {'),
+      NATIVE_JS.indexOf('  /* ────────────────────────────────────────────────────────────────────\n   * Page transitions'))}
+  `, context);
+  const settles = [];
+  const handle = context.attachGridPlacement(listEl, {
+    cellFromPoint: () => null,
+    onSettle: (placed) => settles.push(placed),
+  });
+  // Press and hold on the tile: the long-press timer lifts it.
+  const hold = (pointerId) => {
+    const down = { pointerId, pointerType: 'touch', isPrimary: true, button: 0, target: item, clientX: 50, clientY: 50 };
+    win.fire('pointerdown', down);
+    listEl.fire('pointerdown', down);
+    timers.pop()(); // the press timer is the newest one
+  };
+  const ghostUp = () => ghosts.some((g) => g.parentNode);
+  return { win, listEl, item, timers, settles, handle, hold, ghostUp, context };
+}
+
+test('a lifted tile whose pointerup was lost is cancelled by the next tap (#5870)', () => {
+  const h = placementHarness();
+  h.hold(1);
+  assert.ok(h.ghostUp(), 'the hold lifted a ghost');
+  assert.ok(h.item.classList.contains('un-reorder-slot'));
+  assert.equal(h.context.gestures.owner('touch') != null, true, 'the gesture is claimed');
+
+  // The finger comes up, and the pointerup never arrives. Then a tap,
+  // anywhere on the page, with a NEW pointer id.
+  h.win.fire('pointerdown', { pointerId: 2, pointerType: 'touch', isPrimary: true, button: 0, target: {} });
+  assert.equal(h.ghostUp(), false, 'the ghost is gone');
+  assert.equal(h.item.classList.contains('un-reorder-slot'), false, 'the slot is filled again');
+  assert.equal(h.listEl.classList.contains('un-reordering'), false);
+  assert.deepEqual(h.settles, [false], 'onSettle fired once, so the host lets go of its deferral');
+  assert.equal(h.context.gestures.owner('touch'), null, 'and the stale claim is released');
+
+  // The grid still works afterwards: a new hold lifts again.
+  h.hold(3);
+  assert.ok(h.ghostUp(), 'a later hold lifts a tile again');
+});
+
+test('the drag ends when its pointerup lands outside the list or only touchend arrives (#5870)', () => {
+  // Capture lost: the pointerup reaches the window but not the list.
+  let h = placementHarness();
+  h.hold(1);
+  h.win.fire('pointerup', { pointerId: 1, pointerType: 'touch' });
+  assert.equal(h.ghostUp(), false);
+  assert.deepEqual(h.settles, [false]);
+
+  // No pointer event at all, only the touch sequence ending: settled a task
+  // later, so a pointerup that is merely late still decides the drop.
+  h = placementHarness();
+  h.hold(1);
+  h.win.fire('touchend', { touches: [] });
+  assert.ok(h.ghostUp(), 'not before the late pointerup has had its chance');
+  h.timers.pop()();
+  assert.equal(h.ghostUp(), false);
+  assert.deepEqual(h.settles, [false]);
+});
+
+test('a second finger during a live drag does not cancel it (#5870)', () => {
+  const h = placementHarness();
+  h.hold(1);
+  h.win.fire('pointerdown', { pointerId: 2, pointerType: 'touch', isPrimary: false, button: 0, target: {} });
+  h.win.fire('touchend', { touches: [{}] });
+  assert.ok(h.ghostUp(), 'still lifted');
+  assert.deepEqual(h.settles, []);
+  h.handle.detach();
+  assert.equal(h.ghostUp(), false);
+  assert.deepEqual(h.settles, [false]);
+  assert.equal((h.win.handlers.pointerdown || []).length, 0, 'detach removes the window listeners');
+});
+
 // ── The release glide ──────────────────────────────────────────────────
 //
 // One release must read as ONE motion: from wherever the ghost is under the
