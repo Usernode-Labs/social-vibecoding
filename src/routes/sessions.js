@@ -3495,8 +3495,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // enforces collab access), and many users can clone the same auto
   // session independently — each clone gets its own branch (forked off the
   // auto session's branch so pushed commits carry over), a copy of the
-  // chat history + spec, and (best-effort) the auto session's Claude Code
-  // memory volume so the agent resumes with full context. A follow-up
+  // chat history + spec. Agent memory stays with the source session; the
+  // clone leaves cc_session_id unset and creates no worker. A follow-up
   // assistant message tells the new owner where things stand and how to
   // proceed (review spec / answer question / ask for PR + staging).
   //
@@ -3674,19 +3674,6 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           log.warn('sessions', 'Draft PR creation deferred after headless clone', {
             sessionId: session.id, code: err.code || null, err: err.message,
           });
-        }
-      }
-
-      // Best-effort: clone the auto session's CC memory volume so --resume
-      // continues its conversation. On failure the clone simply starts with
-      // fresh CC memory (chat history + spec still carry the context).
-      if (src.cc_session_id) {
-        try {
-          await worker.cloneCcVolume(src.id, session.id);
-          await pool.query(`UPDATE chat_sessions SET cc_session_id = $1 WHERE id = $2`, [src.cc_session_id, session.id]);
-          session.cc_session_id = src.cc_session_id;
-        } catch (err) {
-          log.warn('sessions', 'CC volume clone failed — clone starts with fresh CC memory', { src: src.id, dest: session.id, err: err.message });
         }
       }
 
@@ -8873,7 +8860,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session, owner = null, 
       return;
     }
 
-    // Persist the CC session id for later cloned sessions' --resume.
+    // Persist the headless run's own CC session id for same-session resume.
     const newCcId = result.sessionId || result.initSessionId || null;
     if (newCcId && newCcId !== session.cc_session_id) {
       await pool.query(
