@@ -15458,6 +15458,55 @@ CREATE TABLE IF NOT EXISTS server_error_minutes (
 CREATE INDEX IF NOT EXISTS idx_server_error_minutes_minute ON server_error_minutes (minute DESC);
 COMMENT ON COLUMN server_error_minutes.sample IS 'staging:private';
 
+-- What each route cost each process, per minute (the same flush): every
+-- response, /api/ or not, by route TEMPLATE (`(non-api)` for a static file
+-- or page no route declared): how many; how many were held open by design
+-- (`streams`: event streams and long polls, whose time is left out, as they
+-- wait at no cost for as long as their client likes); how many ended with
+-- the client gone first (`aborted`, their time counted); their total and
+-- longest time; and the bytes their sockets were handed. Only a minute's 40
+-- costliest routes keep their names; the rest are `(other)`. The primary
+-- key leads with `minute`, which is all the prune and a time range need.
+-- Pruned after 7 days.
+CREATE TABLE IF NOT EXISTS server_route_minutes (
+  minute    TIMESTAMPTZ NOT NULL,
+  pod       VARCHAR(64) NOT NULL,
+  method    VARCHAR(8) NOT NULL,
+  route     VARCHAR(160) NOT NULL,
+  requests  INTEGER NOT NULL DEFAULT 0,
+  streams   INTEGER NOT NULL DEFAULT 0,
+  aborted   INTEGER NOT NULL DEFAULT 0,
+  total_ms  DOUBLE PRECISION NOT NULL DEFAULT 0,
+  max_ms    DOUBLE PRECISION NOT NULL DEFAULT 0,
+  bytes     BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (minute, pod, method, route)
+);
+
+-- How busy each process was, per minute (services/process-health.js): its
+-- CPU time, how much of the minute its event loop was busy, the loop's
+-- delays (beyond the histogram's 20 ms sampling interval), how often and
+-- how long it stalled (the longest gap between the watcher's wake-ups), its
+-- garbage collection, and its memory's peaks. Read beside
+-- server_route_minutes when a Pod was slow or failed its liveness probe.
+-- Pruned after 14 days.
+CREATE TABLE IF NOT EXISTS server_process_minutes (
+  minute             TIMESTAMPTZ NOT NULL,
+  pod                VARCHAR(64) NOT NULL,
+  role               VARCHAR(16) NOT NULL DEFAULT '',
+  cpu_ms             DOUBLE PRECISION NOT NULL DEFAULT 0,
+  loop_utilization   REAL NOT NULL DEFAULT 0,
+  loop_delay_p99_ms  REAL NOT NULL DEFAULT 0,
+  loop_delay_max_ms  REAL NOT NULL DEFAULT 0,
+  stalls             INTEGER NOT NULL DEFAULT 0,
+  stall_max_ms       REAL NOT NULL DEFAULT 0,
+  gc_ms              REAL NOT NULL DEFAULT 0,
+  gc_count           INTEGER NOT NULL DEFAULT 0,
+  gc_max_ms          REAL NOT NULL DEFAULT 0,
+  rss_mb             REAL NOT NULL DEFAULT 0,
+  heap_used_mb       REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (minute, pod)
+);
+
 -- ── Deleted apps' data, purged (#5121) ──────────────────────────────────
 --
 -- One receipt per deleted app, written by the teardown
