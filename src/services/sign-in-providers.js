@@ -54,6 +54,9 @@
  *      the nonce, and spent once (native_sign_in_tokens). Google's sheet
  *      may not carry the nonce on every app build; a token without one is
  *      taken only within NATIVE_FRESH_S of being issued, and still only once.
+ *      A token carrying any other nonce is refused: an app build that passed
+ *      none to Google's iOS SDK gets a random one of the SDK's own (#5960).
+ *      Every refusal is one log line with its reason.
  *   3. signIn and the username step, exactly as above.
  *
  * The app offers a provider only once the web sign-in for it is set up and
@@ -675,8 +678,11 @@ async function verifyNativeIdToken(pool, config, provider, idToken, state, deps 
     throw new SignInProviderError('not_offered', 'That sign-in is not set up in the app.', 404);
   }
   const row = rows[provider];
-  const refused = () => new SignInProviderError('bad_token', `${LABELS[provider]} sign-in could not be confirmed. Try again.`, 502);
-  if (typeof idToken !== 'string' || !idToken || idToken.length > ID_TOKEN_MAX) throw refused();
+  const refused = (reason) => {
+    log.warn('sign-in-providers', 'Native ID token refused', { provider, reason });
+    return new SignInProviderError('bad_token', `${LABELS[provider]} sign-in could not be confirmed. Try again.`, 502);
+  };
+  if (typeof idToken !== 'string' || !idToken || idToken.length > ID_TOKEN_MAX) throw refused('malformed');
   const { jwtVerify } = await import('jose');
   const keys = deps.jwks || await providerKeys(provider);
   let payload;
@@ -687,17 +693,17 @@ async function verifyNativeIdToken(pool, config, provider, idToken, state, deps 
       clockTolerance: 60,
     }));
   } catch (err) {
-    log.warn('sign-in-providers', 'Native ID token refused', { provider, err: err.code || err.message });
-    throw refused();
+    throw refused(err.code || err.message);
   }
   const nonce = state && typeof state.nonce === 'string' ? state.nonce : '';
   if (typeof payload.nonce === 'string') {
-    if (!nonce || (payload.nonce !== nonce && payload.nonce !== sha256Hex(nonce))) throw refused();
+    if (!nonce || (payload.nonce !== nonce && payload.nonce !== sha256Hex(nonce))) throw refused('nonce_mismatch');
   } else {
     // Apple's sheet always carries it. Google's may not, on an older app
     // build: such a token counts only while it is fresh.
     const now = Math.floor((deps.now || Date.now()) / 1000);
-    if (provider !== 'google' || typeof payload.iat !== 'number' || now - payload.iat > NATIVE_FRESH_S) throw refused();
+    if (provider !== 'google') throw refused('nonce_missing');
+    if (typeof payload.iat !== 'number' || now - payload.iat > NATIVE_FRESH_S) throw refused('stale_without_nonce');
   }
   const claims = claimsFrom(provider, payload);
   const expiresAt = new Date((typeof payload.exp === 'number' ? payload.exp : Math.floor(Date.now() / 1000) + 3600) * 1000);
@@ -708,10 +714,7 @@ async function verifyNativeIdToken(pool, config, provider, idToken, state, deps 
      RETURNING token_hash`,
     [sha256Hex(idToken), provider, expiresAt]
   );
-  if (!spent.length) {
-    log.warn('sign-in-providers', 'Native ID token used twice', { provider });
-    throw refused();
-  }
+  if (!spent.length) throw refused('used_twice');
   return claims;
 }
 

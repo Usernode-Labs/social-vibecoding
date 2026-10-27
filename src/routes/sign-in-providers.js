@@ -292,11 +292,15 @@ function signInProviderRoutes(config) {
     try {
       const state = await providers.consumeState(pool, provider, req.body?.state, binder, { native: true });
       if (!state || state.mismatch) {
+        log.warn('sign-in-providers', 'App sign-in refused', { provider, reason: state ? 'started_elsewhere' : 'expired' });
         return res.status(422).json({ error: 'That sign-in took too long, or started somewhere else. Try again.', code: 'expired' });
       }
       const claims = await providers.verifyNativeIdToken(pool, config, provider, req.body?.idToken, state);
       const result = await providers.signIn(pool, provider, claims, { createSession });
-      if (result.refuse) return res.status(422).json({ error: 'Not signed in.', code: result.refuse });
+      if (result.refuse) {
+        log.info('sign-in-providers', 'App sign-in refused', { provider, reason: result.refuse });
+        return res.status(422).json({ error: 'Not signed in.', code: result.refuse });
+      }
       await afterSignIn(req, res, provider, state, result);
       if (result.next === 'signed-in') {
         createSessionCookie(res, result.session.token, result.session.expiresAt);
