@@ -11853,6 +11853,21 @@
     {
       "source": "src/routes/sign-in-providers.js",
       "method": "POST",
+      "path": "/api/auth/oauth/:provider/native/failed",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "profile.post.auth.oauth.item.native.failed.01aac3c8",
+      "domain": "profile",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "profile",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#profile"
+    },
+    {
+      "source": "src/routes/sign-in-providers.js",
+      "method": "POST",
       "path": "/api/auth/oauth/finish",
       "expression": null,
       "status": "mapped",
