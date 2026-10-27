@@ -50,6 +50,7 @@ import { settleDecidedChange } from '../rules/change-notifications.ts';
 import { createConnectorSubmittedNotification, createPrProposedNotifications, createStalePrNotification } from '../rules/proposal-notifications.ts';
 import { invalidateHeadMoveSql } from '../rules/summary-freshness.ts';
 import { claimRefusal } from '../rules/merge-claim.ts';
+import { APPROVER_NO_WINDOW_WORDS } from '../rules/governance-gate.ts';
 import { toBotChange, withdrawnNote, writeBotChange } from '../rules/bot-notes.ts';
 import { turnStop } from '../rules/turn-stop.ts';
 import { readFacts, NO_FACTS } from './facts.ts';
@@ -540,6 +541,7 @@ function closedLine(r: Row, reason: string, byOwner: boolean): string {
   switch (reason) {
     case 'auto-rejected': return `${l} was set aside for now (more No than Yes, and not enough support to carry it).`;
     case 'admin-no': return `${l} was set aside: an admin voted No and nobody voted Yes within a week. It can always come back as a new change.`;
+    case 'approver-no': return `${l} was set aside: an approver voted No and nobody voted Yes within ${APPROVER_NO_WINDOW_WORDS}. It can always come back as a new change.`;
     case 'proposal-replaced':
       return byOwner && r.ownerName ? `${r.ownerName} replaced ${r.prTitle ? l : 'this change'} with a new one.` : `${l} was replaced by a new one.`;
     case 'superseded': return `${l} was withdrawn: another change for the same request covers it.`;
@@ -561,7 +563,7 @@ const GITHUB_SETTLED: ReadonlySet<string> = new Set(['pr-closed', 'pr-merged']);
 // How a conversation that started the change words its close
 // (rules/agent-notes.ts closedSentence).
 const OUTCOMES: ReadonlyMap<string, string> = new Map([
-  ['auto-rejected', 'rejected'], ['admin-no', 'admin-no'], ['proposal-replaced', 'replaced'], ['manual', 'withdrawn'],
+  ['auto-rejected', 'rejected'], ['admin-no', 'admin-no'], ['approver-no', 'approver-no'], ['proposal-replaced', 'replaced'], ['manual', 'withdrawn'],
 ]);
 
 // ── Moves ───────────────────────────────────────────────────────────────
@@ -1185,7 +1187,7 @@ const reviewCheck: Handler = (s, e, f, ctx, deps) => {
   const at = windowEnds && windowEnds > ctx.now.getTime() && (hourly == null || windowEnds < hourly) ? windowEnds : hourly;
   const again: TimerRequest | null = at != null ? { at: new Date(at), event: { type: 'ReviewCheck' } } : null;
   if (busy(row)) return step(s, { timer: again });
-  if (f.gate?.rejectable) return close(s, e, f, f.gate.adminNo ? 'admin-no' : 'auto-rejected');
+  if (f.gate?.rejectable) return close(s, e, f, f.gate.adminNo ? 'admin-no' : f.gate.approverNo ? 'approver-no' : 'auto-rejected');
   // Its gate is met (a window elapsed, the electorate shrank, a vote whose
   // own ask was lost): the app's merge queue is asked.
   const met = !!f.gate?.mergeable;

@@ -284,6 +284,81 @@ test('a rules project arms the clock with no counted Yes; its author\'s proposin
   assert.equal(g.rejectable, true);
 });
 
+// ── #5947: an approver's lone No sets a change aside after two days ───
+//
+// On an invited project only approvers' votes count, so nothing else ever
+// ends a change an approver turned down. The clock runs from their No unless
+// an approver votes Yes; a non-approver's advisory Yes is not counted.
+
+test('an approver\'s lone No on an invited project arms two days from the No', () => {
+  const gateRules = require('../src/workflow/rules/governance-gate.ts');
+  assert.equal(gateRules.APPROVER_NO_WINDOW_MS, 2 * DAY, 'the default is two days');
+  const now = Date.parse('2026-10-27T00:00:00Z');
+  const noAt = now - DAY;
+  for (const gov of [
+    { approverPolicy: 'invited', approvalsRequired: 1 },
+    { approverPolicy: 'invited', approvalsRequired: null },
+  ]) {
+    // yesCount is the counted Yes: advisory votes never reach it.
+    const at = (t) => governance.computeGate(gov, 3, 0, 1, now - 20 * DAY, t, { approverNoAt: noAt });
+    const armed = at(now);
+    assert.equal(armed.rejectionArmed, true, JSON.stringify(gov));
+    assert.equal(armed.approverNo, true, 'the machine must close it as approver-no');
+    assert.equal(armed.adminNo, undefined);
+    assert.equal(armed.rejectionWindowMs, 2 * DAY);
+    assert.equal(armed.rejectionEndsAt, new Date(noAt + 2 * DAY).toISOString());
+    assert.equal(armed.rejectable, false, 'one day in');
+    assert.equal(at(noAt + 2 * DAY - 1).rejectable, false, 'a millisecond before');
+    assert.equal(at(noAt + 2 * DAY).rejectable, true, 'two days after the No: set aside');
+  }
+});
+
+test('an approver No clock needs an invited project without rules of its own', () => {
+  const now = Date.now();
+  const noAt = now - 3 * DAY;
+  const anyone = governance.computeGate({ approverPolicy: 'anyone', approvalsRequired: 1 },
+    20, 0, 1, now - 9 * DAY, now, { approverNoAt: noAt });
+  assert.equal(anyone.approverNo, undefined, 'every vote counts there: a lone No stays a lone No');
+  assert.equal(anyone.rejectionArmed, false);
+  const rules = governance.computeGate({
+    approverPolicy: 'invited',
+    rules: { rules: [{ group: 'members', kind: 'atLeast', n: 2 }], groups: [] },
+  }, 4, 0, 1, now - 9 * DAY, now, {
+    voters: { yes: new Set(), no: new Set([9]) },
+    rulesFacts: { creatorId: 3, memberCount: 4, membersActive: 4, adminIds: [], groups: new Map(), activeIds: null },
+    authorId: 3, approverNoAt: noAt,
+  });
+  assert.equal(rules.approverNo, undefined, 'a rules project decides by its own rules');
+});
+
+test('a counted Yes, a protected change or a first version keep the approver No clock off', () => {
+  const now = Date.now();
+  const gov = { approverPolicy: 'invited', approvalsRequired: 2 };
+  const noAt = now - 3 * DAY;
+  const voted = governance.computeGate(gov, 3, 1, 1, now - 9 * DAY, now, { approverNoAt: noAt });
+  assert.equal(voted.approverNo, undefined, 'an approver said Yes');
+  assert.equal(voted.rejectionArmed, false);
+  const flagged = governance.computeGate(gov, 3, 0, 1, now - 9 * DAY, now, { approverNoAt: noAt, explicitApproval: true });
+  assert.equal(flagged.rejectionArmed, false, '#788: no clocks on a protected change');
+  const first = governance.computeGate(gov, 3, 0, 1, now - 9 * DAY, now, { approverNoAt: noAt, firstVersion: true });
+  assert.equal(first.rejectable, false);
+});
+
+test('when an admin\'s week and an approver\'s days both run, the sooner end decides and names the reason', () => {
+  const now = Date.now();
+  const gov = { approverPolicy: 'invited', approvalsRequired: 1 };
+  // The same person is both: the approver's two days end first.
+  const both = governance.computeGate(gov, 3, 0, 1, now - 9 * DAY, now, { adminNoAt: now - 3 * DAY, approverNoAt: now - 3 * DAY });
+  assert.equal(both.approverNo, true);
+  assert.equal(both.adminNo, undefined, 'the admin week no longer decides');
+  assert.equal(both.rejectable, true);
+  // An admin's No six days ago ends sooner than an approver's from today.
+  const admin = governance.computeGate(gov, 3, 0, 1, now - 9 * DAY, now, { adminNoAt: now - 6 * DAY, approverNoAt: now });
+  assert.equal(admin.adminNo, true);
+  assert.equal(admin.approverNo, undefined);
+  assert.equal(admin.rejectionEndsAt, new Date(now + DAY).toISOString());
+});
+
 // ── governedGate with a scripted pool ─────────────────────────────────
 //
 // Answers the queries governedGate issues: the governance-columns

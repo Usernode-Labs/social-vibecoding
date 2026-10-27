@@ -106,6 +106,7 @@ async function migrate(config) {
   // #5803: a change an admin voted No on, nobody voting Yes, so the card's
   // week-long "Set aside in …" pill is reviewable on a fresh staging copy.
   await seedStagingAdminNoPr(pool, config);
+  await seedStagingApproverNoPr(pool, config);
   await seedStagingImportedPrProposal(pool, config);
   await seedStagingChecksAdvisoryCard(pool, config);
   await seedStagingExternalAgentProposal(pool, config);
@@ -11925,6 +11926,87 @@ async function seedStagingAdminNoPr(pool, config) {
   );
 
   log.info('db', 'Staging admin-No fixture seeded', { appId, sessionId });
+}
+
+// #5947: an approver's lone No sets a change aside two days after it. One
+// fixture on the self-app shows the countdown: a promoted change one of the
+// project's approvers voted No on a day ago, with an advisory Yes from a
+// person who is not an approver, so its card reads "Set aside in 1d". The
+// approver and the supporter are fake people; the author is the capture
+// account the shots sign in as. Idempotent (the branch name), obviously
+// fake, strictly a no-op outside staging.
+async function seedStagingApproverNoPr(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    "SELECT id FROM apps WHERE slug = $1 AND approver_policy = 'invited'",
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging approver-No fixture skipped: no invited self-app row', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+  const { rows: captureRows } = await pool.query(
+    "SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1"
+  );
+  if (!captureRows.length) {
+    log.warn('db', 'Staging approver-No fixture skipped: capture user missing');
+    return;
+  }
+  const authorId = captureRows[0].id;
+  await pool.query(
+    `INSERT INTO users (id, username, password)
+     VALUES
+       (900330, 'staging-demo-approver-no', 'staging-demo-not-a-login'),
+       (900331, 'staging-demo-supporter', 'staging-demo-not-a-login')
+     ON CONFLICT DO NOTHING`
+  );
+  await pool.query(
+    `INSERT INTO app_approvers (app_id, user_id, status, accepted_at)
+     VALUES ($1, 900330, 'member', NOW())
+     ON CONFLICT (app_id, user_id) DO NOTHING`,
+    [appId]
+  );
+
+  const branch = 'staging-fixture/approver-no';
+  let sessionId;
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, branch]
+  );
+  if (existing.length) {
+    sessionId = existing[0].id;
+  } else {
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
+          promoted_at, created_at)
+       VALUES
+         ($1, $2, $3, 9230, '[staging fixture] An approver voted No, and no approver said Yes',
+          $4, 'promoted', NOW() - INTERVAL '3 days', NOW() - INTERVAL '4 days')
+       RETURNING id`,
+      [appId, authorId, branch,
+       'In plain terms: this proposed change shows what a change looks like after one of the project\'s approvers voted No and no approver has voted Yes yet.']
+    );
+    sessionId = rows[0].id;
+  }
+
+  // The approver's No, a day old: one of the two days is left. The
+  // supporter's Yes is advisory (not an approver), so the countdown is armed.
+  await pool.query(
+    `INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch, created_at)
+     SELECT $1, v.user_id, v.vote, cs.approval_epoch, NOW() - INTERVAL '1 day'
+       FROM chat_sessions cs, (VALUES (900330, 'no'), (900331, 'yes')) AS v(user_id, vote)
+      WHERE cs.id = $1
+     ON CONFLICT (session_id, user_id) DO UPDATE
+       SET vote = EXCLUDED.vote, approval_epoch = EXCLUDED.approval_epoch, created_at = EXCLUDED.created_at`,
+    [sessionId]
+  );
+
+  log.info('db', 'Staging approver-No fixture seeded', { appId, sessionId });
 }
 
 async function seedStagingMyOpenPr(pool, config) {

@@ -78,6 +78,17 @@ const REJECT_KEEPALIVE_YES_FRAC = YES_MID_FRAC;
 // Same week as the longest rejection window and the quiet rule.
 export const ADMIN_NO_WINDOW_MS = 7 * DAY_MS;
 
+// An approver's lone No (#5947). On a project where only its invited
+// approvers' votes count, nothing else ever ends a change an approver turned
+// down: the at-least-N rule has no clock, and the people whose Yes votes are
+// only advisory cannot carry it. So a change with an approver's No and no
+// counted Yes is set aside this many days after that No. The one setting:
+// every window, line and sentence reads it from here.
+export const APPROVER_NO_WINDOW_DAYS: number = 2;
+export const APPROVER_NO_WINDOW_MS = APPROVER_NO_WINDOW_DAYS * DAY_MS;
+// The window as a sentence says it ("within 2 days").
+export const APPROVER_NO_WINDOW_WORDS = APPROVER_NO_WINDOW_DAYS === 1 ? '1 day' : `${APPROVER_NO_WINDOW_DAYS} days`;
+
 // Lazy-consensus knobs: a proposal that has SOME support (Yes strictly
 // leading, no contest) but hasn't reached the eased threshold arms a merge
 // clock anyway: silence is consent. The clock is count-based (NOT
@@ -543,23 +554,45 @@ export function applyAdminNo<G extends Gate>(
   gate: G, adminNoAt: Instant, yesCount: Count, now: Instant,
   { explicitApproval = false }: { explicitApproval?: boolean } = {},
 ): G & { adminNo?: boolean } {
-  if (adminNoAt == null || explicitApproval) return gate;
+  return applyLoneNo(gate, adminNoAt, yesCount, now, ADMIN_NO_WINDOW_MS, 'adminNo', explicitApproval);
+}
+
+// An approver's lone No (#5947): the same rule over APPROVER_NO_WINDOW_MS,
+// for a No from one of an invited project's approvers (pr-gate.ts
+// approverNoAtSql). `yesCount` is the counted Yes, so an advisory Yes from
+// someone who is not an approver does not stop the clock. When an admin's
+// week is also armed, the sooner end wins, and the flag names the clock that
+// ends it, so the machine closes with the reason that applies.
+export function applyApproverNo<G extends Gate>(
+  gate: G, approverNoAt: Instant, yesCount: Count, now: Instant,
+  { explicitApproval = false }: { explicitApproval?: boolean } = {},
+): G & { approverNo?: boolean } {
+  return applyLoneNo(gate, approverNoAt, yesCount, now, APPROVER_NO_WINDOW_MS, 'approverNo', explicitApproval);
+}
+
+function applyLoneNo<G extends Gate>(
+  gate: G, noAt: Instant, yesCount: Count, now: Instant,
+  windowMs: number, flag: 'adminNo' | 'approverNo', explicitApproval: boolean,
+): G & { adminNo?: boolean; approverNo?: boolean } {
+  if (noAt == null || explicitApproval) return gate;
   if ((int(yesCount) || 0) > 0 || gate.mergeable) return gate;
-  const noMs = instantMs(adminNoAt);
+  const noMs = instantMs(noAt);
   if (noMs == null) return gate;
   const nowMs = instantMs(now) ?? Date.now();
-  const endsMs = noMs + ADMIN_NO_WINDOW_MS;
+  const endsMs = noMs + windowMs;
   if (gate.rejectionArmed && gate.rejectionEndsAt) {
     const earlier = Date.parse(gate.rejectionEndsAt);
     if (Number.isFinite(earlier) && earlier <= endsMs) return gate;
   }
+  // A clock this one overtakes no longer says why the change closes.
+  const { adminNo: _admin, approverNo: _approver, ...rest } = gate as G & { adminNo?: boolean; approverNo?: boolean };
   return {
-    ...gate,
-    rejectionWindowMs: ADMIN_NO_WINDOW_MS,
+    ...(rest as G),
+    rejectionWindowMs: windowMs,
     rejectionArmed: true,
     rejectionEndsAt: new Date(endsMs).toISOString(),
     rejectable: nowMs >= endsMs,
-    adminNo: true,
+    [flag]: true,
   };
 }
 
@@ -585,6 +618,8 @@ export interface GovernedGate extends Gate {
   // Set (true) when the rejection clock is an admin's lone No (applyAdminNo),
   // so the machine closes with 'admin-no' rather than 'auto-rejected'.
   adminNo?: boolean;
+  // The same for an approver's lone No (applyApproverNo): 'approver-no'.
+  approverNo?: boolean;
 }
 
 // The two rules computeGate dispatches to. services/governance.js passes
@@ -617,6 +652,9 @@ export interface GateOpts {
   // version of the change (pr-gate.ts adminNoAtSql), or null. applyAdminNo
   // arms the week from it.
   adminNoAt?: Instant;
+  // When one of an invited project's approvers last cast a counted No on it
+  // (pr-gate.ts approverNoAtSql), or null. applyApproverNo arms its days.
+  approverNoAt?: Instant;
 }
 
 // THE FIRST VERSION (13 Oct 2026, D1). A project made from a description
@@ -675,7 +713,8 @@ export function applyFirstVersion<G extends Gate>(gate: G, { explicitApproval = 
 // every regime (applyFirstVersion above).
 //
 // `opts.adminNoAt` arms a week-long takedown from an admin's lone No
-// (applyAdminNo above), before the first-version rule clears every rejection
+// (applyAdminNo above), and `opts.approverNoAt` a shorter one from an
+// approver's (applyApproverNo), before the first-version rule clears every rejection
 // field. A rules project's "Yes" is the counted voters, when it has them: its
 // author's implicit proposing-yes is not a cast Yes and does not stop the
 // clock.
@@ -691,9 +730,13 @@ export function computeGate(
     ? (opts.voters.yes instanceof Set
       ? opts.voters.yes.size : new Set(opts.voters.yes || []).size)
     : yesCount;
-  const timed = applyAdminNo(gate, opts.adminNoAt ?? null, yesForClock, now, {
-    explicitApproval: !!opts.explicitApproval,
-  });
+  // An approver is an invited project's (the roster electorate.ts reads); a
+  // rules project's groups decide by their own rules, so no approver clock.
+  const approverNoAt = gov && !gov.rules && gov.approverPolicy === 'invited' ? opts.approverNoAt ?? null : null;
+  const timed = applyApproverNo(
+    applyAdminNo(gate, opts.adminNoAt ?? null, yesForClock, now, { explicitApproval: !!opts.explicitApproval }),
+    approverNoAt, yesForClock, now, { explicitApproval: !!opts.explicitApproval },
+  );
   return opts.firstVersion ? applyFirstVersion(timed, { explicitApproval: !!opts.explicitApproval }) : timed;
 }
 
