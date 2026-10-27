@@ -175,8 +175,9 @@ test('the hub draws no charts: who is around is faces, a count and names, and no
   // The declared check that read the trend reads who is around instead.
   // (#4729 removed three checks above it, so its index moved 290 → 288;
   // #3969 added the Accessibility settings check above it, so it moved
-  // 288 → 289.)
-  const declared = JSON.parse(read('dapp.json')).tests[289];
+  // 288 → 289; #5992 removed the two feedback destination checks above it,
+  // so it moved 289 → 287.)
+  const declared = JSON.parse(read('dapp.json')).tests[287];
   assert.match(declared.expectSelector, /:has\(\.dev-ws-hero \[data-ws-active-people\]\) > \.dev-ws-tabbody > \[data-ws-hub-for-you\] > \.dev-ws-foryou > \[data-ws-hub-needs-votes\] > button\[data-ws-hub-needs-open\]$/);
   assert.equal(declared.expectText, 'to vote');
 });
