@@ -1043,6 +1043,10 @@ const Browse = {
       openable: !isDemo,
       added: isAdded,
       canOpen,
+      // #5953: the Joined view is the list of what you are in, so each row you
+      // could leave offers Leave beside Open. Never to the creator (the server
+      // refuses: you cannot leave what you started) nor on an inert fixture.
+      canLeave: Browse._view === 'joined' && isAdded && !isDemo && !Browse.isCreator(app),
       addTitle: isAdded
         ? PlatformI18n.t('discover:row.open.tip', { app: app.name || app.slug })
         : PlatformI18n.t('discover:row.join.tip', { app: app.name || app.slug }),
@@ -1160,11 +1164,24 @@ const Browse = {
   },
 
   // The row's Join (#5267: a joined row says Open instead, so this only
-  // ever joins now; leaving is on the project's own page).
+  // ever joins now; leaving is the Joined view's Leave, or the project's ⋯).
   toggleRowAdded(view) {
     if (!view || !view.slug) return;
     if (!view.added) Browse._keptJoins.add(view.slug);
     Home.setMembership(view.slug, !view.added, () => Browse.render());
+  },
+
+  // Whether the signed-in person made `app`: they cannot leave it.
+  isCreator(app) {
+    const me = typeof App !== 'undefined' && App.user ? App.user.id : null;
+    return me != null && !!app && app.created_by === me;
+  },
+
+  // The row's Leave (#5953), in the Joined view: Home.setMembership asks
+  // first, and the repaint drops the row from the list it no longer belongs to.
+  leaveRow(view) {
+    if (!view || !view.slug || !view.canLeave) return;
+    Home.setMembership(view.slug, false, () => Browse.render());
   },
 
   // The row's Open: the app itself, as the detail page's Open does.

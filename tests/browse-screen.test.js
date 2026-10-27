@@ -36,6 +36,7 @@ const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 // these tests read app-card.js's shared chip decision directly.
 const BROWSE_SRC = read('frontend/src/features/apps/browse.js')
   .replace(/^import .*;$/gm, '');
+const BROWSE_LIST_SRC = read('frontend/src/features/apps/browse-list.tsx');
 const APP_SRC = read('public/js/app.js');
 const INDEX = read('public/index.html');
 
@@ -1937,6 +1938,45 @@ test('leaving asks first, and a No leaves everything as it was', async () => {
   assert.equal(mine.is_member, false);
   assert.equal(mine.is_favorited, false, 'leaving takes it off Home too');
   assert.deepEqual(fetchCalls[0].body, { joined: false });
+});
+
+test('the Joined view offers Leave beside Open, never to the creator or outside Joined (#5953)', async () => {
+  const { Browse, Home, fetchCalls, win, state } = makeBrowse({ user: { id: 7 } });
+  const theirs = app({ slug: 'theirs', name: 'Theirs', is_member: true, is_favorited: true, created_by: 3 });
+  const made = app({ slug: 'made', name: 'Made', is_member: true, is_favorited: true, created_by: 7 });
+  const fresh = app({ slug: 'fresh', name: 'Fresh' });
+  Home._apps = [theirs, made, fresh];
+  Browse._apps = [theirs, made, fresh];
+
+  Browse.setView('browse');
+  assert.equal(rowFor(state, 'theirs').canLeave, false, 'Browse keeps its one button: Open');
+  Browse.setView('joined');
+  assert.equal(rowFor(state, 'theirs').canLeave, true, 'a member who did not make it can leave');
+  assert.equal(rowFor(state, 'theirs').canOpen, true, 'and Open stays beside it');
+  assert.equal(rowFor(state, 'made').canLeave, false, 'the creator cannot leave what they started');
+
+  // Leave goes through setMembership, so it asks first and a No sends nothing.
+  const asked = [];
+  win.ConfirmModal = { show: async (o) => { asked.push(o); return false; } };
+  Browse.leaveRow(rowFor(state, 'theirs'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0].title, 'Leave Theirs?');
+  assert.equal(fetchCalls.length, 0);
+
+  win.ConfirmModal = { show: async () => true };
+  Browse.leaveRow(rowFor(state, 'theirs'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(fetchCalls[0], { url: '/api/apps/theirs/membership', method: 'POST', body: { joined: false } });
+  assert.equal(theirs.is_member, false);
+  assert.deepEqual(slugs(state), ['made'], 'the left app drops out of Joined');
+
+  // A row that cannot leave never sends anything.
+  Browse.leaveRow(rowFor(state, 'made'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(fetchCalls.length, 1);
+  assert.match(BROWSE_LIST_SRC, /data-action="leave"/);
+  assert.match(BROWSE_LIST_SRC, /\.browse-leave-btn/, 'the row click skips the button');
 });
 
 test('leaving a private app says it costs access', async () => {

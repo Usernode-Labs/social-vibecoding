@@ -339,6 +339,14 @@
     "text": "Open {{app}}",
     "description": "Accessible name of the Open button on a Discover row, read by screen readers. {{app}} is the app's name."
   },
+  "list.leave.action": {
+    "text": "Leave",
+    "description": "Button beside Open on a row of Discover's Joined list: leave that app's community, after a confirmation. A verb. Keep it one short word: the row is narrow."
+  },
+  "list.leave.named": {
+    "text": "Leave {{app}}",
+    "description": "Accessible name and tooltip of the Leave button on a row of Discover's Joined list. {{app}} is the app's name."
+  },
   "row.join.tip": {
     "text": "Join {{app}}",
     "description": "Tooltip of the Join button on an app's row in Discover. {{app}} is the app's name."
