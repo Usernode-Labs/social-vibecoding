@@ -245,7 +245,9 @@ export const MERGED_RESEND_MS = 5 * 60 * 1000;
 export const MERGED_RESEND_MAX_MS = 30 * 60 * 1000;
 // The outcomes of a sync that did nothing to the branch: a platform sync's
 // once-record is put back, so it may be asked again for that head.
-const NOTHING_RAN: ReadonlySet<string> = new Set(['unmeasured', 'over_budget', 'gone', 'error', 'busy', 'not_pushed', 'stopped']);
+// 'code_missing': the branch did not come across from GitHub
+// (services/code-missing.js), so there was nothing to sync.
+const NOTHING_RAN: ReadonlySet<string> = new Set(['unmeasured', 'over_budget', 'gone', 'error', 'busy', 'not_pushed', 'stopped', 'code_missing']);
 export const SYNC_BACKOFF_MAX_MS = 30 * 60 * 1000;
 // Why a sync with main is asked for.
 export const SYNC_REASONS: ReadonlySet<string> = new Set([

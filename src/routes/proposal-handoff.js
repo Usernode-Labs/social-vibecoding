@@ -1509,6 +1509,13 @@ function proposalHandoffRoutes(config) {
                 message: 'The local commit parent does not match the current proposal tree. Upload local commits in order or rebase onto the current proposal branch.',
               });
             }
+            // The proposal's branch did not come across when Homeroom moved
+            // off GitHub (services/code-missing.js, read live): said so, not
+            // as GitHub being unavailable, which invites a retry.
+            const codeMissing = require('../services/code-missing');
+            if (err.status === 404 && await codeMissing.branchGone(pool, session) === true) {
+              return res.status(409).json({ error: codeMissing.CODE, message: codeMissing.BRANCH_GONE });
+            }
             const detail = github.describeGithubError(err);
             // Never log GitHub's response data on this endpoint: a provider
             // validation error may echo fields from the source upload.

@@ -302,3 +302,71 @@ test('an after-block run again bills and says it once; the timeline\'s progress 
     restore();
   }
 });
+
+// ── A sync that never decided anything is not a conflict ───────────────
+
+test('a sync turn that died on a fatal worker error is an error: no conflict with no files is recorded', async () => {
+  // What run-cc.sh's die() leaves for a change whose branch is not on the
+  // git host: __USERNODE_ERROR__, a non-zero exit and no sync_result.
+  for (const result of [
+    { fatalError: 'branch missing upstream: origin/dev/x-1', exitCode: 1, behind: 0, sha: '', pushOk: false, costUsd: 0 },
+    { exitCode: -1, behind: 0, sha: '', pushOk: false, costUsd: 0 },
+  ]) {
+    const { subject, restore } = loadSyncMain({ execImpl: async () => result });
+    try {
+      const pool = makePool();
+      await assert.rejects(direct(subject, pool, ownerRow(), { reason: 'person' }),
+        (err) => err.code === 'sync_turn_failed' && (!result.fatalError || /branch missing upstream/.test(err.message)));
+      assert.equal(conflictStateUpdates(pool).length, 0, 'merge_conflict_state is not touched');
+      assert.ok(!pool.calls.some((c) => /couldn't resolve the conflicts/.test(JSON.stringify(c.params || []))),
+        'and nobody is told Claude could not resolve conflicts');
+    } finally {
+      restore();
+    }
+  }
+});
+
+test('a sync on a change whose branch did not come across runs nothing and says so', async () => {
+  const { subject, execCalls, restore } = loadSyncMain({
+    execImpl: async () => ({ syncResult: 'clean', behind: 0, sha: 'abc1234', pushOk: true, exitCode: 0, costUsd: 0 }),
+  });
+  const codeMissing = require('../src/services/code-missing');
+  try {
+    const pool = makePool();
+    const asked = [];
+    // (Which host the row names is the live read's business, stubbed here.)
+    const out = await direct(subject, pool, ownerRow(), { reason: 'person' }, {
+      codeMissing: { ...codeMissing, branchGone: async (_pool, s) => { asked.push(s.id); return true; } },
+    });
+    assert.deepEqual(out, { outcome: 'code_missing', message: codeMissing.BRANCH_GONE });
+    assert.deepEqual(asked, [7]);
+    assert.equal(execCalls.length, 0, 'no worker turn');
+    assert.equal(conflictStateUpdates(pool).length, 0);
+    assert.equal(sysSpendInserts(pool).length, 0);
+
+    // Pushed back, or a read that could not tell: the sync runs as before.
+    for (const gone of [false, null]) {
+      const ran = await direct(subject, makePool(), ownerRow(), { reason: 'person' }, {
+        codeMissing: { ...codeMissing, branchGone: async () => gone },
+      });
+      assert.equal(ran.outcome, 'clean');
+    }
+    assert.equal(execCalls.length, 2);
+  } finally {
+    restore();
+  }
+});
+
+test('the route answers a code-missing sync as a refusal, and resume does not ask for one', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8');
+  const route = src.slice(src.indexOf("router.post('/api/sessions/:id/sync-main'"));
+  assert.match(route.slice(0, 4000), /if \(done\.outcome === codeMissing\.CODE\) \{\n\s*return res\.status\(409\)\.json\(\{ error: done\.message \|\| codeMissing\.BRANCH_GONE, code: codeMissing\.CODE \}\);/);
+  const resume = src.slice(src.indexOf('async function resumePausedSession('), src.indexOf('const RESUME_NOT_DECIDED'));
+  assert.ok(resume.indexOf('codeMissing.branchGone(pool, { id: Number(sessionId) }) === true') < resume.indexOf('requestSync('),
+    'sync-on-resume is skipped for it');
+  // The machine gives a platform sync's once-record back: nothing ran.
+  const machine = fs.readFileSync(path.join(__dirname, '..', 'src', 'workflow', 'proposal', 'machine.ts'), 'utf8');
+  assert.match(machine, /const NOTHING_RAN: ReadonlySet<string> = new Set\(\[[^\]]*'code_missing'\]\);/);
+});

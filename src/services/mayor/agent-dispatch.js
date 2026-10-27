@@ -101,6 +101,7 @@ function defaults(deps = {}) {
     callPlatform: deps.callPlatform || require('../mcp-tools').callPlatform,
     loopbackBaseUrl: deps.loopbackBaseUrl || require('./mcp-shim').loopbackBaseUrl,
     attachments: deps.attachments || require('../attachments'),
+    codeMissing: deps.codeMissing || require('../code-missing'),
     // A run of the change's shots under way, and the wait for its end: read
     // from the shots machine, so they answer for every process.
     shotsRunning: deps.shotsRunning || ((id) => require('../shots-state').shotsRunning(id)),
@@ -272,6 +273,16 @@ async function runDispatch({
       + 'try again in a few minutes.');
   }
   const changeId = Number(change.id);
+  // Its branch did not come across when Homeroom moved off GitHub
+  // (code-missing.js branchGone, read live): refused here, before a parked
+  // change is reopened (which takes a slot) or switched to another model,
+  // and before anything starts. The change says so in one row; the coding
+  // tools refuse the same way for every other caller.
+  if (await d.codeMissing.branchGone(pool, change) === true) {
+    await d.codeMissing.noteRefused(pool, changeId);
+    sendAgent('status', { text: d.codeMissing.BRANCH_GONE, changeId, codeMissing: true });
+    return refusal(d.codeMissing.dispatchRefusal(changeId));
+  }
   if (await d.activeWorkers.isSessionBusyAnywhere(changeId)) {
     const waited = await waitOutShotsRun(d, changeId, sendAgent);
     if (waited === 'timeout') return refusal(SHOTS_BUSY_TEXT);

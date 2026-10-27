@@ -22,6 +22,7 @@ const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
 const agentSessions = require('../services/agent-sessions');
 const classicSessions = require('../services/classic-sessions');
+const codeMissing = require('../services/code-missing');
 const { claimIssueForUser } = require('../services/issue-claims');
 const visuals = require('../services/visuals');
 const sessionCost = require('../services/session-cost');
@@ -2039,7 +2040,12 @@ async function resumePausedSession({ pool, config, user, sessionId }) {
     'SELECT COALESCE(integration_behind_by, behind_main) AS behind FROM chat_sessions WHERE id = $1',
     [sessionId]
   );
-  if ((driftRows[0]?.behind || 0) > 0) {
+  // Not for a change whose branch did not come across from GitHub
+  // (services/code-missing.js): there is nothing to merge main into.
+  if ((driftRows[0]?.behind || 0) > 0
+      && await codeMissing.branchGone(pool, { id: Number(sessionId) }) === true) {
+    log.info('sessions', 'Sync-on-resume skipped: the change\'s branch did not come across from GitHub', { sessionId });
+  } else if ((driftRows[0]?.behind || 0) > 0) {
     // Asked of the proposal machine, not waited for: the sync is its work,
     // and a refusal (somebody working on it) is logged. The user clicking
     // "Sync with main" later asks again with the answer in front of them.
@@ -3026,6 +3032,27 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         }
       }
 
+      // A plan carried from another of the user's changes on this app: the
+      // Mayor's start_change `fromChangeId`, offered when a change's code
+      // did not come across from GitHub (services/code-missing.js). Its spec
+      // becomes the new change's plan; the new change's branch is its own,
+      // made from the current version at its first turn like every change's.
+      // Nothing else comes across. Read before anything is parked or claimed.
+      let carriedPlan = null;
+      if (req.body && req.body.fromChangeId != null) {
+        const fromId = Number(req.body.fromChangeId);
+        if (!Number.isSafeInteger(fromId) || fromId <= 0 || fromId > 2147483647) {
+          return res.status(400).json({ error: 'fromChangeId must be a change id' });
+        }
+        const { rows: [from] } = await pool.query(
+          `SELECT id, spec_md, spec_html FROM chat_sessions
+            WHERE id = $1 AND app_id = $2 AND user_id = $3 AND is_headless = FALSE`,
+          [fromId, app.id, req.user.id]
+        );
+        if (!from) return res.status(404).json({ error: 'That change was not found among yours on this app.' });
+        carriedPlan = from;
+      }
+
       // #2779: the new change becomes the Mayor's session's active change,
       // and the one it was working on is parked first — which also frees its
       // slot before the cap below counts it. The grant's own liveness check
@@ -3171,6 +3198,26 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          initialTitle]
       );
       await topicAttrs.selfAssignProposal(pool, app.id, rows[0].id, req.user);
+      // The carried plan (above): the spec and its versions, so the plan
+      // viewer reads as the old change's did. Best effort: the change stands
+      // without it, as a copy's spec history does (clone-headless).
+      if (carriedPlan && String(carriedPlan.spec_md || '').trim()) {
+        try {
+          await pool.query('UPDATE chat_sessions SET spec_md = $2, spec_html = $3 WHERE id = $1',
+            [rows[0].id, carriedPlan.spec_md, carriedPlan.spec_html || null]);
+          rows[0].spec_md = carriedPlan.spec_md;
+          rows[0].spec_html = carriedPlan.spec_html || null;
+          await pool.query(
+            `INSERT INTO chat_session_specs (session_id, version, content, content_html)
+             SELECT $1, version, content, content_html FROM chat_session_specs WHERE session_id = $2`,
+            [rows[0].id, carriedPlan.id]
+          );
+        } catch (err) {
+          log.warn('sessions', 'The carried plan did not come across in full (continuing)', {
+            sessionId: rows[0].id, from: carriedPlan.id, err: err.message,
+          });
+        }
+      }
       if (agentSessionId) {
         await agentSessions.linkChange(pool, {
           agentSessionId,
@@ -3179,7 +3226,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         });
       }
 
-      log.info('sessions', 'Session created (branch deferred to first turn)', { sessionId: rows[0].id });
+      log.info('sessions', 'Session created (branch deferred to first turn)', {
+        sessionId: rows[0].id, ...(carriedPlan ? { planFrom: carriedPlan.id } : {}),
+      });
 
       // #2364: "Start work" on an issue card lands here, and starting work
       // on an issue is taking it — so claim it for the starter (claim row +
@@ -3481,6 +3530,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             ? 'The auto session is still generating. Try again when it finishes.'
             : 'This auto session is not in a cloneable state.',
         });
+      }
+      // The run's branch did not come across when Homeroom moved off GitHub
+      // (services/code-missing.js branchGone, read live). A copy would fall
+      // back to a branch off main below and lose the run's code, so it is
+      // refused before a slot is taken or a branch is made.
+      if (await codeMissing.branchGone(pool, src) === true) {
+        return res.status(409).json({ error: codeMissing.BRANCH_GONE, code: codeMissing.CODE });
       }
 
       // The clone is an ordinary dev-chat session, so the usual caps apply.
@@ -4070,6 +4126,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // Decided here, beside the routes that refuse, so the screen and the
       // server cannot disagree about which sessions take no new message.
       session.classic_read_only = classicSessions.isClassicSession(session);
+      // Its code did not come across when Homeroom moved off GitHub
+      // (services/code-missing.js): a proposal's pull request branch, or a
+      // change underway's own branch when it predates its app's move. Read as
+      // the lists read it (cached a minute), so a branch pushed back clears
+      // it by itself; the turns and the sync read it live before they run.
+      session.code_missing = await codeMissing.forSession(pool, session);
       // #1650: a managed local handoff cannot be proposed merely because it
       // is active. Its exact submitted head must have live staging and a
       // terminal passing verdict, and the in-memory build/check/capture gates
@@ -5075,6 +5137,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // under way as far as this answer knows, never "done".
       const done = out.status === 'pending' ? null : out.lastSync;
       if (!done) return res.status(202).json({ ok: false, pending: true, message: 'The sync with main is still running.' });
+      // Its branch did not come across from GitHub: nothing ran.
+      if (done.outcome === codeMissing.CODE) {
+        return res.status(409).json({ error: done.message || codeMissing.BRANCH_GONE, code: codeMissing.CODE });
+      }
       if (done.outcome === 'error' || done.outcome === 'over_budget' || done.outcome === 'gone') {
         return res.status(done.outcome === 'gone' ? 409 : 500).json({ error: done.message || 'Sync with main failed' });
       }
@@ -9242,13 +9308,49 @@ async function finishToolTurnCleanup(sessionId, turnId, { required = false } = {
 //
 // Deliberately unconditional on runLocally: a local agent commits on the
 // user's machine but pushes through the platform, so it needs the ref too.
+//
+// A stored branch is read on the git host first, live: one that did not come
+// across when Homeroom moved off GitHub (services/code-missing.js
+// branchGone) rejects with the code-missing error, so the tools refuse the
+// dispatch before the spin-up row, the worker image, the worker or a model
+// turn (codeMissingDispatchResult). Every dispatch comes through here (an
+// agent session's, a classic one's, a headless run's), scout and build alike.
+// A branch pushed back under its name reads as there and the turn runs; a
+// read that fails says nothing and the turn runs as before.
 async function ensureBranchForDispatch(pool, session) {
-  if (session.branch_name) return session.branch_name;
+  if (session.branch_name) {
+    if (await codeMissing.branchGone(pool, session) === true) {
+      throw codeMissing.error(codeMissing.BRANCH_GONE, { branchGone: true, branch: session.branch_name });
+    }
+    return session.branch_name;
+  }
   const ensured = await sessionLifecycle.ensureSessionBranch({
     pool, sessionId: session.id,
   });
   session.branch_name = ensured.branchName;
   return ensured.branchName;
+}
+
+// A dispatch refused because the change's branch did not come across from
+// GitHub (ensureBranchForDispatch). Nothing ran: no worker, no turn record,
+// no spend. One status row says so in the change, and the Mayor is told not
+// to offer a retry, as the permanent push failure tells it, and what to offer
+// instead: a new change from the current version, carrying this one's plan.
+async function codeMissingDispatchResult({ session, sendStatus, statusMeta = {} }) {
+  log.info('sessions', 'Dispatch refused: the change\'s branch did not come across from GitHub', {
+    sessionId: session.id, branch: session.branch_name || null,
+  });
+  await sendStatus(codeMissing.BRANCH_GONE, {
+    ...statusMeta, codeMissing: true, error: codeMissing.BRANCH_GONE,
+  });
+  activeWorkers.delete(session.id);
+  workerProgress.clear(session.id);
+  return {
+    toolResultText: codeMissing.dispatchRefusal(session.id),
+    isError: true,
+    codeMissing: true,
+    turnId: null,
+  };
 }
 
 async function runScoutTool({
@@ -9336,6 +9438,17 @@ async function runScoutTool({
   // deciding (or in the awaited gap between the end of its stream and
   // `setPhase('cc')`) must not buy the user a whole scout run.
   if (stopPendingFor(stopHandle)) return stoppedResult();
+
+  // The branch, before anything is started: minted on a first turn (#1350),
+  // refused with nothing run when it did not come across from GitHub.
+  try {
+    await ensureBranchForDispatch(pool, session);
+  } catch (err) {
+    if (!codeMissing.isError(err)) throw err;
+    return codeMissingDispatchResult({
+      session, sendStatus, statusMeta: { ...agentIdentity.metadata, durationMs: Date.now() - turnStartedMs },
+    });
+  }
 
   // #616: read-only prod-debug access for admin-owned sessions on the
   // self-edit app. Checked fresh per turn (admin revocation takes effect
@@ -9504,8 +9617,8 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
   // it. Cold-start cost (clone + checkout + sleep wrapper) is paid here on
   // the first dispatch of a session; subsequent ensures are sub-second.
   // Bootstrap progress (clone/checkout/warm-ready) flows through onProgress
-  // to the dev-chat UI just like the legacy single-shot path used to.
-  await ensureBranchForDispatch(pool, session);
+  // to the dev-chat UI just like the legacy single-shot path used to. The
+  // branch is already on the row (ensureBranchForDispatch, at the entry).
   let containerName = null;
   if (!runLocally) {
     try {
@@ -11612,6 +11725,17 @@ async function runClaudeCodeTool({
   // round trip) must not buy the user a whole build.
   if (stopPendingFor(stopHandle)) return stoppedResult();
 
+  // The branch, before anything is started: minted on a first turn (#1350),
+  // refused with nothing run when it did not come across from GitHub.
+  try {
+    await ensureBranchForDispatch(pool, session);
+  } catch (err) {
+    if (!codeMissing.isError(err)) throw err;
+    return codeMissingDispatchResult({
+      session, sendStatus, statusMeta: { ...executionAgentMeta, durationMs: Date.now() - turnStartedMs },
+    });
+  }
+
   // #616: read-only prod-debug access for admin-owned sessions on the
   // self-edit app. Checked fresh per turn; the internal prod-debug
   // routes re-check per request, so this flag only controls env + prompt
@@ -11867,8 +11991,8 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
   // #907: no container at all for a local run. The platform holds no model
   // credential for it either — the user's own `claude` login on their own
   // machine does the work, so neither their BYOK key nor the platform's proxy
-  // JWT is created, sent, or needed on this path.
-  await ensureBranchForDispatch(pool, session);
+  // JWT is created, sent, or needed on this path. The branch is already on
+  // the row (ensureBranchForDispatch, at the entry).
   let containerName = null;
   if (!runLocally) {
     try {

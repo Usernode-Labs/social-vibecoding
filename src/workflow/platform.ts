@@ -1828,7 +1828,7 @@ const PROMOTE_REFUSALS = new Map<string, Reply>([
 const PROMOTE_FAILURES = new Map<string, number>([
   ['no_commits', 409], ['github_unavailable', 503], ['pr_create_failed', 502], ['pr_merged', 409], ['pr_closed', 409],
   ['reopen_failed', 409], ['no_repo', 409], ['bad_head', 409], ['pr_draft', 409], ['ready_failed', 503], ['not_found', 404],
-  ['session_state_changed', 409],
+  ['session_state_changed', 409], ['code_missing', 409],
 ]);
 
 // Up for a vote: the route has validated, and read the pull request from
@@ -1902,6 +1902,9 @@ function answerReply(a: any): Reply {
   if (a.ok) return { status: 200, body: { ok: true, prNumber: a.prNumber ?? null, prUrl: a.prUrl ?? null, prTitle: a.prTitle ?? null } };
   if (a.code === 'branch_head_changed') return { status: 409, body: { error: 'branch_head_changed', message: a.message } };
   if (a.code === 'session_state_changed') return PROMOTE_REFUSALS.get('session_state_changed')!;
+  // Its branch did not come across from GitHub (services/code-missing.js):
+  // the sentence, with the code a caller tells it apart by.
+  if (a.code === 'code_missing') return { status: 409, body: { error: a.message, code: 'code_missing' } };
   return { status: PROMOTE_FAILURES.get(a.code) || 503, body: { error: a.message || 'Could not put the change up for a vote. Try again shortly.' } };
 }
 
