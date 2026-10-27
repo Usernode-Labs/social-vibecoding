@@ -161,6 +161,9 @@ async function migrate(config) {
   // that seed's first attempt hung in the quiet app, and owns the
   // vote-card app instead. Needs the capture member (seedCaptureAdminUser).
   await seedStagingVoteCardChat(pool);
+  // #5877: the bot's "Ready to try" row about a project, for the bell's
+  // leading tile. Needs the capture member (seedCaptureAdminUser).
+  await seedStagingBotProjectNotification(pool);
   await seedStagingYourApps(pool, config);
   await require('../services/staging-apps').seedCatalog(pool, config);
   await seedStagingBrowseCardBranches(pool, config);
@@ -7235,6 +7238,128 @@ async function seedStagingVoteCardChat(pool) {
     log.info('db', 'Staging vote-card chat fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging vote-card chat seeding failed', { message: err.message });
+  }
+}
+
+// #5877's shots: the Homeroom bot's "Ready to try" row about one project,
+// so the bell's leading tile can be seen wearing that project's icon (a
+// picture, an emoji, or the name's letter) instead of the Homeroom mark. A
+// fresh copy has no such row: the bot writes one only after it has built
+// something, and there is no bot here.
+//
+// Display data only. The app is a made-up one ("Staging demo notes", an
+// emoji icon), its maker a fixture account that cannot log in, and the
+// notification is a plain unread row for the capture member whose detail is
+// the same one the bot's own copy builds. The conversation is a real direct
+// thread between the bot's account and that member, because the bell reads a
+// conversation row only while its recipient is still in the conversation.
+// Idempotent through fixed ids, ON CONFLICT DO NOTHING, and an existence
+// check on the notification row; a no-op outside staging.
+async function seedStagingBotProjectNotification(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    const viewer = await pool.query(
+      `SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1`
+    );
+    const member = viewer.rows[0];
+    if (!member) {
+      log.warn('db', 'Staging bot-project notification skipped: fixture member missing');
+      return;
+    }
+
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES (900112, 'staging-demo-notes-maker', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    // The bot's account, in the posture botAccount() reads: the username
+    // with is_synthetic on top, sentinel password, never a login.
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`
+    );
+    const bot = (await pool.query(
+      `SELECT id FROM users WHERE username = 'homeroom_bot' LIMIT 1`
+    )).rows[0];
+
+    // Private, with a membership for the capture member: the row belongs to
+    // that one account's bell, and a public fixture app would add itself to
+    // Discover, which this change does not touch.
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, icon_emoji, created_by)
+       VALUES (900112, 'Staging demo notes', 'staging-demo-notes', 'running',
+               'private', 'private', '📝', 900112)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at)
+       VALUES (900112, $1, 'member', 900112, NOW())
+       ON CONFLICT (app_id, user_id) DO NOTHING`,
+      [member.id]
+    );
+
+    // One direct conversation per pair (conversation_direct_pairs is unique
+    // on it), found rather than created twice.
+    const low = Math.min(member.id, bot.id);
+    const high = Math.max(member.id, bot.id);
+    const found = await pool.query(
+      `SELECT c.id FROM conversations c
+         JOIN conversation_direct_pairs p ON p.conversation_id = c.id
+        WHERE p.user_low_id = $1 AND p.user_high_id = $2
+        LIMIT 1`,
+      [low, high]
+    );
+    let conversationId = found.rows[0]?.id;
+    if (!conversationId) {
+      const created = await pool.query(
+        `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`,
+        [bot.id]
+      );
+      conversationId = created.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs
+           (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high]
+      );
+    }
+    // Both sides as members, re-asserted on an existing thread so a partial
+    // earlier boot self-heals.
+    await pool.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, responded_at, joined_at)
+       SELECT $1, u.id, 'member', 'member', NOW(), NOW()
+         FROM users u WHERE u.id IN ($2, $3)
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [conversationId, member.id, bot.id]
+    );
+
+    // The bot's ready moment over a request, worded by the service that
+    // words the real one, so the fixture cannot drift from what production
+    // writes.
+    const { botNotificationDetail } = require('../services/homeroom-bot-notify-copy');
+    const detail = botNotificationDetail({
+      moment: 'ready',
+      said: 'ready',
+      appName: 'Staging demo notes',
+      requestTitle: 'Solarized light/dark theming that follows the platform theme',
+    });
+
+    await pool.query(
+      `INSERT INTO notifications
+         (user_id, app_id, conversation_id, source_user_id, kind, detail, read_at, created_at)
+       SELECT $1::int, 900112, $2::int, $3::int, 'build_ready', $4::varchar, NULL, NOW() - INTERVAL '1 hour'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM notifications n
+           WHERE n.user_id = $1 AND n.kind = 'build_ready' AND n.conversation_id = $2
+        )`,
+      [member.id, conversationId, bot.id, detail]
+    );
+    log.info('db', 'Staging bot-project notification fixture seeded');
+  } catch (err) {
+    log.warn('db', 'Staging bot-project notification seeding failed', { message: err.message });
   }
 }
 
@@ -15773,6 +15898,7 @@ async function seedStagingPlatformMail(pool) {
 module.exports = {
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingProfileCustomization,
   seedStagingBotChatRequest,
+  seedStagingBotProjectNotification,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
   followPlatformDefaultModel,

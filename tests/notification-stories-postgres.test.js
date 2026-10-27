@@ -12,6 +12,10 @@
 //      thread, found by the thread's card. The bell's read serializes them
 //      with the project and the request, and the bot's reply about a
 //      project is counted, not left to Messages as a plain message is.
+//      #5877: and with that project's icon, which the row's leading tile
+//      draws instead of the Homeroom mark. No other row carries one: a
+//      person's conversation with a stray app_id, and an ordinary app
+//      notification, both serialize it as null.
 //   2. A message in a proposal's discussion is about that proposal and the
 //      request it was made from (STORY_COLUMNS_SQL).
 //   3. The history (services/story-history.js) is the request's discussion
@@ -80,7 +84,8 @@ test('the bell\'s stories against the full PostgreSQL schema', { timeout: 180000
   const ada = await user('ada_stories');
   const ben = await user('ben_stories');
   const { rows: [app] } = await pool.query(
-    `INSERT INTO apps (name, slug, status, created_by) VALUES ('Seed swap', 'seed-swap-stories', 'running', $1) RETURNING *`,
+    `INSERT INTO apps (name, slug, status, created_by, icon_image_id, icon_emoji)
+     VALUES ('Seed swap', 'seed-swap-stories', 'running', $1, 'icon-seed-swap', '🌱') RETURNING *`,
     [ada.id],
   );
   const listed = async () => (await notifications.listForUser(pool, ada.id, { limit: 50 }))
@@ -102,6 +107,9 @@ test('the bell\'s stories against the full PostgreSQL schema', { timeout: 180000
     assert.equal(bell.appId, app.id);
     assert.equal(bell.appSlug, app.slug);
     assert.equal(bell.appName, 'Seed swap');
+    // #5877: the project's icon, in the image-then-emoji order its tile draws.
+    assert.equal(bell.appIconUrl, '/app-icons/icon-seed-swap');
+    assert.equal(bell.appIconEmoji, '🌱');
     assert.equal(bell.storyIssueNumber, 5580, 'and it is about request #5580');
     assert.ok(bell.conversationId, 'it still routes as the conversation row it is');
   });
@@ -122,6 +130,19 @@ test('the bell\'s stories against the full PostgreSQL schema', { timeout: 180000
     const bell = (await listed()).find((n) => n.conversationId === conversationId);
     assert.equal(bell.appId, null, 'a person\'s message never carries a project');
     assert.equal(bell.storyIssueNumber, null);
+    // #5877: nor its icon, even on a malformed row that also names the app.
+    assert.equal(bell.appIconUrl, null);
+    assert.equal(bell.appIconEmoji, null);
+    await pool.query(
+      `INSERT INTO notifications (user_id, app_id, conversation_id, source_user_id, kind, read_at, created_at)
+       VALUES ($1, $2, $3, $4, 'conversation_message', NOW(), NOW())`,
+      [ada.id, app.id, conversationId, ben.id],
+    );
+    const stray = (await listed()).find((n) => n.kind === 'conversation_message' && n.conversationId === conversationId
+      && n.conversationMessageId == null);
+    assert.equal(stray.appId, null, 'the project stays off a person\'s row');
+    assert.equal(stray.appIconUrl, null, 'and so does its icon');
+    assert.equal(stray.appIconEmoji, null);
     // The bell leaves plain messages to Messages (#18) and counts the bot's
     // news about a project.
     const split = await notifications.countUnreadSplit(pool, ada.id);
@@ -157,6 +178,45 @@ test('the bell\'s stories against the full PostgreSQL schema', { timeout: 180000
     assert.equal(bell.storyIssueNumber, 5580, 'and the request it was made from');
     assert.equal(bell.storyPrNumber, 5590);
     assert.equal(bell.storyTitle, 'Plant shelf, on the home screen');
+    // #5877: an ordinary notification that is not the bot's about a project
+    // carries no icon, so its kind's tile is all it draws.
+    assert.equal(bell.appIconUrl, null);
+    assert.equal(bell.appIconEmoji, null);
+  });
+
+  // #5877's staging fixture, against the real schema: the bot's "Ready to
+  // try" row about one made-up project, which is what the bell's leading
+  // tile draws on a fresh copy. Run twice, because a boot may run it again.
+  await t.test('the staging fixture seeds one unread bot row about a project, once', async () => {
+    const capture = await user('usernode-capture', false);
+    const was = process.env.USERNODE_ENV;
+    process.env.USERNODE_ENV = 'staging';
+    try {
+      const { seedStagingBotProjectNotification } = require('../src/db/migrate');
+      await seedStagingBotProjectNotification(pool);
+      await seedStagingBotProjectNotification(pool);
+    } finally {
+      if (was === undefined) delete process.env.USERNODE_ENV;
+      else process.env.USERNODE_ENV = was;
+    }
+    const { rows } = await pool.query(
+      `SELECT n.kind, n.app_id, n.read_at, n.conversation_id FROM notifications n
+        WHERE n.user_id = $1`, [capture.id],
+    );
+    assert.equal(rows.length, 1, 'a second boot adds nothing');
+    assert.equal(rows[0].kind, 'build_ready');
+    assert.equal(Number(rows[0].app_id), 900112);
+    assert.equal(rows[0].read_at, null, 'unread, so it is on the Unread tab');
+    assert.ok(rows[0].conversation_id, 'a real conversation, because the bell reads one only while its member is in it');
+
+    const bell = (await notifications.listForUser(pool, capture.id, { limit: 50 }))
+      .map(notifications.serialize)
+      .find((n) => n.kind === 'build_ready');
+    assert.ok(bell, 'the bell lists it');
+    assert.equal(bell.appName, 'Staging demo notes');
+    assert.equal(bell.appIconEmoji, '📝', 'the made-up project\'s emoji icon, which the row draws');
+    assert.equal(bell.appIconUrl, null);
+    assert.equal(rows[0].app_id, 900112);
   });
 
   await t.test('the history is both discussions, newest first, in steps', async () => {

@@ -117,6 +117,7 @@ import {
 
 import { UserAvatar, swatchFor } from '../messages/format';
 import type { ConversationUser } from '../messages/types';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -179,6 +180,9 @@ type ScreenRowView = NotificationRowView & {
   count?: number;
   /** #5580: the project's own name, for its stack's heading. */
   appName?: string | null;
+  /** #5877: that project's icon, so its bot row wears the project's tile. */
+  appIconUrl?: string | null;
+  appIconEmoji?: string | null;
   /** #5580: the request or proposal the row is about (rowView), what its project's stack folds a story on. */
   storyKey?: string | null;
   /** #5580: that request or proposal's number and title, when known. */
@@ -228,11 +232,30 @@ function startOfToday(): number {
  * Run six (14 Oct 2026): the Homeroom bot is drawn as Messages draws it,
  * the Homeroom mark (../messages/format.tsx UserAvatar), not an orange
  * tile of the "H" of its handle.
+ *
+ * #5877: except when its news is about a project. That row wears the
+ * project's own tile — the same picture, emoji or letter every app surface
+ * draws — so a list of "Ready to try" rows names its projects at a glance.
+ * A bot row with no project (a reply, a question the platform cannot place)
+ * keeps the Homeroom mark.
  */
 export function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
   const who = (view.who || '?').replace(/^@/, '');
   const initial = who.charAt(0).toUpperCase() || '?';
   if (view.conversation && view.bot) {
+    if (view.appId != null) {
+      const app = { name: view.appName || '', icon_url: view.appIconUrl || null, icon_emoji: view.appIconEmoji || null };
+      // Its image has no text (alt=""): the row's words say who it is from.
+      return (
+        <span
+          aria-hidden="true"
+          data-icon={appIconKind(app)}
+          className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
+        >
+          <AppIconContent app={app} />
+        </span>
+      );
+    }
     // Its image has no text (alt=""): the row's words say who it is from.
     return <UserAvatar user={BOT_SENDER} size="lg" shape="square" />;
   }
