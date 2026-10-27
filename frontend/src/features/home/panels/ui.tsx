@@ -211,34 +211,13 @@ export function cardTint(key: string, tint?: unknown): string {
  * The row's shape is label + link: the ⋮ that used to ride here is gone
  * Section hiding is retired (#1801).
  */
-export function SectionHeading({ children, beside, action }: {
+export function SectionHeading({ children, action }: {
   children: ReactNode;
-  /**
-   * THE LABEL'S OWN NEIGHBOUR, between the title and the action (#5823).
-   *
-   * My apps' All / Contributing switch belongs to the heading rather than to
-   * the row's right end: it narrows what the label names, it is not an action
-   * on the block. So it sits immediately after the words, and `action` keeps
-   * the right end (Done / Add apps, or the compact New project entry). Only
-   * that heading passes one; Discover's and Challenges' link are their
-   * sections' action, and their markup is unchanged.
-   */
-  beside?: ReactNode;
   action?: ReactNode;
 }) {
   return (
     <h2 className="home-area-label flex items-center gap-2 pt-4 pb-1.5 text-base font-[550] leading-tight text-zinc-900 dark:text-zinc-100">
-      {beside ? (
-        // The label still gives way first when the row is tight (a narrow
-        // phone with the New project entry beside it), but it is the LABEL
-        // that truncates, never the switch that follows it.
-        <span className="min-w-0 flex flex-1 items-center gap-2">
-          <span className="min-w-0 truncate whitespace-nowrap">{children}</span>
-          {beside}
-        </span>
-      ) : (
-        <span className="min-w-0 flex-1 truncate whitespace-nowrap">{children}</span>
-      )}
+      <span className="min-w-0 flex-1 truncate whitespace-nowrap">{children}</span>
       {action}
     </h2>
   );

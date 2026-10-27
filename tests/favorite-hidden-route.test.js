@@ -259,7 +259,7 @@ test('GET /api/apps serves your_apps_hidden as a boolean and hidden rows as not 
     assert.equal(apps.length, 1);
     assert.equal(apps[0].your_apps_hidden, true);
     assert.equal(apps[0].is_favorited, false);
-    // #5823: the flag Home's All / Contributing switch reads, carried per
+    // #5823: the flag naming apps the viewer helps build, carried per
     // row from the shared contributor definition.
     assert.equal(apps[0].is_contributor, true, 'the stub contributor set names this app');
   } finally {
