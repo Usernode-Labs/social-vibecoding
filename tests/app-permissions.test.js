@@ -114,6 +114,32 @@ test('pointer-lock is ungated but delegated by the sandbox, never by allow', asy
   assert.match(src, /_appIframeSandbox: '[^']*\ballow-pointer-lock\b/);
 });
 
+// #5837: the App-tab frame has to be allowed to download. A sandbox without
+// `allow-downloads` lets Chromium swallow every download an app starts ("The
+// frame initiating or instantiating the download is sandboxed"), including a
+// blob URL saved by an <a download>. The React island and the DOM fallback
+// are two copies of one contract, so they must agree byte for byte, and the
+// relaxation stays minimal: escaping the sandbox would let a popup run
+// unsandboxed on the app origin, which this change does not grant.
+test('the App-tab sandbox allows downloads and the two copies agree exactly', async () => {
+  const policy = await loadPolicy();
+  const src = read('public/js/app-view.js');
+  const adapter = src.match(/_appIframeSandbox: '([^']*)'/);
+  assert.ok(adapter, 'the DOM adapter names its navigated sandbox');
+  assert.equal(adapter[1], policy.APP_FRAME_SANDBOX,
+    'the React copy and the DOM fallback are the same string');
+  assert.match(policy.APP_FRAME_SANDBOX, /\ballow-downloads\b/,
+    'a sandboxed app can save a file');
+  for (const wider of ['allow-popups-to-escape-sandbox', 'allow-top-navigation']) {
+    assert.ok(!policy.APP_FRAME_SANDBOX.split(' ').includes(wider),
+      `the app sandbox does not grant ${wider}`);
+    assert.ok(!adapter[1].split(' ').includes(wider),
+      `the DOM fallback does not grant ${wider}`);
+  }
+  // The blank same-origin document stays fully restricted.
+  assert.equal(policy.PENDING_FRAME_SANDBOX, '');
+});
+
 // ── 2. allowAttribute is the last line before the DOM ───────────────────
 
 test('no grants delegates exactly the ungated base', () => {

@@ -2102,7 +2102,7 @@ const AppView = {
   // cross-origin policy below. Until then the blank frame renders sandbox="":
   // no permission is granted to the same-origin initial document, so browsers
   // have no escapable allow-scripts + allow-same-origin pair to warn about.
-  _appIframeSandbox: 'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock',
+  _appIframeSandbox: 'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock allow-downloads',
 
   // ── The permission policy (#2219) ──────────────────────────────────
   //

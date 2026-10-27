@@ -1348,7 +1348,7 @@ test('the app-frame URL policy allows only absolute cross-origin HTTP(S) targets
 
 test('the bridge restricts the blank frame, then enables the app sandbox before navigation', async () => {
   const h = await makeHarness();
-  const fullSandbox = 'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock';
+  const fullSandbox = 'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock allow-downloads';
 
   h.bridge.mount({ slug: SLUG, faded: false });
   const frame = h.bridge.frame();
@@ -1504,7 +1504,7 @@ test('`src` is not state, and the store starts from the prerendered markup', () 
   assert.match(store, /cover: null,/, 'and no cover');
   assert.match(POLICY, /PENDING_FRAME_SANDBOX = ''/, 'the pending sandbox is fully restricted');
   assert.match(POLICY,
-    /APP_FRAME_SANDBOX =[\s\S]*allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock/,
+    /APP_FRAME_SANDBOX =[\s\S]*allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock allow-downloads/,
     'the navigated app keeps the established capability contract');
   assert.match(FRAME,
     /sandbox=\{look\.sandboxReady \? APP_FRAME_SANDBOX : PENDING_FRAME_SANDBOX\}/,

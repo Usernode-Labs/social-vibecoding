@@ -767,7 +767,7 @@ test('the rebuilt frame keeps the sandbox/allow contract in one place', () => {
   assert.match(content.innerHTML, /sandbox=""/,
     'the source-less blank frame starts fully restricted');
   assert.equal(dom.els.get('app-iframe').getAttribute('sandbox'),
-    'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock',
+    'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock allow-downloads',
     'the app sandbox is installed immediately before its safe navigation');
   // #2219: the UNGATED BASE. `geolocation` left this constant when it became
   // a per-user, per-app grant; a frame with no grants delegates exactly this.
