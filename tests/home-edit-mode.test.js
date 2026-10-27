@@ -3,7 +3,7 @@
 // EDIT MODE (#4669): "Edit" beside the My apps heading, or "Edit My apps" in
 // a tile's menu (#5871; a hold opens only the menu now), puts the My apps
 // grid into edit mode — the tiles wiggle, each one grows a remove
-// button, and "Done" beside the heading ends it, with "Add apps" beside it
+// button, and "Done" beside the heading ends it, with "Add other apps" beside it
 // opening the sheet of apps that are not on the shelf. The trailing Create
 // tile keeps its place and its whole at-rest identity. This pins the STATE
 // side of that in the real Home module (the same vm harness
@@ -311,7 +311,7 @@ test('the heading actions and the wiggle are on the screen they serve', () => {
   assert.match(index, /Home\?\.setEditing\?\.\(true\)/);
   assert.match(index, /const canEdit = grid\.ready && grid\.view === 'grid' && !grid\.editing\n\s*&& grid\.items\.some\(\(item\) => !item\.app\.demo\);/);
   assert.match(index, /Home\?\.setEditing\?\.\(false\)/);
-  // "Add apps" rides beside Done (#4669): the sheet opens from the heading,
+  // "Add other apps" rides beside Done (#4669): the sheet opens from the heading,
   // not from a stand-in trailing tile.
   assert.match(index, /home-edit-add/);
   assert.match(index, /openAddAppsSheet\(\)/);
