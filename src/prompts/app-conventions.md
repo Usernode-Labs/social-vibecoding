@@ -964,9 +964,28 @@ Per-test fields:
 - `impact` — required with `visual: true`; up to 20 repo-relative globs using
   `*`, `?`, or `**`. A changed file must match. Keep this mapping in
   `dapp.json`, not in source functions.
+- `persona` — `"guest"` runs the check signed out: it opens in a fresh
+  browser with no cookies or storage and visits its address with no
+  sign-in token at all. Any other value is ignored (with a warning) and
+  the check runs signed in, as every check does by default.
+- `repeat` — a whole number from 2 to 10: load the page that many times,
+  each in a fresh browser. The check passes only if every load passes, and
+  its reason names the load that failed, for example
+  "Attempt 3 of 5: Expected element ... was not found". It stops at the
+  first failed load, and a repeated check is never retried: a pass on a
+  retry would hide exactly the timing failure it exists to catch. `1`
+  (the default) and any other value mean one load, and the check is kept.
 
 A check has no say in how its page is loaded. The old per-check
 `"coldLoad": true` is retired: the platform ignores it, so remove it.
+`persona` and `repeat` are not that: they say who loads the page and how
+often, and each of their loads is a page of its own, never shared with
+another check. Use `persona: "guest"` for a screen a signed-out visitor
+sees (a landing page, an invite link, a sign-in sheet, a public project)
+and `repeat` for a flow whose outcome depends on timing between reads.
+Both cost a page load each time, so neither belongs on an ordinary
+signed-in check. For a child app, a guest check carries no guest token,
+so it sees what the app answers a request with no sign-in at all.
 
 **How checks share a page load.** The runner loads each document (the
 address up to its `#`) once and reaches that document's other checks by

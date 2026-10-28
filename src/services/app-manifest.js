@@ -338,6 +338,10 @@ const MAX_TESTS = LEGACY_GATING_HEAD;
 const MAX_TEST_NAME_LEN = 120;
 const MAX_TEST_SELECTOR_LEN = 256;
 const MAX_TEST_TEXT_LEN = 256;
+// How many times one check may load its page (`repeat`). Each load is a
+// fresh browser context, so this is a wall-clock budget as much as a repair
+// for timing-dependent flows.
+const MAX_CHECK_REPEAT = 10;
 const MAX_VISUAL_SCENARIO_ID_LEN = 96;
 const MAX_VISUAL_IMPACT_PATTERNS = 20;
 const MAX_VISUAL_IMPACT_PATTERN_LEN = 256;
@@ -412,6 +416,7 @@ function readTestsWithMeta(parsed) {
   let ceilingDropped = 0;
   let invalidVisualDropped = 0;
   let retiredColdLoad = 0;
+  let invalidCheckOptions = 0;
   const visualIds = new Set();
   for (const t of raw) {
     if (!t || typeof t !== 'object') { invalidDropped++; continue; }
@@ -431,6 +436,18 @@ function readTestsWithMeta(parsed) {
       visual = null;
     }
     if (visual) visualIds.add(visual.id);
+    // `persona` and `repeat` say who loads the page and how often, never how
+    // its address is reached (that stays the app's rules, below). Both are
+    // opt-in keys so a check without them reads exactly as it did before.
+    // `'guest'` runs it in a fresh, signed-out browser; any other persona is
+    // the default signed-in check, and is ignored with a warning.
+    const guest = t.persona === 'guest';
+    if (Object.prototype.hasOwnProperty.call(t, 'persona') && !guest) invalidCheckOptions++;
+    let repeat = null;
+    if (t.repeat !== undefined && t.repeat !== 1) {
+      if (Number.isInteger(t.repeat) && t.repeat >= 2 && t.repeat <= MAX_CHECK_REPEAT) repeat = t.repeat;
+      else invalidCheckOptions++;
+    }
     out.push({
       name,
       path: p,
@@ -439,9 +456,11 @@ function readTestsWithMeta(parsed) {
       expectText: typeof t.expectText === 'string' && t.expectText.trim()
         ? t.expectText.trim().slice(0, MAX_TEST_TEXT_LEN) : null,
       allowConsoleErrors: !!t.allowConsoleErrors,
-      // No per-check load setting is kept: how a check's page is loaded is
-      // the app's rule (readLoadRules below), never the check's. A leftover
-      // `coldLoad` key is ignored, and counted for the warning below.
+      // How a check's page is LOADED (`coldLoad`, from the app's rules) is
+      // never the check's to say; a leftover key is ignored and counted for
+      // the warning below.
+      ...(guest ? { persona: 'guest' } : {}),
+      ...(repeat ? { repeat } : {}),
       ...(visual || {}),
     });
     if (Object.prototype.hasOwnProperty.call(t, 'coldLoad')) retiredColdLoad++;
@@ -451,6 +470,11 @@ function readTestsWithMeta(parsed) {
     log.warn('app-manifest', 'Dropped invalid/over-ceiling test entries', {
       dropped, invalidDropped, ceilingDropped, invalidVisualDropped,
       kept: out.length, ceiling: MAX_DECLARED_TESTS,
+    });
+  }
+  if (invalidCheckOptions > 0) {
+    log.warn('app-manifest', 'Ignored invalid "persona"/"repeat" on checks', {
+      checks: invalidCheckOptions, maxRepeat: MAX_CHECK_REPEAT,
     });
   }
   if (retiredColdLoad > 0) {
@@ -2573,6 +2597,7 @@ module.exports = {
   MAX_PLATFORM_ENV,
   MAX_TESTS,
   MAX_DECLARED_TESTS,
+  MAX_CHECK_REPEAT,
   LEGACY_GATING_HEAD,
   MAX_APP_ADMINS,
   MAX_ADMIN_USERNAME_LENGTH,
