@@ -267,12 +267,22 @@ test('the kinds and the sort; what an account adds is the hero\'s, not a card in
   }
 });
 
-test('while the directory loads, placeholders; when it cannot be read, a line that says so', () => {
+test('while the directory loads, placeholders; when it cannot be read, a line and Try again', () => {
   const loading = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: null }));
   assert.match(loading, /aria-busy="true"/);
   assert.doesNotMatch(loading, /data-guest-card=/);
   const failed = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: null, failed: true }));
   assert.ok(text(failed).includes(message('auth:guest.loadFailed')));
+  // Without a way to read again, only the sentence.
+  assert.doesNotMatch(failed, /data-guest-retry=/);
+  // With one, the button under it says so (#6007).
+  const retried = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: null, failed: true, onRetry() {} }));
+  assert.ok(text(retried).includes(message('auth:guest.loadFailed')));
+  const button = retried.match(/<button[^>]*data-guest-retry=""[^>]*>([\s\S]*?)<\/button>/);
+  assert.ok(button, 'a Try again button under the failure line');
+  assert.equal(text(button[1]).join(' '), message('auth:guest.retry'));
+  // And nothing to press when it did not fail.
+  assert.doesNotMatch(renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ onRetry() {} })), /data-guest-retry=/);
 });
 
 // ─── guest-project.tsx ────────────────────────────────────────────

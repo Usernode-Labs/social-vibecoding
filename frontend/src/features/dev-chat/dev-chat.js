@@ -7298,12 +7298,41 @@ const DevChat = {
   // #3605: the card's refs navigate inside Homeroom: a request opens its
   // discussion on the app's board, the vote status opens the proposal.
   openIssueRef(n) {
-    const id = parseInt(n, 10);
-    if (id > 0 && window.AppView && AppView.openTopic) AppView.openTopic('issue', id);
+    DevChat._openBoardTopic('issue', n);
   },
   openProposalVote(id) {
-    const sid = parseInt(id, 10);
-    if (sid > 0 && window.AppView && AppView.openTopic) AppView.openTopic('proposal', sid);
+    DevChat._openBoardTopic('proposal', id);
+  },
+
+  // #5693: a request's or a change's page, from this session. With the app
+  // view up for the session's app, `AppView.openTopic` opens it in place. In
+  // the Messages pane (#2813) there is no app view: `App.currentApp` is null,
+  // so openTopic rendered the page into the hidden app screen and nothing on
+  // screen moved — "Open proposal card" did nothing. There the page's own
+  // address is followed instead, as the new-change banner's link already is.
+  _openBoardTopic(kind, ref) {
+    const id = parseInt(ref, 10);
+    if (!(id > 0)) return;
+    const slug = DevChat._appSlug();
+    const inApp = typeof App === 'undefined' || (!!App.currentApp && App.currentApp === slug);
+    if (inApp || !slug) {
+      if (window.AppView && AppView.openTopic) AppView.openTopic(kind, id);
+      return;
+    }
+    const session = DevChat.currentSession;
+    const pr = kind === 'proposal' && session && Number(session.id) === id
+      ? Number(session.pr_number) : 0;
+    location.hash = kind === 'issue'
+      ? `#app/${encodeURIComponent(slug)}/dev/issues/${id}`
+      : DevChat._changePageHref(slug, id, pr);
+  },
+
+  // A change's page address: `dev/changes/<N>` once it has a pull request
+  // (#4367), its proposal id before that.
+  _changePageHref(slug, id, pr) {
+    return Number(pr) > 0
+      ? `#app/${encodeURIComponent(slug)}/dev/changes/${Number(pr)}`
+      : `#app/${encodeURIComponent(slug)}/dev/proposals/${id}`;
   },
 
   async promotePR() {
@@ -9787,8 +9816,8 @@ const DevChat = {
    *  destination the retired "Change overview" strip opened. */
   openProposalCard() {
     const id = DevChat.currentSession?.id;
-    if (id == null || typeof AppView === 'undefined') return;
-    AppView.openTopic('proposal', id);
+    if (id == null) return;
+    DevChat._openBoardTopic('proposal', id);
   },
 
   /**

@@ -380,7 +380,7 @@ test('with no handle and no turn record, hasDurableTurn is false', async () => {
 // exercised by worker-stop-workflow-postgres.test.js. Here the HTTP producer
 // must never run a privileged fallback, even when the conductor is absent.
 function forbidRuntime(t) {
-  for (const method of ['stopTurn', 'signalLegacyTurn', 'stopTurnByJournal', 'isWorkerExecuting', 'evictWorker', 'removeWorker', 'clearActiveTurn']) {
+  for (const method of ['stopTurn', 'stopTurnByJournal', 'isWorkerExecuting', 'evictWorker', 'removeWorker', 'clearActiveTurn']) {
     t.mock.method(workerMod, method, () => { throw new Error(`web called ${method}`); });
   }
 }
@@ -513,14 +513,31 @@ test('a locally applied Stop acknowledges a changed admission target without ret
   assert.equal(requests, 1); assert.equal(stopRegistry.get(SESSION_ID), handle);
 });
 
-test('ordinary Stop fingerprints an old record with neither journal nor turn id', async t => {
-  forbidRuntime(t); const turn = { phase: 'executing', mode: 'build', startedAt: '2026-10-27T10:00:00Z' };
-  routeQueries({ activeTurn: turn }); let captured;
-  interrupt = async p => { captured = p; };
-  const out = await requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID });
-  assert.equal(out.status, 202);
-  assert.equal(captured.expectedJob.legacy, require('../src/workflow/worker-stop/target.ts').legacyTurnKey(turn));
-});
+for (const turnId of [null, 'turn-without-journal']) {
+  test(`ordinary Stop refuses an active ${turnId ? 'record with a turn id but no journal' : 'record with no safe stop identity'} and sends no signal`, async t => {
+    forbidRuntime(t);
+    const turn = { turnId, phase: 'executing', mode: 'build', startedAt: '2026-10-27T10:00:00Z' };
+    routeQueries({ activeTurn: turn });
+    const routeQuery = poolQueryHandler;
+    poolQueryHandler = (sql, params) => /sw.last_used_at::text AS used_at/.test(sql)
+      ? { rows: [{ app_id: 1, user_id: OWNER.id, agent_config_version: 0, active_turn: turn, used_at: null, username: OWNER.username }] }
+      : routeQuery(sql, params);
+    let queued = 0;
+    interrupt = p => require('../src/workflow/worker-stop/interrupt.ts').requestWorkerInterrupt({
+      appendAndWait: async () => { queued += 1; throw new Error('unsafe Stop must not be queued'); },
+    }, poolMod.getPool(), p);
+    const server = await startServer(OWNER);
+    try {
+      const { status, body } = await call(server, `/api/sessions/${SESSION_ID}/stop`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+      });
+      assert.equal(status, 409);
+      assert.equal(body.error, 'The running job has no safe stop identity.');
+      assert.equal(body.code, 'turn_changed');
+      assert.equal(queued, 0);
+    } finally { server.close(); }
+  });
+}
 
 test('an unavailable conductor still permits local cancellation but never a privileged web fallback', async t => {
   forbidRuntime(t); routeQueries({ activeTurn: durableTurn() });
@@ -559,7 +576,7 @@ test('HTTP module contains no worker signal, probe, runtime-stop or confirmation
   const visit = node => {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
         && node.expression.expression.getText(file) === 'worker'
-        && ['stopTurn', 'signalLegacyTurn', 'stopTurnByJournal', 'stopWorker', 'isWorkerExecuting',
+        && ['stopTurn', 'stopTurnByJournal', 'stopWorker', 'isWorkerExecuting',
           'removeWorker', 'evictWorker', 'destroyWorker'].includes(node.expression.name.text)) calls.push(node.expression.getText(file));
     ts.forEachChild(node, visit);
   };

@@ -8,12 +8,31 @@ const { Pool } = require('pg');
 const { fork } = require('node:child_process');
 const { once } = require('node:events');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
-const { workerStop, MACHINE, WORK, WAIT_MS, stopKey } = require('../src/workflow/worker-stop/machine.ts');
-const { stopTarget, snapshot, legacyTurnKey } = require('../src/workflow/worker-stop/target.ts');
+const { workerStop, requested, MACHINE, WORK, WAIT_MS, stopKey } = require('../src/workflow/worker-stop/machine.ts');
+const { stopTarget, snapshot } = require('../src/workflow/worker-stop/target.ts');
 const { requestWorkerStop } = require('../src/workflow/worker-stop/request.ts');
 const { workerStopServices, workerInterruptServices } = require('../src/workflow/worker-stop/services.ts');
 const { workerInterrupt, requestWorkerInterrupt, interruptKey, MACHINE: INTERRUPT, WORK: INTERRUPT_WORK, DISPATCH } = require('../src/workflow/worker-stop/interrupt.ts');
 const { asTransition } = require('./lib/as-transition');
+
+const keyTarget = { sessionId: 42, userId: 7, appId: 3, ownerId: 7, configVersion: 2, active: true,
+  turnId: 'job-42', journal: '/home/node/.claude/turn-job-42.log', usedAt: '2026-10-28T12:00:00Z', strategy: 'turn' };
+
+test('ordinary Stop and dispatch keys match the previous release during rolling deploys', () => {
+  // Captured from canonical main before this cleanup, not computed with the new key function.
+  for (const [payload, hash] of [
+    [keyTarget, '81a7d67836ce6804a4aab5d59e88dbd35ef38ed1705545258a413c89f1d3ff23'],
+    [{ ...keyTarget, userId: null }, 'c38bfeb4530b2e229c8f9d6a6468d05da4bf62b894a93c068bef539e85588aec'],
+    [{ ...keyTarget, active: false, turnId: null, journal: null }, '0ddf306b519b1ba3b54f767a9567f29e662f703d01f13716356159c0c9590105'],
+  ]) assert.equal(interruptKey(payload), `session:42:interrupt:${hash}`);
+});
+
+test('force-stop event admission accepts a turn id without a journal but still requires an identity', () => {
+  const payload = { ...keyTarget, requestId: randomUUID(), journal: null };
+  assert.doesNotThrow(() => requested(payload));
+  assert.throws(() => requested({ ...payload, turnId: null }), /A stop must identify/);
+  assert.doesNotThrow(() => requested({ ...payload, active: false, turnId: null }));
+});
 
 test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 }, async t => {
   const admin = new Pool({ connectionString: process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres', connectionTimeoutMillis: 2000 });
@@ -34,10 +53,6 @@ test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 
   const removalWaits = []; const killTimeouts = [];
   let ordinary = false; let executing = false; let beforeProbe = null;
   t.mock.method(worker, 'stopTurn', () => { throw new Error('registry-based signalling is forbidden'); });
-  t.mock.method(worker, 'signalLegacyTurn', async id => {
-    if (!ordinary) throw new Error('generic process-tree kill is forbidden');
-    calls.push(['legacy-signal', id]);
-  });
   t.mock.method(worker, 'evictWorker', () => { throw new Error('unfenced eviction is forbidden'); });
   t.mock.method(worker, 'isWorkerExecuting', async () => {
     if (!ordinary) throw new Error('a root-only probe is not force-stop confirmation');
@@ -114,7 +129,7 @@ test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 
 
   async function interrupt(s, strategy = 'turn', over = {}, envelope = {}) {
     const target = await stopTarget(pool, s.sessionId, s.userId); const requestId = randomUUID();
-    const payload = { ...snapshot(target), userId: s.userId, strategy, requestId, legacy: legacyTurnKey(target.turn), ...over };
+    const payload = { ...snapshot(target), userId: s.userId, strategy, requestId, ...over };
     const key = interruptKey(payload);
     const id = await web.append(INTERRUPT, key, { type: 'Requested', payload }, {
       appId: s.appId, actor: `user:${s.userId}`, source: { kind: 'route', name: INTERRUPT_WORK }, requestKey: requestId, ...envelope,
@@ -148,6 +163,30 @@ test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 
     assert.equal(rows[0].metadata.workerStopRequest, e.payload.requestId);
     assert.deepEqual(announcements.map(a => a.event), ['status', 'stopped', 'done']);
     assert.ok(announcements.every(a => a.type === 'session_event' && a.sessionId === s.sessionId));
+  });
+  await t.test('force-stop without a journal preserves turn fencing and saved-work rescue', async () => {
+    for (const outcome of ['stopped', 'replacement', 'rescue-failed']) {
+      reset(); const s = await session(); s.turn.journal = null;
+      await pool.query('UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1', [s.sessionId, JSON.stringify(s.turn)]);
+      await pool.query(`UPDATE session_workers SET unpushed_sha = $2, unpushed_branch_name = 'b' WHERE session_id = $1`, [s.sessionId, 'a'.repeat(40)]);
+      if (outcome === 'replacement') beforeDelete = () => pool.query('UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1',
+        [s.sessionId, JSON.stringify({ ...s.turn, turnId: 'replacement' })]);
+      if (outcome === 'rescue-failed') rescueError = new Error('push unavailable');
+      const accepting = { ...web, appendAndWait: async (...args) => {
+        const id = await web.append(...args); await conductor.drain(); await settle(); return web.waitForEvent(id, 1000);
+      } };
+      const stopping = requestWorkerStop(accepting, pool, request(s), 1000);
+      if (outcome === 'stopped') {
+        assert.equal((await stopping).ok, true);
+        assert.deepEqual(calls.map(c => c[0]), ['identity', 'rescue', 'delete']);
+        assert.equal(await current(s), null);
+      } else {
+        await assert.rejects(stopping, err => err.code === (outcome === 'replacement' ? 'turn_changed' : 'stop_unconfirmed'));
+        assert.deepEqual(calls.map(c => c[0]), outcome === 'replacement' ? ['identity'] : ['identity', 'rescue']);
+        assert.ok(await current(s));
+        assert.equal((await pool.query('SELECT unpushed_sha FROM session_workers WHERE session_id = $1', [s.sessionId])).rows[0].unpushed_sha, 'a'.repeat(40));
+      }
+    }
   });
   await t.test('unconfirmed kill uses identity-fenced removal, preserves the volume and confirms before release', async () => {
     reset(); kill = new Error('exec unavailable'); const s = await session(); const e = await append(s);
@@ -473,13 +512,16 @@ test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 
       { over: { userId: 1 } },
       { envelope: { source: { kind: 'system', name: 'another-producer' } } },
       { over: { active: false, turnId: null, journal: null } },
-      { over: { turnId: null } }, { over: { journal: null } },
+      { over: { turnId: null } },
     ]) {
       const s = await session(); const e = await interrupt(s, 'turn', { userId: null, ...invalid.over },
         { source, actor: null, ...invalid.envelope });
       await conductor.drain(); const out = await web.waitForEvent(e.id, 1000);
       assert.equal(out.status, 'rejected'); assert.equal(out.reason, 'not_a_producer');
     }
+    const unjournalled = await session();
+    await assert.rejects(interrupt(unjournalled, 'turn', { userId: null, journal: null }, { source, actor: null }),
+      err => err.code === 'invalid_payload');
     for (const ended of [false, true]) {
       const s = await session(); const e = await dispatched(s);
       await pool.query('UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1', [s.sessionId,
@@ -529,28 +571,6 @@ test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 
       } else await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [s.sessionId]);
       await settle(); assert.equal((await interruptState(e)).state, 'done'); assert.deepEqual(calls, []);
       assert.equal((await interruptState(e)).data.result.confirmed, !expired);
-    }
-  });
-  await t.test('journal-less legacy records retain their supported signal and probe path', async () => {
-    reset(); ordinary = true; const legacy = await session();
-    await pool.query(`UPDATE chat_sessions SET active_turn = active_turn - 'journal' WHERE id = $1`, [legacy.sessionId]);
-    const l = await interrupt(legacy); await conductor.drain(); await settle(); await tick(l); await settle();
-    assert.deepEqual(calls.map(c => c[0]), ['legacy-signal', 'probe']);
-
-  });
-  await t.test('identity-less legacy records are signalled and fenced by their stored contents', async () => {
-    for (const replaced of [false, true]) {
-      reset(); ordinary = true; const s = await session();
-      await pool.query(`UPDATE chat_sessions SET active_turn = active_turn - 'journal' - 'turnId' WHERE id = $1`, [s.sessionId]);
-      const e = await interrupt(s); await conductor.drain();
-      if (replaced) await pool.query(`UPDATE chat_sessions SET active_turn = active_turn || '{"startedAt":"replacement"}'::jsonb WHERE id = $1`, [s.sessionId]);
-      await settle();
-      if (replaced) {
-        assert.deepEqual(calls, []); assert.equal((await interruptState(e)).data.result.reason, 'turn_changed');
-      } else {
-        assert.ok((await current(s)).stopRequestedAt);
-        await tick(e); await settle(); assert.deepEqual(calls.map(c => c[0]), ['legacy-signal', 'probe']);
-      }
     }
   });
   await t.test('admission refuses changed targets; a web process cannot run interruption work', async () => {

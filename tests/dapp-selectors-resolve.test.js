@@ -236,9 +236,13 @@ test('the self-app hash routes dapp.json targets are the ones visuals.js normali
   // standalone status page, never index.html.
   // /api/me/staking/context is authenticated JSON from routes/staking.js.
   // The #1551 check intentionally exercises real preview configuration.
+  // /invite/<token> is the invite page (routes/community-invites.js): the
+  // shell's own document, served at that pathname with a link preview in its
+  // head, and the SPA draws the invite landing from it. It is not a hash
+  // route, and rewriting it into one would lose the view the check is about.
   const STANDALONE = ['/cli/authorize', '/usernode-native/', '/dashboard', '/admin-features',
     '/status', '/node-status', '/debug', '/gallery', '/reports/', '/api/public/',
-    '/waitlist/connect/', '/api/me/staking/context'];
+    '/waitlist/connect/', '/api/me/staking/context', '/invite/'];
 
   const unroutable = [];
   for (const t of declared) {

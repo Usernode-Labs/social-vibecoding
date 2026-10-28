@@ -250,6 +250,23 @@ test('#2821: "Open proposal card" opens the change\'s card page', () => {
   assert.equal(typeof DevChat.revealPrCard, 'undefined', 'the in-page PR jump retired with the "PR #x" label');
 });
 
+test('#5693: in the Messages pane "Open proposal card" follows the card\'s address', () => {
+  // No app view is up there (#2813): App.currentApp is null, so openTopic
+  // drew the card into the hidden app screen and the click did nothing.
+  const { DevChat, sandbox } = makeDevChat();
+  const opened = [];
+  sandbox.AppView = { openTopic: (kind, id) => opened.push([kind, id]) };
+  sandbox.App = { currentApp: null };
+  DevChat.currentSession = { ...SESSION, pr_number: 42, app_slug: 'recipe-box' };
+  DevChat.openProposalCard();
+  assert.deepEqual(opened, []);
+  assert.equal(sandbox.location.hash, '#app/recipe-box/dev/changes/42');
+
+  DevChat.currentSession = { ...SESSION, app_slug: 'recipe-box' };
+  DevChat.openProposalCard();
+  assert.equal(sandbox.location.hash, '#app/recipe-box/dev/proposals/5', 'no PR yet: its proposal id');
+});
+
 test('the title falls back through its three sources, and the branch is the tooltip', () => {
   const { view } = makeDevChat();
   assert.equal(view({ ...SESSION }).title, 'Widget language');

@@ -687,6 +687,25 @@ test('the landing\'s directory is the guest Discover, with no locked tiles', () 
   assert.doesNotMatch(tsx, /TileSkeleton/);
 });
 
+test('a failed read of the directory is retried before it is reported, and Try again re-runs it', () => {
+  const tsx = read(LANDING_TSX);
+  // The read runs as the landing first shows, which after a sign-out is while
+  // the sign-out round trip is still settling, so one refused request is not
+  // a failure yet (#6007).
+  assert.match(tsx, /const APPS_ATTEMPTS = 3;/);
+  assert.match(tsx, /const APPS_RETRY_MS = 1000;/);
+  assert.match(tsx, /for \(let attempt = 1; attempt <= APPS_ATTEMPTS; attempt \+= 1\) \{/);
+  assert.match(tsx, /await new Promise\(\(resolve\) => setTimeout\(resolve, APPS_RETRY_MS\)\);/);
+  // Only the LAST attempt failing says so...
+  assert.match(tsx, /if \(attempt === APPS_ATTEMPTS\) \{\n\s*setAppsFailed\(true\);/);
+  // ...and a list read before it is kept for the shot and the shared link.
+  assert.doesNotMatch(tsx, /st\.appsList = \[\]/);
+  // A read already running is joined, not started again.
+  assert.match(tsx, /if \(st\.appsInFlight\) return st\.appsInFlight;/);
+  // The failure line's button reads the directory again.
+  assert.match(tsx, /onRetry=\{\(\) => \{ st\.appsReady = live\.current\.loadLandingApps\(\); \}\}/);
+});
+
 // ─── landing.tsx: tile renderer ────────────────────────────────────
 
 test('landing tiles mirror home cards and gate on requires_login', () => {

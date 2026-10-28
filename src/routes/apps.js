@@ -8,6 +8,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { findForkSource } = require('../services/app-forker');
 const caddy = require('../services/caddy');
+const previewProjects = require('../services/preview-projects-client');
 const docker = require('../services/docker');
 const github = require('../services/github');
 const driftPoller = require('../services/main-drift-poller');
@@ -1014,6 +1015,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
             const hostPort = await docker.getHostPort(containerName, 3000);
             if (hostPort) url = `http://localhost:${hostPort}`;
           }
+          // A project made inside this platform preview runs at its own
+          // address under the preview (services/preview-projects-client.js).
+          if (!url && !a.self_hosted && previewProjects.active()) url = previewProjects.appUrl(a.slug);
           if (!url) url = `https://${caddy.productionHostname(a.slug)}`;
         }
         // Minimal version info for the home-screen pill — derived
@@ -1818,6 +1822,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           const hostPort = await docker.getHostPort(containerName, 3000);
           if (hostPort) url = `http://localhost:${hostPort}`;
         }
+        if (!url && !appRow.self_hosted && previewProjects.active()) url = previewProjects.appUrl(appRow.slug);
         if (!url) url = `https://${caddy.productionHostname(appRow.slug)}`;
       }
 

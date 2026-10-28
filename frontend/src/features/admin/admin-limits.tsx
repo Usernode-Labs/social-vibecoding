@@ -5,13 +5,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
-// Limits (#admin/limits): the server's app limit and session limit, GitHub's
-// hourly request budget (read-only), the platform's LLM budget dials, and
+// Limits (#admin/limits): the server's app limit and session limit, whether
+// previews may have projects made in them, GitHub's hourly request budget
+// (read-only), the platform's LLM budget dials, and
 // the Anthropic credit balance the remaining-credit figure is derived from.
 //
 // PERMISSIONS: visible to any admin; every field and every Save button is
 // gated on AdminConsole.canWrite() (canAdminWrite). The server enforces the
 // same on PUT /api/admin/app-limit, PUT /api/admin/session-limit,
+// PUT /api/admin/preview-projects,
 // PUT /api/admin/limits and PUT /api/admin/anthropic-credits.
 //
 // ── Sixth section out of the chassis (#1120 slice 21) ─────────────────
@@ -320,6 +322,101 @@ function SessionLimitCard({ canWrite }: { canWrite: boolean }) {
         ) : null}
       </div>
       <StatusLine id="admin-session-limit-status" status={status} okClass="text-green-800 dark:text-green-400" />
+    </div>
+  );
+}
+
+// Projects in previews (services/preview-projects-setting.js): whether a
+// preview of a Homeroom change may have projects made in it, which
+// production builds and runs for it, and makes from each ready-made app the
+// change touches. On by default, so the card offers the opposite of what is
+// in force, and "Use default" clears a stored choice. When the deploy
+// decides (the operator's PREVIEW_PROJECTS_ENABLED=false, or no
+// Kubernetes) the card says so instead of offering a button the server
+// would refuse.
+function PreviewProjectsCard({ canWrite }: { canWrite: boolean }) {
+  const console_ = () => (window as any).AdminConsole;
+  const [data, setData] = useState<any>(null);
+  const [status, setStatus] = useState<Status | null>(null);
+  const [saving, setSaving] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  useEffect(() => {
+    (async () => {
+      const { data: next } = await console_().fetchJson('/api/admin/preview-projects');
+      if (alive.current && next && typeof next === 'object') setData(next);
+    })();
+  }, []);
+
+  const put = async (enabled: boolean | null) => {
+    setStatus(null);
+    setSaving(true);
+    try {
+      const res = await fetch('/api/admin/preview-projects', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      const next = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(next.error || `Save failed (${res.status})`);
+      if (!alive.current) return;
+      setData(next);
+      setStatus({ text: 'Saved. It applies within ten seconds.', tone: 'ok' });
+    } catch (err: any) {
+      if (alive.current) setStatus({ text: err.message, tone: 'err' });
+    } finally {
+      if (alive.current) setSaving(false);
+    }
+  };
+
+  const blocked = data && (data.source === 'off' || data.source === 'unsupported' || data.source === 'preview');
+  const state = !data ? 'Loading…'
+    : data.enabled ? `On · ${data.live} made now` : 'Off';
+  let source = '';
+  if (data && data.source === 'off') {
+    source = 'The deploy has switched it off (PREVIEW_PROJECTS_ENABLED is false), so there is nothing to set here.';
+  } else if (data && data.source === 'preview') {
+    source = 'This is itself a preview of Homeroom, which makes projects for no other preview. On the live server this reads On unless an admin turned it off.';
+  } else if (data && blocked) {
+    source = 'This deploy cannot make projects in previews: they need Kubernetes.';
+  } else if (data && data.source === 'admin') {
+    const who = data.setting.updatedBy ? ` by @${data.setting.updatedBy}` : '';
+    const when = data.setting.updatedAt ? ` on ${String(data.setting.updatedAt).slice(0, 10)}` : '';
+    source = `Turned ${data.enabled ? 'on' : 'off'} here${who}${when}. Without it, it is on.`;
+  } else if (data) {
+    source = 'On by default.';
+  }
+
+  return (
+    <div id="admin-preview-projects" className={`${AdminUI.card} p-4 mt-4`}>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className={AdminUI.cardTitle}>Projects in previews</h2>
+        <span id="admin-preview-projects-state" className="text-xs text-zinc-500 dark:text-zinc-400">{state}</span>
+      </div>
+      <p className={`${AdminUI.muted} mb-3`}>
+        Lets people make projects inside the preview of a Homeroom change, and makes one from each
+        ready-made app the change touches, so it can be tried before the vote. This server builds
+        and runs them for the preview, up to {data ? data.perPreview : 3} per preview
+        and {data ? data.total : 30} in all, and removes them when the preview goes. Turned off,
+        previews built from then on cannot make any. A change applies to every server within ten
+        seconds, with no deploy.
+      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p id="admin-preview-projects-source" className="text-xs text-zinc-500 dark:text-zinc-400">{source}</p>
+        {canWrite && data && !blocked ? (
+          <div className="flex items-center gap-2">
+            {data.source === 'admin' ? (
+              <button id="admin-preview-projects-reset-btn" type="button" className={AdminUI.btn.outline}
+                disabled={saving} onClick={() => put(null)}>Use default</button>
+            ) : null}
+            <button id="admin-preview-projects-toggle-btn" type="button"
+              className={data.enabled ? AdminUI.btn.outline : AdminUI.btn.primary}
+              disabled={saving} onClick={() => put(!data.enabled)}>{data.enabled ? 'Turn off' : 'Turn on'}</button>
+          </div>
+        ) : null}
+      </div>
+      <StatusLine id="admin-preview-projects-status" status={status} okClass="text-green-800 dark:text-green-400" />
     </div>
   );
 }
@@ -740,6 +837,8 @@ function LimitsSection() {
 
       <GithubBudgetCard />
 
+      <PreviewProjectsCard canWrite={canWrite} />
+
       <div className={`${AdminUI.card} p-4 mt-4`}>
         <div className="flex items-center justify-between mb-3">
           <h2 className={AdminUI.cardTitle}>LLM Spend Limits</h2>
@@ -861,7 +960,8 @@ const AdminLimits = {
 if (typeof window !== 'undefined') (window as any).AdminLimits = AdminLimits;
 
 // AppLimitCard is exported for tests/app-limit.test.js, which renders it,
-// SessionLimitCard for tests/session-limit.test.js, GithubBudgetCard for
+// SessionLimitCard for tests/session-limit.test.js, PreviewProjectsCard for
+// tests/preview-projects-setting.test.js, GithubBudgetCard for
 // tests/github-budget.test.js, and GithubBudgetFigures for
 // tests/github-spend.test.js, which renders it from a payload.
-export { AdminLimits, AppLimitCard, SessionLimitCard, GithubBudgetCard, GithubBudgetFigures };
+export { AdminLimits, AppLimitCard, SessionLimitCard, PreviewProjectsCard, GithubBudgetCard, GithubBudgetFigures };

@@ -16051,3 +16051,63 @@ CREATE TABLE IF NOT EXISTS git_host_moves (
   recorded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   applied_at      TIMESTAMPTZ
 );
+
+-- ── Projects made inside a platform preview (services/preview-projects.js)
+--
+-- A preview of the platform runs unreviewed code, so it may not create a
+-- database, build an image or run a container itself. Production does those
+-- three for it, for the projects someone makes there, and nothing else.
+--
+-- preview_project_tokens: the preview's credential, minted when production
+-- deploys it (one per deploy; the newest few live, so a rollout's old pods
+-- keep working). Only the SHA-256 is stored. It dies with the session, and
+-- is deleted when the preview retires. On the prod-debug deny list
+-- (debug-access.js).
+--
+-- preview_projects: one row per project a preview made, by its slug there.
+-- NO foreign key to chat_sessions on purpose: if a session row went, its
+-- projects' runtimes and databases would still be out there, and this row
+-- is how the sweep finds them. `state` is the last operation's: building
+-- and deploying run in the process that took them, and one older than the
+-- stale window is treated as failed. `db_password` is the project database
+-- role's, which production alone holds.
+--
+-- `staging:private`: credential hashes and database passwords.
+CREATE TABLE IF NOT EXISTS preview_project_tokens (
+  id          BIGSERIAL PRIMARY KEY,
+  session_id  INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  token_hash  TEXT NOT NULL UNIQUE CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at  TIMESTAMPTZ NOT NULL
+);
+COMMENT ON TABLE preview_project_tokens IS 'staging:private';
+COMMENT ON COLUMN preview_project_tokens.token_hash IS 'staging:private';
+CREATE INDEX IF NOT EXISTS preview_project_tokens_session_idx
+  ON preview_project_tokens (session_id);
+
+CREATE TABLE IF NOT EXISTS preview_projects (
+  id             BIGSERIAL PRIMARY KEY,
+  session_id     INTEGER NOT NULL,
+  slug           VARCHAR(64) NOT NULL,
+  preview_app_id INTEGER NOT NULL,
+  name           VARCHAR(255) NOT NULL DEFAULT '',
+  state          VARCHAR(16) NOT NULL DEFAULT 'creating'
+                 CHECK (state IN ('creating', 'created', 'building', 'built', 'deploying', 'running', 'failed')),
+  op_started_at  TIMESTAMPTZ,
+  error          TEXT,
+  db_name        VARCHAR(63),
+  db_server      VARCHAR(16),
+  db_password    TEXT,
+  source_branch  VARCHAR(128),
+  source_sha     VARCHAR(40),
+  image_ref      VARCHAR(512),
+  build_ref      VARCHAR(512),
+  runtime_name   VARCHAR(63),
+  hostname       VARCHAR(253),
+  builds         INTEGER NOT NULL DEFAULT 0,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (session_id, slug)
+);
+COMMENT ON TABLE preview_projects IS 'staging:private';
+COMMENT ON COLUMN preview_projects.db_password IS 'staging:private';

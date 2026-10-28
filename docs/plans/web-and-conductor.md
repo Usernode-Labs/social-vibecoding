@@ -212,8 +212,13 @@ it checks the active turn id and journal and does not depend on the owner's
 account state. The pending flag carries the real stopper's name when known;
 otherwise the durable stamp has no stopper. A locally applied Stop
 still succeeds when admission finds a changed job; it never retargets that job.
-Old records with neither turn id nor journal are fenced by a fingerprint of
-their stored contents and signalled without writing a conductor-local registry.
+Ordinary Stop refuses an active record without a journal, even if it has a
+turn id, with 409 and no signal. Current turn producers always supply both;
+such leftovers require investigation. Stop keys retain their format across
+rolling deploys. Force-stop can still remove a captured worker for a record
+with a turn id but no journal, with current-turn fencing and saved-work rescue.
+A current turn whose journal file has vanished still uses the force-stop
+recovery that removes its captured worker identity.
 Ordinary Stop has no whole-worker strategy. Force-stop remains the separate,
 identity-fenced fallback. Retry-time idle waiting performs I/O only on a
 conductor and returns false without I/O when called on the web. The route-side

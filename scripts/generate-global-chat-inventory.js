@@ -67,6 +67,7 @@ const FILE_EXEMPTIONS = new Map([
   ['src/routes/cli-agent.js', 'local coding-agent protocol, represented by CLI Settings and development capabilities'],
   ['src/routes/external-agent-patch-upload.js', 'coding-agent patch upload authenticated by a one-time work-order token (#4264), never a signed-in Classic control'],
   ['src/routes/internal.js', 'platform-to-worker/internal service protocol'],
+  ['src/routes/preview-projects.js', 'a platform preview\'s own process asking production for its projects\' databases, builds and runtimes, by the credential production gave it; never a signed-in Classic control'],
   ['src/routes/private-requests.js', 'admin-only confidential and security requests (#5048), kept off GitHub; their words are not handed to an assistant or its model provider'],
   ['src/routes/languages.js', 'the shell\'s own language list and packs, read by its language runtime as it boots, never a model-visible control'],
   ['src/routes/public-api.js', 'anonymous public integration and waitlist surface'],

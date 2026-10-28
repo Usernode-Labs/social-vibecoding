@@ -33,15 +33,14 @@ test('a pending Stop on a fresh conductor keeps the Kubernetes name for its late
   assert.deepEqual(names, ['sv-worker-s85019']);
 });
 
-test('legacy signalling on a fresh conductor uses the runtime name without registry or last-use writes', async t => {
+test('journal signalling on a fresh conductor uses the runtime name without registry or last-use writes', async t => {
   process.env.WORKER_RUNTIME = 'kubernetes';
   const names = []; const queries = [];
   t.mock.method(require('../src/services/kubernetes'), 'execInWorker', async (_config, name) => { names.push(name); return { stdout: '' }; });
   t.mock.method(require('../src/db/pool'), 'getPool', () => ({ query: async sql => { queries.push(sql); return { rows: [] }; } }));
   assert.equal(worker.warmRegistrySnapshot().some(e => e.sessionId === 85020), false);
-  await worker.signalLegacyTurn(85020);
-  await worker.stopTurnByJournal(85020, '/home/node/.claude/turn-legacy.log', { force: false });
-  assert.deepEqual(names, ['sv-worker-s85020', 'sv-worker-s85020']);
+  await worker.stopTurnByJournal(85020, '/home/node/.claude/turn-current.log', { force: false });
+  assert.deepEqual(names, ['sv-worker-s85020']);
   assert.equal(worker.warmRegistrySnapshot().some(e => e.sessionId === 85020), false);
   assert.equal(worker.getPendingStop(85020), null); assert.deepEqual(queries, []);
 });
