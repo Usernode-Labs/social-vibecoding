@@ -424,6 +424,17 @@
       developer: 'settings:nav.page.developer',
     },
 
+    // #5995: one muted line under the phone menu's rows whose names do not
+    // say what is behind them, keyed by page. Only the few that need it: a
+    // line under every row would make each one a heading again. The sidebar
+    // shows none; the page it opens says the same thing at its top.
+    SUBTITLES: {
+      'linked-accounts': 'settings:nav.subtitle.linkedAccounts',
+      phones: 'settings:nav.subtitle.phones',
+      connectors: 'settings:nav.subtitle.connectors',
+      'agent-files': 'settings:nav.subtitle.agentFiles',
+    },
+
     // Extra words the nav's filter box matches for each part, beyond its own
     // label and its page's. Lower case, space separated: the words people
     // type for a thing, not the words the pane uses for it.
@@ -1386,6 +1397,7 @@
         items: g.items.map((p) => ({
           key: p.key,
           label: Settings.str(p.label),
+          subtitle: Settings.SUBTITLES[p.key] ? tr(Settings.SUBTITLES[p.key]) : '',
           ...Settings._filterTerms(p),
         })),
       }));
