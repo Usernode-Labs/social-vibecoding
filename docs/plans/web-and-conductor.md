@@ -295,6 +295,23 @@ operations are:
   conductor checks again that the requester may delete it. A preview still
   retiring is answered as before (409, ask again in a minute).
 
+- `openrouter.provision`, `openrouter.sync`, `openrouter.disable` and
+  `openrouter.remove`: a company-funded OpenRouter key created, brought in
+  line with its account's weekly allowance, disabled or deleted, with the
+  management key. Web callers keep calling `openrouter-managed-keys.js`,
+  which asks a conductor from a web process and acts itself on a workflow
+  process; its one-key-per-account reservation, allowance and needs-review
+  rules decide what is made, and its refusals are answers, so a provider call
+  is never repeated. An account may ask for its own key and sync before it
+  has platform access (a key is made as the account is created); disabling,
+  deleting or syncing another account's key needs a full admin. A web read
+  asks for a sync only when the key is out of line with the allowance. A
+  provisioning retried after its key was issued and saved, but before its
+  result was recorded, answers with that key rather than the refusal its
+  reservation would give. Whether included keys are offered is the
+  non-secret `OPENROUTER_MANAGED_KEYS_ENABLED` where the key is absent (unset,
+  the key's presence answers), so a web process can run without the key.
+
 An account deletion's provider, worker and stored-file cleanups are the
 `account-deletion` clock's alone, every minute on a conductor; the routes that
 queue them no longer start a sweep of their own. With these, a web process

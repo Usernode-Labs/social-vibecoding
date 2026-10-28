@@ -2330,7 +2330,7 @@ function adminRoutes(config) {
       // request (a provider failure is logged inside it).
       try {
         await managedOpenRouter.syncAllowance({
-          pool, userId, config,
+          pool, userId, config, actorId: req.user.id,
           state: await managedOpenRouter.stateForUser(pool, userId),
         });
       } catch (err) {
