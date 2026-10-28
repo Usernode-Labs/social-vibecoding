@@ -21,6 +21,13 @@
 //   - On a collab-private app the invitee must already be a
 //     collaborator member (non-members can't cast votes there at all,
 //     so an approver row would be dead weight).
+//
+// A project whose `approvers_from_app_id` is set uses that app's roster
+// (docs/plans/versions.md: the ready-made originals use the platform's;
+// rules/electorate.ts getApproverSet). Its panel lists that roster, read
+// only, and it takes no invites or removals of its own: who approves it is
+// changed on the app it names. A change to any roster is a change to every
+// project that uses it, so the governance cache is dropped for those too.
 
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
@@ -41,6 +48,37 @@ function canManageApprovers(pool, app, user) {
   return appAdmins.canManageApp(pool, app, user);
 }
 
+// The app whose roster `app` uses, as { id, slug, name }, or null when it
+// keeps its own.
+async function rosterSource(pool, app) {
+  const linked = Number(app && app.approvers_from_app_id);
+  if (!Number.isInteger(linked) || linked <= 0 || linked === app.id) return null;
+  const { rows } = await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [linked]);
+  return rows[0] || null;
+}
+
+// What a linked project answers an invite or a removal with, in words.
+function linkedRefusal(source) {
+  const name = (source && source.name) || 'another project';
+  return {
+    error: `This project is approved by the people who approve ${name}. Change who approves it there.`,
+    code: 'approvers_linked',
+    approversFrom: source ? { slug: source.slug, name: source.name } : null,
+  };
+}
+
+// The governance cache of `appId` and of every project that uses its
+// roster, here and in every other process.
+async function invalidateRoster(pool, appId) {
+  governance.invalidateGovernance(appId);
+  try {
+    const { rows } = await pool.query('SELECT id FROM apps WHERE approvers_from_app_id = $1', [appId]);
+    for (const r of rows) governance.invalidateGovernance(r.id);
+  } catch (err) {
+    log.warn('approvers', 'Could not drop the caches of the projects that use this roster', { appId, err: err.message });
+  }
+}
+
 function approverRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -51,19 +89,22 @@ function approverRoutes(config) {
     try {
       const app = await appAccess.getAppForUser(
         pool, req.params.slug, req.user, 'collab',
-        appAccess.ACCESS_COLUMNS + ', approver_policy, approvals_required'
+        appAccess.ACCESS_COLUMNS + ', approver_policy, approvals_required, approvers_from_app_id'
       );
       if (!app) return res.status(404).json({ error: 'App not found' });
+      const source = await rosterSource(pool, app);
 
+      // A linked project lists the roster it uses, its members only: a
+      // pending invite there is that app's business.
       const { rows } = await pool.query(
         `SELECT ap.user_id, ap.status, ap.created_at, ap.accepted_at,
                 u.username, inv.username AS invited_by
            FROM app_approvers ap
            JOIN users u ON u.id = ap.user_id
            LEFT JOIN users inv ON inv.id = ap.invited_by
-          WHERE ap.app_id = $1
+          WHERE ap.app_id = $1 AND ($2::boolean IS NOT TRUE OR ap.status = 'member')
           ORDER BY (ap.status = 'member') DESC, LOWER(u.username)`,
-        [app.id]
+        [source ? source.id : app.id, !!source]
       );
       res.json({
         approvers: rows.map((r) => ({
@@ -77,7 +118,10 @@ function approverRoutes(config) {
         approverPolicy: app.approver_policy,
         approvalsRequired: app.approvals_required,
         creatorId: app.created_by,
-        canManage: await canManageApprovers(pool, app, req.user),
+        // The app whose approvers these are, when not this one's own; then
+        // nobody manages them from here.
+        approversFrom: source ? { slug: source.slug, name: source.name } : null,
+        canManage: source ? false : await canManageApprovers(pool, app, req.user),
       });
     } catch (err) {
       log.error('approvers', 'list failed', { slug: req.params.slug, message: err.message });
@@ -95,12 +139,14 @@ function approverRoutes(config) {
     if (!username) return res.status(400).json({ error: 'username is required' });
     try {
       const app = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS + ', name'
+        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS + ', name, approvers_from_app_id'
       );
       if (!app) return res.status(404).json({ error: 'App not found' });
       if (!(await canManageApprovers(pool, app, req.user))) {
         return res.status(403).json({ error: 'Only the app creator or an admin can invite approvers' });
       }
+      const source = await rosterSource(pool, app);
+      if (source) return res.status(409).json(linkedRefusal(source));
 
       const result = await approverInvites.inviteApprover(pool, app, username, req.user);
       if (!result.created) {
@@ -149,7 +195,7 @@ function approverRoutes(config) {
       }
 
       await notifications.markApproverInviteNotificationsRead(pool, req.user.id, appId).catch(() => {});
-      governance.invalidateGovernance(appId);
+      await invalidateRoster(pool, appId);
 
       const wsSvc = require('../services/ws');
       try { wsSvc.pushNotificationToUser(req.user.id, { type: 'notifications_changed' }); } catch {}
@@ -214,7 +260,7 @@ function approverRoutes(config) {
     if (!Number.isFinite(targetId)) return res.status(400).json({ error: 'Invalid user id' });
     try {
       const app = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS + ', approvers_from_app_id'
       );
       if (!app) return res.status(404).json({ error: 'App not found' });
 
@@ -223,6 +269,8 @@ function approverRoutes(config) {
       if (!allowed) {
         return res.status(403).json({ error: 'Only the app creator or an admin can remove approvers' });
       }
+      const source = await rosterSource(pool, app);
+      if (source) return res.status(409).json(linkedRefusal(source));
 
       const { rowCount } = await pool.query(
         'DELETE FROM app_approvers WHERE app_id = $1 AND user_id = $2',
@@ -231,7 +279,7 @@ function approverRoutes(config) {
       if (!rowCount) return res.status(404).json({ error: 'Not an approver' });
 
       await notifications.markApproverInviteNotificationsRead(pool, targetId, app.id).catch(() => {});
-      governance.invalidateGovernance(app.id);
+      await invalidateRoster(pool, app.id);
       try {
         const { pushNotificationToUser } = require('../services/ws');
         pushNotificationToUser(targetId, { type: 'notifications_changed' });

@@ -54,7 +54,8 @@ export const adminNoAtSql = (cs: string): string => `(SELECT MAX(pv.created_at) 
 /**
  * When one of an invited project's approvers last cast a counted No on the
  * change's current approval epoch, or NULL (#5947). An approver is a member
- * of the project's `app_approvers` roster or, while that roster is empty,
+ * of the project's `app_approvers` roster (the roster of the app its
+ * `approvers_from_app_id` names, when set) or, while that roster is empty,
  * a full admin: the same set electorate.ts getApproverSet counts. NULL on a
  * project whose votes all count (`approver_policy` 'anyone'); computeGate
  * also ignores it on a rules project. `cs` is the chat_sessions alias.
@@ -65,9 +66,9 @@ export const approverNoAtSql = (cs: string): string => `(SELECT MAX(pv.created_a
             AND pv.approval_epoch = ${cs}.approval_epoch
             AND counts_toward_session_outcome(pv.user_id, pv.session_id)
             AND (EXISTS (SELECT 1 FROM app_approvers ar
-                          WHERE ar.app_id = ${cs}.app_id AND ar.user_id = pv.user_id AND ar.status = 'member')
+                          WHERE ar.app_id = COALESCE(ap.approvers_from_app_id, ap.id) AND ar.user_id = pv.user_id AND ar.status = 'member')
                  OR (NOT EXISTS (SELECT 1 FROM app_approvers ar
-                                  WHERE ar.app_id = ${cs}.app_id AND ar.status = 'member')
+                                  WHERE ar.app_id = COALESCE(ap.approvers_from_app_id, ap.id) AND ar.status = 'member')
                      AND EXISTS (SELECT 1 FROM users u
                                   WHERE u.id = pv.user_id AND u.is_admin = TRUE AND u.admin_readonly = FALSE))))`;
 
