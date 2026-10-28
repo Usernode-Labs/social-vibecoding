@@ -517,6 +517,28 @@ export interface StepsView {
 
 /** Everything under the card, by topic kind. */
 /** #4453: what a request's page says about the request itself. */
+/**
+ * #5999: the request a close proposal closes, as its page opens: who asked
+ * and when, the title (a link to the request's own page) and the words.
+ * `AppView._closesRequestView` builds it from the same single-request fetch
+ * the request's own page uses.
+ */
+export interface ClosesRequestView {
+  number: number;
+  /** The small heading over it, "The request". */
+  label: string;
+  title: string;
+  asker: string;
+  /** When it was asked: the formatted stamp, its unelided title and the instant. */
+  askedAt: string | null;
+  askedTime: string;
+  askedTitle: string;
+  /** The words, already rendered and sanitised; '' when there are none. */
+  bodyHtml: string;
+  /** The request on its own page. */
+  href: string;
+}
+
 export interface RequestView {
   number: number;
   /** The category's name, as plain words under "Request #N"; null when unset. */
@@ -763,6 +785,13 @@ export interface TopicBody {
   request?: RequestView | null;
   /** #4455: a change's page, drawn as a Messages reply thread (./change-head.tsx). */
   thread?: ChangeThreadView | null;
+  /**
+   * #5999: on a proposal to CLOSE a request, the request itself — its title,
+   * who asked and its words — drawn first in the About sheet, above the
+   * reason for closing. Null until the row has loaded, and for every other
+   * governance kind.
+   */
+  closesRequest?: ClosesRequestView | null;
   /** A proposal's plain-language summary, already rendered. */
   summaryHtml?: string | null;
   /**

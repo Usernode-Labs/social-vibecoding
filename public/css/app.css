@@ -16914,6 +16914,21 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-request-ask-text ul { margin: 0 0 4px; padding-left: 20px; list-style: disc; }
 .dev-request-ask-text ol { margin: 0 0 4px; padding-left: 20px; list-style: decimal; }
 .dev-request-ask-text strong { color: var(--text-primary); }
+/* #5999: the request a close proposal closes, first in its About sheet.
+   The row size (15px, 650) rather than the request page's large heading:
+   the card above already holds this page's one heading. */
+.dev-topic-closes { margin-bottom: 10px; }
+.dev-topic-closes-title {
+  display: block;
+  margin: 2px 0 4px;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--text-primary);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.dev-topic-closes-title:hover { text-decoration: underline; }
+
 /* The hub's own reveal, in the quote's text column; the caret turns over. */
 .dev-request-more.dev-ws-reveal-start { margin-top: 4px; padding-left: 0; width: auto; }
 .dev-request-more .dev-ws-reveal-chev { transition: transform 240ms cubic-bezier(.32, .72, 0, 1); }
