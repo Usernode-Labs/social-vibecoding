@@ -38,9 +38,12 @@ async function withServer(app, fn) {
   }
 }
 
-test('every way a link is followed asks for the phone while phone sign-in is offered', () => {
+test('every way a link is followed asks for a phone or a confirmed email while phone sign-in is offered', () => {
   const offered = /requirePhone: phoneAuth\.offered\(config\)/;
   assert.match(read('src/routes/community-invites.js'), offered, 'Join pressed while signed in');
+  assert.match(read('src/routes/community-invites.js'),
+    /invites\.joinQueued\(pool, req\.user\.id, \{ requirePhone: phoneAuth\.offered\(config\) \}\)/,
+    'the waiting room joining what it was queued on');
   assert.match(read('src/routes/auth.js'), offered, 'the email code');
   assert.match(read('src/routes/sign-in-providers.js'), offered, 'Apple and Google');
   assert.match(read('src/routes/phone-auth.js'), /redeemCarried\(pool, req, res, result\.userId, \{ requirePhone: true \}\)/);
@@ -51,6 +54,12 @@ test('every way a link is followed asks for the phone while phone sign-in is off
   // Checked before anything joins them, so a refusal leaves the row queued.
   const join = svc.slice(svc.indexOf('async function joinAsPrivateMember('));
   assert.ok(join.indexOf('user_phone_identities') < join.indexOf('apply_community_invite'));
+  // A confirmed address is as good as a phone (Evan, 28 Oct 2026): an email
+  // code, or Apple or Google vouching for it, sets it.
+  assert.match(join, /\(u\.email_confirmed = TRUE AND u\.email IS NOT NULL\)\s+OR EXISTS \(SELECT 1 FROM user_phone_identities p WHERE p\.user_id = u\.id\)/);
+  assert.ok(join.indexOf('email_confirmed') < join.indexOf('apply_community_invite'));
+  assert.match(svc, /async function joinQueued\(pool, userId, \{ requirePhone = true \} = \{\}\)/);
+  assert.match(svc, /const result = await redeem\(pool, \{ token, user, requirePhone \}\);/);
   assert.match(read('src/middleware/auth.js'), /'\/api\/auth\/oauth\/',[\s\S]{0,400}'\/api\/auth\/phone\/',/);
 });
 
@@ -276,6 +285,27 @@ test('the waiting room: a queued group can be joined now by adding a phone, and 
   assert.match(waiting, /if \(host && joined\[0\]\?\.slug\) host\._pendingHash = `\/app\/\$\{joined\[0\]\.slug\}`;\s+void check\(\);/);
   // deepLinkUrl takes that app path as it is.
   assert.match(read('public/js/auth-screens.js'), /if \(value\.startsWith\('\/app\/'\)\) return value;/);
+});
+
+test('the waiting room joins what it was queued on when the account may now, and lands in the first app', () => {
+  // 28 Oct 2026: somebody who signed up by email from an invite waited here
+  // with "Join Ear Trainer now" while a phone was the only way in. A
+  // confirmed address lets them in now, without a reload of anything else.
+  const waiting = read('frontend/src/features/auth/waiting.tsx');
+  assert.match(waiting, /fetch\('\/api\/invite-links\/queued\/join', \{ method: 'POST', credentials: 'same-origin' \}\)/);
+  // On show: follow the page's own link, then join, and only list what is
+  // left when nothing joined (no flash of the card before the app opens).
+  const follow = waiting.slice(waiting.indexOf('const followAndList = useCallback('));
+  assert.match(follow, /const joined = await joinQueued\(\);\s+if \(joined\.length\) \{\s+onJoined\(joined\);\s+return;\s+\}\s+await listQueued\(\);/);
+  // A pasted link that joins lands in its app too.
+  const paste = waiting.slice(waiting.indexOf('const joinWithLink = useCallback('));
+  assert.match(paste, /if \(body\?\.status === 'joined' && typeof body\.slug === 'string'\) \{\s+onJoined\(\[\{ slug: body\.slug, name: [^\n]+ \}\]\);\s+return;\s+\}/);
+  // Under a path the platform-access gate leaves open to a waiting account,
+  // and held to the page itself like every other invite write.
+  assert.ok('/api/invite-links/queued/join'.startsWith('/api/invite-links/queued'));
+  assert.match(read('src/middleware/auth.js'), /const GATE_OPEN_PATHS = \[[\s\S]*?'\/api\/invite-links\/queued',/);
+  assert.match(read('src/routes/community-invites.js'),
+    /router\.post\('\/api\/invite-links\/queued\/join', drainGuard, inviteRedeemLimiter, sameOriginBrowserOnly, async \(req, res\) => \{\s+if \(!req\.user\) return res\.status\(401\)/);
 });
 
 test('a provisional handle: private groups see it, public places ask for a username first', () => {

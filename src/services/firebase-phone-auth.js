@@ -7,9 +7,10 @@
  * Endpoints under routes/phone-auth.js. An invite link's Join sheet
  * (frontend/src/features/auth/sign-in-sheet.tsx, `phone`) starts with them
  * whenever they are offered, because an invite makes a private member and a
- * private member signs up with a phone (community-invites.js
- * joinAsPrivateMember). The answers are shaped exactly like the email
- * code's and the native OAuth endpoints' JSON.
+ * phone is the quickest way to be one (community-invites.js
+ * joinAsPrivateMember: a verified phone or a confirmed email). The answers
+ * are shaped exactly like the email code's and the native OAuth endpoints'
+ * JSON.
  *
  * SET UP IN THE ENVIRONMENT, NOT THE DATABASE. Nothing lives in the admin
  * console: the two knobs are platform variables (dapp.json platform_env,
@@ -1115,9 +1116,9 @@ async function finishWithName(pool, { signupToken, name, createSession }) {
 
 /**
  * Link verified phone claims to `userId`, an account that is signed in
- * already (routes/phone-auth.js /api/auth/phone-link/*): somebody who made
- * their account by email, still waiting, adds the phone a private member
- * needs (community-invites.js joinAsPrivateMember). The table's own rules
+ * already (routes/phone-auth.js /api/auth/phone-link/*): somebody still
+ * waiting, whose address was never confirmed, adds the phone a private
+ * member needs (community-invites.js joinAsPrivateMember). The table's own rules
  * hold: one account per number, one number per account. Returns
  * { linked: true, already } and refuses with
  *   phone_in_use          the number, or its Firebase identity, is another

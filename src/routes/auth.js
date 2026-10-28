@@ -402,8 +402,9 @@ function authRoutes(config) {
     // A link that joined this person (a private member's, or anybody's
     // with access) counts for its challenge now, not on the rule's next
     // pass (#3564). A queued one waits for release, and the schedule.
-    // While phone sign-in is offered, an email account new to the platform
-    // stays queued: a private member signs up with a phone.
+    // The code just confirmed the address, so an account new to the
+    // platform joins as a private member (community-invites.js
+    // joinAsPrivateMember).
     if (invite && invite.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
     if (verified.next === 'signed-in') {
       // The account has nothing to set up: a password, or (#4595) a username

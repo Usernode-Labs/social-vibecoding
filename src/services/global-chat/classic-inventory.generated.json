@@ -6288,6 +6288,21 @@
     },
     {
       "source": "src/routes/community-invites.js",
+      "method": "POST",
+      "path": "/api/invite-links/queued/join",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.invite.links.queued.join.09e3b8cd",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/community-invites.js",
       "method": "GET",
       "path": "/api/invite-links/by-token/:token",
       "expression": null,

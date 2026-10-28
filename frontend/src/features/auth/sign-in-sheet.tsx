@@ -44,8 +44,10 @@
  *
  * An invite's Join asks for a phone number first (`phone`, whenever the
  * server offers phone sign-in): an invite makes a private member, and a
- * private member signs up with a phone (services/community-invites.js
- * joinAsPrivateMember), against routes/phone-auth.js:
+ * phone is the quickest way to be one (services/community-invites.js
+ * joinAsPrivateMember takes a verified phone or a confirmed email; the
+ * email code, Apple and Google past the "or" confirm the address too),
+ * against routes/phone-auth.js:
  *
  *   phone       Your name and a phone number. POST /api/auth/phone/request
  *               texts a code, after an invisible reCAPTCHA (./recaptcha.ts)

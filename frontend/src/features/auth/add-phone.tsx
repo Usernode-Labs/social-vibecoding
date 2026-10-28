@@ -1,11 +1,11 @@
 /**
  * "Join Best brunch spots now": a phone number for an account that is
  * waiting (./waiting.tsx). An invite makes a private member only of an
- * account with a verified phone (src/services/community-invites.js
- * joinAsPrivateMember), so somebody who made their account by email, or
- * before phones were asked for, waits in the queue with the links they
- * followed. This card adds the phone and, with it, lets them in to those
- * groups now, as the invite's own Join would have:
+ * account with a verified phone or a confirmed email
+ * (src/services/community-invites.js joinAsPrivateMember), so somebody
+ * with neither (an address never confirmed) waits in the queue with the
+ * links they followed. This card adds the phone and, with it, lets them in
+ * to those groups now, as the invite's own Join would have:
  *
  *   phone  POST /api/auth/phone-link/request texts a code, after the same
  *          invisible reCAPTCHA as the sign-in sheet (./recaptcha.ts).

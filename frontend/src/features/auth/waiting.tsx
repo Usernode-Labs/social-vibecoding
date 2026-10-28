@@ -10,11 +10,13 @@
  * ── A group waiting for them, and a phone ─────────────────────────────
  *
  * An invite link this account followed queues its group (the list under
- * "When you're let in"). An invite lets in, as a private member, only an
- * account with a verified phone, so when the server offers phone sign-in
- * the screen offers the phone too (./add-phone.tsx): adding it joins the
- * queued groups now, and the check below lets them in to the first one's
- * app.
+ * "When you're let in"). An invite lets in, as a private member, an account
+ * with a verified phone or a confirmed email. Somebody queued while a phone
+ * was the only way in, who has a confirmed email, joins on show
+ * (POST /api/invite-links/queued/join) and lands in the first group's app.
+ * Anybody still queued after that is offered the phone when the server
+ * offers phone sign-in (./add-phone.tsx): adding it joins the queued groups
+ * now, and the check below lets them in to the first one's app.
  *
  * ── The poll is not a mount effect ────────────────────────────────────
  *
@@ -247,6 +249,30 @@ export function WaitingScreen() {
     }
   }, []);
 
+  // Joined a queued group as a private member (a phone added from here, a
+  // pasted link, or the join on show), which /api/auth/me reports as access:
+  // check now, and land in the first group's app, the way its invite's Join
+  // lands a newcomer (deepLinkUrl takes an app path).
+  const onJoined = useCallback((joined: JoinedGroup[]) => {
+    const host = legacy().AuthScreens as { _pendingHash?: string } | undefined;
+    if (host && joined[0]?.slug) host._pendingHash = `/app/${joined[0].slug}`;
+    void check();
+  }, [check]);
+
+  // Whatever this account is queued on and may join now: an account with a
+  // confirmed email that was queued while a phone was the only way in.
+  // Answers the groups it joined, none for nearly everybody.
+  const joinQueued = useCallback(async (): Promise<JoinedGroup[]> => {
+    try {
+      const res = await fetch('/api/invite-links/queued/join', { method: 'POST', credentials: 'same-origin' });
+      if (!res.ok) return [];
+      const body = await res.json();
+      return Array.isArray(body?.joined) ? body.joined : [];
+    } catch {
+      return [];
+    }
+  }, []);
+
   const followAndList = useCallback(async () => {
     try {
       const host = legacy().AuthScreens as { _waitingInvite?: string } | undefined;
@@ -261,8 +287,13 @@ export function WaitingScreen() {
     } catch {
       /* the waiting room works without it */
     }
+    const joined = await joinQueued();
+    if (joined.length) {
+      onJoined(joined);
+      return;
+    }
     await listQueued();
-  }, [listQueued]);
+  }, [joinQueued, onJoined, listQueued]);
 
   const loadAccount = useCallback(async () => {
     try {
@@ -279,8 +310,10 @@ export function WaitingScreen() {
   }, []);
 
   // A link pasted into the box, followed from this side as opening it
-  // would be: it queues its community (listed above once it is), and a
-  // link that lets the account in is caught by the check right after.
+  // would be: it joins its community (and lands in its app) when the
+  // account may join now, and otherwise queues it (listed above once it is);
+  // a link that lets the account in some other way is caught by the check
+  // right after.
   const joinWithLink = useCallback(async () => {
     if (joining) return;
     const token = inviteTokenFromText(link);
@@ -298,6 +331,11 @@ export function WaitingScreen() {
       });
       if (res.ok) {
         setLink('');
+        const body = await res.json().catch(() => null);
+        if (body?.status === 'joined' && typeof body.slug === 'string') {
+          onJoined([{ slug: body.slug, name: typeof body.name === 'string' ? body.name : body.slug }]);
+          return;
+        }
         await listQueued();
         await check();
       } else if (res.status === 404 || res.status === 410) {
@@ -310,17 +348,7 @@ export function WaitingScreen() {
     } finally {
       setJoining(false);
     }
-  }, [joining, link, listQueued, check, t]);
-
-  // A phone added from here joined its queued groups as a private member,
-  // which /api/auth/me reports as access: check now, and land in the first
-  // group's app, the way its invite's Join lands a newcomer (deepLinkUrl
-  // takes an app path).
-  const onJoined = useCallback((joined: JoinedGroup[]) => {
-    const host = legacy().AuthScreens as { _pendingHash?: string } | undefined;
-    if (host && joined[0]?.slug) host._pendingHash = `/app/${joined[0].slug}`;
-    void check();
-  }, [check]);
+  }, [joining, link, onJoined, listQueued, check, t]);
 
   const waitingOnShow = useCallback(() => {
     const shot = waitingShot(location.search);
