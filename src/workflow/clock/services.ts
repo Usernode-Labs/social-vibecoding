@@ -9,7 +9,7 @@ import { itemKind, runKind, MAX_ITEMS } from './machine.ts';
 import { bootRelease } from '../release/boot.ts';
 
 // What a job's I/O reads: the platform's configuration and its pool.
-export interface JobDeps { config: any; pool: any }
+export interface JobDeps { config: any; pool: any; previewRetirement?: Json }
 
 export interface Job {
   name: string;
@@ -560,7 +560,7 @@ export const JOBS: readonly Job[] = Object.freeze([
   },
   {
     name: 'preview-data-policy', everyMs: MIN, leaseMs: 10 * MIN, newestOnly: true,
-    run: (_ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/platform-preview-retirement').retire(config, pool),
+    run: (_ctx: WorkContext, { config, pool, previewRetirement }: JobDeps) => legacy('services/platform-preview-startup').check(config, pool, previewRetirement),
   },
   {
     // Staging databases nothing can reach any more (no session, build or

@@ -330,25 +330,30 @@
       { key: 'phones', label: 'settings:nav.part.phones', group: 'settings:nav.group.account' },
       { key: 'wallet', label: 'settings:nav.part.wallet', group: 'settings:nav.group.account', gate: 'wallet-section' },
 
-      // ── AI & building ───────────────────────────────────────────────────
+      // ── AI models & usage ───────────────────────────────────────────────
+      // #5994 split the old "AI & building" group, which mixed the allowance,
+      // the connectors, the agent instructions and a global chat, into this
+      // group and the next: each row is faster to find under a heading that
+      // says what it is about.
       // The allowance leads: it is the figure most builders open Settings to
       // find. OpenRouter follows it — the included key and the default
       // session model — and the Anthropic key, the one you add when the
       // allowance runs out, comes last.
-      { key: 'usage', label: 'settings:nav.part.usage', group: 'settings:nav.group.aiBuilding', page: 'ai' },
-      { key: 'openrouter', label: 'settings:nav.part.openrouter', group: 'settings:nav.group.aiBuilding', page: 'ai' },
-      { key: 'api-key', label: 'settings:nav.part.apiKey', group: 'settings:nav.group.aiBuilding', page: 'ai' },
+      { key: 'usage', label: 'settings:nav.part.usage', group: 'settings:nav.group.aiModels', page: 'ai' },
+      { key: 'openrouter', label: 'settings:nav.part.openrouter', group: 'settings:nav.group.aiModels', page: 'ai' },
+      { key: 'api-key', label: 'settings:nav.part.apiKey', group: 'settings:nav.group.aiModels', page: 'ai' },
+
+      // ── Integrations & automation ───────────────────────────────────────
       // Everything about building from outside Homeroom: the chat connectors
-      // (Claude, ChatGPT, Codex) and the CLI credentials. The out-of-credits
-      // card deep-links #settings/connectors and #settings/cli; both land on
-      // this page (public/js/credit-options.js). Connectors leads because the page is
-      // keyed by it: a page key that named a LATER part would open the page
-      // scrolled past everything above that part.
-      { key: 'connectors', label: 'settings:nav.part.connectors', group: 'settings:nav.group.aiBuilding', page: 'connectors' },
-      { key: 'cli', label: 'settings:nav.part.cli', group: 'settings:nav.group.aiBuilding', page: 'connectors' },
-      { key: 'agent-files', label: 'settings:nav.part.agentFiles', group: 'settings:nav.group.aiBuilding' },
-      { key: 'global-chat', label: 'settings:nav.part.globalChat', group: 'settings:nav.group.aiBuilding' },
-      { key: 'experimental', label: 'settings:nav.part.experimental', group: 'settings:nav.group.aiBuilding' },
+      // (Claude, ChatGPT, Codex), the CLI credentials and the instruction
+      // files and skills those agents read. The out-of-credits card
+      // deep-links #settings/connectors and #settings/cli; both land on the
+      // Connectors & CLI page (public/js/credit-options.js). Connectors leads
+      // because the page is keyed by it: a page key that named a LATER part
+      // would open the page scrolled past everything above that part.
+      { key: 'connectors', label: 'settings:nav.part.connectors', group: 'settings:nav.group.integrations', page: 'connectors' },
+      { key: 'cli', label: 'settings:nav.part.cli', group: 'settings:nav.group.integrations', page: 'connectors' },
+      { key: 'agent-files', label: 'settings:nav.part.agentFiles', group: 'settings:nav.group.integrations' },
 
       // ── Preferences ─────────────────────────────────────────────────────
       // THE UI OVERHAUL moved Theme here out of the hamburger drawer.
@@ -395,6 +400,16 @@
       { key: 'tour', label: 'settings:nav.part.tour', group: 'settings:nav.group.helpAbout' },
       { key: 'usernode', label: 'settings:nav.part.usernode', group: 'settings:nav.group.helpAbout', gate: 'settings-usernode-section' },
       { key: 'about', label: 'settings:nav.part.about', group: 'settings:nav.group.helpAbout' },
+
+      // ── Advanced ────────────────────────────────────────────────────────
+      // #5994: the features you switch on to try, at the foot of the menu
+      // rather than among the AI rows. Experimental is the page of switches;
+      // Global Chat is itself an experimental feature, with a page of its
+      // own settings. Unlike #1554's "Advanced", this group never collapses
+      // (see tests/settings-screen.test.js, "no group collapses"): it is a
+      // heading like the four above it, and every row stays visible.
+      { key: 'experimental', label: 'settings:nav.part.experimental', group: 'settings:nav.group.advanced' },
+      { key: 'global-chat', label: 'settings:nav.part.globalChat', group: 'settings:nav.group.advanced' },
     ],
 
     // The label of each page that holds more than one part. A page of one
@@ -1333,16 +1348,22 @@
     // rule is what keeps this module loadable by the vm harnesses. Tailwind's
     // extractor scans frontend/** including .js, so both spellings still
     // compile.
+    //
+    // The current row wears the lit tokens (#5997), the palette's "where you
+    // are", as the project rail's current place does (.dev-ws-place in
+    // app.css): the lit tint fills it, the lit line rings it, the lit ink
+    // names it, a weight heavier than its neighbours. It was the action
+    // accent's 10% wash, which hardly told it from a hovered row.
     _navView() {
       const active = Settings._section;
       const item = (p) => ({
         key: p.key,
         label: Settings.str(p.label),
         active: p.key === active,
-        className: 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
+        className: 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm transition-colors '
           + (p.key === active
-            ? 'bg-violet-600/10 text-violet-700 dark:text-violet-400'
-            : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
+            ? 'font-semibold bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)] shadow-[inset_0_0_0_1px_var(--lit-line)]'
+            : 'font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
         ...Settings._filterTerms(p),
       });
       return Settings._groupedSections().map((g, i) => ({

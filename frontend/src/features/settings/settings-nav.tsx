@@ -51,12 +51,12 @@
  */
 
 import { useEffect, useState } from 'react';
-import type { KeyboardEvent } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { Input } from '@/components/ui/input';
 
-import { useMessages } from '../../lib/i18n/react';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { settingsNavStore } from './settings-nav-store.js';
 
@@ -169,6 +169,82 @@ function signOut(setQuery: (q: string) => void) {
   (document.getElementById('settings-logout') as HTMLButtonElement | null)?.click();
 }
 
+/**
+ * What the typed words matched, shown in a hit's label (#5996): each run of
+ * the label that one of the words covers is a <mark>. Case-insensitive, as
+ * the filter is; a label whose lower-case form changes length (a dotted
+ * capital I) is left plain rather than marked at the wrong offsets.
+ */
+export function highlightRanges(text: string, query: string): [number, number][] {
+  const lower = text.toLowerCase();
+  if (lower.length !== text.length) return [];
+  const covered = new Array<boolean>(text.length).fill(false);
+  for (const w of query.toLowerCase().split(/\s+/).filter(Boolean)) {
+    for (let at = lower.indexOf(w); at !== -1; at = lower.indexOf(w, at + w.length)) {
+      for (let i = at; i < at + w.length; i++) covered[i] = true;
+    }
+  }
+  const ranges: [number, number][] = [];
+  covered.forEach((on, i) => {
+    if (!on) return;
+    const last = ranges[ranges.length - 1];
+    if (last && last[1] === i) last[1] = i + 1;
+    else ranges.push([i, i + 1]);
+  });
+  return ranges;
+}
+
+const MARK = 'bg-transparent text-zinc-900 dark:text-white font-semibold';
+
+function Highlighted({ text, query }: { text: string; query: string }) {
+  const ranges = highlightRanges(text, query);
+  if (!ranges.length) return <>{text}</>;
+  const out: ReactNode[] = [];
+  let from = 0;
+  for (const [start, end] of ranges) {
+    if (start > from) out.push(text.slice(from, start));
+    out.push(<mark key={start} className={MARK}>{text.slice(start, end)}</mark>);
+    from = end;
+  }
+  if (from < text.length) out.push(text.slice(from));
+  return <>{out}</>;
+}
+
+/** A hit's matched parts, joined as the row's second line. */
+function PartLabels({ parts, query }: { parts: FilterPart[]; query: string }) {
+  return (
+    <>
+      {parts.map((p, i) => (
+        <span key={p.key}>
+          {i ? ' · ' : ''}
+          <Highlighted text={p.label} query={query} />
+        </span>
+      ))}
+    </>
+  );
+}
+
+/**
+ * The two settings a no-match line suggests (#5996): Language and Theme,
+ * what people most often come looking for. Their labels are read from the
+ * menu itself, so the suggestion is always a real name in the viewer's
+ * language and always finds something when chosen.
+ */
+const SUGGESTED_PARTS = ['language', 'theme'];
+
+function suggestions(groups: { items: Filterable[] }[]): string[] {
+  const labels: string[] = [];
+  for (const key of SUGGESTED_PARTS) {
+    for (const group of groups) {
+      for (const item of group.items) {
+        const part = item.parts.find((p) => p.key === key);
+        if (part && !labels.includes(part.label)) labels.push(part.label);
+      }
+    }
+  }
+  return labels.length === SUGGESTED_PARTS.length ? labels : [];
+}
+
 /** Where choosing a hit goes: the first matching part, else the page. */
 const hitTarget = (hit: FilterHit) => (hit.parts[0] ? hit.parts[0].key : hit.item.key);
 
@@ -226,13 +302,37 @@ function FilterField({ id, query, setQuery, hits, signOutHit }: {
   );
 }
 
-/** The one line both hosts show when nothing matches. */
-function NoMatch({ query, className }: { query: string; className: string }) {
+const TRY_BUTTON = 'font-medium text-violet-600 dark:text-violet-400 hover:underline';
+
+/**
+ * What both hosts show when nothing matches: the line saying so, and under
+ * it two settings to try (#5996), each a button that fills the box with its
+ * name.
+ */
+function NoMatch({ query, setQuery, groups, className }: {
+  query: string;
+  setQuery: (q: string) => void;
+  groups: { items: Filterable[] }[];
+  className: string;
+}) {
   const t = useMessages('settings');
+  const [first, second] = suggestions(groups);
   return (
-    <p data-settings-filter-empty="" role="status" className={className}>
-      {t('settings:nav.filter.noMatch', { query: query.trim() })}
-    </p>
+    <div data-settings-filter-empty="" role="status" className={className}>
+      <p>{t('settings:nav.filter.noMatch', { query: query.trim() })}</p>
+      {first ? (
+        <p data-settings-filter-try="" className="mt-1">
+          <RichMessage
+            id="settings:nav.filter.try"
+            values={{ first, second }}
+            components={[
+              <button type="button" className={TRY_BUTTON} onClick={() => setQuery(first)} />,
+              <button type="button" className={TRY_BUTTON} onClick={() => setQuery(second)} />,
+            ]}
+          />
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -307,9 +407,9 @@ export function SettingsNavDesktop() {
               className={HIT_ROW}
               onClick={() => choose(hit, setQuery)}
             >
-              <span className="block">{hit.item.label}</span>
+              <span className="block"><Highlighted text={hit.item.label} query={query} /></span>
               {hit.parts.length ? (
-                <span className={HIT_PARTS}>{hit.parts.map((p) => p.label).join(' · ')}</span>
+                <span className={HIT_PARTS}><PartLabels parts={hit.parts} query={query} /></span>
               ) : null}
             </button>
           ))}
@@ -319,7 +419,7 @@ export function SettingsNavDesktop() {
             </button>
           ) : null}
           {hits.length || signOutHit ? null : (
-            <NoMatch query={query} className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400" />
+            <NoMatch query={query} setQuery={setQuery} groups={groups} className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400" />
           )}
         </div>
       ) : groups.map((group) => (
@@ -364,8 +464,8 @@ export function SettingsMobileMenu() {
                   data-settings-nav={hit.item.key}
                   className={MENU_ROW}
                   titleClassName="font-normal"
-                  title={hit.item.label}
-                  subtitle={hit.parts.length ? hit.parts.map((p) => p.label).join(' · ') : undefined}
+                  title={<Highlighted text={hit.item.label} query={query} />}
+                  subtitle={hit.parts.length ? <PartLabels parts={hit.parts} query={query} /> : undefined}
                   onClick={() => choose(hit, setQuery)}
                 />
               ))}
@@ -383,7 +483,7 @@ export function SettingsMobileMenu() {
               ) : null}
             </GroupedList>
           ) : (
-            <NoMatch query={query} className="px-4 text-[15px] text-zinc-500 dark:text-zinc-400" />
+            <NoMatch query={query} setQuery={setQuery} groups={groups} className="px-4 text-[15px] text-zinc-500 dark:text-zinc-400" />
           )}
         </div>
       ) : groups.map((group) => (

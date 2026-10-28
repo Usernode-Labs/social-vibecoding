@@ -284,6 +284,12 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // Work-order patch upload credentials (#4264): the hash locates a live
   // upload capability. Which task it is for, and until when, stay readable.
   external_agent_upload_tokens: ['token_hash'],
+  // A platform preview's project credential (services/preview-projects.js):
+  // the hash. Which session it is for, and until when, stay readable. A
+  // project made in a preview: its database role's password. Its state,
+  // error, image and host are what debugging it needs and stay readable.
+  preview_project_tokens: ['token_hash'],
+  preview_projects: ['db_password'],
   // Social identity is private account metadata. The short-lived OAuth row
   // additionally contains the callback-state hash and live PKCE verifier.
   user_social_identities: ['provider_subject', 'handle'],

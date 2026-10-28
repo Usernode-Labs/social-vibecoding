@@ -2925,6 +2925,12 @@ const App = {
       evicted = !!AppView.evictKeptApp?.(slug);
     }
 
+    // #6001: a change of this app's that is open — its side panel or its own
+    // page — moves from "It's going live." to "It's live." as the build lands.
+    if (!data.deploying && typeof AppView !== 'undefined') {
+      AppView.refreshOpenChangeForRelease?.(slug);
+    }
+
     // The app tab, for the app in view. Its Improve button spins while the
     // build rolls out and offers the reload once it has landed. Nothing here
     // touches a frame on screen: it keeps showing the build before this one
@@ -2960,6 +2966,8 @@ const App = {
     const slug = data.appSlug;
     if (slug && typeof AppView !== 'undefined') {
       AppView.noteBuild?.(slug, data.sha);
+      // #6001: the build named here is the one a merged change was waiting on.
+      AppView.refreshOpenChangeForRelease?.(slug);
       // Nothing left to reload onto in place: the next open loads it.
       if (AppView.evictKeptApp?.(slug) && slug === App.currentApp && window.Improve) {
         window.Improve.update({ appUpdateReady: false });

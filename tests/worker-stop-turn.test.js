@@ -451,7 +451,7 @@ test('a skipped dispatch hands a tail-holding caller its record, and never touch
   } finally { restore(); }
 });
 
-test('a skipped legacy dispatch does not invent a durable turn owner', async () => {
+test('a dispatch cancelled before registration does not invent a durable turn owner', async () => {
   const { worker, calls, restore } = loadWorker();
   try {
     warmSession(worker, 8103);

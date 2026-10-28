@@ -552,6 +552,14 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
     // moves the fingerprint automatically, so previews built before it are
     // detected as stale with no change to the sweeper (#851).
     const platformEnv = stagingEnv.platformStagingEnv(app, config);
+    // A platform preview's way to have projects made in it
+    // (services/preview-projects.js): its address for production and its own
+    // credential. Nothing for any other app, or with the switch off. The
+    // credential is new on every deploy, so it stays out of the fingerprint
+    // above, beside the database URL.
+    const previewProjectsEnv = await require('./preview-projects').previewEnv(config, {
+      app, sessionId: session.id, commitHash,
+    });
 
     const healthStartedAt = Date.now();
     reportBuildStep(config, session, 'health', timings, healthStartedAt);
@@ -565,6 +573,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
         DATABASE_URL: stagingDbUrl,
         ...platformEnv,
         ...stagingMerge.env,
+        ...previewProjectsEnv,
       },
       port: 3000,
       // #816: state the preview's resourcing rather than inheriting the
@@ -1051,7 +1060,8 @@ async function rebuildProductionInner(config, app, options = {}) {
     }
     watch?.end('build');
     watch?.note('build', require('./app-creation-timing').buildNote({
-      engine: build.prebuilt ? 'prebuilt' : applicationRuntime.mode(config) === 'docker' ? 'docker' : (build.engine || 'kpack'),
+      engine: build.prebuilt ? 'prebuilt' : build.runtimeKind === 'broker' ? 'broker'
+        : applicationRuntime.mode(config) === 'docker' ? 'docker' : (build.engine || 'kpack'),
       result: build, solveStartMs,
     }));
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});

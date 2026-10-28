@@ -82,7 +82,7 @@ const patchUploads = require('./external-agent-patch-upload');
 // itself lives behind the loopback route, not in this file.
 const proposalUpdate = require('./proposal-update');
 const { EXTERNAL_TASK_SUBMIT_LOCK } = require('./advisory-locks');
-const { changeWebPath } = require('./change-destination');
+const { appWebPath, changeWebPath, changeLink } = require('./change-destination');
 
 const GITHUB_API = 'https://api.github.com';
 const BRANCH_PREFIX = 'usernode';
@@ -2613,12 +2613,13 @@ function renderPreparedTask({
 }) {
   const forkOwner = task.fork_owner;
   const forkRepo = task.fork_repo;
-  const webPath = `${origin}/#app/${app.slug}`;
+  const webPath = appWebPath(origin, app.slug);
   // The duplicate warning's links, addressed the same way get_proposal's
   // `webPath` is, so a caller can open one without composing a URL.
   const duplicates = (Array.isArray(openProposals) ? openProposals : []).map((p) => ({
     ...p,
     webPath: origin ? changeWebPath(origin, app.slug, p.proposalId) : null,
+    link: origin ? changeLink(origin, app.slug, p.proposalId, p.prNumber) : null,
   }));
   // An app on Homeroom's own git host: no fork, cloned from there, a patch
   // back. Null for an app on GitHub.

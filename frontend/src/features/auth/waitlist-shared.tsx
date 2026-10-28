@@ -219,12 +219,27 @@ export interface WaitlistOptions {
 
 let optionsPromise: Promise<WaitlistOptions | null> | null = null;
 
-/** The memoised options fetch. Never rejects — a failure resolves to null. */
+// A read fenced by a session boundary (lib/api-cache-identity.ts) is read
+// once more: the options are the same for anyone.
+function readOptions(again: boolean): Promise<WaitlistOptions | null> {
+  return fetch('/api/public/waitlist/options')
+    .then((r) => (r.ok ? (r.json() as Promise<WaitlistOptions>) : null))
+    .catch((err) => (again && err?.name === 'AbortError' ? readOptions(false) : null));
+}
+
+/**
+ * The memoised options fetch. Never rejects — a failure resolves to null,
+ * and is not kept: the next caller asks again. A kept null emptied every
+ * later reader for the document's life (28 Oct 2026: a waiting room reached
+ * by signing up from an invite link had no countries to choose from).
+ */
 export function waitlistOptions(): Promise<WaitlistOptions | null> {
   if (!optionsPromise) {
-    optionsPromise = fetch('/api/public/waitlist/options')
-      .then((r) => (r.ok ? (r.json() as Promise<WaitlistOptions>) : null))
-      .catch(() => null);
+    const pending: Promise<WaitlistOptions | null> = readOptions(true).then((opts) => {
+      if (!opts && optionsPromise === pending) optionsPromise = null;
+      return opts;
+    });
+    optionsPromise = pending;
   }
   return optionsPromise;
 }

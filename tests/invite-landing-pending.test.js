@@ -146,6 +146,32 @@ test('a preview that cannot be read ends the wait with nothing, so the pitch com
   }
 });
 
+// 28 Oct 2026: a signed-out boot's /me resets the session guard while the
+// preview is on its way, and the guard fences the reply with an AbortError
+// ("Session changed", lib/api-cache-identity.ts). The preview is public, so
+// it is read once more; a second fence ends the wait as any failure does.
+test('a preview fenced by a session boundary is read once more', async () => {
+  const fenced = () => Promise.reject(new DOMException('Session changed', 'AbortError'));
+  let n = 0;
+  const hook = mountHook({ pathname: `/invite/${TOKEN}`, fetchImpl: () => (++n === 1 ? fenced() : answering(LIVE)()) });
+  await flush(); await flush();
+  assert.equal(hook.calls.length, 2, 'read again after the fence');
+  assert.equal(hook.read().preview.live, true, 'the card, not the pitch');
+  assert.equal(hook.read().pending, false);
+  hook.unmount();
+
+  const twice = mountHook({ pathname: `/invite/${TOKEN}`, fetchImpl: fenced });
+  await flush(); await flush();
+  assert.equal(twice.calls.length, 2, 'only once more');
+  assert.deepEqual(twice.read(), { preview: null, pending: false });
+  twice.unmount();
+
+  const other = mountHook({ pathname: `/invite/${TOKEN}`, fetchImpl: () => Promise.reject(new TypeError('Failed to fetch')) });
+  await flush();
+  assert.equal(other.calls.length, 1, 'any other failure is not retried');
+  other.unmount();
+});
+
 test('a preview that hangs stops holding the pitch back after the wait, and still lands if it comes', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let resolve;
