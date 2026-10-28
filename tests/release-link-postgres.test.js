@@ -191,16 +191,16 @@ test('the release link signs its recipient in once, by POST, and only while it i
     assert.equal((await spend('short')).status, 422);
     assert.equal((await spend({ token: 'x' })).status, 422);
 
-    // ── An admin's address is refused, as a code is ──
+    // ── An admin's tapped link signs them in, as a code does ──
     await pool.query(
       "INSERT INTO users (username, password, email, email_confirmed, is_admin) VALUES ('boss', 'x', 'boss@example.test', TRUE, TRUE)"
     );
     const bossId = await released('boss@example.test');
     const boss = await releaseLinks.mint(pool, { signupId: bossId, email: 'boss@example.test' });
-    const refused = await spend(boss);
-    assert.equal(refused.status, 422);
-    assert.equal((await refused.json()).code, 'admin_password_required');
-    assert.equal(cookieValue(refused.headers, 'session'), null);
+    const bossSignedIn = await spend(boss);
+    assert.equal(bossSignedIn.status, 200);
+    assert.equal((await bossSignedIn.json()).next, 'signed-in');
+    assert.match(String(cookieValue(bossSignedIn.headers, 'session')), /^[0-9a-f]{64}$/);
   });
 
 // Evan, 12 Oct 2026: a new account's link is spent as the page opens

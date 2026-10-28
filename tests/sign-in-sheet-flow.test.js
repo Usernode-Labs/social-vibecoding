@@ -559,7 +559,6 @@ test('the first step with Apple and Google: the terms under them, then the email
   assert.doesNotMatch(join, /Use a password|data-sign-in-sheet-password=/);
   assert.equal(message('auth:signInSheet.withPassword'), 'Use a password');
   assert.match(message('auth:signInSheet.resume.passwordRequired'), /"Use a password"/);
-  assert.match(message('auth:signInSheet.resume.adminPasswordRequired'), /"Use a password"/);
 });
 
 test('Email code | Password is one switch, and the password and reset steps say no terms (#5258)', () => {

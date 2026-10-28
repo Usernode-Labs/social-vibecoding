@@ -461,7 +461,7 @@ test('the server: the check is a read, and the on-load spend can only reach the 
   const guard = cont.indexOf("if (newAccountOnly && !isUnfinishedAccount(user)) {\n    throw new EmailSignupError('account_set_up', ACCOUNT_SET_UP_MESSAGE);");
   assert.ok(guard > 0, 'the guard');
   assert.ok(guard < cont.indexOf('createSession(client'), 'before any session');
-  assert.ok(guard < cont.indexOf("if (user && user.is_admin)"), 'before the refusals');
+  assert.ok(guard < cont.indexOf("if (user && user.password_set && !user.email_confirmed)"), 'before the refusals');
   const { isUnfinishedAccount } = require('../src/services/email-signup');
   assert.equal(isUnfinishedAccount(null), true, 'no account yet');
   assert.equal(isUnfinishedAccount({ is_admin: false, password_set: false, needs_username_choice: true }), true);

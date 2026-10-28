@@ -569,20 +569,23 @@ test('an email code branches on the account it matches (#1586)', async (t) => {
         [legacyId],
       )).rows[0].email_confirmed, false);
 
-      // ── An admin account is never signed in by a code ──────────────────
+      // ── An admin account signs in by a code, like any account ──────────
       const adminId = await seed('admin@example.com', {
         email_confirmed: true, password_set: true, is_admin: true,
       });
-      const adminRefused = await verify(
+      const adminSignedIn = await verify(
         'admin@example.com',
         await freshCode('admin@example.com'),
       );
-      assert.equal(adminRefused.status, 422);
-      assert.equal((await adminRefused.json()).code, 'admin_password_required');
+      assert.equal(adminSignedIn.status, 200);
+      const adminBody = await adminSignedIn.json();
+      assert.equal(adminBody.next, 'signed-in');
+      assert.equal(adminBody.user.id, adminId);
+      assert.equal(adminBody.user.isAdmin, true);
       assert.equal((await pool.query(
         'SELECT COUNT(*)::int AS count FROM sessions WHERE user_id = $1',
         [adminId],
-      )).rows[0].count, 0);
+      )).rows[0].count, 1);
 
       // ── A correct code is consumed on every branch, refusals included ──
       assert.equal((await pool.query(
