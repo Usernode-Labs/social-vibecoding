@@ -15,10 +15,12 @@ const driftPoller = require('../services/main-drift-poller');
 const appSecrets = require('../services/app-secrets');
 const platformEnv = require('../services/platform-env');
 const pendingSecrets = require('../services/pending-secrets');
+const { encrypt: encryptSecret } = require('../services/secrets');
 const appManifest = require('../services/app-manifest');
 const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
 const renamePr = require('../services/rename-pr');
 const topicsPr = require('../services/topics-pr');
+const platformOperations = require('../services/platform-operations');
 const places = require('../services/places');
 const { drainGuard } = require('../services/lifecycle');
 const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter, firstSessionMomentLimiter } = require('../middleware/rate-limits');
@@ -517,6 +519,22 @@ function isPlatformRepo(parsed, config) {
 // the deploy actually resolves (scripts/dump-platform-env.js). So they
 // are no longer a dead end and no longer refused; see the self-hosted
 // branches in the three routes further below.
+// A settings proposal's branch, file and PR are written on a conductor
+// (services/manifest-proposal-operation.js), which reads the proposer's
+// authority again first. The route has already checked and validated
+// everything it answers for. Resolves the PR's result, or answers the
+// refusal (or "still working") itself and resolves null.
+async function proposeManifest(res, app, user, flavor, args) {
+  const out = await platformOperations.request({
+    op: 'manifest.propose', appId: app.id, userId: user.id,
+    input: { flavor, args, repoUrl: app.repo_url },
+  });
+  if (out.ok) return out;
+  const { ok: _ok, status, ...body } = out;
+  res.status(status || 500).json(body);
+  return null;
+}
+
 function refuseIfSelfHosted(app, res) {
   if (!app || !app.self_hosted) return false;
   res.status(403).json({
@@ -2848,67 +2866,18 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         group: scope === 'platform' ? group : null,
       });
 
-      const result = await renamePr.createSecretDeclarationPR(
-        config, pool, app,
-        { scope, key, declaration, hasValue: !!value.length },
-        { id: req.user.id, username: req.user.username }
-      );
-
-      // Value handling, only after the PR exists — a failed proposal must
-      // not leave a value behind.
-      //
-      // A full admin's value lands NOW, through the same DAO path the PUT
-      // route uses (both stores accept a not-yet-declared key: that's the
-      // pre-declaration bootstrapping the PUT route and
-      // platform-env.setValue already document). For a child app it stays
-      // inert until the declaration merges, because mergeForDeploy only
-      // injects declared keys. Everyone else's value waits in
-      // pending_secret_declarations and is applied by the merge.
-      const applyNow = !!req.user?.canAdminWrite && !!value.length;
-      if (applyNow) {
-        if (scope === 'platform') {
-          const client = await pool.connect();
-          try {
-            await client.query('BEGIN');
-            await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
-            await platformEnv.setValue(client, app.id, key, value, {
-              userId: req.user.id,
-              dataKey: config.dataEncryptionKey,
-              privateHint: isPrivate,
-            });
-            await client.query('COMMIT');
-          } catch (err) {
-            await client.query('ROLLBACK').catch(() => {});
-            throw err;
-          } finally {
-            client.release();
-          }
-          events.record(pool, {
-            type: events.EVENT_TYPES.PLATFORM_ENV_CHANGED,
-            userId: req.user.id,
-            appId: app.id,
-            metadata: { key, action: 'set', private: isPrivate, appliedBy: 'admin-direct' },
-          });
-        } else {
-          await appSecrets.setValue(pool, app.id, key, value, {
-            sensitive: isPrivate,
-            userId: req.user.id,
-            dataKey: config.dataEncryptionKey,
-          });
-        }
-      }
-
-      await pendingSecrets.create(pool, {
-        appId: app.id,
-        sessionId: result.sessionId,
-        scope,
-        key,
-        declaration,
-        value: value.length ? value : null,
-        userId: req.user.id,
-        dataKey: config.dataEncryptionKey,
-        valueApplied: applyNow,
+      // The value travels with the proposal, encrypted with the data key as
+      // pending_secret_declarations keeps it, and is handled on the conductor
+      // once the PR exists (services/manifest-proposal-operation.js
+      // declareValue): a full admin's lands now, everyone else's waits for
+      // the merge, and a failed proposal leaves none behind. So a proposal
+      // still opening when this answers keeps its value too.
+      const result = await proposeManifest(res, app, req.user, 'secret-declaration', {
+        scope, key, declaration, hasValue: !!value.length, isPrivate,
+        valueEnc: value.length ? encryptSecret(value, config.dataEncryptionKey) : null,
       });
+      if (!result) return;
+      const applyNow = !!result.valueApplied;
 
       // The VALUE never reaches a log line — only the key, its privacy
       // flag, and who proposed it.
@@ -3034,9 +3003,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // Open the rename PR + promoted vote session via the shared helper
       // (services/rename-pr.js) — the exact same code path the boot
       // migration uses to drain legacy rename issues.
-      const result = await renamePr.createRenamePR(
-        config, pool, app, newName, { id: req.user.id, username: req.user.username }
-      );
+      const result = await proposeManifest(res, app, req.user, 'rename', { newName });
+      if (!result) return;
 
       res.status(201).json({
         ok: true,
@@ -3197,11 +3165,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         });
       }
 
-      const result = await renamePr.createVisibilityPR(
-        config, pool, app,
-        { collab: collabVisibility, view: viewVisibility },
-        { id: req.user.id, username: req.user.username }
-      );
+      const result = await proposeManifest(res, app, req.user, 'visibility',
+        { collab: collabVisibility, view: viewVisibility });
+      if (!result) return;
 
       res.status(201).json({
         ok: true,
@@ -3280,9 +3246,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // sheet warns that if both pass the later one may overwrite the
       // earlier. The community read still returns the open one
       // (findWhoDecidesPr) so the sheet can link to it.
-      const result = await whoDecides.createWhoDecidesPR(
-        config, pool, app, diff, { id: req.user.id, username: req.user.username }
-      );
+      const result = await proposeManifest(res, app, req.user, 'who-decides', diff);
+      if (!result) return;
       res.status(201).json({
         ok: true,
         sessionId: result.sessionId,
@@ -3525,11 +3490,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         });
       }
 
-      const result = await renamePr.createAdminsPR(
-        config, pool, app,
-        { usernames },
-        { id: req.user.id, username: req.user.username }
-      );
+      const result = await proposeManifest(res, app, req.user, 'admins', { usernames });
+      if (!result) return;
 
       res.status(201).json({
         ok: true,
@@ -3624,11 +3586,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         });
       }
 
-      const result = await renamePr.createGovernancePR(
-        config, pool, app,
-        { policy: approverPolicy, approvalsRequired },
-        { id: req.user.id, username: req.user.username }
-      );
+      const result = await proposeManifest(res, app, req.user, 'governance',
+        { policy: approverPolicy, approvalsRequired });
+      if (!result) return;
 
       // Initial-approver invites go out only after the PR exists (a
       // failed proposal must not leave invites behind). Already-member /
@@ -3704,9 +3664,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (!repoRef.parse(app.repo_url)) {
         return res.status(400).json({ error: 'Could not parse the app repository URL' });
       }
-      const result = await topicsPr.createTopicsPR(
-        config, pool, app, change, { id: req.user.id, username: req.user.username }
-      );
+      const result = await proposeManifest(res, app, req.user, 'topics', change);
+      if (!result) return;
       res.status(201).json({
         ok: true,
         sessionId: result.sessionId,
