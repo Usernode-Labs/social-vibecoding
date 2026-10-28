@@ -173,6 +173,10 @@ const BOOT_CLOCK_MARGIN_MS = 5 * 60 * 1000;
 // How long to wait before looking again at a shots run that keeps the
 // change's worker (worker.retire).
 const RETIRE_RECHECK_MS = 2 * 60 * 1000;
+// How long after its merge a merge missing from a build looks for the merge
+// that carried it (carried.find): a stacked pull request's parent merges
+// within days. One stuck for good stops asking GitHub on every release.
+const CARRIER_LOOK_MS = 30 * 24 * 60 * 60 * 1000;
 
 // ── Copy ────────────────────────────────────────────────────────────────
 
@@ -491,9 +495,10 @@ function resultOf(status: Followup['status']) {
     }
     // Not in this build: a merge into another pull request's branch (a
     // stacked one) never reaches main by its own commit, so it looks for the
-    // later merge that carried it (carried.find), once per build.
+    // later merge that carried it (carried.find), once per build, for a month.
     if (p.kind === WORK.verify && status === 'done' && result.contains === false && s.name !== 'live'
-        && d.role === 'merge' && !d.carriedBy && d.repo && d.mergeSha && result.sha && !d.followups[`carrier:${result.sha}`]) {
+        && d.role === 'merge' && !d.carriedBy && d.repo && d.mergeSha && result.sha && !d.followups[`carrier:${result.sha}`]
+        && ctx.now.getTime() - Date.parse(d.mergedAt) <= CARRIER_LOOK_MS) {
       const work: WorkRequest[] = [{ kind: WORK.carrier, key: `carrier:${result.sha}`, input: {
         ...d.repo, appId: d.appId, sessionId: d.sessionId, mergeSha: d.mergeSha, mergedAt: d.mergedAt, release: result.sha,
       } }];

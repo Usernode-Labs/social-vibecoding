@@ -530,6 +530,15 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
       assert.deepEqual((await workOf(lone)).filter((w) => w.kind === WORK.carrier).map((w) => w.work_key).sort(),
         [`carrier:${SHA('9')}`, `carrier:${SHA('f')}`]);
       assert.equal((await row(lone.id)).included_in_session_id, null);
+
+      // A merge more than a month old stuck for good asks GitHub nothing more.
+      const old = await proposal(a);
+      await merge(old, { mergeSha: SHA('7'), mergedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString() });
+      await settle();
+      await send(old, 'Deployed', { sha: SHA('8') });
+      await settle();
+      assert.ok((await workOf(old)).some((w) => w.work_key === `verify:${SHA('8')}`), 'its own commit is still checked');
+      assert.ok(!(await workOf(old)).some((w) => w.kind === WORK.carrier));
     } finally {
       work.results.delete(WORK.verify);
       work.results.delete(WORK.carrier);
