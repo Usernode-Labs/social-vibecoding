@@ -110,7 +110,16 @@ function uploadIdOf(value) {
 function nextStepFor(kind, uploadId) {
   if (kind === 'plan') return `Call post_spec with specUploadId ${uploadId} instead of spec.`;
   if (kind === 'video') return `Call create_request with videoUploadId ${uploadId}.`;
-  return `Call create_request with ${uploadId} in screenshotUploadIds.`;
+  return `Call create_request with ${uploadId} in screenshotUploadIds, or show it in a plan's text as <img src="PATH"> (PATH is this answer's \`path\`).`;
+}
+
+// Where a stored video or screenshot is served (routes/issue-videos.js,
+// the screenshot route), which a plan's text may show.
+function mediaPath(kind, mediaId) {
+  if (!mediaId) return null;
+  if (kind === 'screenshot') return `/issue-images/${mediaId}`;
+  if (kind === 'video') return `/issue-videos/${mediaId}`;
+  return null;
 }
 
 // Rows a day past their expiry. Never fatal; the next mint sweeps again.
@@ -265,7 +274,7 @@ async function storeUpload(pool, { uploadId, userId, kind, contentType, body }) 
     }));
     return usedUp();
   }
-  return { ok: true, uploadId, kind, bytes: body.length, sha256 };
+  return { ok: true, uploadId, kind, bytes: body.length, sha256, path: mediaPath(kind, mediaId) };
 }
 
 // The upload a tool call names, of the user making it, of the kind the field
@@ -342,6 +351,7 @@ module.exports = {
   tokenFromHeader,
   uploadIdOf,
   nextStepFor,
+  mediaPath,
   sweep,
   mintUpload,
   authenticateUpload,

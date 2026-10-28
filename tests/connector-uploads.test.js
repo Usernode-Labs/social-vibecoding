@@ -214,8 +214,10 @@ test('a video and a screenshot go where the feedback dialog\'s go, unlinked, and
 
     const s = await put(53, PNG, auth());
     assert.equal(s.status, 201);
-    assert.match((await s.json()).nextStep, /53 in screenshotUploadIds/);
+    const sJson = await s.json();
+    assert.match(sJson.nextStep, /53 in screenshotUploadIds, or show it in a plan's text/);
     const sIns = queries.find((q) => q.sql.includes('INSERT INTO issue_screenshots'));
+    assert.equal(sJson.path, `/issue-images/${sIns.params[0]}`, 'the path a plan\'s text shows it at');
     assert.deepEqual(sIns.params.slice(1, 3), [7, 'image/png']);
   });
 });
