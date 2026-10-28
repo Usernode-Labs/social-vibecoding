@@ -127,8 +127,10 @@ test('a native pull request merged by hand is reported to the proposal machine, 
   assert.deepEqual(await scans.lookMergedByHand(p, 8), { merged: false });
   github.getPR = async () => ({ merged: true, merge_commit_sha: 'c'.repeat(40), merged_at: '2026-10-19T09:00:00Z' });
   assert.deepEqual(await scans.lookMergedByHand(p, 8), { merged: true });
+  // `base`: where it merged (src/workflow/rules/pr-base.ts); this answer
+  // names none, which the machine reads as main.
   assert.deepEqual(merges, [{ sessionId: 8, appId: 4, from: 'promoted', merged: true, closed: false,
-    mergeSha: 'c'.repeat(40), mergedAt: '2026-10-19T09:00:00Z', closedAt: null }]);
+    mergeSha: 'c'.repeat(40), mergedAt: '2026-10-19T09:00:00Z', closedAt: null, base: null }]);
   github.getPR = async () => { throw new Error('API rate limit exceeded'); };
   assert.deepEqual(await scans.lookMergedByHand(p, 8), { skipped: 'budget' }, 'a refusal for the limit is a look skipped');
 });

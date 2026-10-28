@@ -218,6 +218,32 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
       },
     },
 
+    // A stacked import whose parent is on main, moved onto main
+    // (rules/pr-base.ts): its pull request's base is retargeted. One already
+    // based there, or merged or closed meanwhile, has nothing to move; a
+    // closed one keeps its base.
+    [WORK.retarget]: {
+      maxAttempts: 6,
+      backoffMs: (n) => Math.min(30 * 60 * 1000, 30 * 1000 * 2 ** (n - 1)),
+      async run({ input }): Promise<Json> {
+        const row = await session(Number(input.sessionId));
+        const mock = row?.source === 'imported' && legacy('config').usesMockGithubForImports();
+        const gh = mock ? legacy('services/github-mock') : github();
+        if (!mock && !gh.isEnabled()) throw new Error('GitHub is not configured');
+        let pr: any;
+        try {
+          pr = await gh.getPR(input.owner, input.repo, input.number);
+        } catch (err) {
+          if (gone(err)) throw permanent('The pull request is gone from GitHub.');
+          throw err;
+        }
+        if (pr?.merged || pr?.state === 'closed') throw permanent('The pull request is no longer open on GitHub.');
+        if (pr?.base?.ref === input.base) return { base: input.base, already: true };
+        await gh.retargetPR(input.owner, input.repo, input.number, input.base);
+        return { base: input.base };
+      },
+    },
+
     // Its worker goes (a pause, an unpromote, a close). One already gone is
     // gone. Fenced and finished (worker.removeWorker): the resources are read
     // by identity, then removed only while this claim is still ours (a
@@ -320,7 +346,9 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
         if (!mock && !gh.isEnabled()) throw new Error('GitHub is not configured');
         try {
           const pr = await gh.getPR(repo.owner, repo.repo, row.pr_number);
-          if (pr?.merged) return { merged: true, sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null };
+          // Where it merged: a merge into another branch is never recorded as
+          // merged (rules/pr-base.ts).
+          if (pr?.merged) return { merged: true, sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, base: pr.base?.ref ?? null };
           return { merged: false, state: pr?.state || null };
         } catch (err) {
           if (gone(err)) return { merged: false, gone: true };

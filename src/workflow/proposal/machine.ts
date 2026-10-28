@@ -21,6 +21,14 @@
 // start, a check main has fixed, the Homeroom bot) is data of underway or
 // in_review: never while it is being merged, and no merge while it syncs.
 //
+// "Merged" means "in main" (rules/pr-base.ts). An import whose pull request
+// is based on another change's branch waits for that change: it is never
+// measured or claimed, and once that change is on main (its Merged, or
+// GitHub's merge seen by a look) it is told (ParentMerged), its pull request
+// is retargeted to main (pr.retarget) and it syncs with main. A merge GitHub
+// reports into any branch but main closes the proposal as merged elsewhere;
+// it is never recorded as merged.
+//
 // `chat_sessions.status` is the projection, with the values it always had:
 // underway reads 'active' while it holds one of its owner's slots (and the
 // platform's), 'paused' once it gave it back (an imported proposal holds
@@ -53,6 +61,7 @@ import { claimRefusal } from '../rules/merge-claim.ts';
 import { APPROVER_NO_WINDOW_WORDS } from '../rules/governance-gate.ts';
 import { toBotChange, withdrawnNote, writeBotChange } from '../rules/bot-notes.ts';
 import { turnStop } from '../rules/turn-stop.ts';
+import { MAIN_BRANCH, onMain } from '../rules/pr-base.ts';
 import { readFacts, NO_FACTS } from './facts.ts';
 import type { Facts, Row } from './facts.ts';
 
@@ -70,11 +79,12 @@ export const WORK = Object.freeze({
   observe: 'merge.observe',
   sync: 'branch.sync',
   diagram: 'pr.diagram',
+  retarget: 'pr.retarget',
 });
 export const QUEUE = 'merge-queue';
 export const appKey = (appId: number) => `app:${appId}`;
 // The proposal's GitHub moves, run one at a time.
-const PR_MOVES: ReadonlySet<string> = new Set([WORK.open, WORK.close, WORK.reopen, WORK.diagram]);
+const PR_MOVES: ReadonlySet<string> = new Set([WORK.open, WORK.close, WORK.reopen, WORK.diagram, WORK.retarget]);
 
 // ── State ───────────────────────────────────────────────────────────────
 
@@ -177,6 +187,9 @@ export interface Data {
   refused?: { head: string | null; main: string | null; kind: string } | null;
   gaveUp?: { head: string | null; main: string | null } | null;
   backoff?: { until: string; failures: number } | null;
+  // The change under this one's base is on main: its pull request is being
+  // retargeted to main (pr.retarget, its n), then it syncs with main.
+  retarget?: { n: number; parentId: number | null } | null;
 }
 
 const STATES = ['underway', 'proposing', 'in_review', 'merging', 'unconfirmed', 'merged', 'closed'] as const;
@@ -251,7 +264,7 @@ const NOTHING_RAN: ReadonlySet<string> = new Set(['unmeasured', 'over_budget', '
 export const SYNC_BACKOFF_MAX_MS = 30 * 60 * 1000;
 // Why a sync with main is asked for.
 export const SYNC_REASONS: ReadonlySet<string> = new Set([
-  'person', 'resume', 'conflict', 'boot_failure', 'fixed_check', 'bot_fix', 'bot_handoff',
+  'person', 'resume', 'conflict', 'boot_failure', 'fixed_check', 'bot_fix', 'bot_handoff', 'parent_merged',
 ]);
 // The platform's syncs for a failing check: once per head, the keys recorded
 // beside it (services/fixed-check-sync.js).
@@ -325,9 +338,11 @@ const EVENTS = {
   // `pr`: the pull request as GitHub showed the route (null: none yet);
   // `cap`: the owner's ceiling on proposals in review.
   Promote: (p: any) => {
+    // `base`: the branch GitHub merges it into (an import's; null when the
+    // caller did not read it, which reads as main).
     const pr = p?.pr == null ? null : {
       state: p.pr.state === 'closed' ? 'closed' : 'open', draft: !!p.pr.draft, merged: !!p.pr.merged,
-      head: optSha(p.pr.head, 'pr.head'),
+      head: optSha(p.pr.head, 'pr.head'), base: text(p.pr.base, 255),
     };
     return { ...session(p), from: from(p), userId: int(p?.userId, 'userId'), username: text(p?.username, 100),
       cap: count(p?.cap, 'cap'), pr, expectedHead: optSha(p?.expectedHead, 'expectedHead'), viaAgent: !!p?.viaAgent,
@@ -355,9 +370,11 @@ const EVENTS = {
   // GitHub's word on its pull request, as a look read it (an import's,
   // services/pr-import-sync.js, or a native one's merged by hand,
   // proposal-scans.js): merged, or closed and when. `tally`: the votes it
-  // stood at, for a merge's record.
+  // stood at, for a merge's record. `base`: the branch it merged into (null:
+  // a caller that did not say, read as main).
   PrLooked: (p: any) => ({ ...session(p), from: from(p), merged: !!p?.merged, closed: !!p?.closed,
     mergeSha: text(p?.mergeSha, 64), mergedAt: text(p?.mergedAt, 40), closedAt: text(p?.closedAt, 40), readAt: text(p?.readAt, 40),
+    base: text(p?.base, 255),
     tally: p?.tally == null ? null : {
       yes: Math.max(0, Number(p.tally.yes) | 0),
       required: p.tally.required == null ? null : Math.max(0, Number(p.tally.required) | 0),
@@ -406,6 +423,10 @@ const EVENTS = {
   // event (services/proposal-diagram.js storeDeclared): the pull request's
   // body is owed its block.
   DiagramStored: (p: any) => ({ ...session(p) }),
+  // The change whose branch this one's pull request is based on is on main
+  // (its own machine on Merged, or a look that read it there): the pull
+  // request is retargeted to main, and the proposal syncs with it.
+  ParentMerged: (p: any) => ({ ...session(p), parentId: optInt(p?.parentId, 'parentId') }),
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -538,7 +559,7 @@ const destroyWorker = (d: Data, n: number): WorkRequest => ({ kind: WORK.destroy
 
 
 // The thread line of a close, in Homeroom's words (a change, never "PR #n").
-function closedLine(r: Row, reason: string, byOwner: boolean): string {
+function closedLine(r: Row, reason: string, byOwner: boolean, base: string | null = null): string {
   const l = label(r);
   switch (reason) {
     case 'auto-rejected': return `${l} was set aside for now (more No than Yes, and not enough support to carry it).`;
@@ -553,6 +574,9 @@ function closedLine(r: Row, reason: string, byOwner: boolean): string {
     case 'campaign-refused': return `${l} could not be put up for a vote and was closed. The maintenance campaign can make it again.`;
     case 'pr-closed': return `${l} was closed on GitHub, so it is closed here too.`;
     case 'pr-merged': return `${l} was merged on GitHub before it went up for a vote, so it is closed here.`;
+    case 'merged-elsewhere':
+      return `${l} was merged on GitHub into ${base || 'another branch'}, not into main, so it is not recorded as merged here. `
+        + 'Its code reaches main with the change that branch belongs to.';
     case 'manual':
       return byOwner && r.ownerName ? `${r.ownerName} withdrew ${r.prTitle ? l : 'this change'}.` : `${l} was withdrawn.`;
     default: return `${l} was withdrawn.`;
@@ -560,7 +584,7 @@ function closedLine(r: Row, reason: string, byOwner: boolean): string {
 }
 
 // The closes that follow GitHub's own (services/pr-import-sync.js).
-const GITHUB_SETTLED: ReadonlySet<string> = new Set(['pr-closed', 'pr-merged']);
+const GITHUB_SETTLED: ReadonlySet<string> = new Set(['pr-closed', 'pr-merged', 'merged-elsewhere']);
 
 // How a conversation that started the change words its close
 // (rules/agent-notes.ts closedSentence).
@@ -582,7 +606,11 @@ const promote: Handler = (s, e, f) => {
   const moved = prMove({ ...s.data, n, promoting, answer: null },
     { kind: WORK.open, key: `open:${n}`, input: { sessionId: s.data.sessionId, n, userId: p.userId, expectedHead: p.expectedHead,
       imported: s.data.imported } });
-  return step({ name: 'proposing', data: moved.data }, { work: moved.work, timer: null });
+  // An import's base, as GitHub showed the route, and the change it waits
+  // for (the guard found it open), recorded with the move that decided on it.
+  const writes: DomainWrite[] = s.data.imported && p.pr && p.pr.base
+    ? [{ type: 'prBase', sessionId: s.data.sessionId, base: p.pr.base, waitsFor: onMain(p.pr.base) ? null : f.baseOwner?.id ?? null }] : [];
+  return step({ name: 'proposing', data: moved.data }, { work: moved.work, timer: null, writes });
 };
 
 // review.open reported for the promote under way.
@@ -678,7 +706,7 @@ const resume: Handler = (s, e, f, ctx, deps) => {
 // Closed, for any reason, by one path (R3): the database's part commits with
 // the move, the rest is durable work, and the preview is retired for good
 // (the preview machine tells the shots machine).
-function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner?: boolean; purgeCc?: boolean } = {}): Outcome<PState> {
+function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner?: boolean; purgeCc?: boolean; base?: string | null } = {}): Outcome<PState> {
   const row = f.row!;
   const n = s.data.n + 1;
   let d: Data = { ...s.data, n, reason, promoting: null, claim: null, force: null, attempt: null, sync: null,
@@ -708,7 +736,7 @@ function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner
   }
   const writes: DomainWrite[] = [{ type: 'closed', eventId: e.id, sessionId: d.sessionId, appId: d.appId,
     outcome: OUTCOMES.get(reason) || 'closed', agentSessionId: row.agentSessionId, prNumber: row.prNumber }];
-  if (row.prNumber) writes.push(line(e, d, closedLine(row, reason, !!more.byOwner)));
+  if (row.prNumber) writes.push(line(e, d, closedLine(row, reason, !!more.byOwner, more.base ?? null)));
   if (reason === 'request-closed') {
     // A change of the Homeroom bot's withdrawn because every request it is
     // for was closed (homeroom-bot-closed-requests.js): each request's
@@ -719,9 +747,12 @@ function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner
   writes.push(toBotChange(d.sessionId, 'Closed', { reason }));
   const push = [board(f, 'archived'), votes(f)];
   if (row.linkedIssues.length) push.push(issueUpdate({ action: 'updated', source: 'session_archived', appSlug: row.appSlug, appId: row.appId }));
+  // Merged into main on GitHub before its vote: the changes stacked on it
+  // move onto main.
+  const stacked = reason === 'pr-merged' ? parentMerged(d, f) : [];
   return step({ name: 'closed', data: d }, {
     writes, work, push, timer: null, cancel,
-    messages: [toPreview(d, 'RetireRequested', { reason: 'archived', terminal: true }), ...told],
+    messages: [toPreview(d, 'RetireRequested', { reason: 'archived', terminal: true }), ...told, ...stacked],
   });
 }
 
@@ -731,9 +762,12 @@ const closeEvent: Handler = (s, e, f) =>
 // GitHub merged or closed its pull request (the guard left the rest): merged
 // while up for its vote is a merge, which merge-followups records; merged
 // before it, or closed, closes the proposal.
-const prLooked: Handler = (s, e, f, ctx) => (e.payload.merged && s.name === 'in_review'
-  ? mergedOnGithub(s, f, ctx, { sha: e.payload.mergeSha, mergedAt: e.payload.mergedAt, tally: e.payload.tally }, 'recovery')
-  : close(s, e, f, e.payload.merged ? 'pr-merged' : 'pr-closed'));
+// One merged into any branch but main is merged elsewhere, whatever its state.
+const prLooked: Handler = (s, e, f, ctx) => (e.payload.merged && !onMain(e.payload.base)
+  ? close(s, e, f, 'merged-elsewhere', { base: e.payload.base })
+  : e.payload.merged && s.name === 'in_review'
+    ? mergedOnGithub(s, e, f, ctx, { sha: e.payload.mergeSha, mergedAt: e.payload.mergedAt, tally: e.payload.tally, base: e.payload.base }, 'recovery')
+    : close(s, e, f, e.payload.merged ? 'pr-merged' : 'pr-closed'));
 
 const reopen: Handler = (s, e, f, ctx, deps) => {
   const n = s.data.n + 1;
@@ -830,12 +864,17 @@ const stopRequested: Handler = (s, e, f) => {
 
 // merge-followups moved it into merged (its own merge, a merge by hand, a
 // change carried by another's): whatever the queue asked of it ends.
-const merged: Handler = (s) => {
+// The changes stacked on its branch are told it is on main.
+const merged: Handler = (s, e, f) => {
   const { told, cancel, work } = endSlots(s.data, 'merged');
-  const out: Live = { name: 'merged', data: { ...s.data, claim: null, promoting: null, force: null, sync: null,
+  const out: Live = { name: 'merged', data: { ...s.data, claim: null, promoting: null, force: null, sync: null, retarget: null,
     attempt: s.data.attempt ? { ...s.data.attempt, stage: 'merged' } : null } };
-  return step(out, { timer: null, messages: told, cancel, work });
+  return step(out, { timer: null, messages: [...told, ...parentMerged(s.data, f)], cancel, work });
 };
+
+// Each open change stacked on this one's branch hears it is on main.
+const parentMerged = (d: Data, f: Facts): MessageRequest[] => f.waiting.map((id) =>
+  ({ to: { machine: MACHINE, key: sessionKey(id) }, event: { type: 'ParentMerged', payload: { sessionId: id, parentId: d.sessionId } }, appId: d.appId }));
 
 // ── The merge (step 6) ──────────────────────────────────────────────────
 
@@ -858,9 +897,21 @@ function askRefusal(s: Live, f: Facts): string | null {
   if (s.name !== 'in_review') return 'not_in_review';
   if (s.data.attempt) return 'in_progress';
   if (s.data.sync) return 'syncing';
+  // Its pull request is based on another branch: never measured, never
+  // merged there (rules/pr-base.ts).
+  const base = baseRefusal(f.row!);
+  if (base) return base;
   // A merge does not wait for the shots agent's turn (facts.ts mergeMoving).
   if (f.row!.mergeMoving) return 'busy';
   return null;
+}
+
+// Why an import is not merged while its pull request is based where it is:
+// it waits for the change whose branch that is, or its base is no change's.
+// A force does not reach past it: "merged" means "in main".
+function baseRefusal(r: Row): string | null {
+  if (!r.imported || onMain(r.baseRef)) return null;
+  return r.waitsFor ? 'waits_for_parent' : 'base_not_main';
 }
 
 // The queue asks: the gate is measured (merge.gate), the proposal still in
@@ -890,6 +941,8 @@ function gated(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: D
   const row = f.row!;
   if (r.head !== row.head || a.head !== row.head) return back('head_moved');
   if (r.epoch !== row.epoch || a.epoch !== row.epoch) return back('epoch_moved');
+  const base = baseRefusal(row);
+  if (base) return back(base);
   const refusal = f.claim ? claimRefusal(f.claim, {
     head: row.head, force: a.force, shotsEnforced: !!deps.shotsEnforced, mainPassThrough: !!r.mainPassThrough,
     votesMergeable: !!f.gate?.mergeable,
@@ -908,7 +961,12 @@ function gated(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: D
 // GitHub merged it: merge-followups is told (it moves the proposal into
 // 'merged' and runs every follow-up), and so is the queue. The proposal
 // reads merging until merge-followups' Merged arrives.
-function mergedOnGithub(s: Live, f: Facts, ctx: TransitionContext, r: any, observedBy: string): Outcome<PState> {
+//
+// Only into main: a merge GitHub made into another branch (a base moved
+// after the attempt read it) closes the proposal as merged elsewhere, and
+// nothing records it as merged or live.
+function mergedOnGithub(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, r: any, observedBy: string): Outcome<PState> {
+  if (!onMain(r?.base)) return close(s, e, f, 'merged-elsewhere', { base: r.base });
   const a = s.data.attempt;
   const report: Record<string, Json> = {
     mergeSha: r?.sha ?? null, mergedAt: r?.mergedAt || ctx.now.toISOString(), force: !!a?.force,
@@ -959,7 +1017,7 @@ function attempted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, dep
   }
   const r = (e.type === 'WorkSucceeded' ? e.payload.result : { outcome: 'refused', kind: 'blocked', message: null }) as any;
   switch (r?.outcome) {
-    case 'merged': return mergedOnGithub(s, f, ctx, r, r.observed ? 'recovery' : 'merge');
+    case 'merged': return mergedOnGithub(s, e, f, ctx, r, r.observed ? 'recovery' : 'merge');
     case 'head_moved':
       return backToReview(s, e, f, ctx, deps, { outcome: 'head_moved', line: r.message, extra: { votesKept: !!r.votesKept }, push: { headMoved: true } });
     case 'unverified': return backToReview(s, e, f, ctx, deps, { outcome: 'unverified', line: r.message });
@@ -1022,7 +1080,7 @@ function observed(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps
     return step(next, { timer: s.name === 'unconfirmed' ? timerFor(next, f, ctx, deps)
       : { at: later(ctx, OBSERVE_MIN_MS), event: { type: 'ObserveDue' } } });
   }
-  if (r.merged) return mergedOnGithub(s, f, ctx, r, 'recovery');
+  if (r.merged) return mergedOnGithub(s, e, f, ctx, r, 'recovery');
   // Not merged (or the pull request is gone): back to review.
   return backToReview(s, e, f, ctx, deps, {
     outcome: 'not_merged',
@@ -1064,6 +1122,9 @@ function syncRefusal(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): 
       if (p.reason === 'bot_handoff' && row.fixedCheckSyncKeys.includes(BOT_HANDOFF_KEY)) return 'already_tried';
     }
   }
+  // Its parent landed: only a branch Homeroom can push to is synced (an
+  // author's fork is theirs to bring up to date).
+  if (p.reason === 'parent_merged' && row.forkHead) return 'fork_head';
   if (p.reason === 'conflict') {
     if (s.name !== 'in_review') return 'not_promoted';
     if (row.forkHead) return 'fork_head';
@@ -1081,6 +1142,12 @@ const syncRequested: Handler = (s, e, f, ctx) => {
   if (why) {
     return step(s, { messages: p.queueN ? [toQueue(s.data, 'ResolutionEnded', { n: p.queueN, outcome: 'declined', reason: why })] : [] });
   }
+  return beginSync(s, p, f, ctx);
+};
+
+// A sync with main begins (its refusal was asked first): its work, and what
+// makes it once.
+function beginSync(s: Live, p: any, f: Facts, ctx: TransitionContext): Outcome<PState> {
   const n = s.data.n + 1;
   const row = f.row!;
   const sync: Sync = { n, reason: p.reason, head: row.integrationHead || row.head || null, queueN: p.queueN ?? null, approved: !!p.approved, at: ctx.now.toISOString(),
@@ -1107,7 +1174,58 @@ const syncRequested: Handler = (s, e, f, ctx) => {
       measureFirst: p.reason === 'boot_failure' || CHECK_SYNCS.has(p.reason), waitForIdle: p.reason === 'boot_failure' || CHECK_SYNCS.has(p.reason),
       githubConflict: !!p.githubConflict } }],
   });
+}
+
+// ── A stacked change whose parent landed (rules/pr-base.ts) ─────────────
+
+// Its parent is on main: its pull request is retargeted to main, one of its
+// GitHub moves. Told twice (the parent's merge and a look that read the
+// parent merged), the retarget under way answers both.
+const parentMergedEvent: Handler = (s, e, f) => {
+  const row = f.row!;
+  if (s.data.retarget || !row.repo || !row.prNumber) return step(s);
+  const n = s.data.n + 1;
+  const moved = prMove({ ...s.data, n, retarget: { n, parentId: e.payload.parentId ?? null } },
+    { kind: WORK.retarget, key: `retarget:${n}`, input: { sessionId: s.data.sessionId, owner: row.repo.owner, repo: row.repo.repo,
+      number: row.prNumber, base: MAIN_BRANCH } });
+  return step({ name: s.name, data: moved.data } as Live, { work: moved.work });
 };
+
+// pr.retarget reported. On main now: the row says so, the proposal syncs
+// with main (its checks run again on what the sync pushes, as for any sync),
+// and the queue hears it may be in line. Refused for good: it stays where it
+// is, and the thread says what a person can do.
+function retargeted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<PState> {
+  const p = e.payload as WorkResultPayload;
+  const done = prDone(s.data, p.workKey);
+  const d: Data = { ...done.data, retarget: null };
+  const row = f.row!;
+  if (e.type !== 'WorkSucceeded') {
+    return step({ name: s.name, data: d } as Live, {
+      work: done.work,
+      writes: [{ ...line(e, d, `${prLabel(row)} could not be moved onto main on GitHub (${String(p.error?.message || 'no reason given').slice(0, 200)}). `
+        + 'Change its base to main on GitHub; Homeroom picks it up from there.'), dedupe: true }],
+    });
+  }
+  const next: Live = { name: s.name, data: d } as Live;
+  const writes: DomainWrite[] = [{ type: 'prBase', sessionId: d.sessionId, base: MAIN_BRANCH, waitsFor: null }];
+  const sync = { reason: 'parent_merged', head: null, queueN: null, approved: false, githubConflict: false };
+  const refusal = syncRefusal(next, { ...e, payload: sync } as Event<any>, f, ctx);
+  const synced = refusal ? null : beginSync(next, sync, f, ctx);
+  writes.push(line(e, d, synced
+    ? `${prLabel(row)}: the change it is built on is on main now, so its pull request targets main. Homeroom is bringing it up to date with main; its checks run again on the result.`
+    : `${prLabel(row)}: the change it is built on is on main now, so its pull request targets main.`));
+  const out = synced || step(next);
+  return {
+    ...out,
+    writes: [...writes, ...(out.writes || [])],
+    work: [...done.work, ...(out.work || [])],
+    push: [...(out.push || []), votes(f)],
+    // Nothing else holds it back: the queue looks (a sync under way declines
+    // its ask until it ends).
+    messages: [...(out.messages || []), ...(s.name === 'in_review' ? [toQueue(d, 'MergeWanted', { reason: 'parent-merged' })] : [])],
+  };
+}
 
 // branch.sync reported.
 function synced(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<PState> {
@@ -1243,6 +1361,7 @@ function workDone(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps
   if (p.kind === WORK.attempt && a?.stage === 'merge' && s.name === 'merging' && p.workKey === `attempt:${a.n}`) return attempted(s, e, f, ctx, deps);
   if (p.kind === WORK.observe && (s.name === 'unconfirmed' || (s.name === 'merging' && !a))) return observed(s, e, f, ctx, deps);
   if (p.kind === WORK.sync && s.data.sync && p.workKey === `sync:${s.data.sync.n}`) return synced(s, e, f, ctx);
+  if (p.kind === WORK.retarget && s.data.retarget && p.workKey === `retarget:${s.data.retarget.n}`) return retargeted(s, e, f, ctx);
   const done = PR_MOVES.has(p.kind) ? prDone(s.data, p.workKey) : { data: s.data, work: [] };
   done.data = { ...done.data, doomed: (done.data.doomed || []).filter((x) => x.key !== p.workKey || x.kind !== p.kind) };
   const writes: DomainWrite[] = [];
@@ -1288,6 +1407,9 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: Transitio
       // An imported pull request its author keeps as a draft is not up for
       // a vote: GitHub would refuse to merge it (bug 10).
       if (s.data.imported && pr.draft) return reject('pr_draft');
+      // Based on a branch that is neither main nor an open change's: there
+      // is nothing it could wait for, and it never merges where it points.
+      if (s.data.imported && !onMain(pr.base) && !f.baseOwner) return reject('pr_base_not_main');
       return ok();
     },
   )],
@@ -1362,6 +1484,9 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: Transitio
   )],
   ['ApprovalsCleared', (s) => (s.name === 'closed' || s.name === 'merged' ? reject('closed') : ok())],
   ['DiagramStored', (s) => (s.name === 'closed' ? reject('closed') : ok())],
+  // Only an open change moves onto main; a closed one keeps its base.
+  ['ParentMerged', (s) => (['underway', 'proposing', 'in_review'].includes(s.name) ? ok()
+    : reject(s.name === 'closed' ? 'closed' : s.name === 'merging' || s.name === 'unconfirmed' ? 'merging' : 'merged'))],
   ['ForceMerge', (s, e) => all(
     () => (s.name === 'in_review' ? ok() : reject(s.name === 'merging' || s.name === 'unconfirmed' ? 'in_progress' : 'not_in_review')),
     () => read(s, e),
@@ -1390,13 +1515,14 @@ const HANDLERS = new Map<string, Handler>([
   ['MergeRequested', mergeRequested], ['ForceMerge', forceMerge], ['SyncRequested', syncRequested], ['ObserveDue', observeDue],
   ['StopRequested', stopRequested],
   ['DiagramStored', diagramStored],
+  ['ParentMerged', parentMergedEvent],
   ['Rearm', (s, e, f, ctx, deps) => step(s, { timer: timerFor(s, f, ctx, deps) })],
   ['WorkSucceeded', workDone], ['WorkFailed', workDone], ['WorkExhausted', workDone],
 ]);
 // The events that may create the instance (every one but the clock's): the
 // first adopts the proposal from its row, then is handled as for one held.
 const CREATE = ['Adopted', 'Promote', 'Unpromote', 'Pause', 'Resume', 'Close', 'PrLooked', 'Reopen',
-  'Merged', 'ReviewHeadMoved', 'ApprovalsCleared', 'MergeRequested', 'ForceMerge', 'SyncRequested', 'DiagramStored'];
+  'Merged', 'ReviewHeadMoved', 'ApprovalsCleared', 'MergeRequested', 'ForceMerge', 'SyncRequested', 'DiagramStored', 'ParentMerged'];
 // The queue's asks are answered whatever the proposal's state: a rejection
 // would leave the queue waiting for an answer that never comes.
 const ANSWERED: ReadonlySet<string> = new Set(['MergeRequested', 'SyncRequested']);
@@ -1474,7 +1600,12 @@ function transitions(deps: Deps) {
     },
     to: (_s: any, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<PState> => {
       const a = adopt(e.payload.sessionId, f.row!);
-      if (type === 'Adopted' || (type === 'Merged' && a.name === 'merged')) return retained(step(a, { timer: timerFor(a, f, ctx, deps) }), e, f, ctx, deps, a.name);
+      if (type === 'Adopted') return retained(step(a, { timer: timerFor(a, f, ctx, deps) }), e, f, ctx, deps, a.name);
+      // Adopted by merge-followups' own Merged: the changes stacked on it
+      // still hear it is on main.
+      if (type === 'Merged' && a.name === 'merged') {
+        return retained(step(a, { timer: timerFor(a, f, ctx, deps), messages: parentMerged(a.data, f) }), e, f, ctx, deps, a.name);
+      }
       const out = HANDLERS.get(type)!(a, e, f, ctx, deps);
       return retained(out.timer === undefined ? { ...out, timer: timerFor(out.next as Live, f, ctx, deps) } : out, e, f, ctx, deps, a.name);
     },
@@ -1514,8 +1645,11 @@ export function proposal(deps: Deps): Machine<PState, Facts> {
     // proposal's CC volume purged once its retention window passes (the
     // leader's archived GC is gone, so an older Pod must not decide one). 5:
     // the pull request's diagram block, a GitHub move of its own (an older
-    // Pod would not move the queue on past it).
-    version: 5,
+    // Pod would not move the queue on past it). 6: a stacked import waits for
+    // the change under it and is retargeted to main once that change is on
+    // main (ParentMerged, pr.retarget); a merge into another branch closes it
+    // (an older Pod would record it merged).
+    version: 6,
     events: EVENTS,
     create: CREATE,
     terminal: ['merged'],
@@ -1553,6 +1687,9 @@ export function proposal(deps: Deps): Machine<PState, Facts> {
       Rearm: system,
       StopRequested: routeOrSystem,
       DiagramStored: system,
+      // Its parent's own machine, or a look that read the parent merged.
+      ParentMerged: (e: Event<any>): Check => ((e.source.kind === 'message' && e.source.from.machine === MACHINE)
+        || e.source.kind === 'system' ? ok() : reject('internal_only')),
     },
     transitions: transitions(deps) as any,
     writes: WRITES,
@@ -1706,6 +1843,12 @@ const WRITES = {
   prCleared: async (tx: Tx, w: any) => tx.query(
     'UPDATE chat_sessions SET pr_number = NULL, pr_url = NULL WHERE id = $1 AND pr_number IS NOT DISTINCT FROM $2', [w.sessionId, w.prNumber ?? null]),
   ccPurged: async (tx: Tx, w: any) => tx.query('UPDATE chat_sessions SET cc_purged = TRUE WHERE id = $1', [w.sessionId]),
+  // An import's base on GitHub and the open change it waits for
+  // (rules/pr-base.ts), as the move that decided on them read them.
+  prBase: async (tx: Tx, w: any) => tx.query(
+    `UPDATE chat_sessions SET imported_pr_base_ref = $2, waits_for_session_id = $3
+      WHERE id = $1 AND (imported_pr_base_ref IS DISTINCT FROM $2 OR waits_for_session_id IS DISTINCT FROM $3)`,
+    [w.sessionId, w.base ?? null, w.waitsFor ?? null]),
   // GitHub refused the merge as a conflict: the card says so at once (the
   // files fill in with the next sync). Not a "behind" count: that is the
   // measurement's (merge trace bug 2).

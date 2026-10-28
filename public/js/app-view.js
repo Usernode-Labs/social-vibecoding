@@ -7180,6 +7180,30 @@ const AppView = {
       // Its code did not come across from GitHub (_codeMissing): the page
       // says so in a notice above Votes and Testing (change-head.tsx).
       codeMissing: kind !== 'gov' && AppView._codeMissing(item),
+      // Stacked on another change's branch, or based on a branch no open
+      // change has (_stackedOn): said in a notice above Votes and Testing,
+      // with a door to the change it waits for.
+      ...AppView._stackedView(kind, item),
+    };
+  },
+
+  // The change page's half of _stackedOn: `waitsFor`, the change it waits
+  // for (its number, title and page), or `baseNotMain`, the branch its pull
+  // request targets. Nothing for a change that is merged or closed.
+  _stackedView(kind, item) {
+    if (kind === 'gov' || !item || ['merged', 'merging', 'closed', 'archived'].includes(item.status)) return {};
+    const stack = AppView._stackedOn(item);
+    if (!stack) return {};
+    if (!stack.waitsFor) return { baseNotMain: { branch: stack.base } };
+    const w = stack.waitsFor;
+    const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+    return {
+      waitsFor: {
+        sessionId: w.id,
+        number: w.number,
+        title: w.title,
+        href: w.number ? `#app/${slug}/dev/changes/${w.number}` : `#app/${slug}/dev/proposals/${w.id}`,
+      },
     };
   },
 
@@ -23500,6 +23524,22 @@ const AppView = {
     return p.code_missing === true && ['active', 'paused', 'promoted', 'merging'].includes(p.status);
   },
 
+  // An import whose pull request is not based on main
+  // (src/workflow/rules/pr-base.ts): the branch it targets and, when that is
+  // an open change's branch, that change ({ id, number, title }). Null for
+  // one based on main, and for a row that does not say (read as main).
+  _stackedOn(p) {
+    if (!p || p.source !== 'imported') return null;
+    const base = p.imported_pr_base_ref;
+    if (!base || base === 'main') return null;
+    const w = p.waits_for && typeof p.waits_for === 'object' ? p.waits_for : null;
+    const id = parseInt((w && w.id) || p.waits_for_session_id, 10) || 0;
+    return {
+      base: String(base),
+      waitsFor: id ? { id, number: parseInt(w && w.prNumber, 10) || null, title: (w && w.title) || null } : null,
+    };
+  },
+
   blockReasons(pr) {
     const p = pr || {};
     const out = [];
@@ -23512,6 +23552,28 @@ const AppView = {
         label: PlatformI18n.t('changes:badge.reason.codeMissing.label'),
         detail: PlatformI18n.t('changes:badge.reason.codeMissing.detail'),
       }];
+    }
+    // Where its pull request merges (src/workflow/rules/pr-base.ts): an
+    // import stacked on another open change's branch waits for that change,
+    // which nobody need act on here (amber, as deferred checks are); one
+    // based on a branch no open change has cannot go live until somebody
+    // changes its base to main (red). First, because nothing else on it
+    // merges before that does.
+    const stack = AppView._stackedOn(p);
+    if (stack && stack.waitsFor) {
+      const n = stack.waitsFor.number;
+      out.push({
+        key: 'waits_for_change',
+        label: n ? PlatformI18n.t('changes:badge.reason.waitsFor.label', { number: n }) : PlatformI18n.t('changes:badge.reason.waitsFor.labelUnnumbered'),
+        detail: n ? PlatformI18n.t('changes:badge.reason.waitsFor.detail', { number: n }) : PlatformI18n.t('changes:badge.reason.waitsFor.detailUnnumbered'),
+        soft: true,
+      });
+    } else if (stack) {
+      out.push({
+        key: 'base_not_main',
+        label: PlatformI18n.t('changes:badge.reason.baseNotMain.label'),
+        detail: PlatformI18n.t('changes:badge.reason.baseNotMain.detail', { branch: stack.base }),
+      });
     }
     const fresh = AppView._freshnessOf(p);
     // Merge-pipeline conflicts: a real attempt failed and a human is needed.

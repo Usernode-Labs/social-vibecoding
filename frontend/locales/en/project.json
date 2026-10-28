@@ -2551,6 +2551,18 @@
     "text": "This proposal’s code didn’t come across when Homeroom moved off GitHub. Its creator can submit it again, or Homeroom restores it when GitHub’s copy of the code arrives.",
     "description": "Amber notice on a change's page, above its Votes and Testing cards, when the change's code (its branch) is not on Homeroom's own code host because it did not come across when Homeroom moved off GitHub. GitHub is a product name; Homeroom is the product's own name. \"GitHub's copy of the code\" is the export of the old repositories that GitHub is sending to Homeroom. \"Submit it again\" means put the same change up again."
   },
+  "topic.change.waitsFor": {
+    "text": "Waits for <0>#{{number}}: {{title}}</0>. This change is built on that change’s branch, so it can go live only after #{{number}} does. Homeroom then moves it onto main and brings it up to date; its checks run again on the result.",
+    "description": "Notice on a change's page, above its Votes and Testing cards, when the change is stacked on another open change: its pull request targets that change's branch instead of main. {{number}} and {{title}} are the other change's number and title; <0></0> links to that change's page. \"main\" is the name of the project's main line of code and stays as it is. Homeroom is the product's own name."
+  },
+  "topic.change.waitsForUntitled": {
+    "text": "Waits for <0>#{{number}}</0>. This change is built on that change’s branch, so it can go live only after #{{number}} does. Homeroom then moves it onto main and brings it up to date; its checks run again on the result.",
+    "description": "Notice on a change's page, above its Votes and Testing cards, when the change is stacked on another open change that has no title: its pull request targets that change's branch instead of main. {{number}} is the other change's number; <0></0> links to that change's page. \"main\" is the name of the project's main line of code and stays as it is. Homeroom is the product's own name."
+  },
+  "topic.change.baseNotMain": {
+    "text": "Its pull request targets {{branch}}, not main, and no open change here is built on that branch. Change its base to main on GitHub before it can go live.",
+    "description": "Amber notice on a change's page, above its Votes and Testing cards, when its pull request targets a branch other than main that no open change in the project uses. {{branch}} is that branch's name as written on GitHub and stays as it is. \"main\" is the name of the project's main line of code and stays as it is. GitHub is a product name."
+  },
   "topic.change.gate.noteSeeFailed": {
     "text": "{{note}} <0>See what failed</0>",
     "description": "The line under the Testing card on a change's page when its checks failed. {{note}} is one or more whole sentences, already worded, saying what happened. <0></0> is a link-style button that opens the Details sheet at the failed checks."

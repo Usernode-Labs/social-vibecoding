@@ -38,6 +38,7 @@ const challengeScorer = require('../services/topochain/challenge-scorer');
 const { botRequestedBySql } = require('../services/bot-requested-by');
 const { firstVersionSql, isFirstVersion } = require('../services/first-version-rule');
 const repoRef = require('../services/repo-ref');
+const prBase = require('../workflow/rules/pr-base.ts');
 const codeMissing = require('../services/code-missing');
 const {
   reviewedHeadForSession,
@@ -2712,7 +2713,10 @@ function voteRoutes(config) {
         try {
           const live = await github.getPR(owner, repo.replace(/\.git$/, ''), session.pr_number);
           pr = { state: live?.state === 'closed' ? 'closed' : 'open', draft: !!live?.draft, merged: !!live?.merged,
-            head: /^[0-9a-f]{40}$/i.test(String(live?.head?.sha || '')) ? live.head.sha : null };
+            head: /^[0-9a-f]{40}$/i.test(String(live?.head?.sha || '')) ? live.head.sha : null,
+            // Where it would merge: an import based on a branch that is
+            // neither main nor an open change's is refused (rules/pr-base.ts).
+            base: live?.base?.ref ?? null };
         } catch (err) {
           log.warn('votes', 'Promote PR revision check failed', {
             sessionId: session.id, pr: session.pr_number, err: err.message,
@@ -2971,6 +2975,10 @@ function voteRoutes(config) {
       // once, here, because it is a fact about the pull request that never
       // changes while it is open; `branchHomeOf` reads it.
       const headRepoFullName = pr.head?.repo?.full_name || null;
+      // WHERE it merges (src/workflow/rules/pr-base.ts): main, or the branch
+      // of another open change it is stacked on, which it then waits for.
+      // Any other base is refused when it is put up for a vote.
+      const baseRef = pr.base?.ref || null;
 
       // Optional testing metadata (#945 follow-up). A connector submission
       // can carry the same two things a build turn's "==== TESTING ===="
@@ -3024,17 +3032,18 @@ function voteRoutes(config) {
       let promoteEvent = null;
       try {
         await importClient.query('BEGIN');
+        const waitsFor = (await prBase.readBaseOwner(importClient, { appId: app.id, sessionId: null, base: baseRef })).open;
         ({ rows: inserted } = await importClient.query(
           `INSERT INTO chat_sessions
            (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status,
             source, imported_pr_head_sha, handoff_base_sha,
-            imported_pr_author, imported_pr_head_repo,
+            imported_pr_author, imported_pr_head_repo, imported_pr_base_ref, waits_for_session_id,
             promoted_at, shared_at, created_at,
             testing_md, testing_path, testing_paths, linked_issues, pr_body,
             pr_summary_md, pr_summary_source, pr_summary_source_head_sha,
             pr_summary_source_body_hash, pr_summary_applied_version)
          VALUES ($1, $2, $3, $4, $5, $6, $7::text,
-            'imported', $8::text, $9, $10, $11,
+            'imported', $8::text, $9, $10, $11, $19, $20,
             NULL, NOW(),
             NOW(), $12, $13, $14::jsonb, $15, $16, $17,
             CASE WHEN $17::text IS NULL THEN NULL ELSE 'author' END,
@@ -3062,6 +3071,7 @@ function voteRoutes(config) {
             // without it renders exactly as it did before this field existed.
             importSummary,
             summaryFreshness.bodyHash(pr.body || null),
+            baseRef, waitsFor ? waitsFor.id : null,
           ]
         ));
         await topicAttrs.selfAssignProposal(
@@ -3090,7 +3100,7 @@ function voteRoutes(config) {
           promoteEvent = await require('../workflow/platform.ts').promoteInTransaction({
             sessionId: inserted[0].id, appId: app.id, userId: req.user.id, username: req.user.username, from: 'active',
             cap: effectiveSessionCaps(config, req.user).promotedSessions,
-            pr: { state: pr.state, draft: !!pr.draft, merged: !!pr.merged, head: headSha },
+            pr: { state: pr.state, draft: !!pr.draft, merged: !!pr.merged, head: headSha, base: baseRef },
             expectedHead: headSha, db: importClient, source: { kind: 'route', name: 'pr-import' },
           });
         }
@@ -4056,6 +4066,12 @@ function voteRoutes(config) {
            -- "the author must update this branch in their fork" about a
            -- branch in the app's own repository (#2100).
            cs.imported_pr_head_repo,
+           -- Where it merges, and the change it waits for when it is
+           -- stacked on that change's branch (src/workflow/rules/pr-base.ts):
+           -- the card's "Waits for #N" and the change page's notice.
+           cs.imported_pr_base_ref, cs.waits_for_session_id,
+           (SELECT jsonb_build_object('id', w.id, 'prNumber', w.pr_number, 'title', w.pr_title, 'status', w.status)
+              FROM chat_sessions w WHERE w.id = cs.waits_for_session_id) AS waits_for,
            -- #967: which external coding agent wrote it, when the proposal
            -- came in through the hosted MCP connector ('claude-code' |
            -- 'codex' | 'external'). NULL for everything else. Drives the
@@ -5388,6 +5404,17 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
       error: codeMissing.MERGE_REFUSAL,
     };
   }
+  // Its pull request is based on another change's branch, or on a branch no
+  // open change has (src/workflow/rules/pr-base.ts): nothing about it is
+  // measured, forced or not, until it targets main. The queue keeps it out
+  // of its line; this is the gate saying so to an ask that came anyway.
+  if (session.source === 'imported' && !prBase.onMain(session.imported_pr_base_ref)) {
+    return {
+      merged: false,
+      blockReason: session.waits_for_session_id ? 'waits_for_parent' : 'base_not_main',
+      error: `Its pull request is based on ${String(session.imported_pr_base_ref).slice(0, 200)}, not main.`,
+    };
+  }
   // #955: a revision the PLATFORM advanced (its own sync/conflict-resolution
   // commit, sitting on the reviewed head) kept its approvals, so there is no
   // review to return to — carry on and let the real gates decide. The pin now
@@ -6267,7 +6294,10 @@ function refusalKind(err, pr) {
 //   unverified { message }        a 409 whose revision GitHub would not confirm
 //   reopened   {}                 closed on GitHub, reopened: it can be merged again
 //   closed     { message }        closed on GitHub, and could not be reopened
-//   refused    { kind, message }  conflict | draft | blocked | base_moved
+//   refused    { kind, message }  conflict | draft | blocked | base_moved | base_not_main
+// A merge is only ever into main (src/workflow/rules/pr-base.ts): the pull
+// request's base is read before GitHub is asked, one based on any other
+// branch is refused, and every `merged` names the base it went into.
 // It never asks twice: once it has asked (its checkpoint), a retry reads the
 // pull request first, so a lost answer is observed rather than misread as a
 // refusal (merge trace bug 1). An error that is no answer from GitHub (the
@@ -6320,6 +6350,9 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
     return { outcome: 'refused', kind, message, githubMessage: said || null };
   };
   const unanswered = (err) => !err || !Number.isInteger(err.status) || err.status >= 500 || err.status === 429;
+  // The base a merge went into, when GitHub said (the machine records only
+  // a merge into main).
+  const baseOf = (ref) => (ref ? { base: ref } : {});
   // GitHub's hourly limit used up (a 403 or a 429 saying no requests are
   // left) or its secondary limit (Retry-After): it did not merge, and it is
   // not a refusal of this head. The proposal goes back to review with
@@ -6337,13 +6370,37 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
       if (err && (err.status === 404 || err.status === 410)) return { outcome: 'closed', message: `${label} is gone from GitHub.` };
       throw err;
     }
-    if (pr && pr.merged) return { outcome: 'merged', sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, observed: true };
+    if (pr && pr.merged) {
+      return { outcome: 'merged', sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, observed: true, ...baseOf(pr.base?.ref) };
+    }
+  }
+
+  // Where GitHub would merge it. On 28 Oct 2026 #5957, based on #5956's
+  // branch, was merged there and recorded merged. An import's row learns the
+  // base it read, so the card and the queue say it waits from now on.
+  let base;
+  try {
+    base = (await client.getPR(owner, repo, session.pr_number))?.base?.ref ?? null;
+  } catch (err) {
+    if (throttled(err)) return limited(err);
+    if (codeMissing.isError(err)) {
+      return { outcome: 'refused', kind: 'blocked', codeMissing: true, message: `${label} wasn't merged. ${codeMissing.REASON}` };
+    }
+    if (err && (err.status === 404 || err.status === 410)) return { outcome: 'closed', message: `${label} is gone from GitHub.` };
+    throw err;
+  }
+  if (!prBase.onMain(base)) {
+    if (isImported) await prBase.recordBase(pool, { sessionId: session.id, appId: session.app_id, base }).catch(() => {});
+    return {
+      outcome: 'refused', kind: 'base_not_main', base,
+      message: `${label} wasn't merged: its pull request is based on ${String(base).slice(0, 200)}, not main. It merges once it targets main.`,
+    };
   }
   await checkpoint({ asked: true });
 
   const merge = async () => {
     const data = await client.mergePR(owner, repo, session.pr_number, pinned);
-    return { outcome: 'merged', sha: (data && data.sha) || null };
+    return { outcome: 'merged', sha: (data && data.sha) || null, ...baseOf(base) };
   };
   try {
     return await merge();
@@ -6395,7 +6452,9 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
     }
     if (unanswered(err)) throw err;
     const pr = await readPr();
-    if (pr && pr.merged) return { outcome: 'merged', sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, observed: true };
+    if (pr && pr.merged) {
+      return { outcome: 'merged', sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, observed: true, ...baseOf(pr.base?.ref ?? base) };
+    }
     if (pr && pr.state === 'closed') {
       try {
         await client.reopenPR(owner, repo, session.pr_number);

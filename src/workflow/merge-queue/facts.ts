@@ -11,6 +11,10 @@
 //   lanes      a head that merges cleanly (or was never measured) goes to the
 //              direct lane; one measured conflicting to the conflict lane,
 //              admitted by rule C
+//
+// An import based on a branch that is not main is not in the line at all
+// (rules/pr-base.ts): it waits for the change under it, and is neither merged
+// nor synced until it has been moved onto main.
 
 import type { Tx } from '../kernel/index.ts';
 import { readPrGate } from '../rules/pr-gate.ts';
@@ -100,6 +104,7 @@ const LINE_SQL = `
     JOIN apps a ON a.id = cs.app_id
     LEFT JOIN wf_instances w ON w.machine = 'proposal' AND w.key = 'session:' || cs.id
    WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.is_headless = FALSE
+     AND (cs.source IS DISTINCT FROM 'imported' OR cs.imported_pr_base_ref IS NULL OR cs.imported_pr_base_ref = 'main')
    ORDER BY cs.id`;
 
 export async function readLine(tx: Tx, appId: number, now: Date): Promise<Candidate[]> {

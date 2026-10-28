@@ -176,7 +176,9 @@ test('the route hands the proposal machine the status it read, the cap, and the 
     assert.deepEqual(ctx.promoteCalls, [{
       sessionId: 7, appId: 5, userId: 3, username: 'evan',
       from: 'paused', cap: 3,
-      pr: { state: 'open', draft: true, merged: false, head: HEAD },
+      // `base`: where it would merge (src/workflow/rules/pr-base.ts); this
+      // GitHub answer names none, which the machine reads as main.
+      pr: { state: 'open', draft: true, merged: false, head: HEAD, base: null },
       expectedHead: null, viaAgent: false, ownOperation: null,
     }]);
     assert.deepEqual(ctx.githubWrites, [], 'the route reads GitHub; it changes nothing there');
@@ -187,7 +189,7 @@ test('the route hands the proposal machine the status it read, the cap, and the 
 test('a merged or closed pull request is passed as read, for the machine to refuse', async () => {
   await withServer({ getPRImpl: async () => ({ state: 'closed', merged: true, draft: false, head: { sha: 'not-a-sha' } }) }, async (ctx) => {
     await promote(ctx);
-    assert.deepEqual(ctx.promoteCalls[0].pr, { state: 'closed', draft: false, merged: true, head: null },
+    assert.deepEqual(ctx.promoteCalls[0].pr, { state: 'closed', draft: false, merged: true, head: null, base: null },
       'a head that is not a commit sha is passed as none');
   });
 });
@@ -460,4 +462,11 @@ test('a refused review.open sends the change back to Underway, with the answer t
   assert.deepEqual(out.next.data.answer, { n: 1, ok: false, code: 'reopen_failed',
     message: 'This proposal\'s pull request (#26) was closed on GitHub and couldn\'t be reopened.' });
   assert.equal((out.writes || []).some((w) => w.type === 'promoted' || w.type === 'line'), false, 'a doomed proposal is never promoted');
+});
+
+test('the pull request\'s base is passed as GitHub shows it, for the machine to refuse one no open change is built on', async () => {
+  await withServer({ getPRImpl: async () => ({ state: 'open', merged: false, draft: false, head: { sha: HEAD }, base: { ref: 'claude/sec09-parent' } }) }, async (ctx) => {
+    await promote(ctx);
+    assert.equal(ctx.promoteCalls[0].pr.base, 'claude/sec09-parent');
+  });
 });
