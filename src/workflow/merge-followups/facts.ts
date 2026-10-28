@@ -139,8 +139,8 @@ export function includedIn(candidates: any[], commitShas: unknown): { id: number
 // that branch: its merge commit never reaches main, and the other's merge
 // brings the change there inside its squash, with that commit among its
 // own. carried.find reads who may have carried it: the app's merges since
-// it (or since the last one it ruled out, $3/$4), oldest first, a page at a
-// time. The carrier is the first whose pull request lists the commit and
+// it (or past the last one it read, $3/$4, and those it could not rule out,
+// $5), oldest first, a page at a time. The carrier is the first whose pull request lists the commit and
 // whose recorded merge commit the build that looked contains; it is named
 // by the change that merged it to main (a carried merge's or an included
 // change's carrier: a chain of stacked pull requests ends there).
@@ -150,7 +150,7 @@ export const CARRIER_CANDIDATES_SQL = `SELECT cs.id, cs.pr_number, cs.merged_at,
    JOIN chat_sessions root ON root.id = COALESCE(cs.included_in_session_id, cs.id)
   WHERE cs.app_id = $1 AND cs.id <> $2 AND root.id <> $2 AND cs.status = 'merged'
     AND cs.pr_number IS NOT NULL AND cs.merge_commit_sha IS NOT NULL AND cs.merged_at IS NOT NULL
-    AND (cs.merged_at, cs.id) > ($3::timestamptz, $4::int)
+    AND ((cs.merged_at, cs.id) > ($3::timestamptz, $4::int) OR cs.id = ANY($5::int[]))
   ORDER BY cs.merged_at, cs.id
   LIMIT 50`;
 

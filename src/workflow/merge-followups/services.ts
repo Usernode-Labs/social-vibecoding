@@ -12,6 +12,11 @@ import { WORK } from './machine.ts';
 
 interface Deps { config: any; pool: Pool }
 
+// carried.find: how recent a merge it leaves for a later look, and how
+// many undecided merges it keeps to read again (a page is 50).
+const CARRIER_SETTLE_MS = 60 * 60 * 1000;
+const CARRIER_RECHECK_MAX = 25;
+
 export function mergeFollowupsServices({ config, pool }: Deps): Record<string, WorkHandler> {
   const github = () => legacy('services/github');
   const session = async (id: number) => (await pool.query(
@@ -98,50 +103,53 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
     // it there (facts.ts CARRIER_CANDIDATES_SQL): one whose pull request
     // lists the commit, and whose recorded merge commit the build contains.
     // A merged pull request's commits never change, so one that does not
-    // list it is ruled out for good: `scanned` is the last of an unbroken run
-    // of those, where the next look starts. None found: it waits, and the
-    // next build looks again. A pull request or commit GitHub no longer has
-    // is not the carrier.
+    // list it is ruled out for good. `scanned` is how far it has read, and
+    // `recheck` the merges it read but could not rule out (one that lists it
+    // but is not in this build, a list cut short, one GitHub would not
+    // show): the next look reads those again and goes on from there. It
+    // reads no further than a merge of the last hour, which a later
+    // recording could still put before it. None found: it waits, and the
+    // next build looks again.
     [WORK.carrier]: {
       maxAttempts: 6,
       backoffMs: backoff,
       async run({ input }): Promise<Json> {
         const gh = github();
         if (!gh.isEnabled()) return { carrier: null };
-        const after = input.after as { mergedAt?: string; id?: number } | null;
+        const after = input.after as { mergedAt?: string; id?: number; recheck?: number[] } | null;
         let scanned = after?.mergedAt && Number.isInteger(after.id) ? { mergedAt: after.mergedAt, id: after.id! } : null;
+        const again = new Set((Array.isArray(after?.recheck) ? after!.recheck : []).filter(Number.isInteger));
         const { rows } = await pool.query(CARRIER_CANDIDATES_SQL,
-          [input.appId, input.sessionId, scanned?.mergedAt ?? input.mergedAt, scanned?.id ?? 0]);
-        let unbroken = true;
+          [input.appId, input.sessionId, scanned?.mergedAt ?? input.mergedAt, scanned?.id ?? 0, [...again]]);
+        const recheck: number[] = [];
+        const settled = Date.now() - CARRIER_SETTLE_MS;
+        let reading = true;
         for (const c of rows) {
-          const here = { mergedAt: new Date(c.merged_at).toISOString(), id: Number(c.id) };
-          let listed: { shas?: string[]; complete?: boolean } | null;
+          const mergeSha = String(c.merge_commit_sha).toLowerCase();
+          let out = false;
           try {
-            listed = await gh.listPullRequestCommitShas(input.owner, input.repo, Number(c.pr_number));
+            const listed = await gh.listPullRequestCommitShas(input.owner, input.repo, Number(c.pr_number));
+            if (!lists(listed?.shas, input.mergeSha)) out = listed?.complete !== false;
+            else {
+              const { status } = await gh.compareCommitAncestry(input.owner, input.repo, mergeSha, input.release);
+              if (status === 'identical' || status === 'ahead') {
+                return { carrier: { sessionId: Number(c.carrier_id),
+                  prNumber: c.carrier_pr_number == null ? null : Number(c.carrier_pr_number), prTitle: c.carrier_pr_title ?? null, mergeSha } };
+              }
+            }
           } catch (err) {
             if (!gone(err)) throw err;
-            if (unbroken) scanned = here;
-            continue;
           }
-          if (!lists(listed?.shas, input.mergeSha)) {
-            // A list cut short rules nothing out.
-            if (listed?.complete === false) unbroken = false;
-            else if (unbroken) scanned = here;
-            continue;
-          }
-          unbroken = false;
-          const mergeSha = String(c.merge_commit_sha).toLowerCase();
-          try {
-            const { status } = await gh.compareCommitAncestry(input.owner, input.repo, mergeSha, input.release);
-            if (status !== 'identical' && status !== 'ahead') continue;
-          } catch (err) {
-            if (gone(err)) continue;
-            throw err;
-          }
-          return { carrier: { sessionId: Number(c.carrier_id),
-            prNumber: c.carrier_pr_number == null ? null : Number(c.carrier_pr_number), prTitle: c.carrier_pr_title ?? null, mergeSha } };
+          const id = Number(c.id);
+          if (again.has(id)) { if (!out) recheck.push(id); continue; }
+          // Past where it had read: go on over what is decided, and what is
+          // kept to read again, while that list is short and the merge settled.
+          const at = new Date(c.merged_at);
+          if (!reading || at.getTime() > settled || (!out && recheck.length >= CARRIER_RECHECK_MAX)) { reading = false; continue; }
+          if (!out) recheck.push(id);
+          scanned = { mergedAt: at.toISOString(), id };
         }
-        return { carrier: null, scanned };
+        return { carrier: null, scanned: scanned ? { ...scanned, recheck } : null };
       },
     },
 

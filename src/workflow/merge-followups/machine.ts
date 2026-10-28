@@ -56,7 +56,7 @@ type Role = 'merge' | 'included';
 interface Followup { kind: string; input: Json; status: 'pending' | 'done' | 'failed' | 'exhausted' | 'retried'; error?: string }
 interface Tally { yes: number; required: number | null; active: number | null }
 interface CarrierRef { sessionId: number; prNumber: number | null; prTitle: string | null }
-interface CarrierScan { mergedAt: string; id: number }
+interface CarrierScan { mergedAt: string; id: number; recheck: number[] }
 
 export interface Data {
   sessionId: number;
@@ -75,7 +75,7 @@ export interface Data {
   selfHosted: boolean;
   includedIn: CarrierRef | null;   // role 'included': the change that carried it
   carriedBy?: CarrierRef | null;   // role 'merge': the later merge that brought its commit to main (carried.find)
-  carrierScan?: CarrierScan | null; // role 'merge': the later merges carried.find has ruled out, up to this one
+  carrierScan?: CarrierScan | null; // role 'merge': how far carried.find has read, and what it reads again
   included: number[];              // role 'merge': the changes it carried, as found
   deliveries: number;              // app-delivery requests so far (app.deliver items, in a merge recorded before)
   delivery?: typeof DELIVERY;      // the deploy is asked of app-delivery (absent: self-hosted, or a merge recorded before every deploy was app-delivery's)
@@ -527,9 +527,15 @@ function resultOf(status: Followup['status']) {
       return toLive(e, { ...d, mergeSha: c.mergeSha,
         carriedBy: { sessionId: c.sessionId, prNumber: c.prNumber, prTitle: c.prTitle } }, release, ctx);
     }
+    // Two looks may answer out of order: the one that read further stands.
     const scanned = looked.scanned;
     if (p.kind === WORK.carrier && status === 'done' && scanned && Number.isInteger(scanned.id) && !Number.isNaN(Date.parse(scanned.mergedAt))) {
-      return { next: { name: s.name, data: { ...d, carrierScan: { mergedAt: scanned.mergedAt, id: scanned.id } } } };
+      const scan: CarrierScan = { mergedAt: new Date(scanned.mergedAt).toISOString(), id: scanned.id,
+        recheck: (Array.isArray(scanned.recheck) ? scanned.recheck : []).filter(Number.isInteger).slice(0, 50) };
+      const was = d.carrierScan;
+      const further = !was || Date.parse(scan.mergedAt) > Date.parse(was.mergedAt)
+        || (Date.parse(scan.mergedAt) === Date.parse(was.mergedAt) && scan.id >= was.id);
+      if (further) return { next: { name: s.name, data: { ...d, carrierScan: scan } } };
     }
     if (p.kind === WORK.find && status === 'done') {
       // `found` carries each change's matched head.
