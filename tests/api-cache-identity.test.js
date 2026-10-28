@@ -181,6 +181,21 @@ test('the same reset still fences a document that had a partition or a viewer', 
   }
 });
 
+// Adding a phone in Settings (28 Oct 2026) went through this guard as if it
+// were a sign-in: the reads on their way were cut off and every other tab
+// reloaded. An auth write that keeps the session fences nothing.
+test('an auth write that keeps the session leaves the reads on their way and tells no other tab', async () => {
+  for (const url of ['/api/auth/phone-link/request', '/api/auth/oauth/google/native/start']) {
+    const held = deferred();
+    const h = page({ fetcher: (req) => new URL(req.url).pathname === '/api/private' ? held.promise : json({ ok: true }, A) });
+    const pending = h.win.fetch('/api/private');
+    await h.win.fetch(url, { method: 'POST' });
+    held.resolve(json({ fake: 'A' }));
+    assert.deepEqual(await (await pending).json(), { fake: 'A' }, url);
+    assert.equal(h.announcements.length, 0, url);
+  }
+});
+
 test('a login or logout from a signed-out document still fences the reads on their way', async () => {
   const held = deferred();
   const h = page({ initial: null, fetcher: (req) => new URL(req.url).pathname === '/api/private' ? held.promise : json({ ok: true }, null) });

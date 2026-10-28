@@ -4,6 +4,35 @@ export const API_SCOPE_HEADER = 'X-Usernode-Cache-Scope';
 const EXPIRY_HEADER = 'X-Usernode-Cache-Expires';
 const BOUNDARY_KEY = 'usernode.api-identity-boundary';
 
+/**
+ * Auth writes that never start, end or switch a session: none writes or
+ * clears the session cookie. A code asked for, a phone linked to the
+ * signed-in account, the waiting room's answers. Every other write under
+ * /api/auth/ is a session boundary (the server's SESSION_MINT_PATHS, logout,
+ * account deletion, a password reset): it fences the reads on their way and
+ * tells the other tabs, which reload. Fencing these instead cut off reads
+ * the screen was waiting for and reloaded every other tab when someone added
+ * a phone. A new route is a boundary until it is listed here, and
+ * tests/api-cache-auth-writes.test.js fails until it is classified.
+ */
+export const AUTH_WRITES_KEEPING_SESSION = Object.freeze([
+  '/api/auth/otp/request',
+  '/api/auth/password-reset/request',
+  '/api/auth/phone/request',
+  '/api/auth/phone-link/request',
+  '/api/auth/phone-link/verify',
+  '/api/auth/waiting/about',
+  '/api/auth/wallet-check',
+  '/api/auth/oauth/:provider/native/start',
+  '/api/auth/oauth/:provider/native/failed',
+]);
+const KEEPS_SESSION = AUTH_WRITES_KEEPING_SESSION
+  .map(route => new RegExp(`^${route.replace(/:[a-z]+/g, '[^/]+')}$`));
+
+export function authWriteKeepsSession(pathname: string): boolean {
+  return KEEPS_SESSION.some(route => route.test(pathname));
+}
+
 export function readApiCacheScope(doc: Pick<Document, 'cookie'> | undefined = typeof document !== 'undefined' ? document : undefined): string | null {
   try {
     if (!doc) return null;
@@ -191,7 +220,8 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
     if (url.origin !== win.location.origin || !url.pathname.startsWith('/api/')) return send(input, init);
     const req = new Request(typeof Request !== 'undefined' && input instanceof Request ? input : url.href, init);
     const auth = url.pathname.startsWith('/api/auth/');
-    const mutation = auth && req.method !== 'GET' && req.method !== 'HEAD';
+    const mutation = auth && req.method !== 'GET' && req.method !== 'HEAD'
+      && !authWriteKeepsSession(url.pathname);
     const identityRead = req.method === 'GET' && url.pathname === '/api/auth/me';
     if (mutation) { reset({ broadcast: true }); }
     // Native restoration installs its HttpOnly cookie outside this document.
