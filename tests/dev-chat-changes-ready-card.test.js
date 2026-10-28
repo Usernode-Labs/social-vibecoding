@@ -27,6 +27,10 @@ const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
 );
+const PR_CARD_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'transcript.tsx'),
+  'utf8'
+);
 
 // Build a DevChat in a sandbox with a fake #dc-messages. #1078: the rows are
 // a React island, so `renderMessages` publishes a view model rather than
@@ -409,8 +413,10 @@ test('promotePR success locks and relabels the proposal button (#1602)', async (
   // status flipped to 'promoted' → the same affordance acknowledges completion
   // but can no longer issue a second request.
   assert.equal(h.DevChat.currentSession.status, 'promoted', 'session promoted');
-  assert.match(h.getHtml(), /disabled[^>]*>Already proposed</,
-    'button is disabled and relabeled after the successful re-render');
+  assert.match(h.getHtml(), /class="dc-pr-btn dc-pr-btn-promote"[^>]*>Already proposed</,
+    'button is relabeled after the successful re-render');
+  assert.doesNotMatch(h.getHtml(), /disabled[^>]*>Already proposed</,
+    '#5693: it opens the proposal rather than sitting disabled');
   assert.deepEqual(h.changesRow().propose, { kind: 'completed' });
 });
 
@@ -421,8 +427,8 @@ test('an already-promoted session loads with a disabled completed proposal actio
       stagingUrl: 'https://preview.example.org', _slug: 'prm002' },
   ], activeSession({ id: 8, status: 'promoted', pr_number: 42 }));
 
-  assert.match(html, /disabled[^>]*>Already proposed</,
-    'the completion survives a fresh render rather than becoming clickable again');
+  assert.match(html, /title="Open this change&#x27;s proposal: its vote, checks and discussion"[^>]*>Already proposed</,
+    'the completion survives a fresh render, and #5693 makes it the way to the proposal');
   assert.doesNotMatch(html, />Submit for review</, 'the active label is gone');
   assert.deepEqual(h.changesRow().propose, { kind: 'completed' });
 });
@@ -449,7 +455,8 @@ test('merging and merged cards keep the proposal action completed (#1602)', () =
       { role: 'system', content: 'Staging deployed!', changesReady: true,
         stagingUrl: 'https://preview.example.org', _slug: `prm-${status}` },
     ], activeSession({ id: 9, status }));
-    assert.match(html, /disabled[^>]*>Already proposed</, `${status} remains locked`);
+    assert.match(html, />Already proposed</, `${status} remains completed`);
+    assert.doesNotMatch(html, />Submit for review</, `${status} offers no second proposal`);
     assert.deepEqual(h.changesRow().propose, { kind: 'completed' });
   }
 });
@@ -619,7 +626,7 @@ test('the trailing card keeps the proposal action\'s lifecycle (#1889)', () => {
   let h = makeDevChat();
   let html = h.render([CARD, WRAP_UP, ASK, ANSWER], withPr({ status: 'promoted' }));
   assert.ok(at(html, 'class="dc-pr-card"') > at(html, 'rounds to the hour'));
-  assert.match(html, /disabled[^>]*>Already proposed</);
+  assert.match(html, />Already proposed</);
   assert.deepEqual(h.changesRow().propose, { kind: 'completed' });
 
   h = makeDevChat();
@@ -695,6 +702,35 @@ test('a proposed card links its lifecycle badge to the vote page (#3605)', () =>
   assert.match(html, />View on GitHub</, 'the GitHub action is still there');
   h.DevChat.openProposalVote(h.changesRow().proposalId);
   assert.deepEqual(opened, [['proposal', 31]]);
+});
+
+// #5693: "Already proposed" was a disabled dead end; it opens the proposal now.
+test('"Already proposed" opens the proposal it became (#5693)', () => {
+  const h = makeDevChat();
+  const opened = [];
+  h.AppView.openTopic = (kind, id) => { opened.push([kind, id]); };
+  const promoted = activeSession({ id: 41, status: 'promoted', pr_number: 90 });
+  h.render([
+    { role: 'system', content: 'Staging deployed!', changesReady: true,
+      stagingUrl: 'https://preview.example.org', _slug: 'open001' },
+  ], promoted);
+  assert.match(PR_CARD_SRC, /r\.propose\.kind === 'completed' && r\.proposalId \? \(\) => controller\(\)\?\.openProposalVote\?\.\(r\.proposalId\)/,
+    'the completed button calls openProposalVote with the card\'s proposal');
+  h.DevChat.openProposalVote(h.changesRow().proposalId);
+  assert.deepEqual(opened, [['proposal', 41]], 'with the app view up, the page opens in place');
+
+  // In the Messages pane (#2813) no app view is up: App.currentApp is null,
+  // and openTopic would render into the hidden app screen. The page's own
+  // address is followed instead.
+  opened.length = 0;
+  h.sandbox.App = { currentApp: null };
+  h.sandbox.location = { hash: '' };
+  h.DevChat.currentSession = { ...promoted, app_slug: 'demo-app' };
+  h.DevChat.openProposalVote(41);
+  assert.deepEqual(opened, [], 'nothing is rendered off screen');
+  assert.equal(h.sandbox.location.hash, '#app/demo-app/dev/changes/90');
+  h.DevChat.openIssueRef(12);
+  assert.equal(h.sandbox.location.hash, '#app/demo-app/dev/issues/12');
 });
 
 test('an underway card has no vote link (#3605)', () => {
