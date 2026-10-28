@@ -466,6 +466,13 @@
     },
     {
       "source": "src/routes/profile.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "99bdf65d0f5685f9bbc5",
+      "count": 1,
+      "preview": "WEEKLY_USE_TOTALS_SQL"
+    },
+    {
+      "source": "src/routes/profile.js",
       "kind": "structural-template",
       "fingerprint": "0334b42a4d62d9ecdbf9",
       "count": 1,
