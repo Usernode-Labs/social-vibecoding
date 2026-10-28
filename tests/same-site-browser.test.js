@@ -220,6 +220,9 @@ const EXEMPT = new Map([
   // #4264: a coding agent's sandbox, authenticated by the task's one-time
   // upload token in Authorization; no cookie is read.
   ['external-agent-patch-upload.js POST /api/external-tasks/:taskId/patch', TOKEN],
+  // A coding agent's machine, authenticated by the connector upload's
+  // one-time token in Authorization; no cookie is read.
+  ['connector-uploads.js POST /api/connector-uploads/:uploadId', TOKEN],
   // A platform preview's own process, in the cluster, authenticated by the
   // credential production gave it (services/preview-projects.js); no cookie
   // is read, and a call through any proxy is refused.

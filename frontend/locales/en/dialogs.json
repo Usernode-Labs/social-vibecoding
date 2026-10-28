@@ -1391,10 +1391,6 @@
     "text": "Couldn't read that clip. Try an MP4, WebM or MOV recording.",
     "description": "Status line of the \"Suggest an improvement\" dialog when a chosen video cannot be played by the browser. MP4, WebM and MOV are file formats."
   },
-  "feedback.video.tooLong": {
-    "text": "Clips can be up to 60 seconds long. Trim it and try again.",
-    "description": "Status line of the \"Suggest an improvement\" dialog when a chosen video is longer than a minute."
-  },
   "feedback.video.uploadFailed": {
     "text": "Video upload failed",
     "description": "Status line of the \"Suggest an improvement\" dialog when the server refused the attached video and gave no reason."

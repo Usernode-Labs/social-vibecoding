@@ -1505,13 +1505,13 @@ export function init() {
 
     // ── #3940: video attachment ────────────────────────────────────
     // One clip per issue, chosen alongside the images above. MP4/WebM/MOV
-    // only, up to 50 MB and (read from the file's metadata here, enforced
-    // client-side only) 60 seconds. The clip uploads on its own with a
+    // only, up to 50 MB, and as long as fits in that: a narrated walkthrough
+    // of a change runs a few minutes, and the size is what storage and the
+    // upload actually pay for. The clip uploads on its own with a
     // progress bar — fetch gives no upload progress, so this one is an
     // XMLHttpRequest. The server re-checks size and magic bytes on every
     // upload and caps the issue at one clip (src/routes/feedback.js).
     const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
-    const MAX_VIDEO_SECONDS = 60;
     const videoBtn = document.getElementById('feedback-video-btn');
     const videoLabel = videoBtn.querySelector('[data-video-label]');
     const videoInput = document.getElementById('feedback-video-input');
@@ -1632,10 +1632,10 @@ export function init() {
       xhr.send(entry.blob);
     });
 
-    // The 60-second rule needs the clip's metadata, and the same load
-    // proves the browser can decode it at all. A Blob-backed WebM without
-    // a duration header reports Infinity until seeked past the end — ask
-    // once, then read it back.
+    // Loading the clip's metadata proves the browser can decode it at all,
+    // which is what the thumbnail's preview needs. A Blob-backed WebM
+    // without a duration header reports Infinity until seeked past the
+    // end — ask once, then read it back.
     const videoDurationSeconds = (objectUrl) => new Promise((resolve) => {
       const probe = document.createElement('video');
       probe.preload = 'metadata';
@@ -1687,10 +1687,6 @@ export function init() {
       if (video !== entry) return;
       if (seconds === null) {
         abandon(true, t('dialogs:feedback.video.unreadable'));
-        return;
-      }
-      if (seconds > MAX_VIDEO_SECONDS + 0.25) {
-        abandon(true, t('dialogs:feedback.video.tooLong'));
         return;
       }
       entry.stateEl.textContent = t('dialogs:feedback.video.uploading');

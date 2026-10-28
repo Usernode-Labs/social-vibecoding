@@ -1199,10 +1199,6 @@
     "text": "No se pudo leer ese clip. Prueba con una grabación MP4, WebM o MOV.",
     "source": "b2464bc98b6a67bab4ac418af0f1a25a10342cd55b714081fc7b773d9a540dea"
   },
-  "feedback.video.tooLong": {
-    "text": "Los clips pueden durar hasta 60 segundos. Recórtalo e inténtalo de nuevo.",
-    "source": "fcba2c5a0e92738ed595623daa5439879123b314d501ef4642da02c9d9d54f01"
-  },
   "feedback.video.uploadFailed": {
     "text": "Error al subir el video",
     "source": "5afe923fc21376c1689069f95128eff7bdaf2ab81ecab63dee2287cfaa6f8c36"
