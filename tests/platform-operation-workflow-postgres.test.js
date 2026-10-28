@@ -392,6 +392,28 @@ test('privileged operations are conductor work', { timeout: 90000 }, async (t) =
     t.mock.method(topicAttrs, 'selfAssignProposal', assign);
   });
 
+  await t.test('an app is removed on the conductor, for someone who may still delete it', async () => {
+    const runtime = require('../src/services/application-runtime');
+    const removed = [];
+    t.mock.method(runtime, 'remove', async (_config, ref) => { removed.push([process.env.PROCESS_ROLE, ref.runtimeName]); });
+    const p = await project();
+    await pool.query(`UPDATE apps SET runtime_kind = 'kubernetes', runtime_name = 'sv-app-x' WHERE id = $1`, [p.appId]);
+    const { key } = await ask({ ...p, op: 'app.remove', input: {} });
+    assert.deepEqual(removed, [], 'the web append removes nothing');
+    await settle();
+    assert.equal((await instance(key)).data.ok, true);
+    assert.deepEqual(removed, [['conductor', 'sv-app-x']]);
+    assert.equal((await pool.query('SELECT 1 FROM apps WHERE id = $1', [p.appId])).rowCount, 0);
+
+    // Someone else, who could delete nothing of it, is refused before anything goes.
+    const q = await project();
+    const { rows: [other] } = await pool.query(`INSERT INTO users (username, password, has_platform_access) VALUES ('ops_other_${seq}', 'x', TRUE) RETURNING id`);
+    const refused = await ask({ ...q, userId: other.id, op: 'app.remove', input: {} });
+    await settle();
+    assert.equal((await instance(refused.key)).data.status, 403);
+    assert.equal((await pool.query('SELECT 1 FROM apps WHERE id = $1', [q.appId])).rowCount, 1);
+  });
+
   await t.test('a web process never runs the work', async () => {
     const p = await project();
     await ask(rename(p, 'Web only'));

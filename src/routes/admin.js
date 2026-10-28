@@ -844,8 +844,7 @@ function adminRoutes(config) {
         userId: Number(req.params.id), actorId: req.user.id, mode: 'admin', confirmation: req.body?.confirmation,
       });
       res.json(result);
-      void require('../services/account-deletion-cleanup').sweep(pool, config).catch(() => {});
-    } catch (err) { require('./account-deletion').sendError(res, err); }
+          } catch (err) { require('./account-deletion').sendError(res, err); }
   });
 
   // Admin-issued temporary password (issue #282). The universal recovery
@@ -1991,13 +1990,14 @@ function adminRoutes(config) {
       const fresh = rows.find((r) => r.id === id);
       res.json({ domain: fresh ? adminDomainRow(fresh) : null });
     } catch (err) {
+      if (err.code === 'edge_teardown_failed') return res.status(503).json({ error: err.message, code: err.code });
       log.error('admin', 'Custom domain action failed', { id, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   }
 
   router.post('/api/admin/domains/:id/check', requireAdminWrite, (req, res) => adminDomainAction(req, res,
-    (row) => (row.status === 'disabled' ? row : appDomains.checkNow(pool, config, row))));
+    (row) => (row.status === 'disabled' ? row : appDomains.checkNow(pool, config, row, { userId: req.user.id }))));
   router.post('/api/admin/domains/:id/disable', requireAdminWrite, (req, res) => adminDomainAction(req, res,
     (row) => (row.status === 'disabled' ? row : appDomains.disable(pool, config, row, req.user))));
   router.post('/api/admin/domains/:id/enable', requireAdminWrite, (req, res) => adminDomainAction(req, res,
@@ -2375,7 +2375,7 @@ function adminRoutes(config) {
       // request (a provider failure is logged inside it).
       try {
         await managedOpenRouter.syncAllowance({
-          pool, userId, config,
+          pool, userId, config, actorId: req.user.id,
           state: await managedOpenRouter.stateForUser(pool, userId),
         });
       } catch (err) {
