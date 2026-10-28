@@ -3,25 +3,24 @@ import type { Queryable, Runtime, EventOutcome } from '../kernel/index.ts';
 import { MACHINE, WORK, WAIT_MS, stopKey, failure } from './machine.ts';
 import type { Result } from './machine.ts';
 import type { Target } from './target.ts';
-import { legacyTurnKey, snapshot, stopTarget } from './target.ts';
+import { snapshot, stopTarget } from './target.ts';
 
 function fail(result: Result): never {
   if (result.ok) throw new Error('Expected a failed stop');
   throw Object.assign(new Error(result.message), { code: result.code, httpStatus: result.status });
 }
 export interface StopRequest {
-  sessionId: number; userId: number; expectedTurnId?: string | null; expectedJob?: Pick<Target, 'active' | 'turnId' | 'journal'> & { legacy?: string | null };
+  sessionId: number; userId: number; expectedTurnId?: string | null; expectedJob?: Pick<Target, 'active' | 'turnId' | 'journal'>;
 }
-export async function prepareStop(db: Queryable, p: Omit<StopRequest, 'userId'> & { userId: number | null }, { allowIdentityless = false } = {}) {
+export async function prepareStop(db: Queryable, p: Omit<StopRequest, 'userId'> & { userId: number | null }) {
   const current = await stopTarget(db, p.sessionId, p.userId);
   if (!current) fail(failure('not_authorized', 'Session not found', 404));
   if (!current.active && (p.expectedJob?.active || p.expectedTurnId)) return null;
   if (p.expectedTurnId && current.turnId !== p.expectedTurnId) fail(failure('turn_changed', 'The running job changed. Retry Stop.', 409));
-  if (p.expectedJob && (current.active !== p.expectedJob.active || current.turnId !== p.expectedJob.turnId || current.journal !== p.expectedJob.journal
-      || (p.expectedJob.legacy && p.expectedJob.legacy !== legacyTurnKey(current.turn)))) {
+  if (p.expectedJob && (current.active !== p.expectedJob.active || current.turnId !== p.expectedJob.turnId || current.journal !== p.expectedJob.journal)) {
     fail(failure('turn_changed', 'The running job changed. Retry Stop.', 409));
   }
-  if (current.active && !current.turnId && !current.journal && !(allowIdentityless && legacyTurnKey(current.turn))) {
+  if (current.active && !current.turnId && !current.journal) {
     fail(failure('turn_changed', 'The running job has no safe stop identity.', 409));
   }
   return current;
