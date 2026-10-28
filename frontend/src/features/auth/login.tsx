@@ -72,6 +72,7 @@ import { t as translate } from '../../lib/i18n/runtime';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { returnKeyHandler } from '../../lib/return-to-next';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { CodeBoxes } from './code-boxes';
 import { AuthBackButton, backToLanding } from './back-button';
 import { NativeLoginDetailsLink } from './native-login-details';
 import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
@@ -218,19 +219,9 @@ const AUTHFIELD = { box: 'card', hint: 'dim', ring: 'bare' } as const;
 const AUTH_CARD = 'rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden';
 const AUTH_ROW = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
 const AUTH_LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
-/**
- * Board 4's code field — the one row on the three sign-in screens whose value
- * is not prose. Monospace at 26px with 8px between the characters, so six
- * digits read as six separate things and a transcription slip is visible
- * without counting. The 28px line box on top of the `card` box's own `py-1`
- * is the board's 36px field.
- *
- * A whole literal, like every class string in this file, and it rides in
- * through `className` rather than a variant: `cn` is tailwind-merge, so
- * `text-[26px]` displaces the `card` box's own `text-[17px]` instead of
- * racing it for stylesheet order.
- */
-const CODE_FIELD = 'font-mono text-[26px] leading-[28px] tracking-[8px]';
+// Board 4's code field was one monospace field with 8px between the digits,
+// so six digits read as six separate things. #5989 made them six boxes over
+// one real field (./code-boxes.tsx), as the sign-in sheet's codes are.
 const ERROR = 'text-red-400 text-sm';
 // The line under the set-password step's username field: its rule, or the
 // server's sentence about the name (QA 2026-09-24 Q12). Two whole literals.
@@ -1711,29 +1702,18 @@ export function LoginScreen() {
                   ]} />
               </p>
               {/*
-                  The same one-field card as the email step, with the value
-                  spelled as a code (CODE_FIELD). Left-aligned like every
-                  other row of this card: the label sits at the row's left
-                  edge, and `tracking-[8px]` puts its 8px after the last
-                  character too, which centring would then read as off-centre.
+                  The same card as the email step, with the code as six boxes
+                  over one real field (#5989, ./code-boxes.tsx): the sign-in
+                  sheet's codes draw them, and so does this screen's. The
+                  label stays at the row's left edge; a new code (cooldownUntil
+                  moves) empties the boxes with the field.
               */}
               <div className={AUTH_CARD}>
                 <div className={AUTH_ROW}>
                   <label htmlFor="otp-code" className={AUTH_LABEL}>
                     {t('auth:login.otp.codeLabel')}
                   </label>
-                  <Input
-                    ref={otpCode}
-                    id="otp-code"
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={6}
-                    enterKeyHint="go"
-                    {...AUTHFIELD}
-                    className={CODE_FIELD}
-                    placeholder="123456"
-                  />
+                  <CodeBoxes id="otp-code" inputRef={otpCode} label={t('auth:login.otp.codeLabel')} clearKey={cooldownUntil} boxAttr="data-otp-code-box" className="mt-2 mb-1" />
                 </div>
               </div>
               {/*

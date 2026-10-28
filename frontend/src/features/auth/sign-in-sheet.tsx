@@ -184,6 +184,7 @@ import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
+import { CODE_BOX, CODE_BOX_NEXT, CODE_LENGTH, codeDigits, CodeBoxes } from './code-boxes';
 import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
 import { NativeLoginDetailsLink } from './native-login-details';
 import { PhoneInput, readPhone } from './phone-input';
@@ -507,13 +508,10 @@ export async function requestPasswordReset(address: string): Promise<{ ok: true 
   }
 }
 
-/** The code's length (routes/auth.js sends six digits). */
-export const CODE_LENGTH = 6;
-
-/** What is typed or pasted into the code, as the six digits it can be: a pasted "583 914" or "Code: 583914" fills all six. */
-export function codeDigits(value: string): string {
-  return value.replace(/\D/g, '').slice(0, CODE_LENGTH);
-}
+// The code's length and its digits live with the six boxes (./code-boxes.tsx,
+// #5989) since every digit code draws them; kept exported from here for the
+// callers and tests that read them off the sheet.
+export { CODE_LENGTH, codeDigits };
 
 /** A mail service whose own inbox a button can open, for the code step (#5253). */
 export type MailApp = { name: string; url: string };
@@ -732,10 +730,9 @@ const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400
 // white segment on it, as Settings' Light / Dark / System.
 const SWITCH_TRACK = 'mt-4 grid grid-cols-2 gap-1 rounded-full bg-zinc-200 p-1 dark:bg-zinc-800';
 const SWITCH_ON = 'h-9 rounded-full bg-white text-[15px] font-semibold text-zinc-900 shadow-sm dark:bg-zinc-600 dark:text-zinc-100';
-// The code's six boxes (#5253): white cards with the sheets' hairline, the
-// one the next digit goes into ringed in the accent while the field has focus.
-const CODE_BOX = 'flex h-14 items-center justify-center rounded-xl bg-white text-[24px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-100';
-const CODE_BOX_NEXT = 'flex h-14 items-center justify-center rounded-xl bg-white text-[24px] font-semibold text-zinc-900 ring-2 ring-violet-600 dark:bg-zinc-900 dark:ring-violet-400 dark:text-zinc-100';
+// The code's six boxes (#5253) are ./code-boxes.tsx's CODE_BOX and
+// CODE_BOX_NEXT: the email step below still draws its own copy of the
+// pattern, because its sixth digit sends the code (onCodeInput).
 const MAIL_BUTTON = 'flex h-[50px] w-full items-center justify-center rounded-full bg-violet-50 text-[17px] font-[650] text-violet-700 dark:bg-violet-950/50 dark:text-violet-300';
 const SWITCH_OFF = 'h-9 rounded-full text-[15px] font-medium text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100';
 
@@ -1718,7 +1715,9 @@ export function SignInSheet({
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-phone-code" className={LABEL}>{t('auth:signInSheet.phoneCode.label')}</label>
-                <input ref={phoneCodeField} id="sign-in-sheet-phone-code" {...ONE_TIME_CODE_FIELD} enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
+                {/* Six boxes over one real field (#5989), as the email code's. A new
+                    code (cooldownUntil moves) empties them with the field. */}
+                <CodeBoxes id="sign-in-sheet-phone-code" inputRef={phoneCodeField} label={t('auth:signInSheet.phoneCode.label')} clearKey={cooldownUntil} boxAttr="data-sign-in-sheet-phone-code-box" className="mt-2 mb-1" />
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.phoneCode.checking') : t('auth:signInSheet.phoneCode.submit')}</button>

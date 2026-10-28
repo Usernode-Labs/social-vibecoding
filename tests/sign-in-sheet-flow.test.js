@@ -201,9 +201,12 @@ test('a code field says it is a one-time code, in every way a browser reads (Eva
     assert.ok(block.includes(attr), attr);
   }
   const src = read(SHEET);
-  for (const id of ['sign-in-sheet-code', 'sign-in-sheet-phone-code']) {
-    assert.match(src, new RegExp(`id="${id}" \\{\\.\\.\\.ONE_TIME_CODE_FIELD\\} enterKeyHint="go" maxLength=\\{6\\}`), id);
-  }
+  assert.match(src, /id="sign-in-sheet-code" \{\.\.\.ONE_TIME_CODE_FIELD\} enterKeyHint="go" maxLength=\{6\}/, 'sign-in-sheet-code');
+  // The phone code is six boxes over one real field (#5989): the field is
+  // code-boxes.tsx's, with the same attributes.
+  assert.match(src, /<CodeBoxes id="sign-in-sheet-phone-code" inputRef=\{phoneCodeField\}/, 'sign-in-sheet-phone-code');
+  const boxes = read('frontend/src/features/auth/code-boxes.tsx');
+  assert.match(boxes, /id=\{id\}\s+\{\.\.\.ONE_TIME_CODE_FIELD\}\s+enterKeyHint="go"\s+maxLength=\{6\}/);
   assert.doesNotMatch(src, /type="password"[^>]*one-time-code|one-time-code[^>]*type="password"/);
 });
 

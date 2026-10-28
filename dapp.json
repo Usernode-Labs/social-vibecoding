@@ -4257,9 +4257,9 @@
       "expectText": "signs in with a password"
     },
     {
-      "name": "An invite link opens the code step with its own address, not an empty field (#1548)",
+      "name": "An invite link opens the code step with its own address, not an empty field (#1548); the code is six boxes over one field (#5989)",
       "path": "/?shot=signup-code-sent#signup/demo%40example.invalid",
-      "expectSelector": "#auth-login-screen:not(.hidden) #otp-view:not(.hidden) #otp-step-code:not(.hidden) #otp-email-echo",
+      "expectSelector": "#auth-login-screen:not(.hidden) #otp-view:not(.hidden) #otp-step-code:not(.hidden):has([data-otp-code-box=\"5\"]):has(input#otp-code[autocomplete=\"one-time-code\"]) #otp-email-echo",
       "expectText": "demo@example.invalid"
     },
     {

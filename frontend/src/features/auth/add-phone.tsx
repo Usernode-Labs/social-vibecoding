@@ -24,6 +24,7 @@ import { buttonVariants } from '@/components/ui/button';
 
 import { useMessages } from '../../lib/i18n/react';
 import { phoneRecaptchaToken } from './recaptcha';
+import { CodeBoxes } from './code-boxes';
 import { blockedOffline } from './shared';
 import { PhoneInput, readPhone } from './phone-input';
 import { RecaptchaNotice } from './sign-in-sheet';
@@ -38,7 +39,6 @@ const PRIMARY = `${buttonVariants({
 })} flex items-center justify-center disabled:opacity-60`;
 const FIELD_GROUP = 'overflow-hidden rounded-2xl bg-zinc-50 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-800';
 const LABEL = 'block px-4 pt-3 text-[13px] text-zinc-500 dark:text-zinc-400';
-const INPUT = 'w-full border-0 bg-transparent px-4 pt-1 pb-2 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
 const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400 hover:underline disabled:text-zinc-500 disabled:no-underline';
 
 const RESEND_MS = 60 * 1000;
@@ -149,7 +149,9 @@ export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
         <form key="code" className="mt-4 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void verify(); }}>
           <div className={FIELD_GROUP}>
             <label htmlFor="add-phone-code" className={LABEL}>{t('auth:addPhone.codeLabel')}</label>
-            <input ref={codeField} id="add-phone-code" inputMode="numeric" autoComplete="one-time-code" enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
+            {/* Six boxes over one real field (#5989), as the sign-in sheet's codes.
+                "Send a new code" (resendAt moves) empties them. */}
+            <CodeBoxes id="add-phone-code" inputRef={codeField} label={t('auth:addPhone.codeLabel')} clearKey={resendAt} boxAttr="data-add-phone-code-box" className="mx-4 mt-1 mb-3" />
           </div>
           <button type="submit" disabled={busy} className={PRIMARY}>{busy ? t('auth:addPhone.checking') : t('auth:addPhone.verify')}</button>
           <div className="flex items-center justify-between">
