@@ -5075,6 +5075,35 @@
       "name": "iPhone Duo: a one-sided column of system chrome (?side-strip=right paints the Duo's 84pt column) puts the shell in strip mode, with the strip's back controls and the Apps section in the markup (24 Oct 2026)",
       "path": "/?demo=1&side-strip=right",
       "expectSelector": "html[data-side-strip=\"right\"]:has(#platform-tabs > .platform-side-apps:first-child + .platform-tabs-marker + #platform-tab-home) .platform-side-strip-ground + .platform-side-strip-frost + #platform-side-strip-top > #platform-side-strip-back"
+    },
+    {
+      "name": "Signed out, 5 loads: an invite link shows its card, not the waitlist (#6003)",
+      "path": "/invite/stagingdemoinvite00001",
+      "repeat": 5,
+      "persona": "guest",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has([data-landing-invite=\"live\"]) :is(.hidden #landing-waitlist-link, #landing-waitlist-link.hidden)",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Signed out: the landing shows its story or pitch (#6003)",
+      "path": "/",
+      "persona": "guest",
+      "expectSelector": "#auth-landing-screen:not(.hidden) :is([data-landing-story] h1, div:not(.hidden) > h1)",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Signed out: the sign-in sheet opens (#6003)",
+      "path": "/?login=1",
+      "persona": "guest",
+      "expectSelector": "#auth-landing-screen [data-sign-in-sheet] #sign-in-sheet-title",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Signed out: a public project's page loads (#6003)",
+      "path": "/app/staging-landing-open",
+      "persona": "guest",
+      "expectSelector": "#auth-landing-screen:not(.hidden) [data-guest-project=\"staging-landing-open\"]",
+      "allowConsoleErrors": true
     }
   ],
   "governance": {

@@ -318,6 +318,15 @@ function withToken(url, token) {
   return base + (base.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token) + frag;
 }
 
+// The address one declared check visits. A `guest` check must really be
+// signed out, so it gets the bare address: a `token` query parameter is the
+// sign-in, and appending it would make the check a signed-in one wearing a
+// visitor's hat. Every other check signs in as the view-only admin.
+function checkVisitUrl(origin, visitPath, token, persona) {
+  const url = `${origin}${visitPath}`;
+  return persona === 'guest' ? url : withToken(url, token);
+}
+
 // The self-app uses clean pathname routes for app screens
 // (`/app/<slug>/...`) and keeps the rest of its SPA screens in fragments
 // (`#leaderboard`, `#admin/...`, ...). A non-app testing path joined as a
@@ -2202,9 +2211,16 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         path: t.path,
         // Tests sign as the view-only-admin so admin-gated check routes
         // render; screenshots (TARGETS) keep the non-admin captureToken.
-        url: withToken(`${stagingOrigin}${visitPath}`, testsToken),
+        // A guest check is the exception: no token at all, so it is really
+        // signed out.
+        url: checkVisitUrl(stagingOrigin, visitPath, testsToken, t.persona),
         expectSelector: t.expectSelector || '',
         expectText: t.expectText || '',
+        // Opt-in, like the load bits below: a signed-out check and a check
+        // that loads its page more than once each get their own browser
+        // (capture.js groupTests), and the runner judges every load.
+        ...(t.persona === 'guest' ? { persona: 'guest' } : {}),
+        ...(t.repeat > 1 ? { repeat: t.repeat } : {}),
         allowConsoleErrors: !!t.allowConsoleErrors,
         // How capture.js groupTests loads its page, from the app's
         // `bootParams` / `routingBoundaries` against the address visited:
@@ -3615,6 +3631,7 @@ module.exports = {
   deriveCapturePlan,
   parseShots,
   withToken,
+  checkVisitUrl,
   mintCaptureToken,
   selectCaptureTokens,
   CAPTURE_USERNAME,
