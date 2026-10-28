@@ -1793,7 +1793,6 @@ const App = {
         && shot !== 'feedback-offline' && shot !== 'feedback-queued'
         && shot !== 'feedback-capture-failed'
         && shot !== 'feedback-required' && shot !== 'feedback-choose'
-        && shot !== 'feedback-choose-missed'
         && shot !== 'feedback-first' && shot !== 'feedback-sent' && shot !== 'feedback-bot') return;
     const spent = shot === 'feedback-spent';
     // #1054: the two offline variants. `feedback-offline` is the dialog as a
@@ -1818,20 +1817,14 @@ const App = {
     // real Submit and photographs the real refusal; the controller returns
     // before any fetch, so this posts nothing either.
     const requiredError = shot === 'feedback-required';
-    // #2707: the dialog as somebody with an app open meets it — two real
-    // destinations, neither chosen, and the row asking which. The
+    // #5992: the dialog as somebody with an app open meets it — two real
+    // destinations, both tappable, and the open app already chosen. The
     // shot routes cannot reach that state on their own: `/` has no app open,
     // and this app's own dev screen is self-hosted, which is the one case
     // that forces the Platform target. So it pins the label the way
     // ?shot=feedback-spent pins the kudos budget, and drives the shipped
     // branch through the controller's own hook. Files nothing.
     const chooseTarget = shot === 'feedback-choose';
-    // #2888: that same dialog after Submit was pressed with neither
-    // destination chosen — the row red, the hint red, focus on the row. A
-    // description is assigned first (not typed: no live title call) so the
-    // only refusal on screen is the one this state is about. The hook presses
-    // the real Submit, whose refusal returns before any fetch. Files nothing.
-    const missedTarget = shot === 'feedback-choose-missed';
     // ONCE PER DOCUMENT. _applyRouteShots dedupes on the hash, not on the
     // applier, so a fragment that changes after boot re-runs this one — and
     // this shot is not idempotent the way the others are. Its
@@ -1962,30 +1955,18 @@ const App = {
           // Same retry shape, and for the same reason, as the two above: the
           // dialog's own open-time reset decides the destination row, so a
           // pose that lands before it is wiped. What the check asserts is
-          // the app option LIVE and named, with nothing chosen (the row asks
-          // by its label now; the hint under it is only a refusal), so that
-          // is what this waits for.
+          // the app option LIVE, named and SELECTED (#5992), so that is what
+          // this waits for.
           let chooseTries = App.IMPROVE_SHOT_TRIES;
           const poseChoice = () => {
             const app = document.getElementById('feedback-target-app');
             const name = document.getElementById('feedback-target-app-name');
-            if (app && !app.disabled && name && name.textContent === 'Example App') return;
+            if (app && !app.disabled && app.getAttribute('aria-checked') === 'true'
+                && name && name.textContent === 'Example App') return;
             try { App._simulateFeedbackTargetChoice?.('Example App'); } catch (e) { /* ignore */ }
             if (--chooseTries > 0) setTimeout(poseChoice, App.IMPROVE_SHOT_INTERVAL_MS);
           };
           setTimeout(poseChoice, 50);
-        }
-        if (missedTarget) {
-          let missTries = App.IMPROVE_SHOT_TRIES;
-          const pressWithoutChoice = () => {
-            const row = document.getElementById('feedback-target');
-            if (row && row.getAttribute('aria-invalid') === 'true') return;
-            const text = document.getElementById('feedback-text');
-            if (text && !text.value) text.value = 'Dragging a card scrolls the board back to the top.';
-            try { App._simulateFeedbackTargetMissed?.('Example App'); } catch (e) { /* ignore */ }
-            if (--missTries > 0) setTimeout(pressWithoutChoice, App.IMPROVE_SHOT_INTERVAL_MS);
-          };
-          setTimeout(pressWithoutChoice, 50);
         }
         if (requiredError) {
           // Same retry shape, and for the same reason, as captureFailed

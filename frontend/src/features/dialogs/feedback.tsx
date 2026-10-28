@@ -234,15 +234,14 @@ export function FeedbackDialog() {
             is always visible but rendered disabled/grayed-out when no app
             with a repo is open (see ./feedback-controller).
 
-            #2707: BOTH options render `aria-checked="false"`, because when
-            both are selectable nothing is selected until the person taps
-            one. The old markup pre-checked Platform, and the controller
-            then pre-selected "This app" on open wherever it was available —
-            so the dialog always arrived with a destination already made up,
-            and a report about the app could be filed against the platform
-            (or the reverse) by nobody's decision. The controller still
-            selects the single available destination when there is only one:
-            an extra tap that cannot disambiguate anything is just a tax.
+            #2707, #5992: BOTH options render `aria-checked="false"`, because
+            the controller decides on open and this prerendered markup cannot
+            know whether an app is open. It now selects the open app by
+            default there (#5992), so the row arrives with a destination
+            that is where the person was; both options stay tappable, and
+            Homeroom is one tap away. The controller still selects the
+            single available destination when there is only one: an extra
+            tap that cannot disambiguate anything is just a tax.
         */}
         {/* WHERE SHOULD THIS GO? (UI overhaul): the question the row asks,
             as its label, where the grey hint under it used to ask it. Each
