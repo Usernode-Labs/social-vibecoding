@@ -37,7 +37,8 @@
  *      (recaptchaSiteKey, served at GET /api/auth/phone/recaptcha; the
  *      shell earns it in frontend/src/features/auth/recaptcha.ts). An
  *      empty key is served while Brevo or Twilio sends the texts: requestCode()
- *      ignores the token on that path, so the browser runs no check. A
+ *      ignores the token on that path, so the browser runs no check, unless
+ *      it asks for one for the Firebase backup (FIREBASE BACKUP). A
  *      missing or refused one is recaptcha_required. The page's host must
  *      be one of the Firebase project's authorized domains for the answer
  *      to count. The server never sends the SMS itself — Firebase does, at
@@ -507,34 +508,133 @@ async function requestCode(config, rawPhone, recaptchaToken, deps = {}) {
   }
   // Brevo or Twilio carries the text: the code, its hashes, its expiry and
   // its single use all belong to services/sms/otp.js, because neither checks
-  // codes. reCAPTCHA is Firebase's, so a gateway request ignores it.
+  // codes. reCAPTCHA is Firebase's, so a gateway request uses its token only
+  // for the Firebase backup (below).
   if (selectedGateway(config)) {
     const sms = require('./sms');
     const otp = require('./sms/otp');
+    const backup = await firebaseBackupOn(config, deps);
+    // A resend while the gateway's code is still live: that text may never
+    // have arrived (a Sender ID a carrier drops is accepted all the same),
+    // so this one goes by Firebase. A client that cannot earn the check
+    // (no `canBackUp`) gets a gateway resend, as before.
+    if (backup && await otp.liveFor(deps.pool, phoneNumber)) {
+      if (usableToken(recaptchaToken)) {
+        const sessionInfo = await sendByFirebaseBackup(config, phoneNumber, recaptchaToken, 'resend', deps);
+        return { phoneNumber, sessionInfo };
+      }
+      if (deps.canBackUp) {
+        const ask = await backupCheck(config, deps);
+        if (ask) throw ask;
+      }
+    }
     let issued;
     try {
       issued = await otp.issue(deps.pool, phoneNumber);
       await sms.sendOtpSms(deps.pool, config, { phoneNumber, code: issued.code }, deps);
     } catch (error) {
       const mapped = smsErrorToPhoneAuth(error);
+      if (mapped && backup && mapped.code !== 'invalid_phone') {
+        if (usableToken(recaptchaToken)) {
+          const sessionInfo = await sendByFirebaseBackup(
+            config, phoneNumber, recaptchaToken, mapped.providerCode || mapped.code, deps
+          );
+          return { phoneNumber, sessionInfo };
+        }
+        // The code just issued stays live, so the request with the token
+        // takes the resend branch above.
+        if (deps.canBackUp) {
+          const ask = await backupCheck(config, deps);
+          if (ask) throw ask;
+        }
+      }
       if (mapped) throw mapped;
       throw error;
     }
     return { phoneNumber, sessionInfo: issued.sessionInfo };
   }
   if (!firebaseOffered(config)) throw testNumbersOnlyError();
+  return { phoneNumber, sessionInfo: await firebaseSendCode(config, phoneNumber, recaptchaToken, deps) };
+}
+
+function usableToken(recaptchaToken) {
+  return typeof recaptchaToken === 'string' && !!recaptchaToken
+    && recaptchaToken.length <= RECAPTCHA_TOKEN_MAX;
+}
+
+// Firebase texts the code and keeps it; the sessionInfo is all we get back.
+async function firebaseSendCode(config, phoneNumber, recaptchaToken, deps = {}) {
   const body = { phoneNumber };
-  if (typeof recaptchaToken === 'string' && recaptchaToken
-      && recaptchaToken.length <= RECAPTCHA_TOKEN_MAX) {
-    body.recaptchaToken = recaptchaToken;
-  }
+  if (usableToken(recaptchaToken)) body.recaptchaToken = recaptchaToken;
   const data = await identityToolkit(config, 'accounts:sendVerificationCode', body, deps);
   if (typeof data.sessionInfo !== 'string' || !data.sessionInfo
       || data.sessionInfo.length > SESSION_INFO_MAX) {
     log.warn('phone-auth', 'Identity Toolkit sent no sessionInfo');
     throw new PhoneAuthError('firebase_unreachable', 'Could not reach the sign-in service. Try again.', 502);
   }
-  return { phoneNumber, sessionInfo: data.sessionInfo };
+  return data.sessionInfo;
+}
+
+// ── Firebase backup ─────────────────────────────────────────────────────
+//
+// While Brevo or Twilio is selected, Firebase sends a sign-in code the
+// gateway could not: one it refused or could not reach, a country with no
+// Sender ID, or a resend while the gateway's code is still live. Only sign-in
+// codes: Firebase writes its own text, so marketing and the admin test stay
+// on the gateway. It needs Firebase set up and the admin switch on
+// (services/sms/select.js, FALLBACK_KEY).
+//
+// Firebase texts a web caller only with a reCAPTCHA token, and the gateway
+// path runs no check (#5840). So the check is earned only when the backup is
+// needed: a client that says it can (`backup: true`, deps.canBackUp) is
+// answered 409 recaptcha_backup with Firebase's site key, and asks once
+// more with a token (frontend/src/features/auth/recaptcha.ts,
+// postPhoneCodeRequest). The code Firebase sends is redeemed by
+// exchangeCode's Firebase leg, whatever provider is selected. Every backup
+// send is one sms_deliveries row with provider 'firebase'; `why` is logged.
+async function firebaseBackupOn(config, deps = {}) {
+  if (!firebaseOffered(config)) return false;
+  try {
+    return await require('./sms/select').fallbackEnabled(deps.pool);
+  } catch {
+    return false;
+  }
+}
+
+// The 409 that asks the client for a token, or null when Firebase's site key
+// cannot be read (the gateway's own answer then stands).
+async function backupCheck(config, deps = {}) {
+  let siteKey;
+  try {
+    siteKey = await firebaseSiteKey(config, deps);
+  } catch {
+    return null;
+  }
+  const ask = new PhoneAuthError('recaptcha_backup', 'Sending your code another way.', 409);
+  ask.siteKey = siteKey;
+  return ask;
+}
+
+async function sendByFirebaseBackup(config, phoneNumber, recaptchaToken, why, deps = {}) {
+  const sms = require('./sms');
+  const { countryOf } = require('./sms/countries');
+  const row = { kind: 'otp', provider: 'firebase', country: countryOf(phoneNumber) || null, phone: phoneNumber, attempts: 1 };
+  log.warn('phone-auth', 'Sign-in code going by the Firebase backup', {
+    why, phone: `…${phoneNumber.slice(-4)}`,
+  });
+  try {
+    const sessionInfo = await firebaseSendCode(config, phoneNumber, recaptchaToken, deps);
+    await sms.recordDelivery(deps.pool, { ...row, status: 'sent' });
+    return sessionInfo;
+  } catch (error) {
+    await sms.recordDelivery(deps.pool, {
+      ...row,
+      status: error && error.status === 502 ? 'failed' : 'refused',
+      errorCode: error && error.code ? String(error.code) : 'internal',
+      providerCode: error && error.providerCode ? error.providerCode : null,
+    });
+    throw error;
+  }
 }
 
 // Firebase's code for a refusal, the part before ' : '. Only ever the
@@ -636,7 +736,8 @@ async function recaptchaSiteKey(config, deps = {}) {
   assertOffered(config);
   // A gateway carries the text, and requestCode() ignores the reCAPTCHA token on
   // that path: there is no check to answer, so no site key is served and the
-  // browser loads no widget. A switch back to Firebase serves one again.
+  // browser loads no widget. A switch back to Firebase serves one again. The
+  // Firebase backup hands its key over itself (backupCheck).
   let selected = 'firebase';
   try {
     selected = require('./sms/select').selectedSync(config);
@@ -647,6 +748,11 @@ async function recaptchaSiteKey(config, deps = {}) {
   // Test numbers only: nothing is texted, so there is no check to answer.
   // The sheet reads the empty key as "send the request without a token".
   if (!firebaseOffered(config)) return '';
+  return firebaseSiteKey(config, deps);
+}
+
+// The Firebase project's own site key, kept for an hour per API key.
+async function firebaseSiteKey(config, deps = {}) {
   const now = (deps.now || Date.now)();
   const cached = siteKeyCache.get(config.firebaseWebApiKey);
   if (cached && cached.until > now) return cached.siteKey;
@@ -1177,6 +1283,7 @@ module.exports = {
   PhoneAuthError,
   offered,
   firebaseOffered,
+  firebaseBackupOn,
   brevoOffered,
   gatewayOffered,
   mintSmsToken,

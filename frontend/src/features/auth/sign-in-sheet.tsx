@@ -190,7 +190,7 @@ import { CodeBoxes, CODE_LENGTH, codeDigits } from './code-boxes';
 import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
 import { NativeLoginDetailsLink } from './native-login-details';
 import { PhoneInput, readPhone } from './phone-input';
-import { phoneRecaptchaInUse, phoneRecaptchaToken, RECAPTCHA_LINE } from './recaptcha';
+import { phoneRecaptchaInUse, postPhoneCodeRequest, RECAPTCHA_LINE } from './recaptcha';
 import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
 import {
   blockedOffline,
@@ -1270,14 +1270,7 @@ export function SignInSheet({
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
-      const recaptchaToken = await phoneRecaptchaToken();
-      const res = await fetch('/api/auth/phone/request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ phoneNumber: value, ...(recaptchaToken ? { recaptchaToken } : {}) }),
-      });
-      const data = await res.json().catch(() => ({}));
+      const { res, data } = await postPhoneCodeRequest('/api/auth/phone/request', value);
       if (!res.ok || !data.ok || typeof data.sessionInfo !== 'string') {
         // Asked again too soon for a number a code already went to: that
         // code is still the one to type, with the resend held.

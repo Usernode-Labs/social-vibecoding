@@ -2281,6 +2281,21 @@
     {
       "source": "src/routes/admin.js",
       "method": "PUT",
+      "path": "/api/admin/sms/fallback",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.put.admin.sms.fallback.a26b8541",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "PUT",
       "path": "/api/admin/sms/provider",
       "expression": null,
       "status": "mapped",

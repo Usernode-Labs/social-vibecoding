@@ -16,6 +16,7 @@ import { phoneRecaptchaToken, RECAPTCHA_NOTICE } from '../auth/recaptcha';
 // what the last texts did. It looks like Email delivery on purpose:
 //
 //   1. Who sends texts, and is it ready?  (provider card, PUT /api/admin/sms/provider)
+//      And if Brevo or Twilio cannot?    (Firebase backup, PUT /api/admin/sms/fallback)
 //   2. Is phone sign-in set up?           (status card, GET /api/admin/sms/status)
 //   3. Which countries may it text?       (Sender IDs card, from the same read)
 //   4. Does a text go out right now?      (send a test, POST /api/admin/sms/test)
@@ -81,6 +82,7 @@ interface SmsStatus {
   senders?: SenderRow[];
   senderProvider?: string;
   stagingLogOnly?: boolean;
+  fallback?: { enabled: boolean; ready: boolean };
 }
 
 interface Outcome {
@@ -313,6 +315,70 @@ function ProviderCard({ provider, write, onSaved }: {
           {saving ? 'Saving…' : 'Save'}
         </button>
       )}
+      {note ? (
+        <p className={`text-sm mt-2 ${note.bad ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+          {note.text}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+// While Brevo or Twilio sends, Firebase can send the sign-in codes the
+// gateway could not: a refusal, an outage, a country with no Sender ID, or a
+// resend while the first code is still live (services/firebase-phone-auth.js,
+// FIREBASE BACKUP).
+function FallbackCard({ fallback, write, onSaved }: {
+  fallback: { enabled: boolean; ready: boolean }; write: boolean; onSaved: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [note, setNote] = useState<{ text: string; bad?: boolean } | null>(null);
+
+  const toggle = async (enabled: boolean) => {
+    if (!write || saving) return;
+    setSaving(true);
+    setNote(null);
+    const res = await fetchJson('/api/admin/sms/fallback', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    setSaving(false);
+    if (!res.ok) {
+      setNote({ text: (res.data && res.data.error) || 'The platform refused the change.', bad: true });
+      return;
+    }
+    setNote({ text: enabled ? 'Saved. Firebase now backs up sign-in codes.' : 'Saved. Sign-in codes go by the gateway only.' });
+    onSaved();
+  };
+
+  return (
+    <div id="admin-sms-fallback" className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 mb-4">
+      <h3 className="text-sm font-semibold mb-2">Firebase backup for sign-in codes</h3>
+      <label className="flex items-start gap-2 text-sm py-1">
+        <input
+          id="admin-sms-fallback-enabled"
+          type="checkbox"
+          className="mt-1"
+          checked={fallback.enabled}
+          disabled={!write || saving}
+          onChange={(e) => toggle(e.target.checked)}
+        />
+        <span>
+          When the gateway cannot send a sign-in code, or someone asks for a new one while
+          the first is still unused, Firebase sends it instead.
+        </span>
+      </label>
+      <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+        {fallback.ready
+          ? 'Firebase is set up. A backup text asks the person for Google’s reCAPTCHA check first; other sign-ins skip it. Marketing and test texts never use the backup.'
+          : 'Firebase is not set up, so there is no backup whatever this says.'}
+      </p>
+      {!write ? (
+        <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-2">
+          Changing this needs full admin access.
+        </p>
+      ) : null}
       {note ? (
         <p className={`text-sm mt-2 ${note.bad ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
           {note.text}
@@ -712,6 +778,9 @@ function SmsSection() {
       </p>
       {provider ? (
         <ProviderCard provider={provider} write={write} onSaved={loadStatus} />
+      ) : null}
+      {isGateway && status?.fallback ? (
+        <FallbackCard fallback={status.fallback} write={write} onSaved={loadStatus} />
       ) : null}
       <div id="admin-sms-status" className="mb-4">
         <StatusCard status={status} failed={statusFailed} />
