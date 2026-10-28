@@ -63,9 +63,10 @@
 </head>
 <body class="min-h-screen bg-ground text-fg">
   <!-- What the times are for, how this app finds one, and the new plan's
-       example name were filled in when the project was made. data-mode is
-       the mode: 'dates' (a plan's suggested days and times) or 'weekly'
-       (the hours of every week). Only that mode's parts show. -->
+       example name are this project's words (words.json, chosen when the
+       project was made), which server.js fills in as it serves the page.
+       data-mode is the mode: 'dates' (a plan's suggested days and times) or
+       'weekly' (the hours of every week). Only that mode's parts show. -->
   <main id="app" class="page-column flex flex-col px-4 py-8" data-mode="{{TIME_MODE}}">
     <!-- Home: the open plans, each with its grid of who is free when; or,
          weekly, the week. -->

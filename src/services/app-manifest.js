@@ -1924,7 +1924,9 @@ async function reconcileAppVisibility(pool, app, manifest) {
  *   - policy →invited with an EMPTY roster: auto-seed the app creator
  *     as an approver member so a child app can never lock itself out
  *     (the self-app has no created_by; the governed gate's full-admin
- *     fallback covers it);
+ *     fallback covers it). Never on an app that uses another's roster
+ *     (apps.approvers_from_app_id, the ready-made originals): its roster
+ *     is that app's, and a row of its own would count for nothing;
  *   - flush the governance cache (services/governance.js);
  *   - group-chat system message + `governance_changed` app update;
  *   - GOVERNANCE_CHANGED analytics event.
@@ -1976,9 +1978,12 @@ async function applyGovernanceChange(pool, app, { approverPolicy, approvalsRequi
       );
       if (!members.length) {
         const { rows: creatorRows } = await pool.query(
-          'SELECT created_by FROM apps WHERE id = $1', [app.id]
+          'SELECT created_by, approvers_from_app_id FROM apps WHERE id = $1', [app.id]
         );
-        const creatorId = creatorRows[0]?.created_by || null;
+        // Approved by another app's roster: nothing of its own to seed.
+        const linked = creatorRows[0]?.approvers_from_app_id != null;
+        const creatorId = linked ? null : (creatorRows[0]?.created_by || null);
+        if (linked) log.info('app-manifest', 'No approver seeded: this app uses another app\'s approvers', { appId: app.id });
         if (creatorId) {
           await pool.query(
             `INSERT INTO app_approvers (app_id, user_id, status, accepted_at)

@@ -8,8 +8,10 @@
 //   card        the first session's card, when one is owed: the model's,
 //               within its wait, else the fallback (services/app-sketch.js)
 //   repository  a fresh repository with the starter (and the card) as its
-//               first commit; a remix's copy of its source; an import's
-//               connector scaffold and create answers. Then `repo_url`.
+//               first commit, or, for a version of a ready-made original,
+//               the original's tree with the project's own words and name;
+//               a remix's copy of its source; an import's connector
+//               scaffold and create answers. Then `repo_url`.
 //
 // What it resolves is the machine's: the first commit, the image a
 // ready-made app may deploy instead of building, and what it measured. Its
@@ -28,6 +30,8 @@ const appSketch = require('./app-sketch');
 const creationTiming = require('./app-creation-timing');
 const starterImages = require('./starter-images');
 const repoQueue = require('./repo-create-queue');
+const originals = require('./originals');
+const lineage = require('./upstream-lineage');
 const { pushAppCreationPhase } = require('./ws');
 const repoRef = require('./repo-ref');
 
@@ -158,6 +162,11 @@ async function setUp(config, pool, appId, ctx) {
 async function seedStarter(config, pool, row, sketch, ctx) {
   if (!github.isEnabled()) return { sha: null, repoUrl: null, offer: null };
   try {
+    // A ready-made made as a version of its original (POST /api/apps wrote
+    // the link; services/originals.js sourceFor says what to copy, or that
+    // it is made as before).
+    const source = await originals.sourceFor(config, pool, row);
+    if (source) return await seedVersion(config, pool, row, sketch, ctx, source);
     const botUsername = await github.getBotUsername();
     const made = await repoQueue.withRetries(pool, async () => {
       // adoptExisting: a try after one that died between GitHub's create and
@@ -200,6 +209,56 @@ async function seedStarter(config, pool, row, sketch, ctx) {
     err.repoFailed = true;
     throw err;
   }
+}
+
+// A version of a ready-made original (docs/plans/versions.md, "Making a
+// ready-made"; services/originals.js): its first commit is the original's
+// tree at the commit it copies, with this project's own words.json, its name
+// in README, CLAUDE.md and LICENSE, its repository pointer, its card and its
+// dapp.json's name, description, icon and approval rule, and
+// `followOriginal: true`. A commit with no parent, which main is moved to,
+// like a remix's copy: it carries nothing of the original's history, and
+// any bytes the original holds (an image) arrive as they are.
+//
+// The lineage records the commit it copies (`syncedSha`) before anything is
+// pushed, so a try that resumes copies the same one and finds its own first
+// commit at the head by its message, and then that first commit
+// (`baseSha`). The image key is computed from these same files: the
+// original's image for this ready-made, built ahead (services/starter-
+// images.js), is the one its first deploy runs. `template` stays set, and
+// `template_version` is left empty: the lineage says which revision it is.
+async function seedVersion(config, pool, row, sketch, ctx, source) {
+  const template = templateOf(row);
+  const message = originals.versionMessage(row.name, source.original);
+  if (!source.committed) await lineage.writeUpstream(pool, row.id, { syncedSha: source.sha });
+  const botUsername = await github.getBotUsername();
+  const made = await repoQueue.withRetries(pool, async () => {
+    const repo = await github.createRepo(botUsername, row.slug, {
+      description: `${row.name}: built on Homeroom`,
+      adoptExisting: true,
+    });
+    const repoUrl = repo.html_url;
+    const files = source.tree
+      ? originals.versionFiles(source.tree, starterFiles(row, { repoUrl, sketch }), {
+        name: row.name, templateId: template, originalTemplate: source.original ? source.original.template : null,
+      })
+      : null;
+    const head = repo.adopted ? await github.headCommit(botUsername, row.slug) : null;
+    if (head && head.message === message) return { repoUrl, files, sha: head.sha };
+    if (!files) throw new Error('The project this is a version of cannot be read just now. Try again in a minute.');
+    const sha = await github.createRootCommit(botUsername, row.slug, files, { message });
+    await github.forceBranchToSha(botUsername, row.slug, 'main', sha);
+    return { repoUrl, files, sha };
+  }, { signal: ctx?.signal, label: { appId: row.id, slug: row.slug } });
+  const sha = String(made.sha || '').toLowerCase() || null;
+  await pool.query('UPDATE apps SET repo_url = $1, template_version = NULL WHERE id = $2', [made.repoUrl, row.id]);
+  if (sha) await lineage.writeUpstream(pool, row.id, { syncedSha: source.sha, baseSha: sha });
+  if (sketch) await appSketch.markCommitted(pool, row.id).catch(() => {});
+  const key = made.files ? starterImages.contextKey(made.files, starterImages.buildRecipe(config)) : null;
+  log.info('app-creator', 'Made as a version of its original', {
+    appId: row.id, slug: row.slug, original: source.original ? source.original.slug : null, syncedSha: source.sha, baseSha: sha,
+  });
+  return { sha, repoUrl: made.repoUrl, offer: sha ? { starter: { sha, template, ...(key ? { key } : {}) } } : null };
 }
 
 // An import keeps the repository it imported. Before #1218's follow-up an

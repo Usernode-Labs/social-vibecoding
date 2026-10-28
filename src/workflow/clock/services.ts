@@ -467,6 +467,16 @@ export const JOBS: readonly Job[] = Object.freeze([
     },
   },
   {
+    // The ready-made originals (services/originals.js): one project per
+    // starter directory with ready-made entries, made through the normal
+    // create path when it is missing, and the platform's approvers kept in
+    // each one's community. Its starters are this build's. Only where the
+    // git host is configured and versions are on (it says why it did
+    // nothing otherwise); a preview arms no clock.
+    name: 'originals', everyMs: 10 * MIN, newestOnly: true,
+    run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/originals').ensure(config, pool),
+  },
+  {
     // The app-host gate follows APP_GATE, in both directions: on brings it up
     // and routes every app through it, off routes them all straight back
     // (services/kubernetes.js reconcileAppGateIngresses). The newest build's

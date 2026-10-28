@@ -1405,6 +1405,21 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const readyMade = appTemplates.isReadyMade(template);
       const homeroomBotDm = require('../services/homeroom-bot-dm');
       const owesFirstVersion = !repoUrlNormalized && !readyMade && !!homeroomBotDm.normalizeBrief(req.body.brief);
+      // A ready-made app whose starter directory has an original is a
+      // version of it (docs/plans/versions.md, services/originals.js
+      // linkFor): of a running original, where versions are on, one that
+      // gets its updates, whose setup makes its first commit from the
+      // original's main (app-creator.js seedStarter); else made from
+      // app-templates as before, and linked as an older copy. Never a
+      // reason the create fails: without a link it is made as before.
+      let originalLink = null;
+      if (readyMade) {
+        try {
+          originalLink = await require('../services/originals').linkFor(config, pool, template);
+        } catch (err) {
+          log.warn('apps', 'Could not find the ready-made\'s original', { template, err: err.message });
+        }
+      }
       const db = await pool.connect();
       let appRow;
       // A part of the create that is never a reason it fails: under a
@@ -1510,6 +1525,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           appRow = templated[0] || appRow;
         }
 
+        // Its link to its original, read by its setup (originalLink above).
+        if (originalLink) {
+          await optional('version_link', 'Not linked to its original', async () => {
+            const link = await require('../services/upstream-lineage').writeUpstream(db, appRow.id, originalLink);
+            if (link) appRow = { ...appRow, upstream: originalLink };
+          });
+        }
+
         // The card of the idea, and with it the project's icon
         // (services/app-sketch.js): owed now, made by the setup before the
         // repository's first commit, which carries it. Only from "What do you
@@ -1592,6 +1615,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           ...(rule ? { approverPolicy: rule.approverPolicy, approvalsRequired: rule.approvalsRequired } : {}),
           ...(description ? { described: true } : {}),
           ...(template !== appTemplates.DEFAULT_TEMPLATE ? { template } : {}),
+          ...(originalLink && originalLink.following ? { versionOf: originalLink.slug } : {}),
           // Which door it came through: the first session's "What do you
           // want to make?" (the admin Journey's first session, journey.js
           // firstSession, counts only these) or the Create button's, which
@@ -4250,14 +4274,17 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // The invited approvers by name, so the Workshop's rule line ("evan
       // or snait says yes") is drawn once rather than said as a count first
       // and rewritten when GET /approvers answered (polish board #13). Only
-      // for a reader that route would answer: it is collab-read.
+      // for a reader that route would answer: it is collab-read. A project
+      // that uses another's approvers (apps.approvers_from_app_id, the
+      // ready-made originals: the platform's) names that roster.
       let approverNames = null;
       if (gov.approverPolicy === 'invited' && canChat) {
         const { rows: approverRows } = await pool.query(
           `SELECT u.username
              FROM app_approvers ap
              JOIN users u ON u.id = ap.user_id
-            WHERE ap.app_id = $1 AND ap.status = 'member'
+            WHERE ap.app_id = COALESCE((SELECT a.approvers_from_app_id FROM apps a WHERE a.id = $1), $1)
+              AND ap.status = 'member'
             ORDER BY LOWER(u.username)`,
           [app.id]
         );

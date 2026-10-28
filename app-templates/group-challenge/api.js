@@ -21,15 +21,28 @@
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 const PLATFORM_API_BASE = process.env.USERNODE_PLATFORM_API_V1_URL || process.env.USERNODE_PLATFORM_API_URL;
 
-// What this challenge counts, filled in when the project was made. The
-// page carries the same words (public/index.html, its data-unit-* values).
-const UNIT_PLURAL = '{{UNIT_PLURAL}}';
+// The words this project was made with (words.json beside this file, which
+// Homeroom writes when the project is made; the page's {{...}} come from the
+// same file). Every project made from this starter runs this same code, and
+// only its words.json differs. A missing or unreadable file reads as none,
+// and each value below then falls back to the miles challenge's.
+const WORDS = (() => {
+  try {
+    const parsed = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, 'words.json'), 'utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+})();
+// What this challenge counts, set when the project was made. The page
+// carries the same words (public/index.html, its data-unit-* values).
+const UNIT_PLURAL = typeof WORDS.UNIT_PLURAL === 'string' && WORDS.UNIT_PLURAL ? WORDS.UNIT_PLURAL : 'miles';
 // The group's goal for a month nobody changed it for. A month's goal is
 // kept from its first entry on (challenge_goals), so a new default here
 // applies from the next month that starts.
-const DEFAULT_GOAL = Number('{{DEFAULT_GOAL}}');
+const DEFAULT_GOAL = Number(WORDS.DEFAULT_GOAL) > 0 ? Number(WORDS.DEFAULT_GOAL) : 200;
 // Whether an amount may have decimals ("3.1 miles"), or is a whole number.
-const DECIMALS = '{{DECIMALS}}' === 'yes';
+const DECIMALS = (WORDS.DECIMALS == null ? 'yes' : WORDS.DECIMALS) === 'yes';
 // The most one entry can be: half the group's usual monthly goal. Far more
 // than anybody does in a day, so it only stops a slipped finger's extra
 // zeros; a big day can still be logged as two entries.
