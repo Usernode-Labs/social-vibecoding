@@ -728,7 +728,9 @@ test('the profile checks assert on the changed screen, not on "/"', () => {
   // chat_sessions still draws the lower half of the screen.
   const screen = mine.find((t) => t.path === '/?demo=1#profile');
   assert.ok(screen, 'the Me screen check is one of the two');
-  assert.match(screen.expectSelector, /#profile-identity-card:has\(#profile-edit-btn\) \+ #profile-stats/);
+  // The combinator may be written with or without spaces (#5927 folded the
+  // weekly-use check into this one and wrote it compact).
+  assert.match(screen.expectSelector, /#profile-identity-card:has\(#profile-edit-btn\) ?\+ ?#profile-stats/);
   assert.equal(screen.expectText, 'Edit profile');
 });
 
