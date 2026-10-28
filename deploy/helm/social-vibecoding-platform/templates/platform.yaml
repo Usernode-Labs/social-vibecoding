@@ -277,7 +277,8 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             httpGet: {path: /health, port: http}
             periodSeconds: 3
             timeoutSeconds: 2
-            failureThreshold: 40
+            # Covers the 180s security barrier plus ordinary boot/drain work.
+            failureThreshold: 100
           readinessProbe:
             httpGet: {path: /health, port: http}
             periodSeconds: 5

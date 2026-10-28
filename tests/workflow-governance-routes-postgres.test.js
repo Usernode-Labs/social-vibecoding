@@ -337,7 +337,7 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
 // it) and is restarted, rather than serving votes nothing would decide.
 test('a failed workflow runtime or loop start ends the process; the loops need no leader', () => {
   const server = fs.readFileSync(require.resolve('../server.js'), 'utf8');
-  assert.match(server, /await require\('\.\/src\/workflow\/platform\.ts'\)\.startWorkflow\(config, \{ loops: false \}\);/);
+  assert.match(server, /await require\('\.\/src\/workflow\/platform\.ts'\)\.startWorkflow\(config, \{ loops: false, previewRetirement \}\);/);
   assert.doesNotMatch(server, /\.startWorkflow\([^;]*\)\s*\.catch\(/, 'nothing swallows the failure');
   // A process that runs the workflow starts its loops in start(), once it
   // listens, whether or not it leads; a failure is start()'s to end.
