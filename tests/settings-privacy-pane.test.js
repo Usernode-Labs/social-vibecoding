@@ -60,6 +60,19 @@ test('the prerendered pane is hidden and carries no choice', () => {
   assert.equal(message('settings:privacy.discoverable.label'), 'Let people find my profile');
 });
 
+test('the line under each choice says what is true now (#5926)', () => {
+  const { PrivacySection } = loadTsx('frontend/src/features/settings/sections/privacy.tsx');
+  const html = renderToHtml(createElement(PrivacySection, {}));
+  // The switch is off until the account is read, and its line says so.
+  assert.ok(html.includes(escape(message('settings:privacy.discoverable.descriptionOff'))));
+  assert.ok(!html.includes(escape(message('settings:privacy.discoverable.descriptionOn'))));
+  assert.match(PANE, /settings\?\.discoverable\s*\?\s*'settings:privacy\.discoverable\.descriptionOn'\s*:\s*'settings:privacy\.discoverable\.descriptionOff'/);
+  assert.match(message('settings:privacy.discoverable.descriptionOn'), /^Anyone on Homeroom can find your username/);
+  assert.doesNotMatch(message('settings:privacy.discoverable.descriptionOff'), /When this is off/);
+  // "Anyone" says what it means in practice.
+  assert.match(message('settings:privacy.whoCanMessage.anyoneDescription'), /people you don't know/);
+});
+
 test('the pane reads and writes the route the rules sit behind', () => {
   assert.match(PANE, /const ENDPOINT = '\/api\/me\/contact-privacy';/);
   assert.match(PANE, /method: 'POST'/);

@@ -1548,16 +1548,20 @@
     "description": "Second choice under \"Who can message or invite me\" in Settings > Privacy: anybody on Homeroom can start a conversation with you or invite you."
   },
   "privacy.whoCanMessage.anyoneDescription": {
-    "text": "Anybody on Homeroom can message you, invite you or send you a friend request.",
+    "text": "Anybody on Homeroom can message you, invite you or send you a friend request, including people you don't know.",
     "description": "Small explanation under the \"Anyone\" choice in Settings > Privacy."
   },
   "privacy.discoverable.label": {
     "text": "Let people find my profile",
     "description": "Label of a switch in Settings > Privacy, off by default. When on, people who are not in a project with you can find your username when they search for people."
   },
-  "privacy.discoverable.description": {
-    "text": "When this is off, only your friends and people who made or were invited into a project you're in find your username when they search for someone to message, mention or invite. A link to your profile still works.",
-    "description": "Explanation under the \"Let people find my profile\" switch in Settings > Privacy."
+  "privacy.discoverable.descriptionOff": {
+    "text": "Only your friends and people who made or were invited into a project you're in can find your username when they search for someone to message, mention or invite. A link to your profile still works.",
+    "description": "Explanation under the \"Let people find my profile\" switch in Settings > Privacy while the switch is off: who can find you now."
+  },
+  "privacy.discoverable.descriptionOn": {
+    "text": "Anyone on Homeroom can find your username when they search for someone to message, mention or invite.",
+    "description": "Explanation under the \"Let people find my profile\" switch in Settings > Privacy while the switch is on: who can find you now."
   },
   "privacy.loadFailed": {
     "text": "Couldn't load your privacy settings. Try again in a moment.",
@@ -1579,9 +1583,21 @@
     "text": "Share usage analytics",
     "description": "Label of the switch in Settings > Privacy that lets Homeroom record how the person uses it. Off unless they turn it on."
   },
-  "privacy.usageAnalytics.description": {
-    "text": "Off unless you turn it on. When it is on, Homeroom keeps a record linked to your account of the screens you open and in what order, which apps you open, how long pages take to load and whether a few actions worked, to see where people get stuck or lost. It never records what you type or what is on screen. Turning it off stops this from then on.",
-    "description": "Explanation under the Share usage analytics switch in Settings > Privacy: what is recorded when it is on. \"Lost\" means unable to find their way around."
+  "privacy.usageAnalytics.stateOff": {
+    "text": "Off. Homeroom doesn't record how you use it unless you turn this on.",
+    "description": "First line under the Share usage analytics switch in Settings > Privacy while the switch is off: what is true now."
+  },
+  "privacy.usageAnalytics.stateOn": {
+    "text": "On. Homeroom keeps a record linked to your account, to see where people get stuck or lost. Turning it off stops this from then on.",
+    "description": "First line under the Share usage analytics switch in Settings > Privacy while the switch is on: what is true now. \"Lost\" means unable to find their way around."
+  },
+  "privacy.usageAnalytics.records": {
+    "text": "When it's on, we record: the screens you open and in what order, which apps you open, how long pages take to load and whether a few actions worked.",
+    "description": "Line under the Share usage analytics switch in Settings > Privacy, after the on/off line: everything that is recorded while the switch is on."
+  },
+  "privacy.usageAnalytics.neverRecords": {
+    "text": "We never record: what you type or what is on screen.",
+    "description": "Last line under the Share usage analytics switch in Settings > Privacy: what is never recorded, whether the switch is on or off."
   },
   "privacy.usageAnalytics.saveFailed": {
     "text": "Could not save that. Try again.",
