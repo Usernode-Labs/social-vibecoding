@@ -875,7 +875,6 @@ function usersAdminRoutes(config) {
       const result = await require('../../../services/account-deletion').deleteAccount(pool, {
         userId: toIntId(req.params.id), actorId: req.user.id, mode: 'admin', confirmation: req.body?.confirmation,
       });
-      void require('../../../services/account-deletion-cleanup').sweep(pool, config).catch(() => {});
       return ok(res, result, { message: 'Account deleted. External cleanup may still be pending.' });
     } catch (err) {
       if (err instanceof require('../../../services/account-deletion').AccountDeletionError) return fail(res, err.status, err.message);

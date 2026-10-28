@@ -30,6 +30,9 @@ const OPERATIONS = new Map([
   ['manifest.propose', () => require('./manifest-proposal-operation')],
   ['branch.ensure', () => require('./branch-operation')],
   ['revert.open', () => require('./revert-operation')],
+  ['domain.check', () => require('./domain-operation')],
+  ['domain.teardown', () => require('./domain-operation')],
+  ['app.remove', () => require('./app-removal-operation')],
 ]);
 
 // The requester as the auth middleware builds `req.user`, read now: an

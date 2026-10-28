@@ -282,6 +282,25 @@ operations are:
   while one is under way is the same request, and a new one starts once it
   has finished. So a claim a try began but could not record before its
   process went is the retry's own, and adopted.
+- `domain.check` and `domain.teardown`: a custom domain's check (DNS, the
+  certificate probe and its Ingress) and the removal of its Ingress and
+  certificate Secret, asked by the domain routes for a person who must still
+  manage the project or be a full admin. The domain sweep and a teardown on a
+  conductor write the edge themselves. A domain whose edge could not be taken
+  down keeps its row and status (503, ask again), so a hostname is never
+  released, nor a disabled one left routed, while its Ingress remains.
+- `app.remove`: an app's whole teardown (previews, runtime, domain edge,
+  database and files, then its row), asked by DELETE /api/apps/:slug and a
+  test account's retirement after their gates and confirmations; the
+  conductor checks again that the requester may delete it. A preview still
+  retiring is answered as before (409, ask again in a minute).
+
+An account deletion's provider, worker and stored-file cleanups are the
+`account-deletion` clock's alone, every minute on a conductor; the routes that
+queue them no longer start a sweep of their own. With these, a web process
+makes no Kubernetes write in production (preview projects, off by default,
+still build and deploy from the request's process): its runtime calls are
+reads (status, deployment state, logs, quotas, a preview's state).
 
 These move web dependencies behind durable commands. Web Pods still need
 their current Kubernetes and database permissions for other callers, including

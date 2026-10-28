@@ -3776,7 +3776,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (row.status === 'disabled') {
         return res.status(409).json({ error: 'An admin has disabled this domain.', code: 'disabled' });
       }
-      const next = await appDomains.checkNow(pool, config, row);
+      const next = await appDomains.checkNow(pool, config, row, { userId: req.user.id });
       res.json(domainPayload(ctx.app, next, true));
     } catch (err) {
       log.error('apps', 'Check custom domain failed', { slug: req.params.slug, message: err.message });
@@ -3794,6 +3794,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       log.info('apps', 'Custom domain removed', { slug: ctx.app.slug, hostname: row.hostname, by: req.user.username });
       res.status(204).end();
     } catch (err) {
+      if (err.code === 'edge_teardown_failed') return res.status(503).json({ error: err.message, code: err.code });
       log.error('apps', 'Remove custom domain failed', { slug: req.params.slug, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
@@ -3925,7 +3926,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
 
       // The runtime, the app database, its stored files, then the row
       // (services/app-teardown.js, shared with retiring a test account).
-      await require('../services/app-teardown').teardownApp(pool, config, app);
+      await require('../services/app-teardown').teardownApp(pool, config, app, { userId: req.user.id });
 
       log.info('apps', 'App deleted', {
         appId: app.id, slug: app.slug, by: req.user?.id, shared, notified: recipients.length,

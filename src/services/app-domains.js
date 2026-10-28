@@ -271,10 +271,23 @@ async function claim(pool, app, rawHostname, user) {
   return row;
 }
 
+// The edge goes first, and a domain whose Ingress or certificate could not be
+// taken down (the cluster, or the conductor that writes it, unavailable)
+// keeps its row and its status: removing or disabling it again finishes the
+// job, and a hostname is never released, nor a disabled one left routed,
+// while its Ingress still sends it to the app.
+async function takeEdgeDown(config, row, user, what) {
+  try {
+    await teardownEdge(config, row, { userId: user?.id });
+  } catch (err) {
+    log.warn('app-domains', `Edge teardown failed on ${what}; the domain is kept`, { hostname: row.hostname, err: err.message });
+    throw Object.assign(new Error('The domain\'s routing could not be taken down right now, so nothing was changed. Try again in a minute.'),
+      { code: 'edge_teardown_failed', status: 503 });
+  }
+}
+
 async function remove(pool, config, app, row, user, { action = 'removed' } = {}) {
-  await teardownEdge(config, row).catch((err) => {
-    log.warn('app-domains', 'Edge teardown failed on remove', { hostname: row.hostname, err: err.message });
-  });
+  await takeEdgeDown(config, row, user, 'remove');
   await pool.query('DELETE FROM app_domains WHERE id = $1', [row.id]);
   invalidateHost(row.hostname);
   await recordEvent(pool, { appId: app.id, userId: user?.id ?? null, hostname: row.hostname, action });
@@ -314,10 +327,28 @@ async function provisionEdge(config, app, row) {
   await kubernetes.deployCustomDomain(config, { app, domain: row });
 }
 
-async function teardownEdge(config, row) {
+async function teardownEdge(config, row, { userId = null } = {}) {
   if (!runtimeIsKubernetes(config)) return;
+  if (!onWorkflowProcess()) return askConductor('domain.teardown', row, userId, { hostname: row.hostname });
   const kubernetes = require('./kubernetes');
   await kubernetes.deleteCustomDomain(config, { domain: row });
+}
+
+// The edge is written where the runtime's credentials are used: a process
+// that runs the workflow (the domain sweep, a teardown) writes it itself; a
+// web process asks a conductor (services/domain-operation.js), on behalf of
+// the person who asked, who must still manage the project.
+function onWorkflowProcess() {
+  const role = require('./process-role');
+  return role.runsWorkflow(role.processRole());
+}
+async function askConductor(op, row, userId, extra = {}) {
+  if (!userId) throw new Error(`${op} from a web process needs the person who asked`);
+  const out = await require('./platform-operations').request({
+    op, appId: row.app_id, userId, input: { domainId: row.id, ...extra },
+  });
+  if (!out.ok) throw Object.assign(new Error(out.error || 'The edge was not changed'), { status: out.status, code: out.code });
+  return out;
 }
 
 /**
@@ -450,6 +481,10 @@ async function checkRow(pool, config, row, { now = Date.now(), resolver, probe =
 
 /** "Check now": a failed claim starts over; anything else is checked at once. */
 async function checkNow(pool, config, row, deps = {}) {
+  if (!onWorkflowProcess()) {
+    await askConductor('domain.check', row, deps.userId);
+    return byId(pool, row.id);
+  }
   let current = row;
   if (row.status === 'failed') {
     current = await setStatus(pool, row.id, 'pending', { failure_count: 0, last_error: null, verified_at: null, live_at: null }, { from: 'failed' });
@@ -477,9 +512,7 @@ function selectDue(rows, now = Date.now()) {
 // ── Admin levers ────────────────────────────────────────────────────────
 
 async function disable(pool, config, row, user) {
-  await teardownEdge(config, row).catch((err) => {
-    log.warn('app-domains', 'Edge teardown failed on disable', { hostname: row.hostname, err: err.message });
-  });
+  await takeEdgeDown(config, row, user, 'disable');
   const next = await setStatus(pool, row.id, 'disabled', { disabled_at: new Date(), disabled_by: user?.id ?? null });
   invalidateHost(row.hostname);
   await recordEvent(pool, { appId: row.app_id, userId: user?.id ?? null, hostname: row.hostname, action: 'disabled' });
