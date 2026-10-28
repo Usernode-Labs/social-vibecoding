@@ -586,14 +586,19 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
               `promotePR` used to disable the button and swap its innerHTML
               for a spinner; a 3s status poll's repaint would have undone
               both, re-entry guard included. #1602 keeps the terminal state
-              in that same model so a promoted card remains visibly locked. */}
+              in that same model so a promoted card remains visibly locked.
+              #5693: locked against a second proposal, not against reading
+              it: once proposed, "Already proposed" opens the proposal's page
+              (the vote, the checks, the discussion) instead of a dead end. */}
           {r.propose ? (
             <button
               className="dc-pr-btn dc-pr-btn-promote"
-              disabled={r.propose.kind !== 'ready'}
+              disabled={r.propose.kind !== 'ready' && !(r.propose.kind === 'completed' && r.proposalId)}
               aria-busy={r.propose.kind === 'pending' ? 'true' : undefined}
-              title={r.propose.kind === 'ready' || r.propose.kind === 'empty' ? r.propose.note : undefined}
-              onClick={r.propose.kind === 'ready' ? () => controller()?.promotePR?.() : undefined}
+              title={r.propose.kind === 'ready' || r.propose.kind === 'empty' ? r.propose.note
+                : r.propose.kind === 'completed' && r.proposalId ? t('devchat:card.changes.alreadyProposedTitle') : undefined}
+              onClick={r.propose.kind === 'ready' ? () => controller()?.promotePR?.()
+                : r.propose.kind === 'completed' && r.proposalId ? () => controller()?.openProposalVote?.(r.proposalId) : undefined}
             >
               {r.propose.kind === 'pending'
                 ? <><span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>{` ${t('devchat:card.changes.proposing')}`}</>

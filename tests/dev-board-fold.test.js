@@ -1694,7 +1694,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 741 → 739: −2: #5992 preselects the open app, so the unchosen row's
   // Submit check folds into feedback.destination-choice and the
   // missed-destination state is retired. 739 leaves 141 slots.
-  checkCap.assertPinned(DAPP.tests.length, 739);
+  // 739 → 743: +4: guardrail 2 (#6003) adds the four signed-out checks —
+  // an invite link loaded five times, the landing, the sign-in sheet and a
+  // public project's page. 743 leaves 137 slots under MAX_DECLARED_TESTS
+  // (880), far clear of the 20-slot floor.
+  checkCap.assertPinned(DAPP.tests.length, 743);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

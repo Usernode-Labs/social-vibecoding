@@ -63,9 +63,12 @@ test('a brand-new check runs three times, each on its own cold load', async () =
   assert.equal(checkHistory.GRADUATION_PASSES, 10, 'ten clean runs clear the flaky tag');
   const capture = read('capture/capture.js');
   assert.match(capture, /function groupTests\(tests, env\) \{/);
-  assert.match(capture, /const solo = all\.filter\(\(t\) => t && t\.solo\);/,
-    'a repeat is exempt from grouping, or it is an assertion against a page load '
-    + 'somebody else already did');
+  // A solo check, a signed-out one and one that repeats its own loads each
+  // get a group of its own, or the assertion is against a page load somebody
+  // else already did — and a guest one against a page somebody else already
+  // signed in (#6003).
+  assert.match(capture, /const own = \(t\) => !!\(t && \(t\.solo \|\| t\.persona === 'guest' \|\| checkRepeat\(t\) > 1\)\);/,
+    'a repeat or a signed-out check is exempt from grouping');
   assert.match(capture, /for \(const t of solo\) groups\.push\(\[t\]\);/);
 });
 
@@ -179,6 +182,9 @@ test('a check that disagrees with itself on its debut does not land', () => {
     'a repeat is an observation of a check, not a second row on the card');
   assert.match(src, /declaredCount: dispatched\.filter\(\(d\) => d\.repeatOf == null\)\.length/,
     'and it is not a second declared check in the count either');
+  assert.match(src, /if \(Number\(base && base\.repeat\) > 1\) continue;/,
+    'a check that loads its page its own several times (`repeat`) already '
+    + 'makes this debut observation in one verdict, so it gets no extras');
 });
 
 test('the reason says how many runs disagreed, before it says what broke', () => {

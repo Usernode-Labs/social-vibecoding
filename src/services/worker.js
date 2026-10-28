@@ -5022,13 +5022,6 @@ async function stopTurnByJournal(sessionId, journal, { timeoutMs = 15000, force 
   throw Object.assign(new Error('stopTurnByJournal: the stop was not confirmed'), { code: 'stop_unconfirmed' });
 }
 
-// Legacy records have no journal identity. Signal the configured runtime
-// without inventing a warm registry entry or changing its last-use record.
-async function signalLegacyTurn(sessionId, { timeoutMs = 30000 } = {}) {
-  await execWorkerCommand(workerRuntimeName(sessionId), ['sh', '-c', buildTurnStopScript(null)], null, { timeoutMs });
-  return 'signalled';
-}
-
 // A machine's turn.stop work (src/workflow/turn-stop.ts): the turn on the
 // session that the instance `machine`/`key` runs, with a work item of one
 // of `kinds` (and, given `workKey`, that very item), is stamped stopped (by whom), killed (only that turn), and,
@@ -6300,7 +6293,6 @@ module.exports = {
   execInWorker,
   stopTurn,
   stopTurnByJournal,
-  signalLegacyTurn,
   stopOwnedTurn,
   // #937: pending-stop record (survives the dispatch it guards)
   clearPendingStop,

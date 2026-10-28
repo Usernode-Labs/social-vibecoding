@@ -5691,6 +5691,11 @@ const AppView = {
     // #2603: the governance twin — loaded for settled rows too, because a
     // close proposal's page is read after the fact as much as before it.
     if (t.kind === 'gov') AppView._loadGovVoteRoster(item.id);
+    // #5999: the request a close proposal closes, so its words can be read
+    // on the page that closed it. Same after-paint discipline as the roster:
+    // the block appears once the answer republishes the head.
+    const target = AppView._govRequestNumber(item);
+    if (target) AppView._loadGovRequest(target);
     // An auto-expanded transcript (arrived via "Read chat") loads straight
     // away; every other one loads when it is opened.
     if (!changePage && body.transcript && body.transcript.expanded) {
@@ -5791,8 +5796,18 @@ const AppView = {
       // Close-issue proposals store the proposer's reason in the payload;
       // fall back to it when the description is empty so a completed
       // close-issue topic still shows why the close was proposed.
+      // #5999: a close proposal's page shows the request it closes first —
+      // its title, who asked and their words — then the closer's reason.
+      // Only the cached row draws: this builder loads nothing, so the
+      // Workshop's inline expansion shows it once it is already loaded.
+      const closesTarget = AppView._govRequestNumber(item);
+      const closesSlug = (AppView.appData && AppView.appData.slug) || null;
+      const closesCached = closesTarget && closesSlug
+        ? AppView._govRequest[`${closesSlug}:${closesTarget}`] : null;
       body = {
         actions: null,
+        closesRequest: closesCached && closesCached.phase === 'ready'
+          ? AppView._closesRequestView(closesCached.issue) : null,
         note: item.description || (item.payload && item.payload.reason) || null,
         // #2603: the votes cast on it, in the voters' own words — the same
         // roster a proposal's page shows. Its own fetch, so the head paints
@@ -5921,6 +5936,34 @@ const AppView = {
       // page is drawn from the board's older row (openTopic `rowFresh`).
       trackPending: !!issue.track && AppView._devTopic?.kind === 'issue'
         && Number(AppView._devTopic.id) === Number(n) && AppView._devTopic.rowFresh === false,
+    };
+  },
+
+  // #5999: the request a proposal CLOSES, as a close proposal's page draws
+  // it — the same shape a request's own page opens with (who asked and
+  // when, the title, the words), so the reader meets the request before the
+  // reason for closing it. Derivation matches `_requestView`: the asker
+  // falls back to the row's `user`, the stamp to `relStamp`, and the Source
+  // line is dropped the way the request's own page drops it.
+  _closesRequestView(issue) {
+    if (!issue) return null;
+    const n = Number(issue.number);
+    if (!Number.isInteger(n) || n <= 0) return null;
+    const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+    const askedAt = issue.createdAt || null;
+    const stamp = askedAt && typeof GroupChat !== 'undefined' && GroupChat._stamp
+      ? GroupChat._stamp(askedAt) : (askedAt ? relStamp(askedAt) : { text: '', title: '' });
+    const words = AppView._requestWords(issue.body);
+    return {
+      number: n,
+      label: PlatformI18n.t('changes:governance.closes.title'),
+      title: issue.title || '',
+      asker: issue.created_by_username || issue.user || PlatformI18n.t('changes:request.page.askerUnknown'),
+      askedAt,
+      askedTime: stamp.text,
+      askedTitle: stamp.title,
+      bodyHtml: words.text.trim() ? AppView._issueBodyHtml({ body: words.text }) : '',
+      href: `#app/${slug}/dev/issues/${n}`,
     };
   },
 
@@ -9434,18 +9477,27 @@ const AppView = {
       // topic the lists do cover.
       return AppView._loadDevData(opts)
         .then(() => AppView._refreshTopicOnDemandRow())
-        .then(() => AppView._renderTopicHead());
+        .then(() => AppView._renderTopicHead())
+        .then(() => { AppView._refreshOpenChangeFromBoard(); });
     }
     if (App.currentSubTab !== 'forum') return undefined;
     const parts = live ? AppView._partsForLive(live) : null;
     // The burst was about rows this board does not show.
     if (parts && !parts.size) return Promise.resolve(true);
-    if (parts) return AppView._loadDevFeed({ ...(opts || {}), parts });
+    if (parts) {
+      return AppView._loadDevFeed({ ...(opts || {}), parts }).then((r) => {
+        AppView._refreshOpenChangeFromBoard();
+        return r;
+      });
+    }
     // Session rows render inside the board/feed now, so the full-feed
     // reload below covers session_update events too (no separate strip).
     // A fresh run started first is the one the feed's own load then joins.
     if (opts) AppView._loadDevData(opts);
-    return AppView._loadDevFeed();
+    return AppView._loadDevFeed().then((r) => {
+      AppView._refreshOpenChangeFromBoard();
+      return r;
+    });
   },
 
   // (#5164) The project hub's quiet refresh: the For you card (the votes
@@ -9467,7 +9519,64 @@ const AppView = {
     if (!AppView._devDataReady) return undefined;
     App._announceRefreshIntent?.();
     const parts = whole ? null : new Set(['promoted', 'merged']);
-    return AppView._loadDevFeed(parts ? { parts } : null);
+    return AppView._loadDevFeed(parts ? { parts } : null).then((r) => {
+      // #6001: a change open beside the hub moves with the row the hub just
+      // read — Going live, or a verdict — instead of waiting to be reopened.
+      AppView._refreshOpenChangeFromBoard();
+      return r;
+    });
+  },
+
+  // #6001: the change a board reload moved, as the page beside it reads it.
+  // The row the last signature belonged to, `{ id, sig }`, so a repaint
+  // happens only when something the page shows has actually changed.
+  _changeBoardSig: null,
+  _refreshOpenChangeFromBoard() {
+    const t = AppView._devTopic;
+    if (!t || (t.kind !== 'proposal' && t.kind !== 'session')) return false;
+    if (t.id == null || !Number.isFinite(Number(t.id))) return false;
+    // The item is on screen as a page of its own, or in the Workshop panel.
+    // Anywhere else nothing is drawn for it and nothing is told.
+    const onPage = typeof App !== 'undefined' && App.currentTab === 'dev' && App.currentSubTab === 'topic';
+    if (!AppView._devTopicInPanel && !onPage) return false;
+    const id = Number(t.id);
+    const row = AppView._topicRowFor(id);
+    if (!row) return false;
+    // What the page's Votes and Testing cards and its status pill draw.
+    // Nothing else moving is news to a reader's eye, and a quiet reload is
+    // not a reason to redraw the page (topic-head.tsx's no-poll rule).
+    const sig = [
+      row.status, row.deployment_state, row.live_at,
+      row.check_state, row.check_phase, row.checks_checked_at, row.yes_count,
+    ].join('|');
+    const last = AppView._changeBoardSig;
+    // First look at a newly opened change only records: the page has just
+    // read itself, and this fresh row is the state it is already showing.
+    AppView._changeBoardSig = { id, sig };
+    if (!last || last.id !== id || last.sig === sig) return false;
+    // The page's own read takes precedence over the cached row, so the board's
+    // newer values are merged over it rather than assumed. A bare id would
+    // re-read; a patch costs no request and keeps what only the page reads.
+    AppView._forwardChangePatch(id, row);
+    AppView._renderTopicHead();
+    return true;
+  },
+  // #6001: a release finished for `slug`. A change it carries that is open —
+  // its Votes card moves from "It's going live." to "It's live." — re-reads
+  // its own row, because the live event names the app, not the change.
+  refreshOpenChangeForRelease(slug) {
+    if (!slug || typeof App === 'undefined' || App.currentTab !== 'dev') return false;
+    if (!AppView.appData || AppView.appData.slug !== slug) return false;
+    const t = AppView._devTopic;
+    if (!t || (t.kind !== 'proposal' && t.kind !== 'session')) return false;
+    if (!AppView._devTopicInPanel && App.currentSubTab !== 'topic') return false;
+    const item = AppView._findTopicItem();
+    if (!item || !['merged', 'merging'].includes(item.status)) return false;
+    // The page re-reads; the next board reload records where it landed then.
+    AppView._changeBoardSig = null;
+    AppView._tellChangePage(Number(item.id));
+    AppView._renderTopicHead();
+    return true;
   },
 
   // What a live burst moved, as board parts: a vote moves the proposals'
@@ -16047,6 +16156,12 @@ const AppView = {
     if (AppView._topicIssue && Number(AppView._topicIssue.number) === n) {
       AppView._topicIssue.body = body;
     }
+    // #5999: a close proposal's copy of the same request, so an edit saved
+    // on the request's page shows on the page that closed it too.
+    for (const key of Object.keys(AppView._govRequest)) {
+      const entry = AppView._govRequest[key];
+      if (entry && entry.issue && Number(entry.issue.number) === n) entry.issue.body = body;
+    }
     return AppView._issueBodyHtml({ body });
   },
 
@@ -20292,6 +20407,43 @@ const AppView = {
   _govVoteRoster: Object.create(null),
   _govVoteRosterInFlight: new Set(),
   _govVoteRosterStale: new Set(),
+
+  // #5999: the request a close proposal targets, fetched after paint so a
+  // closed request's words can be read on the page that closed it. Keyed
+  // `${slug}:${number}` for the same reason `_ghCommentsKey` is — issue
+  // numbers repeat across apps and this cache outlives the app view. Each
+  // entry is `{ phase: 'loading' | 'ready' | 'missing', issue? }`; a 404 is
+  // remembered as `missing` so a settled page is not refetched every paint.
+  _govRequest: Object.create(null),
+
+  // The request number a close_issue row targets, or null for any other
+  // governance kind (a rename, a secret change) and for a row whose payload
+  // carries no usable number.
+  _govRequestNumber(item) {
+    if (!item) return null;
+    if (item.kind !== 'close_issue' && item.row_type !== 'close_issue') return null;
+    const n = Number(item.payload && item.payload.issueNumber);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  },
+
+  // Fetch it once, into `_govRequest`, and republish the head when the
+  // answer lands — `_loadGovVoteRoster`'s discipline, for the same reasons.
+  // A miss is `missing`: the page reads as it does today, and is not retried
+  // within the session.
+  async _loadGovRequest(n) {
+    const slug = (AppView.appData && AppView.appData.slug) || null;
+    const num = Number(n);
+    if (!slug || !Number.isInteger(num) || num <= 0) return;
+    const key = `${slug}:${num}`;
+    if (AppView._govRequest[key]) return;
+    AppView._govRequest[key] = { phase: 'loading' };
+    const row = await AppView._fetchIssueByNumber(num);
+    // `_fetchIssueByNumber` answers null when the view left the app, so a
+    // stale answer lands as `missing` on the OLD slug's key and is simply
+    // never read again.
+    AppView._govRequest[key] = row ? { phase: 'ready', issue: row } : { phase: 'missing' };
+    AppView._renderTopicHead();
+  },
 
   _invalidateGovVoteRoster(issueId) {
     if (issueId == null) return;

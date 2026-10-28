@@ -16,11 +16,10 @@ interface Facts { target: Input | null; reason: string | null }
 type State = { name: typeof NONE | 'stopping'; data: null } | { name: 'done'; data: { result: Result } };
 const done = (result: Result): Outcome<State> => ({ next: { name: 'done', data: { result } } });
 
-type RequestOptions = { allowIdentityless?: boolean };
 type SystemRequest = Omit<Request, 'userId'> & { userId: number | null };
-export function requested(p: any, options: RequestOptions & { allowSystem: true }): SystemRequest;
-export function requested(p: any, options?: RequestOptions): Request;
-export function requested(p: any, { allowIdentityless = false, allowSystem = false }: RequestOptions & { allowSystem?: boolean } = {}): SystemRequest {
+export function requested(p: any, options: { allowSystem: true }): SystemRequest;
+export function requested(p: any): Request;
+export function requested(p: any, { allowSystem = false }: { allowSystem?: boolean } = {}): SystemRequest {
   for (const k of ['sessionId', 'userId']) {
     if (k === 'userId' && allowSystem && p?.userId === null) continue;
     if (!Number.isSafeInteger(p?.[k]) || p[k] < 1 || p[k] > 2147483647) throw new Error(`${k} must name a record`);
@@ -30,7 +29,7 @@ export function requested(p: any, { allowIdentityless = false, allowSystem = fal
       || typeof p.active !== 'boolean'
       || typeof p.requestId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(p.requestId)
       || [p.turnId, p.journal, p.usedAt].some(v => v !== null && (typeof v !== 'string' || !v || v.length > 512))
-      || (!allowIdentityless && p.active && !p.turnId && !p.journal)) throw new Error('A stop must identify the captured job and request');
+      || (p.active && !p.turnId && !p.journal)) throw new Error('A stop must identify the captured job and request');
   return { sessionId: p.sessionId, userId: p.userId, ownerId: p.ownerId, appId: p.appId,
     configVersion: p.configVersion, active: p.active, turnId: p.turnId, journal: p.journal, usedAt: p.usedAt,
     requestId: p.requestId };

@@ -385,7 +385,7 @@ test('a draining process shrinks its pools as its drain begins: main, workflow, 
   const boot = src.indexOf('await processes.start({ pool: getPool(config), role: ownRole });');
   const gate = src.indexOf('const room = await processes.waitForRoom();');
   assert.ok(boot > 0 && gate > boot, 'after registering');
-  assert.ok(gate < src.indexOf("startWorkflowClients(config)") && gate < src.indexOf("startWorkflow(config, { loops: false })")
+  assert.ok(gate < src.indexOf("startWorkflowClients(config)") && gate < src.indexOf("startWorkflow(config, { loops: false, previewRetirement })")
     && gate < src.indexOf('const server = app.listen(config.port'), 'before its work and its listener');
   const retained = src.slice(src.indexOf('function retainedAboveDrain('), src.indexOf('async function drainUntilIdle('));
   for (const part of ["require('./src/db/pool').drainExcess()", 'workflowPlatform.drainExcess()', "require('./src/services/db-manager').drainExcess()"]) {

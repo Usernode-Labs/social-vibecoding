@@ -2327,7 +2327,8 @@ test('prepare_work reports the proposals already up for a vote on this request',
     author: 'evan',
     // Which of the job's requests it is for: the one this job names.
     requests: [50],
-    webPath: 'https://usernode.example/#app/recipe-box/dev/proposals/3140',
+    webPath: 'https://usernode.example/app/recipe-box/dev/proposals/3140',
+    link: 'https://usernode.example/app/recipe-box/dev/changes/52',
   }]);
 
   // NOT as `proposalId`. That field names the proposal a work order REVISES,
@@ -3540,7 +3541,7 @@ test('a proposal states where its code lives, and the id is echoed both ways', (
   assert.equal(bot.proposalId, 512);
   assert.equal(bot.id, 512, 'both spellings, because renderPreparedTask reads one and the route the other');
   assert.equal(bot.title, 'Add a dark-mode toggle');
-  assert.equal(bot.webPath, `${ORIGIN}/#app/recipe-box/dev/proposals/512`);
+  assert.equal(bot.webPath, `${ORIGIN}/app/recipe-box/dev/proposals/512`);
 
   const fork = svc.describeTargetProposal(FORK_PROPOSAL, { id: 3 }, APP, ORIGIN);
   assert.equal(fork.ok, true);
@@ -3740,7 +3741,7 @@ test('the update work order names the proposal, its head, and where it is being 
   assert.match(order, new RegExp(`Its current commit:\\s+${BASE_SHA}`));
   // The line a production run needed: the agent had the proposal id and no
   // way to read the discussion it was revising.
-  assert.match(order, /Where the group is reading it:\s+https:\/\/usernode\.example\/#app\/recipe-box\/dev\/proposals\/512/);
+  assert.match(order, /Where the group is reading it:\s+https:\/\/usernode\.example\/app\/recipe-box\/dev\/proposals\/512/);
 });
 
 test('the update work order says, up front, that submitting clears the votes', async () => {
@@ -3869,7 +3870,7 @@ test('active and paused describe as a session; promoted still describes as a pro
     assert.equal(d.branchHome, 'app_repo', 'a native session\'s head is always in the app\'s repository');
     assert.equal(d.title, 'Fix the failing dark-mode check',
       'a session that was never promoted has no pr_title — its own title is the honest fallback');
-    assert.equal(d.webPath, `${ORIGIN}/#app/recipe-box/dev/proposals/601`);
+    assert.equal(d.webPath, `${ORIGIN}/app/recipe-box/dev/proposals/601`);
   }
   assert.equal(svc.describeTargetProposal(BOT_PROPOSAL, { id: 3 }, APP, ORIGIN).targetKind, 'proposal');
   // pr_title wins when there is one: that is the string the group reads on the
@@ -3918,7 +3919,7 @@ test('the session work order says CONTINUING, and names the session it continues
   assert.match(order, /Homeroom session id:\s+601/);
   assert.match(order, /Its title:\s+Fix the failing dark-mode check/);
   assert.match(order, new RegExp(`Its current commit:\\s+${BASE_SHA}`));
-  assert.match(order, /Where its owner is reading it:\s+https:\/\/usernode\.example\/#app\/recipe-box\/dev\/proposals\/601/);
+  assert.match(order, /Where its owner is reading it:\s+https:\/\/usernode\.example\/app\/recipe-box\/dev\/proposals\/601/);
   assert.doesNotMatch(order, /Where the group is reading it/, 'no group is reading it yet');
 });
 

@@ -31,7 +31,7 @@
 // on the require path to do it.
 const crypto = require('crypto');
 const log = require('./logger');
-const { changeWebPath } = require('./change-destination');
+const { appWebPath, changeWebPath, changeLink } = require('./change-destination');
 const visibleChangesContract = require('./visible-changes');
 const diagramContract = require('./diagram');
 const proposalDiagram = require('./proposal-diagram');
@@ -502,7 +502,7 @@ function shapeApp(app, origin) {
     status: app.status || null,
     repoUrl: app.repo_url || null,
     // Where a human opens it. Hash route — this is a hash-routed SPA.
-    webPath: `${origin}/#app/${app.slug}`,
+    webPath: appWebPath(origin, app.slug),
   };
 }
 
@@ -1661,6 +1661,8 @@ function shapeProposal(session, origin, viewerId = null) {
     linkedIssues: require('./pr-metadata').sanitizeIssueNumbers(session.linked_issues),
     prNumber: session.pr_number || null,
     prUrl: session.pr_url || null,
+    // The page a person reads and votes on it at; prUrl is the git host's.
+    link: session.app_slug ? changeLink(origin, session.app_slug, session.id, session.pr_number) : null,
     stagingUrl: session.staging_url || null,
     checkState: session.check_state || null,
     checks,
@@ -1930,6 +1932,8 @@ function shapeChange(session, live, origin, kind = 'agent_mayor') {
     linkedIssues: require('./pr-metadata').sanitizeIssueNumbers(session.linked_issues),
     prNumber: session.pr_number || null,
     prUrl: session.pr_url || null,
+    // The page a person reads and votes on it at; prUrl is the git host's.
+    link: session.app_slug ? changeLink(origin, session.app_slug, session.id, session.pr_number) : null,
     stagingUrl: session.staging_url || null,
     checks,
     yesVotes: typeof session.yes_count === 'number' ? session.yes_count : null,
@@ -3044,7 +3048,7 @@ function registerTools(server, ctx) {
     return readResult('get_request', {
       ...shapeRequest(match, { bodyMax: MAX_REQUEST_BODY_CHARS }),
       inProgress: shapeInProgress(match.in_progress),
-      webPath: `${origin}/#app/${slug}/dev/issues/${wanted}`,
+      webPath: appWebPath(origin, slug, `dev/issues/${wanted}`),
       images: pictures.images,
       specs: specs ? specs.slice(0, MAX_REQUEST_SPECS_SUMMARY).map(shapeSpecSummary) : null,
     }, pictures.content);
@@ -3137,7 +3141,7 @@ function registerTools(server, ctx) {
     const listed = await callPlatform(baseUrl, accessToken, 'GET', `/api/apps/${slug}/issues/${number}/specs`);
     if (!listed.ok) return platformError(listed);
     const entries = Array.isArray(listed.body && listed.body.specs) ? listed.body.specs : [];
-    const webPath = `${origin}/#app/${slug}/dev/issues/${number}`;
+    const webPath = appWebPath(origin, slug, `dev/issues/${number}`);
     const pick = sessionId != null
       ? (entries.find((e) => Number(e.sessionId) === Number(sessionId) && Number(e.version) === Number(version))
         || { sessionId, version })
@@ -3223,7 +3227,7 @@ function registerTools(server, ctx) {
       specChars: prepared.format === 'html' ? Number(posted.htmlChars) || 0 : Number(posted.markdownChars) || 0,
       newRecord: !!posted.createdRecord,
       commentPosted: !!posted.commentPosted,
-      webPath: `${origin}/#app/${slug}/dev/issues/${number}`,
+      webPath: appWebPath(origin, slug, `dev/issues/${number}`),
     });
   });
 
@@ -3403,9 +3407,9 @@ function registerTools(server, ctx) {
   // rules. A bare name tags nobody, which is why the description says so.
   const POST_MESSAGE_HINT = 'Shorten the message or split it across two posts, and call again.';
   const discussionWebPath = (slug, threadType, ref, messageId) => {
-    if (threadType === 'issue') return `${origin}/#app/${slug}/dev/issues/${ref}`;
+    if (threadType === 'issue') return appWebPath(origin, slug, `dev/issues/${ref}`);
     if (threadType === 'session') return changeWebPath(origin, slug, ref);
-    if (threadType === 'governance') return `${origin}/#app/${slug}/dev/governance/${ref}`;
+    if (threadType === 'governance') return appWebPath(origin, slug, `dev/governance/${ref}`);
     // The Messages addresses services/notifications.js links to.
     if (threadType === 'message') return `${origin}/#messages/app/${slug}/thread/${ref}`;
     return `${origin}/#messages/app/${slug}/m/${messageId}`;
@@ -3573,8 +3577,8 @@ function registerTools(server, ctx) {
       title: untrusted(issue.title || titleCheck.value, MAX_REQUEST_TITLE_CHARS),
       descriptionChars: bodyCheck.value.length,
       webPath: number
-        ? `${origin}/#app/${slug}/dev/issues/${number}`
-        : `${origin}/#app/${slug}/dev`,
+        ? appWebPath(origin, slug, `dev/issues/${number}`)
+        : appWebPath(origin, slug, 'dev'),
       images: screenshotIds.map((id) => `${origin}/issue-images/${id}`),
     });
   });
@@ -3717,7 +3721,7 @@ function registerTools(server, ctx) {
       alsoClaimedBy: state.others,
       notePosted: noteResult.attempted ? noteResult.posted : null,
       noteError: noteResult.error,
-      webPath: `${origin}/#app/${slug}/dev/issues/${wanted}`,
+      webPath: appWebPath(origin, slug, `dev/issues/${wanted}`),
       nextStep: (state.others.length
         ? `${state.others.length} other ${state.others.length === 1 ? 'person has' : 'people have'} claimed this request too — `
           + 'tell the user who, because the work may already be under way. '
@@ -3782,7 +3786,7 @@ function registerTools(server, ctx) {
       cleared: wasCleared,
       notePosted: noteResult.attempted ? noteResult.posted : null,
       noteError: noteResult.error,
-      webPath: `${origin}/#app/${slug}/dev/issues/${wanted}`,
+      webPath: appWebPath(origin, slug, `dev/issues/${wanted}`),
       nextStep: wasCleared
         ? 'The claim is cleared and the board no longer shows this user on this request.'
         : 'There was no live claim of this user\'s to clear, so nothing changed — the board already '
@@ -3885,8 +3889,8 @@ function registerTools(server, ctx) {
       reasonChars: reasonCheck.value.length,
       inProgress,
       webPath: proposalId
-        ? `${origin}/#app/${slug}/dev/governance/${proposalId}`
-        : `${origin}/#app/${slug}/dev/issues/${wanted}`,
+        ? appWebPath(origin, slug, `dev/governance/${proposalId}`)
+        : appWebPath(origin, slug, `dev/issues/${wanted}`),
       nextStep: `The group is now voting on closing request #${wanted}. It stays open until that vote passes, `
         + 'and the platform closes it then; nothing else is needed from you, and this connector cannot vote. '
         + (busy
@@ -3965,6 +3969,8 @@ function registerTools(server, ctx) {
       prNumber: z.number().nullable()
         .describe('Its pull request number — the number a person finds on GitHub and on the Dev board, so name the proposal by it first: "PR #2151 (proposal 4223)". Null on a card that has no pull request yet.'),
       prUrl: z.string().nullable(),
+      link: z.string().nullable()
+        .describe('The page to give a PERSON for it: its Homeroom page, by its pull request number when it has one (https://<platform>/app/<slug>/dev/changes/<prNumber>). Link people here, never to prUrl.'),
       stagingUrl: z.string().nullable(),
       checkState: z.string().nullable(),
       // The per-field prose lives here rather than in the tool description on
@@ -4465,6 +4471,7 @@ function registerTools(server, ctx) {
         branchHome: z.enum(['app_repo', 'user_fork', 'git_host']),
         youCanPush: z.boolean(),
         webPath: z.string().nullable(),
+        link: z.string().nullable(),
       })),
       truncated: z.boolean(),
     },
@@ -4499,6 +4506,7 @@ function registerTools(server, ctx) {
           branchHome: shaped.branch.home,
           youCanPush: shaped.branch.youCanPush,
           webPath: shaped.webPath,
+          link: shaped.link,
         };
       }),
       truncated: open.length > MAX_LIST_ITEMS,
@@ -4561,6 +4569,8 @@ function registerTools(server, ctx) {
       linkedIssues: z.array(z.number()),
       prNumber: z.number().nullable(),
       prUrl: z.string().nullable(),
+      link: z.string().nullable()
+        .describe('The page to give a PERSON for it: its Homeroom page, by its pull request number when it has one (https://<platform>/app/<slug>/dev/changes/<prNumber>). Link people here, never to prUrl.'),
       stagingUrl: z.string().nullable(),
       checks: z.unknown()
         .describe('The checks snapshot, in the same shape get_proposal reports: state, phase, failing names, failures with reasons and their excerpt details, detailsTruncated, stale, error.'),
@@ -5072,6 +5082,8 @@ function registerTools(server, ctx) {
         mine: z.boolean(),
         author: z.string().nullable(),
         webPath: z.string().nullable(),
+        link: z.string().nullable().optional()
+          .describe('Its Homeroom page, by its pull request number: the link to give a person.'),
         requests: z.array(z.number()).optional()
           .describe('Which of the requests this work order names that proposal is for.'),
       })),
@@ -5440,6 +5452,8 @@ function registerTools(server, ctx) {
       prNumber: z.number().nullable()
         .describe('Its pull request number — the number a person sees on GitHub and on the Dev board, so name the proposal by it first: "PR #2151 (proposal 4223)". Null on a shared in-progress card, which has no pull request until it is proposed.'),
       prUrl: z.string().nullable(),
+      link: z.string().nullable()
+        .describe('The page to give a PERSON for it: its Homeroom page, by its pull request number when it has one (https://<platform>/app/<slug>/dev/changes/<prNumber>). Link people here, never to prUrl.'),
       externalAgent: z.string(),
       webPath: z.string(),
       // Set only by an UPDATE (#1054): the proposal's new head, how many votes
@@ -5625,6 +5639,7 @@ function registerTools(server, ctx) {
         appSlug: promotedSlug,
         prNumber: promotedPr,
         prUrl: typeof promotedBody.prUrl === 'string' ? promotedBody.prUrl : ((row && row.pr_url) || null),
+        link: promotedSlug ? changeLink(origin, promotedSlug, proposalId, promotedPr) : null,
         externalAgent: externalAgentTasks.normalizeAgent(agent, clientName),
         headSha: null,
         votesCleared: null,
@@ -6010,6 +6025,7 @@ function registerTools(server, ctx) {
         appSlug: result.appSlug,
         prNumber: result.prNumber,
         prUrl: result.prUrl,
+        link: result.proposalId && result.appSlug ? changeLink(origin, result.appSlug, result.proposalId, result.prNumber) : null,
         externalAgent: result.externalAgent,
         headSha: result.headSha || null,
         votesCleared: cleared,
@@ -6048,7 +6064,7 @@ function registerTools(server, ctx) {
         sessionId: null,
         webPath: result.proposalId
           ? changeWebPath(origin, result.appSlug, result.proposalId)
-          : `${origin}/#app/${result.appSlug}`,
+          : appWebPath(origin, result.appSlug),
         nextStep: (result.unchanged ? resubmitStep : landedStep)
           + rejectedNote + titleNote + descNote + summaryNote + proposeNote,
       });
@@ -6070,6 +6086,7 @@ function registerTools(server, ctx) {
         appSlug: result.appSlug,
         prNumber: null,
         prUrl: null,
+        link: result.sessionId && result.appSlug ? changeLink(origin, result.appSlug, result.sessionId, null) : null,
         externalAgent: result.externalAgent,
         headSha: result.headSha || null,
         votesCleared: null,
@@ -6088,7 +6105,7 @@ function registerTools(server, ctx) {
         proposeError: null,
         webPath: result.sessionId
           ? changeWebPath(origin, result.appSlug, result.sessionId)
-          : `${origin}/#app/${result.appSlug}`,
+          : appWebPath(origin, result.appSlug),
         nextStep: (result.reshared
           ? 'The new commits are on the same in-progress card the group was already watching'
           : 'It is now visible in the app\'s IN-PROGRESS area, not up for a vote')
@@ -6107,6 +6124,7 @@ function registerTools(server, ctx) {
         appSlug: result.appSlug,
         prNumber: result.prNumber,
         prUrl: result.prUrl,
+        link: result.proposalId && result.appSlug ? changeLink(origin, result.appSlug, result.proposalId, result.prNumber) : null,
         externalAgent: result.externalAgent,
         headSha: null,
         votesCleared: null,
@@ -6132,7 +6150,7 @@ function registerTools(server, ctx) {
         sessionId: null,
         webPath: result.proposalId
           ? changeWebPath(origin, result.appSlug, result.proposalId)
-          : `${origin}/#app/${result.appSlug}`,
+          : appWebPath(origin, result.appSlug),
         nextStep: 'That work was already submitted — most likely the coding agent submitted it itself through '
           + 'its own connector. Nothing was duplicated. It is up for the group\'s vote'
           + `${proposalRef(result.proposalId, result.prNumber) ? ` as ${proposalRef(result.proposalId, result.prNumber)}` : ''}; `
@@ -6145,6 +6163,7 @@ function registerTools(server, ctx) {
       appSlug: result.appSlug,
       prNumber: result.prNumber,
       prUrl: result.prUrl,
+      link: result.proposalId && result.appSlug ? changeLink(origin, result.appSlug, result.proposalId, result.prNumber) : null,
       externalAgent: result.externalAgent,
       headSha: null,
       votesCleared: null,
@@ -6174,7 +6193,7 @@ function registerTools(server, ctx) {
       sessionId: null,
       webPath: result.proposalId
         ? changeWebPath(origin, result.appSlug, result.proposalId)
-        : `${origin}/#app/${result.appSlug}`,
+        : appWebPath(origin, result.appSlug),
       linkedIssues: Array.isArray(result.linkedIssues) ? result.linkedIssues : null,
       nextStep: 'It is now up for a vote'
         + `${proposalRef(result.proposalId, result.prNumber) ? ` as ${proposalRef(result.proposalId, result.prNumber)}` : ''}. `
@@ -6384,7 +6403,7 @@ function registerTools(server, ctx) {
     return toolResult({
       buildId: session.id,
       status: session.headless_status || 'generating',
-      webPath: `${origin}/#app/${slug}/dev/issues/${requestNumber}`,
+      webPath: appWebPath(origin, slug, `dev/issues/${requestNumber}`),
       nextStep: 'Builds take a few minutes. Poll get_platform_build; tell the user you will check back rather than polling in a tight loop.',
     });
   });
@@ -6424,7 +6443,7 @@ function registerTools(server, ctx) {
     const needsHumanReview = ready && outcome === 'spec';
     const readyToSubmit = ready && (outcome === 'code' || outcome === 'spec_code');
     const webPath = session.app_slug && session.headless_issue_number
-      ? `${origin}/#app/${session.app_slug}/dev/issues/${session.headless_issue_number}`
+      ? appWebPath(origin, session.app_slug, `dev/issues/${session.headless_issue_number}`)
       : null;
 
     let nextStep;
@@ -6522,6 +6541,8 @@ function registerTools(server, ctx) {
       appSlug: z.string().nullable(),
       prNumber: z.number().nullable(),
       prUrl: z.string().nullable(),
+      link: z.string().nullable()
+        .describe('The page to give a PERSON for it: its Homeroom page, by its pull request number when it has one (https://<platform>/app/<slug>/dev/changes/<prNumber>). Link people here, never to prUrl.'),
       webPath: z.string(),
       nextStep: z.string(),
     },
@@ -6541,8 +6562,8 @@ function registerTools(server, ctx) {
     }
     if (session.headless_outcome === 'spec') {
       const where = session.app_slug && session.headless_issue_number
-        ? `${origin}/#app/${session.app_slug}/dev/issues/${session.headless_issue_number}`
-        : `${origin}/#app/${session.app_slug || ''}`;
+        ? appWebPath(origin, session.app_slug, `dev/issues/${session.headless_issue_number}`)
+        : session.app_slug ? appWebPath(origin, session.app_slug) : origin;
       return toolError(
         'needs_human_review',
         'That build stopped at a written plan rather than a code change. A person has to read and approve the plan before it is built — '
@@ -6569,6 +6590,7 @@ function registerTools(server, ctx) {
       appSlug: session.app_slug || null,
       prNumber,
       prUrl: (promoted.body && promoted.body.prUrl) || null,
+      link: session.app_slug ? changeLink(origin, session.app_slug, clone.id, prNumber) : null,
       webPath: session.app_slug
         ? changeWebPath(origin, session.app_slug, clone.id)
         : `${origin}/#`,

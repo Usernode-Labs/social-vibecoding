@@ -73,6 +73,37 @@ process is), so what a follower could not do had to move:
   requests records the merges it carries as running.
 - **A web process decides nothing** (docs/workflows.md, "Running it"): it runs
   no pipeline slot, and a route waits for a conductor's outcome.
+- **Preview security retirement runs on conductors.** Before starting any
+  workflow work, a conductor (or `all`) still retires unsafe platform previews.
+  A web process performs no Docker/Kubernetes retirement and does not warm
+  worker images. It waits before listening for a successful result of the
+  existing `preview-data-policy` clock, whose scan started within the last
+  three minutes, using database time. The result must match the data-policy
+  digest, runtime mode/namespace, release and receipt key. Recent matching
+  proof lets web restart during a short conductor outage. An old-format,
+  mismatched, expired or failed latest result cannot open the barrier; database
+  failure or a three-minute timeout fails boot with no privileged fallback.
+  Staging keeps its existing skip.
+
+The security clock is armed before release-adoption work, so unrelated adoption
+retries cannot delay web startup. Its first run is due immediately; an existing
+clock keeps its minute interval. A conductor passes its successful boot scan
+as an immutable startup dependency to that clock: its first run can record
+that result without a second inventory. A later clock result, including a
+failure, or an expired/mismatched boot result requires a fresh scan. Missing
+receipt keys prevent readiness proof only after retirement has run.
+On boot, a scope failure is logged and the conductor continues without a
+proof; periodic clock runs still fail, and web startup stays closed. An actual
+retirement failure still fails conductor boot.
+Web waits long enough for an older conductor's skipped tick, the next tick
+and retirement, and its Kubernetes startup probe allows five minutes for that
+wait plus ordinary boot work. `all` keeps its direct pre-work check and does
+not wait on itself.
+The durable clock result replaces duplicate web execution; no new machine,
+receipt table or preview-policy epoch is needed. This removes a dependency on
+web runtime-write authority; separate service accounts, Secret inputs and
+database logins remain required to enforce the wider privilege boundary. The
+scope tag binds configuration, not an authenticated producer identity.
 
 What makes the split safe (docs/plans/draining-releases.md): who works on
 what is in Postgres (the workflow's records), a Stop is an event to the
@@ -181,8 +212,13 @@ it checks the active turn id and journal and does not depend on the owner's
 account state. The pending flag carries the real stopper's name when known;
 otherwise the durable stamp has no stopper. A locally applied Stop
 still succeeds when admission finds a changed job; it never retargets that job.
-Old records with neither turn id nor journal are fenced by a fingerprint of
-their stored contents and signalled without writing a conductor-local registry.
+Ordinary Stop refuses an active record without a journal, even if it has a
+turn id, with 409 and no signal. Current turn producers always supply both;
+such leftovers require investigation. Stop keys retain their format across
+rolling deploys. Force-stop can still remove a captured worker for a record
+with a turn id but no journal, with current-turn fencing and saved-work rescue.
+A current turn whose journal file has vanished still uses the force-stop
+recovery that removes its captured worker identity.
 Ordinary Stop has no whole-worker strategy. Force-stop remains the separate,
 identity-fenced fallback. Retry-time idle waiting performs I/O only on a
 conductor and returns false without I/O when called on the web. The route-side

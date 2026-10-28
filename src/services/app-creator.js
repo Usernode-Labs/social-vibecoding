@@ -20,6 +20,7 @@
 const log = require('./logger');
 const github = require('./github');
 const dbManager = require('./db-manager');
+const previewProjects = require('./preview-projects-client');
 const deployFailure = require('./deploy-failure');
 const { getTemplateFiles, getConnectorScaffoldFiles, getCanonicalRepoFile } = require('./template');
 const appTemplates = require('./app-templates');
@@ -116,8 +117,11 @@ async function setUp(config, pool, appId, ctx) {
     // reported once the database is done, so it never ticks off a database
     // still being made.
     const database = steps.once('database', () => timing.time('database', () => part('database', async () => {
-      const dbName = dbManager.appDbName(row.slug);
-      const { password } = await dbManager.createDatabase(dbName);
+      // Inside a platform preview, which may not make a database itself,
+      // production makes it (services/preview-projects-client.js).
+      const { password } = previewProjects.active()
+        ? await previewProjects.createDatabase(row)
+        : await dbManager.createDatabase(dbManager.appDbName(row.slug));
       await pool.query('UPDATE apps SET db_password = $1 WHERE id = $2', [password, appId]);
       return true;
     }))).then((done) => { reportPhase(appId, row.slug, 'repository'); return done; });

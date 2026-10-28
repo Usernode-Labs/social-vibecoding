@@ -180,7 +180,7 @@ export function drainExcess(): number {
   return legacy('db/connection-options').poolExcess(kernelPool);
 }
 
-export async function startWorkflow(config: any, opts: { loops: boolean }): Promise<void> {
+export async function startWorkflow(config: any, opts: { loops: boolean; previewRetirement?: Json }): Promise<void> {
   log = legacy('services/logger');
   appConfig = config;
   const appPool = legacy('db/pool').getPool(config);
@@ -261,7 +261,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     ...workerStopServices({ pool: appPool }),
     ...workerInterruptServices({ pool: appPool }),
     ...releaseServices({ adoptions: ADOPTIONS }),
-    ...clockServices(CLOCK_JOBS, { config, pool: appPool }),
+    ...clockServices(CLOCK_JOBS, { config, pool: appPool, previewRetirement: opts.previewRetirement }),
   };
   const started = createPlatformRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, release: bootRelease(),
@@ -312,6 +312,16 @@ export async function startWorkflowLoops(): Promise<void> {
   // Owed before any work is claimed: a failure here ends the process with
   // nothing of its own running.
   const release = bootRelease();
+  // This clock opens web readiness. Arm it before unrelated release
+  // adoptions and their retries: due now on first boot, otherwise on its
+  // existing minute interval. Retirement already ran before this conductor
+  // could start any preview work (server.js).
+  if (legacy('config').runsClusterMaintenance()) {
+    const job = CLOCK_JOBS.find(j => j.name === 'preview-data-policy')!;
+    await runtime.append(CLOCK, clockKey(job.name), { type: 'Arm', payload: {
+      job: job.name, everyMs: job.everyMs, firstDueAt: new Date().toISOString(), onDemand: false,
+    } }, { requestKey: `arm:${release}`, source: { kind: 'system', name: 'release' } });
+  }
   await runtime.append(RELEASE, releaseKey(release), { type: 'Booted', payload: { release } },
     { requestKey: `booted:${release}`, source: { kind: 'system', name: 'boot' } });
   await runtime.start({ loops: true });
@@ -495,6 +505,7 @@ async function armClocks(release: string): Promise<number> {
   }
   if (!runs) return 0;
   for (const job of CLOCK_JOBS) {
+    if (job.name === 'preview-data-policy') continue; // armed before the release's adoption work
     // A job first armed is due within the next two minutes (spread, so they
     // do not all start in the same second). Only the first Arm reads it. An
     // on-demand job runs only when asked; its interval is what an older

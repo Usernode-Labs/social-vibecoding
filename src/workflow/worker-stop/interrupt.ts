@@ -7,7 +7,7 @@ import type { Json, Outcome, Queryable, Runtime, TransitionContext } from '../ke
 import { STOP_CONFIRM_TIMEOUT_MS, STOP_PROBE_INTERVAL_MS, classifyStopProbe } from '../rules/worker-interrupt.ts';
 import { requested } from './machine.ts';
 import type { Request } from './machine.ts';
-import { legacyTurnKey, sameScope, sameTurn, snapshot, stopTarget } from './target.ts';
+import { sameScope, sameTurn, snapshot, stopTarget } from './target.ts';
 import { prepareStop, requireAcceptedStop } from './request.ts';
 import type { StopRequest } from './request.ts';
 
@@ -15,10 +15,11 @@ export const MACHINE = 'worker-interrupt';
 export const WORK = 'worker.interrupt';
 export const DISPATCH = 'worker.dispatch';
 export type Strategy = 'turn';
-export type Interrupt = Omit<Request, 'userId'> & { userId: number | null; strategy: Strategy; legacy?: string | null; by?: string | null };
+export type Interrupt = Omit<Request, 'userId'> & { userId: number | null; strategy: Strategy; by?: string | null };
 export type Input = Interrupt & { expiresAt: number };
+// Keep the retired fingerprint's null slot so keys match across rolling deploys.
 export const interruptKey = (p: Interrupt) => `session:${p.sessionId}:interrupt:${canonicalHash([
-  p.userId, p.appId, p.ownerId, p.configVersion, p.active, p.turnId, p.journal, p.legacy ?? null, p.active ? null : p.usedAt, p.strategy,
+  p.userId, p.appId, p.ownerId, p.configVersion, p.active, p.turnId, p.journal, null, p.active ? null : p.usedAt, p.strategy,
 ])}`;
 type Data = { target: Input; attempts: number; result?: Json };
 type State = { name: typeof NONE | 'signalling' | 'waiting' | 'probing' | 'done'; data: Data | null };
@@ -51,12 +52,11 @@ export function workerInterrupt() {
     decode: row => ({ name: row.state, data: row.data }) as State,
     events: {
       Requested: (p: any) => {
-        const r = requested(p, { allowIdentityless: true, allowSystem: true });
+        const r = requested(p, { allowSystem: true });
+        if (r.active && !r.journal) throw new Error('An active ordinary stop must name its journal');
         if (p.strategy !== 'turn') throw new Error('A stop must name its strategy');
-        const legacy = p.legacy ?? null;
-        if ((legacy !== null && !/^[a-f0-9]{64}$/.test(legacy)) || (r.active && !r.turnId && !r.journal && !legacy)) throw new Error('An old record must name its fingerprint');
         if (p.by != null && (typeof p.by !== 'string' || p.by.length > 100)) throw new Error('A stopper must name a person');
-        return { ...r, strategy: p.strategy, legacy, by: p.by ?? null };
+        return { ...r, strategy: p.strategy, by: p.by ?? null };
       },
       Tick: (p: any) => ({ requestId: String(p?.requestId || '') }),
     },
@@ -104,9 +104,12 @@ export function workerInterrupt() {
 
 type InterruptRequest = StopRequest & { strategy: Strategy };
 async function prepareInterrupt(db: Queryable, p: InterruptRequest) {
-  const current = await prepareStop(db, p, { allowIdentityless: true });
+  const current = await prepareStop(db, p);
   if (!current) return;
-  const payload: Interrupt = { ...snapshot(current), userId: p.userId, requestId: randomUUID(), strategy: p.strategy, legacy: legacyTurnKey(current.turn) };
+  if (current.active && !current.journal) {
+    throw Object.assign(new Error('The running job has no safe stop identity.'), { code: 'turn_changed', httpStatus: 409 });
+  }
+  const payload: Interrupt = { ...snapshot(current), userId: p.userId, requestId: randomUUID(), strategy: p.strategy };
   return { payload, options: { appId: current.appId, actor: `user:${p.userId}`, source: { kind: 'route' as const, name: WORK }, requestKey: payload.requestId } };
 }
 export async function requestWorkerInterrupt(runtime: Runtime, db: Queryable, p: InterruptRequest) {

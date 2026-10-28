@@ -106,9 +106,13 @@ export function UsageAnalyticsSection() {
           {t('settings:privacy.usageAnalytics.label')}
         </span>
       </label>
-      <p id="settings-usage-analytics-description" className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-        {t('settings:privacy.usageAnalytics.description')}
-      </p>
+      {/* #5926: what is true now, then what it records and what it never
+          records, each on its own line. */}
+      <div id="settings-usage-analytics-description" className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed space-y-1">
+        <p>{t(on ? 'settings:privacy.usageAnalytics.stateOn' : 'settings:privacy.usageAnalytics.stateOff')}</p>
+        <p>{t('settings:privacy.usageAnalytics.records')}</p>
+        <p>{t('settings:privacy.usageAnalytics.neverRecords')}</p>
+      </div>
       {error ? <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-400">{error}</p> : null}
     </div>
   );

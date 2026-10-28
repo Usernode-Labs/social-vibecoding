@@ -1,6 +1,12 @@
 const docker = require('./docker');
 const caddy = require('./caddy');
 const kubernetes = require('./kubernetes');
+// A third kind of runtime, beside docker and kubernetes, and never the
+// process's mode: a project made inside a platform preview, which production
+// builds and runs for the preview (services/preview-projects-client.js).
+// New builds and deploys take it only in a preview production gave the
+// credential to; everything later dispatches on the row's runtime_kind.
+const previewProjects = require('./preview-projects-client');
 
 function mode(config) {
   const value = config?.appRuntime || process.env.APP_RUNTIME || 'docker';
@@ -10,9 +16,12 @@ function mode(config) {
 
 function productionRef(config, app) {
   const runtimeKind = app.runtime_kind || mode(config);
+  if (runtimeKind === previewProjects.RUNTIME_KIND) return { runtimeKind, runtimeName: app.runtime_name || app.slug };
   return { runtimeKind, runtimeName: app.runtime_name || (runtimeKind === 'kubernetes'
     ? kubernetes.appResourceName(app, 'production') : `usernode-app-${app.slug}`) };
 }
+
+const brokered = (ref) => ref?.runtimeKind === previewProjects.RUNTIME_KIND;
 
 // `onProgress(image)` reports the image build as it goes, in the runtime's
 // own terms: kpack lifecycle phases with their times on kubernetes, the
@@ -23,6 +32,9 @@ function productionRef(config, app) {
 async function build(config, {
   app, revision, environment, sessionId, sourceDir, dockerImage, starterTree = false, onProgress = null,
 }) {
+  if (environment === 'production' && previewProjects.active()) {
+    return previewProjects.build(config, { app, sourceDir, onProgress });
+  }
   if (mode(config) === 'docker') {
     await docker.buildImage(sourceDir, dockerImage, { GIT_SHA: revision }, { onProgress });
     return { runtimeKind: 'docker', imageRef: dockerImage, buildRef: null };
@@ -85,6 +97,9 @@ async function deploy(config, {
   if (environment === 'staging' && app.slug === previewPolicy.PLATFORM_SLUG
       && labels?.[previewPolicy.LABEL] !== previewPolicy.DIGEST) {
     throw previewPolicy.refuse('platform deploy requires a verified sanitized clone');
+  }
+  if (environment === 'production' && previewProjects.active()) {
+    return previewProjects.deploy(config, { app, imageRef, env, onRollout });
   }
   if (mode(config) === 'docker') {
     const name = runtimeName || dockerName;
@@ -190,11 +205,13 @@ async function withPreviewDeployLock(config, sessionId, fn) {
 }
 
 async function inspect(config, ref) {
+  if (brokered(ref)) return previewProjects.inspect(config, ref);
   if ((ref.runtimeKind || mode(config)) === 'docker') return docker.inspectContainer(ref.runtimeName);
   return kubernetes.inspectApplication(config, ref.runtimeName);
 }
 
 async function status(config, ref) {
+  if (brokered(ref)) return previewProjects.status(config, ref);
   if ((ref.runtimeKind || mode(config)) === 'docker') return docker.getContainerStatus(ref.runtimeName);
   return kubernetes.getApplicationStatus(config, ref.runtimeName);
 }
@@ -223,6 +240,8 @@ const APP_PORT = 3000;
 
 function appOrigin(config, ref) {
   if (!ref || !ref.runtimeName) return null;
+  // Production runs it, so from a preview it is reached at its own address.
+  if (brokered(ref)) return previewProjects.appOrigin(config, ref);
   if ((ref.runtimeKind || mode(config)) === 'docker') {
     return `http://${ref.runtimeName}:${APP_PORT}`;
   }
@@ -231,6 +250,7 @@ function appOrigin(config, ref) {
 }
 
 async function probeHealth(config, ref, { timeoutMs = 3000 } = {}) {
+  if (brokered(ref)) return previewProjects.probeHealth(config, ref, { timeoutMs });
   if ((ref.runtimeKind || mode(config)) === 'docker') {
     return docker.probeHealthOnce(ref.runtimeName, 3000, '/health', { timeoutMs });
   }
@@ -246,6 +266,7 @@ async function probeHealth(config, ref, { timeoutMs = 3000 } = {}) {
 }
 
 async function logs(config, ref, tailLines) {
+  if (brokered(ref)) return previewProjects.logs(config, ref, tailLines);
   if ((ref.runtimeKind || mode(config)) === 'docker') {
     const { stdout, stderr } = await docker.execFileAsync('docker', ['logs', '--tail', String(tailLines || 200), ref.runtimeName]);
     return stdout + stderr;
@@ -254,12 +275,14 @@ async function logs(config, ref, tailLines) {
 }
 
 async function restart(config, ref) {
+  if (brokered(ref)) return previewProjects.restart(config, ref);
   if ((ref.runtimeKind || mode(config)) === 'docker') return docker.restartContainer(ref.runtimeName);
   return kubernetes.restartApplication(config, ref.runtimeName);
 }
 
 async function remove(config, ref, options = {}) {
   if (!ref?.runtimeName) return;
+  if (brokered(ref)) return previewProjects.remove(config, ref);
   if ((ref.runtimeKind || mode(config)) === 'docker') return docker.stopAndRemove(ref.runtimeName, options);
   await kubernetes.deleteApplication(config, ref.runtimeName);
   if (options.deleteBuilds && ref.appId != null) await kubernetes.deleteBuilds(config, ref.appId);

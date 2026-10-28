@@ -102,6 +102,9 @@ function hubHarness({ appData = true, tab = 'dev', subTab = 'forum', hidden = fa
       appData: appData ? { slug: 'demo' } : null,
       _devDataReady: ready,
       _loadDevFeed: (opts) => { loads.push(opts); return Promise.resolve(true); },
+      // #6001: the tick also hands a moved row to a change open beside the
+      // hub. What that does is #6001's own suite; here it is just a call.
+      _refreshOpenChangeFromBoard: () => {},
     },
     Set,
     Promise,
