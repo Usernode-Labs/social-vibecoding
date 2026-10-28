@@ -41,7 +41,7 @@
 'use strict';
 
 const { nativeWebSessionIsLive } = require('../../services/web-session-auth');
-const { activityTimePrecision } = require('../../services/topochain/activity-time');
+const { activityTimePrecision, parseActivityAt } = require('../../services/topochain/activity-time');
 
 
 const {
@@ -1813,12 +1813,14 @@ function topochainMobileRoutes(config) {
       }
 
       let requestedCompletedAt = null;
+      let requestedCompletedAtPrecision = null;
       if (body.completed_at !== undefined && body.completed_at !== null && body.completed_at !== '') {
-        const parsed = new Date(body.completed_at);
-        if (Number.isNaN(parsed.getTime())) {
+        const parsed = parseActivityAt(body.completed_at);
+        if (!parsed) {
           details.completed_at = ['The completed_at field must be a valid date.'];
         } else {
-          requestedCompletedAt = parsed;
+          requestedCompletedAt = parsed.at;
+          requestedCompletedAtPrecision = parsed.precision;
         }
       }
 
@@ -1953,6 +1955,10 @@ function topochainMobileRoutes(config) {
       const metadata = {
         kind: 'challenge_completion', session_id: sessionId, nullifier_hex: nullifierHex, wallet_address: walletAddress,
       };
+      // A bare `completed_at` date is stored at noon UTC, so mark it 'day':
+      // the activity list then shows the date alone rather than a midnight
+      // the client never sent. The bridge's own instants keep their hour.
+      if (requestedCompletedAtPrecision === 'day') metadata.timestamp_precision = 'day';
 
       // ── One transaction: the activity row IS the completion row (no
       // separate completions table — SPEC §4.10). A unique-violation on

@@ -8,13 +8,14 @@ async function record(pool, sessionId, commit, turnId = null) {
     if (commit) throw new Error('Cannot record unpushed worker changes without the database');
     return;
   }
-  await pool.query(
+  const written = await pool.query(
     `INSERT INTO session_workers (session_id, unpushed_sha, unpushed_branch_name)
      SELECT id, $2::text, $3::text FROM chat_sessions
       WHERE id = $1 AND ($4::text IS NULL OR active_turn->>'turnId' = $4) FOR UPDATE
      ON CONFLICT (session_id) DO UPDATE
        SET unpushed_sha = EXCLUDED.unpushed_sha, unpushed_branch_name = EXCLUDED.unpushed_branch_name`,
     [sessionId, commit?.sha ?? null, commit?.branchName ?? null, turnId]);
+  return (written.rowCount ?? written.rows?.length ?? 0) === 1;
 }
 
 async function read(pool, sessionId, { turnId = null, includeActive = false } = {}) {

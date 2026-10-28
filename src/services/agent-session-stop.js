@@ -54,8 +54,6 @@ async function readWork(pool, { agentSessionId, userId }, deps = {}) {
       stopping,
       stopRequestedAt: requestedAt,
       stopToken: token,
-      // Compatibility for a browser still running the previous control.
-      canForceStop: false,
     },
     row,
   };

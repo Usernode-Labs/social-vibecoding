@@ -114,7 +114,7 @@ function credentialRoutes(config) {
       // sync, and the managed state is synced before the credential's
       // key-info is read, because that merged key-info is what the settings
       // limit line renders.
-      const allowance = config.openrouterManagementApiKey
+      const allowance = managedOpenRouter.managedKeysEnabled(config)
         ? await managedOpenRouter.resolveAllowance(pool, req.user.id)
         : { cents: 0, limitUsd: 0, limitReset: managedOpenRouter.LIMIT_RESET };
       const managedRow = await managedOpenRouter.syncAllowance({
@@ -124,7 +124,7 @@ function credentialRoutes(config) {
       const meta = await credentialStore.readMetadata({ pool, userId: req.user.id, ...OPENROUTER });
       const managed = managedOpenRouter.publicState(managedRow);
       const configured = meta?.status === 'valid';
-      const available = codexAvailable() && !!config.openrouterManagementApiKey;
+      const available = codexAvailable() && managedOpenRouter.managedKeysEnabled(config);
       const hasAllowance = allowance.cents > 0;
       res.json({
         configured,
@@ -147,7 +147,7 @@ function credentialRoutes(config) {
           limitUsd: allowance.limitUsd,
           limitReset: allowance.limitReset,
           reason: !codexAvailable() ? 'not_available'
-            : (!config.openrouterManagementApiKey ? 'not_configured'
+            : (!managedOpenRouter.managedKeysEnabled(config) ? 'not_configured'
               : (managed ? 'already_issued'
                 : (!hasAllowance ? 'no_allowance'
                   : (configured ? 'personal_key_configured' : null)))),

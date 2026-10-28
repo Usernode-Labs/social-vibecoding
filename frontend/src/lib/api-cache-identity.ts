@@ -4,6 +4,35 @@ export const API_SCOPE_HEADER = 'X-Usernode-Cache-Scope';
 const EXPIRY_HEADER = 'X-Usernode-Cache-Expires';
 const BOUNDARY_KEY = 'usernode.api-identity-boundary';
 
+/**
+ * Auth writes that never start, end or switch a session: none writes or
+ * clears the session cookie. A code asked for, a phone linked to the
+ * signed-in account, the waiting room's answers. Every other write under
+ * /api/auth/ is a session boundary (the server's SESSION_MINT_PATHS, logout,
+ * account deletion, a password reset): it fences the reads on their way and
+ * tells the other tabs, which reload. Fencing these instead cut off reads
+ * the screen was waiting for and reloaded every other tab when someone added
+ * a phone. A new route is a boundary until it is listed here, and
+ * tests/api-cache-auth-writes.test.js fails until it is classified.
+ */
+export const AUTH_WRITES_KEEPING_SESSION = Object.freeze([
+  '/api/auth/otp/request',
+  '/api/auth/password-reset/request',
+  '/api/auth/phone/request',
+  '/api/auth/phone-link/request',
+  '/api/auth/phone-link/verify',
+  '/api/auth/waiting/about',
+  '/api/auth/wallet-check',
+  '/api/auth/oauth/:provider/native/start',
+  '/api/auth/oauth/:provider/native/failed',
+]);
+const KEEPS_SESSION = AUTH_WRITES_KEEPING_SESSION
+  .map(route => new RegExp(`^${route.replace(/:[a-z]+/g, '[^/]+')}$`));
+
+export function authWriteKeepsSession(pathname: string): boolean {
+  return KEEPS_SESSION.some(route => route.test(pathname));
+}
+
 export function readApiCacheScope(doc: Pick<Document, 'cookie'> | undefined = typeof document !== 'undefined' ? document : undefined): string | null {
   try {
     if (!doc) return null;
@@ -50,9 +79,18 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
   function broadcastBoundary(): void {
     try { win.localStorage.setItem(BOUNDARY_KEY, `${Date.now()}:${Math.random()}`); } catch { /* no storage */ }
   }
-  function reset({ broadcast = false } = {}): void {
+  // A document nobody was ever signed in to: no partition hint before or
+  // now, no viewer, and the same native session. Its reads carried no
+  // identity, so no identity can have changed under them.
+  const anonymous = () => observedScope === null && scope() === null
+    && currentViewer() == null && renewal().epoch === observedNativeEpoch;
+  // `unlessAnonymous`: a caller dropping a session it may never have had
+  // (App._dropCachedSession, on a signed-out boot's /me) fences nothing when
+  // there was none. Fencing then threw away public reads already on their
+  // way, so an invite link showed the waitlist pitch instead of its card.
+  function reset({ broadcast = false, unlessAnonymous = false } = {}): void {
     boundary++;
-    epoch++;
+    if (!(unlessAnonymous && anonymous())) epoch++;
     observedScope = scope();
     observedNativeEpoch = renewal().epoch;
     if (broadcast) broadcastBoundary();
@@ -182,7 +220,8 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
     if (url.origin !== win.location.origin || !url.pathname.startsWith('/api/')) return send(input, init);
     const req = new Request(typeof Request !== 'undefined' && input instanceof Request ? input : url.href, init);
     const auth = url.pathname.startsWith('/api/auth/');
-    const mutation = auth && req.method !== 'GET' && req.method !== 'HEAD';
+    const mutation = auth && req.method !== 'GET' && req.method !== 'HEAD'
+      && !authWriteKeepsSession(url.pathname);
     const identityRead = req.method === 'GET' && url.pathname === '/api/auth/me';
     if (mutation) { reset({ broadcast: true }); }
     // Native restoration installs its HttpOnly cookie outside this document.
@@ -240,7 +279,7 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
   const bridge = (win.UsernodeReact ||= {});
   bridge.apiCache = {
     scope,
-    reset,
+    reset: (options: { broadcast?: boolean } = {}) => reset({ ...options, unlessAnonymous: true }),
     setViewer(id: number | string | null, verified = true) {
       const next = id == null ? null : String(id);
       if (viewer !== undefined && next !== viewer) reset({ broadcast: verified });

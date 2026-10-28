@@ -131,30 +131,19 @@ test('a governance vote stays within its query budget', { timeout: 120000 }, asy
   const { rows: [issue] } = await pool.query(
     `INSERT INTO issues (app_id, title, kind, payload, created_by) VALUES ($1, 'rename', 'rename', $2, $3) RETURNING *`,
     [app.id, JSON.stringify({ newName: 'Budgeted' }), author.id]);
-  // No scheduled job is armed here (as on a staging preview,
-  // config.runsClusterMaintenance): each clock is first due at a random point
-  // of the next two minutes, and its run, or the timer loop waking for it,
-  // would land among the vote's queries.
-  const runtimeConfig = require('../src/config');
-  const runsClusterMaintenance = runtimeConfig.runsClusterMaintenance;
-  runtimeConfig.runsClusterMaintenance = () => false;
-  t.after(() => { runtimeConfig.runsClusterMaintenance = runsClusterMaintenance; });
-  await platform.startWorkflow(config, { loops: true });
-  const enrolled = Date.now() + 5000;
-  while (!(await pool.query(`SELECT 1 FROM wf_instances WHERE key = $1 AND state = 'open'`, [`issue:${issue.id}`])).rowCount) {
-    assert.ok(Date.now() < enrolled, 'the boot backfill enrolled the proposal');
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  // The boot's own work is not the vote's: the release's adoptions run to
-  // their end first.
-  const booted = Date.now() + 20000;
+  // Measure the vote pipeline, not release adoption or background services.
+  // Boot backfill has its own coverage in workflow-governance-routes-postgres;
+  // starting it here can stall setup on an unrelated adoption/retry before
+  // this test ever casts a vote. Slots still process real events and writes.
+  await platform.startWorkflow(config, { loops: false });
+  await platform.fileProposal(issue.id, app.id);
+  const enrolledBy = Date.now() + 25000;
   for (;;) {
     const { rows: [r] } = await pool.query(
-      `SELECT (SELECT count(*) FROM wf_instances WHERE machine = 'release' AND state = 'adopting')::int AS adopting,
-              (SELECT count(*) FROM wf_events WHERE status = 'pending')::int AS pending,
-              (SELECT count(*) FROM wf_work WHERE status IN ('running', 'reported'))::int AS working`);
-    if (!r.adopting && !r.pending && !r.working) break;
-    assert.ok(Date.now() < booted, `the boot's work ended (${JSON.stringify(r)})`);
+      `SELECT EXISTS (SELECT 1 FROM wf_instances WHERE machine = 'governance-proposal' AND key = $1 AND state = 'open') AS enrolled,
+              (SELECT count(*) FROM wf_events WHERE status = 'pending')::int AS pending`, [`issue:${issue.id}`]);
+    if (r.enrolled && !r.pending) break;
+    assert.ok(Date.now() < enrolledBy, `the proposal is enrolled (${JSON.stringify(r)})`);
     await new Promise((r) => setTimeout(r, 50));
   }
   const settle = () => new Promise((r) => setTimeout(r, 300));  // let the loops go quiet
@@ -165,6 +154,7 @@ test('a governance vote stays within its query budget', { timeout: 120000 }, asy
     const { result, seen } = await counted(() => call(vote, { params: { id: String(issue.id) }, body: { vote: 'up' }, user: voter }));
     assert.equal(result.status, 200, JSON.stringify(result.body));
     check(result.body);
+    t.diagnostic(`${label}: ${seen.length} queries (budget ${budget})`);
     assert.ok(seen.length <= budget,
       `${label}: ${seen.length} queries, budget ${budget}:\n${seen.map((q, i) => `  ${i + 1}. ${q}`).join('\n')}`);
   };

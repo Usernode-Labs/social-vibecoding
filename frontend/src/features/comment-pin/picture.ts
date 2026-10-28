@@ -558,11 +558,16 @@ export function pinTarget(pin: Point, host: Element): Rect | null {
  * come out dimmed. Every one of them is out of the page's flow (fixed, or
  * display:none when not showing), which is why the capture cuts them out
  * rather than holding their place (`drawShell`).
+ *
+ * The hub's ⋯ dropdown (#dev-plus-menu) is inside the page the picture
+ * draws, so a picture taken while it is open carries it; it is out of the
+ * flow too, so cutting it out moves nothing.
  */
 export const PAGE_EXCLUDES = [
   '#feedback-modal',
   '#apps-switcher-sheet',
   '#apps-switcher-overlay',
+  '#dev-plus-menu',
   '.overlay-scrim',
   '.un-modal',
   '.un-sheet',
@@ -696,6 +701,15 @@ const isElementNode = (n: unknown): n is HTMLElement => !!n && (n as Node).nodeT
  * keeps the scroll offset, and the pictures matched the unchanged capture
  * pixel for pixel (Settings scrolled, Home's own scroller, Messages, the
  * rail scrolled sideways). Only the copy is touched, never the page.
+ *
+ * `overflow: hidden` was not enough on a phone (27 Oct 2026): #general's
+ * transcript was drawn over the channel's own line and up under the header
+ * in a C comment's picture, while the page itself was correct. SnapDOM moves
+ * a scroller's children into a translated `will-change: transform` wrapper,
+ * and WebKit painted that wrapper unclipped. `clip-path: inset(0)` is a
+ * geometric clip WebKit applies to every descendant, so the copy cuts off at
+ * its box as the screen does. It does not make a containing block, so
+ * SnapDOM's re-offset of absolute and fixed descendants is unaffected.
  */
 export function flattenScrollers(ctx: CloneContext, styleOf: (el: Element) => CSSStyleDeclaration = (el) => getComputedStyle(el)): number {
   const map = ctx?.nodeMap;
@@ -710,6 +724,7 @@ export function flattenScrollers(ctx: CloneContext, styleOf: (el: Element) => CS
     if (!/(auto|scroll)/.test(`${s.overflowX} ${s.overflowY}`)) return;
     copy.style.setProperty('overflow', 'hidden', 'important');
     copy.style.setProperty('-webkit-overflow-scrolling', 'auto', 'important');
+    copy.style.setProperty('clip-path', 'inset(0)', 'important');
     changed++;
   });
   return changed;

@@ -19,9 +19,9 @@
     {
       "source": "src/db/migrate.js",
       "kind": "structural-template",
-      "fingerprint": "0c1464d259b25f669f6c",
+      "fingerprint": "2e2b82f344f408c6c819",
       "count": 1,
-      "preview": "`INSERT INTO user_activities (id, user_id, season_event_id, activity_type, points, description, metadata, activity_at, challenge_id) VALUES (${base}, $1, $2, 'c"
+      "preview": "`INSERT INTO user_activities (id, user_id, season_event_id, activity_type, points, description, metadata, activity_at, challenge_id, source) VALUES (${base}, $1"
     },
     {
       "source": "src/db/migrate.js",

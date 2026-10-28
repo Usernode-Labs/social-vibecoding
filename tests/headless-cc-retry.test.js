@@ -36,6 +36,7 @@ function loadSessions(mockPool, overrides = {}) {
     pool: require.resolve('../src/db/pool'),
     ws: require.resolve('../src/services/ws'),
     github: require.resolve('../src/services/github'),
+    operations: require.resolve('../src/services/platform-operations'),
     llm: require.resolve('../src/services/llm'),
     worker: require.resolve('../src/services/worker'),
     staging: require.resolve('../src/services/staging'),
@@ -98,6 +99,11 @@ function loadSessions(mockPool, overrides = {}) {
       broadcastGlobal: () => {},
       pushNotificationToUser: () => 0,
       pushSessionUpdate: () => {},
+    })],
+    // New branches are a conductor's platform operation
+    // (services/branch-operation.js, tested on its own).
+    [paths.operations, stubModule(paths.operations, {
+      request: async ({ input }) => ({ ok: true, branch: input.branch }),
     })],
     [paths.github, stubModule(paths.github, githubStub)],
     [paths.llm, stubModule(paths.llm, llmStub)],

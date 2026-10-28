@@ -225,12 +225,6 @@ COPY verify-shots-browser-auth.js /usr/local/bin/verify-shots-browser-auth.js
 COPY verify-shots-browser-fonts.js /usr/local/bin/verify-shots-browser-fonts.js
 COPY classify-codex-resume.js /usr/local/bin/classify-codex-resume.js
 COPY build-codex-model-catalog.js /usr/local/bin/build-codex-model-catalog.js
-# usernode-push is the worker's only path to writing anything back to
-# GitHub: it POSTs to the platform's internal push proxy, which runs
-# the actual `git push` from the host side with the bot token injected
-# for that one call. See worker.execPushFromWorker + src/routes/internal.js.
-# The worker container itself carries zero GitHub credentials.
-COPY usernode-push   /usr/local/bin/usernode-push
 # usernode-issues is read-only: it GETs the platform's internal issues
 # endpoints (anonymous public-repo fetch happens platform-side) so Claude
 # Code can list the repo's open GitHub issues — or fetch one issue's full
@@ -246,7 +240,7 @@ COPY usernode-issues /usr/local/bin/usernode-issues
 # attachments routes (#450).
 COPY usernode-attachments /usr/local/bin/usernode-attachments
 # usernode-report-platform-issue is the worker's escalation valve: a
-# build-turn write path (WORKER_JWT, like usernode-push) that DRAFTS a
+# build-turn write path (WORKER_JWT) that DRAFTS a
 # platform-repo issue when the agent hits a blocker it can't fix in this
 # app's repo (shared bridge, native WebView, staging pipeline, checks
 # gate). Human-gated: the draft renders as a confirm/dismiss card in the
@@ -292,7 +286,6 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/shots-browser-bootstrap.js \
               /usr/local/bin/write-shots-mcp-config.js \
               /usr/local/bin/homeroom-read-mcp.js \
-              /usr/local/bin/usernode-push \
               /usr/local/bin/usernode-issues \
               /usr/local/bin/usernode-attachments \
               /usr/local/bin/usernode-report-platform-issue \

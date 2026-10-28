@@ -639,6 +639,15 @@ export async function startedFromStory(kind: 'existing' | 'new'): Promise<boolea
 export const SIGNING_IN_MAX_MS = 20_000;
 
 /**
+ * How a failed read of the public directory is given a chance (#6007): the
+ * first read and two retries, a second apart. It runs as the landing first
+ * shows, which after a sign-out is while the sign-out round trip is still
+ * settling, so one refused request is usually a moment rather than an outage.
+ */
+const APPS_ATTEMPTS = 3;
+const APPS_RETRY_MS = 1000;
+
+/**
  * A "You're in" link that may be spent as the page opens (Evan, 12 Oct
  * 2026): a new account's (`signup`), carrying both the token that names its
  * address, which the check reads, and its one-time sign-in. Its arrival puts
@@ -917,6 +926,8 @@ export function LandingScreen() {
     appsLoaded: false,
     appsReady: null as Promise<void> | null,
     appsList: [] as PublicApp[],
+    // The read under way, so Try again joins it rather than starting another.
+    appsInFlight: null as Promise<void> | null,
     openSlug: null as string | null,
     // #931: launch-cover state for the in-page viewer. The generation counter
     // makes a superseded open's `load`/timers inert (same contract as
@@ -1000,7 +1011,7 @@ export function LandingScreen() {
   const nativeProviders = useNativeSignInProviders(waitlistPayload);
   const nativeSignIn = nativeProviders.length > 0;
   const providers = nativeSignIn ? nativeProviders : webProviders;
-  // An invite makes a private member, who signs up with a phone number
+  // An invite makes a private member, quickest with a phone number
   // (services/community-invites.js): the Join sheet starts there when the
   // server offers it.
   const phoneSignIn = waitlistPayload?.phone_sign_in === true;
@@ -1236,36 +1247,58 @@ export function LandingScreen() {
   }, [clearViewerCover, refreshHeader, st]);
 
   const loadLandingApps = useCallback(async () => {
-    try {
-      const res = await fetch('/api/public/apps?include_wallets=0');
-      if (!res.ok) throw new Error('http ' + res.status);
-      const data = await res.json();
-      const list: PublicApp[] = (data && data.apps) || [];
-      // NOTHING RENDERS THIS LIST any more — the directory grid is gone. It
-      // is still fetched, and this is the whole of why:
-      //
-      //   * `?shot=anon-back` needs an app the viewer would actually open
-      //     (not gated, has a URL) to script its two guest open/back cycles,
-      //     and takes it from here (see runAnonBackShot);
-      //   * the scroller's pull-to-refresh runs this callback, so a pull
-      //     still re-checks whether the platform redeployed
-      //     (App._refreshOrReload);
-      //   * `_loadLandingApps` is one of the nine names the legacy router
-      //     patches over;
-      //   * a shared link to a project, opened while signed out, opens the
-      //     project's read-only page when it is public and titles its
-      //     sign-in sheet with the project's name otherwise (#5264);
-      //   * it IS the guest Discover (features/guest/guest-discover.tsx):
-      //     every card there is a row of it.
-      st.appsList = list;
-      setApps(list as GuestApp[]);
+    // A read already running IS the read: Try again pressed mid-flight joins
+    // it rather than starting a second one.
+    if (st.appsInFlight) return st.appsInFlight;
+    const read = async () => {
+      // A retry, automatic or from Try again, shows the placeholders again.
       setAppsFailed(false);
-    } catch {
-      st.appsList = [];
-      // A list read before stays on screen; only a first read that failed
-      // says so.
-      setAppsFailed(true);
-    }
+      // ONE HICCUP IS NOT A FAILURE. This read runs as the landing first
+      // shows, which after a sign-out is while the sign-out round trip is
+      // still settling; a single failed request used to leave Discover saying
+      // it could not load, with nothing to do about it until a reload
+      // (#6007). So an attempt that fails is tried again twice, a second
+      // apart, and only the last one failing is reported.
+      for (let attempt = 1; attempt <= APPS_ATTEMPTS; attempt += 1) {
+        try {
+          const res = await fetch('/api/public/apps?include_wallets=0');
+          if (!res.ok) throw new Error('http ' + res.status);
+          const data = await res.json();
+          const list: PublicApp[] = (data && data.apps) || [];
+          // NOTHING RENDERS THIS LIST any more — the directory grid is gone. It
+          // is still fetched, and this is the whole of why:
+          //
+          //   * `?shot=anon-back` needs an app the viewer would actually open
+          //     (not gated, has a URL) to script its two guest open/back cycles,
+          //     and takes it from here (see runAnonBackShot);
+          //   * the scroller's pull-to-refresh runs this callback, so a pull
+          //     still re-checks whether the platform redeployed
+          //     (App._refreshOrReload);
+          //   * `_loadLandingApps` is one of the nine names the legacy router
+          //     patches over;
+          //   * a shared link to a project, opened while signed out, opens the
+          //     project's read-only page when it is public and titles its
+          //     sign-in sheet with the project's name otherwise (#5264);
+          //   * it IS the guest Discover (features/guest/guest-discover.tsx):
+          //     every card there is a row of it.
+          st.appsList = list;
+          setApps(list as GuestApp[]);
+          setAppsFailed(false);
+          return;
+        } catch {
+          // No list is cleared here: one read before stays on screen, and the
+          // shot and the shared-link lookup still see it.
+          if (attempt === APPS_ATTEMPTS) {
+            setAppsFailed(true);
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, APPS_RETRY_MS));
+        }
+      }
+    };
+    const flight = read().finally(() => { st.appsInFlight = null; });
+    st.appsInFlight = flight;
+    return flight;
   }, [st]);
 
   /**
@@ -2175,6 +2208,7 @@ export function LandingScreen() {
               primaryClass={PRIMARY_PILL}
               signedIn={waitingGuest}
               onOpenInside={(app) => { void live.current.openLandingApp(app); }}
+              onRetry={() => { st.appsReady = live.current.loadLandingApps(); }}
               hero={waitingGuest ? (
                 <WaitlistCard email={sessionEmail()} />
               ) : (

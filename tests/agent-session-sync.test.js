@@ -170,7 +170,7 @@ test('the state route answers "unchanged" to a screen that is current, and the r
   }, async (call) => {
     const current = await call('GET', '/api/agent-sessions/5/state?version=4&rev=12');
     assert.deepEqual(current.body, {
-      unchanged: true, version: 4, busy: true, turn: { id: 'turn-abcd-1', phase: 'cc', startedAt: 1790000000000, stopping: false, stopRequestedAt: null, stopToken: 'agent:turn-abcd-1', changeId: null, canForceStop: false },
+      unchanged: true, version: 4, busy: true, turn: { id: 'turn-abcd-1', phase: 'cc', startedAt: 1790000000000, stopping: false, stopRequestedAt: null, stopToken: 'agent:turn-abcd-1', changeId: null },
     }, 'the durable turn and stop controls a screen on any pod can draw');
     const whole = await call('GET', '/api/agent-sessions/5/state');
     assert.equal(whole.body.full, true);

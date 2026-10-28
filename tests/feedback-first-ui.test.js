@@ -77,10 +77,9 @@ function harness({ response = { firstFeedback: moment }, ok = true, patchResult 
     sandbox, el, timers, calls, fixes, nav, toasts, closes,
     failedReads: () => failedReads,
     advance(ms) { clock += ms; },
-    // #2707: this harness opens with an app on screen, so BOTH destinations
-    // are real and none is preselected — a submit refuses until one is tapped.
-    // Every test below is about what happens AFTER a submit, so the tap is
-    // part of getting there, the way typing the description is.
+    // #5992: this harness opens with an app on screen, so the app is the
+    // default destination; every test below is about what happens AFTER a
+    // submit, so this picks the platform the way a person might.
     async submit() {
       el('feedback-text').value = 'The board jumps.';
       el('feedback-target-platform').click();

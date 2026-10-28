@@ -181,19 +181,18 @@ test('a turn a restart caught is followed through its journal, not started again
   assert.equal(w.last()['turn:build'].phase, 'done');
 });
 
-test('a followed build turn whose commit the restart kept from being pushed is pushed from its worker', async () => {
+test('a followed turn uses the shared publication result without healing it again', async () => {
   const w = item({ 'turn:build': { phase: 'started', mode: 'build', deadlineAt: Date.now() + 60000, headBefore: 'base', record: { turnId: 't-4', journal: '/j/4' } } });
   const turn = { turnId: 't-4', journal: '/j/4', mode: 'build', phase: 'executing' };
-  const worker = fakeWorker({ pushOk: false, sha: 'local', ahead: 1, exitCode: 0, providerDispatched: true });
+  const worker = fakeWorker({ pushOk: true, sha: 'published', ahead: 1, exitCode: 0, providerDispatched: true });
   const out = await durableTurn.runTurn(w.steps, 'build', {
     pool: pool(turn), session: SESSION, mode: 'build', budgetMs: 60000,
     dispatch: async () => { throw new Error('not dispatched'); },
     deps: { worker, agentTurn },
   });
   assert.equal(out.routed.result.pushOk, true);
-  assert.equal(out.routed.result.sha, 'pushed');
-  assert.equal(out.routed.result.repushed, true);
-  assert.ok(worker.calls.some((c) => c[0] === 'push' && c[2] === 'dev/bot-41'));
+  assert.equal(out.routed.result.sha, 'published');
+  assert.ok(!worker.calls.some(c => c[0] === 'push'), 'the tail never repeats publication');
 });
 
 test('a record that is another step\'s is not followed: a turn that landed with its record lost is read off the branch', async () => {

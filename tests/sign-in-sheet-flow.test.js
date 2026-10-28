@@ -40,6 +40,7 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const AUTH_SCREENS = read('public/js/auth-screens.js');
 const GATE = read('frontend/src/features/auth/communities-first-run.js');
 const SHEET = 'frontend/src/features/auth/sign-in-sheet.tsx';
+const CODE_BOXES = 'frontend/src/features/auth/code-boxes.tsx';
 const LANDING = 'frontend/src/features/auth/landing.tsx';
 const SHARED = 'frontend/src/features/auth/shared.ts';
 
@@ -200,11 +201,15 @@ test('a code field says it is a one-time code, in every way a browser reads (Eva
     "autoComplete: 'one-time-code'", "autoCapitalize: 'none'", "autoCorrect: 'off'", 'spellCheck: false']) {
     assert.ok(block.includes(attr), attr);
   }
+  // The one real field under the boxes carries them, for every screen that
+  // draws the boxes (#5989).
+  const boxes = read(CODE_BOXES);
+  assert.match(boxes, /\{\.\.\.ONE_TIME_CODE_FIELD\}\s+enterKeyHint="go"\s+maxLength=\{maxLength\}/);
+  assert.doesNotMatch(boxes, /type="password"[^>]*one-time-code|one-time-code[^>]*type="password"/);
   const src = read(SHEET);
   for (const id of ['sign-in-sheet-code', 'sign-in-sheet-phone-code']) {
-    assert.match(src, new RegExp(`id="${id}" \\{\\.\\.\\.ONE_TIME_CODE_FIELD\\} enterKeyHint="go" maxLength=\\{6\\}`), id);
+    assert.match(src, new RegExp(`<CodeBoxes id="${id}"`), id);
   }
-  assert.doesNotMatch(src, /type="password"[^>]*one-time-code|one-time-code[^>]*type="password"/);
 });
 
 test('the code is six boxes over one real field, and the sixth digit sends it (#5253)', () => {
@@ -216,10 +221,10 @@ test('the code is six boxes over one real field, and the sixth digit sends it (#
   assert.equal(codeDigits('Code: 583914.'), '583914');
   assert.equal(codeDigits('58391412'), '583914');
   assert.equal(codeDigits('ab'), '');
-  const src = read(SHEET);
+  const boxes = read(CODE_BOXES);
   // One real field still carries the one-time-code attributes; the boxes are drawn from it and hidden from readers.
-  assert.match(src, /<div className="grid grid-cols-6 gap-2" aria-hidden="true">/);
-  assert.match(src, /id="sign-in-sheet-code" \{\.\.\.ONE_TIME_CODE_FIELD\} enterKeyHint="go" maxLength=\{6\} onInput=\{\(e\) => onCodeInput\(e\.currentTarget\.value\)\}/);
+  assert.match(boxes, /<div className="grid grid-cols-6 gap-2" aria-hidden="true">/);
+  const src = read(SHEET);
   // The sixth digit sends it, once per code.
   assert.match(src, /if \(digits\.length === CODE_LENGTH && digits !== autoSent\.current && !busy\) \{\s+autoSent\.current = digits;\s+void verify\(\);/);
   // No Continue to press on the code step any more.
@@ -554,7 +559,6 @@ test('the first step with Apple and Google: the terms under them, then the email
   assert.doesNotMatch(join, /Use a password|data-sign-in-sheet-password=/);
   assert.equal(message('auth:signInSheet.withPassword'), 'Use a password');
   assert.match(message('auth:signInSheet.resume.passwordRequired'), /"Use a password"/);
-  assert.match(message('auth:signInSheet.resume.adminPasswordRequired'), /"Use a password"/);
 });
 
 test('Email code | Password is one switch, and the password and reset steps say no terms (#5258)', () => {

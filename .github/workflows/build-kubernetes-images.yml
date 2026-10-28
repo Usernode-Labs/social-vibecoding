@@ -113,8 +113,9 @@ jobs:
       # Authority fixtures load real workflow handlers that depend on bcrypt.
       - run: |
           npm rebuild bcrypt --build-from-source
-          node --test --test-timeout=60000 tests/platform-preview-schema-compatibility.test.js tests/workflow-event-authority-postgres.test.js tests/worker-push-workflow-postgres.test.js tests/worker-release-workflow-postgres.test.js
+          node --test --test-timeout=60000 tests/platform-preview-schema-compatibility.test.js tests/workflow-event-authority-postgres.test.js tests/turn-publication-postgres.test.js tests/worker-release-workflow-postgres.test.js
           node --test --test-timeout=60000 tests/worker-eviction-postgres.test.js
+          node --test --test-timeout=60000 tests/worker-stop-workflow-postgres.test.js tests/platform-preview-startup-postgres.test.js
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports[5432] }}/postgres
           TEST_PREVIEW_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres18.ports[5432] }}/postgres
@@ -122,7 +123,7 @@ jobs:
       # A preceding database regression may already have built authentication.
       - run: |
           node -e "require('bcrypt')" || npm rebuild bcrypt --build-from-source
-          node --require ./tests/lib/test-net.js --test --test-timeout=60000 --test-concurrency=1 tests/private-streams-postgres.test.js tests/notification-current-access-postgres.test.js tests/global-chat-turn-routes.test.js
+          node --require ./tests/lib/test-net.js --test --test-timeout=60000 --test-concurrency=1 tests/private-streams-postgres.test.js tests/notification-current-access-postgres.test.js
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports[5432] }}/postgres
 

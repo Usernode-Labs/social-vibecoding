@@ -366,7 +366,7 @@ async function retire(pool, { userId, confirmation }, { actorId, config = {} } =
     // kept is logged, and the app is taken down all the same.
     if (await runReport.keep(pool, { app, testUser: user })) reportsKept.push(app.slug);
     try {
-      await teardownApp(pool, config, app);
+      await teardownApp(pool, config, app, { userId: actorId });
       removedApps.push(app.slug);
     } catch (err) {
       log.error('test-accounts', 'App teardown failed while retiring a test account', {

@@ -346,7 +346,7 @@ As built, the gate lets exactly two things through, both decided on the bearer's
 
 ## Coding agent
 
-The coding agent runs exactly as today: one warm worker per change, with the app's repo on the change's branch, pushing through `usernode-push`. It gains read-only platform MCP bound to that change's app, and nothing else.
+The coding agent uses one warm worker per change, with the app's repo on the change's branch. It commits and returns its result; shared conductor completion/recovery publishes through the isolated trusted Git pusher. It gains read-only platform MCP bound to that change's app.
 
 **Setup, per build or scout turn**
 
@@ -365,7 +365,7 @@ The coding agent runs exactly as today: one warm worker per change, with the app
 
 **Why read-only is enough.** Everything a change needs to write is already done around the agent:
 
-- pushes through `usernode-push`;
+- publication through the conductor after the worker returns its commit;
 - PR metadata from its description block;
 - staging and checks by the server;
 - promotion and requests by the Mayor with the user's confirmation.
@@ -494,6 +494,8 @@ The Mayor uses the normal per-user LLM budget instead of the monthly cap.
 - **Client:** `GlobalChatScreen` in `Shell.tsx`; the `#chat` route, `SCREEN_IDS` and `REACT_SCREEN_IDS` entries, and `_BACK_SLOT` in `app.js`; `global-chat-screen` and `global-chat-composer` from `ADDED_IDS` (they were never in the frozen baseline).
 - **Other references:** `llm-telemetry`, `debug-access` and `db-console-scope`.
 - **Tests:** the \~20 `global-chat-*` tests, and the screen lists in `visibility-store`, `screen-transition-order`, `boot-screen` and `react-screen-ids-consistency`.
+
+**As built: Global Chat removed (October 2026).** Nobody had used it for over a month, so its code, settings, checks, copy and tests went in one change. The shared OpenRouter transport it carried moved to `services/openrouter.js` and the platform's effort scale to `services/reasoning-efforts.js`; the server-error observer reads its route-to-file map from the route files themselves. Its old addresses (`#chat`, `#chat/<id>`, `#messages/agent/<uuid>`, `#settings/global-chat`) open Messages. The six `global_chat_*` tables stay for now, with their account-deletion, user-merge and private-data entries, so the transcripts stay out of the admin database console; dropping them is a later change. The `global-chat` entry hint stays accepted, for the agent sessions Global Chat started.
 
 ## Security
 

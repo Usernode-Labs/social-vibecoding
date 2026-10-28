@@ -96,7 +96,7 @@ test('post_spec sends the whole spec to the request\'s spec route on the caller\
         newRecord: false, commentPosted: true }
     );
     assert.equal(s.title, '<untrusted-content>Spinner</untrusted-content>');
-    assert.equal(s.webPath, `${ORIGIN}/#app/cool-app/dev/issues/4041`);
+    assert.equal(s.webPath, `${ORIGIN}/app/cool-app/dev/issues/4041`);
     assert.ok(valid(c.specs, 'post_spec', s));
   } finally { c.restore(); }
 });

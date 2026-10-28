@@ -3,7 +3,7 @@
 const { Router, raw } = require('express');
 const { rateLimit } = require('express-rate-limit');
 const { getPool } = require('../db/pool');
-const { internalAuth, internalAuthPurpose } = require('../middleware/internal-auth');
+const { internalAuthPurpose } = require('../middleware/internal-auth');
 const log = require('../services/logger');
 const worker = require('../services/worker');
 const docker = require('../services/docker');
@@ -82,20 +82,10 @@ async function isKnownHost(pool, rawDomain) {
 // verifies a session-scoped JWT minted at warm-container bootstrap (see
 // src/services/worker.js's mintWorkerJwt).
 //
-// These endpoints are the only path by which a worker container can
-// affect anything outside its own filesystem. The worker carries no
-// GitHub credentials at all — its sole write capability is whatever
-// this router chooses to expose. Today:
-//   - POST /api/internal/sessions/:id/push  →  git push the session's
-//     canonical branch (looked up from the DB; the worker doesn't get
-//     to pick).
-//   - POST /api/internal/sessions/:id/pr    →  create a PR for the
-//     session's canonical branch.
-//
-// Both endpoints are rate-limited per session to bound the blast
-// radius of a runaway CC turn. A push storm at 60/min still gives us
-// plenty of headroom for normal use (typical session pushes 1–5 times)
-// while preventing 1000+/sec API hammering.
+// Workers carry no Git credentials. Active callbacks expose only their
+// declared purpose: request reads, visual declarations, model/debug access
+// and platform-issue drafts. Git publication and PR creation belong to
+// conductor completion/recovery; their old callback URLs return 410.
 
 // ── App-host gate (Caddy forward_auth, and the Kubernetes gate proxy) ──
 //
@@ -249,11 +239,14 @@ function internalRoutes(_config) {
   });
 
   // Build-agent declaration boundary. Claude build workers carry the legacy
-  // worker:session capability; Codex build workers carry only worker:push.
+  // worker:session capability; OpenRouter builds carry only a declaration token.
   // Both may record intent for their own session, but neither can execute a
   // replay, read artifacts, or address another proposal.
   const visibleChangesAuth = internalAuthPurpose([
-    platformJwt.PUR_WORKER_PUSH,
+    platformJwt.PUR_VISIBLE_CHANGES,
+    // One-release verification-only compatibility for in-flight OpenRouter
+    // builds. New code never mints this purpose; Git/PR callbacks stay 410.
+    'worker:push',
     platformJwt.PUR_WORKER,
   ]);
   const visibleChangesLimiter = rateLimit({
@@ -382,67 +375,32 @@ function internalRoutes(_config) {
     }
   });
 
-  const pushLimiter = rateLimit({
+  const sessionLimiter = rateLimit({
     windowMs: 60 * 1000,
     max: 60,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     keyGenerator: (req) => `session:${req.workerSession?.sessionId || 'anon'}`,
     handler: (req, res) => {
-      log.warn('internal-api', 'Push proxy rate-limited', {
+      log.warn('internal-api', 'Worker API rate-limited', {
         sessionId: req.workerSession?.sessionId,
       });
       res.status(429).json({ ok: false, code: 'rate_limited' });
     },
   });
 
-  router.post(
-    '/api/internal/sessions/:sessionId/push',
-    internalAuthPurpose([platformJwt.PUR_WORKER_PUSH, platformJwt.PUR_WORKER]),
-    pushLimiter,
-    async (req, res) => {
-      const sessionId = parseInt(req.params.sessionId, 10);
-      if (!Number.isFinite(sessionId)) {
-        return res.status(400).json({ ok: false, code: 'bad_session_id' });
-      }
-      if (req.workerSession.sessionId !== sessionId) {
-        log.warn('internal-api', 'Session mismatch between JWT and route', {
-          jwt: req.workerSession.sessionId, route: sessionId,
-        });
-        return res.status(403).json({ ok: false, code: 'session_mismatch' });
-      }
+  // Old worker images still call this endpoint. A permanent response makes
+  // them return their result immediately; the conductor publishes it. This
+  // tombstone never authenticates a write capability or accesses a worker.
+  router.post('/api/internal/sessions/:sessionId/push', (_req, res) => {
+    res.status(410).json({ ok: false, code: 'push_retired', permanent: true,
+      message: 'The conductor publishes completed turns.' });
+  });
 
-      try {
-        // The conductor rechecks the current session and repository privacy
-        // immediately before it runs the trusted pusher.
-        const { sha, branch } = await require('../workflow/platform.ts').requestWorkerPush(sessionId);
-        return res.json({ ok: true, branch, sha });
-      } catch (err) {
-        // #1376: `message` is the raw failure; `detail`/`permanent` carry the
-        // operator-readable version so the worker's __USERNODE_WARN__ line
-        // (and anything reading this response) says why, not just that.
-        return res.status(err.httpStatus || 502).json({
-          ok: false,
-          code: err.code || 'push_failed',
-          message: err.message,
-          detail: err.userMessage || null,
-          permanent: err.permanent === true,
-          ...(err.sessionStatus ? { status: err.sessionStatus } : {}),
-        });
-      }
-    }
-  );
-
-  // Read-only: list the session repo's OPEN GitHub issues. Backs the
-  // worker's usernode-issues CLI (scout + build), giving Claude Code the
-  // same list_github_issues capability the Mayor has in-process. Anonymous
-  // public fetch with no credentials — caching, pagination, and PR-filtering
-  // all live in github.fetchPublicIssues. GET because it mutates nothing;
-  // accepts the session-scoped ISSUES_JWT via the same internalAuth gate.
   router.get(
     '/api/internal/sessions/:sessionId/issues',
     internalAuthPurpose([platformJwt.PUR_ISSUES_READ, platformJwt.PUR_WORKER]),
-    pushLimiter,
+    sessionLimiter,
     async (req, res) => {
       const sessionId = parseInt(req.params.sessionId, 10);
       if (!Number.isFinite(sessionId)) {
@@ -511,7 +469,7 @@ function internalRoutes(_config) {
   router.get(
     '/api/internal/sessions/:sessionId/issues/:number',
     internalAuthPurpose([platformJwt.PUR_ISSUES_READ, platformJwt.PUR_WORKER]),
-    pushLimiter,
+    sessionLimiter,
     async (req, res) => {
       const sessionId = parseInt(req.params.sessionId, 10);
       if (!Number.isFinite(sessionId)) {
@@ -593,7 +551,7 @@ function internalRoutes(_config) {
   router.get(
     '/api/internal/sessions/:sessionId/attachments',
     internalAuthPurpose([platformJwt.PUR_ISSUES_READ, platformJwt.PUR_WORKER]),
-    pushLimiter,
+    sessionLimiter,
     async (req, res) => {
       const sessionId = parseInt(req.params.sessionId, 10);
       if (!Number.isFinite(sessionId)) {
@@ -642,7 +600,7 @@ function internalRoutes(_config) {
   router.get(
     '/api/internal/sessions/:sessionId/attachments/:attId',
     internalAuthPurpose([platformJwt.PUR_ISSUES_READ, platformJwt.PUR_WORKER]),
-    pushLimiter,
+    sessionLimiter,
     async (req, res) => {
       const sessionId = parseInt(req.params.sessionId, 10);
       if (!Number.isFinite(sessionId)) {
@@ -677,71 +635,16 @@ function internalRoutes(_config) {
     }
   );
 
-  // PR creation endpoint. Today's `git push` path doesn't strictly
-  // need a worker-callable PR endpoint (the platform's sessions route
-  // creates PRs as part of the per-turn finalization flow), but
-  // exposing it here closes the last hole where the worker would need
-  // a token to do something cross-cutting. It's a thin wrapper around
-  // github.createPR; same per-session auth + rate limit as push.
-  router.post(
-    '/api/internal/sessions/:sessionId/pr',
-    internalAuth,
-    pushLimiter,
-    async (req, res) => {
-      const sessionId = parseInt(req.params.sessionId, 10);
-      if (!Number.isFinite(sessionId)) {
-        return res.status(400).json({ ok: false, code: 'bad_session_id' });
-      }
-      if (req.workerSession.sessionId !== sessionId) {
-        return res.status(403).json({ ok: false, code: 'session_mismatch' });
-      }
-
-      const { title, body } = req.body || {};
-      if (typeof title !== 'string' || !title.trim()) {
-        return res.status(400).json({ ok: false, code: 'bad_title' });
-      }
-
-      let session;
-      try {
-        const { rows } = await pool.query(
-          `SELECT cs.id, cs.branch_name, cs.status, a.repo_url
-           FROM chat_sessions cs
-           JOIN apps a ON a.id = cs.app_id
-           WHERE cs.id = $1`,
-          [sessionId]
-        );
-        if (!rows.length) return res.status(404).json({ ok: false, code: 'session_not_found' });
-        session = rows[0];
-      } catch (err) {
-        return res.status(500).json({ ok: false, code: 'db_error', message: err.message });
-      }
-
-      if (!session.branch_name) {
-        return res.status(400).json({ ok: false, code: 'no_branch' });
-      }
-      const parsed = repoRef.ownerRepo(session.repo_url);
-      if (!parsed) return res.status(400).json({ ok: false, code: 'bad_repo_url' });
-      const { owner, repo } = parsed;
-
-      try {
-        const pr = await github.createPR(owner, repo, {
-          branch: session.branch_name,
-          title,
-          body: body || '',
-        });
-        return res.json({ ok: true, number: pr.number, url: pr.html_url });
-      } catch (err) {
-        log.warn('internal-api', 'PR create via worker proxy failed', {
-          sessionId, owner, repo, err: err.message,
-        });
-        return res.status(502).json({ ok: false, code: 'pr_failed', message: err.message });
-      }
-    }
-  );
+  // No worker calls this in the shipped protocol. Retire it explicitly for
+  // external callers too: PR creation belongs to conductor finalization.
+  router.post('/api/internal/sessions/:sessionId/pr', (_req, res) => {
+    res.status(410).json({ ok: false, code: 'pr_retired', permanent: true,
+      message: 'The conductor creates proposals after turn completion.' });
+  });
 
   // ── Platform-issue escalation valve (build-turn coding agent) ─────────
   //
-  // The worker can only edit + push ITS OWN app repo. Some blockers live
+  // A build edits only its own app repository. Some blockers live
   // outside it — the shared bridge, wallet / native WebView, the
   // staging/preview pipeline, the checks gate. When the build-turn agent
   // is confident the root cause is platform-level (rather than looping on
@@ -757,7 +660,7 @@ function internalRoutes(_config) {
   // POST /api/sessions/:id/platform-issue/:msgId/confirm in
   // src/routes/sessions.js.
   //
-  // Guardrails: session-scoped auth (like push/pr), a hard per-session
+  // Guardrails: session-scoped auth, a hard per-session
   // rate cap, and a normalised-title de-dupe against open agent reports
   // AND this session's earlier drafts, so a stuck turn can't spam either
   // the tracker or the timeline.

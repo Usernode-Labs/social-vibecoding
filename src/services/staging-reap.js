@@ -894,6 +894,11 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
 
     const pool = getPool(config);
 
+    // Projects made inside previews that are gone (services/preview-projects.js):
+    // their runtimes first, then their databases, which would otherwise be
+    // this pass's orphans with a runtime still connected. Never throws.
+    await require('./preview-projects').sweep(config, pool);
+
     const [dbs, live, connected] = await Promise.all([
       pool.query(`SELECT datname FROM pg_database WHERE datname LIKE '%\\_staging\\_%'`),
       // A session the preview machine holds keeps its databases: its attempts

@@ -115,6 +115,9 @@ const DENIED_TABLES = new Set([
   'mcp_delegations',          // which of the platform's own agents holds a grant for whom (#2779)
   'mcp_auth_audit_events',    // security audit trail for connector credentials
   'external_agent_upload_tokens', // one-time work-order patch upload credential hashes (#4264)
+  'connector_uploads',       // one-time connector upload credential hashes and unposted plans
+  'preview_project_tokens',   // platform previews' project credential hashes (preview-projects.js)
+  'preview_projects',         // projects made in platform previews, with their database passwords
   'user_social_identities',   // private provider ownership proofs
   'social_identity_oauth_states', // social-link state hashes + PKCE verifiers
   'wallet_challenges',        // wallet sign-in challenge hashes, single use

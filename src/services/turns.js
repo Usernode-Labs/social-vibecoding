@@ -36,6 +36,7 @@
 const log = require('./logger');
 const { turnOwner } = require('../workflow/rules/turn-stop.ts');
 const repoRef = require('./repo-ref');
+const turnLifecycle = require('./turn-lifecycle');
 
 async function loadUser(pool, userId) {
   const { rows: [u] } = await pool.query('SELECT id, username FROM users WHERE id = $1', [Number(userId)]);
@@ -411,7 +412,12 @@ async function runRecover(ctx, { config, pool }, input) {
     [sessionId, String(input.identity)]);
   if (!left) return { ended: 'recovered' };
   log.error('turns', 'Ending a turn record no recovery could take to its end', { sessionId, identity: input.identity });
-  await require('../routes/sessions').forceStopSession(pool, sessionId, 'homeroom', null);
+  const { stopTarget, snapshot } = require('../workflow/worker-stop/target.ts');
+  const target = await stopTarget(pool, sessionId, null);
+  if (!target || String(turnLifecycle.turnIdentity(target.turn) || 'record') !== String(input.identity)) return { ended: 'recovered' };
+  await require('./worker-force-stop').run(pool, {
+    ...snapshot(target), requestId: `recover:${ctx.workId}`, expiresAt: Date.now() + 30_000,
+  }, { renew: () => ctx.checkpoint(ctx.resumeFrom ?? null), signal: ctx.signal });
   return { ended: 'ended' };
 }
 

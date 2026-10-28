@@ -243,10 +243,8 @@ async function runMayorTurn(ctx, deps) {
     stoppedBy: null,
     // #937: epoch ms of the FIRST stop request for this turn (GET
     // /status serves it so a reloading client rebuilds its escalation
-    // ladder), and whether a confirm-the-kill loop is already running
-    // for it — repeat stops must not multiply the kill budget.
+    // ladder). The conductor machine coalesces repeat Stop requests.
     stopRequestedAt: null,
-    confirming: false,
     // #889: POST /stop lives in another request and has no access to
     // this turn's `send` closure, but it needs to announce the stop on
     // every channel the moment the click lands (rather than ~20s later

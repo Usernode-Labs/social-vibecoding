@@ -70,18 +70,6 @@ const FIELDS = [
     // Always up on its step since #5261: the screen is only this errand.
     alsoClasses: ['mb-2'],
   },
-  {
-    screen: 'auth-waitlist-screen',
-    src: WAITLIST,
-    id: 'waitlist-code',
-    tag: 'input',
-    component: 'Input',
-    attrs: {
-      type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code',
-      maxlength: '32', placeholder: '000000',
-    },
-    alsoClasses: ['font-mono'],
-  },
   // ── #more, the four stage-2 questions ────────────────────────────────
   {
     screen: 'auth-more-screen',
@@ -285,6 +273,20 @@ test('and renders the ONE box the primitive owns, plus only its own extras', () 
       assert.ok(el.classes.includes(cls), `#${f.id}: lost its own "${cls}"`);
     }
   }
+});
+
+test('the code step is six boxes over one real field (#5989)', () => {
+  // #waitlist-code left this list on purpose: it is not the Input primitive
+  // any more, it is the shared CodeBoxes' one real field (features/auth/
+  // code-boxes.tsx), drawn under six boxes. It keeps its id, its
+  // one-time-code contract and the longer paste the field always took.
+  const el = elementById('auth-waitlist-screen', 'waitlist-code');
+  assert.equal(el.tag, 'input');
+  assert.equal(el.attrs.autocomplete, 'one-time-code');
+  assert.equal(el.attrs.inputmode, 'numeric');
+  assert.equal(el.attrs.maxlength, '32');
+  assert.equal(el.attrs['aria-hidden'], undefined, 'the real field is not the hidden one; the boxes are');
+  assert.match(read(WAITLIST), /<CodeBoxes\s+id="waitlist-code"/);
 });
 
 test('the box and the label are each decided in exactly one place', () => {

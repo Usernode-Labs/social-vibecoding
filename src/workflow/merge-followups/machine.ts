@@ -20,7 +20,7 @@ import { authorLine, closingComment, liveLine, threadLine } from '../rules/inclu
 import { creditsSentence, mergeCredits } from '../rules/merge-credits.ts';
 import { applyInTransaction } from '../rules/pending-secret-apply.ts';
 import { toBotChange, writeBotChange } from '../rules/bot-notes.ts';
-import { appVersion, boardMoved, chatLine, issuesClosed, issueUpdate, toUser, voteUpdate as votePush } from '../pushes.ts';
+import { appVersion, boardMoved, chatLine, issueUpdate, toUser, voteUpdate as votePush } from '../pushes.ts';
 import { readFacts } from './facts.ts';
 import type { Facts } from './facts.ts';
 
@@ -370,13 +370,12 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
   // machine (src/workflow/main-check/), asked by message.
   if (d.mergeSha) messages.push(toMainCheck(d));
   // The requests it closes stop showing as open in every web process at
-  // once, and the lists re-read (GitHub closes `Closes #N` late);
+  // once, and the lists re-read;
   // issues.closeAfterMerge makes sure they close.
   const push: Push[] = [voteUpdate(d, {})];
   if (d.repo && s.linkedIssues.length) {
     // The request board changed: the Workshop re-places its cards.
-    push.push(issuesClosed({ ...d.repo, numbers: s.linkedIssues }),
-      boardMoved(issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' })));
+    push.push(boardMoved(issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' })));
   }
   const x: Extra = {
     writes: [{ type: 'secrets', eventId: e.id, sessionId: d.sessionId, appId: d.appId }, ...settleWrites(e, d, s)],
@@ -530,13 +529,7 @@ function resultOf(status: Followup['status']) {
       });
       const work: WorkRequest[] = r.waiting ? [{ kind: WORK.issues, key: `issues~${ctx.version + 1}`,
         input: { ...(prev.input as Record<string, Json>), look: 2 }, notBefore: new Date(ctx.now.getTime() + ISSUES_SECOND_LOOK_MS) }] : [];
-      // A linked request still open at the first look stays hidden: the
-      // second look closes it. Only what the last look leaves open is shown
-      // again.
-      const linked = new Set(numbers((prev.input as { linkedIssues?: unknown }).linkedIssues));
-      const open = numbers(r.stillOpen).filter((n) => !r.waiting || !linked.has(n));
       return { next: { name: s.name, data: track(d, work) }, work, messages, push: [
-        issuesClosed({ ...d.repo, numbers: numbers(r.closed), open }),
         boardMoved(issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' })),
       ] };
     }

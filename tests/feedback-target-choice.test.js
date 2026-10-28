@@ -1,21 +1,17 @@
-// Frontend tests for issue #2707: when Send Feedback has more than one
-// destination to offer, the person picks one — the dialog does not pick
-// for them.
+// Frontend tests for issue #5992: when Send Feedback has more than one
+// destination to offer, it opens on the app the person is in — the place the
+// improvement came from — and Homeroom stays one tap away.
 //
-// What this replaces was a single line in the open handler:
+// #2707 had deliberately left the question unanswered, on the theory that a
+// preselected destination miscategorises a report. #5992 asks for the
+// opposite: the open app is the default, because that is where the person
+// was when they suggested the improvement, and pressing Post request with
+// the default sends it there with no extra tap. An explicit earlier pick
+// (a restored draft, a caller's own `target`) still wins.
 //
-//     // Default to the app the user is looking at — most likely intent.
-//     setFeedbackTarget('app');
-//
-// A guess about intent is exactly what miscategorises a report. Somebody
-// reading their own words, not the row above them, files an app bug against
-// the platform (or the reverse) without ever making that choice — and the
-// mistake is invisible to the person who made it, so nobody reports it.
-//
-// #2888 changed how the unanswered question is enforced: Submit is no
-// longer disabled while it waits. It stays pressable, and pressing it with
-// no destination sends nothing, turns the row and the hint red, announces
-// the hint and puts focus on the row.
+// #2888's refusal (nothing is sent, the row turns red) stays in the code as
+// a safety net, but with a destination always preselected it can no longer
+// be reached in normal use.
 //
 // The asymmetric half matters just as much and is easy to lose in a later
 // refactor: when only ONE destination is reachable there is nothing to
@@ -118,6 +114,11 @@ test('?shot=feedback-choose is a recognised deep link', () => {
   assert.match(shot, /feedback-target-app-name/, 'and it waits for the app option, live and named');
   assert.match(
     shot,
+    /getAttribute\('aria-checked'\) === 'true'/,
+    'and for the app option to be the preselected one (#5992)'
+  );
+  assert.match(
+    shot,
     /App\._simulateFeedbackTargetChoice/,
     'through the controller hook, like the two shots beside it'
   );
@@ -128,55 +129,63 @@ test('?shot=feedback-choose is a recognised deep link', () => {
   );
 });
 
-test('?shot=feedback-choose-missed presses the real Submit through the controller', () => {
+test('?shot=feedback-choose-missed is gone with the state it posed', () => {
   const app = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
   const start = app.indexOf('_applyFeedbackShot() {');
   const shot = app.slice(start, app.indexOf('renderAdminButton()', start));
-  assert.match(shot, /'feedback-choose-missed'/, 'the shot name is accepted');
-  assert.match(shot, /App\._simulateFeedbackTargetMissed/, 'through the controller hook');
-  assert.match(shot, /getAttribute\('aria-invalid'\) === 'true'/, 'and it waits for the red row');
-  assert.match(
-    CONTROLLER_TEXT,
-    /App\._simulateFeedbackTargetMissed = \(name\) => \{\s*applyTargetAvailability\(true, \{ name \}\);\s*feedbackBtn\.click\(\);/,
-    'the hook poses the shipped branch and clicks the real button'
+  assert.doesNotMatch(shot, /'feedback-choose-missed'/, 'the shot name is no longer accepted');
+  assert.doesNotMatch(shot, /App\._simulateFeedbackTargetMissed/, 'nor is the hook called');
+  assert.doesNotMatch(CONTROLLER_TEXT, /App\._simulateFeedbackTargetMissed/, 'and the hook is gone');
+  assert.doesNotMatch(
+    fs.readFileSync(path.join(ROOT, 'dapp.json'), 'utf8'),
+    /feedback\.destination-missed|feedback-choose-missed/,
+    'nothing declares the unreachable state'
   );
 });
 
-test('all four declared checks exist and match the shipped ids and copy', () => {
+test('the three declared checks exist and match the shipped ids and copy', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'dapp.json'), 'utf8'));
   const declared = manifest.tests || [];
 
   const choice = declared.find((t) => t.id === 'feedback.destination-choice');
-  assert.ok(choice, 'the unchosen state is covered');
+  assert.ok(choice, 'the two-destination state is covered');
   assert.equal(choice.path, '/?shot=feedback-choose');
   assert.equal(choice.visual, true, 'and it is the representative visual flow');
-  assert.equal(choice.expectText, LABEL, 'the row asks by its label');
-  assert.match(choice.expectSelector, /#feedback-target-label \+ #feedback-target:/);
-  assert.match(choice.expectSelector, /#feedback-target-hint\.hidden$/, 'and says nothing under it yet');
+  assert.equal(choice.expectText, LABEL, 'the row keeps its label');
+  assert.match(choice.expectSelector, /#feedback-target-label \+ #feedback-target\b/);
+  assert.match(
+    choice.expectSelector,
+    /#feedback-target-app\[aria-checked="true"\]/,
+    'the open app is preselected (#5992)'
+  );
+  assert.match(
+    choice.expectSelector,
+    /#feedback-target-platform\[aria-checked="false"\]/,
+    'while Homeroom stays tappable and unchosen'
+  );
+  assert.match(choice.expectSelector, /#feedback-target-hint\.hidden/, 'and says nothing under the row');
+  assert.match(
+    choice.expectSelector,
+    /#feedback-submit:not\(:disabled\)/,
+    'Post request is live with the default destination'
+  );
   const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
   assert.match(html, new RegExp(`<p[^>]*id="feedback-target-label"[^>]*>${LABEL.replace('?', '\\?')}</p>`));
   assert.match(html, /id="feedback-target"[^>]*aria-labelledby="feedback-target-label"/);
 
-  // #2888: Submit is live while the question waits — never disabled for it.
+  // The unchosen row's Submit check folded into the choice above, and the
+  // missed-destination state is gone with the default that made it
+  // unreachable (#5992).
+  assert.ok(
+    !declared.some((t) => t.path === '/?shot=feedback-choose-missed'
+      || t.id === 'feedback.destination-missed'),
+    'the unreachable missed-destination state is retired'
+  );
   assert.ok(
     !declared.some((t) => t.path === '/?shot=feedback-choose'
       && /#feedback-submit:disabled/.test(t.expectSelector)),
     'no check still asserts the retired disabled Submit'
   );
-  const live = declared.find((t) => t.path === '/?shot=feedback-choose'
-    && /#feedback-submit:not\(:disabled\)/.test(t.expectSelector));
-  assert.ok(live, 'the pressable Submit is covered');
-  assert.match(live.expectSelector, /#feedback-target:not\(\[aria-invalid\]\)/,
-    'and the row is not red before anybody presses it');
-
-  const missed = declared.find((t) => t.id === 'feedback.destination-missed');
-  assert.ok(missed, 'the pressed-without-a-destination state is covered');
-  assert.equal(missed.path, '/?shot=feedback-choose-missed');
-  assert.match(missed.expectSelector, /#feedback-target\[aria-invalid=\\?"true\\?"\]/);
-  assert.match(missed.expectSelector, /#feedback-target-app\.\\!border-red-600/);
-  assert.match(missed.expectSelector, /#feedback-target-hint\[role=\\?"alert\\?"\]/);
-  assert.ok(HINT.startsWith(missed.expectText));
-  assert.ok(CONTROLLER_TEXT.includes("'!border-red-600'"), 'the class the check selects is the one the controller writes');
 
   const single = declared.find((t) => t.path === '/?shot=feedback'
     && /#feedback-target-hint\.hidden/.test(t.expectSelector || ''));
@@ -192,7 +201,7 @@ test('all four declared checks exist and match the shipped ids and copy', () => 
   // DESCENDANT of #feedback-modal: useStaticModal lifts the card out of that
   // root into the kit's own shell when the dialog opens, so a descendant
   // selector matches nothing precisely when the dialog IS open.
-  for (const t of [choice, live, missed, single]) {
+  for (const t of [choice, single]) {
     assert.match(
       t.expectSelector,
       /^body:has\(#feedback-modal:not\(\.hidden\)\)/,
@@ -357,46 +366,25 @@ function makeHarness({ appData = null, sessionDraft = null } = {}) {
 
 const OPEN_APP = { name: 'Example App', repo_url: 'https://github.com/acme/example-app' };
 
-test('with two destinations, the dialog opens with neither chosen', () => {
+test('with two destinations, the dialog opens on the open app', () => {
   const h = makeHarness({ appData: OPEN_APP });
   h.open();
 
-  assert.equal(h.checked('app'), 'false', '"This app" is not preselected');
-  assert.equal(h.checked('platform'), 'false', 'and neither is the platform');
-  assert.equal(h.caretShown('app'), false, 'no caret marks a choice nobody made');
+  assert.equal(h.checked('app'), 'true', 'the open app is preselected (#5992)');
+  assert.equal(h.checked('platform'), 'false', 'Homeroom is not');
+  assert.equal(h.caretShown('app'), true, 'the caret marks the default destination');
   assert.equal(h.caretShown('platform'), false);
   assert.equal(h.el('feedback-target-app').disabled, false, 'both options are tappable');
   assert.equal(h.el('feedback-target-platform').disabled, false);
-});
-
-test('Post request stays pressable while the question waits, which is asked quietly', () => {
-  const h = makeHarness({ appData: OPEN_APP });
-  h.open();
-
-  assert.equal(h.el('feedback-submit').disabled, false, 'Post request is live (#2888)');
-  assert.equal(h.el('feedback-target').getAttribute('aria-invalid'), null, 'nothing is red yet');
+  assert.equal(h.el('feedback-submit').disabled, false, 'Post request is live at once');
+  assert.equal(h.el('feedback-target').getAttribute('aria-invalid'), null, 'nothing is red');
   assert.equal(h.el('feedback-target-hint').getAttribute('role'), null, 'nor announced');
-  // The row's label asks ("Where should this go?", in the markup); nothing
-  // under it speaks until a submit is refused.
-  assert.equal(h.hintShown(), false, 'no line under the row yet');
+  assert.equal(h.hintShown(), false, 'no line under the row');
   assert.equal(h.el('feedback-target-hint').textContent, '');
   assert.equal(h.el('feedback-target').getAttribute('aria-describedby'), null);
 });
 
-test('tapping a destination selects it, clears the hint and frees Submit', () => {
-  const h = makeHarness({ appData: OPEN_APP });
-  h.open();
-  h.el('feedback-target-app').fire('click');
-
-  assert.equal(h.checked('app'), 'true');
-  assert.equal(h.checked('platform'), 'false');
-  assert.equal(h.caretShown('app'), true, 'the caret moves under the choice');
-  assert.equal(h.hintShown(), false, 'the prompt has been answered');
-  assert.equal(h.el('feedback-target').getAttribute('aria-describedby'), null);
-  assert.equal(h.el('feedback-submit').disabled, false, 'Submit is live');
-});
-
-test('the platform option frees it just the same', () => {
+test('tapping Homeroom moves the destination to the platform', () => {
   const h = makeHarness({ appData: OPEN_APP });
   h.open();
   h.el('feedback-target-platform').fire('click');
@@ -404,109 +392,58 @@ test('the platform option frees it just the same', () => {
   assert.equal(h.checked('platform'), 'true');
   assert.equal(h.checked('app'), 'false');
   assert.equal(h.caretShown('platform'), true);
-  assert.equal(h.el('feedback-submit').disabled, false);
-});
-
-test('a submit with no destination files NOTHING and re-asks', async () => {
-  const h = makeHarness({ appData: OPEN_APP });
-  h.open();
-  h.type('Dragging a card scrolls the board back to the top.');
-
-  await h.submit();
-
-  assert.equal(h.filed().length, 0, 'nothing was sent against a destination nobody picked');
-  assert.ok(h.hintShown(), 'the question is still on screen');
-});
-
-test('#2888: that submit turns the row red, announces why and focuses the row', async () => {
-  const h = makeHarness({ appData: OPEN_APP });
-  h.open();
-  h.type('Dragging a card scrolls the board back to the top.');
-  const focusedBefore = h.el('feedback-target-app').focused;
-
-  await h.submit();
-
-  assert.equal(h.el('feedback-target').getAttribute('aria-invalid'), 'true', 'the row is marked invalid');
-  assert.equal(
-    h.el('feedback-target').getAttribute('aria-describedby'),
-    'feedback-target-hint',
-    'the radiogroup points at its own explanation'
-  );
-  for (const which of ['app', 'platform']) {
-    assert.ok(h.el(`feedback-target-${which}`).classes.has('!border-red-600'), `${which} is outlined red`);
-  }
-  const hint = h.el('feedback-target-hint');
-  assert.equal(hint.textContent, HINT);
-  assert.ok(hint.classes.has('!text-red-700'), 'the hint is red');
-  assert.equal(hint.getAttribute('role'), 'alert', 'and announced');
-  assert.equal(h.el('feedback-target-app').focused, focusedBefore + 1, 'focus moves to the row');
-  assert.equal(h.el('feedback-submit').disabled, false, 'Submit is still live for the retry');
-  assert.equal(h.el('feedback-text-error').classes.has('hidden'), true, 'the description was fine');
-});
-
-test('#2888: an empty description and no destination are both reported at once', async () => {
-  const h = makeHarness({ appData: OPEN_APP });
-  h.open();
-
-  await h.submit();
-
-  assert.equal(h.filed().length, 0);
-  assert.equal(h.el('feedback-text-error').classes.has('hidden'), false, 'the description error shows');
-  assert.equal(h.el('feedback-target').getAttribute('aria-invalid'), 'true', 'and so does the row');
-});
-
-test('#2888: choosing a destination clears the red, and the retry is filed there', async () => {
-  const h = makeHarness({ appData: OPEN_APP });
-  h.open();
-  h.type('Dragging a card scrolls the board back to the top.');
-  await h.submit();
-  assert.equal(h.filed().length, 0);
-
-  h.el('feedback-target-platform').fire('click');
+  assert.equal(h.caretShown('app'), false);
   assert.equal(h.el('feedback-target').getAttribute('aria-invalid'), null);
-  assert.equal(h.el('feedback-target-app').classes.has('!border-red-600'), false);
-  assert.equal(h.el('feedback-target-hint').getAttribute('role'), null);
   assert.equal(h.hintShown(), false);
-
-  await h.submit();
-  const [call] = h.filed();
-  assert.ok(call, 'it was sent');
-  assert.equal(JSON.parse(call.opts.body).target, 'platform');
+  assert.equal(h.el('feedback-submit').disabled, false, 'Submit is live');
 });
 
-test('#2888: a reopen asks again quietly, without the previous red', async () => {
-  const h = makeHarness({ appData: OPEN_APP });
-  h.open();
-  h.type('x');
-  await h.submit();
-  assert.equal(h.el('feedback-target').getAttribute('aria-invalid'), 'true');
-
-  h.sandbox.Feedback._reset();
-  h.open();
-  assert.equal(h.hintShown(), false, 'asked by the label again, quietly');
-  assert.equal(h.el('feedback-target').getAttribute('aria-invalid'), null);
-  assert.equal(h.el('feedback-target-hint').classes.has('!text-red-700'), false);
-});
-
-test('the destination that was tapped is the one submitted', async () => {
+test('a submit with the default destination files to the open app', async () => {
   const h = makeHarness({ appData: OPEN_APP });
   h.open();
   h.type('Dragging a card scrolls the board back to the top.');
-  h.el('feedback-target-app').fire('click');
 
   await h.submit();
 
   const [call] = h.filed();
   assert.ok(call, 'it was sent');
   const body = JSON.parse(call.opts.body);
-  assert.equal(body.target, 'app');
+  assert.equal(body.target, 'app', 'no extra tap was needed (#5992)');
   assert.equal(body.appSlug, 'example-app');
 });
 
+test('tapping Homeroom then submitting files to the platform', async () => {
+  const h = makeHarness({ appData: OPEN_APP });
+  h.open();
+  h.type('Dragging a card scrolls the board back to the top.');
+  h.el('feedback-target-platform').fire('click');
+
+  await h.submit();
+
+  const [call] = h.filed();
+  assert.ok(call, 'it was sent');
+  const body = JSON.parse(call.opts.body);
+  assert.equal(body.target, 'platform');
+  assert.equal(body.appSlug, undefined);
+});
+
+test('an empty description is refused alone, and the destination row stays calm', async () => {
+  const h = makeHarness({ appData: OPEN_APP });
+  h.open();
+
+  await h.submit();
+
+  assert.equal(h.filed().length, 0, 'nothing was sent');
+  assert.equal(h.el('feedback-text-error').classes.has('hidden'), false, 'the description error shows');
+  assert.equal(h.el('feedback-target').getAttribute('aria-invalid'), null, 'the row has a destination');
+  assert.equal(h.hintShown(), false, 'and nothing is asked of it');
+});
+
 // #21: asking for a change from inside an app (Improve.giveFeedback, the
-// Workshop "+" menu's row) passes `target: 'app'`: that press was the choice,
-// so the dialog opens on the app. `fromDev` alone still asks, as #2707 wants.
-test('#21: opened from inside an app with target app, "This app" is chosen and Submit is live', () => {
+// Workshop "+" menu's row) passes `target: 'app'`. That press was the
+// choice, and #5992 makes the open app the default anyway, so `fromDev`
+// alone now opens on the app too.
+test('#21: opened from inside an app, "This app" is chosen and Submit is live', () => {
   const h = makeHarness({ appData: OPEN_APP });
   h.open({ fromDev: true, target: 'app' });
 
@@ -518,8 +455,9 @@ test('#21: opened from inside an app with target app, "This app" is chosen and S
 
   const asked = makeHarness({ appData: OPEN_APP });
   asked.open({ fromDev: true });
-  assert.equal(asked.checked('app'), 'false', 'fromDev alone still leaves the choice open');
+  assert.equal(asked.checked('app'), 'true', 'fromDev alone opens on the app now (#5992)');
   assert.equal(asked.checked('platform'), 'false');
+  assert.equal(asked.el('feedback-submit').disabled, false);
 });
 
 test('#21: target app is ignored where "This app" cannot be chosen', () => {
@@ -586,28 +524,27 @@ test('a rescued draft hands back the destination its author chose', () => {
   assert.equal(h.el('feedback-submit').disabled, false);
 });
 
-test('reopening after a choice asks again', () => {
+test('reopening after choosing Homeroom opens on the app again', () => {
   const h = makeHarness({ appData: OPEN_APP });
   h.open();
-  h.el('feedback-target-app').fire('click');
-  assert.equal(h.hintShown(), false);
+  h.el('feedback-target-platform').fire('click');
+  assert.equal(h.checked('platform'), 'true');
 
   h.sandbox.Feedback._reset();
   h.open();
 
-  assert.equal(h.checked('app'), 'false', 'the previous answer is not a new default');
-  assert.equal(h.checked('platform'), 'false');
-  assert.equal(h.hintShown(), false, 'asked by the label, quietly');
-  assert.equal(h.el('feedback-submit').disabled, false, 'still pressable (#2888)');
+  assert.equal(h.checked('app'), 'true', 'the open app is the default again (#5992)');
+  assert.equal(h.checked('platform'), 'false', 'an earlier tap is not a remembered choice');
+  assert.equal(h.hintShown(), false);
+  assert.equal(h.el('feedback-submit').disabled, false);
 });
 
-test('closing the dialog does not leave the question behind for the next open', async () => {
-  // _open clears the question first, so the one-destination case that
-  // follows a two-destination one is not poisoned by it.
+test('a two-destination open does not leak into the next, no-app open', () => {
+  // Both destinations picked their own option; the one-destination case
+  // that follows still falls back to Homeroom, selected and live.
   const h = makeHarness({ appData: OPEN_APP });
   h.open();
-  await h.submit();
-  assert.ok(h.hintShown(), 'a refused submit left the line up');
+  assert.equal(h.checked('app'), 'true');
 
   h.sandbox.Feedback._reset();
   h.sandbox.AppView.appData = null;
@@ -615,6 +552,8 @@ test('closing the dialog does not leave the question behind for the next open', 
   h.sandbox.App.currentTab = 'home';
   h.open();
 
+  assert.equal(h.el('feedback-target-app').disabled, true, '"This app" is not selectable');
+  assert.equal(h.checked('platform'), 'true', 'the single destination is chosen');
   assert.equal(h.el('feedback-submit').disabled, false, 'Submit is live for the single option');
   assert.equal(h.hintShown(), false);
 });

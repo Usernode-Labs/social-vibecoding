@@ -306,6 +306,15 @@ test('on a phone the gate card stacks its buttons under its line', () => {
   assert.match(phone, /\.dev-change-gate-head \{ flex-wrap: wrap; row-gap: 2px; \}/);
   assert.match(phone, /\.dev-change-gate-name \{ min-width: 0; \}/);
   assert.match(phone, /\.dev-change-gate-figure \{ white-space: nowrap; \}/);
+  // #5991: on a phone the pinned repeat keeps only the heading, the figure,
+  // the bar and the vote, and sits a little tighter; its note stays on the
+  // full card in the thread.
+  assert.match(phone, /\.dev-change-gate-repeat \{ padding: 4px 12px 8px; \}/);
+  assert.match(phone, /\.dev-change-gate-repeat \.dev-change-gate \{ padding: 10px 12px; \}/);
+  assert.match(phone, /\.dev-change-gate-repeat \.dev-change-gate-act \{ margin-top: 8px; \}/);
+  assert.match(phone, /\.dev-change-gate-repeat \.dev-change-gate-note \{ display: none; \}/);
+  const wider = css.replace(/@media \(max-width: 640px\) \{[\s\S]*?\n\}/g, '');
+  assert.doesNotMatch(wider, /\.dev-change-gate-repeat \.dev-change-gate-note/, 'desktop keeps the note in the pin');
   // Desktop keeps today's two columns: one for the text, one for the buttons.
   assert.match(css, /\.dev-change-gate \{[^}]*grid-template-columns: minmax\(0, 1fr\) auto;/);
 });

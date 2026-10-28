@@ -1690,7 +1690,17 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Apps section. `side-strip` is a boot parameter, so the check has a page
   // load of its own and no other check's route can carry it. 741 leaves
   // 139 slots.
-  checkCap.assertPinned(DAPP.tests.length, 741);
+  //
+  // 741 → 739: −2: #5992 preselects the open app, so the unchosen row's
+  // Submit check folds into feedback.destination-choice and the
+  // missed-destination state is retired. 739 leaves 141 slots.
+  // 739 → 743: +4: guardrail 2 (#6003) adds the four signed-out checks —
+  // an invite link loaded five times, the landing, the sign-in sheet and a
+  // public project's page. 743 leaves 137 slots under MAX_DECLARED_TESTS
+  // (880), far clear of the 20-slot floor.
+  // 743 → 742: −1: Global Chat is removed, and with it the check that its
+  // composer wore the safe-bar contract. 742 leaves 138 slots.
+  checkCap.assertPinned(DAPP.tests.length, 742);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

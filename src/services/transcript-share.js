@@ -125,9 +125,9 @@ function sanitizeTranscript(rows) {
 // no row carries metadata.inheritedFrom. Fork copies stamp every row, so the
 // marker path wins and this text is free to read naturally.
 //
-// The load-bearing sentence is the memory caveat. Unlike a clone-headless
-// clone, a fork does NOT inherit the agent's Claude Code volume (that would
-// hand it everything the sanitiser above withholds), so the model knows only
+// The load-bearing sentence is the memory caveat. A fork does NOT inherit
+// the agent's Claude Code volume (that would hand it everything the sanitiser
+// above withholds), so the model knows only
 // what the copied transcript says. Telling the new owner that up front is what
 // stops them assuming a shared memory that isn't there.
 //

@@ -292,7 +292,32 @@ test('builders that know the PR number use it', () => {
 test('connector webPath keeps the session id an agent passes back', () => {
   // mcp-charter: "proposalId … the last number in webPath".
   const { changeWebPath } = require('../src/services/change-destination');
-  assert.equal(changeWebPath('https://h.test', 'notes', 7296), 'https://h.test/#app/notes/dev/proposals/7296');
+  assert.equal(changeWebPath('https://h.test', 'notes', 7296), 'https://h.test/app/notes/dev/proposals/7296');
+});
+
+test('the connector gives people the clean change page, by its pull request number', () => {
+  const { changeLink, appWebPath } = require('../src/services/change-destination');
+  assert.equal(changeLink('https://h.test', 'notes', 7296, 4509), 'https://h.test/app/notes/dev/changes/4509');
+  assert.equal(changeLink('https://h.test', 'notes', 7296, null), 'https://h.test/app/notes/dev/proposals/7296',
+    'a change with no pull request yet, by its session id');
+  assert.equal(appWebPath('https://h.test', 'notes'), 'https://h.test/app/notes');
+  assert.equal(appWebPath('https://h.test', 'notes', '/dev/issues/12'), 'https://h.test/app/notes/dev/issues/12');
+  // The shell routes exactly this path: the same page as the fragment form.
+  const app = read('public/js/app.js');
+  assert.match(app, /_appRouteFromPath\(pathname\)/);
+  // No connector answer is a #app/ fragment any more, and every one that
+  // names a proposal carries the link beside the git host's prUrl.
+  for (const rel of ['src/services/mcp-tools.js', 'src/services/external-agent-tasks.js']) {
+    assert.doesNotMatch(read(rel), /\$\{origin\}\/#app\//, `${rel} hands out clean paths`);
+  }
+  const tools = read('src/services/mcp-tools.js');
+  const withPrUrl = (tools.match(/^\s+prUrl: (?!z\.)/gm) || []).length;
+  const withLink = (tools.match(/^\s+link: (?!z\.)/gm) || []).length;
+  assert.ok(withLink >= 8, `the proposal answers carry link (${withLink})`);
+  assert.ok(withPrUrl - withLink <= 4, 'only promote_change, the error extras and the demo tools carry prUrl alone');
+  const charter = read('src/services/mcp-charter.js');
+  assert.match(charter, /When you LINK a person to a proposal, give them `link`/);
+  assert.match(charter, /Never send a person to `prUrl`/);
 });
 
 test('the side panel and link embeds read dev/changes/<N> as a change', () => {

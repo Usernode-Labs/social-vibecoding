@@ -207,6 +207,15 @@ config:
   waitlistOauthOrigin: ""
   # Firebase phone authentication flag; enable in the cluster's plaintext values.
   firebasePhoneAuthEnabled: false
+  # Projects made inside a platform preview (services/preview-projects.js):
+  # production makes each one's database on the preview database server,
+  # builds it from the git host and runs it like an app proposal's preview,
+  # for that preview only, and retires them with it. On by default, and an
+  # admin turns it off or on again in Admin > Limits with no deploy
+  # (services/preview-projects-setting.js). false here is the operator's
+  # absolute off switch, which the admin setting cannot override. Needs
+  # gitHost and the preview database server.
+  previewProjects: true
   platformRepository: https://github.com/replace-me/social-vibecoding
   # Homeroom's own git host, where app repositories live
   # (services/git-host.js; docs/plans/github-independence-build.md). Empty

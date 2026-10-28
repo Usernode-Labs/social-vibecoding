@@ -96,6 +96,22 @@ async function redeem(pool, sessionInfo, code) {
   return spent.rows[0]?.phone_e164 || null;
 }
 
+/**
+ * Whether a gateway code for this number is still waiting to be typed: the
+ * sign that a new request is a resend, which firebase-phone-auth.js sends by
+ * the Firebase backup instead of the gateway that may not have delivered.
+ */
+async function liveFor(pool, phoneNumber) {
+  if (!pool) return false;
+  const { rows } = await pool.query(
+    `SELECT 1 FROM sms_otp_codes
+      WHERE phone_e164 = $1 AND consumed_at IS NULL AND expires_at > NOW()
+      LIMIT 1`,
+    [phoneNumber]
+  );
+  return rows.length > 0;
+}
+
 async function cleanupExpired(pool) {
   await pool.query("DELETE FROM sms_otp_codes WHERE expires_at < NOW() - INTERVAL '1 hour'");
 }
@@ -106,6 +122,7 @@ module.exports = {
   MAX_ATTEMPTS,
   issue,
   redeem,
+  liveFor,
   cleanupExpired,
   sha256Hex,
 };

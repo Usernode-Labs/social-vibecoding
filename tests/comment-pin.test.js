@@ -421,6 +421,18 @@ test('the picture is drawn ahead while the menu or the form is open, and opens a
   assert.match(src, /const onResize = \(\) => \{ if \(window\.innerWidth !== size\.width\) spoil\(\); \};/);
   // The menu's dim is cut out of every picture, or one drawn under the menu would be dimmed.
   assert.ok(picture.PAGE_EXCLUDES.includes('.overlay-scrim'));
+  // The hub's ⋯ menu has the same issue row, in a dropdown the picture draws
+  // over, so it gets the picture ready while it is open too, and only when
+  // that row is there (a read-only viewer has none).
+  const plusMenu = read('public/js/app-view.js');
+  assert.match(plusMenu, /const issueRow = menu\.querySelector\('\[data-plus="issue"\]'\);\s*btn\.addEventListener\('click', \(e\) => \{/,
+    'the issue row is read before the menu\'s handlers');
+  assert.match(plusMenu, /if \(PlatformUI\.isTouch\(\)\) \{\s*AppView\.refreshDevChatSecretsState\(\);[\s\S]{0,800}?if \(issueRow\) window\.UsernodeReact\?\.suggestShortcut\?\.prepare\?\.\(\);/,
+    'the touch sheet gets the picture ready while it is open');
+  assert.match(plusMenu, /if \(open\) AppView\.refreshDevChatSecretsState\(\);[\s\S]{0,400}?if \(open && issueRow\) window\.UsernodeReact\?\.suggestShortcut\?\.prepare\?\.\(\);/,
+    'and so does the desktop dropdown');
+  // And the dropdown, which is inside the drawn page, is cut out of it.
+  assert.ok(picture.PAGE_EXCLUDES.includes('#dev-plus-menu'), 'the hub\'s ⋯ dropdown');
 });
 
 test('what counts as the page changing since the picture was drawn', () => {
@@ -554,8 +566,8 @@ test('scrollers are drawn as clipped boxes in the copy, so WebKit paints them th
   // SnapDOM's map, either way round: original to copy, or copy to original.
   const map = new Map([[rail, railCopy], [cardCopy, card], [feed, feedCopy], [text, { nodeType: 3 }]]);
   assert.equal(picture.flattenScrollers({ nodeMap: map }, styleOf), 2);
-  assert.deepEqual(railCopy.set, { overflow: 'hidden !important', '-webkit-overflow-scrolling': 'auto !important' });
-  assert.deepEqual(feedCopy.set, { overflow: 'hidden !important', '-webkit-overflow-scrolling': 'auto !important' });
+  assert.deepEqual(railCopy.set, { overflow: 'hidden !important', '-webkit-overflow-scrolling': 'auto !important', 'clip-path': 'inset(0) !important' });
+  assert.deepEqual(feedCopy.set, { overflow: 'hidden !important', '-webkit-overflow-scrolling': 'auto !important', 'clip-path': 'inset(0) !important' });
   assert.deepEqual(cardCopy.set, {}, 'a box that does not scroll is left as it is');
   assert.deepEqual(rail.set, {}, 'the page is never written to');
   assert.equal(picture.flattenScrollers({}, styleOf), 0, 'no map, nothing done');
@@ -850,6 +862,7 @@ test('takeBase asks the side panel for its picture with the others, and lays it 
     '#feedback-modal',
     '#apps-switcher-sheet',
     '#apps-switcher-overlay',
+    '#dev-plus-menu',
     '.overlay-scrim',
     '.un-modal',
     '.un-sheet',

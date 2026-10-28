@@ -365,9 +365,9 @@ export function scheduleWarmComment(win: Pick<Window, 'setTimeout' | 'addEventLi
 }
 
 /**
- * The Homeroom menu or the form has opened, and comment mode is one tap
- * away: load its code and draw the page now, while it sits still under the
- * sheet, so the mode opens on it at once (comment-pin.tsx
+ * The Homeroom menu, the hub's ⋯ menu or the form has opened, and comment
+ * mode is one tap away: load its code and draw the page now, while it sits
+ * still under the sheet, so the mode opens on it at once (comment-pin.tsx
  * `prepareCommentView`). Nothing at all where the device has turned it off,
  * and nothing on a capture route (`onCaptureRoute`).
  */
@@ -445,7 +445,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   });
   // The feedback dialog's controller asks where "Suggest an improvement"
   // goes, and its C key's `ready()` check reads the setting; that code is
-  // classic there and cannot import.
+  // classic there and cannot import. `prepare` is for the hub's ⋯ menu
+  // (public/js/app-view.js `_wirePlusMenu`), which gets the picture ready
+  // while it is open, as the Homeroom menu does for its own row.
   const bridge = ((window as unknown as { UsernodeReact?: Record<string, unknown> }).UsernodeReact ||= {});
   scheduleWarmComment(window);
   bridge.suggestShortcut = {
@@ -456,5 +458,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     },
     opensComment: () => suggestOpensComment(),
     openComment: (opts?: OpenOptions) => openCommentMode(opts || {}),
+    prepare: () => prepareComment(),
   };
 }

@@ -985,37 +985,10 @@ async function finalizeRecoveredTurn({
     return { outcome: 'done', summary: summaryParts.join('\n\n') };
   }
 
-  // The turn committed locally (ahead/sha set) but the worker's
-  // usernode-push callback never landed the branch on GitHub
-  // (push_ok=0 — e.g. the platform was mid-restart when the worker
-  // called POST /api/internal/sessions/:id/push). `result.ahead` is
-  // computed from the worker's LOCAL `origin/main..HEAD`, so it's >0
-  // even with the remote branch still empty. Heal it here, while the
-  // worker container still exists, before applyPrMetadata's createPR —
-  // otherwise createPR 422s ("No commits between main and <branch>")
-  // and, once the worker is evicted, the only copy of the commit is
-  // gone. (chat 510 / issue #295: a restart mid-push left the branch
-  // un-pushable and the work recoverable only from the CC transcript.)
+  // Publication (including retries and its durable failure) was completed
+  // by the shared journal boundary before this tail may create a PR/checks.
   if (!result.pushOk) {
-    try {
-      const pushed = await worker.execPushFromWorker(sessionId, session.branch_name);
-      result.pushOk = true;
-      log.info('server', 'Recovered turn: re-pushed un-pushed branch', {
-        sessionId, branch: session.branch_name,
-        sha: (pushed?.sha || result.sha || '').substring(0, 8),
-      });
-    } catch (err) {
-      // #1376: same treatment as the live tail — carry the real reason into
-      // chat instead of a fixed "send your request again", which for a
-      // permanently unpushable branch is advice that can only fail again.
-      const failure = worker.describePushFailure(err);
-      log.warn('server', 'Recovered turn: re-push failed — skipping PR creation', {
-        sessionId,
-        branch: session.branch_name,
-        code: failure.code,
-        permanent: failure.permanent,
-        err: err.message,
-      });
+      const failure = worker.describePushFailure(result.pushFailure || { code: result.pushFailed || 'push_failed' });
       const pushFailedText = failure.text;
       emit('status', { text: pushFailedText });
       await pool.query(
@@ -1036,9 +1009,7 @@ async function finalizeRecoveredTurn({
             + `Reason: ${failure.text}`
           : 'Tell the user to send their request again to re-push and open the PR.')
       );
-      if (!keepWorker) await worker.destroyWorker(containerName);
       return { outcome: 'push_failed', summary: summaryParts.join('\n\n') };
-    }
   }
 
   try {

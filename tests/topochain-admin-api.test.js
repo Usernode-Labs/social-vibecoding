@@ -1414,6 +1414,59 @@ test('user-activities: create validates the challenge belongs to the given event
   } finally { server.close(); }
 });
 
+test('user-activities: a bare activity_at date is stored at noon UTC marked day-only, and an edit to a real time flips it', async () => {
+  seedActivityFixtures();
+  const { server, base } = await listen(buildSubApp(userActivitiesAdminRoutes));
+  try {
+    const createRes = await fetch(`${base}/api/v4/admin/user-activities`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: 1, season_event_id: 1, challenge_id: 500, activity_type: 'onchain_tx', points: 5,
+        activity_at: '2026-10-20',
+      }),
+    });
+    assert.equal(createRes.status, 201);
+    const created = (await createRes.json()).data;
+    assert.equal(created.activity_at, '2026-10-20T12:00:00.000+00:00',
+      'a bare date is noon UTC, not midnight');
+    assert.equal(created.metadata.timestamp_precision, 'day');
+
+    const importRes = await fetch(`${base}/api/v4/admin/user-activities/import`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        activities: [
+          { user_id: 1, season_event_id: 1, challenge_id: 500, activity_type: 'onchain_tx', points: 3, activity_at: '2026-10-19' },
+        ],
+      }),
+    });
+    assert.equal(importRes.status, 201);
+    const imported = db.userActivities.find((a) => a.id !== created.id
+      && a.metadata && a.metadata.timestamp_precision === 'day');
+    assert.ok(imported, 'an imported bare date is marked day-only too');
+    assert.equal(imported.activity_at.toISOString(), '2026-10-19T12:00:00.000Z');
+
+    // Editing the time to a real instant moves the precision with it.
+    const editRes = await fetch(`${base}/api/v4/admin/user-activities/${created.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activity_at: '2026-10-20T15:42:00.000Z' }),
+    });
+    assert.equal(editRes.status, 200);
+    const edited = (await editRes.json()).data;
+    assert.equal(edited.activity_at, '2026-10-20T15:42:00.000+00:00');
+    assert.equal(edited.metadata.timestamp_precision, 'instant');
+
+    // And back to a bare date: the hour is hidden again.
+    const reEditRes = await fetch(`${base}/api/v4/admin/user-activities/${created.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activity_at: '2026-10-21' }),
+    });
+    assert.equal(reEditRes.status, 200);
+    const reEdited = (await reEditRes.json()).data;
+    assert.equal(reEdited.activity_at, '2026-10-21T12:00:00.000+00:00');
+    assert.equal(reEdited.metadata.timestamp_precision, 'day');
+  } finally { server.close(); }
+});
+
 test('user-activities: update ALWAYS validates the event/challenge pair, even when only season_event_id changes (the v4 fix)', async () => {
   seedActivityFixtures();
   db.userActivities.push({

@@ -13,6 +13,8 @@ const assert = require('node:assert');
 const poolMod = require('../src/db/pool');
 let poolQueryHandler = async () => ({ rows: [] });
 poolMod.getPool = () => ({ query: (sql, params) => poolQueryHandler(sql, params) });
+// Settings proposals are written on a conductor: run that operation here.
+require('./lib/inline-operations').inlineOperations({ pool: () => poolMod.getPool(), user: () => currentUser, app: () => appRow });
 
 // Stub the GitHub service: enabled, with recordable branch/push/PR calls.
 const github = require('../src/services/github');

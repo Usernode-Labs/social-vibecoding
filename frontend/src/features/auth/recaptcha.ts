@@ -80,13 +80,21 @@ function readSiteKey(): Promise<string | null> {
 
 let widget: { id: number; resolve: ((token: string | null) => void) | null } | null = null;
 
-/** A fresh reCAPTCHA token for one phone code request, or null. */
-export async function phoneRecaptchaToken(): Promise<string | null> {
+// The key a Firebase backup asked for (postPhoneCodeRequest), once one has:
+// from then on the screens carry the notice line too.
+let backupKey: string | null = null;
+
+/**
+ * A fresh reCAPTCHA token for one phone code request, or null. `key` is the
+ * site key a Firebase backup handed over; without it the server's own is
+ * read.
+ */
+export async function phoneRecaptchaToken(key?: string): Promise<string | null> {
   try {
     // The site key comes first: with none (Brevo sends the texts, or a
     // server with test numbers only, services/firebase-phone-auth.js) the
     // request goes now, without Google's script being fetched at all.
-    const siteKey = await readSiteKey();
+    const siteKey = key || await readSiteKey();
     if (!siteKey) return null;
     const g = await loadScript();
     if (!g) return null;
@@ -136,7 +144,42 @@ export async function phoneRecaptchaToken(): Promise<string | null> {
  * Firebase is picked up on the next read.
  */
 export function phoneRecaptchaInUse(): Promise<boolean> {
+  if (backupKey) return Promise.resolve(true);
   return readSiteKey().then((key) => !!key).catch(() => false);
+}
+
+/**
+ * Ask for a phone code at `url` (the sign-in sheet's /api/auth/phone/request
+ * or the add-phone card's /api/auth/phone-link/request) and read the answer.
+ *
+ * While Brevo or Twilio sends the texts no check is answered, unless the
+ * Firebase backup is needed (services/firebase-phone-auth.js, FIREBASE
+ * BACKUP): the gateway could not send the code, or this is a resend while
+ * the first is still unused. The server then answers 409 recaptcha_backup
+ * with Firebase's site key, and the request goes once more with a token
+ * earned for it. `backup: true` says this client can do that; an older one
+ * gets the gateway's answer as before.
+ */
+export async function postPhoneCodeRequest(url: string, phoneNumber: string): Promise<{ res: Response; data: any }> {
+  const send = async (recaptchaToken: string | null) => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ phoneNumber, backup: true, ...(recaptchaToken ? { recaptchaToken } : {}) }),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { res, data };
+  };
+  const first = await send(await phoneRecaptchaToken());
+  if (first.res.status !== 409 || first.data?.code !== 'recaptcha_backup'
+      || typeof first.data.siteKey !== 'string' || !first.data.siteKey) {
+    return first;
+  }
+  backupKey = first.data.siteKey;
+  const token = await phoneRecaptchaToken(first.data.siteKey);
+  if (!token) return first;
+  return send(token);
 }
 
 /**

@@ -152,8 +152,12 @@ test('owner-scoped declared-check fixtures resolve the exact capture admin', () 
 
 test('visuals.js signs test URLs with testsToken and screenshots with screenshotToken', () => {
   const src = read('src/services/visuals.js');
-  // The test-suite URL uses testsToken.
-  assert.match(src, /url:\s*withToken\(`\$\{stagingOrigin\}\$\{visitPath\}`,\s*testsToken\)/);
+  // The test-suite URL uses testsToken. A declared check's address comes
+  // from checkVisitUrl, which is withToken for every check except a guest
+  // one (a `persona: 'guest'` check is really signed out, so it gets no
+  // token at all: tests/visuals-check-url.test.js pins that split).
+  assert.match(src, /url:\s*checkVisitUrl\(stagingOrigin, visitPath, testsToken, t\.persona\)/);
+  assert.match(src, /return persona === 'guest' \? url : withToken\(url, token\);/);
   // The "after" screenshot keeps the non-admin screenshotToken.
   assert.match(src, /afterUrl\s*=\s*withToken\(`\$\{stagingOrigin\}\$\{visitPath\}`,\s*screenshotToken\)/);
   // testsToken is never wired into the screenshot TARGETS.

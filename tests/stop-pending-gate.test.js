@@ -30,6 +30,8 @@ const {
   STOP_CONFIRM_TIMEOUT_MS,
   STOP_MAX_KILL_ATTEMPTS,
   classifyStopProbe,
+} = require('../src/workflow/rules/worker-interrupt.ts');
+const {
   classifyStopRequest,
   killsWorkerInPhase,
   stopPendingFor,

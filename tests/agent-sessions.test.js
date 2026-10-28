@@ -598,6 +598,25 @@ test('one stop route calls the coding stop server-side and returns its error', a
   } finally { jobs.requestSessionStop = saved; }
 });
 
+test('the agent stop route preserves typed conductor refusals and the legacy unconfirmed error', async t => {
+  const jobs = require('../src/routes/sessions');
+  let error;
+  t.mock.method(jobs, 'requestSessionStop', async () => { throw error; });
+  const row = { active_turn: null, turn_live: false, change_id: 50, change_turn: { turnId: 'job-1', mode: 'build' } };
+  await withRoutes({ id: 7, username: 'ada' }, { 'FROM agent_sessions s': () => ({ rows: [row] }) }, async call => {
+    for (const [code, status, httpStatus] of [
+      ['turn_changed', 409, 409], ['not_authorized', 404, 404], ['stop_unconfirmed', 503, 503], ['stop_unconfirmed', 503, undefined],
+    ]) {
+      error = Object.assign(new Error(`Stop refused: ${code}`), { code, httpStatus });
+      const out = await call('POST', '/api/agent-sessions/5/stop', { token: 'change:50:job-1' });
+      assert.equal(out.status, status); assert.deepEqual(out.body, { error: error.message, code });
+    }
+    error = new Error('internal credential or database detail');
+    const unexpected = await call('POST', '/api/agent-sessions/5/stop', { token: 'change:50:job-1' });
+    assert.equal(unexpected.status, 500); assert.equal(unexpected.body.error, 'Internal server error');
+  });
+});
+
 test('stop with no turn running says so, tells no machine and writes nothing', async () => {
   const machine = require('./lib/turn-platform').installTurnPlatform({ finish: false });
   try {

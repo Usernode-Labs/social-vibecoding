@@ -193,9 +193,10 @@ test('the invite box follows a pasted link, and says why one did not work', () =
   const src = code(read(WAITING));
   assert.match(src, /<form\s+data-waiting-invite=""/);
   assert.match(src, /fetch\(`\/api\/invite-links\/by-token\/\$\{encodeURIComponent\(token\)\}\/redeem`, \{\s+method: 'POST',/);
-  // Followed: the list above shows its community, and a link that let the
-  // account in boots the shell at once.
-  assert.match(src, /if \(res\.ok\) \{\s+setLink\(''\);\s+await listQueued\(\);\s+await check\(\);/);
+  // Followed: a link that joined its community lands in its app; otherwise
+  // the list above shows its community, and a link that let the account in
+  // boots the shell at once.
+  assert.match(src, /if \(res\.ok\) \{\s+setLink\(''\);\s+const body = await res\.json\(\)\.catch\(\(\) => null\);\s+if \(body\?\.status === 'joined' && typeof body\.slug === 'string'\) \{\s+onJoined\(\[[^\n]+\]\);\s+return;\s+\}\s+await listQueued\(\);\s+await check\(\);/);
   assert.match(src, /res\.status === 404 \|\| res\.status === 410\) \{\s+setLinkError\(t\('auth:waiting\.invite\.dead'\)\)/);
   for (const [id, said] of [
     ['auth:waiting.invite.title', 'Have an invite link?'],

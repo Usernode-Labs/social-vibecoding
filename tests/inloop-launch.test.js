@@ -126,6 +126,14 @@ function request(port, { method = 'GET', path: p = '/', headers = {}, body = nul
     req.end();
   });
 }
+// Nothing of ours answers on this port any more. The number came from an
+// ephemeral bind (freePort(), or the probe server above), so once our
+// listener is gone another test file running in parallel may bind it; a
+// connect that meets that socket opening or closing is reset, not refused.
+// Any HTTP response still resolves request() and fails the assertion.
+function refused(port) {
+  return assert.rejects(request(port), /ECONNREFUSED|ECONNRESET|EPIPE/);
+}
 
 test('the front proxy routes hosted assets to the platform and everything else to the app', async () => {
   const platformSeen = [];
@@ -541,7 +549,7 @@ test('failed commands and wrapper exits leave no app listener behind', { timeout
     const missing = spawnSync(process.execPath, [launcher, '/a-command-that-does-not-exist'], { cwd: dir, env, encoding: 'utf8', timeout: 10000 });
     assert.equal(missing.status, 2, missing.stderr);
     // The failed spawn closed the front socket as well as its launch record.
-    await assert.rejects(request(port), /ECONNREFUSED/);
+    await refused(port);
     child = spawn(process.execPath, [launcher, process.execPath, 'wrapper.js'], { cwd: dir, env, stdio: ['ignore', 'ignore', 'pipe'] });
     identity = readProcess(child.pid);
     let stderr = '';
@@ -551,8 +559,8 @@ test('failed commands and wrapper exits leave no app listener behind', { timeout
     const grandchild = JSON.parse(fs.readFileSync(path.join(dir, 'grandchild.json'), 'utf8'));
     const state = readProcess(grandchild.pid)?.state;
     assert.ok(!state || /^[ZX]/.test(state), `grandchild ${grandchild.pid} is still alive: ${state}`);
-    await assert.rejects(request(grandchild.port), /ECONNREFUSED/);
-    await assert.rejects(request(port), /ECONNREFUSED/);
+    await refused(grandchild.port);
+    await refused(port);
   } finally {
     if (identity) await stopOwned(processGroup(identity), { waitMs: 0 });
     if (child) child.kill('SIGKILL');
@@ -607,8 +615,8 @@ test('the live supervisor cleans its app group if the launcher is killed', { tim
     }
     const state = readProcess(app.pid)?.state;
     assert.ok(!state || /^[ZX]/.test(state), `app ${app.pid} survived supervisor cleanup: ${state}`);
-    await assert.rejects(request(app.port), /ECONNREFUSED/);
-    await assert.rejects(request(port), /ECONNREFUSED/);
+    await refused(app.port);
+    await refused(port);
   } finally {
     await require('../worker/usernode-run-inloop').stopLaunch(port, { waitMs: 0 });
     if (appIdentity) await stopOwned([appIdentity], { waitMs: 0 });

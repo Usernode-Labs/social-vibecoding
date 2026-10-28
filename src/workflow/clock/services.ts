@@ -9,7 +9,7 @@ import { itemKind, runKind, MAX_ITEMS } from './machine.ts';
 import { bootRelease } from '../release/boot.ts';
 
 // What a job's I/O reads: the platform's configuration and its pool.
-export interface JobDeps { config: any; pool: any }
+export interface JobDeps { config: any; pool: any; previewRetirement?: Json }
 
 export interface Job {
   name: string;
@@ -169,13 +169,6 @@ export const JOBS: readonly Job[] = Object.freeze([
     // dispatched them.
     name: 'local-agent-leases', everyMs: MIN,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/local-agent').sweepExpiredLeases(pool).then((n: number) => ({ released: n })),
-  },
-  {
-    // Global Chat usage a turn never settled (its request's process went
-    // mid-call): an error at its estimate, once no turn could still settle
-    // it (services/global-chat/accounting.js).
-    name: 'global-chat-usage-settle', everyMs: 15 * MIN,
-    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/global-chat/accounting').settleAbandonedReservations(pool),
   },
   {
     // A coding record no work item holds (the old orphan sweep's and
@@ -560,7 +553,7 @@ export const JOBS: readonly Job[] = Object.freeze([
   },
   {
     name: 'preview-data-policy', everyMs: MIN, leaseMs: 10 * MIN, newestOnly: true,
-    run: (_ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/platform-preview-retirement').retire(config, pool),
+    run: (_ctx: WorkContext, { config, pool, previewRetirement }: JobDeps) => legacy('services/platform-preview-startup').check(config, pool, previewRetirement),
   },
   {
     // Staging databases nothing can reach any more (no session, build or

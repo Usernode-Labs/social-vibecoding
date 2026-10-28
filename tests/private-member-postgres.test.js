@@ -41,12 +41,15 @@ test('private members, against the full schema', { timeout: 180000 }, async (t) 
   const waitlist = require('../src/services/waitlist');
 
   let seq = 0;
-  async function account({ access = false, email = null } = {}) {
+  // An address is confirmed unless `confirmed: false` (an old password
+  // account that never confirmed it): an email code, Apple and Google all
+  // confirm the address they make an account with.
+  async function account({ access = false, email = null, confirmed = true } = {}) {
     const n = ++seq;
     const { rows } = await pool.query(
       `INSERT INTO users (username, password, has_platform_access, email, email_confirmed)
-       VALUES ($1, 'x', $2, $3::varchar, $3::varchar IS NOT NULL) RETURNING id, username`,
-      [`person_${n}`, access, email]
+       VALUES ($1, 'x', $2, $3::varchar, $3::varchar IS NOT NULL AND $4::boolean) RETURNING id, username`,
+      [`person_${n}`, access, email, confirmed]
     );
     return { id: rows[0].id, username: rows[0].username, isAdmin: false, hasPlatformAccess: access };
   }
@@ -87,13 +90,13 @@ test('private members, against the full schema', { timeout: 180000 }, async (t) 
     assert.equal(rows.length, 1, 'a member of the community');
   });
 
-  await t.test('while phone sign-in is offered, a private member is one with a verified phone', async () => {
+  await t.test('while phone sign-in is offered, a private member is one with a verified phone or a confirmed email', async () => {
     const uses = async () => (await pool.query(
       'SELECT uses FROM community_invites WHERE token = $1', [made.link.token])).rows[0].uses;
     const inGroup = async (id) => (await pool.query(
       'SELECT 1 FROM community_members WHERE community_id = $1 AND user_id = $2', [group.community_id, id])).rows.length === 1;
-    // An account made by email: the link holds its place and lets it in no further.
-    const pia = await account({ email: 'pia@example.com' });
+    // An address never confirmed: the link holds its place and lets it in no further.
+    const pia = await account({ email: 'pia@example.com', confirmed: false });
     const waiting = await invites.redeem(pool, { token: made.link.token, user: pia, requirePhone: true });
     assert.deepEqual([waiting.status, waiting.slug, waiting.privateMember], ['queued', null, false]);
     assert.deepEqual(await tier(pia.id), { has_platform_access: false, private: false });
@@ -114,6 +117,17 @@ test('private members, against the full schema', { timeout: 180000 }, async (t) 
     const sam = await account({ access: true });
     const member = await invites.redeem(pool, { token: made.link.token, user: sam, requirePhone: true });
     assert.deepEqual([member.status, member.privateMember], ['joined', false]);
+    // An account made by email code, Apple or Google confirmed its address:
+    // it joins on the spot, no phone asked (Evan, 28 Oct 2026).
+    const zoe = await account({ email: 'zoe@example.com' });
+    const straight = await invites.redeem(pool, { token: made.link.token, user: zoe, requirePhone: true });
+    assert.deepEqual([straight.status, straight.slug, straight.privateMember], ['joined', 'best-brunch', true]);
+    assert.deepEqual(await tier(zoe.id), { has_platform_access: false, private: true });
+    assert.equal(await inGroup(zoe.id), true);
+    // With neither an address nor a phone, still queued.
+    const ivo = await account();
+    const held = await invites.redeem(pool, { token: made.link.token, user: ivo, requirePhone: true });
+    assert.deepEqual([held.status, held.privateMember], ['queued', false]);
   });
 
   await t.test('a phone sign-up gives a name: it is the display name, and the handle is picked from it', async () => {
@@ -185,9 +199,25 @@ test('private members, against the full schema', { timeout: 180000 }, async (t) 
     assert.deepEqual(await usernames.replaceProvisionalUsername(pool, noa.user.id, noa.user.username), { username: noa.user.username });
   });
 
-  await t.test('an account made by email adds a phone, and its queued link lets it in', async () => {
+  await t.test('an account queued while a phone was the only way in joins once it may: its confirmed address', async () => {
+    // Queued as the rule used to queue an account made by email, then the
+    // address counts: the waiting room's join (POST
+    // /api/invite-links/queued/join) lets it in, on the use already spent.
+    const kai = await account({ email: 'kai@example.com', confirmed: false });
+    assert.equal((await invites.redeem(pool, { token: made.link.token, user: kai, requirePhone: true })).status, 'queued');
+    const { rows: [{ uses: spent }] } = await pool.query('SELECT uses FROM community_invites WHERE token = $1', [made.link.token]);
+    assert.deepEqual(await invites.joinQueued(pool, kai.id), [], 'not confirmed yet: still queued');
+    await pool.query('UPDATE users SET email_confirmed = TRUE, email_confirmed_at = NOW() WHERE id = $1', [kai.id]);
+    assert.deepEqual(await invites.joinQueued(pool, kai.id, { requirePhone: true }), [{ slug: 'best-brunch', name: 'Best brunch spots' }]);
+    assert.deepEqual(await tier(kai.id), { has_platform_access: false, private: true });
+    const { rows: [{ uses }] } = await pool.query('SELECT uses FROM community_invites WHERE token = $1', [made.link.token]);
+    assert.equal(uses, spent, 'no second use');
+    assert.deepEqual(await invites.joinQueued(pool, kai.id), [], 'nothing left queued');
+  });
+
+  await t.test('an account whose address was never confirmed adds a phone, and its queued link lets it in', async () => {
     const phoneAuth = require('../src/services/firebase-phone-auth');
-    const rae = await account({ email: 'rae@example.com' });
+    const rae = await account({ email: 'rae@example.com', confirmed: false });
     const queued = await invites.redeem(pool, { token: made.link.token, user: rae, requirePhone: true });
     assert.equal(queued.status, 'queued');
     assert.deepEqual(await invites.joinQueued(pool, rae.id), [], 'no phone yet: still queued');

@@ -37,9 +37,9 @@
 // refresh's open list no longer names, GitHub is asked once, and only a close
 // GitHub itself reports closes the row (one-way; a reopen never reopens it),
 // then the caches are busted and open trays re-read, the same way a merge's
-// close does (issue-close-watcher.js bustAndBroadcast, closeTwinRows).
+// close does (issue-close-watcher.js broadcastClosed, closeTwinRows).
 // then the caches are busted and open trays re-read, the same way a merge's
-// close does (issue-close-watcher.js bustAndBroadcast, closeTwinRows).
+// close does (issue-close-watcher.js broadcastClosed, closeTwinRows).
 //
 // 16 Oct 2026: #4752 never had such a row. A request filed through Suggest an
 // improvement or a comment pin (routes/feedback.js) gets a GitHub issue and a
@@ -330,8 +330,8 @@ async function noteRequestsClosed(pool, { appId, closed, strict = false, tellStr
  * complete list): a proposal of the bot's up for a vote none of whose linked
  * requests is among them may be for requests closed on GitHub. Each is
  * withdrawn once GitHub confirms every one of its requests closed. The list
- * alone is not trusted: a number just closed is hidden from it before GitHub
- * agrees (github.noteIssuesClosed), and one closed by mistake may be reopened.
+ * alone is not trusted: a provider list can lag behind a close, and a
+ * request closed by mistake may have been reopened.
  * The caller does not wake the bot; it is the refresh. Resolves
  * { withdrawn: [sessionId] }; never throws.
  */
@@ -434,7 +434,7 @@ async function closeRequestRows(pool, { appId, appSlug, repoUrl, openNumbers, de
 // Both best-effort: the rows are closed either way.
 async function announceClosed(pool, { repo, appId, appSlug, closed, watcher, deps }) {
   try {
-    watcher.bustAndBroadcast({
+    watcher.broadcastClosed({
       owner: repo.owner, repo: repo.repo, appSlug: appSlug || null, appId, closed,
     });
   } catch (err) {

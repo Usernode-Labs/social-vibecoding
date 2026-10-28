@@ -71,7 +71,7 @@ const SUGGESTIONS = [
 // A programmable pool stub that walks the clone-headless query sequence.
 // `outcome` sets src.headless_outcome; `suggestionsRow` is what the
 // "most recent assistant message with suggestions" lookup returns.
-function makeHandler({ outcome, suggestionsRow, repoUrl = null }) {
+function makeHandler({ outcome, suggestionsRow, repoUrl = null, ccSessionId = null, specMd = '' }) {
   return async (sql) => {
     if (/FROM chat_sessions cs\s+JOIN apps a/.test(sql)) {
       return {
@@ -90,12 +90,12 @@ function makeHandler({ outcome, suggestionsRow, repoUrl = null }) {
           headless_outcome: outcome,
           headless_issue_number: 42,
           branch_name: 'auto/issue-42',
-          spec_md: '',
+          spec_md: specMd,
           linked_issues: [],
           testing_md: null,
           testing_path: null,
           testing_paths: null,
-          cc_session_id: null,
+          cc_session_id: ccSessionId,
           session_title: '#42 · Make the header nicer',
         }],
       };
@@ -104,7 +104,7 @@ function makeHandler({ outcome, suggestionsRow, repoUrl = null }) {
       return { rows: [{ cnt: '0' }] };
     }
     if (/INSERT INTO chat_sessions/.test(sql)) {
-      return { rows: [{ id: 99, app_id: 11, app_slug: 'demo', user_id: 7 }] };
+      return { rows: [{ id: 99, app_id: 11, app_slug: 'demo', user_id: 7, cc_session_id: null }] };
     }
     if (/INSERT INTO chat_session_messages[\s\S]*SELECT/.test(sql)) {
       return { rows: [] }; // convo copy
@@ -136,6 +136,45 @@ function followUpInsert() {
   return captured.find((c) =>
     /INSERT INTO chat_session_messages \(session_id, role, content, metadata\)/.test(c.sql));
 }
+
+test('a source with agent memory hands off chat and specs without copying that memory', async () => {
+  const worker = require('../src/services/worker');
+  const kubernetes = require('../src/services/kubernetes');
+  const oldCopy = worker.cloneCcVolume;
+  const copies = [];
+  // Trap the retired entry point: even a best-effort call whose error is
+  // swallowed must fail this test, without touching a real worker volume.
+  worker.cloneCcVolume = async (...args) => { copies.push(args); };
+  captured = [];
+  handler = makeHandler({
+    outcome: 'spec_code',
+    ccSessionId: '11111111-1111-4111-8111-111111111111',
+    specMd: '# Inherited plan',
+  });
+  const server = await startServer();
+  try {
+    const { res, body } = await clone(server);
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(body.session.cc_session_id, null, 'no inherited agent conversation');
+    assert.deepStrictEqual(copies, [], 'no worker memory copy was attempted');
+    const session = captured.find((c) => /INSERT INTO chat_sessions/.test(c.sql));
+    assert.strictEqual(session.params[3], '# Inherited plan');
+    assert.strictEqual(session.params[8], 1, 'source session is still recorded');
+    assert.doesNotMatch(session.sql, /cc_session_id/);
+    assert.ok(!captured.some((c) => /UPDATE chat_sessions SET cc_session_id/.test(c.sql)));
+    for (const table of ['chat_session_messages', 'chat_session_specs']) {
+      const copy = captured.find((c) => c.sql.includes(`INSERT INTO ${table}`) && /SELECT/.test(c.sql));
+      assert.ok(copy, `${table} history is still copied`);
+      assert.deepStrictEqual(copy.params, [99, 1]);
+    }
+  } finally {
+    server.close();
+    if (oldCopy === undefined) delete worker.cloneCcVolume;
+    else worker.cloneCcVolume = oldCopy;
+  }
+  assert.strictEqual(oldCopy, undefined, 'Docker memory-copy helper is removed');
+  assert.strictEqual(kubernetes.cloneWorkerVolume, undefined, 'Kubernetes memory-copy helper is removed');
+});
 
 test("question clone forwards the question turn's suggestions onto the follow-up", async () => {
   captured = [];
@@ -221,13 +260,30 @@ for (const outcome of ['spec', 'code', 'spec_code']) {
 test('cloning pushed code opens a draft PR on the human branch; a spec clone stays PR-free', async () => {
   const prMetadata = require('../src/services/pr-metadata');
   const oldEnabled = github.isEnabled;
-  const oldCreateBranch = github.createBranch;
+  const oldGetBranchSha = github.getBranchSha;
+  const oldEnsure = github.ensureBranchAtSha;
   const oldFetchIssue = github.fetchPublicIssue;
   const oldApply = prMetadata.applyPrMetadata;
   const branches = [];
   const prs = [];
   github.isEnabled = () => true;
-  github.createBranch = async (_owner, _repo, branch, from) => { branches.push({ branch, from }); };
+  // The clone's branch is a conductor's platform operation
+  // (services/branch-operation.js): run here as the conductor would, off the
+  // source run's own branch as it reads it.
+  github.getBranchSha = async (_owner, _repo, branch) => `sha-of-${branch}`;
+  github.ensureBranchAtSha = async (_owner, _repo, branch, sha) => { branches.push({ branch, from: sha.replace(/^sha-of-/, '') }); };
+  const operations = require('../src/services/platform-operations');
+  const branchOperation = require('../src/services/branch-operation');
+  const conductorPool = {
+    query: async (sql, params) => (/SELECT \* FROM apps WHERE id = \$1/.test(sql)
+      ? { rows: [{ id: 11, slug: 'demo', repo_url: 'https://github.com/acme/demo' }] }
+      : /SELECT app_id, branch_name FROM chat_sessions WHERE id = \$1/.test(sql)
+        ? { rows: [{ app_id: 11, branch_name: 'auto/issue-42' }] } : { rows: [] }),
+  };
+  const priorTransport = operations._setTransportForTests(async (p) => ({
+    status: 'done', requestId: 'r',
+    result: { ok: true, ...(await branchOperation.run({ pool: conductorPool }, p, VIEWER, require('../src/services/durable-steps').none())) },
+  }));
   github.fetchPublicIssue = async () => ({ issue: { title: 'Make the header nicer' } });
   prMetadata.applyPrMetadata = async (args) => {
     prs.push(args);
@@ -246,10 +302,12 @@ test('cloning pushed code opens a draft PR on the human branch; a spec clone sta
     }
     assert.equal(prs.length, 2);
     assert.ok(prs.every((call) => call.session.status === undefined || call.session.status === 'active'));
-    assert.ok(branches.every((item) => item.from === 'auto/issue-42'));
+    assert.ok(branches.length > 0 && branches.every((item) => item.from === 'auto/issue-42'));
   } finally {
     github.isEnabled = oldEnabled;
-    github.createBranch = oldCreateBranch;
+    github.getBranchSha = oldGetBranchSha;
+    github.ensureBranchAtSha = oldEnsure;
+    operations._setTransportForTests(priorTransport);
     github.fetchPublicIssue = oldFetchIssue;
     prMetadata.applyPrMetadata = oldApply;
   }

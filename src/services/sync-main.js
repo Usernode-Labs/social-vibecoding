@@ -371,6 +371,8 @@ async function runSyncWork(config, pool, {
       const syncResult = result.syncResult || (result.exitCode === 0 ? 'clean' : 'conflict');
       const message = syncResult === 'already_synced'
         ? 'Already up to date with main, so there is nothing to merge.'
+        : ['clean', 'resolved'].includes(syncResult) && !result.pushOk
+          ? 'Merged main locally, but publication failed. The commit is kept in this session.'
         : syncResult === 'clean'
           ? `Merged main cleanly. Pushed ${result.sha ? result.sha.slice(0, 7) : 'merge commit'}.`
           : syncResult === 'resolved'

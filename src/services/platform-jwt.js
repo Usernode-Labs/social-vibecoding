@@ -54,6 +54,8 @@ const PUR_IFRAME = 'iframe';
 // welcomes guests verifies this audience on purpose.
 const PUR_GUEST = 'guest';
 const PUR_WORKER = 'worker:session';
+// Declares before/after-shot intent only; it cannot publish Git or create PRs.
+const PUR_VISIBLE_CHANGES = 'worker:visible-changes';
 // The platform asking an app, server to server, to erase or export one
 // person's rows (#5118, "Your people's data" in src/prompts/app-conventions.md).
 // Signed with the app-identity key, so an app verifies it with the public key
@@ -65,11 +67,10 @@ const USER_DATA_TTL = '10m';
 // Narrow, purpose-bound worker capabilities (review #2 / #6): the
 // general worker:session token is reserved for build/sync mutations. Agent
 // subprocesses receive only the capabilities their mode needs: proxy auth,
-// issue reads, pushes, or production diagnostics. Keeping these purposes
+// issue reads or production diagnostics. Keeping these purposes
 // distinct matters for Claude scouts because unrestricted read-only Bash can
 // inspect its own environment; merely renaming a general token would still
 // let it call every endpoint that accepts worker:session.
-const PUR_WORKER_PUSH = 'worker:push';
 const PUR_ISSUES_READ = 'worker:issues-read';
 const PUR_ANTHROPIC_PROXY = 'worker:anthropic-proxy';
 const PUR_PROD_DEBUG = 'worker:prod-debug';
@@ -167,6 +168,20 @@ function iframeVerifyKeys() {
     throw new Error('IFRAME_JWT_PUBLIC_KEY not set — cannot verify app identity tokens');
   }
   return keys;
+}
+
+// The public half of the key THIS process signs app-identity tokens with,
+// or null when it signs none. Production's is the injected pair's. A
+// staging clone's is its own ephemeral pair's, which is NOT the
+// IFRAME_JWT_PUBLIC_KEY it was given (that one is the production parent's,
+// above). An app the clone runs (services/preview-projects-client.js) must
+// be given this one, or every token the clone mints for it fails to verify.
+function signingPublicKeyPem() {
+  const injected = pem(process.env.IFRAME_JWT_PRIVATE_KEY);
+  if (injected) {
+    return crypto.createPublicKey(injected).export({ type: 'spki', format: 'pem' }).toString();
+  }
+  return _stagingSigningPair ? _stagingSigningPair.publicKey : null;
 }
 
 function workerSecret() {
@@ -449,12 +464,13 @@ function verifyWorkerToken(token) {
   return verifyWorkerPurpose(token, PUR_WORKER);
 }
 
-function signWorkerPushToken({ sessionId }) {
-  return signWorkerPurpose({ sessionId, purpose: PUR_WORKER_PUSH });
+function signVisibleChangesToken({ sessionId }) {
+  return signWorkerPurpose({ sessionId, purpose: PUR_VISIBLE_CHANGES });
 }
-function verifyWorkerPushToken(token) {
-  return verifyWorkerPurpose(token, PUR_WORKER_PUSH);
+function verifyVisibleChangesToken(token) {
+  return verifyWorkerPurpose(token, PUR_VISIBLE_CHANGES);
 }
+
 function signIssuesReadToken({ sessionId }) {
   return signWorkerPurpose({ sessionId, purpose: PUR_ISSUES_READ });
 }
@@ -701,9 +717,9 @@ module.exports = {
   PUR_IFRAME,
   PUR_GUEST,
   PUR_WORKER,
+  PUR_VISIBLE_CHANGES,
   PUR_USER_DELETION,
   PUR_USER_EXPORT,
-  PUR_WORKER_PUSH,
   PUR_ISSUES_READ,
   PUR_ANTHROPIC_PROXY,
   PUR_PROD_DEBUG,
@@ -726,12 +742,13 @@ module.exports = {
   signGuestToken,
   verifyGuestToken,
   guestPublicKeyPem,
+  signingPublicKeyPem,
   signWorkerToken,
   verifyWorkerToken,
+  signVisibleChangesToken,
+  verifyVisibleChangesToken,
   signWorkerPurpose,
   verifyWorkerPurpose,
-  signWorkerPushToken,
-  verifyWorkerPushToken,
   signIssuesReadToken,
   verifyIssuesReadToken,
   signAnthropicProxyToken,

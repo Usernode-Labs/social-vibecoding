@@ -983,28 +983,10 @@
     },
     {
       "id": "feedback.destination-choice",
-      "name": "With two destinations available, neither is preselected and the row asks where it should go (#2707, UI overhaul)",
+      "name": "With an app open, the app is preselected as the destination and Post request is live (#5992)",
       "path": "/?shot=feedback-choose",
-      "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-target-label + #feedback-target:has(#feedback-target-app[aria-checked=\"false\"]):has(#feedback-target-platform[aria-checked=\"false\"]) + #feedback-target-hint.hidden",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-label + #feedback-target + #feedback-target-hint.hidden):has(#feedback-target-app[aria-checked=\"true\"]):has(#feedback-target-platform[aria-checked=\"false\"]) #feedback-submit:not(:disabled)",
       "expectText": "Where should this go?",
-      "visual": true,
-      "impact": [
-        "frontend/src/features/dialogs/feedback.tsx",
-        "frontend/src/features/dialogs/feedback-controller.js"
-      ]
-    },
-    {
-      "name": "Post request stays pressable while no destination is picked, and nothing is red yet (#2707, #2888)",
-      "path": "/?shot=feedback-choose",
-      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-hint.hidden):has(#feedback-target:not([aria-invalid])) #feedback-submit:not(:disabled)",
-      "expectText": "Post request"
-    },
-    {
-      "id": "feedback.destination-missed",
-      "name": "Post request with no destination turns the row red and says why (#2888)",
-      "path": "/?shot=feedback-choose-missed",
-      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target[aria-invalid=\"true\"]):has(#feedback-target-app.\\!border-red-600[aria-checked=\"false\"]) #feedback-target-hint[role=\"alert\"]:not(.hidden)",
-      "expectText": "Choose where this goes",
       "visual": true,
       "impact": [
         "frontend/src/features/dialogs/feedback.tsx",
@@ -3145,11 +3127,6 @@
       "expectSelector": "body > a[href=\"#platform-tabs\"]:first-of-type:not([hidden]) + header#platform-header ~ nav#platform-tabs a#platform-tab-home"
     },
     {
-      "name": "The global chat composer wears the safe-bar contract, so on a phone it sits above the tab bar (bug e)",
-      "path": "/?demo=1",
-      "expectSelector": "#global-chat-screen .global-chat-shell > .global-chat-transcript:not(.platform-safe-scroll) ~ form.global-chat-composer.platform-safe-bar > textarea#global-chat-composer[placeholder]"
-    },
-    {
       "name": "#2783: #general groups one person's consecutive messages under a single name, the later ones as continuation lines (in Homeroom's Discussion tab, where its address opens since #3653)",
       "path": "/?demo=1#messages/910004",
       "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-thread-pane.messages-thread-channel .messages-message:not(.messages-message-grouped) + .messages-message-grouped > time.messages-message-gutter + .min-w-0"
@@ -3428,7 +3405,7 @@
       "name": "Settings groups its menu under headings and offers the test alert (#1795)",
       "path": "/#settings/alerts",
       "expectSelector": "#settings-root:has(#settings-nav-desktop h2) [data-settings-section=\"alerts\"]:not(.hidden) #devchat-alerts-test",
-      "expectText": "AI & building"
+      "expectText": "Integrations & automation"
     },
     {
       "name": "Settings opens with a filter box over an uncollapsed menu, Account current",
@@ -4388,10 +4365,10 @@
       "expectSelector": "#dev-workshop:not(:has(#dev-plus-btn)) [data-ws-pane] #dev-actions > #dev-kanban-filterbar:not(:empty):last-child"
     },
     {
-      "name": "On Unread, a project's notifications stack under its newest card, and one request's news is one card (#5580)",
+      "name": "On Unread, a project's notifications stack under its newest card, one request's news is one card (#5580), and the closed top card names the request by number alone (#5929)",
       "path": "/?shot=notifications&demo=1",
       "expectSelector": "#notifications-sheet[data-open] [data-notif-stack=\"a:0\"][data-stack-closed] > [data-stack-top] > [data-notif-id=\"990214\"][data-notif-group-size=\"2\"][aria-expanded=\"false\"]",
-      "expectText": "#990301 · 2 notifications"
+      "expectText": "#990301"
     },
     {
       "name": "The Notifications sheet is a flat list of rows (#1385)",
@@ -5093,6 +5070,35 @@
       "name": "iPhone Duo: a one-sided column of system chrome (?side-strip=right paints the Duo's 84pt column) puts the shell in strip mode, with the strip's back controls and the Apps section in the markup (24 Oct 2026)",
       "path": "/?demo=1&side-strip=right",
       "expectSelector": "html[data-side-strip=\"right\"]:has(#platform-tabs > .platform-side-apps:first-child + .platform-tabs-marker + #platform-tab-home) .platform-side-strip-ground + .platform-side-strip-frost + #platform-side-strip-top > #platform-side-strip-back"
+    },
+    {
+      "name": "Signed out, 5 loads: an invite link shows its card, not the waitlist (#6003)",
+      "path": "/invite/stagingdemoinvite00001?shot=anon",
+      "repeat": 5,
+      "persona": "guest",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has([data-landing-invite=\"live\"]) :is(.hidden #landing-waitlist-link, #landing-waitlist-link.hidden)",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Signed out: the landing shows its story or pitch (#6003)",
+      "path": "/?shot=anon#landing",
+      "persona": "guest",
+      "expectSelector": "#auth-landing-screen:not(.hidden) :is([data-landing-story] h1, div:not(.hidden) > h1)",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Signed out: the sign-in sheet opens (#6003)",
+      "path": "/?shot=anon&login=1",
+      "persona": "guest",
+      "expectSelector": "#auth-landing-screen [data-sign-in-sheet] #sign-in-sheet-title",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Signed out: a public project's page loads (#6003)",
+      "path": "/app/staging-landing-open?shot=anon",
+      "persona": "guest",
+      "expectSelector": "#auth-landing-screen:not(.hidden) [data-guest-project=\"staging-landing-open\"]",
+      "allowConsoleErrors": true
     }
   ],
   "governance": {

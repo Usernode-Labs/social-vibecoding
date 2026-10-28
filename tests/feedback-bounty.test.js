@@ -98,7 +98,6 @@ llm.generateIssueTitle = async () => ({ title: 'Generated title', usage: undefin
 
 const github = require('../src/services/github');
 github.isEnabled = () => true;
-github.noteIssueCreated = () => {};
 // Both targets file through github.createIssue: an app's request and one on
 // the platform's own board are both request rows (services/requests.js).
 // The platform's answers #42, an app's #9.

@@ -96,8 +96,7 @@ module.exports = function install(world) {
   let comments = 0;
   world.onReset(() => { comments = 0; });
   outside(world, 'services/github', {
-    keep: ['parseGithubUrl', 'safeMention', 'noteIssuesClosed', 'unsuppressIssues', 'invalidateIssuesCache',
-      'noteIssueCreated', 'describeGithubError', 'credentialClass', 'clipIssueComments', '_resetSingleIssueCache'],
+    keep: ['parseGithubUrl', 'safeMention', 'describeGithubError', 'credentialClass', 'clipIssueComments', '_resetSingleIssueCache'],
     overrides: {
       async init() {},
       isEnabled: () => true,
@@ -484,7 +483,11 @@ module.exports = function install(world) {
         if (!missing && (state.rawStdout || state.execExitSeen)) state.providerDispatched = true;
         // The follower has read the turn's end; nothing of it is kept yet.
         if (t) await world.kill(`followed:${t.step}`);
-        return realWorker.finalizeHarnessResult(state);
+        const active = await turnLifecycle.loadActiveTurn(pool, sid);
+        return require('../../src/services/turn-publication').publish({
+          pool, sessionId: sid, turnId, journal, mode: active?.mode || null, branchName: where.branch,
+          result: realWorker.finalizeHarnessResult(state), push: branch => this.execPushFromWorker(sid, branch),
+        });
       } finally {
         upsert(sid, { inFlight: false, lastUsedMs: Date.now() });
       }
@@ -567,7 +570,6 @@ module.exports = function install(world) {
       await world.record('worker.removeCcVolume', { sessionId: Number(sessionId) });
       return { removed: true };
     },
-    async stopWorker(name) { await world.record('worker.stop', { name }); },
     async retireWorker(sessionId) { await world.record('worker.retire', { sessionId: Number(sessionId) }); },
     holdWorker() { return () => {}; },
     warmRegistrySnapshot: () => [...registry.entries()].map(([sessionId, m]) => ({ sessionId, ...m })),

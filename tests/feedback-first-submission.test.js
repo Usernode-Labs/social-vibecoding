@@ -55,7 +55,6 @@ require('../src/db/pool').getPool = () => ({
 });
 const github = require('../src/services/github');
 github.isEnabled = () => true;
-github.noteIssueCreated = () => {};
 github.createIssue = async () => {
   if (githubFails) throw new Error('GitHub unavailable');
   return { number: ++issueNumber, html_url: `https://github.com/owner/demo/issues/${issueNumber}` };

@@ -237,19 +237,35 @@ test('the default section is an ungated page, and the first one', () => {
 
 // ── Pages and groups (the settings restructure) ─────────────────────────
 
-test('the registry groups pages under four headings, Account first', () => {
+test('the registry groups pages under six headings, Account first and Advanced last', () => {
   const sections = registrySections();
   // A group is named by its message id; the heading is that id's English.
   const groupIds = [];
   for (const s of sections) if (!groupIds.includes(s.group)) groupIds.push(s.group);
-  assert.deepEqual(groupIds, ['settings:nav.group.account', 'settings:nav.group.aiBuilding',
-    'settings:nav.group.preferences', 'settings:nav.group.helpAbout']);
+  // #5994 split "AI & building" (the allowance, the connectors, the agent
+  // instructions and a global chat under one heading) into AI models & usage
+  // and Integrations & automation, and moved Experimental and Global Chat
+  // out of the AI rows to an Advanced group at the foot of the menu. Global
+  // Chat has since been removed, and its part with it.
+  assert.deepEqual(groupIds, ['settings:nav.group.account', 'settings:nav.group.aiModels',
+    'settings:nav.group.integrations', 'settings:nav.group.preferences',
+    'settings:nav.group.helpAbout', 'settings:nav.group.advanced']);
   const order = groupIds.map((id) => message(id));
-  assert.deepEqual(order, ['Account', 'AI & building', 'Preferences', 'Help & about'],
-    'four groups, in menu order');
-  // dapp.json asserts this heading by TEXT, so the spelling is a contract.
-  assert.ok(manifest.tests.some((t) => t.expectText === 'AI & building'),
-    'the AI & building heading is a declared check');
+  assert.deepEqual(order, ['Account', 'AI models & usage', 'Integrations & automation',
+    'Preferences', 'Help & about', 'Advanced'], 'six groups, in menu order');
+  // dapp.json asserts a heading by TEXT, so the spelling is a contract.
+  assert.ok(manifest.tests.some((t) => t.expectText === 'Integrations & automation'),
+    'the Integrations & automation heading is a declared check');
+  assert.ok(!settingsJs.includes('settings:nav.group.aiBuilding'), 'the old AI & building group is gone');
+  // Where each AI-and-building row went.
+  const byGroup = (key) => sections.find((s) => s.key === key).group;
+  assert.deepEqual(['usage', 'openrouter', 'api-key'].map(byGroup),
+    Array(3).fill('settings:nav.group.aiModels'), 'the allowance, OpenRouter and the Anthropic key are AI models & usage');
+  assert.deepEqual(['connectors', 'cli', 'agent-files'].map(byGroup),
+    Array(3).fill('settings:nav.group.integrations'), 'connectors, CLI and agent files are Integrations & automation');
+  assert.deepEqual(['experimental'].map(byGroup),
+    ['settings:nav.group.advanced'], 'Experimental is Advanced');
+  assert.equal(sections.at(-1).group, 'settings:nav.group.advanced', 'and Advanced closes the menu');
 
   // A page takes its group from its first part, and never straddles two.
   for (const page of registryPages()) {
@@ -263,7 +279,7 @@ test('the registry groups pages under four headings, Account first', () => {
   const byKey = Object.fromEntries(sections.map((s) => [s.key, s]));
   for (const key of [
     'theme', 'language', 'alerts', 'blocked-apps', 'tour', 'username', 'email',
-    'password', 'delete-account', 'wallet', 'global-chat', 'openrouter',
+    'password', 'delete-account', 'wallet', 'openrouter',
     'api-key', 'connectors', 'app-ai', 'app-permissions', 'agent-files', 'cli',
     'dev-console', 'experimental', 'usernode', 'admin-preview', 'about',
   ]) assert.ok(byKey[key], `${key} is still a registered part`);
@@ -440,6 +456,32 @@ test('the filter matches every word, and names the parts that matched', () => {
     'words may land on the page and a part');
   assert.deepEqual(hit('zebra'), []);
   assert.deepEqual(hit('   '), [], 'blank is not a query');
+});
+
+test('the filter marks what matched and, finding nothing, suggests two settings (#5996)', () => {
+  const at = navTsx.indexOf('export function highlightRanges(');
+  const src = navTsx.slice(at, navTsx.indexOf('\n}\n', at) + 2)
+    .replace('export ', '')
+    .replace('(text: string, query: string): [number, number][]', '(text, query)')
+    .replace('new Array<boolean>(text.length)', 'new Array(text.length)')
+    .replace('const ranges: [number, number][] = [];', 'const ranges = [];');
+  const highlightRanges = new Function(`${src}; return highlightRanges;`)();
+  assert.deepEqual(highlightRanges('Password', 'pass'), [[0, 4]]);
+  assert.deepEqual(highlightRanges('Email & recovery', 'EMAIL rec'), [[0, 5], [8, 11]], 'case-insensitive, every word');
+  assert.deepEqual(highlightRanges('Linked phones', 'link linked'), [[0, 6]], 'overlapping words merge');
+  assert.deepEqual(highlightRanges('Theme', 'zzz'), []);
+  assert.match(navTsx, /<Highlighted text=\{hit\.item\.label\} query=\{query\} \/>/, 'hit labels are marked on both hosts');
+
+  // The suggestions are the menu's own Language and Theme parts, each a
+  // button that fills the box with its name.
+  assert.match(navTsx, /const SUGGESTED_PARTS = \['language', 'theme'\];/);
+  for (const key of ['language', 'theme']) {
+    assert.ok(registrySections().some((s) => s.key === key), `${key} is a real settings part`);
+  }
+  assert.match(navTsx, /id="settings:nav\.filter\.try"/);
+  assert.match(navTsx, /onClick=\{\(\) => setQuery\(first\)\}/);
+  assert.match(navTsx, /onClick=\{\(\) => setQuery\(second\)\}/);
+  assert.equal(message('settings:nav.filter.try', { first: 'Language', second: 'Theme' }), 'Try <0>Language</0> or <1>Theme</1>.');
 });
 
 // ── Language is offered to everyone (the #1556 gate is gone) ───────────
@@ -839,8 +881,14 @@ test('the nav components render what the module shapes, and nothing else', () =>
   // with state, so it stays in the module — which is also what keeps
   // settings.js loadable by the vm harnesses (see settings-mobile-push).
   const nav = settingsJs.slice(settingsJs.indexOf('    _navView() {'));
-  assert.match(nav.slice(0, 1200), /bg-violet-600\/10 text-violet-700 dark:text-violet-400/,
-    'the active sidebar row keeps its tint, character for character');
+  // #5997: the current row is marked with the lit tokens ("where you are"),
+  // not the action accent, and in a heavier weight than the others.
+  assert.match(nav.slice(0, 1200),
+    /'font-semibold bg-\[color:var\(--lit-tint\)\] text-\[color:var\(--lit-ink\)\] shadow-\[inset_0_0_0_1px_var\(--lit-line\)\]'/,
+    'the active sidebar row wears the lit tint, ink and line');
+  assert.match(nav.slice(0, 1200), /'font-medium text-zinc-600 dark:text-zinc-300/,
+    'the other rows stay at the lighter weight');
+  assert.doesNotMatch(nav.slice(0, 1200), /violet/, 'the action accent no longer marks where you are');
   assert.match(navTsx, /className=\{item\.className\}/,
     'the component renders that string rather than recomputing it');
 

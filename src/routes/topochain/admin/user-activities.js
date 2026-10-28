@@ -18,7 +18,8 @@ const { Router } = require('express');
 const { getPool } = require('../../../db/pool');
 const log = require('../../../services/logger');
 const { adminWriteGate } = require('./auth');
-const { toIntId, toDate } = require('./util');
+const { toIntId } = require('./util');
+const { parseActivityAt } = require('../../../services/topochain/activity-time');
 const { computeOffchainColumns, resolveOffchainWeight } = require('../../../services/topochain/scoring');
 const {
   ok, fail, iso, num, paginate, meta, ValidationError,
@@ -203,10 +204,11 @@ function userActivitiesAdminRoutes(config) {
         details.points = ['The points field is required and must be numeric.'];
       }
 
-      const activityAt = toDate(body.activity_at);
-      if (activityAt === undefined || activityAt === null) {
+      const parsedActivityAt = parseActivityAt(body.activity_at);
+      if (!parsedActivityAt) {
         details.activity_at = ['The activity_at field is required and must be a valid date.'];
       }
+      const activityAt = parsedActivityAt ? parsedActivityAt.at : null;
 
       const description = body.description == null ? null : String(body.description);
 
@@ -214,6 +216,11 @@ function userActivitiesAdminRoutes(config) {
       if (body.metadata !== undefined && body.metadata !== null) {
         if (typeof body.metadata !== 'object') details.metadata = ['The metadata field must be an object.'];
         else metadata = body.metadata;
+      }
+      // A bare date is stored at noon UTC marked 'day' so the activity list
+      // shows the date alone instead of a made-up midnight.
+      if (parsedActivityAt && parsedActivityAt.precision === 'day') {
+        metadata = { ...(metadata || {}), timestamp_precision: 'day' };
       }
 
       if (Object.keys(details).length) return fail(res, 422, 'The given data was invalid.', { details });
@@ -305,7 +312,8 @@ function userActivitiesAdminRoutes(config) {
           const challengeId = toIntId(row.challenge_id);
           const activityType = row.activity_type;
           const points = Number(row.points);
-          const activityAt = toDate(row.activity_at);
+          const parsedActivityAt = parseActivityAt(row.activity_at);
+          const activityAt = parsedActivityAt ? parsedActivityAt.at : null;
           const description = row.description == null ? null : String(row.description);
 
           if (!userId) { errors.push(`Row ${rowNum}: user_id is required and must exist.`); continue; }
@@ -319,7 +327,7 @@ function userActivitiesAdminRoutes(config) {
           if (row.points === undefined || row.points === null || row.points === '' || Number.isNaN(points)) {
             errors.push(`Row ${rowNum}: points must be numeric.`); continue;
           }
-          if (activityAt === undefined || activityAt === null) {
+          if (!parsedActivityAt) {
             errors.push(`Row ${rowNum}: activity_at must be a valid date.`); continue;
           }
 
@@ -335,11 +343,14 @@ function userActivitiesAdminRoutes(config) {
           }
 
           const storedType = challenge.category || activityType;
+          const metadata = parsedActivityAt.precision === 'day'
+            ? JSON.stringify({ timestamp_precision: 'day' })
+            : null;
           await client.query(
             `INSERT INTO user_activities
-               (user_id, season_event_id, activity_type, points, description, activity_at, added_by, source, challenge_id, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 'admin_ui', $8, NOW(), NOW())`,
-            [userId, seasonEventId, storedType, points, description, activityAt, req.user.id, challengeId]
+               (user_id, season_event_id, activity_type, points, description, metadata, activity_at, added_by, source, challenge_id, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'admin_ui', $9, NOW(), NOW())`,
+            [userId, seasonEventId, storedType, points, description, metadata, activityAt, req.user.id, challengeId]
           );
           importedCount += 1;
         }
@@ -643,16 +654,30 @@ function userActivitiesAdminRoutes(config) {
           fields.points = n;
         }
       }
+      let activityPrecision = null;
       if (body.activity_at !== undefined) {
-        const d = toDate(body.activity_at);
-        if (d == null) details.activity_at = ['The activity_at field must be a valid date.'];
-        else fields.activity_at = d;
+        const parsed = parseActivityAt(body.activity_at);
+        if (!parsed) details.activity_at = ['The activity_at field must be a valid date.'];
+        else {
+          fields.activity_at = parsed.at;
+          activityPrecision = parsed.precision;
+        }
       }
       if (body.description !== undefined) fields.description = body.description == null ? null : String(body.description);
       if (body.metadata !== undefined) {
         if (body.metadata === null) fields.metadata = null;
         else if (typeof body.metadata !== 'object') details.metadata = ['The metadata field must be an object.'];
         else fields.metadata = body.metadata;
+      }
+      // An edit that moves the time moves the precision with it, so a row
+      // edited to a real time shows its hour and one edited to a bare date
+      // shows only the day. The key is merged into whatever metadata the
+      // row ends up with.
+      if (activityPrecision) {
+        const base = fields.metadata && typeof fields.metadata === 'object'
+          ? fields.metadata
+          : (fields.metadata === null ? {} : (existing.metadata || {}));
+        fields.metadata = { ...base, timestamp_precision: activityPrecision };
       }
 
       if (Object.keys(details).length) return fail(res, 422, 'The given data was invalid.', { details });

@@ -52,7 +52,7 @@ require.cache[pushId] = {
 const githubId = require.resolve('../src/services/github');
 require.cache[githubId] = {
   id: githubId, filename: githubId, loaded: true,
-  exports: new Proxy({ isEnabled: () => false, noteIssueCreated() {}, safeMention: (s) => s }, {
+  exports: new Proxy({ isEnabled: () => false, safeMention: (s) => s }, {
     get: (t, k) => (k in t ? t[k] : async () => null),
   }),
 };

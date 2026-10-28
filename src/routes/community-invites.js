@@ -19,13 +19,17 @@
  *   POST   /api/invite-links/by-token/:token/redeem  follow it
  *   GET    /api/invite-links/queued                the communities a person
  *                                                  still waiting is queued for
+ *   POST   /api/invite-links/queued/join           join them now, when the
+ *                                                  account may (a confirmed
+ *                                                  email or a phone)
  *   GET    /invite/:token                          the page: the shell, with
  *                                                  a link preview in its head
  *
- * The by-token routes and `queued` are open to a signed-in account without
- * platform access (GATE_OPEN_PATHS in middleware/auth.js): following a link
- * from the waiting room is how somebody still waiting queues a community.
- * Everything else a link does is behind the gate like the rest of the API.
+ * The by-token routes and the `queued` ones are open to a signed-in account
+ * without platform access (GATE_OPEN_PATHS in middleware/auth.js): following
+ * a link from the waiting room is how somebody still waiting queues a
+ * community, or joins it. Everything else a link does is behind the gate
+ * like the rest of the API.
  */
 
 const fs = require('fs');
@@ -274,6 +278,23 @@ function communityInviteRoutes(config) {
     }
   });
 
+  // The waiting room asks this on show. An account queued while a phone was
+  // the only way a link let somebody new in, and that has a confirmed email,
+  // joins those communities now as a private member (community-invites.js
+  // joinAsPrivateMember), as a phone added from the waiting room does. Joins
+  // nothing for anybody else, and answers which it joined.
+  router.post('/api/invite-links/queued/join', drainGuard, inviteRedeemLimiter, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const joined = await invites.joinQueued(pool, req.user.id, { requirePhone: phoneAuth.offered(config) });
+      if (joined.length) await challengeScorer.scoreOnJoin(pool, config);
+      return res.json({ joined });
+    } catch (err) {
+      log.error('invites', 'Joining queued invites failed', { err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.get('/api/invite-links/by-token/:token', invitePreviewLimiter, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     // Staging's demo link is never followed: signed in, it is a link that
@@ -324,7 +345,8 @@ function communityInviteRoutes(config) {
       await journeyEvents.noteInviteSignedIn(pool, { token: req.params.token, userId: req.user.id });
       const result = await invites.redeem(pool, {
         token: req.params.token, user: req.user, browser: inviteActivity.browserFrom(req),
-        // A private member signs up with a phone (community-invites.js).
+        // A private member has a verified phone or a confirmed email
+        // (community-invites.js joinAsPrivateMember).
         requirePhone: phoneAuth.offered(config),
       });
       // Following a link clears any copy the sign-in carried: it is spent.

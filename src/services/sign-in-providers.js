@@ -756,8 +756,7 @@ async function exchangeCode(pool, config, provider, { code, state }, deps = {}) 
 
 /**
  * The account for these claims, in one transaction. Returns one of
- *   { refuse: 'admin_password_required' | 'password_required'
- *             | 'no_verified_email' | 'linked_elsewhere' }
+ *   { refuse: 'password_required' | 'no_verified_email' | 'linked_elsewhere' }
  *   { next: 'signed-in', session, user, userId, created, email }
  *   { next: 'username', signupToken, expiresAt, userId, created, email }
  */
@@ -777,7 +776,6 @@ async function signIn(pool, provider, claims, { createSession }) {
     let created = false;
 
     if (user) {
-      if (user.is_admin) return { refuse: 'admin_password_required' };
       await client.query(
         `UPDATE user_oauth_identities
             SET last_used_at = NOW(), email = COALESCE($3, email)
@@ -797,8 +795,7 @@ async function signIn(pool, provider, claims, { createSession }) {
       );
       user = rows[0] || null;
       if (user) {
-        // The email code's refusals, for the same reasons (email-signup.js).
-        if (user.is_admin) return { refuse: 'admin_password_required' };
+        // The email code's refusals, for the same reason (email-signup.js).
         if (user.password_set && !user.email_confirmed) return { refuse: 'password_required' };
         // One identity per provider per account: a second, different one
         // with the same address is somebody's other account at the provider,
@@ -884,7 +881,7 @@ async function completeUsername(pool, { signupToken, username, createSession }) 
         [sha256Hex(signupToken)]
       );
       const signup = rows[0];
-      if (!signup || new Date(signup.expires_at) < new Date() || signup.is_admin) return { invalid: true };
+      if (!signup || new Date(signup.expires_at) < new Date()) return { invalid: true };
       let handle = signup.username;
       if (signup.needs_username_choice === true) {
         const free = await usernames.checkAvailability(client, check.value, signup.user_id);

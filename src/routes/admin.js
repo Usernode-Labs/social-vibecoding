@@ -49,6 +49,7 @@ const managedOpenRouter = require('../services/openrouter-managed-keys');
 const discoveryCuration = require('../services/discovery-curation');
 const appStorageCap = require('../services/app-storage-cap');
 const appLimit = require('../services/app-limit');
+const previewProjectsSetting = require('../services/preview-projects-setting');
 const sessionLimit = require('../services/session-limit');
 const platformLimits = require('../services/platform-limit-alerts');
 const githubBudget = require('../services/github-budget');
@@ -843,8 +844,7 @@ function adminRoutes(config) {
         userId: Number(req.params.id), actorId: req.user.id, mode: 'admin', confirmation: req.body?.confirmation,
       });
       res.json(result);
-      void require('../services/account-deletion-cleanup').sweep(pool, config).catch(() => {});
-    } catch (err) { require('./account-deletion').sendError(res, err); }
+          } catch (err) { require('./account-deletion').sendError(res, err); }
   });
 
   // Admin-issued temporary password (issue #282). The universal recovery
@@ -1407,6 +1407,50 @@ function adminRoutes(config) {
     }
   });
 
+  // ── Projects in previews ────────────────────────────────────
+  //
+  // Whether platform previews may have projects made in them, which
+  // production builds and runs for them (services/preview-projects.js).
+  // On by default; a full admin turns it off or on here without a deploy.
+  // Read open to view-only admins, like /app-limit; the write is
+  // requireAdminWrite. `enabled` is true, false, or null to go back to the
+  // default. When the deploy decides (the operator's
+  // PREVIEW_PROJECTS_ENABLED=false, or a Docker deploy) there is nothing to
+  // set (409): see the precedence in services/preview-projects-setting.js.
+  router.get('/api/admin/preview-projects', async (_req, res) => {
+    try {
+      res.json(await previewProjectsSetting.adminPayload(pool, config));
+    } catch (err) {
+      log.error('admin', 'Read preview projects setting failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/preview-projects', requireAdminWrite, async (req, res) => {
+    const body = req.body || {};
+    if (!Object.prototype.hasOwnProperty.call(body, 'enabled')) {
+      return res.status(400).json({ error: 'Provide enabled: true, false, or null for the default.' });
+    }
+    const invalid = previewProjectsSetting.validate(body.enabled);
+    if (invalid) return res.status(400).json({ error: invalid });
+    const block = previewProjectsSetting.deployBlock(config);
+    if (block) {
+      return res.status(409).json({
+        error: block === 'off'
+          ? 'The deploy has switched projects in previews off (PREVIEW_PROJECTS_ENABLED is false), so there is nothing to set.'
+          : 'This deploy cannot make projects in previews (they need Kubernetes), so there is nothing to set.',
+      });
+    }
+    try {
+      await previewProjectsSetting.set(pool, { value: body.enabled, actorId: req.user.id });
+      log.info('admin', 'Preview projects setting updated', { by: req.user.username, enabled: body.enabled });
+      res.json(await previewProjectsSetting.adminPayload(pool, config));
+    } catch (err) {
+      log.error('admin', 'Update preview projects setting failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // ── Session limit ───────────────────────────────────────────
   //
   // The platform-wide cap on coding sessions, active and in review
@@ -1946,13 +1990,14 @@ function adminRoutes(config) {
       const fresh = rows.find((r) => r.id === id);
       res.json({ domain: fresh ? adminDomainRow(fresh) : null });
     } catch (err) {
+      if (err.code === 'edge_teardown_failed') return res.status(503).json({ error: err.message, code: err.code });
       log.error('admin', 'Custom domain action failed', { id, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   }
 
   router.post('/api/admin/domains/:id/check', requireAdminWrite, (req, res) => adminDomainAction(req, res,
-    (row) => (row.status === 'disabled' ? row : appDomains.checkNow(pool, config, row))));
+    (row) => (row.status === 'disabled' ? row : appDomains.checkNow(pool, config, row, { userId: req.user.id }))));
   router.post('/api/admin/domains/:id/disable', requireAdminWrite, (req, res) => adminDomainAction(req, res,
     (row) => (row.status === 'disabled' ? row : appDomains.disable(pool, config, row, req.user))));
   router.post('/api/admin/domains/:id/enable', requireAdminWrite, (req, res) => adminDomainAction(req, res,
@@ -2330,7 +2375,7 @@ function adminRoutes(config) {
       // request (a provider failure is logged inside it).
       try {
         await managedOpenRouter.syncAllowance({
-          pool, userId, config,
+          pool, userId, config, actorId: req.user.id,
           state: await managedOpenRouter.stateForUser(pool, userId),
         });
       } catch (err) {
@@ -3216,7 +3261,30 @@ function adminRoutes(config) {
       senders: smsSenders.list(config, senderProvider),
       senderProvider,
       stagingLogOnly: provider.stagingLogOnly,
+      // The Firebase backup for sign-in codes a gateway could not send
+      // (services/firebase-phone-auth.js, FIREBASE BACKUP). `ready` is
+      // Firebase being set up; without it the switch does nothing.
+      fallback: {
+        enabled: await smsSelect.fallbackEnabled(pool).catch(() => true),
+        ready: phoneAuth.firebaseOffered(config),
+      },
     });
+  });
+
+  // Switch the Firebase backup on or off. Full admins only.
+  router.put('/api/admin/sms/fallback', requireAdminWrite, async (req, res) => {
+    const enabled = req.body?.enabled;
+    if (typeof enabled !== 'boolean') {
+      return res.status(422).json({ error: 'enabled must be true or false.', code: 'invalid_enabled' });
+    }
+    try {
+      await smsSelect.setFallback(pool, enabled, req.user.id);
+      log.warn('admin', 'Admin switched the Firebase SMS backup', { by: req.user.username, enabled });
+      res.json({ ok: true, enabled });
+    } catch (err) {
+      log.error('admin', 'sms fallback change failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
   });
 
   // Change who sends texts. Full admins only, and a provider that is not

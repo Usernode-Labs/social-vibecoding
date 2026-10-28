@@ -51,6 +51,7 @@ function loadWorker({
 } = {}) {
   const ids = {
     docker: require.resolve('../src/services/docker'),
+    publication: require.resolve('../src/services/turn-publication'),
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
     subject: require.resolve('../src/services/worker'),
@@ -78,6 +79,7 @@ function loadWorker({
       return { stdout: '', stderr: '' };
     },
   });
+  stub(ids.publication, { captureTarget: async () => ({}), beforeCleanup: async () => {}, eligible: () => false, publish: async ({ result }) => result });
   const noop = () => {};
   stub(ids.logger, { info: noop, warn: noop, error: noop, debug: noop });
 
@@ -273,9 +275,23 @@ test('stopTurn flags the session so the watchdog tightens its cadence', async ()
   } finally { restore(); }
 });
 
+test('the web stop gate records intent without runtime I/O or a last-use write', async () => {
+  const { worker, calls, dbCalls, restore } = loadWorker();
+  try {
+    worker.noteStopPending(778);
+    assert.ok(worker.getPendingStop(778) > 0);
+    assert.deepEqual(calls, []);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(dbCalls, [], 'does not invalidate the queued stop snapshot by marking the worker used');
+    const state = await worker.execInWorker(778, { ...DISPATCH_ARGS, logicalTurnId: 'stopped-778' });
+    assert.equal(state.exitCode, 143); assert.deepEqual(calls, []);
+  } finally { restore(); }
+});
+
 test('stopTurn swallows docker failures — the watchdog is the fallback', async () => {
   const ids = {
     docker: require.resolve('../src/services/docker'),
+    publication: require.resolve('../src/services/turn-publication'),
     logger: require.resolve('../src/services/logger'),
     subject: require.resolve('../src/services/worker'),
   };
@@ -357,7 +373,7 @@ test('a pending stop makes execInWorker skip the dispatch entirely', async () =>
   const { worker, calls, restore } = loadWorker();
   try {
     warmSession(worker, 8100);
-    await worker.stopTurn(8100);
+    worker.noteStopPending(8100);
     const afterStop = calls.length;
 
     const state = await worker.execInWorker(8100, {
@@ -435,7 +451,7 @@ test('a skipped dispatch hands a tail-holding caller its record, and never touch
   } finally { restore(); }
 });
 
-test('a skipped legacy dispatch does not invent a durable turn owner', async () => {
+test('a dispatch cancelled before registration does not invent a durable turn owner', async () => {
   const { worker, calls, restore } = loadWorker();
   try {
     warmSession(worker, 8103);
@@ -461,12 +477,13 @@ test('a new turn pushes the earlier commit before dispatching its runner', async
     onExec: call => { if (isDispatch(call)) { assert.equal(pending, null); order.push('runner'); } },
     queryAnswer: (sql, params) => {
       if (sql.includes('SELECT sw.unpushed_sha AS sha')) return { rows: pending ? [{ ...pending, active: false }] : [] };
-      if (sql.includes('SELECT cs.app_id, cs.branch_name')) return { rows: [{ branch_name: 'dev/test', repo_url: 'https://github.com/Trusted-Owner/stored-repo.git',
+      if (sql.includes('SELECT cs.app_id, cs.user_id, cs.branch_name')) return { rows: [{ branch_name: 'dev/test', repo_url: 'https://github.com/Trusted-Owner/stored-repo.git',
         unpushed_sha: pending?.sha, unpushed_branch_name: pending?.branchName }] };
       if (sql.includes('UPDATE session_workers SET unpushed_sha = NULL')) { assert.equal(params[1], pending.sha); pending = null; }
     },
   });
   t.mock.method(require('../src/services/github-pause'), 'codeChangesPaused', () => false);
+  t.mock.method(require('../src/services/github'), 'checkRepoPublic', async () => ({ ok: true, private: false }));
   t.mock.method(require('../src/services/github'), 'getInstallationToken', async () => 'fake-rescue-token');
   t.mock.method(require('../src/services/worker-git-push'), 'push', async () => { order.push('push'); return { sha: 'a'.repeat(40), stderr: '' }; });
   try {
@@ -486,12 +503,13 @@ test('an unpushed commit refuses a new turn without a runner, charge or retained
           const active = activeTurns.get(8315);
           return { rows: [{ ...commit, active: !!active, turn_id: active?.turnId, phase: active?.phase }] };
         }
-        if (sql.includes('SELECT cs.app_id, cs.branch_name')) return { rows: [{ branch_name: commit.branchName,
+        if (sql.includes('SELECT cs.app_id, cs.user_id, cs.branch_name')) return { rows: [{ branch_name: commit.branchName,
           repo_url: 'https://github.com/Trusted-Owner/stored-repo.git', unpushed_sha: commit.sha, unpushed_branch_name: commit.branchName }] };
       } });
       ({ activeTurns } = fx);
       t.mock.method(require('../src/services/github-pause'), 'codeChangesPaused', () => cause === 'github_paused');
-      t.mock.method(require('../src/services/github'), 'getInstallationToken', async () => cause === 'no_token' ? null : 'fake-rescue-token');
+      t.mock.method(require('../src/services/github'), 'checkRepoPublic', async () => ({ ok: true, private: false }));
+  t.mock.method(require('../src/services/github'), 'getInstallationToken', async () => cause === 'no_token' ? null : 'fake-rescue-token');
       t.mock.method(require('../src/services/worker-git-push'), 'push', async () => { throw new Error('Synthetic network outage'); });
       try {
         warmSession(fx.worker, 8315);
@@ -586,13 +604,16 @@ test('a stop landing DURING the dispatch re-issues the kill', async () => {
   // in the milliseconds while `docker exec -d` is in flight, so its kill
   // found no turn process. The re-arm fires once the registry knows this
   // turn's journal path, which is what makes the marker land.
-  let worker;
+  let worker; const confirmations = [];
+  const interrupts = require('../src/services/worker-interrupt');
+  const originalConfirm = interrupts.confirmDispatchedStop;
+  interrupts.confirmDispatchedStop = async (_pool, target) => { confirmations.push(target); };
   const { calls, restore, worker: w } = loadWorker({
     journalLines: ['__USERNODE_EXIT__ 143'],
     onExec: async ({ args }) => {
       // Simulate the click landing between `exec -d` being issued and it
       // returning — stamp the record the way POST /stop would.
-      if (args[0] === 'exec' && args[1] === '-d') await worker.stopTurn(8200);
+      if (args[0] === 'exec' && args[1] === '-d') worker.noteStopPending(8200, 'root');
     },
   });
   worker = w;
@@ -617,7 +638,12 @@ test('a stop landing DURING the dispatch re-issues the kill', async () => {
     // the whole point of re-arming after dispatch rather than before.
     assert.match(script, /J='\/home\/node\/\.claude\/turn-[A-Za-z0-9-]+\.log'/,
       'the kill targets this UUID-safe logical turn journal');
-  } finally { restore(); }
+    assert.equal(confirmations.length, 1);
+    assert.equal(confirmations[0].sessionId, 8200);
+    assert.equal(confirmations[0].by, 'root', 'the real stopper reaches the system backstop');
+    assert.equal(confirmations[0].journal, `/home/node/.claude/turn-${confirmations[0].turnId}.log`);
+    assert.ok(script.includes(confirmations[0].journal), 'the durable backstop targets the same dispatched job');
+  } finally { interrupts.confirmDispatchedStop = originalConfirm; restore(); }
 });
 
 test('with no stop pending, a dispatch proceeds and issues no kill', async () => {
@@ -1054,6 +1080,27 @@ test('a stop by journal on a session with no worker stops nothing, and does not 
   try {
     assert.equal(await worker.stopTurnByJournal(8401, JOURNAL), 'not_current');
   } finally { restore(); }
+});
+
+test('ordinary journal stop preserves TERM grace and fences the journal before signalling', async () => {
+  const { worker, calls, restore } = loadWorker();
+  try {
+    assert.equal(await worker.stopTurnByJournal(8402, JOURNAL, { force: false, timeoutMs: 4321 }), 'signalled');
+    const script = calls[0].args[4];
+    assert.ok(script.indexOf(`[ "$N" = '${JOURNAL}' ]`) < script.indexOf('kill -TERM'));
+    assert.ok(script.indexOf('kill -TERM') < script.indexOf('sleep 0.1'));
+    assert.ok(script.indexOf('sleep 0.1') < script.indexOf('kill -KILL'));
+    assert.equal(calls[0].opts.timeout, 4321);
+  } finally { restore(); }
+});
+
+test('retry-time worker cancellation returns false on web without runtime access', async t => {
+  const before = process.env.PROCESS_ROLE; process.env.PROCESS_ROLE = 'web';
+  t.after(() => { if (before == null) delete process.env.PROCESS_ROLE; else process.env.PROCESS_ROLE = before; });
+  const worker = require('../src/services/worker');
+  t.mock.method(worker, 'stopTurn', () => { throw new Error('web signal'); });
+  t.mock.method(worker, 'isWorkerExecuting', () => { throw new Error('web probe'); });
+  assert.equal(await require('../src/services/worker-interrupt').waitForTurnStopped(8402, 'unused'), false);
 });
 
 test('a machine stops only its own turn: another machine\'s, a person\'s or another kind is left alone', async () => {

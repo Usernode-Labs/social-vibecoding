@@ -4279,6 +4279,10 @@
     "text": "Open this proposal's discussion",
     "description": "Tooltip of a governance proposal's card in the Workshop list; pressing the card opens its page. \"Open\" is a verb."
   },
+  "governance.closes.title": {
+    "text": "The request",
+    "description": "Small heading inside About this proposal on a proposal to close a request, over the closed request's title, who asked and its words."
+  },
   "governance.roster.yes_one": {
     "text": "Yes ({{count}})",
     "description": "Lead of the list of people who voted Yes on a governance proposal, on its page; the names follow after a colon. {{count}} is how many people."

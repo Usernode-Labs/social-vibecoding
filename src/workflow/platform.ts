@@ -58,12 +58,16 @@ import { releaseServices } from './release/services.ts';
 import type { Adoption } from './release/services.ts';
 import { MACHINE as CLOCK, clock, clockKey } from './clock/machine.ts';
 import { clockServices } from './clock/services.ts';
-import { workerPush } from './worker-push/machine.ts';
-import { workerPushServices } from './worker-push/services.ts';
-import { requestWorkerPush as askWorkerPush } from './worker-push/request.ts';
 import { MACHINE as WORKER_RELEASE, WORK as RELEASE_WORKER, releaseKey as workerReleaseKey, workerRelease } from './worker-release/machine.ts';
 import type { Request as WorkerReleaseRequest } from './worker-release/machine.ts';
 import { workerReleaseServices } from './worker-release/services.ts';
+import { workerStop } from './worker-stop/machine.ts';
+import { workerStopServices, workerInterruptServices } from './worker-stop/services.ts';
+import { workerInterrupt, requestWorkerInterrupt as askWorkerInterrupt } from './worker-stop/interrupt.ts';
+import { requestWorkerStop as askWorkerStop } from './worker-stop/request.ts';
+import { MACHINE as PLATFORM_OPERATION, WORK as OPERATION_WORK, operationKey, platformOperation, singleFlight } from './platform-operation/machine.ts';
+import type { Request as OperationRequest } from './platform-operation/machine.ts';
+import { platformOperationServices } from './platform-operation/services.ts';
 import { JOBS as CLOCK_JOBS, JOB_NAMES as CLOCK_JOB_NAMES } from './clock/services.ts';
 import { requestKey as botRequestKey } from './rules/bot-loop.ts';
 import { DM as BOT_DM, VOICE as BOT_VOICE, dmKey, placeOf, voiceKey } from './rules/bot-replies.ts';
@@ -179,7 +183,7 @@ export function drainExcess(): number {
   return legacy('db/connection-options').poolExcess(kernelPool);
 }
 
-export async function startWorkflow(config: any, opts: { loops: boolean }): Promise<void> {
+export async function startWorkflow(config: any, opts: { loops: boolean; previewRetirement?: Json }): Promise<void> {
   log = legacy('services/logger');
   appConfig = config;
   const appPool = legacy('db/pool').getPool(config);
@@ -247,7 +251,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const trials = shotsEval(evalDeps(config));
   // People's turns: a conversation's, a change's (turn/).
   const turns = turnMachine();
-  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, trials, turns, releases, clocks, workerPush(), workerRelease()];
+  const machines = [machine, merges, builds, deliveries, creations, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, bench, trials, turns, releases, clocks, workerRelease(), workerStop(), workerInterrupt(), platformOperation()];
   knownEvents = new Map(machines.map((m) => [m.name, new Set(m.events.keys())]));
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
@@ -256,10 +260,12 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     ...mainCheckServices(deps), ...botRequestServices(deps), ...botLaneServices(deps), ...benchLaneServices({ config, pool: appPool }),
     ...shotsEvalServices({ config, pool: appPool }),
     ...turnServices({ config, pool: appPool }),
-    ...workerPushServices({ pool: appPool }),
     ...workerReleaseServices({ pool: appPool }),
+    ...workerStopServices({ pool: appPool }),
+    ...workerInterruptServices({ pool: appPool }),
+    ...platformOperationServices({ pool: appPool, config }),
     ...releaseServices({ adoptions: ADOPTIONS }),
-    ...clockServices(CLOCK_JOBS, { config, pool: appPool }),
+    ...clockServices(CLOCK_JOBS, { config, pool: appPool, previewRetirement: opts.previewRetirement }),
   };
   const started = createPlatformRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, release: bootRelease(),
@@ -310,6 +316,16 @@ export async function startWorkflowLoops(): Promise<void> {
   // Owed before any work is claimed: a failure here ends the process with
   // nothing of its own running.
   const release = bootRelease();
+  // This clock opens web readiness. Arm it before unrelated release
+  // adoptions and their retries: due now on first boot, otherwise on its
+  // existing minute interval. Retirement already ran before this conductor
+  // could start any preview work (server.js).
+  if (legacy('config').runsClusterMaintenance()) {
+    const job = CLOCK_JOBS.find(j => j.name === 'preview-data-policy')!;
+    await runtime.append(CLOCK, clockKey(job.name), { type: 'Arm', payload: {
+      job: job.name, everyMs: job.everyMs, firstDueAt: new Date().toISOString(), onDemand: false,
+    } }, { requestKey: `arm:${release}`, source: { kind: 'system', name: 'release' } });
+  }
   await runtime.append(RELEASE, releaseKey(release), { type: 'Booted', payload: { release } },
     { requestKey: `booted:${release}`, source: { kind: 'system', name: 'boot' } });
   await runtime.start({ loops: true });
@@ -493,6 +509,7 @@ async function armClocks(release: string): Promise<number> {
   }
   if (!runs) return 0;
   for (const job of CLOCK_JOBS) {
+    if (job.name === 'preview-data-policy') continue; // armed before the release's adoption work
     // A job first armed is due within the next two minutes (spread, so they
     // do not all start in the same second). Only the first Arm reads it. An
     // on-demand job runs only when asked; its interval is what an older
@@ -1170,10 +1187,12 @@ function running(): Runtime {
   return runtime;
 }
 
-// HTTP and any remaining web-side salvage callers share this seam. There is
-// no privileged local fallback when the conductor is unavailable.
-export function requestWorkerPush(sessionId: number, branchName?: string) {
-  return askWorkerPush(running(), kernelPool!, { sessionId, branchName });
+export function requestWorkerStop(p: Parameters<typeof askWorkerStop>[2]) {
+  return askWorkerStop(running(), kernelPool!, p);
+}
+
+export function requestWorkerInterrupt(p: Parameters<typeof askWorkerInterrupt>[2]) {
+  return askWorkerInterrupt(running(), kernelPool!, p);
 }
 
 // Called in the context reset's transaction, or once for a promoted Pause.
@@ -1183,6 +1202,48 @@ export function appendWorkerRelease(db: Queryable, p: WorkerReleaseRequest): Pro
   return appendEvent(db, WORKER_RELEASE, workerReleaseKey(p.sessionId, requestId),
     { type: 'Requested', payload: { ...p, requestId } },
     { appId: p.appId, requestKey: requestId, actor: `user:${p.userId}`, source: { kind: 'route', name: RELEASE_WORKER } });
+}
+
+// A privileged operation (platform-operation/): appended for a conductor,
+// then waited for. An event no conductor decides within `admitMs` is refused,
+// so it never runs later (503 to the route). An accepted one is waited for up
+// to `waitMs`; past that the answer is `pending` with its request id, and the
+// work still finishes, publishing what it changed as it always did.
+export type OperationOutcome =
+  | { status: 'done'; requestId: string; result: Json }
+  | { status: 'failed'; requestId: string; error: { message: string; code: string | null } | null }
+  | { status: 'pending'; requestId: string }
+  | { status: 'refused'; requestId: string; reason: string | null };
+export async function runOperation(p: Omit<OperationRequest, 'requestId'>,
+  { waitMs = 60000, admitMs = 5000 }: { waitMs?: number; admitMs?: number } = {}): Promise<OperationOutcome> {
+  const rt = running();
+  if (singleFlight(p.op)) throw new Error(`${p.op} is appended, never waited for (appendOperation)`);
+  const requestId = randomUUID(); const key = operationKey({ ...p, requestId });
+  const out = await rt.appendAndWait(PLATFORM_OPERATION, key, { type: 'Requested', payload: { ...p, requestId } },
+    { appId: p.appId, actor: `user:${p.userId}`, source: { kind: 'route', name: OPERATION_WORK }, requestKey: requestId, waitMs: admitMs });
+  const settled = out.status === 'pending' ? (await rt.refuseIfPending(out.eventId, 'operation_unavailable')) ?? out : out;
+  if (settled.status !== 'accepted' && settled.status !== 'replayed') return { status: 'refused', requestId, reason: settled.reason ?? settled.status };
+  return operationOutcome(requestId,
+    await rt.waitFor(PLATFORM_OPERATION, key, i => i.state === 'done' || i.state === 'failed', waitMs));
+}
+
+// What a route is told of an operation's instance as the wait last read it
+// (the kernel answers with that read when the wait runs out): only a
+// finished instance is an answer; anything else is still under way.
+export function operationOutcome(requestId: string, i: { state: string; data: any } | null): OperationOutcome {
+  if (i?.state === 'failed') return { status: 'failed', requestId, error: i.data?.error ?? null };
+  if (i?.state === 'done') return { status: 'done', requestId, result: (i.data ?? null) as Json };
+  return { status: 'pending', requestId };
+}
+
+// The same request appended in the caller's transaction, for an operation
+// nobody waits on (an Undo's revert, opened after the answer): it runs once
+// the transaction commits, on whichever conductor claims it.
+export async function appendOperation(db: Queryable, p: Omit<OperationRequest, 'requestId'>): Promise<string> {
+  const requestId = randomUUID();
+  await appendEvent(db, PLATFORM_OPERATION, operationKey({ ...p, requestId }), { type: 'Requested', payload: { ...p, requestId } },
+    { appId: p.appId, actor: `user:${p.userId}`, source: { kind: 'route', name: OPERATION_WORK }, requestKey: requestId });
+  return requestId;
 }
 
 // Whether this process runs the workflow's loops (the admin console's reads

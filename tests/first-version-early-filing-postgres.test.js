@@ -142,7 +142,6 @@ test('a first version filed while its project is set up', { timeout: 180000 }, a
       return m ? { owner: m[1], repo: m[2] } : null;
     },
     async createIssue(owner, repo, body) { created.push({ owner, repo, ...body }); return { number: 1 }; },
-    noteIssueCreated() {},
     getBotUsername: async () => 'usernode-bot',
     async fetchPublicIssue(_o, _r, number) {
       return { issue: { number, title: 'First version', body: 'Polls for our club', state: 'open', createdAt: '2026-10-15T10:00:00Z', updatedAt: '2026-10-15T10:00:00Z' } };

@@ -40,6 +40,13 @@ test('exports real commits and merges, and repeats a successful push', async (t)
   assert.equal(git(f.origin, 'rev-parse', `refs/heads/${branchName}`), merged);
 });
 
+test('publication refuses an export whose commit differs from its durable intent', async t => {
+  const f = fixture(t); const sha = commit(f.ws, 'saved-work');
+  await assert.rejects(publish(f, { expectedSha: 'f'.repeat(40) }), e => e.code === 'commit_changed' && e.permanent);
+  assert.equal(git(f.origin, 'for-each-ref', '--format=%(refname)', `refs/heads/${branchName}`), '');
+  assert.equal((await publish(f, { expectedSha: sha })).sha, sha);
+});
+
 test('an unchanged base can create a session branch without an empty bundle', async (t) => {
   const f = fixture(t);
   assert.equal((await publish(f)).sha, f.base);

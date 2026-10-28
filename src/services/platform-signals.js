@@ -448,7 +448,6 @@ async function fileRow(pool, config, row, deps) {
       const created = await github.createIssue(parsed.owner, parsed.repo, { title: row.title, body });
       issueNumber = Number(created && created.number);
       if (!Number.isInteger(issueNumber) || issueNumber <= 0) throw new Error('invalid issue number');
-      try { github.noteIssueCreated?.(parsed.owner, parsed.repo, created); } catch {}
       // Not main-watch's fileBotIssue: that also tells everybody who follows
       // the board that a request was filed, and on Homeroom's own board
       // that is every member. A signal tells the full admins instead (below).

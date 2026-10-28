@@ -1443,9 +1443,9 @@ CREATE INDEX IF NOT EXISTS chat_sessions_activity_idx ON chat_sessions(status, l
 -- A headless session is NOT connected to any user's dev chat: it runs one
 -- unattended Mayor turn (scout / build / question) against the issue, may
 -- push a branch, but never opens a PR or builds staging. It is billed to
--- the user who clicked the button (user_id), and any collaborator can later
--- clone its state (messages + spec + branch + CC memory) into their own
--- dev-chat session via POST /api/sessions/:id/clone-headless.
+-- the user who clicked the button (user_id). The hosted connector can later
+-- clone its messages, spec and pushed branch into the caller's own proposal
+-- via POST /api/sessions/:id/clone-headless. Agent memory is not copied.
 --   is_headless            = marks the row as an auto session; excluded from
 --                            per-user session lists, the 3-slot cap, and chat.
 --   headless_status        = 'generating' (run in flight) | 'ready' | 'failed'.
@@ -7740,6 +7740,52 @@ CREATE TABLE IF NOT EXISTS external_agent_patch_uploads (
 );
 COMMENT ON TABLE external_agent_patch_uploads IS 'staging:private';
 
+-- ── Connector uploads: a plan, a video or a screenshot ───────────────
+-- The work-order patch upload above, for the other big things a coding agent
+-- hands Homeroom through the connector. post_spec took a plan only as a
+-- string inside the tool call, and a plan with drawn screens runs to
+-- hundreds of KB; create_request took screenshots only as base64 and a video
+-- not at all. prepare_upload now mints one row here and prints a curl
+-- command; the agent sends the file with it, and post_spec or
+-- create_request names the row's id instead of carrying the bytes.
+-- services/connector-uploads.js has the whole design.
+--
+-- One table, because each credential is for ONE upload: the row is the
+-- credential (token_hash, SHA-256 only; the token itself is printed in the
+-- prepare_upload answer to its owner and nowhere else) and, once the file
+-- has come, a record of it. A used row takes no second upload, so a token
+-- that leaked cannot swap the bytes its owner is about to submit.
+--
+-- A plan's text is kept in `data` until post_spec posts it. A video or a
+-- screenshot goes where the feedback dialog's clips and stills go
+-- (issue_videos, issue_screenshots), unlinked, and `media_id` names that row;
+-- create_request links it to the request exactly as Send feedback does, and
+-- an upload nobody files is swept from there after 24 hours like any other.
+-- The row itself is deleted once its file is used, and swept a day after it
+-- expires.
+--
+-- `staging:private`: unpublished work and credential hashes.
+CREATE TABLE IF NOT EXISTS connector_uploads (
+  id            BIGSERIAL PRIMARY KEY,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind          VARCHAR(16) NOT NULL CHECK (kind IN ('plan', 'video', 'screenshot')),
+  token_hash    TEXT NOT NULL UNIQUE CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at    TIMESTAMPTZ NOT NULL,
+  stored_at     TIMESTAMPTZ,
+  content_type  VARCHAR(32),
+  bytes         INTEGER CHECK (bytes IS NULL OR bytes > 0),
+  sha256        TEXT,
+  data          BYTEA,
+  media_id      VARCHAR(32)
+);
+COMMENT ON TABLE connector_uploads IS 'staging:private';
+COMMENT ON COLUMN connector_uploads.token_hash IS 'staging:private';
+CREATE INDEX IF NOT EXISTS connector_uploads_user_idx
+  ON connector_uploads (user_id, created_at);
+CREATE INDEX IF NOT EXISTS connector_uploads_expiry_idx
+  ON connector_uploads (expires_at);
+
 -- ── Generic agent backend (Codex/OpenRouter BYOK; plan.md PR1) ───────
 -- chat_sessions today pins Claude continuity via cc_session_id. To add a
 -- second coding-agent backend (codex_openrouter) without breaking the
@@ -8065,11 +8111,8 @@ COMMENT ON COLUMN users.profile_disabled_reason IS 'staging:private';
 -- above: the column holds the sha256 hex of a 32-byte token that only ever
 -- travels inside the emailed link (/#reset-password?token=…), so a DB read
 -- alone can never redeem a reset. Minted by POST
--- /api/auth/password-reset/request only for non-admin accounts with a
--- CONFIRMED email (admins keep the admin-issued temporary-password path —
--- the same email-control-must-not-equal-admin-takeover stance as the
--- web signup guard in src/services/email-signup.js), consumed and
--- cleared by POST /api/auth/password-reset/confirm, which runs
+-- /api/auth/password-reset/request for any account with a CONFIRMED email,
+-- consumed and cleared by POST /api/auth/password-reset/confirm, which runs
 -- accountRecovery() so every session and CLI authorization dies with the
 -- old password.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_token_hash VARCHAR(64);
@@ -16051,3 +16094,63 @@ CREATE TABLE IF NOT EXISTS git_host_moves (
   recorded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   applied_at      TIMESTAMPTZ
 );
+
+-- ── Projects made inside a platform preview (services/preview-projects.js)
+--
+-- A preview of the platform runs unreviewed code, so it may not create a
+-- database, build an image or run a container itself. Production does those
+-- three for it, for the projects someone makes there, and nothing else.
+--
+-- preview_project_tokens: the preview's credential, minted when production
+-- deploys it (one per deploy; the newest few live, so a rollout's old pods
+-- keep working). Only the SHA-256 is stored. It dies with the session, and
+-- is deleted when the preview retires. On the prod-debug deny list
+-- (debug-access.js).
+--
+-- preview_projects: one row per project a preview made, by its slug there.
+-- NO foreign key to chat_sessions on purpose: if a session row went, its
+-- projects' runtimes and databases would still be out there, and this row
+-- is how the sweep finds them. `state` is the last operation's: building
+-- and deploying run in the process that took them, and one older than the
+-- stale window is treated as failed. `db_password` is the project database
+-- role's, which production alone holds.
+--
+-- `staging:private`: credential hashes and database passwords.
+CREATE TABLE IF NOT EXISTS preview_project_tokens (
+  id          BIGSERIAL PRIMARY KEY,
+  session_id  INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  token_hash  TEXT NOT NULL UNIQUE CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at  TIMESTAMPTZ NOT NULL
+);
+COMMENT ON TABLE preview_project_tokens IS 'staging:private';
+COMMENT ON COLUMN preview_project_tokens.token_hash IS 'staging:private';
+CREATE INDEX IF NOT EXISTS preview_project_tokens_session_idx
+  ON preview_project_tokens (session_id);
+
+CREATE TABLE IF NOT EXISTS preview_projects (
+  id             BIGSERIAL PRIMARY KEY,
+  session_id     INTEGER NOT NULL,
+  slug           VARCHAR(64) NOT NULL,
+  preview_app_id INTEGER NOT NULL,
+  name           VARCHAR(255) NOT NULL DEFAULT '',
+  state          VARCHAR(16) NOT NULL DEFAULT 'creating'
+                 CHECK (state IN ('creating', 'created', 'building', 'built', 'deploying', 'running', 'failed')),
+  op_started_at  TIMESTAMPTZ,
+  error          TEXT,
+  db_name        VARCHAR(63),
+  db_server      VARCHAR(16),
+  db_password    TEXT,
+  source_branch  VARCHAR(128),
+  source_sha     VARCHAR(40),
+  image_ref      VARCHAR(512),
+  build_ref      VARCHAR(512),
+  runtime_name   VARCHAR(63),
+  hostname       VARCHAR(253),
+  builds         INTEGER NOT NULL DEFAULT 0,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (session_id, slug)
+);
+COMMENT ON TABLE preview_projects IS 'staging:private';
+COMMENT ON COLUMN preview_projects.db_password IS 'staging:private';

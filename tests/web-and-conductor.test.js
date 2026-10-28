@@ -111,9 +111,6 @@ test('issues one process closes leave every process\'s board read, with nothing 
   const github = require('../src/services/github');
   await github.closeIssue('Acme', 'board', 4);
   await github.closeIssue('Acme', 'board', 5);
-  github.noteIssuesClosed('Acme', 'board', [4, 'x', 5]);
-  github.invalidateIssuesCache('Acme', 'board');
-  github.unsuppressIssues('Acme', 'board', [5]);
   assert.deepEqual(sent, [], 'nothing is passed on');
   const ws = require('../src/services/ws');
   ws._onBusMessage({ kind: 'issues_cache', routing: { owner: 'Acme', repo: 'board' }, data: { open: [5] } });
@@ -217,6 +214,12 @@ test('the chart runs a conductor beside the web Pods by default, and the Service
   assert.deepEqual(deployments.map((d) => [d.metadata.name, role(d)]),
     [['social-vibecoding', 'web'], ['social-vibecoding-conductor', 'conductor']]);
   const [web, conductor] = deployments;
+  for (const deployment of deployments) {
+    const probe = deployment.spec.template.spec.containers[0].startupProbe;
+    assert.ok(probe.periodSeconds * probe.failureThreshold * 1000
+      >= require('../src/services/platform-preview-startup').WAIT_MS + 120_000,
+    'the startup probe allows the security barrier and ordinary boot/drain work');
+  }
   assert.equal(web.spec.template.metadata.labels['social.usernode.io/serves-requests'], 'true');
   assert.equal(conductor.spec.template.metadata.labels['social.usernode.io/serves-requests'], undefined, 'no requests for the conductor');
   assert.equal(conductor.spec.template.metadata.labels['app.kubernetes.io/component'], 'platform', 'the platform\'s network identity');

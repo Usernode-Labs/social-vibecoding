@@ -585,9 +585,13 @@ test('the password step walks on Return, and each field says what its Return doe
   assert.match(SHEET, /id="sign-in-sheet-current-password"[^>]*enterKeyHint="go"/);
   // The account step is one field since #4891 (no password), so it goes too.
   assert.doesNotMatch(SHEET, /id="sign-in-sheet-password"|sign-in-sheet-confirm|Password again|accountStepFields/);
-  for (const id of ['sign-in-sheet-email', 'sign-in-sheet-code', 'sign-in-sheet-provider-username', 'sign-in-sheet-username']) {
+  for (const id of ['sign-in-sheet-email', 'sign-in-sheet-provider-username', 'sign-in-sheet-username']) {
     assert.match(SHEET, new RegExp(`id="${id}"[^>]*enterKeyHint="go"`), `${id}: a one-field step's Return goes`);
   }
+  // The code steps draw the shared boxes (#5989), whose one real field says
+  // "go" for every screen that uses it.
+  assert.match(SHEET, /<CodeBoxes id="sign-in-sheet-code"/);
+  assert.match(read('frontend/src/features/auth/code-boxes.tsx'), /enterKeyHint="go"/);
   assert.doesNotMatch(SHEET, /id="sign-in-sheet-username"[^>]*onKeyDown=/);
   assert.match(SHEET, /const passwordStepFields = \[identifierField, currentPasswordField\];/);
 });

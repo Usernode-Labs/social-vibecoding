@@ -31,7 +31,6 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
-const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 
 const registry = require('../src/agents/registry');
 const agentTurn = require('../src/services/agent-turn');
@@ -112,6 +111,7 @@ function stubModule(id, exports) {
 function loadWorker(t, journalLines) {
   const ids = {
     docker: require.resolve('../src/services/docker'),
+    publication: require.resolve('../src/services/turn-publication'),
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
     childProcess: require.resolve('child_process'),
@@ -125,6 +125,10 @@ function loadWorker(t, journalLines) {
     ...realDocker,
     execFileAsync: async (cmd, args, opts) => { calls.push({ cmd, args, opts }); return { stdout: '', stderr: '' }; },
     execShellStdin: async () => ({ stdout: '', stderr: '' }),
+  });
+  stubModule(ids.publication, {
+    captureTarget: async () => ({}), beforeCleanup: async () => {}, eligible: () => false,
+    publish: async ({ result }) => result.ahead > 0 && result.sha && !result.branchMismatch ? { ...result, pushOk: true } : result,
   });
   const noop = () => {};
   stubModule(ids.logger, { info: noop, warn: noop, error: noop, debug: noop });
@@ -351,7 +355,7 @@ function runRunCc(env, fx, upstream, extra = {}) {
         INLOOP_PGDATA: path.join(fx.dir, 'absent-pgdata'),
         RUNNER: path.join(ROOT, 'worker', 'run-cc.sh'),
         TURN_JOURNAL: journal,
-        ...RUNNER_TEST_ENV,
+
         ...extra,
       },
       stdio: ['ignore', 'ignore', 'ignore'],
@@ -777,7 +781,7 @@ test('a GLM bot build whose agent failed opens no proposal, even when its partia
   assert.equal(run.execs[1].agentHarness, 'claude');
   assert.equal(run.out.ok, false);
   // The reason first, then the turn's final message, so the run says why.
-  assert.equal(run.out.error, 'the build turn failed (the agent exited with code 1); it last said: '
+  assert.equal(run.out.error, 'the build turn failed (the agent exited with code 1); last activity: [done]; it last said: '
     + '# Pin the markers to the map ## User-facing changes The markers stay put. ## Technical implementation In map.js.');
   assert.deepEqual(run.promotions, [], 'nothing was put up for a vote');
   // And the build asked run-cc.sh not to keep a failed turn in the first place.
@@ -809,7 +813,7 @@ test('a build that ended on an error result, or on the runtime\'s API error noti
     '__USERNODE_EXIT__ 0',
   ];
   const isError = await runBotBuild(t, GLM, { journal: ended({ is_error: true, result: 'Stopped.' }), propose: true });
-  assert.equal(isError.out.error, 'the build turn failed (the agent reported an error); it last said: Stopped.');
+  assert.equal(isError.out.error, 'the build turn failed (the agent reported an error); last activity: [done]; it last said: Stopped.');
   assert.deepEqual(isError.promotions, []);
   t.mock.restoreAll();
   const wire = await runBotBuild(t, GLM, {
@@ -818,7 +822,7 @@ test('a build that ended on an error result, or on the runtime\'s API error noti
   });
   // The notice itself, read before any exit code, and not said twice.
   assert.equal(wire.out.error, 'the build turn failed (it ended on an API error: API Error: Connection lost mid-response. '
-    + 'The response above may be incomplete.)');
+    + 'The response above may be incomplete.); last activity: [done]');
   assert.deepEqual(wire.promotions, []);
 });
 
@@ -836,7 +840,7 @@ test('a Codex build that failed fails as failed, with its exit code', async (t) 
   });
   assert.equal(run.execs[1].agentHarness, 'codex');
   assert.equal(run.out.ok, false);
-  assert.equal(run.out.error, 'the build turn failed (the agent exited with code 1)');
+  assert.equal(run.out.error, 'the build turn failed (the agent exited with code 1); last activity: [done]');
   assert.deepEqual(run.promotions, []);
   assert.match(run.dispatches[1].script, /run-codex-agent\.sh/);
   assert.equal(run.dispatches[1].env.DISCARD_FAILED_TURN, undefined, 'the Codex runner needs no asking');

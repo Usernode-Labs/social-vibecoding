@@ -197,7 +197,8 @@ const GATE_OPEN_PATHS = [
   // Following an invite link from the waiting room queues its community
   // for the day the account is let in (services/community-invites.js).
   // Only the by-token reads and redeem, and the queued list the waiting
-  // room shows: making and managing links stays behind the gate.
+  // room shows and its join (/api/invite-links/queued/join): making and
+  // managing links stays behind the gate.
   '/api/invite-links/by-token/',
   '/api/invite-links/queued',
   // An account just made from the signed-out story records that it

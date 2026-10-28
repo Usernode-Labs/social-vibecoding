@@ -31,7 +31,7 @@
 // on the require path to do it.
 const crypto = require('crypto');
 const log = require('./logger');
-const { changeWebPath } = require('./change-destination');
+const { appWebPath, changeWebPath, changeLink } = require('./change-destination');
 const visibleChangesContract = require('./visible-changes');
 const diagramContract = require('./diagram');
 const proposalDiagram = require('./proposal-diagram');
@@ -39,6 +39,7 @@ const unitSuiteRow = require('./unit-suite-row');
 const checkSignals = require('./check-signals');
 const { sniffImageType } = require('./attachments');
 const requestSpecs = require('./request-specs');
+const connectorUploads = require('./connector-uploads');
 const repoRef = require('./repo-ref');
 const {
   READ_SCOPE,
@@ -151,6 +152,8 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 //   submit_work            — opens or advances a proposal, for the group to vote on
 //   create_request         — files on the app's board and as a GitHub issue
 //   post_spec              — posts a spec on a request, for the group to review
+//   prepare_upload         — mints a one-time command that stores one file
+//                            (a plan, a video, a screenshot) for the two above
 //   post_message           — posts in the user's name on a discussion thread
 //                            the whole group reads
 //   prepare_work           — claims the request on the app's board; mints a
@@ -195,6 +198,9 @@ const ACTING_TOOLS = Object.freeze([
   'submit_work',
   'create_request',
   'post_spec',
+  // It files nothing, but it hands out a credential and holds a row for a
+  // day, as prepare_work holds a work order.
+  'prepare_upload',
   'post_message',
   'propose_close_request',
   'prepare_work',
@@ -502,7 +508,7 @@ function shapeApp(app, origin) {
     status: app.status || null,
     repoUrl: app.repo_url || null,
     // Where a human opens it. Hash route — this is a hash-routed SPA.
-    webPath: `${origin}/#app/${app.slug}`,
+    webPath: appWebPath(origin, app.slug),
   };
 }
 
@@ -1661,6 +1667,8 @@ function shapeProposal(session, origin, viewerId = null) {
     linkedIssues: require('./pr-metadata').sanitizeIssueNumbers(session.linked_issues),
     prNumber: session.pr_number || null,
     prUrl: session.pr_url || null,
+    // The page a person reads and votes on it at; prUrl is the git host's.
+    link: session.app_slug ? changeLink(origin, session.app_slug, session.id, session.pr_number) : null,
     stagingUrl: session.staging_url || null,
     checkState: session.check_state || null,
     checks,
@@ -1930,6 +1938,8 @@ function shapeChange(session, live, origin, kind = 'agent_mayor') {
     linkedIssues: require('./pr-metadata').sanitizeIssueNumbers(session.linked_issues),
     prNumber: session.pr_number || null,
     prUrl: session.pr_url || null,
+    // The page a person reads and votes on it at; prUrl is the git host's.
+    link: session.app_slug ? changeLink(origin, session.app_slug, session.id, session.pr_number) : null,
     stagingUrl: session.staging_url || null,
     checks,
     yesVotes: typeof session.yes_count === 'number' ? session.yes_count : null,
@@ -3044,7 +3054,7 @@ function registerTools(server, ctx) {
     return readResult('get_request', {
       ...shapeRequest(match, { bodyMax: MAX_REQUEST_BODY_CHARS }),
       inProgress: shapeInProgress(match.in_progress),
-      webPath: `${origin}/#app/${slug}/dev/issues/${wanted}`,
+      webPath: appWebPath(origin, slug, `dev/issues/${wanted}`),
       images: pictures.images,
       specs: specs ? specs.slice(0, MAX_REQUEST_SPECS_SUMMARY).map(shapeSpecSummary) : null,
     }, pictures.content);
@@ -3137,7 +3147,7 @@ function registerTools(server, ctx) {
     const listed = await callPlatform(baseUrl, accessToken, 'GET', `/api/apps/${slug}/issues/${number}/specs`);
     if (!listed.ok) return platformError(listed);
     const entries = Array.isArray(listed.body && listed.body.specs) ? listed.body.specs : [];
-    const webPath = `${origin}/#app/${slug}/dev/issues/${number}`;
+    const webPath = appWebPath(origin, slug, `dev/issues/${number}`);
     const pick = sessionId != null
       ? (entries.find((e) => Number(e.sessionId) === Number(sessionId) && Number(e.version) === Number(version))
         || { sessionId, version })
@@ -3172,11 +3182,12 @@ function registerTools(server, ctx) {
 
   server.registerTool('post_spec', {
     title: 'Post a plan on a request',
-    description: `Post a plan on an open request, for the group to review before anything is built: what will change and how. Read get_spec_format first. An HTML plan leads with before/after screens and opens in Homeroom's plan viewer from a card in the request's discussion, and its markdown copy is posted on the GitHub issue too. Posting again on the same request adds your next version, so answer review comments by revising and posting again. Everyone who can see the request can read it. It builds nothing, claims nothing and starts no vote, and you must be a member of the app. Limits: an HTML plan up to ${requestSpecs.MAX_SPEC_HTML_CHARS} characters, a markdown one up to ${requestSpecs.MAX_SPEC_MARKDOWN_CHARS}, and one call up to ${MCP_REQUEST_BODY_KB} KB. Over a limit it is refused with the numbers, never shortened.`,
+    description: `Post a plan on an open request, for the group to review before anything is built: what will change and how. Read get_spec_format first. An HTML plan leads with before/after screens and opens in Homeroom's plan viewer from a card in the request's discussion, and its markdown copy is posted on the GitHub issue too. Posting again on the same request adds your next version, so answer review comments by revising and posting again. Everyone who can see the request can read it. It builds nothing, claims nothing and starts no vote, and you must be a member of the app. Limits: an HTML plan up to ${requestSpecs.MAX_SPEC_HTML_CHARS} characters, a markdown one up to ${requestSpecs.MAX_SPEC_MARKDOWN_CHARS}, and one call up to ${MCP_REQUEST_BODY_KB} KB. Over a limit it is refused with the numbers, never shortened. A plan saved in a file, above all one with drawn screens, need not be written out here: send it with prepare_upload (kind "plan") and pass \`specUploadId\` instead of \`spec\`.`,
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       requestNumber: z.number().int().positive().describe('The open request the plan is for, as returned by list_requests.'),
-      spec: z.string().describe('The whole plan: one <article data-spec> HTML document as get_spec_format describes, or markdown for a change nobody sees.'),
+      spec: z.string().optional().describe(`The whole plan: one <article data-spec> HTML document as get_spec_format describes, or markdown for a change nobody sees. Send this or specUploadId, not both.`),
+      specUploadId: z.number().int().positive().optional().describe('Instead of `spec`: the uploadId a prepare_upload command (kind "plan") answered with once it sent the plan\'s file. The same checks apply to it as to `spec`, and it is used up by the post.'),
     },
     outputSchema: {
       requestNumber: z.number(),
@@ -3190,7 +3201,7 @@ function registerTools(server, ctx) {
       webPath: z.string(),
     },
     annotations: writeAnnotations,
-  }, async ({ slug, requestNumber, spec }) => {
+  }, async ({ slug, requestNumber, spec, specUploadId }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
     if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
@@ -3198,14 +3209,28 @@ function registerTools(server, ctx) {
     if (!Number.isInteger(number) || number <= 0) {
       return toolError('invalid_request', 'requestNumber must be a request number, as returned by list_requests.');
     }
+    const fromUpload = specUploadId !== undefined && specUploadId !== null;
+    if (fromUpload && spec !== undefined && spec !== null) {
+      return toolError('invalid_request', 'Send the plan as spec or as specUploadId, not both.');
+    }
+    // A plan from an upload is read back here, on the caller's behalf, and
+    // then goes exactly the way an inline one does.
+    let planText = spec;
+    if (fromUpload) {
+      const taken = await connectorUploads.takeUpload(pool, {
+        userId: user.id, uploadId: specUploadId, kind: 'plan', field: 'specUploadId',
+      });
+      if (!taken.ok) return toolError(taken.code, taken.message);
+      planText = taken.text;
+    }
     // The route checks the same rules; checking here first keeps a refused
     // spec from crossing the wire twice.
-    const prepared = requestSpecs.prepareSpec(spec);
+    const prepared = requestSpecs.prepareSpec(planText);
     if (!prepared.ok) {
       const { code, message, limitChars, actualChars } = prepared;
       return toolError(code, message, limitChars ? { limitChars, actualChars } : {});
     }
-    const result = await callPlatform(baseUrl, accessToken, 'POST', `/api/apps/${slug}/issues/${number}/spec`, { spec });
+    const result = await callPlatform(baseUrl, accessToken, 'POST', `/api/apps/${slug}/issues/${number}/spec`, { spec: planText });
     // A 404 here is as often the request (closed, or never on this app) as
     // the app, and the route says which: its words, not the generic sentence.
     if (result.status === 404) {
@@ -3213,6 +3238,9 @@ function registerTools(server, ctx) {
         || 'That app or request was not found, or you do not have access to it.');
     }
     if (!result.ok) return platformError(result);
+    // Posted, so the upload is done with. A refused post keeps it, so the
+    // same id can be posted again once the refusal is dealt with.
+    if (fromUpload) await connectorUploads.consumeUploads(pool, { userId: user.id, uploadIds: [specUploadId] });
     const posted = result.body || {};
     return toolResult({
       requestNumber: number,
@@ -3223,7 +3251,7 @@ function registerTools(server, ctx) {
       specChars: prepared.format === 'html' ? Number(posted.htmlChars) || 0 : Number(posted.markdownChars) || 0,
       newRecord: !!posted.createdRecord,
       commentPosted: !!posted.commentPosted,
-      webPath: `${origin}/#app/${slug}/dev/issues/${number}`,
+      webPath: appWebPath(origin, slug, `dev/issues/${number}`),
     });
   });
 
@@ -3403,9 +3431,9 @@ function registerTools(server, ctx) {
   // rules. A bare name tags nobody, which is why the description says so.
   const POST_MESSAGE_HINT = 'Shorten the message or split it across two posts, and call again.';
   const discussionWebPath = (slug, threadType, ref, messageId) => {
-    if (threadType === 'issue') return `${origin}/#app/${slug}/dev/issues/${ref}`;
+    if (threadType === 'issue') return appWebPath(origin, slug, `dev/issues/${ref}`);
     if (threadType === 'session') return changeWebPath(origin, slug, ref);
-    if (threadType === 'governance') return `${origin}/#app/${slug}/dev/governance/${ref}`;
+    if (threadType === 'governance') return appWebPath(origin, slug, `dev/governance/${ref}`);
     // The Messages addresses services/notifications.js links to.
     if (threadType === 'message') return `${origin}/#messages/app/${slug}/thread/${ref}`;
     return `${origin}/#messages/app/${slug}/m/${messageId}`;
@@ -3488,10 +3516,13 @@ function registerTools(server, ctx) {
   // `images` is offered to an external client only. The Mayor's writes run
   // from a confirmation card that stores and shows the exact input, which is
   // no place for a megabyte of base64, and its route list has no upload.
+  // So are `videoUploadId` and `screenshotUploadIds`, the same files sent
+  // ahead with prepare_upload: an agent with a file on its machine never
+  // has to write it out into this call.
   const offersImages = kind === 'external';
   server.registerTool('create_request', {
     title: 'File a request on an app',
-    description: `File a feature request or bug report on a Homeroom app. It appears on the app's board and as a GitHub issue for the group to see and discuss. This does not change the app by itself — someone still has to build it and the group still has to vote it in. Check list_requests first to avoid duplicates. Write the whole report: the description is stored verbatim, up to ${MAX_REQUEST_BODY_CHARS} characters (GitHub's own issue-body limit), and titles up to ${MAX_REQUEST_TITLE_CHARS}. Nothing is ever shortened for you — a field over its limit is refused with the limit and your actual length, and nothing is filed, so you can split the report or shorten it and call again. \`descriptionChars\` in the result is the length that was stored; it equals what you sent.${offersImages ? ` To show the problem, attach up to ${MAX_REQUEST_IMAGES} PNG or JPEG screenshots in \`images\`, each as base64 with its SHA-256 so a damaged copy is caught; they are embedded below the description the way a person's screenshots are, and get_request shows them back. One call is at most ${MCP_REQUEST_BODY_KB} KB, so downscale a large screenshot first.` : ''}`,
+    description: `File a feature request or bug report on a Homeroom app. It appears on the app's board and as a GitHub issue for the group to see and discuss. This does not change the app by itself — someone still has to build it and the group still has to vote it in. Check list_requests first to avoid duplicates. Write the whole report: the description is stored verbatim, up to ${MAX_REQUEST_BODY_CHARS} characters (GitHub's own issue-body limit), and titles up to ${MAX_REQUEST_TITLE_CHARS}. Nothing is ever shortened for you — a field over its limit is refused with the limit and your actual length, and nothing is filed, so you can split the report or shorten it and call again. \`descriptionChars\` in the result is the length that was stored; it equals what you sent.${offersImages ? ` To show the problem, attach up to ${MAX_REQUEST_IMAGES} PNG or JPEG screenshots in \`images\`, each as base64 with its SHA-256 so a damaged copy is caught; they are embedded below the description the way a person's screenshots are, and get_request shows them back. One call is at most ${MCP_REQUEST_BODY_KB} KB, so downscale a large screenshot first. A screenshot saved in a file, or a video, goes up with prepare_upload instead, and you pass its uploadId here: \`screenshotUploadIds\`, and \`videoUploadId\` for one MP4, WebM or MOV clip of any length up to 50 MB, which the request page plays inline below the stills.` : ''}`,
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       title: z.string().describe(`A short one-line summary of what is being asked for. At most ${MAX_REQUEST_TITLE_CHARS} characters.`),
@@ -3502,6 +3533,8 @@ function registerTools(server, ctx) {
           sha256: z.string().describe('The hex SHA-256 of the same file\'s bytes (for example `sha256sum shot.png`), computed from the file, not from the base64. A mismatch means the copy was damaged, and nothing is filed.'),
           mimeType: z.enum(['image/png', 'image/jpeg']).optional().describe('Optional. When given, it must match the bytes.'),
         })).optional().describe(`Up to ${MAX_REQUEST_IMAGES} screenshots, in the order they should appear. PNG or JPEG, neither side over ${MAX_REQUEST_IMAGE_EDGE_PX} pixels. The whole call must fit in ${MCP_REQUEST_BODY_KB} KB of JSON and base64 is a third larger than the file, so in practice keep them to about ${Math.floor((MCP_REQUEST_BODY_KB * 0.7) / 50) * 50} KB of image in total: a JPEG of the relevant part of the screen, about 1000 pixels wide, usually does. Each image's line is added after the description and counts toward GitHub's limit with it. Anyone with an image's link can open it, even on a private app, so leave out anything private.`),
+        screenshotUploadIds: z.array(z.number().int().positive()).optional().describe(`Screenshots sent ahead with prepare_upload (kind "screenshot"): the uploadIds their commands answered with, in the order they should appear, after any in \`images\`. Together with \`images\`, at most ${MAX_REQUEST_IMAGES}.`),
+        videoUploadId: z.number().int().positive().optional().describe('One video sent ahead with prepare_upload (kind "video"): the uploadId its command answered with. Its link is added after the screenshots, and the request page plays it inline. Anyone with the link can open it, even on a private app.'),
       } : {}),
     },
     outputSchema: {
@@ -3511,9 +3544,11 @@ function registerTools(server, ctx) {
       webPath: z.string(),
       // Where each attached image is served, in order. Empty with none.
       images: z.array(z.string()),
+      // Where the attached video is served, or null with none.
+      video: z.string().nullable(),
     },
     annotations: writeAnnotations,
-  }, async ({ slug, title, description, images }) => {
+  }, async ({ slug, title, description, images, screenshotUploadIds, videoUploadId }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
     if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
@@ -3539,10 +3574,40 @@ function registerTools(server, ctx) {
     if (images != null && !offersImages) {
       return toolError('invalid_request', 'images cannot be attached from here.');
     }
+    if ((screenshotUploadIds != null || videoUploadId != null) && !offersImages) {
+      return toolError('invalid_request', 'Uploaded files cannot be attached from here.');
+    }
     const imageCheck = checkRequestImages(images);
     if (!imageCheck.ok) {
       return toolError(imageCheck.code, imageCheck.message,
         imageCheck.index === undefined ? {} : { index: imageCheck.index });
+    }
+    // Files sent ahead with prepare_upload, each read back for this caller
+    // and checked before anything is sent, so a wrong id files nothing.
+    const uploadedShots = Array.isArray(screenshotUploadIds) ? screenshotUploadIds : [];
+    if (screenshotUploadIds != null && !Array.isArray(screenshotUploadIds)) {
+      return toolError('invalid_request', 'screenshotUploadIds must be a list of uploadIds.');
+    }
+    if (imageCheck.images.length + uploadedShots.length > MAX_REQUEST_IMAGES) {
+      return toolError('invalid_images', `A request takes at most ${MAX_REQUEST_IMAGES} screenshots; `
+        + `${imageCheck.images.length + uploadedShots.length} were sent between images and screenshotUploadIds. `
+        + 'Nothing was uploaded or filed.');
+    }
+    const uploadedShotIds = [];
+    for (const uploadId of uploadedShots) {
+      const taken = await connectorUploads.takeUpload(pool, {
+        userId: user.id, uploadId, kind: 'screenshot', field: 'screenshotUploadIds',
+      });
+      if (!taken.ok) return toolError(taken.code, taken.message);
+      uploadedShotIds.push(taken.mediaId);
+    }
+    let videoId = null;
+    if (videoUploadId != null) {
+      const taken = await connectorUploads.takeUpload(pool, {
+        userId: user.id, uploadId: videoUploadId, kind: 'video', field: 'videoUploadId',
+      });
+      if (!taken.ok) return toolError(taken.code, taken.message);
+      videoId = taken.mediaId;
     }
     // One upload per image, in order, through the feedback dialog's route.
     // An upload that is never linked to a request is deleted by the
@@ -3557,13 +3622,19 @@ function registerTools(server, ctx) {
       }
       screenshotIds.push(id);
     }
+    screenshotIds.push(...uploadedShotIds);
     const result = await callPlatform(baseUrl, accessToken, 'POST', `/api/apps/${slug}/issues`, {
       title: titleCheck.value,
       description: bodyCheck.value || null,
       kind: 'general',
       ...(screenshotIds.length ? { screenshotIds } : {}),
+      ...(videoId ? { videoId } : {}),
     });
     if (!result.ok) return platformError(result);
+    // Filed, so the uploads are done with; their files stay, linked to the
+    // request. A refused filing keeps them, so the same ids can be sent again.
+    const usedUploads = [...uploadedShots, ...(videoUploadId != null ? [videoUploadId] : [])];
+    if (usedUploads.length) await connectorUploads.consumeUploads(pool, { userId: user.id, uploadIds: usedUploads });
     const issue = (result.body && result.body.issue) || {};
     const number = issue.github_issue_number || null;
     return toolResult({
@@ -3573,11 +3644,73 @@ function registerTools(server, ctx) {
       title: untrusted(issue.title || titleCheck.value, MAX_REQUEST_TITLE_CHARS),
       descriptionChars: bodyCheck.value.length,
       webPath: number
-        ? `${origin}/#app/${slug}/dev/issues/${number}`
-        : `${origin}/#app/${slug}/dev`,
+        ? appWebPath(origin, slug, `dev/issues/${number}`)
+        : appWebPath(origin, slug, 'dev'),
       images: screenshotIds.map((id) => `${origin}/issue-images/${id}`),
+      video: videoId ? `${origin}/issue-videos/${videoId}` : null,
     });
   });
+
+  // ── prepare_upload ───────────────────────────────────────────────────
+  //
+  // The connector's half of services/connector-uploads.js: mint a one-time
+  // command that sends one file from the agent's own machine, so a plan, a
+  // video or a screenshot never has to be written out inside a tool call.
+  // The token is in `command` and nowhere else in the answer; post_spec and
+  // create_request then name the upload by its id. External clients only,
+  // like the fields that take it.
+  if (offersImages) {
+    server.registerTool('prepare_upload', {
+      title: 'Get a command to upload a file',
+      description: `Get a one-time command that sends ONE file to Homeroom straight from your machine, so a large plan, a video or a screenshot is never written out inside a tool call. kind "plan": an HTML or markdown plan for post_spec, which then takes \`specUploadId\` instead of \`spec\` (up to ${requestSpecs.MAX_SPEC_HTML_CHARS} characters, the plan viewer's own limit). kind "video": an MP4, WebM or MOV clip of any length up to ${connectorUploads.sizeLabel(connectorUploads.maxBytesFor('video'))}, for create_request's \`videoUploadId\`; the request page plays it inline. kind "screenshot": a PNG or JPEG up to ${connectorUploads.sizeLabel(connectorUploads.maxBytesFor('screenshot'))}, for create_request's \`screenshotUploadIds\`. Run \`command\` from a shell on the machine that holds the file. It answers "ok":true with the uploadId once the file is stored and checked; a refusal says why and stores nothing. Each command stores one file, of its kind, for you only, and works for ${connectorUploads.TOKEN_TTL_HOURS} hours: never print, commit or share its token. It needs a machine that can reach Homeroom; a hosted sandbox that cannot should send a plan as \`spec\` and screenshots as \`images\` instead.`,
+      inputSchema: {
+        kind: z.enum(connectorUploads.KINDS).describe('What the file is: "plan", "video" or "screenshot".'),
+        file: z.string().optional().describe('The path of the file on your machine, written into the command for you. Optional: without it the command says FILE where the path goes.'),
+      },
+      outputSchema: {
+        uploadId: z.number(),
+        kind: z.enum(connectorUploads.KINDS),
+        command: z.string(),
+        maxBytes: z.number(),
+        expiresAt: z.string(),
+        nextStep: z.string(),
+      },
+      annotations: writeAnnotations,
+    }, async ({ kind: uploadKind, file }) => {
+      const guard = scopeGuard(WRITE_SCOPE);
+      if (guard) return guard;
+      if (!connectorUploads.KINDS.includes(uploadKind)) {
+        return toolError('invalid_request', `kind must be one of ${connectorUploads.KINDS.join(', ')}.`);
+      }
+      let filePath = 'FILE';
+      if (file !== undefined && file !== null && file !== '') {
+        if (typeof file !== 'string' || file.length > 1024 || /[\u0000-\u001f\u007f]/.test(file)) {
+          return toolError('invalid_request', 'file must be a path on one line, at most 1024 characters.');
+        }
+        filePath = file;
+      }
+      const minted = await connectorUploads.mintUpload(pool, { userId: user.id, kind: uploadKind, origin });
+      if (!minted.ok) return toolError(minted.code, minted.message, { retryable: minted.code === 'platform_unavailable' });
+      // Single-quoted for any POSIX shell; a quote inside the path is closed,
+      // escaped and reopened.
+      const quoted = `'${filePath.replace(/'/g, `'\\''`)}'`;
+      const seconds = uploadKind === 'video' ? 600 : 120;
+      const command = `curl -sS --max-time ${seconds} -X PUT -H 'Authorization: Bearer ${minted.token}' `
+        + `--data-binary @${quoted} ${minted.url}`;
+      const field = uploadKind === 'plan' ? 'post_spec\'s specUploadId'
+        : (uploadKind === 'video' ? 'create_request\'s videoUploadId' : 'create_request\'s screenshotUploadIds');
+      return toolResult({
+        uploadId: minted.uploadId,
+        kind: uploadKind,
+        command,
+        maxBytes: minted.maxBytes,
+        expiresAt: minted.expiresAt.toISOString(),
+        nextStep: `Run the command${filePath === 'FILE' ? ', with FILE replaced by the file\'s path' : ''}. When it answers `
+          + `"ok":true, pass ${minted.uploadId} as ${field}. If it is refused, it says why and the command `
+          + 'stays usable; once a file is stored, the command is spent.',
+      });
+    });
+  }
 
   // ── claim_request / release_request ──────────────────────────────────
   //
@@ -3717,7 +3850,7 @@ function registerTools(server, ctx) {
       alsoClaimedBy: state.others,
       notePosted: noteResult.attempted ? noteResult.posted : null,
       noteError: noteResult.error,
-      webPath: `${origin}/#app/${slug}/dev/issues/${wanted}`,
+      webPath: appWebPath(origin, slug, `dev/issues/${wanted}`),
       nextStep: (state.others.length
         ? `${state.others.length} other ${state.others.length === 1 ? 'person has' : 'people have'} claimed this request too — `
           + 'tell the user who, because the work may already be under way. '
@@ -3782,7 +3915,7 @@ function registerTools(server, ctx) {
       cleared: wasCleared,
       notePosted: noteResult.attempted ? noteResult.posted : null,
       noteError: noteResult.error,
-      webPath: `${origin}/#app/${slug}/dev/issues/${wanted}`,
+      webPath: appWebPath(origin, slug, `dev/issues/${wanted}`),
       nextStep: wasCleared
         ? 'The claim is cleared and the board no longer shows this user on this request.'
         : 'There was no live claim of this user\'s to clear, so nothing changed — the board already '
@@ -3885,8 +4018,8 @@ function registerTools(server, ctx) {
       reasonChars: reasonCheck.value.length,
       inProgress,
       webPath: proposalId
-        ? `${origin}/#app/${slug}/dev/governance/${proposalId}`
-        : `${origin}/#app/${slug}/dev/issues/${wanted}`,
+        ? appWebPath(origin, slug, `dev/governance/${proposalId}`)
+        : appWebPath(origin, slug, `dev/issues/${wanted}`),
       nextStep: `The group is now voting on closing request #${wanted}. It stays open until that vote passes, `
         + 'and the platform closes it then; nothing else is needed from you, and this connector cannot vote. '
         + (busy
@@ -3965,6 +4098,8 @@ function registerTools(server, ctx) {
       prNumber: z.number().nullable()
         .describe('Its pull request number — the number a person finds on GitHub and on the Dev board, so name the proposal by it first: "PR #2151 (proposal 4223)". Null on a card that has no pull request yet.'),
       prUrl: z.string().nullable(),
+      link: z.string().nullable()
+        .describe('The page to give a PERSON for it: its Homeroom page, by its pull request number when it has one (https://<platform>/app/<slug>/dev/changes/<prNumber>). Link people here, never to prUrl.'),
       stagingUrl: z.string().nullable(),
       checkState: z.string().nullable(),
       // The per-field prose lives here rather than in the tool description on
@@ -4465,6 +4600,7 @@ function registerTools(server, ctx) {
         branchHome: z.enum(['app_repo', 'user_fork', 'git_host']),
         youCanPush: z.boolean(),
         webPath: z.string().nullable(),
+        link: z.string().nullable(),
       })),
       truncated: z.boolean(),
     },
@@ -4499,6 +4635,7 @@ function registerTools(server, ctx) {
           branchHome: shaped.branch.home,
           youCanPush: shaped.branch.youCanPush,
           webPath: shaped.webPath,
+          link: shaped.link,
         };
       }),
       truncated: open.length > MAX_LIST_ITEMS,
@@ -4561,6 +4698,8 @@ function registerTools(server, ctx) {
       linkedIssues: z.array(z.number()),
       prNumber: z.number().nullable(),
       prUrl: z.string().nullable(),
+      link: z.string().nullable()
+        .describe('The page to give a PERSON for it: its Homeroom page, by its pull request number when it has one (https://<platform>/app/<slug>/dev/changes/<prNumber>). Link people here, never to prUrl.'),
       stagingUrl: z.string().nullable(),
       checks: z.unknown()
         .describe('The checks snapshot, in the same shape get_proposal reports: state, phase, failing names, failures with reasons and their excerpt details, detailsTruncated, stale, error.'),
@@ -5072,6 +5211,8 @@ function registerTools(server, ctx) {
         mine: z.boolean(),
         author: z.string().nullable(),
         webPath: z.string().nullable(),
+        link: z.string().nullable().optional()
+          .describe('Its Homeroom page, by its pull request number: the link to give a person.'),
         requests: z.array(z.number()).optional()
           .describe('Which of the requests this work order names that proposal is for.'),
       })),
@@ -5440,6 +5581,8 @@ function registerTools(server, ctx) {
       prNumber: z.number().nullable()
         .describe('Its pull request number — the number a person sees on GitHub and on the Dev board, so name the proposal by it first: "PR #2151 (proposal 4223)". Null on a shared in-progress card, which has no pull request until it is proposed.'),
       prUrl: z.string().nullable(),
+      link: z.string().nullable()
+        .describe('The page to give a PERSON for it: its Homeroom page, by its pull request number when it has one (https://<platform>/app/<slug>/dev/changes/<prNumber>). Link people here, never to prUrl.'),
       externalAgent: z.string(),
       webPath: z.string(),
       // Set only by an UPDATE (#1054): the proposal's new head, how many votes
@@ -5625,6 +5768,7 @@ function registerTools(server, ctx) {
         appSlug: promotedSlug,
         prNumber: promotedPr,
         prUrl: typeof promotedBody.prUrl === 'string' ? promotedBody.prUrl : ((row && row.pr_url) || null),
+        link: promotedSlug ? changeLink(origin, promotedSlug, proposalId, promotedPr) : null,
         externalAgent: externalAgentTasks.normalizeAgent(agent, clientName),
         headSha: null,
         votesCleared: null,
@@ -6010,6 +6154,7 @@ function registerTools(server, ctx) {
         appSlug: result.appSlug,
         prNumber: result.prNumber,
         prUrl: result.prUrl,
+        link: result.proposalId && result.appSlug ? changeLink(origin, result.appSlug, result.proposalId, result.prNumber) : null,
         externalAgent: result.externalAgent,
         headSha: result.headSha || null,
         votesCleared: cleared,
@@ -6048,7 +6193,7 @@ function registerTools(server, ctx) {
         sessionId: null,
         webPath: result.proposalId
           ? changeWebPath(origin, result.appSlug, result.proposalId)
-          : `${origin}/#app/${result.appSlug}`,
+          : appWebPath(origin, result.appSlug),
         nextStep: (result.unchanged ? resubmitStep : landedStep)
           + rejectedNote + titleNote + descNote + summaryNote + proposeNote,
       });
@@ -6070,6 +6215,7 @@ function registerTools(server, ctx) {
         appSlug: result.appSlug,
         prNumber: null,
         prUrl: null,
+        link: result.sessionId && result.appSlug ? changeLink(origin, result.appSlug, result.sessionId, null) : null,
         externalAgent: result.externalAgent,
         headSha: result.headSha || null,
         votesCleared: null,
@@ -6088,7 +6234,7 @@ function registerTools(server, ctx) {
         proposeError: null,
         webPath: result.sessionId
           ? changeWebPath(origin, result.appSlug, result.sessionId)
-          : `${origin}/#app/${result.appSlug}`,
+          : appWebPath(origin, result.appSlug),
         nextStep: (result.reshared
           ? 'The new commits are on the same in-progress card the group was already watching'
           : 'It is now visible in the app\'s IN-PROGRESS area, not up for a vote')
@@ -6107,6 +6253,7 @@ function registerTools(server, ctx) {
         appSlug: result.appSlug,
         prNumber: result.prNumber,
         prUrl: result.prUrl,
+        link: result.proposalId && result.appSlug ? changeLink(origin, result.appSlug, result.proposalId, result.prNumber) : null,
         externalAgent: result.externalAgent,
         headSha: null,
         votesCleared: null,
@@ -6132,7 +6279,7 @@ function registerTools(server, ctx) {
         sessionId: null,
         webPath: result.proposalId
           ? changeWebPath(origin, result.appSlug, result.proposalId)
-          : `${origin}/#app/${result.appSlug}`,
+          : appWebPath(origin, result.appSlug),
         nextStep: 'That work was already submitted — most likely the coding agent submitted it itself through '
           + 'its own connector. Nothing was duplicated. It is up for the group\'s vote'
           + `${proposalRef(result.proposalId, result.prNumber) ? ` as ${proposalRef(result.proposalId, result.prNumber)}` : ''}; `
@@ -6145,6 +6292,7 @@ function registerTools(server, ctx) {
       appSlug: result.appSlug,
       prNumber: result.prNumber,
       prUrl: result.prUrl,
+      link: result.proposalId && result.appSlug ? changeLink(origin, result.appSlug, result.proposalId, result.prNumber) : null,
       externalAgent: result.externalAgent,
       headSha: null,
       votesCleared: null,
@@ -6174,7 +6322,7 @@ function registerTools(server, ctx) {
       sessionId: null,
       webPath: result.proposalId
         ? changeWebPath(origin, result.appSlug, result.proposalId)
-        : `${origin}/#app/${result.appSlug}`,
+        : appWebPath(origin, result.appSlug),
       linkedIssues: Array.isArray(result.linkedIssues) ? result.linkedIssues : null,
       nextStep: 'It is now up for a vote'
         + `${proposalRef(result.proposalId, result.prNumber) ? ` as ${proposalRef(result.proposalId, result.prNumber)}` : ''}. `
@@ -6384,7 +6532,7 @@ function registerTools(server, ctx) {
     return toolResult({
       buildId: session.id,
       status: session.headless_status || 'generating',
-      webPath: `${origin}/#app/${slug}/dev/issues/${requestNumber}`,
+      webPath: appWebPath(origin, slug, `dev/issues/${requestNumber}`),
       nextStep: 'Builds take a few minutes. Poll get_platform_build; tell the user you will check back rather than polling in a tight loop.',
     });
   });
@@ -6424,7 +6572,7 @@ function registerTools(server, ctx) {
     const needsHumanReview = ready && outcome === 'spec';
     const readyToSubmit = ready && (outcome === 'code' || outcome === 'spec_code');
     const webPath = session.app_slug && session.headless_issue_number
-      ? `${origin}/#app/${session.app_slug}/dev/issues/${session.headless_issue_number}`
+      ? appWebPath(origin, session.app_slug, `dev/issues/${session.headless_issue_number}`)
       : null;
 
     let nextStep;
@@ -6522,6 +6670,8 @@ function registerTools(server, ctx) {
       appSlug: z.string().nullable(),
       prNumber: z.number().nullable(),
       prUrl: z.string().nullable(),
+      link: z.string().nullable()
+        .describe('The page to give a PERSON for it: its Homeroom page, by its pull request number when it has one (https://<platform>/app/<slug>/dev/changes/<prNumber>). Link people here, never to prUrl.'),
       webPath: z.string(),
       nextStep: z.string(),
     },
@@ -6541,8 +6691,8 @@ function registerTools(server, ctx) {
     }
     if (session.headless_outcome === 'spec') {
       const where = session.app_slug && session.headless_issue_number
-        ? `${origin}/#app/${session.app_slug}/dev/issues/${session.headless_issue_number}`
-        : `${origin}/#app/${session.app_slug || ''}`;
+        ? appWebPath(origin, session.app_slug, `dev/issues/${session.headless_issue_number}`)
+        : session.app_slug ? appWebPath(origin, session.app_slug) : origin;
       return toolError(
         'needs_human_review',
         'That build stopped at a written plan rather than a code change. A person has to read and approve the plan before it is built — '
@@ -6554,7 +6704,7 @@ function registerTools(server, ctx) {
     // The build ran unattended and is not promotable itself: the platform
     // clones it into a session the user owns (their own branch, forked from
     // the build's, so its commits carry over) and that clone is what gets
-    // proposed. Same two steps the browser takes.
+    // proposed. Submission does not resume the build's agent or copy its memory.
     const cloned = await callPlatform(baseUrl, accessToken, 'POST', `/api/sessions/${buildId}/clone-headless`);
     if (!cloned.ok) return platformError(cloned);
     const clone = (cloned.body && cloned.body.session) || {};
@@ -6569,6 +6719,7 @@ function registerTools(server, ctx) {
       appSlug: session.app_slug || null,
       prNumber,
       prUrl: (promoted.body && promoted.body.prUrl) || null,
+      link: session.app_slug ? changeLink(origin, session.app_slug, clone.id, prNumber) : null,
       webPath: session.app_slug
         ? changeWebPath(origin, session.app_slug, clone.id)
         : `${origin}/#`,

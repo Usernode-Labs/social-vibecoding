@@ -125,10 +125,31 @@ test('Apple and Google sign-in against the full PostgreSQL schema', { timeout: 1
     assert.equal((await pool.query('SELECT email_confirmed FROM users WHERE id = $1', [halfway.id])).rows[0].email_confirmed, true);
   });
 
-  await t.test('the email code\'s refusals: admins, unconfirmed password accounts, and no verified address', async () => {
-    await account({ email: 'boss@example.com', isAdmin: true });
-    assert.deepEqual(await providers.signIn(pool, 'google', claims('g-boss', 'boss@example.com'), { createSession }),
-      { refuse: 'admin_password_required' });
+  await t.test('admins sign in like anyone: by a linked identity and by a verified address', async () => {
+    const boss = await account({ email: 'boss@example.com', isAdmin: true });
+    await pool.query(
+      `INSERT INTO user_oauth_identities (user_id, provider, subject, email, last_used_at)
+       VALUES ($1, 'google', 'g-boss', 'boss@example.com', NOW())`,
+      [boss.id]
+    );
+    const linked = await providers.signIn(pool, 'google', claims('g-boss', 'boss@example.com'), { createSession });
+    assert.equal(linked.next, 'signed-in');
+    assert.equal(linked.userId, boss.id);
+    assert.equal(linked.user.isAdmin, true);
+    // No identity at the provider yet: the verified address links and signs in.
+    const byAddress = await providers.signIn(pool, 'apple', claims('a-boss', 'boss@example.com'), { createSession });
+    assert.equal(byAddress.next, 'signed-in');
+    assert.equal(byAddress.userId, boss.id);
+    assert.equal(byAddress.user.isAdmin, true);
+    // An admin who has not chosen a username can finish that step too.
+    const picker = await account({ email: 'picker@example.com', isAdmin: true, chosen: false });
+    const step = await providers.signIn(pool, 'google', claims('g-picker', 'picker@example.com'), { createSession });
+    assert.equal(step.next, 'username');
+    const finished = await providers.completeUsername(pool, {
+      signupToken: step.signupToken, username: 'boss_pick', createSession,
+    });
+    assert.equal(finished.user.id, picker.id);
+
     await account({ email: 'unconfirmed@example.com', confirmed: false });
     assert.deepEqual(await providers.signIn(pool, 'google', claims('g-u', 'unconfirmed@example.com'), { createSession }),
       { refuse: 'password_required' });

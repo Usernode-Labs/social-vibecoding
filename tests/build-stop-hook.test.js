@@ -29,7 +29,6 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawn, spawnSync } = require('node:child_process');
-const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 
 const hook = require('../worker/build-stop-hook');
 const worker = require('../src/services/worker');
@@ -368,7 +367,7 @@ function runRunCc(fx, extra = {}) {
         MODE: 'build',
         BRANCH,
         SESSION_ID: '5001',
-        ...RUNNER_TEST_ENV, PLATFORM_URL: 'http://127.0.0.1:1',
+        PLATFORM_URL: 'http://127.0.0.1:1',
         WORKER_JWT: 'test-worker-jwt',
         AGENT_PROVIDER: 'openrouter',
         OPENROUTER_API_KEY: 'sk-or-v1-stop-guard-test-key',

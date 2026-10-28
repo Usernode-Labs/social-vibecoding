@@ -123,13 +123,12 @@ async function withTransaction(pool, fn) {
   }
 }
 
-// Refusals that mean "the code was right, but a code cannot sign this account
-// in". They are distinct from `invalid_or_expired_code` so the sign-in screen
-// can route the person to the password form instead of implying they mistyped.
+// A refusal that means "the code was right, but a code cannot sign this
+// account in". It is distinct from `invalid_or_expired_code` so the sign-in
+// screen can route the person to the password form instead of implying they
+// mistyped.
 const PASSWORD_REQUIRED_MESSAGE =
   'This account signs in with a password. Enter it below to continue.';
-const ADMIN_PASSWORD_REQUIRED_MESSAGE =
-  'This admin account signs in with a password. Enter it below to continue.';
 
 // The refusal a release link's on-load spend gets for an account already set
 // up (continueProvenEmail `newAccountOnly`): the page then waits for a tap.
@@ -299,9 +298,8 @@ async function continueProvenEmail(client, email, { createSession, newAccountOnl
   }
 
   // The code is already consumed at this point, on every branch below. A
-  // correct code must never be replayable, and neither refusal is
+  // correct code must never be replayable, and the refusal is not
   // retry-able with the same code anyway.
-  if (user && user.is_admin) return { refuse: 'admin_password_required' };
   if (user && user.password_set && !user.email_confirmed) {
     return { refuse: 'password_required' };
   }
@@ -414,9 +412,6 @@ async function finishProvenEmail(pool, email, result) {
   }
   if (result.refuse === 'password_required') {
     throw new EmailSignupError('password_required', PASSWORD_REQUIRED_MESSAGE);
-  }
-  if (result.refuse === 'admin_password_required') {
-    throw new EmailSignupError('admin_password_required', ADMIN_PASSWORD_REQUIRED_MESSAGE);
   }
   if (result.created) {
     await waitlist.linkUserByEmail(pool, { userId: result.userId, email, newAccount: true });
@@ -564,7 +559,7 @@ async function completePassword(pool, { signupToken, password, username = null, 
       }
 
       await client.query('DELETE FROM web_signup_sessions WHERE token_hash = $1', [tokenHash(signupToken)]);
-      if (signup.is_admin || signup.password_set) return { invalid: true };
+      if (signup.password_set) return { invalid: true };
 
       if (passwordHash) {
         await client.query(

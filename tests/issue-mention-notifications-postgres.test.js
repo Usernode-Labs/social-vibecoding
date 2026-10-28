@@ -69,7 +69,6 @@ test('mentions in a request\'s text against the full schema', { timeout: 120000 
     filed.push({ title: github.safeMention(title), body: github.safeMention(body) });
     return { number: 3950 + filed.length, title, html_url: `https://github.com/${owner}/${repo}/issues/${3950 + filed.length}` };
   };
-  github.noteIssueCreated = () => {};
   const notifications = require('../src/services/notifications');
   const { issueRoutes } = require('../src/routes/issues');
 

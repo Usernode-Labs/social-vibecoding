@@ -184,6 +184,7 @@ test('Kubernetes probes and push proxy preserve Docker operation deadlines', asy
   // The GitHub App's installation token, the push's only GitHub credential.
   const github = require('../src/services/github');
   t.mock.method(github, 'canActOn', () => true);
+  t.mock.method(github, 'checkRepoPublic', async () => ({ ok: true, private: false }));
   t.mock.method(github, 'getInstallationToken', async () => 'fake-test-token');
   const deadlines = [];
   t.mock.method(require('../src/db/pool'), 'getPool', () => ({
@@ -206,7 +207,7 @@ test('Kubernetes probes and push proxy preserve Docker operation deadlines', asy
 });
 
 
-test('legacy recovery and stop helpers never invoke Docker in Kubernetes mode', async (t) => {
+test('recovery and identity-scoped removal never invoke Docker in Kubernetes mode', async (t) => {
   const prior = process.env.WORKER_RUNTIME;
   process.env.WORKER_RUNTIME = 'kubernetes';
   t.after(() => { if (prior === undefined) delete process.env.WORKER_RUNTIME; else process.env.WORKER_RUNTIME = prior; });
@@ -214,24 +215,15 @@ test('legacy recovery and stop helpers never invoke Docker in Kubernetes mode', 
   t.mock.method(docker, 'execFileAsync', async () => assert.fail('must not call Docker'));
   t.mock.method(docker, 'stopAndRemove', async () => assert.fail('must not call Docker'));
   const removed = [];
-  t.mock.method(kubernetes, 'deleteWorker', async (cfg, id, options) => removed.push({ id, options }));
+  const identity = { deployment: 'captured-uid', secret: null, pvc: null };
+  t.mock.method(kubernetes, 'workerIdentity', async () => identity);
+  t.mock.method(kubernetes, 'deleteWorkerIdentity', async (_cfg, id, captured) => removed.push({ id, captured }));
+  t.mock.method(kubernetes, 'workerIdentityGone', async () => true);
   await assert.rejects(worker.watchWorker('sv-worker-s42'), /requires a turn journal/);
-  await worker.stopWorker('sv-worker-s42');
-  assert.deepEqual(removed, [{ id: 42, options: { deleteVolume: false } }]);
+  assert.deepEqual(await worker.removeWorker(42), { removed: true });
+  assert.deepEqual(removed, [{ id: 42, captured: identity }]);
   await assert.rejects(worker.destroyWorker('unexpected-name'), /Invalid Kubernetes worker name/);
 });
-
-test('legacy Docker stop preserves its existing stop-only behavior', async (t) => {
-  const prior = process.env.WORKER_RUNTIME;
-  process.env.WORKER_RUNTIME = 'docker';
-  t.after(() => { if (prior === undefined) delete process.env.WORKER_RUNTIME; else process.env.WORKER_RUNTIME = prior; });
-  const docker = require('../src/services/docker');
-  const calls = [];
-  t.mock.method(docker, 'execFileAsync', async (...args) => { calls.push(args); });
-  await worker.stopWorker('usernode-worker-42');
-  assert.deepEqual(calls, [['docker', ['stop', 'usernode-worker-42'], { timeout: 15000 }]]);
-});
-
 
 for (const scenario of ['absent', 'starting', 'pod-replacement', 'api-error']) {
   test(`Kubernetes liveness distinguishes ${scenario} when no Pod is listed`, async (t) => {

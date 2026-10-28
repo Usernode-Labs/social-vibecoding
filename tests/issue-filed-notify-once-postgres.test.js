@@ -66,7 +66,6 @@ test('a request names a follower: one notification, one buzz', { timeout: 120000
     nextNumber += 1;
     return { number: nextNumber, title, html_url: `https://github.com/${owner}/${repo}/issues/${nextNumber}` };
   };
-  github.noteIssueCreated = () => {};
   const notifications = require('../src/services/notifications');
   const { issueRoutes } = require('../src/routes/issues');
 

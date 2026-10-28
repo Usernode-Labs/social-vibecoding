@@ -701,12 +701,12 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     }
     try {
       const result = await agentStop.requestStop({
-        pool, user: req.user, agentSessionId: id, force: body.force === true,
+        pool, user: req.user, agentSessionId: id,
         token: body.token || null, scheduleInteractiveRecovery,
       });
       return res.status(result.status).json(result.body);
     } catch (err) {
-      if (err.code === 'stop_unconfirmed') return res.status(503).json({ error: err.message, code: err.code });
+      if (err.httpStatus || err.code === 'stop_unconfirmed') return res.status(err.httpStatus || 503).json({ error: err.message, code: err.code });
       return sendError(res, err, 'Stop agent turn');
     }
   });

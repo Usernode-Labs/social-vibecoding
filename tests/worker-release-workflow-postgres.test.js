@@ -51,7 +51,7 @@ test('requested worker releases are conductor work', { timeout: 60000 }, async t
     if (role === undefined) delete process.env.PROCESS_ROLE; else process.env.PROCESS_ROLE = role;
   });
   let seq = 0;
-  async function session(status = 'active', turnId = null) {
+  async function session(status = 'promoted', turnId = null) {
     const { rows: [u] } = await pool.query(`INSERT INTO users (username, password) VALUES ($1, 'x') RETURNING id`, [`release_${++seq}`]);
     const { rows: [a] } = await pool.query(`INSERT INTO apps (name, slug, created_by, status) VALUES ($1, $1, $2, 'running') RETURNING id`, [`release-${seq}`, u.id]);
     const { rows: [s] } = await pool.query(`INSERT INTO chat_sessions
@@ -63,44 +63,27 @@ test('requested worker releases are conductor work', { timeout: 60000 }, async t
   }
   const row = async s => (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [s.sessionId])).rows[0];
   const outcome = id => web.waitForEvent(id, 1000);
-  const queue = (s, reason = 'agent-reset') => appendWorkerRelease(pool, { ...s, reason });
+  const queue = (s, reason = 'promoted-pause') => appendWorkerRelease(pool, { ...s, reason });
   async function settle() {
     process.env.PROCESS_ROLE = 'conductor';
     try { await conductor.runServices(); await conductor.drain(); } finally { process.env.PROCESS_ROLE = 'web'; }
   }
 
-  await t.test('reset and its release intent commit together, and only the conductor removes the worker', async () => {
-    const s = await session(); const before = removals.length;
+  await t.test('reset keeps the worker, clears both resume ids and commits no release event', async () => {
+    const s = await session('active');
+    await pool.query("UPDATE chat_sessions SET cc_session_id = 'old', agent_thread_id = 'old' WHERE id = $1", [s.sessionId]);
     const reset = await switchSessionAgent(pool, { sessionId: s.sessionId, userId: s.userId,
       pref: { backend: 'claude_code', provider: 'anthropic', model: null, reasoningEffort: null } });
-    assert.equal(reset.ok, true); assert.equal((await row(s)).agent_config_version, 3);
-    const { rows: [event] } = await pool.query('SELECT id, key, payload, source, actor FROM wf_events WHERE machine = $1 AND app_id = $2', [MACHINE, s.appId]);
-    assert.equal(event.payload.configVersion, 3); assert.equal(event.actor, `user:${s.userId}`);
-    assert.deepEqual(event.source, { kind: 'route', name: WORK });
-    assert.equal(removals.length, before);
-    await conductor.drain(); assert.equal((await outcome(Number(event.id))).status, 'accepted');
-    await settle(); assert.deepEqual(removals.slice(before), [s.sessionId]);
-    const { rows: [item] } = await pool.query('SELECT input FROM wf_work WHERE machine = $1 AND key = $2', [MACHINE, event.key]);
-    assert.deepEqual(Object.keys(item.input).sort(), ['appId', 'configVersion', 'reason', 'requestedAt', 'sessionId', 'turnId', 'userId']);
-  });
-  await t.test('a failure appending the intent rolls back the reset and transcript', async () => {
-    const s = await session();
-    const failing = { connect: async () => {
-      const client = await pool.connect();
-      return { release: () => client.release(), query: (sql, params) => {
-        if (String(sql).includes('INSERT INTO wf_events')) throw new Error('synthetic append failure');
-        return client.query(sql, params);
-      } };
-    } };
-    await assert.rejects(switchSessionAgent(failing, { sessionId: s.sessionId, userId: s.userId,
-      pref: { backend: 'claude_code', provider: 'anthropic', model: null, reasoningEffort: null } }), /synthetic append failure/);
-    assert.equal((await row(s)).agent_config_version, 2);
-    assert.equal((await pool.query('SELECT 1 FROM chat_session_messages WHERE session_id = $1', [s.sessionId])).rowCount, 0);
+    assert.equal(reset.ok, true); assert.equal(reset.session.agent_config_version, 3);
+    assert.equal(reset.session.cc_session_id, null); assert.equal(reset.session.agent_thread_id, null);
+    assert.equal((await pool.query("SELECT 1 FROM wf_events WHERE machine = 'worker-release'")).rowCount, 0);
+    await conductor.drain(); await settle(); assert.deepEqual(removals, []);
+    assert.equal((await pool.query('SELECT 1 FROM session_workers WHERE session_id = $1', [s.sessionId])).rowCount, 1);
   });
   await t.test('an older conductor leaves the intent pending until a build that knows the machine runs', async () => {
     const s = await session(); const id = await queue(s);
-    const { workerPush } = require('../src/workflow/worker-push/machine.ts');
-    const old = createRuntime({ pool, machines: [workerPush()], slots: 1 });
+    const { workerStop } = require('../src/workflow/worker-stop/machine.ts');
+    const old = createRuntime({ pool, machines: [workerStop()], slots: 1 });
     try {
       assert.equal(await old.drain(), 0);
       assert.equal((await web.waitForEvent(id, 0)).status, 'pending');
@@ -111,7 +94,7 @@ test('requested worker releases are conductor work', { timeout: 60000 }, async t
     const s = await session();
     for (const change of ['key', 'app', 'owner', 'source', 'actor', 'version', 'erased']) {
       const requestId = randomUUID();
-      const payload = { ...s, reason: 'agent-reset', requestId };
+      const payload = { ...s, reason: 'promoted-pause', requestId };
       if (change === 'owner') payload.userId++;
       if (change === 'version') payload.configVersion++;
       if (change === 'erased') await pool.query('UPDATE users SET anonymised_at = NOW() WHERE id = $1', [s.userId]);

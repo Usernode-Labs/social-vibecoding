@@ -53,13 +53,9 @@ process is), so what a follower could not do had to move:
 - **No loop needs a wake over the bus**: a launch appends its machine's event
   in whatever process it lands (the bench lane's `Look`, the shots evals'
   `Look`).
-- **What one process learns about a repo's issues, the others hear**
-  (`issues_cache`): a close, a reopen or an invalidation leaves every
-  process's open-issues copy, so a list a web process serves is as fresh as
-  the merge or the heal the conductor made. An issue the platform files
-  reaches every copy too (15 Oct 2026), so the conductor's bot reads a
-  request a web process filed, a project's first version among them, at
-  once rather than once GitHub's own list has it.
+- **Issue lists come from the current provider**: the old process-local issue
+  cache and its cache-only bus messages are removed. Actual issue updates
+  still notify connected browsers through `issue_update`.
 - **A DM answer the bot owes** is the person's DM machine's (`bot-dm`, docs/workflows.md):
   the message is heard in its own transaction on the web Pod, and the answer, and any
   later try, are its work, wherever the workflow loops run.
@@ -77,6 +73,37 @@ process is), so what a follower could not do had to move:
   requests records the merges it carries as running.
 - **A web process decides nothing** (docs/workflows.md, "Running it"): it runs
   no pipeline slot, and a route waits for a conductor's outcome.
+- **Preview security retirement runs on conductors.** Before starting any
+  workflow work, a conductor (or `all`) still retires unsafe platform previews.
+  A web process performs no Docker/Kubernetes retirement and does not warm
+  worker images. It waits before listening for a successful result of the
+  existing `preview-data-policy` clock, whose scan started within the last
+  three minutes, using database time. The result must match the data-policy
+  digest, runtime mode/namespace, release and receipt key. Recent matching
+  proof lets web restart during a short conductor outage. An old-format,
+  mismatched, expired or failed latest result cannot open the barrier; database
+  failure or a three-minute timeout fails boot with no privileged fallback.
+  Staging keeps its existing skip.
+
+The security clock is armed before release-adoption work, so unrelated adoption
+retries cannot delay web startup. Its first run is due immediately; an existing
+clock keeps its minute interval. A conductor passes its successful boot scan
+as an immutable startup dependency to that clock: its first run can record
+that result without a second inventory. A later clock result, including a
+failure, or an expired/mismatched boot result requires a fresh scan. Missing
+receipt keys prevent readiness proof only after retirement has run.
+On boot, a scope failure is logged and the conductor continues without a
+proof; periodic clock runs still fail, and web startup stays closed. An actual
+retirement failure still fails conductor boot.
+Web waits long enough for an older conductor's skipped tick, the next tick
+and retirement, and its Kubernetes startup probe allows five minutes for that
+wait plus ordinary boot work. `all` keeps its direct pre-work check and does
+not wait on itself.
+The durable clock result replaces duplicate web execution; no new machine,
+receipt table or preview-policy epoch is needed. This removes a dependency on
+web runtime-write authority; separate service accounts, Secret inputs and
+database logins remain required to enforce the wider privilege boundary. The
+scope tag binds configuration, not an authenticated producer identity.
 
 What makes the split safe (docs/plans/draining-releases.md): who works on
 what is in Postgres (the workflow's records), a Stop is an event to the
@@ -84,56 +111,217 @@ machine whose work runs the turn, and a worker's callbacks (the model proxy,
 BYOK spend, a shots eval's bill) read a turn that is not in their process
 from the database.
 
-Worker push callbacks use the `worker-push` machine
-(`src/workflow/worker-push/`). The HTTP handler authenticates the worker and
-reads its stored branch, then waits for a separate request instance. The
-conductor rechecks the session, account, app, branch, repository and public
-visibility before exporting Git objects and running authenticated Git in the
-trusted pusher. No JWT, Git credential or Git bundle enters the event or work
-input. A request not started within 80 seconds expires; an HTTP wait that
-times out returns a retryable 503. There is no direct web-side push fallback.
-The handler has its own work kind and concurrency, so a turn waiting for its
-worker's callback does not occupy the push queue. Local `all` processes run
-the same machine and handler.
+Coding runners commit and journal their result. Both live completion
+(`worker.execInWorker`) and journal recovery (`worker.resumeTurnFromJournal`)
+pass through `turn-publication.js` before returning to their caller. This
+covers Claude Code, both OpenRouter harnesses, builds and sync, including a
+sync fast-forward with no commits ahead of main. Failed/discarded or stopped
+runners without a commit are not published; the first-version partial-work
+rescue remains an explicit separate policy.
 
-Agent-context reset and a promoted proposal's Pause queue `worker-release`
-requests (`src/workflow/worker-release/`). Reset writes its release intent in
-the same transaction as the model/context change and transcript message;
-Pause leaves the proposal up for voting. The conductor checks the current
-owner, account, configuration, turn and last use, takes the worker eviction
-lock shared with startup, then deletes only captured runtime identities and
-waits for them to be gone. A later use or context reset makes stale work skip.
-Pause still releases an idle worker when its captured turn has just finished;
-a different running turn is spared. A later turn that also finishes before
-Pause executes can lose its warm worker.
-The work lease and session lock are checked before deletion. An unpushed commit
-is recorded durably in `session_workers` before the turn is released, so
-another conductor or a restarted process can rescue it. Worker preparation
-rescues it under the eviction lock on every image, and the dispatch guard
-checks again before any runner can reset the checkout. A caller whose own
-attempt is already registered supplies its `turnId`; only that matching
-`dispatch_pending` attempt may see through the active-turn guard. A different
-running turn is left alone. A new turn never supersedes an unpushed commit.
-Failed rescue or a failed database read prevents a new turn, agent-reset or
-promoted-Pause removal, idle eviction and stale-worker replacement. A refused
-turn starts no agent, charges no coding turn, and releases only its own
-pending record. The refusal names the commit, branch and push failure;
-permanent failures are passed through to the Mayor and agent dispatch.
-On a GitHub-hosted app during the GitHub pause, a build whose push failed
-blocks further builds in that session until its commit can be pushed.
-Failed record writes retain the turn and journal for recovery.
-The context volume stays. Agent dispatch records an operation immediately
-after switching agents, so its reset release will often skip; reusing that
-warm worker is safe because its setup does not depend on the agent backend.
-A separate machine lets older conductors leave these intents for the new
-build during rollout. The idempotent schema migration adds nullable
-`unpushed_sha` and `unpushed_branch_name` columns to the private table;
-no new runtime configuration is needed. Existing unpushed commits held only
-in an older conductor's memory are not backfilled by this migration.
+A new dispatch record and its publication target are captured in one
+transaction. Capture failure rolls it back and releases only the exact
+undispatched physical attempt, including a pre-registered OpenRouter attempt.
+
+Publication uses the existing `turn_effects` receipt table. Its pending intent
+binds the app, owner, repository, branch and exact commit before Git I/O. The
+conductor rechecks current authority and public visibility and uses the existing
+trusted Git pusher, which imports objects into its own isolated repository and
+never gives credentials to worker code. The export must match the saved SHA;
+pushes never force. Transient errors retry publication up to five times, with
+backoff; permanent or exhausted failures are recorded and returned through the
+existing `pushOk`/failure result. PR creation and checks require success.
+
+A restart before publication or an uncertain push replays the journal and only
+retries that exact publication. A completed receipt is replayed without Git I/O.
+Database failures leave the turn and journal retained. The worker's saved commit
+is durable before publication and stays until it is published or explicitly
+rescued. Worker preparation rescues saved work before any runner can reset its
+checkout; failed rescue prevents startup, eviction or stale-image replacement.
+An inactive session cannot authorize new publication; rescue may still publish
+its exact durable saved commit before eviction. A new turn never supersedes
+saved work. Partial-work rescue also records its
+commit before pushing it. A push failure never dispatches a second paid turn.
+
+The worker push callback, push-specific capability, HTTP retry loop and separate
+`worker-push` machine are removed. Old worker images get a permanent 410 from
+the retired endpoint and return their result; completion reconciles both old
+`push_ok` values and the new commit-only result. OpenRouter build workers keep
+a declaration-only capability for before/after-shot intent, with no Git write
+authority. For one release, the declaration routes also verify old `worker:push`
+tokens held by in-flight builds; new code never mints them, and they cannot
+reach other purposes. The worker-callable PR endpoint also returns permanent 410, with
+no authentication, database, Git or proposal side effects; conductor
+finalization remains the supported creation path. New worker images require
+the conductor completion path for sync; normal releases pin each conductor's
+worker image alongside its code.
+
+A context reset keeps the warm worker. It clears both resume ids, increments
+the configuration version under the existing row lock, and records the reset
+in the transcript. Backend, model and resume values are supplied on each exec;
+worker replacement is not what makes model context fresh. Dispatch still
+refuses stale configuration, and startup rescue still protects saved commits.
+
+A promoted proposal's Pause queues `worker-release` work. The conductor checks
+current owner, account, configuration, turn and last use under the shared worker
+eviction lock, then removes only captured runtime identities and waits for them
+to disappear. A captured turn that just ended can be released; a different
+running turn is spared. A saved commit, including pending publication, prevents
+removal until rescue is safe and succeeds. A captured running turn without a
+saved commit retains its existing release behavior. The context volume stays.
+
+Force-stop fallback uses `worker-stop` requests (`src/workflow/worker-stop/`).
+The web captures the actor, app, owner, configuration and running job, then
+waits for the conductor to confirm termination. The conductor rechecks current
+authority and job identity under the worker eviction lock. It hard-kills only
+the captured journal; if that cannot confirm termination, it rescues any saved
+commit and removes only captured runtime identities, retaining the volume.
+A missing journal on an unchanged executing record also uses fenced removal,
+so both Force stop and last-attempt recovery can end that stranded record.
+A newer job or a worker used after an orphan-stop request is spared. Ledger
+settlement failure retains the stopped turn for recovery. Announcements and
+durable cleanup run on the conductor; the web releases only its captured local
+handle and hold. Last-attempt turn recovery uses that same conductor I/O core.
+Older conductors leave the separate machine's requests pending during rollout;
+unavailable or unconfirmed stops return a retryable 503 with no web-side runtime
+fallback. Work not started within 30 seconds expires; journal-kill and removal
+waits use only the remaining request budget, with expiry rechecked after commit
+rescue before deletion. The HTTP wait allows five extra seconds for settlement
+and the workflow result. A captured job that already ended succeeds without
+queueing; agent-stop HTTP responses preserve typed 404/409/503 refusals.
+No schema or runtime configuration change is needed.
+
+Ordinary Stop queues the separate `worker-interrupt` machine in the same
+package. It acknowledges admission without waiting for confirmation, keeping
+the existing HTTP responses and local stream cancellation. The originating
+process stamps stop intent and disarms completion notifications before aborting,
+without waiting for conductor admission. A local CLI turn needs no container
+command, and final wrap-up stays protected.
+The conductor retains the TERM/grace/KILL signal, two-second probe cadence,
+three-signal cap and 30-second budget. Timers and attempts are in PostgreSQL;
+an actor's duplicate clicks share an active confirmation, and another conductor can finish
+it; repeat requests acknowledge that pending confirmation. After a confirmation
+ends, a new click can try again. Every work step rechecks current authority,
+configuration and job. Ordinary confirmation never
+clears the owning turn's record or escalates into force-stop deletion.
+The local pending flag gates spin-up. If Stop crosses an exec already in flight,
+its dispatcher signals and appends bounded confirmation for that exact new
+record, without waiting for another work item's result. This backstop has a
+dedicated system source and a null actor, independently of human-click coalescing;
+it checks the active turn id and journal and does not depend on the owner's
+account state. The pending flag carries the real stopper's name when known;
+otherwise the durable stamp has no stopper. A locally applied Stop
+still succeeds when admission finds a changed job; it never retargets that job.
+Ordinary Stop refuses an active record without a journal, even if it has a
+turn id, with 409 and no signal. Current turn producers always supply both;
+such leftovers require investigation. Stop keys retain their format across
+rolling deploys. Force-stop can still remove a captured worker for a record
+with a turn id but no journal, with current-turn fencing and saved-work rescue.
+A current turn whose journal file has vanished still uses the force-stop
+recovery that removes its captured worker identity.
+Ordinary Stop has no whole-worker strategy. Force-stop remains the separate,
+identity-fenced fallback. Retry-time idle waiting performs I/O only on a
+conductor and returns false without I/O when called on the web. The route-side
+polling loop, local `confirming` flag and name-based stop shim are removed.
+Older conductors leave this separate machine pending, so rollout can temporarily
+return retryable 503s, with no web-side runtime fallback. This needs no schema
+or runtime configuration change.
+
+The hosted connector's headless-build handoff keeps the pushed branch, chat
+and spec history, but no longer copies agent memory. The clone leaves
+`cc_session_id` unset and creates no worker or memory-copy Job; submission
+promotes it directly. The Docker and Kubernetes copy helpers are removed.
+
+Code-host writes a person asks for over HTTP are **privileged operations**
+(`src/workflow/platform-operation/`, `services/platform-operations.js`): one
+machine for every typed operation, not one machine per write. The route keeps
+the validation, checks and refusals it always had, then appends the operation
+with the requester as its actor. Admission refuses a request that is not this
+instance's, from another producer, or for an erased account or a missing
+project. The conductor's work loads the requester as the auth middleware
+would and reads its current authority and target again on every attempt,
+before any write it still has to make; a check its own progress would trip
+tells its own proposal or claim, as its steps record them, from a competing
+one. A request refused part way, by its authority or its account, gives back
+what it holds (an Undo claim it never linked). Each write is kept as a step
+in the work item's checkpoint. A
+retry or another conductor after a restart carries on from the last finished
+step: a request's branch name is kept, its branch or PR found already made is
+used, and its session or announcement is never made twice. A refusal is an
+answer (`{ ok: false, status }`), never a retry. Other failures retry four
+times within about twenty seconds, except a branch the host refuses, which is
+answered at once with the host's reason (as these routes always answered), so
+the same request asked again makes the same branch. A route waits up to a minute; an event
+no conductor admits within five seconds is refused so it never runs later
+(503), and one still running past the wait answers 503 `operation_pending`,
+never a success, and finishes. Each operation is its own work kind, so a
+conductor claims only the operations its build knows: during a rollout an
+older conductor leaves a newer operation queued for a newer one. The
+operations are:
+
+- `manifest.propose`: every settings proposal that edits dapp.json (rename,
+  visibility, who decides, admins, governance, a secret declaration, topics),
+  rechecked for its flavor's access, the self-app rule, a verified owner when
+  it makes a project public, the repository the route saw and the open
+  proposal it would duplicate. A secret declaration's value travels with it,
+  encrypted with the data key as `pending_secret_declarations` keeps it, and
+  is applied (a full admin's) or held for the merge on the conductor once the
+  PR exists, so a proposal still opening when its route answers keeps it.
+- `branch.ensure`: a native proposal start's `dev/cli-u<id>-…` branch at its
+  exact base (a different existing ref is a 409 conflict), an issue's
+  headless run, a clone of that run (off the source run's branch as the
+  conductor reads it, else main), and a change's first-turn branch asked by a
+  web process. A conductor's own work keeps making the first-turn branch
+  itself, so no work item waits on another. Only `dev/` names are made.
+- `revert.open`: an Undo. The route records the request before it answers,
+  and answers at once, as before; the conductor makes the revert branch, PR,
+  promoted session and announcement, then refreshes the vote panel. A host
+  failure is tried again from the last finished step; a conflict, or the last
+  try, gives the claim back and says so in the thread. One Undo of a change
+  runs at a time: its instance is keyed by the change, so a second click
+  while one is under way is the same request, and a new one starts once it
+  has finished. So a claim a try began but could not record before its
+  process went is the retry's own, and adopted.
+- `domain.check` and `domain.teardown`: a custom domain's check (DNS, the
+  certificate probe and its Ingress) and the removal of its Ingress and
+  certificate Secret, asked by the domain routes for a person who must still
+  manage the project or be a full admin. The domain sweep and a teardown on a
+  conductor write the edge themselves. A domain whose edge could not be taken
+  down keeps its row and status (503, ask again), so a hostname is never
+  released, nor a disabled one left routed, while its Ingress remains.
+- `app.remove`: an app's whole teardown (previews, runtime, domain edge,
+  database and files, then its row), asked by DELETE /api/apps/:slug and a
+  test account's retirement after their gates and confirmations; the
+  conductor checks again that the requester may delete it. A preview still
+  retiring is answered as before (409, ask again in a minute).
+
+- `openrouter.provision`, `openrouter.sync`, `openrouter.disable` and
+  `openrouter.remove`: a company-funded OpenRouter key created, brought in
+  line with its account's weekly allowance, disabled or deleted, with the
+  management key. Web callers keep calling `openrouter-managed-keys.js`,
+  which asks a conductor from a web process and acts itself on a workflow
+  process; its one-key-per-account reservation, allowance and needs-review
+  rules decide what is made, and its refusals are answers, so a provider call
+  is never repeated. An account may ask for its own key and sync before it
+  has platform access (a key is made as the account is created); disabling,
+  deleting or syncing another account's key needs a full admin. A web read
+  asks for a sync only when the key is out of line with the allowance. A
+  provisioning retried after its key was issued and saved, but before its
+  result was recorded, answers with that key rather than the refusal its
+  reservation would give. Whether included keys are offered is the
+  non-secret `OPENROUTER_MANAGED_KEYS_ENABLED` where the key is absent (unset,
+  the key's presence answers), so a web process can run without the key.
+
+An account deletion's provider, worker and stored-file cleanups are the
+`account-deletion` clock's alone, every minute on a conductor; the routes that
+queue them no longer start a sweep of their own. With these, a web process
+makes no Kubernetes write in production (preview projects, off by default,
+still build and deploy from the request's process): its runtime calls are
+reads (status, deployment state, logs, quotas, a preview's state).
 
 These move web dependencies behind durable commands. Web Pods still need
 their current Kubernetes and database permissions for other callers, including
-force-stop fallback, volume copies, repository operations and startup work. Moving
+the remaining repository writes and startup work. Moving
 those callers, then splitting service accounts, Secret inputs and actual
 database login privileges, remains SEC-09 work. The event's source metadata
 also remains a convention among trusted processes; it does not authenticate
@@ -191,6 +379,6 @@ round, is less detailed than what it shows of its own:
   one image and rolls both Deployments; the release pipeline decides that,
   not the chart. With the drain, a conductor release no longer cuts the work
   it was doing, so the gain is smaller than it was.
-- Migrating all remaining infrastructure calls from routes. The push
-  callback above now queues conductor work; other web-side calls still
-  finish in their own process and need to move before privileges are split.
+- Migrating all remaining infrastructure calls from routes. Turn publication
+  runs on the conductor; other web-side calls still finish in their own process
+  and need to move before privileges are split.

@@ -6,15 +6,11 @@ const {
   DEFAULT_MARKETING_BASE_URL,
   normalizeBaseUrl,
 } = require('./services/marketing-links');
-const {
-  DEFAULT_MODEL: DEFAULT_GLOBAL_CHAT_MODEL,
-  DEFAULT_REASONING_EFFORT: DEFAULT_GLOBAL_CHAT_REASONING_EFFORT,
-  // One effort scale for the whole platform (minimal, low, medium, high,
-  // xhigh). Global Chat happens to declare it, but it is not Global Chat's:
-  // the coding-agent default below is validated against the same list so the
-  // two profiles can never drift onto different vocabularies.
-  REASONING_EFFORTS: REASONING_EFFORT_LEVELS,
-} = require('./services/global-chat/prompt');
+// One effort scale for the whole platform (minimal, low, medium, high,
+// xhigh): the coding-agent default below is validated against the same list
+// the OpenRouter transport uses, so the two can never drift onto different
+// vocabularies.
+const { REASONING_EFFORT_SET: REASONING_EFFORT_LEVELS } = require('./services/reasoning-efforts');
 const { parseOpenRouterHarnessMap } = require('./agents/registry');
 
 // #2600: the default reasoning effort for an OpenRouter CODING turn when the
@@ -23,8 +19,7 @@ const { parseOpenRouterHarnessMap } = require('./agents/registry');
 // recommends for coding (GLM 5.3 Flash, DeepSeek v4.1 Flash) are cheap enough
 // per token that thinking longer is the better trade on repository work: a
 // change that lands first time costs less than a cheap one that has to be
-// re-run. Global Chat is a SEPARATE profile and deliberately stays at its own
-// low default; do not collapse the two.
+// re-run.
 const DEFAULT_CODEX_REASONING_EFFORT = 'xhigh';
 
 const REQUIRED = [
@@ -347,13 +342,6 @@ function load() {
     console.error('[config] NATIVE_SESSION_V2_TESTNET_CHAIN_ID must be a canonical Rust ChainId.');
     process.exit(1);
   }
-  const globalChatDefaultReasoningEffort =
-    process.env.OPENROUTER_DEFAULT_GLOBAL_CHAT_REASONING
-      || DEFAULT_GLOBAL_CHAT_REASONING_EFFORT;
-  if (!REASONING_EFFORT_LEVELS.has(globalChatDefaultReasoningEffort)) {
-    console.error('[config] OPENROUTER_DEFAULT_GLOBAL_CHAT_REASONING must be minimal, low, medium, high, or xhigh.');
-    process.exit(1);
-  }
   const codexDefaultReasoningEffort =
     process.env.OPENROUTER_DEFAULT_CODEX_REASONING
       || DEFAULT_CODEX_REASONING_EFFORT;
@@ -460,14 +448,6 @@ function load() {
     // choice. A user's Settings choice is stored on the session and still
     // wins; this only fills the blank.
     openrouterDefaultCodexReasoning: codexDefaultReasoningEffort,
-    // Global Chat is a separate profile from repository development. Its
-    // inexpensive, minimal-effort defaults never rewrite the coding-agent choice.
-    openrouterDefaultGlobalChatModel:
-      process.env.OPENROUTER_DEFAULT_GLOBAL_CHAT_MODEL || DEFAULT_GLOBAL_CHAT_MODEL,
-    openrouterDefaultGlobalChatReasoning: globalChatDefaultReasoningEffort,
-    openrouterGlobalChatFallbackModels:
-      (process.env.OPENROUTER_GLOBAL_CHAT_FALLBACK_MODELS || 'deepseek/deepseek-v4-flash-0731')
-        .split(',').map((s) => s.trim()).filter(Boolean),
     // Curated badges in the model picker, and — since #2569 — the OpenRouter
     // models a new account STARTS with. Exact ids keep the recommendation
     // deliberate: adding a provider prefix here would label dozens of old,
@@ -500,6 +480,12 @@ function load() {
     // and administer limited child keys; unlike child keys, a management key
     // cannot be used for model inference.
     openrouterManagementApiKey: process.env.OPENROUTER_MANAGEMENT_API_KEY || '',
+    // Whether company-funded keys are offered at all, said without the key:
+    // a process that only asks a conductor for them (a web process) need
+    // not hold it. Unset, the key's presence answers, as it always did.
+    openrouterManagedKeysEnabled: process.env.OPENROUTER_MANAGED_KEYS_ENABLED == null
+      || process.env.OPENROUTER_MANAGED_KEYS_ENABLED === ''
+      ? null : String(process.env.OPENROUTER_MANAGED_KEYS_ENABLED) === 'true',
     openrouterManagedWorkspaceId: process.env.OPENROUTER_MANAGED_WORKSPACE_ID || '',
     // Default-open claim policy. Operators may opt into requiring a linked
     // GitHub or X identity before the one lifetime managed key is reserved.
@@ -917,6 +903,12 @@ function load() {
     ).replace(/\/$/, ''),
     selfAppSlug: SELF_APP_SLUG,
     selfAppDbName: SELF_APP_DB_NAME,
+    // Projects made inside a platform preview (services/preview-projects.js):
+    // production makes their database, build and runtime for the preview.
+    // On unless the operator switches it off (the chart's
+    // config.previewProjects: false); an admin decides in Admin > Limits
+    // (services/preview-projects-setting.js).
+    previewProjectsEnabled: process.env.PREVIEW_PROJECTS_ENABLED !== 'false',
     // #3699: apps whose spec author (an agent chat's or dev chat's scout, and
     // the Homeroom bot) is asked for an HTML spec (before/after screens,
     // diagrams) instead of markdown. Every app by default; comma-separated
@@ -1096,9 +1088,6 @@ function load() {
   console.log(`  OPENROUTER_MANAGED_WORKSPACE_ID=${config.openrouterManagedWorkspaceId || '(default workspace)'}`);
   console.log(`  OPENROUTER_DEFAULT_CODEX_MODEL=${config.openrouterDefaultCodexModel}`);
   console.log(`  OPENROUTER_DEFAULT_CODEX_REASONING=${config.openrouterDefaultCodexReasoning}`);
-  console.log(`  OPENROUTER_DEFAULT_GLOBAL_CHAT_MODEL=${config.openrouterDefaultGlobalChatModel}`);
-  console.log(`  OPENROUTER_DEFAULT_GLOBAL_CHAT_REASONING=${config.openrouterDefaultGlobalChatReasoning}`);
-  console.log(`  OPENROUTER_GLOBAL_CHAT_FALLBACK_MODELS=${config.openrouterGlobalChatFallbackModels.join(',') || '(none)'}`);
   console.log(`  OPENROUTER_RECOMMENDED_MODELS=${config.openrouterRecommendedModels.join(',') || '(none)'}`);
   console.log(`  IDENTITY_CREDIT_POLICY=${config.identityCreditPolicy}`);
   console.log(`  GITHUB_LINK=${config.githubLinkClientId && config.githubLinkClientSecret ? '(enabled)' : '(disabled)'}`);

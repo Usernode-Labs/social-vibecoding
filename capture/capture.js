@@ -1128,6 +1128,12 @@ function resolveTests(env, readStdin) {
       expectSelector: t.expectSelector ? String(t.expectSelector).slice(0, 256) : '',
       expectText: t.expectText ? String(t.expectText).slice(0, 256) : '',
       allowConsoleErrors: !!t.allowConsoleErrors,
+      // Who loads the check's page, and how many times. The platform sets
+      // both from the check's own dapp.json entry; only when set, so a list
+      // that uses neither reads exactly as before.
+      ...(t.persona === 'guest' ? { persona: 'guest' } : {}),
+      ...(Number.isInteger(t.repeat) && t.repeat > 1 && t.repeat <= MAX_CHECK_REPEAT
+        ? { repeat: t.repeat } : {}),
       // How groupTests loads the check's page. The platform sets these
       // from the app's dapp.json rules (app-manifest.js checkLoadFlags);
       // only when set, so a list that uses none reads exactly as before.
@@ -1193,6 +1199,15 @@ const HASH_GROUP_CAP = 6;
 // would be silently dropped.
 const RETRY_INDEX_BASE = 1000000;
 const RETRY_RUNS = 3;
+// A check's own `repeat` is bounded here too, so a list that skips the
+// manifest's validation cannot ask for a thousand loads of one page.
+const MAX_CHECK_REPEAT = 10;
+// How many loads a check asks for: 0 for an ordinary one-load check, so
+// every branch below reads the same way.
+function checkRepeat(t) {
+  const n = t && t.repeat;
+  return Number.isInteger(n) && n > 1 && n <= MAX_CHECK_REPEAT ? n : 0;
+}
 // At most this many failing checks are asked again in one run.
 const RETRY_MAX_CHECKS = 10;
 // And none are, when this fraction of the suite is red: that is the change.
@@ -1227,7 +1242,11 @@ function testShard(env) {
 // order matters, for longest-first.
 function groupCost(group) {
   const tests = Array.isArray(group) ? group : [group];
-  return 3 + Math.max(0, cohortsOf(tests).length - 1) + 0.1 * tests.length;
+  const repeat = tests.length === 1 ? checkRepeat(tests[0]) : 0;
+  // A repeated check loads its page once per attempt, so sharding and
+  // heaviest-first see what it really costs.
+  return (3 + Math.max(0, cohortsOf(tests).length - 1) + 0.1 * tests.length)
+    * (repeat > 1 ? repeat : 1);
 }
 
 // The groups, heaviest first, ties in their original order. A pool that
@@ -1485,11 +1504,17 @@ function groupTestsByDocument(tests, opts) {
 // app's parameters or routes. Nothing shortens the window a switch gets: a
 // shorter one changed verdicts both ways (see
 // tests/capture-switch-window.test.js).
+//
+// A `guest` or repeated check is exempt too, and for the same reason a solo
+// one is: a signed-out page and each repeat load have to be their OWN
+// browser, never a switch on a page another check already signed in or
+// loaded. groupTests puts each in a group of one.
 function groupTests(tests, env) {
   const all = Array.isArray(tests) ? tests : [];
-  const solo = all.filter((t) => t && t.solo);
-  const cold = all.filter((t) => t && !t.solo && t.coldLoad);
-  const shared = (solo.length || cold.length) ? all.filter((t) => !(t && (t.solo || t.coldLoad))) : all;
+  const own = (t) => !!(t && (t.solo || t.persona === 'guest' || checkRepeat(t) > 1));
+  const solo = all.filter(own);
+  const cold = all.filter((t) => t && !own(t) && t.coldLoad);
+  const shared = (solo.length || cold.length) ? all.filter((t) => !own(t) && !(t && t.coldLoad)) : all;
   const groups = groupByDocument(env)
     ? groupTestsByDocument(shared, { cap: hashGroupCap(env) })
     : groupTestsByUrl(shared);
@@ -1938,6 +1963,10 @@ async function runTestGroup(browser, group, opts) {
   const tests = Array.isArray(group) ? group : [group];
   const cohorts = cohortsOf(tests);
   const lead = tests[0];
+  // Where a verdict goes. The repeat loop in runTests.runOne passes one that
+  // only records the attempt, so a load that fails can be reported once,
+  // naming the attempt, instead of writing a frame of its own.
+  const emit = typeof o.emit === 'function' ? o.emit : emitTest;
   // When the caller asks: how long the cold load took, from opening the
   // context to the first settle (the checks-timing summary in runTests).
   const startedAt = Date.now();
@@ -1976,7 +2005,7 @@ async function runTestGroup(browser, group, opts) {
     for (const t of tests) {
       const failureReason = reasonFor(t);
       const pass = !failureReason;
-      emitTest(t.index, pass ? 'pass' : 'fail', status, {
+      emit(t.index, pass ? 'pass' : 'fail', status, {
         name: t.name, path: t.path,
         consoleErrors: t.allowConsoleErrors ? [] : consoleErrors,
         failureReason: pass ? '' : failureReason,
@@ -2256,7 +2285,7 @@ async function runTestGroup(browser, group, opts) {
           failureReason = `${errorCount} console error${errorCount === 1 ? '' : 's'} on load`;
         }
         const pass = !failureReason;
-        emitTest(t.index, pass ? 'pass' : 'fail', status, {
+        emit(t.index, pass ? 'pass' : 'fail', status, {
           name: t.name, path: t.path,
           consoleErrors: t.allowConsoleErrors ? [] : cohortErrors,
           failureReason: pass ? '' : failureReason,
@@ -2411,15 +2440,23 @@ async function runTests(browser, tests, opts) {
     }
     const timing = {};
     const cohortCount = cohortsOf(group).length;
+    // A repeated check loads the page once per attempt, in sequence, in its
+    // own single-check group: the group may take that many times as long.
+    const repeat = group.length === 1 ? checkRepeat(group[0]) : 0;
     const groupBudgetMs = perTestMs
       + navBudgetMs
       + GROUP_EXTRA_CHECK_MS * (group.length - 1)
       + GROUP_EXTRA_COHORT_MS * Math.max(0, cohortCount - 1);
+    const totalBudgetMs = repeat > 1 ? groupBudgetMs * repeat : groupBudgetMs;
     let timer = null;
     const timeout = new Promise((resolve) => {
-      timer = setTimeout(() => resolve('timeout'), groupBudgetMs);
+      timer = setTimeout(() => resolve('timeout'), totalBudgetMs);
       if (timer && typeof timer.unref === 'function') timer.unref();
     });
+    // The last attempt's verdict for a repeated check, and which attempt was
+    // in progress when the budget ran out: the failure names both.
+    let repeated = null;
+    let attemptInProgress = 0;
     let outcome;
     try {
       // The group's own ceiling, so a rolling assert window can never
@@ -2427,18 +2464,75 @@ async function runTests(browser, tests, opts) {
       const groupOpts = { ...settleOpts, groupDeadlineAt: now() + groupBudgetMs };
       // Where the group writes how long its cold load took.
       groupOpts.timing = timing;
+      // A repeated check runs its loads one after another, each on a fresh
+      // context (runTestGroup opens one per call), and records each
+      // attempt's verdict instead of writing it. It stops at the first
+      // failed load: one failure is the failure, and the loads after it
+      // could only hide that.
+      const runGroup = async () => {
+        if (repeat <= 1) return runTestGroup(browser, group, groupOpts);
+        for (let attempt = 1; attempt <= repeat; attempt += 1) {
+          attemptInProgress = attempt;
+          let captured = null;
+          // Each load is a page of its own, so each gets its own ceiling.
+          await runTestGroup(browser, group, {
+            ...groupOpts,
+            groupDeadlineAt: now() + groupBudgetMs,
+            emit: (index, status, loadStatus, payload) => {
+              captured = { index, status, loadStatus, payload: payload || {} };
+              return true;
+            },
+          });
+          // A load that reported no verdict did not pass.
+          if (!captured) {
+            const t = group[0];
+            captured = {
+              index: t.index, status: 'fail', loadStatus: 0,
+              payload: {
+                name: t.name, path: t.path, consoleErrors: [],
+                failureReason: 'The check reported no verdict',
+              },
+            };
+          }
+          repeated = { ...captured, attempt };
+          if (captured.status !== 'pass') break;
+        }
+        return undefined;
+      };
       outcome = await Promise.race([
         Promise.resolve()
-          .then(() => runTestGroup(browser, group, groupOpts))
+          .then(runGroup)
           .then(() => 'done', (err) => `error:${(err && err.message) || err}`),
         timeout,
       ]);
     } finally {
       clearTimeout(timer);
     }
-    // emitTest de-duplicates by index, so these are no-ops for any check in
-    // the group whose frame was already written before the overrun.
-    if (outcome === 'timeout') {
+    if (repeat > 1) {
+      // ONE frame for a repeated check, whatever happened. A failed load
+      // names itself ("Attempt 3 of 5: ..."), and all passes write the last
+      // load's frame. No real frame was written by any attempt, so the
+      // overrun and run-error paths below cannot collide with one.
+      const t = group[0];
+      const attempt = repeated ? repeated.attempt : Math.max(1, attemptInProgress);
+      const payload = repeated ? repeated.payload : {};
+      const failed = !repeated || repeated.status !== 'pass';
+      const perAttemptMs = Math.round(groupBudgetMs / 1000);
+      const reason = repeated
+        ? (payload.failureReason || 'Failed')
+        : (outcome === 'timeout'
+          ? `Check did not finish within ${perAttemptMs}s`
+          : `Test run error: ${String(outcome).slice(6) || 'unknown'}`);
+      emitTest(repeated ? repeated.index : t.index, failed ? 'fail' : 'pass',
+        repeated ? repeated.loadStatus : 0, {
+          ...payload,
+          name: payload.name || t.name,
+          path: payload.path || t.path,
+          failureReason: failed ? `Attempt ${attempt} of ${repeat}: ${reason}` : '',
+        });
+    } else if (outcome === 'timeout') {
+      // emitTest de-duplicates by index, so these are no-ops for any check in
+      // the group whose frame was already written before the overrun.
       for (const t of group) {
         emitTest(t.index, 'fail', 0, {
           name: t.name, path: t.path, consoleErrors: [],
@@ -2487,6 +2581,10 @@ async function runTests(browser, tests, opts) {
   // of its power to block, it just stops blocking on a coin flip. If they
   // all fail it is a real failure and nothing here changed that.
   //
+  // A repeated check (`repeat`) is never among them: it made its own loads,
+  // and a pass on a retry would hide exactly the timing failure it exists
+  // to catch.
+  //
   // Two caps, because a broken change must not become a slow broken change.
   // A quarter of the suite red is the CHANGE, not flakiness, and asking a
   // hundred checks again would triple the run at its least useful moment.
@@ -2500,7 +2598,7 @@ async function runTests(browser, tests, opts) {
   // stops the pass, because that run is red whatever the rest would say.
   const retries = retryRuns(env);
   const failedPrimaries = retries > 0
-    ? own.filter((t) => _testStatus.get(Number(t.index) || 0) === 'fail')
+    ? own.filter((t) => _testStatus.get(Number(t.index) || 0) === 'fail' && checkRepeat(t) <= 1)
     : [];
   const tooManyRed = failedPrimaries.length > own.length * RETRY_SKIP_FRACTION;
   // A shard's retries, and a sweep's (TEST_RETRY_SLOT, one past the last

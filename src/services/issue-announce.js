@@ -1,5 +1,4 @@
 const log = require('./logger');
-const github = require('./github');
 const { pushIssueUpdate } = require('./ws');
 const repoRef = require('./repo-ref');
 // ACCESS_COLUMNS only; app-access.js depends on nothing but the logger, so
@@ -31,13 +30,8 @@ async function findAppByRepo(pool, owner, repo) {
   });
 }
 
-// #125: after an issue lands in a repo through a platform path, make the
-// "Open Issues" panel of any app backed by that repo update without a
-// reload. Two halves: seed the server-side open-issues cache with the new
-// issue (warm path — no extra GitHub list call, no read-after-write lag;
-// the #192 recently-created overlay inside noteIssueCreated also covers
-// the cold-cache / eventually-consistent-list cases), then broadcast an
-// issue_update so connected clients re-pull the panel
+// After an issue lands through a platform path, broadcast an issue_update
+// so connected clients re-pull the request board
 // (App.handleIssueUpdate → AppView.loadVotePanel). `app` is the known
 // target row for app feedback, or null when the caller only knows the
 // repo — in that case we look the app up by repo, since the platform repo
@@ -48,7 +42,6 @@ async function findAppByRepo(pool, owner, repo) {
 // platform-issue draft confirm path (routes/sessions.js).
 async function announceIssueCreated(pool, owner, repo, rawIssue, app) {
   try {
-    github.noteIssueCreated(owner, repo, rawIssue);
     const target = app || await findAppByRepo(pool, owner, repo);
     if (target) {
       pushIssueUpdate({

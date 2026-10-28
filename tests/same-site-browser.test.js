@@ -220,13 +220,21 @@ const EXEMPT = new Map([
   // #4264: a coding agent's sandbox, authenticated by the task's one-time
   // upload token in Authorization; no cookie is read.
   ['external-agent-patch-upload.js POST /api/external-tasks/:taskId/patch', TOKEN],
+  // A coding agent's machine, authenticated by the connector upload's
+  // one-time token in Authorization; no cookie is read.
+  ['connector-uploads.js POST /api/connector-uploads/:uploadId', TOKEN],
+  // A platform preview's own process, in the cluster, authenticated by the
+  // credential production gave it (services/preview-projects.js); no cookie
+  // is read, and a call through any proxy is refused.
+  ['preview-projects.js PUT /api/preview-projects/:slug', TOKEN],
+  ['preview-projects.js POST /api/preview-projects/:slug/build', TOKEN],
+  ['preview-projects.js POST /api/preview-projects/:slug/deploy', TOKEN],
+  ['preview-projects.js POST /api/preview-projects/:slug/restart', TOKEN],
+  ['preview-projects.js DELETE /api/preview-projects/:slug', TOKEN],
   ['mail-webhooks.js POST /api/mail/webhooks/resend', 'Resend raw-body Svix signature; no cookie or browser session authorizes a callback'],
   ['sms-webhooks.js POST /api/sms/webhooks/brevo', 'Brevo\'s SMS webhook bearer token (BREVO_SMS_WEBHOOK_TOKEN); no cookie or browser session authorizes a callback'],
   ['sms-webhooks.js POST /api/sms/webhooks/twilio', 'Twilio\'s X-Twilio-Signature HMAC keyed by TWILIO_AUTH_TOKEN over TWILIO_STATUS_CALLBACK_URL; no cookie or browser session authorizes a callback'],
   ['alerts-webhook.js POST /api/internal/alerts', 'Alertmanager\'s bearer token (ALERTMANAGER_WEBHOOK_TOKEN); no cookie or browser session authorizes a call'],
-  ['global-chat.js POST /api/global-chat/threads/:id/direct-actions', JSON_FIELD],
-  ['global-chat.js POST /api/global-chat/threads/:id/inline-actions', JSON_FIELD],
-  ['global-chat.js POST /api/global-chat/actions/:token/confirm', JSON_FIELD],
   ['internal.js POST /api/internal/shots/:runId/shot', TOKEN],
   ['internal.js POST /api/internal/shots/:runId/closeup', TOKEN],
   ['internal.js POST /api/internal/shots/:runId/skip', TOKEN],
@@ -235,8 +243,8 @@ const EXEMPT = new Map([
   ['internal.js POST /api/internal/shots/:runId/condition', TOKEN],
   ['internal.js POST /api/internal/sessions/:sessionId/visible-changes', TOKEN],
   ['internal.js POST /api/internal/sessions/:sessionId/diagram', TOKEN],
-  ['internal.js POST /api/internal/sessions/:sessionId/push', TOKEN],
-  ['internal.js POST /api/internal/sessions/:sessionId/pr', TOKEN],
+  ['internal.js POST /api/internal/sessions/:sessionId/push', 'retired callback: constant 410 response with no mutation or credential access'],
+  ['internal.js POST /api/internal/sessions/:sessionId/pr', 'retired callback: constant 410 response with no mutation or credential access'],
   ['internal.js POST /api/internal/sessions/:sessionId/platform-issue', TOKEN],
   ['internal.js POST /api/internal/sessions/:sessionId/prod-debug/sql', TOKEN],
   ['issues.js POST /api/apps/:slug/issues', JSON_FIELD],
