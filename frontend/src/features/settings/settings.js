@@ -1348,16 +1348,22 @@
     // rule is what keeps this module loadable by the vm harnesses. Tailwind's
     // extractor scans frontend/** including .js, so both spellings still
     // compile.
+    //
+    // The current row wears the lit tokens (#5997), the palette's "where you
+    // are", as the project rail's current place does (.dev-ws-place in
+    // app.css): the lit tint fills it, the lit line rings it, the lit ink
+    // names it, a weight heavier than its neighbours. It was the action
+    // accent's 10% wash, which hardly told it from a hovered row.
     _navView() {
       const active = Settings._section;
       const item = (p) => ({
         key: p.key,
         label: Settings.str(p.label),
         active: p.key === active,
-        className: 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
+        className: 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm transition-colors '
           + (p.key === active
-            ? 'bg-violet-600/10 text-violet-700 dark:text-violet-400'
-            : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
+            ? 'font-semibold bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)] shadow-[inset_0_0_0_1px_var(--lit-line)]'
+            : 'font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
         ...Settings._filterTerms(p),
       });
       return Settings._groupedSections().map((g, i) => ({
