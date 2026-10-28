@@ -169,6 +169,45 @@ export const MIN_BUILDERS = 5;
 export const UPDATED_WITHIN_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
+ * A change the platform made to every app at once (a licence, a README, a
+ * dependency bump) is not what a project is about, so a card that has no
+ * description of its own does not describe itself with one (28 Oct 2026:
+ * four of the eight big cards said "Add an MIT LICENSE to every existing
+ * app (#5120)"). The card shows its facts instead.
+ */
+const HOUSEKEEPING = /\b(licen[cs]e|readme|changelog|\.gitignore|dependenc|bump|every existing app|all existing apps)\b/i;
+export function isHousekeepingChange(title: string | null | undefined): boolean {
+  return !!title && HOUSEKEEPING.test(title);
+}
+
+/** A merged change's title as a person reads it: no "(#5120)" at the end, which only GitHub can follow. */
+export function cleanChangeTitle(title: string): string {
+  return title.replace(/\s*\(#\d+\)\s*$/, '').trim();
+}
+
+/** What a card may say about the project when it has no description: its latest change, unless that was housekeeping. */
+export function latestRealChange(app: Pick<GuestApp, 'latest_change'>): string {
+  const title = app.latest_change;
+  return title && !isHousekeepingChange(title) ? cleanChangeTitle(title) : '';
+}
+
+/**
+ * What the directory adds up to, for the line under the hero: how many
+ * projects, how many changes their groups voted in this week, and how many
+ * votes are open right now. Only the figures that are not zero are said.
+ */
+export function directorySummary(apps: readonly GuestApp[] | null): { apps: number; week: number; votes: number } | null {
+  if (!apps || !apps.length) return null;
+  let week = 0;
+  let votes = 0;
+  for (const a of apps) {
+    week += a.merged_week || 0;
+    votes += a.open_votes || 0;
+  }
+  return { apps: apps.length, week, votes };
+}
+
+/**
  * Whether "Try it" can open the app for this visitor, here. An app that needs
  * no credential at all opens in the landing's own viewer, anywhere. One that
  * shows a guest its view only at its own address (`guest_ready` without

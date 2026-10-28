@@ -196,13 +196,15 @@ test('a count shows only from 25 members or 10 people active; under that, a card
   assert.ok(busy.includes(message('auth:guest.card.votes_other', { count: 3 })));
   assert.match(cardOf(html, 'busy'), /<a href="#app\/busy\/workshop\?ws=workshop" data-guest-card-votes=""[^>]*text-violet-700/);
   // Too small: what changed this week, else when it last changed, else nothing.
-  // (Each card's text starts with its letter tile and its name.)
+  // (Each card's text starts with its letter tile, twice: the cover and the
+  // small icon beside its name, which every card draws from md so names in
+  // a row line up; landing refresh, 28 Oct 2026.)
   const week = text(cardOf(html, 'week'));
-  assert.deepEqual(week.slice(1), ['Week', message('auth:guest.card.week_other', { count: 4 })]);
+  assert.deepEqual(week.slice(2), ['Week', message('auth:guest.card.week_other', { count: 4 })]);
   const month = text(cardOf(html, 'month'));
-  assert.equal(month.length, 3);
-  assert.match(month[2], /^Updated /);
-  assert.deepEqual(text(cardOf(html, 'quiet')).slice(1), ['Quiet']);
+  assert.equal(month.length, 4);
+  assert.match(month[3], /^Updated /);
+  assert.deepEqual(text(cardOf(html, 'quiet')).slice(2), ['Quiet']);
   for (const card of [week, month]) assert.ok(!card.some((w) => /member|people active/.test(w)), 'no small count');
   assert.match(cardOf(html, 'week'), /data-guest-card-activity=""/);
 });
@@ -350,7 +352,21 @@ test('the short story heads Discover: welcome, headline, one line, what an accou
     message('auth:guest.join.make.title'),
     message('auth:guest.join.make.body'),
     message('auth:guest.hero.joinWaitlist'),
+    message('auth:guest.hero.browse'),
   ]);
+  // With the directory read, one muted line of its totals under the hero's
+  // line (landing refresh, 28 Oct 2026): only the figures that are not zero.
+  const alive = renderComponent(STORY, 'Story', { compact: true, waitlist: true, primaryClass: 'pill', onStart() {}, onSignIn() {}, activity: { apps: 41, week: 87, votes: 52 } });
+  assert.ok(text(alive).includes([
+    message('auth:guest.activity.apps_other', { count: 41 }),
+    message('auth:guest.activity.week_other', { count: 87 }),
+    message('auth:guest.activity.votes_other', { count: 52 }),
+  ].join(' · ')));
+  assert.ok(alive.indexOf('data-landing-story-activity') < alive.indexOf('data-landing-story-points'), 'under the line, above the points');
+  const quietWeek = renderComponent(STORY, 'Story', { compact: true, waitlist: true, primaryClass: 'pill', onStart() {}, onSignIn() {}, activity: { apps: 3, week: 0, votes: 0 } });
+  assert.ok(text(quietWeek).includes(message('auth:guest.activity.apps_other', { count: 3 })));
+  assert.ok(!text(quietWeek).some((w) => /^0 /.test(w)), 'no zero is printed');
+  assert.doesNotMatch(html, /data-landing-story-activity/, 'nothing while the directory loads');
   // The three points, between the line and the button: each title, and its
   // line from md only, so a phone keeps the apps near the first screen.
   assert.ok(html.indexOf('data-landing-story-points') < html.indexOf('data-landing-story-join'));
@@ -369,16 +385,22 @@ test('the short story heads Discover: welcome, headline, one line, what an accou
   // On the page itself, no card, and short: the words, then a small picture
   // beside them from md only.
   assert.doesNotMatch(html, /rounded-\[20px\]|bg-white/);
-  assert.match(html, /class="hidden md:block h-auto w-\[200px\] shrink-0"/);
+  assert.match(html, /class="hidden md:block h-auto w-\[240px\] shrink-0"/);
   assert.ok(html.indexOf('<h1') < html.lastIndexOf('/brand/people.png'), 'the words first, the picture after');
-  // One thing to press in it, a filled button sized to its words, which
-  // opens the story's sheet; still no Sign in of its own (the bar's).
-  assert.deepEqual([...html.matchAll(/<button[^>]*>/g)].map((m) => m[0]), ['<button type="button" data-landing-story-join="" class="pill mt-5 h-11 w-auto px-5 text-[15px]">']);
-  assert.doesNotMatch(html, /<a\s/);
+  // One button in it, filled and sized to its words, which opens the
+  // story's sheet; still no Sign in of its own (the bar's). Beside it the
+  // free way in, a quiet link to the apps under the hero (#apps), which the
+  // line above invites: not a second button.
+  assert.deepEqual([...html.matchAll(/<button[^>]*>/g)].map((m) => m[0]), ['<button type="button" data-landing-story-join="" class="pill h-11 w-auto px-5 text-[15px]">']);
+  const browse = html.match(/<a href="#apps" data-landing-story-browse="" class="([^"]+)">([^<]+)<\/a>/);
+  assert.ok(browse, 'Browse the apps links down the page');
+  assert.equal(browse[2], message('auth:guest.hero.browse'));
+  assert.ok(html.indexOf('data-landing-story-join') < html.indexOf('data-landing-story-browse'), 'the button first');
+  assert.equal([...html.matchAll(/<a\s/g)].length, 1, 'and no other link');
   assert.doesNotMatch(read(LANDING), /data-landing-story-sign-up/);
   // The landing says it from the one switch, and the button notes itself as
   // the way in (features/auth/sign-up-from.ts).
-  assert.match(read(LANDING), /<Story\s+compact\s+primaryClass=\{PRIMARY_PILL\}\s+welcomeEmail=\{releaseEmail\}\s+waitlist=\{NEW_ACCOUNTS_WAIT\}/);
+  assert.match(read(LANDING), /<Story\s+compact\s+primaryClass=\{PRIMARY_PILL\}\s+welcomeEmail=\{releaseEmail\}\s+waitlist=\{NEW_ACCOUNTS_WAIT\}\s+activity=\{directorySummary\(apps\)\}/);
   assert.doesNotMatch(read(LANDING), /<GuestDiscover[^>]*\bwaitlist=/, 'the card that read it is gone');
   assert.match(read(STORY), /onClick=\{\(\) => \{ noteSignUpFrom\('hero'\); onStart\(\); \}\}/);
   // The line invites a look; it does not promise that nothing needs an
@@ -498,8 +520,14 @@ test('the guest bar: the wordmark at the column\'s left, Sign in and Sign up at 
   assert.match(actions.slice(0, 300), /hiddenLast\(session \|\| !guestPages, guestTop \? 'flex shrink-0 items-center gap-1\.5' : `absolute bottom-4 right-4 /);
   assert.match(actions, /data-landing-sign-in=""\s+className=\{hiddenLast\(session \|\| !guestPages, 'un-touch-target h-7 rounded-full px-2 /);
   assert.match(actions, /onClick=\{\(\) => \{ noteSignUpFrom\('header_sign_in'\); setSheet\('signin'\); \}\}/);
-  assert.match(actions, /<Button\s+type="button"\s+variant="pillAccent"\s+size="none"\s+ink="solid"\s+data-landing-sign-up=""/);
+  // Three ways in while new accounts wait (landing refresh, 28 Oct 2026):
+  // Sign in, Sign up as the neutral pill, and the hero's own Join the
+  // waitlist as the filled one, from md. Once accounts no longer wait, Sign
+  // up is the filled pill again and the third is gone.
+  assert.match(actions, /<Button\s+type="button"\s+variant=\{NEW_ACCOUNTS_WAIT \? 'pillNeutral' : 'pillAccent'\}\s+size="none"\s+ink=\{NEW_ACCOUNTS_WAIT \? 'neutral' : 'solid'\}\s+data-landing-sign-up=""/);
   assert.match(actions, /data-landing-sign-up=""\s+className=\{guestTop \? 'un-touch-target h-7 /);
+  assert.match(actions, /\{NEW_ACCOUNTS_WAIT \? \(\s+<Button\s+type="button"\s+variant="pillAccent"\s+size="none"\s+ink="solid"\s+data-landing-join-waitlist=""\s+className="un-touch-target hidden md:inline-flex h-7 /);
+  assert.match(actions, /data-landing-join-waitlist=""[^]*?\{t\('auth:guest\.hero\.joinWaitlist'\)\}/);
   assert.doesNotMatch(header, /<a[\s>]/, 'still no anchor in the bar');
   // A project's page keeps its title centred and clear of the buttons.
   assert.match(header, /id="landing-header-title"\s+className="flex-1 min-w-0 px-10 /);
@@ -549,4 +577,74 @@ test('the landing\'s declared checks hold Discover and the bar\'s Sign in, folde
   // Its one other button is pinned by the story's own test above, under the
   // runner's 256-character cap on a selector.
   assert.ok(one.expectSelector.length <= 256);
+});
+
+// The landing refresh (28 Oct 2026): the page kept as it was, with the small
+// things that make it read as finished.
+test('a card does not describe itself with housekeeping, and drops the issue number', () => {
+  const { isHousekeepingChange, cleanChangeTitle, latestRealChange, directorySummary } = loadTsx(DATA);
+  assert.equal(isHousekeepingChange('Add an MIT LICENSE to every existing app (#5120)'), true);
+  assert.equal(isHousekeepingChange('Update README'), true);
+  assert.equal(isHousekeepingChange('Bump dependencies'), true);
+  assert.equal(isHousekeepingChange('Add a Copy link button that opens a game at a chosen level'), false);
+  assert.equal(isHousekeepingChange(null), false);
+  assert.equal(cleanChangeTitle('Keep page blocks from overlapping on phone screens (#5331)'), 'Keep page blocks from overlapping on phone screens');
+  assert.equal(cleanChangeTitle('Scale a recipe to the number of guests'), 'Scale a recipe to the number of guests');
+  assert.equal(latestRealChange({ latest_change: 'Add an MIT LICENSE to every existing app (#5120)' }), '');
+  assert.equal(latestRealChange({ latest_change: 'Rest timer between sets (#12)' }), 'Rest timer between sets');
+  assert.equal(latestRealChange({ latest_change: null }), '');
+  // The card reads it through latestRealChange, never latest_change itself.
+  const src = read(DISCOVER);
+  assert.match(src, /const latest = latestRealChange\(app\);\s+const about = app\.description \|\| \(latest \? t\('auth:guest\.card\.latest', \{ title: latest \}\) : ''\);/);
+  const apps = [
+    { ...FACT_APPS[0], slug: 'chore', name: 'Chore', description: null, latest_change: 'Add an MIT LICENSE to every existing app (#5120)' },
+    { ...FACT_APPS[0], slug: 'real', name: 'Real', description: null, latest_change: 'Rest timer between sets (#12)' },
+  ];
+  const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps }));
+  assert.doesNotMatch(cardOf(html, 'chore'), /data-guest-card-about/);
+  assert.ok(text(cardOf(html, 'real')).includes(message('auth:guest.card.latest', { title: 'Rest timer between sets' })));
+  // The votes line is a link to a place: the ballot, the words, an arrow.
+  assert.match(cardOf(html, 'real'), /data-guest-card-votes=""[^>]*>\s*<svg[^>]*>[^]*?<\/svg><span>[^<]+<\/span><span aria-hidden="true">→<\/span><\/a>/);
+  // What the directory adds up to, for the hero's line.
+  assert.deepEqual(directorySummary(FACT_APPS), { apps: 4, week: 10, votes: 3 });
+  assert.equal(directorySummary(null), null);
+  assert.equal(directorySummary([]), null);
+});
+
+test('a hairline under the hero, counts on the headings, two columns of rows from md, how many are shown, and a foot', () => {
+  const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: MANY, onStart() {}, onSignIn() {} }));
+  // The bar's hairline across the column, between the hero and the search.
+  assert.match(html, /<div data-guest-separator="" class="mx-4 h-px bg-\[var\(--app-sheet-line\)\]" aria-hidden="true"><\/div>/);
+  assert.ok(html.indexOf('data-guest-separator') < html.indexOf('data-guest-search'));
+  // "All apps · 20" and "More apps · 16" (four big cards on a phone's render).
+  const counts = [...html.matchAll(/data-guest-count=""[^>]*>(\d+)</g)].map((m) => Number(m[1]));
+  assert.deepEqual(counts, [20, 16]);
+  assert.equal(message('auth:guest.more'), 'More apps');
+  // Under Show more, how far the list has been read.
+  assert.ok(text(html).includes(message('auth:guest.shown', { shown: 12, total: 16 })));
+  // One list below md (a server render is never wide); from md the rows are
+  // dealt into two lists, the first half then the second.
+  assert.equal([...html.matchAll(/data-guest-more=""[^]*?<div class="grid grid-cols-1 gap-2\.5 md:grid-cols-2">/g)].length, 1);
+  const src = read(DISCOVER);
+  assert.match(src, /function splitRows\(rows: GuestApp\[\], wide: boolean\): GuestApp\[\]\[\] \{\s+if \(!wide \|\| rows\.length < 2\) return \[rows\];\s+const cut = Math\.ceil\(rows\.length \/ 2\);\s+return \[rows\.slice\(0, cut\), rows\.slice\(cut\)\];/);
+  // A row says up to two things, the votes in the accent.
+  const busy = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: [...MANY.slice(0, 4), { ...FACT_APPS[0], slug: 'busy', name: 'Busy', active_users: 1 }] }));
+  const row = busy.slice(busy.indexOf('data-guest-row="busy"'));
+  assert.ok(text(row).join(' ').includes(`${message('auth:guest.card.members_other', { count: 87 })} · ${message('auth:guest.card.week_other', { count: 6 })}`));
+  assert.match(row, /<span class="hidden md:inline"> · /, 'the second from md only');
+  assert.doesNotMatch(row, /up for a vote/, 'two at most');
+  // The foot: the name, the ways in, the code.
+  const foot = html.slice(html.indexOf('<footer data-guest-foot=""'));
+  assert.deepEqual(text(foot), ['Homeroom', message('auth:guest.hero.joinWaitlist'), '·', message('auth:guest.header.signIn'), '·', message('auth:guest.foot.code')]);
+  assert.match(foot, /<a href="https:\/\/github\.com\/Usernode-Labs\/social-vibecoding" target="_blank" rel="noopener noreferrer" data-guest-foot-code=""/);
+  // A waitlisted account is signed in already: no ways in, just the code.
+  const waiting = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: MANY, signedIn: true }));
+  assert.deepEqual(text(waiting.slice(waiting.indexOf('<footer data-guest-foot=""'))), ['Homeroom', message('auth:guest.foot.code')]);
+  // Every card draws its small icon from md, so the names line up; the
+  // icon-on-colour cover carries a soft light; the card lifts under the pointer.
+  assert.match(src, /<span className="hidden md:block"><GuestIcon app=\{app\} size="sm" eager=\{eager\} \/><\/span>/);
+  assert.match(src, /radial-gradient\(120% 90% at 30% 20%, rgba\(255,255,255,0\.28\), transparent 60%\), \$\{color\}/);
+  assert.match(src, /<article data-guest-card=\{app\.slug\} className="group flex min-w-0 flex-col gap-2 motion-safe:transition-transform motion-safe:duration-150 motion-safe:hover:-translate-y-0\.5">/);
+  // The landing passes the foot its ways in, except for a waitlisted account.
+  assert.match(read(LANDING), /onStart=\{waitingGuest \? undefined : \(\) => \{ noteSignUpFrom\('hero'\); setSheet\('start'\); \}\}\s+onSignIn=\{waitingGuest \? undefined : \(\) => \{ noteSignUpFrom\('header_sign_in'\); setSheet\('signin'\); \}\}/);
 });

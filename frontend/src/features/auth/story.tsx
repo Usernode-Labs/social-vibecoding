@@ -106,7 +106,7 @@ export function nextStep(fit: number, footBottom: number, screenBottom: number):
   return fit + 1;
 }
 
-export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, compact = false, lookAround = false, waitlist = false }: {
+export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, compact = false, lookAround = false, waitlist = false, activity = null }: {
   primaryClass: string;
   /** The address a "You're in" mail's link names, greeted under the welcome. */
   welcomeEmail?: string | null;
@@ -131,6 +131,13 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
   compact?: boolean;
   /** The short story's button says "Join the waitlist" (guest-data NEW_ACCOUNTS_WAIT). */
   waitlist?: boolean;
+  /**
+   * What the directory adds up to (guest-data directorySummary), said in one
+   * muted line under the short story's line: how many apps, how many changes
+   * voted in this week, how many votes open. Null while the directory loads,
+   * and the line is simply not there.
+   */
+  activity?: { apps: number; week: number; votes: number } | null;
   /**
    * Inside the Homeroom app the full story is still the front door
    * (landing.tsx `storyFront`), and this adds "Look around first" under its
@@ -266,6 +273,21 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
             {t('auth:story.headline')}
           </h1>
           <p className="mt-2 text-base leading-[22px] text-zinc-500 dark:text-zinc-400 text-balance">{t('auth:guest.hero.line')}</p>
+          {activity ? (
+            // One line of life: the directory's totals, in the fact lines'
+            // type, with a green dot that says "now". Only the figures that
+            // are not zero, joined the way a card joins its pair.
+            <p data-landing-story-activity="" className="mt-2 flex items-center gap-2 text-[13px] text-zinc-500 dark:text-zinc-400">
+              <span className="h-[7px] w-[7px] shrink-0 rounded-full bg-emerald-500" aria-hidden="true" />
+              <span>
+                {[
+                  t('auth:guest.activity.apps', { count: activity.apps }),
+                  activity.week > 0 ? t('auth:guest.activity.week', { count: activity.week }) : '',
+                  activity.votes > 0 ? t('auth:guest.activity.votes', { count: activity.votes }) : '',
+                ].filter(Boolean).join(' · ')}
+              </span>
+            </p>
+          ) : null}
           <ul data-landing-story-points="" className="mt-5 grid w-full grid-cols-3 gap-3 md:max-w-[820px] md:gap-6">
             {points.map((p) => (
               <li key={p.title} className="flex min-w-0 flex-col items-start gap-2 md:flex-row md:gap-3">
@@ -279,14 +301,26 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
               </li>
             ))}
           </ul>
-          <button
-            type="button"
-            data-landing-story-join=""
-            className={cn(primaryClass, 'mt-5 h-11 w-auto px-5 text-[15px]')}
-            onClick={() => { noteSignUpFrom('hero'); onStart(); }}
-          >
-            {waitlist ? t('auth:guest.hero.joinWaitlist') : t('auth:guest.hero.signUp')}
-          </button>
+          {/* The button, and beside it the free way in: the line above says
+              "look around", so there is a link that does that, to the search
+              under the hero (#apps is where Discover starts). */}
+          <div className="mt-5 flex flex-wrap items-center gap-1">
+            <button
+              type="button"
+              data-landing-story-join=""
+              className={cn(primaryClass, 'h-11 w-auto px-5 text-[15px]')}
+              onClick={() => { noteSignUpFrom('hero'); onStart(); }}
+            >
+              {waitlist ? t('auth:guest.hero.joinWaitlist') : t('auth:guest.hero.signUp')}
+            </button>
+            <a
+              href="#apps"
+              data-landing-story-browse=""
+              className="inline-flex h-11 items-center gap-1 rounded-full px-3 text-[15px] font-semibold text-zinc-700 hover:text-zinc-950 hover:underline dark:text-zinc-300 dark:hover:text-white"
+            >
+              {t('auth:guest.hero.browse')}
+            </a>
+          </div>
         </div>
         <img
           src="/brand/people.png"
@@ -294,7 +328,7 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
           width={816}
           height={612}
           draggable={false}
-          className="hidden md:block h-auto w-[200px] shrink-0"
+          className="hidden md:block h-auto w-[240px] shrink-0"
         />
       </div>
     );

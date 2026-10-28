@@ -78,7 +78,7 @@ import {
 import { Story } from './story';
 import { GuestDiscover } from '../guest/guest-discover';
 import { type GuestIntent, GuestProject } from '../guest/guest-project';
-import { type GuestApp, linksToWorkshop, NEW_ACCOUNTS_WAIT, projectHash } from '../guest/guest-data';
+import { type GuestApp, directorySummary, linksToWorkshop, NEW_ACCOUNTS_WAIT, projectHash } from '../guest/guest-data';
 import { noteSignUpFrom } from './sign-up-from';
 import { WaitlistCard } from '../guest/waitlist-card';
 import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
@@ -1735,15 +1735,36 @@ export function LandingScreen() {
           </button>
           <Button
             type="button"
-            variant="pillAccent"
+            variant={NEW_ACCOUNTS_WAIT ? 'pillNeutral' : 'pillAccent'}
             size="none"
-            ink="solid"
+            ink={NEW_ACCOUNTS_WAIT ? 'neutral' : 'solid'}
             data-landing-sign-up=""
             className={guestTop ? 'un-touch-target h-7 px-3.5 text-[15px] font-semibold' : 'un-touch-target hidden md:inline-flex h-7 px-3.5 text-[15px] font-semibold'}
             onClick={() => { noteSignUpFrom('header_sign_up'); setSheet('start'); }}
           >
             {t('auth:guest.header.signUp')}
           </Button>
+          {/*
+              While new accounts wait (guest-data NEW_ACCOUNTS_WAIT), the bar
+              carries the hero's own promise too, as the filled pill, so the
+              three ways in sit together: Sign in for an account, Sign up for
+              somebody invited, Join the waitlist for everybody else. Sign up
+              steps back to the neutral pill beside it. From md only: a
+              phone's bar has room for two.
+          */}
+          {NEW_ACCOUNTS_WAIT ? (
+            <Button
+              type="button"
+              variant="pillAccent"
+              size="none"
+              ink="solid"
+              data-landing-join-waitlist=""
+              className="un-touch-target hidden md:inline-flex h-7 px-3.5 text-[15px] font-semibold"
+              onClick={() => { noteSignUpFrom('header_sign_up'); setSheet('start'); }}
+            >
+              {t('auth:guest.hero.joinWaitlist')}
+            </Button>
+          ) : null}
         </div>
       </header>
       {/*
@@ -2209,6 +2230,8 @@ export function LandingScreen() {
               signedIn={waitingGuest}
               onOpenInside={(app) => { void live.current.openLandingApp(app); }}
               onRetry={() => { st.appsReady = live.current.loadLandingApps(); }}
+              onStart={waitingGuest ? undefined : () => { noteSignUpFrom('hero'); setSheet('start'); }}
+              onSignIn={waitingGuest ? undefined : () => { noteSignUpFrom('header_sign_in'); setSheet('signin'); }}
               hero={waitingGuest ? (
                 <WaitlistCard email={sessionEmail()} />
               ) : (
@@ -2217,6 +2240,7 @@ export function LandingScreen() {
                   primaryClass={PRIMARY_PILL}
                   welcomeEmail={releaseEmail}
                   waitlist={NEW_ACCOUNTS_WAIT}
+                  activity={directorySummary(apps)}
                   onStart={() => setSheet('start')}
                   onSignIn={() => setSheet('signin')}
                 />

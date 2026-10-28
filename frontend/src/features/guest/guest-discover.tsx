@@ -37,7 +37,7 @@ import { type AnchorHTMLAttributes, type MouseEvent, type ReactNode, useCallback
 
 import { Chip, ChipRail } from '@/components/ui/chip';
 import { GroupedList } from '@/components/ui/grouped-list';
-import { ChevronRightIcon, SearchIcon } from '@/components/ui/icons';
+import { BallotIcon, ChevronRightIcon, SearchIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -57,6 +57,7 @@ import {
   featuredApps,
   inHomeroomApp,
   filterApps,
+  latestRealChange,
   presentCategories,
   projectHash,
   projectPath,
@@ -122,7 +123,13 @@ export function GuestCover({ app, className, iconSize = 'lg' }: { app: GuestApp;
     );
   }
   return (
-    <span className={cn('relative flex items-center justify-center overflow-hidden', className)} style={{ background: color }}>
+    // A soft light in the top-left corner of the project's own colour, so a
+    // cover that is the icon on a flat colour sits beside the illustrated
+    // ones instead of reading as a placeholder (landing refresh, 28 Oct 2026).
+    <span
+      className={cn('relative flex items-center justify-center overflow-hidden', className)}
+      style={{ background: `radial-gradient(120% 90% at 30% 20%, rgba(255,255,255,0.28), transparent 60%), ${color}` }}
+    >
       <GuestIcon app={app} size={iconSize} />
     </span>
   );
@@ -143,7 +150,10 @@ export function GuestCover({ app, className, iconSize = 'lg' }: { app: GuestApp;
 function useCardFacts(sort: GuestSort) {
   const t = useMessages('auth');
   return (app: GuestApp) => {
-    const about = app.description || (app.latest_change ? t('auth:guest.card.latest', { title: app.latest_change }) : '');
+    // Its latest change only when that was the project's own work, without
+    // the issue number (guest-data latestRealChange).
+    const latest = latestRealChange(app);
+    const about = app.description || (latest ? t('auth:guest.card.latest', { title: latest }) : '');
     const builders = buildersOf(app);
     const active = app.active_users || 0;
     const figure = sort === 'new'
@@ -190,9 +200,11 @@ function CardFacts({ app, sort }: { app: GuestApp; sort: GuestSort }) {
         <a
           href={projectVotesHash(app.slug)}
           data-guest-card-votes=""
-          className="mt-0.5 block text-xs font-semibold text-violet-700 hover:underline dark:text-violet-400"
+          className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-violet-700 hover:underline dark:text-violet-400"
         >
-          {votes}
+          <BallotIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+          <span>{votes}</span>
+          <span aria-hidden="true">→</span>
         </a>
       ) : second ? (
         <span data-guest-card-activity="" className={cn('mt-0.5', FACT_LINE)}>{second}</span>
@@ -237,9 +249,12 @@ function Card({ app, eager, sort, tryable, inside, onOpenInside }: {
 }) {
   const t = useMessages('auth');
   return (
-    <article data-guest-card={app.slug} className="flex min-w-0 flex-col gap-2">
+    // The card lifts 2px under the pointer and its picture takes the deck's
+    // lift shadow; nothing else moves, and nothing moves at all for somebody
+    // who asked for less motion.
+    <article data-guest-card={app.slug} className="group flex min-w-0 flex-col gap-2 motion-safe:transition-transform motion-safe:duration-150 motion-safe:hover:-translate-y-0.5">
       <ProjectLink slug={app.slug} tabIndex={-1} aria-hidden="true" className="relative block rounded-2xl outline-offset-4">
-        <GuestCover app={app} className="aspect-[16/10] w-full rounded-2xl shadow-[inset_0_0_0_1px_var(--app-sheet-line)]" />
+        <GuestCover app={app} className="aspect-[16/10] w-full rounded-2xl shadow-[inset_0_0_0_1px_var(--app-sheet-line)] motion-safe:transition-shadow motion-safe:duration-150 group-hover:shadow-[inset_0_0_0_1px_var(--app-sheet-line),var(--dc-lift-shadow)]" />
         {isNew(app) ? (
           <span className="absolute left-2 top-2 rounded-full bg-white px-2 py-0.5 text-xs font-bold text-zinc-950 dark:bg-zinc-900 dark:text-white">
             {t('auth:guest.card.new')}
@@ -247,9 +262,11 @@ function Card({ app, eager, sort, tryable, inside, onOpenInside }: {
         ) : null}
       </ProjectLink>
       <span className="flex min-w-0 items-start gap-2.5">
-        {/* The icon is the picture already when the group chose none. On a
-            phone's two narrow columns the words get the room instead. */}
-        {app.illustration_url ? <span className="hidden md:block"><GuestIcon app={app} size="sm" eager={eager} /></span> : null}
+        {/* Every card from md, so the names in a row start at the same edge
+            whether or not the group chose a picture (before, a card whose
+            picture was its icon sat flush left beside an indented neighbour).
+            On a phone's two narrow columns the words get the room instead. */}
+        <span className="hidden md:block"><GuestIcon app={app} size="sm" eager={eager} /></span>
         <span className="min-w-0 flex-1">
           <ProjectLink slug={app.slug} data-guest-card-link="" className="block truncate -my-[11px] py-[11px] text-[15px] font-[650] text-zinc-900 outline-offset-4 dark:text-zinc-100">
             {app.name}
@@ -282,7 +299,11 @@ function MoreRow({ app, sort, tryable, inside, onOpenInside, last }: {
 }) {
   const t = useMessages('auth');
   const { about, fact, activity, votes } = useCardFacts(sort)(app);
-  const line = fact || activity || votes || about;
+  // Up to two of the fact, what changed lately and the votes, joined the way
+  // the card joins its pair, the votes in the accent; what it is only when
+  // there is none of those.
+  const parts = [fact, activity, votes].filter(Boolean).slice(0, 2);
+  const line = parts.length ? null : about;
   return (
     <div
       data-guest-row={app.slug}
@@ -292,13 +313,17 @@ function MoreRow({ app, sort, tryable, inside, onOpenInside, last }: {
         <GuestIcon app={app} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{app.name}</span>
-          {line ? (
-            <span className={cn('block truncate text-[13px]', line === votes && !fact && !activity
-              ? 'font-semibold text-violet-700 dark:text-violet-400'
-              : 'text-zinc-500 dark:text-zinc-400')}
-            >
-              {line}
+          {parts.length ? (
+            <span className="block truncate text-[13px] text-zinc-500 dark:text-zinc-400">
+              {parts.map((p, i) => (
+                // The second only from md: a phone's row has room for one.
+                <span key={p} className={cn(i ? 'hidden md:inline' : '', p === votes ? 'font-semibold text-violet-700 dark:text-violet-400' : '') || undefined}>
+                  {i ? ' · ' : ''}{p}
+                </span>
+              ))}
             </span>
+          ) : line ? (
+            <span className="block truncate text-[13px] text-zinc-500 dark:text-zinc-400">{line}</span>
           ) : null}
         </span>
       </ProjectLink>
@@ -434,7 +459,7 @@ function CardGrid({ apps, sort, tryable, inside, onOpenInside }: {
   );
 }
 
-export function GuestDiscover({ apps, failed, hero, primaryClass, onOpenInside, onRetry, signedIn = false }: {
+export function GuestDiscover({ apps, failed, hero, primaryClass, onOpenInside, onRetry, onStart, onSignIn, signedIn = false }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   /** The directory could not be read. */
@@ -446,6 +471,9 @@ export function GuestDiscover({ apps, failed, hero, primaryClass, onOpenInside, 
   onOpenInside: (app: GuestApp) => void;
   /** Read the directory again, from the line that says it could not be. */
   onRetry?: () => void;
+  /** The foot's ways in (landing.tsx): make an account, and sign in. Absent for a waitlisted account, which has both. */
+  onStart?: () => void;
+  onSignIn?: () => void;
   /**
    * A waitlisted account is looking (landing.tsx): it is signed in, so
    * every public project opens for it in the landing's viewer, and nothing
@@ -478,6 +506,10 @@ export function GuestDiscover({ apps, failed, hero, primaryClass, onOpenInside, 
   return (
     <div data-guest-discover="" className="flex flex-col gap-5">
       {hero}
+      {/* The line between Homeroom and its apps: the bar's own hairline,
+          across the column, so the pitch and the search stop reading as one
+          block (landing refresh, 28 Oct 2026). */}
+      <div data-guest-separator="" className="mx-4 h-px bg-[var(--app-sheet-line)]" aria-hidden="true" />
       <div className="flex flex-col gap-5 px-4">
         <label className="flex h-11 items-center gap-2 rounded-[14px] bg-white px-3.5 text-zinc-400 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-500">
           <SearchIcon className="h-[18px] w-[18px] shrink-0" />
@@ -518,7 +550,10 @@ export function GuestDiscover({ apps, failed, hero, primaryClass, onOpenInside, 
 
         <section className="flex flex-col gap-3" aria-busy={apps ? undefined : true}>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className={SMALL_CAPS_LABEL}>{browsing ? t('auth:guest.all') : t('auth:guest.results')}</h2>
+            <h2 className={SMALL_CAPS_LABEL}>
+              {browsing ? t('auth:guest.all') : t('auth:guest.results')}
+              {apps ? <span data-guest-count="" className="ml-1.5 font-semibold normal-case tracking-normal text-zinc-400 dark:text-zinc-500">{list.length}</span> : null}
+            </h2>
             <SortControl sort={sort} onSort={setSort} />
           </div>
           {!apps && !failed ? (
@@ -547,29 +582,45 @@ export function GuestDiscover({ apps, failed, hero, primaryClass, onOpenInside, 
           <CardGrid apps={top} sort={sort} tryable={tryable} inside={signedIn} onOpenInside={onOpenInside} />
           {rows.length ? (
             <div data-guest-more="" className="flex flex-col gap-2.5">
-              <h2 className={SMALL_CAPS_LABEL}>{t('auth:guest.more')}</h2>
-              <GroupedList className="mx-0">
-                {rows.map((app, i) => (
-                  <MoreRow
-                    key={app.slug}
-                    app={app}
-                    sort={sort}
-                    tryable={tryable(app)}
-                    inside={signedIn}
-                    onOpenInside={onOpenInside}
-                    last={i === rows.length - 1}
-                  />
-                ))}
-              </GroupedList>
+              <h2 className={SMALL_CAPS_LABEL}>
+                {t('auth:guest.more')}
+                <span data-guest-count="" className="ml-1.5 font-semibold normal-case tracking-normal text-zinc-400 dark:text-zinc-500">{more.length}</span>
+              </h2>
+              {/* One list on a phone; from md two side by side, the rows
+                  dealt in order down the first then the second, so twelve
+                  rows take six rows' height and a desktop column is not
+                  850px wide for one short line. */}
+              <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
+                {splitRows(rows, wide).map((half, h) => half.length ? (
+                  <GroupedList key={h} className="mx-0 self-start">
+                    {half.map((app, i) => (
+                      <MoreRow
+                        key={app.slug}
+                        app={app}
+                        sort={sort}
+                        tryable={tryable(app)}
+                        inside={signedIn}
+                        onOpenInside={onOpenInside}
+                        last={i === half.length - 1}
+                      />
+                    ))}
+                  </GroupedList>
+                ) : null)}
+              </div>
               {more.length > rows.length ? (
-                <button
-                  type="button"
-                  data-guest-show-more=""
-                  className="min-h-11 self-center rounded-full bg-white px-5 text-[15px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
-                  onClick={() => setRowsShown((n) => n + ROWS_STEP)}
-                >
-                  {t('auth:guest.showMore')}
-                </button>
+                <div className="flex flex-col items-center gap-1.5">
+                  <button
+                    type="button"
+                    data-guest-show-more=""
+                    className="min-h-11 self-center rounded-full bg-white px-5 text-[15px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                    onClick={() => setRowsShown((n) => n + ROWS_STEP)}
+                  >
+                    {t('auth:guest.showMore')}
+                  </button>
+                  <span data-guest-shown="" className="text-xs text-zinc-400 dark:text-zinc-500">
+                    {t('auth:guest.shown', { shown: rows.length, total: more.length })}
+                  </span>
+                </div>
               ) : null}
             </div>
           ) : null}
@@ -579,7 +630,48 @@ export function GuestDiscover({ apps, failed, hero, primaryClass, onOpenInside, 
             </p>
           ) : null}
         </section>
+
+        {/* The page ends on a line, not on a button: the name, and the ways
+            in a visitor who read this far may want, in the fact lines' type.
+            The code link is the platform's own repository, which is public. */}
+        <footer data-guest-foot="" className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-[var(--app-sheet-line)] pt-4 text-xs text-zinc-500 dark:text-zinc-400">
+          <span className="font-bold text-zinc-700 dark:text-zinc-300">Homeroom</span>
+          <span className="flex flex-wrap items-center gap-x-1">
+            {onStart ? (
+              <button type="button" data-guest-foot-join="" className="min-h-11 px-1 hover:text-zinc-900 hover:underline dark:hover:text-zinc-100" onClick={onStart}>
+                {t('auth:guest.hero.joinWaitlist')}
+              </button>
+            ) : null}
+            {onStart && onSignIn ? <span aria-hidden="true">·</span> : null}
+            {onSignIn ? (
+              <button type="button" data-guest-foot-sign-in="" className="min-h-11 px-1 hover:text-zinc-900 hover:underline dark:hover:text-zinc-100" onClick={onSignIn}>
+                {t('auth:guest.header.signIn')}
+              </button>
+            ) : null}
+            {onStart || onSignIn ? <span aria-hidden="true">·</span> : null}
+            <a
+              href="https://github.com/Usernode-Labs/social-vibecoding"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-guest-foot-code=""
+              className="inline-flex min-h-11 items-center px-1 hover:text-zinc-900 hover:underline dark:hover:text-zinc-100"
+            >
+              {t('auth:guest.foot.code')}
+            </a>
+          </span>
+        </footer>
       </div>
     </div>
   );
+}
+
+/**
+ * The rows of "More projects" dealt into the two columns a wide screen
+ * draws: the first half down the left, the rest down the right, so reading
+ * order stays the list's order. One column, so one list, below md.
+ */
+function splitRows(rows: GuestApp[], wide: boolean): GuestApp[][] {
+  if (!wide || rows.length < 2) return [rows];
+  const cut = Math.ceil(rows.length / 2);
+  return [rows.slice(0, cut), rows.slice(cut)];
 }
