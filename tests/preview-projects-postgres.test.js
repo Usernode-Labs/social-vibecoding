@@ -85,7 +85,7 @@ async function until(fn, ms = 5000) {
     const value = await fn();
     if (value) return value;
     if (Date.now() > end) throw new Error('timed out');
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
 
@@ -107,7 +107,7 @@ test('projects made inside a platform preview, against a real PostgreSQL', async
   const saved = {
     create: dbManager.createPreviewProjectDatabase, drop: dbManager.dropDatabase, url: dbManager.connectionUrl,
     isConfigured: gitHost.isConfigured, createRepo: gitHost.createRepo, push: gitHost.pushInitialFiles,
-    repoUrl: gitHost.repoUrl, deleteRef: gitHost.deleteRef,
+    repoUrl: gitHost.repoUrl, deleteRef: gitHost.deleteRef, setPrivate: gitHost.setPrivate,
     build: runtime.build, deploy: runtime.deploy, remove: runtime.remove, withBuildUse: retention.withBuildUse,
   };
   dbManager.createPreviewProjectDatabase = async (name) => { calls.push(['db', name]); return { password: `pw-${name}`, server: 'preview', url: 'postgres://x' }; };
@@ -117,6 +117,7 @@ test('projects made inside a platform preview, against a real PostgreSQL', async
   gitHost.createRepo = async (name, opts) => { calls.push(['repo', name, opts.private]); return { name }; };
   gitHost.pushInitialFiles = async (repo, files, { branch }) => { calls.push(['push', repo, branch, files.length]); return 'A'.repeat(40); };
   gitHost.repoUrl = (name) => `https://git.example.test/apps/${name}`;
+  gitHost.setPrivate = async (repo, isPrivate) => { calls.push(['visibility', repo, isPrivate]); };
   gitHost.deleteRef = async (repo, ref) => { calls.push(['branch', repo, ref]); };
   retention.withBuildUse = async (_c, fn) => fn();
   runtime.build = async (_c, args) => { calls.push(['build', args.app.slug, args.app.id, args.revision, args.environment]); return { imageRef: 'reg/preview-project@sha256:1', buildRef: 'b1' }; };
@@ -141,7 +142,7 @@ test('projects made inside a platform preview, against a real PostgreSQL', async
     Object.assign(dbManager, { createPreviewProjectDatabase: saved.create, dropDatabase: saved.drop, connectionUrl: saved.url });
     Object.assign(gitHost, {
       isConfigured: saved.isConfigured, createRepo: saved.createRepo, pushInitialFiles: saved.push,
-      repoUrl: saved.repoUrl, deleteRef: saved.deleteRef,
+      repoUrl: saved.repoUrl, deleteRef: saved.deleteRef, setPrivate: saved.setPrivate,
     });
     Object.assign(runtime, { build: saved.build, deploy: saved.deploy, remove: saved.remove });
     retention.withBuildUse = saved.withBuildUse;
@@ -185,6 +186,8 @@ test('projects made inside a platform preview, against a real PostgreSQL', async
     assert.ok([202, 409].includes(busy.status));
     const built = await until(async () => {
       const r = await call(token, 'GET', '/api/preview-projects/tier');
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      if (r.body.project.state === 'failed') throw new Error(`the build failed: ${r.body.project.error}`);
       return r.body.project.state === 'built' ? r.body.project : null;
     });
     assert.equal(built.imageRef, 'reg/preview-project@sha256:1');
@@ -192,13 +195,16 @@ test('projects made inside a platform preview, against a real PostgreSQL', async
     assert.match(build[1], /^preview-project-\d+$/, 'built under a slug no app has');
     assert.match(build[2], /^pp-\d+$/);
     assert.equal(build[3], 'a'.repeat(40));
-    assert.ok(calls.some((c) => c[0] === 'repo' && c[2] === true), 'the source repository is private');
+    assert.ok(calls.some((c) => c[0] === 'repo' && c[2] === false), 'the source repository is public: builds fetch it with no credential');
+    assert.ok(calls.some((c) => c[0] === 'visibility' && c[2] === false), 'and one made private before is turned public');
 
     assert.equal((await call(token, 'POST', '/api/preview-projects/tier/deploy', { imageRef: 'reg/other@sha256:9', env: {} })).status, 409);
     res = await call(token, 'POST', '/api/preview-projects/tier/deploy', { imageRef: built.imageRef, env: { USERNODE_APP_ID: '41', USERNODE_ENV: 'production' } });
     assert.equal(res.status, 202);
     const running = await until(async () => {
       const r = await call(token, 'GET', '/api/preview-projects/tier');
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      if (r.body.project.state === 'failed') throw new Error(`the deploy failed: ${r.body.project.error}`);
       return r.body.project.state === 'running' ? r.body.project : null;
     });
     assert.equal(running.url, 'https://tier--s500.example.test');

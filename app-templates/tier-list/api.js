@@ -1,20 +1,29 @@
 // This app's API: a shared tier list. Anyone in the project adds things to
 // rank, each person puts each one in a tier (or in Want to, below F, for one
 // they have not got to yet), the group's tier list is where the average
-// lands, and anyone can see who put each one where. GET /api/presence says
-// who has the list open right now: names kept in memory, never stored, and
-// forgotten after a minute and a half without a look. server.js
-// mounts it after the sign-in check: a write always has req.user ({ id,
-// username }); a read may come from a guest with no account (req.guest, no
-// req.user). Live updates (live-updates.js) are mounted before it, so every
-// write here that succeeds tells the screens that are open.
+// lands, and anyone can see who put each one where. One person's whole board
+// is GET /api/people/:id. Each item's sheet carries comments anyone in the
+// project can write, with @mentions resolved against the project's member
+// list, a delete for the person who wrote one and a report for everyone
+// else's. GET /api/presence says who has the list open right now: names kept
+// in memory, never stored, and forgotten after a minute and a half without a
+// look. server.js mounts it after the sign-in check: a write always has
+// req.user ({ id, username }); a read may come from a guest with no account
+// (req.guest, no req.user). Live updates (live-updates.js) are mounted
+// before it, so every write here that succeeds tells the screens that are
+// open.
 //
 // It came from Homeroom's ready-made tier list. Change it freely.
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+const PLATFORM_API_BASE = process.env.USERNODE_PLATFORM_API_V1_URL || process.env.USERNODE_PLATFORM_API_URL;
 
 const NAME_MAX = 60;
 const ITEMS_SHOWN = 300;
+const COMMENT_MAX = 500;
+const COMMENTS_SHOWN = 200;
+// Two different people reporting a comment hides it for everyone.
+const HIDE_AFTER_REPORTS = 2;
 
 // Who has the list open: user id -> { username, seen }, in this process only.
 // A screen checks in on the timer it already keeps (public/live-updates.js,
@@ -47,9 +56,38 @@ function cleanText(value, max) {
   return value.replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
+/**
+ * A comment's words: line breaks kept, spaces and tabs within a line
+ * collapsed, at most two blank lines in a row, cut to `max`. cleanText
+ * flattens newlines, which a comment must keep.
+ */
+function cleanBody(value, max) {
+  if (typeof value !== 'string') return '';
+  const lines = value.replace(/\r\n?/g, '\n').split('\n').map((line) => line.replace(/[ \t]+/g, ' ').trim());
+  const out = [];
+  let blanks = 0;
+  for (const line of lines) {
+    if (!line) {
+      blanks += 1;
+      if (blanks > 2) continue;
+    } else {
+      blanks = 0;
+    }
+    out.push(line);
+  }
+  return out.join('\n').trim().slice(0, max);
+}
+
 function idParam(req) {
   const id = Number(req.params.id);
   return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+// A person's id may be one of the staging fakes' negative ids, so this is any
+// non-zero integer rather than idParam's positive one.
+function personParam(req) {
+  const id = Number(req.params.id);
+  return Number.isInteger(id) && id !== 0 ? id : null;
 }
 
 function fail(res, err) {
@@ -88,6 +126,33 @@ async function migrate(pool) {
      WHERE v.username IS NULL AND v.user_id = i.created_by
   `);
 
+  // An item's comments, oldest first. Rows are only added or deleted, never
+  // edited. `mentions` holds the handles of the project's members the writer
+  // named, in the member list's own spelling. Keyed by user_id, so Homeroom's
+  // default user-data sweep (usernode-user-data.js) erases them with the rest.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tier_comments (
+      id SERIAL PRIMARY KEY,
+      item_id INTEGER NOT NULL REFERENCES tier_items(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      body VARCHAR(500) NOT NULL,
+      mentions TEXT[] NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS tier_comments_item_idx ON tier_comments (item_id, created_at, id)');
+  // One report per person per comment. user_id is the reporter, so the
+  // default sweep deletes a person's reports with their other rows.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tier_comment_reports (
+      comment_id INTEGER NOT NULL REFERENCES tier_comments(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (comment_id, user_id)
+    )
+  `);
+
   // A staging preview starts with no rows, so seed a few obviously fake
   // ones for the checks in dapp.json to find: items, and tiers from three
   // fake people (negative ids, never a real account), two of whom want to
@@ -115,6 +180,53 @@ async function migrate(pool) {
         (900002, -3, 'staging-demo-cy', 'W')
       ON CONFLICT DO NOTHING
     `);
+    // Two comments on the first item, so its sheet's Comments section has
+    // something to show. One names the other fake person, as a mention.
+    await pool.query(`
+      INSERT INTO tier_comments (id, item_id, user_id, username, body, mentions, created_at)
+      VALUES
+        (900001, 900001, -1, 'staging-demo-ana',
+         'Agree with @staging-demo-ben, this one is top of the list.',
+         ARRAY['staging-demo-ben'], NOW() - INTERVAL '2 days'),
+        (900002, 900001, -3, 'staging-demo-cy',
+         'A close second for me.', ARRAY[]::TEXT[], NOW() - INTERVAL '1 day')
+      ON CONFLICT DO NOTHING
+    `);
+  }
+}
+
+// The project's members, from the platform ("Members" in the platform
+// conventions): what the @ list suggests, and what a comment's mentions are
+// matched against. Asked with the viewer's own token, so only a member gets
+// an answer; anyone else (an admin looking in, the platform's check runner)
+// gets an empty list and the screen simply has no @ list. Cached for a
+// minute per viewer, so the answer one member got is never shown to somebody
+// the platform refuses.
+const memberCache = new Map(); // viewer id -> { at, members }
+const MEMBER_CACHE_MS = 60 * 1000;
+
+async function memberList(req) {
+  if (!req.user) return [];
+  const hit = memberCache.get(req.user.id);
+  if (hit && Date.now() - hit.at < MEMBER_CACHE_MS) return hit.members;
+  const token = req.query.token || req.headers['x-usernode-token'];
+  if (!PLATFORM_API_BASE || !token) return [];
+  const headers = { 'x-usernode-user-token': token };
+  if (process.env.USERNODE_LLM_PROXY_TOKEN) headers['x-usernode-app-token'] = process.env.USERNODE_LLM_PROXY_TOKEN;
+  try {
+    const resp = await fetch(`${PLATFORM_API_BASE}/members?limit=200`, { headers });
+    if (!resp.ok) return [];
+    const body = await resp.json();
+    const list = (body.members || [])
+      .map((m) => ({ id: m.id, username: m.username }))
+      .filter((m) => typeof m.username === 'string' && m.username);
+    if (!list.length) return [];
+    if (memberCache.size > 500) memberCache.clear();
+    memberCache.set(req.user.id, { at: Date.now(), members: list });
+    return list;
+  } catch (err) {
+    console.warn('members lookup failed: ' + err.message);
+    return [];
   }
 }
 
@@ -227,6 +339,171 @@ function routes(app, pool) {
         raters: votes.filter((v) => v.tier !== WANT).map((v) => ({ ...person(v), tier: v.tier })),
         wanters: votes.filter((v) => v.tier === WANT).map(person),
       });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  // Everyone with at least one item on a board of their own, the viewer
+  // first, then by name: the People row. `ranked` counts tiers, `wants`
+  // counts Want to, which is a place but no ranking.
+  app.get('/api/people', async (req, res) => {
+    try {
+      const me = req.user ? req.user.id : null;
+      const { rows } = await pool.query(
+        `SELECT user_id AS id, MAX(username) AS name,
+                COUNT(*) FILTER (WHERE tier <> 'W')::int AS ranked,
+                COUNT(*) FILTER (WHERE tier = 'W')::int AS wants
+           FROM tier_votes
+          GROUP BY user_id
+          ORDER BY CASE WHEN user_id = $1 THEN 0 ELSE 1 END, LOWER(MAX(username)) NULLS LAST, user_id`,
+        [me]
+      );
+      res.json({
+        people: rows.map((r) => ({ id: r.id, name: r.name, you: r.id === me, ranked: r.ranked, wants: r.wants })),
+      });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  // One person's whole board: where they put each item, and their counts.
+  // Reading only; nobody moves another person's items.
+  app.get('/api/people/:id', async (req, res) => {
+    const id = personParam(req);
+    if (id === null) return res.status(404).json({ error: 'They have nothing on their board any more.' });
+    try {
+      const me = req.user ? req.user.id : null;
+      const { rows } = await pool.query(
+        `SELECT user_id AS id, MAX(username) AS name,
+                COUNT(*) FILTER (WHERE tier <> 'W')::int AS ranked,
+                COUNT(*) FILTER (WHERE tier = 'W')::int AS wants
+           FROM tier_votes WHERE user_id = $1 GROUP BY user_id`,
+        [id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'They have nothing on their board any more.' });
+      const { rows: votes } = await pool.query('SELECT item_id, tier FROM tier_votes WHERE user_id = $1', [id]);
+      const places = {};
+      votes.forEach((v) => { places[v.item_id] = v.tier; });
+      res.json({
+        person: { id: rows[0].id, name: rows[0].name, you: rows[0].id === me, ranked: rows[0].ranked, wants: rows[0].wants },
+        places,
+      });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  // The project's members, for the comment field's @ list. Empty for a guest,
+  // a non-member, or when the platform's member list is out of reach; the
+  // screen then has no @ list, and comments still post without highlighting.
+  app.get('/api/members', async (req, res) => {
+    try {
+      res.json({ members: await memberList(req) });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  // One item's comments, oldest first, leaving out the ones the viewer
+  // reported and any that two different people have reported.
+  app.get('/api/items/:id/comments', async (req, res) => {
+    const id = idParam(req);
+    if (!id) return res.status(404).json({ error: GONE });
+    try {
+      const me = req.user ? req.user.id : null;
+      const { rows: item } = await pool.query('SELECT 1 FROM tier_items WHERE id = $1', [id]);
+      if (!item.length) return res.status(404).json({ error: GONE });
+      const { rows } = await pool.query(
+        `SELECT c.id, c.user_id, c.username, c.body, c.mentions, c.created_at
+           FROM tier_comments c
+          WHERE c.item_id = $1
+            AND (SELECT COUNT(*) FROM tier_comment_reports r WHERE r.comment_id = c.id) < $2
+            AND NOT EXISTS (
+              SELECT 1 FROM tier_comment_reports r WHERE r.comment_id = c.id AND r.user_id = $3)
+          ORDER BY c.created_at, c.id
+          LIMIT $4`,
+        [id, HIDE_AFTER_REPORTS, me, COMMENTS_SHOWN]
+      );
+      res.json({
+        comments: rows.map((c) => ({
+          id: c.id,
+          name: c.username,
+          you: c.user_id === me,
+          body: c.body,
+          mentions: c.mentions || [],
+          at: c.created_at,
+        })),
+      });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  // Anyone signed in can say something about an item. The @handles naming a
+  // project member are kept, in the member list's own spelling.
+  app.post('/api/items/:id/comments', async (req, res) => {
+    const id = idParam(req);
+    if (!id) return res.status(404).json({ error: GONE });
+    const body = cleanBody(req.body && req.body.body, COMMENT_MAX);
+    if (!body) return res.status(400).json({ error: 'Type a comment first.' });
+    try {
+      const members = await memberList(req);
+      const handles = new Map(members.map((m) => [m.username.toLowerCase(), m.username]));
+      const mentions = [];
+      const at = /@([A-Za-z0-9_.-]+)/g;
+      let match;
+      while ((match = at.exec(body))) {
+        const own = handles.get(match[1].toLowerCase());
+        if (own && !mentions.includes(own)) mentions.push(own);
+      }
+      const { rows } = await pool.query(
+        `INSERT INTO tier_comments (item_id, user_id, username, body, mentions)
+         SELECT id, $2, $3, $4, $5::text[] FROM tier_items WHERE id = $1
+         RETURNING id`,
+        [id, req.user.id, req.user.username, body, mentions]
+      );
+      if (!rows.length) return res.status(404).json({ error: GONE });
+      res.status(201).json({ id: rows[0].id });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  // Only the person who wrote a comment can take it back.
+  app.delete('/api/comments/:id', async (req, res) => {
+    const id = idParam(req);
+    if (!id) return res.status(404).json({ error: 'That comment is not here any more.' });
+    try {
+      const { rowCount } = await pool.query(
+        'DELETE FROM tier_comments WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+      if (!rowCount) {
+        const { rows } = await pool.query('SELECT 1 FROM tier_comments WHERE id = $1', [id]);
+        if (!rows.length) return res.status(404).json({ error: 'That comment is not here any more.' });
+        return res.status(403).json({ error: 'Only the person who wrote it can delete it.' });
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  // Someone else's comment can be reported, once per person; two different
+  // people reporting it hide it for everyone. Your own is yours to delete.
+  app.post('/api/comments/:id/report', async (req, res) => {
+    const id = idParam(req);
+    if (!id) return res.status(404).json({ error: 'That comment is not here any more.' });
+    try {
+      const { rows } = await pool.query('SELECT user_id FROM tier_comments WHERE id = $1', [id]);
+      if (!rows.length) return res.status(404).json({ error: 'That comment is not here any more.' });
+      if (rows[0].user_id === req.user.id) {
+        return res.status(400).json({ error: 'You can delete your own comment instead.' });
+      }
+      await pool.query(
+        'INSERT INTO tier_comment_reports (comment_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [id, req.user.id]
+      );
+      res.status(202).json({ ok: true });
     } catch (err) {
       fail(res, err);
     }

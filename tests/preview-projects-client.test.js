@@ -311,3 +311,48 @@ test('outside such a preview, without a demo owner, or for a directory with no r
   const changed = migrate.indexOf("require('../services/preview-projects-client').seedChangedStarters(pool, config)");
   assert.ok(catalog > 0 && changed > catalog, 'made with the staging seeds, after the demo owner and catalog exist');
 });
+
+test('the starters of this change are featured, and one that failed before is tried again', async (t) => {
+  setEnv(t, {});
+  const env = { ...previewEnv('http://usernode:3000'), PREVIEW_PROJECTS_STARTER_DIRS: 'tier-list' };
+  const appTemplates = require('../src/services/app-templates');
+  const tierId = appTemplates.READY_IDS.find((id) => appTemplates.dirOf(id) === 'tier-list');
+  const slug = `${tierId}-this-change`;
+  const queries = [];
+  const pool = {
+    query: async (sql, params = []) => {
+      queries.push({ sql: sql.replace(/\s+/g, ' ').trim(), params });
+      if (sql.includes('FROM users WHERE username')) return { rows: [{ id: 41 }] };
+      if (sql.includes('SELECT id, slug, status FROM apps')) return { rows: [{ id: 77, slug, status: 'error' }] };
+      return { rows: [] };
+    },
+    connect: async () => ({ query: async () => ({ rows: [] }), release() {} }),
+  };
+  const retried = [];
+  const saved = client.retryWhenRunning;
+  client.retryWhenRunning = (id, s) => { retried.push([id, s]); };
+  t.after(() => { client.retryWhenRunning = saved; });
+  const out = await client.seedChangedStarters(pool, null, env);
+  assert.deepEqual(out.made, [], 'it was there already');
+  const feature = queries.find((q) => q.sql.startsWith('INSERT INTO featured_apps'));
+  assert.deepEqual(feature.params, [77, 41], 'featured, by the demo identity');
+  assert.match(feature.sql, /ON CONFLICT \(app_id\) DO NOTHING/);
+  assert.deepEqual(retried, [[77, slug]]);
+});
+
+test('a retry waits for the workflow runtime, is not counted, and gives up quietly', async () => {
+  const calls = [];
+  let up = false;
+  const platform = {
+    retryCreation: async (id, opts) => {
+      calls.push([id, opts]);
+      if (!up) { up = true; throw new Error('The workflow runtime is not running in this process'); }
+      return { status: 'accepted' };
+    },
+  };
+  await client.retryWhenRunning(77, 'x', { pollMs: 5, tries: 3, platform });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.deepEqual(calls, [[77, { counted: false, actor: 'preview-projects' }], [77, { counted: false, actor: 'preview-projects' }]]);
+  const failing = { retryCreation: async () => { throw new Error('boom'); } };
+  await client.retryWhenRunning(78, 'y', { pollMs: 5, tries: 3, platform: failing });
+});

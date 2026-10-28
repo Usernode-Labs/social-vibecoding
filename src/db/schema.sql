@@ -8065,11 +8065,8 @@ COMMENT ON COLUMN users.profile_disabled_reason IS 'staging:private';
 -- above: the column holds the sha256 hex of a 32-byte token that only ever
 -- travels inside the emailed link (/#reset-password?token=…), so a DB read
 -- alone can never redeem a reset. Minted by POST
--- /api/auth/password-reset/request only for non-admin accounts with a
--- CONFIRMED email (admins keep the admin-issued temporary-password path —
--- the same email-control-must-not-equal-admin-takeover stance as the
--- web signup guard in src/services/email-signup.js), consumed and
--- cleared by POST /api/auth/password-reset/confirm, which runs
+-- /api/auth/password-reset/request for any account with a CONFIRMED email,
+-- consumed and cleared by POST /api/auth/password-reset/confirm, which runs
 -- accountRecovery() so every session and CLI authorization dies with the
 -- old password.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_token_hash VARCHAR(64);

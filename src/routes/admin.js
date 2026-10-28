@@ -49,6 +49,7 @@ const managedOpenRouter = require('../services/openrouter-managed-keys');
 const discoveryCuration = require('../services/discovery-curation');
 const appStorageCap = require('../services/app-storage-cap');
 const appLimit = require('../services/app-limit');
+const previewProjectsSetting = require('../services/preview-projects-setting');
 const sessionLimit = require('../services/session-limit');
 const platformLimits = require('../services/platform-limit-alerts');
 const githubBudget = require('../services/github-budget');
@@ -1402,6 +1403,50 @@ function adminRoutes(config) {
       res.json(await appLimit.adminPayload(pool, config));
     } catch (err) {
       log.error('admin', 'Update app limit failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Projects in previews ────────────────────────────────────
+  //
+  // Whether platform previews may have projects made in them, which
+  // production builds and runs for them (services/preview-projects.js).
+  // On by default; a full admin turns it off or on here without a deploy.
+  // Read open to view-only admins, like /app-limit; the write is
+  // requireAdminWrite. `enabled` is true, false, or null to go back to the
+  // default. When the deploy decides (the operator's
+  // PREVIEW_PROJECTS_ENABLED=false, or a Docker deploy) there is nothing to
+  // set (409): see the precedence in services/preview-projects-setting.js.
+  router.get('/api/admin/preview-projects', async (_req, res) => {
+    try {
+      res.json(await previewProjectsSetting.adminPayload(pool, config));
+    } catch (err) {
+      log.error('admin', 'Read preview projects setting failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/preview-projects', requireAdminWrite, async (req, res) => {
+    const body = req.body || {};
+    if (!Object.prototype.hasOwnProperty.call(body, 'enabled')) {
+      return res.status(400).json({ error: 'Provide enabled: true, false, or null for the default.' });
+    }
+    const invalid = previewProjectsSetting.validate(body.enabled);
+    if (invalid) return res.status(400).json({ error: invalid });
+    const block = previewProjectsSetting.deployBlock(config);
+    if (block) {
+      return res.status(409).json({
+        error: block === 'off'
+          ? 'The deploy has switched projects in previews off (PREVIEW_PROJECTS_ENABLED is false), so there is nothing to set.'
+          : 'This deploy cannot make projects in previews (they need Kubernetes), so there is nothing to set.',
+      });
+    }
+    try {
+      await previewProjectsSetting.set(pool, { value: body.enabled, actorId: req.user.id });
+      log.info('admin', 'Preview projects setting updated', { by: req.user.username, enabled: body.enabled });
+      res.json(await previewProjectsSetting.adminPayload(pool, config));
+    } catch (err) {
+      log.error('admin', 'Update preview projects setting failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

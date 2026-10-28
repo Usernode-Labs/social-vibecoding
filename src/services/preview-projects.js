@@ -34,9 +34,10 @@
 //     to it in its env, stored only as a SHA-256, and names one session.
 //     Every operation is on that session's projects alone: the session comes
 //     from the token, never from the request.
-//   * Only a preview of the PLATFORM gets one (config.selfAppSlug), only when
-//     PREVIEW_PROJECTS_ENABLED is on (the chart's config.previewProjects,
-//     default off), and only on Kubernetes.
+//   * Only a preview of the PLATFORM gets one (config.selfAppSlug), only on
+//     Kubernetes, and only while it is on: on by default, turned off in
+//     Admin > Limits or by the operator's PREVIEW_PROJECTS_ENABLED=false
+//     (services/preview-projects-setting.js).
 //   * At most MAX_PER_PREVIEW projects per preview and MAX_TOTAL at once.
 //   * A project's slug is its own: never the platform's, never with `--`
 //     (the host would read as another preview's), short enough that
@@ -108,10 +109,11 @@ function isStaging() {
   return process.env.USERNODE_ENV === 'staging';
 }
 
-// On, here: production (never a preview itself), switched on, on Kubernetes.
-function enabled(config) {
-  if (isStaging() || config?.previewProjectsEnabled !== true) return false;
-  return require('./application-runtime').mode(config) === 'kubernetes';
+// On, here: production (never a preview itself), on Kubernetes, not
+// switched off by the operator, and not turned off in Admin > Limits
+// (services/preview-projects-setting.js has the precedence). On by default.
+function enabled(config, pool) {
+  return require('./preview-projects-setting').enabled(config, pool || require('../db/pool').getPool(config));
 }
 
 // ── The credential ─────────────────────────────────────────────────────
@@ -208,8 +210,10 @@ async function changedStarterDirs(config, { app, commitHash }) {
 //     which the preview makes as it boots, ready to open
 //     (preview-projects-client.js seedChangedStarters).
 async function previewEnv(config, { app, sessionId, commitHash = null, pool = null }) {
-  if (!enabled(config) || !app || app.slug !== config.selfAppSlug) return {};
-  const token = await issueToken(pool || require('../db/pool').getPool(config), sessionId);
+  if (!app || app.slug !== config.selfAppSlug) return {};
+  const db = pool || require('../db/pool').getPool(config);
+  if (!(await enabled(config, db))) return {};
+  const token = await issueToken(db, sessionId);
   if (!token) return {};
   const starterDirs = await changedStarterDirs(config, { app, commitHash });
   const caddy = require('./caddy');
@@ -403,6 +407,12 @@ function checkFiles(files) {
   return { ok: true, files: out };
 }
 
+// PUBLIC, like an app's own repository: a build fetches its commit with no
+// credential (kubernetes-buildkit.js: `git fetch "$REPO_URL"` from the git
+// host's in-cluster address), so a private one fails every build with
+// "could not read Username". What it holds is what the preview generated
+// from the proposal's own starters, which are public with the proposal.
+// The first version made it private, so an existing one is turned public.
 let sourceRepo = null;
 async function pushSource(row, files) {
   const gitHost = require('./git-host');
@@ -410,9 +420,10 @@ async function pushSource(row, files) {
   if (!sourceRepo) {
     await gitHost.createRepo(SOURCE_REPO, {
       description: 'Projects made inside Homeroom platform previews, as they are built',
-      private: true,
+      private: false,
       adoptExisting: true,
     });
+    await gitHost.setPrivate(SOURCE_REPO, false);
     sourceRepo = SOURCE_REPO;
   }
   const branch = `project-${row.id}-b${row.builds}`;

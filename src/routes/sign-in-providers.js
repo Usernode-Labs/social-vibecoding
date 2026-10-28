@@ -144,7 +144,8 @@ function signInProviderRoutes(config) {
     const consented = result.created || state.follow_invite === true;
     const invite = consented
       ? await communityInvites.redeemCarried(pool, req, res, result.userId, {
-        // A private member signs up with a phone (community-invites.js).
+        // A private member has a verified phone or a confirmed email
+        // (community-invites.js): the provider vouched for this address.
         requirePhone: phoneAuth.offered(config),
       })
       : await communityInvites.dropCarried(pool, req, res, result.userId);

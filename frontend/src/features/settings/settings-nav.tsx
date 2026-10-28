@@ -85,9 +85,14 @@ interface NavGroup {
   items: NavItem[];
 }
 
+/** A phone menu row: a page, and the one line under it when its name needs one. */
+interface MenuItem extends Filterable {
+  subtitle: string;
+}
+
 interface MenuGroup {
   name: string;
-  items: Filterable[];
+  items: MenuItem[];
 }
 
 interface NavState {
@@ -499,10 +504,13 @@ export function SettingsMobileMenu() {
                 className={MENU_ROW}
                 // ListRow bolds its title for the rows it was built for, where
                 // the title is a subject with a subtitle under it. These are
-                // one-word menu entries with no second line, so bold made the
-                // whole menu read as a stack of headings.
+                // short menu entries, most with no second line, so bold made
+                // the whole menu read as a stack of headings.
                 titleClassName="font-normal"
                 title={item.label}
+                // #5995: the few rows whose name does not say what is behind
+                // it carry one muted line (Settings.SUBTITLES); the rest none.
+                subtitle={item.subtitle || undefined}
                 onClick={() => navClick(item.key)}
               />
             ))}
