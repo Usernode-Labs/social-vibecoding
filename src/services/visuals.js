@@ -2278,6 +2278,12 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         const extras = [];
         for (const d of dispatched) {
           if (!d.firstRun) continue;
+          // A check that loads its page its own several times (`repeat`)
+          // is already making the debut observations this exists for: ONE
+          // verdict from N loads, every one of which has to pass. Three
+          // more dispatches of it would be N×3 pages and no new answer.
+          const base = tests[d.index];
+          if (Number(base && base.repeat) > 1) continue;
           for (let i = 1; i < checkHistory.NEW_CHECK_RUNS; i++) extras.push(d);
         }
         for (const d of extras.slice(0, checkHistory.MAX_NEW_CHECK_REPEATS)) {
