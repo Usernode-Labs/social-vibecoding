@@ -110,7 +110,13 @@
          screen reader only, and the page starts with one short line. -->
     <header class="flex flex-col gap-1">
       <h1 class="sr-only">{{APP_NAME}}</h1>
-      <p class="text-body text-muted">Our favorite {{ITEM_PLURAL}}, ranked together.</p>
+      <!-- The question mark explains how a tier list works: a small circle
+           beside the line that says what this is, there even while the list
+           is empty. Its padding keeps a full-size tap target around it. -->
+      <div class="flex items-center">
+        <p class="text-body text-muted">Our favorite {{ITEM_PLURAL}}, ranked together.</p>
+        <button id="help-open" type="button" class="-my-2.5 -mr-2.5 shrink-0 rounded-full p-2.5" aria-label="How this tier list works"><span class="flex h-6 w-6 items-center justify-center rounded-full border border-line bg-surface text-small font-semibold text-muted" aria-hidden="true">?</span></button>
+      </div>
       <!-- Who else has the list open just now; app.js fills it in and it
            stays hidden when nobody else is here. -->
       <p id="presence" class="text-small text-muted" aria-live="polite" hidden></p>
@@ -160,27 +166,26 @@
     </div>
 
     <!-- One board, three rankings: yours, first (drag each into a tier), the
-         group's (every item in the tier its average lands in), and People
-         (one project member's whole board, to look at). Tapping one, on any
-         of them, opens its sheet below. The question mark beside the switch
-         explains how a tier list works. -->
+         group's (every item in the tier its average lands in), and Other
+         people (another member's whole board, to look at). Tapping one, on
+         any of them, opens its sheet below. -->
     <section id="ranking" class="flex flex-col gap-3 appear" hidden>
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <!-- The three boards and the question mark stay on one line at 390 px;
-             the note gives up its share of the row first and drops below
-             them rather than squeezing the switch. -->
+        <!-- The three boards stay on one line at 390 px; the note gives up
+             its share of the row first and drops below them rather than
+             squeezing the switch. -->
         <div class="flex min-w-0 items-center gap-2">
           <div id="view-toggle" role="radiogroup" aria-label="Whose ranking" class="inline-flex rounded-xl border border-line bg-surface p-1">
             <button type="button" role="radio" data-view="group" aria-checked="false" class="min-h-11 rounded-lg px-3 text-body font-medium">The group's</button>
             <button type="button" role="radio" data-view="yours" aria-checked="true" class="min-h-11 rounded-lg px-3 text-body font-medium">Yours</button>
-            <button type="button" role="radio" data-view="person" aria-checked="false" class="min-h-11 rounded-lg px-3 text-body font-medium">People</button>
+            <button type="button" role="radio" data-view="person" aria-checked="false" class="min-h-11 rounded-lg px-3 text-body font-medium">Other people</button>
           </div>
-          <button id="help-open" type="button" class="min-h-11 w-11 shrink-0 rounded-xl border border-line bg-surface text-body font-semibold" aria-label="How this tier list works">?</button>
         </div>
         <p id="board-note" class="w-full min-w-0 px-1 text-small text-muted sm:w-auto"></p>
       </div>
-      <!-- One name for each person with something on a board, filled when
-           that is whose board is showing. Hidden unless People is picked. -->
+      <!-- One name for each other person with something on a board, filled
+           when that is whose board is showing. Hidden unless Other people is
+           picked. -->
       <div id="people" role="radiogroup" aria-label="Whose board" class="flex flex-wrap gap-1.5" hidden></div>
       <p id="hint" class="px-1 text-small text-muted" aria-live="polite"></p>
       <div id="board" class="list" data-view="yours"></div>
@@ -280,7 +285,7 @@
         <li><strong>Yours:</strong> drag each {{ITEM_ONE}} into the tier you think it belongs in. Change your mind any time.</li>
         <li><strong>Want to {{WANT_VERB}}:</strong> put one there if you have not got to it yet. It counts toward no tier.</li>
         <li><strong>The group's:</strong> every {{ITEM_ONE}} sits in the tier its average lands in.</li>
-        <li><strong>People:</strong> pick someone to see their whole tier list.</li>
+        <li><strong>Other people:</strong> pick someone else to see their whole tier list.</li>
         <li>Tap any {{ITEM_ONE}} to see who ranked it what and to comment. Type @ to mention someone.</li>
       </ul>
     </section>

@@ -8,7 +8,7 @@
 // index.html's data-verb): drag one there that you have not got to yet. It
 // counts toward no tier, and the group's board lists there every one
 // somebody wants to, with how many people. Dragging it back to "Not ranked
-// yet" takes it off your board. "People" is one project member's whole
+// yet" takes it off your board. "Other people" is another member's whole
 // board, chosen from a row of names; it is for looking, never moving.
 // Tapping an item, on any board, opens its sheet: the group's tier, who put
 // it in which tier and who wants to, its comments (write one, @ a member,
@@ -77,7 +77,7 @@
   var CHIP = 'inline-flex min-h-11 max-w-full items-center rounded-lg bg-raised px-3 py-2 text-left text-small font-medium hover:bg-line';
   var CHIP_MOVABLE = 'inline-flex min-h-11 max-w-full cursor-grab touch-none select-none items-center rounded-lg border border-line bg-surface px-3 py-2 text-left text-small font-medium shadow-sm';
   var NAME_CHIP = 'inline-flex max-w-full items-center rounded-lg bg-raised px-2.5 py-1.5 text-small font-medium';
-  // The People row: the chosen name filled with the accent, the rest outlined.
+  // The Other people row: the chosen name filled with the accent, the rest outlined.
   var PERSON_ON = 'inline-flex min-h-11 items-center rounded-lg bg-accent px-3 text-small font-medium text-on-accent';
   var PERSON_OFF = 'inline-flex min-h-11 items-center rounded-lg border border-line bg-surface px-3 text-small font-medium';
   // The @ list's choices, the highlighted one and the rest.
@@ -95,8 +95,9 @@
   var view = 'yours';
   try { if (localStorage.getItem('tier-list:view') === 'group') view = 'group'; } catch (e) { /* yours */ }
   try { if (localStorage.getItem('tier-list:view') === 'person') view = 'person'; } catch (e) { /* yours */ }
-  // The People row (everyone with something on a board), whose board is
-  // showing, and where that person put each item. Remembered on this device.
+  // The Other people row (everyone else with something on a board: your own
+  // is Yours), whose board is showing, and where that person put each item.
+  // Remembered on this device.
   var people = [];
   var personId = null;
   var person = null;
@@ -376,8 +377,7 @@
     } else if (view === 'person') {
       // Looking only: the same chip as the group's board, no drag.
       var place = placeOf(item);
-      var whose = person && person.you ? 'your own'
-        : person && person.name ? '@' + person.name + '\'s' : 'their';
+      var whose = person && person.name ? '@' + person.name + '\'s' : 'their';
       chip = h('button', CHIP, item.name);
       chip.setAttribute('aria-label', item.name + (place === 'W' ? ', in ' + whose + ' ' + WANT_LABEL
         : place ? ', in ' + whose + ' ' + place + ' tier' : ', not on their board yet')
@@ -416,19 +416,19 @@
     return r;
   }
 
-  // The People row: a name for each person with something on a board, the
-  // viewer's own as "You", filled when it is whose board is showing.
+  // The Other people row: a name for each other person with something on a
+  // board, filled when it is whose board is showing.
   function renderPeople() {
     el.people.textContent = '';
     if (view !== 'person') { el.people.hidden = true; return; }
     el.people.hidden = false;
     if (!people.length) {
-      el.people.appendChild(h('p', 'px-1 text-small text-muted', 'Nobody has ranked anything yet.'));
+      el.people.appendChild(h('p', 'px-1 text-small text-muted', 'Nobody else has ranked anything yet.'));
       return;
     }
     people.forEach(function (p) {
       var b = h('button', p.id === personId ? PERSON_ON : PERSON_OFF,
-        p.you ? 'You' : p.name ? '@' + p.name : 'Someone');
+        p.name ? '@' + p.name : 'Someone');
       b.type = 'button';
       b.setAttribute('role', 'radio');
       b.setAttribute('aria-checked', p.id === personId ? 'true' : 'false');
@@ -478,8 +478,8 @@
     } else if (view === 'person') {
       var total = data.items.length;
       if (person) {
-        el.note.textContent = (person.you ? 'You ranked '
-          : person.name ? '@' + person.name + ' ranked ' : 'They ranked ') + person.ranked + ' of ' + total;
+        el.note.textContent = (person.name ? '@' + person.name + ' ranked ' : 'They ranked ')
+          + person.ranked + ' of ' + total;
       } else {
         el.note.textContent = '';
       }
@@ -1005,7 +1005,7 @@
     renderBoard();
     var none = !data.items.length;
     // Nothing to switch between, drag or tray yet: just the tiers. The
-    // question mark stays, which is where it is most useful.
+    // question mark is in the header, so it stays.
     el.toggle.hidden = none;
     el.note.hidden = none;
     if (none) { el.hint.hidden = true; el.tray.hidden = true; el.people.hidden = true; }
@@ -1045,8 +1045,8 @@
     el.presence.hidden = false;
   }
 
-  // Whose board People shows: remembered on this device, the first person
-  // who is not you when that one has nothing any more, else you.
+  // Whose board Other people shows: remembered on this device, else the
+  // first one listed.
   function rememberPerson() {
     try { localStorage.setItem('tier-list:person', personId == null ? '' : String(personId)); } catch (e) { /* not kept */ }
   }
@@ -1054,9 +1054,7 @@
   function choosePerson() {
     var listed = people.some(function (p) { return p.id === personId; });
     if (listed) return;
-    var other = people.filter(function (p) { return !p.you; })[0];
-    var pick = other || people[0];
-    personId = pick ? pick.id : null;
+    personId = people[0] ? people[0].id : null;
     rememberPerson();
   }
 
@@ -1090,7 +1088,7 @@
     // read once more when it is back.
     if (loading) { again = true; return loading; }
     var itemsRead = api('GET', '/api/items');
-    // The People row is read beside the board; a failed read leaves it empty
+    // The Other people row is read beside the board; a failed read leaves it empty
     // rather than failing the screen.
     var peopleRead = api('GET', '/api/people').catch(function () { return { people: [] }; });
     loading = Promise.all([itemsRead, peopleRead])
@@ -1100,7 +1098,8 @@
         if (drag) { if (live) live.changed(); return null; }
         loaded = true;
         data = out[0];
-        people = out[1].people || [];
+        // Everyone else: your own board is Yours.
+        people = (out[1].people || []).filter(function (p) { return !p.you; });
         choosePerson();
         return view === 'person' ? loadPerson() : null;
       })
@@ -1129,7 +1128,7 @@
     render();
     if (view === 'person') loadPerson().then(function () { if (view === 'person') render(); });
   });
-  // Picking whose board to look at, on the People row.
+  // Picking whose board to look at, on the Other people row.
   el.people.addEventListener('click', function (e) {
     var b = e.target.closest('[data-person]');
     if (!b) return;

@@ -386,7 +386,7 @@ test('a tier list says who else is here', () => {
     const html = file(generate(id), 'public/index.html');
     // Under the opening line, in the hint's own small muted text, announced
     // politely; it starts hidden, and stays so with nobody else here.
-    assert.match(html, /<p class="text-body text-muted">Our favorite [^<]+, ranked together\.<\/p>\s*<!--[^>]*?-->\s*<p id="presence" class="text-small text-muted" aria-live="polite" hidden><\/p>/);
+    assert.match(html, /<p class="text-body text-muted">Our favorite [^<]+, ranked together\.<\/p>\s*<button id="help-open"[^]*?<\/button>\s*<\/div>\s*<!--[^>]*?-->\s*<p id="presence" class="text-small text-muted" aria-live="polite" hidden><\/p>/);
     assert.ok(html.indexOf('id="presence"') < html.indexOf('</header>'), `${id}: inside the header`);
     assert.ok(t.features.some((f) => f.startsWith('**Who else is here**: a line under the title')), id);
     assert.ok(t.tests.some((c) => c.expectSelector === 'header #presence[aria-live="polite"]'), id);
@@ -419,10 +419,15 @@ test('a tier list shows each person\'s board, comments with @mentions, and a hel
   for (const id of READY.slice(0, 4)) {
     const t = appTemplates.get(id);
     const html = file(generate(id), 'public/index.html');
-    // The switch has a third board, People, and the question mark beside it
-    // stays when the list is empty.
-    assert.match(html, /<button type="button" role="radio" data-view="person" aria-checked="false" class="min-h-11 rounded-lg px-3 text-body font-medium">People<\/button>/);
-    assert.match(html, /<button id="help-open" type="button" [^>]*aria-label="How this tier list works">\?<\/button>/);
+    // The switch has a third board, Other people; the question mark is a
+    // small circle beside the line under the title, so it is there even while
+    // the list is empty, with a full-size tap target around it.
+    assert.match(html, /<button type="button" role="radio" data-view="person" aria-checked="false" class="min-h-11 rounded-lg px-3 text-body font-medium">Other people<\/button>/);
+    assert.match(html, /<button id="help-open" type="button" class="-my-2\.5 -mr-2\.5 shrink-0 rounded-full p-2\.5" aria-label="How this tier list works"><span class="flex h-6 w-6 items-center justify-center rounded-full [^"]*" aria-hidden="true">\?<\/span><\/button>/);
+    const header = html.slice(html.indexOf('<header'), html.indexOf('</header>'));
+    assert.match(header, /ranked together\.<\/p>\s*<button id="help-open"/, `${id}: the question mark is beside the line under the title`);
+    assert.ok(html.indexOf('id="help-open"') < html.indexOf('id="view-toggle"'), `${id}: and no longer in the board switch`);
+    assert.match(html, /<li><strong>Other people:<\/strong> pick someone else to see their whole tier list\.<\/li>/);
     assert.match(html, /<div id="people" role="radiogroup" aria-label="Whose board" [^>]*hidden><\/div>/);
     // The help sheet reuses the item sheet's frame and this list's own word.
     assert.match(html, /<div id="help" class="fixed inset-0 z-40 flex flex-col justify-end" hidden>/);
@@ -435,7 +440,7 @@ test('a tier list shows each person\'s board, comments with @mentions, and a hel
     assert.match(html, /<div id="mention-list" role="listbox" [^>]*hidden><\/div>/);
     assert.ok(html.indexOf('id="detail-raters"') < html.indexOf('id="detail-comments"'), `${id}: the comments are below who ranked it`);
     // What the entry says, and the checks that read the screen.
-    for (const part of ['**People**', '**Comments**', '**Help**']) {
+    for (const part of ['**Other people**', '**Comments**', '**Help**']) {
       assert.ok(t.features.some((f) => f.startsWith(part)), `${id}: ${part}`);
     }
     assert.match(t.tables, /tier_comments/);
@@ -448,6 +453,9 @@ test('a tier list shows each person\'s board, comments with @mentions, and a hel
   // A person's board is read, never moved: only Yours has drop targets.
   assert.match(script, /if \(view === 'person'\) return personPlaces\[item\.id\] \|\| null;/);
   assert.match(script, /data\.items\.filter\(function \(i\) \{ return placeOf\(i\) === 'W'; \}\)/);
+  // Other people is everyone else: your own board is Yours.
+  assert.match(script, /people = \(out\[1\]\.people \|\| \[\]\)\.filter\(function \(p\) \{ return !p\.you; \}\);/);
+  assert.match(script, /'Nobody else has ranked anything yet\.'/);
   // The @ list's names come from the project's member list, never a fixture.
   assert.match(script, /api\('GET', '\/api\/members'\)/);
   const api = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'tier-list/api.js'), 'utf8');
