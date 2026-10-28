@@ -457,6 +457,8 @@ test('the password step is the sheet\'s: the link opens it, and Forgot password 
   const src = read(SHEET);
   assert.match(src, /type Step = 'choose' \| 'email' \| 'code' \| 'account' \| 'username' \| 'password' \| 'forgot' \| 'phone' \| 'phone-code' \| 'link';/);
   assert.match(src, /data-sign-in-sheet-password=""\s+onClick=\{\(e\) => \{ e\.preventDefault\(\); setError\(null\); setDetails\(null\); setStep\('password'\); \}\}/);
+  // Where the sheet has the one field, a username leads here (identifierKind).
+  assert.match(src, /identifierPrefill\.current = value\.replace\(\/\^@\/, ''\);\s+setStep\('password'\);/);
   assert.match(src, /<label htmlFor="sign-in-sheet-identifier" className=\{LABEL\}>\{t\('auth:signInSheet\.password\.identifierLabel'\)\}<\/label>/);
   assert.equal(message('auth:signInSheet.password.identifierLabel'), 'Username or email');
   assert.match(src, /<PasswordInput ref=\{currentPasswordField\} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password"/);
@@ -467,18 +469,21 @@ test('the password step is the sheet\'s: the link opens it, and Forgot password 
   // #5616: picking Password is choosing how to sign in, so the step has no
   // "Other ways to continue" back to Apple and Google; closing the sheet does
   // that. Without the Email code | Password switch, the email code is the one
-  // other way, and the link goes straight to that step.
+  // other way, and the link goes straight to that step. Where the sheet has
+  // the one field, the link emails the code itself: to the address typed, or
+  // to the account of the username typed.
   assert.doesNotMatch(src, /signInSheet\.password\.otherWays/);
   const passwordAt = src.indexOf("{step === 'password' ? (");
   const passwordForm = src.slice(passwordAt, src.indexOf("{step === 'forgot' ? (", passwordAt));
   assert.doesNotMatch(passwordForm, /otherWays/);
-  assert.match(passwordForm, /\{!methodSwitch \? \(\s+<button type="button" className=\{QUIET\} onClick=\{\(\) => toStep\('email'\)\}>\s+\{t\('auth:signInSheet\.password\.useEmailCode'\)\}/);
+  assert.match(passwordForm, /\) : !methodSwitch \? \(\s+<button type="button" className=\{QUIET\} onClick=\{\(\) => toStep\('email'\)\}>\s+\{t\('auth:signInSheet\.password\.useEmailCode'\)\}/);
+  assert.match(passwordForm, /\{oneField \? \([\s\S]*?data-sign-in-sheet-email-me-code=""[\s\S]*?void requestCode\(typed, byUsername\);[\s\S]*?\{t\('auth:signInSheet\.password\.emailMeCode'\)\}/);
   assert.match(passwordForm, /data-sign-in-sheet-forgot=""/);
   // Join pressed on an invite, then a password: the shell follows the link
   // without asking a second time, as it did from the sign-in screen.
   assert.match(src, /if \(followInvite\) rememberInviteJoin\(\);\s+await finish\('existing'\);/);
   // A right code for a password account moves to this step with the address.
-  assert.match(src, /identifierPrefill\.current = email;\s+setStep\('password'\);/);
+  assert.match(src, /identifierPrefill\.current = codeUsername \|\| email;\s+setStep\('password'\);/);
   // A session the shell cannot confirm says so in the sheet, as on the screen.
   assert.match(src, /<SessionConfirmationNotice completion=\{completion\} \/>/);
   assert.match(src, /<NativeLoginDetailsLink details=\{details\} \/>/);
@@ -502,14 +507,15 @@ test('each way into the sheet says only what is true for it', () => {
   const start = render('story', 'Continue to Homeroom');
   const join = render('invite', 'Join Sunday Run Club');
   const BUTTON = /<button type="submit"[^>]*>Send code<\/button>/;
-  // Sign in and Continue: the Email code | Password switch over the field
-  // (#5258, where the link under the button was), then the button, and
-  // nothing after the form: sending a code makes no account, so no terms
+  // Sign in and Start here: one field for an email or a username (a phone
+  // too, where it is offered), its Continue, and nothing after the form: no
+  // Email code | Password switch and no "Use a password", since what is typed
+  // decides (identifierKind); sending a code makes no account, so no terms
   // (#5257; the code step says them).
   for (const html of [signin, start]) {
-    assert.match(html, /<div role="radiogroup" aria-label="How to sign in" data-sign-in-sheet-method=""[^>]*><button type="button" role="radio" aria-checked="true" data-sign-in-sheet-method-email=""[^>]*>Email code<\/button><button type="button" role="radio" aria-checked="false" data-sign-in-sheet-method-password=""[^>]*>Password<\/button><\/div><form/);
-    assert.match(html, new RegExp(`${BUTTON.source}</form></div></div>`), 'nothing under the button');
-    assert.doesNotMatch(html, /By continuing|data-sign-in-sheet-password=|Use a password/);
+    assert.match(html, /<label for="sign-in-sheet-email"[^>]*>Email or username<\/label><input id="sign-in-sheet-email" data-sign-in-sheet-identifier="" type="text" autoComplete="username"/);
+    assert.match(html, /<button type="submit"[^>]*>Continue<\/button><\/form><\/div><\/div>/, 'nothing under the button');
+    assert.doesNotMatch(html, /data-sign-in-sheet-method|By continuing|data-sign-in-sheet-password=|Use a password/);
     assert.doesNotMatch(html, /New to Homeroom|This makes your account|Already have an account|Welcome back/);
   }
   // Join: the button, then the terms, and nothing after.
@@ -524,7 +530,7 @@ test('each way into the sheet says only what is true for it', () => {
     assert.doesNotMatch(html, /<p class="mt-1 text-\[15px\] leading-snug/);
   }
   assert.equal(join.match(/<p[\s>]/g).length, 1, 'the terms alone under the button');
-  for (const html of [signin, start]) assert.equal((html.match(/<p[\s>]/g) || []).length, 0, 'no line under the button, the switch above');
+  for (const html of [signin, start]) assert.equal((html.match(/<p[\s>]/g) || []).length, 0, 'no line under the button');
   const landing = read(LANDING);
   assert.doesNotMatch(landing, /It takes a minute|Welcome back|Sign in or make an account/);
   // No line under any title, the phone's join included (#4326 trimmed its copy).
@@ -532,7 +538,7 @@ test('each way into the sheet says only what is true for it', () => {
   assert.doesNotMatch(landing, /No app, no password/);
 });
 
-test('the first step with Apple and Google: the terms under them, then the email, then the password (#5257)', () => {
+test('the first step with Apple and Google: the terms under them, then the one field (#5257)', () => {
   const { SignInSheet } = loadTsx(SHEET);
   const render = (from) => renderToHtml(createElement(SignInSheet, {
     open: true, title: 'Continue to Homeroom', from, providers: ['google', 'apple'], onClose() {}, primaryClass: 'pill',
@@ -544,22 +550,24 @@ test('the first step with Apple and Google: the terms under them, then the email
     const order = [
       at(/data-sign-in-provider="google"/), at(/data-sign-in-provider="apple"/),
       at(/By continuing, you agree to Homeroom&#x27;s terms and acknowledge the privacy notice\./), at(/data-sign-in-sheet-or=""/),
-      at(/id="sign-in-sheet-email"/), at(/data-sign-in-provider="email"/), at(/data-sign-in-sheet-password=""/),
+      at(/id="sign-in-sheet-email"/), at(/data-sign-in-provider="email"/),
     ];
     for (const i of order) assert.ok(i > 0, `${from}: every part is there`);
     assert.deepEqual([...order].sort((a, b) => a - b), order, `${from}: in that order`);
-    // The email is sent from here: a form, its button the submit.
-    assert.match(html, /<button type="submit" data-sign-in-provider="email"[^>]*>Continue with email<\/button><\/form>/);
+    // What was typed is sent from here: a form, its button the submit.
+    assert.match(html, /<button type="submit" data-sign-in-provider="email"[^>]*>Continue<\/button><\/form><\/div>/);
     assert.equal((html.match(/By continuing/g) || []).length, 1, `${from}: the terms once`);
-    assert.match(html, />Use a password<\/a>/);
+    // The one field is the way to a password too: a username leads there.
+    assert.doesNotMatch(html, /Use a password|data-sign-in-sheet-password=|data-sign-in-sheet-to-phone/);
   }
   // An invite's Join only makes an account: its terms, and no password.
   const join = render('invite');
   assert.match(join, /By continuing, you agree/);
   assert.doesNotMatch(join, /Use a password|data-sign-in-sheet-password=/);
   assert.equal(message('auth:signInSheet.withPassword'), 'Use a password');
-  assert.match(message('auth:signInSheet.resume.passwordRequired'), /"Use a password"/);
-  assert.match(message('auth:signInSheet.resume.adminPasswordRequired'), /"Use a password"/);
+  // Back from a provider to a password account: the field above leads there.
+  assert.match(message('auth:signInSheet.resume.passwordRequired'), /Enter your username above, then Continue\./);
+  assert.match(message('auth:signInSheet.resume.adminPasswordRequired'), /Enter your username above, then Continue\./);
 });
 
 test('Email code | Password is one switch, and the password and reset steps say no terms (#5258)', () => {
@@ -908,4 +916,39 @@ test('closed by its ✕, its dim or Escape, the sheet goes down the way it came 
   // A second tap on the fading dim is the same close, not a second timer.
   assert.match(sheet, /if \(closeTimer\.current != null\) return;/);
   assert.match(sheet, /data-sign-in-sheet-closing=\{closing \? '' : undefined\}/);
+});
+
+// One way in: the story's Start here and Sign in open a sheet whose one field
+// takes an email, a phone number or a username, and what was typed decides
+// the next step. A username's code goes to its account's address, which the
+// sheet never learns (routes/auth.js /otp/request and /otp/verify).
+test('the one field sends an email to its code, a phone to its text and a username to the password', () => {
+  const { identifierKind } = loadTsx(SHEET);
+  assert.equal(identifierKind('', true), 'empty');
+  assert.equal(identifierKind('  ', true), 'empty');
+  assert.equal(identifierKind('Ada@Example.com', true), 'email');
+  assert.equal(identifierKind('+44 7700 900123', true), 'phone');
+  assert.equal(identifierKind('(415) 555-0123', true), 'phone');
+  assert.equal(identifierKind('415 555 0123', false), 'username', 'no phone sign-in: digits are a name');
+  assert.equal(identifierKind('12345', true), 'username', 'too short for a number');
+  assert.equal(identifierKind('ada', true), 'username');
+  assert.equal(identifierKind('@ada', true), 'username', 'a handle with its @');
+  const src = read(SHEET);
+  assert.match(src, /if \(kind === 'email'\) \{ void requestCode\(value\); return; \}/);
+  assert.match(src, /if \(e164 && !askName\) \{ void requestPhoneCode\(e164\); return; \}/);
+  assert.match(src, /body: JSON\.stringify\(byUsername \? \{ username: value \} : \{ email: value \}\),/);
+  // The code step names the username, never an address it does not have.
+  assert.match(src, /<RichMessage id="auth:signInSheet\.code\.sentToUsername" values=\{\{ username: codeUsername \}\}/);
+  assert.match(message('auth:signInSheet.code.sentToUsername'), /^If <0>@\{\{username\}\}<\/0> has an email on its account, we sent the code there\. <1>Change<\/1>$/);
+  // The resend goes the same way the code went.
+  assert.match(src, /void requestCode\(codeUsername \|\| email, !!codeUsername\);/);
+});
+
+test('a phone-offering sheet labels the one field for a phone too', () => {
+  const { SignInSheet } = loadTsx(SHEET);
+  const html = renderToHtml(createElement(SignInSheet, {
+    open: true, title: 'Continue to Homeroom', from: 'story', phoneLink: true, askName: false, onClose() {}, primaryClass: 'pill',
+  }));
+  assert.match(html, />Email, phone or username<\/label>/);
+  assert.doesNotMatch(html, /data-sign-in-sheet-to-phone/);
 });

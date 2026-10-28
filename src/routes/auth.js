@@ -367,6 +367,14 @@ function authRoutes(config) {
   // Browser JavaScript never receives a mobile bearer.
   router.post('/api/auth/otp/request', otpRequestLimiter, otpRequestEmailLimiter, async (req, res) => {
     try {
+      // The sign-in sheet's one field takes a username too: the code goes to
+      // that account's address. The answer is the same whether or not the
+      // name has an account with one, so it says nothing about either.
+      if (req.body?.email === undefined && typeof req.body?.username === 'string') {
+        const address = await emailSignup.emailForUsername(pool, req.body.username);
+        if (address) await emailSignup.requestCode(pool, config, address);
+        return res.json({ ok: true });
+      }
       await emailSignup.requestCode(pool, config, req.body?.email);
       return res.json({ ok: true });
     } catch (error) {
@@ -480,9 +488,14 @@ function authRoutes(config) {
 
   router.post('/api/auth/otp/verify', otpVerifyLimiter, async (req, res) => {
     try {
+      // A username's code (see /otp/request) is checked against its account's
+      // address; no account is refused exactly as a wrong code is.
+      const address = req.body?.email === undefined && typeof req.body?.username === 'string'
+        ? await emailSignup.emailForUsername(pool, req.body.username)
+        : req.body?.email;
       const verified = await emailSignup.verifyCode(
         pool,
-        req.body?.email,
+        address,
         req.body?.code,
         { createSession }
       );

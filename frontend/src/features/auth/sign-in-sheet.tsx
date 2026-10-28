@@ -187,7 +187,7 @@ import { t as translate } from '../../lib/i18n/runtime';
 import { CodeBoxes, CODE_LENGTH, codeDigits } from './code-boxes';
 import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
 import { NativeLoginDetailsLink } from './native-login-details';
-import { PhoneInput, readPhone } from './phone-input';
+import { PhoneInput, phoneE164, readPhone } from './phone-input';
 import { phoneRecaptchaInUse, phoneRecaptchaToken, RECAPTCHA_LINE } from './recaptcha';
 import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
 import {
@@ -464,6 +464,31 @@ export { phoneE164 } from './phone-input';
  */
 export function firstStepLine(from: 'invite' | 'story' | 'signin', phone = false): 'terms' | 'password' {
   return from === 'invite' && !phone ? 'terms' : 'password';
+}
+
+/**
+ * ONE WAY IN: where the sheet may be for an account somebody has
+ * (`firstStepLine` 'password': the story's Start here, Sign in), its first
+ * step is one field that takes an email, a phone number or a username, and
+ * what was typed decides the next step:
+ *
+ *   email     the email code, which signs an account in or makes one;
+ *   phone     the phone's code, when phone sign-in is offered (a "+…"
+ *             number is texted at once, any other goes to the phone step
+ *             to pick its country);
+ *   username  the password step, the name filled in, with "Email me a
+ *             code instead", which emails the code to that account's
+ *             address without showing it (routes/auth.js /otp/request).
+ *
+ * Its own "Use a phone number instead" and "Use a password" links, and the
+ * Email code | Password switch, are gone there: the one field is all of them.
+ */
+export function identifierKind(raw: string, phoneOffered: boolean): 'empty' | 'email' | 'phone' | 'username' {
+  const value = raw.trim();
+  if (!value) return 'empty';
+  if (value.includes('@') && !value.startsWith('@')) return 'email';
+  if (phoneOffered && /^\+?[\d\s().-]+$/.test(value) && value.replace(/\D/g, '').length >= 6) return 'phone';
+  return 'username';
 }
 
 /**
@@ -841,6 +866,9 @@ export function SignInSheet({
   // dropped while Brevo sends the texts and no check is used (#5840).
   const recaptchaInUse = useRecaptchaLine(step === 'phone' || step === 'phone-code');
   const [email, setEmail] = useState('');
+  // The username a code went to instead of an address (`identifierKind`),
+  // or '' when the code went to `email`.
+  const [codeUsername, setCodeUsername] = useState('');
   // The number a code went to, as sent (E.164), and the verify leg's handle.
   const [phoneNumber, setPhoneNumber] = useState('');
   const phoneSession = useRef('');
@@ -1035,10 +1063,12 @@ export function SignInSheet({
     return () => window.clearInterval(t);
   }, [open, cooldownUntil]);
 
-  const requestCode = useCallback(async (address: string) => {
+  // `byUsername`: the code goes to the address on that username's account,
+  // which the server never names (`identifierKind`).
+  const requestCode = useCallback(async (address: string, byUsername = false) => {
     setError(null);
-    const value = address.trim().toLowerCase();
-    if (!value || !value.includes('@')) {
+    const value = byUsername ? address.trim().replace(/^@/, '') : address.trim().toLowerCase();
+    if (!value || (!byUsername && !value.includes('@'))) {
       setError(translate('auth:signInSheet.email.invalid'));
       // Said, and the caret put where the answer goes (#5678).
       firstField.current?.focus({ preventScroll: true });
@@ -1051,10 +1081,11 @@ export function SignInSheet({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ email: value }),
+        body: JSON.stringify(byUsername ? { username: value } : { email: value }),
       });
       const data = await res.json().catch(() => ({}));
-      setEmail(value);
+      setEmail(byUsername ? '' : value);
+      setCodeUsername(byUsername ? value : '');
       if (!res.ok || !data.ok) {
         // A code went out a moment ago and is still the live one: the code
         // step is where they should be, with the resend held as long as the
@@ -1067,7 +1098,12 @@ export function SignInSheet({
             ? Math.min(retryAfter, 900) * 1000 : RESEND_COOLDOWN_MS));
           return;
         }
-        setStep('email');
+        if (byUsername) {
+          identifierPrefill.current = value;
+          setStep('password');
+        } else {
+          setStep('email');
+        }
         setError(data.error || translate('auth:signInSheet.email.sendFailed'));
         return;
       }
@@ -1208,15 +1244,16 @@ export function SignInSheet({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ email, code, ...(followInvite ? { followInvite: true } : {}) }),
+        body: JSON.stringify({ ...(codeUsername ? { username: codeUsername } : { email }), code, ...(followInvite ? { followInvite: true } : {}) }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
         // A right code for an account that signs in with its password (an
         // admin's, or one whose address was never confirmed): its password
-        // step, with the address carried over, as the sign-in screen does.
+        // step, with the address (or the username) carried over, as the
+        // sign-in screen does.
         if (data.code === 'password_required' || data.code === 'admin_password_required') {
-          identifierPrefill.current = email;
+          identifierPrefill.current = codeUsername || email;
           setStep('password');
           setError(data.error || translate('auth:signInSheet.code.passwordAccount'));
           return;
@@ -1246,7 +1283,7 @@ export function SignInSheet({
     } finally {
       setBusy(false);
     }
-  }, [email, followInvite, finish]);
+  }, [email, codeUsername, followInvite, finish]);
 
   // Each keystroke or paste: the digits it can be, in the boxes, and the
   // sixth sends it (#5253). Not again for the same six, so a refused code
@@ -1360,6 +1397,30 @@ export function SignInSheet({
       setBusy(false);
     }
   }, [followInvite, finish]);
+
+  // The one field's Continue (`identifierKind`): on to the step what was typed asks for.
+  const continueWithIdentifier = useCallback((raw: string) => {
+    setError(null);
+    setDetails(null);
+    const value = raw.trim();
+    const kind = identifierKind(value, phone || phoneLink);
+    if (kind === 'empty') {
+      setError(translate('auth:signInSheet.identifier.missing'));
+      firstField.current?.focus({ preventScroll: true });
+      return;
+    }
+    if (kind === 'email') { void requestCode(value); return; }
+    if (kind === 'phone') {
+      const e164 = phoneE164(value);
+      if (e164 && !askName) { void requestPhoneCode(e164); return; }
+      // No country code, or a name to ask first: the phone step, the number in it.
+      setPhoneNumber(e164 || value);
+      setStep('phone');
+      return;
+    }
+    identifierPrefill.current = value.replace(/^@/, '');
+    setStep('password');
+  }, [phone, phoneLink, askName, requestCode, requestPhoneCode]);
 
   // #4891: the account step asks for the username and nothing else. The
   // password was optional (#4595), and still one more decision at the very
@@ -1496,7 +1557,9 @@ export function SignInSheet({
 
   if (!open) return null;
 
-  const methodSwitch = hasMethodSwitch(step, from, phone);
+  // One field for every way in, where the sheet may be for an account somebody has.
+  const oneField = firstStepLine(from, phone) === 'password';
+  const methodSwitch = !oneField && hasMethodSwitch(step, from, phone);
   const toStep = (next: Step) => { setError(null); setDetails(null); setResetSent(false); setStep(next); };
 
   // The way to a password, where the sheet may be for an account somebody
@@ -1649,38 +1712,56 @@ export function SignInSheet({
               {t('auth:signInSheet.or')}
               <span aria-hidden="true" className="h-px flex-1 bg-[color:var(--app-sheet-line)]" />
             </div>
-            <form className="flex flex-col gap-2.5" onSubmit={(e) => { e.preventDefault(); void requestCode(firstField.current?.value || ''); }}>
+            <form className="flex flex-col gap-2.5" onSubmit={(e) => { e.preventDefault(); const typed = firstField.current?.value || ''; if (oneField) continueWithIdentifier(typed); else void requestCode(typed); }}>
               <div className={FIELD_GROUP}>
                 <div className={FIELD}>
-                  <label htmlFor="sign-in-sheet-email" className={LABEL}>{t('auth:signInSheet.email.label')}</label>
-                  <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="go" defaultValue={email} className={INPUT} onInput={(e) => setHasAddress(!!e.currentTarget.value.trim())} onChange={(e) => setHasAddress(!!e.currentTarget.value.trim())} onFocus={(e) => setHasAddress(!!e.currentTarget.value.trim())} {...HANDLE_FIELD} />
+                  {oneField ? (
+                    <>
+                      <label htmlFor="sign-in-sheet-email" className={LABEL}>{phone || phoneLink ? t('auth:signInSheet.identifier.label') : t('auth:signInSheet.identifier.labelNoPhone')}</label>
+                      <input ref={firstField} id="sign-in-sheet-email" data-sign-in-sheet-identifier="" type="text" autoComplete="username" enterKeyHint="go" defaultValue={email} className={INPUT} onInput={(e) => setHasAddress(!!e.currentTarget.value.trim())} onChange={(e) => setHasAddress(!!e.currentTarget.value.trim())} onFocus={(e) => setHasAddress(!!e.currentTarget.value.trim())} {...HANDLE_FIELD} />
+                    </>
+                  ) : (
+                    <>
+                      <label htmlFor="sign-in-sheet-email" className={LABEL}>{t('auth:signInSheet.email.label')}</label>
+                      <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="go" defaultValue={email} className={INPUT} onInput={(e) => setHasAddress(!!e.currentTarget.value.trim())} onChange={(e) => setHasAddress(!!e.currentTarget.value.trim())} onFocus={(e) => setHasAddress(!!e.currentTarget.value.trim())} {...HANDLE_FIELD} />
+                    </>
+                  )}
                 </div>
               </div>
               <button type="submit" data-sign-in-provider="email" data-sign-in-email-empty={hasAddress ? undefined : ''} disabled={busy} className={hasAddress ? EMAIL_BUTTON_READY : EMAIL_BUTTON_EMPTY} {...HOLD_FIELD_FOCUS}>
-                {busy ? t('auth:signInSheet.email.sending') : t('auth:signInSheet.continueWithEmail')}
+                {busy ? t('auth:signInSheet.identifier.working') : oneField ? t('auth:signInSheet.identifier.continue') : t('auth:signInSheet.continueWithEmail')}
               </button>
             </form>
-            {phone || phoneLink ? (
+            {!oneField && (phone || phoneLink) ? (
               <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{phone ? t('auth:signInSheet.toPhone') : t('auth:signInSheet.toPhoneLink')}</button>
             ) : null}
-            {passwordLink}
+            {oneField ? null : passwordLink}
           </div>
         ) : null}
 
         {step === 'email' ? (
-          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void requestCode(firstField.current?.value || ''); }}>
+          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); const typed = firstField.current?.value || ''; if (oneField) continueWithIdentifier(typed); else void requestCode(typed); }}>
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-email" className={LABEL}>{t('auth:signInSheet.email.label')}</label>
-                <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="go" defaultValue={email} className={INPUT} {...HANDLE_FIELD} />
+                {oneField ? (
+                  <>
+                    <label htmlFor="sign-in-sheet-email" className={LABEL}>{phone || phoneLink ? t('auth:signInSheet.identifier.label') : t('auth:signInSheet.identifier.labelNoPhone')}</label>
+                    <input ref={firstField} id="sign-in-sheet-email" data-sign-in-sheet-identifier="" type="text" autoComplete="username" enterKeyHint="go" defaultValue={email} className={INPUT} {...HANDLE_FIELD} />
+                  </>
+                ) : (
+                  <>
+                    <label htmlFor="sign-in-sheet-email" className={LABEL}>{t('auth:signInSheet.email.label')}</label>
+                    <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="go" defaultValue={email} className={INPUT} {...HANDLE_FIELD} />
+                  </>
+                )}
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.email.sending') : t('auth:signInSheet.email.send')}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? (oneField ? t('auth:signInSheet.identifier.working') : t('auth:signInSheet.email.sending')) : oneField ? t('auth:signInSheet.identifier.continue') : t('auth:signInSheet.email.send')}</button>
             {emailFoot}
             {providers.length ? (
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('choose'); }}>{t('auth:signInSheet.email.otherWays')}</button>
             ) : null}
-            {phone || phoneLink ? (
+            {!oneField && (phone || phoneLink) ? (
               <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{phone ? t('auth:signInSheet.toPhone') : t('auth:signInSheet.toPhoneLink')}</button>
             ) : null}
           </form>
@@ -1738,12 +1819,22 @@ export function SignInSheet({
         {step === 'code' ? (
           <form className="mt-1 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void verify(); }}>
             {/* Where it went, and the way to fix a typo in it, on one line. */}
-            <p data-sign-in-sheet-sent-to="" className="flex min-w-0 items-baseline gap-x-1 whitespace-nowrap text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">
-              <RichMessage id="auth:signInSheet.code.sentTo" values={{ email }} components={[
-              <SentAddress title={email} />,
-              <button type="button" className="shrink-0 font-medium text-violet-700 dark:text-violet-400 hover:underline" onClick={() => { setError(null); setLinkRefused(false); setStep('email'); }} />,
-              ]} />
-            </p>
+            {codeUsername ? (
+              // A username's code: the address stays private, so say whose it is.
+              <p data-sign-in-sheet-sent-to="" data-sign-in-sheet-sent-to-username="" className="text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">
+                <RichMessage id="auth:signInSheet.code.sentToUsername" values={{ username: codeUsername }} components={[
+                <span className="font-semibold text-zinc-700 dark:text-zinc-300" />,
+                <button type="button" className="font-medium text-violet-700 dark:text-violet-400 hover:underline" onClick={() => { setError(null); setCodeUsername(''); setStep(firstStep); }} />,
+                ]} />
+              </p>
+            ) : (
+              <p data-sign-in-sheet-sent-to="" className="flex min-w-0 items-baseline gap-x-1 whitespace-nowrap text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">
+                <RichMessage id="auth:signInSheet.code.sentTo" values={{ email }} components={[
+                <SentAddress title={email} />,
+                <button type="button" className="shrink-0 font-medium text-violet-700 dark:text-violet-400 hover:underline" onClick={() => { setError(null); setLinkRefused(false); setStep('email'); }} />,
+                ]} />
+              </p>
+            )}
             {/* Six boxes drawn under one real field: the keyboard's code from the mail, and a paste, fill all six. */}
             <div className="mt-2">
               <label htmlFor="sign-in-sheet-code" className="sr-only">{t('auth:signInSheet.code.label')}</label>
@@ -1755,7 +1846,7 @@ export function SignInSheet({
             ) : null}
             <div className="flex items-center justify-between">
               <span className="text-[15px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.code.checkSpam')}</span>
-              <button type="button" className={`${QUIET} disabled:text-zinc-500 disabled:dark:text-zinc-400 disabled:no-underline`} disabled={busy || waitLeft > 0} onClick={() => { void requestCode(email); }}>
+              <button type="button" className={`${QUIET} disabled:text-zinc-500 disabled:dark:text-zinc-400 disabled:no-underline`} disabled={busy || waitLeft > 0} onClick={() => { void requestCode(codeUsername || email, !!codeUsername); }}>
                 {waitLeft > 0 ? t('auth:signInSheet.code.resendIn', { count: waitLeft }) : t('auth:signInSheet.code.resend')}
               </button>
             </div>
@@ -1779,7 +1870,24 @@ export function SignInSheet({
               {/* Picking Password is choosing how to sign in, so this step offers no way back to
                   Apple and Google: closing the sheet does that (#5616). Without the switch, the
                   email code is the one other way, and the link goes to that step. */}
-              {!methodSwitch ? (
+              {oneField ? (
+                // The one field's username comes here first; its code goes to the
+                // account's address (`identifierKind`), an address's to itself.
+                <button
+                  type="button"
+                  data-sign-in-sheet-email-me-code=""
+                  className={QUIET}
+                  disabled={busy}
+                  onClick={() => {
+                    const typed = (identifierField.current?.value || '').trim();
+                    if (!typed) { toStep(firstStep); return; }
+                    const byUsername = identifierKind(typed, false) !== 'email';
+                    void requestCode(typed, byUsername);
+                  }}
+                >
+                  {t('auth:signInSheet.password.emailMeCode')}
+                </button>
+              ) : !methodSwitch ? (
                 <button type="button" className={QUIET} onClick={() => toStep('email')}>
                   {t('auth:signInSheet.password.useEmailCode')}
                 </button>

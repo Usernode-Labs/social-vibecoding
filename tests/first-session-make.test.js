@@ -144,11 +144,11 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
   assert.match(landing, /const storyOn = waitlistPayload\?\.story_landing !== false && !onInvitePath && !session;/);
   assert.match(landing, /useState\(\s+\(\) => typeof location !== 'undefined' && onInviteLink\(location\.pathname\),\s+\);/);
   assert.match(landing, /const pitchHidden = madeForYou \|\| deadInvite \|\| storyOn \|\| invitePending \|\| waitingGuest;/);
-  // Polish N10: the email line's "Sign in" opens the same sheet titled Sign in.
+  // One way in: Start here, whose sheet takes an email, a phone or a username.
   // The story heads the guest Discover now, in its short version
-  // (features/guest, tests/guest-discover.test.js), with the same two ways in.
+  // (features/guest, tests/guest-discover.test.js), with the same way in.
   // Its button says join the waitlist while new accounts wait (guest-data NEW_ACCOUNTS_WAIT).
-  assert.match(landing, /<Story\s+compact\s+primaryClass=\{PRIMARY_PILL\}\s+welcomeEmail=\{releaseEmail\}\s+waitlist=\{NEW_ACCOUNTS_WAIT\}\s+onStart=\{\(\) => setSheet\('start'\)\}\s+onSignIn=\{\(\) => setSheet\('signin'\)\}\s+\/>/);
+  assert.match(landing, /<Story\s+compact\s+primaryClass=\{PRIMARY_PILL\}\s+welcomeEmail=\{releaseEmail\}\s+waitlist=\{NEW_ACCOUNTS_WAIT\}\s+onStart=\{\(\) => setSheet\('start'\)\}\s+\/>/);
   // A new account from its sheet is asked what to make, not which communities to join.
   assert.match(landing, /sessionStorage\.setItem\('usernode:first-session:make', '1'\)/);
   assert.match(landing, /fetch\('\/api\/me\/first-session\/started', \{ method: 'POST', credentials: 'same-origin' \}\)/);
@@ -165,10 +165,11 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
 // #4037, decisions A and B on the onboarding canvas, and the owner's review of
 // 8 October (C1-story): "Welcome to Homeroom" over the picture, one headline,
 // "For example" over the make screen's three examples (Evan's, #4354; their
-// rows are pinned by the templates test below), then one "Continue" (#5251,
-// the navigation review: no separate Sign in, the email decides) and the line
-// under it; the waves pill that followed is gone (#5376, Evan, 17 Oct 2026).
-test('the story: label, headline, "For example" and the three examples, then one Continue and the email line', () => {
+// rows are pinned by the templates test below), then one "Start here" (#5251,
+// the navigation review: no separate Sign in; what is typed in its sheet
+// decides) and nothing under it; the waves pill that followed is gone (#5376,
+// Evan, 17 Oct 2026).
+test('the story: label, headline, "For example" and the three examples, then one Start here and no Sign in line', () => {
   const html = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {} });
   // Each row: its emoji (the tier list draws a chart, no text), title and line.
   const TEMPLATE_ROWS = loadTsx(`${DIR}/examples.ts`).FRONT.flatMap((t) => (t.chart ? [message(t.title), message(t.line)] : [t.emoji, message(t.title), message(t.line)]));
@@ -180,12 +181,10 @@ test('the story: label, headline, "For example" and the three examples, then one
     'For example',
     ...TEMPLATE_ROWS,
     message('auth:story.continue'),
-    'Sign in',
-    'or join with your email.',
   ]);
-  assert.match(html, /<a href="#signup" data-landing-story-start="" class="pill">Continue<\/a>/);
-  // Polish N10: the line is still one sentence, and its "Sign in" is a link.
-  assert.match(html, /<p data-landing-story-how=""[^>]*><a href="#login" data-landing-story-signin="" class="[^"]*">Sign in<\/a> or join with your email\.<\/p><\/div>/);
+  assert.match(html, /<a href="#signup" data-landing-story-start="" class="pill">Start here<\/a><\/div>/);
+  // One way in: no Sign in line of its own under it.
+  assert.doesNotMatch(html, /data-landing-story-how|data-landing-story-signin/);
   assert.doesNotMatch(html, /Already have an account|Get started|data-landing-story-waves|in waves/);
   // In a phone browser too, the story fills the screen and its foot is at the foot.
   const css = read('public/css/app.css');

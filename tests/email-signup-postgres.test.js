@@ -32,7 +32,9 @@ const DDL = `
     -- chooseFirstUsername stamps it (QA 2026-09-24 Q12's handle choice).
     updated_at TIMESTAMPTZ,
     -- "Are you 18 or older?" answered yes (#5095); the wallet claim waits for it.
-    adult_attested_at TIMESTAMPTZ
+    adult_attested_at TIMESTAMPTZ,
+    -- A username's code skips synthetic accounts (email-signup.js emailForUsername).
+    is_synthetic BOOLEAN NOT NULL DEFAULT FALSE
   );
   CREATE UNIQUE INDEX users_email_lower_unique
     ON users (lower(email)) WHERE email IS NOT NULL;
@@ -813,6 +815,88 @@ test('a repeat code request inside the min gap reuses the outstanding code', asy
       assert.equal(fourth.length, 1);
       assert.notEqual(fourth[0].id, third[0].id, 'an aged code must be replaced');
       assert.equal(sent.length, 3);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+      mail.sendOtpMail = originalSend;
+      mail.pruneDeliveries = originalPrune;
+      if (originalPool) require.cache[poolPath] = originalPool;
+      else delete require.cache[poolPath];
+      delete require.cache[authPath];
+    }
+  });
+});
+
+// One way in: the sign-in sheet's one field takes a username, and its code
+// goes to that account's address (routes/auth.js). The answer to a request is
+// the same 200 whether or not the name has an account with an address, so it
+// tells nobody either; verifying for a name with none is a wrong code.
+test('a username\'s code goes to its account\'s address, and says nothing of one that has none', async (t) => {
+  await withDatabase(t, async (pool) => {
+    const poolPath = require.resolve('../src/db/pool');
+    const authPath = require.resolve('../src/routes/auth');
+    const mail = require('../src/services/mail');
+    const originalPool = require.cache[poolPath];
+    const originalSend = mail.sendOtpMail;
+    const originalPrune = mail.pruneDeliveries;
+    const sent = [];
+    require.cache[poolPath] = {
+      exports: { getPool: () => pool },
+      loaded: true,
+      id: poolPath,
+      filename: poolPath,
+      paths: originalPool ? originalPool.paths : [],
+    };
+    mail.sendOtpMail = async (_config, email, value) => { sent.push({ email, value }); };
+    mail.pruneDeliveries = async () => {};
+    delete require.cache[authPath];
+
+    const { authRoutes } = require('../src/routes/auth');
+    const app = express();
+    app.use(express.json());
+    app.use(cookieParser());
+    app.use(authRoutes({}));
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const post = (path, body) => fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    try {
+      await pool.query(
+        `INSERT INTO users (username, password, email, email_confirmed, has_platform_access)
+         VALUES ('Ada', 'x', 'ada@example.com', TRUE, TRUE),
+                ('phoney', 'x', NULL, FALSE, TRUE)`,
+      );
+
+      // A live name, typed in any case and with its @: the code goes to its address.
+      const asked = await post('/api/auth/otp/request', { username: '@ada' });
+      assert.equal(asked.status, 200);
+      assert.deepEqual(await asked.json(), { ok: true });
+      assert.deepEqual(sent.map((m) => m.email), ['ada@example.com']);
+
+      // No such name, and a name with no address: the same answer, and no mail.
+      for (const username of ['nobody', 'phoney']) {
+        const res = await post('/api/auth/otp/request', { username });
+        assert.equal(res.status, 200);
+        assert.deepEqual(await res.json(), { ok: true });
+      }
+      assert.equal(sent.length, 1);
+
+      // A name with no account is refused exactly as a wrong code is.
+      const unknown = await post('/api/auth/otp/verify', { username: 'nobody', code: sent[0].value });
+      assert.equal(unknown.status, 422);
+      assert.equal((await unknown.json()).code, 'invalid_or_expired_code');
+
+      // The right code, by the name, signs the account in.
+      const verified = await post('/api/auth/otp/verify', { username: 'ADA', code: sent[0].value });
+      assert.equal(verified.status, 200);
+      const body = await verified.json();
+      assert.equal(body.next, 'signed-in');
+      assert.equal(body.user.username, 'Ada');
+      assert.ok(cookieValue(verified.headers, 'session'), 'a session cookie');
     } finally {
       await new Promise((resolve) => server.close(resolve));
       mail.sendOtpMail = originalSend;

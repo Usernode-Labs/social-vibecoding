@@ -178,7 +178,7 @@ test('signing UP from an invite page follows the link server-side; signing IN is
   assert.match(auth, /return await answerProvenEmail\(req, res, verified, \{ followInvite: req\.body\?\.followInvite === true \}\);/);
   assert.match(auth, /return await answerProvenEmail\(req, res, verified, \{ via: 'link', extra: \{ email: verified\.email \} \}\);/);
   assert.match(auth, /const consented = verified\.created \|\| followInvite;\s+const invite = consented\s+\? await communityInvites\.redeemCarried\(pool, req, res, verified\.userId, \{\s+requirePhone: phoneAuth\.offered\(config\),\s+\}\)\s+: await communityInvites\.dropCarried\(pool, req, res, verified\.userId\);\s+(?:\/\/[^\n]*\n\s*)*if \(invite && invite\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);\s+if \(verified\.next === 'signed-in'\)/);
-  assert.match(read('frontend/src/features/auth/sign-in-sheet.tsx'), /body: JSON\.stringify\(\{ email, code, \.\.\.\(followInvite \? \{ followInvite: true \} : \{\}\) \}\)/);
+  assert.match(read('frontend/src/features/auth/sign-in-sheet.tsx'), /body: JSON\.stringify\(\{ \.\.\.\(codeUsername \? \{ username: codeUsername \} : \{ email \}\), code, \.\.\.\(followInvite \? \{ followInvite: true \} : \{\}\) \}\)/);
   const login = auth.slice(auth.indexOf("log.info('auth', 'Login successful'"), auth.indexOf("log.info('auth', 'Login successful'") + 900);
   assert.match(login, /await communityInvites\.dropCarried\(pool, req, res, user\.id\);/, 'a password sign-in drops the carried copy');
   assert.doesNotMatch(login, /redeemCarried/);

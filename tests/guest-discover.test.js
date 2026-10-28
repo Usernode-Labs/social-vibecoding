@@ -388,25 +388,23 @@ test('inside the Homeroom app the full story stays the front door, with Look aro
   // Only somebody signed out gets the story; a waitlisted account starts on Discover.
   assert.match(src, /const storyFront = storyOn && inApp && !linkedSlug && !discoverLink && !gate;/);
   assert.match(src, /const guestPages = guestOn && !storyFront;/);
-  assert.match(src, /\{storyFront \? \(\s+<Story [^>]*onStart=\{\(\) => setSheet\('start'\)\} onSignIn=\{\(\) => setSheet\('signin'\)\} lookAround \/>/);
+  assert.match(src, /\{storyFront \? \(\s+<Story [^>]*onStart=\{\(\) => setSheet\('start'\)\} lookAround \/>/);
   // Discover opened from it has a back, and the back returns to the story.
   assert.match(src, /const appDiscover = storyOn && inApp && discoverLink;/);
   assert.match(src, /const showBack = !!openApp \|\| !!guestProject \|\| appDiscover;/);
   assert.match(src, /location\.hash = appDiscover && !guestProject \? '#landing' : '#apps';/);
-  // The full story keeps Continue and its email line, then the way to look
+  // The full story keeps Start here, its one way in, then the way to look
   // around: a link to #apps.
-  const html = renderComponent(STORY, 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {}, lookAround: true });
+  const html = renderComponent(STORY, 'Story', { primaryClass: 'pill', onStart() {}, lookAround: true });
   assert.match(html, /data-landing-story-start/);
-  // A link on its own line in the Sign in line's blue, not a second button.
+  // A link on its own line, in the story's link blue, not a second button.
   const look = html.match(/<p class="text-\[15px\] leading-5"><a href="#apps" data-landing-story-look="" class="([^"]+)">([^<]+)<\/a><\/p>/);
   assert.ok(look, 'Look around first links to Discover');
   assert.equal(look[2], message('auth:story.lookAround'));
-  const signIn = html.match(/data-landing-story-signin="" class="([^"]+)"/);
-  assert.ok(signIn);
-  assert.equal(look[1], signIn[1], 'the same look as Sign in');
-  assert.ok(html.indexOf('data-landing-story-how') < html.indexOf('data-landing-story-look'), 'under the Sign in line');
+  assert.match(look[1], /text-violet-700/);
+  assert.ok(html.indexOf('data-landing-story-start') < html.indexOf('data-landing-story-look'), 'under Start here');
   // Without the prop (the browsers' short story, the first session) it is absent.
-  assert.doesNotMatch(renderComponent(STORY, 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} }), /data-landing-story-look/);
+  assert.doesNotMatch(renderComponent(STORY, 'Story', { primaryClass: 'pill', onStart() {} }), /data-landing-story-look/);
 });
 
 test('an account on the waitlist looks around: its card over Discover, every public app, and voting and joining later', () => {
@@ -444,8 +442,9 @@ const SHEET = 'frontend/src/features/auth/sign-in-sheet.tsx';
 
 test('the ways in are the sheet\'s: Apple, Google and email, and a phone number on the landing\'s sheets', () => {
   const sheet = read(SHEET);
-  // A phone where it is offered but not first: the link under the email.
-  assert.match(sheet, /\{phone \|\| phoneLink \? \(/);
+  // A phone where it is offered but not first: the link under the email,
+  // except where the one field takes a phone number itself.
+  assert.match(sheet, /\{!oneField && \(phone \|\| phoneLink\) \? \(/);
   assert.match(sheet, /\{phone \? t\('auth:signInSheet\.toPhone'\) : t\('auth:signInSheet\.toPhoneLink'\)\}/);
   const landing = read(LANDING);
   // The story's sheet (Sign up, Sign in), a project page's and a shared
