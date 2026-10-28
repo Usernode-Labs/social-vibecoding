@@ -5682,13 +5682,18 @@ html.first-paint-reserved #home-challenges-section.home-section-pending {
   }
 }
 
-/* 9.5rem is the reference's card at a 390pt phone (150/390 of the frame),
-   and it is a fixed width on purpose: cards that flex would resize as the
-   lane's count changes, and the rail's whole affordance is that the row
-   continues past the edge at a constant rhythm. */
+/* The card was enlarged for #6012, from 9.5rem to 11.25rem, so the artwork
+   is easier to see; it is still a fixed width on purpose: cards that flex
+   would resize as the lane's count changes, and the rail's whole affordance
+   is that the row continues past the edge at a constant rhythm. 11.25rem is
+   as wide as it goes and still leave a sliver of the frame at a 390px phone:
+   the lead padding and the gap are 0.75rem and 0.625rem, so two cards come
+   to 12 + 180 + 10 + 180 = 382px and the third starts 2px past the edge,
+   where 11.5rem would end the second card flush against it. Narrower phones
+   cut the second card instead, which is the stronger cue. */
 .home-discover-card {
   flex: 0 0 auto;
-  width: 9.5rem;
+  width: 11.25rem;
   scroll-snap-align: start;
   border-radius: 0.875rem;
   background: var(--tint-bg);
@@ -5702,7 +5707,9 @@ html.first-paint-reserved #home-challenges-section.home-section-pending {
 .home-discover-illustration { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 .home-discover-art {
   overflow: hidden;
-  height: 7.5rem;
+  /* Keeps the block's own ratio with the wider card (#6012): 180 × 120 / 152
+     ≈ 142px, so illustration framings are not cropped differently. */
+  height: 8.875rem;
   background: var(--tint-art);
   display: flex;
   align-items: center;
@@ -5711,9 +5718,9 @@ html.first-paint-reserved #home-challenges-section.home-section-pending {
 /* The app's own icon, at the size the art block can carry. An emoji is a
    glyph and scales with font-size; an uploaded image fills the block, which
    is the one case that looks like the reference's own art. */
-.home-discover-art-emoji { font-size: 2.75rem; line-height: 1; }
+.home-discover-art-emoji { font-size: 3.25rem; line-height: 1; }
 .home-discover-art-img { width: 100%; height: 100%; object-fit: cover; }
-.home-discover-art-letter { font-size: 2.25rem; line-height: 1; font-weight: 700; opacity: .45; }
+.home-discover-art-letter { font-size: 2.75rem; line-height: 1; font-weight: 700; opacity: .45; }
 /* Two lines, ellipsised — the reference's own treatment. `line-clamp` is
    three properties and one of them is prefixed, which is why it is here
    rather than as utilities beside the element. */
