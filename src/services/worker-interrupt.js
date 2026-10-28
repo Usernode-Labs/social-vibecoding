@@ -37,15 +37,9 @@ async function perform(pool, { target, action }, { renew, signal }) {
     if (before.done) return before;
     if (action !== 'probe' && before.current.active) {
       const by = target.userId === null ? target.by ?? null : before.current.username;
-      if (target.turnId || target.journal) {
-        await turnLifecycle.markStopRequested(pool, {
-          sessionId: target.sessionId, ...turnLifecycle.cleanupArgs(before.current.turn), by,
-        });
-      } else {
-        await pool.query(`UPDATE chat_sessions SET active_turn = active_turn || $3::jsonb
-          WHERE id = $1 AND active_turn = $2::jsonb AND active_turn->>'stopRequestedAt' IS NULL`,
-        [target.sessionId, JSON.stringify(before.current.turn), JSON.stringify({ stopRequestedAt: new Date().toISOString(), stopRequestedBy: by })]);
-      }
+      await turnLifecycle.markStopRequested(pool, {
+        sessionId: target.sessionId, ...turnLifecycle.cleanupArgs(before.current.turn), by,
+      });
       const stamped = await check();
       if (stamped.done) return stamped;
     }
@@ -53,13 +47,7 @@ async function perform(pool, { target, action }, { renew, signal }) {
     const remaining = () => Math.max(1, target.expiresAt - Date.now());
     if (!before.current.active) return { done: true, confirmed: true, reason: 'no_turn' };
     if (action === 'signal') {
-      if (target.journal) {
-        await worker.stopTurnByJournal(target.sessionId, target.journal, { force: false, timeoutMs: Math.min(30000, remaining()) });
-      } else {
-        // Legacy records have no journal fence. Retain their existing
-        // signal behavior under the current-job and startup-lock checks.
-        await worker.signalLegacyTurn(target.sessionId, { timeoutMs: Math.min(30000, remaining()) });
-      }
+      await worker.stopTurnByJournal(target.sessionId, target.journal, { force: false, timeoutMs: Math.min(30000, remaining()) });
       const after = await check();
       return after.done ? after : { signalled: true };
     }

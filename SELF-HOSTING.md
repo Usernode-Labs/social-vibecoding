@@ -985,7 +985,7 @@ is real, so all session-gated routes work.
   mount, on purpose). (Routing itself needs no per-host Caddy action any
   more — the wildcard site maps hostnames to container names — so the
   only gap here is that a staging clone can't start the containers.)
-  On Kubernetes, `config.previewProjects: true` closes it without giving
+  On Kubernetes, projects in previews close it without giving
   the clone that right: production makes the database, build and runtime
   of each project someone makes in a platform preview, for that preview
   only, up to three, and retires them with it
@@ -993,7 +993,9 @@ is real, so all session-gated routes work.
   server-wide app cap, and makes one project ready to open for each starter
   (`app-templates/<dir>/`) its proposal changed, at
   `/app/<starter>-this-change`. It needs the git host and the preview
-  database server. Off by default.
+  database server. On by default: a full admin turns it off or on in
+  Admin > Limits, and `config.previewProjects: false` is the operator's
+  off switch, which the admin setting cannot override.
 - Reading `deploy-status.json` (host-mounted file the staging container
   doesn't see).
 - `/api/auth/login` against any cloned account (passwords scrubbed —

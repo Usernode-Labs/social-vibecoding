@@ -150,9 +150,18 @@ import { recordAppUse } from './app-recency';
 import { hydrateNeedsSeen, unseenNeeds } from '../workshop/needs-seen';
 import { navStore } from '../nav/nav-store.js';
 
+/**
+ * The keyboard's ring on a row of this menu (#5927): drawn inside the row,
+ * in the accent, and a step lighter on the dark theme, where the browser's
+ * own outline was hard to find on the frosted glass. Focus only; a tap
+ * draws nothing.
+ */
+const FOCUS_RING = 'outline-none focus-visible:ring-2 focus-visible:ring-inset '
+  + 'focus-visible:ring-violet-500 dark:focus-visible:ring-violet-400';
+
 const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm '
   + 'text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 '
-  + 'transition-colors';
+  + 'transition-colors ' + FOCUS_RING;
 
 /**
  * A section label's TYPE, without the row it sits in.
@@ -582,14 +591,18 @@ export function AppsSwitcherSheet(): ReactNode {
               {appLabel}
             </span>
           )}
+          {/* A 36px target with a 24px ✕ (#5927): the 20px glyph was the
+              smallest thing on the sheet. `-mr-2` keeps the glyph's edge on
+              the rows' 20px margin; `un-touch-target` grows the hit box to
+              44px. */}
           <button
             id="apps-switcher-close"
             type="button"
-            className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 un-touch-target"
+            className={'shrink-0 -mr-2 inline-flex items-center justify-center w-9 h-9 rounded-full text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 un-touch-target ' + FOCUS_RING}
             aria-label={t('core:common.close')}
             onClick={close}
           >
-            <XIcon className="w-5 h-5" />
+            <XIcon className="w-6 h-6" />
           </button>
         </div>
         {/* THE APPS STRIP IS GONE (#2718 review).
@@ -703,7 +716,7 @@ export function AppsSwitcherSheet(): ReactNode {
               <button
                 id="app-menu-row-homeroom"
                 type="button"
-                className="flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+                className={'flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors ' + FOCUS_RING}
                 onClick={() => {
                   const info = { slug: slug || null, name: name || null };
                   void AppContext.dismissForNav().then(() => {
@@ -733,7 +746,7 @@ export function AppsSwitcherSheet(): ReactNode {
                   <button
                     id="app-menu-row-add-home"
                     type="button"
-                    className="flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+                    className={'flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors ' + FOCUS_RING}
                     onClick={() => { void AppContext.dismissForNav().then(() => addToHomeScreen.run()); }}
                   >
                     <span className="shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200" aria-hidden="true">
@@ -933,26 +946,30 @@ export function AppsSwitcherSheet(): ReactNode {
               PRIVACY SITS BESIDE IT (#5116): "Privacy · Report app", the
               same two links the bridge's footer carries on an app opened at
               its own address. Privacy is Homeroom's notice, in a new tab.
+
+              READABLE AND TAPPABLE (#5927): 13px in the muted ink a row's
+              subtitle uses, a step lighter on dark than the 12px zinc-500 it
+              was, each link a 44px-tall target with its own side padding, and
+              that padding is the gap between them where a "·" stood.
           */}
           {(slug && canReport) || privacyHref ? (
-            <div id="app-menu-legal" className="flex flex-wrap items-center justify-center gap-x-2 px-5 pt-3 pb-1 text-xs text-zinc-500 dark:text-zinc-400">
+            <div id="app-menu-legal" className="flex flex-wrap items-center justify-center gap-x-1 px-5 pt-2 text-[13px] text-zinc-600 dark:text-zinc-300">
               {privacyHref ? (
                 <a
                   id="app-menu-privacy"
                   href={privacyHref}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center min-h-[32px] hover:text-zinc-700 dark:hover:text-zinc-200 hover:underline"
+                  className={'inline-flex items-center min-h-[44px] px-3 rounded-lg hover:text-zinc-900 dark:hover:text-zinc-100 hover:underline ' + FOCUS_RING}
                 >
                   {t('agent:appContext.privacy')}
                 </a>
               ) : null}
-              {privacyHref && slug && canReport ? <span aria-hidden="true">·</span> : null}
               {slug && canReport ? (
                 <button
                   id="improve-row-report"
                   type="button"
-                  className="inline-flex items-center gap-1.5 min-h-[32px] text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:underline"
+                  className={'inline-flex items-center gap-1.5 min-h-[44px] px-3 rounded-lg hover:text-zinc-900 dark:hover:text-zinc-100 hover:underline ' + FOCUS_RING}
                   onClick={async () => {
                     await AppContext.close();
                     openReport({ targetType: 'app', target: slug, label: appLabel });

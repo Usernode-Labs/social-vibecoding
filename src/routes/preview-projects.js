@@ -62,7 +62,7 @@ function previewProjectsRoutes(config, deps = {}) {
   const internal = deps.isInternal || isDirectInternalCall;
 
   const authenticate = async (req, res, next) => {
-    if (!service.enabled(config) || !internal(req)) return notFound(res);
+    if (!internal(req) || !(await service.enabled(config, pool))) return notFound(res);
     const token = service.tokenFromHeader(req.get('authorization'));
     let auth;
     try {

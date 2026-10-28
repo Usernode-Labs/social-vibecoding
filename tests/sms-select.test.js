@@ -100,3 +100,23 @@ test('describe names each provider, its readiness and its missing settings', asy
   assert.equal(described.stagingLogOnly, false);
   assert.ok(!JSON.stringify(described).includes('web'), 'no value ever leaves the server');
 });
+
+test('the Firebase backup is on until an admin saves off, and the read is cached', async () => {
+  const counter = { n: 0 };
+  assert.equal(await select.fallbackEnabled(poolWith([], counter)), true);
+  assert.equal(await select.fallbackEnabled(poolWith([{ value: 'off' }], counter)), true, 'cached for ten seconds');
+  assert.equal(counter.n, 1);
+  select.invalidate();
+  assert.equal(await select.fallbackEnabled(poolWith([{ value: 'off' }])), false);
+  select.invalidate();
+  const broken = { query: async () => { throw new Error('down'); } };
+  assert.equal(await select.fallbackEnabled(broken), true, 'an unreadable setting leaves the backup on');
+});
+
+test('setFallback saves on or off and is read back at once', async () => {
+  const writes = [];
+  const pool = { query: async (sql, params) => { writes.push(params); return { rows: [] }; } };
+  assert.equal(await select.setFallback(pool, false, 7), false);
+  assert.deepEqual(writes[0], [select.FALLBACK_KEY, 'off', 7]);
+  assert.equal(await select.fallbackEnabled(pool), false, 'the cache holds the saved value');
+});

@@ -7740,6 +7740,52 @@ CREATE TABLE IF NOT EXISTS external_agent_patch_uploads (
 );
 COMMENT ON TABLE external_agent_patch_uploads IS 'staging:private';
 
+-- ── Connector uploads: a plan, a video or a screenshot ───────────────
+-- The work-order patch upload above, for the other big things a coding agent
+-- hands Homeroom through the connector. post_spec took a plan only as a
+-- string inside the tool call, and a plan with drawn screens runs to
+-- hundreds of KB; create_request took screenshots only as base64 and a video
+-- not at all. prepare_upload now mints one row here and prints a curl
+-- command; the agent sends the file with it, and post_spec or
+-- create_request names the row's id instead of carrying the bytes.
+-- services/connector-uploads.js has the whole design.
+--
+-- One table, because each credential is for ONE upload: the row is the
+-- credential (token_hash, SHA-256 only; the token itself is printed in the
+-- prepare_upload answer to its owner and nowhere else) and, once the file
+-- has come, a record of it. A used row takes no second upload, so a token
+-- that leaked cannot swap the bytes its owner is about to submit.
+--
+-- A plan's text is kept in `data` until post_spec posts it. A video or a
+-- screenshot goes where the feedback dialog's clips and stills go
+-- (issue_videos, issue_screenshots), unlinked, and `media_id` names that row;
+-- create_request links it to the request exactly as Send feedback does, and
+-- an upload nobody files is swept from there after 24 hours like any other.
+-- The row itself is deleted once its file is used, and swept a day after it
+-- expires.
+--
+-- `staging:private`: unpublished work and credential hashes.
+CREATE TABLE IF NOT EXISTS connector_uploads (
+  id            BIGSERIAL PRIMARY KEY,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind          VARCHAR(16) NOT NULL CHECK (kind IN ('plan', 'video', 'screenshot')),
+  token_hash    TEXT NOT NULL UNIQUE CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at    TIMESTAMPTZ NOT NULL,
+  stored_at     TIMESTAMPTZ,
+  content_type  VARCHAR(32),
+  bytes         INTEGER CHECK (bytes IS NULL OR bytes > 0),
+  sha256        TEXT,
+  data          BYTEA,
+  media_id      VARCHAR(32)
+);
+COMMENT ON TABLE connector_uploads IS 'staging:private';
+COMMENT ON COLUMN connector_uploads.token_hash IS 'staging:private';
+CREATE INDEX IF NOT EXISTS connector_uploads_user_idx
+  ON connector_uploads (user_id, created_at);
+CREATE INDEX IF NOT EXISTS connector_uploads_expiry_idx
+  ON connector_uploads (expires_at);
+
 -- ── Generic agent backend (Codex/OpenRouter BYOK; plan.md PR1) ───────
 -- chat_sessions today pins Claude continuity via cc_session_id. To add a
 -- second coding-agent backend (codex_openrouter) without breaking the
@@ -8065,11 +8111,8 @@ COMMENT ON COLUMN users.profile_disabled_reason IS 'staging:private';
 -- above: the column holds the sha256 hex of a 32-byte token that only ever
 -- travels inside the emailed link (/#reset-password?token=…), so a DB read
 -- alone can never redeem a reset. Minted by POST
--- /api/auth/password-reset/request only for non-admin accounts with a
--- CONFIRMED email (admins keep the admin-issued temporary-password path —
--- the same email-control-must-not-equal-admin-takeover stance as the
--- web signup guard in src/services/email-signup.js), consumed and
--- cleared by POST /api/auth/password-reset/confirm, which runs
+-- /api/auth/password-reset/request for any account with a CONFIRMED email,
+-- consumed and cleared by POST /api/auth/password-reset/confirm, which runs
 -- accountRecovery() so every session and CLI authorization dies with the
 -- old password.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_token_hash VARCHAR(64);

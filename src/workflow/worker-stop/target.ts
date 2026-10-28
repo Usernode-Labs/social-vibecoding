@@ -1,5 +1,4 @@
 import type { Queryable } from '../kernel/index.ts';
-import { canonicalHash } from '../kernel/index.ts';
 
 export interface Target {
   sessionId: number; appId: number | null; ownerId: number | null; userId: number | null;
@@ -27,17 +26,8 @@ export async function stopTarget(db: Queryable, sessionId: number, userId: numbe
 export function sameScope(a: Current | null, b: Target): a is Current {
   return !!a && a.appId === b.appId && a.ownerId === b.ownerId && a.configVersion === b.configVersion;
 }
-// Old records without a turn id or journal are bound to their stored
-// contents. Adding stop intent must not change that identity.
-export function legacyTurnKey(turn: any): string | null {
-  if (!turn || typeof turn !== 'object' || Array.isArray(turn)
-      || turn.turnId || turn.logicalTurnId || turn.turnUuid || turn.journal) return null;
-  const { stopRequestedAt: _at, stopRequestedBy: _by, ...record } = turn;
-  return canonicalHash(record);
-}
-export function sameTurn(a: Current, b: Target & { legacy?: string | null }, removed = false): boolean {
+export function sameTurn(a: Current, b: Target, removed = false): boolean {
   return a.active === b.active && a.turnId === b.turnId && a.journal === b.journal
-    && (!b.legacy || b.legacy === legacyTurnKey(a.turn))
     && (b.active || removed || a.usedAt === b.usedAt);
 }
 export function snapshot(r: Current): Target {

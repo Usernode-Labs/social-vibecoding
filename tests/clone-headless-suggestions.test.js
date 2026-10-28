@@ -260,13 +260,30 @@ for (const outcome of ['spec', 'code', 'spec_code']) {
 test('cloning pushed code opens a draft PR on the human branch; a spec clone stays PR-free', async () => {
   const prMetadata = require('../src/services/pr-metadata');
   const oldEnabled = github.isEnabled;
-  const oldCreateBranch = github.createBranch;
+  const oldGetBranchSha = github.getBranchSha;
+  const oldEnsure = github.ensureBranchAtSha;
   const oldFetchIssue = github.fetchPublicIssue;
   const oldApply = prMetadata.applyPrMetadata;
   const branches = [];
   const prs = [];
   github.isEnabled = () => true;
-  github.createBranch = async (_owner, _repo, branch, from) => { branches.push({ branch, from }); };
+  // The clone's branch is a conductor's platform operation
+  // (services/branch-operation.js): run here as the conductor would, off the
+  // source run's own branch as it reads it.
+  github.getBranchSha = async (_owner, _repo, branch) => `sha-of-${branch}`;
+  github.ensureBranchAtSha = async (_owner, _repo, branch, sha) => { branches.push({ branch, from: sha.replace(/^sha-of-/, '') }); };
+  const operations = require('../src/services/platform-operations');
+  const branchOperation = require('../src/services/branch-operation');
+  const conductorPool = {
+    query: async (sql, params) => (/SELECT \* FROM apps WHERE id = \$1/.test(sql)
+      ? { rows: [{ id: 11, slug: 'demo', repo_url: 'https://github.com/acme/demo' }] }
+      : /SELECT app_id, branch_name FROM chat_sessions WHERE id = \$1/.test(sql)
+        ? { rows: [{ app_id: 11, branch_name: 'auto/issue-42' }] } : { rows: [] }),
+  };
+  const priorTransport = operations._setTransportForTests(async (p) => ({
+    status: 'done', requestId: 'r',
+    result: { ok: true, ...(await branchOperation.run({ pool: conductorPool }, p, VIEWER, require('../src/services/durable-steps').none())) },
+  }));
   github.fetchPublicIssue = async () => ({ issue: { title: 'Make the header nicer' } });
   prMetadata.applyPrMetadata = async (args) => {
     prs.push(args);
@@ -285,10 +302,12 @@ test('cloning pushed code opens a draft PR on the human branch; a spec clone sta
     }
     assert.equal(prs.length, 2);
     assert.ok(prs.every((call) => call.session.status === undefined || call.session.status === 'active'));
-    assert.ok(branches.every((item) => item.from === 'auto/issue-42'));
+    assert.ok(branches.length > 0 && branches.every((item) => item.from === 'auto/issue-42'));
   } finally {
     github.isEnabled = oldEnabled;
-    github.createBranch = oldCreateBranch;
+    github.getBranchSha = oldGetBranchSha;
+    github.ensureBranchAtSha = oldEnsure;
+    operations._setTransportForTests(priorTransport);
     github.fetchPublicIssue = oldFetchIssue;
     prMetadata.applyPrMetadata = oldApply;
   }

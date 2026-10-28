@@ -57,6 +57,10 @@ function makeHarness() {
     // (it hands the head to the preview machine). It is evicted alongside the
     // route, so it binds the stubs below rather than a previous test's.
     pipeline: require.resolve('../src/services/handoff-pipeline'),
+    // The start's branch is a conductor's platform operation
+    // (services/branch-operation.js, tested on its own): answered here as
+    // the conductor would, through the stubbed host below.
+    operations: require.resolve('../src/services/platform-operations'),
     subject: require.resolve('../src/routes/proposal-handoff'),
   };
   const original = new Map(Object.values(ids).map((id) => [id, require.cache[id]]));
@@ -409,6 +413,19 @@ function makeHarness() {
       args.session.pr_number = 62;
       args.session.pr_url = 'https://github.com/acme/demo/pull/62';
       return { prNumber: 62, prUrl: args.session.pr_url };
+    },
+  });
+  stubModule(ids.operations, {
+    async request({ op, input }) {
+      assert.equal(op, 'branch.ensure');
+      assert.equal(input.purpose, 'proposal-start');
+      try {
+        await require(ids.github).ensureBranchAtSha('acme', 'demo', input.branch, input.baseSha);
+      } catch (err) {
+        if (err.code === 'branch_conflict') return { ok: false, status: 409, error: 'branch_conflict' };
+        return { ok: false, status: 500, error: err.message };
+      }
+      return { ok: true, branch: input.branch, sha: input.baseSha };
     },
   });
   stubModule(ids.prImportSync, {

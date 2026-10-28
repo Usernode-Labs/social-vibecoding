@@ -1,11 +1,11 @@
 /**
  * "Join Best brunch spots now": a phone number for an account that is
  * waiting (./waiting.tsx). An invite makes a private member only of an
- * account with a verified phone (src/services/community-invites.js
- * joinAsPrivateMember), so somebody who made their account by email, or
- * before phones were asked for, waits in the queue with the links they
- * followed. This card adds the phone and, with it, lets them in to those
- * groups now, as the invite's own Join would have:
+ * account with a verified phone or a confirmed email
+ * (src/services/community-invites.js joinAsPrivateMember), so somebody
+ * with neither (an address never confirmed) waits in the queue with the
+ * links they followed. This card adds the phone and, with it, lets them in
+ * to those groups now, as the invite's own Join would have:
  *
  *   phone  POST /api/auth/phone-link/request texts a code, after the same
  *          invisible reCAPTCHA as the sign-in sheet (./recaptcha.ts).
@@ -24,7 +24,7 @@ import { buttonVariants } from '@/components/ui/button';
 
 import { useMessages } from '../../lib/i18n/react';
 import { CodeBoxes } from './code-boxes';
-import { phoneRecaptchaToken } from './recaptcha';
+import { postPhoneCodeRequest } from './recaptcha';
 import { blockedOffline } from './shared';
 import { PhoneInput, readPhone } from './phone-input';
 import { RecaptchaNotice } from './sign-in-sheet';
@@ -75,14 +75,7 @@ export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
-      const recaptchaToken = await phoneRecaptchaToken();
-      const res = await fetch('/api/auth/phone-link/request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ phoneNumber: value, ...(recaptchaToken ? { recaptchaToken } : {}) }),
-      });
-      const data = await res.json().catch(() => ({}));
+      const { res, data } = await postPhoneCodeRequest('/api/auth/phone-link/request', value);
       if (!res.ok || !data.ok || typeof data.sessionInfo !== 'string') {
         setError(data.error || t('auth:addPhone.sendFailed'));
         return;

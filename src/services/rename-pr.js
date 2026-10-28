@@ -36,6 +36,7 @@ const events = require('./events');
 const topicAttrs = require('./topic-attributes');
 const explicitApprovalReasons = require('./explicit-approval');
 const repoRef = require('./repo-ref');
+const durableSteps = require('./durable-steps');
 
 function renamePrTitle(newName) {
   return `Rename to "${newName}"`;
@@ -71,16 +72,28 @@ function renamePrTitle(newName) {
  * Throws on GitHub / DB failure so callers can map it to an HTTP error
  * or skip-and-continue. On success returns
  * `{ sessionId, prNumber, prUrl, branch }`.
+ *
+ * Runs on a conductor, as the platform-operation machine's
+ * `manifest.propose` (services/manifest-proposal-operation.js), which hands
+ * its `steps`: each write is kept as a step, so a retry or a restart
+ * carries on from the last one instead of opening a second branch or PR.
+ * Without steps (tests) every step simply runs.
  */
 async function createManifestPR(config, pool, app, actor, opts) {
+  const steps = opts.steps || durableSteps.none();
   const { owner, repo } = repoRef.ownerRepo(app.repo_url) || {};
   if (!owner || !repo) throw new Error('Could not parse the app repository URL');
 
+  // Branch naming pattern: <prefix>/<slug>-<timestamp>. The timestamp
+  // suffix avoids collisions if a prior attempt left a stale branch on the
+  // remote. Kept, so a retry of this request reuses its own branch.
+  const branch = await steps.once('branch-name', () => `${opts.branchPrefix}/${app.slug}-${Date.now()}`);
   // Build the updated dapp.json. Preserve existing fields when the file
   // is present + parseable; create a minimal manifest when it's missing
   // (legacy apps predating the manifest). A malformed file is already
   // treated as empty by the deploy reader, so falling back to a fresh
-  // object there is safe.
+  // object there is safe. Built again on a retry (a pure change of what main
+  // holds), never kept: the platform's own manifest is hundreds of KB.
   let manifestObj = { secrets: [] };
   const existing = await github.getFileContent(owner, repo, appManifest.MANIFEST_FILENAME, 'main');
   if (existing != null) {
@@ -93,23 +106,37 @@ async function createManifestPR(config, pool, app, actor, opts) {
   }
   opts.mutate(manifestObj);
   const updatedContent = `${JSON.stringify(manifestObj, null, 2)}\n`;
-
-  // Branch naming pattern: <prefix>/<slug>-<timestamp>. The timestamp
-  // suffix avoids collisions if a prior attempt left a stale branch on
-  // the remote. (Plain service code, not a workflow script, so Date.now
-  // is fine here.)
-  const branch = `${opts.branchPrefix}/${app.slug}-${Date.now()}`;
-  await github.createBranch(owner, repo, branch);
-  await github.pushFiles(
-    owner, repo,
-    [{ path: appManifest.MANIFEST_FILENAME, content: updatedContent }],
-    { branch, message: opts.commitMessage }
-  );
+  // Each write tolerates its own earlier, unconfirmed try: the branch
+  // already there (its name is this request's own), the file already
+  // holding the change, the PR already open from the branch.
+  await steps.once('branch', async () => {
+    try {
+      await github.createBranch(owner, repo, branch);
+    } catch (err) {
+      if (!steps.active || !(await github.getBranchSha(owner, repo, branch).catch(() => null))) throw err;
+    }
+    return true;
+  });
+  await steps.once('pushed', async () => {
+    const onBranch = steps.active
+      ? await github.getFileContent(owner, repo, appManifest.MANIFEST_FILENAME, branch).catch(() => null) : null;
+    if (onBranch === updatedContent) return true;
+    await github.pushFiles(
+      owner, repo,
+      [{ path: appManifest.MANIFEST_FILENAME, content: updatedContent }],
+      { branch, message: opts.commitMessage }
+    );
+    return true;
+  });
 
   const prTitle = opts.prTitle;
   // safeMention is applied inside github.createPR; the actor.username
   // and names flow into the body verbatim here.
-  const prData = await github.createPR(owner, repo, { branch, title: prTitle, body: opts.prBody });
+  const prData = await steps.once('pr', async () => {
+    const open = steps.active ? await github.findOpenPrByBranch(owner, repo, branch).catch(() => null) : null;
+    const pr = open || await github.createPR(owner, repo, { branch, title: prTitle, body: opts.prBody });
+    return { number: pr.number, html_url: pr.html_url };
+  });
 
   // Drop the rename PR straight into the vote panel as a promoted
   // session, mirroring the normal promote path (POST
@@ -123,14 +150,23 @@ async function createManifestPR(config, pool, app, actor, opts) {
   // every other proposal; the session-caps counting treats it as NULL does.
   // (JS comment, not `--` in the SQL: scripts/check-sql.js flattens queries
   // to one line and a line comment would eat the statement.)
-  const { rows: sessRows } = await pool.query(
-    `INSERT INTO chat_sessions
-       (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status, promoted_at, source)
-     VALUES ($1, $2, $3, $4, $5, $6, 'promoted', NOW(), 'settings')
-     RETURNING id`,
-    [app.id, actor.id || null, branch, prData.number, prData.html_url, prTitle]
-  );
-  const sessionId = sessRows[0].id;
+  // A session an earlier, unconfirmed try inserted for this very PR is that
+  // try's: found by its branch and number rather than inserted again.
+  const sessionId = await steps.once('session', async () => {
+    const { rows: [found] } = await pool.query(
+      `SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 AND pr_number = $3 AND source = 'settings'`,
+      [app.id, branch, prData.number]
+    );
+    if (found) return found.id;
+    const { rows: sessRows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status, promoted_at, source)
+       VALUES ($1, $2, $3, $4, $5, $6, 'promoted', NOW(), 'settings')
+       RETURNING id`,
+      [app.id, actor.id || null, branch, prData.number, prData.html_url, prTitle]
+    );
+    return sessRows[0].id;
+  });
   // (Born in review: its insert enrolled it in the proposal machine,
   // schema.sql wf_enrol_proposal.)
   // Legacy rename-issue migration can only attribute very old rows to the
@@ -161,6 +197,10 @@ async function createManifestPR(config, pool, app, actor, opts) {
     sessionId, err: err.message,
   }));
 
+  // Announced once: a retry after this point does not post the vote twice.
+  if (steps.has('announced')) {
+    return { sessionId, prNumber: prData.number, prUrl: prData.html_url, branch };
+  }
   const { sendSystemMessage, pushVoteUpdate, pushNotificationToUser } = require('./ws');
   const notifications = require('./notifications');
   const { getActiveUserStats } = require('./active-users');
@@ -216,6 +256,7 @@ async function createManifestPR(config, pool, app, actor, opts) {
     log.warn('rename-pr', 'Manifest-PR pr_proposed notify failed', { sessionId, err: err.message });
   }
 
+  await steps.set('announced', true);
   log.info('rename-pr', 'Manifest PR opened', {
     slug: app.slug, prNumber: prData.number, title: prTitle, by: actor.username,
   });
@@ -228,8 +269,9 @@ async function createManifestPR(config, pool, app, actor, opts) {
  * sets dapp.json's top-level `name`. Caller owns validation (length,
  * name-differs, GitHub-enabled) and dedupe.
  */
-async function createRenamePR(config, pool, app, newName, actor) {
+async function createRenamePR(config, pool, app, newName, actor, { steps } = {}) {
   return createManifestPR(config, pool, app, actor, {
+    steps,
     mutate: (m) => { m.name = newName; },
     branchPrefix: 'rename',
     commitMessage: `Rename to "${newName}"`,
@@ -257,9 +299,10 @@ function visibilityPrTitle(collab, view) {
  * (findVisibilityPr below). The change applies when the merged PR's
  * production rebuild runs reconcileAppVisibility.
  */
-async function createVisibilityPR(config, pool, app, { collab, view }, actor) {
+async function createVisibilityPR(config, pool, app, { collab, view }, actor, { steps } = {}) {
   const desc = appManifest.describeVisibility(collab, view);
   return createManifestPR(config, pool, app, actor, {
+    steps,
     mutate: (m) => { m.visibility = { build: collab, view }; },
     branchPrefix: 'visibility',
     commitMessage: visibilityPrTitle(collab, view),
@@ -294,9 +337,10 @@ function governancePrTitle(policy, approvalsRequired) {
  * runs reconcileAppGovernance — or, for the self-hosted platform app,
  * on the post-deploy boot's seedSelfApp reconcile.
  */
-async function createGovernancePR(config, pool, app, { policy, approvalsRequired }, actor) {
+async function createGovernancePR(config, pool, app, { policy, approvalsRequired }, actor, { steps } = {}) {
   const desc = appManifest.describeGovernance(policy, approvalsRequired);
   return createManifestPR(config, pool, app, actor, {
+    steps,
     mutate: (m) => {
       m.governance = {
         approvers: policy,
@@ -342,9 +386,10 @@ function adminsPrTitle(usernames) {
  * (services/governance.js applyNoTimerMerge + services/app-admins.js
  * canForceMerge).
  */
-async function createAdminsPR(config, pool, app, { usernames }, actor) {
+async function createAdminsPR(config, pool, app, { usernames }, actor, { steps } = {}) {
   const desc = appManifest.describeAdmins(usernames);
   return createManifestPR(config, pool, app, actor, {
+    steps,
     mutate: (m) => { m.admins = usernames; },
     branchPrefix: 'admins',
     commitMessage: adminsPrTitle(usernames),
@@ -399,7 +444,7 @@ function secretDeclarationPrTitle(scope, key) {
  * against the manifest + value store + pending rows, field caps,
  * GitHub-enabled) and dedupe (findSecretDeclarationPr below).
  */
-async function createSecretDeclarationPR(config, pool, app, { scope, key, declaration, hasValue }, actor) {
+async function createSecretDeclarationPR(config, pool, app, { scope, key, declaration, hasValue }, actor, { steps } = {}) {
   const isPlatform = scope === 'platform';
   const decl = declaration || {};
   const title = secretDeclarationPrTitle(scope, key);
@@ -434,6 +479,7 @@ async function createSecretDeclarationPR(config, pool, app, { scope, key, declar
     : 'No value accompanies this proposal: it declares the variable only.';
 
   return createManifestPR(config, pool, app, actor, {
+    steps,
     mutate: (m) => {
       const field = isPlatform ? 'platform_env' : 'secrets';
       if (!Array.isArray(m[field])) m[field] = [];

@@ -322,7 +322,8 @@ test('a tier list ranks by dragging, and tapping one shows who ranked it what', 
   assert.match(script, /function openDetail\(id, opener\) \{\s+finishLeaving\(\);/, 'a sheet on its way down goes at once for the next');
   assert.match(script, /api\('GET', '\/api\/items\/' \+ asked\)/);
   assert.match(script, /el\.main\.inert = true;/, 'the board behind it cannot be reached');
-  assert.match(script, /if \(e\.key === 'Escape' && detail\) closeDetail\(\);/);
+  // Escape puts the @ list away first, and the sheet on the next press.
+  assert.match(script, /if \(e\.key !== 'Escape'\) return;[\s\S]{0,200}if \(detail\) closeDetail\(\);/);
   // Removing it went into the sheet: two taps, for whoever added it.
   assert.match(script, /tapTwice\(el\.detailRemove, 'Tap again to remove'/);
   assert.match(script, /el\.detailRemove\.hidden = !item\.mine;/);
@@ -385,7 +386,7 @@ test('a tier list says who else is here', () => {
     const html = file(generate(id), 'public/index.html');
     // Under the opening line, in the hint's own small muted text, announced
     // politely; it starts hidden, and stays so with nobody else here.
-    assert.match(html, /<p class="text-body text-muted">Our favorite [^<]+, ranked together\.<\/p>\s*<!--[^>]*?-->\s*<p id="presence" class="text-small text-muted" aria-live="polite" hidden><\/p>/);
+    assert.match(html, /<p class="text-body text-muted">Our favorite [^<]+, ranked together\.<\/p>\s*<button id="help-open"[^]*?<\/button>\s*<\/div>\s*<!--[^>]*?-->\s*<p id="presence" class="text-small text-muted" aria-live="polite" hidden><\/p>/);
     assert.ok(html.indexOf('id="presence"') < html.indexOf('</header>'), `${id}: inside the header`);
     assert.ok(t.features.some((f) => f.startsWith('**Who else is here**: a line under the title')), id);
     assert.ok(t.tests.some((c) => c.expectSelector === 'header #presence[aria-live="polite"]'), id);
@@ -404,8 +405,70 @@ test('a tier list says who else is here', () => {
   assert.match(api, /const present = new Map\(\);/);
   assert.match(api, /const PRESENCE_WINDOW_MS = 90000;/);
   assert.match(api, /app\.get\('\/api\/presence'/);
-  // Nothing new is stored: still the two tables the entry names.
-  assert.deepEqual([...api.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)].map((m) => m[1]), ['tier_items', 'tier_votes']);
+  // Presence itself stores nothing: the tables are the ones the entry names.
+  assert.deepEqual([...api.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)].map((m) => m[1]),
+    ['tier_items', 'tier_votes', 'tier_comments', 'tier_comment_reports']);
+});
+
+// "Tier list app should have a way to show what each person put, have a way
+// to add comments after you click on an item, with autocomplete for people's
+// names and you can @ message them, and a tooltip button you can push, that
+// explains what a tier list is and what to do with it." (request #5841.)
+// tests/app-templates-postgres.test.js runs the people and comment routes.
+test('a tier list shows each person\'s board, comments with @mentions, and a help sheet', () => {
+  for (const id of READY.slice(0, 4)) {
+    const t = appTemplates.get(id);
+    const html = file(generate(id), 'public/index.html');
+    // The switch has a third board, Other people; the question mark is a
+    // small circle beside the line under the title, so it is there even while
+    // the list is empty, with a full-size tap target around it.
+    assert.match(html, /<button type="button" role="radio" data-view="person" aria-checked="false" class="min-h-11 rounded-lg px-3 text-body font-medium">Other people<\/button>/);
+    assert.match(html, /<button id="help-open" type="button" class="-my-2\.5 -mr-2\.5 shrink-0 rounded-full p-2\.5" aria-label="How this tier list works"><span class="flex h-6 w-6 items-center justify-center rounded-full [^"]*" aria-hidden="true">\?<\/span><\/button>/);
+    const header = html.slice(html.indexOf('<header'), html.indexOf('</header>'));
+    assert.match(header, /ranked together\.<\/p>\s*<button id="help-open"/, `${id}: the question mark is beside the line under the title`);
+    assert.ok(html.indexOf('id="help-open"') < html.indexOf('id="view-toggle"'), `${id}: and no longer in the board switch`);
+    assert.match(html, /<li><strong>Other people:<\/strong> pick someone else to see their whole tier list\.<\/li>/);
+    // Whose board: one dropdown however many other people there are, with
+    // how much of the list they ranked beside it.
+    assert.match(html, /<div id="people" class="[^"]*" hidden>\s*<label for="person-select" class="sr-only">Whose board<\/label>\s*<select id="person-select" class="field[^"]*"><\/select>/);
+    assert.match(html, /<p id="person-note" [^>]*><\/p>/);
+    assert.match(html, /<p id="people-empty" [^>]*hidden>Nobody else has ranked anything yet\.<\/p>/);
+    // The help sheet reuses the item sheet's frame and this list's own word.
+    assert.match(html, /<div id="help" class="fixed inset-0 z-40 flex flex-col justify-end" hidden>/);
+    assert.match(html, /<h2 id="help-title" class="min-w-0 flex-1 text-heading">How this tier list works<\/h2>/);
+    assert.match(html, new RegExp(`<li><strong>Want to ${t.fill.WANT_VERB}:<\\/strong>`), id);
+    // Comments sit below who ranked it, with the field, the @ list and Post.
+    assert.match(html, /<p class="section-label mb-0">Comments<\/p>/);
+    assert.match(html, /<div id="detail-comments"><\/div>/);
+    assert.match(html, /<textarea id="comment-body" name="body" maxlength="500" rows="2" class="field w-full"\s+placeholder="Add a comment\. Type @ to mention someone\.">/);
+    assert.match(html, /<div id="mention-list" role="listbox" [^>]*hidden><\/div>/);
+    assert.ok(html.indexOf('id="detail-raters"') < html.indexOf('id="detail-comments"'), `${id}: the comments are below who ranked it`);
+    // What the entry says, and the checks that read the screen.
+    for (const part of ['**Other people**', '**Comments**', '**Help**']) {
+      assert.ok(t.features.some((f) => f.startsWith(part)), `${id}: ${part}`);
+    }
+    assert.match(t.tables, /tier_comments/);
+    assert.ok(t.tests.some((c) => c.expectSelector === '#view-toggle button[data-view="person"]'), id);
+    assert.ok(t.tests.some((c) => c.expectSelector === '#help-open'), id);
+  }
+  const script = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'tier-list/public/app.js'), 'utf8');
+  assert.doesNotMatch(script, /\{\{/, 'the script is the same for every tier list');
+  assert.doesNotMatch(script, /\.innerHTML\s*=/, 'people\'s words are text nodes, never markup');
+  // A person's board is read, never moved: only Yours has drop targets.
+  assert.match(script, /if \(view === 'person'\) return personPlaces\[item\.id\] \|\| null;/);
+  assert.match(script, /data\.items\.filter\(function \(i\) \{ return placeOf\(i\) === 'W'; \}\)/);
+  // Other people is everyone else: your own board is Yours.
+  assert.match(script, /people = \(out\[1\]\.people \|\| \[\]\)\.filter\(function \(p\) \{ return !p\.you; \}\);/);
+  assert.match(script, /el\.personSelect\.addEventListener\('change'/, 'picked from the dropdown');
+  assert.doesNotMatch(script, /data-person/, 'no row of name buttons any more');
+  assert.match(script, /if \(key !== peopleKey\)/, 'options rebuilt only when the list changed, so a live refresh never resets it');
+  // The @ list's names come from the project's member list, never a fixture.
+  assert.match(script, /api\('GET', '\/api\/members'\)/);
+  const api = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'tier-list/api.js'), 'utf8');
+  assert.match(api, /CREATE TABLE IF NOT EXISTS tier_comments/);
+  assert.match(api, /CREATE TABLE IF NOT EXISTS tier_comment_reports/);
+  assert.match(api, /app\.get\('\/api\/people'/);
+  assert.match(api, /app\.get\('\/api\/items\/:id\/comments'/);
 });
 
 // "Add SSE to all of the templated apps. Tier list for example, changes are

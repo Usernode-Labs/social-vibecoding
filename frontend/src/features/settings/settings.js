@@ -332,8 +332,8 @@
 
       // ── AI models & usage ───────────────────────────────────────────────
       // #5994 split the old "AI & building" group, which mixed the allowance,
-      // the connectors, the agent instructions and a global chat, into this
-      // group and the next: each row is faster to find under a heading that
+      // the connectors and the agent instructions, into this group and the
+      // next: each row is faster to find under a heading that
       // says what it is about.
       // The allowance leads: it is the figure most builders open Settings to
       // find. OpenRouter follows it — the included key and the default
@@ -403,13 +403,11 @@
 
       // ── Advanced ────────────────────────────────────────────────────────
       // #5994: the features you switch on to try, at the foot of the menu
-      // rather than among the AI rows. Experimental is the page of switches;
-      // Global Chat is itself an experimental feature, with a page of its
-      // own settings. Unlike #1554's "Advanced", this group never collapses
+      // rather than among the AI rows. Experimental is the page of switches.
+      // Unlike #1554's "Advanced", this group never collapses
       // (see tests/settings-screen.test.js, "no group collapses"): it is a
       // heading like the four above it, and every row stays visible.
       { key: 'experimental', label: 'settings:nav.part.experimental', group: 'settings:nav.group.advanced' },
-      { key: 'global-chat', label: 'settings:nav.part.globalChat', group: 'settings:nav.group.advanced' },
     ],
 
     // The label of each page that holds more than one part. A page of one
@@ -422,6 +420,17 @@
       theme: 'settings:nav.page.theme',
       'app-permissions': 'settings:nav.page.appPermissions',
       developer: 'settings:nav.page.developer',
+    },
+
+    // #5995: one muted line under the phone menu's rows whose names do not
+    // say what is behind them, keyed by page. Only the few that need it: a
+    // line under every row would make each one a heading again. The sidebar
+    // shows none; the page it opens says the same thing at its top.
+    SUBTITLES: {
+      'linked-accounts': 'settings:nav.subtitle.linkedAccounts',
+      phones: 'settings:nav.subtitle.phones',
+      connectors: 'settings:nav.subtitle.connectors',
+      'agent-files': 'settings:nav.subtitle.agentFiles',
     },
 
     // Extra words the nav's filter box matches for each part, beyond its own
@@ -443,7 +452,6 @@
       connectors: 'settings:nav.keywords.connectors',
       cli: 'settings:nav.keywords.cli',
       'agent-files': 'settings:nav.keywords.agentFiles',
-      'global-chat': 'settings:nav.keywords.globalChat',
       experimental: 'settings:nav.keywords.experimental',
       theme: 'settings:nav.keywords.theme',
       'dev-console': 'settings:nav.keywords.devConsole',
@@ -1348,16 +1356,22 @@
     // rule is what keeps this module loadable by the vm harnesses. Tailwind's
     // extractor scans frontend/** including .js, so both spellings still
     // compile.
+    //
+    // The current row wears the lit tokens (#5997), the palette's "where you
+    // are", as the project rail's current place does (.dev-ws-place in
+    // app.css): the lit tint fills it, the lit line rings it, the lit ink
+    // names it, a weight heavier than its neighbours. It was the action
+    // accent's 10% wash, which hardly told it from a hovered row.
     _navView() {
       const active = Settings._section;
       const item = (p) => ({
         key: p.key,
         label: Settings.str(p.label),
         active: p.key === active,
-        className: 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
+        className: 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm transition-colors '
           + (p.key === active
-            ? 'bg-violet-600/10 text-violet-700 dark:text-violet-400'
-            : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
+            ? 'font-semibold bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)] shadow-[inset_0_0_0_1px_var(--lit-line)]'
+            : 'font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
         ...Settings._filterTerms(p),
       });
       return Settings._groupedSections().map((g, i) => ({
@@ -1380,6 +1394,7 @@
         items: g.items.map((p) => ({
           key: p.key,
           label: Settings.str(p.label),
+          subtitle: Settings.SUBTITLES[p.key] ? tr(Settings.SUBTITLES[p.key]) : '',
           ...Settings._filterTerms(p),
         })),
       }));

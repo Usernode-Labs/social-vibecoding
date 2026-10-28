@@ -57,28 +57,29 @@ function fakePool(handlers, queries = []) {
 
 // ── The switch ─────────────────────────────────────────────────────────
 
-test('it is off unless switched on, never on in a preview, and only on Kubernetes', () => {
-  withEnv({ USERNODE_ENV: 'production' }, () => {
-    assert.equal(projects.enabled({ ...CONFIG, previewProjectsEnabled: false }), false);
-    assert.equal(projects.enabled({ selfAppSlug: SELF, appRuntime: 'kubernetes' }), false, 'off by default');
-    assert.equal(projects.enabled({ ...CONFIG, appRuntime: 'docker' }), false, 'Docker previews share an alias per session');
-    assert.equal(projects.enabled(CONFIG), true);
+test('it is on unless turned off, never on in a preview, and only on Kubernetes', async () => {
+  const none = () => fakePool([['FROM platform_settings', []]]);
+  await withEnv({ USERNODE_ENV: 'production' }, async () => {
+    assert.equal(await projects.enabled(CONFIG, none()), true, 'on by default');
+    assert.equal(await projects.enabled({ ...CONFIG, previewProjectsEnabled: false }, none()), false, 'the operator\'s off switch');
+    assert.equal(await projects.enabled({ ...CONFIG, appRuntime: 'docker' }, none()), false, 'Docker previews share an alias per session');
+    assert.equal(await projects.enabled(CONFIG, fakePool([['FROM platform_settings', [{ value: 'off' }]]])), false, 'an admin turned it off');
   });
-  withEnv({ USERNODE_ENV: 'staging' }, () => {
-    assert.equal(projects.enabled(CONFIG), false, 'a preview never answers for another');
+  await withEnv({ USERNODE_ENV: 'staging' }, async () => {
+    assert.equal(await projects.enabled(CONFIG, none()), false, 'a preview never answers for another');
   });
 });
 
-test('the chart switches it off by default, and passes false through as false', () => {
+test('the chart leaves it on by default, and passes false through as the operator\'s off switch', () => {
   const values = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'helm', 'social-vibecoding-platform', 'values.yaml'), 'utf8');
   const template = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'helm', 'social-vibecoding-platform', 'templates', 'platform.yaml'), 'utf8');
-  assert.match(values, /^ {2}previewProjects: false$/m);
+  assert.match(values, /^ {2}previewProjects: true$/m);
   const line = template.split('\n').find((l) => l.includes('PREVIEW_PROJECTS_ENABLED'));
   assert.ok(line, 'the platform Deployment carries the switch');
   assert.match(line, /\.Values\.config\.previewProjects \| quote/);
   assert.doesNotMatch(line, /default/, 'Helm\'s default swallows false');
   const config = fs.readFileSync(path.join(__dirname, '..', 'src', 'config.js'), 'utf8');
-  assert.match(config, /previewProjectsEnabled: process\.env\.PREVIEW_PROJECTS_ENABLED === 'true'/);
+  assert.match(config, /previewProjectsEnabled: process\.env\.PREVIEW_PROJECTS_ENABLED !== 'false'/);
 });
 
 // ── The credential ─────────────────────────────────────────────────────
@@ -114,6 +115,7 @@ test('a platform preview is given the address, its credential, its session and i
   await withEnv({ USERNODE_ENV: 'production', PLATFORM_INTERNAL_URL: 'http://usernode.platform.svc:3000/' }, async () => {
     const queries = [];
     const pool = fakePool([
+      ['FROM platform_settings', []],
       ['INSERT INTO preview_project_tokens', [{ id: 9 }]],
       ['DELETE FROM preview_project_tokens', []],
     ], queries);
@@ -123,7 +125,8 @@ test('a platform preview is given the address, its credential, its session and i
     assert.equal(env.PREVIEW_PROJECTS_SESSION_ID, '11513');
     assert.match(env.PREVIEW_PROJECTS_ORIGIN, /^https:\/\/usernode-2d5619--s11513\./);
     assert.equal(env.PREVIEW_PROJECTS_INTERNAL_ORIGIN, 'http://sv-preview-2-s11513.social-apps.svc:3000');
-    assert.equal(queries[0].params[1], projects.hashToken(env.PREVIEW_PROJECTS_TOKEN), 'only the hash goes in');
+    assert.equal(queries.find((q) => q.sql.includes('INSERT INTO preview_project_tokens')).params[1],
+      projects.hashToken(env.PREVIEW_PROJECTS_TOKEN), 'only the hash goes in');
     assert.equal(env.MAX_APPS, '0', 'the broker caps it; the server-wide cap would stop Make it on the sample tiles alone');
     assert.equal(env.PREVIEW_PROJECTS_STARTER_DIRS, undefined, 'no commit, no starters');
 
@@ -155,7 +158,7 @@ test('production asks the repository what the preview\'s commit changed, and nam
     await withEnv({ USERNODE_ENV: 'production' }, async () => {
       const sha = 'a'.repeat(40);
       const app = { id: 2, slug: SELF, repo_url: 'https://github.com/Usernode-Labs/social-vibecoding' };
-      const pool = fakePool([['INSERT INTO preview_project_tokens', [{ id: 9 }]], ['DELETE FROM preview_project_tokens', []]]);
+      const pool = fakePool([['FROM platform_settings', []], ['INSERT INTO preview_project_tokens', [{ id: 9 }]], ['DELETE FROM preview_project_tokens', []]]);
       const env = await projects.previewEnv(CONFIG, { app, sessionId: 7, commitHash: sha, pool });
       assert.equal(env.PREVIEW_PROJECTS_STARTER_DIRS, 'tier-list');
       assert.deepEqual(asked, [['Usernode-Labs', 'social-vibecoding', `main...${sha}`]]);
@@ -168,6 +171,16 @@ test('production asks the repository what the preview\'s commit changed, and nam
   }
   const staging = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'staging.js'), 'utf8');
   assert.match(staging, /previewEnv\(config, \{\s*app, sessionId: session\.id, commitHash,\s*\}\)/);
+});
+
+test('the source repository is public, like an app\'s: a build fetches its commit with no credential', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'preview-projects.js'), 'utf8');
+  const push = source.slice(source.indexOf('async function pushSource'), source.indexOf('function dropBranch'));
+  assert.match(push, /private: false/);
+  assert.match(push, /setPrivate\(SOURCE_REPO, false\)/, 'and one an earlier version made private is turned public');
+  assert.doesNotMatch(push, /private: true/);
+  const buildkit = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'kubernetes-buildkit.js'), 'utf8');
+  assert.match(buildkit, /git -c protocol\.version=2 fetch -q --depth 1 "\$REPO_URL"/, 'the fetch that needs it');
 });
 
 // ── Names ──────────────────────────────────────────────────────────────

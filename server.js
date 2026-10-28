@@ -68,7 +68,6 @@ const { appFileServeRoutes, appFileShellRoutes } = require('./src/routes/app-fil
 const appStorageRoutes = require('./src/routes/app-storage');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
 const { credentialRoutes } = require('./src/routes/credentials');
-const { globalChatRoutes } = require('./src/routes/global-chat');
 const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
 const appPlatformApiRoutes = require('./src/routes/app-platform-api');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
@@ -253,13 +252,22 @@ app.use(require('./src/routes/alerts-webhook').alertsWebhookRoutes(config));
 // task's own token. src/routes/external-agent-patch-upload.js has the rest.
 app.use(require('./src/routes/external-agent-patch-upload').externalAgentPatchUploadRoutes(config));
 
+// ── Connector uploads: a plan, a video or a screenshot ─────────────────────
+// The same door for the other large things a coding agent hands the
+// connector (post_spec's plan, create_request's video and screenshots). HERE
+// for the patch upload's reasons: raw bytes under any Content-Type, from a
+// sandbox with no session, authenticated by the upload's own one-time token.
+// src/routes/connector-uploads.js has the rest.
+app.use(require('./src/routes/connector-uploads').connectorUploadRoutes(config));
+
 // ── Projects made inside a platform preview ────────────────────────────────
 // A platform preview asks production for the database, build and runtime of
 // a project someone makes in it (services/preview-projects.js). HERE for
 // the patch upload's reasons: the caller is a preview's process with no
 // session, authenticated by its own credential, and a build's body is far
 // over the global parser's limit, so each route parses its own once the
-// caller is known. Off by default (PREVIEW_PROJECTS_ENABLED), and 404 then.
+// caller is known. 404 when it is off (Admin > Limits, or the operator's
+// PREVIEW_PROJECTS_ENABLED=false).
 app.use(require('./src/routes/preview-projects').previewProjectsRoutes(config));
 
 // ── Challenges API (SV web shell) ──────────────────────────────────────────
@@ -664,7 +672,6 @@ app.use(require('./src/routes/sign-in-providers').signInProviderRoutes(config));
 // (src/services/firebase-phone-auth.js).
 app.use(require('./src/routes/phone-auth').phoneAuthRoutes(config));
 app.use(credentialRoutes(config));
-app.use(globalChatRoutes(config));
 app.use(appRoutes(config));
 app.use(illustrationRoutes(config));
 // Shell relay for usernode.uploadFile()/deleteFile()/getStorageUsage()

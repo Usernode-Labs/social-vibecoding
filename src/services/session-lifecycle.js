@@ -411,7 +411,22 @@ async function closeOwnSession({ pool, sessionId, reason, waitMs }) {
 // Returns { branchName, created }. Throws with `code` set when the session
 // is gone ('no_session') or GitHub refused the ref ('branch_create_failed',
 // carrying a userMessage safe to show in chat).
-async function ensureSessionBranch({ pool, sessionId, username = null, label = null }) {
+// The ref is made where the code-host credential is used: a process that
+// runs the workflow (a conductor's turn, the bot's build) makes it itself,
+// so its work never waits on another work item; a web process asks a
+// conductor (services/branch-operation.js, purpose `session`), on behalf of
+// whoever sent the first turn, or the change's owner.
+async function createRef({ row, sessionId, branchName, owner, repo, userId }) {
+  const role = require('./process-role');
+  if (role.runsWorkflow(role.processRole())) return github.createBranch(owner, repo, branchName);
+  const out = await require('./platform-operations').request({
+    op: 'branch.ensure', appId: row.app_id, userId: userId || row.user_id,
+    input: { purpose: 'session', branch: branchName, sessionId: Number(sessionId) },
+  });
+  if (!out.ok) throw Object.assign(new Error(out.error || 'The branch was not created'), { status: out.status });
+}
+
+async function ensureSessionBranch({ pool, sessionId, username = null, label = null, userId = null }) {
   // One first use at a time per session, on any process: a session lock on
   // the process's lock connection (src/db/session-locks.js), not a row lock
   // in a transaction held on a pooled connection across GitHub's call (the
@@ -419,7 +434,7 @@ async function ensureSessionBranch({ pool, sessionId, username = null, label = n
   const { SESSION_BRANCH_LOCK } = require('./advisory-locks');
   return require('../db/session-locks').withSessionLock(pool, [SESSION_BRANCH_LOCK, Number(sessionId)], async () => {
     const { rows } = await pool.query(
-      `SELECT cs.id, cs.branch_name, cs.user_id, cs.session_title, u.username, a.repo_url
+      `SELECT cs.id, cs.app_id, cs.branch_name, cs.user_id, cs.session_title, u.username, a.repo_url
          FROM chat_sessions cs
          JOIN apps a ON a.id = cs.app_id
          LEFT JOIN users u ON u.id = cs.user_id
@@ -440,7 +455,7 @@ async function ensureSessionBranch({ pool, sessionId, username = null, label = n
     const [owner, repo] = ownerRepo(row.repo_url);
     if (github.isEnabled() && owner && repo) {
       try {
-        await github.createBranch(owner, repo, branchName);
+        await createRef({ row, sessionId, branchName, owner, repo, userId });
       } catch (err) {
         log.warn('session-lifecycle', 'Deferred branch creation failed', {
           sessionId, branch: branchName, err: err.message,

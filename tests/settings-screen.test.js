@@ -245,7 +245,8 @@ test('the registry groups pages under six headings, Account first and Advanced l
   // #5994 split "AI & building" (the allowance, the connectors, the agent
   // instructions and a global chat under one heading) into AI models & usage
   // and Integrations & automation, and moved Experimental and Global Chat
-  // out of the AI rows to an Advanced group at the foot of the menu.
+  // out of the AI rows to an Advanced group at the foot of the menu. Global
+  // Chat has since been removed, and its part with it.
   assert.deepEqual(groupIds, ['settings:nav.group.account', 'settings:nav.group.aiModels',
     'settings:nav.group.integrations', 'settings:nav.group.preferences',
     'settings:nav.group.helpAbout', 'settings:nav.group.advanced']);
@@ -262,8 +263,8 @@ test('the registry groups pages under six headings, Account first and Advanced l
     Array(3).fill('settings:nav.group.aiModels'), 'the allowance, OpenRouter and the Anthropic key are AI models & usage');
   assert.deepEqual(['connectors', 'cli', 'agent-files'].map(byGroup),
     Array(3).fill('settings:nav.group.integrations'), 'connectors, CLI and agent files are Integrations & automation');
-  assert.deepEqual(['experimental', 'global-chat'].map(byGroup),
-    Array(2).fill('settings:nav.group.advanced'), 'Experimental and Global Chat are Advanced');
+  assert.deepEqual(['experimental'].map(byGroup),
+    ['settings:nav.group.advanced'], 'Experimental is Advanced');
   assert.equal(sections.at(-1).group, 'settings:nav.group.advanced', 'and Advanced closes the menu');
 
   // A page takes its group from its first part, and never straddles two.
@@ -278,7 +279,7 @@ test('the registry groups pages under six headings, Account first and Advanced l
   const byKey = Object.fromEntries(sections.map((s) => [s.key, s]));
   for (const key of [
     'theme', 'language', 'alerts', 'blocked-apps', 'tour', 'username', 'email',
-    'password', 'delete-account', 'wallet', 'global-chat', 'openrouter',
+    'password', 'delete-account', 'wallet', 'openrouter',
     'api-key', 'connectors', 'app-ai', 'app-permissions', 'agent-files', 'cli',
     'dev-console', 'experimental', 'usernode', 'admin-preview', 'about',
   ]) assert.ok(byKey[key], `${key} is still a registered part`);
@@ -880,8 +881,14 @@ test('the nav components render what the module shapes, and nothing else', () =>
   // with state, so it stays in the module — which is also what keeps
   // settings.js loadable by the vm harnesses (see settings-mobile-push).
   const nav = settingsJs.slice(settingsJs.indexOf('    _navView() {'));
-  assert.match(nav.slice(0, 1200), /bg-violet-600\/10 text-violet-700 dark:text-violet-400/,
-    'the active sidebar row keeps its tint, character for character');
+  // #5997: the current row is marked with the lit tokens ("where you are"),
+  // not the action accent, and in a heavier weight than the others.
+  assert.match(nav.slice(0, 1200),
+    /'font-semibold bg-\[color:var\(--lit-tint\)\] text-\[color:var\(--lit-ink\)\] shadow-\[inset_0_0_0_1px_var\(--lit-line\)\]'/,
+    'the active sidebar row wears the lit tint, ink and line');
+  assert.match(nav.slice(0, 1200), /'font-medium text-zinc-600 dark:text-zinc-300/,
+    'the other rows stay at the lighter weight');
+  assert.doesNotMatch(nav.slice(0, 1200), /violet/, 'the action accent no longer marks where you are');
   assert.match(navTsx, /className=\{item\.className\}/,
     'the component renders that string rather than recomputing it');
 
