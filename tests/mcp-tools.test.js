@@ -2907,6 +2907,10 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // A person's spec on a request, for the group to review before anything
     // is built. It builds, claims and votes on nothing (request-specs.js).
     'post_spec',
+    // A one-time command that sends one file (a plan, a video, a screenshot)
+    // for post_spec or create_request, instead of writing it into the call
+    // (services/connector-uploads.js). External clients only.
+    'prepare_upload',
     'prepare_work',
     // #2779. The native change lifecycle. recheck_change is on every surface;
     // the other four are registered only for an agent session's Mayor — see
@@ -3158,7 +3162,7 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
     'deploy_bench_preview', 'edit_bench_task', 'edit_challenge', 'keep_bench_trial',
     'label_bench_task', 'launch_bench_run', 'launch_bench_studio', 'launch_shots_eval',
     'move_challenge',
-    'post_message', 'post_spec', 'prepare_work', 'promote_change', 'propose_close_request',
+    'post_message', 'post_spec', 'prepare_upload', 'prepare_work', 'promote_change', 'propose_close_request',
     'rate_homeroom_bot_run', 'recheck_change', 'regrade_bench_run', 'remove_challenge', 'reorder_challenges', 'rerun_bench_trial',
     'retire_test_account', 'run_challenge_scoring',
     // The Homeroom bot's configurations: full admins only.
@@ -3300,7 +3304,7 @@ test('whoami hands the model the canonical name and the exact shipped rules', ()
 
 test('every write tool checks its scope before it does anything', () => {
   const writeTools = [
-    'create_request', 'prepare_work', 'submit_work',
+    'create_request', 'prepare_upload', 'prepare_work', 'submit_work',
     'start_platform_build', 'answer_questions', 'submit_platform_build',
     'demo_mode', 'demo_propose', 'demo_promote', 'demo_vote', 'demo_reset',
   ];

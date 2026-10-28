@@ -252,6 +252,14 @@ app.use(require('./src/routes/alerts-webhook').alertsWebhookRoutes(config));
 // task's own token. src/routes/external-agent-patch-upload.js has the rest.
 app.use(require('./src/routes/external-agent-patch-upload').externalAgentPatchUploadRoutes(config));
 
+// ── Connector uploads: a plan, a video or a screenshot ─────────────────────
+// The same door for the other large things a coding agent hands the
+// connector (post_spec's plan, create_request's video and screenshots). HERE
+// for the patch upload's reasons: raw bytes under any Content-Type, from a
+// sandbox with no session, authenticated by the upload's own one-time token.
+// src/routes/connector-uploads.js has the rest.
+app.use(require('./src/routes/connector-uploads').connectorUploadRoutes(config));
+
 // ── Projects made inside a platform preview ────────────────────────────────
 // A platform preview asks production for the database, build and runtime of
 // a project someone makes in it (services/preview-projects.js). HERE for
