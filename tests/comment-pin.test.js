@@ -395,6 +395,18 @@ test('the picture is drawn ahead while the menu or the form is open, and opens a
   assert.match(src, /const onResize = \(\) => \{ if \(window\.innerWidth !== size\.width\) spoil\(\); \};/);
   // The menu's dim is cut out of every picture, or one drawn under the menu would be dimmed.
   assert.ok(picture.PAGE_EXCLUDES.includes('.overlay-scrim'));
+  // The hub's ⋯ menu has the same issue row, in a dropdown the picture draws
+  // over, so it gets the picture ready while it is open too, and only when
+  // that row is there (a read-only viewer has none).
+  const plusMenu = read('public/js/app-view.js');
+  assert.match(plusMenu, /const issueBtn = menu\.querySelector\('\[data-plus="issue"\]'\);\s*btn\.addEventListener\('click', \(e\) => \{/,
+    'the issue row is read before the menu\'s handlers');
+  assert.match(plusMenu, /if \(PlatformUI\.isTouch\(\)\) \{\s*AppView\.refreshDevChatSecretsState\(\);[\s\S]{0,800}?if \(issueBtn\) window\.UsernodeReact\?\.suggestShortcut\?\.prepare\?\.\(\);/,
+    'the touch sheet gets the picture ready while it is open');
+  assert.match(plusMenu, /if \(open\) AppView\.refreshDevChatSecretsState\(\);[\s\S]{0,400}?if \(open && issueBtn\) window\.UsernodeReact\?\.suggestShortcut\?\.prepare\?\.\(\);/,
+    'and so does the desktop dropdown');
+  // And the dropdown, which is inside the drawn page, is cut out of it.
+  assert.ok(picture.PAGE_EXCLUDES.includes('#dev-plus-menu'), 'the hub\'s ⋯ dropdown');
 });
 
 test('what counts as the page changing since the picture was drawn', () => {
@@ -824,6 +836,7 @@ test('takeBase asks the side panel for its picture with the others, and lays it 
     '#feedback-modal',
     '#apps-switcher-sheet',
     '#apps-switcher-overlay',
+    '#dev-plus-menu',
     '.overlay-scrim',
     '.un-modal',
     '.un-sheet',

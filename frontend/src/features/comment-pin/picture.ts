@@ -558,11 +558,16 @@ export function pinTarget(pin: Point, host: Element): Rect | null {
  * come out dimmed. Every one of them is out of the page's flow (fixed, or
  * display:none when not showing), which is why the capture cuts them out
  * rather than holding their place (`drawShell`).
+ *
+ * The hub's ⋯ dropdown (#dev-plus-menu) is inside the page the picture
+ * draws, so a picture taken while it is open carries it; it is out of the
+ * flow too, so cutting it out moves nothing.
  */
 export const PAGE_EXCLUDES = [
   '#feedback-modal',
   '#apps-switcher-sheet',
   '#apps-switcher-overlay',
+  '#dev-plus-menu',
   '.overlay-scrim',
   '.un-modal',
   '.un-sheet',

@@ -8998,6 +8998,10 @@ const AppView = {
     });
     // The rows a keyboard can reach (QA 2026-09-24 Q18).
     const PLUS_ROWS = 'button[data-plus]:not([disabled])';
+    // The hub's row to Homeroom bot. Read before the handlers below so the
+    // menu's open can get comment mode ready only when that row is there
+    // (a read-only viewer has none).
+    const issueBtn = menu.querySelector('[data-plus="issue"]');
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       // Touch platforms: present the same items as a bottom action
@@ -9006,6 +9010,12 @@ const AppView = {
       // handler, so both idioms share one wiring path.
       if (PlatformUI.isTouch()) {
         AppView.refreshDevChatSecretsState();
+        // Comment mode's picture takes about a third of a second to draw,
+        // so draw it while the sheet is open; otherwise "Suggest an
+        // improvement" looks dead until it is ready. The Homeroom menu
+        // does the same from its own open effect
+        // (features/app-context/app-context-sheet.tsx).
+        if (issueBtn) window.UsernodeReact?.suggestShortcut?.prepare?.();
         // In DOM order, so the two group headings arrive between the rows
         // they head rather than being dropped on the touch path.
         //
@@ -9064,6 +9074,10 @@ const AppView = {
       // Refresh the App secrets item's "N required missing" state only
       // when the menu actually opens — no fetch on every card-list mount.
       if (open) AppView.refreshDevChatSecretsState();
+      // And get comment mode's picture ready while the menu is open, as the
+      // Homeroom menu does, so "Suggest an improvement" opens it at once
+      // rather than after the drawing.
+      if (open && issueBtn) window.UsernodeReact?.suggestShortcut?.prepare?.();
       // QA 2026-09-24 Q18: focus goes to the first row, so the arrows below
       // have somewhere to start from.
       if (open) {
@@ -9102,7 +9116,6 @@ const AppView = {
     // management, and (#1900) filing an issue, which #1490 had folded into
     // Improve's Give feedback; each row is conditional on viewer/app
     // permissions, so wire only the rows the frame rendered.
-    const issueBtn = menu.querySelector('[data-plus="issue"]');
     if (issueBtn) {
       issueBtn.addEventListener('click', () => {
         close();

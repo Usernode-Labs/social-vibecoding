@@ -445,7 +445,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   });
   // The feedback dialog's controller asks where "Suggest an improvement"
   // goes, and its C key's `ready()` check reads the setting; that code is
-  // classic there and cannot import.
+  // classic there and cannot import. `prepare` is for the hub's ⋯ menu
+  // (public/js/app-view.js `_wirePlusMenu`), which gets the picture ready
+  // while it is open, as the Homeroom menu does for its own row.
   const bridge = ((window as unknown as { UsernodeReact?: Record<string, unknown> }).UsernodeReact ||= {});
   scheduleWarmComment(window);
   bridge.suggestShortcut = {
@@ -456,5 +458,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     },
     opensComment: () => suggestOpensComment(),
     openComment: (opts?: OpenOptions) => openCommentMode(opts || {}),
+    prepare: () => prepareComment(),
   };
 }
