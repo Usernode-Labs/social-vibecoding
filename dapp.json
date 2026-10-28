@@ -3410,7 +3410,7 @@
       "name": "Settings groups its menu under headings and offers the test alert (#1795)",
       "path": "/#settings/alerts",
       "expectSelector": "#settings-root:has(#settings-nav-desktop h2) [data-settings-section=\"alerts\"]:not(.hidden) #devchat-alerts-test",
-      "expectText": "AI & building"
+      "expectText": "Integrations & automation"
     },
     {
       "name": "Settings opens with a filter box over an uncollapsed menu, Account current",

@@ -2275,9 +2275,13 @@
     "text": "Account",
     "description": "Heading over a group of rows in the Settings menu: who you are and how you sign in."
   },
-  "nav.group.aiBuilding": {
-    "text": "AI & building",
-    "description": "Heading over a group of rows in the Settings menu: AI allowance, keys, connectors and tools for building apps."
+  "nav.group.aiModels": {
+    "text": "AI models & usage",
+    "description": "Heading over a group of rows in the Settings menu: the AI allowance, how much of it is spent, and the keys and models used."
+  },
+  "nav.group.integrations": {
+    "text": "Integrations & automation",
+    "description": "Heading over a group of rows in the Settings menu: the chat connectors (Claude, ChatGPT, Codex), command-line (CLI) access, and the instruction files and skills that coding agents read."
   },
   "nav.group.preferences": {
     "text": "Preferences",
@@ -2286,6 +2290,10 @@
   "nav.group.helpAbout": {
     "text": "Help & about",
     "description": "Heading over a group of rows in the Settings menu: the welcome tour, the phone app and version information."
+  },
+  "nav.group.advanced": {
+    "text": "Advanced",
+    "description": "Heading over the last group of rows in the Settings menu: the experimental features a person can switch on to try, and Global Chat's own settings."
   },
   "nav.group.other": {
     "text": "Other",

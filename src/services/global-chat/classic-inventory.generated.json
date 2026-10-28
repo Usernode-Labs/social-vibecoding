@@ -149,7 +149,7 @@
     {
       "key": "usage",
       "label": "Usage",
-      "group": "AI & building",
+      "group": "AI models & usage",
       "gate": null,
       "capabilityId": "settings.open.usage",
       "classicPath": "#settings/usage",
@@ -158,7 +158,7 @@
     {
       "key": "openrouter",
       "label": "OpenRouter",
-      "group": "AI & building",
+      "group": "AI models & usage",
       "gate": null,
       "capabilityId": "settings.open.openrouter",
       "classicPath": "#settings/openrouter",
@@ -167,7 +167,7 @@
     {
       "key": "api-key",
       "label": "Anthropic API key",
-      "group": "AI & building",
+      "group": "AI models & usage",
       "gate": null,
       "capabilityId": "settings.open.api_key",
       "classicPath": "#settings/api-key",
@@ -176,7 +176,7 @@
     {
       "key": "connectors",
       "label": "Connectors",
-      "group": "AI & building",
+      "group": "Integrations & automation",
       "gate": null,
       "capabilityId": "settings.open.connectors",
       "classicPath": "#settings/connectors",
@@ -185,7 +185,7 @@
     {
       "key": "cli",
       "label": "CLI & coding-agent access",
-      "group": "AI & building",
+      "group": "Integrations & automation",
       "gate": null,
       "capabilityId": "settings.open.cli",
       "classicPath": "#settings/cli",
@@ -194,28 +194,10 @@
     {
       "key": "agent-files",
       "label": "Agent instructions & skills",
-      "group": "AI & building",
+      "group": "Integrations & automation",
       "gate": null,
       "capabilityId": "settings.open.agent_files",
       "classicPath": "#settings/agent-files",
-      "mobileSupported": true
-    },
-    {
-      "key": "global-chat",
-      "label": "Global Chat (experimental)",
-      "group": "AI & building",
-      "gate": null,
-      "capabilityId": "settings.open.global_chat",
-      "classicPath": "#settings/global-chat",
-      "mobileSupported": true
-    },
-    {
-      "key": "experimental",
-      "label": "Experimental",
-      "group": "AI & building",
-      "gate": null,
-      "capabilityId": "settings.open.experimental",
-      "classicPath": "#settings/experimental",
       "mobileSupported": true
     },
     {
@@ -324,6 +306,24 @@
       "gate": null,
       "capabilityId": "settings.open.about",
       "classicPath": "#settings/about",
+      "mobileSupported": true
+    },
+    {
+      "key": "experimental",
+      "label": "Experimental",
+      "group": "Advanced",
+      "gate": null,
+      "capabilityId": "settings.open.experimental",
+      "classicPath": "#settings/experimental",
+      "mobileSupported": true
+    },
+    {
+      "key": "global-chat",
+      "label": "Global Chat (experimental)",
+      "group": "Advanced",
+      "gate": null,
+      "capabilityId": "settings.open.global_chat",
+      "classicPath": "#settings/global-chat",
       "mobileSupported": true
     }
   ],
