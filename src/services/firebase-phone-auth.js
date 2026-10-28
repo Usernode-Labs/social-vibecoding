@@ -921,7 +921,6 @@ async function markTestAccount(client, userId, claims) {
 
 /**
  * The account for these claims, in one transaction. Returns one of
- *   { refuse: 'admin_password_required' }
  *   { next: 'signed-in', session, user, userId, created }
  *   { next: 'username', signupToken, expiresAt, userId, created }
  * and throws PhoneAuthError('phone_in_use') when the number already
@@ -971,7 +970,6 @@ async function signIn(pool, claims, { createSession } = {}) {
         // re-point the previous holder's account.
         if (byPhone[0] && String(byPhone[0].firebase_uid).startsWith('sms:')) {
           user = byPhone[0];
-          if (user.is_admin) return { refuse: 'admin_password_required' };
           await client.query(
             `UPDATE user_phone_identities
                 SET firebase_uid = $2, last_used_at = NOW()
@@ -982,9 +980,6 @@ async function signIn(pool, claims, { createSession } = {}) {
       }
 
       if (user) {
-        // The email code's refusal, for the same reason (email-signup.js):
-        // an admin account signs in with its password, never a phone.
-        if (user.is_admin) return { refuse: 'admin_password_required' };
         if (linked[0]) {
           await client.query(
             'UPDATE user_phone_identities SET last_used_at = NOW() WHERE firebase_uid = $1',

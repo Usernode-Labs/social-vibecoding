@@ -233,7 +233,8 @@ Feedback, gallery, public API, share links, MCP, status.
 ## Known constraints for test runs
 
 - Guest flows require signing the admin session out (browser automation cannot
-  reach incognito); the admin signs back in by password only.
+  reach incognito); the admin signs back in (by password or any other sign-in
+  method).
 - Waitlist join email is limited to one per day per recipient — use a fresh
   `+tag` alias each run; the waitlist IP limiter (5/15min) is shared across
   join + survey + confirm (#1296).

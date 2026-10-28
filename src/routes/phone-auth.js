@@ -216,22 +216,6 @@ function phoneAuthRoutes(config) {
             return phoneAuth.verifyIdToken(pool, config, exchanged.idToken);
           })();
       const result = await phoneAuth.signIn(pool, claims, { createSession });
-      if (result.refuse) {
-        // A refused sign-in is still a failed verification, with the account
-        // and number known: logged, the one refuse the flow produces.
-        await failureLog.recordFailure(pool, {
-          kind: 'verify',
-          userId: result.userId,
-          phoneLast4: last4Of(claims?.phoneNumber),
-          errorCode: result.refuse,
-          providerCode: null,
-          message: 'Admin accounts sign in with their password.',
-        });
-        return res.status(422).json({
-          error: 'Admin accounts sign in with their password.',
-          code: result.refuse,
-        });
-      }
 
       // An invite link this visitor opened first is followed as the account
       // the phone just CREATED, and an existing account follows it only when

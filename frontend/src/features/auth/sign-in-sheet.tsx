@@ -217,7 +217,6 @@ const RESUME_ERRORS: Record<string, string> = {
   expired: 'auth:signInSheet.resume.expired',
   no_verified_email: 'auth:signInSheet.resume.noVerifiedEmail',
   password_required: 'auth:signInSheet.resume.passwordRequired',
-  admin_password_required: 'auth:signInSheet.resume.adminPasswordRequired',
   linked_elsewhere: 'auth:signInSheet.resume.linkedElsewhere',
   logout_required: 'auth:signInSheet.resume.logoutRequired',
 };
@@ -1214,10 +1213,10 @@ export function SignInSheet({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
-        // A right code for an account that signs in with its password (an
-        // admin's, or one whose address was never confirmed): its password
-        // step, with the address carried over, as the sign-in screen does.
-        if (data.code === 'password_required' || data.code === 'admin_password_required') {
+        // A right code for an account that signs in with its password (one
+        // whose address was never confirmed): its password step, with the
+        // address carried over, as the sign-in screen does.
+        if (data.code === 'password_required') {
           identifierPrefill.current = email;
           setStep('password');
           setError(data.error || translate('auth:signInSheet.code.passwordAccount'));
