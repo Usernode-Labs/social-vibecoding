@@ -498,7 +498,8 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     const stacked = await proposal(a);
     await merge(stacked, { mergeSha: SHA('b') });
     await merge(carrier, { mergeSha: SHA('c') });
-    work.results.set(WORK.verify, (input) => ({ sha: input.sha, contains: input.mergeSha === input.sha }));
+    work.results.set(WORK.verify, (input) => ({ sha: input.sha, contains: input.mergeSha === input.sha,
+      status: input.mergeSha === input.sha ? 'identical' : 'diverged' }));
     work.results.set(WORK.carrier, (input) => (input.sessionId === stacked.id && input.release === SHA('c')
       ? { carrier: { sessionId: carrier.id, prNumber: carrier.pr_number, prTitle: carrier.pr_title, mergeSha: SHA('c') } }
       : { carrier: null }));

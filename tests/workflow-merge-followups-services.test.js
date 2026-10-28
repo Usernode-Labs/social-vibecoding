@@ -178,36 +178,40 @@ test('included.find names each carried change with the head that matched', async
 });
 
 test('carried.find names the later merge whose pull request lists the commit and whose merge the build contains', async (t) => {
-  const candidates = [
-    { id: 6, pr_number: 9, pr_title: 'Unrelated', merge_commit_sha: 'd'.repeat(40) },
-    { id: 7, pr_number: 10, pr_title: 'Lists it, not in this build', merge_commit_sha: 'e'.repeat(40) },
-    { id: 8, pr_number: 11, pr_title: 'The carrier', merge_commit_sha: 'F'.repeat(40) },
-  ];
-  gh.listPullRequestCommitShas = async (_o, _r, n) => ({ shas: n === 9 ? ['c'.repeat(40)] : ['B'.repeat(40)] });
+  const row = (id, pr, sha, carrier = { id, pr, title: `PR ${pr}` }) => ({ id, pr_number: pr, merge_commit_sha: sha,
+    merged_at: new Date(Date.UTC(2026, 9, 28, id)), carrier_id: carrier.id, carrier_pr_number: carrier.pr, carrier_pr_title: carrier.title });
+  const candidates = [row(6, 9, 'd'.repeat(40)), row(7, 10, 'e'.repeat(40)), row(8, 11, 'F'.repeat(40), { id: 12, pr: 14, title: 'Main' })];
+  gh.listPullRequestCommitShas = async (_o, _r, n) => ({ shas: n === 9 ? ['c'.repeat(40)] : ['B'.repeat(40)], complete: true });
   const compared = [];
   gh.compareCommitAncestry = async (_o, _r, base) => { compared.push(base); return { status: base === 'f'.repeat(40) ? 'ahead' : 'diverged' }; };
   t.after(() => { delete gh.compareCommitAncestry; });
   const { asked, handlers: h } = withRows(() => candidates);
   const input = { sessionId: 5, appId: 2, owner: 'acme', repo: 'shop', mergeSha: 'b'.repeat(40),
-    mergedAt: '2026-10-28T10:00:00.000Z', release: '1'.repeat(40) };
-  assert.deepEqual(await call(h, WORK.carrier, input),
-    { carrier: { sessionId: 8, prNumber: 11, prTitle: 'The carrier', mergeSha: 'f'.repeat(40) } });
-  assert.deepEqual(asked[0].params, [2, 5, input.mergedAt]);
+    mergedAt: '2026-10-28T00:00:00.000Z', release: '1'.repeat(40), after: null };
+  // #8 lists it and is in the build; it went to main inside #12 (carried
+  // or included there), which is the carrier.
+  assert.deepEqual((await call(h, WORK.carrier, input)).carrier, { sessionId: 12, prNumber: 14, prTitle: 'Main', mergeSha: 'f'.repeat(40) });
+  assert.deepEqual(asked[0].params, [2, 5, input.mergedAt, 0]);
   assert.deepEqual(compared, ['e'.repeat(40), 'f'.repeat(40)], 'only a pull request that lists the commit is compared');
-  // None in this build: it waits for the next one.
+  // None in this build: #6 is ruled out for good, #7 and #8 are read again
+  // next time; the next look starts after #6.
   gh.compareCommitAncestry = async () => ({ status: 'diverged' });
-  assert.deepEqual(await call(h, WORK.carrier, input), { carrier: null });
+  const none = await call(h, WORK.carrier, input);
+  assert.deepEqual(none, { carrier: null, scanned: { mergedAt: candidates[0].merged_at.toISOString(), id: 6 } });
+  await call(h, WORK.carrier, { ...input, after: none.scanned });
+  assert.deepEqual(asked.at(-1).params, [2, 5, none.scanned.mergedAt, 6]);
   // A pull request or merge commit GitHub no longer has is not the
   // carrier; any other failure is retried.
   gh.compareCommitAncestry = async () => { throw Object.assign(new Error('HTTP 404'), { status: 404 }); };
-  assert.deepEqual(await call(h, WORK.carrier, input), { carrier: null });
+  assert.equal((await call(h, WORK.carrier, input)).carrier, null);
   const listing = gh.listPullRequestCommitShas;
   gh.listPullRequestCommitShas = async (_o, _r, n) => {
     if (n === 10) throw Object.assign(new Error('HTTP 404'), { status: 404 });
     return listing(_o, _r, n);
   };
   gh.compareCommitAncestry = async () => ({ status: 'ahead' });
-  assert.deepEqual((await call(h, WORK.carrier, input)).carrier.sessionId, 8, 'past a pull request that is gone');
+  assert.equal((await call(h, WORK.carrier, input)).carrier.sessionId, 12, 'past a pull request that is gone');
+  gh.listPullRequestCommitShas = listing;
   gh.compareCommitAncestry = async () => { throw Object.assign(new Error('HTTP 502'), { status: 502 }); };
   await assert.rejects(call(h, WORK.carrier, input), /HTTP 502/);
 });

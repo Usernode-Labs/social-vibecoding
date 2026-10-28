@@ -38,7 +38,7 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
         if (!github().isEnabled()) throw permanent('GitHub is not configured');
         try {
           const { status } = await github().compareCommitAncestry(input.owner, input.repo, input.mergeSha, input.sha);
-          return { sha: input.sha, contains: status === 'identical' || status === 'ahead' };
+          return { sha: input.sha, contains: status === 'identical' || status === 'ahead', status };
         } catch (err) {
           if (gone(err)) return { sha: input.sha, contains: false };
           throw err;
@@ -94,33 +94,54 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
       },
     },
 
-    // A merge whose commit is not in the build it was checked against looks
-    // for the later merge that carried it to main (facts.ts
-    // CARRIER_CANDIDATES_SQL): one whose pull request lists the commit, and
-    // whose own merge commit that build contains. None found: it waits, and
-    // the next build looks again.
+    // A merge whose commit is off main looks for the later merge that carried
+    // it there (facts.ts CARRIER_CANDIDATES_SQL): one whose pull request
+    // lists the commit, and whose recorded merge commit the build contains.
+    // A merged pull request's commits never change, so one that does not
+    // list it is ruled out for good: `scanned` is the last of an unbroken run
+    // of those, where the next look starts. None found: it waits, and the
+    // next build looks again. A pull request or commit GitHub no longer has
+    // is not the carrier.
     [WORK.carrier]: {
       maxAttempts: 6,
       backoffMs: backoff,
       async run({ input }): Promise<Json> {
         const gh = github();
         if (!gh.isEnabled()) return { carrier: null };
-        const { rows } = await pool.query(CARRIER_CANDIDATES_SQL, [input.appId, input.sessionId, input.mergedAt]);
-        // A pull request or commit GitHub no longer has is not the carrier.
+        const after = input.after as { mergedAt?: string; id?: number } | null;
+        let scanned = after?.mergedAt && Number.isInteger(after.id) ? { mergedAt: after.mergedAt, id: after.id! } : null;
+        const { rows } = await pool.query(CARRIER_CANDIDATES_SQL,
+          [input.appId, input.sessionId, scanned?.mergedAt ?? input.mergedAt, scanned?.id ?? 0]);
+        let unbroken = true;
         for (const c of rows) {
+          const here = { mergedAt: new Date(c.merged_at).toISOString(), id: Number(c.id) };
+          let listed: { shas?: string[]; complete?: boolean } | null;
+          try {
+            listed = await gh.listPullRequestCommitShas(input.owner, input.repo, Number(c.pr_number));
+          } catch (err) {
+            if (!gone(err)) throw err;
+            if (unbroken) scanned = here;
+            continue;
+          }
+          if (!lists(listed?.shas, input.mergeSha)) {
+            // A list cut short rules nothing out.
+            if (listed?.complete === false) unbroken = false;
+            else if (unbroken) scanned = here;
+            continue;
+          }
+          unbroken = false;
           const mergeSha = String(c.merge_commit_sha).toLowerCase();
           try {
-            const listed = await gh.listPullRequestCommitShas(input.owner, input.repo, Number(c.pr_number));
-            if (!lists(listed?.shas, input.mergeSha)) continue;
             const { status } = await gh.compareCommitAncestry(input.owner, input.repo, mergeSha, input.release);
             if (status !== 'identical' && status !== 'ahead') continue;
           } catch (err) {
             if (gone(err)) continue;
             throw err;
           }
-          return { carrier: { sessionId: Number(c.id), prNumber: Number(c.pr_number), prTitle: c.pr_title ?? null, mergeSha } };
+          return { carrier: { sessionId: Number(c.carrier_id),
+            prNumber: c.carrier_pr_number == null ? null : Number(c.carrier_pr_number), prTitle: c.carrier_pr_title ?? null, mergeSha } };
         }
-        return { carrier: null };
+        return { carrier: null, scanned };
       },
     },
 
