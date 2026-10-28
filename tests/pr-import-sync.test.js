@@ -1059,9 +1059,18 @@ test('a look at a pull request retargeted to main forgets what it waited for; on
   ], async () => {
     const moved = basePool(null);
     await prImportSync.syncImportedProposal({ config: {}, pool: moved, session: { ...SESSION, imported_pr_base_ref: 'claude/sec09-parent', waits_for_session_id: 54 } });
-    assert.deepEqual(baseWrite(moved).params, [321, 'main', null]);
+    assert.deepEqual(baseWrite(moved).params, [321, null, null], 'the default branch is stored as no other base');
     const level = basePool(null);
-    await prImportSync.syncImportedProposal({ config: {}, pool: level, session: { ...SESSION, imported_pr_base_ref: 'main' } });
+    await prImportSync.syncImportedProposal({ config: {}, pool: level, session: { ...SESSION, imported_pr_base_ref: null } });
+    assert.equal(level.calls.length, 0);
+  });
+  // A repository whose default branch is master: its pull requests merge
+  // there, and nothing is read or written for them either.
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: SESSION_HEAD, ref: 'feature/x' }, base: { ref: 'master', repo: { default_branch: 'master' } }, mergeable: true })],
+  ], async () => {
+    const level = basePool(null);
+    await prImportSync.syncImportedProposal({ config: {}, pool: level, session: { ...SESSION } });
     assert.equal(level.calls.length, 0);
   });
 });

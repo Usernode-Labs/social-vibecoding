@@ -104,7 +104,7 @@ const LINE_SQL = `
     JOIN apps a ON a.id = cs.app_id
     LEFT JOIN wf_instances w ON w.machine = 'proposal' AND w.key = 'session:' || cs.id
    WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.is_headless = FALSE
-     AND (cs.source IS DISTINCT FROM 'imported' OR cs.imported_pr_base_ref IS NULL OR cs.imported_pr_base_ref = 'main')
+     AND (cs.source IS DISTINCT FROM 'imported' OR cs.imported_pr_base_ref IS NULL)
    ORDER BY cs.id`;
 
 export async function readLine(tx: Tx, appId: number, now: Date): Promise<Candidate[]> {

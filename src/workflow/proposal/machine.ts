@@ -21,8 +21,9 @@
 // start, a check main has fixed, the Homeroom bot) is data of underway or
 // in_review: never while it is being merged, and no merge while it syncs.
 //
-// "Merged" means "in main" (rules/pr-base.ts). An import whose pull request
-// is based on another change's branch waits for that change: it is never
+// "Merged" means "in main", the repository's default branch (rules/pr-base.ts).
+// An import whose pull request is based on another change's branch waits for
+// that change: it is never
 // measured or claimed, and once that change is on main (its Merged, or
 // GitHub's merge seen by a look) it is told (ParentMerged), its pull request
 // is retargeted to main (pr.retarget) and it syncs with main. A merge GitHub
@@ -61,7 +62,7 @@ import { claimRefusal } from '../rules/merge-claim.ts';
 import { APPROVER_NO_WINDOW_WORDS } from '../rules/governance-gate.ts';
 import { toBotChange, withdrawnNote, writeBotChange } from '../rules/bot-notes.ts';
 import { turnStop } from '../rules/turn-stop.ts';
-import { MAIN_BRANCH, onMain } from '../rules/pr-base.ts';
+import { onMain } from '../rules/pr-base.ts';
 import { readFacts, NO_FACTS } from './facts.ts';
 import type { Facts, Row } from './facts.ts';
 
@@ -338,8 +339,8 @@ const EVENTS = {
   // `pr`: the pull request as GitHub showed the route (null: none yet);
   // `cap`: the owner's ceiling on proposals in review.
   Promote: (p: any) => {
-    // `base`: the branch GitHub merges it into (an import's; null when the
-    // caller did not read it, which reads as main).
+    // `base`: the branch GitHub merges it into when that is not main (an
+    // import's, rules/pr-base.ts otherBase); null: main, or not read.
     const pr = p?.pr == null ? null : {
       state: p.pr.state === 'closed' ? 'closed' : 'open', draft: !!p.pr.draft, merged: !!p.pr.merged,
       head: optSha(p.pr.head, 'pr.head'), base: text(p.pr.base, 255),
@@ -370,8 +371,8 @@ const EVENTS = {
   // GitHub's word on its pull request, as a look read it (an import's,
   // services/pr-import-sync.js, or a native one's merged by hand,
   // proposal-scans.js): merged, or closed and when. `tally`: the votes it
-  // stood at, for a merge's record. `base`: the branch it merged into (null:
-  // a caller that did not say, read as main).
+  // stood at, for a merge's record. `base`: the branch it merged into when
+  // that is not main (rules/pr-base.ts otherBase; null: main, or not said).
   PrLooked: (p: any) => ({ ...session(p), from: from(p), merged: !!p?.merged, closed: !!p?.closed,
     mergeSha: text(p?.mergeSha, 64), mergedAt: text(p?.mergedAt, 40), closedAt: text(p?.closedAt, 40), readAt: text(p?.readAt, 40),
     base: text(p?.base, 255),
@@ -608,8 +609,8 @@ const promote: Handler = (s, e, f) => {
       imported: s.data.imported } });
   // An import's base, as GitHub showed the route, and the change it waits
   // for (the guard found it open), recorded with the move that decided on it.
-  const writes: DomainWrite[] = s.data.imported && p.pr && p.pr.base
-    ? [{ type: 'prBase', sessionId: s.data.sessionId, base: p.pr.base, waitsFor: onMain(p.pr.base) ? null : f.baseOwner?.id ?? null }] : [];
+  const writes: DomainWrite[] = s.data.imported && p.pr
+    ? [{ type: 'prBase', sessionId: s.data.sessionId, base: p.pr.base ?? null, waitsFor: onMain(p.pr.base) ? null : f.baseOwner?.id ?? null }] : [];
   return step({ name: 'proposing', data: moved.data }, { work: moved.work, timer: null, writes });
 };
 
@@ -1178,8 +1179,9 @@ function beginSync(s: Live, p: any, f: Facts, ctx: TransitionContext): Outcome<P
 
 // ── A stacked change whose parent landed (rules/pr-base.ts) ─────────────
 
-// Its parent is on main: its pull request is retargeted to main, one of its
-// GitHub moves. Told twice (the parent's merge and a look that read the
+// Its parent is on main: its pull request is retargeted to main (its
+// repository's default branch, which the work reads), one of its GitHub
+// moves. Told twice (the parent's merge and a look that read the
 // parent merged), the retarget under way answers both.
 const parentMergedEvent: Handler = (s, e, f) => {
   const row = f.row!;
@@ -1187,7 +1189,7 @@ const parentMergedEvent: Handler = (s, e, f) => {
   const n = s.data.n + 1;
   const moved = prMove({ ...s.data, n, retarget: { n, parentId: e.payload.parentId ?? null } },
     { kind: WORK.retarget, key: `retarget:${n}`, input: { sessionId: s.data.sessionId, owner: row.repo.owner, repo: row.repo.repo,
-      number: row.prNumber, base: MAIN_BRANCH } });
+      number: row.prNumber } });
   return step({ name: s.name, data: moved.data } as Live, { work: moved.work });
 };
 
@@ -1208,7 +1210,7 @@ function retargeted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): O
     });
   }
   const next: Live = { name: s.name, data: d } as Live;
-  const writes: DomainWrite[] = [{ type: 'prBase', sessionId: d.sessionId, base: MAIN_BRANCH, waitsFor: null }];
+  const writes: DomainWrite[] = [{ type: 'prBase', sessionId: d.sessionId, base: null, waitsFor: null }];
   const sync = { reason: 'parent_merged', head: null, queueN: null, approved: false, githubConflict: false };
   const refusal = syncRefusal(next, { ...e, payload: sync } as Event<any>, f, ctx);
   const synced = refusal ? null : beginSync(next, sync, f, ctx);

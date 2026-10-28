@@ -2714,9 +2714,10 @@ function voteRoutes(config) {
           const live = await github.getPR(owner, repo.replace(/\.git$/, ''), session.pr_number);
           pr = { state: live?.state === 'closed' ? 'closed' : 'open', draft: !!live?.draft, merged: !!live?.merged,
             head: /^[0-9a-f]{40}$/i.test(String(live?.head?.sha || '')) ? live.head.sha : null,
-            // Where it would merge: an import based on a branch that is
-            // neither main nor an open change's is refused (rules/pr-base.ts).
-            base: live?.base?.ref ?? null };
+            // Where it would merge, when that is not its repository's
+            // default branch: an import based on a branch that is no open
+            // change's is refused (rules/pr-base.ts).
+            base: prBase.otherBase(live) };
         } catch (err) {
           log.warn('votes', 'Promote PR revision check failed', {
             sessionId: session.id, pr: session.pr_number, err: err.message,
@@ -2975,10 +2976,11 @@ function voteRoutes(config) {
       // once, here, because it is a fact about the pull request that never
       // changes while it is open; `branchHomeOf` reads it.
       const headRepoFullName = pr.head?.repo?.full_name || null;
-      // WHERE it merges (src/workflow/rules/pr-base.ts): main, or the branch
-      // of another open change it is stacked on, which it then waits for.
-      // Any other base is refused when it is put up for a vote.
-      const baseRef = pr.base?.ref || null;
+      // WHERE it merges (src/workflow/rules/pr-base.ts): main (the
+      // repository's default branch: null here), or the branch of another
+      // open change it is stacked on, which it then waits for. Any other base
+      // is refused when it is put up for a vote.
+      const baseRef = prBase.otherBase(pr);
 
       // Optional testing metadata (#945 follow-up). A connector submission
       // can carry the same two things a build turn's "==== TESTING ===="
@@ -6350,8 +6352,8 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
     return { outcome: 'refused', kind, message, githubMessage: said || null };
   };
   const unanswered = (err) => !err || !Number.isInteger(err.status) || err.status >= 500 || err.status === 429;
-  // The base a merge went into, when GitHub said (the machine records only
-  // a merge into main).
+  // The branch a merge went into, when that is not main (the machine
+  // records only a merge into main).
   const baseOf = (ref) => (ref ? { base: ref } : {});
   // GitHub's hourly limit used up (a 403 or a 429 saying no requests are
   // left) or its secondary limit (Retry-After): it did not merge, and it is
@@ -6371,7 +6373,7 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
       throw err;
     }
     if (pr && pr.merged) {
-      return { outcome: 'merged', sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, observed: true, ...baseOf(pr.base?.ref) };
+      return { outcome: 'merged', sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, observed: true, ...baseOf(prBase.otherBase(pr)) };
     }
   }
 
@@ -6380,7 +6382,7 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
   // base it read, so the card and the queue say it waits from now on.
   let base;
   try {
-    base = (await client.getPR(owner, repo, session.pr_number))?.base?.ref ?? null;
+    base = prBase.otherBase(await client.getPR(owner, repo, session.pr_number));
   } catch (err) {
     if (throttled(err)) return limited(err);
     if (codeMissing.isError(err)) {
@@ -6453,7 +6455,7 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
     if (unanswered(err)) throw err;
     const pr = await readPr();
     if (pr && pr.merged) {
-      return { outcome: 'merged', sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, observed: true, ...baseOf(pr.base?.ref ?? base) };
+      return { outcome: 'merged', sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, observed: true, ...baseOf(pr.base ? prBase.otherBase(pr) : base) };
     }
     if (pr && pr.state === 'closed') {
       try {

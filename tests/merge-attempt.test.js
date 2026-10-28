@@ -384,12 +384,12 @@ test('a native pull request someone retargeted on GitHub is refused too, and not
   } finally { c.restore(); }
 });
 
-test('a merge into main names its base; a lost answer that merged elsewhere names that one', async () => {
+test('a merge into main names no other base; a lost answer that merged elsewhere names that one', async () => {
   const c = load({ session: imported, github: { getPR: () => ({ state: 'open', merged: false, base: { ref: 'main' } }), mergePR: () => ({ sha: 'squash' }) } });
   c.session = imported;
   try {
     const { out } = await attempt(c);
-    assert.deepEqual(out, { outcome: 'merged', sha: 'squash', base: 'main' });
+    assert.deepEqual(out, { outcome: 'merged', sha: 'squash' });
   } finally { c.restore(); }
   const lost = load({ session: imported, github: { getPR: () => ({ state: 'closed', merged: true, merge_commit_sha: 'm'.repeat(40), merged_at: '2026-10-28T17:31:27Z', base: { ref: 'claude/sec09-parent' } }) } });
   lost.session = imported;
@@ -399,4 +399,21 @@ test('a merge into main names its base; a lost answer that merged elsewhere name
     assert.equal(out.base, 'claude/sec09-parent', 'the proposal machine closes it as merged elsewhere, never as merged');
     assert.deepEqual(lost.calls.merge, [], 'observed, never asked again');
   } finally { lost.restore(); }
+});
+
+test('main is the repository\'s default branch, as GitHub names it: master merges there, a branch called main does not', async () => {
+  const repo = { full_name: 'acme/demo', default_branch: 'master' };
+  const onMaster = load({ session: imported, github: { getPR: () => ({ state: 'open', merged: false, base: { ref: 'master', repo } }), mergePR: () => ({ sha: 'squash' }) } });
+  onMaster.session = imported;
+  try {
+    const { out } = await attempt(onMaster);
+    assert.deepEqual(out, { outcome: 'merged', sha: 'squash' });
+  } finally { onMaster.restore(); }
+  const onMain = load({ session: imported, github: { getPR: () => ({ state: 'open', merged: false, base: { ref: 'main', repo } }) } });
+  onMain.session = imported;
+  try {
+    const { out } = await attempt(onMain);
+    assert.deepEqual([out.outcome, out.kind, out.base], ['refused', 'base_not_main', 'main']);
+    assert.deepEqual(onMain.calls.merge, []);
+  } finally { onMain.restore(); }
 });

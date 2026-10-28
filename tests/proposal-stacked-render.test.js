@@ -108,14 +108,13 @@ test('the card: an amber "Waits for #5956", first; the bar stays the vote', () =
   assert.equal(unnumbered.label, 'Waits for another change');
 });
 
-test('the card: a base no open change has is a red "Not based on main"; on main, or not read yet, says nothing', () => {
+test('the card: a base no open change has is a red "Not based on main"; on main (no other base) says nothing', () => {
   const AppView = makeAppView();
   const lone = AppView.blockReasons(PR({ imported_pr_base_ref: 'someone/else', waits_for_session_id: null, waits_for: null }))[0];
   assert.deepEqual(JSON.parse(JSON.stringify(lone)), { key: 'base_not_main', label: 'Not based on main', detail: NOT_MAIN });
   const tags = AppView.statusTagSpecs(PR({ imported_pr_base_ref: 'someone/else', waits_for_session_id: null, waits_for: null }));
   assert.equal(tags[0].cls, AppView.STATUS_TAG_CLS.blocking);
-  for (const over of [{ imported_pr_base_ref: 'main', waits_for_session_id: null, waits_for: null },
-    { imported_pr_base_ref: null, waits_for_session_id: null, waits_for: null }, { source: 'native' }]) {
+  for (const over of [{ imported_pr_base_ref: null, waits_for_session_id: null, waits_for: null }, { source: 'native' }]) {
     const keys = AppView.blockReasons(PR(over)).map((r) => r.key);
     assert.ok(!keys.includes('waits_for_change') && !keys.includes('base_not_main'), JSON.stringify(over));
   }

@@ -16114,10 +16114,12 @@ COMMENT ON COLUMN preview_projects.db_password IS 'staging:private';
 -- base is not main is never merged by Homeroom, and a merge GitHub made into
 -- another branch is never recorded as merged. On 28 Oct 2026 #5957, stacked
 -- on #5956's branch, was merged into that branch and recorded merged.
---   imported_pr_base_ref = the branch GitHub merges the pull request into,
---                          as last read (the import, every look at the pull
---                          request, the promote). NULL: not read yet, read as
---                          main (the merge attempt reads GitHub's own answer).
+--   imported_pr_base_ref = the branch GitHub merges the pull request into
+--                          when that is NOT its repository's default branch
+--                          ("main": GitHub's default_branch), as last read
+--                          (the import, every look at the pull request, the
+--                          promote). NULL: the default branch, or not read
+--                          yet (the merge attempt reads GitHub's own answer).
 --   waits_for_session_id = the open change of the same app whose branch that
 --                          base is. It stays out of the merge queue until
 --                          that change is on main; then its pull request is

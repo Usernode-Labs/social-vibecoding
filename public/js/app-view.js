@@ -23524,14 +23524,14 @@ const AppView = {
     return p.code_missing === true && ['active', 'paused', 'promoted', 'merging'].includes(p.status);
   },
 
-  // An import whose pull request is not based on main
-  // (src/workflow/rules/pr-base.ts): the branch it targets and, when that is
-  // an open change's branch, that change ({ id, number, title }). Null for
-  // one based on main, and for a row that does not say (read as main).
+  // An import whose pull request is not based on main, its repository's
+  // default branch (src/workflow/rules/pr-base.ts): the branch it targets
+  // and, when that is an open change's branch, that change ({ id, number,
+  // title }). Null for one based on main: the row then has no base.
   _stackedOn(p) {
     if (!p || p.source !== 'imported') return null;
     const base = p.imported_pr_base_ref;
-    if (!base || base === 'main') return null;
+    if (!base) return null;
     const w = p.waits_for && typeof p.waits_for === 'object' ? p.waits_for : null;
     const id = parseInt((w && w.id) || p.waits_for_session_id, 10) || 0;
     return {

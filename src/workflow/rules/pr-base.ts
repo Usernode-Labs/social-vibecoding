@@ -1,30 +1,54 @@
 // Where an imported pull request merges into: its base on GitHub, and the
 // change it waits for when that base is another open change's branch.
 //
-// "Merged" means "in main". GitHub merges a pull request into its own base,
-// whatever that is, so a change whose base is not main is never asked of
-// GitHub (routes/votes.js attemptMerge reads the base first), and a merge
-// GitHub reports into another branch is never recorded as merged or live
-// (the proposal machine closes it as merged elsewhere). On 28 Oct 2026 a
-// stack of three (#5955 → #5956 → #5957) showed both: #5957 was merged into
-// #5956's branch and recorded merged, and #5956 still targeted #5955's
-// branch after #5955 had landed.
+// "Merged" means "in main", and main is the repository's default branch
+// (GitHub's `default_branch`: `main` for every repository Homeroom makes, but
+// an imported repository may use another name). GitHub merges a pull request
+// into its own base, whatever that is, so a change whose base is not the
+// default branch is never asked of GitHub (routes/votes.js attemptMerge reads
+// the base first), and a merge GitHub reports into another branch is never
+// recorded as merged or live (the proposal machine closes it as merged
+// elsewhere). On 28 Oct 2026 a stack of three (#5955 → #5956 → #5957) showed
+// both: #5957 was merged into #5956's branch and recorded merged, and #5956
+// still targeted #5955's branch after #5955 had landed.
 //
 // A stacked change waits: its base is the branch of an open change of the
 // same app (`chat_sessions.waits_for_session_id`), it stays out of the merge
 // queue, and once that change is on main its pull request is retargeted to
 // main and synced with it (the proposal machine's ParentMerged). A base that
 // is neither main nor an open change's branch is refused at promotion.
+//
+// Every value past a GitHub read is the OTHER base: the branch a pull request
+// targets when that is not its repository's default branch, and null when it
+// is (or nobody read it yet). The row stores it that way
+// (`chat_sessions.imported_pr_base_ref`), events carry it that way, and
+// `otherBase` is the one place a GitHub payload is turned into it.
 
 import type { Queryable } from './db.ts';
 
-export const MAIN_BRANCH = 'main';
+// What a repository's default branch is when GitHub does not say (a test's
+// stand-in, an older payload): the platform's own name for it.
+const FALLBACK_DEFAULT = 'main';
 
-// A stored base of NULL is one not read yet (a row imported before the
-// column, or a native proposal, which Homeroom always opens against main):
-// read as main, since the merge attempt reads GitHub's own answer anyway.
+// The repository's default branch, from a pull request as GitHub returns it
+// (`base.repo.default_branch`; the git host's and the staging mock's answer
+// in the same shape).
+export function defaultBranchOf(pr: any): string {
+  const name = pr?.base?.repo?.default_branch;
+  return typeof name === 'string' && name.trim() ? name.trim() : FALLBACK_DEFAULT;
+}
+
+// The branch a pull request targets when it is not its repository's default
+// branch; null when it is, or GitHub named none.
+export function otherBase(pr: any): string | null {
+  const ref = pr?.base?.ref;
+  if (typeof ref !== 'string' || !ref.trim()) return null;
+  return ref.trim() === defaultBranchOf(pr) ? null : ref.trim().slice(0, 255);
+}
+
+// An other base (see the top) that says the pull request merges into main.
 export function onMain(base: unknown): boolean {
-  return base == null || base === '' || String(base) === MAIN_BRANCH;
+  return base == null || base === '';
 }
 
 // The statuses of a change that is still open: one whose branch a stacked
@@ -50,8 +74,9 @@ export async function readBaseOwner(db: Queryable, p: { appId: number; sessionId
   return { open: open ? of(open) : null, merged: merged ? of(merged) : null };
 }
 
-// The base as GitHub reported it, and the open change it waits for, written
-// together. Returns what the row now says and whether it changed.
+// The other base (null: the default branch) and the open change it waits
+// for, written together. Returns what the row now says and whether it
+// changed.
 export async function recordBase(db: Queryable, p: { sessionId: number; appId: number; base: string | null }): Promise<{ base: string | null; waitsFor: number | null; changed: boolean; mergedOwner: BaseOwner | null }> {
   const base = typeof p.base === 'string' && p.base.trim() ? p.base.trim().slice(0, 255) : null;
   const owners = await readBaseOwner(db, { appId: p.appId, sessionId: p.sessionId, base });

@@ -164,7 +164,7 @@ async function syncImportedProposal({ config, pool, session }) {
       const taken = await require('../workflow/platform.ts').prLooked({
         sessionId: session.id, appId: session.app_id, from: session.status, merged: !!pr.merged, closed: pr.state === 'closed',
         mergeSha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, closedAt: pr.closed_at || null,
-        base: (pr.base && pr.base.ref) || null,
+        base: prBase.otherBase(pr),
       });
       if (!taken) return 'unchanged';
       log.info('pr-import-sync', 'Imported pull request settled on GitHub', {
@@ -203,8 +203,8 @@ async function syncImportedProposal({ config, pool, session }) {
 // fails over its base.
 async function refreshBase({ pool, session, pr }) {
   try {
-    const base = (pr.base && pr.base.ref) || null;
-    if (!base) return;
+    // Null: its repository's default branch (rules/pr-base.ts otherBase).
+    const base = prBase.otherBase(pr);
     // On main, as the row already reads (a base not read yet reads as main):
     // nothing to read or write, so a look at an unchanged pull request stays
     // a single GitHub read.

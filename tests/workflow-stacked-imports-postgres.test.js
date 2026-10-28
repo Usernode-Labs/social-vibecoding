@@ -71,7 +71,8 @@ test('stacked imports against the full PostgreSQL schema', { timeout: 240000 }, 
     return a;
   }
   // An import in review (or underway), its checks passed on its head,
-  // measured clean; based on main unless `on` names the change under it.
+  // measured clean; based on main (no other base) unless `on` names the
+  // change under it or `base` another branch.
   async function imported({ appRow, owner, on = null, base = null, status = 'promoted', head = null } = {}) {
     const n = ++seq;
     const h = head || SHA(String(n % 10));
@@ -85,7 +86,7 @@ test('stacked imports against the full PostgreSQL schema', { timeout: 240000 }, 
                'acme/' || $11::text)
        RETURNING *`,
       [appRow.id, owner.id, status, `claude/stack-${n}`, 5900 + n, `Change ${n}`, h, SHA('e'),
-        on ? on.branch_name : (base || 'main'), on ? on.id : null, appRow.slug]);
+        on ? on.branch_name : base, on ? on.id : null, appRow.slug]);
     return { ...s, app: appRow, owner };
   }
   const row = async (s) => (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [s.id])).rows[0];
@@ -129,9 +130,10 @@ test('stacked imports against the full PostgreSQL schema', { timeout: 240000 }, 
     work.hold.clear();
     work.answer.clear();
     work.answer.set(WORK.gate, async (input) => ready((await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [input.sessionId])).rows[0]));
-    work.answer.set(WORK.attempt, { outcome: 'merged', sha: SHA('9'), base: 'main' });
+    // Into main: attemptMerge names no other base.
+    work.answer.set(WORK.attempt, { outcome: 'merged', sha: SHA('9') });
     work.answer.set(WORK.sync, { outcome: 'clean', sha: SHA('5'), message: 'Merged main cleanly.' });
-    work.answer.set(WORK.retarget, (input) => ({ base: input.base }));
+    work.answer.set(WORK.retarget, { base: 'main' });
     work.answer.set(WORK.open, () => ({ head: SHA('1'), prNumber: 5999, prUrl: null, prTitle: 'x' }));
   };
   defaults();
@@ -294,9 +296,9 @@ test('stacked imports against the full PostgreSQL schema', { timeout: 240000 }, 
     assert.equal((await eventsOf(MACHINE, sessionKey(C.id), 'ParentMerged')).length, 0);
     // B's pull request is retargeted to main, then it syncs with main.
     const [retarget] = callsFor(WORK.retarget, B);
-    assert.deepEqual([retarget.input.base, retarget.input.number, retarget.input.owner], ['main', B.pr_number, 'acme']);
+    assert.deepEqual([retarget.input.number, retarget.input.owner], [B.pr_number, 'acme'], 'onto its repository\'s default branch, which the work reads');
     const b = await row(B);
-    assert.deepEqual([b.imported_pr_base_ref, b.waits_for_session_id], ['main', null]);
+    assert.deepEqual([b.imported_pr_base_ref, b.waits_for_session_id], [null, null], 'no other base: it merges into main');
     const [sync] = callsFor(WORK.sync, B);
     assert.equal(sync.input.reason, 'parent_merged', 'the existing Homeroom sync, which resolved #5956\'s conflict');
     assert.ok((await lines(B)).some((l) => /^PR #\d+: Change \d+: the change it is built on is on main now, so its pull request targets main\. Homeroom is bringing it up to date with main; its checks run again on the result\.$/.test(l)));
@@ -325,7 +327,7 @@ test('stacked imports against the full PostgreSQL schema', { timeout: 240000 }, 
     const A = await imported({ appRow: a, owner, status: 'active' });
     const B = await imported({ appRow: a, owner, on: A, status: 'active' });
     const gone = await imported({ appRow: a, owner, on: A, status: 'archived' });
-    await toProposal(A, 'PrLooked', { from: 'active', merged: true, closed: true, base: 'main' });
+    await toProposal(A, 'PrLooked', { from: 'active', merged: true, closed: true, base: null });
     await rt.drain();
     assert.equal((await pInst(A)).data.reason, 'pr-merged');
     assert.equal((await eventsOf(MACHINE, sessionKey(B.id), 'ParentMerged')).length, 1);
@@ -336,7 +338,7 @@ test('stacked imports against the full PostgreSQL schema', { timeout: 240000 }, 
     assert.equal((await outcome(again)).result, 'accepted');
     await settle();
     assert.equal(callsFor(WORK.retarget, B).length, 1, 'one retarget answers both');
-    assert.equal((await row(B)).imported_pr_base_ref, 'main');
+    assert.equal((await row(B)).imported_pr_base_ref, null);
     assert.equal(callsFor(WORK.sync, B)[0].input.reason, 'parent_merged', 'underway, it syncs too');
     const closed = await toProposal(gone, 'ParentMerged', { parentId: A.id });
     await settle();
@@ -382,8 +384,8 @@ test('stacked imports against the full PostgreSQL schema', { timeout: 240000 }, 
     await settle();
     assert.deepEqual([(await outcome(refused)).result, (await outcome(refused)).reason], ['rejected', 'pr_base_not_main']);
     assert.equal((await row(D)).status, 'active');
-    // One on main goes up as ever.
-    const ok = await promote(A, 'main');
+    // One on main (no other base) goes up as ever.
+    const ok = await promote(A, null);
     await settle();
     assert.equal((await outcome(ok)).result, 'accepted');
   });
