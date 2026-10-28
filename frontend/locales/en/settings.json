@@ -871,6 +871,10 @@
     "text": "No settings match “{{query}}”.",
     "description": "Shown under the Settings search box when no settings page matches. {{query}} is what the person typed. Keep the quotation marks around it, in the target language's style."
   },
+  "nav.filter.try": {
+    "text": "Try <0>{{first}}</0> or <1>{{second}}</1>.",
+    "description": "Shown under \"No settings match\" in the Settings search box. {{first}} and {{second}} are the names of two settings pages (Language and Theme); each is a button that searches for it."
+  },
   "nav.filter.signOut": {
     "text": "Sign out",
     "description": "Search result in the Settings search box, in red, shown when the person typed something like \"sign out\" or \"log out\": choosing it signs them out of Homeroom."

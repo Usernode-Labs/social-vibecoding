@@ -457,6 +457,32 @@ test('the filter matches every word, and names the parts that matched', () => {
   assert.deepEqual(hit('   '), [], 'blank is not a query');
 });
 
+test('the filter marks what matched and, finding nothing, suggests two settings (#5996)', () => {
+  const at = navTsx.indexOf('export function highlightRanges(');
+  const src = navTsx.slice(at, navTsx.indexOf('\n}\n', at) + 2)
+    .replace('export ', '')
+    .replace('(text: string, query: string): [number, number][]', '(text, query)')
+    .replace('new Array<boolean>(text.length)', 'new Array(text.length)')
+    .replace('const ranges: [number, number][] = [];', 'const ranges = [];');
+  const highlightRanges = new Function(`${src}; return highlightRanges;`)();
+  assert.deepEqual(highlightRanges('Password', 'pass'), [[0, 4]]);
+  assert.deepEqual(highlightRanges('Email & recovery', 'EMAIL rec'), [[0, 5], [8, 11]], 'case-insensitive, every word');
+  assert.deepEqual(highlightRanges('Linked phones', 'link linked'), [[0, 6]], 'overlapping words merge');
+  assert.deepEqual(highlightRanges('Theme', 'zzz'), []);
+  assert.match(navTsx, /<Highlighted text=\{hit\.item\.label\} query=\{query\} \/>/, 'hit labels are marked on both hosts');
+
+  // The suggestions are the menu's own Language and Theme parts, each a
+  // button that fills the box with its name.
+  assert.match(navTsx, /const SUGGESTED_PARTS = \['language', 'theme'\];/);
+  for (const key of ['language', 'theme']) {
+    assert.ok(registrySections().some((s) => s.key === key), `${key} is a real settings part`);
+  }
+  assert.match(navTsx, /id="settings:nav\.filter\.try"/);
+  assert.match(navTsx, /onClick=\{\(\) => setQuery\(first\)\}/);
+  assert.match(navTsx, /onClick=\{\(\) => setQuery\(second\)\}/);
+  assert.equal(message('settings:nav.filter.try', { first: 'Language', second: 'Theme' }), 'Try <0>Language</0> or <1>Theme</1>.');
+});
+
 // ── Language is offered to everyone (the #1556 gate is gone) ───────────
 
 test('the Language section is offered to everyone, whatever is saved', () => {
