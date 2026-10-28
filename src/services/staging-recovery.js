@@ -227,17 +227,24 @@ async function stagingNeedsRebuild(session, { config = null, headSha = null, env
 // machine is building, retiring or retrying is its own already
 // (preview-workflow.working). The leader's heal looked only at the 50
 // oldest. `signal` ends the look early (the run's lease is gone).
-async function lookForLostPreviews(config, { signal = null } = {}) {
+//
+// `appId`: right after that app's previews were retired out of band (the
+// preview-data-policy clock, platform-preview-startup tellRetired), only its
+// previews are looked at, and the ones it is checking too: their run is
+// judging a runtime that may be gone, and every page of it would fail.
+async function lookForLostPreviews(config, { signal = null, appId = null } = {}) {
   const pool = require('../db/pool').getPool(config);
   const { rows } = await pool.query(
     `SELECT cs.id, cs.app_id, cs.staging_url, cs.staging_runtime_kind, cs.staging_runtime_name,
             cs.staging_container_id, cs.staging_commit_sha
        FROM wf_instances w JOIN chat_sessions cs ON w.key = 'session:' || cs.id
-      WHERE w.machine = 'preview' AND w.state IN ('settled', 'deferred')
-        AND NOT (w.state = 'settled' AND w.data->>'verdict' = 'error')
-        AND jsonb_typeof(w.data->'serving') = 'object'
-        AND cs.status IN ('promoted', 'merging')
-      ORDER BY cs.id`);
+      WHERE w.machine = 'preview' AND jsonb_typeof(w.data->'serving') = 'object'
+        AND ((w.state IN ('settled', 'deferred')
+              AND NOT (w.state = 'settled' AND w.data->>'verdict' = 'error')
+              AND cs.status IN ('promoted', 'merging'))
+          OR ($1::int IS NOT NULL AND w.state = 'checking'))
+        AND ($1::int IS NULL OR cs.app_id = $1)
+      ORDER BY cs.id`, [appId]);
   const previewWorkflow = require('./preview-workflow');
   let lost = 0;
   for (const session of rows) {
@@ -632,8 +639,25 @@ async function recheckSessionChecks({ pool, session, reason }) {
       sessionId: session.id, commitSha: await requestedRecheckHead(pool, session),
     });
   }
-  await workflow().recheck({ pool, session, reason, trigger: CHECK_TRIGGER_BY_REASON.get(reason) || null,
-    system: !FORCED_RECHECK_REASONS.has(reason) && reason !== 'preview-click' });
+  // A preview the machine says serves may be gone from under it (retired
+  // out of band: the data-policy retirement of a release). Run against, it
+  // checked nothing: on 28 Oct 2026 every one of 743 checks failed at once.
+  // So the runtime is looked at first, from the row as it is now, and one
+  // that is gone is reported lost: the machine rebuilds it, and the recheck
+  // below joins that build. A runtime that cannot be read is not gone. The
+  // system's own recheck leaves one the machine is building or retrying to
+  // it (rebuildSessionStaging's rule): a loss reported again is rebuilt as
+  // a person's, past the error lane's cap.
+  const system = !FORCED_RECHECK_REASONS.has(reason) && reason !== 'preview-click';
+  if (await workflow().held(session.id) && (!system || !await workflow().working(session.id))) {
+    const { rows: [runtime] } = await pool.query(
+      `SELECT id, staging_url, staging_runtime_kind, staging_runtime_name, staging_container_id
+         FROM chat_sessions WHERE id = $1`, [session.id]);
+    if (runtime && await stagingNeedsRebuild(runtime, { envCheck: false })) {
+      await workflow().lost({ session, detail: 'runtime gone' });
+    }
+  }
+  await workflow().recheck({ pool, session, reason, trigger: CHECK_TRIGGER_BY_REASON.get(reason) || null, system });
   return 'handed_off';
 }
 

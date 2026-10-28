@@ -47,6 +47,27 @@ async function check(config, pool, bootResult = null, { boot = false } = {}) {
   return { ...result, scope: proofScope, checkedAt: time.since };
 }
 
+// The clock's run, after check: a retirement deletes runtimes out of band,
+// and the preview machine still says they serve. A run going against one
+// fails every page; a re-run checked nothing (28 Oct 2026, 743 checks at
+// once). So the platform's previews it took are reported lost
+// (staging-recovery lookForLostPreviews), the ones being checked among them,
+// and the machine rebuilds each. Also after a boot scan the clock records.
+// Never fails the run, whose result is the web's readiness proof: the
+// preview-runtimes clock and a person's re-run look again.
+async function tellRetired(config, pool, result, { signal = null } = {}) {
+  if (!(Number(result?.retired) > 0)) return result;
+  try {
+    const { rows } = await pool.query('SELECT id FROM apps WHERE slug = $1 AND self_hosted IS TRUE', [policy.PLATFORM_SLUG]);
+    if (rows.length !== 1) return result;
+    const { lost } = await require('./staging-recovery').lookForLostPreviews(config, { signal, appId: rows[0].id });
+    return { ...result, lost };
+  } catch (error) {
+    require('./logger').warn('preview-policy', 'Could not tell the preview machine what retirement removed', { message: error.message });
+    return result;
+  }
+}
+
 async function beforeServe(config, pool, { timeoutMs = WAIT_MS, pollMs = 500,
   now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
   if (process.env.USERNODE_ENV === 'staging') return { skipped: 'staging' };
@@ -73,4 +94,4 @@ async function beforeServe(config, pool, { timeoutMs = WAIT_MS, pollMs = 500,
   }
 }
 
-module.exports = { JOB, MAX_AGE_MS, WAIT_MS, check, beforeServe };
+module.exports = { JOB, MAX_AGE_MS, WAIT_MS, check, tellRetired, beforeServe };

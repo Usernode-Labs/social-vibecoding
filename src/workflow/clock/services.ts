@@ -42,9 +42,12 @@ export interface Job {
 // started, not by when its release was first seen, so a rollback to an older
 // build, or a rollout of the same build with another configuration, is the
 // newest once it serves. A platform with no process recorded (a test) has no
-// older build.
+// older build. A process is recorded from its start (services/processes.js
+// start, before its boot's own retirement), so a newer build is the newest
+// while it still boots. The preview machine's build of a platform preview
+// asks the same (preview/services.ts standDown).
 const LIVE_SECONDS = 45;
-async function newestBuild(pool: any): Promise<boolean> {
+export async function newestBuild(pool: any): Promise<boolean> {
   const own = String(process.env.GIT_SHA || '').trim().slice(0, 40) || null;
   const { rows: [newest] } = await pool.query(
     `SELECT release FROM platform_processes
@@ -559,8 +562,15 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { config }: JobDeps) => legacy('services/staging-reap').tellStaleEnv(config),
   },
   {
+    // The platform's previews made under another data policy than this
+    // build's, retired (its result is the web's readiness proof). The
+    // ones the preview machine still says serve are reported lost, so it
+    // rebuilds them rather than check a runtime that is gone.
     name: 'preview-data-policy', everyMs: MIN, leaseMs: 10 * MIN, newestOnly: true,
-    run: (_ctx: WorkContext, { config, pool, previewRetirement }: JobDeps) => legacy('services/platform-preview-startup').check(config, pool, previewRetirement),
+    run: async (ctx: WorkContext, { config, pool, previewRetirement }: JobDeps) => {
+      const startup = legacy('services/platform-preview-startup');
+      return startup.tellRetired(config, pool, await startup.check(config, pool, previewRetirement), { signal: ctx.signal });
+    },
   },
   {
     // Staging databases nothing can reach any more (no session, build or
