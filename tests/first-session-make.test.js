@@ -180,13 +180,16 @@ test('the story: label, headline, "For example" and the three examples, then one
     'For example',
     ...TEMPLATE_ROWS,
     message('auth:story.continue'),
+    'Already have an account?',
     'Sign in',
-    'or join with your email.',
   ]);
-  assert.match(html, /<a href="#signup" data-landing-story-start="" class="pill">Continue<\/a>/);
+  // #5849: the button says it makes an account, and the line right
+  // under it is for somebody who already has an account.
+  assert.equal(message('auth:story.continue'), 'Create your account');
+  assert.match(html, /<a href="#signup" data-landing-story-start="" class="pill">Create your account<\/a>/);
   // Polish N10: the line is still one sentence, and its "Sign in" is a link.
-  assert.match(html, /<p data-landing-story-how=""[^>]*><a href="#login" data-landing-story-signin="" class="[^"]*">Sign in<\/a> or join with your email\.<\/p><\/div>/);
-  assert.doesNotMatch(html, /Already have an account|Get started|data-landing-story-waves|in waves/);
+  assert.match(html, /<p data-landing-story-how=""[^>]*>Already have an account\? <a href="#login" data-landing-story-signin="" class="[^"]*">Sign in<\/a><\/p><\/div>/);
+  assert.doesNotMatch(html, /or join with your email|Get started|data-landing-story-waves|in waves/);
   // In a phone browser too, the story fills the screen and its foot is at the foot.
   const css = read('public/css/app.css');
   // Polish N10: one level-1 heading. The covered platform header leaves the

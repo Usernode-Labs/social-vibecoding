@@ -217,7 +217,11 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
       </a>
       {/* Polish N10: the line read like a second way in but was plain
           text. Its "Sign in" is one now, the same sheet titled Sign in
-          (landing.tsx's 'signin'), for somebody who has an account. */}
+          (landing.tsx's 'signin'), for somebody who has an account.
+          #5849: a bare "Continue" over "Sign in or join with your email"
+          read as two unclear choices. The button says what it is for
+          ("Create your account") and the line right under it is for
+          the returning person ("Already have an account? Sign in"). */}
       <p data-landing-story-how="" className="mt-1 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400 text-balance">
         <RichMessage
           id="auth:story.email"
