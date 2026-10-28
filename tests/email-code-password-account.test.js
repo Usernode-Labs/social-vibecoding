@@ -54,8 +54,10 @@ test('a refused-but-correct code lands on the password form, address carried ove
   assert.ok(handler, 'onOtpVerify is still one callback');
   const body = handler[0];
 
-  // Both refusals route the same way: they are not mistyped codes.
-  assert.match(body, /data\.code === 'password_required' \|\| data\.code === 'admin_password_required'/);
+  // The only refusal that routes to the form: a confirmed-email account
+  // that still has a password is signed in, so this is the unconfirmed one.
+  assert.match(body, /data\.code === 'password_required'/);
+  assert.doesNotMatch(body, /admin_password_required/, 'admins are signed in like anyone');
   assert.match(body, /showLoginBaseView\(\);/,
     'the code step is left for the form that can actually succeed');
   assert.match(body, /username\.current\.value = st\.otpEmail \|\| ''/,
@@ -65,7 +67,6 @@ test('a refused-but-correct code lands on the password form, address carried ove
   // The branch must be taken BEFORE the generic "invalid or expired" message.
   assert.equal(message('auth:login.otp.codeRejected'), 'Invalid or expired code.');
   assert.ok(body.includes("'auth:login.otp.codeRejected'"));
-  assert.ok(body.indexOf('admin_password_required') < body.indexOf("'auth:login.otp.codeRejected'"));
 });
 
 test('a code that signs you straight in finishes the login instead of asking for a password', () => {

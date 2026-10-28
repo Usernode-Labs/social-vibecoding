@@ -298,16 +298,33 @@ test('the headless creation paths still mint up front, and say why', () => {
   );
 });
 
-test('the clone path never asks GitHub for heads/null', () => {
-  // github.createBranch(owner, repo, name, fromBranch = 'main') defaults
-  // only on undefined, so a NULL source branch_name would reach the API as
-  // the literal string "null". Reachable now that a source session can be
-  // branchless.
-  const src = read('src/routes/sessions.js');
-  const inherits = src.match(/createBranch\([^)]*src\.branch_name[^)]*\)/g) || [];
-  assert.equal(inherits.length, 1, 'expected the clone inheritance site (the fork is retired, #2779)');
-  for (const use of inherits) {
-    assert.match(use, /\|\| 'main'/, `unguarded branch inheritance: ${use}`);
+test('the clone path never asks GitHub for heads/null', async () => {
+  // A source session can be branchless (#1350), so a NULL source
+  // branch_name must never reach the host as the literal string "null".
+  // The clone's branch is a conductor's platform operation
+  // (services/branch-operation.js): it reads the source run's branch itself
+  // and starts from main when there is none.
+  const github = require('../src/services/github');
+  const branchOperation = require('../src/services/branch-operation');
+  const { none } = require('../src/services/durable-steps');
+  const prior = { getBranchSha: github.getBranchSha, ensureBranchAtSha: github.ensureBranchAtSha };
+  const read = []; const made = [];
+  github.getBranchSha = async (_o, _r, branch) => { read.push(branch); return `sha-of-${branch}`; };
+  github.ensureBranchAtSha = async (_o, _r, branch, sha) => { made.push({ branch, sha }); };
+  const pool = {
+    query: async (sql) => (/FROM apps WHERE id/.test(sql)
+      ? { rows: [{ id: 11, repo_url: 'https://github.com/acme/demo' }] }
+      : { rows: [{ app_id: 11, branch_name: null }] }),
+  };
+  try {
+    const out = await branchOperation.run({ pool }, {
+      appId: 11, input: { purpose: 'clone-headless', branch: 'dev/tester-1', sourceSessionId: 1 },
+    }, null, none());
+    assert.deepEqual(read, ['main']);
+    assert.deepEqual(made, [{ branch: 'dev/tester-1', sha: 'sha-of-main' }]);
+    assert.equal(out.inheritedCodeBranch, false);
+  } finally {
+    Object.assign(github, prior);
   }
 });
 

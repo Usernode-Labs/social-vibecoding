@@ -127,7 +127,7 @@ async function checkPeople(pool, governance) {
  * Open the PR. `change` is diffChange's output (at least one part set).
  * Resolves `{ sessionId, prNumber, prUrl, branch, title }`.
  */
-async function createWhoDecidesPR(config, pool, app, change, actor) {
+async function createWhoDecidesPR(config, pool, app, change, actor, { steps } = {}) {
   const title = describeChange(change);
   const parts = [];
   if (change.visibility) {
@@ -140,6 +140,7 @@ async function createWhoDecidesPR(config, pool, app, change, actor) {
   }
   const block = change.governance ? governanceRules.blockFor(change.governance) : null;
   const result = await renamePr.createManifestPR(config, pool, app, actor, {
+    steps,
     mutate: (m) => {
       if (change.visibility) {
         const cols = columnsFor(change.visibility);

@@ -44,8 +44,10 @@
  *
  * An invite's Join asks for a phone number first (`phone`, whenever the
  * server offers phone sign-in): an invite makes a private member, and a
- * private member signs up with a phone (services/community-invites.js
- * joinAsPrivateMember), against routes/phone-auth.js:
+ * phone is the quickest way to be one (services/community-invites.js
+ * joinAsPrivateMember takes a verified phone or a confirmed email; the
+ * email code, Apple and Google past the "or" confirm the address too),
+ * against routes/phone-auth.js:
  *
  *   phone       Your name and a phone number. POST /api/auth/phone/request
  *               texts a code, after an invisible reCAPTCHA (./recaptcha.ts)
@@ -188,7 +190,7 @@ import { CodeBoxes, CODE_LENGTH, codeDigits } from './code-boxes';
 import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
 import { NativeLoginDetailsLink } from './native-login-details';
 import { PhoneInput, readPhone } from './phone-input';
-import { phoneRecaptchaInUse, phoneRecaptchaToken, RECAPTCHA_LINE } from './recaptcha';
+import { phoneRecaptchaInUse, postPhoneCodeRequest, RECAPTCHA_LINE } from './recaptcha';
 import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
 import {
   blockedOffline,
@@ -215,7 +217,6 @@ const RESUME_ERRORS: Record<string, string> = {
   expired: 'auth:signInSheet.resume.expired',
   no_verified_email: 'auth:signInSheet.resume.noVerifiedEmail',
   password_required: 'auth:signInSheet.resume.passwordRequired',
-  admin_password_required: 'auth:signInSheet.resume.adminPasswordRequired',
   linked_elsewhere: 'auth:signInSheet.resume.linkedElsewhere',
   logout_required: 'auth:signInSheet.resume.logoutRequired',
 };
@@ -1212,10 +1213,10 @@ export function SignInSheet({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
-        // A right code for an account that signs in with its password (an
-        // admin's, or one whose address was never confirmed): its password
-        // step, with the address carried over, as the sign-in screen does.
-        if (data.code === 'password_required' || data.code === 'admin_password_required') {
+        // A right code for an account that signs in with its password (one
+        // whose address was never confirmed): its password step, with the
+        // address carried over, as the sign-in screen does.
+        if (data.code === 'password_required') {
           identifierPrefill.current = email;
           setStep('password');
           setError(data.error || translate('auth:signInSheet.code.passwordAccount'));
@@ -1268,14 +1269,7 @@ export function SignInSheet({
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
-      const recaptchaToken = await phoneRecaptchaToken();
-      const res = await fetch('/api/auth/phone/request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ phoneNumber: value, ...(recaptchaToken ? { recaptchaToken } : {}) }),
-      });
-      const data = await res.json().catch(() => ({}));
+      const { res, data } = await postPhoneCodeRequest('/api/auth/phone/request', value);
       if (!res.ok || !data.ok || typeof data.sessionInfo !== 'string') {
         // Asked again too soon for a number a code already went to: that
         // code is still the one to type, with the resend held.

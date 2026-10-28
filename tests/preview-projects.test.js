@@ -173,6 +173,16 @@ test('production asks the repository what the preview\'s commit changed, and nam
   assert.match(staging, /previewEnv\(config, \{\s*app, sessionId: session\.id, commitHash,\s*\}\)/);
 });
 
+test('the source repository is public, like an app\'s: a build fetches its commit with no credential', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'preview-projects.js'), 'utf8');
+  const push = source.slice(source.indexOf('async function pushSource'), source.indexOf('function dropBranch'));
+  assert.match(push, /private: false/);
+  assert.match(push, /setPrivate\(SOURCE_REPO, false\)/, 'and one an earlier version made private is turned public');
+  assert.doesNotMatch(push, /private: true/);
+  const buildkit = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'kubernetes-buildkit.js'), 'utf8');
+  assert.match(buildkit, /git -c protocol\.version=2 fetch -q --depth 1 "\$REPO_URL"/, 'the fetch that needs it');
+});
+
 // ── Names ──────────────────────────────────────────────────────────────
 
 test('a project name is its own: never the platform\'s, never another preview\'s host, and one DNS label', () => {

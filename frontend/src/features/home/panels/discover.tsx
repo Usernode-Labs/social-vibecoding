@@ -112,7 +112,7 @@ function CardArt({ icon }: { icon: IconView }) {
  * with dapp.json's own Discover check, so they stay whatever the card looks
  * like. `home-discover-tile` does NOT stay: it named a 40px tile in a grid,
  * the CSS that sized it is retired with the grid, and a class that says
- * "tile" on a 152px card is a name the next reader has to disbelieve.
+ * "tile" on a 180px card is a name the next reader has to disbelieve.
  *
  * The blurb and the contributor line are both CONDITIONAL. Most apps declare
  * no description (there is no such column on `apps` — it comes off the
@@ -231,7 +231,7 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
         {/*
             UP TO TWO LINES, then "…". The single line this name carried was
             for a 55px grid track, and its `truncate whitespace-nowrap` still
-            cut long community names mid-word on a 152px card ("Community
+            cut long community names mid-word on a 180px card ("Community
             Tier …"). The clamp in `.home-discover-name` gives a long name a
             second line before it gives up, and `overflow-wrap: anywhere`
             keeps a run-without-spaces name from overflowing the card.

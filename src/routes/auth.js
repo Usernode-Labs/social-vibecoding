@@ -402,8 +402,9 @@ function authRoutes(config) {
     // A link that joined this person (a private member's, or anybody's
     // with access) counts for its challenge now, not on the rule's next
     // pass (#3564). A queued one waits for release, and the schedule.
-    // While phone sign-in is offered, an email account new to the platform
-    // stays queued: a private member signs up with a phone.
+    // The code just confirmed the address, so an account new to the
+    // platform joins as a private member (community-invites.js
+    // joinAsPrivateMember).
     if (invite && invite.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
     if (verified.next === 'signed-in') {
       // The account has nothing to set up: a password, or (#4595) a username
@@ -1936,11 +1937,7 @@ function authRoutes(config) {
   //   - Always answers `{ ok: true }` for a well-formed email, whether or
   //     not an account matched — the same anti-enumeration contract as the
   //     web email-signup flow (see src/services/mail/index.js).
-  //   - Only non-admin accounts with a CONFIRMED email are eligible. Admins
-  //     keep the admin-issued temporary-password path: control of an inbox
-  //     must never be enough to take over an admin console login (the same
-  //     stance as the shared OTP set-password guard in
-  //     src/services/email-signup.js).
+  //   - Only accounts with a CONFIRMED email are eligible.
   //   - The DB stores only the sha256 of the token; the plaintext exists in
   //     the emailed link alone and is never logged.
   //   - A new request overwrites any previous outstanding token (single
@@ -1954,7 +1951,7 @@ function authRoutes(config) {
     try {
       const { rows } = await pool.query(
         `SELECT id, email FROM users
-          WHERE lower(email) = lower($1) AND email_confirmed = TRUE AND is_admin = FALSE`,
+          WHERE lower(email) = lower($1) AND email_confirmed = TRUE`,
         [email]
       );
       if (rows.length > 0) {
@@ -1965,7 +1962,7 @@ function authRoutes(config) {
         const issued = await pool.query(
           `UPDATE users SET password_reset_token_hash = $1,
                             password_reset_expires_at = $2
-            WHERE id = $3 AND email = $4 AND email_confirmed = TRUE AND is_admin = FALSE`,
+            WHERE id = $3 AND email = $4 AND email_confirmed = TRUE`,
           [tokenHash, expiresAt, user.id, user.email]
         );
         // The mailbox may have changed since the lookup. Never issue a

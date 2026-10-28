@@ -510,7 +510,7 @@ test('email-reset request: unknown email answers 200 with no token mint and no m
   }
 });
 
-test('email-reset request: eligibility filter excludes admins and unconfirmed emails in SQL', async () => {
+test('email-reset request: eligibility filter is a confirmed email, admins included', async () => {
   reset();
   userByEmail = { id: 7, email: 'dave@example.com' };
   const server = await startApp(authRoutes, { nodeRpcUrl: 'http://unused' });
@@ -520,7 +520,7 @@ test('email-reset request: eligibility filter excludes admins and unconfirmed em
     const sel = capturedQueries.find((q) => /SELECT .*WHERE lower\(email\) = lower\(\$1\)/s.test(q.sql));
     assert.ok(sel, 'looked the account up by email (case-insensitively — #1269)');
     assert.match(sel.sql, /email_confirmed = TRUE/, 'only confirmed emails are eligible');
-    assert.match(sel.sql, /is_admin = FALSE/, 'admin accounts are excluded from email reset');
+    assert.doesNotMatch(sel.sql, /is_admin/, 'admin accounts are not excluded from email reset');
     assert.strictEqual(sel.params[0], 'dave@example.com', 'email is normalized to lower case');
   } finally {
     server.close();
@@ -547,10 +547,29 @@ test('email-reset request: eligible account mints a hashed token, mails the plai
     assert.ok(mint.params[1] instanceof Date && mint.params[1] > new Date(), 'expiry is in the future');
     assert.strictEqual(mint.params[2], 7);
     assert.strictEqual(mint.params[3], userByEmail.email);
-    assert.match(mint.sql, /AND email = \$4 AND email_confirmed = TRUE AND is_admin = FALSE/);
+    assert.match(mint.sql, /AND email = \$4 AND email_confirmed = TRUE/);
+    assert.doesNotMatch(mint.sql, /is_admin/, 'the mint never excludes an admin');
 
     assert.ok(!JSON.stringify(r.body).includes(token), 'plaintext token not in the response');
     assert.ok(!JSON.stringify(logCalls).includes(token), 'plaintext token never logged');
+  } finally {
+    server.close();
+  }
+});
+
+test('email-reset request: an admin with a confirmed email is issued a reset token too', async () => {
+  reset();
+  userByEmail = { id: 9, email: 'boss@example.com', is_admin: true };
+  const server = await startApp(authRoutes, { nodeRpcUrl: 'http://unused' });
+  try {
+    const r = await post(server, '/api/auth/password-reset/request', { email: 'boss@example.com' });
+    assert.strictEqual(r.res.status, 200);
+    assert.strictEqual(r.body.ok, true);
+    assert.strictEqual(sentResetMails.length, 1, 'the admin is mailed the same reset link');
+    assert.strictEqual(sentResetMails[0].email, 'boss@example.com');
+    const mint = capturedQueries.find((q) => /UPDATE users SET password_reset_token_hash/.test(q.sql));
+    assert.ok(mint, 'a token was minted for the admin');
+    assert.strictEqual(mint.params[2], 9);
   } finally {
     server.close();
   }

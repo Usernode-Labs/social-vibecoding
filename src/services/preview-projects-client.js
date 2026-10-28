@@ -127,14 +127,42 @@ async function createDatabase(row) {
 // owned by the seeded demo identity, never by whoever opens the preview, and
 // open to everyone, so anyone looking can open it and join it.
 //
+// Each is featured, so it leads Home's Discover for whoever opens the
+// preview (My apps lists the viewer's own projects only).
+//
 // Run with the staging seeds on every boot (db/migrate.js); one already
-// made is left as it is. NEVER THROWS.
+// made is left as it is, unless it failed, when it is tried again.
+// NEVER THROWS.
 
 const CHANGE_SUFFIX = '-this-change';
 const DEMO_OWNER = 'staging-demo-user';
 
 function changeStarterSlug(templateId) {
   return `${templateId}${CHANGE_SUFFIX}`;
+}
+
+// The seeds run before the workflow runtime starts (db/migrate.js, then
+// server.js), and a retry is the app-creation machine's: it is asked for
+// once the runtime is up, as the project's Retry button asks
+// (routes/apps.js POST /api/apps/:slug/retry). Never throws.
+const RETRY_POLL_MS = 5000;
+const RETRY_TRIES = 36;
+function retryWhenRunning(appId, slug, { tries = RETRY_TRIES, pollMs = RETRY_POLL_MS, platform = null } = {}) {
+  const attempt = async (left) => {
+    try {
+      const wf = platform || require('../workflow/platform.ts');
+      const out = await wf.retryCreation(appId, { counted: false, actor: 'preview-projects' });
+      log.info('preview-projects', 'Retried a changed starter that had failed', { slug, status: out && out.status });
+    } catch (err) {
+      if (left > 1 && /not running/i.test(err.message || '')) {
+        const timer = setTimeout(() => attempt(left - 1), pollMs);
+        if (timer.unref) timer.unref();
+        return;
+      }
+      log.warn('preview-projects', 'Could not retry a changed starter that had failed', { slug, err: err.message });
+    }
+  };
+  return attempt(tries);
 }
 
 async function seedChangedStarters(pool, _config = null, env = process.env) {
@@ -197,6 +225,27 @@ async function seedChangedStarters(pool, _config = null, env = process.env) {
       }
     }
     if (made.length) log.info('preview-projects', 'Made the starters this change touches', { made });
+
+    // On everyone's Home. My apps lists the viewer's own projects, and these
+    // are the demo identity's, so each is featured instead: Home's Discover
+    // leads with it for anyone who opens the preview.
+    const slugs = ids.map(changeStarterSlug);
+    const { rows: projects } = await pool.query(
+      'SELECT id, slug, status FROM apps WHERE slug = ANY($1::text[])', [slugs]);
+    for (const p of projects) {
+      await pool.query(
+        `INSERT INTO featured_apps (app_id, sort_order, created_by) VALUES ($1, -1, $2)
+         ON CONFLICT (app_id) DO NOTHING`,
+        [p.id, owner.id]
+      );
+    }
+    // One an earlier boot made that failed: tried again, so a fix to how
+    // previews make projects reaches a project that already failed. Not
+    // counted against its retries, which are for the project's own faults.
+    for (const p of projects) {
+      // Through the export, which a test stands in for.
+      if (p.status === 'error' && !made.includes(p.slug)) module.exports.retryWhenRunning(p.id, p.slug);
+    }
   } catch (err) {
     log.warn('preview-projects', 'Making the changed starters failed (continuing)', { err: err.message });
   }
@@ -342,6 +391,7 @@ module.exports = {
   active,
   appUrl,
   changeStarterSlug,
+  retryWhenRunning,
   seedChangedStarters,
   createDatabase,
   readTree,

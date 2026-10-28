@@ -22,10 +22,11 @@
  *                 on the waitlist) joins on the spot too, as a PRIVATE MEMBER
  *                 (users.private_member_since): in this community now, on the
  *                 waitlist for making apps of their own, once they have a
- *                 verified phone (whenever phone sign-in is offered). A
- *                 redemption the link cannot grant now stays queued, and the
- *                 trigger in schema.sql applies it the moment they are let
- *                 in, however that happens.
+ *                 verified phone or a confirmed email address (whenever
+ *                 phone sign-in is offered). A redemption the link cannot
+ *                 grant now stays queued, and the trigger in schema.sql
+ *                 applies it the moment they are let in, however that
+ *                 happens.
  *
  * WHAT A LINK GRANTS is what its maker could grant: on a project where
  * building is by invitation it is the collaborator invite, accepted; anywhere
@@ -804,15 +805,16 @@ async function entryFor(pool, invite, user, showSelfHosted) {
  * transaction, the link's row locked for its use count. `browser` is the
  * browser it was followed from (invite-activity.browserFrom), for the
  * maker's open notice. `requirePhone` is whether a private member must have
- * a verified phone (joinAsPrivateMember): the callers pass
- * firebase-phone-auth.offered(config).
+ * a verified phone or a confirmed email (joinAsPrivateMember): the callers
+ * pass firebase-phone-auth.offered(config).
  *
  * Returns `{ ok: true, status, slug, name, privateMember }`:
  *   status 'joined'  in the project now (slug set);
  *          'member'  was already in it; nothing spent (slug set);
  *          'queued'  the link could not grant it now (its maker no longer
- *                    holds the right, say, or a private member's phone is
- *                    missing): joins when let in (no slug);
+ *                    holds the right, say, or a private member has neither
+ *                    a verified phone nor a confirmed email): joins when
+ *                    let in (no slug);
  * or `{ ok: false, status: 404|410, reason }` for an unknown or dead link.
  *
  * Somebody without platform access joins too, as a PRIVATE MEMBER
@@ -947,21 +949,28 @@ async function redeem(pool, { token, user, browser = null, requirePhone = false 
  * that did it). A redemption it skipped (its maker lost the right to grant,
  * say) stays queued and marks nothing. Returns whether they are in.
  *
- * A private member signs up with a phone number: with `requirePhone` (phone
- * sign-in is offered), an account with no verified phone
- * (user_phone_identities, services/firebase-phone-auth.js) is not joined at
- * all, and its redemption stays queued, so it joins when let in off the
- * waitlist like any queued one. The invite's Join sheet starts with the
- * phone for that reason. Without phone sign-in set up, nothing could meet
- * the rule, so it is not asked.
+ * A private member is somebody we can reach: with `requirePhone` (phone
+ * sign-in is offered), an account with neither a verified phone
+ * (user_phone_identities, services/firebase-phone-auth.js) nor a confirmed
+ * email address (users.email_confirmed: an email code, or Apple or Google
+ * vouching for the address) is not joined at all, and its redemption stays
+ * queued, so it joins when let in off the waitlist like any queued one, or
+ * once it adds a phone (joinQueued). Phone only, until 28 Oct 2026: an
+ * account made by email from an invite then waited on the waitlist, and
+ * Evan let a confirmed address through too. The invite's Join sheet still
+ * starts with the phone, the quickest way in. Without phone sign-in set up,
+ * nothing is asked.
  */
 async function joinAsPrivateMember(client, userId, redemptionId, { requirePhone = false } = {}) {
   if (requirePhone) {
-    const { rows: phone } = await client.query(
-      'SELECT 1 FROM user_phone_identities WHERE user_id = $1',
+    const { rows: reachable } = await client.query(
+      `SELECT 1 FROM users u
+        WHERE u.id = $1
+          AND ((u.email_confirmed = TRUE AND u.email IS NOT NULL)
+               OR EXISTS (SELECT 1 FROM user_phone_identities p WHERE p.user_id = u.id))`,
       [userId]
     );
-    if (!phone.length) return false;
+    if (!reachable.length) return false;
   }
   await client.query('SELECT apply_community_invite($1)', [redemptionId]);
   const { rows } = await client.query(
@@ -998,14 +1007,16 @@ async function queuedFor(pool, userId) {
 
 /**
  * Follow again, as a private member, every link `userId` (no access yet) is
- * queued on: what an account made by email does once it adds the phone a
- * private member needs (routes/phone-auth.js /api/auth/phone-link/verify).
+ * queued on: what an account does once it adds a phone
+ * (routes/phone-auth.js /api/auth/phone-link/verify), and what the waiting
+ * room asks on show (POST /api/invite-links/queued/join), for an account
+ * queued while a phone was the only way in that has a confirmed email.
  * Through redeem itself, so a queued row is applied without spending a
  * second use, and the joining is told and recorded as any other. Returns
  * the communities joined, `[{ slug, name }]`, oldest link first. A link
  * that fails is logged and skipped: the rest still join.
  */
-async function joinQueued(pool, userId) {
+async function joinQueued(pool, userId, { requirePhone = true } = {}) {
   const { rows: u } = await pool.query(
     'SELECT id, is_admin, has_platform_access FROM users WHERE id = $1',
     [userId]
@@ -1024,7 +1035,7 @@ async function joinQueued(pool, userId) {
   const joined = [];
   for (const { token } of rows) {
     try {
-      const result = await redeem(pool, { token, user, requirePhone: true });
+      const result = await redeem(pool, { token, user, requirePhone });
       if (result.ok && result.status === 'joined') joined.push({ slug: result.slug, name: result.name });
     } catch (err) {
       log.warn('invites', 'Joining a queued link failed', { userId, err: err.message });

@@ -108,6 +108,11 @@ function phoneAuthRoutes(config) {
   // recordFailure writes nothing. Lives inside phoneAuthRoutes because it
   // writes through that router's own pool.
   async function fail(res, error, what, ctx = {}) {
+    // Not a failure: the client earns a reCAPTCHA token for the Firebase
+    // backup with this key and asks again (services/firebase-phone-auth.js).
+    if (error instanceof phoneAuth.PhoneAuthError && error.code === 'recaptcha_backup') {
+      return res.status(409).json({ error: error.message, code: error.code, siteKey: error.siteKey });
+    }
     if (error instanceof phoneAuth.PhoneAuthError) {
       await failureLog.recordFailure(pool, {
         kind: ctx.kind,
@@ -182,7 +187,7 @@ function phoneAuthRoutes(config) {
           config,
           req.body?.phoneNumber,
           req.body?.recaptchaToken,
-          { pool }
+          { pool, canBackUp: req.body?.backup === true }
         );
         return res.json({ ok: true, sessionInfo: sent.sessionInfo });
       } catch (error) {
@@ -216,22 +221,6 @@ function phoneAuthRoutes(config) {
             return phoneAuth.verifyIdToken(pool, config, exchanged.idToken);
           })();
       const result = await phoneAuth.signIn(pool, claims, { createSession });
-      if (result.refuse) {
-        // A refused sign-in is still a failed verification, with the account
-        // and number known: logged, the one refuse the flow produces.
-        await failureLog.recordFailure(pool, {
-          kind: 'verify',
-          userId: result.userId,
-          phoneLast4: last4Of(claims?.phoneNumber),
-          errorCode: result.refuse,
-          providerCode: null,
-          message: 'Admin accounts sign in with their password.',
-        });
-        return res.status(422).json({
-          error: 'Admin accounts sign in with their password.',
-          code: result.refuse,
-        });
-      }
 
       // An invite link this visitor opened first is followed as the account
       // the phone just CREATED, and an existing account follows it only when
@@ -374,7 +363,9 @@ function phoneAuthRoutes(config) {
     signedIn,
     async (req, res) => {
       try {
-        const sent = await phoneAuth.requestCode(config, req.body?.phoneNumber, req.body?.recaptchaToken, { pool });
+        const sent = await phoneAuth.requestCode(config, req.body?.phoneNumber, req.body?.recaptchaToken, {
+          pool, canBackUp: req.body?.backup === true,
+        });
         return res.json({ ok: true, sessionInfo: sent.sessionInfo });
       } catch (error) {
         return fail(res, error, 'Phone link code request', {

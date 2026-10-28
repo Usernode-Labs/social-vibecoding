@@ -50,6 +50,7 @@ function loadSessions(mockPool, overrides = {}) {
     events: require.resolve('../src/services/events'),
     sessions: require.resolve('../src/routes/sessions'),
     notifications: require.resolve('../src/services/notifications'),
+    operations: require.resolve('../src/services/platform-operations'),
   };
 
   const githubStub = {
@@ -106,6 +107,11 @@ function loadSessions(mockPool, overrides = {}) {
       },
     })],
     [paths.github, stubModule(paths.github, githubStub)],
+    // The run's branch is a conductor's platform operation
+    // (services/branch-operation.js, tested on its own).
+    [paths.operations, stubModule(paths.operations, {
+      request: async ({ input }) => ({ ok: true, branch: input.branch }),
+    })],
     [paths.llm, stubModule(paths.llm, llmStub)],
     [paths.worker, stubModule(paths.worker, workerStub)],
     // Keep the real module's other exports (sessionRoutes wires several

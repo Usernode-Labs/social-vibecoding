@@ -411,12 +411,75 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       const seededWants = (await app.call('GET', '/api/items', { as: ada })).data.items.find((i) => i.id === 900005);
       assert.deepEqual([seededWants.votes, seededWants.wants, seededWants.tier], [0, 2, null]);
 
+      // People: everyone with something on a board, the viewer first, then
+      // by name, and one person's whole board where they put each item.
+      const people = (await app.call('GET', '/api/people', { as: ada })).data.people;
+      assert.deepEqual(people.filter((p) => p.id < 0).map((p) => [p.id, p.name, p.you, p.ranked, p.wants]), [
+        [-1, 'staging-demo-ana', false, 4, 1],
+        [-2, 'staging-demo-ben', false, 3, 1],
+        [-3, 'staging-demo-cy', false, 3, 1],
+      ]);
+      const mine = people.find((p) => p.id === 101);
+      assert.deepEqual([mine.name, mine.you, mine.ranked, mine.wants], ['ada', true, 1, 0], 'you are listed first, as you');
+      const ana = (await app.call('GET', '/api/people/-1', { as: ada })).data;
+      assert.deepEqual([ana.person.id, ana.person.name, ana.person.you, ana.person.ranked, ana.person.wants],
+        [-1, 'staging-demo-ana', false, 4, 1]);
+      assert.deepEqual(ana.places, { 900001: 'S', 900002: 'A', 900003: 'B', 900004: 'F', 900005: 'W' });
+      assert.equal((await app.call('GET', '/api/people/999999', { as: ada })).status, 404);
+      assert.equal((await app.call('GET', '/api/people/0', { as: ada })).status, 404);
+
+      // Comments: the two seeded ones, oldest first, ana's mention kept in
+      // the member list's own spelling.
+      const demoComments = (await app.call('GET', '/api/items/900001/comments', { as: ada })).data.comments;
+      assert.deepEqual(demoComments.map((c) => [c.name, c.you, c.body, c.mentions]), [
+        ['staging-demo-ana', false, 'Agree with @staging-demo-ben, this one is top of the list.', ['staging-demo-ben']],
+        ['staging-demo-cy', false, 'A close second for me.', []],
+      ]);
+      assert.equal((await app.call('GET', '/api/items/999999/comments', { as: ada })).status, 404);
+
+      // The @ list's names: the project's members, for a member's own token.
+      assert.deepEqual((await app.call('GET', '/api/members', { as: ada })).data,
+        { members: [{ id: 101, username: 'ada' }, { id: 102, username: 'grace' }] });
+
+      // Anyone signed in can comment: the body keeps its line breaks, and a
+      // name that is a project member is kept as a mention.
+      assert.equal((await app.call('POST', '/api/items/900002/comments', { as: ada, body: { body: '   ' } })).status, 400);
+      assert.equal((await app.call('POST', '/api/items/999999/comments', { as: ada, body: { body: 'Hi' } })).status, 404);
+      const posted = await app.call('POST', '/api/items/900002/comments', { as: ada, body: { body: '  @Grace  says   hi\n\n\n\nok ' } });
+      assert.equal(posted.status, 201);
+      let comments = (await app.call('GET', '/api/items/900002/comments', { as: ada })).data.comments;
+      let newest = comments[comments.length - 1];
+      assert.deepEqual([newest.id, newest.name, newest.you, newest.body, newest.mentions],
+        [posted.data.id, 'ada', true, '@Grace says hi\n\n\nok', ['grace']]);
+
+      // Your own comment is yours to delete; someone else's is not.
+      const gracesOwn = await app.call('POST', '/api/items/900002/comments', { as: grace, body: { body: 'Mine' } });
+      assert.equal(gracesOwn.status, 201);
+      assert.equal((await app.call('POST', `/api/comments/${gracesOwn.data.id}/report`, { as: grace })).status, 400,
+        'you delete your own comment instead');
+      assert.equal((await app.call('DELETE', `/api/comments/${gracesOwn.data.id}`, { as: ada })).status, 403);
+      assert.equal((await app.call('DELETE', `/api/comments/${gracesOwn.data.id}`, { as: grace })).status, 200);
+
+      // A report hides it for whoever reported it at once; two different
+      // people reporting it hide it for everyone.
+      const visible = async (as) => (await app.call('GET', '/api/items/900002/comments', { as })).data.comments.map((c) => c.id);
+      assert.equal((await app.call('POST', `/api/comments/${posted.data.id}/report`, { as: grace })).status, 202);
+      assert.ok(!(await visible(grace)).includes(posted.data.id), 'hidden for whoever reported it');
+      assert.ok((await visible(sam)).includes(posted.data.id), 'still there for anyone else');
+      assert.equal((await app.call('POST', `/api/comments/${posted.data.id}/report`, { as: sam })).status, 202);
+      assert.ok(!(await visible(ada)).includes(posted.data.id), 'two different people hide it for everyone');
+      assert.equal((await app.call('POST', '/api/comments/999999/report', { as: sam })).status, 404);
+
+      const onItem = await app.call('POST', `/api/items/${id}/comments`, { as: grace, body: { body: 'On the noodle place' } });
+      assert.equal(onItem.status, 201, 'the item that goes away has a comment too');
+
       assert.equal((await app.call('DELETE', `/api/items/${id}`, { as: grace })).status, 403, 'only whoever added it removes it');
       const before = graces.events();
       assert.equal((await app.call('DELETE', `/api/items/${id}`, { as: ada })).status, 200);
       assert.ok(!(await app.call('GET', '/api/items', { as: ada })).data.items.some((i) => i.id === id));
       await graces.until((x) => x.events() > before);
       assert.equal((await app.call('GET', `/api/items/${id}`, { as: grace })).status, 404, 'its sheet is gone with it');
+      assert.equal((await app.call('GET', `/api/items/${id}/comments`, { as: grace })).status, 404, 'its comments are gone with it');
       // Grace's stream stays open: SIGTERM still drains and exits (run() checks).
     });
   });

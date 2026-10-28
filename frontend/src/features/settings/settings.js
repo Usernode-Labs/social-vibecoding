@@ -332,8 +332,8 @@
 
       // ── AI models & usage ───────────────────────────────────────────────
       // #5994 split the old "AI & building" group, which mixed the allowance,
-      // the connectors, the agent instructions and a global chat, into this
-      // group and the next: each row is faster to find under a heading that
+      // the connectors and the agent instructions, into this group and the
+      // next: each row is faster to find under a heading that
       // says what it is about.
       // The allowance leads: it is the figure most builders open Settings to
       // find. OpenRouter follows it — the included key and the default
@@ -403,13 +403,11 @@
 
       // ── Advanced ────────────────────────────────────────────────────────
       // #5994: the features you switch on to try, at the foot of the menu
-      // rather than among the AI rows. Experimental is the page of switches;
-      // Global Chat is itself an experimental feature, with a page of its
-      // own settings. Unlike #1554's "Advanced", this group never collapses
+      // rather than among the AI rows. Experimental is the page of switches.
+      // Unlike #1554's "Advanced", this group never collapses
       // (see tests/settings-screen.test.js, "no group collapses"): it is a
       // heading like the four above it, and every row stays visible.
       { key: 'experimental', label: 'settings:nav.part.experimental', group: 'settings:nav.group.advanced' },
-      { key: 'global-chat', label: 'settings:nav.part.globalChat', group: 'settings:nav.group.advanced' },
     ],
 
     // The label of each page that holds more than one part. A page of one
@@ -422,6 +420,17 @@
       theme: 'settings:nav.page.theme',
       'app-permissions': 'settings:nav.page.appPermissions',
       developer: 'settings:nav.page.developer',
+    },
+
+    // #5995: one muted line under the phone menu's rows whose names do not
+    // say what is behind them, keyed by page. Only the few that need it: a
+    // line under every row would make each one a heading again. The sidebar
+    // shows none; the page it opens says the same thing at its top.
+    SUBTITLES: {
+      'linked-accounts': 'settings:nav.subtitle.linkedAccounts',
+      phones: 'settings:nav.subtitle.phones',
+      connectors: 'settings:nav.subtitle.connectors',
+      'agent-files': 'settings:nav.subtitle.agentFiles',
     },
 
     // Extra words the nav's filter box matches for each part, beyond its own
@@ -443,7 +452,6 @@
       connectors: 'settings:nav.keywords.connectors',
       cli: 'settings:nav.keywords.cli',
       'agent-files': 'settings:nav.keywords.agentFiles',
-      'global-chat': 'settings:nav.keywords.globalChat',
       experimental: 'settings:nav.keywords.experimental',
       theme: 'settings:nav.keywords.theme',
       'dev-console': 'settings:nav.keywords.devConsole',
@@ -1386,6 +1394,7 @@
         items: g.items.map((p) => ({
           key: p.key,
           label: Settings.str(p.label),
+          subtitle: Settings.SUBTITLES[p.key] ? tr(Settings.SUBTITLES[p.key]) : '',
           ...Settings._filterTerms(p),
         })),
       }));
