@@ -196,11 +196,13 @@ async function syncImportedProposal({ config, pool, session }) {
 }
 
 // The pull request's base, as this look read it, onto the row (and the change
-// it waits for). Still based on the branch of a change that is on main: its
-// parent landed while it pointed there (GitHub retargets a dependent pull
-// request only when the merged branch is deleted), so it is moved onto main
-// as the parent's own merge would have moved it. Best-effort: a look never
-// fails over its base.
+// it waits for). Still based on the branch of the change it was waiting for,
+// now on main: its parent landed while it pointed there (GitHub retargets a
+// dependent pull request only when the merged branch is deleted), so it is
+// moved onto main as the parent's own merge would have moved it (a message
+// that never arrived, an older release's pod during a rollout). Only that
+// recorded parent: a merged change it never waited for whose branch has the
+// same name moves nothing. Best-effort: a look never fails over its base.
 async function refreshBase({ pool, session, pr }) {
   try {
     // Null: its repository's default branch (rules/pr-base.ts otherBase).
@@ -209,7 +211,9 @@ async function refreshBase({ pool, session, pr }) {
     // nothing to read or write, so a look at an unchanged pull request stays
     // a single GitHub read.
     if (prBase.onMain(base) && prBase.onMain(session.imported_pr_base_ref) && session.waits_for_session_id == null) return;
-    const read = await prBase.recordBase(pool, { sessionId: session.id, appId: session.app_id, base });
+    const read = await prBase.recordBase(pool, {
+      sessionId: session.id, appId: session.app_id, base, waited: session.waits_for_session_id ?? null,
+    });
     session.imported_pr_base_ref = read.base;
     session.waits_for_session_id = read.waitsFor;
     if (read.changed) {

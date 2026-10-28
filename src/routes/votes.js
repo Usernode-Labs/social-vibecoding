@@ -2544,6 +2544,12 @@ function mergedRowSelect() {
            -- GitHub-maintained note (kept visible on merged rows too).
            cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,
            cs.reviewed_head_sha,
+           -- Where it merges, and the change it waits for (src/workflow/
+           -- rules/pr-base.ts): the change page reads its row from here, so
+           -- its "Waits for #N" follows a retarget without the board's list.
+           cs.imported_pr_base_ref, cs.waits_for_session_id,
+           (SELECT jsonb_build_object('id', w.id, 'prNumber', w.pr_number, 'title', w.pr_title, 'status', w.status)
+              FROM chat_sessions w WHERE w.id = cs.waits_for_session_id) AS waits_for,
            cs.shots_state, cs.shots_run_id,
            cs.shots_detail, cs.shots_updated_at,
            -- #967: which external coding agent wrote it, for the "built
@@ -6297,9 +6303,11 @@ function refusalKind(err, pr) {
 //   reopened   {}                 closed on GitHub, reopened: it can be merged again
 //   closed     { message }        closed on GitHub, and could not be reopened
 //   refused    { kind, message }  conflict | draft | blocked | base_moved | base_not_main
-// A merge is only ever into main (src/workflow/rules/pr-base.ts): the pull
-// request's base is read before GitHub is asked, one based on any other
-// branch is refused, and every `merged` names the base it went into.
+// An import is only ever merged into main (src/workflow/rules/pr-base.ts):
+// its pull request's base is read before GitHub is asked, one based on any
+// other branch is refused, and every `merged` names the branch it went into
+// when that is not main. A native proposal's pull request is Homeroom's own,
+// opened against main (services/github.js createPR), and is merged as ever.
 // It never asks twice: once it has asked (its checkpoint), a retry reads the
 // pull request first, so a lost answer is observed rather than misread as a
 // refusal (merge trace bug 1). An error that is no answer from GitHub (the
@@ -6352,9 +6360,9 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
     return { outcome: 'refused', kind, message, githubMessage: said || null };
   };
   const unanswered = (err) => !err || !Number.isInteger(err.status) || err.status >= 500 || err.status === 429;
-  // The branch a merge went into, when that is not main (the machine
-  // records only a merge into main).
-  const baseOf = (ref) => (ref ? { base: ref } : {});
+  // The branch an import's merge went into, when that is not main (the
+  // machine records only a merge into main).
+  const baseOf = (ref) => (isImported && ref ? { base: ref } : {});
   // GitHub's hourly limit used up (a 403 or a 429 saying no requests are
   // left) or its secondary limit (Retry-After): it did not merge, and it is
   // not a refusal of this head. The proposal goes back to review with
@@ -6377,22 +6385,24 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
     }
   }
 
-  // Where GitHub would merge it. On 28 Oct 2026 #5957, based on #5956's
-  // branch, was merged there and recorded merged. An import's row learns the
+  // Where GitHub would merge an import. On 28 Oct 2026 #5957, based on
+  // #5956's branch, was merged there and recorded merged. Its row learns the
   // base it read, so the card and the queue say it waits from now on.
-  let base;
-  try {
-    base = prBase.otherBase(await client.getPR(owner, repo, session.pr_number));
-  } catch (err) {
-    if (throttled(err)) return limited(err);
-    if (codeMissing.isError(err)) {
-      return { outcome: 'refused', kind: 'blocked', codeMissing: true, message: `${label} wasn't merged. ${codeMissing.REASON}` };
+  let base = null;
+  if (isImported) {
+    try {
+      base = prBase.otherBase(await client.getPR(owner, repo, session.pr_number));
+    } catch (err) {
+      if (throttled(err)) return limited(err);
+      if (codeMissing.isError(err)) {
+        return { outcome: 'refused', kind: 'blocked', codeMissing: true, message: `${label} wasn't merged. ${codeMissing.REASON}` };
+      }
+      if (err && (err.status === 404 || err.status === 410)) return { outcome: 'closed', message: `${label} is gone from GitHub.` };
+      throw err;
     }
-    if (err && (err.status === 404 || err.status === 410)) return { outcome: 'closed', message: `${label} is gone from GitHub.` };
-    throw err;
   }
   if (!prBase.onMain(base)) {
-    if (isImported) await prBase.recordBase(pool, { sessionId: session.id, appId: session.app_id, base }).catch(() => {});
+    await prBase.recordBase(pool, { sessionId: session.id, appId: session.app_id, base, waited: session.waits_for_session_id ?? null }).catch(() => {});
     return {
       outcome: 'refused', kind: 'base_not_main', base,
       message: `${label} wasn't merged: its pull request is based on ${String(base).slice(0, 200)}, not main. It merges once it targets main.`,

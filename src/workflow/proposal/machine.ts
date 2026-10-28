@@ -191,6 +191,10 @@ export interface Data {
   // The change under this one's base is on main: its pull request is being
   // retargeted to main (pr.retarget, its n), then it syncs with main.
   retarget?: { n: number; parentId: number | null } | null;
+  // Moved onto main while it could not sync (still going up for a vote, or
+  // somebody working on it): the sync is owed, and it is not merged before
+  // it has run (rules/pr-base.ts).
+  owedSync?: boolean | null;
 }
 
 const STATES = ['underway', 'proposing', 'in_review', 'merging', 'unconfirmed', 'merged', 'closed'] as const;
@@ -373,9 +377,11 @@ const EVENTS = {
   // proposal-scans.js): merged, or closed and when. `tally`: the votes it
   // stood at, for a merge's record. `base`: the branch it merged into when
   // that is not main (rules/pr-base.ts otherBase; null: main, or not said).
+  // `baseRead`: the look read the base (an older release's does not, and its
+  // merge is left for the next look to read).
   PrLooked: (p: any) => ({ ...session(p), from: from(p), merged: !!p?.merged, closed: !!p?.closed,
     mergeSha: text(p?.mergeSha, 64), mergedAt: text(p?.mergedAt, 40), closedAt: text(p?.closedAt, 40), readAt: text(p?.readAt, 40),
-    base: text(p?.base, 255),
+    base: text(p?.base, 255), baseRead: !!p?.baseRead,
     tally: p?.tally == null ? null : {
       yes: Math.max(0, Number(p.tally.yes) | 0),
       required: p.tally.required == null ? null : Math.max(0, Number(p.tally.required) | 0),
@@ -641,7 +647,8 @@ function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
   const read = typeof r.head === 'string' ? r.head.toLowerCase() : null;
   const head = row.head && row.head !== promoting.headAt ? row.head : read;
   const work = [...done.work];
-  return step(next, {
+  // A stacked change moved onto main while it went up: its owed sync runs now.
+  return owedSyncNow(step(next, {
     writes: [
       // A change of the Homeroom bot's: its change machine follows it from here.
       toBotChange(d.sessionId, 'Proposed'),
@@ -662,7 +669,7 @@ function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
       toQueue(d, 'MergeWanted', { reason: 'promoted' }),
       ...(promoting.campaign ? [toCampaign(d, promoting.campaign, 'ProposalOpened', { prNumber: prNumber || null })] : [])],
     timer: timerFor(next, f, ctx, deps),
-  });
+  }), f, ctx);
 }
 
 const unpromote: Handler = (s, e, f, ctx, deps) => {
@@ -710,7 +717,10 @@ const resume: Handler = (s, e, f, ctx, deps) => {
 function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner?: boolean; purgeCc?: boolean; base?: string | null } = {}): Outcome<PState> {
   const row = f.row!;
   const n = s.data.n + 1;
-  let d: Data = { ...s.data, n, reason, promoting: null, claim: null, force: null, attempt: null, sync: null,
+  // A retarget waiting behind the close is dropped with it (prMove), so the
+  // proposal no longer waits for one: a later parent's merge, after a
+  // reopen, moves it again.
+  let d: Data = { ...s.data, n, reason, promoting: null, claim: null, force: null, attempt: null, sync: null, retarget: null, owedSync: null,
     answer: s.name === 'proposing' && s.data.promoting
       ? { n: s.data.promoting.n, ok: false, code: 'session_state_changed' } : s.data.answer };
   // A gate or a sync under way is ended with it (the worker's removal below
@@ -902,6 +912,8 @@ function askRefusal(s: Live, f: Facts): string | null {
   // merged there (rules/pr-base.ts).
   const base = baseRefusal(f.row!);
   if (base) return base;
+  // Moved onto main and not synced yet: it merges once its sync has run.
+  if (s.data.owedSync) return 'sync_owed';
   // A merge does not wait for the shots agent's turn (facts.ts mergeMoving).
   if (f.row!.mergeMoving) return 'busy';
   return null;
@@ -1189,44 +1201,68 @@ const parentMergedEvent: Handler = (s, e, f) => {
   const n = s.data.n + 1;
   const moved = prMove({ ...s.data, n, retarget: { n, parentId: e.payload.parentId ?? null } },
     { kind: WORK.retarget, key: `retarget:${n}`, input: { sessionId: s.data.sessionId, owner: row.repo.owner, repo: row.repo.repo,
-      number: row.prNumber } });
+      number: row.prNumber, from: row.baseRef } });
   return step({ name: s.name, data: moved.data } as Live, { work: moved.work });
 };
 
-// pr.retarget reported. On main now: the row says so, the proposal syncs
-// with main (its checks run again on what the sync pushes, as for any sync),
-// and the queue hears it may be in line. Refused for good: it stays where it
-// is, and the thread says what a person can do.
+// pr.retarget reported. On main now: the row says so, any stale warning
+// from the wait is forgotten, the proposal syncs with main (its checks run
+// again on what the sync pushes, as for any sync), and the queue hears it may
+// be in line. One that cannot sync now (going up for a vote, somebody working
+// on it) owes the sync, and runs it once it can (owedSyncNow). One whose
+// branch is on its author's fork is theirs to bring up to date. Its base
+// moved meanwhile to another branch: nothing moved, and the next look records
+// where it is. Refused for good: it stays where it is, and the thread says so.
 function retargeted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<PState> {
   const p = e.payload as WorkResultPayload;
   const done = prDone(s.data, p.workKey);
   const d: Data = { ...done.data, retarget: null };
   const row = f.row!;
-  if (e.type !== 'WorkSucceeded') {
+  const r = (e.type === 'WorkSucceeded' ? p.result : null) as any;
+  if (!r) {
     return step({ name: s.name, data: d } as Live, {
       work: done.work,
-      writes: [{ ...line(e, d, `${prLabel(row)} could not be moved onto main on GitHub (${String(p.error?.message || 'no reason given').slice(0, 200)}). `
-        + 'Change its base to main on GitHub; Homeroom picks it up from there.'), dedupe: true }],
+      writes: [{ ...line(e, d, `${prLabel(row)}: Homeroom did not move its pull request onto main on GitHub `
+        + `(${String(p.error?.message || 'no reason given').slice(0, 200)}). If it is still open, change its base to main on GitHub; Homeroom picks it up from there.`), dedupe: true }],
     });
   }
+  if (r.skipped) return step({ name: s.name, data: d } as Live, { work: done.work });
   const next: Live = { name: s.name, data: d } as Live;
-  const writes: DomainWrite[] = [{ type: 'prBase', sessionId: d.sessionId, base: null, waitsFor: null }];
-  const sync = { reason: 'parent_merged', head: null, queueN: null, approved: false, githubConflict: false };
-  const refusal = syncRefusal(next, { ...e, payload: sync } as Event<any>, f, ctx);
-  const synced = refusal ? null : beginSync(next, sync, f, ctx);
-  writes.push(line(e, d, synced
+  const writes: DomainWrite[] = [{ type: 'prBase', sessionId: d.sessionId, base: null, waitsFor: null },
+    { type: 'staleCleared', sessionId: d.sessionId }];
+  const refusal = syncRefusal(next, { ...e, payload: PARENT_SYNC } as Event<any>, f, ctx);
+  const owed = !!refusal && OWED_SYNC.has(refusal);
+  const synced = refusal ? null : beginSync(next, PARENT_SYNC, f, ctx);
+  writes.push(line(e, d, synced || owed
     ? `${prLabel(row)}: the change it is built on is on main now, so its pull request targets main. Homeroom is bringing it up to date with main; its checks run again on the result.`
     : `${prLabel(row)}: the change it is built on is on main now, so its pull request targets main.`));
-  const out = synced || step(next);
+  const out = synced || step(owed ? { name: s.name, data: { ...d, owedSync: true } } as Live : next);
   return {
     ...out,
     writes: [...writes, ...(out.writes || [])],
     work: [...done.work, ...(out.work || [])],
     push: [...(out.push || []), votes(f)],
-    // Nothing else holds it back: the queue looks (a sync under way declines
-    // its ask until it ends).
-    messages: [...(out.messages || []), ...(s.name === 'in_review' ? [toQueue(d, 'MergeWanted', { reason: 'parent-merged' })] : [])],
+    // Nothing else holds it back: the queue looks (a sync under way, or
+    // owed, declines its ask until it has run).
+    messages: [...(out.messages || []), ...(s.name === 'in_review' && !owed ? [toQueue(d, 'MergeWanted', { reason: 'parent-merged' })] : [])],
   };
+}
+
+// The sync a retarget asks for, and the refusals that only mean "not now".
+const PARENT_SYNC = { reason: 'parent_merged', head: null, queueN: null, approved: false, githubConflict: false };
+const OWED_SYNC: ReadonlySet<string> = new Set(['busy', 'not_underway', 'in_progress']);
+
+// An owed sync, begun once nothing stands in its way (a move into review, the
+// hourly review check); still refused for a reason that only means "not now",
+// it stays owed.
+function owedSyncNow(out: Outcome<PState>, f: Facts, ctx: TransitionContext): Outcome<PState> {
+  const next = out.next as Live;
+  if (!next?.data?.owedSync || !f.row) return out;
+  const refusal = syncRefusal(next, { payload: PARENT_SYNC } as Event<any>, f, ctx);
+  if (refusal) return OWED_SYNC.has(refusal) ? out : { ...out, next: { name: next.name, data: { ...next.data, owedSync: null } } as Live };
+  const synced = beginSync({ name: next.name, data: { ...next.data, owedSync: null } } as Live, PARENT_SYNC, f, ctx);
+  return { ...out, next: synced.next, writes: [...(out.writes || []), ...(synced.writes || [])], work: [...(out.work || []), ...(synced.work || [])],
+    push: [...(out.push || []), ...(synced.push || [])] };
 }
 
 // branch.sync reported.
@@ -1300,7 +1336,9 @@ const idleCheck: Handler = (s, e, f, ctx, deps) => {
 // The hourly look at a proposal in review, every input read under the lock:
 // voted down (R1's twin: the gate as it is now), gone quiet (R2: a vote
 // since the warning cancels the close).
-const reviewCheck: Handler = (s, e, f, ctx, deps) => {
+// A sync owed since its retarget (owedSyncNow) is begun here too.
+const reviewCheck: Handler = (s, e, f, ctx, deps) => owedSyncNow(lookAtReview(s, e, f, ctx, deps), f, ctx);
+const lookAtReview: Handler = (s, e, f, ctx, deps) => {
   const row = f.row!;
   // Hourly, or sooner when the gate's window ends before that: a proposal
   // that becomes mergeable with time is asked for then (D5).
@@ -1310,6 +1348,10 @@ const reviewCheck: Handler = (s, e, f, ctx, deps) => {
   const again: TimerRequest | null = at != null ? { at: new Date(at), event: { type: 'ReviewCheck' } } : null;
   if (busy(row)) return step(s, { timer: again });
   if (f.gate?.rejectable) return close(s, e, f, f.gate.adminNo ? 'admin-no' : f.gate.approverNo ? 'approver-no' : 'auto-rejected');
+  // Waiting for the change under it (rules/pr-base.ts): nothing it could do
+  // would merge it sooner, so it never goes quiet while it waits (its stale
+  // warning is forgotten once it is moved onto main).
+  if (baseRefusal(row) === 'waits_for_parent') return step(s, { timer: again });
   // Its gate is met (a window elapsed, the electorate shrank, a vote whose
   // own ask was lost): the app's merge queue is asked.
   const met = !!f.gate?.mergeable;
@@ -1465,6 +1507,10 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: Transitio
     () => (['underway', 'proposing', 'in_review'].includes(s.name) ? ok()
       : reject(s.name === 'closed' ? 'already_closed' : s.name === 'merging' || s.name === 'unconfirmed' ? 'merging' : 'merged')),
     () => (sameReading(statusOf(s), e.payload.from) ? ok() : reject('overtaken')),
+    // A merge read by a look that did not read where it went (an older
+    // release's): the next look reads it, so a merge into another branch is
+    // never taken for one into main.
+    () => (e.payload.merged && !e.payload.baseRead ? reject('base_unread') : ok()),
     () => (e.payload.merged ? ok() : !e.payload.closed ? reject('open')
       : !(ctx.now.getTime() - Date.parse(e.payload.readAt || '') <= PR_LOOK_STALE_MS) ? reject('stale')
         : ctx.now.getTime() - Date.parse(e.payload.closedAt || '') < PR_CLOSE_SETTLES_MS ? reject('settling') : ok()),

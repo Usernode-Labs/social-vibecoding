@@ -7918,7 +7918,7 @@ const AppView = {
           heading: underwayImported
             ? PlatformI18n.t('changes:card.reasons.attention')
             : (list.some((r) => !r.soft) ? PlatformI18n.t('changes:card.reasons.cantMerge') : PlatformI18n.t('changes:card.reasons.worthKnowing')),
-          items: list.map((r) => ({ key: r.key, label: r.label, detail: r.detail, soft: !!r.soft })),
+          items: list.map((r) => ({ key: r.key, label: r.label, detail: r.detail, soft: !!(r.soft || r.waiting) })),
         };
       }
     }
@@ -17796,7 +17796,7 @@ const AppView = {
       const label = r.name || r.label || '';
       const n = Number.isFinite(r.count) ? r.count : NaN;
       rows.push({
-        key: r.key, tone: r.soft ? 'warn' : 'bad',
+        key: r.key, tone: r.soft || r.waiting ? 'warn' : 'bad',
         label: label || r.key,
         sub: r.key === 'behind' && Number.isFinite(n)
           ? PlatformI18n.t('changes:ledger.behind.commits', { count: n })
@@ -23554,11 +23554,12 @@ const AppView = {
       }];
     }
     // Where its pull request merges (src/workflow/rules/pr-base.ts): an
-    // import stacked on another open change's branch waits for that change,
-    // which nobody need act on here (amber, as deferred checks are); one
-    // based on a branch no open change has cannot go live until somebody
-    // changes its base to main (red). First, because nothing else on it
-    // merges before that does.
+    // import stacked on another open change's branch waits for that change.
+    // It stops the merge, so the card says "can't merge yet", but nobody
+    // need act on this change, so it is drawn amber (`waiting`, as deferred
+    // checks are). One based on a branch no open change has cannot go live
+    // until somebody changes its base to main (red). First, because nothing
+    // else on it merges before that does.
     const stack = AppView._stackedOn(p);
     if (stack && stack.waitsFor) {
       const n = stack.waitsFor.number;
@@ -23566,7 +23567,7 @@ const AppView = {
         key: 'waits_for_change',
         label: n ? PlatformI18n.t('changes:badge.reason.waitsFor.label', { number: n }) : PlatformI18n.t('changes:badge.reason.waitsFor.labelUnnumbered'),
         detail: n ? PlatformI18n.t('changes:badge.reason.waitsFor.detail', { number: n }) : PlatformI18n.t('changes:badge.reason.waitsFor.detailUnnumbered'),
-        soft: true,
+        waiting: true,
       });
     } else if (stack) {
       out.push({
@@ -23965,9 +23966,10 @@ const AppView = {
           t: 'chip', key: `tag-${r.key}`,
           // Three tones, three meanings: `running` is in flight and nobody
           // need act (the only one that spins), `soft` is worth knowing and
-          // does not block, everything else stops the merge.
+          // does not block, everything else stops the merge. `waiting` stops
+          // it too, but nobody need act on this change, so it is amber.
           cls: r.running ? AppView.STATUS_TAG_CLS.running
-            : r.soft ? AppView.STATUS_TAG_CLS.soft
+            : r.soft || r.waiting ? AppView.STATUS_TAG_CLS.soft
               : AppView.STATUS_TAG_CLS.blocking,
           label: r.label, title: r.detail || undefined, meta: true,
           spinner: !!r.running,

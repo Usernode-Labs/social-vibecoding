@@ -94,9 +94,14 @@ test('the copy, from the catalogs', () => {
 test('the card: an amber "Waits for #5956", first; the bar stays the vote', () => {
   const AppView = makeAppView();
   const reasons = JSON.parse(JSON.stringify(AppView.blockReasons(PR())));
-  assert.deepEqual(reasons[0], { key: 'waits_for_change', label: 'Waits for #5956', detail: WAITS, soft: true });
+  // It stops the merge (not `soft`: the card says it can't merge yet), and
+  // nobody has to act on this change (`waiting`: drawn amber).
+  assert.deepEqual(reasons[0], { key: 'waits_for_change', label: 'Waits for #5956', detail: WAITS, waiting: true });
   const tags = AppView.statusTagSpecs(PR());
   assert.equal(tags[0].cls, AppView.STATUS_TAG_CLS.soft, 'amber: nobody has to act on this change');
+  assert.match(APP_VIEW_SRC, /list\.some\(\(r\) => !r\.soft\) \? PlatformI18n\.t\('changes:card\.reasons\.cantMerge'\)/,
+    'a reason that is not soft makes the card say why it can\'t merge yet');
+  assert.match(APP_VIEW_SRC, /key: r\.key, tone: r\.soft \|\| r\.waiting \? 'warn' : 'bad',/, 'its ledger row is amber too');
   assert.equal(tags[0].data['data-status-tag'], 'waits_for_change');
   assert.equal(tags[0].spinner, false, 'nothing is in flight');
   assert.equal(AppView.statusPillState(PR()).key, 'needs_vote', 'its vote goes on meanwhile');
@@ -139,6 +144,9 @@ test('the change\'s page: the notice above Votes and Testing, with a door to the
   const notice = renderComponent(head, 'StackNotice', { v: view });
   assert.match(notice, /^<div data-change-waits-for="11568" class="rounded-lg border border-amber-500\/40 bg-amber-500\/10 text-sm text-amber-800 dark:text-amber-300 px-3 py-2 mt-3">/);
   assert.match(notice, /Waits for <a href="#app\/demo\/dev\/changes\/5956" class="font-semibold underline" data-change-waits-for-link="11568">#5956: SEC-09: conductor runtime writes<\/a>\. This change is built on that change’s branch, so it can go live only after #5956 does\./);
+  // The change it waits for has no number yet: the notice still says so.
+  const unnumbered = renderComponent(head, 'StackNotice', { v: { ...view, waitsFor: { ...view.waitsFor, number: null, href: '#app/demo/dev/proposals/11568' } } });
+  assert.match(unnumbered, /Waits for <a href="#app\/demo\/dev\/proposals\/11568" class="font-semibold underline" data-change-waits-for-link="11568">another change<\/a>\./);
   const red = renderComponent(head, 'StackNotice', { v: lone });
   assert.match(red, /data-change-base-not-main=""/);
   assert.match(red, /Its pull request targets someone\/else, not main/);

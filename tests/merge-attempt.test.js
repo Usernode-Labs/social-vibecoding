@@ -372,14 +372,14 @@ test('a pull request based on another change\'s branch is never asked to merge, 
   } finally { c.restore(); }
 });
 
-test('a native pull request someone retargeted on GitHub is refused too, and nothing is written', async () => {
-  const c = load({ session: native, github: { getPR: () => ({ state: 'open', merged: false, base: { ref: 'release' } }) } });
+test('a native pull request is Homeroom\'s own, opened against main: no base is read, and it merges as ever', async () => {
+  const c = load({ session: native, github: { getPR: () => ({ state: 'open', merged: false, base: { ref: 'main', repo: { default_branch: 'master' } } }), mergePR: () => ({ sha: 'squash' }) } });
   c.session = native;
   const sql = recording(c);
   try {
     const { out } = await attempt(c);
-    assert.equal(out.kind, 'base_not_main');
-    assert.deepEqual(c.calls.merge, []);
+    assert.deepEqual(out, { outcome: 'merged', sha: 'squash' }, 'even where the repository\'s default branch is called something else');
+    assert.equal(c.calls.get, 0, 'one GitHub call, the merge');
     assert.ok(!sql.some((q) => /imported_pr_base_ref/.test(q.text)), 'only an import keeps a base');
   } finally { c.restore(); }
 });

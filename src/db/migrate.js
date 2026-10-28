@@ -12702,9 +12702,11 @@ async function seedStagingImportedPrProposal(pool, config) {
 
   // Fixture 4: an imported proposal stacked on fixture 1's branch, so it
   // waits for #9310 (src/workflow/rules/pr-base.ts): the card's "Waits for
-  // #9310" tag and the change page's notice. The mock GitHub reports the same
-  // base for #9313 (services/github-mock.js FIXTURE_BASES), so a look keeps
-  // it. Re-stamped on every boot.
+  // #9310" tag and the change page's notice. The row holds what a look at
+  // the pull request records: the mock GitHub reports the same base for
+  // #9313 (services/github-mock.js FIXTURE_BASES), so a look keeps it. The
+  // wait is stamped only while #9310 is open: a preview that merged it has
+  // nothing to wait for (its next look moves #9313 onto main).
   const headSha4 = 'd5e4c3b2a1f0e9d8c7b6a5948372615f4e3d2c1b';
   const branch4 = 'staging-fixture/imported-pr-stacked';
   let id4;
@@ -12727,7 +12729,7 @@ async function seedStagingImportedPrProposal(pool, config) {
             '[staging fixture] Imported PR, stacked on #9310',
             'In plain terms: this pull request is built on top of #9310, so it goes live only after #9310 does.',
             'promoted', 'imported', $4, 'octo-contributor',
-            $6, $7,
+            $6, (SELECT id FROM chat_sessions WHERE id = $7 AND status IN ('active', 'paused', 'promoted', 'merging')),
             'passing', $4, NOW() - INTERVAL '6 minutes',
             $5, NOW() - INTERVAL '7 minutes', NOW() - INTERVAL '8 minutes')
          RETURNING id`,
@@ -12739,7 +12741,8 @@ async function seedStagingImportedPrProposal(pool, config) {
         `UPDATE chat_sessions
             SET source = 'imported', imported_pr_head_sha = $2, imported_pr_author = 'octo-contributor',
                 imported_pr_base_ref = $3, waits_for_session_id = $4
-          WHERE id = $1 AND status = 'promoted'`,
+          WHERE id = $1 AND status = 'promoted'
+            AND EXISTS (SELECT 1 FROM chat_sessions o WHERE o.id = $4 AND o.status IN ('active', 'paused', 'promoted', 'merging'))`,
         [id4, headSha4, branch1, id1]
       );
     }

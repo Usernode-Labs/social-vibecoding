@@ -223,7 +223,8 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
     // (rules/pr-base.ts): its pull request's base is retargeted to its
     // repository's default branch, as GitHub names it. One already based
     // there has nothing to move; one merged or closed meanwhile keeps its
-    // base.
+    // base; one based on a branch other than the one it was told about
+    // (`from`: its author moved it) is left where it is.
     [WORK.retarget]: {
       maxAttempts: 6,
       backoffMs: (n) => Math.min(30 * 60 * 1000, 30 * 1000 * 2 ** (n - 1)),
@@ -241,7 +242,9 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
         }
         if (pr?.merged || pr?.state === 'closed') throw permanent('The pull request is no longer open on GitHub.');
         const target = defaultBranchOf(pr);
-        if (otherBase(pr) == null) return { base: target, already: true };
+        const now = otherBase(pr);
+        if (now == null) return { base: target, already: true };
+        if (input.from && now !== input.from) return { skipped: 'base_moved', base: now };
         await gh.retargetPR(input.owner, input.repo, input.number, target);
         return { base: target };
       },
@@ -351,7 +354,10 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
           const pr = await gh.getPR(repo.owner, repo.repo, row.pr_number);
           // Where it merged: a merge into another branch is never recorded as
           // merged (rules/pr-base.ts).
-          if (pr?.merged) return { merged: true, sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, base: otherBase(pr) };
+          if (pr?.merged) {
+            return { merged: true, sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null,
+              base: row.source === 'imported' ? otherBase(pr) : null };
+          }
           return { merged: false, state: pr?.state || null };
         } catch (err) {
           if (gone(err)) return { merged: false, gone: true };

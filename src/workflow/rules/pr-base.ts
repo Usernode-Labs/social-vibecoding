@@ -57,30 +57,51 @@ export const OPEN_STATUSES: readonly string[] = ['active', 'paused', 'promoted',
 
 export interface BaseOwner { id: number; prNumber: number | null; prTitle: string | null; status: string }
 
+const repoName = (v: unknown) => {
+  const m = /^(?:https?:\/\/[^/]+\/)?([a-z0-9._-]+)\/([a-z0-9._-]+?)(?:\.git)?\/?$/.exec(String(v ?? '').trim().toLowerCase());
+  return m ? `${m[1]}/${m[2]}` : null;
+};
+// A change whose branch can be a base: a branch of the app's own repository.
+// A pull request's base is always a branch there, so an import whose head is
+// on its author's fork never owns one, whatever its branch is called. An
+// import from before its head repository was recorded is taken as it is.
+function onAppRepo(r: any): boolean {
+  if (r.source !== 'imported' || !r.imported_pr_head_repo) return true;
+  return repoName(r.imported_pr_head_repo) === repoName(r.repo_url);
+}
+
 // The change of this app whose branch is `base`, other than the change
-// itself: the open one (the change it waits for), else the newest merged one
-// (a change that landed while the stacked one still targets its branch).
-export async function readBaseOwner(db: Queryable, p: { appId: number; sessionId: number | null; base: string | null }): Promise<{ open: BaseOwner | null; merged: BaseOwner | null }> {
+// itself: the open one (the change it waits for), else the merged one it was
+// recorded waiting for (`waited`: a change that landed while the stacked one
+// still targets its branch). A merged change with that branch name that it
+// never waited for is nobody's parent: a long-lived branch (`develop`) whose
+// own pull request was merged once is still just a branch.
+export async function readBaseOwner(db: Queryable, p: { appId: number; sessionId: number | null; base: string | null; waited?: number | null }): Promise<{ open: BaseOwner | null; merged: BaseOwner | null }> {
   if (onMain(p.base)) return { open: null, merged: null };
   const { rows } = await db.query(
-    `SELECT id, pr_number, pr_title, status FROM chat_sessions
-      WHERE app_id = $1 AND branch_name = $2 AND id IS DISTINCT FROM $3::int AND is_headless = FALSE
-        AND status = ANY($4::text[] || ARRAY['merged'])
-      ORDER BY (status = 'merged'), id DESC`,
-    [p.appId, p.base, p.sessionId, OPEN_STATUSES]);
+    `SELECT cs.id, cs.pr_number, cs.pr_title, cs.status, cs.source, cs.imported_pr_head_repo, a.repo_url
+       FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+      WHERE cs.app_id = $1 AND cs.branch_name = $2 AND cs.id IS DISTINCT FROM $3::int AND cs.is_headless = FALSE
+        AND (cs.status = ANY($4::text[]) OR (cs.status = 'merged' AND cs.id = $5::int))
+      ORDER BY (cs.status = 'merged'), cs.id DESC`,
+    [p.appId, p.base, p.sessionId, OPEN_STATUSES, p.waited ?? null]);
+  const owners = rows.filter(onAppRepo);
   const of = (r: any): BaseOwner => ({ id: Number(r.id), prNumber: r.pr_number ?? null, prTitle: r.pr_title ?? null, status: r.status });
-  const open = rows.find((r: any) => r.status !== 'merged');
-  const merged = rows.find((r: any) => r.status === 'merged');
+  const open = owners.find((r: any) => r.status !== 'merged');
+  const merged = owners.find((r: any) => r.status === 'merged');
   return { open: open ? of(open) : null, merged: merged ? of(merged) : null };
 }
 
-// The other base (null: the default branch) and the open change it waits
-// for, written together. Returns what the row now says and whether it
-// changed.
-export async function recordBase(db: Queryable, p: { sessionId: number; appId: number; base: string | null }): Promise<{ base: string | null; waitsFor: number | null; changed: boolean; mergedOwner: BaseOwner | null }> {
+// The other base (null: the default branch) and the change it waits for,
+// written together: the open change whose branch it is, or the one it was
+// waiting for, merged since (it waits until it has been moved onto main, so
+// a look that finds it there asks again). Returns what the row now says,
+// whether it changed, and that merged parent.
+export async function recordBase(db: Queryable, p: { sessionId: number; appId: number; base: string | null; waited?: number | null }): Promise<{ base: string | null; waitsFor: number | null; changed: boolean; mergedOwner: BaseOwner | null }> {
   const base = typeof p.base === 'string' && p.base.trim() ? p.base.trim().slice(0, 255) : null;
-  const owners = await readBaseOwner(db, { appId: p.appId, sessionId: p.sessionId, base });
-  const waitsFor = owners.open ? owners.open.id : null;
+  const owners = await readBaseOwner(db, { appId: p.appId, sessionId: p.sessionId, base, waited: p.waited ?? null });
+  const parent = owners.open || owners.merged;
+  const waitsFor = parent ? parent.id : null;
   const { rowCount } = await db.query(
     `UPDATE chat_sessions SET imported_pr_base_ref = $2, waits_for_session_id = $3
       WHERE id = $1 AND (imported_pr_base_ref IS DISTINCT FROM $2 OR waits_for_session_id IS DISTINCT FROM $3)`,

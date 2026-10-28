@@ -1408,21 +1408,22 @@ export async function prLooked(m: { sessionId: number; appId: number; from: stri
   // The same reading within a minute (the webhook's and the clock's) is one
   // event; a close still settling is looked at again on the next run.
   const out = await proposalEvent('PrLooked', { from: m.from, merged: m.merged, closed: m.closed, mergeSha: m.mergeSha,
-    mergedAt: m.mergedAt, closedAt: m.closedAt, readAt: new Date().toISOString(), tally, base: m.base ?? null },
+    mergedAt: m.mergedAt, closedAt: m.closedAt, readAt: new Date().toISOString(), tally, base: m.base ?? null, baseRead: true },
   { sessionId: m.sessionId, appId: m.appId, source: sys('pr-look'), waitMs: 5000,
     requestKey: `pr-looked:${m.sessionId}:${what}:${m.mergedAt || m.closedAt || '-'}:${Math.floor(Date.now() / 60000)}` });
   // Taken once decided: one still pending is the next look's to report again.
   return typeof out === 'object' && out != null && ['accepted', 'replayed'].includes((out as any).status);
 }
 
-// A look found a stacked import still based on the branch of a change that
-// is on main (rules/pr-base.ts): it moves onto main, as its parent's own
-// merge would have told it. One a day per pair: a move under way answers a
-// second ask, and one that failed for good is not asked again every look.
+// A look found a stacked import still based on the branch of the change it
+// waited for, which is on main now (rules/pr-base.ts): it moves onto main, as
+// its parent's own merge would have told it. One an hour per pair: a move
+// under way answers a second ask, and one that failed for good is not asked
+// again every look.
 export async function parentMerged(p: { sessionId: number; appId: number; parentId: number }): Promise<void> {
   await proposalEvent('ParentMerged', { parentId: p.parentId },
     { sessionId: p.sessionId, appId: p.appId, source: sys('pr-look'),
-      requestKey: `parent-merged:${p.sessionId}:${p.parentId}:${Math.floor(Date.now() / 86400000)}` });
+      requestKey: `parent-merged:${p.sessionId}:${p.parentId}:${Math.floor(Date.now() / 3600000)}` });
 }
 
 // The platform's own app now runs `sha` (its release booting): every merge

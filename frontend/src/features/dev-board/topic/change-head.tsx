@@ -266,7 +266,7 @@ export function CodeMissingNotice(): ReactNode {
 export function StackNotice({ v }: { v: ChangeThreadView }): ReactNode {
   const t = useMessages('project');
   const w = v.waitsFor;
-  if (w && w.number) {
+  if (w) {
     const door = (
       <a
         href={w.href}
@@ -283,8 +283,9 @@ export function StackNotice({ v }: { v: ChangeThreadView }): ReactNode {
       <Alert variant="notice" density="compact" className="mt-3" data-change-waits-for={w.sessionId}>
         <span>
           <RichMessage
-            id={w.title ? 'project:topic.change.waitsFor' : 'project:topic.change.waitsForUntitled'}
-            values={{ number: w.number, title: w.title || '' }}
+            id={!w.number ? 'project:topic.change.waitsForUnnumbered'
+              : w.title ? 'project:topic.change.waitsFor' : 'project:topic.change.waitsForUntitled'}
+            values={{ number: w.number ?? '', title: w.title || '' }}
             components={[door]}
           />
         </span>

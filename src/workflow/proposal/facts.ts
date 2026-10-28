@@ -140,7 +140,8 @@ export interface Facts {
   // or done and not reported yet.
   tearingDown: boolean;
   // Promote of an import whose pull request's base is not main: the open
-  // change whose branch that base is (it waits for it), else none.
+  // change whose branch that base is (it waits for it), or the one it waited
+  // for, merged since (it is being moved onto main), else none.
   baseOwner: BaseOwner | null;
   // Merged, PrLooked: the open changes stacked on this one's branch, told
   // once it is on main (rules/pr-base.ts readWaiting).
@@ -331,7 +332,8 @@ export async function readFacts(tx: Tx, sessionId: number, event: Event<any>, o:
   const out: Facts = { ...NO_FACTS, row };
   if (event.type === 'Promote') out.caps = await readCaps(tx, row, false);
   if (event.type === 'Promote' && row.imported && p.pr && !onMain(p.pr.base)) {
-    out.baseOwner = (await readBaseOwner(tx, { appId: row.appId, sessionId: row.id, base: p.pr.base })).open;
+    const owners = await readBaseOwner(tx, { appId: row.appId, sessionId: row.id, base: p.pr.base, waited: row.waitsFor });
+    out.baseOwner = owners.open || owners.merged;
   }
   if (event.type === 'Merged' || (event.type === 'PrLooked' && p.merged)) out.waiting = await readWaiting(tx, row.id);
   if (event.type === 'Resume' && p.caps) out.caps = await readCaps(tx, row, true);
