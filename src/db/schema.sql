@@ -16108,3 +16108,69 @@ CREATE TABLE IF NOT EXISTS preview_projects (
 );
 COMMENT ON TABLE preview_projects IS 'staging:private';
 COMMENT ON COLUMN preview_projects.db_password IS 'staging:private';
+
+-- ── Versions: originals and the versions made from them ───────────────
+--
+-- Every copy of a project is a version of one original, and the original's
+-- merged changes are offered down to each version that follows it as an
+-- ordinary change its own group votes on (docs/plans/versions.md;
+-- services/upstream-lineage.js, services/upstream-offers.js).
+--
+-- apps.upstream: a version's link to its original, NULL on everything else:
+--   { appId, slug, following, syncedSha, baseSha, share, legacy, since }
+-- `syncedSha` is the original's commit this version last took; `baseSha` a
+-- commit IN THE VERSION'S repository whose tree is the original at
+-- `syncedSha` as it looks in this version (its first commit, then each
+-- update's synthetic "theirs" commit), kept reachable by
+-- refs/homeroom/upstream. `legacy` marks a copy made before versions
+-- existed, whose two commits are found when first needed.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS upstream JSONB;
+CREATE INDEX IF NOT EXISTS idx_apps_upstream_app
+  ON apps (((upstream->>'appId')::int)) WHERE upstream IS NOT NULL;
+
+-- The starter directory (app-templates/<dir>) a ready-made original the
+-- platform made stands for; NULL on every other project.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS original_of VARCHAR(40);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_apps_original_of
+  ON apps (original_of) WHERE original_of IS NOT NULL;
+
+-- This app's approver roster is that app's: the ready-made originals point
+-- it at the platform app, so the platform's approvers approve them and a
+-- change to that roster changes theirs (rules/electorate.ts getApproverSet).
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS approvers_from_app_id INTEGER
+  REFERENCES apps(id) ON DELETE SET NULL;
+
+-- An update proposal on a version, from that original. One open at a time
+-- per version, behind the offer machinery's own read.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS upstream_from_app_id INTEGER
+  REFERENCES apps(id) ON DELETE SET NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_sessions_one_open_update
+  ON chat_sessions (app_id)
+  WHERE upstream_from_app_id IS NOT NULL AND status IN ('active', 'promoted', 'merging');
+
+-- Each version's update, one row per version: where it stands, what it
+-- brings and what it does in this version.
+--   available  the original moved on; nothing opened yet (a dormant
+--              version waits for its hub's card)
+--   open       the proposal exists (session_id)
+--   needs_fit  it conflicts with the version's own changes (conflicts)
+--   skipped    the group said not this one; the lineage moved past it
+--   merged     it went in; the lineage moved to it
+--   failed     planning it failed (error); tried again when the original moves
+CREATE TABLE IF NOT EXISTS upstream_offers (
+  app_id       INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  from_app_id  INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  from_sha     VARCHAR(40) NOT NULL,
+  state        VARCHAR(12) NOT NULL DEFAULT 'available'
+               CHECK (state IN ('available', 'open', 'needs_fit', 'skipped', 'merged', 'failed')),
+  theirs_sha   VARCHAR(40),
+  session_id   INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
+  facts        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  brings       JSONB NOT NULL DEFAULT '[]'::jsonb,
+  keeps        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  conflicts    JSONB NOT NULL DEFAULT '[]'::jsonb,
+  error        TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_upstream_offers_state ON upstream_offers (state, updated_at);
