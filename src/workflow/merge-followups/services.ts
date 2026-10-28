@@ -7,7 +7,7 @@
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { backoff, closeAndComment, gone, permanent } from '../github-work.ts';
-import { INCLUDED_CANDIDATES_SQL, includedIn, liveShotsRun } from './facts.ts';
+import { CARRIER_CANDIDATES_SQL, INCLUDED_CANDIDATES_SQL, includedIn, liveShotsRun, lists } from './facts.ts';
 import { WORK } from './machine.ts';
 
 interface Deps { config: any; pool: Pool }
@@ -91,6 +91,36 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
         const listed = await gh.listPullRequestCommitShas(input.owner, input.repo, input.prNumber);
         const found = includedIn(rows, listed?.shas);
         return { found };
+      },
+    },
+
+    // A merge whose commit is not in the build it was checked against looks
+    // for the later merge that carried it to main (facts.ts
+    // CARRIER_CANDIDATES_SQL): one whose pull request lists the commit, and
+    // whose own merge commit that build contains. None found: it waits, and
+    // the next build looks again.
+    [WORK.carrier]: {
+      maxAttempts: 6,
+      backoffMs: backoff,
+      async run({ input }): Promise<Json> {
+        const gh = github();
+        if (!gh.isEnabled()) return { carrier: null };
+        const { rows } = await pool.query(CARRIER_CANDIDATES_SQL, [input.appId, input.sessionId, input.mergedAt]);
+        // A pull request or commit GitHub no longer has is not the carrier.
+        for (const c of rows) {
+          const mergeSha = String(c.merge_commit_sha).toLowerCase();
+          try {
+            const listed = await gh.listPullRequestCommitShas(input.owner, input.repo, Number(c.pr_number));
+            if (!lists(listed?.shas, input.mergeSha)) continue;
+            const { status } = await gh.compareCommitAncestry(input.owner, input.repo, mergeSha, input.release);
+            if (status !== 'identical' && status !== 'ahead') continue;
+          } catch (err) {
+            if (gone(err)) continue;
+            throw err;
+          }
+          return { carrier: { sessionId: Number(c.id), prNumber: Number(c.pr_number), prTitle: c.pr_title ?? null, mergeSha } };
+        }
+        return { carrier: null };
       },
     },
 

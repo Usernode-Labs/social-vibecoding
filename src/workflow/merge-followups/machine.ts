@@ -35,6 +35,7 @@ export const WORK = Object.freeze({
   verify: 'delivery.verify',
   retire: 'worker.retire',
   find: 'included.find',
+  carrier: 'carried.find',
   issues: 'issues.closeAfterMerge',
   closePr: 'github.closePullRequest',
   journey: 'journey.changeLive',
@@ -72,6 +73,7 @@ export interface Data {
   tally: Tally | null;
   selfHosted: boolean;
   includedIn: CarrierRef | null;   // role 'included': the change that carried it
+  carriedBy?: CarrierRef | null;   // role 'merge': the later merge that brought its commit to main (carried.find)
   included: number[];              // role 'merge': the changes it carried, as found
   deliveries: number;              // app-delivery requests so far (app.deliver items, in a merge recorded before)
   delivery?: typeof DELIVERY;      // the deploy is asked of app-delivery (absent: self-hosted, or a merge recorded before every deploy was app-delivery's)
@@ -487,10 +489,29 @@ function resultOf(status: Followup['status']) {
     if (p.kind === WORK.verify && status === 'done' && result.contains && s.name !== 'live') {
       return toLive(e, d, result.sha || null, ctx);
     }
+    // Not in this build: a merge into another pull request's branch (a
+    // stacked one) never reaches main by its own commit, so it looks for the
+    // later merge that carried it (carried.find), once per build.
+    if (p.kind === WORK.verify && status === 'done' && result.contains === false && s.name !== 'live'
+        && d.role === 'merge' && !d.carriedBy && d.repo && d.mergeSha && result.sha && !d.followups[`carrier:${result.sha}`]) {
+      const work: WorkRequest[] = [{ kind: WORK.carrier, key: `carrier:${result.sha}`, input: {
+        ...d.repo, appId: d.appId, sessionId: d.sessionId, mergeSha: d.mergeSha, mergedAt: d.mergedAt, release: result.sha,
+      } }];
+      return { next: { name: s.name, data: track(d, work) }, work };
+    }
     // A shots run still works in the worker: the same retire, later.
     if (p.kind === WORK.retire && status === 'done' && (result as { waiting?: string }).waiting) {
       return outcome(s.name, d, { work: [{ kind: WORK.retire, key: `worker~${ctx.version + 1}`, input: prev.input,
         notBefore: new Date(ctx.now.getTime() + RETIRE_RECHECK_MS) }] });
+    }
+    // The build that looked contains the carrier's merge commit: the merge
+    // now names that commit and the change it went live inside, its row too
+    // (project: "Live, included in #N", and its Undo is that change's).
+    const carrier = (result as { carrier?: CarrierRef & { mergeSha: string } | null }).carrier;
+    if (p.kind === WORK.carrier && status === 'done' && carrier && s.name !== 'live' && !d.carriedBy) {
+      const release = String((prev.input as { release?: string }).release);
+      return toLive(e, { ...d, mergeSha: carrier.mergeSha,
+        carriedBy: { sessionId: carrier.sessionId, prNumber: carrier.prNumber, prTitle: carrier.prTitle } }, release, ctx);
     }
     if (p.kind === WORK.find && status === 'done') {
       // `found` carries each change's matched head.
@@ -772,8 +793,18 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
             WHERE id = $1`,
           [d.sessionId, d.mergedAt, live, d.mergeSha, d.includedIn?.sessionId ?? null,
             d.tally?.required ?? null, d.tally?.active ?? null]);
-      } else if (live && before.name !== 'live') {
-        await tx.query('UPDATE chat_sessions SET live_at = $2 WHERE id = $1', [d.sessionId, live]);
+      } else {
+        // Carried: the row names the commit that brought it to main, and the
+        // change it went live inside (its Undo is that change's).
+        const prior = (before as Going).data;
+        if (d.carriedBy && !prior.carriedBy) {
+          await tx.query(
+            'UPDATE chat_sessions SET merge_commit_sha = $2, included_in_session_id = $3 WHERE id = $1',
+            [d.sessionId, d.mergeSha, d.carriedBy.sessionId]);
+        }
+        if (live && before.name !== 'live') {
+          await tx.query('UPDATE chat_sessions SET live_at = $2 WHERE id = $1', [d.sessionId, live]);
+        }
       }
     },
   });

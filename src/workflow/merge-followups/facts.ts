@@ -135,6 +135,27 @@ export function includedIn(candidates: any[], commitShas: unknown): { id: number
   return out;
 }
 
+// A pull request based on another one's branch (a stacked one) merges into
+// that branch: its merge commit never reaches main, and the other's merge
+// brings the change there inside its squash, with that commit among its
+// own. carried.find reads who may have carried it: the app's merges since,
+// oldest first. The carrier is the first whose pull request lists the
+// commit and whose merge commit the build that looked contains.
+export const CARRIER_CANDIDATES_SQL = `SELECT cs.id, cs.pr_number, cs.pr_title, cs.merge_commit_sha
+   FROM chat_sessions cs
+  WHERE cs.app_id = $1 AND cs.id <> $2 AND cs.status = 'merged'
+    AND cs.included_in_session_id IS NULL
+    AND cs.pr_number IS NOT NULL AND cs.merge_commit_sha IS NOT NULL
+    AND cs.merged_at >= $3::timestamptz
+  ORDER BY cs.merged_at, cs.id
+  LIMIT 20`;
+
+// Whether `commitShas` (a pull request's own commits) lists `sha`.
+export function lists(commitShas: unknown, sha: unknown): boolean {
+  const want = fullSha(sha);
+  return !!want && (Array.isArray(commitShas) ? commitShas : []).some((c) => fullSha(c) === want);
+}
+
 // The app's repository, on whichever host (rules/github-url.ts).
 export function parseRepo(url: unknown): { owner: string; repo: string } | null {
   return parseRepoAddress(url);

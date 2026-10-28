@@ -2068,6 +2068,13 @@
       "preview": "INCLUDED_CANDIDATES_SQL"
     },
     {
+      "source": "src/workflow/merge-followups/services.ts",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "a1223eba4887ebb455a7",
+      "count": 1,
+      "preview": "CARRIER_CANDIDATES_SQL"
+    },
+    {
       "source": "src/workflow/platform.ts",
       "kind": "runtime-built-identifier",
       "fingerprint": "9e1cc39ff30320cb83c2",
