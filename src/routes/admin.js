@@ -844,8 +844,7 @@ function adminRoutes(config) {
         userId: Number(req.params.id), actorId: req.user.id, mode: 'admin', confirmation: req.body?.confirmation,
       });
       res.json(result);
-      void require('../services/account-deletion-cleanup').sweep(pool, config).catch(() => {});
-    } catch (err) { require('./account-deletion').sendError(res, err); }
+          } catch (err) { require('./account-deletion').sendError(res, err); }
   });
 
   // Admin-issued temporary password (issue #282). The universal recovery
@@ -1991,13 +1990,14 @@ function adminRoutes(config) {
       const fresh = rows.find((r) => r.id === id);
       res.json({ domain: fresh ? adminDomainRow(fresh) : null });
     } catch (err) {
+      if (err.code === 'edge_teardown_failed') return res.status(503).json({ error: err.message, code: err.code });
       log.error('admin', 'Custom domain action failed', { id, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   }
 
   router.post('/api/admin/domains/:id/check', requireAdminWrite, (req, res) => adminDomainAction(req, res,
-    (row) => (row.status === 'disabled' ? row : appDomains.checkNow(pool, config, row))));
+    (row) => (row.status === 'disabled' ? row : appDomains.checkNow(pool, config, row, { userId: req.user.id }))));
   router.post('/api/admin/domains/:id/disable', requireAdminWrite, (req, res) => adminDomainAction(req, res,
     (row) => (row.status === 'disabled' ? row : appDomains.disable(pool, config, row, req.user))));
   router.post('/api/admin/domains/:id/enable', requireAdminWrite, (req, res) => adminDomainAction(req, res,
@@ -2375,7 +2375,7 @@ function adminRoutes(config) {
       // request (a provider failure is logged inside it).
       try {
         await managedOpenRouter.syncAllowance({
-          pool, userId, config,
+          pool, userId, config, actorId: req.user.id,
           state: await managedOpenRouter.stateForUser(pool, userId),
         });
       } catch (err) {
@@ -3261,7 +3261,30 @@ function adminRoutes(config) {
       senders: smsSenders.list(config, senderProvider),
       senderProvider,
       stagingLogOnly: provider.stagingLogOnly,
+      // The Firebase backup for sign-in codes a gateway could not send
+      // (services/firebase-phone-auth.js, FIREBASE BACKUP). `ready` is
+      // Firebase being set up; without it the switch does nothing.
+      fallback: {
+        enabled: await smsSelect.fallbackEnabled(pool).catch(() => true),
+        ready: phoneAuth.firebaseOffered(config),
+      },
     });
+  });
+
+  // Switch the Firebase backup on or off. Full admins only.
+  router.put('/api/admin/sms/fallback', requireAdminWrite, async (req, res) => {
+    const enabled = req.body?.enabled;
+    if (typeof enabled !== 'boolean') {
+      return res.status(422).json({ error: 'enabled must be true or false.', code: 'invalid_enabled' });
+    }
+    try {
+      await smsSelect.setFallback(pool, enabled, req.user.id);
+      log.warn('admin', 'Admin switched the Firebase SMS backup', { by: req.user.username, enabled });
+      res.json({ ok: true, enabled });
+    } catch (err) {
+      log.error('admin', 'sms fallback change failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
   });
 
   // Change who sends texts. Full admins only, and a provider that is not

@@ -190,10 +190,11 @@ async function aliasMap(pool, appId) {
  * before anything is written to GitHub) if it would not apply. Resolves
  * `{ sessionId, prNumber, prUrl, branch, title }`.
  */
-async function createTopicsPR(config, pool, app, change, actor) {
+async function createTopicsPR(config, pool, app, change, actor, { steps } = {}) {
   const aliases = await aliasMap(pool, app.id);
   let applied = null;
   const opts = {
+    steps,
     mutate: (m) => {
       applied = applyTopicChange(m, change, { aliases });
       m.topics = applied.topics;

@@ -307,6 +307,11 @@
       "services | uses src/services/turns.js:repairCut": "a change's dev chat turn that did not end its own way (turn.repair, once per turn): the reply's pills or the \"didn't answer\" note (turn-recovery.js repairUnansweredTurn, which posts it once), skipped while another turn runs on the change, read from wf_instances; keeps nothing",
       "services | uses src/services/turns.js:tellStalled": "a failed agent turn's \"Session stopped before finishing\" (turn.stalled, once per turn): belled unless the conversation is watched now, read from stream_watchers on any process; owed by the turn item's result, cut out of the void call in agent-turn.js's catch, which a restart lost; keeps nothing",
       "services | uses src/services/agent-sessions.js:nameFromRequest": "a conversation opened on a request named after it (turn.name, beside the turn that asked): the request read from GitHub, the name written only over an automatic one; cut out of the route's void call after its commit, which a restart lost; keeps nothing"
+    },
+    "platform-operation": {
+      "services | uses src/services/platform-operations.js:run": "one typed code-host write a web route asked for (operation.run): it reads the requester's current authority and target before the first write and keeps every write as a step in the work item's checkpoint, so a retry or another process carries on from it; nothing is kept in process memory",
+      "services | uses src/services/process-role.js:processRole": "reads the immutable process role before any code-host I/O; a web process only appends operations and waits for their result",
+      "services | uses src/services/process-role.js:runsWorkflow": "a pure role check refusing the operation outside a workflow process"
     }
   }
 }

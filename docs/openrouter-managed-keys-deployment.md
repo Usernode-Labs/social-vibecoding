@@ -40,6 +40,7 @@ In `Usernode-Labs/social-vibecoding`, open **Settings → Secrets and variables
 | --- | --- | --- | --- |
 | Secret | `USERNODE_OPENROUTER_MANAGEMENT_API_KEY` | Yes for included keys | OpenRouter organization management key. |
 | Variable | `OPENROUTER_MANAGED_DAILY_LIMIT_USD` | No longer used | The child key's limit is the user's platform weekly allowance, not a per-key amount. The deploy still writes this variable; it is inert. |
+| Variable | `OPENROUTER_MANAGED_KEYS_ENABLED` | Only where the key is absent | `true` or `false`: whether included keys are offered. A web process asks a conductor to create, sync, disable or delete keys (docs/plans/web-and-conductor.md), so it needs only this, not the management key. Unset, the key's presence answers. |
 | Variable | `OPENROUTER_MANAGED_WORKSPACE_ID` | Recommended | Dedicated funded OpenRouter workspace id. |
 | Variable | `OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY` | No longer used | Every account is created with its included key (#2568), so there is no eligibility gate. The deploy still writes this variable; it is inert. |
 | Variable | `OPENROUTER_DEFAULT_CODEX_MODEL` | Optional | Preferred model slug; deploy default is `z-ai/glm-5.3-flash`. |

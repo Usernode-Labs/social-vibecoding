@@ -1287,14 +1287,19 @@ function proposalHandoffRoutes(config) {
         });
         return res.status(400).json({ error: 'bad_branch_name' });
       }
-      try {
-        await github.ensureBranchAtSha(repo.owner, repo.repo, branchName, input.baseSha);
-      } catch (err) {
-        if (err.code === 'branch_conflict') return res.status(409).json({ error: 'branch_conflict' });
-        log.warn('proposal-handoff', 'GitHub branch creation failed', {
-          app: app.slug, ...github.describeGithubError(err),
-        });
-        return res.status(503).json(githubBudget.githubUnavailableBody(err));
+      // Created on a conductor (services/branch-operation.js), which reads
+      // the requester's standing and the branch's shape again first.
+      const branched = await require('../services/platform-operations').request({
+        op: 'branch.ensure', appId: app.id, userId: req.user.id,
+        input: { purpose: 'proposal-start', branch: branchName, baseSha: input.baseSha },
+      });
+      if (!branched.ok) {
+        if (branched.error === 'branch_conflict') return res.status(409).json({ error: 'branch_conflict' });
+        // A refusal, the host's reason it is unavailable (github-budget), or
+        // the platform's own: answered as the conductor gave it.
+        const { ok: _ok, status, requestId: _requestId, ...body } = branched;
+        log.warn('proposal-handoff', 'Branch creation refused', { app: app.slug, status, error: body.error });
+        return res.status(status === 500 || !status ? 503 : status).json(status === 500 ? { error: 'github_unavailable' } : body);
       }
 
       let created;
