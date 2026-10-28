@@ -10110,6 +10110,62 @@
       "classicPath": "#app/:slug/app"
     },
     {
+      "source": "src/routes/preview-projects.js",
+      "method": "PUT",
+      "path": "/api/preview-projects/:slug",
+      "expression": null,
+      "status": "exempt",
+      "reason": "a platform preview's own process asking production for its projects' databases, builds and runtimes, by the credential production gave it; never a signed-in Classic control"
+    },
+    {
+      "source": "src/routes/preview-projects.js",
+      "method": "GET",
+      "path": "/api/preview-projects/:slug",
+      "expression": null,
+      "status": "exempt",
+      "reason": "a platform preview's own process asking production for its projects' databases, builds and runtimes, by the credential production gave it; never a signed-in Classic control"
+    },
+    {
+      "source": "src/routes/preview-projects.js",
+      "method": "GET",
+      "path": "/api/preview-projects/:slug/logs",
+      "expression": null,
+      "status": "exempt",
+      "reason": "a platform preview's own process asking production for its projects' databases, builds and runtimes, by the credential production gave it; never a signed-in Classic control"
+    },
+    {
+      "source": "src/routes/preview-projects.js",
+      "method": "POST",
+      "path": "/api/preview-projects/:slug/build",
+      "expression": null,
+      "status": "exempt",
+      "reason": "a platform preview's own process asking production for its projects' databases, builds and runtimes, by the credential production gave it; never a signed-in Classic control"
+    },
+    {
+      "source": "src/routes/preview-projects.js",
+      "method": "POST",
+      "path": "/api/preview-projects/:slug/deploy",
+      "expression": null,
+      "status": "exempt",
+      "reason": "a platform preview's own process asking production for its projects' databases, builds and runtimes, by the credential production gave it; never a signed-in Classic control"
+    },
+    {
+      "source": "src/routes/preview-projects.js",
+      "method": "POST",
+      "path": "/api/preview-projects/:slug/restart",
+      "expression": null,
+      "status": "exempt",
+      "reason": "a platform preview's own process asking production for its projects' databases, builds and runtimes, by the credential production gave it; never a signed-in Classic control"
+    },
+    {
+      "source": "src/routes/preview-projects.js",
+      "method": "DELETE",
+      "path": "/api/preview-projects/:slug",
+      "expression": null,
+      "status": "exempt",
+      "reason": "a platform preview's own process asking production for its projects' databases, builds and runtimes, by the credential production gave it; never a signed-in Classic control"
+    },
+    {
       "source": "src/routes/private-requests.js",
       "method": "GET",
       "path": "/api/apps/:slug/private-requests",

@@ -253,6 +253,15 @@ app.use(require('./src/routes/alerts-webhook').alertsWebhookRoutes(config));
 // task's own token. src/routes/external-agent-patch-upload.js has the rest.
 app.use(require('./src/routes/external-agent-patch-upload').externalAgentPatchUploadRoutes(config));
 
+// ── Projects made inside a platform preview ────────────────────────────────
+// A platform preview asks production for the database, build and runtime of
+// a project someone makes in it (services/preview-projects.js). HERE for
+// the patch upload's reasons: the caller is a preview's process with no
+// session, authenticated by its own credential, and a build's body is far
+// over the global parser's limit, so each route parses its own once the
+// caller is known. Off by default (PREVIEW_PROJECTS_ENABLED), and 404 then.
+app.use(require('./src/routes/preview-projects').previewProjectsRoutes(config));
+
 // ── Challenges API (SV web shell) ──────────────────────────────────────────
 // /challenges-api/* used to be a READ-ONLY proxy to the (now retired)
 // external leaderboard deployment. Since the topochain merge the same five

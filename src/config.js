@@ -917,6 +917,10 @@ function load() {
     ).replace(/\/$/, ''),
     selfAppSlug: SELF_APP_SLUG,
     selfAppDbName: SELF_APP_DB_NAME,
+    // Projects made inside a platform preview (services/preview-projects.js):
+    // production makes their database, build and runtime for the preview.
+    // Default off; the chart's config.previewProjects turns it on.
+    previewProjectsEnabled: process.env.PREVIEW_PROJECTS_ENABLED === 'true',
     // #3699: apps whose spec author (an agent chat's or dev chat's scout, and
     // the Homeroom bot) is asked for an HTML spec (before/after screens,
     // diagrams) instead of markdown. Every app by default; comma-separated

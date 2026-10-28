@@ -230,6 +230,7 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - {name: NATIVE_SESSION_V2_TESTNET_CHAIN_ID, value: {{ .Values.config.nativeSessionV2TestnetChainId | quote }}}
             - {name: LOG_LEVEL, value: {{ .Values.config.logLevel | quote }}}
             - {name: FIREBASE_PHONE_AUTH_ENABLED, value: {{ .Values.config.firebasePhoneAuthEnabled | quote }}}
+            - {name: PREVIEW_PROJECTS_ENABLED, value: {{ .Values.config.previewProjects | quote }}}
             - {name: WORKER_MEMORY, value: {{ .Values.config.workerMemory | quote }}}
             - {name: WORKER_MEMORY_PLATFORM_REPO, value: {{ .Values.config.workerMemoryPlatformRepo | quote }}}
             - {name: PLATFORM_SIGNALS, value: {{ .Values.config.platformSignals.mode | default "shadow" | quote }}}
