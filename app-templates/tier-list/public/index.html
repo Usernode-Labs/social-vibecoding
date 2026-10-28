@@ -42,13 +42,13 @@
        classes are written out in full so app.js can name them whole. -->
   <style>
     :root {
-      --tier-s: 255 127 127;
-      --tier-a: 255 191 127;
-      --tier-b: 255 223 127;
-      --tier-c: 222 240 127;
-      --tier-d: 168 222 140;
-      --tier-f: 160 196 255;
-      --on-tier: 28 25 23;
+      --tier-s: 255 143 143;
+      --tier-a: 255 199 143;
+      --tier-b: 255 228 143;
+      --tier-c: 226 243 143;
+      --tier-d: 181 227 156;
+      --tier-f: 173 204 255;
+      --on-tier: 0 0 0;
       --scrim: 28 25 23;
     }
     .dark {
@@ -159,17 +159,29 @@
       <p class="text-body text-muted">Add the first one above. Everyone here can add more and rank them.</p>
     </div>
 
-    <!-- One board, two rankings: yours, first (drag each into a tier) and
-         the group's (every item in the tier its average lands in). Tapping
-         one, on either, opens its sheet below. -->
+    <!-- One board, three rankings: yours, first (drag each into a tier), the
+         group's (every item in the tier its average lands in), and People
+         (one project member's whole board, to look at). Tapping one, on any
+         of them, opens its sheet below. The question mark beside the switch
+         explains how a tier list works. -->
     <section id="ranking" class="flex flex-col gap-3 appear" hidden>
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <div id="view-toggle" role="radiogroup" aria-label="Whose ranking" class="inline-flex rounded-xl border border-line bg-surface p-1">
-          <button type="button" role="radio" data-view="group" aria-checked="false" class="min-h-11 rounded-lg px-4 text-body font-medium">The group's</button>
-          <button type="button" role="radio" data-view="yours" aria-checked="true" class="min-h-11 rounded-lg px-4 text-body font-medium">Yours</button>
+        <!-- The three boards and the question mark stay on one line at 390 px;
+             the note gives up its share of the row first and drops below
+             them rather than squeezing the switch. -->
+        <div class="flex min-w-0 items-center gap-2">
+          <div id="view-toggle" role="radiogroup" aria-label="Whose ranking" class="inline-flex rounded-xl border border-line bg-surface p-1">
+            <button type="button" role="radio" data-view="group" aria-checked="false" class="min-h-11 rounded-lg px-3 text-body font-medium">The group's</button>
+            <button type="button" role="radio" data-view="yours" aria-checked="true" class="min-h-11 rounded-lg px-3 text-body font-medium">Yours</button>
+            <button type="button" role="radio" data-view="person" aria-checked="false" class="min-h-11 rounded-lg px-3 text-body font-medium">People</button>
+          </div>
+          <button id="help-open" type="button" class="min-h-11 w-11 shrink-0 rounded-xl border border-line bg-surface text-body font-semibold" aria-label="How this tier list works">?</button>
         </div>
-        <p id="board-note" class="px-1 text-small text-muted"></p>
+        <p id="board-note" class="w-full min-w-0 px-1 text-small text-muted sm:w-auto"></p>
       </div>
+      <!-- One name for each person with something on a board, filled when
+           that is whose board is showing. Hidden unless People is picked. -->
+      <div id="people" role="radiogroup" aria-label="Whose board" class="flex flex-wrap gap-1.5" hidden></div>
       <p id="hint" class="px-1 text-small text-muted" aria-live="polite"></p>
       <div id="board" class="list" data-view="yours"></div>
       <!-- Below F, and not a tier: where you put one you want to
@@ -213,6 +225,24 @@
           <div id="detail-wanters" class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 px-3 py-2"></div>
         </div>
       </div>
+      <!-- What people said about it, oldest first, and the field to add
+           one. Typing @ suggests the project's members; a mention of a
+           member is highlighted once posted. Your own comment is yours to
+           delete; someone else's can be reported. -->
+      <div class="flex flex-col gap-2">
+        <p class="section-label mb-0">Comments</p>
+        <div id="detail-comments"></div>
+        <form id="comment-form" class="flex flex-col gap-2" autocomplete="off">
+          <div class="relative">
+            <textarea id="comment-body" name="body" maxlength="500" rows="2" class="field w-full"
+              placeholder="Add a comment. Type @ to mention someone."></textarea>
+            <div id="mention-list" role="listbox" aria-label="Mention someone"
+              class="mt-1 overflow-hidden rounded-xl border border-line bg-surface shadow-lg" hidden></div>
+          </div>
+          <p id="comment-status" class="text-small text-danger" role="alert" hidden></p>
+          <div class="flex justify-end"><button id="comment-post" type="submit" class="btn-primary">Post</button></div>
+        </form>
+      </div>
       <div id="detail-yours" role="group" aria-labelledby="detail-yours-label" class="sr-only flex-col gap-2 focus-within:not-sr-only focus-within:flex">
         <p id="detail-yours-label" class="section-label mb-0">Your tier</p>
         <div class="flex flex-wrap gap-2">
@@ -230,6 +260,29 @@
         <button id="detail-off" type="button" class="btn-secondary" hidden>Take it off my board</button>
         <button id="detail-remove" type="button" class="btn-secondary border-0 bg-transparent px-2 text-small text-muted" hidden>Remove it for everyone</button>
       </div>
+    </section>
+  </div>
+
+  <!-- The question mark's sheet: what a tier list is and what each board
+       and row does. It slides up like an item's sheet and closes the same
+       ways (Close, Escape, or a tap on the dimmed board). -->
+  <div id="help" class="fixed inset-0 z-40 flex flex-col justify-end" hidden>
+    <div id="help-scrim" class="scrim appear absolute inset-0"></div>
+    <section id="help-sheet" role="dialog" aria-modal="true" aria-labelledby="help-title"
+      class="rise relative mx-auto flex max-h-[85vh] w-full max-w-xl flex-col gap-4 overflow-y-auto rounded-t-2xl border border-b-0 border-line bg-surface px-4 pb-8 pt-3 shadow-lg">
+      <div class="mx-auto h-1 w-10 shrink-0 rounded-full bg-line" aria-hidden="true"></div>
+      <header class="flex items-start gap-3">
+        <h2 id="help-title" class="min-w-0 flex-1 text-heading">How this tier list works</h2>
+        <button id="help-close" type="button" class="btn-secondary shrink-0">Close</button>
+      </header>
+      <p class="text-body">A tier list sorts things from best to worst. S is the best tier, then A, B, C and D, down to F.</p>
+      <ul class="flex flex-col gap-2 text-body">
+        <li><strong>Yours:</strong> drag each {{ITEM_ONE}} into the tier you think it belongs in. Change your mind any time.</li>
+        <li><strong>Want to {{WANT_VERB}}:</strong> put one there if you have not got to it yet. It counts toward no tier.</li>
+        <li><strong>The group's:</strong> every {{ITEM_ONE}} sits in the tier its average lands in.</li>
+        <li><strong>People:</strong> pick someone to see their whole tier list.</li>
+        <li>Tap any {{ITEM_ONE}} to see who ranked it what and to comment. Type @ to mention someone.</li>
+      </ul>
     </section>
   </div>
 
