@@ -21,6 +21,7 @@ const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
 const renamePr = require('../services/rename-pr');
 const topicsPr = require('../services/topics-pr');
 const platformOperations = require('../services/platform-operations');
+const versionLinks = require('../services/version-links');
 const places = require('../services/places');
 const { drainGuard } = require('../services/lifecycle');
 const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter, firstSessionMomentLimiter } = require('../middleware/rate-limits');
@@ -70,23 +71,24 @@ const validateVisibilityCombo = createOptions.visibilityComboError;
 // A source must have finished the durable parts of provisioning before a
 // fork can take a repository snapshot. `awaiting_secrets` is safe: its repo
 // is complete and only private deploy input is missing. People see a fork
-// as a "remix", so these messages say so.
+// as making their own version of a project (docs/plans/versions.md, "Words
+// on screen"), so these messages say so.
 // Keeping this as a shared message builder lets both initial fork and Retry
 // reject the known race before creating another async failure row.
 function forkSourceReadinessError(sourceApp) {
-  if (!sourceApp) return 'The app this copy came from no longer exists.';
-  if (sourceApp.self_hosted) return 'Homeroom itself cannot be remixed.';
+  if (!sourceApp) return 'The project this version came from no longer exists.';
+  if (sourceApp.self_hosted) return 'You cannot make your own version of Homeroom itself.';
   if (sourceApp.status === 'creating') {
-    return 'This app is still being set up. Try remixing it again once it is ready.';
+    return 'This project is still being set up. Try making your own version again once it is ready.';
   }
   if (sourceApp.status === 'error') {
-    return 'This app cannot be remixed until its setup error is fixed.';
+    return 'You can make your own version of this project once its setup error is fixed.';
   }
   if (!['running', 'awaiting_secrets'].includes(sourceApp.status)) {
-    return 'This app is not ready to remix yet.';
+    return 'This project is not ready for you to make your own version yet.';
   }
   if (!sourceApp.repo_url) {
-    return 'This app is not ready to remix yet because its code is still being set up.';
+    return 'This project is not ready for you to make your own version yet, because its code is still being set up.';
   }
   return null;
 }
@@ -1681,9 +1683,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   });
 
   // Fork an existing app into a brand-new, independent app owned by the
-  // forker (people see this as "Remix"). Mirrors POST /api/apps: same
-  // quota/cap gate, same slug derivation, same insert-CTE (app row +
-  // creator membership) — plus a reference-only `forked_from`. Its insert
+  // forker (people see this as making their own version of it). Mirrors
+  // POST /api/apps: same quota/cap gate, same slug derivation, same
+  // insert-CTE (app row + creator membership) — plus a reference-only
+  // `forked_from` and the version's `upstream` link. Its insert
   // starts its making (src/workflow/app-creation/), which copies the
   // source's code into a new repository and gives the copy an EMPTY
   // database of its own. Nobody's data, keys,
@@ -1692,6 +1695,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     const { name } = req.body;
     if (!name?.trim()) {
       return res.status(400).json({ error: 'App name is required' });
+    }
+    // Whether the version gets the original's updates (docs/plans/versions.md):
+    // on unless the maker turned it off. Written into its link below and into
+    // its dapp.json as `followOriginal` (app-forker.rewriteDappName), where
+    // its group can vote to change it later.
+    const follow = req.body?.follow === undefined ? true : req.body.follow;
+    if (typeof follow !== 'boolean') {
+      return res.status(400).json({ error: 'follow must be true or false' });
     }
 
     try {
@@ -1740,20 +1751,32 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // what the copy changed later can be told apart from what it copied.
       //
       // A copy always starts as Just you (private to build, private to
-      // view), whatever the source's audience: what the remixer made is
+      // view), whatever the source's audience: what its maker made is
       // theirs until they invite people or open it up. The worker strips
       // the copied dapp.json's `visibility` block so the first deploy does
       // not put the source's audience back.
+      const forkedAt = new Date().toISOString();
       const forkedFrom = JSON.stringify({
         appId: sourceApp.id,
         slug: sourceApp.slug,
-        forkedAt: new Date().toISOString(),
+        forkedAt,
+      });
+      // The version's link to its original (apps.upstream, services/
+      // upstream-lineage.js): the same reference, whether it gets the
+      // original's updates, and since when. The worker adds the two commits
+      // updates and suggestions are planned from (app-creator.copyFork).
+      // `forked_from` stays as it was for its older readers.
+      const upstream = JSON.stringify({
+        appId: sourceApp.id,
+        slug: sourceApp.slug,
+        following: follow,
+        since: forkedAt,
       });
       const { rows } = await pool.query(
         `WITH new_app AS (
            INSERT INTO apps (name, slug, created_by, status,
-                             collab_visibility, view_visibility, forked_from)
-           VALUES ($1, $2, $3, 'creating', 'private', 'private', $4::jsonb)
+                             collab_visibility, view_visibility, forked_from, upstream)
+           VALUES ($1, $2, $3, 'creating', 'private', 'private', $4::jsonb, $5::jsonb)
            RETURNING *
          ), membership AS (
            INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
@@ -1761,7 +1784,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
            ON CONFLICT (app_id, user_id) DO NOTHING
          )
          SELECT * FROM new_app`,
-        [name.trim(), slug, req.user.id, forkedFrom]
+        [name.trim(), slug, req.user.id, forkedFrom, upstream]
       );
       const appRow = rows[0];
       log.info('apps', 'App fork (pending)', { appId: appRow.id, slug, sourceSlug: sourceApp.slug });
@@ -2029,6 +2052,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       appPayload.custom_domain = domainRow ? { hostname: domainRow.hostname, status: domainRow.status } : null;
       appPayload.share_url = shareUrl(url, domainRow && domainRow.status === 'live' ? appPayload.custom_domain : null);
       await attachForkLineage(pool, appPayload);
+      // Versions (docs/plans/versions.md): on a version, the original it was
+      // made from and whether it gets its updates; on an original, how many
+      // versions it has (services/version-links.js). Best-effort: a read
+      // that fails says nothing about either, never a failed page.
+      Object.assign(appPayload, await versionLinks.appFields(pool, appRow, req.user).catch((err) => {
+        log.warn('apps', 'Could not read the versions of an app', { slug: appRow.slug, message: err.message });
+        return { upstream_link: null, versions: null };
+      }));
       res.json({ app: appPayload });
     } catch (err) {
       log.error('apps', 'Failed to get app', { message: err.message });
@@ -4024,13 +4055,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         sourceApp = await findForkSource(pool, appRow);
         if (!sourceApp && !appRow.repo_url) {
           return res.status(409).json({
-            error: 'The app this copy came from no longer exists, so the copy cannot be retried.',
+            error: 'The project this version came from no longer exists, so it cannot be set up again.',
           });
         }
         if (sourceApp && !appRow.repo_url) {
           if (!(await appAccess.checkAppAccess(pool, sourceApp, req.user, 'view'))) {
             return res.status(403).json({
-              error: 'You no longer have access to the app this copy came from.',
+              error: 'You no longer have access to the project this version came from.',
             });
           }
           const readinessError = forkSourceReadinessError(sourceApp);
@@ -4362,6 +4393,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (channel && places.generalMuted(placesPayload)) {
         channel = { ...channel, unread_count: 0, muted: true };
       }
+      // Versions (services/version-links.js). Best-effort, like the reads
+      // above: one that fails is no line, never a failed hub.
+      const versionFields = await versionLinks.communityFields(pool, app).catch((err) => {
+        log.warn('apps', 'Could not read the versions for the hub', { slug: app.slug, message: err.message });
+        return { made_from: null, versions: null };
+      });
       res.json({
         slug: app.slug,
         name: app.name,
@@ -4404,6 +4441,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           pr_number: pendingWhoDecides.pr_number,
           title: pendingWhoDecides.pr_title || null,
         } : null,
+        // Versions (docs/plans/versions.md): what a version was made from
+        // and whether it gets its updates, and an original's versions, for
+        // the hero's line (versionFields, read above).
+        made_from: versionFields.made_from,
+        versions: versionFields.versions,
       });
     } catch (err) {
       log.error('apps', 'Failed to load community', { message: err.message });
@@ -4674,4 +4716,7 @@ module.exports = {
   // #2524: the activity guard and its two bounds, so the contract is
   // unit-testable without standing up the whole app router.
   activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,
+  // The refusals of making your own version, for their words
+  // (tests/app-fork-retry-route.test.js).
+  forkSourceReadinessError,
 };

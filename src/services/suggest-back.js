@@ -1,63 +1,78 @@
 'use strict';
 
-// "Suggest this back": send a remix's changes to the app it was copied from,
-// as an ordinary proposal there.
+// "Suggest to <original>": send a version's own changes to the project it
+// was made from, as an ordinary proposal there (docs/plans/versions.md,
+// "Suggestions up"). Ids, routes and code keep `suggest-back`: tests and
+// dapp.json checks select on them.
 //
-// People see a fork as a "Remix" (their own copy). A copy records where it
-// started in `apps.forked_from` (services/app-forker.js):
+// A version records where it started in `apps.upstream`
+// (services/upstream-lineage.js):
 //
-//   { appId, slug, sourceSha, forkBaseSha, forkedAt }
+//   { appId, slug, following, syncedSha, baseSha, share, legacy, since }
 //
-// `sourceSha` is the commit of the ORIGINAL that was cloned, and
-// `forkBaseSha` the copy's own first commit: that clone, flattened, with the
-// copy's name written into dapp.json. So `forkBaseSha..<copy's main>` is
-// exactly what the copy's owner changed, and it applies onto `sourceSha` in
-// the original. Copies made before those two fields existed carry only
-// { appId, slug } and cannot use this; they get a plain sentence saying so.
+// `syncedSha` is the ORIGINAL's commit the version last took, and `baseSha`
+// a commit in the VERSION's repository whose tree is the original at
+// `syncedSha` as it looks in this version (its first commit, then each
+// update's "theirs" commit). A copy from before versions keeps the older
+// `forked_from` ({ appId, slug, sourceSha, forkBaseSha, forkedAt }), read as
+// the same two when it has no link yet; a legacy link has its commits found
+// when first needed (upstream-lineage.resolveLegacy). A copy whose commits
+// cannot be found gets a plain sentence saying so.
 //
-// ── What is sent, and what is not ──────────────────────────────────────
+// ── What can be sent ───────────────────────────────────────────────────
 //
-// The diff is binary-safe (`--binary --full-index`) and leaves out what
-// makes the copy a different app rather than a change to the original:
+// "Your changes" are the commits on the version's main since `baseSha` that
+// are the version's own: not the updates it took from the original (a
+// commit whose proposal came from there, `upstream_from_app_id`, or whose
+// subject starts "Update from "). The preview lists them ({ sha, title },
+// newest last), and the send takes `picks` (default all of them).
 //
-//   * `.claude/homeroom-canonical-repo`, which names the copy's own
-//     repository (app-forker writeCanonicalRepoPointer);
-//   * in dapp.json, the top-level `name`, `visibility`, `admins` and
-//     `governance`. Any other key the copy changed is carried over onto the
-//     ORIGINAL's dapp.json at `sourceSha`, so the original keeps its own
-//     name, audience, admins and approval rule.
+// Each picked commit travels on its own (`git format-patch`), binary-safe,
+// without what makes the version a different project rather than a change
+// to the original (upstream-lineage: words.json, its repository pointer,
+// README.md, CLAUDE.md, LICENSE; and in dapp.json its name, visibility,
+// admins, governance, description and followOriginal). Any other dapp.json
+// key a picked commit changed is carried over onto the ORIGINAL's dapp.json
+// at `syncedSha`, as one last patch, so the original keeps its own name,
+// audience, admins and approval rule. The picks are applied first on the
+// version's own `baseSha`: one that does not apply there builds on a change
+// that was not picked, and is refused in words saying so. Then they are
+// applied on the original at `syncedSha` with `git am --3way`.
 //
-// Nothing of the copy's data, members or keys is in a repository, so nothing
-// of them can travel.
+// Nothing of the version's data, members or keys is in a repository, so
+// nothing of them can travel.
 //
 // ── Who may send ───────────────────────────────────────────────────────
 //
-// The copy's owner (its creator), and only when they could take part in the
-// original anyway: collab access (services/app-access.js), and membership of
-// its community (the communities.requireAppMembership rule). A non-member
-// with collab access is answered `join_required`, which the client's fetch
-// wrapper turns into Join and a retry; somebody without collab access is told
-// to ask to join. Version one is for the original's collaborators only.
+// The version's owner (its creator), and only when they could take part in
+// the original anyway: collab access (services/app-access.js), and
+// membership of its community (the communities.requireAppMembership rule).
+// A non-member with collab access is answered `join_required`, which the
+// client's fetch wrapper turns into Join and a retry; somebody without
+// collab access is told to ask to join.
 //
 // ── How it lands ───────────────────────────────────────────────────────
 //
 // The same chain demo mode and submit_work's patch path run in process
 // (routes/demo-mode.js, services/external-agent-tasks.js):
-// externalAgentPatch.applyPatch commits the diff at `sourceSha` in the
-// original's bot-owned repository and pushes a fresh branch, createPR opens
-// the pull request, and a `chat_sessions` row (`source = 'imported'`,
-// `active`, owned by the copy's owner) makes it a proposal, whose preview and
-// checks start as an import's do. The bounds are submit_work's: the
-// promoted-proposal cap, 256 KB and 200 files, and nothing under `.github/`.
-// One open suggestion per copy (`chat_sessions.suggested_from_app_id`, with
-// a partial unique index behind the read).
+// externalAgentPatch.applyPatch applies the mbox at `syncedSha` in the
+// original's repository (`git am --3way`) and pushes a fresh branch,
+// createPR opens the pull request ("Suggested by <version>: <titles>"), and
+// a `chat_sessions` row (`source = 'imported'`, `active`, owned by the
+// version's owner) makes it a proposal, whose preview and checks start as an
+// import's do. The bounds are submit_work's: the promoted-proposal cap,
+// 256 KB and 200 files, and nothing under `.github/`. One open suggestion
+// per version (`chat_sessions.suggested_from_app_id`, with a partial unique
+// index behind the read).
 
 const log = require('./logger');
 const repoRef = require('./repo-ref');
+const lineage = require('./upstream-lineage');
 
-const EXCLUDED_MANIFEST_KEYS = Object.freeze(['name', 'visibility', 'admins', 'governance']);
-const EXCLUDED_PATHS = Object.freeze(['.claude/homeroom-canonical-repo']);
-const MANIFEST_PATH = 'dapp.json';
+// What never travels, as upstream-lineage says it for both directions.
+const EXCLUDED_MANIFEST_KEYS = lineage.EXCLUDED_MANIFEST_KEYS;
+const EXCLUDED_PATHS = lineage.EXCLUDED_PATHS;
+const MANIFEST_PATH = lineage.MANIFEST_PATH;
 const OPEN_STATUSES = Object.freeze(['active', 'promoted', 'merging']);
 const SHA_RE = /^[0-9a-f]{40}$/i;
 // The bounds submit_work's patch path holds (services/external-agent-patch.js
@@ -67,24 +82,35 @@ const MAX_PATCH_BYTES = 256 * 1024;
 const MAX_PATCH_FILES = 200;
 // How many commit subjects the confirmation lists before "and N more".
 const MAX_LISTED_COMMITS = 20;
+// How many of the version's own changes the pick list offers (the newest).
+const MAX_CHANGES = 100;
+// The subject an update's merge carries (services/upstream-offers.js), for a
+// merge whose proposal row is gone.
+const UPDATE_SUBJECT = /^Update from /;
+// git's empty tree, the parent side of a version's very first commit.
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
 // What people read. Plain words; no em dashes (tests/no-em-dash-in-copy).
 const MESSAGES = Object.freeze({
-  notACopy: 'This project is not a remix, so there is nothing to suggest back.',
-  notOwner: 'Only the person who made this copy can suggest it back.',
-  lineageMissing: 'This copy was made before Homeroom kept track of where a remix starts, '
-    + 'so its changes can’t be sent back from here.',
-  originalGone: 'The app this copy came from no longer exists.',
+  notACopy: 'This project was not made from another one, so there is nothing to suggest.',
+  notOwner: 'Only the person who made this version can suggest its changes.',
+  lineageMissing: 'This version was made before Homeroom kept track of where a version starts, '
+    + 'so its changes can’t be sent from here.',
+  originalGone: 'The project this version came from no longer exists.',
   collabRequired: 'Ask to join to suggest changes.',
-  noChanges: 'Your copy has no changes to send since you remixed it.',
-  originalMoved: 'The original has changed too much since you remixed it.',
+  noChanges: 'Your version has no changes to send since you made it.',
+  originalMoved: 'The original has changed too much since you made your version.',
   tooLarge: 'Your changes are too big to send as one proposal (over 256 KB).',
   tooManyFiles: (n) => `Your changes touch ${n} files, more than the 200 one proposal can carry.`,
-  forbiddenPath: (file) => `Your changes include ${file}. Changes under .github/ can’t be sent back.`,
-  alreadyOpen: (name) => `You already sent this copy’s changes to ${name}, and that proposal is still open.`,
-  noGithub: 'GitHub is not set up here, so changes can’t be sent back.',
+  forbiddenPath: (file) => `Your changes include ${file}. Changes under .github/ can’t be suggested.`,
+  alreadyOpen: (name) => `You already suggested this version’s changes to ${name}, and that proposal is still open.`,
+  noGithub: 'No code host is set up here, so changes can’t be suggested.',
   unavailable: 'Homeroom could not send your changes just now. Try again shortly.',
-  prFailed: 'GitHub did not open the pull request, so nothing was sent.',
+  prFailed: 'The code host did not open the pull request, so nothing was sent.',
+  nothingPicked: 'Pick at least one of your changes to suggest.',
+  unknownPick: 'One of the changes you picked is not one of this version’s own changes. Open the list again and pick from it.',
+  dependsOnUnpicked: (title) => `“${title}” builds on one of your changes you did not pick. `
+    + 'Pick that one too, or leave this one out.',
 });
 
 function refusal(status, code, error, extra = {}) {
@@ -96,8 +122,8 @@ function sha(value) {
 }
 
 /**
- * The lineage a copy's row carries, or null for an app that is not a copy.
- * `complete` is whether both commits this feature needs are recorded.
+ * The older lineage a copy's row carries in `forked_from`, or null for an
+ * app that is not a copy. `complete` is whether both commits are recorded.
  */
 function readLineage(row) {
   let ref = row ? row.forked_from : null;
@@ -117,58 +143,40 @@ function readLineage(row) {
   };
 }
 
-function parseJsonObject(text) {
-  if (typeof text !== 'string') return null;
-  try {
-    const value = JSON.parse(text);
-    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
-  } catch {
-    return null;
+/**
+ * A version's link to its original, as suggestions read it: `apps.upstream`
+ * when it has one, else the older `forked_from` under the same names.
+ * Resolves { appId, slug, syncedSha, baseSha, legacy, complete } or null for
+ * a project that is not a version. Pure.
+ */
+function readLink(row) {
+  const up = lineage.readUpstream(row);
+  if (up) {
+    return {
+      appId: up.appId, slug: up.slug, syncedSha: up.syncedSha, baseSha: up.baseSha,
+      legacy: up.legacy, upstream: true, complete: lineage.planned(up),
+    };
   }
-}
-
-function sameJson(a, b) {
-  return JSON.stringify(a) === JSON.stringify(b);
+  const old = readLineage(row);
+  if (!old) return null;
+  return {
+    appId: old.appId, slug: old.slug, syncedSha: old.sourceSha, baseSha: old.forkBaseSha,
+    legacy: false, upstream: false, complete: old.complete,
+  };
 }
 
 /**
- * The original's dapp.json with the copy's own changes carried over, minus
- * the keys that make the copy a different app (EXCLUDED_MANIFEST_KEYS).
- *
- * `baseText` is dapp.json at the copy's first commit, `headText` at its
- * main, `targetText` at the original's `sourceSha` (null when absent). Each
- * top-level key the copy added, changed or removed, other than the excluded
- * ones, is applied to the target; key order is the target's, with new keys
- * after it. Returns { changed: false } when nothing applies, and
- * { changed: true, text, keys } otherwise. A dapp.json that does not parse
- * on either side of the copy is left alone (`unreadable: true`): there is no
- * telling which of its keys changed. Pure.
+ * The original's dapp.json with the version's changes to it carried over,
+ * minus the keys that never travel (upstream-lineage.mergeManifest). Kept
+ * under this name for its callers. Pure.
  */
 function mergeManifest(baseText, headText, targetText) {
-  if (baseText === headText) return { changed: false };
-  const base = baseText == null ? {} : parseJsonObject(baseText);
-  const head = headText == null ? {} : parseJsonObject(headText);
-  if (!base || !head) return { changed: false, unreadable: true };
-  const keys = [];
-  for (const key of new Set([...Object.keys(base), ...Object.keys(head)])) {
-    if (EXCLUDED_MANIFEST_KEYS.includes(key)) continue;
-    if (!sameJson(base[key], head[key])) keys.push(key);
-  }
-  if (!keys.length) return { changed: false };
-  const target = targetText == null ? {} : parseJsonObject(targetText);
-  if (!target) return { changed: false, unreadable: true };
-  const next = { ...target };
-  for (const key of keys) {
-    if (Object.prototype.hasOwnProperty.call(head, key)) next[key] = head[key];
-    else delete next[key];
-  }
-  if (sameJson(next, target)) return { changed: false };
-  return { changed: true, text: `${JSON.stringify(next, null, 2)}\n`, keys };
+  return lineage.mergeManifest(baseText, headText, targetText);
 }
 
-/** The pathspec for everything but dapp.json and the excluded paths. */
+/** The pathspec for everything but dapp.json and the paths that never travel. */
 function diffPathspec() {
-  return ['.', `:(exclude)${MANIFEST_PATH}`, ...EXCLUDED_PATHS.map((p) => `:(exclude)${p}`)];
+  return lineage.diffPathspec();
 }
 
 /**
@@ -200,55 +208,172 @@ async function showFile(git, rev, file) {
   }
 }
 
+// A commit's parent, or git's empty tree for a first commit.
+async function parentOf(git, commit) {
+  try {
+    const { stdout } = await git(['rev-parse', '--verify', '--quiet', `${commit}^`]);
+    return String(stdout).trim() || EMPTY_TREE;
+  } catch {
+    return EMPTY_TREE;
+  }
+}
+
+// A change's title: its subject without the "(#N)" its merge added.
+function titleOf(subject) {
+  return String(subject || '').trim().replace(/\s+\(#\d+\)$/, '');
+}
+
+class DependsOnUnpicked extends Error {
+  constructor(pick) {
+    super('depends_on_unpicked');
+    this.pick = pick;
+  }
+}
+
+// The picks do not apply on the original as the version last took it, even
+// with every one of the version's changes: the original's own changes are in
+// the way.
+class DoesNotFit extends Error {
+  constructor(pick) {
+    super('does_not_fit');
+    this.pick = pick;
+  }
+}
+
+// One commit's own change as a mail (`git format-patch`), without the paths
+// that never travel, and what it did to dapp.json. `mail` is null when the
+// commit changed nothing that travels.
+async function commitPatch(git, commit, spec) {
+  const parent = await parentOf(git, commit.sha);
+  const { stdout: names } = await git(['diff', '--name-only', '--no-renames', parent, commit.sha, '--', ...spec]);
+  const touched = String(names || '').split('\n').map((x) => x.trim()).filter(Boolean);
+  let mail = null;
+  if (touched.length) {
+    const { stdout } = await git([
+      'format-patch', '-1', '--stdout', '--binary', '--full-index', '--no-renames',
+      ...(parent === EMPTY_TREE ? ['--root'] : []), commit.sha, '--', ...spec,
+    ]);
+    mail = String(stdout || '').trim() ? String(stdout) : null;
+  }
+  const before = parent === EMPTY_TREE ? null : await showFile(git, parent, MANIFEST_PATH);
+  const after = await showFile(git, commit.sha, MANIFEST_PATH);
+  return { commit, mail, touched: mail ? touched : [], manifest: before !== after ? { before, after } : null };
+}
+
+// Apply `patches` on `baseSha` in turn (`git am --3way`), from a clean
+// checkout. Resolves the index of the first that does not apply, or -1.
+async function firstMisfit(git, dir, baseSha, patches) {
+  const fs = require('fs/promises');
+  const path = require('path');
+  await git(['am', '--abort']).catch(() => {});
+  await git(['checkout', '-q', '-f', '--detach', baseSha]);
+  for (const [i, p] of patches.entries()) {
+    const file = path.join(dir, `.usernode-pick-${i}.patch`);
+    await fs.writeFile(file, p.mail);
+    try {
+      await git(['am', '--3way', '--keep-non-patch', '--quiet', file]);
+    } catch {
+      await git(['am', '--abort']).catch(() => {});
+      return i;
+    } finally {
+      await fs.rm(file, { force: true }).catch(() => {});
+    }
+  }
+  return -1;
+}
+
 /**
  * Build the patch in a scratch repository (`git` is
- * external-agent-head.withScratchRepo's runner, `dir` its directory).
- * Fetches the copy's two commits and, only when dapp.json needs carrying
- * over, the original's `sourceSha`. Returns { patch, files, manifestKeys }.
+ * external-agent-head.withScratchRepo's runner, `dir` its directory): an
+ * mbox of the picked commits, each `git format-patch` of its own change
+ * without the paths that never travel, then, when a pick changed dapp.json
+ * keys that travel, one more message carrying them over onto the original's
+ * dapp.json at `syncedSha`.
+ *
+ * `changes` are all the version's own changes and `picks` the chosen ones,
+ * [{ sha, title }] oldest first. The picks are applied on the version's
+ * `baseSha` in turn first. One that does not apply there, when all of the
+ * version's changes together do, builds on a change that was not picked
+ * (DependsOnUnpicked); one that does not apply even then does not fit the
+ * original as the version last took it (DoesNotFit). Resolves
+ * { patch, files, manifestKeys, sent: [titles] }.
  */
-async function buildPatch({ git, dir, copyRemote, originalRemote, forkBaseSha, copyHeadSha, sourceSha }) {
-  await git(['fetch', '--no-tags', '--depth', '1', copyRemote, forkBaseSha, copyHeadSha]);
+async function buildPatch({
+  git, dir, copyRemote, originalRemote, baseSha, copyHeadSha, syncedSha, picks, changes = picks,
+}) {
+  await git(['fetch', '--no-tags', copyRemote, baseSha, copyHeadSha]);
   const spec = diffPathspec();
-  const { stdout: body } = await git([
-    'diff', '--binary', '--full-index', '--no-renames', forkBaseSha, copyHeadSha, '--', ...spec,
-  ]);
-  const { stdout: names } = await git([
-    'diff', '--name-only', '--no-renames', forkBaseSha, copyHeadSha, '--', ...spec,
-  ]);
-  const files = String(names || '').split('\n').map((s) => s.trim()).filter(Boolean);
-  let patch = String(body || '');
+  const fs = require('fs/promises');
+  const path = require('path');
 
-  // dapp.json: the copy's changes to it, minus the excluded keys, carried
-  // over onto the ORIGINAL's dapp.json at sourceSha, and diffed against
-  // that. The original is fetched only when the copy changed the file.
+  const made = new Map();
+  const patchOf = async (c) => {
+    if (!made.has(c.sha)) made.set(c.sha, await commitPatch(git, c, spec));
+    return made.get(c.sha);
+  };
+  const picked = [];
+  for (const pick of picks) picked.push(await patchOf(pick));
+  const messages = picked.filter((p) => p.mail);
+
+  if (messages.length) {
+    const misfit = await firstMisfit(git, dir, baseSha, messages);
+    if (misfit !== -1) {
+      const failing = messages[misfit].commit;
+      if (picks.length < changes.length) {
+        const all = [];
+        for (const c of changes) all.push(await patchOf(c));
+        if (await firstMisfit(git, dir, baseSha, all.filter((p) => p.mail)) === -1) {
+          throw new DependsOnUnpicked(failing);
+        }
+      }
+      throw new DoesNotFit(failing);
+    }
+  }
+
+  const files = new Set();
+  for (const m of messages) for (const f of m.touched) files.add(f);
+  let patch = messages.map((m) => (m.mail.endsWith('\n') ? m.mail : `${m.mail}\n`)).join('');
+
+  // dapp.json: each pick's changes to it, minus the keys that never travel,
+  // carried over in turn onto the ORIGINAL's dapp.json at syncedSha, and
+  // sent as one more commit on top of it. The original is fetched only when
+  // a pick changed the file.
   let manifestKeys = [];
-  const baseText = await showFile(git, forkBaseSha, MANIFEST_PATH);
-  const headText = await showFile(git, copyHeadSha, MANIFEST_PATH);
-  if (baseText !== headText) {
-    await git(['fetch', '--no-tags', '--depth', '1', originalRemote, sourceSha]);
-    const targetText = await showFile(git, sourceSha, MANIFEST_PATH);
-    const merged = mergeManifest(baseText, headText, targetText);
-    if (merged.changed) {
-      const fs = require('fs/promises');
-      const path = require('path');
+  const manifestSteps = picked.map((p) => p.manifest).filter(Boolean);
+  if (manifestSteps.length) {
+    await git(['fetch', '--no-tags', '--depth', '1', originalRemote, syncedSha]);
+    const targetText = await showFile(git, syncedSha, MANIFEST_PATH);
+    let text = targetText;
+    const keys = new Set();
+    for (const step of manifestSteps) {
+      const merged = mergeManifest(step.before, step.after, text);
+      if (merged.changed) {
+        text = merged.text;
+        for (const k of merged.keys) keys.add(k);
+      }
+    }
+    if (text !== targetText) {
       const file = path.join(dir, '.usernode-suggest-manifest.json');
-      await fs.writeFile(file, merged.text, 'utf8');
+      await fs.writeFile(file, text, 'utf8');
       const { stdout: blob } = await git(['hash-object', '-w', file]);
-      await git(['read-tree', sourceSha]);
+      await fs.rm(file, { force: true }).catch(() => {});
+      await git(['read-tree', syncedSha]);
       await git(['update-index', '--add', '--cacheinfo', `100644,${String(blob).trim()},${MANIFEST_PATH}`]);
       const { stdout: tree } = await git(['write-tree']);
-      const { stdout: manifestDiff } = await git([
-        'diff', '--binary', '--full-index', sourceSha, String(tree).trim(), '--', MANIFEST_PATH,
+      const { stdout: commit } = await git([
+        'commit-tree', String(tree).trim(), '-p', syncedSha, '-m', 'Carry over dapp.json settings',
       ]);
-      if (String(manifestDiff || '').trim()) {
-        if (patch && !patch.endsWith('\n')) patch += '\n';
-        patch += String(manifestDiff);
-        files.push(MANIFEST_PATH);
-        manifestKeys = merged.keys;
+      const { stdout: mail } = await git([
+        'format-patch', '-1', '--stdout', '--binary', '--full-index', String(commit).trim(),
+      ]);
+      if (String(mail || '').trim()) {
+        patch += String(mail);
+        files.add(MANIFEST_PATH);
+        manifestKeys = [...keys];
       }
     }
   }
-  return { patch, files, manifestKeys };
+  return { patch, files: [...files], manifestKeys, sent: messages.map((m) => m.commit.title) };
 }
 
 function defaultDeps() {
@@ -262,6 +387,7 @@ function defaultDeps() {
     topicAttrs: require('./topic-attributes'),
     prImportSync: require('./pr-import-sync'),
     ws: require('./ws'),
+    lineage,
   };
 }
 
@@ -270,26 +396,34 @@ function appRef(app) {
 }
 
 /**
- * Everything that decides whether `user` may send `fork`'s changes back,
- * short of building the patch. Shared by the preview and the send, so the
- * dialog and the button can never disagree. Resolves
- * { ok: true, lineage, original } or a refusal { ok: false, status, body }.
+ * Everything that decides whether `user` may send `fork`'s changes, short
+ * of building the patch. Shared by the preview and the send, so the dialog
+ * and the button can never disagree. A legacy link has its two commits
+ * looked for here (upstream-lineage.resolveLegacy). Resolves
+ * { ok: true, link, original } or a refusal { ok: false, status, body }.
  */
-async function evaluate({ pool, user, fork, deps }) {
-  const lineage = readLineage(fork);
-  if (!lineage) return refusal(409, 'not_a_copy', MESSAGES.notACopy);
+async function evaluate({ pool, config = {}, user, fork, deps }) {
+  let link = readLink(fork);
+  if (!link) return refusal(409, 'not_a_copy', MESSAGES.notACopy);
   if (!user || fork.created_by !== user.id) return refusal(403, 'not_owner', MESSAGES.notOwner);
 
   let original = null;
-  if (lineage.appId) {
-    const { rows } = await pool.query('SELECT * FROM apps WHERE id = $1', [lineage.appId]);
+  if (link.appId) {
+    const { rows } = await pool.query('SELECT * FROM apps WHERE id = $1', [link.appId]);
     original = rows[0] || null;
   }
   if (!original || original.self_hosted) return refusal(409, 'original_gone', MESSAGES.originalGone);
   if (!(await deps.appAccess.checkAppAccess(pool, original, user, 'view'))) {
     return refusal(409, 'original_gone', MESSAGES.originalGone);
   }
-  if (!lineage.complete) {
+  if (!link.complete && link.upstream) {
+    const resolver = deps.lineage || lineage;
+    const resolved = await resolver.resolveLegacy(config, pool, fork).catch(() => null);
+    if (resolved && lineage.planned(resolved)) {
+      link = { ...link, syncedSha: resolved.syncedSha, baseSha: resolved.baseSha, legacy: false, complete: true };
+    }
+  }
+  if (!link.complete) {
     return refusal(409, 'lineage_missing', MESSAGES.lineageMissing, { original: appRef(original) });
   }
   // Collaborators of the original only, for now. Admins pass, as they do
@@ -307,12 +441,13 @@ async function evaluate({ pool, user, fork, deps }) {
       status: 403,
       body: { ...deps.communities.joinRequiredBody(original), original: appRef(original) },
       original,
+      link,
     };
   }
-  return { ok: true, lineage, original };
+  return { ok: true, link, original };
 }
 
-/** The open suggestion this copy already has on the original, or null. */
+/** The open suggestion this version already has on the original, or null. */
 async function openSuggestion(pool, fork) {
   const { rows } = await pool.query(
     `SELECT cs.id, cs.pr_number, a.slug
@@ -336,14 +471,38 @@ function repoOf(deps, app) {
 }
 
 /**
- * What the confirmation shows: the original, the commit subjects since the
- * remix (newest last, at most MAX_LISTED_COMMITS), how many files they
- * touch, and whether Send can go ahead (`reason` is the refusal it would
- * meet, which the dialog says in place of the list).
+ * The version's own changes since `baseSha` up to `head`, oldest first, as
+ * [{ sha, title }]: the commits on its main that are not the updates it
+ * took from the original (a commit an update's proposal merged, or one
+ * whose subject says it is an update). Also the files they touch.
  */
-async function preview({ pool, user, fork, deps = defaultDeps() }) {
+async function ownChanges({ pool, deps, fork, link, head }) {
+  const repo = repoOf(deps, fork);
+  const compared = await deps.github.compareCommitSubjects(repo.owner, repo.repo, link.baseSha, head);
+  const { rows } = await pool.query(
+    `SELECT merge_commit_sha FROM chat_sessions
+      WHERE app_id = $1 AND upstream_from_app_id IS NOT NULL AND merge_commit_sha IS NOT NULL`,
+    [fork.id]
+  );
+  const updates = new Set(rows.map((r) => String(r.merge_commit_sha || '').toLowerCase()).filter(Boolean));
+  const changes = (compared.commits || [])
+    .map((c) => ({ sha: sha(c.sha), subject: String(c.subject || '') }))
+    .filter((c) => c.sha && !updates.has(c.sha) && !UPDATE_SUBJECT.test(c.subject))
+    .map((c) => ({ sha: c.sha, title: titleOf(c.subject) || c.sha.slice(0, 7) }));
+  const files = (compared.files || []).filter((f) => !lineage.isExcludedPath(f));
+  return { changes, files, total: Number(compared.totalCommits) || (compared.commits || []).length };
+}
+
+/**
+ * What the confirmation shows: the original, the version's own changes
+ * (`changes`, [{ sha, title }] newest last, at most MAX_CHANGES; `commits`
+ * their titles, at most MAX_LISTED_COMMITS, for the older dialog), how many
+ * files they touch, and whether Send can go ahead (`reason` is the refusal
+ * it would meet, which the dialog says in place of the list).
+ */
+async function preview({ pool, config = {}, user, fork, deps = defaultDeps() }) {
   const copy = appRef(fork);
-  const verdict = await evaluate({ pool, user, fork, deps });
+  const verdict = await evaluate({ pool, config, user, fork, deps });
   if (!verdict.ok && verdict.body.code !== 'join_required') {
     return {
       copy,
@@ -351,6 +510,7 @@ async function preview({ pool, user, fork, deps = defaultDeps() }) {
       ready: false,
       reason: { code: verdict.body.code, error: verdict.body.error },
       commits: [],
+      changes: [],
       commitCount: 0,
       fileCount: 0,
       open: null,
@@ -358,53 +518,57 @@ async function preview({ pool, user, fork, deps = defaultDeps() }) {
   }
   // A join_required verdict still names the original: Send stays offered,
   // and the press that meets the refusal is asked to Join first.
-  const { original } = verdict;
-  const lineage = readLineage(fork);
+  const { original, link } = verdict;
   const open = await openSuggestion(pool, fork);
-  let commits = [];
-  let commitCount = 0;
+  let changes = [];
   let fileCount = 0;
-  const copyRepo = repoOf(deps, fork);
-  if (copyRepo && deps.github.isEnabled()) {
+  // Whether the list was read: a list that could not be read (the code host
+  // slow) leaves Send offered, and the send reads it again; one that was
+  // read and is empty says there is nothing to send.
+  let listed = false;
+  if (repoOf(deps, fork) && deps.github.isEnabled()) {
     try {
-      const compared = await deps.github.compareCommitSubjects(
-        // A copy's repository is the platform's own, always on `main`
-        // (app-forker pushes HEAD:main).
-        copyRepo.owner, copyRepo.repo, lineage.forkBaseSha, 'main'
-      );
-      commitCount = compared.totalCommits;
-      commits = compared.commits.slice(-MAX_LISTED_COMMITS).map((c) => c.subject).filter(Boolean);
-      fileCount = compared.files.filter((f) => !EXCLUDED_PATHS.includes(f)).length;
+      // A version's repository is the platform's own, always on `main`
+      // (app-forker pushes HEAD:main).
+      const own = await ownChanges({ pool, deps, fork, link, head: 'main' });
+      changes = own.changes;
+      fileCount = own.files.length;
+      listed = true;
     } catch (err) {
-      log.warn('suggest-back', 'Could not list the copy’s commits', { slug: fork.slug, err: err.message });
+      log.warn('suggest-back', 'Could not list the version’s changes', { slug: fork.slug, err: err.message });
     }
   }
+  const empty = listed && !changes.length;
   return {
     copy,
     original: appRef(original),
-    ready: !open && verdict.ok,
+    ready: !open && verdict.ok && !empty,
     reason: open
       ? { code: 'already_open', error: MESSAGES.alreadyOpen(original.name || original.slug) }
-      : (verdict.ok ? null : { code: verdict.body.code, error: verdict.body.error }),
-    commits,
-    commitCount,
+      : (verdict.ok
+        ? (empty ? { code: 'no_changes', error: MESSAGES.noChanges } : null)
+        : { code: verdict.body.code, error: verdict.body.error }),
+    commits: changes.slice(-MAX_LISTED_COMMITS).map((c) => c.title),
+    changes: changes.slice(-MAX_CHANGES),
+    commitCount: changes.length,
     fileCount,
     open,
   };
 }
 
-function prTitle(copyName, subjects) {
-  const one = subjects.length === 1 ? subjects[0] : null;
-  return (one ? `${one} (from ${copyName})` : `Changes from ${copyName}`).slice(0, 256);
+function prTitle(copyName, titles) {
+  const list = titles.length ? `: ${titles.join(', ')}` : '';
+  const title = `Suggested by ${copyName}${list}`;
+  return title.length > 256 ? `${title.slice(0, 255)}…` : title;
 }
 
 function prBody({ copy, user, subjects, manifestKeys }) {
   const lines = [
-    `Suggested back from **${copy.name}**, a remix of this app, by ${user.username || 'its owner'}.`,
+    `Suggested by **${copy.name}**, a version of this project, by ${user.username || 'its owner'}.`,
     '',
   ];
   if (subjects.length) {
-    lines.push('Changes since the remix:', '');
+    lines.push('Its changes:', '');
     for (const s of subjects.slice(-MAX_LISTED_COMMITS)) lines.push(`- ${s}`);
     if (subjects.length > MAX_LISTED_COMMITS) lines.push(`- and ${subjects.length - MAX_LISTED_COMMITS} more`);
     lines.push('');
@@ -416,15 +580,31 @@ function prBody({ copy, user, subjects, manifestKeys }) {
   return lines.join('\n');
 }
 
+// `picks` from the request: absent is all of them; anything else must be a
+// list of the version's own changes by their full commit.
+function choosePicks(raw, changes) {
+  if (raw === undefined || raw === null) return { picks: changes };
+  if (!Array.isArray(raw) || !raw.every((p) => typeof p === 'string')) {
+    return { error: refusal(400, 'invalid_picks', MESSAGES.unknownPick) };
+  }
+  if (!raw.length) return { error: refusal(400, 'nothing_picked', MESSAGES.nothingPicked) };
+  const wanted = new Set(raw.map((p) => p.trim().toLowerCase()));
+  const known = new Set(changes.map((c) => c.sha));
+  if ([...wanted].some((p) => !known.has(p))) return { error: refusal(400, 'unknown_pick', MESSAGES.unknownPick) };
+  // In the version's own order, oldest first, whatever order they came in.
+  return { picks: changes.filter((c) => wanted.has(c.sha)) };
+}
+
 /**
- * Send the copy's changes to the original as a proposal. Resolves
+ * Send the version's picked changes (`picks`, all of them when absent) to
+ * the original as a proposal. Resolves
  * { ok: true, sessionId, prNumber, prUrl, href, original } or a refusal
  * { ok: false, status, body }.
  */
-async function suggest({ pool, config, user, fork, deps = defaultDeps() }) {
-  const verdict = await evaluate({ pool, user, fork, deps });
+async function suggest({ pool, config, user, fork, picks: rawPicks, deps = defaultDeps() }) {
+  const verdict = await evaluate({ pool, config, user, fork, deps });
   if (!verdict.ok) return verdict;
-  const { lineage, original } = verdict;
+  const { link, original } = verdict;
 
   const capError = await deps.limits.checkPromotedCap(pool, config, user);
   if (capError) return refusal(429, capError.code, capError.message);
@@ -445,21 +625,24 @@ async function suggest({ pool, config, user, fork, deps = defaultDeps() }) {
     const live = await deps.github.getRepoHead(copyRepo.owner, copyRepo.repo);
     copyHeadSha = sha(live && live.headSha);
   } catch (err) {
-    log.warn('suggest-back', 'Could not read the copy’s head', { slug: fork.slug, err: err.message });
+    log.warn('suggest-back', 'Could not read the version’s head', { slug: fork.slug, err: err.message });
   }
   copyHeadSha = copyHeadSha || sha(fork.main_sha);
   if (!copyHeadSha) return refusal(503, 'platform_unavailable', MESSAGES.unavailable);
-  if (copyHeadSha === lineage.forkBaseSha) return refusal(409, 'no_changes', MESSAGES.noChanges);
+  if (copyHeadSha === link.baseSha) return refusal(409, 'no_changes', MESSAGES.noChanges);
 
-  let subjects = [];
+  // The version's own changes, read at the head the patch is built from.
+  let changes;
   try {
-    const compared = await deps.github.compareCommitSubjects(
-      copyRepo.owner, copyRepo.repo, lineage.forkBaseSha, copyHeadSha
-    );
-    subjects = compared.commits.map((c) => c.subject).filter(Boolean);
+    ({ changes } = await ownChanges({ pool, deps, fork, link, head: copyHeadSha }));
   } catch (err) {
-    log.warn('suggest-back', 'Could not list the copy’s commits for the PR body', { slug: fork.slug, err: err.message });
+    log.warn('suggest-back', 'Could not list the version’s changes', { slug: fork.slug, err: err.message });
+    return refusal(503, 'platform_unavailable', MESSAGES.unavailable);
   }
+  if (!changes.length) return refusal(409, 'no_changes', MESSAGES.noChanges);
+  const chosen = choosePicks(rawPicks, changes);
+  if (chosen.error) return chosen.error;
+  const { picks } = chosen;
 
   // ── The patch ──────────────────────────────────────────────────────
   let built;
@@ -471,11 +654,17 @@ async function suggest({ pool, config, user, fork, deps = defaultDeps() }) {
       dir,
       copyRemote: deps.head.authenticatedRemote(credential.token, copyRepo.owner, copyRepo.repo),
       originalRemote: deps.head.authenticatedRemote(credential.token, originalRepo.owner, originalRepo.repo),
-      forkBaseSha: lineage.forkBaseSha,
+      baseSha: link.baseSha,
       copyHeadSha,
-      sourceSha: lineage.sourceSha,
+      syncedSha: link.syncedSha,
+      picks,
+      changes,
     }));
   } catch (err) {
+    if (err instanceof DependsOnUnpicked) {
+      return refusal(409, 'depends_on_unpicked', MESSAGES.dependsOnUnpicked(err.pick.title), { sha: err.pick.sha });
+    }
+    if (err instanceof DoesNotFit) return refusal(409, 'original_moved', MESSAGES.originalMoved);
     log.error('suggest-back', 'Building the patch failed', {
       slug: fork.slug,
       err: deps.head.redactToken(err && (err.stderr || err.message), credential && credential.token),
@@ -486,12 +675,12 @@ async function suggest({ pool, config, user, fork, deps = defaultDeps() }) {
   const bounded = checkPatch(built);
   if (bounded) return bounded;
 
-  // ── Apply at the commit the copy was cut from, on the original ─────
+  // ── Apply at the commit the version last took, on the original ─────
   const applied = await deps.externalAgentPatch.applyPatch({
     owner: originalRepo.owner,
     repo: originalRepo.repo,
     patch: built.patch,
-    baseSha: lineage.sourceSha,
+    baseSha: link.syncedSha,
     userId: user.id,
     taskId: `s${fork.id}`,
   });
@@ -503,6 +692,7 @@ async function suggest({ pool, config, user, fork, deps = defaultDeps() }) {
   }
 
   const copy = appRef(fork);
+  const subjects = picks.map((p) => p.title);
   let pr;
   try {
     pr = await deps.github.createPR(originalRepo.owner, originalRepo.repo, {
@@ -532,7 +722,7 @@ async function suggest({ pool, config, user, fork, deps = defaultDeps() }) {
        RETURNING id`,
       [
         original.id, user.id, applied.branch, pr.number, pr.html_url || null, title,
-        applied.headSha, sha(pr.base && pr.base.sha) || lineage.sourceSha, botLogin,
+        applied.headSha, sha(pr.base && pr.base.sha) || link.syncedSha, botLogin,
         `${originalRepo.owner}/${originalRepo.repo}`, body, fork.id,
       ]
     );
@@ -574,7 +764,8 @@ async function suggest({ pool, config, user, fork, deps = defaultDeps() }) {
   });
 
   log.info('suggest-back', 'Suggestion sent', {
-    copy: fork.slug, original: original.slug, sessionId, prNumber: pr.number, files: built.files.length,
+    copy: fork.slug, original: original.slug, sessionId, prNumber: pr.number,
+    files: built.files.length, picks: picks.length, of: changes.length,
   });
   return {
     ok: true,
@@ -594,12 +785,18 @@ module.exports = {
   MAX_PATCH_FILES,
   MESSAGES,
   readLineage,
+  readLink,
   mergeManifest,
   diffPathspec,
   checkPatch,
   buildPatch,
+  choosePicks,
   evaluate,
   preview,
   suggest,
   proposalHref,
+  prTitle,
+  titleOf,
+  DependsOnUnpicked,
+  DoesNotFit,
 };

@@ -146,6 +146,9 @@ const EXEMPT = new Map([
   // #4417: a topics proposal needs its `op` (and the topic's fields) in a
   // JSON body, like the rename and visibility PRs beside it.
   ['apps.js POST /api/apps/:slug/topics-pr', JSON_FIELD],
+  // Versions: whether a version gets its original's updates, as a proposal;
+  // `follow` is a boolean read from a JSON body.
+  ['versions.js POST /api/apps/:slug/follow-pr', JSON_FIELD],
   ['apps.js POST /api/apps/:slug/favorite', JSON_FIELD],
   ['apps.js POST /api/apps/:slug/membership', JSON_FIELD],
   ['auth.js POST /api/auth/login', JSON_FIELD],

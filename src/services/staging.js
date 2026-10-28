@@ -980,6 +980,11 @@ async function rebuildProductionInner(config, app, options = {}) {
     // triggered. No-op when the block is absent; best-effort.
     await appManifest.reconcileAppGovernance(prodPool, app, manifest)
       .catch((err) => log.warn('staging', 'Governance reconcile failed', { app: app.slug, err: err.message }));
+    // And a version's `followOriginal` line (docs/plans/versions.md): a
+    // merged change to whether it gets its original's updates applies here.
+    // No-op when the line is absent or the project is not a version.
+    await appManifest.reconcileAppFollow(prodPool, app, manifest)
+      .catch((err) => log.warn('staging', 'Following reconcile failed', { app: app.slug, err: err.message }));
     // And the manifest's `admins` block (issue #788): a merged PR that
     // edits the per-app admin roster applies here, on the rebuild its
     // merge triggered — which is why such a PR needs explicit approval

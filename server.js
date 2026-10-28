@@ -694,6 +694,9 @@ app.use(demoModeRoutes(config));
 // "Suggest this back": a remix's owner sends the copy's changes to the app
 // it was copied from, as a proposal there (routes/suggest-back.js).
 app.use(require('./src/routes/suggest-back').suggestBackRoutes(config));
+// Versions: an original's hub ("From its versions") and a version's vote on
+// whether it gets its original's updates (routes/versions.js).
+app.use(require('./src/routes/versions').versionsRoutes(config));
 app.use(kudosRoutes(config));
 // Public read-only apps + contributors API. Mounted after authMiddleware
 // like kudosRoutes; reachable anonymously via the `/api/public/` prefix in
