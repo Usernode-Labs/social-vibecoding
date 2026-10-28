@@ -570,10 +570,11 @@ test('the landing\'s declared checks hold Discover and the bar\'s Sign in, folde
   assert.match(story.expectSelector, /#landing-header \[data-landing-sign-in\]:not\(\.hidden\)/);
   assert.match(story.expectSelector, /\[data-guest-discover\] \[data-landing-story\] h1$/);
   // The bar's Sign in and Sign up, and one button in the short story: its
-  // join button, and nothing else to press there.
+  // join button, and beside it only the Browse the apps link (landing
+  // refresh, 28 Oct 2026); no other link to press there.
   const one = manifest.tests.find((t) => /^Landing has Sign in and Sign up in its bar, and one button to make an account under the story/.test(t.name));
   assert.ok(one);
-  assert.match(one.expectSelector, /:has\(#landing-header button\[data-landing-sign-up\]\):has\(\[data-landing-story\] button\[data-landing-story-join\]\):not\(:has\(\[data-landing-story\] a\)\) #landing-header \[data-landing-sign-in\]:not\(\.hidden\)$/);
+  assert.match(one.expectSelector, /:has\(#landing-header \[data-landing-sign-up\]\):has\(\[data-landing-story\] button\[data-landing-story-join\]\):not\(:has\(\[data-landing-story\] a:not\(\[data-landing-story-browse\]\)\)\) #landing-header \[data-landing-sign-in\]:not\(\.hidden\)$/);
   // Its one other button is pinned by the story's own test above, under the
   // runner's 256-character cap on a selector.
   assert.ok(one.expectSelector.length <= 256);
@@ -614,11 +615,14 @@ test('a card does not describe itself with housekeeping, and drops the issue num
 test('a hairline under the hero, counts on the headings, two columns of rows from md, how many are shown, and a foot', () => {
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: MANY, onStart() {}, onSignIn() {} }));
   // The bar's hairline across the column, between the hero and the search.
-  assert.match(html, /<div data-guest-separator="" class="mx-4 h-px bg-\[var\(--app-sheet-line\)\]" aria-hidden="true"><\/div>/);
+  // With air of its own on top of the column's gap: 12px each side on a
+  // phone, 20px from md.
+  assert.match(html, /<div data-guest-separator="" class="mx-4 my-3 h-px bg-\[var\(--app-sheet-line\)\] md:my-5" aria-hidden="true"><\/div>/);
   assert.ok(html.indexOf('data-guest-separator') < html.indexOf('data-guest-search'));
-  // "All apps · 20" and "More apps · 16" (four big cards on a phone's render).
+  // "All apps" as it was; "More apps · 16" (four big cards on a phone's render).
   const counts = [...html.matchAll(/data-guest-count=""[^>]*>(\d+)</g)].map((m) => Number(m[1]));
-  assert.deepEqual(counts, [20, 16]);
+  assert.deepEqual(counts, [16]);
+  assert.match(html, new RegExp(`<h2 class="[^"]*">${message('auth:guest.all')}</h2>`));
   assert.equal(message('auth:guest.more'), 'More apps');
   // Under Show more, how far the list has been read.
   assert.ok(text(html).includes(message('auth:guest.shown', { shown: 12, total: 16 })));

@@ -507,9 +507,9 @@ export function GuestDiscover({ apps, failed, hero, primaryClass, onOpenInside, 
     <div data-guest-discover="" className="flex flex-col gap-5">
       {hero}
       {/* The line between Homeroom and its apps: the bar's own hairline,
-          across the column, so the pitch and the search stop reading as one
-          block (landing refresh, 28 Oct 2026). */}
-      <div data-guest-separator="" className="mx-4 h-px bg-[var(--app-sheet-line)]" aria-hidden="true" />
+          across the column, with air above and below it, so the pitch and
+          the search stop reading as one block (landing refresh, 28 Oct 2026). */}
+      <div data-guest-separator="" className="mx-4 my-3 h-px bg-[var(--app-sheet-line)] md:my-5" aria-hidden="true" />
       <div className="flex flex-col gap-5 px-4">
         <label className="flex h-11 items-center gap-2 rounded-[14px] bg-white px-3.5 text-zinc-400 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-500">
           <SearchIcon className="h-[18px] w-[18px] shrink-0" />
@@ -550,10 +550,7 @@ export function GuestDiscover({ apps, failed, hero, primaryClass, onOpenInside, 
 
         <section className="flex flex-col gap-3" aria-busy={apps ? undefined : true}>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className={SMALL_CAPS_LABEL}>
-              {browsing ? t('auth:guest.all') : t('auth:guest.results')}
-              {apps ? <span data-guest-count="" className="ml-1.5 font-semibold normal-case tracking-normal text-zinc-400 dark:text-zinc-500">{list.length}</span> : null}
-            </h2>
+            <h2 className={SMALL_CAPS_LABEL}>{browsing ? t('auth:guest.all') : t('auth:guest.results')}</h2>
             <SortControl sort={sort} onSort={setSort} />
           </div>
           {!apps && !failed ? (

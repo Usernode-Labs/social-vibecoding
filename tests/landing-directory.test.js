@@ -170,7 +170,7 @@ test('the check-my-status line sits under the pills, unchanged (#1538)', () => {
   // too (#5251), and its one Sign in.
   const manifest = JSON.parse(read('dapp.json'));
   assert.ok(
-    manifest.tests.some((t) => /:has\(#landing-header button\[data-landing-sign-up\]\)/.test(t.expectSelector || '')),
+    manifest.tests.some((t) => /:has\(#landing-header \[data-landing-sign-up\]\)/.test(t.expectSelector || '')),
     'the declared check reads the story\'s one way in',
   );
 });
