@@ -387,7 +387,7 @@ test('update_proposal_issues sends bounded deltas through the platform route', a
     });
     assert.deepEqual(result.linkedIssues, [18, 27]);
     assert.equal(result.prBodyStatus, 'updated');
-    assert.equal(result.webPath, `${ORIGIN}/#app/recipe-box/dev/proposals/412`);
+    assert.equal(result.webPath, `${ORIGIN}/app/recipe-box/dev/proposals/412`);
     assert.match(result.nextStep, /No code or votes changed/);
   } finally { c.restore(); }
 });
@@ -582,7 +582,7 @@ test('get_request returns the whole description the board scan cut', async () =>
     assert.match(full.body, /^<untrusted-content>/);
     assert.match(full.title, /^<untrusted-content>/);
     assert.equal(full.state, 'open');
-    assert.equal(full.webPath, `${ORIGIN}/#app/recipe-box/dev/issues/1221`);
+    assert.equal(full.webPath, `${ORIGIN}/app/recipe-box/dev/issues/1221`);
 
     // Same route the scan already uses: no new platform endpoint, and
     // nothing added to the connector allowlist to read what it could reach.
@@ -1189,11 +1189,11 @@ test('post_message posts on every thread get_discussion reads, through the chat 
   try {
     const cases = [
       [{ threadType: 'issue', ref: 12 }, { thread_type: 'issue', thread_ref: 12 },
-        `${ORIGIN}/#app/recipe-box/dev/issues/12`],
+        `${ORIGIN}/app/recipe-box/dev/issues/12`],
       [{ threadType: 'session', ref: 50 }, { thread_type: 'session', thread_ref: 50 },
-        `${ORIGIN}/#app/recipe-box/dev/proposals/50`],
+        `${ORIGIN}/app/recipe-box/dev/proposals/50`],
       [{ threadType: 'governance', ref: 9 }, { thread_type: 'governance', thread_ref: 9 },
-        `${ORIGIN}/#app/recipe-box/dev/governance/9`],
+        `${ORIGIN}/app/recipe-box/dev/governance/9`],
       [{ threadType: 'message', ref: 60 }, { thread_type: 'message', thread_ref: 60 },
         `${ORIGIN}/#messages/app/recipe-box/thread/60`],
       // The channel is the app's own stream: no thread at all on the wire.
@@ -1412,7 +1412,7 @@ test('claiming a request marks it and posts the progress note on its thread', as
     assert.deepEqual(out.alsoClaimedBy, []);
     assert.equal(out.notePosted, true);
     assert.equal(out.noteError, null);
-    assert.equal(out.webPath, `${ORIGIN}/#app/recipe-box/dev/issues/12`);
+    assert.equal(out.webPath, `${ORIGIN}/app/recipe-box/dev/issues/12`);
 
     // The claim goes through the platform's own route, and the note through
     // the same chat route answer_questions uses — no new endpoint for either.
@@ -1629,7 +1629,7 @@ test('proposing to close files a close_issue vote through the platform route', a
     assert.equal(out.reasonChars, 'Shipped in PR #901 (proposal 4223).'.length);
     assert.equal(out.inProgress, null);
     // The proposal's own page, keyed by its id — it has no GitHub issue.
-    assert.equal(out.webPath, `${ORIGIN}/#app/recipe-box/dev/governance/701`);
+    assert.equal(out.webPath, `${ORIGIN}/app/recipe-box/dev/governance/701`);
     assert.match(out.nextStep, /stays open until that vote passes/);
     assert.match(out.nextStep, /never that it is closed/);
     assert.doesNotMatch(out.nextStep, /work in progress/, 'nobody is on it, so there is nobody to warn about');
@@ -2695,7 +2695,7 @@ test('app and request shaping wraps the user-authored fields', () => {
   );
   assert.equal(app.slug, 'recipe-box', 'the slug is a platform identifier, not free text');
   assert.match(app.name, /^<untrusted-content>/, 'the name is user-authored and wrapped');
-  assert.equal(app.webPath, `${ORIGIN}/#app/recipe-box`);
+  assert.equal(app.webPath, `${ORIGIN}/app/recipe-box`);
 
   const request = tools.shapeRequest({
     number: 212,
@@ -2738,7 +2738,7 @@ test('proposal shaping returns the platform hash route', () => {
     ORIGIN
   );
   assert.equal(proposal.proposalId, 58);
-  assert.equal(proposal.webPath, `${ORIGIN}/#app/recipe-box/dev/proposals/58`);
+  assert.equal(proposal.webPath, `${ORIGIN}/app/recipe-box/dev/proposals/58`);
   assert.equal(proposal.yesVotes, 3);
   assert.equal(proposal.votesRequired, 4);
   assert.equal(proposal.externalAgent, 'claude_code_web');
@@ -4945,7 +4945,7 @@ test('#2136 — get_proposal by prNumber answers exactly as by proposalId', asyn
     assert.deepEqual(strip(byPr), strip(byId));
     assert.equal(byPr.structuredContent.proposalId, 4223);
     assert.equal(byPr.structuredContent.prNumber, 2151);
-    assert.equal(byPr.structuredContent.webPath, `${ORIGIN}/#app/recipe-box/dev/proposals/4223`,
+    assert.equal(byPr.structuredContent.webPath, `${ORIGIN}/app/recipe-box/dev/proposals/4223`,
       'the human-facing route is the lifecycle-aware change page');
     assert.ok(validateOutput(c.specs.get('get_proposal'), byPr).success);
     // Resolved through the same list list_my_proposals reads — the user's own
