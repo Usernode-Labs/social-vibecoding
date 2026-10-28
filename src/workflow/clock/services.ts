@@ -467,6 +467,22 @@ export const JOBS: readonly Job[] = Object.freeze([
     },
   },
   {
+    // Updates down from originals to the versions that follow them
+    // (services/upstream-offers.js): a run marks the versions whose original
+    // moved on (a database write) and hands back, one target per version,
+    // what needs git: settling updates whose proposal merged or closed,
+    // refreshing open ones whose original moved again, and opening up to ten
+    // for versions somebody used lately. Nothing while versions are off.
+    name: 'upstream-offers', everyMs: MIN, newestOnly: true,
+    run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/upstream-offers').sweep(config, pool),
+    item: {
+      concurrency: 2,
+      maxAttempts: 3,
+      leaseMs: 5 * MIN,
+      run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/upstream-offers').work(config, pool, ctx.input.input),
+    },
+  },
+  {
     // The app-host gate follows APP_GATE, in both directions: on brings it up
     // and routes every app through it, off routes them all straight back
     // (services/kubernetes.js reconcileAppGateIngresses). The newest build's
