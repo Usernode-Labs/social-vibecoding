@@ -15964,4 +15964,7 @@ module.exports = {
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
   seedStagingGeneralChannel, seedStagingShotsNoticed, seedStagingShotsScreens,
+  // A test seam: preview-projects-source-repo.test.js counts what a preview's
+  // sample apps leave room for under the limit it runs with.
+  seedStagingAppCapApps,
 };
