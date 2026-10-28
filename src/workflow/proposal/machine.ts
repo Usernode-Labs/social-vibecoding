@@ -553,6 +553,12 @@ function closedLine(r: Row, reason: string, byOwner: boolean): string {
     case 'campaign-refused': return `${l} could not be put up for a vote and was closed. The maintenance campaign can make it again.`;
     case 'pr-closed': return `${l} was closed on GitHub, so it is closed here too.`;
     case 'pr-merged': return `${l} was merged on GitHub before it went up for a vote, so it is closed here.`;
+    // An update from the original (services/upstream-offers.js): skipped by
+    // the version's group, replaced because the original moved on and the
+    // new plan clashes with this version, or refused a vote when offered.
+    case 'update-skipped': return `${l} was skipped. Its original won't offer these changes again.`;
+    case 'update-replaced': return `${l} was closed: the original changed again, and the newer update needs fitting to this version.`;
+    case 'update-refused': return `${l} could not be put up for a vote and was closed. It will be offered again when the original changes.`;
     case 'manual':
       return byOwner && r.ownerName ? `${r.ownerName} withdrew ${r.prTitle ? l : 'this change'}.` : `${l} was withdrawn.`;
     default: return `${l} was withdrawn.`;
