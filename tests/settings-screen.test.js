@@ -854,8 +854,14 @@ test('the nav components render what the module shapes, and nothing else', () =>
   // with state, so it stays in the module — which is also what keeps
   // settings.js loadable by the vm harnesses (see settings-mobile-push).
   const nav = settingsJs.slice(settingsJs.indexOf('    _navView() {'));
-  assert.match(nav.slice(0, 1200), /bg-violet-600\/10 text-violet-700 dark:text-violet-400/,
-    'the active sidebar row keeps its tint, character for character');
+  // #5997: the current row is marked with the lit tokens ("where you are"),
+  // not the action accent, and in a heavier weight than the others.
+  assert.match(nav.slice(0, 1200),
+    /'font-semibold bg-\[color:var\(--lit-tint\)\] text-\[color:var\(--lit-ink\)\] shadow-\[inset_0_0_0_1px_var\(--lit-line\)\]'/,
+    'the active sidebar row wears the lit tint, ink and line');
+  assert.match(nav.slice(0, 1200), /'font-medium text-zinc-600 dark:text-zinc-300/,
+    'the other rows stay at the lighter weight');
+  assert.doesNotMatch(nav.slice(0, 1200), /violet/, 'the action accent no longer marks where you are');
   assert.match(navTsx, /className=\{item\.className\}/,
     'the component renders that string rather than recomputing it');
 
