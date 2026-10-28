@@ -407,6 +407,12 @@ function checkFiles(files) {
   return { ok: true, files: out };
 }
 
+// PUBLIC, like an app's own repository: a build fetches its commit with no
+// credential (kubernetes-buildkit.js: `git fetch "$REPO_URL"` from the git
+// host's in-cluster address), so a private one fails every build with
+// "could not read Username". What it holds is what the preview generated
+// from the proposal's own starters, which are public with the proposal.
+// The first version made it private, so an existing one is turned public.
 let sourceRepo = null;
 async function pushSource(row, files) {
   const gitHost = require('./git-host');
@@ -414,9 +420,10 @@ async function pushSource(row, files) {
   if (!sourceRepo) {
     await gitHost.createRepo(SOURCE_REPO, {
       description: 'Projects made inside Homeroom platform previews, as they are built',
-      private: true,
+      private: false,
       adoptExisting: true,
     });
+    await gitHost.setPrivate(SOURCE_REPO, false);
     sourceRepo = SOURCE_REPO;
   }
   const branch = `project-${row.id}-b${row.builds}`;
