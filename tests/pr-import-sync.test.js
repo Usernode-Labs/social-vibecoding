@@ -1012,10 +1012,11 @@ const platformFake = require.cache[require.resolve('../src/workflow/platform.ts'
 // A pool that answers the base owner's read with `owner` ({ id, status, … }),
 // as the query would: a merged one only when it is the change the row was
 // waiting for ($5). Records every statement.
-function basePool(owner) {
+function basePool(owner, { parentStatus = null } = {}) {
   const pool = recordingPool();
   pool.query = async (sql, params) => {
     pool.calls.push({ sql, params });
+    if (/^SELECT status FROM chat_sessions WHERE id = \$1$/.test(sql)) return { rows: parentStatus ? [{ status: parentStatus }] : [] };
     if (/WHERE cs\.app_id = \$1 AND cs\.branch_name = \$2/.test(sql)) {
       const found = owner && (owner.status !== 'merged' || Number(params[4]) === owner.id);
       return { rows: found ? [{ pr_number: 5956, pr_title: 'Parent', repo_url: 'https://github.com/acme/demo', ...owner }] : [] };
@@ -1111,4 +1112,32 @@ test('a merge GitHub made into another branch is reported with that base, never 
     assert.equal(looked[0].base, 'claude/sec09-parent');
     assert.equal(pool.moves.length, 0);
   });
+});
+
+test('GitHub moved it onto main itself (the merged branch was deleted): it still syncs, so the link stays until that is done', async () => {
+  const told = [];
+  platformFake.parentMerged = async (p) => { told.push(p); };
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: SESSION_HEAD, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
+  ], async () => {
+    const waiting = { ...SESSION, imported_pr_base_ref: 'claude/sec09-parent', waits_for_session_id: 54 };
+    // Its parent's merge is recorded: the move is asked for (the retarget
+    // answers "already", and the sync runs).
+    const merged = basePool(null, { parentStatus: 'merged' });
+    await prImportSync.syncImportedProposal({ config: {}, pool: merged, session: { ...waiting } });
+    assert.deepEqual(told, [{ sessionId: 321, appId: 9, parentId: 54 }]);
+    assert.equal(baseWrite(merged), undefined, 'the link stays until the move is done');
+    // Still being recorded: nothing yet, its Merged tells the change.
+    told.length = 0;
+    const merging = basePool(null, { parentStatus: 'merging' });
+    await prImportSync.syncImportedProposal({ config: {}, pool: merging, session: { ...waiting } });
+    assert.deepEqual(told, []);
+    assert.equal(baseWrite(merging), undefined);
+    // Its author moved it to main while the parent is still open: their call.
+    const open = basePool(null, { parentStatus: 'promoted' });
+    await prImportSync.syncImportedProposal({ config: {}, pool: open, session: { ...waiting } });
+    assert.deepEqual(baseWrite(open).params, [321, null, null]);
+    assert.deepEqual(told, []);
+  });
+  delete platformFake.parentMerged;
 });

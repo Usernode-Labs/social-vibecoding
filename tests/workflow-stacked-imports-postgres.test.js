@@ -346,20 +346,33 @@ test('stacked imports against the full PostgreSQL schema', { timeout: 240000 }, 
     assert.equal((await outcome(closed)).reason, 'closed');
   });
 
-  await t.test('S8 a retarget GitHub refuses for good says what a person can do, and the change keeps waiting', async () => {
+  await t.test('S8 a retarget GitHub never answers says what a person can do, and the change no longer reads as waiting; one no longer open says nothing', async () => {
     defaults();
     const owner = await user();
     const a = await app(owner);
     const A = await imported({ appRow: a, owner });
     const B = await imported({ appRow: a, owner, on: A });
-    work.answer.set(WORK.retarget, () => { throw Object.assign(new Error('The pull request is no longer open on GitHub.'), { permanent: true }); });
+    work.answer.set(WORK.retarget, () => { throw new Error('GitHub is unreachable.'); });
     await settle();
     await landed(A);
     assert.equal(callsFor(WORK.retarget, B).length, 1);
     assert.equal(callsFor(WORK.sync, B).length, 0);
-    assert.equal((await row(B)).imported_pr_base_ref, A.branch_name, 'still where it was');
+    assert.deepEqual([(await row(B)).imported_pr_base_ref, (await row(B)).waits_for_session_id], [A.branch_name, A.id], 'still where it was');
     assert.equal((await pInst(B)).data.retarget, null, 'and a later look may ask again');
-    assert.ok((await lines(B)).some((l) => /Homeroom did not move its pull request onto main on GitHub \(The pull request is no longer open on GitHub\.\)\. If it is still open, change its base to main on GitHub/.test(l)));
+    assert.ok((await lines(B)).some((l) => /could not move its pull request onto main on GitHub \(GitHub is unreachable\)\. Change its base to main on GitHub/.test(l)));
+    // Its parent is merged, so it waits for nothing: its base is just not main.
+    const asked = await toProposal(B, 'MergeRequested', { queueN: 31 }, fromQueue);
+    await settle();
+    assert.equal((await outcome(asked)).result, 'accepted');
+    assert.ok((await eventsOf(QUEUE, appKey(a.id), 'AttemptEnded')).some((x) => x.payload.n === 31 && x.payload.reason === 'base_not_main'));
+    // Merged or closed on GitHub meanwhile: its look settles it, nothing is said.
+    const C = await imported({ appRow: a, owner, on: B });
+    work.answer.set(WORK.retarget, { skipped: 'not_open' });
+    await settle();
+    await toProposal(C, 'ParentMerged', { parentId: B.id });
+    await settle();
+    assert.equal(callsFor(WORK.retarget, C).length, 1);
+    assert.deepEqual(await lines(C), []);
   });
 
   // ── Promotion ───────────────────────────────────────────────────────
@@ -403,19 +416,23 @@ test('stacked imports against the full PostgreSQL schema', { timeout: 240000 }, 
     if (!(await fn())) assert.fail(`${what} never happened`);
   };
 
-  await t.test('S10 a change waiting for its parent never goes quiet; one based on a branch no change has does', async () => {
+  await t.test('S10 a change waiting for a parent up for its own vote does not go quiet; one waiting for a draft, or for nothing, does', async () => {
     defaults();
     const owner = await user();
     const a = await app(owner);
-    const A = await imported({ appRow: a, owner, status: 'active' });
+    const A = await imported({ appRow: a, owner });
+    const draft = await imported({ appRow: a, owner, status: 'active' });
     const waiting = await imported({ appRow: a, owner, on: A });
+    const onDraft = await imported({ appRow: a, owner, on: draft });
     const lone = await imported({ appRow: a, owner, base: 'someone/else' });
-    for (const s of [waiting, lone]) {
+    const quiet = [waiting, onDraft, lone];
+    for (const s of quiet) {
       await pool.query(`UPDATE chat_sessions SET promoted_at = NOW() - interval '10 days', created_at = NOW() - interval '10 days' WHERE id = $1`, [s.id]);
     }
     await settle();
-    for (const s of [waiting, lone]) await review(s);
-    assert.equal((await row(waiting)).stale_notified_at, null, 'waiting: nothing it could do would merge it sooner');
+    for (const s of quiet) await review(s);
+    assert.equal((await row(waiting)).stale_notified_at, null, 'its parent is up for a vote: nothing it could do would merge it sooner');
+    assert.ok((await row(onDraft)).stale_notified_at, 'a parent nobody put up for a vote is no reason to hold a review slot');
     assert.ok((await row(lone)).stale_notified_at, 'nothing to wait for: it goes quiet as any change does');
   });
 
@@ -510,5 +527,88 @@ test('stacked imports against the full PostgreSQL schema', { timeout: 240000 }, 
       'a fork\'s branch called develop is not the base\'s, and a develop merged once is no parent');
     const waited = await prBase.readBaseOwner(pool, { appId: a.id, sessionId: null, base: 'develop', waited: once.id });
     assert.equal(waited.merged.id, once.id, 'the parent it was waiting for, merged since');
+  });
+
+  await t.test('S15 the review check\'s clock runs from the move onto main, and a warning from the wait is forgotten', async () => {
+    defaults();
+    const owner = await user();
+    const a = await app(owner);
+    const A = await imported({ appRow: a, owner });
+    const B = await imported({ appRow: a, owner, on: A });
+    await pool.query(`UPDATE chat_sessions SET promoted_at = NOW() - interval '10 days', created_at = NOW() - interval '10 days',
+                             stale_notified_at = NOW() - interval '1 day' WHERE id = $1`, [B.id]);
+    await settle();
+    await landed(A);
+    assert.equal((await row(B)).imported_pr_base_ref, null);
+    assert.equal((await row(B)).stale_notified_at, null, 'the warning from the wait is forgotten');
+    await review(B);
+    assert.equal((await row(B)).stale_notified_at, null, 'it has its week in the queue from the move');
+    assert.ok((await pInst(B)).data.movedToMainAt);
+  });
+
+  await t.test('S16 a parent it no longer waits for moves nothing', async () => {
+    defaults();
+    const owner = await user();
+    const a = await app(owner);
+    const A = await imported({ appRow: a, owner });
+    const D = await imported({ appRow: a, owner });
+    const C = await imported({ appRow: a, owner, on: D });
+    await settle();
+    // Its author stacked it on D after a look had it waiting for A.
+    await toProposal(C, 'ParentMerged', { parentId: A.id });
+    await settle();
+    assert.equal(callsFor(WORK.retarget, C).length, 0);
+    assert.equal((await row(C)).waits_for_session_id, D.id);
+  });
+
+  await t.test('S17 a sync owed while somebody worked on it is begun by the queue\'s next ask, not an hour later', async () => {
+    defaults();
+    const owner = await user();
+    const a = await app(owner);
+    const A = await imported({ appRow: a, owner });
+    const B = await imported({ appRow: a, owner, on: A });
+    await settle();
+    await pool.query(`UPDATE chat_sessions SET active_turn = '{"mode":"build"}'::jsonb WHERE id = $1`, [B.id]);
+    await landed(A);
+    assert.equal(callsFor(WORK.sync, B).length, 0, 'not under a turn');
+    assert.equal((await pInst(B)).data.owedSync, true);
+    const early = await toProposal(B, 'MergeRequested', { queueN: 41 }, fromQueue);
+    await settle();
+    assert.equal((await outcome(early)).result, 'accepted');
+    const ends = async () => (await eventsOf(QUEUE, appKey(a.id), 'AttemptEnded')).map((x) => [x.payload.n, x.payload.reason]);
+    assert.ok((await ends()).some(([n, r]) => n === 41 && r === 'sync_owed'), 'never merged before its sync');
+    await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [B.id]);
+    await toProposal(B, 'MergeRequested', { queueN: 42 }, fromQueue);
+    await settle();
+    assert.ok((await ends()).some(([n, r]) => n === 42 && r === 'syncing'));
+    assert.equal(callsFor(WORK.sync, B)[0].input.reason, 'parent_merged');
+    assert.ok(!(await pInst(B)).data.owedSync);
+    assert.equal(calls(WORK.gate).filter((c) => Number(c.input.sessionId) === B.id).length, 0, 'measured only once it has synced');
+  });
+
+  await t.test('S18 a change is not merged while its retarget runs', async () => {
+    defaults();
+    const owner = await user();
+    const a = await app(owner);
+    const A = await imported({ appRow: a, owner });
+    const B = await imported({ appRow: a, owner, on: A });
+    await settle();
+    let release;
+    work.hold.set(WORK.retarget, new Promise((r) => { release = r; }));
+    await asTransition((c) => c.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [A.id]));
+    await toProposal(A, 'Merged', {}, fromMerge);
+    await rt.drain();
+    const run = settle();
+    await until(() => callsFor(WORK.retarget, B).length === 1, 'the retarget');
+    // A look already reads it on main (GitHub retargeted it itself).
+    await pool.query('UPDATE chat_sessions SET imported_pr_base_ref = NULL, waits_for_session_id = NULL WHERE id = $1', [B.id]);
+    await toProposal(B, 'MergeRequested', { queueN: 51 }, fromQueue);
+    await rt.drain();
+    assert.ok((await eventsOf(QUEUE, appKey(a.id), 'AttemptEnded')).some((x) => x.payload.n === 51 && x.payload.reason === 'retargeting'));
+    work.hold.delete(WORK.retarget);
+    release();
+    await run;
+    await settle();
+    assert.equal(callsFor(WORK.sync, B)[0].input.reason, 'parent_merged', 'it syncs once moved');
   });
 });

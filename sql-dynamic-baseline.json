@@ -2112,7 +2112,7 @@
     {
       "source": "src/workflow/proposal/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "aa7080ed7f4c9e982191",
+      "fingerprint": "2385c0614936905ec898",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.pr_number, cs.pr_title, cs.branch_name, cs.reviewed_head_sha, cs.imported_pr_head"
     },

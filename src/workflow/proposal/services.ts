@@ -237,10 +237,11 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
         try {
           pr = await gh.getPR(input.owner, input.repo, input.number);
         } catch (err) {
-          if (gone(err)) throw permanent('The pull request is gone from GitHub.');
+          if (gone(err)) return { skipped: 'not_open' };
           throw err;
         }
-        if (pr?.merged || pr?.state === 'closed') throw permanent('The pull request is no longer open on GitHub.');
+        // Merged or closed meanwhile: its look settles the proposal.
+        if (pr?.merged || pr?.state === 'closed') return { skipped: 'not_open' };
         const target = defaultBranchOf(pr);
         const now = otherBase(pr);
         if (now == null) return { base: target, already: true };

@@ -12705,8 +12705,9 @@ async function seedStagingImportedPrProposal(pool, config) {
   // #9310" tag and the change page's notice. The row holds what a look at
   // the pull request records: the mock GitHub reports the same base for
   // #9313 (services/github-mock.js FIXTURE_BASES), so a look keeps it. The
-  // wait is stamped only while #9310 is open: a preview that merged it has
-  // nothing to wait for (its next look moves #9313 onto main).
+  // wait is stamped only while #9310 is open. A preview that merged #9310
+  // moves #9313 onto main; after a restart the mock forgets that move and
+  // reports #9310's branch again, so #9313 then reads "Not based on main".
   const headSha4 = 'd5e4c3b2a1f0e9d8c7b6a5948372615f4e3d2c1b';
   const branch4 = 'staging-fixture/imported-pr-stacked';
   let id4;

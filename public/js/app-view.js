@@ -23527,13 +23527,16 @@ const AppView = {
   // An import whose pull request is not based on main, its repository's
   // default branch (src/workflow/rules/pr-base.ts): the branch it targets
   // and, when that is an open change's branch, that change ({ id, number,
-  // title }). Null for one based on main: the row then has no base.
+  // title }). Null for one based on main: the row then has no base. A
+  // parent that is no longer open (merged and the move onto main not done,
+  // or closed) is waited for by nobody: its base is just not main.
   _stackedOn(p) {
     if (!p || p.source !== 'imported') return null;
     const base = p.imported_pr_base_ref;
     if (!base) return null;
     const w = p.waits_for && typeof p.waits_for === 'object' ? p.waits_for : null;
-    const id = parseInt((w && w.id) || p.waits_for_session_id, 10) || 0;
+    const open = !w || !w.status || ['active', 'paused', 'promoted', 'merging'].includes(w.status);
+    const id = open ? (parseInt((w && w.id) || p.waits_for_session_id, 10) || 0) : 0;
     return {
       base: String(base),
       waitsFor: id ? { id, number: parseInt(w && w.prNumber, 10) || null, title: (w && w.title) || null } : null,

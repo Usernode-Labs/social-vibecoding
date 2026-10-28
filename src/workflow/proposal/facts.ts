@@ -111,9 +111,11 @@ export interface Row {
   integrationResolvedEpoch: number | null;
   forkHead: boolean;
   // An import's base on GitHub as last read, and the open change whose branch
-  // it is (rules/pr-base.ts): a base that is not main is never merged.
+  // it is (rules/pr-base.ts): a base that is not main is never merged. That
+  // change's status: it is waited for only while it is open.
   baseRef: string | null;
   waitsFor: number | null;
+  waitsForStatus: string | null;
 }
 
 export interface Caps {
@@ -178,6 +180,7 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
             cs.check_state, cs.checks_commit_sha, cs.boot_failure_sync_head, cs.fixed_check_sync_head, cs.fixed_check_sync_keys,
             cs.integration_head_sha, cs.integration_main_sha, cs.integration_resolved_epoch, cs.imported_pr_head_repo,
             cs.imported_pr_base_ref, cs.waits_for_session_id,
+            (SELECT w.status FROM chat_sessions w WHERE w.id = cs.waits_for_session_id) AS waits_for_status,
             (cs.shots_state IS NOT NULL OR cs.shots_detail IS NOT NULL
               OR EXISTS (SELECT 1 FROM wf_instances sh WHERE sh.machine = 'shots' AND sh.key = 'session:' || cs.id)) AS shots,
             cs.active_turn IS NOT NULL AS active_turn,
@@ -229,6 +232,7 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
     forkHead: imported && forkOf(r),
     baseRef: r.imported_pr_base_ref ?? null,
     waitsFor: r.waits_for_session_id ?? null,
+    waitsForStatus: r.waits_for_status ?? null,
   };
 }
 

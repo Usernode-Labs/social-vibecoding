@@ -211,9 +211,21 @@ async function refreshBase({ pool, session, pr }) {
     // nothing to read or write, so a look at an unchanged pull request stays
     // a single GitHub read.
     if (prBase.onMain(base) && prBase.onMain(session.imported_pr_base_ref) && session.waits_for_session_id == null) return;
-    const read = await prBase.recordBase(pool, {
-      sessionId: session.id, appId: session.app_id, base, waited: session.waits_for_session_id ?? null,
-    });
+    // On main already, while it waited for a parent that landed (GitHub
+    // retargets a dependent pull request itself when the merged branch is
+    // deleted): it still syncs with main as the move would have, so the link
+    // stays until the proposal machine has done it, and the move is asked
+    // for once the parent's merge is recorded.
+    const waited = session.waits_for_session_id ?? null;
+    if (prBase.onMain(base) && waited != null) {
+      const { rows: [parent] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [waited]);
+      if (parent && parent.status === 'merging') return;
+      if (parent && parent.status === 'merged') {
+        await require('../workflow/platform.ts').parentMerged({ sessionId: session.id, appId: session.app_id, parentId: Number(waited) });
+        return;
+      }
+    }
+    const read = await prBase.recordBase(pool, { sessionId: session.id, appId: session.app_id, base, waited });
     session.imported_pr_base_ref = read.base;
     session.waits_for_session_id = read.waitsFor;
     if (read.changed) {

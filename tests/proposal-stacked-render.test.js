@@ -119,6 +119,12 @@ test('the card: a base no open change has is a red "Not based on main"; on main 
   assert.deepEqual(JSON.parse(JSON.stringify(lone)), { key: 'base_not_main', label: 'Not based on main', detail: NOT_MAIN });
   const tags = AppView.statusTagSpecs(PR({ imported_pr_base_ref: 'someone/else', waits_for_session_id: null, waits_for: null }));
   assert.equal(tags[0].cls, AppView.STATUS_TAG_CLS.blocking);
+  // A parent that is no longer open (merged, the move onto main not done;
+  // or closed): its base is just not main.
+  for (const status of ['merged', 'archived']) {
+    const gone = AppView.blockReasons(PR({ waits_for: { id: 11568, prNumber: 5956, title: 'x', status } }))[0];
+    assert.equal(gone.key, 'base_not_main', status);
+  }
   for (const over of [{ imported_pr_base_ref: null, waits_for_session_id: null, waits_for: null }, { source: 'native' }]) {
     const keys = AppView.blockReasons(PR(over)).map((r) => r.key);
     assert.ok(!keys.includes('waits_for_change') && !keys.includes('base_not_main'), JSON.stringify(over));
