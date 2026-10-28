@@ -365,9 +365,9 @@ export function scheduleWarmComment(win: Pick<Window, 'setTimeout' | 'addEventLi
 }
 
 /**
- * The Homeroom menu or the form has opened, and comment mode is one tap
- * away: load its code and draw the page now, while it sits still under the
- * sheet, so the mode opens on it at once (comment-pin.tsx
+ * The Homeroom menu, the hub's ⋯ menu or the form has opened, and comment
+ * mode is one tap away: load its code and draw the page now, while it sits
+ * still under the sheet, so the mode opens on it at once (comment-pin.tsx
  * `prepareCommentView`). Nothing at all where the device has turned it off,
  * and nothing on a capture route (`onCaptureRoute`).
  */

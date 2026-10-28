@@ -399,11 +399,11 @@ test('the picture is drawn ahead while the menu or the form is open, and opens a
   // over, so it gets the picture ready while it is open too, and only when
   // that row is there (a read-only viewer has none).
   const plusMenu = read('public/js/app-view.js');
-  assert.match(plusMenu, /const issueBtn = menu\.querySelector\('\[data-plus="issue"\]'\);\s*btn\.addEventListener\('click', \(e\) => \{/,
+  assert.match(plusMenu, /const issueRow = menu\.querySelector\('\[data-plus="issue"\]'\);\s*btn\.addEventListener\('click', \(e\) => \{/,
     'the issue row is read before the menu\'s handlers');
-  assert.match(plusMenu, /if \(PlatformUI\.isTouch\(\)\) \{\s*AppView\.refreshDevChatSecretsState\(\);[\s\S]{0,800}?if \(issueBtn\) window\.UsernodeReact\?\.suggestShortcut\?\.prepare\?\.\(\);/,
+  assert.match(plusMenu, /if \(PlatformUI\.isTouch\(\)\) \{\s*AppView\.refreshDevChatSecretsState\(\);[\s\S]{0,800}?if \(issueRow\) window\.UsernodeReact\?\.suggestShortcut\?\.prepare\?\.\(\);/,
     'the touch sheet gets the picture ready while it is open');
-  assert.match(plusMenu, /if \(open\) AppView\.refreshDevChatSecretsState\(\);[\s\S]{0,400}?if \(open && issueBtn\) window\.UsernodeReact\?\.suggestShortcut\?\.prepare\?\.\(\);/,
+  assert.match(plusMenu, /if \(open\) AppView\.refreshDevChatSecretsState\(\);[\s\S]{0,400}?if \(open && issueRow\) window\.UsernodeReact\?\.suggestShortcut\?\.prepare\?\.\(\);/,
     'and so does the desktop dropdown');
   // And the dropdown, which is inside the drawn page, is cut out of it.
   assert.ok(picture.PAGE_EXCLUDES.includes('#dev-plus-menu'), 'the hub\'s ⋯ dropdown');
