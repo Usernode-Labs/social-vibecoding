@@ -149,13 +149,7 @@ test('reset-agent-context atomically switches the backend and records the contex
   const update = calls.find((call) => /UPDATE chat_sessions SET/.test(call.text));
   assert.deepEqual(update.params.slice(1), ['claude_code', 'anthropic', null, null]);
   assert.ok(calls.some((call) => call.text === 'COMMIT'));
-  const intent = calls.find((call) => /INSERT INTO wf_events/.test(call.text));
-  assert.equal(intent.params[0], 'worker-release');
-  assert.deepEqual(JSON.parse(intent.params[4]), {
-    sessionId: 42, appId: 5, userId: 7, reason: 'agent-reset', configVersion: 3,
-    requestId: JSON.parse(intent.params[4]).requestId,
-  });
-  assert.ok(calls.indexOf(intent) < calls.findIndex(call => call.text === 'COMMIT'), 'the release intent commits with the reset');
+  assert.ok(!calls.some(call => /INSERT INTO wf_events/.test(call.text)), 'reset does not request worker eviction');
 });
 
 // ── #1348: "whichever on-platform agent I used last" ─────────────────

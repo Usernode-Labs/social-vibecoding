@@ -58,7 +58,6 @@ const github = {
   enabled: true,
   isEnabled: () => github.enabled,
   safeMention: (s) => s,
-  noteIssueCreated: () => {},
   createIssue: async (owner, repo, issue) => { created.push({ owner, repo, ...issue }); return { number: 4840 + created.length }; },
   compareCommitAncestry: async (owner, repo, base, head) => ({ status: base === GREEN && head === RED ? 'ahead' : 'diverged' }),
   compareCommitSubjects: async () => ({ commits: BURST.map(({ sha: s, subject }) => ({ sha: s, subject })), totalCommits: BURST.length }),

@@ -9,7 +9,7 @@
 # scout + build counterpart to the Mayor's in-process list_github_issues /
 # get_github_issue tools.
 #
-# Unlike usernode-push, this is allowed in BOTH build and scout modes:
+# This is allowed in BOTH build and scout modes:
 # reading public issues is harmless and never escapes the container. It
 # authenticates with ISSUES_JWT (a session-scoped, read-only token passed
 # to both modes) — deliberately NOT WORKER_JWT, so scout still has no way

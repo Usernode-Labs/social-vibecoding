@@ -510,7 +510,6 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       isEnabled: () => true,
       safeMention: (s) => s,
       async createIssue(owner, repo, body) { created.push({ owner, repo, ...body }); return { number: 1 }; },
-      noteIssueCreated() {},
     };
     // Its making files it once its setup has made the repository.
     await pool.query(`UPDATE apps SET repo_url = 'https://github.com/usernode-bot/chore-wheel' WHERE id = $1`, [project.id]);
@@ -556,7 +555,6 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       isEnabled: () => true,
       safeMention: (x) => x,
       async createIssue(owner, repo, body) { created.push({ owner, repo, ...body }); return { number: 1 }; },
-      noteIssueCreated() {},
     };
     try {
       await pool.query(

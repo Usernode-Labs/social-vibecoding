@@ -1,6 +1,5 @@
 {
   "allowed": {
-    "uses src/services/branch-names.js:isValidBranchName": "the shared pure branch-name validator used by push admission; it reads only its string argument and holds no process state",
     "timer src/workflow/kernel/services.ts#execute setInterval": "the lease heartbeat of a running work item; it dies with the handler, and a lapsed lease lets the next process claim the item",
     "timer src/workflow/kernel/stream.ts#Signals setTimeout": "the LISTEN connection's reconnect and a loop's idle sleep; loops poll while it is down",
     "timer src/workflow/kernel/stream.ts#waitForOutcome setTimeout": "a route's bounded wait for an event's outcome; it answers 202 when it runs out",
@@ -204,9 +203,9 @@
       "services | uses src/services/compliance.js:runScan": "the compliance report's scan (compliance-scan clock, and an admin's Scan now through it): each check reads the database or GitHub (one read per project, giving way to the hourly budget) and its result is inserted as one more scan; a run stopped part way records what it reached and fails so the clock tries again sooner; keeps nothing",
       "services | uses src/services/compliance.js:scanIntervalDays": "the compliance-scan clock's interval from the environment (a constant per build)",
       "services | uses src/services/connector-input-waits.js:sweepDue": "\"your agent is waiting on you\" for each wait whose delay passed (connector-input-waits clock): fired_at stamped in the statement that selects it, SKIP LOCKED and checked again in the outer WHERE, so two passes send one; keeps nothing",
-      "services | uses src/services/ip-retention.js:purgeExpiredIps": "a person's IP address cleared from the rows that recorded it once older than IP_RETENTION_DAYS (ip-retention clock): one UPDATE \u2026 SET ip = NULL per table, the rows kept; idempotent, keeps nothing",
+      "services | uses src/services/ip-retention.js:purgeExpiredIps": "a person's IP address cleared from the rows that recorded it once older than IP_RETENTION_DAYS (ip-retention clock): one UPDATE … SET ip = NULL per table, the rows kept; idempotent, keeps nothing",
       "services | uses src/services/logger.js:info": "the challenge scorer's \"credits written\" log line: output only",
-      "services | uses src/services/mcp-oauth.js:pruneDelegations": "an agent session's delegated connector grants and their tokens a week after their turn (delegation-prune clock): one bounded DELETE \u2026 RETURNING in a transaction, idempotent; keeps nothing",
+      "services | uses src/services/mcp-oauth.js:pruneDelegations": "an agent session's delegated connector grants and their tokens a week after their turn (delegation-prune clock): one bounded DELETE … RETURNING in a transaction, idempotent; keeps nothing",
       "services | uses src/services/merge-debug.js:pruneOldRuns": "/debug merge traces past their window (merge-debug-prune clock): one age DELETE, which throws when it fails so the clock records it; keeps nothing",
       "services | uses src/services/mobile-push.js:drain": "the phone push sender's queue, drained for a few minutes by the push-drain clock's run (one at a time across processes): each row it claims carries the run's work item and attempt, and a row left sending is sent again only when its claiming attempt is no longer live, so a run beside another sends no push twice; the provider is the one setup.ts made from the configuration; keeps nothing",
       "services | uses src/services/mobile-push.js:retention": "the sender's tables past their windows (push-retention clock): bounded age DELETEs, idempotent; keeps nothing",
@@ -214,7 +213,7 @@
       "services | uses src/services/platform-limit-alerts.js:sweep": "the server-wide caps and GitHub's budget, told to the full admins once a level is crossed (platform-limits clock): each level decided under its row lock with the notification it causes; GitHub's figures come from this process's own answers, and a process with none yet records nothing; keeps nothing",
       "services | uses src/services/platform-signals.js:sweep": "problems the platform finds in itself, filed as requests, updated and closed (platform-signals clock): the whole pass under its session advisory try-lock (a pass that cannot take it skips; a stalled process keeps it, a dead one frees it), each signal's row upserted by fingerprint; keeps nothing",
       "services | uses src/services/process-health.js:prune": "each process's per-minute health past its 14 days (server-error-prune clock): one age DELETE; idempotent; the figures each process keeps of its own minute are not read here; keeps nothing",
-      "services | uses src/services/processes.js:reap":"the registry rows of processes that stopped beating (process-reap clock): one DELETE by heartbeat age; keeps nothing",
+      "services | uses src/services/processes.js:reap": "the registry rows of processes that stopped beating (process-reap clock): one DELETE by heartbeat age; keeps nothing",
       "services | uses src/services/proposal-scans.js:fixedCheckSync": "the fixed-check sync (fixed-check-sync clock): each sync it asks for is the proposal machine's SyncRequested, once per head under its lock; what it said last is the clock's previous result, keeps nothing",
       "services | uses src/services/proposal-scans.js:importedTargets": "every open imported proposal, as targets (imported-prs clock); a read, keeps nothing",
       "services | uses src/services/proposal-scans.js:lookImported": "one imported pull request looked at (pr-import-sync.syncImportedProposal), a target of the imported-prs clock: its head moved through the proposal machine (ReviewHeadMoved), a merge or close handed to merge-followups or the proposal's Close; read fresh by id, keeps nothing",
@@ -302,13 +301,6 @@
       "services | uses src/services/process-role.js:processRole": "reads the immutable boot role before stop I/O, refusing execution on a web process; no decision or per-session state is held in memory",
       "services | uses src/services/process-role.js:runsWorkflow": "a pure role check permitting force-stop work only on conductor and local all processes, without keeping session state",
       "services | uses src/services/worker-force-stop.js:run": "confirms termination of the captured journal or removes captured runtime identities under the shared eviction lock, rechecking current authority and job identity in PostgreSQL before side effects; retains failed ledger settlement and uses no required process registry state, as the separate-conductor test exercises"
-    },
-    "worker-push": {
-      "services | uses src/services/process-role.js:processRole": "reads this process's immutable boot role before any push I/O, refusing accidental work execution on a web process; keeps no decision or session state",
-      "services | uses src/services/process-role.js:runsWorkflow": "a pure check of the boot role that permits the push handler on conductor and local all processes, holding no process state",
-      "services | uses src/services/repo-ref.js:ownerRepo": "parses the current stored repository address for the public-repository check; pure parsing using deployment Git host configuration, with no session memory",
-      "services | uses src/services/github.js:checkRepoPublic": "checks current repository visibility through the configured GitHub or hosted Git client; no per-session state is kept, and an unavailable check refuses the push",
-      "services | uses src/services/worker.js:execPushFromWorker": "exports Git objects from the session's deterministically named worker and pushes from a fresh trusted repository; rechecks stored app, repository and branch, uses no required registry state, and can be repeated after a lost claim"
     },
     "turn": {
       "services | uses src/services/turns.js:run": "a person's turn, run whole as the turn machine's turn.run item (the Mayor's rounds, the coding run it dispatches in the change's worker or on the person's machine, its tail and wrap-up), or carried on from its record after its process went: the turn's own pipeline (mayor/agent-turn.js, routes/sessions.js, turn-recovery.js), which only those modules know; the machine owns that a turn runs, in order, and that its claim is released; keeps nothing beyond the turn (workflow-foundation/design-turns-and-lock.md 8.1)",

@@ -18,8 +18,6 @@ const gh = {
   thread: { comments: [] },
   fetchIssueComments: async (o, r, n, opts) => { calls.push(['read-comments', n, opts.since]); return gh.thread; },
   getIssue: async (o, r, n) => { calls.push(['get', n]); if (n === 404) throw Object.assign(new Error('nf'), { status: 404 }); return { state: n === 1 ? 'open' : 'closed' }; },
-  noteIssuesClosed: () => calls.push(['note']),
-  invalidateIssuesCache: () => calls.push(['bust']),
 };
 const id = require.resolve('../src/services/github');
 require.cache[id] = { id, filename: id, loaded: true, exports: gh, paths: [] };

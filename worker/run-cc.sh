@@ -84,13 +84,8 @@
 #                              a build never uses, and the request adapter
 #                              cuts stale browser and shell output from what
 #                              each model call re-sends
-#   PAT                        legacy back-compat — not set by the
-#                              current platform. The push step uses
-#                              `usernode-push` (which calls back into
-#                              the platform's internal proxy), not
-#                              direct `git push` with embedded creds.
 #
-# MODE=sync (#8): merge origin/main into the current branch and push.
+# MODE=sync (#8): merge origin/main and return the commit for publication.
 #   1. git fetch origin
 #   2. git reset --hard origin/$BRANCH (same hygiene as build)
 #   3. git merge origin/main --no-edit
@@ -354,21 +349,13 @@ Do not run git commands. I will commit and push for you after you finish editing
     SYNC_RESULT="resolved"
   fi
 
-  # Push the merge commit (clean or resolved).
-  echo "__USERNODE_PHASE__ sync_push"
-  PUSH_OK=0
-  if /usr/local/bin/usernode-push; then
-    PUSH_OK=1
-  else
-    echo "__USERNODE_WARN__ push failed"
-  fi
-
+  # Publication belongs to the conductor after this result is journalled.
   # Re-fetch so origin/main is fresh for the behind count below.
   git fetch origin main --quiet 2>/dev/null || true
   AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
   BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
   SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-  echo "__USERNODE_RESULT__ cc_exit=0 ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=sync sync_result=$SYNC_RESULT conflict_files=$CONFLICT_FILES_CSV"
+  echo "__USERNODE_RESULT__ cc_exit=0 ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=0 mode=sync sync_result=$SYNC_RESULT conflict_files=$CONFLICT_FILES_CSV"
   exit 0
 fi
 # ── end MODE=sync ─────────────────────────────────────────────────────
@@ -385,7 +372,7 @@ fi
 #     inherit
 #   - this script's MODE=scout branch (below) skips the commit/push
 #     block entirely
-#   - usernode-push refuses if MODE=scout (worker/usernode-push)
+#   - the conductor never publishes a scout result
 #   - every scout callback credential is purpose-bound: ISSUES_JWT can only
 #     read issues/attachments, ANTHROPIC_API_KEY can only reach the model
 #     proxy, and PROD_DEBUG_JWT can only reach read-only diagnostics;
@@ -729,16 +716,6 @@ if usernode_settle_session_branch; then
   usernode_commit_leftovers "$TURN_START_SHA" "$COMMIT_MSG"
 fi
 
-echo "__USERNODE_PHASE__ push"
-PUSH_OK=0
-if [ -n "$USERNODE_BRANCH_MISMATCH" ]; then
-  echo "__USERNODE_WARN__ skipping push"
-elif /usr/local/bin/usernode-push; then
-  PUSH_OK=1
-else
-  echo "__USERNODE_WARN__ push failed"
-fi
-
 git fetch origin main --quiet 2>/dev/null || true
 AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
 # #8: how many commits this branch is behind origin/main. Drives the
@@ -752,15 +729,6 @@ if [ -n "$USERNODE_BRANCH_MISMATCH" ]; then
   BRANCH_MISMATCH_FIELD=" branch_mismatch=1"
 fi
 
-# Terminal phase marker: the dev-chat progress card's collapsed label is
-# the LAST line of the log, so without this every build turn ends frozen
-# on "[push]" ("Pushing"). The UI maps done → "Finished" and
-# push_failed → "Push failed"; the platform side can append a healing
-# [done] if it re-pushes the branch itself.
-if [ "$PUSH_OK" = "1" ]; then
-  echo "__USERNODE_PHASE__ done"
-else
-  echo "__USERNODE_PHASE__ push_failed"
-fi
-echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build$BRANCH_MISMATCH_FIELD$STOP_HOOK_BLOCKS_FIELD$MEMORY_FIELDS"
+# The conductor appends the terminal progress phase after publication.
+echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=0 mode=build$BRANCH_MISMATCH_FIELD$STOP_HOOK_BLOCKS_FIELD$MEMORY_FIELDS"
 exit "$CC_EXIT"

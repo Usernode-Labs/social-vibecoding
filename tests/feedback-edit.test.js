@@ -49,7 +49,6 @@ require('../src/db/pool').getPool = () => pool;
 const github = require('../src/services/github');
 const realPatch = github.patchIssueContent;
 github.patchIssueContent = async (...args) => { patches.push(args); await patch?.(...args); };
-github.invalidateIssuesCache = () => {};
 const wsId = require.resolve('../src/services/ws');
 const announcements = [];
 require.cache[wsId] = { id: wsId, filename: wsId, loaded: true,

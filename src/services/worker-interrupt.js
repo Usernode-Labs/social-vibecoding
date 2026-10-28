@@ -11,7 +11,7 @@ function workflowOnly() {
   if (!role.runsWorkflow(role.processRole())) throw Object.assign(new Error('Worker interruption requires a workflow process'), { code: 'workflow_role_required' });
 }
 
-// One signal, probe or legacy runtime stop. The machine owns confirmation's
+// One journal signal or probe. The machine owns confirmation's
 // attempts and timers; no handle or local loop is needed on this process.
 async function perform(pool, { target, action }, { renew, signal }) {
   workflowOnly();
@@ -51,24 +51,6 @@ async function perform(pool, { target, action }, { renew, signal }) {
     }
     if (Date.now() >= target.expiresAt) return { done: true, confirmed: false, reason: 'giveup' };
     const remaining = () => Math.max(1, target.expiresAt - Date.now());
-    if (action === 'runtime') {
-      let declined;
-      const mayStop = async () => {
-        const out = await check();
-        if (out.done) { declined = out; return false; }
-        if (Date.now() >= target.expiresAt) { declined = { done: true, confirmed: false, reason: 'giveup' }; return false; }
-        return true;
-      };
-      const out = await worker.stopWorkerByIdentity(target.sessionId, {
-        waitMs: remaining(), pollMs: 250, renew: checkpoint,
-        proceed: async () => {
-          if (!(await mayStop())) return false;
-          await worker.rescueUnpushedCommit(target.sessionId, { turnId: target.turnId, forTurnStart: true });
-          return mayStop();
-        },
-      });
-      return out.skipped ? declined : { done: true, confirmed: true, reason: 'runtime_stopped' };
-    }
     if (!before.current.active) return { done: true, confirmed: true, reason: 'no_turn' };
     if (action === 'signal') {
       if (target.journal) {

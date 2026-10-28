@@ -113,7 +113,7 @@ jobs:
       # Authority fixtures load real workflow handlers that depend on bcrypt.
       - run: |
           npm rebuild bcrypt --build-from-source
-          node --test --test-timeout=60000 tests/platform-preview-schema-compatibility.test.js tests/workflow-event-authority-postgres.test.js tests/worker-push-workflow-postgres.test.js tests/worker-release-workflow-postgres.test.js
+          node --test --test-timeout=60000 tests/platform-preview-schema-compatibility.test.js tests/workflow-event-authority-postgres.test.js tests/turn-publication-postgres.test.js tests/worker-release-workflow-postgres.test.js
           node --test --test-timeout=60000 tests/worker-eviction-postgres.test.js
           node --test --test-timeout=60000 tests/worker-stop-workflow-postgres.test.js
         env:

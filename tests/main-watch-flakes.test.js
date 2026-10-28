@@ -37,7 +37,6 @@ const github = {
   fail: false,
   isEnabled: () => github.enabled,
   safeMention: (s) => s,
-  noteIssueCreated: () => {},
   createIssue: async (owner, repo, issue) => {
     if (github.fail) throw new Error('GitHub said no');
     created.push({ owner, repo, ...issue });

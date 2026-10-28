@@ -41,7 +41,6 @@ llm.generateIssueTitle = async ({ description }) => {
 
 const github = require('../src/services/github');
 github.isEnabled = () => true;
-github.noteIssueCreated = () => {};
 // Both targets file through github.createIssue now: an app's request and
 // one on the platform's own board are both request rows
 // (services/requests.js), so one stub sees both, split by repository.

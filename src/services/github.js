@@ -2030,27 +2030,7 @@ function clipIssueComments(comments, { max = ISSUE_COMMENTS_KEEP, bodyMax = ISSU
   return { comments: clipped, truncated: !!wasTruncated || droppedOlder };
 }
 
-// The calls the request cache used to need. A board is a query now, so
-// there is nothing to record, expire or share between processes; they stay
-// so their callers (the merge path, the close watcher, ws.js) need no change.
-function expireIssuesCachesHere() {}
-
-function noteIssuesClosed(owner, repo, numbers) {
-  return Array.isArray(numbers) ? numbers.length : 0;
-}
-
-function unsuppressIssues() {}
-
-function invalidateIssuesCache() { return false; }
-
-function applyIssuesChange() {}
-
-function noteIssueCreated(owner, repo, rawIssue) {
-  return !!(owner && repo && rawIssue && rawIssue.number != null);
-}
-
 module.exports = {
-  expireIssuesCachesHere,
   init,
   isEnabled,
   hasApp,
@@ -2141,11 +2121,6 @@ module.exports = {
   clipIssueComments,
   refreshPublicIssues,
   truncateIssueBodies,
-  invalidateIssuesCache,
-  applyIssuesChange,
-  noteIssueCreated,
-  noteIssuesClosed,
-  unsuppressIssues,
   listActionsSecrets,
   invalidateActionsSecretsCache,
   ACTIONS_SECRETS_FORBIDDEN_MESSAGE,

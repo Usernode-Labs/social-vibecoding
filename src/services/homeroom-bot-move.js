@@ -267,8 +267,6 @@ async function closeNow(pool, { app, repo, issueNumber, user, newNumber, deps = 
   await ws.sendSystemMessage(pool, app.id, `${user.username} moved this request to Homeroom as #${newNumber} and closed it here`,
     'system', null, { type: 'issue', ref: n }).catch(() => {});
   try {
-    github.noteIssuesClosed?.(repo.owner, repo.repo, [n]);
-    github.invalidateIssuesCache?.(repo.owner, repo.repo);
     ws.pushIssueUpdate?.({ action: 'github_synced', appSlug: app.slug, appId: app.id, source: 'moved' });
   } catch {}
   return { ok: true };

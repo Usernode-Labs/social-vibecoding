@@ -501,7 +501,7 @@ test('run seven: a turn\'s ledger row keeps every host its requests used and how
 test('a Claude-harness OpenRouter turn gets the OpenRouter capability set and nothing Anthropic', () => {
   const build = worker.buildTurnSecretEnv({
     mode: 'build', agentBackend: 'codex_openrouter', agentHarness: 'claude',
-    workerSessionJwt: 'general-session-token', workerPushJwt: 'push-only',
+    workerSessionJwt: 'general-session-token', visibleChangesJwt: 'push-only',
     issuesReadJwt: 'issues', anthropicProxyJwt: 'anthropic-proxy', prodDebugJwt: 'prod-debug',
     openrouterApiKey: 'sk-or-user', homeroomMcpToken: 'grant',
   });
@@ -513,12 +513,12 @@ test('a Claude-harness OpenRouter turn gets the OpenRouter capability set and no
   });
   const scout = worker.buildTurnSecretEnv({
     mode: 'scout', agentBackend: 'codex_openrouter', agentHarness: 'claude',
-    workerPushJwt: 'push-only', issuesReadJwt: 'issues', openrouterApiKey: 'sk-or-user',
+    visibleChangesJwt: 'push-only', issuesReadJwt: 'issues', openrouterApiKey: 'sk-or-user',
   });
   assert.deepEqual(scout, { OPENROUTER_API_KEY: 'sk-or-user', ISSUES_JWT: 'issues' });
   assert.throws(() => worker.buildTurnSecretEnv({
     mode: 'build', agentBackend: 'codex_openrouter', agentHarness: 'claude',
-    workerPushJwt: 'push-only', issuesReadJwt: 'issues',
+    visibleChangesJwt: 'push-only', issuesReadJwt: 'issues',
   }), /openrouterApiKey required/);
   for (const mode of ['sync', 'shots']) {
     assert.throws(() => worker.buildTurnSecretEnv({

@@ -88,7 +88,6 @@ test('an issue one process files is in every other process\'s board read at once
   const body = `**Source:** Homeroom user (evan)\n\nPolls for our club. ${'Every member votes once on each poll, and sees who won. '.repeat(150)}`;
   const filed = await github.createIssue('usernode-bot', 'club-votes', { title: 'First version of Club Votes', body });
   assert.equal(filed.number, 1);
-  github.noteIssueCreated('usernode-bot', 'club-votes', filed);
   assert.deepEqual(sent, [], 'nothing is passed on: every process reads the same rows');
 
   // The conductor: another process, which never saw the filing.

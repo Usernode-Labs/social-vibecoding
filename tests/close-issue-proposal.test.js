@@ -85,7 +85,6 @@ function loadIssues(pool, { gh = {}, active = 2 } = {}) {
       if (gh.createIssue) return gh.createIssue(owner, repo, args);
       return { number: 777 };
     },
-    noteIssueCreated: () => {},
     closeIssue: async (owner, repo, issueNumber) => {
       spies.ghCalls.push({ type: 'closeIssue', owner, repo, issueNumber });
       if (gh.closeIssue) return gh.closeIssue(owner, repo, issueNumber);
@@ -94,12 +93,6 @@ function loadIssues(pool, { gh = {}, active = 2 } = {}) {
     createIssueComment: async (owner, repo, issueNumber, body) => {
       spies.ghCalls.push({ type: 'createIssueComment', owner, repo, issueNumber, body });
       return { id: 1 };
-    },
-    noteIssuesClosed: (owner, repo, numbers) => {
-      spies.ghCalls.push({ type: 'noteIssuesClosed', owner, repo, numbers: [...numbers] });
-    },
-    invalidateIssuesCache: (owner, repo) => {
-      spies.ghCalls.push({ type: 'invalidateIssuesCache', owner, repo });
     },
   });
   stub(ids.appAccess, {

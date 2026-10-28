@@ -29,6 +29,7 @@ function kubernetesRuntime(t, { token = 'fake-test-token' } = {}) {
   // The push's GitHub credential: the App's installation token.
   const github = require('../src/services/github');
   t.mock.method(github, 'canActOn', () => true);
+  t.mock.method(github, 'checkRepoPublic', async () => ({ ok: true, private: false }));
   t.mock.method(github, 'getInstallationToken', async () => token);
   t.after(() => {
     if (prior.runtime === undefined) delete process.env.WORKER_RUNTIME;
@@ -40,6 +41,7 @@ function kubernetesRuntime(t, { token = 'fake-test-token' } = {}) {
 // each read, while the replay is still in flight. Every other command the
 // worker sends (a stop, a push) is recorded.
 function journalWorker(t, snapshots, { onRead = () => {} } = {}) {
+  t.mock.method(require('../src/services/turn-publication'), 'publish', async ({ result }) => result);
   const commands = [];
   let reads = 0;
   t.mock.method(kubernetes, 'execInWorker', async (_config, runtime, command, input) => {

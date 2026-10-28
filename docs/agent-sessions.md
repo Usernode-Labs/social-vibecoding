@@ -346,7 +346,7 @@ As built, the gate lets exactly two things through, both decided on the bearer's
 
 ## Coding agent
 
-The coding agent runs exactly as today: one warm worker per change, with the app's repo on the change's branch, pushing through `usernode-push`. It gains read-only platform MCP bound to that change's app, and nothing else.
+The coding agent uses one warm worker per change, with the app's repo on the change's branch. It commits and returns its result; shared conductor completion/recovery publishes through the isolated trusted Git pusher. It gains read-only platform MCP bound to that change's app.
 
 **Setup, per build or scout turn**
 
@@ -365,7 +365,7 @@ The coding agent runs exactly as today: one warm worker per change, with the app
 
 **Why read-only is enough.** Everything a change needs to write is already done around the agent:
 
-- pushes through `usernode-push`;
+- publication through the conductor after the worker returns its commit;
 - PR metadata from its description block;
 - staging and checks by the server;
 - promotion and requests by the Mayor with the user's confirmation.

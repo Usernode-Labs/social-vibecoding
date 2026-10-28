@@ -82,17 +82,6 @@ export function redeployStatus(d: {
   return { kind: 'scoped', routing: { appSlug: d.appSlug }, data };
 }
 
-// Issues just closed on GitHub, to every web process's own copy of the
-// repository's open issues (github.js: the "just closed" suppression, since
-// GitHub's list lags, and the cache). `open`: issues hidden as about to
-// close that are still open after all, shown again. It reaches no browser:
-// services/ws.js applies it where it relays workflow pushes. The cache is
-// per process, and this is how a process that did not close them hears it.
-export function issuesClosed(d: { owner: string; repo: string; numbers: number[]; open?: number[] }): Push {
-  return { kind: 'issues_closed', routing: { owner: d.owner, repo: d.repo },
-    data: { numbers: d.numbers, ...(d.open?.length ? { open: d.open } : {}) } };
-}
-
 // One person's tabs (ws.pushToUser).
 export const toUser = (userId: number, data: JsonObject): Push => ({ kind: 'user', routing: { userId }, data });
 

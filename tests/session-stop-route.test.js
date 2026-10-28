@@ -380,7 +380,7 @@ test('with no handle and no turn record, hasDurableTurn is false', async () => {
 // exercised by worker-stop-workflow-postgres.test.js. Here the HTTP producer
 // must never run a privileged fallback, even when the conductor is absent.
 function forbidRuntime(t) {
-  for (const method of ['stopTurn', 'signalLegacyTurn', 'stopTurnByJournal', 'isWorkerExecuting', 'stopWorkerByIdentity', 'evictWorker', 'removeWorker', 'clearActiveTurn']) {
+  for (const method of ['stopTurn', 'signalLegacyTurn', 'stopTurnByJournal', 'isWorkerExecuting', 'evictWorker', 'removeWorker', 'clearActiveTurn']) {
     t.mock.method(workerMod, method, () => { throw new Error(`web called ${method}`); });
   }
 }
@@ -480,16 +480,6 @@ test('ordinary Stop only queues confirmation, retains the owner and aborts after
   assert.equal(activeWorkers.has(SESSION_ID), true);
 });
 
-test('legacy worker Stop queues an identity-scoped stop without trusting the handle worker name', async t => {
-  forbidRuntime(t); routeQueries();
-  const handle = stopRegistry.createHandle({ sessionId: SESSION_ID, phase: 'legacy', workerName: 'untrusted-name' });
-  stopRegistry.set(SESSION_ID, handle); const requests = [];
-  interrupt = async p => requests.push(p);
-  await requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID });
-  assert.equal(requests[0].strategy, 'worker'); assert.equal(requests[0].sessionId, SESSION_ID);
-  assert.equal('workerName' in requests[0], false);
-});
-
 test('local Stop aborts and stamps the spin-up gate while admission is still pending', async t => {
   forbidRuntime(t); routeQueries();
   const handle = stopRegistry.createHandle({ sessionId: SESSION_ID, phase: 'mayor1' });
@@ -551,6 +541,17 @@ test('a local CLI turn stops without queueing any container operation; wrap-up r
   assert.equal(queued, 0);
 });
 
+test('a remembered worker name does not signal outside coding and pre-build phases', async t => {
+  forbidRuntime(t); routeQueries({ activeTurn: durableTurn() });
+  let queued = 0; interrupt = async () => { queued += 1; };
+  for (const phase of ['mayor2', 'legacy']) {
+    const handle = stopRegistry.createHandle({ sessionId: SESSION_ID, phase, workerName: 'unused' });
+    stopRegistry.set(SESSION_ID, handle);
+    await requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID });
+  }
+  assert.equal(queued, 0);
+});
+
 test('HTTP module contains no worker signal, probe, runtime-stop or confirmation loop', () => {
   const fs = require('node:fs'); const src = fs.readFileSync(require.resolve('../src/routes/sessions'), 'utf8');
   const ts = require('typescript'); const calls = [];
@@ -558,7 +559,7 @@ test('HTTP module contains no worker signal, probe, runtime-stop or confirmation
   const visit = node => {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
         && node.expression.expression.getText(file) === 'worker'
-        && ['stopTurn', 'signalLegacyTurn', 'stopTurnByJournal', 'stopWorker', 'stopWorkerByIdentity', 'isWorkerExecuting',
+        && ['stopTurn', 'signalLegacyTurn', 'stopTurnByJournal', 'stopWorker', 'isWorkerExecuting',
           'removeWorker', 'evictWorker', 'destroyWorker'].includes(node.expression.name.text)) calls.push(node.expression.getText(file));
     ts.forEachChild(node, visit);
   };

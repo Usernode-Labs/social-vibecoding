@@ -54,7 +54,6 @@ const githubStub = {
     created.push({ owner, repo, title, body, labels, createdBy });
     return { number: 40 + created.length, title };
   },
-  noteIssueCreated() {},
   safeMention: (s) => s,
 };
 require.cache[githubId] = {

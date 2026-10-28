@@ -5192,7 +5192,6 @@ async function fileFirstRequest(pool, config, appId, { steps, last = false, deps
       const created = await github.createIssue(parsed.owner, parsed.repo, { title, body: filedBody });
       const number = Number(created?.number);
       if (!Number.isInteger(number) || number <= 0) throw new Error('invalid issue number');
-      try { github.noteIssueCreated?.(parsed.owner, parsed.repo, created); } catch {}
       return number;
     });
     const issueId = await steps.once('record', async () => {

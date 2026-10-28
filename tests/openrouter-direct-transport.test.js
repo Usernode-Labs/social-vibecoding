@@ -18,7 +18,7 @@ test('codex_openrouter scout env: OpenRouter key + narrow issues-read token only
   const env = worker.buildTurnSecretEnv({
     mode: 'scout',
     workerSessionJwt: 'minted.worker.session.jwt',
-    workerPushJwt: 'minted.worker.push.jwt',
+    visibleChangesJwt: 'minted.worker.push.jwt',
     issuesReadJwt: 'minted.worker.issues-read.jwt',
     anthropicApiKey: null,
     prodDebugJwt: 'minted.proddebug.jwt',
@@ -41,7 +41,7 @@ test('codex_openrouter build env: narrow push + issues tokens, no Anthropic/rela
   const env = worker.buildTurnSecretEnv({
     mode: 'build',
     workerSessionJwt: 'minted.worker.session.jwt',
-    workerPushJwt: 'minted.worker.push.jwt',
+    visibleChangesJwt: 'minted.worker.push.jwt',
     issuesReadJwt: 'minted.worker.issues-read.jwt',
     anthropicApiKey: null,
     prodDebugJwt: 'minted.proddebug.jwt',
@@ -50,7 +50,7 @@ test('codex_openrouter build env: narrow push + issues tokens, no Anthropic/rela
   });
   assert.deepEqual(Object.keys(env).sort(), ['ISSUES_JWT', 'OPENROUTER_API_KEY', 'WORKER_JWT']);
   assert.equal(env.OPENROUTER_API_KEY, 'sk-or-user-key');
-  // WORKER_JWT here is the narrow worker:push token, NOT worker:session —
+  // WORKER_JWT here is the declaration-only worker:visible-changes token, NOT worker:session —
   // so the Anthropic proxy must reject it.
   assert.equal(env.WORKER_JWT, 'minted.worker.push.jwt');
   assert.equal(env.ISSUES_JWT, 'minted.worker.issues-read.jwt');
@@ -124,10 +124,10 @@ test('runner uses a worker-local adapter with the user key and no platform relay
 test('codex push/issues tokens are narrow purposes, NOT worker:session', () => {
   const platformJwt = require('../src/services/platform-jwt');
   process.env.WORKER_JWT_SECRET = 'test-worker-secret-codex';
-  const pushTok = platformJwt.signWorkerPushToken({ sessionId: 7 });
+  const pushTok = platformJwt.signVisibleChangesToken({ sessionId: 7 });
   const issuesTok = platformJwt.signIssuesReadToken({ sessionId: 7 });
   // Each round-trips only under its own purpose...
-  assert.equal(platformJwt.verifyWorkerPushToken(pushTok).session_id, 7);
+  assert.equal(platformJwt.verifyVisibleChangesToken(pushTok).session_id, 7);
   assert.equal(platformJwt.verifyIssuesReadToken(issuesTok).session_id, 7);
   // ...and crucially, the general worker:session verifier (what the
   // Anthropic proxy accepts) rejects both, so a Codex turn that only holds
@@ -136,7 +136,7 @@ test('codex push/issues tokens are narrow purposes, NOT worker:session', () => {
   assert.throws(() => platformJwt.verifyWorkerToken(issuesTok), /purpose|scope/);
   // A general worker:session token does NOT satisfy the narrow verifiers.
   const sessionTok = platformJwt.signWorkerToken({ sessionId: 7 });
-  assert.throws(() => platformJwt.verifyWorkerPushToken(sessionTok), /purpose|scope/);
+  assert.throws(() => platformJwt.verifyVisibleChangesToken(sessionTok), /purpose|scope/);
   assert.throws(() => platformJwt.verifyIssuesReadToken(sessionTok), /purpose|scope/);
 });
 
@@ -180,7 +180,7 @@ test('Anthropic proxy accepts only proxy or rolling-deploy general purpose', () 
 
   for (const token of [
     platformJwt.signIssuesReadToken({ sessionId: 9 }),
-    platformJwt.signWorkerPushToken({ sessionId: 9 }),
+    platformJwt.signVisibleChangesToken({ sessionId: 9 }),
     platformJwt.signProdDebugToken({ sessionId: 9 }),
   ]) {
     const rejected = run(token);

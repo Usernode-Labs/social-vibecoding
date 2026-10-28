@@ -1,20 +1,6 @@
-// Tests for the recovery push-heal fix (chat 510 / issue #295).
-//
-// When a coding turn commits locally but its worker's usernode-push
-// callback never lands the branch on GitHub (push_ok=0 — e.g. the
-// platform was mid-restart when the worker POSTed
-// /api/internal/sessions/:id/push), finalizeRecoveredTurn must re-push
-// the branch (while the worker container still exists) BEFORE
-// applyPrMetadata's createPR. Otherwise createPR 422s ("No commits
-// between main and <branch>") and, once the worker is evicted, the only
-// copy of the commit is lost.
-//
-// server.js only boots under the require.main guard, so requiring it here
-// exposes finalizeRecoveredTurn without starting servers. worker and
-// pr-metadata are stubbed via require.cache BEFORE the require so
-// server.js (and its inline require of pr-metadata) bind the stubs.
-//
-// Run with: node --test tests/recovered-turn-push-heal.test.js
+// The recovered tail consumes the shared publication result. It creates
+// PRs/checks only after publication, and retains a commit whose publication
+// failed. Retry/restart windows live in turn-publication-postgres.test.js.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -28,30 +14,13 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt';
 require('./platform-keys').setPlatformKeys();
 
 // ── worker stub ─────────────────────────────────────────────────────────
-// pushBehavior is mutated per-test to drive success vs failure.
 const workerCalls = [];
-let pushBehavior = { mode: 'ok', sha: 'newpushedsha0001' };
 const workerPath = require.resolve('../src/services/worker');
 const realWorker = require(workerPath);
 require.cache[workerPath].exports = {
   ...realWorker,
   destroyWorker: async (name) => { workerCalls.push(['destroyWorker', name]); },
-  execPushFromWorker: async (sessionId, branch) => {
-    workerCalls.push(['execPushFromWorker', sessionId, branch]);
-    if (pushBehavior.mode === 'throw') {
-      if (pushBehavior.permanent) {
-        // #1376: mirrors execPushFromWorker's bad_branch rejection.
-        const err = new Error(`Invalid branch name: ${branch}`);
-        err.code = 'bad_branch';
-        err.permanent = true;
-        err.userMessage = `This session's branch name (${branch}) isn't a valid git branch, `
-          + 'so the push can never succeed. Start a new session on this app.';
-        throw err;
-      }
-      throw new Error('push proxy failed: container gone');
-    }
-    return { sha: pushBehavior.sha };
-  },
+  execPushFromWorker: async () => { throw new Error('the tail must not publish again'); },
   noteTailMilestone: async (sessionId, milestone) => {
     workerCalls.push(['noteTailMilestone', sessionId, milestone]);
     return true;
@@ -173,7 +142,6 @@ const insertedRows = (pool) => pool.calls
 test.beforeEach(() => {
   workerCalls.length = 0;
   prMetadataCalls.length = 0;
-  pushBehavior = { mode: 'ok', sha: 'newpushedsha0001' };
   revisionCalls.length = 0;
 });
 
@@ -217,7 +185,7 @@ test('a recovered OpenRouter chat reply stays a normal reply, not a Claude compl
   assert.ok(!JSON.stringify(pool.calls).includes('Claude Code'));
 });
 
-test('re-pushes an un-pushed recovered branch before creating the PR', async () => {
+test('uses the shared published result before creating the PR', async () => {
   const pool = makePool();
   const emits = [];
 
@@ -225,21 +193,14 @@ test('re-pushes an un-pushed recovered branch before creating the PR', async () 
     config: {}, pool, staging: {},
     session: { ...SESSION },
     sessionId: 510,
-    result: { ahead: 1, sha: 'localonlysha12345', pushOk: false, lastResultText: 'done', sessionId: 'cc-2' },
+    result: { ahead: 1, sha: 'localonlysha12345', pushOk: true, lastResultText: 'done', sessionId: 'cc-2' },
     repoOwner: 'Usernode-Labs', repoName: 'social-vibecoding',
     emit: (event, data) => emits.push({ event, data }),
     containerName: 'usernode-worker-510',
     keepWorker: true,
   });
 
-  // The branch is re-pushed first, with the session's canonical branch.
-  assert.deepEqual(
-    workerCalls.find((c) => c[0] === 'execPushFromWorker'),
-    ['execPushFromWorker', 510, 'dev/evan-1781527910307']
-  );
-  // Then the normal PR tail runs, and the commit goes to the preview machine.
-  assert.equal(prMetadataCalls.length, 1);
-  assert.equal(revisionCalls.length, 1);
+  assert.ok(!workerCalls.some(c => c[0] === 'execPushFromWorker'));
   assert.equal(revisionCalls[0].head, 'localonlysha12345');
   // No "couldn't push" warning when the re-push succeeds.
   assert.ok(!sysMsgInserted(pool));
@@ -297,8 +258,7 @@ test('the recovered tail writes the same rows a normal turn does', async () => {
   }
 });
 
-test('skips PR creation and warns the user when the re-push fails', async () => {
-  pushBehavior = { mode: 'throw' };
+test('skips PR/checks on a recorded transient publication failure and retains the worker', async () => {
   const pool = makePool();
   const emits = [];
 
@@ -306,7 +266,7 @@ test('skips PR creation and warns the user when the re-push fails', async () => 
     config: {}, pool, staging: {},
     session: { ...SESSION },
     sessionId: 510,
-    result: { ahead: 1, sha: 'localonlysha12345', pushOk: false, lastResultText: 'done', sessionId: 'cc-2' },
+    result: { ahead: 1, sha: 'localonlysha12345', pushOk: false, pushFailure: { code: 'push_failed', permanent: false, message: 'push proxy failed: container gone' }, lastResultText: 'done', sessionId: 'cc-2' },
     repoOwner: 'Usernode-Labs', repoName: 'social-vibecoding',
     emit: (event, data) => emits.push({ event, data }),
     containerName: 'usernode-worker-510',
@@ -314,13 +274,13 @@ test('skips PR creation and warns the user when the re-push fails', async () => 
   });
 
   // Push was attempted, but the doomed createPR is NOT.
-  assert.ok(workerCalls.some((c) => c[0] === 'execPushFromWorker'));
+  assert.ok(!workerCalls.some((c) => c[0] === 'execPushFromWorker'));
   assert.equal(prMetadataCalls.length, 0);
   assert.equal(revisionCalls.length, 0, 'nothing to preview: the commit is not on GitHub');
   // The user is told the truth, and the worker is reaped (keepWorker:false).
   assert.ok(sysMsgInserted(pool));
   assert.ok(emits.some((e) => e.event === 'status' && /not on GitHub/i.test(e.data.text)));
-  assert.ok(workerCalls.some((c) => c[0] === 'destroyWorker'));
+  assert.ok(!workerCalls.some((c) => c[0] === 'destroyWorker'), 'saved work stays in its worker');
 
   // #896: the message states the situation and the action, without
   // naming the restart — that lives in metadata.recovered instead.
@@ -339,7 +299,6 @@ test('a permanently unpushable branch says so instead of advising a retry', asyn
   // #1376: the production shape — a branch minted from an email-address
   // username, rejected by the push proxy's charset. Retrying re-pushes the
   // same rejected name forever, so the copy must not suggest it.
-  pushBehavior = { mode: 'throw', permanent: true };
   const pool = makePool();
   const emits = [];
 
@@ -347,7 +306,7 @@ test('a permanently unpushable branch says so instead of advising a retry', asyn
     config: {}, pool, staging: {},
     session: { ...SESSION },
     sessionId: 510,
-    result: { ahead: 1, sha: 'localonlysha12345', pushOk: false, lastResultText: 'done', sessionId: 'cc-3' },
+    result: { ahead: 1, sha: 'localonlysha12345', pushOk: false, pushFailure: { code: 'bad_branch', permanent: true, message: 'Invalid branch name', userMessage: 'This push can never succeed. Start a new session on this app.' }, lastResultText: 'done', sessionId: 'cc-3' },
     repoOwner: 'Usernode-Labs', repoName: 'social-vibecoding',
     emit: (event, data) => emits.push({ event, data }),
     containerName: 'usernode-worker-510',

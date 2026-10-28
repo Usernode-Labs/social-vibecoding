@@ -16,8 +16,8 @@
 # "Report to platform" on that card before the issue is created (they
 # can also dismiss it).
 #
-# The worker container carries no GitHub credentials. Like usernode-push,
-# this is a thin wrapper over the platform's internal API: it POSTs to
+# The worker container carries no GitHub credentials. This request helper
+# is a thin wrapper over the platform's internal API: it POSTs to
 #   POST /api/internal/sessions/$SESSION_ID/platform-issue
 # with `Authorization: Bearer $WORKER_JWT`. The platform validates the
 # session, de-dupes against open reports and earlier drafts, and pushes
@@ -40,7 +40,7 @@
 
 set -u
 
-# Build-only, exactly like usernode-push: scout is read-only and never
+# Build-only: scout is read-only and never
 # receives WORKER_JWT, so refuse outright to keep the intent clear even
 # if CC invokes this script directly via Bash.
 if [ "${MODE:-build}" = "scout" ]; then

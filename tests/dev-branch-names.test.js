@@ -139,6 +139,7 @@ test('execPushFromWorker reports a missing GitHub credential as permanent', asyn
     query: async () => ({ rows: [{ branch_name: 'dev/evan-1', repo_url: 'https://github.com/Usernode-Labs/social-vibecoding' }] }),
   }));
   t.mock.method(github, 'canActOn', () => true);
+  t.mock.method(github, 'checkRepoPublic', async () => ({ ok: true, private: false }));
   t.mock.method(github, 'getInstallationToken', async () => { throw new Error('No GitHub App installation found for owner: Usernode-Labs'); });
   await assert.rejects(
     () => worker.execPushFromWorker(1, 'dev/evan-1'),
@@ -296,15 +297,9 @@ test('both push-failure tails describe the failure instead of a fixed sentence',
   );
 
   const server = read('server.js') + read('src/services/turn-recovery.js');
-  assert.match(server, /worker\.describePushFailure\(err\)/);
+  assert.match(server, /worker\.describePushFailure\(result\.pushFailure/);
   assert.equal(
     server.includes('send your request again to re-push and open the PR.'), false,
     'server.js must not hardcode the retry sentence'
   );
-});
-
-test('the internal push route returns the operator-readable detail', () => {
-  const src = read('src/routes/internal.js');
-  assert.match(src, /detail: err\.userMessage \|\| null/);
-  assert.match(src, /permanent: err\.permanent === true/);
 });
