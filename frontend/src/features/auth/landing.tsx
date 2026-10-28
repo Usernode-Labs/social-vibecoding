@@ -1011,7 +1011,7 @@ export function LandingScreen() {
   const nativeProviders = useNativeSignInProviders(waitlistPayload);
   const nativeSignIn = nativeProviders.length > 0;
   const providers = nativeSignIn ? nativeProviders : webProviders;
-  // An invite makes a private member, who signs up with a phone number
+  // An invite makes a private member, quickest with a phone number
   // (services/community-invites.js): the Join sheet starts there when the
   // server offers it.
   const phoneSignIn = waitlistPayload?.phone_sign_in === true;

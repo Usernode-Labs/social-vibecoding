@@ -153,6 +153,7 @@ test('the paths: the page is a shell document; following from the waiting room i
     "router.get('/api/invite-links/by-token/:token', invitePreviewLimiter,",
     "router.post('/api/invite-links/by-token/:token/redeem', drainGuard, inviteRedeemLimiter,",
     "router.get('/api/invite-links/queued',",
+    "router.post('/api/invite-links/queued/join', drainGuard, inviteRedeemLimiter, sameOriginBrowserOnly,",
     "router.get('/invite/:token', invitePreviewLimiter,",
   ]) assert.ok(src.includes(route), route);
   // Only a live link leaves its token for sign-in to follow (never staging's
