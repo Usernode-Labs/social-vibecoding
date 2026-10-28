@@ -875,6 +875,12 @@ test('a username\'s code goes to its account\'s address, and says nothing of one
       const asked = await post('/api/auth/otp/request', { username: '@ada' });
       assert.equal(asked.status, 200);
       assert.deepEqual(await asked.json(), { ok: true });
+      // The answer goes first; the lookup and the mail follow it.
+      const settle = async (count) => {
+        for (let i = 0; i < 50 && sent.length < count; i += 1) await new Promise((r) => setTimeout(r, 20));
+        await new Promise((r) => setTimeout(r, 50));
+      };
+      await settle(1);
       assert.deepEqual(sent.map((m) => m.email), ['ada@example.com']);
 
       // No such name, and a name with no address: the same answer, and no mail.
@@ -883,6 +889,7 @@ test('a username\'s code goes to its account\'s address, and says nothing of one
         assert.equal(res.status, 200);
         assert.deepEqual(await res.json(), { ok: true });
       }
+      await settle(2);
       assert.equal(sent.length, 1);
 
       // A name with no account is refused exactly as a wrong code is.

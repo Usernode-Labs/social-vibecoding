@@ -369,11 +369,18 @@ function authRoutes(config) {
     try {
       // The sign-in sheet's one field takes a username too: the code goes to
       // that account's address. The answer is the same whether or not the
-      // name has an account with one, so it says nothing about either.
+      // name has an account with one, so it says nothing about either. The
+      // answer goes before the lookup and the mail, so neither their time nor
+      // a failure of theirs can tell a caller what the name is.
       if (req.body?.email === undefined && typeof req.body?.username === 'string') {
-        const address = await emailSignup.emailForUsername(pool, req.body.username);
-        if (address) await emailSignup.requestCode(pool, config, address);
-        return res.json({ ok: true });
+        const username = req.body.username;
+        res.json({ ok: true });
+        setImmediate(() => {
+          emailSignup.emailForUsername(pool, username)
+            .then((address) => (address ? emailSignup.requestCode(pool, config, address) : null))
+            .catch((error) => log.error('email-signup', 'Username code request failed', { message: error.message }));
+        });
+        return undefined;
       }
       await emailSignup.requestCode(pool, config, req.body?.email);
       return res.json({ ok: true });
