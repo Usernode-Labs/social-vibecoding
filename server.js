@@ -1180,9 +1180,14 @@ async function start() {
   const room = await processes.waitForRoom();
   if (room.waitedMs > 0) log.info('server', 'Older processes gave back their connections; starting', room);
   // Conductors retire unsafe previews before starting work. Web processes
-  // wait for a fresh result from the existing security clock before serving.
+  // wait for a fresh result from the existing security clock before serving:
+  // how long, in the startup diagnostics and the log, since that wait is most
+  // of a web Pod's rollout when it is long.
+  const barrierStartedAt = Date.now();
   const previewRetirement = runsClusterMaintenance()
     ? await require('./src/services/platform-preview-startup').beforeServe(config, getPool(config)) : null;
+  const previewBarrierMs = Date.now() - barrierStartedAt;
+  if (previewRetirement) log.info('server', 'Preview retirement confirmed; starting', { waitedMs: previewBarrierMs, role: ownRole });
   // The limiters that gate a send, a bill or a guess count in Postgres: one
   // budget for every process, kept across a deploy (services/rate-limit-store.js).
   require('./src/services/rate-limit-store').setPool(getPool(config));
@@ -1203,6 +1208,7 @@ async function start() {
     migrationsOnStartup,
     migration,
     servicesMs: Date.now() - servicesStartedAt,
+    previewBarrierMs,
   });
 
   if (processRole.runsWorkflow(ownRole)) worker.ensureWorkerImage().catch((err) => {

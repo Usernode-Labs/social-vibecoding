@@ -321,11 +321,54 @@ export async function startWorkflowLoops(): Promise<void> {
     await runtime.append(CLOCK, clockKey(job.name), { type: 'Arm', payload: {
       job: job.name, everyMs: job.everyMs, firstDueAt: new Date().toISOString(), onDemand: false,
     } }, { requestKey: `arm:${release}`, source: { kind: 'system', name: 'release' } });
+    void pullInSecurityClock(job, release).catch((err: Error) =>
+      log!.warn('workflow', 'Could not pull the preview retirement clock in', { message: err.message }));
   }
   await runtime.append(RELEASE, releaseKey(release), { type: 'Booted', payload: { release } },
     { requestKey: `booted:${release}`, source: { kind: 'system', name: 'boot' } });
   await runtime.start({ loops: true });
   loopsHere = true;
+}
+
+// A new build's web Pods serve only once this clock has recorded a proof
+// scoped to the build (services/platform-preview-startup.js beforeServe). An
+// existing clock keeps its next minute tick, and an older conductor that
+// claims a tick skips it (`older_build`) and puts the next a minute off, so
+// the web Pod of 28 Oct 2026 waited 98 s, most of its rollout. Until the
+// proof is there, this conductor pulls the next run in. Only through Arm's
+// own rule, which every build applies alike (a due time further off than
+// one interval comes in to it): an Arm at PULL_IN_INTERVAL_MS, then one at
+// the job's interval, so whichever conductor handles them the run is due at
+// once and the interval is the job's again. Its run here is the boot scan
+// (no second inventory); an older conductor's skip is pulled in again.
+// Bounded by web's own wait; a lost process leaves at most a one-second
+// interval, which the next conductor's boot Arm puts back.
+const PULL_IN_FOR_MS = 180_000;
+const PULL_IN_EVERY_MS = 2_000;
+const PULL_IN_INTERVAL_MS = 1_000;
+async function pullInSecurityClock(job: { name: string; everyMs: number }, release: string): Promise<void> {
+  const startup = legacy('services/platform-preview-startup');
+  const key = clockKey(job.name);
+  const me = randomUUID().slice(0, 8);
+  const arm = (everyMs: number, requestKey: string) => runtime!.append(CLOCK, key,
+    { type: 'Arm', payload: { job: job.name, everyMs, onDemand: false } },
+    { requestKey, source: { kind: 'system', name: 'release' } });
+  const deadline = Date.now() + PULL_IN_FOR_MS;
+  for (let n = 0; runtime && Date.now() < deadline; n += 1) {
+    const proven = await startup.proven(appConfig, kernelPool);
+    const { rows: [clock] } = await kernelPool!.query(
+      `SELECT state, (data->>'everyMs')::bigint AS every,
+              (data->>'due')::timestamptz > clock_timestamp() + make_interval(secs => $3) AS later
+         FROM wf_instances WHERE machine = $1 AND key = $2`,
+      [CLOCK, key, PULL_IN_EVERY_MS / 1000]);
+    if (!clock) return;
+    if (!proven && clock.state === 'waiting' && clock.later) await arm(PULL_IN_INTERVAL_MS, `pull-in:${release}:${me}:${n}`);
+    if (Number(clock.every) !== job.everyMs || (!proven && clock.state === 'waiting' && clock.later)) {
+      await arm(job.everyMs, `pull-back:${release}:${me}:${n}`);
+    }
+    if (proven) return;
+    await new Promise((resolve) => setTimeout(resolve, PULL_IN_EVERY_MS).unref?.());
+  }
 }
 
 // What a new build owes what an older one left, in order (release/services.ts):

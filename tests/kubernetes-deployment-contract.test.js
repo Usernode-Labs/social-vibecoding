@@ -192,8 +192,17 @@ test('Kubernetes platform rollout preserves availability and singleton ownership
   assert.match(platform, /type: RollingUpdate/);
   assert.match(platform, /maxSurge: 1/);
   assert.match(platform, /maxUnavailable: 0/);
-  assert.match(platform, /minReadySeconds: 10/);
-  assert.match(platform, /successThreshold: 2/);
+  // A new color stays ready 5 s before the old one goes (28 Oct 2026: 10 s,
+  // and two readiness answers, of a rollout a web Pod waited on).
+  assert.equal((platform.match(/minReadySeconds: 5\n/g) || []).length, 2, 'both roles hold a new Pod ready before it counts');
+  assert.match(platform, /successThreshold: 1/);
+  // The startup probe asks every second and still allows five minutes: the
+  // security barrier's 180 s plus ordinary boot and drain work.
+  const startup = platform.slice(platform.indexOf('startupProbe:'), platform.indexOf('readinessProbe:'));
+  const every = Number(startup.match(/periodSeconds: (\d+)/)[1]);
+  const tries = Number(startup.match(/failureThreshold: (\d+)/)[1]);
+  assert.equal(every, 1);
+  assert.ok(every * tries >= 300, `startup budget ${every * tries}s`);
   assert.match(platform, /name: PLATFORM_LEADER_LOCK, value: "1"/);
   assert.doesNotMatch(platform, /type: Recreate/);
 });

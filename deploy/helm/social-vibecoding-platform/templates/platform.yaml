@@ -39,7 +39,7 @@ spec:
   # Kubernetes' Deployment controller supplies the two rollout colors as
   # old/new ReplicaSets. The new color must stay ready before it counts as
   # available, while maxUnavailable=0 keeps the old color serving until then.
-  minReadySeconds: 10
+  minReadySeconds: 5
   progressDeadlineSeconds: 600
   strategy:
     type: RollingUpdate
@@ -73,7 +73,7 @@ metadata:
 spec:
   replicas: {{ .Values.platform.conductor.replicas }}
   revisionHistoryLimit: 5
-  minReadySeconds: 10
+  minReadySeconds: 5
   progressDeadlineSeconds: 600
   strategy:
     type: RollingUpdate
@@ -276,16 +276,21 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             {{- end }}
           startupProbe:
             httpGet: {path: /health, port: http}
-            periodSeconds: 3
+            # Every second, so a Pod that has started listening is seen within
+            # one: the rollout waits on it.
+            periodSeconds: 1
             timeoutSeconds: 2
-            # Covers the 180s security barrier plus ordinary boot/drain work.
-            failureThreshold: 100
+            # 300s, as before: the 180s security barrier plus ordinary boot/drain work.
+            failureThreshold: 300
           readinessProbe:
             httpGet: {path: /health, port: http}
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 3
-            successThreshold: 2
+            # One answer once startup has passed: the startup probe already
+            # saw it serve, and minReadySeconds holds it ready before the old
+            # color goes.
+            successThreshold: 1
           livenessProbe:
             httpGet: {path: /health, port: http}
             periodSeconds: 15
