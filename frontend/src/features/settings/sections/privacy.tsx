@@ -9,6 +9,8 @@
  *    friend request. A conversation that already exists keeps working.
  *  - Let people find my profile (off by default): whether people outside
  *    your projects find your username in a search.
+ *    The line under each control says what is true now (#5926): the
+ *    switch's explanation follows its state.
  *
  * The rules live on the server (src/services/contact-privacy.js and the
  * user_contactable_by / user_discoverable_by functions in schema.sql); this
@@ -180,7 +182,9 @@ export function PrivacySection() {
             </span>
           </label>
           <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-            {t('settings:privacy.discoverable.description')}
+            {t(settings?.discoverable
+              ? 'settings:privacy.discoverable.descriptionOn'
+              : 'settings:privacy.discoverable.descriptionOff')}
           </p>
         </div>
         {error ? (
