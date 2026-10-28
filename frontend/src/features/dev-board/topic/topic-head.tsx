@@ -48,7 +48,7 @@ import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { topicHeadStore } from './topic-store';
 import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { TopicBack } from './topic-back';
-import { RequestHead } from './request-head';
+import { RequestHead, RequestWords } from './request-head';
 import { ChangeThreadHead } from './change-head';
 import { DescriptionEditor } from './description-editor';
 import { ISSUE_BODY_MAX } from '../../../lib/issue-body-limit';
@@ -1941,7 +1941,10 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
   // fetch failed, or nobody has voted) must not be what keeps the About
   // sheet open, so it is resolved to null before the test below.
   const roster = body.roster && body.roster.phase !== 'hidden' ? body.roster : null;
-  const hasAbout = !!(summaryHtml || issueHtml || issueEditor?.canEdit || tiles || body.proposalBody || body.note || roster);
+  // #5999: the request a close proposal closes. Like the roster, a missing
+  // one is resolved to null so it is never what keeps the sheet open.
+  const closes = body.closesRequest || null;
+  const hasAbout = !!(summaryHtml || issueHtml || issueEditor?.canEdit || tiles || body.proposalBody || body.note || roster || closes);
   // #3908: a screenshot in the request's words opens in the app's viewer,
   // over this page, instead of following its file link out of it. The
   // pictures are inside sanitised markdown, so the sheet takes the tap.
@@ -1958,6 +1961,21 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
               <h5 className="dev-topic-sub">{t('project:topic.about.whatChanges')}</h5>
               <Html className="dev-topic-about-body" html={summaryHtml} />
             </>
+          ) : null}
+          {closes ? (
+            // #5999: the request comes FIRST, in the shape a request's own
+            // page opens with — who asked and when, the title (the way
+            // through to its page), then the words as the same quote folded
+            // at four lines. The reason for closing stays below it.
+            <div className="dev-topic-closes" data-closes-request={closes.number}>
+              <h5 className="dev-topic-sub">{closes.label}</h5>
+              <div className="messages-message-head">
+                <span className="messages-message-author">{closes.asker}</span>
+                {closes.askedTime ? <time dateTime={closes.askedAt || undefined} title={closes.askedTitle}>{closes.askedTime}</time> : null}
+              </div>
+              <a className="dev-topic-closes-title" href={closes.href}>{closes.title}</a>
+              <RequestWords html={closes.bodyHtml} />
+            </div>
           ) : null}
           {issueEditor ? <IssueBody key={issueEditor.issue} html={issueHtml || ''} editor={issueEditor} />
             : issueHtml ? <Html className="dev-topic-about-body" html={issueHtml} /> : null}
