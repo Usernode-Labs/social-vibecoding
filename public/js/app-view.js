@@ -5690,14 +5690,12 @@ const AppView = {
     if (t.kind === 'proposal' && ['promoted', 'merging'].includes(item.status)) AppView._loadVoteRoster(item.id);
     // #2603: the governance twin — loaded for settled rows too, because a
     // close proposal's page is read after the fact as much as before it.
-    if (t.kind === 'gov') {
-      AppView._loadGovVoteRoster(item.id);
-      // #5999: the request a close proposal closes, so its words can be read
-      // on the page that closed it. Same after-paint discipline as the
-      // roster: the block appears once the answer republishes the head.
-      const target = AppView._govRequestNumber(item);
-      if (target) AppView._loadGovRequest(target);
-    }
+    if (t.kind === 'gov') AppView._loadGovVoteRoster(item.id);
+    // #5999: the request a close proposal closes, so its words can be read
+    // on the page that closed it. Same after-paint discipline as the roster:
+    // the block appears once the answer republishes the head.
+    const target = AppView._govRequestNumber(item);
+    if (target) AppView._loadGovRequest(target);
     // An auto-expanded transcript (arrived via "Read chat") loads straight
     // away; every other one loads when it is opened.
     if (!changePage && body.transcript && body.transcript.expanded) {
