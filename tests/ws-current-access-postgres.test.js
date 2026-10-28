@@ -17,17 +17,9 @@ const { AUTHORIZE_SQL } = require('../src/services/ws-delivery');
 const notifications = require('../src/services/notifications');
 const conversations = require('../src/services/conversations');
 const pushes = require('../src/workflow/pushes.ts');
+const { waitFor } = require('./lib/wait-for');
 const DSN = process.env.TEST_DATABASE_URL || process.env.SQL_CHECK_CONNECTION_URL
   || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
-
-const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
-async function until(predicate, message) {
-  const end = Date.now() + 3000;
-  while (!predicate()) {
-    if (Date.now() > end) assert.fail(message);
-    await wait(5);
-  }
-}
 
 test('current WebSocket authority against the full PostgreSQL schema', {
   timeout: 120000,
@@ -115,10 +107,10 @@ test('current WebSocket authority against the full PostgreSQL schema', {
       sock.on('message', raw => sock.frames.push(JSON.parse(String(raw))));
       sock.on('close', code => { sock.closeCode = code; });
       await new Promise((resolve, reject) => { sock.once('open', resolve); sock.once('error', reject); });
-      if (path === '/ws/events') await until(() => sock.frames.length, 'platform handshake');
+      if (path === '/ws/events') await waitFor(() => sock.frames.length, { label: 'platform handshake' });
       // The server closes a socket it refuses before it ever authorizes it
       // (a 4004 reconnect), so a close counts as settled too.
-      await until(() => waiter.seen || sock.readyState >= WebSocket.CLOSING, 'post-upgrade authority check');
+      await waitFor(() => waiter.seen || sock.readyState >= WebSocket.CLOSING, { label: 'post-upgrade authority check' });
       return sock;
     } finally {
       const at = pendingOpens.indexOf(waiter);
@@ -155,14 +147,14 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     heldBatches.add(hold);
     holdNext = hold;
     instances[i].ws.pushToUser(userId, event('unrelated-held-batch'));
-    await until(() => hold.started, 'unrelated authorization batch held');
+    await waitFor(() => hold.started, { label: 'unrelated authorization batch held' });
     return () => { hold.release(); heldBatches.delete(hold); };
   }
   async function flushBatch(resume, i, userId, sock) {
     const label = `flushed-${++seq}`;
     instances[i].ws.pushToUser(userId, event(label));
     resume();
-    await until(() => frames(sock, label).length, 'queued delivery batch finished');
+    await waitFor(() => frames(sock, label).length, { label: 'queued delivery batch finished' });
   }
   async function conversationFixture(f, { kind = 'group', memberStatus = 'member' } = {}) {
     const { rows: [c] } = await pool.query(
@@ -187,8 +179,13 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     for (const hold of heldBatches) hold.release();
     heldBatches.clear();
     holdNext = null;
-    for (const sock of sockets) sock.terminate();
-    await wait(20);
+    // Each socket's own `close` event ends the teardown: a terminated socket
+    // has finished with the server, not merely been asked to stop.
+    await Promise.all(sockets.map(sock => new Promise(resolve => {
+      if (sock.readyState === WebSocket.CLOSED) return resolve();
+      sock.once('close', resolve);
+      sock.terminate();
+    })));
   }
   t.afterEach(closeAll);
 
@@ -198,14 +195,14 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     const owner = await open(1, f.owner.token, `/ws/chat/${f.slug}`);
     instances[0].ws.broadcast(f.appId, event('before'));
     instances[1].ws._onBusMessage({ kind: 'room', routing: { appId: f.appId }, data: event('before') });
-    await until(() => member.every(s => frames(s, 'before').length === 1), 'positive room delivery');
+    await waitFor(() => member.every(s => frames(s, 'before').length === 1), { label: 'positive room delivery' });
     await pool.query('DELETE FROM app_collaborators WHERE app_id = $1 AND user_id = $2', [f.appId, f.member.id]);
     instances[0].ws.broadcast(f.appId, event('after'));
     instances[1].ws._onBusMessage({ kind: 'room', routing: { appId: f.appId }, data: event('after') });
-    await until(() => frames(owner, 'after').length === 1 && member.every(s => s.readyState === WebSocket.CLOSED), 'revoked room readers closed');
+    await waitFor(() => frames(owner, 'after').length === 1 && member.every(s => s.readyState === WebSocket.CLOSED), { label: 'revoked room readers closed' });
     for (const sock of member) assert.equal(frames(sock, 'after').length, 0);
     const retry = await open(0, f.member.token, `/ws/chat/${f.slug}`);
-    await until(() => retry.readyState === WebSocket.CLOSED, 'reconnect refused');
+    await waitFor(() => retry.readyState === WebSocket.CLOSED, { label: 'reconnect refused' });
     assert.equal(retry.frames.length, 0);
   });
 
@@ -222,7 +219,7 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     assert.equal(response.status, 200);
     instances[1].ws._onBusMessage({ kind: 'user', routing: { userId: f.member.id }, data: event('logout') });
     instances[0].ws.broadcast(f.appId, event('logout'));
-    await until(() => frames(other, 'logout').length === 1 && personal.readyState === 3 && room.readyState === 3, 'logout authority checked');
+    await waitFor(() => frames(other, 'logout').length === 1 && personal.readyState === 3 && room.readyState === 3, { label: 'logout authority checked' });
     assert.equal(frames(personal, 'logout').length, 0);
     assert.equal(frames(room, 'logout').length, 0);
     await assert.rejects(open(0, f.member.token), /401/);
@@ -236,7 +233,7 @@ test('current WebSocket authority against the full PostgreSQL schema', {
       else await pool.query('UPDATE users SET anonymised_at = NOW() WHERE id = $1', [f.admin.id]);
       instances[1].ws._onBusMessage({ kind: 'user', routing: { userId: f.admin.id }, data: event(kind) });
       instances[1].ws._onBusMessage({ kind: 'admins', data: event(kind) });
-      await until(() => sock.readyState === 3, `${kind} closes socket`);
+      await waitFor(() => sock.readyState === 3, { label: `${kind} closes socket` });
       assert.equal(frames(sock, kind).length, 0);
     }
   });
@@ -246,7 +243,7 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     const sock = await open(0, f.member.token, `/ws/chat/${f.slug}`);
     await pool.query('DELETE FROM sessions WHERE token = $1', [f.member.token]);
     sock.send(JSON.stringify({ type: 'chat', content: 'FAKE_REVOKED_WRITE' }));
-    await until(() => sock.readyState === 3, 'revoked writer closed');
+    await waitFor(() => sock.readyState === 3, { label: 'revoked writer closed' });
     assert.equal(sock.closeCode, 4001);
     const { rows: [row] } = await pool.query('SELECT COUNT(*)::int AS n FROM chat_messages WHERE app_id = $1', [f.appId]);
     assert.equal(row.n, 0);
@@ -279,7 +276,7 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     const personal = await open(1, f.member.token), room = await open(0, f.member.token, `/ws/chat/${f.slug}`);
     instances[1].ws.pushToUser(f.member.id, event('native-before'));
     instances[0].ws.broadcast(f.appId, event('native-before'));
-    await until(() => frames(personal, 'native-before').length && frames(room, 'native-before').length, 'native positive controls');
+    await waitFor(() => frames(personal, 'native-before').length && frames(room, 'native-before').length, { label: 'native positive controls' });
     const { revokeNativeSessionCredentials } = require('../src/services/native-session-revocation');
     const q = await pool.connect();
     try {
@@ -289,7 +286,7 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     } catch (err) { await q.query('ROLLBACK'); throw err; } finally { q.release(); }
     instances[1].ws.pushToUser(f.member.id, event('native-after'));
     instances[0].ws.broadcast(f.appId, event('native-after'));
-    await until(() => personal.readyState === 3 && room.readyState === 3, 'native revocation closes sockets');
+    await waitFor(() => personal.readyState === 3 && room.readyState === 3, { label: 'native revocation closes sockets' });
     assert.equal(frames(personal, 'native-after').length, 0);
     assert.equal(frames(room, 'native-after').length, 0);
   });
@@ -303,12 +300,12 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     const relay = label => instances[1].ws._onBusMessage({ kind: 'user', routing: { userId: f.member.id, actorUserId: f.owner.id },
       data: { type: 'conversation_message_created', conversationId: c.id, label, content: 'FAKE_PRIVATE_CONVERSATION' } });
     relay('conversation-before');
-    await until(() => frames(member, 'conversation-before').length, 'member positive control');
+    await waitFor(() => frames(member, 'conversation-before').length, { label: 'member positive control' });
     await pool.query("UPDATE conversation_members SET status = 'removed', left_at = NOW() WHERE conversation_id = $1 AND user_id = $2", [c.id, f.member.id]);
     relay('conversation-after');
     instances[1].ws.pushToUser(f.owner.id, event('conversation-control'));
     instances[1].ws.pushToUser(f.member.id, { type: 'conversation_membership_changed', conversationId: c.id, content: 'must be projected away' });
-    await until(() => frames(owner, 'conversation-control').length && member.frames.some(m => m.type === 'conversation_membership_changed'), 'content batch processed');
+    await waitFor(() => frames(owner, 'conversation-control').length && member.frames.some(m => m.type === 'conversation_membership_changed'), { label: 'content batch processed' });
     assert.equal(frames(member, 'conversation-after').length, 0);
     assert.deepEqual(member.frames.find(m => m.type === 'conversation_membership_changed'), { type: 'conversation_membership_changed', conversationId: c.id });
   });
@@ -325,7 +322,7 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     instances[1].ws._onBusMessage({ kind: 'user', routing: { userId: f.stranger.id }, data });
     await pool.query('UPDATE conversation_messages SET content = $2 WHERE id = $1', [c.messageId, 'FAKE_CURRENT_BODY']);
     await flushBatch(resume, 1, f.member.id, member);
-    await until(() => member.frames.some(m => m.type === 'notification_new'), 'current notification delivered');
+    await waitFor(() => member.frames.some(m => m.type === 'notification_new'), { label: 'current notification delivered' });
     const delivered = member.frames.find(m => m.type === 'notification_new');
     assert.equal(delivered.notification.messageContent, 'FAKE_CURRENT_BODY');
     assert.equal(delivered.notification.conversationId, c.conversationId);
@@ -373,8 +370,8 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     instances[1].ws._onBusMessage({ kind: 'user', routing: { userId: f.member.id },
       data: { type: 'notification_new', notificationId: c.notificationId }, fromWorkflow: true });
     for (const n of invites) instances[1].ws.pushToUser(f.stranger.id, { type: 'notification_new', notificationId: n.id });
-    await until(() => stranger.frames.filter(m => m.type === 'notification_new').length === 2
-      && member.frames.some(m => m.type === 'notification_new'), 'all pending invitations delivered');
+    await waitFor(() => stranger.frames.filter(m => m.type === 'notification_new').length === 2
+      && member.frames.some(m => m.type === 'notification_new'), { label: 'all pending invitations delivered' });
     const invited = member.frames.find(m => m.type === 'notification_new').notification;
     assert.equal(invited.kind, 'conversation_invite');
     assert.equal(invited.messageContent, null);
@@ -395,7 +392,7 @@ test('current WebSocket authority against the full PostgreSQL schema', {
       await conversations.withLockedAudience(pool, f.owner, c.conversationId, ids => {
         ws.pushConversationEvent(ids, data, { excludeUserId: f.owner.id, actorUserId: f.owner.id });
       });
-      await until(() => member.frames.some(m => m.type === data.type), 'direct positive control');
+      await waitFor(() => member.frames.some(m => m.type === data.type), { label: 'direct positive control' });
       member.frames.length = 0;
       const resume = await stallBatch(1, f.member.id);
       await conversations.withLockedAudience(pool, f.owner, c.conversationId, ids => {
@@ -419,7 +416,7 @@ test('current WebSocket authority against the full PostgreSQL schema', {
       try {
         const data = { type: 'conversation_reaction_updated', conversationId: c.conversationId, messageId: c.messageId };
         instances[0].ws.pushConversationEvent([f.member.id], data, { actorUserId: f.owner.id });
-        await until(() => member.frames.some(m => m.type === data.type), 'relayed reaction positive control');
+        await waitFor(() => member.frames.some(m => m.type === data.type), { label: 'relayed reaction positive control' });
         assert.deepEqual(member.frames.find(m => m.type === data.type), data, 'actor metadata stays off the browser wire');
         member.frames.length = 0;
         const resume = await stallBatch(1, f.member.id);
@@ -440,7 +437,7 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     const relay = data => instances[1].ws._onBusMessage({ kind: 'user', routing: { userId: f.member.id }, data });
     relay({ type: 'conversation_message_created', conversationId: c.conversationId, messageId: c.messageId });
     relay({ type: 'conversation_read', conversationId: c.conversationId, userId: f.owner.id });
-    await until(() => member.frames.filter(m => m.type.startsWith('conversation_')).length === 2, 'safe legacy actors resolved');
+    await waitFor(() => member.frames.filter(m => m.type.startsWith('conversation_')).length === 2, { label: 'safe legacy actors resolved' });
     member.frames.length = 0;
     const resume = await stallBatch(1, f.member.id);
     relay({ type: 'conversation_reaction_updated', conversationId: c.conversationId, messageId: c.messageId });
@@ -454,17 +451,21 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     const f = await fixture();
     const sock = await open(1, f.admin.token);
     sock.send(JSON.stringify({ type: 'watch_session', sessionId: f.sessionId }));
-    await until(() => sock.frames.some(frame => frame.type === 'session_watch' && frame.watching), 'admin watch accepted');
+    await waitFor(() => sock.frames.some(frame => frame.type === 'session_watch' && frame.watching), { label: 'admin watch accepted' });
     const relay = label => {
       instances[1].ws._onBusMessage({ kind: 'session', routing: { sessionId: f.sessionId, userId: f.owner.id, appId: f.appId },
         data: { type: 'session_event', sessionId: f.sessionId, event: 'cc_progress', label } });
       instances[1].ws._onBusMessage({ kind: 'admins', data: event(label) });
     };
     relay('admin-before');
-    await until(() => frames(sock, 'admin-before').length === 2, 'admin positive controls');
+    await waitFor(() => frames(sock, 'admin-before').length === 2, { label: 'admin positive controls' });
     await pool.query('UPDATE users SET is_admin = FALSE WHERE id = $1', [f.admin.id]);
     relay('admin-after');
-    await wait(75);
+    // A control frame on the same socket after the demoted payload: one FIFO
+    // delivery queue decides both, so the control arriving proves the
+    // demoted socket's decision has already been made.
+    instances[1].ws.pushToUser(f.admin.id, event('admin-control'));
+    await waitFor(() => frames(sock, 'admin-control').length, { label: 'post-demotion delivery batch processed' });
     assert.equal(frames(sock, 'admin-after').length, 0);
   });
 
@@ -473,10 +474,13 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     const sock = await open(0, f.owner.token);
     const progress = label => instances[0].ws.broadcastGlobal({ type: 'session_event', event: 'cc_progress', sessionId: f.sessionId, label });
     progress('owner-before');
-    await until(() => frames(sock, 'owner-before').length, 'owner positive control');
+    await waitFor(() => frames(sock, 'owner-before').length, { label: 'owner positive control' });
     await pool.query('DELETE FROM app_collaborators WHERE app_id = $1 AND user_id = $2', [f.appId, f.owner.id]);
     progress('owner-after');
-    await wait(75);
+    // The control follows the revoked event through the same FIFO delivery
+    // queue; its arrival proves the revoked event was already decided.
+    instances[0].ws.pushToUser(f.owner.id, event('owner-control'));
+    await waitFor(() => frames(sock, 'owner-control').length, { label: 'post-revocation delivery batch processed' });
     assert.equal(frames(sock, 'owner-after').length, 0);
   });
 
@@ -489,11 +493,11 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     ws._onBusMessage({ kind: 'session', routing: { sessionId: f.sessionId, userId: f.member.id, appId: f.appId },
       data: { type: 'session_event', sessionId: f.sessionId + 1, event: 'cc_progress', label: 'wrong-session' } });
     ws.pushToUser(f.owner.id, event('routing-control'));
-    await until(() => frames(owner, 'routing-control').length, 'routing batch processed');
+    await waitFor(() => frames(owner, 'routing-control').length, { label: 'routing batch processed' });
     assert.equal(frames(member, 'stale-owner').length, 0);
     assert.equal(frames(member, 'wrong-session').length, 0);
     ws._onBusMessage({ kind: 'session', routing: { sessionId: f.sessionId, userId: f.owner.id, appId: f.appId, fanout: true }, oversize: true });
-    await until(() => member.frames.some(m => m.type === 'resync_hint'), 'oversize app audience still gets a content-free repair hint');
+    await waitFor(() => member.frames.some(m => m.type === 'resync_hint'), { label: 'oversize app audience still gets a content-free repair hint' });
   });
 
   await t.test('session working-state follows current ownership and sharing, even on a delayed workflow relay', async () => {
@@ -503,15 +507,15 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     await pool.query('UPDATE chat_sessions SET shared_at = NOW() WHERE id = $1', [f.sessionId]);
     const state = { type: 'session_state', sessionId: f.sessionId, appId: f.appId, appSlug: f.slug, userId: f.owner.id, shared: true };
     ws.pushSessionState({ ...state, label: 'shared-before' });
-    await until(() => frames(member, 'shared-before').length && frames(owner, 'shared-before').length, 'shared positive controls');
+    await waitFor(() => frames(member, 'shared-before').length && frames(owner, 'shared-before').length, { label: 'shared positive controls' });
     await pool.query('UPDATE chat_sessions SET shared_at = NULL WHERE id = $1', [f.sessionId]);
     ws._onBusMessage({ kind: 'scoped', routing: { appId: f.appId }, data: { ...state, label: 'shared-after' }, fromWorkflow: true });
-    await until(() => frames(owner, 'shared-after').length, 'owner still receives');
+    await waitFor(() => frames(owner, 'shared-after').length, { label: 'owner still receives' });
     assert.equal(frames(member, 'shared-after').length, 0);
     await pool.query('UPDATE chat_sessions SET user_id = $1 WHERE id = $2', [f.member.id, f.sessionId]);
     ws.pushSessionState({ ...state, shared: false, label: 'previous-owner' });
     ws.pushToUser(f.member.id, event('ownership-control'));
-    await until(() => frames(member, 'ownership-control').length, 'ownership batch processed');
+    await waitFor(() => frames(member, 'ownership-control').length, { label: 'ownership batch processed' });
     assert.equal(frames(owner, 'previous-owner').length, 0);
   });
 
@@ -528,7 +532,7 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     const deploy = require('../src/services/app-deploy-status');
     deploy.markStart(f.slug, { fromSha: 'a'.repeat(40) });
     deploy.markEnd(f.slug, { missingSecrets: ['FAKE_SECRET_NAME'] });
-    await until(() => member.frames.filter(frame => frame.type === 'app_redeploy_status').length === 4, 'all deploy producers reach member');
+    await waitFor(() => member.frames.filter(frame => frame.type === 'app_redeploy_status').length === 4, { label: 'all deploy producers reach member' });
     assert.equal(stranger.frames.filter(frame => frame.type === 'app_redeploy_status').length, 0);
   });
 
@@ -539,21 +543,24 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     const member = await open(1, f.member.token);
     const emit = label => instances[1].ws.broadcastGlobalScoped(event(label), { appId: f.appId });
     emit('public');
-    await until(() => frames(outsider, 'public').length, 'public positive control');
+    await waitFor(() => frames(outsider, 'public').length, { label: 'public positive control' });
     await pool.query("UPDATE apps SET view_visibility = 'private' WHERE id = $1", [f.appId]);
     emit('private');
-    await until(() => frames(member, 'private').length, 'member remains authorized');
+    await waitFor(() => frames(member, 'private').length, { label: 'member remains authorized' });
     assert.equal(frames(outsider, 'private').length, 0);
     await pool.query('INSERT INTO user_app_blocks (user_id, app_id) VALUES ($1, $2)', [f.member.id, f.appId]);
     emit('blocked');
     instances[1].ws.pushToUser(f.member.id, { type: 'app_blocks_changed', appId: f.appId, slug: f.slug, blocked: true,
       content: 'must be projected away' });
-    await until(() => member.frames.some(m => m.type === 'app_blocks_changed'), 'blocked person still receives their revocation notice');
+    await waitFor(() => member.frames.some(m => m.type === 'app_blocks_changed'), { label: 'blocked person still receives their revocation notice' });
     assert.equal(frames(member, 'blocked').length, 0);
     assert.deepEqual(member.frames.find(m => m.type === 'app_blocks_changed'), { type: 'app_blocks_changed', appId: f.appId, slug: f.slug, blocked: true });
     await pool.query('UPDATE apps SET moderation_suspended_at = NOW() WHERE id = $1', [f.appId]);
     emit('suspended');
-    await wait(75);
+    // The control follows the suspended event through the same FIFO delivery
+    // queue; its arrival proves the suspended event was already decided.
+    instances[1].ws.pushToUser(f.member.id, event('suspended-control'));
+    await waitFor(() => frames(member, 'suspended-control').length, { label: 'post-suspension delivery batch processed' });
     assert.equal(frames(member, 'suspended').length, 0);
   });
 
@@ -571,7 +578,10 @@ test('current WebSocket authority against the full PostgreSQL schema', {
       data: { type: 'session_event', event: 'checks_ready', label: 'missing-session-route' } });
     routeFailure = true;
     ws.broadcastGlobal({ type: 'session_event', sessionId: f.sessionId, event: 'checks_ready', label: 'route-failure' });
-    await wait(75);
+    // The failing route lookup is the event: once its cache entry has settled
+    // the batch dropped it without a delivery, so nothing more can arrive.
+    await waitFor(() => ws._sessionMetaCache.get(f.sessionId)?.settled === true,
+      { label: 'the failed route lookup settled' });
     routeFailure = false;
     assert.deepEqual(sock.frames.filter(frame => frame.label), []);
     assert.deepEqual(sock.frames.find(frame => frame.type === 'resync_hint'), { type: 'resync_hint' });
@@ -582,7 +592,7 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     const sock = await open(1, f.member.token);
     await pool.query('DELETE FROM sessions WHERE token = $1', [f.member.token]);
     instances[1].ws._onBusListening();
-    await until(() => sock.readyState === 3, 'idle revoked socket closed on recovery');
+    await waitFor(() => sock.readyState === 3, { label: 'idle revoked socket closed on recovery' });
   });
 
   await t.test('an unavailable delivery authority sends no content and closes candidates', async () => {
@@ -590,7 +600,7 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     const sock = await open(1, f.member.token);
     outage = true;
     instances[1].ws.pushToUser(f.member.id, event('outage'));
-    await until(() => sock.readyState === 3, 'unavailable authority closes candidate');
+    await waitFor(() => sock.readyState === 3, { label: 'unavailable authority closes candidate' });
     outage = false;
     assert.equal(frames(sock, 'outage').length, 0);
   });
@@ -600,7 +610,7 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     const sock = await open(1, f.member.token);
     const before = gateQueries;
     for (let n = 0; n < 50; n++) instances[1].ws.pushToUser(f.member.id, event(`burst-${n}`));
-    await until(() => sock.frames.filter(frame => frame.label?.startsWith('burst-')).length === 50, 'all burst frames');
+    await waitFor(() => sock.frames.filter(frame => frame.label?.startsWith('burst-')).length === 50, { label: 'all burst frames' });
     assert.equal(gateQueries - before, 1, 'one batch, not a query per frame');
     assert.deepEqual(sock.frames.filter(frame => frame.label).map(frame => frame.label), Array.from({ length: 50 }, (_, n) => `burst-${n}`));
   });

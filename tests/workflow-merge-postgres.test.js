@@ -23,6 +23,7 @@ const { attentionStates } = require('../src/workflow/platform.ts');
 const { mergeQueue, MACHINE: QUEUE, appKey } = require('../src/workflow/merge-queue/machine.ts');
 const { preview } = require('../src/workflow/preview/machine.ts');
 const { PROCESS_PRESENCE_LOCK } = require('../src/workflow/rules/presence.ts');
+const { waitFor } = require('./lib/wait-for');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const SHA = (c) => c.repeat(40).slice(0, 40);
@@ -265,7 +266,7 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     await want(a);
     await rt.drain();
     const running = rt.runServices();
-    await new Promise((r) => setTimeout(r, 100));
+    await running; // the gate work this pass claimed has finished; the attempt is another pass
     await rt.drain();
     const q = await qInst(a);
     assert.equal(q.state, 'working');
@@ -412,7 +413,7 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     await rt.drain();
     assert.equal((await outcome(sync)).result, 'accepted');
     const running = rt.runServices();
-    await new Promise((r) => setTimeout(r, 100));
+    await waitFor(() => calls(WORK.sync).length === 1, { label: 'the sync to start' });
     await want(s.app);
     await rt.drain();
     await rt.drain();
@@ -443,7 +444,7 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     await gating;
     await rt.drain();
     const merging = rt.runServices();
-    await new Promise((r) => setTimeout(r, 100));
+    await waitFor(() => calls(WORK.attempt).length === 1, { label: 'the merge attempt to start' });
     await rt.drain();
     assert.equal((await pInst(m)).state, 'merging');
     const refused = await toProposal(m, 'SyncRequested', { reason: 'person' }, { kind: 'route' });
@@ -495,7 +496,7 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     await want(a);
     await rt.drain();
     const running = rt.runServices();
-    await new Promise((r) => setTimeout(r, 100));
+    await running; // the gate work this pass claimed has finished, so the next drain starts the merge
     await rt.drain();
     assert.equal(calls(WORK.sync).length, 0, 'held while the direct merge is under way');
     release();
@@ -619,7 +620,7 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     await want(u.app);
     await rt.drain();
     const gating = rt.runServices();
-    await new Promise((r) => setTimeout(r, 100));
+    await waitFor(() => calls(WORK.gate).length === 1, { label: 'the gate to start' });
     const during = await toProposal(u, 'Unpromote', { from: 'promoted', userId: u.owner.id }, { kind: 'route' });
     await rt.drain();
     assert.equal((await outcome(during)).reason, 'busy');
@@ -675,9 +676,18 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     work.hold.set(WORK.gate, new Promise((r) => { release = r; }));
     await want(s.app, { sessionId: s.id });
     await rt.drain();
-    const first = (await qInst(s.app)).deadline_at;
+    // The deadline is the transition's clock plus a long guard, so a clock
+    // tick means the database's clock has moved past the moment it was read,
+    // not past the deadline itself.
+    const { rows: [slot] } = await pool.query(
+      'SELECT deadline_at, clock_timestamp() AS read_at FROM wf_instances WHERE machine = $1 AND key = $2',
+      [QUEUE, appKey(s.app.id)]);
+    const first = slot.deadline_at;
     assert.ok(first, 'the guard is set with the slot');
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(async () => {
+      const { rows: [tick] } = await pool.query('SELECT clock_timestamp() AS now');
+      return new Date(tick.now).getTime() > new Date(slot.read_at).getTime();
+    }, { label: 'the database clock to move past the moment the slot was read' });
     await want(s.app);
     await want(s.app);
     await rt.drain();
@@ -982,7 +992,7 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     await want(a);
     await rt.drain();
     const running = rt.runServices();
-    await new Promise((r) => setTimeout(r, 100));
+    await waitFor(() => calls(WORK.sync).length === 1, { label: 'the conflicting resolution to start' });
     await rt.drain();
     assert.equal(calls(WORK.sync).length, 1, 'the conflicting one is being resolved');
     assert.equal(calls(WORK.gate).length, 0, 'the busy one was declined');

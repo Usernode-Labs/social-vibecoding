@@ -15,17 +15,8 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool, Client } = require('pg');
 
+const { waitFor, within } = require('./lib/wait-for');
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
-
-async function until(check, { timeoutMs = 5000, label = 'condition' } = {}) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const value = await check();
-    if (value) return value;
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
 
 test('processes and the roster, against the full schema', { timeout: 120000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
@@ -166,10 +157,9 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
     // beats and still sees the Pod that should make it hand over.
     const taken = await Promise.all(Array.from({ length: 6 }, () => pool.connect()));
     try {
-      const within = (p) => Promise.race([p, new Promise((r) => setTimeout(() => r('waited on the pool'), 3000))]);
-      assert.equal(await within(processes.startedSinceDrain()), 2);
-      assert.equal(await within(processes.newerDraining()), 1, 'pod-all-new-draining');
-      assert.notEqual(await within(processes.beat().then(() => 'beat')), 'waited on the pool');
+      assert.equal(await within(processes.startedSinceDrain(), 3000, 'startedSinceDrain with the pool checked out'), 2);
+      assert.equal(await within(processes.newerDraining(), 3000, 'newerDraining with the pool checked out'), 1, 'pod-all-new-draining');
+      assert.equal(await within(processes.beat().then(() => 'beat'), 3000, 'a beat with the pool checked out'), 'beat');
     } finally {
       for (const c of taken) c.release();
     }
@@ -186,7 +176,7 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
     processes.setAboveDrain(3);
     assert.equal(await claims(991021), 1, 'still above its drain sizes');
     processes.setAboveDrain(0);
-    await until(async () => (await claims(991021)) === 0, { label: 'the claim given back' });
+    await waitFor(async () => (await claims(991021)) === 0, { label: 'the claim given back' });
 
     // This process starting: no claim of a role it replaces, no wait.
     assert.ok((await processes.waitForRoom({ pollMs: 20 })).waitedMs < 1000);
@@ -199,16 +189,28 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
       assert.ok((await processes.waitForRoom({ pollMs: 20 })).waitedMs < 1000, 'another lock is no claim');
       await other.query('SELECT pg_advisory_lock(991022, 7)');
       let done = false;
-      const waiting = processes.waitForRoom({ pollMs: 20 }).then((r) => { done = true; return r; });
-      await new Promise((r) => setTimeout(r, 200));
+      // A counting read stands in for the claim probe: two reads that found
+      // the claim prove it is still waiting, without a fixed sleep.
+      let refused = 0;
+      const waiting = processes.waitForRoom({
+        pollMs: 20,
+        read: async () => { refused += 1; return { rows: [{ processes: await claims(991022) }] }; },
+      }).then((r) => { done = true; return r; });
+      await waitFor(() => refused >= 2, { label: 'two reads that found the claim' });
       assert.equal(done, false, 'waits while a process it replaces holds a claim');
       await other.query('SELECT pg_advisory_unlock(991022, 7)');
-      assert.ok((await waiting).waitedMs >= 200);
+      const waited = await waiting;
+      assert.ok(waited.waitedMs > 0, 'it waited for the claim to go');
+      assert.ok(refused >= 2, 'it read the claim again rather than taking one look');
       // The claim goes when that process's connection closes, whatever it did.
       await other.query('SELECT pg_advisory_lock(991023, 8)');
       done = false;
-      const again = processes.waitForRoom({ pollMs: 20 }).then(() => { done = true; });
-      await new Promise((r) => setTimeout(r, 100));
+      let refusedAgain = 0;
+      const again = processes.waitForRoom({
+        pollMs: 20,
+        read: async () => { refusedAgain += 1; return { rows: [{ processes: await claims(991023) }] }; },
+      }).then(() => { done = true; });
+      await waitFor(() => refusedAgain >= 2, { label: 'two reads that found the claim before its connection closed' });
       assert.equal(done, false);
       await other.end();
       await again;
@@ -234,16 +236,19 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
     assert.equal(await claims(991021), 1);
     processes.setAboveDrain(2);
     await pool.query(claimBackend);
-    await until(() => claimLost === 1, { label: 'the claim lost' });
+    await waitFor(() => claimLost === 1, { label: 'the claim lost' });
     // A claim already given back is nothing to lose.
-    await until(async () => (await claims(991021)) === 0, { label: 'the old claim gone' });
+    await waitFor(async () => (await claims(991021)) === 0, { label: 'the old claim gone' });
     await processes.markDraining(new Date(Date.now() + 60_000));
-    await until(async () => (await claims(991021)) === 1, { label: 'a new claim' });
+    await waitFor(async () => (await claims(991021)) === 1, { label: 'a new claim' });
     processes.setAboveDrain(0);
-    await until(async () => (await claims(991021)) === 0, { label: 'given back' });
+    await waitFor(async () => (await claims(991021)) === 0, { label: 'given back' });
     await pool.query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name LIKE 'homeroom-%-locks'
       AND datname = current_database() AND pid <> pg_backend_pid()`);
-    await new Promise((r) => setTimeout(r, 200));
+    // The connection's loss is handled once session-locks has marked it dead
+    // (and run any onLost); nothing held means nothing was reported lost.
+    const locks = require('../src/db/session-locks');
+    await waitFor(() => locks.openConnections() === 0, { label: 'the process lock connection gone' });
     assert.equal(claimLost, 1, 'nothing held, nothing lost');
 
     // A read that fails is tried again, never taken for room.
@@ -277,7 +282,6 @@ test('processes and the roster, against the full schema', { timeout: 120000 }, a
     // The row is gone; the capacity claim is not: it goes with the
     // connection, which closes after the pool's own end.
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted AND classid = 991021::oid`)).rows[0].n, 1);
-    await until(() => true);
   });
 });
 
@@ -289,7 +293,7 @@ test('a claim that cannot be taken ends the process rather than drain unclaimed'
   try {
     await processes.start({ pool: nowhere, role: 'web', onClaimLost: () => { lost += 1; } });
     await processes.markDraining(new Date(Date.now() + 60_000)).catch(() => {});
-    for (let i = 0; i < 100 && !lost; i++) await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => lost > 0, { label: 'the claim loss that ends the process' });
     assert.equal(lost, 1);
   } finally {
     processes._reset();
