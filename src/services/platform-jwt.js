@@ -170,6 +170,20 @@ function iframeVerifyKeys() {
   return keys;
 }
 
+// The public half of the key THIS process signs app-identity tokens with,
+// or null when it signs none. Production's is the injected pair's. A
+// staging clone's is its own ephemeral pair's, which is NOT the
+// IFRAME_JWT_PUBLIC_KEY it was given (that one is the production parent's,
+// above). An app the clone runs (services/preview-projects-client.js) must
+// be given this one, or every token the clone mints for it fails to verify.
+function signingPublicKeyPem() {
+  const injected = pem(process.env.IFRAME_JWT_PRIVATE_KEY);
+  if (injected) {
+    return crypto.createPublicKey(injected).export({ type: 'spki', format: 'pem' }).toString();
+  }
+  return _stagingSigningPair ? _stagingSigningPair.publicKey : null;
+}
+
 function workerSecret() {
   const s = process.env.WORKER_JWT_SECRET;
   if (!s) throw new Error('WORKER_JWT_SECRET not set — cannot mint or verify worker tokens');
@@ -728,6 +742,7 @@ module.exports = {
   signGuestToken,
   verifyGuestToken,
   guestPublicKeyPem,
+  signingPublicKeyPem,
   signWorkerToken,
   verifyWorkerToken,
   signVisibleChangesToken,

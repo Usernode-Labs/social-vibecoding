@@ -378,6 +378,10 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           if (removed && removed.removed === false) throw new Error(`Still present after retirement: ${container}`);
         }
         for (const a of attempts) await dropUnitEarly(input.sessionId, a.n);
+        // Projects someone made in the preview, which production ran for it
+        // (services/preview-projects.js): before the preview's own
+        // databases, and a project that will not go fails the item.
+        await legacy('services/preview-projects').retireForSession(config, pool, input.sessionId);
         const dbs = attempts.flatMap((a: { db: string; dbs?: string[] }) => a.dbs ?? [a.db]);
         for (const db of dbs) await dbManager().dropDatabase(db, { strict: true });
         const left = name ? await k.previewResourcesPresent(config, name, secrets) : [];

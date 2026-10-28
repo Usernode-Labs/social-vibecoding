@@ -122,6 +122,7 @@
       "services | uses src/services/kubernetes.js:restorePreviewAttempt": "gives the Deployment back to the serving attempt's template after the machine cancelled a build past its deploy (Kubernetes API)",
       "services | uses src/services/platform-env-check.js:refreshPlatformEnvCheck": "the platform-variables check of the platform's own proposals, from the branch's dapp.json diff (GitHub), after a run settles",
       "services | uses src/services/pr-metadata.js:buildVisualsBlock": "the PR body's visuals block from the published media (pure)",
+      "services | uses src/services/preview-projects.js:retireForSession": "removes every project made inside a platform preview (runtime, database, source branch, row) and the preview's credentials, for its retirement and before its own databases go (strict: one that will not go fails the item); keeps nothing",
       "services | uses src/services/staging.js:prepareAttempt": "the build of one attempt: buildAndDeployStagingInner in its attempt mode, cut out of buildAndDeployStaging's per-process queue (_stagingBuilds) and the preview coordinator; its own checkout, database and env Secret, no row writes",
       "services | uses src/services/staging.js:verifyStagingEdge": "an HTTP probe of the preview's public address after a deploy (no state, no row writes)",
       "services | uses src/services/unit-suite.js:isEnabled": "whether the unit suite runs at all, from the configuration (pure)",

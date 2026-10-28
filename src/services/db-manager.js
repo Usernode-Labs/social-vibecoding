@@ -961,6 +961,32 @@ async function applyStagingConnectionLimit(dbName, { execute: given = null, serv
   }
 }
 
+// An EMPTY database for a project made inside a platform preview
+// (services/preview-projects.js), with its own owner role, on the server a
+// new preview-side database goes to. Only a staging-clone name
+// (app_<…>_staging_s<sessionId>_<tag>) is accepted: that shape is what
+// puts it on the preview server, what caps its connections like a clone's,
+// and what the orphan sweep collects once its session has no preview. Any
+// earlier one of the same name is dropped first, as a clone's is. Resolves
+// { password, server, url }; the caller keeps the password.
+async function createPreviewProjectDatabase(dbName) {
+  if (!SAFE_IDENT.test(dbName) || !isStagingCloneDb(dbName)) {
+    throw new Error(`createPreviewProjectDatabase: ${JSON.stringify(dbName)} is not a preview database name`);
+  }
+  const server = previewCreateServer();
+  const inAdmin = adminExecutor(server);
+  await dropOldTarget(dbName, server);
+  const role = ownerRoleName(dbName);
+  if (!SAFE_IDENT.test(role)) throw new Error(`createPreviewProjectDatabase: unsafe role ${role}`);
+  const password = generatePassword();
+  await inAdmin(`CREATE ROLE ${role} LOGIN PASSWORD '${password}'`);
+  await inAdmin(`CREATE DATABASE ${dbName} TEMPLATE template0 OWNER ${role}`);
+  await inAdmin(`REVOKE CONNECT ON DATABASE ${dbName} FROM PUBLIC`);
+  await applyStagingConnectionLimit(dbName, { execute: inAdmin, server });
+  log.info('db-manager', 'Preview project database created', { dbName, server: serverKey(server) });
+  return { password, server: serverKey(server), url: connectionUrl(dbName, password, { server }) };
+}
+
 // `viaTemplate` (staging previews only): clone from the source's staging
 // template — a redacted copy kept warm on the server and refreshed at most
 // every STAGING_DB_TEMPLATE_MAX_AGE_MS — with a file-level CREATE DATABASE
@@ -3885,6 +3911,7 @@ module.exports = {
   legacyShotsDbName,
   ownerRoleName,
   createDatabase,
+  createPreviewProjectDatabase,
   dropDatabase,
   cloneDatabase,
   connectionUrl,
