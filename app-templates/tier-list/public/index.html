@@ -183,10 +183,16 @@
         </div>
         <p id="board-note" class="w-full min-w-0 px-1 text-small text-muted sm:w-auto"></p>
       </div>
-      <!-- One name for each other person with something on a board, filled
-           when that is whose board is showing. Hidden unless Other people is
-           picked. -->
-      <div id="people" role="radiogroup" aria-label="Whose board" class="flex flex-wrap gap-1.5" hidden></div>
+      <!-- Whose board Other people shows: a dropdown of everyone else with
+           something on a board, so it stays one line however many there
+           are, with how much of the list they ranked beside it. Hidden
+           unless Other people is picked. -->
+      <div id="people" class="flex flex-wrap items-center gap-x-3 gap-y-1" hidden>
+        <label for="person-select" class="sr-only">Whose board</label>
+        <select id="person-select" class="field w-auto min-w-0 max-w-full"></select>
+        <p id="person-note" class="min-w-0 px-1 text-small text-muted"></p>
+        <p id="people-empty" class="px-1 text-small text-muted" hidden>Nobody else has ranked anything yet.</p>
+      </div>
       <p id="hint" class="px-1 text-small text-muted" aria-live="polite"></p>
       <div id="board" class="list" data-view="yours"></div>
       <!-- Below F, and not a tier: where you put one you want to

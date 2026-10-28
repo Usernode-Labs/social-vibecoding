@@ -428,7 +428,11 @@ test('a tier list shows each person\'s board, comments with @mentions, and a hel
     assert.match(header, /ranked together\.<\/p>\s*<button id="help-open"/, `${id}: the question mark is beside the line under the title`);
     assert.ok(html.indexOf('id="help-open"') < html.indexOf('id="view-toggle"'), `${id}: and no longer in the board switch`);
     assert.match(html, /<li><strong>Other people:<\/strong> pick someone else to see their whole tier list\.<\/li>/);
-    assert.match(html, /<div id="people" role="radiogroup" aria-label="Whose board" [^>]*hidden><\/div>/);
+    // Whose board: one dropdown however many other people there are, with
+    // how much of the list they ranked beside it.
+    assert.match(html, /<div id="people" class="[^"]*" hidden>\s*<label for="person-select" class="sr-only">Whose board<\/label>\s*<select id="person-select" class="field[^"]*"><\/select>/);
+    assert.match(html, /<p id="person-note" [^>]*><\/p>/);
+    assert.match(html, /<p id="people-empty" [^>]*hidden>Nobody else has ranked anything yet\.<\/p>/);
     // The help sheet reuses the item sheet's frame and this list's own word.
     assert.match(html, /<div id="help" class="fixed inset-0 z-40 flex flex-col justify-end" hidden>/);
     assert.match(html, /<h2 id="help-title" class="min-w-0 flex-1 text-heading">How this tier list works<\/h2>/);
@@ -455,7 +459,9 @@ test('a tier list shows each person\'s board, comments with @mentions, and a hel
   assert.match(script, /data\.items\.filter\(function \(i\) \{ return placeOf\(i\) === 'W'; \}\)/);
   // Other people is everyone else: your own board is Yours.
   assert.match(script, /people = \(out\[1\]\.people \|\| \[\]\)\.filter\(function \(p\) \{ return !p\.you; \}\);/);
-  assert.match(script, /'Nobody else has ranked anything yet\.'/);
+  assert.match(script, /el\.personSelect\.addEventListener\('change'/, 'picked from the dropdown');
+  assert.doesNotMatch(script, /data-person/, 'no row of name buttons any more');
+  assert.match(script, /if \(key !== peopleKey\)/, 'options rebuilt only when the list changed, so a live refresh never resets it');
   // The @ list's names come from the project's member list, never a fixture.
   assert.match(script, /api\('GET', '\/api\/members'\)/);
   const api = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'tier-list/api.js'), 'utf8');

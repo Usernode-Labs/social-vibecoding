@@ -38,6 +38,9 @@
     helpOpen: document.getElementById('help-open'),
     note: document.getElementById('board-note'),
     people: document.getElementById('people'),
+    personSelect: document.getElementById('person-select'),
+    personNote: document.getElementById('person-note'),
+    peopleEmpty: document.getElementById('people-empty'),
     hint: document.getElementById('hint'),
     board: document.getElementById('board'),
     want: document.getElementById('want'),
@@ -77,9 +80,6 @@
   var CHIP = 'inline-flex min-h-11 max-w-full items-center rounded-lg bg-raised px-3 py-2 text-left text-small font-medium hover:bg-line';
   var CHIP_MOVABLE = 'inline-flex min-h-11 max-w-full cursor-grab touch-none select-none items-center rounded-lg border border-line bg-surface px-3 py-2 text-left text-small font-medium shadow-sm';
   var NAME_CHIP = 'inline-flex max-w-full items-center rounded-lg bg-raised px-2.5 py-1.5 text-small font-medium';
-  // The Other people row: the chosen name filled with the accent, the rest outlined.
-  var PERSON_ON = 'inline-flex min-h-11 items-center rounded-lg bg-accent px-3 text-small font-medium text-on-accent';
-  var PERSON_OFF = 'inline-flex min-h-11 items-center rounded-lg border border-line bg-surface px-3 text-small font-medium';
   // The @ list's choices, the highlighted one and the rest.
   var MENTION_ON = 'flex min-h-11 w-full items-center bg-raised px-3 text-left text-small font-medium';
   var MENTION_OFF = 'flex min-h-11 w-full items-center px-3 text-left text-small font-medium';
@@ -416,25 +416,30 @@
     return r;
   }
 
-  // The Other people row: a name for each other person with something on a
-  // board, filled when it is whose board is showing.
+  // The Other people dropdown: an option for each other person with
+  // something on a board, the one whose board is showing chosen. One line
+  // however many there are. Its options are rebuilt only when the list
+  // itself changed, so a live refresh never resets it under somebody.
+  var peopleKey = '';
   function renderPeople() {
-    el.people.textContent = '';
     if (view !== 'person') { el.people.hidden = true; return; }
     el.people.hidden = false;
-    if (!people.length) {
-      el.people.appendChild(h('p', 'px-1 text-small text-muted', 'Nobody else has ranked anything yet.'));
-      return;
+    var none = !people.length;
+    el.personSelect.hidden = none;
+    el.personNote.hidden = none;
+    el.peopleEmpty.hidden = !none;
+    if (none) return;
+    var key = people.map(function (p) { return p.id + ':' + (p.name || ''); }).join('|');
+    if (key !== peopleKey) {
+      peopleKey = key;
+      el.personSelect.textContent = '';
+      people.forEach(function (p) {
+        var option = h('option', null, p.name ? '@' + p.name : 'Someone');
+        option.value = String(p.id);
+        el.personSelect.appendChild(option);
+      });
     }
-    people.forEach(function (p) {
-      var b = h('button', p.id === personId ? PERSON_ON : PERSON_OFF,
-        p.name ? '@' + p.name : 'Someone');
-      b.type = 'button';
-      b.setAttribute('role', 'radio');
-      b.setAttribute('aria-checked', p.id === personId ? 'true' : 'false');
-      b.setAttribute('data-person', String(p.id));
-      el.people.appendChild(b);
-    });
+    el.personSelect.value = personId ? String(personId) : '';
   }
 
   function renderBoard() {
@@ -477,12 +482,12 @@
       el.hint.textContent = 'Drag each one into a tier, or into ' + WANT_LABEL + ' if you haven\'t yet. Tap one to see who ranked it what.';
     } else if (view === 'person') {
       var total = data.items.length;
-      if (person) {
-        el.note.textContent = (person.name ? '@' + person.name + ' ranked ' : 'They ranked ')
-          + person.ranked + ' of ' + total;
-      } else {
-        el.note.textContent = '';
-      }
+      // How much of the list they ranked sits beside the dropdown, not up
+      // by the switch.
+      el.note.textContent = '';
+      el.personNote.textContent = person
+        ? (person.name ? '@' + person.name + ' ranked ' : 'They ranked ') + person.ranked + ' of ' + total
+        : '';
       el.trayLabel.textContent = 'Not on their board yet';
       el.tray.hidden = !waiting.length;
       el.tray.removeAttribute('data-drop');
@@ -1128,11 +1133,11 @@
     render();
     if (view === 'person') loadPerson().then(function () { if (view === 'person') render(); });
   });
-  // Picking whose board to look at, on the Other people row.
-  el.people.addEventListener('click', function (e) {
-    var b = e.target.closest('[data-person]');
-    if (!b) return;
-    var id = Number(b.getAttribute('data-person'));
+  // Picking whose board to look at, in the Other people dropdown. It lets go
+  // of the focus once chosen, as a tapped button would.
+  el.personSelect.addEventListener('change', function () {
+    var id = Number(el.personSelect.value);
+    el.personSelect.blur();
     if (!id || id === personId) return;
     personId = id;
     rememberPerson();
