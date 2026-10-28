@@ -546,6 +546,78 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     }
   });
 
+  await t.test('carried.find reads the app\'s later merges from the database, a page at a time from the last ruled out', async (t2) => {
+    const github = require('../src/services/github');
+    const { mergeFollowupsServices } = require('../src/workflow/merge-followups/services.ts');
+    const handler = mergeFollowupsServices({ config: {}, pool })[WORK.carrier];
+    const at = (minutes) => new Date(Date.now() - 60 * 60 * 1000 + minutes * 60 * 1000).toISOString();
+    const a = await app();
+    const other = await app();
+    const before = await proposal(a);
+    const stacked = await proposal(a);
+    const unrelated = await proposal(a);
+    const carrier = await proposal(a);
+    const elsewhere = await proposal(other);
+    await merge(before, { mergeSha: SHA('1'), mergedAt: at(0) });
+    await merge(stacked, { mergeSha: SHA('2'), mergedAt: at(1) });
+    await merge(unrelated, { mergeSha: SHA('3'), mergedAt: at(2) });
+    await merge(elsewhere, { mergeSha: SHA('4'), mergedAt: at(3) });
+    await merge(carrier, { mergeSha: SHA('5'), mergedAt: at(4) });
+    // Every pull request but the unrelated one lists the stacked commit; only
+    // the carrier's merge is in the build.
+    const listed = [];
+    t2.mock.method(github, 'isEnabled', () => true);
+    t2.mock.method(github, 'listPullRequestCommitShas', async (_o, _r, n) => {
+      listed.push(n);
+      return { shas: n === unrelated.pr_number ? [SHA('9')] : [SHA('2')], complete: true };
+    });
+    let inBuild = SHA('5');
+    t2.mock.method(github, 'compareCommitAncestry', async (_o, _r, base) => ({ status: base === inBuild ? 'ahead' : 'diverged' }));
+    const run = (after = null) => handler.run({ key: 'carrier', attempt: 1, resumeFrom: null, checkpoint: async () => {}, input: {
+      owner: 'acme', repo: 'shop', appId: a.id, sessionId: stacked.id, mergeSha: SHA('2'), mergedAt: at(1), release: SHA('e'), after,
+    } });
+    // Its own app's merges since it, oldest first: not one before it, not
+    // itself, not another app's.
+    assert.deepEqual((await run()).carrier,
+      { sessionId: carrier.id, prNumber: carrier.pr_number, prTitle: carrier.pr_title, mergeSha: SHA('5') });
+    assert.deepEqual(listed, [unrelated.pr_number, carrier.pr_number]);
+    // Not in this build: the unrelated one is ruled out, and the next look
+    // reads only what comes after it.
+    inBuild = SHA('0');
+    const none = await run();
+    assert.equal(none.carrier, null);
+    assert.equal(none.scanned.id, unrelated.id);
+    listed.length = 0;
+    assert.equal((await run(none.scanned)).carrier, null);
+    assert.deepEqual(listed, [carrier.pr_number]);
+  });
+
+  await t.test('a child app\'s stacked merge goes live with the deploy of the merge that carried it', async () => {
+    const a = await app();
+    const carrier = await proposal(a);
+    const stacked = await proposal(a);
+    await merge(stacked, { mergeSha: SHA('b') });
+    await merge(carrier, { mergeSha: SHA('c') });
+    work.results.set(WORK.verify, (input) => ({ sha: input.sha, contains: input.mergeSha === input.sha,
+      status: input.mergeSha === input.sha ? 'identical' : 'diverged' }));
+    work.results.set(WORK.carrier, (input) => (input.sessionId === stacked.id
+      ? { carrier: { sessionId: carrier.id, prNumber: carrier.pr_number, prTitle: carrier.pr_title, mergeSha: SHA('c') } }
+      : { carrier: null }));
+    try {
+      // app-delivery deploys main's tip and tells every merge waiting on it.
+      await delivered(carrier, SHA('c'));
+      await delivered(stacked, SHA('c'));
+      assert.equal((await instance(carrier)).state, 'live');
+      const i = await instance(stacked);
+      assert.equal(i.state, 'live');
+      assert.equal(i.data.deliveredSha, SHA('c'));
+      assert.equal((await row(stacked.id)).included_in_session_id, carrier.id);
+    } finally {
+      work.results.delete(WORK.verify);
+      work.results.delete(WORK.carrier);
+    }
+  });
+
   await t.test('only a promoted or merging proposal can be merged, and only the machine moves it', async () => {
     const a = await app();
     const s = await proposal(a, { status: 'active' });
