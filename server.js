@@ -259,7 +259,8 @@ app.use(require('./src/routes/external-agent-patch-upload').externalAgentPatchUp
 // the patch upload's reasons: the caller is a preview's process with no
 // session, authenticated by its own credential, and a build's body is far
 // over the global parser's limit, so each route parses its own once the
-// caller is known. Off by default (PREVIEW_PROJECTS_ENABLED), and 404 then.
+// caller is known. 404 when it is off (Admin > Limits, or the operator's
+// PREVIEW_PROJECTS_ENABLED=false).
 app.use(require('./src/routes/preview-projects').previewProjectsRoutes(config));
 
 // ── Challenges API (SV web shell) ──────────────────────────────────────────
