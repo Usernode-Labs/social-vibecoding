@@ -13,6 +13,7 @@ export const WORK = 'operation.run';
 // The operations services/platform-operations.js runs, by name.
 export const OPERATIONS: ReadonlySet<string> = new Set([
   'manifest.propose', 'branch.ensure', 'revert.open', 'domain.check', 'domain.teardown', 'app.remove',
+  'openrouter.provision', 'openrouter.sync', 'openrouter.disable', 'openrouter.remove',
 ]);
 // What an operation's input may weigh: what a route captured, never a file.
 export const MAX_INPUT_BYTES = 64 * 1024;

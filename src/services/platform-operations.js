@@ -33,17 +33,23 @@ const OPERATIONS = new Map([
   ['domain.check', () => require('./domain-operation')],
   ['domain.teardown', () => require('./domain-operation')],
   ['app.remove', () => require('./app-removal-operation')],
+  ['openrouter.provision', () => require('./openrouter-key-operation')],
+  ['openrouter.sync', () => require('./openrouter-key-operation')],
+  ['openrouter.disable', () => require('./openrouter-key-operation')],
+  ['openrouter.remove', () => require('./openrouter-key-operation')],
 ]);
 
 // The requester as the auth middleware builds `req.user`, read now: an
 // account erased or shut out of the platform since asking asks nothing.
-async function requester(pool, userId) {
+// `anyAccount`: an operation an account may ask for on its own behalf before
+// it has platform access (its included OpenRouter key, made as it is created).
+async function requester(pool, userId, { anyAccount = false } = {}) {
   const { rows: [u] } = await pool.query(
     `SELECT id, username, is_admin, admin_readonly, has_platform_access, private_member_since, anonymised_at
        FROM users WHERE id = $1`, [userId]);
   if (!u || u.anonymised_at) return null;
   const privateMember = !u.has_platform_access && !u.is_admin && u.private_member_since != null;
-  if (!u.has_platform_access && !u.is_admin && !privateMember) return null;
+  if (!anyAccount && !u.has_platform_access && !u.is_admin && !privateMember) return null;
   return {
     id: u.id, username: u.username, isAdmin: !!u.is_admin, adminReadonly: !!u.admin_readonly,
     canAdminWrite: !!u.is_admin && !u.admin_readonly, hasPlatformAccess: !!u.has_platform_access, privateMember,
@@ -58,7 +64,7 @@ async function run(deps, request, steps = durableSteps.none()) {
   // The requester and their authority are read again on every attempt: one
   // shut out or revoked since an earlier attempt stops what is left, and
   // gives back what it holds.
-  const user = await requester(deps.pool, request.userId);
+  const user = await requester(deps.pool, request.userId, { anyAccount: !!op.anyAccount?.(request) });
   const refused = user ? await op.authorize(deps, request, user, { steps })
     : { status: 403, error: 'You can no longer do this.', code: 'not_authorized' };
   if (refused) {

@@ -500,6 +500,12 @@ function load() {
     // and administer limited child keys; unlike child keys, a management key
     // cannot be used for model inference.
     openrouterManagementApiKey: process.env.OPENROUTER_MANAGEMENT_API_KEY || '',
+    // Whether company-funded keys are offered at all, said without the key:
+    // a process that only asks a conductor for them (a web process) need
+    // not hold it. Unset, the key's presence answers, as it always did.
+    openrouterManagedKeysEnabled: process.env.OPENROUTER_MANAGED_KEYS_ENABLED == null
+      || process.env.OPENROUTER_MANAGED_KEYS_ENABLED === ''
+      ? null : String(process.env.OPENROUTER_MANAGED_KEYS_ENABLED) === 'true',
     openrouterManagedWorkspaceId: process.env.OPENROUTER_MANAGED_WORKSPACE_ID || '',
     // Default-open claim policy. Operators may opt into requiring a linked
     // GitHub or X identity before the one lifetime managed key is reserved.
