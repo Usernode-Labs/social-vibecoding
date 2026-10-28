@@ -124,29 +124,36 @@ test('GitHub preconditions match the other manifest-PR routes', () => {
   assert.match(route, /Could not parse the app repository URL/);
 });
 
+// The value is handled on the conductor that opens the PR
+// (services/manifest-proposal-operation.js declareValue), after the PR
+// exists; the route only sends it, encrypted with the data key.
+const operation = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'manifest-proposal-operation.js'), 'utf8');
+const declare = operation.slice(operation.indexOf('async function declareValue'), operation.indexOf('async function run('));
+
 test('the PR is opened BEFORE any value is written', () => {
-  const prAt = route.indexOf('createSecretDeclarationPR');
-  const applyAt = route.indexOf('const applyNow');
-  assert.ok(prAt > 0 && applyAt > prAt,
+  assert.match(route, /valueEnc: value\.length \? encryptSecret\(value, config\.dataEncryptionKey\) : null/);
+  assert.doesNotMatch(route, /appSecrets\.setValue\(pool, app\.id, key|pendingSecrets\.create\(/, 'the route writes no value');
+  const run = operation.slice(operation.indexOf('async function run('));
+  assert.ok(run.indexOf('flavor.build(') < run.indexOf("steps.once('value'"),
     'a failed proposal must not leave a value behind, so the PR comes first');
 });
 
 test('only a full admin\'s value is written immediately; everyone else\'s waits', () => {
-  assert.match(route, /const applyNow = !!req\.user\?\.canAdminWrite && !!value\.length/);
+  assert.match(declare, /const applyNow = !!user\.canAdminWrite && !!value\.length/);
   // The platform write takes the same advisory lock inside a transaction
   // the direct route uses, so two admins serialize instead of interleaving.
-  assert.match(route, /pg_advisory_xact_lock\(\$1\)', \[ADMIN_MUTATION_LOCK\]/);
-  assert.match(route, /platformEnv\.setValue\(client, app\.id, key, value, \{[\s\S]*?privateHint: isPrivate/);
-  assert.match(route, /appSecrets\.setValue\(pool, app\.id, key, value, \{[\s\S]*?sensitive: isPrivate/);
+  assert.match(declare, /pg_advisory_xact_lock\(\$1\)', \[ADMIN_MUTATION_LOCK\]/);
+  assert.match(declare, /platformEnv\.setValue\(client, app\.id, args\.key, value, \{[\s\S]*?privateHint: !!args\.isPrivate/);
+  assert.match(declare, /appSecrets\.setValue\(pool, app\.id, args\.key, value, \{[\s\S]*?sensitive: !!args\.isPrivate/);
   // And the pending row is always created — it is what makes the panel
   // show "up for vote" / "value set, declaration up for vote".
-  assert.match(route, /pendingSecrets\.create\(pool, \{/);
+  assert.match(declare, /pendingSecrets\.create\(pool, \{/);
   assert.match(route, /valueApplied: applyNow/);
 });
 
 test('an admin-direct platform write is recorded as a platform-env change', () => {
-  assert.match(route, /EVENT_TYPES\.PLATFORM_ENV_CHANGED/);
-  assert.match(route, /appliedBy: 'admin-direct'/);
+  assert.match(declare, /EVENT_TYPES\.PLATFORM_ENV_CHANGED/);
+  assert.match(declare, /appliedBy: 'admin-direct'/);
 });
 
 test('nothing logs the value', () => {

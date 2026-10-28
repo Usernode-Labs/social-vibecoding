@@ -110,7 +110,11 @@ test('#4378: making a project public needs a verified owner, on the server and t
   const apps = read('src/routes/apps.js');
   const route = apps.slice(apps.indexOf("router.post('/api/apps/:slug/visibility-pr'"));
   assert.match(route, /if \(viewVisibility === 'public' && app\.view_visibility !== 'public'\) \{\s+const identityRefusal = await communities\.identityPublicRefusal\(pool, req\.user\?\.id\);\s+if \(identityRefusal\) return res\.status\(403\)\.json\(identityRefusal\);\s+\}/);
-  assert.ok(route.indexOf('identityPublicRefusal') < route.indexOf('renamePr.createVisibilityPR'), 'refused before any PR is opened');
+  assert.ok(route.indexOf('identityPublicRefusal') < route.indexOf("proposeManifest(res, app, req.user, 'visibility'"), 'refused before any PR is opened');
+  // The conductor that opens the PR asks again (services/manifest-proposal-operation.js).
+  const operation = read('src/services/manifest-proposal-operation.js');
+  assert.match(operation, /public: \(app, a\) => a\.view === 'public' && app\.view_visibility !== 'public'/);
+  assert.match(operation, /const refusal = await communities\.identityPublicRefusal\(pool, user\.id\);/);
 
   const communities = require('../src/services/communities');
   const asked = [];
@@ -132,7 +136,7 @@ test('#4378: making a project public needs a verified owner, on the server and t
   // verify sheet before it sends again; Not now leaves it as it was.
   const who = apps.slice(apps.indexOf("router.post('/api/apps/:slug/who-decides-pr'"));
   assert.match(who, /if \(diff\.visibility === 'public' && app\.view_visibility !== 'public'\) \{\s+const identityRefusal = await communities\.identityPublicRefusal\(pool, req\.user\?\.id\);\s+if \(identityRefusal\) return res\.status\(403\)\.json\(identityRefusal\);\s+\}/);
-  assert.ok(who.indexOf('identityPublicRefusal') < who.indexOf('createWhoDecidesPR'), 'refused before any PR is opened');
+  assert.ok(who.indexOf('identityPublicRefusal') < who.indexOf("proposeManifest(res, app, req.user, 'who-decides'"), 'refused before any PR is opened');
   const propose = read('frontend/src/features/who-decides/propose.ts');
   assert.match(propose, /if \(data && data\.code === 'identity_required'\) \{\s+if \(!\(await askToVerifyForPublic\(\)\)\) return \{ state: 'notVerified' \};\s+res = await send\(\);/);
 

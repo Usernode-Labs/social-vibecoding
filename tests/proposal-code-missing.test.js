@@ -636,7 +636,7 @@ test('a copy of an auto run, a CLI hand-off upload and a local agent\'s upload r
   const clone = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/clone-headless'"));
   const refusedAt = clone.indexOf('if (await codeMissing.branchGone(pool, src) === true) {');
   assert.ok(refusedAt > 0, 'the copy reads the run\'s branch live');
-  for (const later of ['sessionLifecycle.freeUserSlot(', 'sessionLifecycle.claimGlobalSlot(', 'github.createBranch(']) {
+  for (const later of ['sessionLifecycle.freeUserSlot(', 'sessionLifecycle.claimGlobalSlot(', "op: 'branch.ensure'"]) {
     assert.ok(refusedAt < clone.indexOf(later), `before ${later}: no slot, no branch off main`);
   }
   assert.match(clone.slice(refusedAt, refusedAt + 200), /return res\.status\(409\)\.json\(\{ error: codeMissing\.BRANCH_GONE, code: codeMissing\.CODE \}\);/);

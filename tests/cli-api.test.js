@@ -86,7 +86,7 @@ test('all secret-declaration session lifecycle mutations enforce the CLI credent
   );
   guardedBefore(
     routeSlice(votes, "router.post('/api/sessions/:id/undo'", "router.post('/api/sessions/:id/admin-merge'"),
-    'isCliCredentialManagementSession(req, session)', 'checkAndOpenRevert', 'undo'
+    'isCliCredentialManagementSession(req, session)', "op: 'revert.open'", 'undo'
   );
   guardedBefore(
     routeSlice(votes, "router.post('/api/sessions/:id/admin-merge'", 'return router;'),

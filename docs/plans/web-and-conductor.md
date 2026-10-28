@@ -232,9 +232,60 @@ and spec history, but no longer copies agent memory. The clone leaves
 `cc_session_id` unset and creates no worker or memory-copy Job; submission
 promotes it directly. The Docker and Kubernetes copy helpers are removed.
 
+Code-host writes a person asks for over HTTP are **privileged operations**
+(`src/workflow/platform-operation/`, `services/platform-operations.js`): one
+machine for every typed operation, not one machine per write. The route keeps
+the validation, checks and refusals it always had, then appends the operation
+with the requester as its actor. Admission refuses a request that is not this
+instance's, from another producer, or for an erased account or a missing
+project. The conductor's work loads the requester as the auth middleware
+would and reads its current authority and target again on every attempt,
+before any write it still has to make; a check its own progress would trip
+tells its own proposal or claim, as its steps record them, from a competing
+one. A request refused part way, by its authority or its account, gives back
+what it holds (an Undo claim it never linked). Each write is kept as a step
+in the work item's checkpoint. A
+retry or another conductor after a restart carries on from the last finished
+step: a request's branch name is kept, its branch or PR found already made is
+used, and its session or announcement is never made twice. A refusal is an
+answer (`{ ok: false, status }`), never a retry. Other failures retry four
+times within about twenty seconds, except a branch the host refuses, which is
+answered at once with the host's reason (as these routes always answered), so
+the same request asked again makes the same branch. A route waits up to a minute; an event
+no conductor admits within five seconds is refused so it never runs later
+(503), and one still running past the wait answers 503 `operation_pending`,
+never a success, and finishes. Each operation is its own work kind, so a
+conductor claims only the operations its build knows: during a rollout an
+older conductor leaves a newer operation queued for a newer one. The
+operations are:
+
+- `manifest.propose`: every settings proposal that edits dapp.json (rename,
+  visibility, who decides, admins, governance, a secret declaration, topics),
+  rechecked for its flavor's access, the self-app rule, a verified owner when
+  it makes a project public, the repository the route saw and the open
+  proposal it would duplicate. A secret declaration's value travels with it,
+  encrypted with the data key as `pending_secret_declarations` keeps it, and
+  is applied (a full admin's) or held for the merge on the conductor once the
+  PR exists, so a proposal still opening when its route answers keeps it.
+- `branch.ensure`: a native proposal start's `dev/cli-u<id>-…` branch at its
+  exact base (a different existing ref is a 409 conflict), an issue's
+  headless run, a clone of that run (off the source run's branch as the
+  conductor reads it, else main), and a change's first-turn branch asked by a
+  web process. A conductor's own work keeps making the first-turn branch
+  itself, so no work item waits on another. Only `dev/` names are made.
+- `revert.open`: an Undo. The route records the request before it answers,
+  and answers at once, as before; the conductor makes the revert branch, PR,
+  promoted session and announcement, then refreshes the vote panel. A host
+  failure is tried again from the last finished step; a conflict, or the last
+  try, gives the claim back and says so in the thread. One Undo of a change
+  runs at a time: its instance is keyed by the change, so a second click
+  while one is under way is the same request, and a new one starts once it
+  has finished. So a claim a try began but could not record before its
+  process went is the retry's own, and adopted.
+
 These move web dependencies behind durable commands. Web Pods still need
 their current Kubernetes and database permissions for other callers, including
-repository operations and startup work. Moving
+the remaining repository writes and startup work. Moving
 those callers, then splitting service accounts, Secret inputs and actual
 database login privileges, remains SEC-09 work. The event's source metadata
 also remains a convention among trusted processes; it does not authenticate
