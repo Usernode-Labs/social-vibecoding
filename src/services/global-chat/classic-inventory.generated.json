@@ -14949,6 +14949,36 @@
       "classicPath": "#settings"
     },
     {
+      "source": "src/routes/versions.js",
+      "method": "GET",
+      "path": "/api/apps/:slug/versions",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.apps.item.versions.b30ebcd7",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app"
+    },
+    {
+      "source": "src/routes/versions.js",
+      "method": "POST",
+      "path": "/api/apps/:slug/follow-pr",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.apps.item.follow.pr.c8c2e74c",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app"
+    },
+    {
       "source": "src/routes/visuals.js",
       "method": "GET",
       "path": "/visuals/:id",

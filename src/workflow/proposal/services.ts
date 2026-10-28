@@ -275,6 +275,19 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
           `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.self_hosted AS app_self_hosted, a.created_by AS app_created_by
              FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [Number(input.sessionId)]);
         if (!row || row.status !== 'promoted') return { ready: false, blockReason: 'not_in_review' };
+        // Additive changes only on an original that versions get their
+        // updates from (services/schema-safety.js): a change that drops,
+        // renames or retypes data waits, said once in its thread. Asked
+        // first and cheaply (a count, and the diff only when some follow);
+        // an admin's force merge is the way past it, as for the votes.
+        if (!input.force) {
+          const schemaSafety = legacy('services/schema-safety');
+          const refusal = await schemaSafety.mergeRefusal(pool, row).catch(() => null);
+          if (refusal) {
+            await schemaSafety.sayOnce(pool, row, refusal.message);
+            return { ready: false, blockReason: schemaSafety.BLOCK_REASON };
+          }
+        }
         const out = await legacy('routes/votes').evaluateMergeGate(config, pool, row, {
           force: !!input.force, forceBy: input.forcedBy ? { username: input.forcedBy } : null,
         });

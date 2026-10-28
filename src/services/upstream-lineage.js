@@ -141,21 +141,126 @@ function isExcludedPath(file) {
   return EXCLUDED_PATHS.includes(p);
 }
 
+// The subject of a ready-made project's starter commit (app-creator.js
+// initMessage). It sits on top of the README commit the git host makes a
+// repository with, so it is the first commit that is the project's own.
+const STARTER_SUBJECT = /^Initialize .+ from Homeroom template$/;
+
+// Reading a repository for resolveLegacy: its mirror (services/repo-mirror.js,
+// a full clone for a repository on the git host), and git run in it. Both are
+// replaceable, so the tests drive real repositories on disk.
+const DEFAULT_GIT = Object.freeze({
+  mirror: (owner, repo) => require('./repo-mirror').ensureMirror(owner, repo),
+  git: async (dir, args) => (await require('./git-host').git(['-C', dir, ...args])).stdout,
+});
+
+function lines(text) {
+  return String(text || '').split('\n').map((l) => l.trim()).filter(Boolean);
+}
+
+async function mirrorOf(io, repoUrl) {
+  const ref = require('./repo-ref').ownerRepo(repoUrl);
+  return ref ? io.mirror(ref.owner, ref.repo) : null;
+}
+
+// The oldest commit on main's first-parent line whose subject is the
+// starter's, or null.
+async function starterCommit(io, dir) {
+  const out = await io.git(dir, ['log', '--first-parent', '--format=%H%x1f%s', 'HEAD']);
+  const found = lines(out)
+    .map((l) => l.split('\x1f'))
+    .filter(([, subject]) => STARTER_SUBJECT.test(String(subject || '').trim()));
+  return found.length ? sha(found[found.length - 1][0]) : null;
+}
+
+// A copy made from someone's project: its own first commit (copies are
+// pushed history-free, app-forker.copyRepoTree), and the original's commit
+// that was main when the copy was made. The second is a best effort: the
+// copy took main as it was at that moment, and a commit the original's main
+// had then is the one whose tree it copied.
+async function remixCommits(io, app, original, forked) {
+  const copyDir = await mirrorOf(io, app.repo_url);
+  const originalDir = await mirrorOf(io, original.repo_url);
+  if (!copyDir || !originalDir) return null;
+  const roots = lines(await io.git(copyDir, ['rev-list', '--max-parents=0', 'HEAD']));
+  const baseSha = roots.length ? sha(roots[roots.length - 1]) : null;
+  const at = new Date((forked && forked.forkedAt) || app.created_at || NaN);
+  if (!baseSha || Number.isNaN(at.getTime())) return null;
+  const synced = lines(await io.git(originalDir, [
+    'rev-list', '-1', '--first-parent', `--before=${at.toISOString()}`, 'HEAD',
+  ]));
+  const syncedSha = synced.length ? sha(synced[0]) : null;
+  return syncedSha ? { syncedSha, baseSha } : null;
+}
+
+// A ready-made project from before versions: rendered from the same
+// starter as its original, so its starter commit is the original's starter
+// commit as it looks in this project.
+async function readyMadeCommits(io, app, original) {
+  const copyDir = await mirrorOf(io, app.repo_url);
+  const originalDir = await mirrorOf(io, original.repo_url);
+  if (!copyDir || !originalDir) return null;
+  const baseSha = await starterCommit(io, copyDir);
+  const syncedSha = baseSha ? await starterCommit(io, originalDir) : null;
+  return baseSha && syncedSha ? { syncedSha, baseSha } : null;
+}
+
 /**
  * A legacy version's two commits, found the first time they are needed:
  * for a copy made before versions existed, `syncedSha` and `baseSha` were
- * never recorded. Resolves to the updated link, or null when they cannot be
- * found (the copy then cannot be planned, and says so).
+ * never recorded. Resolves to the updated link (written, `legacy: false`),
+ * or null when they cannot be found (the copy then cannot be planned, and
+ * says so). A link that is planned already is returned as it is.
  *
- * Filled in by the lineage work (docs/plans/versions.md, "Remixes and
- * lineage"); until then a legacy link cannot be planned.
+ *   a copy of someone's project  the two commits its `forked_from` kept,
+ *                                when it kept them; else its own first
+ *                                commit, and the original's main at the
+ *                                moment it was made;
+ *   a ready-made project         its "Initialize <name> from Homeroom
+ *                                template" commit, and the original's own
+ *                                first one.
+ *
+ * `app` needs only its id; the row is read again. `io` is for the tests.
  */
-async function resolveLegacy(_config, _pool, _app) {
-  return null;
+async function resolveLegacy(_config, pool, app, io = DEFAULT_GIT) {
+  if (!app || !Number.isInteger(Number(app.id))) return null;
+  const { rows: [row] = [] } = await pool.query(
+    'SELECT id, upstream, forked_from, repo_url, created_at FROM apps WHERE id = $1', [Number(app.id)]);
+  const link = readUpstream(row);
+  if (!link) return null;
+  if (planned(link) && !link.legacy) return link;
+  const { rows: [original] = [] } = await pool.query(
+    'SELECT id, repo_url FROM apps WHERE id = $1', [link.appId]);
+  if (!original || !original.repo_url || !row.repo_url) return null;
+
+  let forked = row.forked_from;
+  if (typeof forked === 'string') {
+    try { forked = JSON.parse(forked); } catch { forked = null; }
+  }
+  if (!forked || typeof forked !== 'object' || Array.isArray(forked)) forked = null;
+
+  let found = null;
+  try {
+    if (forked && sha(forked.sourceSha) && sha(forked.forkBaseSha)) {
+      found = { syncedSha: sha(forked.sourceSha), baseSha: sha(forked.forkBaseSha) };
+    } else if (forked) {
+      found = await remixCommits(io, row, original, forked);
+    } else {
+      found = await readyMadeCommits(io, row, original);
+    }
+  } catch (err) {
+    require('./logger').warn('upstream-lineage', 'Could not find a version\'s commits', {
+      appId: row.id, err: err && err.message,
+    });
+    return null;
+  }
+  if (!found) return null;
+  return writeUpstream(pool, row.id, { ...found, legacy: false });
 }
 
 module.exports = {
   EXCLUDED_MANIFEST_KEYS,
+  STARTER_SUBJECT,
   EXCLUDED_PATHS,
   MANIFEST_PATH,
   OFFER_REF,

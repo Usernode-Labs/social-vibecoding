@@ -239,40 +239,63 @@ async function scaffoldImport(row) {
   return { sha: null, repoUrl, offer: null };
 }
 
-// A remix: its source's current main copied into a fresh bot-owned
-// repository, history-free (services/app-forker.js copyRepoTree, a force
-// push: the same copy again lands the same way), and the repository and
-// the lineage it was cut from written in ONE update. A copy whose
-// repository is recorded already is not copied again: its source may have
-// changed or gone since.
+// A version made from someone's project: its source's current main copied
+// into a fresh repository, history-free (services/app-forker.js
+// copyRepoTree, a force push: the same copy again lands the same way), and
+// the repository and the lineage it was cut from written in ONE update. A
+// copy whose repository is recorded already is not copied again: its source
+// may have changed or gone since.
+//
+// The lineage is written twice over: `forked_from` keeps its two commits
+// for the readers from before versions, and `apps.upstream` (the route
+// wrote its appId, slug, following and since) gets the same two under the
+// names updates and suggestions plan from (docs/plans/versions.md):
+// `syncedSha` the original's commit it copied, `baseSha` the version's own
+// first commit. A copy whose commits git did not give is marked `legacy`,
+// so they are looked for when first needed (upstream-lineage.resolveLegacy).
+// Whether it gets the original's updates is the route's choice, written
+// into its dapp.json as `followOriginal`; a row from before the choice
+// existed does not follow.
 async function copyFork(config, pool, row) {
   if (row.repo_url) return { sha: null, repoUrl: row.repo_url, offer: null };
   const forker = require('./app-forker');
+  const lineage = require('./upstream-lineage');
   const sourceApp = await forker.findForkSource(pool, row);
-  if (sourceApp?.self_hosted) throw new Error('Homeroom itself cannot be remixed.');
-  if (!sourceApp) throw new Error('The app this copy came from no longer exists.');
+  if (sourceApp?.self_hosted) throw new Error('You cannot make your own version of Homeroom itself.');
+  if (!sourceApp) throw new Error('The project this version came from no longer exists.');
   if (!sourceApp.repo_url) {
-    const err = new Error('The original app is not ready to copy yet.');
+    const err = new Error('The original is not ready for you to make your own version yet.');
     err.cloneFailed = true;
     throw err;
   }
   if (!github.isEnabled()) {
-    const err = new Error('Remixing is unavailable because GitHub integration is not configured.');
+    const err = new Error('You cannot make your own version here, because no code host is set up.');
     err.repoFailed = true;
     throw err;
   }
+  const link = lineage.readUpstream(row);
+  const follow = link ? link.following : false;
   const tempDir = `/tmp/usernode-fork-${row.slug}`;
   try {
     const botUsername = await github.getBotUsername();
-    const copied = await forker.copyRepoTree({ sourceApp, botUsername, forkSlug: row.slug, forkName: row.name, tempDir });
+    const copied = await forker.copyRepoTree({
+      sourceApp, botUsername, forkSlug: row.slug, forkName: row.name, tempDir, follow,
+    });
+    const shas = forker.forkLineageShas(copied);
+    const synced = shas.sourceSha && shas.forkBaseSha
+      ? { syncedSha: String(shas.sourceSha).toLowerCase(), baseSha: String(shas.forkBaseSha).toLowerCase(), legacy: false }
+      : { legacy: true };
     await pool.query(
       `UPDATE apps
           SET repo_url = $1,
               forked_from = CASE WHEN jsonb_typeof(forked_from) = 'object'
                                  THEN forked_from || $2::jsonb
-                                 ELSE forked_from END
+                                 ELSE forked_from END,
+              upstream = CASE WHEN jsonb_typeof(upstream) = 'object'
+                              THEN upstream || $4::jsonb
+                              ELSE upstream END
         WHERE id = $3`,
-      [copied.repoUrl, JSON.stringify(forker.forkLineageShas(copied)), row.id]);
+      [copied.repoUrl, JSON.stringify(shas), row.id, JSON.stringify(synced)]);
     return { sha: copied.mainSha ? String(copied.mainSha).toLowerCase() : null, repoUrl: copied.repoUrl, offer: null };
   } finally {
     await require('./docker').execFileAsync('rm', ['-rf', tempDir]).catch(() => {});

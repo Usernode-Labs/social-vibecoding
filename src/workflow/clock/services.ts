@@ -483,6 +483,17 @@ export const JOBS: readonly Job[] = Object.freeze([
     },
   },
   {
+    // Copies made before versions existed become versions of their
+    // originals (services/versions-backfill.js): remixes, and ready-made
+    // projects once their starter's original exists. A page of each a run,
+    // carried on from where the last run stopped; never following on its
+    // own. Which ready-mades have an original is this build's catalog.
+    name: 'versions-backfill', everyMs: 10 * MIN, newestOnly: true,
+    run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/versions-backfill').run(config, pool, {
+      previous: (ctx.input.previous ?? null) as any,
+    }),
+  },
+  {
     // The app-host gate follows APP_GATE, in both directions: on brings it up
     // and routes every app through it, off routes them all straight back
     // (services/kubernetes.js reconcileAppGateIngresses). The newest build's

@@ -101,6 +101,7 @@ function clonedTree(dir) {
     admins: ['someone'],
     visibility: { build: 'public', view: 'public' },
     governance: { approvers: 'invited', approvals: { atLeast: 2 } },
+    followOriginal: false,
     icon: { emoji: '📚' },
   }));
   fs.writeFileSync(path.join(dir, 'README.md'), '# source\n');
@@ -198,8 +199,28 @@ test('copyRepoTree: one git process per step, in the fork tree, pushed to the gi
     assert.equal(manifest.visibility, undefined);
     assert.equal(manifest.governance, undefined);
     assert.deepEqual(manifest.icon, { emoji: '📚' }, 'the look comes with the code');
+    // Whether the version gets the original's updates is the maker's choice
+    // (on unless turned off), not the original's own followOriginal line.
+    assert.equal(manifest.followOriginal, true);
+    assert.equal(Object.keys(manifest).pop(), 'followOriginal', 'written last');
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('rewriteDappName writes the maker\'s followOriginal over the original\'s', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fork-follow-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'dapp.json'), JSON.stringify({ name: 'A', followOriginal: true, tests: [] }));
+    forker.rewriteDappName(dir, 'B', { follow: false });
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'dapp.json'), 'utf8')),
+      { name: 'B', tests: [], followOriginal: false });
+    fs.rmSync(path.join(dir, 'dapp.json'));
+    forker.rewriteDappName(dir, 'C');
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'dapp.json'), 'utf8')),
+      { name: 'C', followOriginal: true }, 'on by default, even with no dapp.json to start from');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 

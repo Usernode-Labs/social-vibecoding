@@ -162,10 +162,13 @@ test('branches are made only under dev/, and a proposal start only on its reques
 
 test('every settings route asks for a manifest proposal the conductor knows how to recheck and open', () => {
   const { FLAVORS } = require('../src/services/manifest-proposal-operation');
-  const apps = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'apps.js'), 'utf8');
-  const asked = [...apps.matchAll(/proposeManifest\(res, app, req\.user, '([a-z-]+)'/g)].map((m) => m[1]).sort();
+  // The settings routes: routes/apps.js, and the versions' follow-pr
+  // (routes/versions.js).
+  const routes = ['apps.js', 'versions.js']
+    .map((f) => fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', f), 'utf8')).join('\n');
+  const asked = [...routes.matchAll(/proposeManifest\(res, app, req\.user, '([a-z-]+)'/g)].map((m) => m[1]).sort();
   assert.deepEqual(asked, [...FLAVORS.keys()].sort());
-  assert.doesNotMatch(apps, /renamePr\.create[A-Za-z]+PR\(|topicsPr\.createTopicsPR\(|whoDecides\.createWhoDecidesPR\(/,
+  assert.doesNotMatch(routes, /renamePr\.create[A-Za-z]+PR\(|topicsPr\.createTopicsPR\(|whoDecides\.createWhoDecidesPR\(|followPr\.createFollowPR\(/,
     'no settings route writes to the code host itself');
 });
 
