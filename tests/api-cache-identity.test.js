@@ -151,6 +151,45 @@ test('another tab changing identity clears the former viewer and reloads without
   assert.equal(h.announcements.length, 0);
 });
 
+// An invite link opened signed out (28 Oct 2026): /me answered "signed out"
+// while the invite preview was on its way, App._dropCachedSession reset the
+// guard, and the preview's reply was fenced, so the landing drew the waitlist
+// pitch instead of the invite card. A document that never had a session has
+// nothing to fence.
+test('dropping a session this document never had leaves the reads on their way', async () => {
+  const held = deferred();
+  const h = page({ initial: null, fetcher: () => held.promise });
+  const preview = h.win.fetch('/api/public/invites/fake');
+  h.win.UsernodeReact.apiCache.reset({ broadcast: true });
+  assert.equal(h.announcements.length, 1, 'the boundary is still announced to other tabs');
+  held.resolve(json({ live: true }, null));
+  assert.deepEqual(await (await preview).json(), { live: true });
+});
+
+test('the same reset still fences a document that had a partition or a viewer', async () => {
+  for (const [label, initial, before] of [
+    ['partition', A, () => {}],
+    ['viewer', null, (h) => h.win.UsernodeReact.apiCache.setViewer(101, true)],
+  ]) {
+    const held = deferred();
+    const h = page({ initial, fetcher: () => held.promise });
+    before(h);
+    const old = h.win.fetch('/api/private');
+    h.win.UsernodeReact.apiCache.reset({ broadcast: true });
+    held.resolve(json({ private: 'FAKE_OLD' }, initial));
+    await assert.rejects(old, { name: 'AbortError' }, label);
+  }
+});
+
+test('a login or logout from a signed-out document still fences the reads on their way', async () => {
+  const held = deferred();
+  const h = page({ initial: null, fetcher: (req) => new URL(req.url).pathname === '/api/private' ? held.promise : json({ ok: true }, null) });
+  const old = h.win.fetch('/api/private');
+  await h.win.fetch('/api/auth/login', { method: 'POST' });
+  held.resolve(json({ fake: 'anonymous' }, null));
+  await assert.rejects(old, { name: 'AbortError' });
+});
+
 test('native restoration waits for cookie installation, then /me confirms the new partition', async () => {
   const restored = deferred();
   const expiry = new Date(Date.now() + 86400_000).toISOString();
