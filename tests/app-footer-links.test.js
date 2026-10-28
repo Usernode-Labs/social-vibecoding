@@ -116,6 +116,25 @@ test('inside the platform the app menu carries Privacy beside Report app', () =>
   assert.equal(message('agent:appContext.privacy'), 'Privacy');
 });
 
+test('the app menu’s foot, close and rows are readable and reachable (#5927)', () => {
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  const legal = sheet.slice(sheet.indexOf('id="app-menu-legal"'), sheet.indexOf("{t('agent:appContext.reportApp')}"));
+  assert.match(legal, /className="[^"]*\btext-\[13px\] text-zinc-600 dark:text-zinc-300\b/,
+    'the foot is 13px in a lighter ink on dark, not 12px zinc-500');
+  assert.equal((legal.match(/min-h-\[44px\] px-3/g) || []).length, 2, 'each link is a 44px target');
+  assert.doesNotMatch(legal, /·/, 'no dot between the links: their padding is the gap');
+
+  const ring = sheet.match(/const FOCUS_RING = ([^;]+);/);
+  assert.ok(ring, 'one focus ring for the menu');
+  assert.match(ring[1], /focus-visible:ring-2/);
+  assert.match(ring[1], /dark:focus-visible:ring-violet-400/, 'a lighter ring on the dark theme');
+  assert.match(sheet, /\+ 'transition-colors ' \+ FOCUS_RING;/, 'every ROW carries it');
+
+  const close = sheet.slice(sheet.indexOf('id="apps-switcher-close"'), sheet.indexOf('</button>', sheet.indexOf('id="apps-switcher-close"')));
+  assert.match(close, /w-9 h-9[^']*un-touch-target ' \+ FOCUS_RING/, 'a 36px close with a 44px hit box');
+  assert.match(close, /<XIcon className="w-6 h-6" \/>/, 'a 24px ✕');
+});
+
 test('platform.json names Homeroom’s privacy notice', () => {
   const { appHostConfig } = require('../src/services/app-host-config');
   const { privacyNoticeUrl } = require('../src/services/marketing-links');
