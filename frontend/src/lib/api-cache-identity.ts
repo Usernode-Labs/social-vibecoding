@@ -50,9 +50,18 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
   function broadcastBoundary(): void {
     try { win.localStorage.setItem(BOUNDARY_KEY, `${Date.now()}:${Math.random()}`); } catch { /* no storage */ }
   }
-  function reset({ broadcast = false } = {}): void {
+  // A document nobody was ever signed in to: no partition hint before or
+  // now, no viewer, and the same native session. Its reads carried no
+  // identity, so no identity can have changed under them.
+  const anonymous = () => observedScope === null && scope() === null
+    && currentViewer() == null && renewal().epoch === observedNativeEpoch;
+  // `unlessAnonymous`: a caller dropping a session it may never have had
+  // (App._dropCachedSession, on a signed-out boot's /me) fences nothing when
+  // there was none. Fencing then threw away public reads already on their
+  // way, so an invite link showed the waitlist pitch instead of its card.
+  function reset({ broadcast = false, unlessAnonymous = false } = {}): void {
     boundary++;
-    epoch++;
+    if (!(unlessAnonymous && anonymous())) epoch++;
     observedScope = scope();
     observedNativeEpoch = renewal().epoch;
     if (broadcast) broadcastBoundary();
@@ -240,7 +249,7 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
   const bridge = (win.UsernodeReact ||= {});
   bridge.apiCache = {
     scope,
-    reset,
+    reset: (options: { broadcast?: boolean } = {}) => reset({ ...options, unlessAnonymous: true }),
     setViewer(id: number | string | null, verified = true) {
       const next = id == null ? null : String(id);
       if (viewer !== undefined && next !== viewer) reset({ broadcast: verified });
