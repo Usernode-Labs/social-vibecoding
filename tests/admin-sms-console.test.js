@@ -365,6 +365,40 @@ test('only a full admin switches providers, and a provider that is not ready is 
   }
 });
 
+test('the Firebase backup: status reports it, and only a full admin switches it', async () => {
+  reset();
+  smsSelect.invalidate();
+  const server = await startServer({ ...FULL_CONFIG, ...BREVO_CONFIG });
+  try {
+    currentUser = fullAdmin();
+    const status = await call(server, 'GET', '/api/admin/sms/status');
+    assert.deepEqual(status.body.fallback, { enabled: true, ready: true }, 'on by default, with Firebase set up');
+
+    currentUser = { id: 6, username: 'viewer', isAdmin: true, canAdminWrite: false };
+    const denied = await call(server, 'PUT', '/api/admin/sms/fallback', { enabled: false });
+    assert.equal(denied.status, 403);
+
+    currentUser = fullAdmin();
+    const bad = await call(server, 'PUT', '/api/admin/sms/fallback', { enabled: 'no' });
+    assert.equal(bad.status, 422);
+    const off = await call(server, 'PUT', '/api/admin/sms/fallback', { enabled: false });
+    assert.equal(off.status, 200);
+    assert.equal(off.body.enabled, false);
+    const after = await call(server, 'GET', '/api/admin/sms/status');
+    assert.equal(after.body.fallback.enabled, false);
+  } finally {
+    smsSelect.invalidate();
+    server.close();
+  }
+});
+
+test('the section shows the backup switch while a gateway sends', () => {
+  const src = read('frontend/src/features/admin/admin-sms.tsx');
+  assert.match(src, /id="admin-sms-fallback"/);
+  assert.match(src, /'\/api\/admin\/sms\/fallback'/);
+  assert.match(src, /\{isGateway && status\?\.fallback \? \(\s+<FallbackCard /);
+});
+
 test('choosing a provider that is not ready answers 409 with what is missing', async () => {
   reset();
   const server = await startServer(FULL_CONFIG);

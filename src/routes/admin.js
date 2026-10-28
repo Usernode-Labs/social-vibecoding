@@ -3261,7 +3261,30 @@ function adminRoutes(config) {
       senders: smsSenders.list(config, senderProvider),
       senderProvider,
       stagingLogOnly: provider.stagingLogOnly,
+      // The Firebase backup for sign-in codes a gateway could not send
+      // (services/firebase-phone-auth.js, FIREBASE BACKUP). `ready` is
+      // Firebase being set up; without it the switch does nothing.
+      fallback: {
+        enabled: await smsSelect.fallbackEnabled(pool).catch(() => true),
+        ready: phoneAuth.firebaseOffered(config),
+      },
     });
+  });
+
+  // Switch the Firebase backup on or off. Full admins only.
+  router.put('/api/admin/sms/fallback', requireAdminWrite, async (req, res) => {
+    const enabled = req.body?.enabled;
+    if (typeof enabled !== 'boolean') {
+      return res.status(422).json({ error: 'enabled must be true or false.', code: 'invalid_enabled' });
+    }
+    try {
+      await smsSelect.setFallback(pool, enabled, req.user.id);
+      log.warn('admin', 'Admin switched the Firebase SMS backup', { by: req.user.username, enabled });
+      res.json({ ok: true, enabled });
+    } catch (err) {
+      log.error('admin', 'sms fallback change failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
   });
 
   // Change who sends texts. Full admins only, and a provider that is not
