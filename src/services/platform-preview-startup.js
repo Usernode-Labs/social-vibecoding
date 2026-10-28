@@ -49,19 +49,18 @@ async function check(config, pool, bootResult = null, { boot = false } = {}) {
 
 // The clock's run, after check: a retirement deletes runtimes out of band,
 // and the preview machine still says they serve. A run going against one
-// fails every page; a re-run checked nothing (28 Oct 2026, 743 checks at
-// once). So the platform's previews it took are reported lost
-// (staging-recovery lookForLostPreviews), the ones being checked among them,
-// and the machine rebuilds each. Also after a boot scan the clock records.
-// Never fails the run, whose result is the web's readiness proof: the
-// preview-runtimes clock and a person's re-run look again.
-async function tellRetired(config, pool, result, { signal = null } = {}) {
-  if (!(Number(result?.retired) > 0)) return result;
+// fails every page (28 Oct 2026). So every run, whichever process makes it,
+// reports lost the platform's previews being checked whose runtime is gone
+// (staging-recovery lookForGoneRuns): this run's retirement may have taken
+// them, or a conductor's boot, which the clock's next run often does not
+// see as its own. The machine stops each run and builds the preview again;
+// the vote-backed ones the preview-runtimes clock reports. Never fails the
+// run, whose result is the web's readiness proof.
+async function tellRetired(config, result, { signal = null } = {}) {
+  if (!result || result.skipped) return result;
   try {
-    const { rows } = await pool.query('SELECT id FROM apps WHERE slug = $1 AND self_hosted IS TRUE', [policy.PLATFORM_SLUG]);
-    if (rows.length !== 1) return result;
-    const { lost } = await require('./staging-recovery').lookForLostPreviews(config, { signal, appId: rows[0].id });
-    return { ...result, lost };
+    const { lost } = await require('./staging-recovery').lookForGoneRuns(config, { appSlug: policy.PLATFORM_SLUG, signal });
+    return lost > 0 ? { ...result, lost } : result;
   } catch (error) {
     require('./logger').warn('preview-policy', 'Could not tell the preview machine what retirement removed', { message: error.message });
     return result;

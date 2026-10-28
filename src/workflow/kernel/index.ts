@@ -45,6 +45,9 @@ export interface RuntimeOptions {
   // The build this process runs: work of a kind marked `ownRelease` is
   // claimed only by a process whose release its input names.
   release?: string;
+  // Whether this process runs the newest build, for the kinds marked
+  // `newestOnly`. Absent, it always does (a test, a single process).
+  newest?: () => Promise<boolean>;
   // Current application authority, checked before replay or machine code.
   authorizeEvent?: EventAuthorizer;
   // Publishes what browsers should hear, inside the transition's transaction.
@@ -55,6 +58,12 @@ const quiet: Logger = { info() {}, warn() {}, error() {} };
 // How long a full kind is left be at most without a notify: the fallback
 // for a notify that never came.
 const FULL_RECHECK_MS = 30000;
+// How long an answer of `newest` is kept.
+const NEWEST_MS = 5000;
+// How long a newer build may leave work only it may claim before an older
+// one takes it again: one that has started but claims nothing (stuck in
+// its boot, or crashing before its loops) holds it back no longer.
+const NEWEST_WAIT_MS = 2 * 60000;
 
 export function createRuntime(opts: RuntimeOptions) {
   const log = opts.log || quiet;
@@ -125,8 +134,30 @@ export function createRuntime(opts: RuntimeOptions) {
     full.delete(kind);
     return false;
   };
-  // Kinds this process may claim now.
-  const kindsWithRoom = () => [...handlers].filter(([kind, h]) => localRoom(kind, h) > 0 && !isFull(kind)).map(([k]) => k);
+  // The kinds only the newest build claims (WorkHandler.newestOnly), and
+  // whether this process may claim them: it runs the newest build, or an
+  // item of them has waited NEWEST_WAIT_MS (the newer build is not taking
+  // them). Asked at most every NEWEST_MS; a read that fails keeps the last
+  // answer. While it may not, those kinds are not due here and nothing of
+  // them is claimed.
+  const newestKinds = new Set([...handlers].filter(([, h]) => h.newestOnly).map(([kind]) => kind));
+  let newestAnswer = { at: -Infinity, newest: true };
+  const leftWaiting = async () => (await opts.pool.query<{ waited: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM wf_work WHERE kind = ANY($1::text[])
+       AND ((status = 'queued' AND due_at < now() - make_interval(secs => $2::float8 / 1000))
+         OR (status = 'running' AND lease_until < now() - make_interval(secs => $2::float8 / 1000)))) AS waited`,
+    [[...newestKinds], NEWEST_WAIT_MS])).rows[0]?.waited === true;
+  async function runsNewest(): Promise<boolean> {
+    if (!newestKinds.size || !opts.newest) return true;
+    if (Date.now() - newestAnswer.at < NEWEST_MS) return newestAnswer.newest;
+    const newest = await opts.newest().then((is) => is || leftWaiting()).catch(() => newestAnswer.newest);
+    newestAnswer = { at: Date.now(), newest };
+    return newest;
+  }
+  // Kinds this process may claim now. Fullness first: isFull drops a
+  // lapsed mark, which nextFreeMs would otherwise wake for every 250 ms.
+  const kindsWithRoom = (newest = true) => [...handlers]
+    .filter(([kind, h]) => localRoom(kind, h) > 0 && !isFull(kind) && (newest || !newestKinds.has(kind))).map(([k]) => k);
   // A `wf_work` notify names a kind: new work of it, or an item of it that
   // ended somewhere. Whether the loop sleeps or not, the kind is no longer
   // taken as full; it wakes the services loop when this process could claim
@@ -147,7 +178,7 @@ export function createRuntime(opts: RuntimeOptions) {
   // Claim and start what this process has room for; returns the started runs.
   async function startServices(): Promise<Promise<void>[]> {
     const started: Promise<void>[] = [];
-    for (const kind of await dueKinds(service, kindsWithRoom())) {
+    for (const kind of await dueKinds(service, kindsWithRoom(await runsNewest()))) {
       const handler = handlers.get(kind)!;
       const set = running.get(kind) || new Set();
       running.set(kind, set);
@@ -268,7 +299,7 @@ export function createRuntime(opts: RuntimeOptions) {
       (payload, until) => Number(payload) < until);
       if (handlers.size) {
         loop('services', async () => (await startServices()).length > 0, 'wf_work', async () => {
-          const due = await nextDueMs(service, kindsWithRoom());
+          const due = await nextDueMs(service, kindsWithRoom(await runsNewest()));
           const free = nextFreeMs();
           return due === null ? free : free === null ? due : Math.min(due, free);
         }, wakesForWork);

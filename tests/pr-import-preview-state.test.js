@@ -340,10 +340,8 @@ test('the clocks and the machine\'s own deadlines leave a live build to the prev
   assert.match(clock, /name: 'preview-runtimes', everyMs: 2 \* MIN, leaseMs: 10 \* MIN,\s+run: \(ctx: WorkContext, \{ config \}: JobDeps\) => legacy\('services\/staging-recovery'\)\.lookForLostPreviews\(config, \{ signal: ctx\.signal \}\),/);
   const recovery = read('src/services/staging-recovery.js');
   const look = recovery.slice(recovery.indexOf('async function lookForLostPreviews('));
-  // A checks run is looked at only right after a retirement of its app's
-  // previews (platform-preview-startup tellRetired names the app).
   assert.match(look.slice(0, look.indexOf('\n}\n')),
-    /WHERE w\.machine = 'preview' AND jsonb_typeof\(w\.data->'serving'\) = 'object'\s+AND \(\(w\.state IN \('settled', 'deferred'\)\s+AND NOT \(w\.state = 'settled' AND w\.data->>'verdict' = 'error'\)\s+AND cs\.status IN \('promoted', 'merging'\)\)\s+OR \(\$1::int IS NOT NULL AND w\.state = 'checking'\)\)/,
+    /WHERE w\.machine = 'preview' AND w\.state IN \('settled', 'deferred'\)\s+AND NOT \(w\.state = 'settled' AND w\.data->>'verdict' = 'error'\)\s+AND jsonb_typeof\(w\.data->'serving'\) = 'object'/,
     'a preview being built, retired or retried is the machine\'s');
 
   const machine = read('src/workflow/preview/machine.ts');

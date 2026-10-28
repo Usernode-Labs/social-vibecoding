@@ -23,7 +23,6 @@ import { LeaseLost } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { PREPARE_CLAIMS, WORK } from './machine.ts';
 import { parseRepoAddress } from '../rules/github-url.ts';
-import { newestBuild } from '../clock/services.ts';
 
 interface Deps { config: any; pool: Pool }
 
@@ -35,17 +34,6 @@ export const PREPARE_LEASE_MS = 60000;
 // Retries after a lost lease, never after a failure: a build that fails is
 // the error lane's, as on [main]. One database per claim (machine.ts).
 const PREPARE_ATTEMPTS = PREPARE_CLAIMS;
-// A preview of the platform itself carries its build's data policy
-// (services/platform-preview-data-policy.js), and a newer build retires every
-// one an older build made. So once a newer build has started, an older one
-// gives such a build back rather than make what would be retired: when it
-// claims it, and before each thing it creates (standDown). On 28 Oct 2026 the
-// old conductors built three in the minute the new ones booted, and each was
-// retired under its checks run. Given back while a try is left, it is
-// claimed again this long after, by when the older build drains and claims
-// nothing; on its last try it builds, and the retirement that follows tells
-// the machine (platform-preview-startup tellRetired).
-const STAND_DOWN_MS = 30000;
 // A lost checks run is collected from the cluster by its retry; a second
 // loss reruns it once more.
 const RUN_ATTEMPTS = 3;
@@ -145,25 +133,25 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
       maxAttempts: PREPARE_ATTEMPTS,
       leaseMs: PREPARE_LEASE_MS,
       concurrency: CONCURRENCY,
-      // When a build given back to a newer one (standDown) is claimed again.
-      backoffMs: () => STAND_DOWN_MS,
+      // Built by the newest build only. A preview carries the build that
+      // made it: a platform preview its data policy, which a newer build
+      // retires in every one an older build made, and any preview its
+      // environment, which the preview-env clock judges by the newest
+      // build's. On 28 Oct 2026 the old conductors started the platform
+      // previews of two changes after a new release's conductor had
+      // started, and each was retired within a minute.
+      newestOnly: true,
       async run(ctx): Promise<Json> {
         const { input } = ctx;
         const [row, a] = await Promise.all([session(input.sessionId), app(input.appId)]);
         if (!row || !a) return { ok: false, detail: 'The proposal or its app no longer exists' };
-        const standDown = async () => {
-          if (a.slug !== legacy('services/platform-preview-data-policy').PLATFORM_SLUG || ctx.attempt >= PREPARE_ATTEMPTS) return;
-          if (await newestBuild(pool)) return;
-          throw Object.assign(new Error('A newer Homeroom build has started; it builds this preview'), { code: 'older_build' });
-        };
-        await standDown();
         // Each claim clones into its own database: one before it may have
         // deployed, and its pods still use that one.
         const db: string = (Array.isArray(input.dbs) && input.dbs[ctx.attempt - 1]) || input.db;
         // The claim fences what it writes: a claim that lost its lease and
         // runs on never touches what a later claim of the attempt deployed.
         const attempt = { n: input.n, claim: ctx.attempt, dbName: db, servingN: input.serving?.n ?? null,
-          checkpoint: async (v: Json) => { await standDown(); await ctx.checkpoint(v); } };
+          checkpoint: (v: Json) => ctx.checkpoint(v) };
         try {
           const built = await staging().prepareAttempt(config, row, a, input.head, attempt);
           // Deployed: still this machine's attempt? A cancel that came during
@@ -183,9 +171,6 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
             if (await cancelledByMachine(ctx.workId)) await undo({ ...input, db, appSlug: a.slug, claim: ctx.attempt });
             throw err;
           }
-          // Given back to a newer build before it deployed: no result. What
-          // its clone made goes with the claim that serves (dropClaims).
-          if ((err as { code?: string }).code === 'older_build') throw err;
           // A failure seen by a claim that is no longer the live one (its
           // lease ran out, or the machine cancelled it) reports nothing and
           // sets nothing off: checkpoint throws for it.

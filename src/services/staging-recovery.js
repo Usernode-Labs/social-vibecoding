@@ -227,29 +227,57 @@ async function stagingNeedsRebuild(session, { config = null, headSha = null, env
 // machine is building, retiring or retrying is its own already
 // (preview-workflow.working). The leader's heal looked only at the 50
 // oldest. `signal` ends the look early (the run's lease is gone).
-//
-// `appId`: right after that app's previews were retired out of band (the
-// preview-data-policy clock, platform-preview-startup tellRetired), only its
-// previews are looked at, and the ones it is checking too: their run is
-// judging a runtime that may be gone, and every page of it would fail.
-async function lookForLostPreviews(config, { signal = null, appId = null } = {}) {
+async function lookForLostPreviews(config, { signal = null } = {}) {
   const pool = require('../db/pool').getPool(config);
   const { rows } = await pool.query(
     `SELECT cs.id, cs.app_id, cs.staging_url, cs.staging_runtime_kind, cs.staging_runtime_name,
             cs.staging_container_id, cs.staging_commit_sha
        FROM wf_instances w JOIN chat_sessions cs ON w.key = 'session:' || cs.id
-      WHERE w.machine = 'preview' AND jsonb_typeof(w.data->'serving') = 'object'
-        AND ((w.state IN ('settled', 'deferred')
-              AND NOT (w.state = 'settled' AND w.data->>'verdict' = 'error')
-              AND cs.status IN ('promoted', 'merging'))
-          OR ($1::int IS NOT NULL AND w.state = 'checking'))
-        AND ($1::int IS NULL OR cs.app_id = $1)
-      ORDER BY cs.id`, [appId]);
+      WHERE w.machine = 'preview' AND w.state IN ('settled', 'deferred')
+        AND NOT (w.state = 'settled' AND w.data->>'verdict' = 'error')
+        AND jsonb_typeof(w.data->'serving') = 'object'
+        AND cs.status IN ('promoted', 'merging')
+      ORDER BY cs.id`);
   const previewWorkflow = require('./preview-workflow');
   let lost = 0;
   for (const session of rows) {
     if (signal?.aborted) break;
     if (!(await stagingNeedsRebuild(session, { config, envCheck: false }))) continue;
+    if (await previewWorkflow.lost({ session, detail: 'runtime gone' })) lost++;
+  }
+  return { examined: rows.length, lost };
+}
+
+// Whether the runtime a preview row names is gone: it names none, or the
+// runtime it names is not there. Narrower than stagingNeedsRebuild: one
+// that is there but restarting, stale or of another commit is not gone,
+// and neither is one that cannot be read.
+async function previewRuntimeGone(session, config = null) {
+  const named = session.staging_runtime_kind === 'kubernetes' ? session.staging_runtime_name : session.staging_container_id;
+  if (!session.staging_url || !named) return true;
+  return (await inspectPreviewRuntime(session, config))?.status === 'not_found';
+}
+
+// The preview-data-policy clock's look (platform-preview-startup
+// tellRetired): the previews of app `appSlug` (the platform's own) that a
+// checks run is going against, whose runtime is gone, reported lost, so the
+// machine stops the run and builds the preview again. A retirement deletes
+// runtimes out of band, at a conductor's boot or in a run of the clock, and
+// a run judging one that is gone fails every page. Every run looks, not
+// only one that retired: the clock's next run is often another process's.
+async function lookForGoneRuns(config, { appSlug, signal = null } = {}) {
+  const pool = require('../db/pool').getPool(config);
+  const { rows } = await pool.query(
+    `SELECT cs.id, cs.app_id, cs.staging_url, cs.staging_runtime_kind, cs.staging_runtime_name, cs.staging_container_id
+       FROM wf_instances w JOIN chat_sessions cs ON w.key = 'session:' || cs.id JOIN apps a ON a.id = cs.app_id
+      WHERE w.machine = 'preview' AND w.state = 'checking' AND jsonb_typeof(w.data->'serving') = 'object'
+        AND a.slug = $1 AND a.self_hosted IS TRUE
+      ORDER BY cs.id`, [appSlug]);
+  const previewWorkflow = require('./preview-workflow');
+  let lost = 0;
+  for (const session of rows) {
+    if (signal?.aborted) break;
+    if (!(await previewRuntimeGone(session, config))) continue;
     if (await previewWorkflow.lost({ session, detail: 'runtime gone' })) lost++;
   }
   return { examined: rows.length, lost };
@@ -643,17 +671,20 @@ async function recheckSessionChecks({ pool, session, reason }) {
   // out of band: the data-policy retirement of a release). Run against, it
   // checked nothing: on 28 Oct 2026 every one of 743 checks failed at once.
   // So the runtime is looked at first, from the row as it is now, and one
-  // that is gone is reported lost: the machine rebuilds it, and the recheck
-  // below joins that build. A runtime that cannot be read is not gone. The
-  // system's own recheck leaves one the machine is building or retrying to
-  // it (rebuildSessionStaging's rule): a loss reported again is rebuilt as
-  // a person's, past the error lane's cap.
+  // that is gone (previewRuntimeGone: not one that restarts or cannot be
+  // read) is reported lost: the machine rebuilds it, and the recheck below
+  // joins that build. Not a preview with no checks (the App bench's), whose
+  // recheck the machine refuses. The system's own recheck leaves one the
+  // machine is building or retrying to it (rebuildSessionStaging's rule): a
+  // loss reported again is rebuilt as a person's, past the error lane's cap.
   const system = !FORCED_RECHECK_REASONS.has(reason) && reason !== 'preview-click';
   if (await workflow().held(session.id) && (!system || !await workflow().working(session.id))) {
     const { rows: [runtime] } = await pool.query(
-      `SELECT id, staging_url, staging_runtime_kind, staging_runtime_name, staging_container_id
-         FROM chat_sessions WHERE id = $1`, [session.id]);
-    if (runtime && await stagingNeedsRebuild(runtime, { envCheck: false })) {
+      `SELECT cs.id, cs.staging_url, cs.staging_runtime_kind, cs.staging_runtime_name, cs.staging_container_id,
+              COALESCE((w.data->>'previewOnly')::boolean, FALSE) AS preview_only
+         FROM chat_sessions cs LEFT JOIN wf_instances w ON w.machine = 'preview' AND w.key = 'session:' || cs.id
+        WHERE cs.id = $1`, [session.id]);
+    if (runtime && !runtime.preview_only && await previewRuntimeGone(runtime)) {
       await workflow().lost({ session, detail: 'runtime gone' });
     }
   }
@@ -670,6 +701,8 @@ module.exports = {
   ROLLOUT_RETRY_DETAIL,
   stagingNeedsRebuild,
   lookForLostPreviews,
+  lookForGoneRuns,
+  previewRuntimeGone,
   inspectPreviewRuntime,
   previewIsOfAnotherCommit,
   recheckHeadSha,

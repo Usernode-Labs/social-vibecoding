@@ -22,7 +22,7 @@ const stub = (path, exports) => {
 
 const SESSION = { id: 77, app_id: 10, status: 'promoted', checks_commit_sha: 'c'.repeat(40) };
 const RUNTIME = { id: 77, staging_url: 'https://p--s77.apps.test', staging_runtime_kind: 'kubernetes',
-  staging_runtime_name: 'sv-preview-10-s77', staging_container_id: null };
+  staging_runtime_name: 'sv-preview-10-s77', staging_container_id: null, preview_only: false };
 
 // staging-recovery with the machine's front door, the runtime and the
 // fresh-run record stubbed. `cluster` answers the runtime's inspect.
@@ -46,7 +46,7 @@ function load({ held = true, working = false, cluster = async () => ({ status: '
   const recovery = require('../src/services/staging-recovery');
   const pool = {
     async query(sql) {
-      if (/staging_runtime_name, staging_container_id\s+FROM chat_sessions/.test(sql)) return { rows: row ? [row] : [] };
+      if (/AS preview_only\s+FROM chat_sessions cs LEFT JOIN wf_instances/.test(sql)) return { rows: row ? [row] : [] };
       return { rows: [] };
     },
   };
@@ -84,18 +84,33 @@ test('the system\'s recheck leaves a preview the machine builds or retries to it
   } finally { person.restore(); }
 });
 
-test('a recheck of a preview that still runs, or cannot be read, runs against it', async () => {
+test('a recheck of a preview that is there, restarting, or cannot be read, runs against it', async () => {
   const live = load();
   try {
     await live.recovery.recheckSessionChecks({ pool: live.pool, session: SESSION, reason: 'manual-recheck' });
     assert.deepEqual(live.calls, [['inspect', 'sv-preview-10-s77'], ['recheck', 'manual-recheck']]);
   } finally { live.restore(); }
+  // A pod that restarts is not a runtime that is gone: a system kick during
+  // a run is refused by the machine, as before, rather than end the run.
+  const restarting = load({ cluster: async () => ({ status: 'restarting', labels: {} }) });
+  try {
+    await restarting.recovery.recheckSessionChecks({ pool: restarting.pool, session: SESSION, reason: 'stale-pending-vote-kick' });
+    assert.deepEqual(restarting.calls, [['inspect', 'sv-preview-10-s77'], ['recheck', 'stale-pending-vote-kick']]);
+  } finally { restarting.restore(); }
   // An API outage is not evidence that the preview is gone.
   const outage = load({ cluster: async () => { throw new Error('the cluster did not answer'); } });
   try {
     await outage.recovery.recheckSessionChecks({ pool: outage.pool, session: SESSION, reason: 'manual-recheck' });
     assert.deepEqual(outage.calls, [['inspect', 'sv-preview-10-s77'], ['recheck', 'manual-recheck']]);
   } finally { outage.restore(); }
+});
+
+test('a preview with no checks (the App bench\'s) is not rebuilt by a recheck the machine refuses', async () => {
+  const { recovery, pool, calls, restore } = load({ row: { ...RUNTIME, preview_only: true }, cluster: async () => ({ status: 'not_found' }) });
+  try {
+    await recovery.recheckSessionChecks({ pool, session: SESSION, reason: 'manual-recheck' });
+    assert.deepEqual(calls, [['recheck', 'manual-recheck']]);
+  } finally { restore(); }
 });
 
 test('a session the machine does not hold is enrolled by the recheck, as before', async () => {

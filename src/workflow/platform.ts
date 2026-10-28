@@ -57,7 +57,7 @@ import { MACHINE as RELEASE, releaseKey, releaseMachine } from './release/machin
 import { releaseServices } from './release/services.ts';
 import type { Adoption } from './release/services.ts';
 import { MACHINE as CLOCK, clock, clockKey } from './clock/machine.ts';
-import { clockServices } from './clock/services.ts';
+import { clockServices, newestBuild } from './clock/services.ts';
 import { MACHINE as WORKER_RELEASE, WORK as RELEASE_WORKER, releaseKey as workerReleaseKey, workerRelease } from './worker-release/machine.ts';
 import type { Request as WorkerReleaseRequest } from './worker-release/machine.ts';
 import { workerReleaseServices } from './worker-release/services.ts';
@@ -265,6 +265,10 @@ export async function startWorkflow(config: any, opts: { loops: boolean; preview
   };
   const started = createPlatformRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, release: bootRelease(),
+    // A kind only the newest build claims (WorkHandler.newestOnly): a
+    // preview's build. The newest build is the newest-only clocks' own,
+    // read on the runtime's own pool, never waiting behind the app's.
+    newest: () => newestBuild(workflowPool),
     publish: (q, pushes) => publishPushes(q, pushes, { badges: !!config.mobilePushEnabled }),
   });
   try {

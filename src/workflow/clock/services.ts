@@ -44,8 +44,8 @@ export interface Job {
 // newest once it serves. A platform with no process recorded (a test) has no
 // older build. A process is recorded from its start (services/processes.js
 // start, before its boot's own retirement), so a newer build is the newest
-// while it still boots. The preview machine's build of a platform preview
-// asks the same (preview/services.ts standDown).
+// while it still boots. The runtime asks the same for the work only the
+// newest build claims (platform.ts newest, WorkHandler.newestOnly).
 const LIVE_SECONDS = 45;
 export async function newestBuild(pool: any): Promise<boolean> {
   const own = String(process.env.GIT_SHA || '').trim().slice(0, 40) || null;
@@ -563,13 +563,14 @@ export const JOBS: readonly Job[] = Object.freeze([
   },
   {
     // The platform's previews made under another data policy than this
-    // build's, retired (its result is the web's readiness proof). The
-    // ones the preview machine still says serve are reported lost, so it
+    // build's, retired (its result is the web's readiness proof). Then the
+    // ones a checks run is going against whose runtime is gone (this run's
+    // retirement or a boot's took it) are reported lost, so the machine
     // rebuilds them rather than check a runtime that is gone.
     name: 'preview-data-policy', everyMs: MIN, leaseMs: 10 * MIN, newestOnly: true,
     run: async (ctx: WorkContext, { config, pool, previewRetirement }: JobDeps) => {
       const startup = legacy('services/platform-preview-startup');
-      return startup.tellRetired(config, pool, await startup.check(config, pool, previewRetirement), { signal: ctx.signal });
+      return startup.tellRetired(config, await startup.check(config, pool, previewRetirement), { signal: ctx.signal });
     },
   },
   {

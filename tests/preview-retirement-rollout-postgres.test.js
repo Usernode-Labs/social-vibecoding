@@ -4,21 +4,22 @@
 // the data policy of the build that made it, and the newest build retires
 // every other one (services/platform-preview-retirement.js, run by the
 // preview-data-policy clock and at a conductor's boot). While a release
-// rolled out, the old conductors went on building previews for three
-// changes, and the new ones retired each within a minute, under its checks
-// run: every page then answered 403, and "Run checks again" ran all 743
-// checks against the runtime that was gone.
+// rolled out, the old conductors went on starting previews for changes, and
+// the new ones retired each within a minute, under its checks run: every
+// page then answered 403, and "Run checks again" ran all 743 checks against
+// the runtime that was gone.
 //
 //   1. The rollout window. An old build serves and a newer one boots (in
 //      platform_processes from its start, before its own boot retirement):
 //      the old build's security clock looks at nothing, so the newer build's
-//      previews are spared, and its build of a platform preview stands down,
-//      at its claim or before what it creates, while a try is left. The
-//      newer build builds and retires.
-//   2. What a retirement took, the preview machine is told about: the
-//      platform's previews it is checking or that back a vote, whose
-//      runtime is gone, are reported lost (the machine rebuilds them). No
-//      other app's, none it is building, none in its error lane.
+//      previews are spared, and a preview's build (newestOnly) is left to
+//      the newer build, which claims it once it runs.
+//   2. What a retirement took, the preview machine is told about, on every
+//      run of the clock whichever process makes it: the platform's previews
+//      being checked whose runtime is gone are reported lost (the machine
+//      stops the run and rebuilds). Not one that is restarting or running,
+//      another app's, one being built, or a vote-backed one at rest (the
+//      preview-runtimes clock's).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -31,28 +32,12 @@ const stub = (path, exports) => {
   require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
 };
 
-// What the build does, and what the cluster says of a runtime.
-const built = [];
-let duringBuild = null;
-const realStaging = require('../src/services/staging');
-stub('../src/services/staging', {
-  ...realStaging,
-  async prepareAttempt(config, row, app, head, attempt) {
-    built.push(['clone', row.id, attempt.claim]);
-    await attempt.checkpoint({ step: 'clone', db: attempt.dbName });
-    if (duringBuild) await duringBuild();
-    await attempt.checkpoint({ step: 'deploy', db: attempt.dbName });
-    built.push(['deploy', row.id, attempt.claim]);
-    return { stagingUrl: `https://p--s${row.id}.apps.test`, hostname: `p--s${row.id}.apps.test`,
-      runtimeKind: 'kubernetes', runtimeName: `sv-preview-${app.id}-s${row.id}` };
-  },
-  async verifyStagingEdge() { return { ok: true }; },
-});
-const gone = new Set();
+// What the cluster says of a runtime, and what the machine is told.
+const cluster = new Map();
 stub('../src/services/application-runtime', {
   ...require('../src/services/application-runtime'),
   mode: () => 'kubernetes',
-  async inspect(config, { runtimeName }) { return gone.has(runtimeName) ? { status: 'not_found' } : { status: 'running', labels: {} }; },
+  async inspect(config, { runtimeName }) { return { status: cluster.get(runtimeName) ?? 'running', labels: {} }; },
 });
 const told = [];
 stub('../src/services/preview-workflow', {
@@ -65,15 +50,37 @@ stub('../src/db/pool', { ...require('../src/db/pool'), getPool: () => db.pool })
 const startup = require('../src/services/platform-preview-startup');
 const retirement = require('../src/services/platform-preview-retirement');
 const { PLATFORM_SLUG } = require('../src/services/platform-preview-data-policy');
-const { JOBS, clockServices } = require('../src/workflow/clock/services.ts');
+const { createRuntime, defineMachine, NONE, ok } = require('../src/workflow/kernel/index.ts');
+const { JOBS, clockServices, newestBuild } = require('../src/workflow/clock/services.ts');
 const { previewServices } = require('../src/workflow/preview/services.ts');
-const { WORK, PREPARE_CLAIMS } = require('../src/workflow/preview/machine.ts');
+const { WORK } = require('../src/workflow/preview/machine.ts');
 
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const config = { appRuntime: 'kubernetes', edgeJwtSecret: 'fake-rollout-receipt-key', kubernetes: { appNamespace: 'fake-apps' } };
 const OLD = 'a'.repeat(40), NEW = 'b'.repeat(40), HEAD = 'c'.repeat(40);
 
-test('a release\'s old build stands down from the platform\'s previews, and what a retirement took is rebuilt', { timeout: 60000 }, async (t) => {
+// A machine that asks for one build, of a kind only the newest build claims.
+const BUILD = 'rollout.build';
+const asker = defineMachine({
+  name: 'rollout-asker',
+  version: 1,
+  events: { Ask: (p) => p || {} },
+  create: ['Ask'],
+  terminal: ['built'],
+  decode: (row) => ({ name: row.state, data: row.data }),
+  async facts() { return {}; },
+  authorize: { Ask: () => ok() },
+  transitions: {
+    [NONE]: { Ask: { to: () => ({ next: { name: 'waiting', data: {} }, work: [{ kind: BUILD, key: 'b1', input: {} }] }) } },
+    waiting: {
+      Ask: { ignore: 'asked' },
+      WorkSucceeded: { to: (s, e) => ({ next: { name: 'built', data: { by: e.payload.result.by } } }) },
+    },
+    built: { Ask: { ignore: 'built' } },
+  },
+});
+
+test('across a release the old build leaves the platform\'s previews to the new one, and what retirement took is rebuilt', { timeout: 60000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   try { await admin.query('SELECT 1'); } catch (error) {
     await admin.end();
@@ -85,8 +92,10 @@ test('a release\'s old build stands down from the platform\'s previews, and what
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = db.pool = new Pool({ connectionString: String(url) });
   pool.on('error', () => {});
+  const runtimes = [];
   const saved = { role: process.env.PROCESS_ROLE, sha: process.env.GIT_SHA, staging: process.env.USERNODE_ENV, retire: retirement.retire };
   t.after(async () => {
+    for (const r of runtimes) await r.stop();
     retirement.retire = saved.retire;
     for (const [key, value] of [['PROCESS_ROLE', saved.role], ['GIT_SHA', saved.sha], ['USERNODE_ENV', saved.staging]]) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
@@ -107,35 +116,32 @@ test('a release\'s old build stands down from the platform\'s previews, and what
     [slug, owner.id, selfHosted])).rows[0];
   const platform = await app(PLATFORM_SLUG, true);
   const other = await app('rollout-other-app', false);
-  const runtimeOf = (a, id) => `sv-preview-${a.id}-s${id}`;
-  // A proposal and, when given, the preview machine's instance of it.
-  async function proposal(a, status, state = null, data = {}) {
+  // A proposal and the preview machine's instance of it, written as the
+  // machine's transition would (the writer marker).
+  async function proposal(a, status, state, data = {}) {
     const { rows: [s] } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, status, branch_name) VALUES ($1, $2, $3, 'feature') RETURNING id`,
       [a.id, owner.id, status]);
+    const runtime = `sv-preview-${a.id}-s${s.id}`;
     await pool.query(
       `UPDATE chat_sessions SET staging_url = $2, staging_runtime_kind = 'kubernetes', staging_runtime_name = $3 WHERE id = $1`,
-      [s.id, `https://p--s${s.id}.apps.test`, runtimeOf(a, s.id)]);
-    if (state) {
-      // Written as the machine's transition would (the writer marker).
-      const c = await pool.connect();
-      try {
-        await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
-        await c.query(
-          `INSERT INTO wf_instances (machine, key, app_id, state, data, machine_version) VALUES ('preview', $1, $2, $3, $4, 1)`,
-          [`session:${s.id}`, a.id, state, { sessionId: s.id, head: HEAD, verdict: null, ...data,
-            serving: { n: 1, head: HEAD, runtimeKind: 'kubernetes', runtimeName: runtimeOf(a, s.id) } }]);
-        await c.query('COMMIT');
-      } finally { c.release(); }
-    }
-    return { id: s.id, runtime: runtimeOf(a, s.id) };
+      [s.id, `https://p--s${s.id}.apps.test`, runtime]);
+    const c = await pool.connect();
+    try {
+      await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+      await c.query(
+        `INSERT INTO wf_instances (machine, key, app_id, state, data, machine_version) VALUES ('preview', $1, $2, $3, $4, 1)`,
+        [`session:${s.id}`, a.id, state, { sessionId: s.id, head: HEAD, verdict: null, ...data,
+          serving: { n: 1, head: HEAD, runtimeKind: 'kubernetes', runtimeName: runtime } }]);
+      await c.query('COMMIT');
+    } finally { c.release(); }
+    return { id: s.id, runtime };
   }
   // The roster as services/processes.js writes it: a process is 'serving'
   // from its start, before its boot's own retirement (server.js).
   const started = (id, release, role, ago = '0 seconds') => pool.query(
     `INSERT INTO platform_processes (id, release, role, host, state, started_at, heartbeat_at)
      VALUES ($1, $2, $3, $1, 'serving', now() - $4::interval, now())`, [id, release, role, ago]);
-  const leaves = (id) => pool.query('DELETE FROM platform_processes WHERE id = $1', [id]);
 
   // The security clock's run, as this process (its GIT_SHA).
   let scans = 0, retiredNow = 0;
@@ -143,104 +149,132 @@ test('a release\'s old build stands down from the platform\'s previews, and what
   const job = JOBS.find((j) => j.name === startup.JOB);
   const clock = clockServices([job], { config, pool, previewRetirement: null })[`clock.${job.name}`];
   const tick = () => clock.run({ input: {}, signal: new AbortController().signal });
-  // A claim of a preview's build (preview.prepare), as this process.
-  const prepare = previewServices({ config, pool })[WORK.prepare];
-  const build = (s, a, claim = 1) => prepare.run({
-    input: { sessionId: s.id, appId: a.id, n: 1, head: HEAD, db: `app_x_staging_s${s.id}_aaaaaa`,
-      dbs: [1, 2, 3].map((k) => `app_x_staging_s${s.id}_${k}${k}${k}${k}${k}${k}`), serving: null },
-    attempt: claim, lostAttempts: 0, workId: `w-${s.id}-${claim}`, key: 'prepare:1',
-    checkpoint: async () => {}, signal: new AbortController().signal,
-  });
-  const olderBuild = { code: 'older_build' };
+  // A process's runtime with a build to claim, asking the roster whether it
+  // runs the newest build (platform.ts passes the same `newest`).
+  const builds = [];
+  const runtimeOf = (sha) => {
+    const r = createRuntime({ pool, machines: [asker], newest: () => newestBuild(pool), services: {
+      [BUILD]: { newestOnly: true, async run() { builds.push(sha); return { by: sha }; } },
+    } });
+    runtimes.push(r);
+    return r;
+  };
+  const asked = async (key) => (await pool.query(`SELECT state, data FROM wf_instances WHERE machine = 'rollout-asker' AND key = $1`, [key])).rows[0];
 
-  const change = await proposal(platform, 'promoted');
-  const otherChange = await proposal(other, 'promoted');
+  // A preview's build is the kind only the newest build claims.
+  assert.equal(previewServices({ config, pool })[WORK.prepare].newestOnly, true);
 
   // ── 1. The rollout window ───────────────────────────────────────────
   process.env.GIT_SHA = OLD;
   await started('old-conductor', OLD, 'conductor', '10 minutes');
-  // Alone, the old build is the newest: it retires, and it builds.
+  // Alone, the old build is the newest: it retires.
   assert.equal((await tick()).release, OLD);
   assert.equal(scans, 1);
-  built.length = 0;
-  assert.equal((await build(change, platform)).ok, true);
-  assert.deepEqual(built, [['clone', change.id, 1], ['deploy', change.id, 1]]);
-
   // A newer build's web process decides nothing: it neither builds nor retires.
   await started('new-web', NEW, 'web');
+  assert.equal(await newestBuild(pool), true);
   assert.equal((await tick()).release, OLD);
   assert.equal(scans, 2);
 
   // A newer conductor is booting. The old build's clock looks at nothing, so
-  // nothing the newer build made (or will make) is retired by the old policy.
+  // nothing the newer build made (or will make) is retired by the old policy...
   await started('new-conductor', NEW, 'conductor');
   assert.deepEqual(await tick(), { skipped: 'older_build' });
   assert.equal(scans, 2, 'the old build retires nothing once a newer one has started');
+  // ...and a build asked for now is not the old build's to make.
+  const old = runtimeOf(OLD);
+  await old.append(asker, 'p1', { type: 'Ask', payload: {} }, { requestKey: 'ask:p1', source: { kind: 'system', name: 'test' } });
+  await old.drain();
+  assert.equal(await old.runServices(), 0, 'the old build claims nothing a newer build should make');
+  assert.equal((await asked('p1')).state, 'waiting');
+  const { rows: [queued] } = await pool.query(`SELECT status, attempt_count FROM wf_work WHERE kind = $1`, [BUILD]);
+  assert.deepEqual(queued, { status: 'queued', attempt_count: 0 }, 'left queued, no attempt spent');
 
-  // Its build of a platform preview is given back at the claim, before any
-  // clone or deploy, while a try is left...
-  built.length = 0;
-  await assert.rejects(build(change, platform, 1), olderBuild);
-  await assert.rejects(build(change, platform, PREPARE_CLAIMS - 1), olderBuild);
-  assert.deepEqual(built, [], 'nothing the newer build would retire is made');
-  // ...and claimed again after STAND_DOWN_MS, by when the old build drains.
-  assert.equal(prepare.backoffMs(1), 30000);
-  // On its last try it builds: the retirement that follows tells the machine (2).
-  assert.equal((await build(change, platform, PREPARE_CLAIMS)).ok, true);
-  // Another app's preview carries no data policy: the old build still builds it.
-  built.length = 0;
-  assert.equal((await build(otherChange, other, 1)).ok, true);
-  assert.deepEqual(built, [['clone', otherChange.id, 1], ['deploy', otherChange.id, 1]]);
-
-  // A build under way when the newer build starts stands down before its deploy.
-  await leaves('new-conductor');
-  built.length = 0;
-  duringBuild = () => started('new-conductor', NEW, 'conductor');
-  await assert.rejects(build(change, platform, 1), olderBuild);
-  duringBuild = null;
-  assert.deepEqual(built, [['clone', change.id, 1]], 'never deployed');
-
-  // The newer build is the newest: it builds, and retires.
+  // The newer build claims and makes it.
   process.env.GIT_SHA = NEW;
-  built.length = 0;
-  assert.equal((await build(change, platform, 1)).ok, true);
-  assert.deepEqual(built, [['clone', change.id, 1], ['deploy', change.id, 1]]);
+  const fresh = runtimeOf(NEW);
+  assert.equal(await fresh.runServices(), 1);
+  await fresh.drain();
+  assert.deepEqual(builds, [NEW]);
+  assert.deepEqual((await asked('p1')).data, { by: NEW });
+  // And it retires.
   assert.equal((await tick()).release, NEW);
   assert.equal(scans, 3);
 
+  // A newer build that claims nothing (stuck in its boot) holds a build
+  // back no longer than two minutes: then the old build takes it again.
+  process.env.GIT_SHA = OLD;
+  const stuck = runtimeOf(OLD);
+  await stuck.append(asker, 'p2', { type: 'Ask', payload: {} }, { requestKey: 'ask:p2', source: { kind: 'system', name: 'test' } });
+  await stuck.drain();
+  assert.equal(await stuck.runServices(), 0);
+  await pool.query(`UPDATE wf_work SET due_at = now() - interval '3 minutes' WHERE key = 'p2' AND kind = $1`, [BUILD]);
+  assert.equal(await runtimeOf(OLD).runServices(), 1, 'a build left waiting is taken by the old build');
+  // Once the newer build has gone (its row no longer beats), the old build
+  // is the newest again and builds at once.
+  await pool.query(`DELETE FROM platform_processes WHERE id = 'new-conductor'`);
+  const resumed = runtimeOf(OLD);
+  await resumed.append(asker, 'p3', { type: 'Ask', payload: {} }, { requestKey: 'ask:p3', source: { kind: 'system', name: 'test' } });
+  await resumed.drain();
+  assert.equal(await resumed.runServices(), 1);
+  await started('new-conductor', NEW, 'conductor');
+  // A roster that cannot be read keeps the last answer (at first: claim).
+  const blind = createRuntime({ pool, machines: [asker], newest: async () => { throw new Error('roster unreadable'); },
+    services: { [BUILD]: { newestOnly: true, async run() { builds.push('blind'); return { by: 'blind' }; } } } });
+  runtimes.push(blind);
+  await blind.append(asker, 'p4', { type: 'Ask', payload: {} }, { requestKey: 'ask:p4', source: { kind: 'system', name: 'test' } });
+  await blind.drain();
+  assert.equal(await blind.runServices(), 1);
+  process.env.GIT_SHA = NEW;
+
+  // The platform's runtime asks the same roster, on its own pool.
+  assert.match(fs.readFileSync(require.resolve('../src/workflow/platform.ts'), 'utf8'),
+    /createPlatformRuntime\(\{[\s\S]{0,400}newest: \(\) => newestBuild\(workflowPool\),/);
+
   // ── 2. What the retirement took ─────────────────────────────────────
   const checking = await proposal(platform, 'active', 'checking');
-  const voted = await proposal(platform, 'promoted', 'settled', { verdict: 'passing' });
-  const resting = await proposal(platform, 'active', 'settled', { verdict: 'failing' });
-  const building = await proposal(platform, 'promoted', 'preparing');
-  const erroring = await proposal(platform, 'promoted', 'settled', { verdict: 'error' });
+  const restarting = await proposal(platform, 'active', 'checking');
   const alive = await proposal(platform, 'active', 'checking');
+  const building = await proposal(platform, 'promoted', 'preparing');
+  const resting = await proposal(platform, 'promoted', 'settled', { verdict: 'passing' });
   const elsewhere = await proposal(other, 'active', 'checking');
-  for (const s of [checking, voted, resting, building, erroring, elsewhere]) gone.add(s.runtime);
+  for (const s of [checking, building, resting, elsewhere]) cluster.set(s.runtime, 'not_found');
+  cluster.set(restarting.runtime, 'restarting');
 
-  // Nothing retired: nothing is looked at.
+  // A run that retired nothing still looks: a conductor's boot retirement
+  // (another process's, or this one's before the clock's last result) took
+  // the runtime, and this run is the first to see it.
   told.length = 0;
-  assert.equal((await tick()).lost, undefined);
-  assert.deepEqual(told, []);
-  // Retired: the ones it is checking and the vote-backed ones are rebuilt.
-  retiredNow = 6;
+  retiredNow = 0;
   const result = await tick();
-  assert.equal(result.retired, 6);
-  assert.equal(result.lost, 2);
-  assert.deepEqual(told, [[checking.id, 'runtime gone'], [voted.id, 'runtime gone']],
-    'not one resting outside a vote, one being built, one in its error lane, one still running, nor another app\'s');
+  assert.equal(result.retired, 0);
+  assert.equal(result.lost, 1);
+  assert.deepEqual(told, [[checking.id, 'runtime gone']],
+    'not one restarting or running, one being built, one at rest under a vote, nor another app\'s');
   // The readiness proof the web waits on is still the run's result.
   assert.equal(typeof result.scope, 'string');
   assert.equal(typeof result.checkedAt, 'string');
-
-  // The preview-runtimes clock's own look is unchanged: vote-backed only,
-  // every app, never a run going.
+  // Nothing gone: the result says nothing more.
+  cluster.set(checking.runtime, 'running');
   told.length = 0;
+  assert.equal((await tick()).lost, undefined);
+  assert.deepEqual(told, []);
+  // The old build's skipped run looks at nothing.
+  process.env.GIT_SHA = OLD;
+  cluster.set(checking.runtime, 'not_found');
+  assert.deepEqual(await tick(), { skipped: 'older_build' });
+  assert.deepEqual(told, []);
+  process.env.GIT_SHA = NEW;
+
+  // The preview-runtimes clock's own look is unchanged: vote-backed ones at
+  // rest, never a run going.
   const { lookForLostPreviews } = require('../src/services/staging-recovery');
   assert.deepEqual(await lookForLostPreviews(config), { examined: 1, lost: 1 });
-  assert.deepEqual(told, [[voted.id, 'runtime gone']]);
+  assert.deepEqual(told, [[resting.id, 'runtime gone']]);
 
   // A look that fails never fails the run: its result opens the web.
-  const failing = { query: async () => { throw new Error('database blinked'); } };
-  assert.deepEqual(await startup.tellRetired(config, failing, { retired: 1, scope: 's' }), { retired: 1, scope: 's' });
+  db.pool = { query: async () => { throw new Error('database blinked'); } };
+  try {
+    assert.deepEqual(await startup.tellRetired(config, { retired: 1, scope: 's' }), { retired: 1, scope: 's' });
+  } finally { db.pool = pool; }
 });
