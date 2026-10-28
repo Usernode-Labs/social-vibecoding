@@ -230,6 +230,27 @@ async function postRequestSpec(pool, { app, repo, issueNumber, issueTitle = null
     client.release();
   }
 
+  // The plan's own pictures: screenshots its author uploaded (prepare_upload,
+  // kind "screenshot") that its text shows. An upload no request links is
+  // swept after 24 hours, so they are stamped with this request the way a
+  // request's own screenshots are. Only the author's, and only ones not yet
+  // linked; best effort, like the request route's own stamping.
+  if (html && repo) {
+    const ids = specHtml.planImageIds(html);
+    if (ids.length) {
+      try {
+        await pool.query(
+          `UPDATE issue_screenshots
+              SET issue_owner = $2, issue_repo = $3, issue_number = $4
+            WHERE id = ANY($1::varchar[]) AND user_id = $5 AND issue_number IS NULL`,
+          [ids, repo.owner, repo.repo, Number(issueNumber), user.id]
+        );
+      } catch (err) {
+        log.warn('request-specs', 'Plan screenshots not linked', { appId: app.id, issueNumber, err: err.message });
+      }
+    }
+  }
+
   // The card and the GitHub copy are announcements of a spec that is already
   // stored and readable, so neither can take the post back with it.
   const card = specCard({ sessionId, version, markdown: prepared.markdown, user });

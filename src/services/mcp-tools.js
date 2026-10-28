@@ -721,11 +721,16 @@ const SPEC_FORMAT_INTRO = [
 ].join('\n\n');
 
 /** get_spec_format's text for the app `slug`: the intro, the contract, the design brief. */
+// A connector client can upload screenshots (prepare_upload) and show them in
+// a plan's text. The Homeroom bot cannot, so this is the connector's, not
+// part of prompts.js's contract, which the bot's own prompts share.
+const SPEC_PICTURES_GUIDE = `PICTURES IN THE TEXT: the "no images by URL" rule has one exception, a plan's own pictures, such as the phone screens of a flow or a design's mockups. Send each with prepare_upload (kind "screenshot": a PNG or JPEG up to 4 MB); its upload answers with a \`path\`, and the plan's text shows it as <img src="PATH" alt="what it shows">. Posting the plan keeps those pictures with the request, and its GitHub copy shows them too. Pictures that belong in a row, like the steps of a flow, go in <div class="spec-strip">, one <figure> per picture with a short <figcaption>; the row scrolls sideways. Any other image is dropped. A plan that follows a design document of its own may open the "user" section with that document's diagrams and pictures in place of a screens figure; keep the screens figure for a change to a screen that exists today.`;
+
 function specFormatGuide(slug) {
   const prompts = require('./prompts');
   const specHtml = require('./spec-html');
   const platformStyles = specHtml.specStylesFor({ slug, self_hosted: false }) === 'platform';
-  return [SPEC_FORMAT_INTRO, prompts.specHtmlContract(platformStyles), prompts.SPEC_DESIGN_BRIEF].join('\n\n');
+  return [SPEC_FORMAT_INTRO, prompts.specHtmlContract(platformStyles), SPEC_PICTURES_GUIDE, prompts.SPEC_DESIGN_BRIEF].join('\n\n');
 }
 
 // One spec version as the connector reports it. The title is the author's
