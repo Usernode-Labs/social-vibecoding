@@ -10,7 +10,8 @@
 //   POST   /api/me/avatar              raw image bytes -> user_avatars
 //   DELETE /api/me/avatar              remove the picture
 //   GET    /api/me/challenges/completed  the viewer's OWN completions
-//   GET    /api/me/summary             Me's stat cards + "Your contributions"
+//   GET    /api/me/summary             Me's stat cards, "This week" and
+//                                      "Your contributions"
 //
 // Every route is me-scoped and 401s without a session, so this router is
 // mounted AFTER authMiddleware in server.js. The public read side of an
@@ -68,6 +69,7 @@ const {
 const { loadOnboarding } = require('../services/topochain/challenge-onboarding');
 const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
 const { MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE } = require('./workshop-overview');
+const { weekStartMs } = require('../services/topochain/challenge-rules');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // ─── Field limits ──────────────────────────────────────────────────────
@@ -113,6 +115,10 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 //                 me-scope GET /api/me/history reads with.
 //   challenges    completed in the profile season, by the one per-user done
 //                 rule (DONE_EXPR) the completed list and Home already share.
+//   week          the viewer's "This week" card (#5966): the minutes they
+//                 spent in apps they did not make, Monday to Sunday UTC — the
+//                 same week and the same rule the 10 minute app challenge
+//                 counts, so the card and the challenge agree.
 //   contributions the newest merged proposals, each carrying what the row
 //                 needs to open it (#app/<slug>/dev/proposals/<session>).
 //
@@ -188,6 +194,72 @@ const DEMO_CONTRIBUTIONS = [
     title: '[Mock] Completed: split settings into sections' },
 ];
 
+// ─── GET /api/me/summary: "This week" (#5966) ──────────────────────────
+//
+// The profile's This week card: how long the viewer spent this week in apps
+// they did not make, and which ones. Deliberately the SAME rule and the SAME
+// week as the 10 minute app challenge (services/topochain/challenge-scorer.js
+// USE_APPS_MINUTES_SQL): app_activity's date-grained rows, summed, with the
+// viewer's own apps excluded. If the two ever disagreed, the card would
+// report a number the challenge it exists to track does not pay.
+//
+// No SQL LIMIT: the total and the app count are over every app, and only the
+// LIST is capped (WEEK_APPS_LIMIT, in shapeWeek). One person's week is
+// bounded by the apps they opened.
+const WEEK_USE_SQL = `
+  SELECT a.id, a.slug, a.name, a.icon_emoji, a.icon_image_id,
+         SUM(aa.seconds_spent)::bigint AS seconds
+    FROM app_activity aa
+    JOIN apps a ON a.id = aa.app_id
+   WHERE aa.user_id = $1
+     AND aa.date >= $2::date AND aa.date <= $3::date
+     AND a.created_by IS DISTINCT FROM aa.user_id
+   GROUP BY a.id, a.slug, a.name, a.icon_emoji, a.icon_image_id
+  HAVING SUM(aa.seconds_spent) > 0
+   ORDER BY seconds DESC, a.name ASC, a.id ASC
+`;
+
+// At most this many apps are listed; the total and the app count still cover
+// every app the viewer used.
+const WEEK_APPS_LIMIT = 5;
+
+// Pure (exported for tests): the Monday-to-Sunday UTC week `now` falls in, as
+// the two `date` bounds the query compares against. The Monday comes from
+// challenge-rules.weekStartMs, the one definition of a challenge week.
+function weekBounds(now = Date.now()) {
+  const start = new Date(weekStartMs(now));
+  const end = new Date(start.getTime() + 6 * 24 * 60 * 60 * 1000);
+  const iso = (d) => d.toISOString().slice(0, 10);
+  return { start: iso(start), end: iso(end) };
+}
+
+const EMPTY_WEEK = () => ({
+  startsOn: null, endsOn: null, seconds: 0, minutes: 0, appCount: 0, apps: [],
+});
+
+// Pure (exported for tests): the week's rows → the card's shape. Whole
+// minutes, rounded down, for the total and for each app: a partial minute is
+// "under a minute" on a row and never counted twice.
+function shapeWeek(rows, bounds) {
+  const list = Array.isArray(rows) ? rows : [];
+  const b = bounds || {};
+  const seconds = list.reduce((n, r) => n + (Number(r.seconds) || 0), 0);
+  return {
+    startsOn: b.start || null,
+    endsOn: b.end || null,
+    seconds,
+    minutes: Math.floor(seconds / 60),
+    appCount: list.length,
+    apps: list.slice(0, WEEK_APPS_LIMIT).map((r) => ({
+      slug: r.slug,
+      name: r.name || r.slug,
+      iconEmoji: r.icon_emoji || null,
+      iconUrl: appIconUrl(r.icon_image_id),
+      minutes: Math.floor((Number(r.seconds) || 0) / 60),
+    })),
+  };
+}
+
 function appIconUrl(imageId) {
   return typeof imageId === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(imageId)
     ? `/app-icons/${imageId}` : null;
@@ -214,9 +286,11 @@ function shapeContribution(r) {
   };
 }
 
-// Pure (exported for tests): the three counts, the contributions and the
-// challenge totals → the response body.
-function shapeSummary({ counts, contributions, challenges }) {
+// Pure (exported for tests): the three counts, the contributions, the
+// challenge totals and the week's use → the response body. `week` is optional
+// so every existing caller keeps its contract; left out it is the empty
+// shape, which draws no card.
+function shapeSummary({ counts, contributions, challenges, week }) {
   const c = counts || {};
   return {
     merged: Number(c.merged) || 0,
@@ -232,6 +306,7 @@ function shapeSummary({ counts, contributions, challenges }) {
         ? { id: Number(challenges.season.id), name: challenges.season.name }
         : null,
     },
+    week: week || EMPTY_WEEK(),
     contributions: (contributions || []).map(shapeContribution),
   };
 }
@@ -1304,20 +1379,24 @@ function profileRoutes(config) {
 
   // ── GET /api/me/summary ──────────────────────────────────────────────
   //
-  // Me's stat cards and "Your contributions" — see SUMMARY_COUNTS_SQL above
-  // for what each number means. The three independent reads go out together;
-  // only the challenge totals wait, on the season they are scoped to.
+  // Me's stat cards, "This week" and "Your contributions" — see
+  // SUMMARY_COUNTS_SQL above for what each number means, and WEEK_USE_SQL for
+  // the week's app use. The independent reads go out together; only the
+  // challenge totals wait, on the season they are scoped to.
   router.get('/api/me/summary', requireUser, async (req, res) => {
     try {
-      const [countRows, contributionRows, season] = await Promise.all([
+      const bounds = weekBounds();
+      const [countRows, contributionRows, weekRows, season] = await Promise.all([
         pool.query(SUMMARY_COUNTS_SQL, [req.user.id]),
         pool.query(SUMMARY_CONTRIBUTIONS_SQL, [req.user.id, SUMMARY_CONTRIBUTIONS_LIMIT]),
+        pool.query(WEEK_USE_SQL, [req.user.id, bounds.start, bounds.end]),
         fetchProfileSeason(pool, IS_STAGING ? 900500 : null),
       ]);
       const totals = season ? await readChallengeTotals(pool, req.user.id, season.id) : null;
       let summary = shapeSummary({
         counts: countRows.rows[0],
         contributions: contributionRows.rows,
+        week: shapeWeek(weekRows.rows, bounds),
         challenges: season
           ? { done: totals ? totals.done : 0, total: totals ? totals.total : 0, season }
           : null,
@@ -1406,6 +1485,10 @@ module.exports = {
   withDemoSummary,
   DEMO_CONTRIBUTIONS,
   SUMMARY_CONTRIBUTIONS_LIMIT,
+  WEEK_USE_SQL,
+  WEEK_APPS_LIMIT,
+  weekBounds,
+  shapeWeek,
   shapeProposals,
   withDemoProposals,
   DEMO_PROPOSALS,

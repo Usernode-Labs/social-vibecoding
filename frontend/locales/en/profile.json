@@ -1058,5 +1058,37 @@
   "feedback.editLeft_other": {
     "text": "You can edit it for {{count}} more minutes.",
     "description": "Action or time remaining beside a recent request in Your feedback. {{count}}, when present, is the number of minutes rounded up."
+  },
+  "week.heading": {
+    "text": "This week",
+    "description": "Small label above the card on the viewer's own profile that sums up how long they spent this week in apps other people made. A week runs Monday to Sunday."
+  },
+  "week.total_one": {
+    "text": "{{number}} minute in apps",
+    "description": "First line of the This week card on the viewer's own profile. {{number}} is the whole number of minutes they spent in apps this week, already formatted; {{count}} is the same number, for the plural."
+  },
+  "week.total_other": {
+    "text": "{{number}} minutes in apps",
+    "description": "First line of the This week card on the viewer's own profile. {{number}} is the whole number of minutes they spent in apps this week, already formatted; {{count}} is the same number, for the plural."
+  },
+  "week.apps_one": {
+    "text": "Across {{number}} app you didn't make",
+    "description": "Second line of the This week card on the viewer's own profile. {{number}} is how many different apps they used this week, already formatted; {{count}} is the same number, for the plural. Apps they made themselves are not counted."
+  },
+  "week.apps_other": {
+    "text": "Across {{number}} apps you didn't make",
+    "description": "Second line of the This week card on the viewer's own profile. {{number}} is how many different apps they used this week, already formatted; {{count}} is the same number, for the plural. Apps they made themselves are not counted."
+  },
+  "week.appMinutes_one": {
+    "text": "{{number}} minute",
+    "description": "Line under an app's name in the This week card on the viewer's own profile: how long they spent in that one app this week. {{number}} is the whole number of minutes, already formatted; {{count}} is the same number, for the plural."
+  },
+  "week.appMinutes_other": {
+    "text": "{{number}} minutes",
+    "description": "Line under an app's name in the This week card on the viewer's own profile: how long they spent in that one app this week. {{number}} is the whole number of minutes, already formatted; {{count}} is the same number, for the plural."
+  },
+  "week.underMinute": {
+    "text": "Under a minute",
+    "description": "Line under an app's name in the This week card on the viewer's own profile when they used it for less than one whole minute this week."
   }
 }

@@ -25,8 +25,9 @@
 import { type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { PLANE_FILL } from '@/components/ui/grouped-list';
+import { GroupedList, ListRow, PLANE_FILL, SectionHeader } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import {
@@ -154,6 +155,11 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
 const STAT_GRID = KUDOS_PARKED ? 'grid grid-cols-2 gap-2 mb-2' : 'grid grid-cols-3 gap-2 mb-2';
 const STAT_COUNT = KUDOS_PARKED ? 2 : 3;
 
+/** A "This week" app row's tile, the same literal Your changes uses
+ *  (./my-proposals.tsx ICON_TILE). */
+const WEEK_ICON_TILE = 'app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden '
+  + 'flex items-center justify-center font-bold text-lg';
+
 /** The three stat cards (the prototype's `.stat`): merged, kudos, challenges.
  *  Numbers the Me screen never had until GET /api/me/summary added them up. */
 function StatCards({ stats }: { stats: Array<{ key: string; value: string; label: string }> }): ReactNode {
@@ -174,7 +180,49 @@ function StatCards({ stats }: { stats: Array<{ key: string; value: string; label
 }
 
 /**
- * The profile's loading state, at the SCREEN's own shape.
+ * "This week" (#5966): the minutes the viewer spent this week in apps they did
+ * not make, and the apps themselves, most used first. Read-only — the rows
+ * open nothing — and it is the same week and the same rule the 10 minute app
+ * challenge counts, so it follows that challenge without opening its page.
+ *
+ * `week` is null until the summary answers, and for a week with no whole
+ * minute in it; the card is then not drawn at all, so the prerender pass (which
+ * can only ever see null) emits exactly what hydration sees.
+ */
+function WeekCard({ week }: { week: any }): ReactNode {
+  const t = useMessages('profile');
+  if (!week) return null;
+  return (
+    <section id="profile-week" className="mt-2">
+      <SectionHeader>{t('profile:week.heading')}</SectionHeader>
+      <GroupedList className="mx-0" tone="plane">
+        <ListRow chevron={false} title={week.total} subtitle={week.apps} />
+        {week.rows.map((row: any) => (
+          <ListRow
+            key={row.slug}
+            data-profile-week-app={row.slug}
+            chevron={false}
+            // The tile Your changes draws its projects with (my-proposals.tsx).
+            leading={(
+              <span
+                className={WEEK_ICON_TILE}
+                data-icon={appIconKind(row.app as never)}
+                title={row.name}
+                aria-hidden="true"
+              >
+                <AppIconContent app={row.app as never} />
+              </span>
+            )}
+            title={row.name}
+            subtitle={row.meta}
+          />
+        ))}
+      </GroupedList>
+    </section>
+  );
+}
+
+/** The profile's loading state, at the SCREEN's own shape.
  *
  * It was the words "Loading profile…" centred in an otherwise empty screen.
  * What arrives now is the regrouped Me: the profile card, three stat cards,
@@ -344,6 +392,7 @@ export function ProfileRoot(): ReactNode {
         <div className="lg:col-start-1 lg:row-start-1">
           <IdentityCard identity={view.identity} />
           <StatCards stats={view.stats} />
+          <WeekCard week={view.week} />
         </div>
         <div className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
           <WorkPanel rows={view.rows} />

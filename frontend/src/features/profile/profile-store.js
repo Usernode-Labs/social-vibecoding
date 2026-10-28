@@ -279,6 +279,44 @@ export function statsView(summary, { kudosParked = KUDOS_PARKED } = {}) {
 }
 
 /**
+ * The "This week" card (#5966): how long the viewer spent this week in apps
+ * they did not make, and which ones — the same week and the same rule the 10
+ * minute app challenge counts, so this card follows that challenge without
+ * opening the challenge page.
+ *
+ * `summary.week` comes from GET /api/me/summary. Null when the summary has not
+ * answered, when it failed (the stat cards fall back to a dash the same way),
+ * or when the week holds under one whole minute: the card never says "0
+ * minutes", it is simply not there.
+ */
+export function weekView(summary) {
+  const w = summary && summary.week;
+  if (!w) return null;
+  const minutes = Number(w.minutes) || 0;
+  if (minutes < 1) return null;
+  const apps = Array.isArray(w.apps) ? w.apps : [];
+  const appCount = Number.isFinite(Number(w.appCount)) ? Number(w.appCount) : apps.length;
+  return {
+    total: t('profile:week.total', { count: minutes, number: minutes.toLocaleString() }),
+    apps: t('profile:week.apps', { count: appCount, number: appCount.toLocaleString() }),
+    rows: apps.map((a) => {
+      const slug = a.slug;
+      const name = a.name || slug;
+      const appMinutes = Number(a.minutes) || 0;
+      return {
+        slug,
+        name,
+        // app-card.js's field names, which AppIconContent reads.
+        app: { slug, name, icon_emoji: a.iconEmoji || null, icon_url: a.iconUrl || null },
+        meta: appMinutes > 0
+          ? t('profile:week.appMinutes', { count: appMinutes, number: appMinutes.toLocaleString() })
+          : t('profile:week.underMinute'),
+      };
+    }),
+  };
+}
+
+/**
  * The "More" rows' second lines — each says what is behind its row, as the
  * prototype's do ("Season 3 · rank #3 · 2 of 3 this week", "3 received").
  * Null when there is nothing true to say yet.
@@ -865,6 +903,8 @@ export function buildProfileView(state, now = Date.now()) {
     identity: identityView(state),
     publicControls: publicControlsView(state),
     stats: statsView(d.summary || null),
+    // Own profile only: another person's page never builds a week for them.
+    week: weekView(d.summary || null),
     rows: moreRowsView(d),
     friends: friendsView(d.friends || null, now),
     feedback: feedbackListView(d.feedback || null, now),

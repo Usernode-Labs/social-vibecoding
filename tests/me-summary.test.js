@@ -16,10 +16,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
+const { loadTsx } = require('./lib/render-tsx');
 
 const root = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
 const collapse = (sql) => sql.replace(/\s+/g, ' ').trim();
+// The Profile screen's pure shaping, which the This week card's view lives in.
+const STORE = 'frontend/src/features/profile/profile-store.js';
 
 const profile = require('../src/routes/profile');
 
@@ -43,6 +46,9 @@ test('an account with nothing yet is zeros, not a failure', () => {
   assert.deepEqual(summary, {
     merged: 0, apps: 0, proposalsTotal: 0, inProgress: 0, kudos: 0, memberSince: null,
     challenges: { done: 0, total: 0, season: null },
+    // A summary built without a week (every older caller) carries the empty
+    // shape, and the client draws no This week card for it (#5966).
+    week: { startsOn: null, endsOn: null, seconds: 0, minutes: 0, appCount: 0, apps: [] },
     contributions: [],
   });
 });
@@ -126,6 +132,7 @@ function mockPool(state) {
       if (sql.includes('AS direct_kudos')) return { rows: [state.counts || {}] };
       if (sql.includes("cs.status = 'merged' AND cs.live_at IS NOT NULL ORDER BY cs.merged_at")) return { rows: state.contributions || [] };
       if (sql.includes('FROM apps WHERE self_hosted = TRUE')) return { rows: state.selfApp ? [state.selfApp] : [] };
+      if (sql.includes('FROM app_activity aa')) return { rows: state.week || [] };
       if (sql.includes('FROM seasons')) return { rows: state.season ? [state.season] : [] };
       if (sql.includes('COUNT(*)::int AS total')) return { rows: [state.totals || { total: 0, done: 0 }] };
       // The season's First challenges, read so a First challenge done counts
@@ -212,4 +219,156 @@ test('?demo=1 in staging fills an empty Me from the merged mocks', async () => {
   const { body } = await get(app, '/api/me/summary?demo=1');
   assert.equal(body.demo, true);
   assert.equal(body.contributions.length, profile.DEMO_CONTRIBUTIONS.length);
+});
+
+// ─── "This week" (#5966) ────────────────────────────────────────────────
+//
+// The profile's own card: minutes spent this week in apps the viewer did not
+// make, per app. It exists so the 10 minute app challenge can be followed
+// from the profile, so it has to be the SAME week and the SAME rule the
+// challenge scores by (src/services/topochain/challenge-scorer.js).
+
+const BOUNDS = { start: '2026-10-26', end: '2026-11-01' };
+
+test('a week of use is whole minutes per app, most used first, and a total over all of them', () => {
+  const { shapeWeek } = profile;
+  const week = shapeWeek([
+    { slug: 'book-club', name: 'Book Club', icon_emoji: '📚', icon_image_id: null, seconds: '545' },
+    { slug: 'garden-swap', name: 'Garden Swap', icon_emoji: '🌱', icon_image_id: 'img1', seconds: '300' },
+    { slug: 'quiz-night', name: 'Quiz Night', icon_emoji: null, icon_image_id: null, seconds: '40' },
+  ], BOUNDS);
+  assert.equal(week.seconds, 885);
+  assert.equal(week.minutes, 14, 'whole minutes, rounded down');
+  assert.equal(week.appCount, 3);
+  assert.equal(week.startsOn, '2026-10-26');
+  assert.equal(week.endsOn, '2026-11-01');
+  assert.deepEqual(week.apps, [
+    { slug: 'book-club', name: 'Book Club', iconEmoji: '📚', iconUrl: null, minutes: 9 },
+    { slug: 'garden-swap', name: 'Garden Swap', iconEmoji: '🌱', iconUrl: '/app-icons/img1', minutes: 5 },
+    // Under a minute is a row, not a dropped one: it says "Under a minute".
+    { slug: 'quiz-night', name: 'Quiz Night', iconEmoji: null, iconUrl: null, minutes: 0 },
+  ]);
+});
+
+test('at most five apps are listed; the total and the app count still cover every app', () => {
+  const rows = Array.from({ length: 7 }, (_, i) => ({
+    slug: `app-${i}`, name: `App ${i}`, icon_emoji: null, icon_image_id: null,
+    seconds: String(600 - i * 60),
+  }));
+  const week = profile.shapeWeek(rows, BOUNDS);
+  assert.equal(profile.WEEK_APPS_LIMIT, 5);
+  assert.equal(week.apps.length, 5, 'the list stops at five');
+  assert.equal(week.appCount, 7, 'the count does not');
+  assert.equal(week.minutes, Math.floor(rows.reduce((n, r) => n + Number(r.seconds), 0) / 60));
+});
+
+test('an empty week is zeros, no rows, and no card', () => {
+  const { weekView } = loadTsx(STORE);
+  const empty = profile.shapeWeek([], BOUNDS);
+  assert.equal(empty.seconds, 0);
+  assert.equal(empty.minutes, 0);
+  assert.equal(empty.appCount, 0);
+  assert.deepEqual(empty.apps, []);
+  // shapeSummary without a week (every older caller) is the empty shape.
+  assert.deepEqual(profile.shapeSummary({ counts: {}, contributions: [], challenges: null }).week,
+    { startsOn: null, endsOn: null, seconds: 0, minutes: 0, appCount: 0, apps: [] });
+  // The client: no summary, under a whole minute, and no week at all.
+  assert.equal(weekView(null), null);
+  assert.equal(weekView({}), null);
+  assert.equal(weekView({ week: { minutes: 0, seconds: 59, appCount: 1, apps: [{ slug: 'a', minutes: 0, seconds: 59 }] } }), null,
+    'under one whole minute is no card, never "0 minutes"');
+  assert.equal(weekView({ week: { minutes: 0, seconds: 59, apps: [] } }), null);
+});
+
+test('the week query is the challenge\'s own rule: apps the viewer did not make, their own activity', () => {
+  const sql = collapse(profile.WEEK_USE_SQL);
+  assert.match(sql, /FROM app_activity aa JOIN apps a ON a\.id = aa\.app_id/);
+  assert.match(sql, /aa\.user_id = \$1/);
+  assert.match(sql, /aa\.date >= \$2::date AND aa\.date <= \$3::date/);
+  assert.match(sql, /a\.created_by IS DISTINCT FROM aa\.user_id/,
+    'the same exclusion USE_APPS_MINUTES_SQL applies, so the card and the challenge agree');
+  assert.match(sql, /HAVING SUM\(aa\.seconds_spent\) > 0/);
+  assert.match(sql, /ORDER BY seconds DESC, a\.name ASC, a\.id ASC/);
+  // The challenge's own statement, read from the scorer, checks the same rule.
+  const scorer = read('src/services/topochain/challenge-scorer.js');
+  const challengeSql = collapse(scorer.slice(scorer.indexOf('const USE_APPS_MINUTES_SQL'),
+    scorer.indexOf('const PROPOSAL_SENT_SQL')));
+  assert.match(challengeSql, /a\.created_by IS DISTINCT FROM aa\.user_id/);
+});
+
+test('the week is Monday 00:00 to Sunday 23:59 UTC, whatever the server\'s own time zone', () => {
+  const { weekBounds } = profile;
+  assert.deepEqual(weekBounds(Date.parse('2026-10-28T12:00:00Z')), { start: '2026-10-26', end: '2026-11-01' },
+    'a Wednesday mid-week');
+  assert.deepEqual(weekBounds(Date.parse('2026-11-01T23:30:00Z')), { start: '2026-10-26', end: '2026-11-01' },
+    'a Sunday night is still that week');
+  assert.deepEqual(weekBounds(Date.parse('2026-11-02T00:00:00Z')), { start: '2026-11-02', end: '2026-11-08' },
+    'Monday midnight starts the next one');
+  assert.deepEqual(weekBounds(Date.parse('2026-10-26T00:00:00Z')), { start: '2026-10-26', end: '2026-11-01' },
+    'Monday midnight is the first moment of its own week');
+});
+
+test('the summary route asks for the viewer\'s week in the same round as its other reads', async () => {
+  const { app, pool } = makeApp({
+    counts: {}, season: null,
+    week: [{ slug: 'book-club', name: 'Book Club', icon_emoji: '📚', icon_image_id: null, seconds: '545' }],
+  }, { user: USER });
+  const { status, body } = await get(app, '/api/me/summary');
+  assert.equal(status, 200);
+  assert.equal(body.week.minutes, 9);
+  assert.equal(body.week.appCount, 1);
+  const call = pool.calls.find((c) => c.sql.includes('FROM app_activity aa'));
+  assert.ok(call, 'the week query ran');
+  assert.equal(call.params[0], 7, 'the session user');
+  const bounds = profile.weekBounds();
+  assert.deepEqual(call.params.slice(1), [bounds.start, bounds.end]);
+});
+
+test('the profile draws This week after the stat cards, with the catalog texts, and nothing without one', () => {
+  const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
+  // The SERVER's shape: the store is what turns it into the card's words.
+  const week = {
+    startsOn: '2026-10-26', endsOn: '2026-11-01', seconds: 885, minutes: 14, appCount: 3,
+    apps: [
+      { slug: 'book-club', name: 'Book Club', iconEmoji: '📚', iconUrl: null, minutes: 9 },
+      { slug: 'quiz-night', name: 'Quiz Night', iconEmoji: null, iconUrl: null, minutes: 0 },
+    ],
+  };
+  const render = (summaryWeek) => {
+    const state = {
+      open: true,
+      data: {
+        ranking: { season_name: 'Season 3', rank: 3 },
+        summary: {
+          merged: 3, apps: 2, kudos: 1, memberSince: '2026-03-04T10:00:00Z',
+          challenges: { done: 2, total: 7, season: { id: 3, name: 'Season 3' } },
+          week: summaryWeek,
+        },
+        ownerPublicProfile: null,
+      },
+      user: { username: 'evan', links: {} },
+      sheetOpen: false, publicStatus: '', publishing: false, previewOpen: false,
+    };
+    const real = loadTsx(STORE);
+    const mod = loadTsx('frontend/src/features/profile/profile-view.tsx', {
+      stubs: { './profile-store.js': { ...real, profileStore: { get: () => state, subscribe: () => () => {} } } },
+    });
+    return renderToHtml(createElement(mod.ProfileRoot, {}));
+  };
+  const html = render(week);
+  const stats = html.indexOf('id="profile-stats"');
+  const card = html.indexOf('id="profile-week"');
+  const work = html.indexOf('id="profile-work"');
+  assert.ok(stats >= 0 && card >= 0 && work >= 0, 'all three render');
+  assert.ok(stats < card && card < work, 'This week sits between the stat cards and Your work');
+  assert.ok(html.includes('data-profile-week-app="book-club"'), 'each app has a row');
+  assert.ok(html.includes('Under a minute'), 'an app used under a minute says so');
+  assert.ok(!/id="profile-week"/.test(render({ minutes: 0, seconds: 59, appCount: 0, apps: [] })),
+    'no whole minute this week: no card');
+});
+
+test('app_activity gets the index one person\'s week needs', () => {
+  const schema = read('src/db/schema.sql');
+  assert.match(schema, /CREATE INDEX IF NOT EXISTS idx_app_activity_user_date ON app_activity\(user_id, date\);/,
+    'the UNIQUE(app_id, …) constraint cannot answer "this user, these dates"');
 });

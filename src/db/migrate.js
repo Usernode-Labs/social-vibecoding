@@ -147,6 +147,9 @@ async function migrate(config) {
   await seedStagingLandingDirectory(pool);
   // After both: it tags their demo apps with a type.
   await seedStagingAppCategories(pool);
+  // Needs the capture member (seedCaptureUser): it gives them a week of use
+  // in other people's apps, which the profile's This week card draws (#5966).
+  await seedStagingWeekUse(pool);
   await seedStagingFailedApp(pool, config);
   await seedStagingForkLineage(pool, config);
   // After the fork fixtures: it switches one of them into demo mode.
@@ -6405,6 +6408,76 @@ async function seedStagingLandingDirectory(pool) {
     log.info('db', 'Staging landing-directory fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging landing-directory seeding failed', { message: err.message });
+  }
+}
+
+// The profile's "This week" card (#5966) reads the capture member's own
+// app_activity for the current Monday-to-Sunday week. A capture identity has
+// no such history, so on a fresh preview the card would simply not be there —
+// no states to compare, nothing to review. This gives usernode-capture three
+// apps somebody else made and real minutes in them, one of them under a
+// minute, so the card draws its total, two app rows and its "Under a minute"
+// line.
+//
+// Dates are THIS week's (date_trunc('week') is Monday in PostgreSQL, the same
+// week the challenge and the card use) and never in the future: a row dated
+// ahead of today would still be inside the week the card sums. ON CONFLICT
+// keeps the every-boot rerun idempotent, and re-deriving the dates weekly is
+// what keeps the fixture in the week being captured. Strictly a no-op outside
+// staging.
+async function seedStagingWeekUse(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    const { rows } = await pool.query(
+      'SELECT id FROM users WHERE username = $1', ['usernode-capture']
+    );
+    if (!rows.length) return;
+    const viewerId = rows[0].id;
+
+    // The apps are somebody else's: the rule the card and the 10 minute app
+    // challenge both apply is `created_by IS DISTINCT FROM` the viewer.
+    const OWNER_ID = 900120;
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES ($1, 'staging-demo-week-builder', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`,
+      [OWNER_ID]
+    );
+    const apps = [
+      { id: 900120, slug: 'staging-demo-recipe-box', name: '[Mock] Recipe Box', emoji: '🍲' },
+      { id: 900121, slug: 'staging-demo-garden-swap', name: '[Mock] Garden Swap', emoji: '🌱' },
+      { id: 900122, slug: 'staging-demo-quiz-night', name: '[Mock] Quiz Night', emoji: '❓' },
+    ];
+    for (const a of apps) {
+      await pool.query(
+        `INSERT INTO apps (id, name, slug, status, view_visibility, collab_visibility, created_by, icon_emoji)
+         VALUES ($1, $2, $3, 'running', 'public', 'public', $4, $5)
+         ON CONFLICT DO NOTHING`,
+        [a.id, a.name, a.slug, OWNER_ID, a.emoji]
+      );
+    }
+
+    // 14 minutes in all: 9 in the first, 5 in the second, and 40 seconds —
+    // "Under a minute" — in the third.
+    const activity = [
+      { appId: 900120, offset: 0, secs: 400 },
+      { appId: 900120, offset: 2, secs: 145 },
+      { appId: 900121, offset: 1, secs: 300 },
+      { appId: 900122, offset: 3, secs: 40 },
+    ];
+    for (const a of activity) {
+      await pool.query(
+        `INSERT INTO app_activity (app_id, user_id, seconds_spent, date)
+         VALUES ($1, $2, $3, LEAST(date_trunc('week', CURRENT_DATE)::date + $4::int, CURRENT_DATE))
+         ON CONFLICT (app_id, user_id, date) DO NOTHING`,
+        [a.appId, viewerId, a.secs, a.offset]
+      );
+    }
+
+    log.info('db', 'Staging This-week fixture seeded');
+  } catch (err) {
+    log.warn('db', 'Staging This-week seeding failed', { message: err.message });
   }
 }
 

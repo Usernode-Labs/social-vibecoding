@@ -890,6 +890,10 @@ CREATE TABLE IF NOT EXISTS app_activity (
   UNIQUE(app_id, user_id, date)
 );
 ALTER TABLE app_activity ADD COLUMN IF NOT EXISTS precise_milliseconds BIGINT NOT NULL DEFAULT 0;
+-- One person's week (the profile's "This week" card, #5966): the only other
+-- index on the table is the UNIQUE(app_id, user_id, date) constraint, which
+-- leads with app_id and so cannot answer "this user, these dates".
+CREATE INDEX IF NOT EXISTS idx_app_activity_user_date ON app_activity(user_id, date);
 
 -- Delivery receipts for engaged-use batches. A browser retains the same UUID
 -- until acknowledgement, so a response lost after COMMIT can be retried
