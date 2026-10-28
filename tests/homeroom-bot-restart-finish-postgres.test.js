@@ -106,7 +106,14 @@ const fakeWorker = {
   // The turn the restart caught, followed through its journal.
   resumeTurnFromJournal: async (sessionId, opts) => {
     calls.push(['resume', sessionId]);
-    return replay(opts.journal, opts.agentHarness || 'claude');
+    const result = replay(opts.journal, opts.agentHarness || 'claude');
+    // This fixture replaces Git I/O: completion returns its publication
+    // result before the recovered tail may propose or start checks.
+    if (opts.mode === 'build' && result.ahead > 0 && result.sha && !result.pushOk) {
+      try { await fakeWorker.execPushFromWorker(sessionId, opts.branchName); result.pushOk = true; }
+      catch (err) { result.pushFailed = err.code || 'push_failed'; }
+    }
+    return result;
   },
   execPushFromWorker: async (sessionId, branch) => {
     pushes.push([sessionId, branch]);
@@ -367,7 +374,7 @@ test('a restart no longer loses a finished bot build: recovery leaves it to its 
     assert.deepEqual(proposed.slice(-1), [sessionId], 'proposed');
     const kept = saves.find((v) => v['turn:build']?.phase === 'done')['turn:build'];
     assert.deepEqual(kept.record, { turnId, journal }, 'the followed turn\'s result is kept, under its record');
-    assert.equal(kept.out.routed.result.repushed, true);
+    assert.equal(kept.out.routed.result.pushOk, true);
     assert.equal((await sessionRow(sessionId)).workflow_owner, `bot-build/run:${runId}`,
       'the session carries the build that owns it, which server.js reads');
   });

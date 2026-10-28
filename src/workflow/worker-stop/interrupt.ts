@@ -14,18 +14,18 @@ import type { StopRequest } from './request.ts';
 export const MACHINE = 'worker-interrupt';
 export const WORK = 'worker.interrupt';
 export const DISPATCH = 'worker.dispatch';
-export type Strategy = 'turn' | 'worker';
+export type Strategy = 'turn';
 export type Interrupt = Omit<Request, 'userId'> & { userId: number | null; strategy: Strategy; legacy?: string | null; by?: string | null };
 export type Input = Interrupt & { expiresAt: number };
 export const interruptKey = (p: Interrupt) => `session:${p.sessionId}:interrupt:${canonicalHash([
   p.userId, p.appId, p.ownerId, p.configVersion, p.active, p.turnId, p.journal, p.legacy ?? null, p.active ? null : p.usedAt, p.strategy,
 ])}`;
 type Data = { target: Input; attempts: number; result?: Json };
-type State = { name: typeof NONE | 'signalling' | 'waiting' | 'probing' | 'runtime' | 'done'; data: Data | null };
+type State = { name: typeof NONE | 'signalling' | 'waiting' | 'probing' | 'done'; data: Data | null };
 type Facts = { target: Input | null; reason: string | null };
 const ended = (s: State, result: Json): Outcome<State> => ({ next: { name: 'done', data: { ...s.data!, result } }, timer: null });
-function work(data: Data, action: 'signal' | 'probe' | 'runtime'): Outcome<State> {
-  return { next: { name: action === 'signal' ? 'signalling' : action === 'probe' ? 'probing' : 'runtime', data },
+function work(data: Data, action: 'signal' | 'probe'): Outcome<State> {
+  return { next: { name: action === 'signal' ? 'signalling' : 'probing', data },
     timer: null, work: [{ kind: WORK, key: `${data.target.requestId}:${action}:${data.attempts}`,
       input: { target: data.target, action } as unknown as Json }] };
 }
@@ -44,7 +44,7 @@ function probed(s: State, out: any, ctx: TransitionContext): Outcome<State> {
     : ended(s, { confirmed: verdict === 'confirmed', reason: verdict });
 }
 export function workerInterrupt() {
-  const start = { to: (_s: State, _e: any, f: Facts) => work({ target: f.target!, attempts: 1 }, f.target!.strategy === 'worker' ? 'runtime' : 'signal') };
+  const start = { to: (_s: State, _e: any, f: Facts) => work({ target: f.target!, attempts: 1 }, 'signal') };
   const pending = { ignore: 'already_stopping' };
   return defineMachine<State, Facts>({
     name: MACHINE, version: 1, retainDays: 1, create: ['Requested'], terminal: ['done'],
@@ -52,7 +52,7 @@ export function workerInterrupt() {
     events: {
       Requested: (p: any) => {
         const r = requested(p, { allowIdentityless: true, allowSystem: true });
-        if (!['turn', 'worker'].includes(p.strategy)) throw new Error('A stop must name its strategy');
+        if (p.strategy !== 'turn') throw new Error('A stop must name its strategy');
         const legacy = p.legacy ?? null;
         if ((legacy !== null && !/^[a-f0-9]{64}$/.test(legacy)) || (r.active && !r.turnId && !r.journal && !legacy)) throw new Error('An old record must name its fingerprint');
         if (p.by != null && (typeof p.by !== 'string' || p.by.length > 100)) throw new Error('A stopper must name a person');
@@ -97,8 +97,6 @@ export function workerInterrupt() {
         WorkFailed: { to: (s, _e, _f, ctx) => probed(s, null, ctx) },
         WorkExhausted: { to: (s, _e, _f, ctx) => probed(s, null, ctx) },
       },
-      runtime: { Requested: pending, Tick: { ignore: 'not_waiting' }, WorkSucceeded: { to: (s, e) => ended(s, e.payload.result ?? { confirmed: true }) },
-        WorkFailed: { to: s => ended(s, { confirmed: false, reason: 'unavailable' }) }, WorkExhausted: { to: s => ended(s, { confirmed: false, reason: 'unavailable' }) } },
       done: { Requested: start, '*': { ignore: 'done' } },
     },
   });

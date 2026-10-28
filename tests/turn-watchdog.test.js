@@ -9,9 +9,9 @@
 //      inFlight flag is off (that gap is what let the auto-pause
 //      sweeper destroy workers mid-wrap-up).
 //   3. Source guards — the sweepers in server.js must use the shared
-//      predicate + the active_turn SQL guard, run-cc.sh must emit the
-//      terminal phase markers, and the push-failure path in
-//      routes/sessions.js must heal-then-error instead of warning.
+//      predicate + the active_turn SQL guard, the conductor must append
+//      terminal publication markers, and the push-failure path in
+//      routes/sessions.js must stop PR creation instead of warning.
 //
 // Run with: node --test tests/turn-watchdog.test.js
 
@@ -45,13 +45,13 @@ test('appendTerminalLine: appends the marker and reports it did', () => {
   assert.deepEqual(lines, ['[commit]', '[push]', '[done]']);
 });
 
-test('appendTerminalLine: dedups an identical trailing marker (new worker images emit their own)', () => {
+test('appendTerminalLine: dedups an identical trailing marker (journal replay can repeat it)', () => {
   const lines = ['[push]', '[done]'];
   assert.equal(appendTerminalLine(lines, '[done]'), false);
   assert.deepEqual(lines, ['[push]', '[done]']);
 });
 
-test('appendTerminalLine: a healed push overwrites [push_failed] with [done]', () => {
+test('appendTerminalLine: successful publication supersedes [push_failed] with [done]', () => {
   const lines = ['[push]', '[push_failed]'];
   assert.equal(appendTerminalLine(lines, '[done]'), true);
   assert.equal(lines[lines.length - 1], '[done]');
@@ -154,36 +154,18 @@ test('server.js recovery flow registers in activeWorkers and bumps last_activity
   );
 });
 
-test('run-cc.sh emits terminal phase markers on scout and build paths', () => {
-  const doneMarkers = runCcSrc.match(/__USERNODE_PHASE__ done/g) || [];
-  assert.ok(doneMarkers.length >= 2, 'expected done markers on both scout and build paths');
-  assert.ok(/__USERNODE_PHASE__ push_failed/.test(runCcSrc), 'push_failed marker missing');
-  // A terminal marker must precede every build __USERNODE_RESULT__ line
-  // (the push's, and a failed turn's that skips it) so the journal's last
-  // phase is terminal.
-  const lines = runCcSrc.split('\n');
-  const buildResults = lines.map((line, i) => [line, i]).filter(([line]) => /__USERNODE_RESULT__ .*mode=build/.test(line));
-  assert.ok(buildResults.length >= 1);
-  for (const [, i] of buildResults) {
-    const phase = lines.slice(0, i).reverse().find((line) => /__USERNODE_PHASE__/.test(line));
-    assert.match(phase, /__USERNODE_PHASE__ (done|push_failed)/,
-      'terminal marker must be emitted before the build result line');
-  }
+test('the conductor appends terminal progress after publication; scout still finishes in its runner', () => {
+  assert.match(runCcSrc, /__USERNODE_PHASE__ done/);
+  const workerSrc = fs.readFileSync(path.join(__dirname, '..', 'src/services/worker.js'), 'utf8');
+  assert.match(workerSrc, /progress\(state.pushFailure \|\| state.branchMismatch \? '\[push_failed\]' : '\[done\]'\)/);
 });
 
-test('sessions.js heals a failed push, then errors instead of warning', () => {
-  // The heal helper re-pushes from the platform side...
-  assert.ok(
-    /worker\.execPushFromWorker\(session\.id, session\.branch_name\)/.test(sessionsSrc),
-    'push heal must call worker.execPushFromWorker'
-  );
-  // ...and the terminal-failure branch sits BEFORE the headless/interactive
-  // success branches, so PR creation and staging are skipped entirely.
-  const healBranchIdx = sessionsSrc.indexOf("else if (!result.pushOk && !(await healPush()))");
+test('a failed shared publication stops PR and preview creation', () => {
+  const failureBranchIdx = sessionsSrc.indexOf('} else if (!result.pushOk) {');
   const headlessBranchIdx = sessionsSrc.indexOf('} else if (headless) {');
-  assert.ok(healBranchIdx !== -1, 'terminal push-failure branch missing');
+  assert.ok(failureBranchIdx !== -1, 'terminal push-failure branch missing');
   assert.ok(headlessBranchIdx !== -1, 'headless branch missing');
-  assert.ok(healBranchIdx < headlessBranchIdx,
+  assert.ok(failureBranchIdx < headlessBranchIdx,
     'push-failure branch must precede the PR/staging success branches');
   // The old soft warnings are gone.
   assert.ok(!/Warning: push reported a failure/.test(sessionsSrc),

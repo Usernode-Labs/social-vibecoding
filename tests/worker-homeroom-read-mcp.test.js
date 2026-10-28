@@ -19,7 +19,6 @@ const path = require('node:path');
 const http = require('node:http');
 const { spawnSync } = require('node:child_process');
 const { z } = require('zod');
-const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
@@ -45,7 +44,7 @@ test('the grant rides only on build and scout turns, on either backend', () => {
     shotsFullAdminToken: 'f', homeroomMcpToken: GRANT,
   });
   const codex = (mode) => worker.buildTurnSecretEnv({
-    mode, agentBackend: 'codex_openrouter', workerPushJwt: 'w', issuesReadJwt: 'i', openrouterApiKey: 'k',
+    mode, agentBackend: 'codex_openrouter', visibleChangesJwt: 'w', issuesReadJwt: 'i', openrouterApiKey: 'k',
     shotsJwt: 'e', shotsMemberToken: 'm', shotsAdminToken: 'a',
     shotsFullAdminToken: 'f', homeroomMcpToken: GRANT,
   });
@@ -220,7 +219,7 @@ exit 1
     PROMPT_FILE: prompt,
     BRANCH: 'smoke',
     MODE: mode,
-    ...RUNNER_TEST_ENV, WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://p',
+    WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://p',
     OPENROUTER_API_KEY: 'sk-or-v1-test', OPENROUTER_API_BASE: 'https://openrouter.ai/api/v1',
     AGENT_MODEL: 'z-ai/glm-5.3-flash', AGENT_MODEL_NAME: 'GLM',
     AGENT_MODEL_CONTEXT_WINDOW: '200000', AGENT_MODEL_SUPPORTS_TOOLS: '1',
@@ -279,7 +278,7 @@ exit 0
   const env = {
     ...process.env,
     PATH: `${bin}:${process.env.PATH}`,
-    ...RUNNER_TEST_ENV, PROMPT_FILE: prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
+    PROMPT_FILE: prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
     MODE: mode, WORKSPACE_DIR: ws, WORKER_JWT: 'jwt',
     ...(mode === 'build' ? { SYSTEM_PROMPT_FILE: systemPrompt } : {}),
     HOMEROOM_MCP_CONFIG: homeroomConfig, BROWSER_MCP_CONFIG: browserConfig, BROWSER_ONLY_MCP_CONFIG: browserOnlyConfig,

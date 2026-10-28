@@ -102,6 +102,16 @@ const ARGS = {
 // run-cc.sh exits 1 for it.
 const FAILED = { ccExit: 0, exitCode: 1, pushOk: false, ahead: 0, sha: '', lastResultText: API_ERROR };
 
+test('a recorded publication failure neither reruns the paid turn nor enters partial-work healing', async () => {
+  const h = harness({ buildTurn: { exitCode: 0, pushOk: false, ahead: 1, sha: 'saved',
+    pushFailed: 'no_token', pushFailure: { code: 'no_token', permanent: true } },
+  kept: { pushed: true, sha: 'must-not-heal', commits: 1 } });
+  const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS, propose: true, keepPartial: true,
+    review: { reviewer: REVIEWER, owner: { botRunId: 900 } } });
+  assert.equal(out.ok, false); assert.equal(h.calls.turns.filter(c => c.mode === 'build').length, 1);
+  assert.deepEqual(h.calls.kept, []); assert.deepEqual(h.calls.promotions, []);
+});
+
 // ── 1. Partial work is kept, reviewed and proposed ──────────────────────
 
 test('a live first version whose build turn failed proposes the work it pushed once its review sees it boot', async () => {

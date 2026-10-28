@@ -57,9 +57,6 @@ const githubStub = {
   },
   async createIssueComment() { return { id: 1 }; },
   async closeIssue() { return {}; },
-  noteIssueCreated() {},
-  noteIssuesClosed() {},
-  invalidateIssuesCache() {},
   safeMention: (s) => s,
 };
 require.cache[githubId] = {

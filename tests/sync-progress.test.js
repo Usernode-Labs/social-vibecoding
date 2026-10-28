@@ -393,6 +393,8 @@ test('activity: each syncResult outcome produces the right terminal row', async 
     { syncResult: 'already_synced', pushOk: true, re: /already up to date/i, ok: true },
     { syncResult: 'clean', pushOk: true, re: /Merged main cleanly/i, ok: true },
     { syncResult: 'resolved', pushOk: true, re: /Claude resolved merge conflicts/i, ok: true },
+    { syncResult: 'clean', pushOk: false, re: /publication failed.*commit is kept/i, ok: false },
+    { syncResult: 'resolved', pushOk: false, re: /publication failed.*commit is kept/i, ok: false },
   ];
   for (const tc of cases) {
     const { subject, restore } = loadSyncMain({
@@ -401,7 +403,8 @@ test('activity: each syncResult outcome produces the right terminal row', async 
     try {
       const pool = activityPool();
       const res = await subject.runSyncMain({ jwtSecret: 's' }, pool, 7, { sessionRow: ownerRow() });
-      assert.equal(res.ok, tc.ok, `${tc.syncResult}: ok flag`);
+      if (tc.pushOk === false) assert.equal(res.outcome, 'not_pushed', 'publication failed, so no revision is adopted');
+      else assert.equal(res.ok, tc.ok, `${tc.syncResult}: ok flag`);
       const contents = statusContents(pool);
       assert.ok(contents.some((c) => tc.re.test(c)), `${tc.syncResult}: terminal text`);
       assert.equal(eventInserts(pool).length, 1, `${tc.syncResult}: one SYNC_MAIN event`);

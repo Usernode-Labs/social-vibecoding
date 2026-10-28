@@ -43,7 +43,6 @@ appAccess.sessionCollabGuard = () => (req, res, next) => next();
 
 const github = require('../src/services/github');
 github.isEnabled = () => true;
-github.noteIssueCreated = () => {};
 // The GitHub App, installed on the platform repository's owner: the only
 // GitHub credential (services/github.js "Who Homeroom is on GitHub").
 github._setAppForTests({

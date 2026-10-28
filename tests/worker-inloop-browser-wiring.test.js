@@ -204,14 +204,13 @@ test('scout/sync stay browser-free while evidence gets only its purpose-bound MC
   assert.match(cc, /if \[ "\$MODE" = "shots" \]; then[\s\S]*BROWSER_MCP_CONFIG="\$SHOTS_TMP\/mcp\.json"[\s\S]*BROWSER_MCP_FLAGS="--mcp-config \$BROWSER_MCP_CONFIG --strict-mcp-config"/);
 });
 
-test('build commit + push + RESULT are emitted unconditionally, not under any browser guard', () => {
+test('build commit + RESULT are emitted unconditionally, not under any browser guard', () => {
   const cc = read('run-cc.sh');
-  // The commit/push/result block sits after the claude call and is not
+  // The commit/result block sits after the claude call and is not
   // nested inside any `if ... BROWSER ...` — so whether or not the agent
   // used (or failed to boot) the browser, the turn still commits and
   // reports. Assert the phases exist at column 0 (top-level), unguarded.
   assert.match(cc, /\necho "__USERNODE_PHASE__ commit"/);
-  assert.match(cc, /\necho "__USERNODE_PHASE__ push"/);
   // The line may end with the branch_mismatch field (worker/session-branch.sh),
   // the stop guard's stop_hook_blocks field (worker/build-stop-hook.js) and
   // the container's memory (worker/memory-fields.sh).

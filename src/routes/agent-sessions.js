@@ -701,7 +701,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     }
     try {
       const result = await agentStop.requestStop({
-        pool, user: req.user, agentSessionId: id, force: body.force === true,
+        pool, user: req.user, agentSessionId: id,
         token: body.token || null, scheduleInteractiveRecovery,
       });
       return res.status(result.status).json(result.body);

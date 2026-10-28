@@ -93,7 +93,6 @@ export interface AgentTurnState {
   stopping?: boolean;
   stopRequestedAt?: number | null;
   stopToken?: string | null;
-  canForceStop?: boolean;
   changeId?: number | null;
   /** Epoch ms the running work started: the build once dispatched, else the turn. */
   startedAt?: number | null;
@@ -625,7 +624,7 @@ export async function switchChange(id: number, changeId: number): Promise<AgentS
   return body.session;
 }
 
-export async function stopTurn(id: number, options: { token?: string | null; force?: boolean } = {}): Promise<{ stopped: boolean; reason?: string; stopRequestedAt?: number | null }> {
+export async function stopTurn(id: number, options: { token?: string | null } = {}): Promise<{ stopped: boolean; reason?: string; stopRequestedAt?: number | null }> {
   return json<{ stopped: boolean; reason?: string; stopRequestedAt?: number | null }>(
     await request(`/api/agent-sessions/${id}/stop`, { method: 'POST', body: JSON.stringify(options) }),
     t('agent:session.error.stopFailed'),

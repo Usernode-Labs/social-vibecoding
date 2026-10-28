@@ -33,7 +33,6 @@ llm.generateIssueTitle = async () => ({ title: 'Generated title', usage: undefin
 
 const github = require('../src/services/github');
 github.isEnabled = () => true;
-github.noteIssueCreated = () => {};
 
 // Platform-target feedback files a request row on the platform's own board
 // (services/requests.js, through github.createIssue); an in-memory store

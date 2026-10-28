@@ -53,13 +53,9 @@ process is), so what a follower could not do had to move:
 - **No loop needs a wake over the bus**: a launch appends its machine's event
   in whatever process it lands (the bench lane's `Look`, the shots evals'
   `Look`).
-- **What one process learns about a repo's issues, the others hear**
-  (`issues_cache`): a close, a reopen or an invalidation leaves every
-  process's open-issues copy, so a list a web process serves is as fresh as
-  the merge or the heal the conductor made. An issue the platform files
-  reaches every copy too (15 Oct 2026), so the conductor's bot reads a
-  request a web process filed, a project's first version among them, at
-  once rather than once GitHub's own list has it.
+- **Issue lists come from the current provider**: the old process-local issue
+  cache and its cache-only bus messages are removed. Actual issue updates
+  still notify connected browsers through `issue_update`.
 - **A DM answer the bot owes** is the person's DM machine's (`bot-dm`, docs/workflows.md):
   the message is heard in its own transaction on the web Pod, and the answer, and any
   later try, are its work, wherever the workflow loops run.
@@ -84,52 +80,64 @@ machine whose work runs the turn, and a worker's callbacks (the model proxy,
 BYOK spend, a shots eval's bill) read a turn that is not in their process
 from the database.
 
-Worker push callbacks use the `worker-push` machine
-(`src/workflow/worker-push/`). The HTTP handler authenticates the worker and
-reads its stored branch, then waits for a separate request instance. The
-conductor rechecks the session, account, app, branch, repository and public
-visibility before exporting Git objects and running authenticated Git in the
-trusted pusher. No JWT, Git credential or Git bundle enters the event or work
-input. A request not started within 80 seconds expires; an HTTP wait that
-times out returns a retryable 503. There is no direct web-side push fallback.
-The handler has its own work kind and concurrency, so a turn waiting for its
-worker's callback does not occupy the push queue. Local `all` processes run
-the same machine and handler.
+Coding runners commit and journal their result. Both live completion
+(`worker.execInWorker`) and journal recovery (`worker.resumeTurnFromJournal`)
+pass through `turn-publication.js` before returning to their caller. This
+covers Claude Code, both OpenRouter harnesses, builds and sync, including a
+sync fast-forward with no commits ahead of main. Failed/discarded or stopped
+runners without a commit are not published; the first-version partial-work
+rescue remains an explicit separate policy.
 
-Agent-context reset and a promoted proposal's Pause queue `worker-release`
-requests (`src/workflow/worker-release/`). Reset writes its release intent in
-the same transaction as the model/context change and transcript message;
-Pause leaves the proposal up for voting. The conductor checks the current
-owner, account, configuration, turn and last use, takes the worker eviction
-lock shared with startup, then deletes only captured runtime identities and
-waits for them to be gone. A later use or context reset makes stale work skip.
-Pause still releases an idle worker when its captured turn has just finished;
-a different running turn is spared. A later turn that also finishes before
-Pause executes can lose its warm worker.
-The work lease and session lock are checked before deletion. An unpushed commit
-is recorded durably in `session_workers` before the turn is released, so
-another conductor or a restarted process can rescue it. Worker preparation
-rescues it under the eviction lock on every image, and the dispatch guard
-checks again before any runner can reset the checkout. A caller whose own
-attempt is already registered supplies its `turnId`; only that matching
-`dispatch_pending` attempt may see through the active-turn guard. A different
-running turn is left alone. A new turn never supersedes an unpushed commit.
-Failed rescue or a failed database read prevents a new turn, agent-reset or
-promoted-Pause removal, idle eviction and stale-worker replacement. A refused
-turn starts no agent, charges no coding turn, and releases only its own
-pending record. The refusal names the commit, branch and push failure;
-permanent failures are passed through to the Mayor and agent dispatch.
-On a GitHub-hosted app during the GitHub pause, a build whose push failed
-blocks further builds in that session until its commit can be pushed.
-Failed record writes retain the turn and journal for recovery.
-The context volume stays. Agent dispatch records an operation immediately
-after switching agents, so its reset release will often skip; reusing that
-warm worker is safe because its setup does not depend on the agent backend.
-A separate machine lets older conductors leave these intents for the new
-build during rollout. The idempotent schema migration adds nullable
-`unpushed_sha` and `unpushed_branch_name` columns to the private table;
-no new runtime configuration is needed. Existing unpushed commits held only
-in an older conductor's memory are not backfilled by this migration.
+A new dispatch record and its publication target are captured in one
+transaction. Capture failure rolls it back and releases only the exact
+undispatched physical attempt, including a pre-registered OpenRouter attempt.
+
+Publication uses the existing `turn_effects` receipt table. Its pending intent
+binds the app, owner, repository, branch and exact commit before Git I/O. The
+conductor rechecks current authority and public visibility and uses the existing
+trusted Git pusher, which imports objects into its own isolated repository and
+never gives credentials to worker code. The export must match the saved SHA;
+pushes never force. Transient errors retry publication up to five times, with
+backoff; permanent or exhausted failures are recorded and returned through the
+existing `pushOk`/failure result. PR creation and checks require success.
+
+A restart before publication or an uncertain push replays the journal and only
+retries that exact publication. A completed receipt is replayed without Git I/O.
+Database failures leave the turn and journal retained. The worker's saved commit
+is durable before publication and stays until it is published or explicitly
+rescued. Worker preparation rescues saved work before any runner can reset its
+checkout; failed rescue prevents startup, eviction or stale-image replacement.
+An inactive session cannot authorize new publication; rescue may still publish
+its exact durable saved commit before eviction. A new turn never supersedes
+saved work. Partial-work rescue also records its
+commit before pushing it. A push failure never dispatches a second paid turn.
+
+The worker push callback, push-specific capability, HTTP retry loop and separate
+`worker-push` machine are removed. Old worker images get a permanent 410 from
+the retired endpoint and return their result; completion reconciles both old
+`push_ok` values and the new commit-only result. OpenRouter build workers keep
+a declaration-only capability for before/after-shot intent, with no Git write
+authority. For one release, the declaration routes also verify old `worker:push`
+tokens held by in-flight builds; new code never mints them, and they cannot
+reach other purposes. The worker-callable PR endpoint also returns permanent 410, with
+no authentication, database, Git or proposal side effects; conductor
+finalization remains the supported creation path. New worker images require
+the conductor completion path for sync; normal releases pin each conductor's
+worker image alongside its code.
+
+A context reset keeps the warm worker. It clears both resume ids, increments
+the configuration version under the existing row lock, and records the reset
+in the transcript. Backend, model and resume values are supplied on each exec;
+worker replacement is not what makes model context fresh. Dispatch still
+refuses stale configuration, and startup rescue still protects saved commits.
+
+A promoted proposal's Pause queues `worker-release` work. The conductor checks
+current owner, account, configuration, turn and last use under the shared worker
+eviction lock, then removes only captured runtime identities and waits for them
+to disappear. A captured turn that just ended can be released; a different
+running turn is spared. A saved commit, including pending publication, prevents
+removal until rescue is safe and succeeds. A captured running turn without a
+saved commit retains its existing release behavior. The context volume stays.
 
 Force-stop fallback uses `worker-stop` requests (`src/workflow/worker-stop/`).
 The web captures the actor, app, owner, configuration and running job, then
@@ -175,11 +183,8 @@ otherwise the durable stamp has no stopper. A locally applied Stop
 still succeeds when admission finds a changed job; it never retargets that job.
 Old records with neither turn id nor journal are fenced by a fingerprint of
 their stored contents and signalled without writing a conductor-local registry.
-The legacy whole-worker fallback uses captured runtime identities and rescues
-saved commits before stopping: Kubernetes removes its Deployment while Docker
-keeps its stopped container, registry entry and sweeper row; both retain the
-context volume. A skipped removal reports the authority, job, completion or
-expiry check that declined it. Retry-time idle waiting performs I/O only on a
+Ordinary Stop has no whole-worker strategy. Force-stop remains the separate,
+identity-fenced fallback. Retry-time idle waiting performs I/O only on a
 conductor and returns false without I/O when called on the web. The route-side
 polling loop, local `confirming` flag and name-based stop shim are removed.
 Older conductors leave this separate machine pending, so rollout can temporarily
@@ -251,6 +256,6 @@ round, is less detailed than what it shows of its own:
   one image and rolls both Deployments; the release pipeline decides that,
   not the chart. With the drain, a conductor release no longer cuts the work
   it was doing, so the gain is smaller than it was.
-- Migrating all remaining infrastructure calls from routes. The push
-  callback above now queues conductor work; other web-side calls still
-  finish in their own process and need to move before privileges are split.
+- Migrating all remaining infrastructure calls from routes. Turn publication
+  runs on the conductor; other web-side calls still finish in their own process
+  and need to move before privileges are split.

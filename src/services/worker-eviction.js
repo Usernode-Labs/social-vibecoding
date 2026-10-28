@@ -107,6 +107,7 @@ async function noteUsed(pool, sessionId, { prepare = null } = {}) {
 // worker used after the request is spared; one starting during removal
 // waits and then boots again. Runtime deletion is by captured identity.
 async function releaseRequested(pool, target, { renew = async () => {}, worker = require('./worker') } = {}) {
+  if (target.reason !== 'promoted-pause') return { skipped: 'retired_reason' };
   let lost = false;
   const checkpoint = async () => {
     if (lost) throw new Error('Worker release lost its session lock');
@@ -127,7 +128,6 @@ async function releaseRequested(pool, target, { renew = async () => {}, worker =
         [target.sessionId, target.appId, target.userId, target.requestedAt]);
       await checkpoint();
       if (!s || s.agent_config_version !== target.configVersion) return false;
-      if (target.reason === 'agent-reset') return !['archived', 'merged'].includes(s.status) && !s.busy && !s.used_after;
       if (s.status !== 'promoted') return false;
       if (target.turnId != null && s.turn_id === target.turnId) return true;
       // The captured turn's own teardown updates last_used_at. Pause still
@@ -136,7 +136,7 @@ async function releaseRequested(pool, target, { renew = async () => {}, worker =
     };
     if (!(await eligible())) return { skipped: 'changed_or_used' };
     try {
-      await worker.rescueUnpushedCommit(target.sessionId);
+      await worker.rescueUnpushedCommit(target.sessionId, { turnId: target.turnId, forTurnStart: true });
     } catch (err) {
       // A permanent push cause refuses new paid turns, but queued removal
       // still retries with backoff: an operator may restore the credential.

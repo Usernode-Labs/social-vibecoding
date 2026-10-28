@@ -184,6 +184,7 @@ test('Kubernetes probes and push proxy preserve Docker operation deadlines', asy
   // The GitHub App's installation token, the push's only GitHub credential.
   const github = require('../src/services/github');
   t.mock.method(github, 'canActOn', () => true);
+  t.mock.method(github, 'checkRepoPublic', async () => ({ ok: true, private: false }));
   t.mock.method(github, 'getInstallationToken', async () => 'fake-test-token');
   const deadlines = [];
   t.mock.method(require('../src/db/pool'), 'getPool', () => ({
@@ -206,7 +207,7 @@ test('Kubernetes probes and push proxy preserve Docker operation deadlines', asy
 });
 
 
-test('recovery and identity-scoped Stop never invoke Docker in Kubernetes mode', async (t) => {
+test('recovery and identity-scoped removal never invoke Docker in Kubernetes mode', async (t) => {
   const prior = process.env.WORKER_RUNTIME;
   process.env.WORKER_RUNTIME = 'kubernetes';
   t.after(() => { if (prior === undefined) delete process.env.WORKER_RUNTIME; else process.env.WORKER_RUNTIME = prior; });
@@ -219,7 +220,7 @@ test('recovery and identity-scoped Stop never invoke Docker in Kubernetes mode',
   t.mock.method(kubernetes, 'deleteWorkerIdentity', async (_cfg, id, captured) => removed.push({ id, captured }));
   t.mock.method(kubernetes, 'workerIdentityGone', async () => true);
   await assert.rejects(worker.watchWorker('sv-worker-s42'), /requires a turn journal/);
-  assert.deepEqual(await worker.stopWorkerByIdentity(42), { stopped: true });
+  assert.deepEqual(await worker.removeWorker(42), { removed: true });
   assert.deepEqual(removed, [{ id: 42, captured: identity }]);
   await assert.rejects(worker.destroyWorker('unexpected-name'), /Invalid Kubernetes worker name/);
 });

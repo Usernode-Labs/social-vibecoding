@@ -12,7 +12,7 @@ import type {
 import { applyProposal } from '../rules/illustrations.ts';
 import { decrypt, encrypt } from '../rules/secrets.ts';
 import { deleteValue, setValue } from '../rules/platform-vars.ts';
-import { appUpdate, boardMoved, chatLine, issuesClosed, issueUpdate as issuePush } from '../pushes.ts';
+import { appUpdate, boardMoved, chatLine, issueUpdate as issuePush } from '../pushes.ts';
 import { GOVERNANCE_KINDS, readFacts } from './facts.ts';
 import type { Facts, Issue } from './facts.ts';
 import { evaluate, nextCheck, withVote } from './gate.ts';
@@ -218,7 +218,7 @@ function apply(
       if (reason) comment += `\n\n${issue.authorName || 'The proposer'}'s reason: ${reason}`;
       work.push({ kind: 'github.closeIssue', key: 'target',
         input: { ...issue.app.repo, number: n, comment, marker: `homeroom-governance:${issueKey(issue.id)}:close`,
-          bustCache: true, appId: issue.appId, appSlug: issue.app.slug } });
+          appId: issue.appId, appSlug: issue.app.slug } });
     }
     // The Homeroom bot's proposals for that request come down once every
     // request they are linked to is closed (services/homeroom-bot-closed-requests.js).
@@ -299,18 +299,16 @@ function supersede(issue: Issue, event: Event<any>, ctx: TransitionContext, caus
 }
 
 // A follow-up result on a closed proposal updates its record.
-// A target closed on GitHub: every web process stops listing it (GitHub's
-// list lags; pushes.ts issuesClosed), then the open-issues lists re-read.
+// A closed request tells open boards to re-read their database-backed list.
 function followupResult(s: { name: Closed; data: ClosedData }, e: Event<WorkResultPayload>, status: Followup['status']): Outcome<GovState> {
   const prev = s.data.followups[e.payload.workKey]!;
   const followups = { ...s.data.followups, [e.payload.workKey]: { ...prev, status, ...(e.payload.error ? { error: e.payload.error.message } : {}) } };
   const input = (prev.input || {}) as Record<string, Json>;
-  const closed = status === 'done' && e.payload.kind === 'github.closeIssue' && input.bustCache
+  const closed = status === 'done' && e.payload.kind === 'github.closeIssue'
     && !(e.payload.result as { gone?: boolean } | null)?.gone;
   return {
     next: { name: s.name, data: { ...s.data, followups } },
     push: closed ? [
-      issuesClosed({ owner: String(input.owner), repo: String(input.repo), numbers: [Number(input.number)] }),
       boardMoved(issuePush({ action: 'github_synced', appSlug: input.appSlug ?? null, appId: input.appId ?? null, source: 'close_issue_vote' })),
     ] : undefined,
   };

@@ -37,7 +37,7 @@ const closedRequests = require('../src/services/homeroom-bot-closed-requests');
 const bot = require('../src/services/homeroom-bot');
 const tray = require('../src/services/homeroom-bot-tray');
 // The real closeTwinRows stands in for the stub watcher's close (it is the
-// writer the stub must use); only bustAndBroadcast is stood in for.
+// writer the stub must use); only broadcastClosed is stood in for.
 const realWatcher = require('../src/services/issue-close-watcher');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
@@ -337,7 +337,7 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
 
   // The ws stub stands in for the real one while these subtests run: what an
   // open tray hears (noteWorkChanged) and what the group chat hears
-  // (bustAndBroadcast's github_synced) is how the strip and the panel learn.
+  // (broadcastClosed's github_synced) is how the strip and the panel learn.
   const wsId = require.resolve('../src/services/ws');
   const realWs = require.cache[wsId];
   const stubWs = () => {
@@ -418,7 +418,7 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
     try {
       const out = await closedRequests.closeRequestRows(pool, {
         appId: app.id, appSlug: app.slug, repoUrl: app.repo_url,
-        openNumbers: [62], deps: { github, watcher: { ...realWatcher, bustAndBroadcast(args) { busted.push(args); } } },
+        openNumbers: [62], deps: { github, watcher: { ...realWatcher, broadcastClosed(args) { busted.push(args); } } },
       });
       assert.deepEqual(out, { closed: [60] });
       assert.deepEqual(github.asked.sort((a, b) => a - b), [60, 64, 65],

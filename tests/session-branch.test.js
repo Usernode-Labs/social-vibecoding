@@ -22,7 +22,6 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
-const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 
 const ROOT = path.join(__dirname, '..');
 const LIB = path.join(ROOT, 'worker', 'session-branch.sh');
@@ -316,7 +315,7 @@ function runnerEnv(t, ws, agentScript, extra = {}) {
     PATH: `${bin}:${process.env.PATH}`,
     HOME: dir,
     PROMPT_FILE: prompt, SYSTEM_PROMPT_FILE: system,
-    ...RUNNER_TEST_ENV, SESSION_ID: '1', PLATFORM_URL: 'http://127.0.0.1:9', WORKER_JWT: 'jwt',
+    SESSION_ID: '1', PLATFORM_URL: 'http://127.0.0.1:9', WORKER_JWT: 'jwt',
     MODE: 'build', BRANCH: 'dev/me', WORKSPACE_DIR: ws,
     BROWSER_MCP_CONFIG: path.join(dir, 'no-mcp.json'),
     INLOOP_PGDATA: path.join(dir, 'no-pgdata'),
@@ -364,7 +363,6 @@ test('run-cc.sh: a build that ended on another line reports no changes and branc
   assert.equal(res.ahead, '0');
   assert.equal(res.sha, '');
   assert.equal(res.push_ok, '0');
-  assert.match(out, /__USERNODE_WARN__ skipping push/);
 
   const state = worker.newWatchState();
   worker.parseLine(out.split('\n').find((l) => l.startsWith('__USERNODE_RESULT__')), () => {}, state);
@@ -392,7 +390,7 @@ exit 0
     ...GIT_ENV,
     PATH: `${bin}:${process.env.PATH}`, HOME: dir,
     PROMPT_FILE: prompt, BRANCH: 'dev/me', MODE: 'build',
-    ...RUNNER_TEST_ENV, WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://127.0.0.1:9',
+    WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://127.0.0.1:9',
     OPENROUTER_API_KEY: 'sk-or-v1-test', OPENROUTER_API_BASE: 'https://openrouter.ai/api/v1',
     AGENT_MODEL: 'z-ai/glm-5.3-flash',
     WORKSPACE_DIR: ws, CODEX_HOME: path.join(dir, 'codex-home'),

@@ -43,12 +43,6 @@ test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 
     if (!ordinary) throw new Error('a root-only probe is not force-stop confirmation');
     calls.push(['probe']); if (beforeProbe) await beforeProbe(); return executing;
   });
-  t.mock.method(worker, 'stopWorkerByIdentity', async (id, options) => {
-    calls.push(['identity', id]); if (beforeDelete) await beforeDelete(id);
-    if (!(await options.proceed())) return { skipped: true };
-    await options.renew(); if (removalError) throw removalError; calls.push(['runtime', id]);
-    await pool.query('DELETE FROM session_workers WHERE session_id = $1', [id]); return { removed: true };
-  });
   t.mock.method(worker, 'stopTurnByJournal', async (id, journal, options) => {
     calls.push([options.force === false ? 'signal' : 'kill', id, journal, process.env.PROCESS_ROLE]);
     killTimeouts.push(options.timeoutMs);
@@ -478,7 +472,6 @@ test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 
       { envelope: { actor: 'user:1' } },
       { over: { userId: 1 } },
       { envelope: { source: { kind: 'system', name: 'another-producer' } } },
-      { over: { strategy: 'worker' } },
       { over: { active: false, turnId: null, journal: null } },
       { over: { turnId: null } }, { over: { journal: null } },
     ]) {
@@ -538,18 +531,12 @@ test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 
       assert.equal((await interruptState(e)).data.result.confirmed, !expired);
     }
   });
-  await t.test('legacy records retain signalling and worker fallback rescues before identity-scoped stopping', async () => {
+  await t.test('journal-less legacy records retain their supported signal and probe path', async () => {
     reset(); ordinary = true; const legacy = await session();
     await pool.query(`UPDATE chat_sessions SET active_turn = active_turn - 'journal' WHERE id = $1`, [legacy.sessionId]);
     const l = await interrupt(legacy); await conductor.drain(); await settle(); await tick(l); await settle();
     assert.deepEqual(calls.map(c => c[0]), ['legacy-signal', 'probe']);
-    reset(); ordinary = true; const s = await session(); const e = await interrupt(s, 'worker'); await conductor.drain(); await settle();
-    assert.deepEqual(calls.map(c => c[0]), ['identity', 'rescue', 'runtime']);
-    assert.equal((await interruptState(e)).data.result.confirmed, true); assert.ok(await current(s));
-    reset(); ordinary = true; rescueError = new Error('keep the saved commit'); const kept = await session(); const k = await interrupt(kept, 'worker');
-    await conductor.drain(); await settle(); assert.equal((await interruptState(k)).data.result.confirmed, false);
-    assert.equal(calls.some(c => c[0] === 'runtime'), false); assert.ok(await current(kept));
-    assert.equal((await pool.query('SELECT 1 FROM session_workers WHERE session_id = $1', [kept.sessionId])).rowCount, 1);
+
   });
   await t.test('identity-less legacy records are signalled and fenced by their stored contents', async () => {
     for (const replaced of [false, true]) {
@@ -566,25 +553,7 @@ test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 
       }
     }
   });
-  await t.test('runtime skips preserve the reason observed just before removal', async () => {
-    for (const reason of ['ended', 'giveup', 'not_authorized', 'turn_changed']) {
-      reset(); ordinary = true; const s = await session(); const e = await interrupt(s, 'worker'); await conductor.drain();
-      let clock;
-      beforeDelete = async id => {
-        if (reason === 'ended') await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [id]);
-        if (reason === 'not_authorized') await pool.query('UPDATE users SET anonymised_at = NOW() WHERE id = $1', [s.userId]);
-        if (reason === 'turn_changed') await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"newer"}'::jsonb WHERE id = $1`, [id]);
-        if (reason === 'giveup') {
-          const now = Date.now(); clock = t.mock.method(Date, 'now', () => now + 31000);
-        }
-      };
-      try { await settle(); } finally { clock?.mock.restore(); }
-      const out = (await interruptState(e)).data.result;
-      assert.equal(out.reason, reason); assert.equal(out.confirmed, reason === 'ended');
-      assert.equal(calls.some(c => c[0] === 'runtime'), false);
-    }
-  });
-  await t.test('admission and legacy deletion refuse changed targets; a web process cannot run interruption work', async () => {
+  await t.test('admission refuses changed targets; a web process cannot run interruption work', async () => {
     reset(); ordinary = true;
     for (const change of ['actor', 'source', 'scope', 'snapshot']) {
       const s = await session(); const e = await interrupt(s, 'turn', change === 'snapshot' ? { turnId: 'other-job' } : {},
@@ -595,10 +564,7 @@ test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 
     }
     assert.deepEqual(calls, []);
     await assert.rejects(services[INTERRUPT_WORK].run({ input: {}, checkpoint: () => { throw new Error('web checkpoint'); } }), /requires a workflow process/);
-    const s = await session(); const e = await interrupt(s, 'worker'); await conductor.drain();
-    beforeDelete = id => pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"replacement"}'::jsonb WHERE id = $1`, [id]);
-    await settle(); assert.equal((await interruptState(e)).data.result.confirmed, false);
-    assert.equal(calls.some(c => c[0] === 'runtime'), false);
+
   });
   await t.test('ordinary admission is asynchronous and unavailable admission never falls back to local runtime access', async () => {
     reset(); ordinary = true; const s = await session();

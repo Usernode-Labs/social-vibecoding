@@ -35,8 +35,6 @@ github.patchIssueBody = async (owner, repo, number, body) => {
   if (patchShouldFail) throw new Error('boom');
   patchCalls.push({ owner, repo, number, body });
 };
-let cacheInvalidations = [];
-github.invalidateIssuesCache = (owner, repo) => cacheInvalidations.push(`${owner}/${repo}`);
 
 const appAccess = require('../src/services/app-access');
 appAccess.getAppForUser = async () => ({
@@ -70,7 +68,6 @@ beforeEach(() => {
   issueUpdates = [];
   patchCalls = [];
   patchShouldFail = false;
-  cacheInvalidations = [];
   ghIssuesResult = defaultGhIssues();
 });
 
@@ -111,7 +108,6 @@ test('author edits the GitHub body, local mirror, issue thread and live viewers'
       msgType: 'system',
       thread: { type: 'issue', ref: 12 },
     }]);
-    assert.deepEqual(cacheInvalidations, ['o/r']);
     assert.equal(issueUpdates.length, 1);
     assert.equal(issueUpdates[0].issueNumber, 12);
     assert.equal(issueUpdates[0].action, 'updated');

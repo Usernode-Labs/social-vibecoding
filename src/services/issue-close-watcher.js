@@ -89,19 +89,9 @@ async function checkIssueState(owner, repo, issueNumber) {
   }
 }
 
-// Bust this repo's open-issues cache and tell every client viewing the
-// app's group chat to refetch (App.handleIssueUpdate → loadVotePanel).
-// Same event shape the merge path broadcasts at merge time. `closed`
-// carries the numbers whose closure was just observed — they're
-// recorded on the known-closed suppression list (#144) so the refetch
-// can't resurrect them even when GitHub's eventually-consistent
-// anonymous list endpoint still reports them open.
-function bustAndBroadcast({ owner, repo, appSlug, appId, closed }) {
+// Tell clients to re-read the request board after a closure is observed.
+function broadcastClosed({ owner, repo, appSlug, appId }) {
   try {
-    if (Array.isArray(closed) && closed.length) {
-      github.noteIssuesClosed(owner, repo, closed);
-    }
-    github.invalidateIssuesCache(owner, repo);
     const { pushIssueUpdate } = require('./ws');
     pushIssueUpdate({
       action: 'github_synced',
@@ -110,7 +100,7 @@ function bustAndBroadcast({ owner, repo, appSlug, appId, closed }) {
       source: 'issue_close_watcher',
     });
   } catch (err) {
-    log.warn('issue-close-watcher', 'Cache bust / broadcast failed', {
+    log.warn('issue-close-watcher', 'Request closure broadcast failed', {
       repo: `${owner}/${repo}`, err: err.message,
     });
   }
@@ -310,5 +300,5 @@ module.exports = {
   closeAfterMerge, closeIncluded, resolveIssueNumbers, mergedIntoDefaultBranch,
   // What an observed close does, for a close made elsewhere (the Homeroom
   // bot's own closes, homeroom-bot-closed-requests.js).
-  bustAndBroadcast, closeTwinRows,
+  broadcastClosed, closeTwinRows,
 };

@@ -87,11 +87,8 @@ function loadIssues(pool, { gh = {}, active = 2, app = SELF_APP, gate = {} } = {
       spies.ghCalls.push({ type: 'createIssue', owner, repo, args });
       return { number: 777 };
     },
-    noteIssueCreated: () => {},
     closeIssue: async () => ({}),
     createIssueComment: async () => ({ id: 1 }),
-    noteIssuesClosed: () => {},
-    invalidateIssuesCache: () => {},
   });
   stub(ids.appAccess, {
     ACCESS_COLUMNS: '*',

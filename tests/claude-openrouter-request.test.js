@@ -15,7 +15,6 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
-const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 
 const {
   startMessagesAdapter, applyTurnPolicy, pairToolIds, makeRedactor, claudeChildEnv, PROVIDER_PREFERENCES,
@@ -843,7 +842,7 @@ test('run-cc.sh runs an OpenRouter scout through the adapter with the key out of
   const env = {
     PATH: `${fx.bin}:${process.env.PATH}`,
     HOME: fx.dir,
-    ...RUNNER_TEST_ENV, PROMPT_FILE: fx.prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
+    PROMPT_FILE: fx.prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
     MODE: 'scout', WORKSPACE_DIR: fx.ws,
     AGENT_PROVIDER: 'openrouter', MODEL: GLM, AGENT_MODEL: GLM,
     AGENT_MODEL_MAX_OUTPUT_TOKENS: '64000', AGENT_REASONING_EFFORT: 'xhigh',
@@ -888,7 +887,7 @@ test('run-cc.sh refuses OpenRouter modes and configs it cannot run safely', asyn
   const fx = runnerFixture();
   const base = {
     PATH: `${fx.bin}:${process.env.PATH}`, HOME: fx.dir,
-    ...RUNNER_TEST_ENV, PROMPT_FILE: fx.prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
+    PROMPT_FILE: fx.prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
     WORKSPACE_DIR: fx.ws, WORKER_JWT: 'push', AGENT_PROVIDER: 'openrouter',
     MODEL: GLM, AGENT_MODEL: GLM, OPENROUTER_API_KEY: KEY,
   };

@@ -111,9 +111,6 @@ test('issues one process closes leave every process\'s board read, with nothing 
   const github = require('../src/services/github');
   await github.closeIssue('Acme', 'board', 4);
   await github.closeIssue('Acme', 'board', 5);
-  github.noteIssuesClosed('Acme', 'board', [4, 'x', 5]);
-  github.invalidateIssuesCache('Acme', 'board');
-  github.unsuppressIssues('Acme', 'board', [5]);
   assert.deepEqual(sent, [], 'nothing is passed on');
   const ws = require('../src/services/ws');
   ws._onBusMessage({ kind: 'issues_cache', routing: { owner: 'Acme', repo: 'board' }, data: { open: [5] } });

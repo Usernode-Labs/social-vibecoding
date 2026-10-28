@@ -43,7 +43,6 @@ let stall = null;
 const github = {
   isEnabled: () => true,
   safeMention: (s) => s,
-  noteIssueCreated: () => {},
   async createIssue(owner, repo, issue) {
     if (stall) { const s = stall; stall = null; s(); return new Promise(() => {}); }
     created.push(issue); return { number: ++number };

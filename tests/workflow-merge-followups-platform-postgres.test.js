@@ -61,7 +61,6 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
       calls.push(['compare', base, head]);
       return { status: head === SHA('c') ? 'ahead' : 'diverged' };
     },
-    noteIssuesClosed: () => {}, invalidateIssuesCache: () => {},
   });
   const realStaging = require('../src/services/staging');
   stub('../src/services/staging', {

@@ -54,7 +54,6 @@ llm.generateIssueTitle = async () => { throw new Error('no model'); };
 
 const github = require('../src/services/github');
 github.isEnabled = () => githubEnabled;
-github.noteIssueCreated = () => {};
 github.createIssue = async (owner, repo, { createdBy } = {}) => {
   createIssueCalls.push({ owner, repo });
   const number = 40 + createIssueCalls.length;

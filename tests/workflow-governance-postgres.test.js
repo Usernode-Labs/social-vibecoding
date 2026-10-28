@@ -191,7 +191,7 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
       ['group-vote', 1, 1, 1]);
     assert.ok(closed.payload.appliedAt);
     const { rows: [ghWork] } = await pool.query(`SELECT * FROM wf_work WHERE key = $1 AND kind = 'github.closeIssue'`, [issueKey(close.id)]);
-    assert.deepEqual([ghWork.work_key, ghWork.input.number, ghWork.input.bustCache], ['target', 42, true]);
+    assert.deepEqual([ghWork.work_key, ghWork.input.number], ['target', 42]);
     assert.match(ghWork.input.comment, /Closed by group vote \(1\/1\) on Homeroom\.\n\n.*'s reason: Done elsewhere/);
     assert.deepEqual((await pool.query(
       `SELECT content FROM chat_messages WHERE thread_type = 'issue' AND thread_ref = 42`)).rows.map((r) => r.content),
@@ -347,9 +347,6 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     assert.equal(s.data.followups.target.status, 'retried');
     assert.equal(retried[1].status, 'done');
     assert.equal(synced().length, 1, 'the close on GitHub tells browsers to re-read the issue list, once');
-    // And every web process to stop listing it (each keeps its own copy).
-    const forgotten = pushed.filter((p) => p.kind === 'issues_closed' && p.routing.repo === a.slug);
-    assert.deepEqual(forgotten.map((p) => p.data.numbers), [[9]]);
     // The retry resumed from the failed attempts' checkpoint: no second comment.
     const last = work.calls.filter((c) => c.kind === 'github.closeIssue').at(-1);
     assert.equal(last.key, retried[0]);

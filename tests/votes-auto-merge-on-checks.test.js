@@ -77,8 +77,6 @@ function loadVotes(opts = {}) {
   stub(ids.github, {
     isEnabled: () => true,
     mergePR: async () => { mergeCalls.count += 1; return { sha: 'deadbeefcafe', merged: true }; },
-    noteIssuesClosed() {},
-    invalidateIssuesCache() {},
   });
   const reports = [];
   const claims = [];

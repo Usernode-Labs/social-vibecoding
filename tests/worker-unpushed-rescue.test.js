@@ -22,6 +22,7 @@ const db = require('../src/db/pool');
 const SHA = 'a'.repeat(40);
 
 function stubTrustedPush(t, branches, calls = [], { turn = null } = {}) {
+  t.mock.method(require('../src/services/github'), 'checkRepoPublic', async () => ({ ok: true, private: false }));
   const commits = new Map();
   const pool = { query: async (sql, [id, sha, branchName]) => {
     if (sql.includes('INSERT INTO session_workers (session_id, unpushed_sha')) commits.set(id, sha ? { sha, branchName } : null);
@@ -39,7 +40,7 @@ function stubTrustedPush(t, branches, calls = [], { turn = null } = {}) {
     assert.equal(options.token, 'fake-test-token');
     calls.push(['push']);
     await options.exportWorker('export Git objects only');
-    return { sha: SHA, stderr: '' };
+    return { sha: options.expectedSha || SHA, stderr: '' };
   });
   return commit => unpushedCommits.record(pool, Number(Object.keys(branches)[0]), commit);
 }
@@ -92,7 +93,7 @@ test('eviction pushes an unpushed commit before the worker is deleted', async (t
   });
   t.mock.method(kubernetes, 'deleteWorker', async (_config, sessionId) => { calls.push(['delete', sessionId]); });
   worker.adoptWarmWorker(71001, 'sv-worker-s71001');
-  await record({ sha: 'abc1234', branchName: 'dev/evan-1' });
+  await record({ sha: SHA, branchName: 'dev/evan-1' });
 
   await worker.evictWorker(71001);
   assert.deepEqual(calls.map((c) => c[0]), ['push', 'exec', 'exec', 'delete'], 'trusted push exports and acknowledges before deletion');

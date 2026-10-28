@@ -21,7 +21,6 @@ const gh = {
     const status = gh.closes.get(n);
     if (status) throw Object.assign(new Error(`HTTP ${status}`), { status });
   },
-  noteIssuesClosed() {}, unsuppressIssues() {}, invalidateIssuesCache() {},
 };
 stub('../src/services/github', gh);
 // The bot's proposals for a closed request: recorded, strict or not.

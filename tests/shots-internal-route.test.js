@@ -129,7 +129,7 @@ test('the brief is readable only with this run\'s shots token', async (t) => {
   // The session's general and narrow worker tokens are not shots tokens.
   for (const other of [
     platformJwt.signWorkerToken({ sessionId: 42 }),
-    platformJwt.signWorkerPushToken({ sessionId: 42 }),
+    platformJwt.signVisibleChangesToken({ sessionId: 42 }),
   ]) {
     const refused = await json(await get(bearer(other)));
     assert.deepEqual([refused.status, refused.body.code], [401, 'bad_token']);

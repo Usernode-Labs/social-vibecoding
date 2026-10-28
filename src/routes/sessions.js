@@ -1844,7 +1844,8 @@ async function resolveExplicitAgentPreference(client, userId, config, {
 // its active change right before the next build (services/mayor/
 // agent-dispatch.js). Under a row lock: refuses a closed or busy change,
 // switches the backend, model and effort, drops both resume ids, records the
-// reset in the change's transcript and queues its worker release atomically.
+// reset in the change's transcript. The warm worker is reused; resume ids,
+// model and backend are supplied afresh on every exec.
 async function switchSessionAgent(pool, { sessionId, userId, pref }) {
   const resolved = pref.backend;
   const isCodex = resolved === 'codex_openrouter';
@@ -1933,9 +1934,6 @@ async function switchSessionAgent(pool, { sessionId, userId, pref }) {
     );
     contextMessage = msg.rows[0] || null;
 
-    await require('../workflow/platform.ts').appendWorkerRelease(client, {
-      sessionId, appId: updatedRow.app_id, userId, reason: 'agent-reset', configVersion: updatedRow.agent_config_version,
-    });
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -8830,14 +8828,14 @@ async function resumeOneHeadlessRunInner({ pool, config, session, owner = null, 
     }
     recoveredTurnForCleanup = recoveryActiveTurn;
     // Terminal marker for the recovered turn's progress card (dedup:
-    // journals from new worker images already end with their own
+    // shared completion already appended its
     // [done]/[push_failed] marker). Decided before flushing so the
     // wholesale progressLog rewrite carries it.
     const producedAnythingEarly = result.execExitSeen || result.resultSeen
       || !!(result.lastResultText || '').trim();
     const headlessTerminal = !producedAnythingEarly
       ? '[interrupted]'
-      : (recoveryActiveTurn.mode !== 'scout' && result.pushOk === false && result.ahead > 0)
+      : (recoveryActiveTurn.mode !== 'scout' && (result.branchMismatch || result.pushFailure || (result.pushOk === false && result.ahead > 0)))
         ? '[push_failed]'
         : '[done]';
     if (turnWatchdog.appendTerminalLine(progressLines, headlessTerminal)) {
@@ -10401,6 +10399,10 @@ async function runCodexAttemptLoop({
       });
     } catch (err) {
       lastError = err;
+      // The runner already ended; publication/persistence is still owned by
+      // its journal. Recovery settles the actual usage and result, without a
+      // second paid attempt or a false provider-failure ledger entry.
+      if (err?.retainActiveTurn) throw err;
       const observedResult = err?.turnResult || null;
       await completeAttempt(attempt, observedResult, statusFor({
         result: observedResult,
@@ -10811,9 +10813,9 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
     // Disarm above, then cancel the local stream before waiting for admission.
     try { handle.abort.abort(); } catch {}
     try {
-      if (!handle.localTurnId && (stopPolicy.killsWorkerInPhase(handle.phase) || handle.workerName)) {
+      if (!handle.localTurnId && stopPolicy.killsWorkerInPhase(handle.phase)) {
         await requestOrdinaryStop(sessionId, user, {
-          expectedTurnId, expectedJob, strategy: stopPolicy.killsWorkerInPhase(handle.phase) ? 'turn' : 'worker',
+          expectedTurnId, expectedJob,
         });
       }
     } catch (err) {
@@ -10827,8 +10829,8 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
 
 // Only admission is awaited. Confirmation's timer and attempts are durable;
 // the owning turn still unwinds and releases its own record and local hold.
-async function requestOrdinaryStop(sessionId, user, { strategy = 'turn', expectedTurnId = null, expectedJob } = {}) {
-  await require('../workflow/platform.ts').requestWorkerInterrupt({ sessionId, userId: user.id, strategy, expectedTurnId, expectedJob });
+async function requestOrdinaryStop(sessionId, user, { expectedTurnId = null, expectedJob } = {}) {
+  await require('../workflow/platform.ts').requestWorkerInterrupt({ sessionId, userId: user.id, strategy: 'turn', expectedTurnId, expectedJob });
 }
 
 // A force stop's runtime effects are the conductor's. The originating
@@ -12570,57 +12572,6 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
     // turn is an opportunity to learn the branch drifted.
     await persistBehindMain(pool, session, result.behind || 0);
 
-    // Append one line to this turn's persisted progress log + live tabs.
-    // Used to overwrite run-cc.sh's [push_failed] terminal marker with
-    // [done] after a successful platform-side re-push heal (the card's
-    // collapsed label is the log's LAST line).
-    const appendTurnProgressLine = (text) => {
-      send('cc_progress', { text, ...executionAgentMeta });
-      return pool.query(
-        `UPDATE chat_session_messages SET metadata = jsonb_set(
-          metadata, '{progressLog}',
-          (COALESCE(metadata->'progressLog', '[]'::jsonb) || $1::jsonb)
-        ) WHERE id = $2`,
-        [JSON.stringify([text]), progressMsgId]
-      ).catch(() => {});
-    };
-
-    // Platform-side re-push heal: run-cc.sh's usernode-push callback
-    // failed (push_ok=0 — e.g. a transient network/platform hiccup while
-    // the worker called back). The commit exists only in the worker, so
-    // re-push it from the platform side — the identical heal the restart
-    // recovery path (finalizeRecoveredTurn in server.js) already uses —
-    // before deciding the turn failed.
-    // #1376: the heal's rejection is the only place the REAL reason for a
-    // push failure exists (an invalid branch name, a missing bot token, a
-    // git error from GitHub). It used to be swallowed into a WARN line and
-    // replaced downstream with a fixed "retry your request" sentence, so a
-    // permanently unpushable session read as a transient hiccup and the
-    // user retried into the same wall. Keep it and describe it.
-    let pushFailure = null;
-    const healPush = async () => {
-      try {
-        await worker.execPushFromWorker(session.id, session.branch_name);
-        result.pushOk = true;
-        pushFailure = null;
-        log.info('sessions', 'Push heal: re-pushed un-pushed branch', {
-          sessionId: session.id, branch: session.branch_name,
-        });
-        await appendTurnProgressLine('[done]');
-        return true;
-      } catch (err) {
-        pushFailure = worker.describePushFailure(err);
-        log.warn('sessions', 'Push heal failed', {
-          sessionId: session.id,
-          branch: session.branch_name,
-          code: pushFailure.code,
-          permanent: pushFailure.permanent,
-          err: err.message,
-        });
-        return false;
-      }
-    };
-
     if (result.fatalError) {
       isError = true;
       const msg = `Worker error: ${result.fatalError.substring(0, 200)}`;
@@ -12667,15 +12618,15 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
           : turnFailure(executionAgentMeta));
         summaryParts.push(msg);
       }
-    } else if (!result.pushOk && !(await healPush())) {
-      // Terminal push failure (heal included): the branch on GitHub is
+    } else if (!result.pushOk) {
+      // The shared conductor completion path recorded a publication failure: the branch on GitHub is
       // stale or absent, so PR creation would 422 and staging would
       // preview the wrong code — skip both and end the turn as a visible
       // error instead of the old easy-to-miss warning. The warm worker
       // keeps the only copy of the commit; the next turn (or a retry)
       // re-pushes it (#295), so nothing is lost.
       isError = true;
-      const failure = pushFailure || worker.describePushFailure(null);
+      const failure = worker.describePushFailure(result.pushFailure || { code: result.pushFailed || 'push_failed' });
       const msg = failure.text;
       await sendStatus(msg, {
         ...turnFailure(executionAgentMeta),
@@ -13140,57 +13091,6 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
       : null,
   };
 }
-
-async function getFilesFromContainer(appSlug) {
-  const containerName = `usernode-app-${appSlug}`;
-  try {
-    // List files in the container's /app directory
-    const { stdout: fileList } = await docker.execFileAsync('docker', [
-      'exec', containerName, 'find', '/app', '-type', 'f',
-      '-not', '-path', '*/node_modules/*',
-      '-not', '-path', '*/.git/*',
-      '-not', '-name', 'package-lock.json',
-    ], { timeout: 10000 });
-
-    const files = fileList.trim().split('\n').filter(Boolean).slice(0, 20);
-    const contents = [];
-
-    for (const filePath of files) {
-      try {
-        const { stdout } = await docker.execFileAsync('docker', [
-          'exec', containerName, 'cat', filePath,
-        ], { timeout: 5000 });
-        const relativePath = filePath.replace('/app/', '');
-        if (stdout.length < 50000) {
-          contents.push(`--- ${relativePath} ---\n${stdout}`);
-        }
-      } catch {}
-    }
-
-    if (contents.length > 0) {
-      log.info('sessions', 'Loaded file context from container', { container: containerName, fileCount: contents.length });
-      return contents.join('\n\n');
-    }
-  } catch (err) {
-    log.warn('sessions', 'Failed to read files from container', { container: containerName, err: err.message });
-  }
-  return null;
-}
-
-function parseFileChanges(text) {
-  const files = [];
-  const regex = /```\w*:?([\w/._-]+)\n([\s\S]*?)```/g;
-  let match;
-  while ((match = regex.exec(text)) !== null) {
-    const path = match[1];
-    const content = match[2];
-    if (path && content && !path.match(/^\d+$/)) {
-      files.push({ path, content });
-    }
-  }
-  return files;
-}
-
 
 // The routes/sessions.js helpers a Mayor turn calls (services/mayor/turn.js,
 // #2779). Handed over rather than required from there, which would be a

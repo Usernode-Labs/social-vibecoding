@@ -53,6 +53,7 @@ test('a git-host rescue refusal uses the bare bounded reason without GitHub or P
   t.mock.method(require('../src/db/pool'), 'getPool', () => ({ query: async sql => ({ rows: [sql.includes('SELECT sw.unpushed_sha AS sha')
     ? { sha, branchName: branch, active: false }
     : { branch_name: branch, repo_url: 'https://git.example.invalid/apps/example', unpushed_sha: sha, unpushed_branch_name: branch }] }) }));
+  t.mock.method(require('../src/services/github'), 'checkRepoPublic', async () => ({ ok: true, private: false }));
   t.mock.method(require('../src/services/github'), 'getInstallationToken', () => { throw new Error('must not use GitHub'); });
   const failure = `Temporary storage failure: ${'x'.repeat(250)}`;
   const push = t.mock.method(pusher, 'push', async options => {

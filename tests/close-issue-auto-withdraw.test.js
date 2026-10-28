@@ -61,9 +61,6 @@ function loadWatcher({ gh = {} }) {
     getPR: async (...a) => (gh.getPR ? gh.getPR(...a) : { body: '' }),
     getIssue: async (...a) => (gh.getIssue ? gh.getIssue(...a) : { number: a[2], state: 'closed' }),
     closeIssue: async (o, r, n) => { closes.push(n); return { number: n, state: 'closed' }; },
-    noteIssuesClosed: () => {},
-    unsuppressIssues: () => {},
-    invalidateIssuesCache: () => {},
   }, orig.github);
   stub(ids.ws, { pushIssueUpdate: () => {} }, orig.ws);
   stub(ids.closed, { noteRequestsClosed: async () => ({ withdrawn: [] }) }, orig.closed);

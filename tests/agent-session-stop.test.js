@@ -58,7 +58,6 @@ test('the first Stop and every retry use immediate force, with no prior-stop dea
   const f = fixture();
   for (const force of [false, true]) {
     const fresh = await f.read();
-    assert.equal(fresh.turn.canForceStop, false, 'there is no separate escalation control');
     assert.equal((await requestStop({ ...f.args, force, token: fresh.turn.stopToken }, f.deps)).status, 202);
     const job = f.calls.filter((c) => c[0] === 'job').at(-1)[1];
     assert.equal(job.force, true);

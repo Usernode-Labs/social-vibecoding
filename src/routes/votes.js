@@ -1756,19 +1756,6 @@ async function annotateDeploymentState(config, pool, app, rows) {
   };
 }
 
-// Native proposals used to trust a mutable branch name all the way through
-// voting and merge. A branch can move independently of the platform's review
-// state, so every approval must be tied to an immutable PR head just like
-// imported proposals already are.
-//
-// Imported proposals deliberately keep imported_pr_head_sha as their source of
-// truth; this helper is native-only so their established sync behaviour stays
-// unchanged.
-function nativeGithubTarget(session) {
-  if (!session || session.source === 'imported' || !session.pr_number) return null;
-  return repoRef.ownerRepo(session.repo_url);
-}
-
 // The preview machine builds and checks a native proposal's reviewed head.
 async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
   void config;

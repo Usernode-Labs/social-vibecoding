@@ -4758,10 +4758,10 @@ async function buildAndPropose({
   // main, then reviewed as any build is. The review's captures say whether it
   // boots; a build kept this way that never booted fails as before.
   let partial = null;
-  if (faultError && keepPartial && review?.reviewer && typeof worker.keepPartialWork === 'function') {
+  if (faultError && !result.pushFailure && keepPartial && review?.reviewer && typeof worker.keepPartialWork === 'function') {
     // Once: it commits and pushes what the turn left.
     const kept = await steps.once('partial', () => worker.keepPartialWork(session.id, { branchName, commitMsg })
-      .catch((err) => { durableSteps.rethrowStop(err, 'partial'); return { pushed: false, reason: err.message }; }));
+      .catch((err) => { durableSteps.rethrowStop(err, 'partial'); if (err.retainActiveTurn) throw err; return { pushed: false, reason: err.message }; }));
     if (kept?.pushed && Number(kept.commits) > 0 && !(startingScreens?.sha && kept.sha === startingScreens.sha)) {
       partial = { reason: faultReason, sha: kept.sha || null, commits: Number(kept.commits) };
       Object.assign(result, { pushOk: true, ahead: Number(kept.commits), sha: kept.sha || null });
