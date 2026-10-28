@@ -9434,18 +9434,27 @@ const AppView = {
       // topic the lists do cover.
       return AppView._loadDevData(opts)
         .then(() => AppView._refreshTopicOnDemandRow())
-        .then(() => AppView._renderTopicHead());
+        .then(() => AppView._renderTopicHead())
+        .then(() => { AppView._refreshOpenChangeFromBoard(); });
     }
     if (App.currentSubTab !== 'forum') return undefined;
     const parts = live ? AppView._partsForLive(live) : null;
     // The burst was about rows this board does not show.
     if (parts && !parts.size) return Promise.resolve(true);
-    if (parts) return AppView._loadDevFeed({ ...(opts || {}), parts });
+    if (parts) {
+      return AppView._loadDevFeed({ ...(opts || {}), parts }).then((r) => {
+        AppView._refreshOpenChangeFromBoard();
+        return r;
+      });
+    }
     // Session rows render inside the board/feed now, so the full-feed
     // reload below covers session_update events too (no separate strip).
     // A fresh run started first is the one the feed's own load then joins.
     if (opts) AppView._loadDevData(opts);
-    return AppView._loadDevFeed();
+    return AppView._loadDevFeed().then((r) => {
+      AppView._refreshOpenChangeFromBoard();
+      return r;
+    });
   },
 
   // (#5164) The project hub's quiet refresh: the For you card (the votes
@@ -9467,7 +9476,64 @@ const AppView = {
     if (!AppView._devDataReady) return undefined;
     App._announceRefreshIntent?.();
     const parts = whole ? null : new Set(['promoted', 'merged']);
-    return AppView._loadDevFeed(parts ? { parts } : null);
+    return AppView._loadDevFeed(parts ? { parts } : null).then((r) => {
+      // #6001: a change open beside the hub moves with the row the hub just
+      // read — Going live, or a verdict — instead of waiting to be reopened.
+      AppView._refreshOpenChangeFromBoard();
+      return r;
+    });
+  },
+
+  // #6001: the change a board reload moved, as the page beside it reads it.
+  // The row the last signature belonged to, `{ id, sig }`, so a repaint
+  // happens only when something the page shows has actually changed.
+  _changeBoardSig: null,
+  _refreshOpenChangeFromBoard() {
+    const t = AppView._devTopic;
+    if (!t || (t.kind !== 'proposal' && t.kind !== 'session')) return false;
+    if (t.id == null || !Number.isFinite(Number(t.id))) return false;
+    // The item is on screen as a page of its own, or in the Workshop panel.
+    // Anywhere else nothing is drawn for it and nothing is told.
+    const onPage = typeof App !== 'undefined' && App.currentTab === 'dev' && App.currentSubTab === 'topic';
+    if (!AppView._devTopicInPanel && !onPage) return false;
+    const id = Number(t.id);
+    const row = AppView._topicRowFor(id);
+    if (!row) return false;
+    // What the page's Votes and Testing cards and its status pill draw.
+    // Nothing else moving is news to a reader's eye, and a quiet reload is
+    // not a reason to redraw the page (topic-head.tsx's no-poll rule).
+    const sig = [
+      row.status, row.deployment_state, row.live_at,
+      row.check_state, row.check_phase, row.checks_checked_at, row.yes_count,
+    ].join('|');
+    const last = AppView._changeBoardSig;
+    // First look at a newly opened change only records: the page has just
+    // read itself, and this fresh row is the state it is already showing.
+    AppView._changeBoardSig = { id, sig };
+    if (!last || last.id !== id || last.sig === sig) return false;
+    // The page's own read takes precedence over the cached row, so the board's
+    // newer values are merged over it rather than assumed. A bare id would
+    // re-read; a patch costs no request and keeps what only the page reads.
+    AppView._forwardChangePatch(id, row);
+    AppView._renderTopicHead();
+    return true;
+  },
+  // #6001: a release finished for `slug`. A change it carries that is open —
+  // its Votes card moves from "It's going live." to "It's live." — re-reads
+  // its own row, because the live event names the app, not the change.
+  refreshOpenChangeForRelease(slug) {
+    if (!slug || typeof App === 'undefined' || App.currentTab !== 'dev') return false;
+    if (!AppView.appData || AppView.appData.slug !== slug) return false;
+    const t = AppView._devTopic;
+    if (!t || (t.kind !== 'proposal' && t.kind !== 'session')) return false;
+    if (!AppView._devTopicInPanel && App.currentSubTab !== 'topic') return false;
+    const item = AppView._findTopicItem();
+    if (!item || !['merged', 'merging'].includes(item.status)) return false;
+    // The page re-reads; the next board reload records where it landed then.
+    AppView._changeBoardSig = null;
+    AppView._tellChangePage(Number(item.id));
+    AppView._renderTopicHead();
+    return true;
   },
 
   // What a live burst moved, as board parts: a vote moves the proposals'
