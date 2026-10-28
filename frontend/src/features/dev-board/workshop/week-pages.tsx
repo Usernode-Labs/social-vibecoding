@@ -314,7 +314,8 @@ export function HappenedRow({ row, fresh, slug, on = false, onOpen, standing = f
   // A bot row opens the chat with Homeroom bot at the request's thread, the
   // drawer row's destination — never the side panel (onOpen). A modified
   // click keeps the request page's href. If the request has no thread yet,
-  // the chat opens (openBotChatFromRequest).
+  // the chat opens (openBotChatFromRequest). That call also closes the side
+  // panel, when this row is in it (#6008), so the chat is not left covered.
   const onBotClick = (event: MouseEvent<HTMLAnchorElement>) => {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
     event.preventDefault();

@@ -4502,6 +4502,18 @@ export function DevWorkshop(): ReactNode {
     window.addEventListener('usernode:workshop-tab', onDoor);
     return () => window.removeEventListener('usernode:workshop-tab', onDoor);
   }, [v.slug]);
+  // #6008: SEE PROGRESS IN THE BOT CHAT CLOSES THIS PANEL. The action is on
+  // the request's card, and that card can be in the panel
+  // (AppView.openBotChatFromRequest, GroupChat.openBotChat). The panel is
+  // portalled over everything and the page stays mounted while the router
+  // leaves for Messages, so without this it went on covering the chat and
+  // the request's thread that the press opened. Closing here runs the
+  // panel's own cleanup, as ✕ and a tab change do.
+  useEffect(() => {
+    const onLeave = () => setSideItem(null);
+    window.addEventListener('usernode:workshop-side-close', onLeave);
+    return () => window.removeEventListener('usernode:workshop-side-close', onLeave);
+  }, []);
   // ANOTHER PROJECT IN THE SAME PAGE (#3555). Going straight from one
   // project's page to another's keeps the host (#app-view keeps
   // #dev-workshop and republishes into it), so this is not mounted again,

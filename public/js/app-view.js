@@ -22269,6 +22269,12 @@ const AppView = {
    * (C4): at this request's own thread, its story, not the whole chat.
    */
   openBotChatFromRequest(issueNumber) {
+    // #6008: OUT OF THE WORKSHOP'S SIDE PANEL FIRST. This action is drawn on
+    // the request's card, and that card can be in the panel beside the
+    // Workshop's list (AppView.openTopicInPanel); the chat and the request's
+    // thread open behind it, and a panel left standing covered the very
+    // thread the press was asking for, so the chat looked empty.
+    if (typeof CustomEvent === 'function') window.dispatchEvent(new CustomEvent('usernode:workshop-side-close'));
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
     const slug = AppView.appData && AppView.appData.slug;
     if (messages && slug && issueNumber && typeof messages.openBotRequest === 'function') messages.openBotRequest(slug, Number(issueNumber));

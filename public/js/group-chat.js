@@ -3287,6 +3287,9 @@ const GroupChat = {
   // B9: the chat with Homeroom bot (See progress, Open chat). 16 Oct 2026
   // (C4): See progress opens it at the request's own thread, its story.
   openBotChat(issueNumber) {
+    // #6008: this card can be in the request's thread inside the Workshop's
+    // side panel, which would go on covering the chat the press opens.
+    if (typeof CustomEvent === 'function') window.dispatchEvent(new CustomEvent('usernode:workshop-side-close'));
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
     const n = Number(issueNumber);
     if (messages && n && GroupChat.appSlug && typeof messages.openBotRequest === 'function') messages.openBotRequest(GroupChat.appSlug, n);

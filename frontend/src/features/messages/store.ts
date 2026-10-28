@@ -1309,13 +1309,39 @@ export async function openBot(reference?: StagedObject | null): Promise<void> {
  * (services/homeroom-bot-track.js). Before, it opened the chat alone, and
  * the person had to find the request in it. A request with no thread yet
  * opens the chat, as before.
+ *
+ * #6008: the thread pane is opened beside the chat only when the chat as
+ * loaded holds the request's card; otherwise the chat is opened at the
+ * message itself (see below), so See progress never lands on a chat with
+ * nothing about the request in it.
  */
 export async function openBotRequest(slug: string, number: number): Promise<void> {
   await openBot();
   try {
     const work = await api.getHomeroomBotWork({ fresh: true });
     const track = (work.tracks || []).find((item) => item.appSlug === slug && item.issueNumber === Number(number));
-    if (track?.rootId) openThreadAt(track.rootId, track.askId || null);
+    if (!track?.rootId) return;
+    const focus = track.askId || null;
+    // #6008: the chat `openBot` moved to — the bot's own conversation,
+    // whether the route has caught up with the address yet or not.
+    const conversationId = state.conversations.find((item) => item.homeroomBot)?.id
+      || state.route.conversationId
+      || null;
+    // THE CHAT MUST HOLD THE CARD. The thread pane opened beside a chat
+    // loaded at its newest page, so a request whose card was older than that
+    // page had no story on screen at all, and See progress looked like it
+    // opened an empty chat. The thread stays the destination when the chat
+    // has the card; otherwise the chat opens AT the message, the way a
+    // message link does, which reads its own window around it — and a focus
+    // that is a reply opens that reply's thread from there (loadThread's
+    // `focus.threadRootId`), with the pane flashing the ask.
+    if (conversationId && state.active?.id === conversationId
+        && state.messages.some((item) => item.id === track.rootId)) {
+      openThreadAt(track.rootId, focus);
+      return;
+    }
+    if (conversationId) openAddress(messageAddress(conversationId, focus || track.rootId));
+    else openThreadAt(track.rootId, focus);
   } catch { /* the chat itself, then */ }
 }
 
