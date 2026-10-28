@@ -824,10 +824,10 @@
       "expectText": "WAITLIST_X_CLIENT_ID"
     },
     {
-      "name": "Me: the editable profile card leads, above the merged and challenges stat cards (#982; no kudos card, #5249)",
+      "name": "Me: the editable profile card leads, above the merged and challenges stat cards (#982; no kudos card, #5249); Earlier weeks follows Your week (#5963)",
       "path": "/?demo=1#profile",
       "expectText": "Edit profile",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-identity-card:has(#profile-edit-btn) + #profile-stats:not(:has([data-profile-stat=\"kudos\"])) > [data-profile-stat=\"merged\"] + [data-profile-stat=\"challenges\"]"
+      "expectSelector": "#profile-screen:not(.hidden):has(#profile-week+#profile-week-earlier [data-week-earlier]) #profile-identity-card:has(#profile-edit-btn)+#profile-stats:not(:has([data-profile-stat=\"kudos\"]))>[data-profile-stat=\"merged\"]+[data-profile-stat=\"challenges\"]"
     },
     {
       "id": "profile.feedback-list",
@@ -844,10 +844,10 @@
       ]
     },
     {
-      "name": "Me: Your work lists Your changes, Your requests and Your votes, each a way to its list (UI overhaul; it was Your contributions)",
+      "name": "Me: Your work lists Your changes, Your requests and Your votes, each a way to its list (UI overhaul; it was Your contributions); Your week lists this week's apps under Rewards (#5963)",
       "path": "/?demo=1#profile",
       "expectText": "Your work",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-work #profile-row-proposals[href=\"#profile/your-changes\"] + #profile-row-feedback[href=\"#profile/your-requests\"] + #profile-row-votes[href=\"#profile/your-votes\"]"
+      "expectSelector": "#profile-screen:not(.hidden):has(#profile-rewards+#profile-week [data-week-app]) #profile-work #profile-row-proposals[href=\"#profile/your-changes\"] + #profile-row-feedback[href=\"#profile/your-requests\"] + #profile-row-votes[href=\"#profile/your-votes\"]"
     },
     {
       "name": "The retired History address opens the Challenges tab, and the tabs are Challenges and Standings",

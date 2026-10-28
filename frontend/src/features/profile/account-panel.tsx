@@ -24,6 +24,18 @@
  * old "More" list, mixed in with app slots, friends and settings; the
  * navigation review split them out under their own heading.
  *
+ * ── Your week ──────────────────────────────────────────────────────────
+ *
+ * #5963: how much you used apps this week, under Rewards. One row per app
+ * you used since Monday with the whole minutes in it, busiest first, a line
+ * with the week's total, and "Earlier weeks" with each of the three weeks
+ * before as one total. The week is the one the weekly challenges count
+ * (Monday 00:00 UTC) and apps you made are left out, as the minutes
+ * challenge leaves them out, so the numbers match it. It is for reading:
+ * the rows have no tile, no chevron and lead nowhere. Only your own page
+ * has it, and only when there is time in one of the four weeks (the store's
+ * weekView is null otherwise, and the panel draws nothing).
+ *
  * ── Account ────────────────────────────────────────────────────────────
  *
  * Friends and App slots, the rows about the account itself. App slots (#3250)
@@ -217,6 +229,65 @@ export function RewardsPanel({ rows }: {
         )}
       </GroupedList>
     </section>
+  );
+}
+
+type WeekView = {
+  apps: { key: string; name: string; minutes: string }[];
+  totalLine: string | null;
+  emptyLine: string | null;
+  earlier: { key: string; label: string; minutes: string }[];
+} | null;
+
+/** The minutes at a row's right end, in the grey of a row's second line. */
+const MINUTES = 'shrink-0 text-[0.8125rem] tabular-nums text-zinc-500 dark:text-zinc-400';
+
+export function WeekPanel({ week }: { week: WeekView }): ReactNode {
+  const t = useMessages('profile');
+  if (!week) return null;
+  return (
+    <>
+      <section id="profile-week" className="mt-2">
+        <SectionHeader>{t('profile:week.heading')}</SectionHeader>
+        <GroupedList className="mx-0" tone="plane">
+          {week.apps.length > 0 ? week.apps.map((app) => (
+            <ListRow
+              key={app.key}
+              data-week-app={app.key}
+              chevron={false}
+              title={app.name}
+              titleClassName={TITLE}
+              trailing={<span className={MINUTES}>{app.minutes}</span>}
+            />
+          )) : (
+            <ListRow
+              data-week-empty=""
+              chevron={false}
+              title={week.emptyLine}
+              titleClassName={TITLE}
+            />
+          )}
+        </GroupedList>
+        {week.totalLine ? (
+          <p className="px-4 pt-2 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{week.totalLine}</p>
+        ) : null}
+      </section>
+      <section id="profile-week-earlier" className="mt-2">
+        <SectionHeader>{t('profile:week.earlierHeading')}</SectionHeader>
+        <GroupedList className="mx-0" tone="plane">
+          {week.earlier.map((w) => (
+            <ListRow
+              key={w.key}
+              data-week-earlier={w.key}
+              chevron={false}
+              title={w.label}
+              titleClassName={TITLE}
+              trailing={<span className={MINUTES}>{w.minutes}</span>}
+            />
+          ))}
+        </GroupedList>
+      </section>
+    </>
   );
 }
 

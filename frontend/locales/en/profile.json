@@ -187,6 +187,42 @@
     "text": "Account",
     "description": "Heading over Friends and App slots on the viewer's own profile."
   },
+  "week.heading": {
+    "text": "Your week",
+    "description": "Heading over the Your week section on the viewer's own profile (Me): the apps they used since Monday and the minutes in each."
+  },
+  "week.earlierHeading": {
+    "text": "Earlier weeks",
+    "description": "Heading over the list under Your week on the viewer's own profile (Me): the total minutes of each of the three weeks before this one."
+  },
+  "week.minutes_one": {
+    "text": "{{number}} min",
+    "description": "Minutes at the right end of a row in Me's Your week section (an app this week, or an earlier week). {{number}} is the whole minutes, already formatted; {{count}} is the same number, for the plural. \"min\" is the short word for minutes."
+  },
+  "week.minutes_other": {
+    "text": "{{number}} min",
+    "description": "Minutes at the right end of a row in Me's Your week section (an app this week, or an earlier week). {{number}} is the whole minutes, already formatted; {{count}} is the same number, for the plural. \"min\" is the short word for minutes."
+  },
+  "week.total_one": {
+    "text": "{{number}} min in all since Monday. Apps you made are not counted.",
+    "description": "Line under the list of apps in Me's Your week section: the week's total minutes across every app. {{number}} is the whole minutes, already formatted; {{count}} is the same number, for the plural."
+  },
+  "week.total_other": {
+    "text": "{{number}} min in all since Monday. Apps you made are not counted.",
+    "description": "Line under the list of apps in Me's Your week section: the week's total minutes across every app. {{number}} is the whole minutes, already formatted; {{count}} is the same number, for the plural."
+  },
+  "week.empty": {
+    "text": "Nothing yet this week.",
+    "description": "The one row of Me's Your week section when the viewer has used no app since Monday but did in one of the three weeks before."
+  },
+  "week.weekOf": {
+    "text": "Week of {{date}}",
+    "description": "Title of a row in Me's Earlier weeks list, naming a past week by the Monday it starts on. {{date}} is that day, already formatted (\"19 Oct\")."
+  },
+  "week.none": {
+    "text": "No time",
+    "description": "Right end of a row in Me's Earlier weeks list for a week in which the viewer used no app."
+  },
   "more.appSlots.title": {
     "text": "App slots",
     "description": "Row on the viewer's own profile: opens the dialog for creating an app, which says how many apps they may have. A \"slot\" is room for one app."

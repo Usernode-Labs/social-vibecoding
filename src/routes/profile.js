@@ -11,6 +11,7 @@
 //   DELETE /api/me/avatar              remove the picture
 //   GET    /api/me/challenges/completed  the viewer's OWN completions
 //   GET    /api/me/summary             Me's stat cards + "Your contributions"
+//   GET    /api/me/weekly-use          Me's "Your week": minutes per app (#5963)
 //
 // Every route is me-scoped and 401s without a session, so this router is
 // mounted AFTER authMiddleware in server.js. The public read side of an
@@ -69,6 +70,7 @@ const { loadOnboarding } = require('../services/topochain/challenge-onboarding')
 const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
 const { MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE } = require('./workshop-overview');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const { weekStartMs } = require('../services/topochain/challenge-rules');
 
 // ─── Field limits ──────────────────────────────────────────────────────
 //
@@ -261,6 +263,98 @@ function withDemoSummary(summary, selfApp, now = Date.now()) {
     proposalsTotal: Math.max(summary.proposalsTotal, contributions.length),
     kudos: Math.max(summary.kudos, contributions.reduce((n, row) => n + row.kudos, 0)),
     contributions,
+    demo: true,
+  };
+}
+
+// ─── GET /api/me/weekly-use: "Your week" on Me (#5963) ────────────────
+//
+// The apps the viewer used since Monday and the minutes in each, busiest
+// first, plus their totals for the three weeks before. The week is the one
+// the weekly challenges count — Monday 00:00 UTC, `weekStartMs` — and the
+// own-app rule is the challenge scorer's (`a.created_by IS DISTINCT FROM
+// aa.user_id`), so the numbers match how the minutes challenge sees their
+// use. `app_activity.date` is a UTC day, so `date >= $2::date` is the week.
+//
+// The apps query has no SQL limit: shapeWeeklyUse drops the apps under a
+// minute and keeps the first WEEKLY_USE_APPS_LIMIT, while the week's total
+// comes from the totals query's bucket 0, so it counts every app and every
+// second. Both reads go out together.
+const WEEKLY_USE_APPS_LIMIT = 20;
+const WEEKLY_USE_EARLIER_WEEKS = 3;
+
+const WEEKLY_USE_APPS_SQL = `
+  SELECT a.slug, a.name, SUM(aa.seconds_spent)::bigint AS seconds
+    FROM app_activity aa
+    JOIN apps a ON a.id = aa.app_id
+   WHERE aa.user_id = $1 AND aa.date >= $2::date
+     AND a.created_by IS DISTINCT FROM aa.user_id
+   GROUP BY a.id, a.slug, a.name
+   ORDER BY seconds DESC, a.name ASC
+`;
+
+// weeks_back: 0 for this week, 1 for last week, … (a day before the week
+// start divides to -1, FLOORed, and is negated).
+const WEEKLY_USE_TOTALS_SQL = `
+  SELECT -FLOOR((aa.date - $2::date) / 7.0)::int AS weeks_back,
+         SUM(aa.seconds_spent)::bigint AS seconds
+    FROM app_activity aa
+    JOIN apps a ON a.id = aa.app_id
+   WHERE aa.user_id = $1 AND aa.date >= $2::date - ${WEEKLY_USE_EARLIER_WEEKS * 7}
+     AND a.created_by IS DISTINCT FROM aa.user_id
+   GROUP BY 1
+`;
+
+/** `YYYY-MM-DD` of a UTC instant. */
+function utcDate(ms) {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+// Pure (exported for tests): the two reads into the response.
+//   { weekStart, totalMinutes, apps: [{ slug, name, minutes }],
+//     earlier: [{ weekStart, minutes }] }   // always three, newest first
+function shapeWeeklyUse(appRows, totalRows, weekStart) {
+  const seconds = new Map();
+  for (const row of totalRows || []) seconds.set(Number(row.weeks_back), Number(row.seconds) || 0);
+  const minutes = (s) => Math.floor(Math.max(0, s) / 60);
+  const weekStartAt = Date.parse(`${weekStart}T00:00:00Z`);
+  const earlier = [];
+  for (let back = 1; back <= WEEKLY_USE_EARLIER_WEEKS; back += 1) {
+    earlier.push({
+      weekStart: utcDate(weekStartAt - back * 7 * 86400000),
+      minutes: minutes(seconds.get(back) || 0),
+    });
+  }
+  const apps = (appRows || [])
+    .map((row) => ({ slug: row.slug, name: row.name || row.slug, minutes: minutes(Number(row.seconds) || 0) }))
+    .filter((row) => row.minutes >= 1)
+    .sort((x, y) => y.minutes - x.minutes || String(x.name).localeCompare(String(y.name)))
+    .slice(0, WEEKLY_USE_APPS_LIMIT);
+  return { weekStart, totalMinutes: minutes(seconds.get(0) || 0), apps, earlier };
+}
+
+// Pure (exported for tests): the ?demo=1 overlay, for the staging shots
+// and checks. REAL DATA WINS: a viewer who used somebody's app this week
+// sees their own rows, and the sample fills in only when this week's list
+// would be empty (the declared check selects on this week's rows, so an
+// account with time only in earlier weeks must still show them). Fixed
+// numbers rather than seeded app_activity rows, because the challenge
+// scorer reads that table and seeded minutes could award the test account
+// the minutes challenge on staging. The slugs are
+// src/services/staging-apps.js's virtual directory.
+const DEMO_WEEKLY_USE_APPS = [
+  { slug: 'staging-demo-popular-2', name: 'Staging demo popular 2', minutes: 32 },
+  { slug: 'staging-demo-popular-1', name: 'Staging demo popular 1', minutes: 14 },
+  { slug: 'staging-demo-featured-2', name: 'Staging demo featured 2', minutes: 3 },
+];
+const DEMO_WEEKLY_USE_EARLIER = [25, 10, 0];
+function withDemoWeeklyUse(week) {
+  if (week.apps.length > 0 || week.totalMinutes > 0) return week;
+  return {
+    ...week,
+    totalMinutes: DEMO_WEEKLY_USE_APPS.reduce((n, a) => n + a.minutes, 0),
+    apps: DEMO_WEEKLY_USE_APPS.map((a) => ({ ...a })),
+    earlier: week.earlier.map((w, i) => ({ ...w, minutes: DEMO_WEEKLY_USE_EARLIER[i] || 0 })),
     demo: true,
   };
 }
@@ -1335,6 +1429,27 @@ function profileRoutes(config) {
     }
   });
 
+  // ── GET /api/me/weekly-use ───────────────────────────────────────────
+  //
+  // "Your week" on Me — see WEEKLY_USE_APPS_SQL above for what is counted.
+  router.get('/api/me/weekly-use', requireUser, async (req, res) => {
+    try {
+      const weekStart = utcDate(weekStartMs(Date.now()));
+      const [appRows, totalRows] = await Promise.all([
+        pool.query(WEEKLY_USE_APPS_SQL, [req.user.id, weekStart]),
+        pool.query(WEEKLY_USE_TOTALS_SQL, [req.user.id, weekStart]),
+      ]);
+      let week = shapeWeeklyUse(appRows.rows, totalRows.rows, weekStart);
+      if (IS_STAGING && req.query.demo === '1') week = withDemoWeeklyUse(week);
+      return res.json(week);
+    } catch (err) {
+      log.error('profile', 'Weekly use read failed', {
+        userId: req.user.id, err: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // ── GET /api/me/requests ─────────────────────────────────────────────
   //
   // "Your requests" on Me. See MY_REQUESTS_SQL above for the two ways a
@@ -1406,6 +1521,13 @@ module.exports = {
   withDemoSummary,
   DEMO_CONTRIBUTIONS,
   SUMMARY_CONTRIBUTIONS_LIMIT,
+  WEEKLY_USE_APPS_SQL,
+  WEEKLY_USE_TOTALS_SQL,
+  WEEKLY_USE_APPS_LIMIT,
+  WEEKLY_USE_EARLIER_WEEKS,
+  shapeWeeklyUse,
+  withDemoWeeklyUse,
+  DEMO_WEEKLY_USE_APPS,
   shapeProposals,
   withDemoProposals,
   DEMO_PROPOSALS,

@@ -450,6 +450,66 @@ export function mergedAgo(iso, now = Date.now()) {
 }
 
 /**
+ * "Your week" (#5963): what GET /api/me/weekly-use said, in the words the
+ * WeekPanel draws. `null` when the read failed, the payload is malformed, or
+ * there is no time in any of the four weeks, and then nothing is drawn. The
+ * panel is for reading: its rows lead nowhere.
+ *
+ *   apps       one row per app used this week, busiest first: its name and
+ *              "32 min"
+ *   totalLine  "49 min in all since Monday. Apps you made are not counted."
+ *              (null when apps is empty)
+ *   emptyLine  "Nothing yet this week." (null when apps is non-empty)
+ *   earlier    the three weeks before, newest first: "Week of 19 Oct" and
+ *              "25 min", or "No time"
+ */
+export function weekView(week) {
+  if (!week || typeof week !== 'object' || !Array.isArray(week.apps) || !Array.isArray(week.earlier)) return null;
+  const apps = week.apps
+    .filter((a) => a && typeof a.slug === 'string' && Number(a.minutes) >= 1)
+    .map((a) => ({
+      key: a.slug,
+      name: String(a.name || a.slug),
+      minutes: minutesLabel(Math.floor(Number(a.minutes))),
+    }));
+  const earlier = week.earlier
+    .filter((w) => w && typeof w.weekStart === 'string')
+    .map((w) => {
+      const minutes = Math.max(0, Math.floor(Number(w.minutes) || 0));
+      return {
+        key: w.weekStart,
+        label: t('profile:week.weekOf', { date: weekOfLabel(w.weekStart) }),
+        minutes: minutes > 0 ? minutesLabel(minutes) : t('profile:week.none'),
+      };
+    });
+  if (apps.length === 0 && !earlier.some((w) => w.minutes !== t('profile:week.none'))) return null;
+  const total = Math.max(0, Math.floor(Number(week.totalMinutes) || 0));
+  return {
+    apps,
+    totalLine: apps.length > 0
+      ? t('profile:week.total', { count: total, number: total.toLocaleString() })
+      : null,
+    emptyLine: apps.length > 0 ? null : t('profile:week.empty'),
+    earlier,
+  };
+}
+
+function minutesLabel(minutes) {
+  return t('profile:week.minutes', { count: minutes, number: minutes.toLocaleString() });
+}
+
+/** "19 Oct" for a `YYYY-MM-DD` UTC day, in the viewer's language; the day itself if it cannot be formatted. */
+function weekOfLabel(weekStart) {
+  const at = Date.parse(`${weekStart}T00:00:00Z`);
+  if (!Number.isFinite(at)) return weekStart;
+  try {
+    return new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  } catch (_) {
+    return weekStart;
+  }
+}
+
+/**
  * The stages Your changes can be narrowed to (#5272), in the order its chips
  * show them. Each is one of GET /api/me/proposal-history's four buckets, so a
  * chip lists exactly what the server filed there: `openForVote` is up for a
@@ -868,5 +928,6 @@ export function buildProfileView(state, now = Date.now()) {
     rows: moreRowsView(d),
     friends: friendsView(d.friends || null, now),
     feedback: feedbackListView(d.feedback || null, now),
+    week: weekView(d.week || null),
   };
 }

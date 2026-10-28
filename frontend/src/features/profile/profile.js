@@ -366,7 +366,7 @@ const Profile = {
       const demo = Profile._demoQuery();
       const requestsRead = Profile._fetchJson(`/api/me/requests?counts=1${demo ? '&demo=1' : ''}`)
         .catch(() => null);
-      const [ranking, summary, ownerPublicProfile, friends, feedback, votes] = await Promise.all([
+      const [ranking, summary, ownerPublicProfile, friends, feedback, votes, week] = await Promise.all([
         Profile._fetchJson('/challenges-api/me/ranking?season_id=active'),
         Profile._fetchJson(`/api/me/summary${demo}`).catch(() => null),
         Profile._fetchJson('/api/me/public-profile').catch(() => null),
@@ -374,6 +374,9 @@ const Profile = {
         listFriends().catch(() => null),
         Profile._fetchJson(`/api/feedback/mine${demo}`).then(feedback => ({ ...feedback, receivedAt: Date.now() })).catch(() => null),
         Profile._fetchJson('/api/me/history?type=votes&limit=1').catch(() => null),
+        // #5963: "Your week", the minutes per app since Monday. Non-fatal: a
+        // failed read leaves the section out and the rest of Me shows.
+        Profile._fetchJson(`/api/me/weekly-use${demo}`).catch(() => null),
       ]);
 
       // Last visit's request counts stay up until this visit's land; with
@@ -396,6 +399,7 @@ const Profile = {
         requests: (cached && cached.requests) || null,
         requestsPending: token,
         votes,
+        week,
       };
       if (username) Profile._ownCache = { username, data };
       Profile._fillRequests(requestsRead, username, token);

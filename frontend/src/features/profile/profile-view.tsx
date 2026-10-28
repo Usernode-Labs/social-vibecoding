@@ -36,7 +36,7 @@ import {
 } from './profile-store.js';
 import { Profile } from './profile.js';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
-import { AccountPanel, AdminPanel, RewardsPanel, SettingsPanel, WorkPanel } from './account-panel';
+import { AccountPanel, AdminPanel, RewardsPanel, SettingsPanel, WeekPanel, WorkPanel } from './account-panel';
 import { FeedbackSheet } from './feedback-sheet';
 import { FriendsSheet } from './friends-sheet';
 import { ProfileEditSheet } from './profile-edit-sheet';
@@ -330,11 +330,12 @@ export function ProfileRoot(): ReactNode {
           Two columns from lg (the navigation review): who you are on the
           left, with your Account group under it; Your work and Rewards on
           the right, spanning both rows. Below lg the three blocks stack in
-          this same DOM order: card, stats, Your work, Rewards, Account,
-          Settings. "Your work" (UI overhaul): Your changes, Your requests
-          and Your votes, each a view of the Your work screen. "Rewards":
-          Challenges & standings and Kudos. "Account": Friends and App
-          slots. Admin & moderation, the native node / wallet / staking rows
+          this same DOM order: card, stats, Your work, Rewards, Your week
+          (#5963, when there is time to show), Account, Settings. "Your
+          work" (UI overhaul): Your changes, Your requests and Your votes,
+          each a view of the Your work screen. "Rewards": Challenges &
+          standings and Kudos. "Your week": the minutes per app since Monday
+          and the three weeks before. "Account": Friends and App slots. Admin & moderation, the native node / wallet / staking rows
           and Log out are in Settings (features/settings/account-rows.tsx);
           the Settings card under this ends the screen at every width (#5557).
           Your contributions, which closed the screen, is gone: Your changes
@@ -348,6 +349,7 @@ export function ProfileRoot(): ReactNode {
         <div className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
           <WorkPanel rows={view.rows} />
           <RewardsPanel rows={view.rows} />
+          <WeekPanel week={view.week} />
         </div>
         <div className="lg:col-start-1 lg:row-start-2">
           <AccountPanel rows={view.rows} />
