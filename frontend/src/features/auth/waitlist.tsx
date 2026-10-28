@@ -77,6 +77,7 @@ import { t as translate } from '../../lib/i18n/runtime';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { AuthBackButton } from './back-button';
+import { CodeBoxes } from './code-boxes';
 import {
   AUTH_SCREEN_IDS,
   hiddenFirst,
@@ -238,6 +239,9 @@ export function WaitlistScreen() {
   const busy = useRef(false);
 
   const code = useRef<HTMLInputElement>(null);
+  /** The digits in the code's boxes (./code-boxes.tsx). Kept beside the field
+   *  because a programmatic `.value = ''` fires no input event. */
+  const [codeValue, setCodeValue] = useState('');
   /** The address the code is for. */
   const confirmEmail = useRef<HTMLInputElement>(null);
 
@@ -617,14 +621,13 @@ export function WaitlistScreen() {
   /**
    * Keep the field to six digits, and confirm as soon as it has them. People
    * paste the code out of a mail app, which brings "123 456" or "Code:
-   * 123456" with it, so strip rather than reject. The Confirm button stays:
-   * a wrong code has to be correctable.
+   * 123456" with it, so strip rather than reject (the field takes a longer
+   * paste for exactly that). The Confirm button stays: a wrong code has to be
+   * correctable.
    */
   const onCodeInput = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const el = e.currentTarget;
-      const digits = el.value.replace(/[^0-9]/g, '').slice(0, 6);
-      if (digits !== el.value) el.value = digits;
+    (digits: string) => {
+      setCodeValue(digits);
       setMsg(null);
       if (digits.length === 6) void onConfirmCode();
     },
@@ -794,21 +797,24 @@ export function WaitlistScreen() {
                   ? t('auth:waitlist.confirm.hintSentTo', { email: sentTo })
                   : t('auth:waitlist.confirm.hintStatus')}
               </p>
-              <div className="flex gap-2">
-                <Input
-                  ref={code}
-                  id="waitlist-code"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={32}
-                  placeholder="000000"
-                  onChange={onCodeInput}
-                  {...SURVEY_FIELD}
-                  // Six digits read as digits, which is the whole point of a
-                  // code field.
-                  mono={true}
-                />
+              {/*
+                  Six boxes over one real field (./code-boxes.tsx): typing,
+                  a paste or the keyboard's suggestion from the mail fills
+                  them, and Confirm sits under them because six boxes and a
+                  button do not fit on one line on a phone (#5989).
+              */}
+              <div className="flex flex-col items-start gap-2">
+                <div className="w-full">
+                  <CodeBoxes
+                    id="waitlist-code"
+                    inputRef={code}
+                    digits={codeValue}
+                    onDigits={onCodeInput}
+                    // Long enough that a pasted "Code: 583 914" reaches the
+                    // cleaning whole, as this field has always taken it.
+                    maxLength={32}
+                  />
+                </div>
                 <Button
                   id="waitlist-code-submit"
                   type="button"

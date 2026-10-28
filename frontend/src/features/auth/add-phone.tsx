@@ -23,6 +23,7 @@ import { useRef, useState } from 'react';
 import { buttonVariants } from '@/components/ui/button';
 
 import { useMessages } from '../../lib/i18n/react';
+import { CodeBoxes } from './code-boxes';
 import { phoneRecaptchaToken } from './recaptcha';
 import { blockedOffline } from './shared';
 import { PhoneInput, readPhone } from './phone-input';
@@ -38,7 +39,9 @@ const PRIMARY = `${buttonVariants({
 })} flex items-center justify-center disabled:opacity-60`;
 const FIELD_GROUP = 'overflow-hidden rounded-2xl bg-zinc-50 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-800';
 const LABEL = 'block px-4 pt-3 text-[13px] text-zinc-500 dark:text-zinc-400';
-const INPUT = 'w-full border-0 bg-transparent px-4 pt-1 pb-2 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
+// The code step's label sits above the boxes rather than in a field card, so
+// it carries its own spacing and no card padding.
+const CODE_LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400 mb-1.5';
 const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400 hover:underline disabled:text-zinc-500 disabled:no-underline';
 
 const RESEND_MS = 60 * 1000;
@@ -55,6 +58,8 @@ export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [number, setNumber] = useState('');
+  /** The digits in the code's boxes (./code-boxes.tsx), reset with each send. */
+  const [codeValue, setCodeValue] = useState('');
   const [resendAt, setResendAt] = useState(0);
   const session = useRef('');
   const phoneField = useRef<HTMLInputElement>(null);
@@ -84,6 +89,8 @@ export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
       }
       session.current = data.sessionInfo;
       setNumber(value);
+      // The keyed code form mounts empty, so its boxes start empty too.
+      setCodeValue('');
       setResendAt(Date.now() + RESEND_MS);
       setStep('code');
     } catch {
@@ -147,13 +154,13 @@ export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
         </form>
       ) : (
         <form key="code" className="mt-4 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void verify(); }}>
-          <div className={FIELD_GROUP}>
-            <label htmlFor="add-phone-code" className={LABEL}>{t('auth:addPhone.codeLabel')}</label>
-            <input ref={codeField} id="add-phone-code" inputMode="numeric" autoComplete="one-time-code" enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
+          <div>
+            <label htmlFor="add-phone-code" className={CODE_LABEL}>{t('auth:addPhone.codeLabel')}</label>
+            <CodeBoxes id="add-phone-code" inputRef={codeField} digits={codeValue} onDigits={setCodeValue} />
           </div>
           <button type="submit" disabled={busy} className={PRIMARY}>{busy ? t('auth:addPhone.checking') : t('auth:addPhone.verify')}</button>
           <div className="flex items-center justify-between">
-            <button type="button" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{t('auth:addPhone.changeNumber')}</button>
+            <button type="button" className={QUIET} onClick={() => { setError(null); setCodeValue(''); setStep('phone'); }}>{t('auth:addPhone.changeNumber')}</button>
             <button type="button" className={QUIET} disabled={busy} onClick={() => { if (Date.now() >= resendAt) void requestCode(number); else setError(t('auth:addPhone.resendTooSoon')); }}>
               {t('auth:addPhone.resend')}
             </button>
