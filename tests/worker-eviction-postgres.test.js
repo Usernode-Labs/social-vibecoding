@@ -259,6 +259,13 @@ test('idle workers are the eviction clock\'s, against the full PostgreSQL schema
   await t.test('another conductor rescues durable commits before Pause/idle removal and keeps failed rescues', async t => {
     const actualWorker = require('../src/services/worker');
     const kubernetes = require('../src/services/kubernetes');
+    const teardownQueries = [];
+    const query = pool.query.bind(pool);
+    t.mock.method(pool, 'query', (...args) => {
+      const pending = query(...args);
+      teardownQueries.push(pending);
+      return pending;
+    });
     t.mock.method(require('../src/db/pool'), 'getPool', () => pool);
     t.mock.method(require('../src/services/github'), 'canActOn', () => true);
     t.mock.method(require('../src/services/github'), 'checkRepoPublic', async () => ({ ok: true, private: false }));
@@ -292,8 +299,10 @@ test('idle workers are the eviction clock\'s, against the full PostgreSQL schema
       });
       assert.equal(state.pushOk, false);
       calls.length = 0; // Publication's recorded failure is separate from the rescue below.
-      // End the recovered turn before the reset/idle request. The teardown's
-      // use timestamp must precede the reset, just as it does in production.
+      // Recovery notes last use asynchronously. Finish that write before
+      // dating the fixture's later Pause/idle request; a late write would
+      // correctly spare a worker used after the request.
+      while (teardownQueries.length) await Promise.all(teardownQueries.splice(0));
       await eviction.noteUsed(pool, id);
       await used(id, '10 minutes');
       const { rows: [ended] } = await pool.query(`UPDATE chat_sessions SET active_turn = NULL,

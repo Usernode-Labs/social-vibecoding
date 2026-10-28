@@ -156,6 +156,9 @@ A newest-build-only security clock repeats retirement each minute. It does not
 use the ordinary stale-preview path, which intentionally preserves serving
 previews while replacements build. A failed replacement cannot restore a
 previous policy generation. Future policy changes use the same cutover rule.
+Conductors check before starting work; web startup reads the clock's recent
+matching result. The bounded-age startup and rollout rules are documented in
+[Web and conductor processes](../plans/web-and-conductor.md).
 
 The runtime uses its existing list Deployment/ReplicaSet/Pod, get/update
 Service and foreground delete Deployment permissions. It does not need list

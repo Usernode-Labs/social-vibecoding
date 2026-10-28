@@ -149,6 +149,10 @@ test('workflow machines in a process of their own, and through its crash', { tim
   await startWorkflow();
   assert.ok((await procs.effects(pool, 'docker.ps')).length > 0,
     'startup retirement verified the outside runtime inventory before becoming ready');
+  await procs.until(async () => (await instance('clock', 'clock:preview-data-policy'))?.data?.last?.ok,
+    'the boot retirement is recorded by the security clock');
+  assert.equal((await procs.effects(pool, 'docker.ps')).length, 1,
+    'server startup passes its retirement through the real workflow without a second inventory');
 
   // ── Governance: a close proposal decided by a vote ──────────────────
   const govKey = (i) => `issue:${i.id}`;

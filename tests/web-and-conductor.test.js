@@ -214,6 +214,12 @@ test('the chart runs a conductor beside the web Pods by default, and the Service
   assert.deepEqual(deployments.map((d) => [d.metadata.name, role(d)]),
     [['social-vibecoding', 'web'], ['social-vibecoding-conductor', 'conductor']]);
   const [web, conductor] = deployments;
+  for (const deployment of deployments) {
+    const probe = deployment.spec.template.spec.containers[0].startupProbe;
+    assert.ok(probe.periodSeconds * probe.failureThreshold * 1000
+      >= require('../src/services/platform-preview-startup').WAIT_MS + 120_000,
+    'the startup probe allows the security barrier and ordinary boot/drain work');
+  }
   assert.equal(web.spec.template.metadata.labels['social.usernode.io/serves-requests'], 'true');
   assert.equal(conductor.spec.template.metadata.labels['social.usernode.io/serves-requests'], undefined, 'no requests for the conductor');
   assert.equal(conductor.spec.template.metadata.labels['app.kubernetes.io/component'], 'platform', 'the platform\'s network identity');

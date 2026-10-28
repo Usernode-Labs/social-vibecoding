@@ -1169,9 +1169,10 @@ async function start() {
   // (processes.js waitForRoom).
   const room = await processes.waitForRoom();
   if (room.waitedMs > 0) log.info('server', 'Older processes gave back their connections; starting', room);
-  // Security retirement precedes serving and starting preview work. A failed
-  // inventory/removal fails boot; the newest-build clock retries thereafter.
-  if (runsClusterMaintenance()) await require('./src/services/platform-preview-retirement').retire(config, getPool(config));
+  // Conductors retire unsafe previews before starting work. Web processes
+  // wait for a fresh result from the existing security clock before serving.
+  const previewRetirement = runsClusterMaintenance()
+    ? await require('./src/services/platform-preview-startup').beforeServe(config, getPool(config)) : null;
   // The limiters that gate a send, a bill or a guess count in Postgres: one
   // budget for every process, kept across a deploy (services/rate-limit-store.js).
   require('./src/services/rate-limit-store').setPool(getPool(config));
@@ -1186,7 +1187,7 @@ async function start() {
   // loops below, once it listens. Fatal: the machines are the only paths for
   // what they decide (governance has no other), so a process without them
   // exits and is restarted rather than serving without them.
-  await require('./src/workflow/platform.ts').startWorkflow(config, { loops: false });
+  await require('./src/workflow/platform.ts').startWorkflow(config, { loops: false, previewRetirement });
   startupDiagnostics = Object.freeze({
     totalMs: Date.now() - startedAt,
     migrationsOnStartup,
@@ -1194,7 +1195,7 @@ async function start() {
     servicesMs: Date.now() - servicesStartedAt,
   });
 
-  worker.ensureWorkerImage().catch((err) => {
+  if (processRole.runsWorkflow(ownRole)) worker.ensureWorkerImage().catch((err) => {
     log.warn('server', 'Worker image build deferred', { err: err.message });
   });
 
