@@ -364,6 +364,9 @@ test('the bundle installs the shortcut, which loads comment mode on the first C'
     'only its type: the mode is never in the shell\'s bundle');
   assert.match(src, /w\.Improve\.giveFeedback\(\)/);
   assert.match(src, /bridge\.suggestShortcut = \{/, 'published for settings.js, which cannot import');
+  // The hub's ⋯ menu is classic and cannot import: it reaches the same
+  // warm-up through the bridge, so its row opens the mode at once.
+  assert.match(src, /prepare: \(\) => prepareComment\(\),/, 'the bridge publishes the picture\'s warm-up');
 });
 
 test('Settings, Experimental no longer has the switch', () => {

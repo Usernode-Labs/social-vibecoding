@@ -16914,6 +16914,21 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-request-ask-text ul { margin: 0 0 4px; padding-left: 20px; list-style: disc; }
 .dev-request-ask-text ol { margin: 0 0 4px; padding-left: 20px; list-style: decimal; }
 .dev-request-ask-text strong { color: var(--text-primary); }
+/* #5999: the request a close proposal closes, first in its About sheet.
+   The row size (15px, 650) rather than the request page's large heading:
+   the card above already holds this page's one heading. */
+.dev-topic-closes { margin-bottom: 10px; }
+.dev-topic-closes-title {
+  display: block;
+  margin: 2px 0 4px;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--text-primary);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.dev-topic-closes-title:hover { text-decoration: underline; }
+
 /* The hub's own reveal, in the quote's text column; the caret turns over. */
 .dev-request-more.dev-ws-reveal-start { margin-top: 4px; padding-left: 0; width: auto; }
 .dev-request-more .dev-ws-reveal-chev { transition: transform 240ms cubic-bezier(.32, .72, 0, 1); }
@@ -22449,6 +22464,37 @@ html.un-ios {
   html.un-android #app-view[data-app-surface="platform"] {
     --platform-safe-bottom: max(var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)), env(safe-area-max-inset-bottom, 0px));
   }
+}
+
+/* THE STATUS BAR ON AN INSTALLED ANDROID APP (#5970), the top twin of the
+   rule above. The same edge-to-edge app can report `safe-area-inset-top` as
+   0 while `safe-area-max-inset-top` (Chrome 135+) carries the status bar's
+   height. With an inset of 0 the header's padding is its ordinary 8px and
+   the title and the bell are drawn under the clock, the signal and the
+   battery icons — the overlap in the report. Taking the larger of the two is
+   exact where the inset is right (they agree in an installed app) and whole
+   where it is not. A browser without the second variable falls back to 0px,
+   which leaves the first untouched.
+
+   THE TOKEN, NOT A NEW ONE: every top-inset rule reads
+   `--un-safe-inset-top` (the #2305 header padding, `--platform-safe-top` on
+   :root, the kit's `.un-safe-top*` classes), so one declaration on <html>
+   reaches them all with no rule restated. The value is `env()` only, never
+   `var(--un-safe-inset-top)`, so it cannot reference itself. The review
+   state (`?safe-bottom=1`) writes the same property as an inline style on
+   <html>, which wins over this rule.
+
+   STANDALONE AND NATIVE WEBVIEW, NEVER A BROWSER TAB (#2509): the same
+   reasoning as the bottom rule, and `html.web-browser-chrome` keeps its
+   `--platform-safe-top: 0px` and 0.5rem clamp below. iOS is untouched —
+   `un-android` is the kit's device class and never lands there. */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  html.un-android {
+    --un-safe-inset-top: max(env(safe-area-inset-top, 0px), env(safe-area-max-inset-top, 0px));
+  }
+}
+html.un-android.in-native-webview:not(.web-browser-chrome) {
+  --un-safe-inset-top: max(env(safe-area-inset-top, 0px), env(safe-area-max-inset-top, 0px));
 }
 
 /* A GLYPH OVER ITS LABEL, 56px tall: 8 of padding, 24 of glyph, 3 of gap, a

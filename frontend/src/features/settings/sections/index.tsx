@@ -98,15 +98,15 @@ export function SettingsSections() {
           for each. A stateful pane; see ./linked-phones.tsx. */}
       <LinkedPhonesSection />
       <WalletSection />
-      {/* ── AI & building ── */}
+      {/* ── AI models & usage ── */}
       <UsageSection />
       <OpenRouterSection />
       <ApiKeySection />
+      {/* ── Integrations & automation ── the chat connectors and CLI, then
+          the instruction files and skills those agents read. */}
       <ConnectorsSection />
       <CliSection />
       <AgentFilesSection />
-      <GlobalChatSettingsSection />
-      <ExperimentalSection />
       {/* ── Preferences ── THE UI OVERHAUL moved Theme out of the hamburger
           drawer; see ./theme.tsx for why it is a stateful pane. Appearance
           is the theme and the desktop sidebar switch; #5285 moved the
@@ -131,6 +131,11 @@ export function SettingsSections() {
       <TourSection />
       <UsernodeSection />
       <AboutSection />
+      {/* ── Advanced ── #5994: the features you switch on to try, at the
+          foot of the menu: the Experimental switches, then Global Chat's
+          own settings. */}
+      <ExperimentalSection />
+      <GlobalChatSettingsSection />
     </>
   );
 }

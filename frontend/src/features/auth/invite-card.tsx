@@ -227,15 +227,22 @@ export function useInvitePreview(): { preview: InvitePreview | null; pending: bo
     if (!token) { setPreview({ live: false, reason: 'unknown' }); setPending(false); return undefined; }
     let live = true;
     const giveUp = setTimeout(() => { if (live) setPending(false); }, INVITE_PREVIEW_WAIT_MS);
-    fetch(`/api/public/invites/${encodeURIComponent(token)}`)
+    const read = (again: boolean): Promise<void> => fetch(`/api/public/invites/${encodeURIComponent(token)}`)
       .then((res) => res.json())
       .then((body: InvitePreview) => {
         if (!live) return;
         if (body && typeof body.live === 'boolean') setPreview(body);
         setPending(false);
       })
-      .catch(() => { if (live) setPending(false); /* the landing still works without the card */ })
-      .finally(() => clearTimeout(giveUp));
+      .catch((err) => {
+        // A session boundary while the read was on its way fences its reply
+        // (lib/api-cache-identity.ts). The preview is the same for anyone,
+        // so the boundary cannot have changed it: read it once more.
+        if (live && again && err?.name === 'AbortError') return read(false);
+        if (live) setPending(false); /* the landing still works without the card */
+        return undefined;
+      });
+    read(true).finally(() => clearTimeout(giveUp));
     return () => { live = false; clearTimeout(giveUp); };
   }, []);
   return { preview, pending };

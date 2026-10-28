@@ -219,9 +219,10 @@ const AUTHFIELD = { box: 'card', hint: 'dim', ring: 'bare' } as const;
 const AUTH_CARD = 'rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden';
 const AUTH_ROW = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
 const AUTH_LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
-// Board 4's code field was one monospace field with 8px between the digits,
-// so six digits read as six separate things. #5989 made them six boxes over
-// one real field (./code-boxes.tsx), as the sign-in sheet's codes are.
+// The emailed code's label above its six boxes (#5989): the card's caption,
+// with the gap the card's own row used to give it. A whole literal, because a
+// class name built at render time is a class the extractor never compiles.
+const OTP_CODE_LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400 mb-1.5';
 const ERROR = 'text-red-400 text-sm';
 // The line under the set-password step's username field: its rule, or the
 // server's sentence about the name (QA 2026-09-24 Q12). Two whole literals.
@@ -499,6 +500,9 @@ export function LoginScreen() {
   const [otpDetails, setOtpDetails] = useState<NativeLoginFailureDetails | null>(null);
   const [otpStatus, setOtpStatus] = useState<string | null>(null);
   const [otpEmailEcho, setOtpEmailEcho] = useState('');
+  /** The digits in the emailed code's boxes (./code-boxes.tsx). Kept beside
+   *  the field because a programmatic `.value = ''` fires no input event. */
+  const [otpDigits, setOtpDigits] = useState('');
   const [otpSignup, setOtpSignup] = useState<OtpSignup | null>(null);
   const [otpUsernameError, setOtpUsernameError] = useState<string | null>(null);
   // The address a waitlist-release link carried, and the moment the resend
@@ -877,6 +881,7 @@ export function LoginScreen() {
       st.otpEmail = email;
       setOtpEmailEcho(email);
       if (otpCode.current) otpCode.current.value = '';
+      setOtpDigits('');
       otpShowStep('code');
       // A standing confirmation, not a flash: somebody who arrived from an
       // invite link never pressed anything, so the screen has to say what it
@@ -1702,20 +1707,15 @@ export function LoginScreen() {
                   ]} />
               </p>
               {/*
-                  The same card as the email step, with the code as six boxes
-                  over one real field (#5989, ./code-boxes.tsx): the sign-in
-                  sheet's codes draw them, and so does this screen's. The
-                  label stays at the row's left edge; a new code (cooldownUntil
-                  moves) empties the boxes with the field.
+                  Six boxes over one real field (./code-boxes.tsx, #5989):
+                  typing, a paste or the keyboard's suggestion from the mail
+                  fills them. The label stays visible above them, as the
+                  card's label did.
               */}
-              <div className={AUTH_CARD}>
-                <div className={AUTH_ROW}>
-                  <label htmlFor="otp-code" className={AUTH_LABEL}>
-                    {t('auth:login.otp.codeLabel')}
-                  </label>
-                  <CodeBoxes id="otp-code" inputRef={otpCode} label={t('auth:login.otp.codeLabel')} clearKey={cooldownUntil} boxAttr="data-otp-code-box" className="mt-2 mb-1" />
-                </div>
-              </div>
+              <label htmlFor="otp-code" className={OTP_CODE_LABEL}>
+                {t('auth:login.otp.codeLabel')}
+              </label>
+              <CodeBoxes id="otp-code" inputRef={otpCode} digits={otpDigits} onDigits={setOtpDigits} />
               {/*
                   Board 4's action group, the one place on these three screens
                   where two buttons sit together: `padding-top: 16px` off the

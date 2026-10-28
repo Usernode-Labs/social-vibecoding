@@ -237,19 +237,34 @@ test('the default section is an ungated page, and the first one', () => {
 
 // ── Pages and groups (the settings restructure) ─────────────────────────
 
-test('the registry groups pages under four headings, Account first', () => {
+test('the registry groups pages under six headings, Account first and Advanced last', () => {
   const sections = registrySections();
   // A group is named by its message id; the heading is that id's English.
   const groupIds = [];
   for (const s of sections) if (!groupIds.includes(s.group)) groupIds.push(s.group);
-  assert.deepEqual(groupIds, ['settings:nav.group.account', 'settings:nav.group.aiBuilding',
-    'settings:nav.group.preferences', 'settings:nav.group.helpAbout']);
+  // #5994 split "AI & building" (the allowance, the connectors, the agent
+  // instructions and a global chat under one heading) into AI models & usage
+  // and Integrations & automation, and moved Experimental and Global Chat
+  // out of the AI rows to an Advanced group at the foot of the menu.
+  assert.deepEqual(groupIds, ['settings:nav.group.account', 'settings:nav.group.aiModels',
+    'settings:nav.group.integrations', 'settings:nav.group.preferences',
+    'settings:nav.group.helpAbout', 'settings:nav.group.advanced']);
   const order = groupIds.map((id) => message(id));
-  assert.deepEqual(order, ['Account', 'AI & building', 'Preferences', 'Help & about'],
-    'four groups, in menu order');
-  // dapp.json asserts this heading by TEXT, so the spelling is a contract.
-  assert.ok(manifest.tests.some((t) => t.expectText === 'AI & building'),
-    'the AI & building heading is a declared check');
+  assert.deepEqual(order, ['Account', 'AI models & usage', 'Integrations & automation',
+    'Preferences', 'Help & about', 'Advanced'], 'six groups, in menu order');
+  // dapp.json asserts a heading by TEXT, so the spelling is a contract.
+  assert.ok(manifest.tests.some((t) => t.expectText === 'Integrations & automation'),
+    'the Integrations & automation heading is a declared check');
+  assert.ok(!settingsJs.includes('settings:nav.group.aiBuilding'), 'the old AI & building group is gone');
+  // Where each AI-and-building row went.
+  const byGroup = (key) => sections.find((s) => s.key === key).group;
+  assert.deepEqual(['usage', 'openrouter', 'api-key'].map(byGroup),
+    Array(3).fill('settings:nav.group.aiModels'), 'the allowance, OpenRouter and the Anthropic key are AI models & usage');
+  assert.deepEqual(['connectors', 'cli', 'agent-files'].map(byGroup),
+    Array(3).fill('settings:nav.group.integrations'), 'connectors, CLI and agent files are Integrations & automation');
+  assert.deepEqual(['experimental', 'global-chat'].map(byGroup),
+    Array(2).fill('settings:nav.group.advanced'), 'Experimental and Global Chat are Advanced');
+  assert.equal(sections.at(-1).group, 'settings:nav.group.advanced', 'and Advanced closes the menu');
 
   // A page takes its group from its first part, and never straddles two.
   for (const page of registryPages()) {

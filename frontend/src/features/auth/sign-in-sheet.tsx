@@ -184,7 +184,7 @@ import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
-import { CODE_BOX, CODE_BOX_NEXT, CODE_LENGTH, codeDigits, CodeBoxes } from './code-boxes';
+import { CodeBoxes, CODE_LENGTH, codeDigits } from './code-boxes';
 import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
 import { NativeLoginDetailsLink } from './native-login-details';
 import { PhoneInput, readPhone } from './phone-input';
@@ -196,7 +196,6 @@ import {
   HANDLE_FIELD,
   legacy,
   type NativeLoginFailureDetails,
-  ONE_TIME_CODE_FIELD,
   passwordSignIn,
   sessionMintFailureMessage,
 } from './shared';
@@ -508,9 +507,9 @@ export async function requestPasswordReset(address: string): Promise<{ ok: true 
   }
 }
 
-// The code's length and its digits live with the six boxes (./code-boxes.tsx,
-// #5989) since every digit code draws them; kept exported from here for the
-// callers and tests that read them off the sheet.
+// The code's length and its cleaning live with the boxes every code step
+// draws (./code-boxes.tsx), and stay exported here for the callers and tests
+// that have always read them off this module.
 export { CODE_LENGTH, codeDigits };
 
 /** A mail service whose own inbox a button can open, for the code step (#5253). */
@@ -730,9 +729,6 @@ const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400
 // white segment on it, as Settings' Light / Dark / System.
 const SWITCH_TRACK = 'mt-4 grid grid-cols-2 gap-1 rounded-full bg-zinc-200 p-1 dark:bg-zinc-800';
 const SWITCH_ON = 'h-9 rounded-full bg-white text-[15px] font-semibold text-zinc-900 shadow-sm dark:bg-zinc-600 dark:text-zinc-100';
-// The code's six boxes (#5253) are ./code-boxes.tsx's CODE_BOX and
-// CODE_BOX_NEXT: the email step below still draws its own copy of the
-// pattern, because its sixth digit sends the code (onCodeInput).
 const MAIL_BUTTON = 'flex h-[50px] w-full items-center justify-center rounded-full bg-violet-50 text-[17px] font-[650] text-violet-700 dark:bg-violet-950/50 dark:text-violet-300';
 const SWITCH_OFF = 'h-9 rounded-full text-[15px] font-medium text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100';
 
@@ -914,10 +910,11 @@ export function SignInSheet({
   const resetField = useRef<HTMLInputElement>(null);
   const typedIdentifier = useRef('');
   const [resetSent, setResetSent] = useState(false);
-  // The code as typed, for its six boxes, whether its field has the caret,
-  // and the last code the sixth digit sent, so one code is sent once.
+  // The code as typed, for its six boxes, and the last code the sixth digit
+  // sent, so one code is sent once. The phone code's own step draws the same
+  // boxes and verifies from its button.
   const [code, setCode] = useState('');
-  const [codeFocused, setCodeFocused] = useState(false);
+  const [phoneCode, setPhoneCode] = useState('');
   const autoSent = useRef('');
   // The account step's handle as typed, and what the live check says of it (#5255).
   const [handleDraft, setHandleDraft] = useState('');
@@ -1251,12 +1248,11 @@ export function SignInSheet({
     }
   }, [email, followInvite, finish]);
 
-  // Each keystroke or paste: the digits it can be, in the field and the
-  // boxes, and the sixth sends it (#5253). Not again for the same six, so
-  // a refused code waits for a change rather than going round.
+  // Each keystroke or paste: the digits it can be, in the boxes, and the
+  // sixth sends it (#5253). Not again for the same six, so a refused code
+  // waits for a change rather than going round.
   const onCodeInput = useCallback((value: string) => {
     const digits = codeDigits(value);
-    if (codeField.current && codeField.current.value !== digits) codeField.current.value = digits;
     setCode(digits);
     if (digits.length === CODE_LENGTH && digits !== autoSent.current && !busy) {
       autoSent.current = digits;
@@ -1297,6 +1293,7 @@ export function SignInSheet({
       phoneSession.current = data.sessionInfo;
       setPhoneNumber(value);
       if (phoneCodeField.current) phoneCodeField.current.value = '';
+      setPhoneCode('');
       setStep('phone-code');
       setCooldownUntil(Date.now() + RESEND_COOLDOWN_MS);
       setNow(Date.now());
@@ -1712,13 +1709,9 @@ export function SignInSheet({
 
         {step === 'phone-code' ? (
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void verifyPhone(); }}>
-            <div className={FIELD_GROUP}>
-              <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-phone-code" className={LABEL}>{t('auth:signInSheet.phoneCode.label')}</label>
-                {/* Six boxes over one real field (#5989), as the email code's. A new
-                    code (cooldownUntil moves) empties them with the field. */}
-                <CodeBoxes id="sign-in-sheet-phone-code" inputRef={phoneCodeField} label={t('auth:signInSheet.phoneCode.label')} clearKey={cooldownUntil} boxAttr="data-sign-in-sheet-phone-code-box" className="mt-2 mb-1" />
-              </div>
+            <div>
+              <label htmlFor="sign-in-sheet-phone-code" className="sr-only">{t('auth:signInSheet.phoneCode.label')}</label>
+              <CodeBoxes id="sign-in-sheet-phone-code" inputRef={phoneCodeField} digits={phoneCode} onDigits={setPhoneCode} />
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.phoneCode.checking') : t('auth:signInSheet.phoneCode.submit')}</button>
             <div className="flex items-center justify-between">
@@ -1752,14 +1745,9 @@ export function SignInSheet({
               ]} />
             </p>
             {/* Six boxes drawn under one real field: the keyboard's code from the mail, and a paste, fill all six. */}
-            <div className="relative mt-2">
-              <div className="grid grid-cols-6 gap-2" aria-hidden="true">
-                {Array.from({ length: CODE_LENGTH }, (_, i) => (
-                  <span key={i} data-sign-in-sheet-code-box={i} className={codeFocused && i === Math.min(code.length, CODE_LENGTH - 1) ? CODE_BOX_NEXT : CODE_BOX}>{code[i] || ''}</span>
-                ))}
-              </div>
+            <div className="mt-2">
               <label htmlFor="sign-in-sheet-code" className="sr-only">{t('auth:signInSheet.code.label')}</label>
-              <input ref={codeField} id="sign-in-sheet-code" {...ONE_TIME_CODE_FIELD} enterKeyHint="go" maxLength={6} onInput={(e) => onCodeInput(e.currentTarget.value)} onFocus={() => setCodeFocused(true)} onBlur={() => setCodeFocused(false)} className="absolute inset-0 h-full w-full border-0 bg-transparent text-transparent caret-transparent outline-none selection:bg-transparent" />
+              <CodeBoxes id="sign-in-sheet-code" inputRef={codeField} digits={code} onDigits={onCodeInput} />
             </div>
             <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{busy ? t('auth:signInSheet.code.checking') : t('auth:signInSheet.code.continuesItself')}</p>
             {mailApp ? (
