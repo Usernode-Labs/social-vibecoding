@@ -20,6 +20,18 @@
  *   hub-first-week-link      as the person who started it, nobody else in
  *                            yet, an invite link out: "Just you so far",
  *                            and Share it saying the link is out
+ *   hub-version              a version of Tier list (docs/plans/versions.md),
+ *                            as its maker: "Made from Tier list · Gets its
+ *                            updates" in the hero, and the Update card for
+ *                            Tier list's latest, not yet looked at
+ *   hub-original             Tier list itself, as one of its approvers: "214
+ *                            versions · 160 get its updates" in the hero, and
+ *                            From its versions (suggestions, lately, the
+ *                            last update)
+ *
+ * The two versions shots answer the cards' own reads too (GET
+ * /api/apps/:slug/upstream and /versions, ../../versions/upstream.ts), with
+ * the made-up states below.
  *
  * The hub is drawn the same from a project's first day (15 Oct 2026); the
  * shots keep their names.
@@ -27,13 +39,15 @@
 
 import type { CommunityPayload } from './community-card';
 
-export type HubShot = 'creator' | 'member' | 'question' | 'link';
+export type HubShot = 'creator' | 'member' | 'question' | 'link' | 'version' | 'original';
 
 const SHOTS: Readonly<Record<string, HubShot>> = Object.freeze({
   'hub-first-week': 'creator',
   'hub-first-week-member': 'member',
   'hub-first-week-question': 'question',
   'hub-first-week-link': 'link',
+  'hub-version': 'version',
+  'hub-original': 'original',
 });
 
 /** Which hub shot the address asks for, or null. */
@@ -59,8 +73,67 @@ export const SHOT_PLAN = Object.freeze({
   ]) as unknown as Array<{ question: string; suggested: string | null }>,
 });
 
+/** The two versions shots' made-up original (docs/plans/versions.md). */
+const SHOT_ORIGINAL = Object.freeze({ slug: 'tier-list', name: 'Tier list', emoji: '🏆', iconUrl: null });
+
+/**
+ * `hub-version`'s GET /api/apps/:slug/upstream: a version that gets Tier
+ * list's updates, with its latest not yet looked at. Null for any other
+ * shot. Pure.
+ */
+export function hubShotUpstream(kind: HubShot | null): Record<string, unknown> | null {
+  if (kind !== 'version') return null;
+  return {
+    enabled: true,
+    original: { ...SHOT_ORIGINAL },
+    following: true,
+    share: false,
+    canManage: true,
+    private: true,
+    behind: true,
+    offer: {
+      state: 'available',
+      sessionId: null,
+      href: null,
+      fromSha: '5f1c0de5f1c0de5f1c0de5f1c0de5f1c0de5f1c0',
+      brings: [
+        { title: 'Other people: pick anyone in the group and see their whole board' },
+        { title: 'Comments on each item, with @mentions' },
+        { title: 'A help sheet, from a small ? beside the title' },
+      ],
+      facts: { tablesAdded: ['comments'], destructive: [], hostsAdded: [], secretsAdded: [], ai: false, storage: false },
+      keeps: { count: 3, titles: ['Rate out of 10, not S to F', 'Who suggested each book'] },
+      conflicts: [],
+    },
+  };
+}
+
+/**
+ * `hub-original`'s GET /api/apps/:slug/versions: Tier list, with two
+ * suggestions in from its versions. Null for any other shot. Pure.
+ */
+export function hubShotVersions(kind: HubShot | null, now: number = Date.now()): Record<string, unknown> | null {
+  if (kind !== 'original') return null;
+  const ago = (min: number) => new Date(now - min * 60000).toISOString();
+  return {
+    count: 214,
+    following: 160,
+    suggestions: [
+      { sessionId: 990942, href: '#app/tier-list/dev/proposals/990942', title: 'Rate out of 10', from: { slug: 'book-club-picks', name: 'Book club picks' } },
+      { sessionId: 990943, href: '#app/tier-list/dev/proposals/990943', title: 'Show who added each item', from: { slug: 'book-club-picks', name: 'Book club picks' } },
+    ],
+    lately: {
+      versions: 31,
+      changes: 46,
+      rows: [{ title: 'Comments on items', from: { slug: 'board-game-night', name: 'Board game night' }, at: ago(90) }],
+    },
+    lastUpdate: { offered: 160, took: 98, skipped: 12, deciding: 50 },
+  };
+}
+
 /** The made-up community a hub shot draws, for `slug`. Pure. */
 export function hubShotPayload(slug: string, kind: HubShot, now: number = Date.now()): CommunityPayload {
+  if (kind === 'version' || kind === 'original') return versionsShotPayload(slug, kind, now);
   const maker = kind !== 'member';
   // A link out and nobody in yet: Just you so far, Share it saying so.
   const alone = kind === 'link';
@@ -110,5 +183,51 @@ export function hubShotPayload(slug: string, kind: HubShot, now: number = Date.n
     can_manage: maker,
     audience_change: null,
     approval: { policy: 'anyone', approvals_required: null, electorate: 3, required: 2 },
+  };
+}
+
+/**
+ * The versions shots' community: a private community's version of Tier list
+ * ("Made from Tier list · Gets its updates"), or Tier list itself, public,
+ * with its versions counted. Pure.
+ */
+function versionsShotPayload(slug: string, kind: 'version' | 'original', now: number): CommunityPayload {
+  const version = kind === 'version';
+  const ago = (min: number) => new Date(now - min * 60000).toISOString();
+  const people = version
+    ? ['maya_t1028', 'dev_t1028', 'rosa_t1028', 'kwame_t1028']
+    : ['evan_t1028', 'salah_t1028', 'maya_t1028', 'priya_t1028', 'jonas_t1028'];
+  const members = people.map((username, i) => ({ id: 990910 + i, username }));
+  const line = version ? 'Can we add the March book before Thursday?' : 'The help sheet is live for everyone';
+  return {
+    slug,
+    name: version ? 'Book club picks' : SHOT_ORIGINAL.name,
+    description: version ? 'Every book we have read, ranked together' : 'Rank anything together, S to F',
+    first_version: null,
+    invite_link: false,
+    invite_summary: null,
+    live_since: ago(60 * 24 * 40),
+    member_count: members.length,
+    is_member: true,
+    is_creator: version,
+    audience: version ? 'invited' : 'open',
+    audience_label: version ? 'Private community' : 'Public community',
+    members,
+    channel: {
+      last_message: line,
+      last_at: ago(95),
+      last_by: people[1],
+      unread_count: 0,
+      recent: [{ id: 990920, content: line, created_at: ago(95), by: people[1] }],
+      href: `#messages/app/${encodeURIComponent(slug)}`,
+      handle: null,
+      post_url: null,
+    },
+    activity: { active_week: 3, shipped_month: 2, daily: [] },
+    can_manage: true,
+    audience_change: null,
+    approval: { policy: 'anyone', approvals_required: null, electorate: members.length, required: 2 },
+    made_from: version ? { slug: SHOT_ORIGINAL.slug, name: SHOT_ORIGINAL.name, following: true } : null,
+    versions: version ? null : { count: 214, following: 160 },
   };
 }

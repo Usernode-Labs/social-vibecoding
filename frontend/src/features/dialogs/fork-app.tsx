@@ -1,9 +1,14 @@
 /**
- * Fork-app dialog (#fork-modal), which people see as "Remix".
+ * Fork-app dialog (#fork-modal), which people see as "Make your own".
  *
- * Makes the viewer their own copy of an app: its code and look, in a new
- * project that starts as Just you, with its own repo, an empty database and
- * its own web address.
+ * Makes the viewer their own VERSION of an app (docs/plans/versions.md): its
+ * code and look, in a new project that starts as Just you, with its own
+ * repo, an empty database and its own web address. The app it was made from
+ * is its ORIGINAL, and "Get <original>'s updates" (on unless they turn it
+ * off) has the original's later changes given to the version as ordinary
+ * changes its own group tries and votes on. That choice goes in the POST as
+ * `follow`; the server writes it into the version's lineage and its
+ * dapp.json (`followOriginal`), where it is votable like any other line.
  *
  * Markup extracted verbatim from Shell.tsx by #1078 chunk A; #1078 chunk I
  * moved the behaviour in and made it stateful. The render output is still
@@ -29,6 +34,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
@@ -49,19 +55,22 @@ import { useDialog } from './use-dialog';
 const POLL_INTERVAL_MS = 4000;
 
 /**
- * What a remix copies, what starts fresh and what stays behind, in that
+ * What a version copies, what starts fresh and what stays behind, in that
  * order: the box under the name field. Each line must stay true of what
  * src/services/app-forker.js does (an empty database, no stored keys, the
  * original's visibility, approval rule and admins stripped from dapp.json).
  * tests/remix-safe-defaults.test.js pins the words as the shell ships them.
+ *
+ * It had a fourth line, "Its code is public on GitHub.", which stopped being
+ * true of every version once projects could live on Homeroom's own git host;
+ * the approved design for versions draws the three.
  */
-// Each line is one whole message (frontend/locales/en/dialogs.json). `lead`
-// says the message opens with a bold lead-in, written as its numbered tag.
-const FORK_INFO_LINES: ReadonlyArray<{ id: string; lead: boolean }> = [
-  { id: 'dialogs:fork.info.copied', lead: true },
-  { id: 'dialogs:fork.info.fresh', lead: true },
-  { id: 'dialogs:fork.info.notCopied', lead: true },
-  { id: 'dialogs:fork.info.public', lead: false },
+// Each line is one whole message (frontend/locales/en/dialogs.json). Each
+// opens with a bold lead-in, written as its numbered tag.
+const FORK_INFO_LINES: ReadonlyArray<{ id: string }> = [
+  { id: 'dialogs:fork.info.copied' },
+  { id: 'dialogs:fork.info.fresh' },
+  { id: 'dialogs:fork.info.notCopied' },
 ];
 
 export interface ForkSource {
@@ -78,6 +87,8 @@ export function ForkAppDialog() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [forked, setForked] = useState<{ slug: string; name: string } | null>(null);
+  // "Get <original>'s updates": on by default, and on again at every open.
+  const [follow, setFollow] = useState(true);
   const progress = useStoreState(creationProgressStore);
   const { blocked: quotaBlocksCreation } = useAppAllowance();
 
@@ -89,6 +100,7 @@ export function ForkAppDialog() {
       setSourceName(src?.name || '');
       setError('');
       setForked(null);
+      setFollow(true);
       stopWatchingCreation();
       if (inputRef.current) inputRef.current.value = src?.name
         ? t('dialogs:fork.defaultName.named', { app: src.name })
@@ -141,7 +153,7 @@ export function ForkAppDialog() {
       const res = await fetch(`/api/apps/${encodeURIComponent(source.slug)}/fork`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, follow }),
       });
       const data = await res.json().catch(() => ({}));
       void invalidateAppAllowance();
@@ -230,10 +242,10 @@ export function ForkAppDialog() {
         ) : (
           <>
         {/*
-            People see a fork as a "Remix": their own copy, which starts as
-            Just you with an empty database (src/services/app-forker.js says
-            what is copied and what is not). The ids keep "fork": the route
-            is /fork and the shell baseline pins them.
+            People see a fork as "Make your own": their own version, which
+            starts as Just you with an empty database (src/services/app-forker.js
+            says what is copied and what is not). The ids keep "fork": the
+            route is /fork and the shell baseline pins them.
 
             Every space beside an inline element is written inside a string:
             JSX drops the line break between text and a tag, which once ran
@@ -284,15 +296,35 @@ export function ForkAppDialog() {
                 {/* The lead-in and its sentence are one message: the bold part
                     is the numbered tag, and what follows it stays one text
                     child, as the prerender needs. */}
-                {line.lead ? (
-                  <RichMessage
-                    id={line.id}
-                    components={[<strong className="font-semibold text-zinc-900 dark:text-zinc-100" />]}
-                  />
-                ) : t(line.id)}
+                <RichMessage
+                  id={line.id}
+                  components={[<strong className="font-semibold text-zinc-900 dark:text-zinc-100" />]}
+                />
               </p>
             ))}
           </div>
+          {/*
+              GET ITS UPDATES (docs/plans/versions.md): a row of its own under
+              the box, the box's hairline round it, its words first and the
+              switch at its end, as the board filters dialog draws a switch
+              with a line under it. On by default. The whole row is the
+              label, so a tap anywhere on it turns the switch.
+          */}
+          <label htmlFor="fork-follow" className="fork-follow">
+            <span className="min-w-0 flex-1">
+              <span className="fork-follow-title">
+                {sourceName ? t('dialogs:fork.follow.title', { app: sourceName }) : t('dialogs:fork.follow.titleUnnamed')}
+              </span>
+              <span className="fork-follow-sub">
+                {sourceName ? t('dialogs:fork.follow.sub', { app: sourceName }) : t('dialogs:fork.follow.subUnnamed')}
+              </span>
+            </span>
+            <Switch
+              id="fork-follow"
+              checked={follow}
+              onChange={(event) => setFollow(event.target.checked)}
+            />
+          </label>
           <div id="fork-error" ref={errorRef} className="text-red-700 dark:text-red-400 text-sm hidden">
             {error}
           </div>

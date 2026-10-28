@@ -1433,7 +1433,7 @@
     {
       "name": "The app detail page opens from a browse row (?shot=browse-detail)",
       "path": "/?shot=browse-detail#apps",
-      "expectText": "Make your own copy",
+      "expectText": "Your own version to change",
       "expectSelector": "#browse-detail #browse-detail-open"
     },
     {
@@ -3643,9 +3643,9 @@
       "expectSelector": ".fork-tag"
     },
     {
-      "name": "The app's own page shows the Remixed-from label",
+      "name": "The app's own page shows the Made-from label",
       "path": "/#apps/staging-demo-fork",
-      "expectText": "Remixed from"
+      "expectText": "Made from"
     },
     {
       "name": "Fork lineage renders under the version it qualifies",

@@ -99,7 +99,7 @@ function render(patch, { apps = [ROW], parked = null, items = null, privateMembe
       isYours: (a) => !!((a.is_collaborator && !a.your_apps_hidden) || a.is_favorited),
       menuItemsFor: () => items || [
         { key: 'install', label: 'Add to Home Screen', run: () => {} },
-        { key: 'fork', label: 'Remix', run: () => {} },
+        { key: 'fork', label: 'Make your own', run: () => {} },
       ],
     },
   };
@@ -195,27 +195,36 @@ test('Add to home screen and Fork are the app page\'s own items, and absent with
     'a laptop has no home screen, and the platform row cannot be forked');
 });
 
-// People see a fork as a "Remix". The row says what it does under its label,
-// and a copy says what it was remixed from, under its description, the way
+// People see a fork as "Make your own" (their own version,
+// docs/plans/versions.md). The row says what it does under its label, and a
+// version says what it was made from, under its description, the way
 // Discover's page does.
-test('Remix says "Make your own copy", and a copy says what it was remixed from', () => {
+test('Make your own says "Your own version to change", and a version says what it was made from', () => {
   const patch = { target: 'app', slug: 'notes-ab12', name: 'Notes', tab: 'dev' };
   const plain = render(patch);
-  assert.match(plain, /id="app-about-fork"[^>]*>[\s\S]*?>Remix<[\s\S]*?>Make your own copy</);
+  assert.match(plain, /id="app-about-fork"[^>]*>[\s\S]*?>Make your own<[\s\S]*?>Your own version to change</);
+  assert.doesNotMatch(plain, />Remix</, 'people never see "Remix"');
   assert.doesNotMatch(plain, /Fork this app/);
   assert.doesNotMatch(plain, /app-about-lineage/, 'an app that is not a copy has no lineage line');
 
   const copy = { ...ROW, forked_from: { appId: 3, slug: 'book-club', name: 'Book Club', linkable: true } };
   const html = render(patch, { apps: [copy] });
-  assert.match(html, /id="app-about-lineage"[^>]*>(?:<[^>]+>)*\u2442 Remixed from Book Club</);
+  assert.match(html, /id="app-about-lineage"[^>]*>(?:<[^>]+>)*Made from Book Club</);
+  assert.doesNotMatch(html, /\u2442/, 'the fork sign is gone with the word');
   assert.match(html, /id="app-about-lineage"[^>]*><a href="#app\/book-club"/, 'it opens the original');
   assert.ok(html.indexOf('id="app-about-tagline"') < html.indexOf('id="app-about-lineage"'),
     'under the description');
 
   const orphan = { ...ROW, forked_from: { appId: 3, slug: 'book-club', name: '<deleted>', linkable: false } };
   const gone = render(patch, { apps: [orphan] });
-  assert.match(gone, /\u2442 Remixed from &lt;deleted&gt;/);
+  assert.match(gone, /Made from &lt;deleted&gt;/);
   assert.doesNotMatch(gone, /id="app-about-lineage"[^>]*><a /, 'a deleted original is text, not a link');
+
+  // A ready-made made from its platform original has no `forked_from`: its
+  // link is the one-app read's `upstream_link`, read the same way.
+  const readyMade = { ...ROW, forked_from: null, upstream_link: { slug: 'tier-list', name: 'Tier list', following: true, linkable: true } };
+  const linked = render(patch, { apps: [readyMade] });
+  assert.match(linked, /id="app-about-lineage"[^>]*><a href="#app\/tier-list"[^>]*>Made from Tier list</);
 });
 
 test('About Homeroom: the three figures instead of the actions, then its roster', () => {

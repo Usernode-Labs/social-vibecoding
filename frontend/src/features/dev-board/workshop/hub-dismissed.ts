@@ -9,6 +9,12 @@
  * offer is still on the page without them, Invite in the hero's row and
  * Suggest an improvement in the hero's ⋯.
  *
+ * A version's Update card (./hub-cards.tsx UpdateCard, docs/plans/versions.md)
+ * closes the same way, from its Not now, under the name of the one update
+ * it is about (`update:<the original's commit>`), so the next update shows
+ * again; `update:behind` is the one-time card of a version that does not
+ * get its updates.
+ *
  * ── The record ─────────────────────────────────────────────────────────
  *
  * There is no per-person store of closed cards on the server, so this is
@@ -31,8 +37,8 @@ export const HUB_DISMISSED_KEY = 'hubDismissed:v1';
 /** How many projects one account's record keeps, newest first. */
 export const HUB_DISMISSED_MAX = 200;
 
-/** The cards that can be closed: Share it, and What do you want to change?. */
-export type HubCard = 'share' | 'start';
+/** The cards that can be closed: Share it, What do you want to change?, and a version's Update card for one update. */
+export type HubCard = 'share' | 'start' | `update:${string}`;
 
 /** By project, then by card: when it was closed. */
 type ClosedMap = Record<string, Partial<Record<HubCard, number>>>;

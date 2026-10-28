@@ -459,9 +459,9 @@ test('the route: same-origin only, membership-gated, 201 with the proposal', asy
 
 // ── 5. The dialog and the ⋯ row ───────────────────────────────────────
 
-test('the ⋯ offers "Suggest this back" to the copy\'s owner only', () => {
+test('the ⋯ offers "Suggest to <original>" to the version\'s owner only', () => {
   const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
-  const { suggestBackTarget, changeLines } = loadTsx('frontend/src/features/dev-board/suggest-back-dialog.tsx');
+  const { suggestBackTarget, changeLines, versionOfApp, pickableChanges } = loadTsx('frontend/src/features/dev-board/suggest-back-dialog.tsx');
   const resolved = { ...COPY, forked_from: { appId: 3, slug: 'book-club', name: 'Book Club', linkable: true } };
   assert.deepEqual(suggestBackTarget(resolved, 5), { slug: 'book-club', name: 'Book Club' });
   assert.equal(suggestBackTarget(resolved, 6), null, 'not for anyone else');
@@ -469,6 +469,16 @@ test('the ⋯ offers "Suggest this back" to the copy\'s owner only', () => {
   assert.equal(suggestBackTarget({ ...resolved, forked_from: null }, 5), null, 'not for an app that is not a copy');
   assert.equal(suggestBackTarget({ ...resolved, forked_from: { ...resolved.forked_from, linkable: false } }, 5), null,
     'not when the original is gone');
+  // Versions (docs/plans/versions.md): a ready-made version has no
+  // `forked_from`; the one-app read's `upstream_link` links it, and wins.
+  const linked = { ...COPY, forked_from: null, upstream_link: { slug: 'tier-list', name: 'Tier list', following: true, linkable: true } };
+  assert.deepEqual(suggestBackTarget(linked, 5), { slug: 'tier-list', name: 'Tier list' });
+  assert.deepEqual(versionOfApp(linked), { slug: 'tier-list', name: 'Tier list', following: true });
+  assert.deepEqual(versionOfApp(resolved), { slug: 'book-club', name: 'Book Club', following: false },
+    'an older server\'s forked_from says nothing of updates');
+  assert.equal(versionOfApp({ ...linked, upstream_link: { ...linked.upstream_link, linkable: false } }), null);
+  assert.deepEqual(pickableChanges({ changes: [{ sha: 'a1', title: 'Rate out of 10' }, { sha: '', title: 'x' }] }), [{ sha: 'a1', title: 'Rate out of 10' }]);
+  assert.deepEqual(pickableChanges({}), [], 'an older server has no pick list');
 
   assert.deepEqual(changeLines({ commits: ['A', 'B'], commitCount: 5, fileCount: 3 }), ['A', 'B', 'and 3 more']);
   assert.deepEqual(changeLines({ commits: [], commitCount: 0, fileCount: 1 }), ['1 file changed']);
@@ -481,8 +491,11 @@ test('the ⋯ offers "Suggest this back" to the copy\'s owner only', () => {
     globalThis.window = { App: { user: { id: 5 } } };
     const html = renderToHtml(createElement(DevPlusMenu, props));
     assert.match(html, /data-plus="suggest-back"/);
-    assert.match(html, />Suggest this back</);
-    assert.match(html, />Send your changes to Book Club as a proposal</);
+    assert.match(html, />Suggest to Book Club</);
+    assert.match(html, />Pick which of your changes to send</);
+    assert.match(html, /data-plus="updates"/, 'and Updates from <original>');
+    assert.match(html, />Updates from Book Club</);
+    assert.match(html, />Doesn’t get its updates</);
     globalThis.window = { App: { user: { id: 6 } } };
     assert.doesNotMatch(renderToHtml(createElement(DevPlusMenu, props)), /suggest-back/);
   } finally {
@@ -495,12 +508,16 @@ test('the dialog says what goes, what does not, and who votes', () => {
   const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
   const { SuggestBackDialog } = loadTsx('frontend/src/features/dev-board/suggest-back-dialog.tsx');
   const html = renderToHtml(createElement(SuggestBackDialog, {
-    slug: 'book-club-remix', copyName: 'Book Club (remix)', original: { slug: 'book-club', name: 'Book Club' }, onClose() {},
+    slug: 'book-club-picks', copyName: 'Book club picks', original: { slug: 'book-club', name: 'Book Club' }, onClose() {},
   }));
   const text = html.replace(/<[^>]*>/g, '').replace(/&#x27;/g, "'");
-  assert.match(text, /Suggest this back to Book Club/);
-  assert.match(text, /Your changes since you remixed go to Book Club as a proposal\. Its members try it and vote, like any other change\./);
-  assert.match(text, /Not sent: Book Club \(remix\)’s name, who can see it, its admins or its data\./);
+  assert.match(text, /Suggest to Book Club/);
+  // An original the platform approves keeps a suggestion in review rather
+  // than putting it to a vote, so the words promise no vote.
+  assert.match(text, /Pick the changes to send\. They go to Book Club as a suggestion, for the people who decide its changes to try\./);
+  assert.match(text, /Your name and words stay yours\. Not sent: Book club picks’s name, who can see it, its admins or its data\./);
+  assert.match(text, /If it goes in, every version that gets Book Club’s updates is given it, yours included\./);
+  assert.doesNotMatch(text, /remix|rewrite|reword/i, 'it promises nothing about rewording the changes');
   assert.match(text, /Loading your changes…/, 'the list loads after the dialog opens, never in a render');
   assert.match(html, />Cancel</);
   assert.match(html, /data-suggest-send="true" disabled=""[^>]*>Send to Book Club</, 'Send waits for the list');

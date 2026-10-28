@@ -77,9 +77,9 @@ test('an import says importing, not creating', () => {
   assert.match(text({ phase: 'repository' }, { mode: 'import' }), /Importing .?My App/);
 });
 
-test('a fork says it is remixing the named app', () => {
-  assert.match(text({ phase: 'repository' }, { mode: 'fork' }), /Remixing .?My App/);
-  assert.doesNotMatch(text({ phase: 'repository' }, { mode: 'fork' }), /Fork/, 'people see Remix, never Fork');
+test('a fork says it is making the named version', () => {
+  assert.match(text({ phase: 'repository' }, { mode: 'fork' }), /Making .?My App/);
+  assert.doesNotMatch(text({ phase: 'repository' }, { mode: 'fork' }), /Fork|Remix/, 'people see their version made, never Fork or Remix');
 });
 
 test('live shows the app is up and offers to open it', () => {
