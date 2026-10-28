@@ -38,7 +38,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BallotIcon, LightBulbIcon, PlusIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 
-import { Message, RichMessage } from '../../lib/i18n/react';
+import { Message } from '../../lib/i18n/react';
 import { noteSignUpFrom } from './sign-up-from';
 import { FRONT } from '../first-session/examples';
 import { useMessages } from '../../lib/i18n/react';
@@ -106,13 +106,11 @@ export function nextStep(fit: number, footBottom: number, screenBottom: number):
   return fit + 1;
 }
 
-export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, compact = false, lookAround = false, waitlist = false }: {
+export function Story({ primaryClass, welcomeEmail = null, onStart, compact = false, lookAround = false, waitlist = false }: {
   primaryClass: string;
   /** The address a "You're in" mail's link names, greeted under the welcome. */
   welcomeEmail?: string | null;
   onStart: () => void;
-  /** The foot line's "Sign in": the sheet in its Sign in mode. Continue's when absent. */
-  onSignIn?: () => void;
   /**
    * THE SHORT STORY, over the guest Discover (features/guest/guest-discover.tsx):
    * the welcome, the headline, one line that says the apps below can be
@@ -215,22 +213,10 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
       <a href="#signup" data-landing-story-start="" className={primaryClass} onClick={(e) => { e.preventDefault(); noteSignUpFrom('story'); onStart(); }}>
         {t('auth:story.continue')}
       </a>
-      {/* Polish N10: the line read like a second way in but was plain
-          text. Its "Sign in" is one now, the same sheet titled Sign in
-          (landing.tsx's 'signin'), for somebody who has an account. */}
-      <p data-landing-story-how="" className="mt-1 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400 text-balance">
-        <RichMessage
-          id="auth:story.email"
-          components={[
-            <a
-              href="#login"
-              data-landing-story-signin=""
-              className={STORY_LINK}
-              onClick={(e) => { e.preventDefault(); noteSignUpFrom('story_sign_in'); (onSignIn || onStart)(); }}
-            />,
-          ]}
-        />
-      </p>
+      {/* One way in (#5939's follow-up): Start here opens the sheet whose one
+          field takes an email, a phone number or a username, and it signs
+          in or makes the account from what was typed. No Sign in line of
+          its own any more. */}
       {lookAround ? (
         <p className="text-[15px] leading-5">
           <a href="#apps" data-landing-story-look="" className={STORY_LINK}>

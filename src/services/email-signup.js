@@ -612,8 +612,43 @@ async function completePassword(pool, { signupToken, password, username = null, 
   return result;
 }
 
+/**
+ * The address a username's code goes to: the sign-in sheet's one field
+ * takes a username too, and an account with no password signs in with an
+ * emailed code. The username matches as sign-in matches it
+ * (routes/auth.js /api/auth/login): case-insensitively, the exact spelling
+ * first, then a retired handle (username_history) when no live account
+ * wears it. Null when nothing matches or the account has no address (one
+ * made by phone). The caller never says which: the address stays private.
+ */
+async function emailForUsername(pool, rawUsername) {
+  const name = typeof rawUsername === 'string' ? rawUsername.trim().replace(/^@/, '') : '';
+  if (!name || name.length > 64 || name.includes('@')) return null;
+  const { rows } = await pool.query(
+    `SELECT email FROM users
+      WHERE LOWER(username) = LOWER($1) AND NOT is_synthetic
+      ORDER BY (username = $1) DESC, id ASC
+      LIMIT 1`,
+    [name]
+  );
+  let row = rows[0];
+  if (!row) {
+    const retired = await pool.query(
+      `SELECT u.email FROM username_history h
+         JOIN users u ON u.id = h.user_id
+        WHERE LOWER(h.username) = LOWER($1) AND NOT u.is_synthetic
+        ORDER BY (h.username = $1) DESC
+        LIMIT 1`,
+      [name]
+    );
+    row = retired.rows[0];
+  }
+  return row ? normalizeEmail(row.email) : null;
+}
+
 module.exports = {
   EmailSignupError,
+  emailForUsername,
   // The release link (services/release-links.js) proves the mailbox the way
   // a code does, and continues exactly as verifyCode does from there.
   continueProvenEmail,

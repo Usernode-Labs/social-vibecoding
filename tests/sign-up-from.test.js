@@ -61,7 +61,7 @@ test('every way an account is made records the sign-up with the button it came f
 
 test('each button notes itself as its sheet opens', () => {
   const where = {
-    'frontend/src/features/auth/story.tsx': ['hero', 'story', 'story_sign_in'],
+    'frontend/src/features/auth/story.tsx': ['hero', 'story'],
     'frontend/src/features/auth/landing.tsx': ['header_sign_in', 'header_sign_up', 'link'],
   };
   for (const [file, kinds] of Object.entries(where)) {

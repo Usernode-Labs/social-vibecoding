@@ -2155,7 +2155,7 @@ export function LandingScreen() {
           */}
           {/* The story itself, inside the app (storyFront above). */}
           {storyFront ? (
-            <Story primaryClass={PRIMARY_PILL} welcomeEmail={releaseEmail} onStart={() => setSheet('start')} onSignIn={() => setSheet('signin')} lookAround />
+            <Story primaryClass={PRIMARY_PILL} welcomeEmail={releaseEmail} onStart={() => setSheet('start')} lookAround />
           ) : null}
           {guestPages && guestProject ? (
             <GuestProject
@@ -2184,7 +2184,6 @@ export function LandingScreen() {
                   welcomeEmail={releaseEmail}
                   waitlist={NEW_ACCOUNTS_WAIT}
                   onStart={() => setSheet('start')}
-                  onSignIn={() => setSheet('signin')}
                 />
               )}
             />

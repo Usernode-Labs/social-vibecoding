@@ -245,7 +245,13 @@ const otpRequestEmailLimiter = makeLimiter({
   windowMs: AUTH_WINDOW_MS,
   max: 5,
   name: 'otp-request-email', shared: true,
-  key: (req) => identifierKey('otp', req.body?.email),
+  // A username's code (routes/auth.js) counts against the name, written as
+  // emailForUsername reads it (no leading @, any case), so it cannot be asked
+  // for over and over by name instead of by address. A name and its address
+  // keep separate counts; the code's reuse window (email-signup.js
+  // requestCode) still sends that mailbox no second code inside it.
+  key: (req) => identifierKey('otp', req.body?.email
+    ?? (typeof req.body?.username === 'string' ? req.body.username.trim().replace(/^@/, '') : undefined)),
   message: (s) => `A code was just sent to that address. Try again ${retryPhrase(s)}.`,
 });
 
