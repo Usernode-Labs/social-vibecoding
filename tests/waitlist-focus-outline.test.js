@@ -85,7 +85,14 @@ test('every focus ring is paired with a focused border colour', () => {
   }
   // 15 since #5261 took the join form's address and country off #waitlist;
   // the country is asked in the waiting room now (the test below).
-  assert.ok(checked >= 15, `expected the whole waitlist form, saw ${checked} fields`);
+  // 14 since #5989: #waitlist-code is six boxes drawn over one transparent
+  // field (features/auth/code-boxes.tsx), the shape the sign-in sheet's
+  // emailed code has had since #5253. That field has no ring of its own — the
+  // box the next digit goes into is ringed instead — so it is not one of the
+  // ringed fields this floor counts, and demanding 15 would mean asking a
+  // transparent overlay to outline a group of boxes that already outlines
+  // itself. tests/auth-code-boxes.test.js holds the boxes' own markup.
+  assert.ok(checked >= 14, `expected the whole waitlist form, saw ${checked} fields`);
 });
 
 test('the country select — the control the report named — is covered', () => {
