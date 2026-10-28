@@ -450,7 +450,6 @@ const {
 // #937: pure local stop policy and pre-dispatch gates. Confirmation belongs to the
 // conductor's interrupt machine.
 const stopPolicy = require('../services/stop-policy');
-const { legacyTurnKey } = require('../workflow/worker-stop/target.ts');
 const { stopPendingFor } = stopPolicy;
 
 // A turn can lose its database connection after the detached worker has
@@ -10610,7 +10609,6 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
     const capturedTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
     const expectedJob = {
       active: !!capturedTurn, turnId: turnLifecycle.turnIdentity(capturedTurn), journal: capturedTurn?.journal || null,
-      ...(legacyTurnKey(capturedTurn) ? { legacy: legacyTurnKey(capturedTurn) } : {}),
     };
     const handle = stopRegistry.get(sessionId);
     if (expectedTurnId) {
