@@ -753,7 +753,11 @@
   },
   "card.changes.alreadyProposed": {
     "text": "Already proposed",
-    "description": "Label of the disabled main button on the changes card in the dev chat once the change was submitted for the group's vote."
+    "description": "Label of the main button on the changes card in the dev chat once the change was submitted for the group's vote. Pressing it opens the proposal's page."
+  },
+  "card.changes.alreadyProposedTitle": {
+    "text": "Open this change's proposal: its vote, checks and discussion",
+    "description": "Tooltip on the 'Already proposed' button on the changes card in the dev chat: pressing it goes to the page for the proposal this change became. 'Open' is a verb."
   },
   "card.changes.submit": {
     "text": "Submit for review",
