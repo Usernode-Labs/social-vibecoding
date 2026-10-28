@@ -1908,24 +1908,24 @@
     "description": "Button under the contributors list in the About pane of the app menu: unfolds the whole list. {{count}} is how many contributors there are (more than five in practice)."
   },
   "appContext.about.lineage.linkTitle": {
-    "text": "Remixed from {{app}}: open the original",
-    "description": "Tooltip of the \"Remixed from\" link in the About pane of the app menu. A remix is an app made as a copy of another; {{app}} is the original app's name. \"open\" is a verb."
+    "text": "Made from {{app}}: open the original",
+    "description": "Tooltip of the \"Made from\" link in the About pane of the app menu: this app is a version made from another app, the original. {{app}} is the original's name. \"open\" is a verb."
   },
   "appContext.about.lineage.linkTitleDeleted": {
-    "text": "Remixed from {{open}}deleted{{close}}: open the original",
-    "description": "Tooltip of the \"Remixed from\" link in the About pane of the app menu. A remix is an app made as a copy of another; Used when the original app has been deleted; the app is shown as the word \"deleted\" in angle brackets, as it always has been. {{open}} and {{close}} are the angle brackets < and > that the code puts around the word; keep them around the translated word."
+    "text": "Made from {{open}}deleted{{close}}: open the original",
+    "description": "Tooltip of the \"Made from\" link in the About pane of the app menu: this app is a version made from another app. Used when the original has been deleted; the app is shown as the word \"deleted\" in angle brackets, as it always has been. {{open}} and {{close}} are the angle brackets < and > that the code puts around the word; keep them around the translated word."
   },
   "appContext.about.lineage.remixedFrom": {
-    "text": "⑂ Remixed from {{app}}",
-    "description": "Amber line under an app's description in the About pane of the app menu: this app was made as a copy (a remix) of another. {{app}} is the original app's name. Keep the fork sign first."
+    "text": "Made from {{app}}",
+    "description": "Amber line under an app's description in the About pane of the app menu: this app is a version made from another app, the original. {{app}} is the original's name."
   },
   "appContext.about.lineage.remixedFromDeleted": {
-    "text": "⑂ Remixed from {{open}}deleted{{close}}",
-    "description": "Amber line under an app's description in the About pane of the app menu: this app was made as a copy (a remix) of another. Used when the original app has been deleted; the app is shown as the word \"deleted\" in angle brackets, as it always has been. {{open}} and {{close}} are the angle brackets < and > that the code puts around the word; keep them around the translated word."
+    "text": "Made from {{open}}deleted{{close}}",
+    "description": "Amber line under an app's description in the About pane of the app menu: this app is a version made from another app. Used when the original has been deleted; the app is shown as the word \"deleted\" in angle brackets, as it always has been. {{open}} and {{close}} are the angle brackets < and > that the code puts around the word; keep them around the translated word."
   },
   "appContext.about.lineage.goneTitle": {
     "text": "The original app no longer exists",
-    "description": "Tooltip of the \"Remixed from\" line in the About pane of the app menu when the app it was copied from has been deleted."
+    "description": "Tooltip of the \"Made from\" line in the About pane of the app menu when the app this version was made from has been deleted."
   },
   "appContext.about.added": {
     "text": "Added",
@@ -1957,7 +1957,7 @@
   },
   "appContext.about.more": {
     "text": "More",
-    "description": "Heading and accessible name of the last section in the About pane of the app menu, which holds Share, Add to home screen, Code, Remix and the version."
+    "description": "Heading and accessible name of the last section in the About pane of the app menu, which holds Share, Add to home screen, Code, Make your own and the version."
   },
   "appContext.about.addToHomeScreen": {
     "text": "Add to home screen",
@@ -1972,12 +1972,12 @@
     "description": "Small note at the right of the Code row in the About pane of the app menu, for an app whose code is on GitHub: the source code is publicly readable there."
   },
   "appContext.about.remix": {
-    "text": "Remix",
-    "description": "Row under More in the About pane of the app menu: a verb, makes the person their own copy of this app to change."
+    "text": "Make your own",
+    "description": "Row under More in the About pane of the app menu: makes the person their own version of this app, a project of their own made from it, to change."
   },
   "appContext.about.remixSub": {
-    "text": "Make your own copy",
-    "description": "Second line of the Remix row in the About pane of the app menu."
+    "text": "Your own version to change",
+    "description": "Second line of the Make your own row in the About pane of the app menu."
   },
   "appContext.about.liveSince": {
     "text": "Live since {{when}}",

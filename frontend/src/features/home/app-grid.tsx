@@ -60,7 +60,7 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 
-import { LockIcon, UserGroupIcon } from '@/components/ui/icons';
+import { CopyIcon, LockIcon, UserGroupIcon } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
@@ -333,13 +333,23 @@ function AppCardTile({ app, style, yours, live, editing }: {
         >
           <AppIcon icon={app.icon} />
         </div>
+        {/*
+            A VERSION OF ANOTHER APP (docs/plans/versions.md): "Made from
+            <original>" as the badge's name and tooltip, on the icon's
+            bottom-left corner. It was an amber disc with the ⑂ fork sign;
+            the word on screen is "version" now, never "fork", and a note
+            about where an app came from is not a status, so it wears the
+            audience badge's quiet face beside it (white, a hairline, muted
+            ink) with a glyph of one tile over another. `.fork-tag` stays:
+            a declared check finds the badge by it.
+        */}
         {app.forkName ? (
           <span
-            className="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm"
+            className="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-white text-zinc-600 shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-800 dark:text-zinc-300"
             title={app.forkDeleted ? t('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : t('home:grid.tile.remixedFrom', { app: app.forkName })}
             aria-label={app.forkDeleted ? t('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : t('home:grid.tile.remixedFrom', { app: app.forkName })}
           >
-            ⑂
+            <CopyIcon className="w-3 h-3" aria-hidden="true" />
           </span>
         ) : null}
         {/* #2902: still loaded — opening it resumes it as it was left. */}

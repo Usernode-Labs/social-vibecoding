@@ -56,12 +56,12 @@
     "description": "Tooltip and accessible name of the small menu button on an app's card: opens the menu of things to do with that app."
   },
   "grid.tile.remixedFrom": {
-    "text": "Remixed from {{app}}",
-    "description": "Tooltip and accessible name of the small ⑂ badge on an app's tile: this app was made as a copy (a remix) of another. {{app}} is the original app's name."
+    "text": "Made from {{app}}",
+    "description": "Tooltip and accessible name of the small badge on an app's tile: this app is a version made from another app, the original. {{app}} is the original's name."
   },
   "grid.tile.remixedFromDeleted": {
-    "text": "Remixed from {{open}}deleted{{close}}",
-    "description": "Tooltip and accessible name of the small ⑂ badge on an app's tile: this app was made as a copy (a remix) of another. Used when the original app has been deleted; the app is shown as the word \"deleted\" in angle brackets, as it always has been. {{open}} and {{close}} are the angle brackets < and > that the code puts around the word; keep them around the translated word."
+    "text": "Made from {{open}}deleted{{close}}",
+    "description": "Tooltip and accessible name of the small badge on an app's tile: this app is a version made from another app. Used when the original has been deleted; the app is shown as the word \"deleted\" in angle brackets, as it always has been. {{open}} and {{close}} are the angle brackets < and > that the code puts around the word; keep them around the translated word."
   },
   "grid.tile.audience.invited": {
     "text": "Private community",
@@ -280,12 +280,12 @@
     "description": "Brief notice when \"Check for updates\" could not reach the server. {{reason}} is the browser's own error message."
   },
   "menu.remix.label": {
-    "text": "Remix",
-    "description": "Item in an app's menu: makes the viewer's own copy of the app to change freely. A verb."
+    "text": "Make your own",
+    "description": "Item in an app's menu: makes the viewer their own version of the app, a project of their own made from it, to change freely."
   },
   "menu.remix.sub": {
-    "text": "Make your own copy",
-    "description": "Second line, and tooltip, of the \"Remix\" item in an app's menu."
+    "text": "Your own version to change",
+    "description": "Second line, and tooltip, of the \"Make your own\" item in an app's menu."
   },
   "menu.lock.lock": {
     "text": "Lock app",

@@ -2870,16 +2870,19 @@ const Home = {
       ? `<button type="button" class="retry-btn relative inline-flex items-center rounded-full bg-violet-600 hover:bg-violet-500 px-1.5 text-[11px] leading-3 font-semibold text-white cursor-pointer transition-colors before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1" data-slug="${app.slug}" aria-label="${htmlText('home:grid.tile.retryNamed', { app: String(app.name || '') })}">${htmlText('core:common.retry')}</button>`
       : '';
 
-    // Fork lineage tag: a small amber ⑂ badge on the icon's bottom-left
-    // corner (opposite the hamburger badge) marking this tile as a remix.
-    // The full "Remixed from <name>" label lives on the app's own page;
-    // here it's glyph-only with the resolved live name (or "<deleted>")
-    // in the tooltip. `forked_from` is null for non-forks.
+    // Lineage tag: a small badge on the icon's bottom-left corner
+    // (opposite the hamburger badge) marking this tile as a version made
+    // from another app (docs/plans/versions.md). The full "Made from
+    // <name>" line lives on the app's own page; here it's glyph-only with
+    // the resolved live name (or "<deleted>") in the tooltip. It wears the
+    // audience badge's quiet face with a two-tile glyph (app-grid.tsx's
+    // copy, which says why); the ⑂ fork sign it had is gone with the word.
+    // `forked_from` is null for an app that is not a version.
     const forkName = app.forked_from && typeof app.forked_from === 'object'
       ? (app.forked_from.name || '<deleted>') : null;
     const forkDeleted = !!forkName && !app.forked_from.name;
     const forkTagHtml = forkName
-      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm" title="${(forkDeleted ? htmlText('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : htmlText('home:grid.tile.remixedFrom', { app: forkName }))}" aria-label="${(forkDeleted ? htmlText('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : htmlText('home:grid.tile.remixedFrom', { app: forkName }))}">⑂</span>`
+      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-white text-zinc-600 shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-800 dark:text-zinc-300" title="${(forkDeleted ? htmlText('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : htmlText('home:grid.tile.remixedFrom', { app: forkName }))}" aria-label="${(forkDeleted ? htmlText('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : htmlText('home:grid.tile.remixedFrom', { app: forkName }))}"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 9h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H11a2 2 0 0 1-2-2V9Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4"/></svg></span>`
       : '';
 
     const icon = Home.iconTileFor(app);
@@ -4116,7 +4119,8 @@ const Home = {
         run: (itemEl) => Home._menuCheckUpdates(app, itemEl),
       });
     }
-    // Fork, which people see as "Remix": available to anyone who can see
+    // Fork, which people see as "Make your own" (their own version of the
+    // app, docs/plans/versions.md): available to anyone who can see
     // the app (every card in this list is already visibility-filtered
     // server-side, so presence here implies view access). Hidden for the
     // platform self-app, which has no per-app repo/DB/container to copy.

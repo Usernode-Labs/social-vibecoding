@@ -1243,6 +1243,26 @@ const Browse = {
     return items.filter((i) => i && !Browse.DETAIL_EXCLUDED_KEYS.includes(i.key));
   },
 
+  // ── Versions (docs/plans/versions.md) ───────────────────────────
+  //
+  // An original's line on its page: how many versions people have made of
+  // it, and how many of those get its updates, "214 versions · 160 get its
+  // updates", from the app payload's `versions: {count, following}` (the
+  // one-app read adds it; null on an app nobody has made a version of). A
+  // zero says nothing: no line before the first version, and no "0 get its
+  // updates". One message per shape, because the second number's verb agrees
+  // with it. Pure — unit-tested in tests/browse-screen.test.js.
+  versionsLineFor(app) {
+    const v = app && app.versions;
+    if (!v || typeof v !== 'object') return null;
+    const count = Math.max(0, Math.floor(Number(v.count) || 0));
+    const following = Math.min(count, Math.max(0, Math.floor(Number(v.following) || 0)));
+    if (!count) return null;
+    if (!following) return PlatformI18n.t('discover:detail.versions.count', { count });
+    if (count === 1) return PlatformI18n.t('discover:detail.versions.oneGetsUpdates');
+    return PlatformI18n.t('discover:detail.versions.manyGetUpdates', { count: following, versions: count });
+  },
+
   // ── Share (the prototype's About sheet: More, then Share) ─────────
   //
   // The link handed out is the app's PUBLIC one: `app.url`, the address the
@@ -1479,7 +1499,8 @@ const Browse = {
           includePrContext: false,
         })
       : '';
-    // Fork lineage — "⑂ Remixed from <name>", under the version chip.
+    // Lineage — "Made from <name>", under the version chip: the app is a
+    // version of another (docs/plans/versions.md).
     //
     // This was the hamburger drawer's last footer row, painted by
     // AppView.renderForkBadge() into a slot by id and revealed through
@@ -1494,7 +1515,11 @@ const Browse = {
     // filled Browse._apps, this reads. A source that has been deleted comes
     // back as `linkable: false` with the literal name "<deleted>", and
     // renders as inert text — the same two states the badge had.
-    const forkRef = app.forked_from;
+    //
+    // A ready-made made from its platform original has no `forked_from`:
+    // its link is the one-app read's `upstream_link` (`{ slug, name,
+    // following, linkable }`), the same shape where it matters here.
+    const forkRef = app.forked_from || app.upstream_link;
     const forkedFrom = (forkRef && typeof forkRef === 'object')
       ? {
           name: forkRef.name || '<deleted>',
@@ -1535,6 +1560,7 @@ const Browse = {
         // chip that would then have two owners. '' draws no wrapper at all.
         versionPillHtml: pillHtml,
         forkedFrom,
+        versions: Browse.versionsLineFor(app),
         updatedRel,
         canOpen,
         openLabel: canOpen
@@ -1552,8 +1578,8 @@ const Browse = {
           index: i,
           label: a.label,
           title: a.title || null,
-          // The line under the label, for an item that has one (Remix's
-          // "Make your own copy"); absent for every other row.
+          // The line under the label, for an item that has one (Make your
+          // own's "Your own version to change"); absent for every other row.
           ...(a.sub ? { sub: a.sub } : {}),
           danger: !!a.danger,
           disabled: !!a.disabled,
