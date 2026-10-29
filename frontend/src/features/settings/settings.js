@@ -227,6 +227,11 @@
     // #5995: counts behind the menu's rows, reported by the pages' own loads.
     _navStatus: {},
     _navStatusPaint: false,
+    // #5997: the pages this viewer pinned to the top of the menu, in their
+    // order, and the groups they folded. Read from this device's storage on
+    // each open() (_loadNavPrefs); empty until then, so the prerender and a
+    // first paint without storage show the menu as it always was.
+    _navPrefs: { pinned: [], folded: [] },
     // Which PAGE is showing (or would show on a viewport crossing) — a page
     // key, never a part key (see SECTIONS). It doubles as "last visited in
     // this tab": open() keeps it when it is still a visible page, so
@@ -407,9 +412,10 @@
       // ── Advanced ────────────────────────────────────────────────────────
       // #5994: the features you switch on to try, at the foot of the menu
       // rather than among the AI rows. Experimental is the page of switches.
-      // Unlike #1554's "Advanced", this group never collapses
-      // (see tests/settings-screen.test.js, "no group collapses"): it is a
-      // heading like the four above it, and every row stays visible.
+      // Unlike #1554's "Advanced", this group is never collapsed for you
+      // (see tests/settings-screen.test.js, "a group folds only when the
+      // person folds it"): it starts open like the four above it, and folds
+      // only if the viewer folds it (#5997).
       { key: 'experimental', label: 'settings:nav.part.experimental', group: 'settings:nav.group.advanced' },
     ],
 
@@ -441,6 +447,38 @@
     TAGS: {
       experimental: 'settings:nav.tag.beta',
     },
+
+    // #5997: the small glyph before each page's name in both menus, keyed by
+    // page. A NAME, not markup: ./settings-nav.tsx maps it to a glyph of
+    // @/components/ui/icons (NAV_ICONS), so this file stays plain JS. A page
+    // without an entry draws no glyph.
+    ICONS: {
+      account: 'user',
+      'linked-accounts': 'link',
+      'contact-privacy': 'shield',
+      phones: 'phone',
+      wallet: 'wallet',
+      ai: 'sparkles',
+      connectors: 'terminal',
+      'agent-files': 'lines',
+      theme: 'sun',
+      accessibility: 'eye',
+      language: 'globe',
+      alerts: 'bell',
+      'app-permissions': 'lock',
+      developer: 'code',
+      tour: 'compass',
+      usernode: 'window',
+      about: 'info',
+      experimental: 'bulb',
+    },
+
+    // #5997: where this device remembers the menu's pins and folds, each a
+    // comma list of keys (page keys in pinned order; group keys, the catalog
+    // id's last segment). Per device, like Messages' folded sections
+    // (usernode:messages-folded): a convenience, not an account setting.
+    PINNED_KEY: 'usernode:settings-pinned',
+    FOLDED_KEY: 'usernode:settings-folded',
 
     // #5995: how much is set up behind a row, said in words at its trailing
     // edge ("2 linked"), keyed by page: [message, the counts summed]. The
@@ -1023,6 +1061,7 @@
       // Per-mount state: the Homeroom-app auto-retry is offered once per
       // visit to Settings, not once per document.
       Settings._usernodeAuthRetryUsed = false;
+      Settings._loadNavPrefs();
       Settings._ensureMediaListener();
       Settings._pendingSection = null;
       Settings._renderAllSections();
@@ -1328,20 +1367,101 @@
     // by the desktop sidebar and the mobile level-1 menu so the two can never
     // drift into different groupings.
     //
-    // No group collapses any more. #1554 shut seven rarely used panes inside
-    // an "Advanced" group to keep the menu short; folding parts into pages
-    // made it short without hiding anything, and two of those seven (what an
-    // app may use on your device, what it may spend) were privacy controls
-    // that should never have needed a disclosure to find.
+    // #5997: the pages the viewer pinned come first, as a Pinned group in
+    // their own order, and leave their usual group rather than showing twice;
+    // a group left with no pages is not drawn. A pin whose page is not offered
+    // right now (Homeroom Wallet while wallet linking is off) is skipped, and
+    // kept, so the page comes back pinned. Each group carries `key` (its
+    // catalog id's last segment) and `folded`; Pinned never folds.
+    //
+    // A group folds only when the viewer folds it. #1554 once shut seven
+    // rarely used panes inside a collapsed "Advanced" group BY DEFAULT, two
+    // of them privacy controls; that is why every group starts open, and why
+    // a fold is the viewer's own choice, remembered on their device.
     _groupedSections() {
-      const groups = [];
-      for (const p of Settings._visiblePages()) {
+      const pages = Settings._visiblePages();
+      const prefs = Settings._navPrefs;
+      const pinned = [];
+      for (const key of prefs.pinned) {
+        const p = pages.find((x) => x.key === key);
+        if (p && !pinned.includes(p)) pinned.push(p);
+      }
+      const groups = pinned.length
+        ? [{ name: 'settings:nav.group.pinned', key: 'pinned', folded: false, items: pinned }]
+        : [];
+      for (const p of pages) {
+        if (pinned.includes(p)) continue;
         const name = p.group || 'settings:nav.group.other';
         let g = groups.find((x) => x.name === name);
-        if (!g) { g = { name, items: [] }; groups.push(g); }
+        if (!g) {
+          const key = name.slice(name.lastIndexOf('.') + 1);
+          g = { name, key, folded: prefs.folded.includes(key), items: [] };
+          groups.push(g);
+        }
         g.items.push(p);
       }
       return groups;
+    },
+
+    // #5997: read the pins and folds this device remembers. Storage that is
+    // missing or throws (a private window, blocked site data) leaves the menu
+    // as it always was for this visit; nothing else depends on it.
+    _loadNavPrefs() {
+      const read = (key) => {
+        try {
+          const raw = localStorage.getItem(key);
+          return raw ? [...new Set(String(raw).split(',').map((k) => k.trim()).filter(Boolean))] : [];
+        } catch {
+          return [];
+        }
+      };
+      Settings._navPrefs = { pinned: read(Settings.PINNED_KEY), folded: read(Settings.FOLDED_KEY) };
+    },
+
+    // Write one list back and repaint both menus. A write that throws still
+    // changes the menu for this visit.
+    _saveNavPref(which, list) {
+      Settings._navPrefs = { ...Settings._navPrefs, [which]: list };
+      const key = which === 'pinned' ? Settings.PINNED_KEY : Settings.FOLDED_KEY;
+      try {
+        if (list.length) localStorage.setItem(key, list.join(','));
+        else localStorage.removeItem(key);
+      } catch { /* storage unavailable: the change lasts this visit */ }
+      Settings._renderNav();
+    },
+
+    // Pin a page (it goes to the bottom of Pinned) or unpin it (it goes back
+    // to its place in its group).
+    _setPinned(key, on) {
+      const list = Settings._navPrefs.pinned.filter((k) => k !== key);
+      if (on) list.push(key);
+      Settings._saveNavPref('pinned', list);
+    },
+
+    // Move a pinned page one place up (step -1) or down (+1) among the pinned
+    // pages the viewer can see. It swaps with that neighbour's slot in the
+    // stored list, so a pin hidden right now keeps its own place. A no-op at
+    // either end.
+    _movePinned(key, step) {
+      const list = Settings._navPrefs.pinned.slice();
+      const offered = new Set(Settings._visiblePages().map((p) => p.key));
+      const shown = list.filter((k) => offered.has(k));
+      const at = shown.indexOf(key);
+      const other = at < 0 ? undefined : shown[at + step];
+      if (!other) return;
+      const i = list.indexOf(key);
+      const j = list.indexOf(other);
+      list[i] = other;
+      list[j] = key;
+      Settings._saveNavPref('pinned', list);
+    },
+
+    // Fold a group down to its heading, or open it again.
+    _setGroupFolded(group, on) {
+      if (group === 'pinned') return;
+      const list = Settings._navPrefs.folded.filter((k) => k !== group);
+      if (on) list.push(group);
+      Settings._saveNavPref('folded', list);
     },
 
     str(s) {
@@ -1431,15 +1551,20 @@
         key: p.key,
         label: Settings.str(p.label),
         active: p.key === active,
-        className: 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm transition-colors '
+        className: 'settings-nav-item flex w-full items-center gap-2.5 text-left rounded-lg pl-3 pr-9 py-2 text-sm transition-colors '
           + (p.key === active
             ? 'font-semibold bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)] shadow-[inset_0_0_0_1px_var(--lit-line)]'
             : 'font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
+        // #5997: the glyph's name, and whether the viewer pinned the page.
+        icon: Settings.ICONS[p.key] || '',
+        pinned: Settings._navPrefs.pinned.includes(p.key),
         ...Settings._navExtras(p.key),
         ...Settings._filterTerms(p),
       });
       return Settings._groupedSections().map((g, i) => ({
         name: tr(g.name),
+        key: g.key,
+        folded: g.folded,
         first: i === 0,
         items: g.items.map(item),
       }));
@@ -1455,10 +1580,14 @@
     _menuView() {
       return Settings._groupedSections().map((g) => ({
         name: tr(g.name),
+        key: g.key,
+        folded: g.folded,
         items: g.items.map((p) => ({
           key: p.key,
           label: Settings.str(p.label),
           subtitle: Settings.SUBTITLES[p.key] ? tr(Settings.SUBTITLES[p.key]) : '',
+          icon: Settings.ICONS[p.key] || '',
+          pinned: Settings._navPrefs.pinned.includes(p.key),
           ...Settings._navExtras(p.key),
           ...Settings._filterTerms(p),
         })),
