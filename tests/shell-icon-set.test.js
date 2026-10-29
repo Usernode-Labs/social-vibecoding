@@ -363,11 +363,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // the landing prerenders, so "Vote on what changes" and "Ask for what you
     // want" draw them in the cold document.
     // SparklesIcon LEFT this list again with #6019: the AI tab draws it on
-    // the bar, which the shell prerenders. CompassIcon (two paths) came onto
-    // it in its place: it was the Discover tab's, and Discover left the bar
-    // for a page of Home's, so nothing in the cold document draws it now.
-    'M12 3.5a8.5 8.5 0 110 17 8.5 8.5 0 010-17z',
-    'M15.5 8.5l-2 5-5 2 2-5z',
+    // the bar, which the shell prerenders. CompassIcon is off it too: the
+    // desktop rail keeps the Discover tab (29 Oct 2026), and the markup is
+    // the same at every width (app.css hides it on a phone).
     // THE MESSAGE ACTIONS (#2387): the hover bar's smile and reply arrow, the
     // ⋯ menu's thread, copy, link, envelope, flag and struck circle, and the
     // emoji picker's heart and cup tabs. Every one draws only once a row is
