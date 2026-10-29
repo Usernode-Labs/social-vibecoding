@@ -16495,6 +16495,17 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-request-primary:hover { background: var(--accent-light); }
 .dev-request-primary:disabled { opacity: .55; cursor: default; }
 
+/* #5987: "Build it with your own Claude Code", folded under the card's own
+   action, which stays the one primary thing on the page. Its link is the
+   shared Button primitive's pill (own-agent-link.tsx). */
+.dev-request-own-agent { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--messages-hair); }
+.dev-request-own-agent-summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-muted); }
+.dev-request-own-agent-lead { margin: 8px 0 0; font-size: 13px; color: var(--text-muted); }
+.dev-request-own-agent-needs-heading { margin: 10px 0 2px; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.dev-request-own-agent-needs { margin: 0; padding-left: 18px; list-style: disc; font-size: 13px; line-height: 1.6; color: var(--text-muted); }
+.dev-request-own-agent-check { display: inline-block; width: 14px; height: 14px; margin-left: 6px; vertical-align: -2px; color: var(--text-muted); }
+.dev-request-own-agent-add { margin-left: 6px; font-weight: 600; color: var(--accent); }
+
 /* Each spec at its newest version, hanging off the request as a shared item. */
 .dev-request-specs.messages-object-list { margin-top: 8px; max-width: 560px; }
 .dev-request-read {

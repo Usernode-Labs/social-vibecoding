@@ -5142,6 +5142,8 @@ function registerTools(server, ctx) {
         .describe('Your checkout\'s current commit — the output of `git rev-parse HEAD`. Pass it whenever this conversation has a checkout and the result reports `checkout`: whether what you are holding is the app\'s code at all, and how far it has drifted. Costs nothing when it is fine and catches a stale fork before you write against it rather than at submit_work.'),
       remoteUrl: z.string().optional()
         .describe('Your checkout\'s origin remote — the output of `git remote get-url origin`. Only meaningful alongside headSha, and it is what identifies a FORK: without it the check can say the commit is behind but not that origin is a different repository from the app\'s own.'),
+      startedFrom: z.string().max(64).optional()
+        .describe('Only when the prompt you were given names it: where this task was started from, e.g. `claude_code_link` for Homeroom\'s "Open in Claude Code" link. Recorded so those tasks can be counted; an unknown value is ignored.'),
     },
     outputSchema: {
       taskId: z.number(),
@@ -5231,7 +5233,7 @@ function registerTools(server, ctx) {
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
-  }, async ({ slug, requestNumber, requestNumbers, brief, restart, proposalId, headSha, remoteUrl }) => {
+  }, async ({ slug, requestNumber, requestNumbers, brief, restart, proposalId, headSha, remoteUrl, startedFrom }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
     if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
@@ -5342,6 +5344,9 @@ function registerTools(server, ctx) {
       // #4264: a one-time upload command in the work order, for a patch too
       // big to retype into submit_work. New work only; the service decides.
       patchUpload: true,
+      // #5987: the "Open in Claude Code" link's prompt names it; the service
+      // keeps only a value it knows.
+      startedFrom,
       specs: requestSpecsToBuild,
     });
     // #4266: at the work-order cap, name the two tools that let the caller see

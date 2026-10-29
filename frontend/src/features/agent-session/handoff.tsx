@@ -29,8 +29,10 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 
+import { buttonVariants } from '@/components/ui/button';
 import { CheckIcon } from '@/components/ui/icons';
 
+import { claudeCodeLink, forkRepository } from '../../lib/claude-code-link';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { t } from '../../lib/i18n/runtime';
 import { ChatgptSetupSteps, ClaudeSetupSteps } from '../settings/connector-setup-steps';
@@ -165,6 +167,35 @@ export function handoffChecks(status: HandoffStatus | null, agent: HandoffAgent)
 }
 
 /**
+ * #5987: a conversation about one request, not yet continuing a change, is
+ * handed to Claude Code as a link whose prompt is already typed: nothing to
+ * copy or paste. The prompt names only the app and the request number
+ * (../../lib/claude-code-link.ts). Every other hand-off keeps copy and paste,
+ * because its instructions carry text people wrote.
+ *
+ * It does not wait for the GitHub and fork checks: prepare_work builds an app
+ * on Homeroom's git host with neither (the status calls those "unavailable"),
+ * and for an app on GitHub it says itself what is missing. `repositories` is
+ * added only for a fork that is ready. Where the checks are not drawn, the
+ * hint names the connector too, since no check row shows it.
+ */
+export function requestHandoff(
+  agent: HandoffAgent,
+  target: HandoffTarget | null,
+  requestNumber: number,
+  status: HandoffStatus | null,
+): { url: string; needs: 'agent:session.handoff.request.needs' | 'agent:session.handoff.request.needsConnector' } | null {
+  if (agent !== 'claude-code' || !target || target.change || !(requestNumber > 0)) return null;
+  const url = claudeCodeLink({ slug: target.slug, number: requestNumber, repository: forkRepository(status) });
+  if (!url) return null;
+  const checksShown = !!status && status.available !== false;
+  return {
+    url,
+    needs: checksShown ? 'agent:session.handoff.request.needs' : 'agent:session.handoff.request.needsConnector',
+  };
+}
+
+/**
  * A Claude Code or Codex tab of the "Build with" sheet: the hand-off itself.
  * The lead says what happens; the checks are what is left to set up, each
  * with the walkthrough's own action; once all three are done, ONE button
@@ -217,7 +248,12 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
   const checks = handoffChecks(status, agent);
   const ready = checks.length > 0 && checks.every((check) => check.done);
   const instructions = status && typeof status.instructions === 'string' ? status.instructions : '';
-  const unavailable = status && status.available === false
+  const requestNumber = Number((about?.focusContext as { issueNumber?: unknown } | undefined)?.issueNumber) || 0;
+  const request = requestHandoff(agent, target, requestNumber, status);
+  const requestLink = request ? request.url : null;
+  // The walkthrough's "cannot hand this off" note is about copy and paste to
+  // a fork; the request link does not need one, so it is not said there.
+  const unavailable = !request && status && status.available === false
     ? (devFlowSelect()?.unavailableNote(status.reason) || t('agent:session.handoff.unavailable'))
     : '';
 
@@ -326,7 +362,24 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
           </div>
         </section>
       ) : null}
-      {ready ? (
+      {request ? (
+        <>
+          <div className="rounded-2xl bg-white px-4 py-3 dark:bg-zinc-800" data-agent-session-handoff-ready data-agent-session-handoff-request={requestNumber}>
+            <p className="font-semibold">{t('agent:session.handoff.request.heading', { number: requestNumber })}</p>
+            <p className="mt-0.5 text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">{t('agent:session.handoff.request.body')}</p>
+          </div>
+          <a
+            className={buttonVariants({ layout: 'fullIconRow', variant: 'pillAccent', size: 'pill' })}
+            href={request.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-agent-session-handoff-action="open-claude-code"
+          >
+            {t('agent:session.handoff.openInClaudeCode')}
+          </a>
+          <p className="px-1 text-center text-[13px] text-zinc-500 dark:text-zinc-400">{t(request.needs)}</p>
+        </>
+      ) : ready ? (
         <>
           <div className="rounded-2xl bg-white px-4 py-3 dark:bg-zinc-800" data-agent-session-handoff-ready>
             <p className="font-semibold">{t('agent:session.handoff.carried.heading')}</p>
@@ -350,7 +403,7 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
         </>
       ) : null}
       {notice ? <p role="status" className={`px-1 ${manual ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}`}>{notice}</p> : null}
-      {ready && instructions ? (
+      {ready && instructions && !requestLink ? (
         <details className="rounded-2xl bg-white px-4 py-3 dark:bg-zinc-800" open={manual}>
           <summary className="cursor-pointer font-semibold">{t('agent:session.handoff.instructions')}</summary>
           <pre className="mt-2 max-h-60 select-all overflow-y-auto whitespace-pre-wrap break-words text-xs text-zinc-700 dark:text-zinc-300" data-agent-session-handoff-instructions>{instructions}</pre>

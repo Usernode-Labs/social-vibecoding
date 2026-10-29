@@ -50,6 +50,7 @@ import {
 import { requestShots, togglePinShot } from './request-shots';
 import { TopicBack } from './topic-back';
 import { saveIssueBody } from './topic-head';
+import { OwnAgentLink } from './own-agent-link';
 
 function appView(): any {
   return typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -261,9 +262,12 @@ function RequestEditor({ r, onClose }: { r: RequestView; onClose: () => void }):
  * is at marked; one sentence; the claim's lapse in small words; and the one
  * thing this viewer would do next. A step already done gets no fill.
  */
-function RequestStatus({ s, specs, tracked = false }: {
+function RequestStatus({ s, specs, tracked = false, slug = '', number = 0 }: {
   s: RequestStatusView;
   specs: RequestSpecCard[];
+  /** #5987: the app and request the "Open in Claude Code" link names. */
+  slug?: string;
+  number?: number;
   /** Homeroom bot's track card follows, with its own steps (TrackBar): one
       row of steps on the page, not two that disagree (polish board #12). */
   tracked?: boolean;
@@ -315,6 +319,7 @@ function RequestStatus({ s, specs, tracked = false }: {
           )}
         </div>
       ) : null}
+      {s.ownAgent && !s.closed && slug && number ? <OwnAgentLink slug={slug} number={number} /> : null}
     </div>
   );
 }
@@ -398,7 +403,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
             <TitleContent t={{ text: r.title, title: r.title, editing: r.titleEditing || undefined }} />
           </h1>
           {editing ? <RequestEditor r={r} onClose={() => setEditing(false)} /> : <RequestWords html={r.bodyHtml} />}
-          <RequestStatus s={r.status} specs={specs} tracked={!!track} />
+          <RequestStatus s={r.status} specs={specs} tracked={!!track} slug={r.slug || ''} number={r.number} />
           {track ? (
             // 16 Oct 2026 (C4, V3): the same card a request's thread leads
             // with, where it is and why, its bar and its pictures, in place
