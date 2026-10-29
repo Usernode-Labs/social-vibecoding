@@ -25,7 +25,8 @@ function demoWork() {
     ],
     next: [
       { threadId: -9201, number: 9201, kind: 'work', title: 'Staging demo: dark mode', app, change: { id: -9201, number: 9202 }, href: '#app/staging-demo-app/dev/issues/9201', group: 'next', what: 'going_live', at: at(1) },
-      { threadId: -9203, number: 9203, kind: 'work', title: 'Staging demo: search the board', app, change: { id: -9203, number: 9204 }, href: '#app/staging-demo-app/dev/issues/9203', group: 'next', what: 'vote', at: at(20) },
+      { threadId: -9203, number: 9203, kind: 'work', title: 'Staging demo: search the board', app, change: { id: -9203, number: 9204 }, href: '#app/staging-demo-app/dev/issues/9203', group: 'next', what: 'vote', at: at(20), myVote: 'yes' },
+      { threadId: -9208, number: 9208, kind: 'work', title: 'Staging demo: tag filter', app, change: { id: -9208, number: 9209 }, href: '#app/staging-demo-app/dev/issues/9208', group: 'next', what: 'building', at: at(3), by: 'bot' },
     ],
     waiting: [
       { threadId: -9205, number: 9205, kind: 'work', title: 'Staging demo: print view', app, change: null, href: '#app/staging-demo-app/dev/issues/9205', group: 'waiting', what: 'not_picked_up', at: at(240), quietDays: 10 },

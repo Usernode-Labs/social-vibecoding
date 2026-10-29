@@ -545,7 +545,7 @@ const ADDED_IDS = {
   'platform-tab-discover': '#2718: the Discover tab, to #apps. #6019 retired it with Discover\'s seat on the phone\'s bar; it comes back on 29 Oct 2026 as the DESKTOP RAIL\'S, under Home (Evan: Home, Discover, Messages, AI, Communities). app.css hides it below 768px, where Home\'s Discover block opens the page.',
   'platform-tab-ai': '#6019: the AI tab, to #ai: the Homeroom bot\'s chat, lit while it is the conversation on the Messages screen (features/nav/tab-bar.tsx). Takes the seat the Discover tab (#platform-tab-discover, #2718) had on the phone\'s bar, which left it for a page of Home\'s there.',
   // #6019 follow-up: the AI tab's own page, which #ai opens.
-  'ai-screen': '#6019 follow-up: the AI tab\'s main view (features/ai/index.tsx): Your work, Up next and Live this week, with Main, the chat with Homeroom bot, docked beside it on a wide window. Ships hidden and empty; its lists load in effects.',
+  'ai-screen': '#6019 follow-up: the AI tab\'s main view (features/ai/index.tsx): Your work, In progress (Up next until 29 Oct 2026) and Live this week, with Main, the chat with Homeroom bot, docked beside it on a wide window. Ships hidden and empty; its lists load in effects.',
   'platform-tabs-ai-badge': '#6019: the AI tab\'s unread count, the bot chat\'s unread messages; ships hidden with no text, as #platform-tabs-badge does.',
   'platform-tab-messages': '#2718: the Messages tab, to #messages. The only tab that can carry a count (see #platform-tabs-badge).',
   'platform-tab-workshop': '#2718: the Workshop tab, to #workshop — which of your apps wants something from you, the question Home does not answer.',

@@ -746,6 +746,7 @@ async function describeApproval(pool, appId, gov) {
     preset: gate.preset,
     rules: gate.rules.map((r) => ({
       group: r.group, kind: r.kind, n: r.n, size: r.size, need: r.need, empty: r.empty,
+      ...(r.min != null ? { min: r.min } : {}),
     })),
     groups: gov.rules.groups.map((g) => ({ name: g.name, key: g.key, people: g.people })),
     creatorId: facts.creatorId,
@@ -790,6 +791,9 @@ function requiredAtPromote(gov, activeAtPromote, noCount) {
   // A rules project's threshold moves with the electorate only on a members
   // majority rule; the counted rules cannot.
   if (gov.rules && !gov.rules.rules.some((r) => r.group === 'members' && r.kind === 'majority')) return null;
+  // A minimum is capped at the group's size then, which no stamp records, so
+  // there is no threshold to show beside today's.
+  if (gov.rules && gov.rules.rules.some((r) => r.group === 'members' && r.kind === 'majority' && r.min != null)) return null;
   const a = parseInt(activeAtPromote, 10);
   if (!Number.isFinite(a) || a < 1) return null;
   return activeUsers().requiredVotes(a, noCount);

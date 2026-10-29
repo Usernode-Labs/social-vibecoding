@@ -82,6 +82,7 @@ const shotsView = require('../services/shots-view');
 const { botRequestedBySql } = require('../services/bot-requested-by');
 const { firstVersionSql } = require('../services/first-version-rule');
 const { governanceKindsSql } = require('../services/governance-kinds');
+const { threadsInSql } = require('../services/ai-work');
 const communities = require('../services/communities');
 const governance = require('../services/governance');
 const codeMissing = require('../services/code-missing');
@@ -431,10 +432,23 @@ const BOT_QUESTIONS_SQL = `
 // project's own NeedsFeed now, which renders them in full there), so they
 // are cut at NEEDS_FEED_SUMMARY_MAX rather than at a card's length. A
 // summary is a few paragraphs; the cap is for the one that is not.
+//
+// `?in=threads` is the Homeroom bot tab's Needs you (29 Oct 2026,
+// NEEDS_FEED_IN_THREADS_SQL): only the decisions in threads the viewer is in
+// (services/ai-work.js threadsInSql: they asked for it, built a change in
+// it, voted in it, wrote in it, or chose Notify me) and has not muted, and
+// the bot's questions to them, which are theirs wherever they are. Without
+// it, every decision owed, as Communities › Needs you lists them.
 const NEEDS_FEED_MAX = 60;
 const NEEDS_FEED_SUMMARY_MAX = 2000;
 
-const NEEDS_FEED_SQL = `
+const IN_THREADS_WHERE = `
+     AND (o.kind = 'question'
+          OR (o.thread_id IN (SELECT mine.thread_id FROM (${threadsInSql('$1')}) mine)
+              AND NOT EXISTS (SELECT 1 FROM thread_followers f
+                               WHERE f.thread_id = o.thread_id AND f.user_id = $1 AND f.muted_at IS NOT NULL)))`;
+
+const needsFeedSql = ({ inThreads = false } = {}) => `
   WITH owed AS (
     SELECT 'proposal'::text AS kind, cs.app_id, cs.id,
            COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, ''))::text AS title,
@@ -487,7 +501,7 @@ const NEEDS_FEED_SQL = `
            NULL::jsonb, NULL::text, NULL::jsonb, NULL::text, NULL::jsonb,
            i.kind::text, i.payload,
            NULL::boolean AS requires_explicit_approval, NULL::text AS explicit_approval_reason,
-           NULL::text AS staging_url, NULL::bigint AS thread_id, NULL::int[] AS linked_issues
+           NULL::text AS staging_url, i.thread_id, NULL::int[] AS linked_issues
       FROM issues i
       LEFT JOIN users u ON u.id = i.created_by
      WHERE ${OWED_GOVERNANCE_WHERE}
@@ -554,9 +568,12 @@ const NEEDS_FEED_SQL = `
    WHERE ${VISIBLE_APP_WHERE}
      AND EXISTS (SELECT 1 FROM community_members cm
                   WHERE cm.community_id = a.community_id AND cm.user_id = $1)
+     ${inThreads ? IN_THREADS_WHERE : ''}
    ORDER BY o.at DESC NULLS LAST, o.id DESC
    LIMIT $4
 `;
+const NEEDS_FEED_SQL = needsFeedSql();
+const NEEDS_FEED_IN_THREADS_SQL = needsFeedSql({ inThreads: true });
 
 // The same feed, counted per project and in the order the viewer joined
 // them (services/places.js reads it; so did the Getting started card's Vote
@@ -1171,7 +1188,7 @@ function workshopOverviewRoutes(config) {
     try {
       if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
       const showSelfHosted = !!req.user.isAdmin || !!config.selfAppPublicVoting;
-      const { rows } = await pool.query(NEEDS_FEED_SQL, [
+      const { rows } = await pool.query(req.query.in === 'threads' ? NEEDS_FEED_IN_THREADS_SQL : NEEDS_FEED_SQL, [
         req.user.id, showSelfHosted, !!req.user.isAdmin, NEEDS_FEED_MAX,
       ]);
       await withCodeMissing(pool, rows);
@@ -1194,7 +1211,7 @@ function workshopOverviewRoutes(config) {
 module.exports = {
   workshopOverviewRoutes, demoNeedsVoteRoutes, withDemoCounts, DEMO_COUNTS, COUNTS_SQL,
   withDemoItems, DEMO_ITEMS, ITEMS_SQL, ITEMS_PER_APP, ITEMS_TOTAL, groupItems,
-  NEEDS_FEED_SQL, NEEDS_FEED_MAX, BOT_QUESTIONS_SQL, BOT_QUESTIONS_MAX, shapeNeedsFeed, withVotesRequired, withViewerDecides, decidingFirst,
+  NEEDS_FEED_SQL, NEEDS_FEED_IN_THREADS_SQL, NEEDS_FEED_MAX, BOT_QUESTIONS_SQL, BOT_QUESTIONS_MAX, shapeNeedsFeed, withVotesRequired, withViewerDecides, decidingFirst,
   withPictures, withCodeMissing, pictureFields, decisionFacts, DEMO_NEEDS_FEED, withDemoNeedsFeed,
   isDemoNeedsProposal,
   OWED_BY_COMMUNITY_SQL, owedByCommunity,

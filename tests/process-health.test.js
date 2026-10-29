@@ -253,11 +253,15 @@ test('the upsert adds sums and keeps peaks; prune removes rows past 14 days and 
   assert.match(read('src/db/schema.sql'), /CREATE TABLE IF NOT EXISTS server_process_minutes \([\s\S]*?PRIMARY KEY \(minute, pod\)\n\);/);
 });
 
+// Ten seconds into a minute, so a clock read can never straddle a boundary.
+const FROZEN = T0 + 10_000;
+
 test('started once: a minute is sampled and flushed just after it ends, re-armed from the clock, and no timer holds the process open', async () => {
   assert.equal(health.noteFinished({ method: 'GET', route: '/x', status: 200, startedAt: 1, durationMs: 5000 }), undefined);
   assert.deepEqual(await health.flush(stubPool()), { minutes: 0 });
   const realInterval = global.setInterval;
   const realTimeout = global.setTimeout;
+  const realNow = Date.now;
   const made = [];
   const fake = (kind) => (fn, ms) => {
     const h = { kind, fn, ms, unrefed: false, unref() { this.unrefed = true; return this; } };
@@ -267,6 +271,9 @@ test('started once: a minute is sampled and flushed just after it ends, re-armed
   global.setInterval = fake('interval');
   global.setTimeout = fake('timeout');
   const pool = stubPool();
+  // One frozen instant for the first arm, the sample, the flush and the
+  // re-arm, so no assertion here depends on when in the minute it runs.
+  Date.now = () => FROZEN;
   try {
     health.start({ pool, role: 'web' });
     health.start({ pool: stubPool(), role: 'web' });
@@ -280,10 +287,11 @@ test('started once: a minute is sampled and flushed just after it ends, re-armed
     assert.equal(pool.calls[0]?.sql, health.PROCESS_UPSERT_SQL);
     assert.equal(made.length, 3);
     assert.equal(made[2].kind, 'timeout');
-    assert.ok(Math.abs(made[2].ms - health.msToNextMinute(Date.now())) < 50, 'set to just after the next minute starts');
+    assert.equal(made[2].ms, health.msToNextMinute(FROZEN), 'set to just after the next minute starts');
   } finally {
     global.setInterval = realInterval;
     global.setTimeout = realTimeout;
+    Date.now = realNow;
     health.stop();
   }
   made[2].fn();
