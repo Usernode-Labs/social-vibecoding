@@ -250,6 +250,74 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // #6019 (stage 5): a private thread's two doors, from the head of a
+  // thread the person started in their chat with the bot
+  // (frontend/src/features/messages/private-thread-bar.tsx,
+  // services/private-threads.js). File it files its words as a request on
+  // a project they pick; Post it posts them in an existing thread, by
+  // number, as theirs. Each once, by their own tap: same-origin, on no
+  // connector's list. A project they have not joined answers 403
+  // join_required, which the client offers Join for.
+  //
+  //   GET  /api/conversations/homeroom-bot/threads/:rootId       → { state, number?, app?, href? }
+  //   POST /api/conversations/homeroom-bot/threads/:rootId/file  { project, title?, text? }
+  //   POST /api/conversations/homeroom-bot/threads/:rootId/post  { project, number, text? }
+  const privateThreads = () => require('../services/private-threads');
+  const threadRoot = (req) => {
+    const id = Number(req.params.rootId);
+    return Number.isInteger(id) && id > 0 && id <= 2147483647 ? id : null;
+  };
+  const answerDoor = (res, out) => {
+    if (out.ok) return res.json(out);
+    const { ok: _ok, status, ...rest } = out;
+    return res.status(status || 400).json(rest);
+  };
+  router.get('/api/conversations/homeroom-bot/threads/:rootId', async (req, res) => {
+    try {
+      const rootId = threadRoot(req);
+      if (!rootId) return res.status(404).json({ error: 'No such thread' });
+      if (!req.user?.id) return res.status(401).json({ error: 'Unauthorized' });
+      return res.json(await privateThreads().stateOf(pool, { user: req.user, rootId }));
+    } catch (err) {
+      log.error('conversations', 'private thread read failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+  router.post('/api/conversations/homeroom-bot/threads/:rootId/file', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const rootId = threadRoot(req);
+      if (!rootId) return res.status(404).json({ error: 'No such thread' });
+      if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+      const body = req.body || {};
+      return answerDoor(res, await privateThreads().fileIt(pool, config, {
+        user: req.user, rootId,
+        project: typeof body.project === 'string' ? body.project.slice(0, 120) : null,
+        title: typeof body.title === 'string' ? body.title : null,
+        text: typeof body.text === 'string' ? body.text : null,
+      }));
+    } catch (err) {
+      log.error('conversations', 'private thread file failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+  router.post('/api/conversations/homeroom-bot/threads/:rootId/post', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const rootId = threadRoot(req);
+      if (!rootId) return res.status(404).json({ error: 'No such thread' });
+      if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+      const body = req.body || {};
+      return answerDoor(res, await privateThreads().postIt(pool, {
+        user: req.user, rootId,
+        project: typeof body.project === 'string' ? body.project.slice(0, 120) : null,
+        number: Number(body.number),
+        text: typeof body.text === 'string' ? body.text : null,
+      }));
+    } catch (err) {
+      log.error('conversations', 'private thread post failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Run six (14 Oct 2026): "We'll tell you when it's live" under a first
   // version's plan (frontend/src/features/messages/notify-me.tsx): whether
   // its maker is told when it is ready and live, on from Make it

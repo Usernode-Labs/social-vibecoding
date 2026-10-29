@@ -16497,3 +16497,32 @@ CREATE TABLE IF NOT EXISTS thread_followers (
 );
 CREATE INDEX IF NOT EXISTS thread_followers_user_idx ON thread_followers (user_id);
 COMMENT ON TABLE thread_followers IS 'staging:private';
+
+-- ── Private threads (stage 5 of #6019) ─────────────────────────────────
+-- A thread a person starts in their private chat with Homeroom bot (the AI
+-- tab, whose main stream is Main): a draft of a request, a reply for a
+-- public thread, an idea with no project yet, or a question. It is a
+-- `thread_root_id` thread of that chat like any other; this row is where
+-- it went. File it files its words as a request on a project they pick
+-- (`state` 'filed', `result_ref` the request's number, `target_thread_id`
+-- its thread); Post it posts them in an existing thread as theirs
+-- ('posted', `result_ref` the number posted on). Nothing in it is public
+-- until one of the two (services/private-threads.js).
+CREATE TABLE IF NOT EXISTS private_threads (
+  id               BIGSERIAL PRIMARY KEY,
+  user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id  INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  root_message_id  INTEGER NOT NULL UNIQUE REFERENCES conversation_messages(id) ON DELETE CASCADE,
+  app_id           INTEGER REFERENCES apps(id) ON DELETE SET NULL,
+  target_thread_id BIGINT REFERENCES threads(id) ON DELETE SET NULL,
+  kind             VARCHAR(16) NOT NULL DEFAULT 'idea'
+                   CHECK (kind IN ('draft_request', 'draft_reply', 'idea', 'ask')),
+  state            VARCHAR(8) NOT NULL DEFAULT 'open'
+                   CHECK (state IN ('open', 'filed', 'posted', 'dropped')),
+  result_ref       INTEGER,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS private_threads_user_idx ON private_threads (user_id, updated_at DESC);
+COMMENT ON TABLE private_threads IS 'staging:private';
+
