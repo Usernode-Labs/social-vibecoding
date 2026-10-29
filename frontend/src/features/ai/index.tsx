@@ -262,7 +262,7 @@ export function AiScreen(): ReactNode {
               data-ai-live-toggle=""
               onClick={() => setLiveOpen(!liveOpen)}
             >
-              <ChevronDownIcon className={`h-4 w-4 text-zinc-400 transition-transform${liveOpen ? '' : ' -rotate-90'}`} aria-hidden="true" />
+              <ChevronDownIcon className={`h-4 w-4 text-zinc-500 dark:text-zinc-400 transition-transform${liveOpen ? '' : ' -rotate-90'}`} aria-hidden="true" />
               <span className="text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">
                 {t('messages:ai.live.title', { count: live.length })}
               </span>

@@ -15,12 +15,12 @@
 //          request's own thread when it had one (the one a merge closed,
 //          reopened), else a new one led by it, or by the first change. A
 //          request takes the changes built for it along.
-//   breakup: `input.parts` are filed as requests in this same thread, by
-//          whoever proposed the move, each `part_of` `input.request`; that
-//          request closes with the last of them (services/requests.js
-//          close). Their numbers are kept as `input.filed`.
-
-import { legacy } from '../legacy.ts';
+//   breakup: decided here, and nothing moves: its parts are filed as
+//          requests in this same thread once it is applied, by the moves'
+//          own service (services/thread-moves.js fileBreakup: at once on
+//          the decision that applied it, else on the next sweep), which
+//          numbers them from the app's one sequence. A rule calls no code
+//          outside the workflow.
 
 interface Db { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount?: number | null }> }
 
@@ -126,30 +126,7 @@ export async function applySplit(db: Db, move: { app_id: number | string; thread
  * voted on. Resolves the thread it left the work in, or null when it was
  * decided already.
  */
-export async function applyBreakup(
-  db: Db, move: { id: number | string; app_id: number | string; thread_id: number | string; input: any; proposed_by?: number | null },
-): Promise<number> {
-  const big = Number(move.input?.request);
-  const parts = Array.isArray(move.input?.parts) ? move.input.parts.slice(0, 6) : [];
-  const numbers = legacy('services/app-numbers');
-  const filed: number[] = [];
-  for (const part of parts) {
-    const title = String(part?.title || '').trim().slice(0, 512);
-    if (!title || !Number.isSafeInteger(big) || big <= 0) continue;
-    const number = await numbers.next(Number(move.app_id), { db });
-    const doneWhen = String(part?.doneWhen || '').trim();
-    await db.query(
-      `INSERT INTO requests (app_id, number, title, body, created_by, source, thread_id, part_of)
-       VALUES ($1, $2, $3, $4, $5, 'homeroom', $6, $7)`,
-      [Number(move.app_id), number, title, doneWhen ? `Done when: ${doneWhen}\n\nPart of #${big}.` : `Part of #${big}.`,
-        move.proposed_by == null ? null : Number(move.proposed_by), Number(move.thread_id), big],
-    );
-    filed.push(number);
-  }
-  await db.query(
-    `UPDATE thread_moves SET input = input || jsonb_build_object('filed', $2::jsonb) WHERE id = $1`,
-    [Number(move.id), JSON.stringify(filed)],
-  );
+export async function applyBreakup(move: { thread_id: number | string }): Promise<number> {
   return Number(move.thread_id);
 }
 
@@ -160,7 +137,7 @@ export async function applyMove(db: Db, moveId: number | string): Promise<number
   );
   if (!move || (move.state !== 'pending' && move.state !== 'voting')) return null;
   const result = move.kind === 'merge' ? await applyMerge(db, move)
-    : move.kind === 'breakup' ? await applyBreakup(db, move)
+    : move.kind === 'breakup' ? await applyBreakup(move)
       : await applySplit(db, move);
   await db.query(
     `UPDATE thread_moves SET state = 'applied', decided_at = NOW(), result_thread_id = $2 WHERE id = $1`,

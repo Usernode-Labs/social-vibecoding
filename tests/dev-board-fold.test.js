@@ -1705,8 +1705,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // cards into the two guest checks already on those pages. 744 leaves 136
   // slots.
   // 744 → 745: +1 (#6019) a request's page draws the changes built for it
-  // under it, each with its own line. 745 leaves 135 slots.
-  checkCap.assertPinned(DAPP.tests.length, 745);
+  // under it, each with its own line. 745 → 747: +2 (#6019 follow-up) the
+  // AI tab's own page, Your work and Up next. 747 leaves 133 slots.
+  checkCap.assertPinned(DAPP.tests.length, 747);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

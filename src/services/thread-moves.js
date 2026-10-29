@@ -190,6 +190,55 @@ async function moveFor(pool, { app, moveId }) {
   return move || null;
 }
 
+/**
+ * A break-up that was applied (workflow/rules/thread-moves.ts) files its
+ * parts here, once: each a request in the same thread, numbered from the
+ * app's one sequence, by whoever proposed the move, `part_of` the big
+ * request (which closes with the last of them, services/requests.js
+ * close). Locked and marked (`input.filed`) in one transaction, so two
+ * processes file it once. Resolves the numbers filed, or null when it was
+ * filed already or is not one.
+ */
+async function fileBreakup(pool, moveId) {
+  const appNumbers = require('./app-numbers');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [move] } = await client.query(
+      `SELECT * FROM thread_moves WHERE id = $1 AND kind = 'breakup' AND state = 'applied'
+          AND NOT (input ? 'filed') FOR UPDATE SKIP LOCKED`,
+      [Number(moveId)]
+    );
+    if (!move) { await client.query('ROLLBACK'); return null; }
+    const big = Number(move.input.request);
+    const filed = [];
+    for (const part of (move.input.parts || []).slice(0, MAX_PARTS)) {
+      const title = String(part?.title || '').trim().slice(0, 512);
+      if (!title) continue;
+      const number = await appNumbers.next(Number(move.app_id), { db: client });
+      const doneWhen = String(part?.doneWhen || '').trim();
+      await client.query(
+        `INSERT INTO requests (app_id, number, title, body, created_by, source, thread_id, part_of)
+         VALUES ($1, $2, $3, $4, $5, 'homeroom', $6, $7)`,
+        [Number(move.app_id), number, title, doneWhen ? `Done when: ${doneWhen}\n\nPart of #${big}.` : `Part of #${big}.`,
+          move.proposed_by == null ? null : Number(move.proposed_by), Number(move.thread_id), big]
+      );
+      filed.push(number);
+    }
+    await client.query(
+      `UPDATE thread_moves SET input = input || jsonb_build_object('filed', $2::jsonb) WHERE id = $1`,
+      [move.id, JSON.stringify(filed)]
+    );
+    await client.query('COMMIT');
+    return filed;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // Apply it, in a transaction of its own, and say so.
 async function decide(pool, { move, thread = null, appId, deps = {}, why }) {
   const client = await pool.connect();
@@ -209,8 +258,7 @@ async function decide(pool, { move, thread = null, appId, deps = {}, why }) {
   const because = why === 'agreed' ? ', as everyone who asked agreed' : ', as nobody objected';
   let text;
   if (move.kind === 'breakup') {
-    const { rows: [after] } = await pool.query('SELECT input FROM thread_moves WHERE id = $1', [move.id]);
-    const filed = Array.isArray(after?.input?.filed) ? after.input.filed : [];
+    const filed = (await fileBreakup(pool, move.id)) || [];
     text = `Broken up into ${filed.map((n) => `#${n}`).join(', ')}${because}. #${move.input.request} closes with the last of them.`;
   } else {
     text = move.kind === 'merge'
@@ -306,6 +354,24 @@ async function sweep(pool, { deps = {} } = {}) {
       log.warn('thread-moves', 'A due move could not be applied', { moveId: Number(move.id), err: err.message });
     }
   }
+  // A break-up the project's vote applied (the governance machine) files its
+  // parts here, on the next sweep.
+  const { rows: unfiled } = await pool.query(
+    `SELECT id, app_id, thread_id, input FROM thread_moves
+      WHERE kind = 'breakup' AND state = 'applied' AND NOT (input ? 'filed') ORDER BY id LIMIT $1`,
+    [SWEEP_BATCH]
+  );
+  for (const move of unfiled) {
+    try {
+      const filed = await fileBreakup(pool, move.id);
+      if (filed && filed.length) {
+        await say(pool, { appId: move.app_id, thread: await threads.threadById(pool, move.thread_id), deps,
+          text: `Broken up into ${filed.map((n) => `#${n}`).join(', ')}, as the vote decided. #${move.input.request} closes with the last of them.` });
+      }
+    } catch (err) {
+      log.warn('thread-moves', 'A break-up\'s parts could not be filed', { moveId: Number(move.id), err: err.message });
+    }
+  }
   const { rowCount: refused } = await pool.query(
     `UPDATE thread_moves m SET state = 'refused', decided_at = NOW()
        FROM issues i
@@ -317,4 +383,5 @@ async function sweep(pool, { deps = {} } = {}) {
 
 module.exports = {
   MAX_PARTS,
-  partsOf, WINDOW_MS, propose, agree, object, openMoves, sweep, requestersOf, shape };
+  partsOf,
+  fileBreakup, WINDOW_MS, propose, agree, object, openMoves, sweep, requestersOf, shape };

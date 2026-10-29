@@ -73,7 +73,7 @@ async function connectPool() {
       status VARCHAR(32) NOT NULL DEFAULT 'active');
     CREATE TABLE chat_messages (
       id SERIAL PRIMARY KEY, app_id INTEGER REFERENCES apps(id) ON DELETE CASCADE,
-      content TEXT NOT NULL DEFAULT '', thread_type VARCHAR(16), thread_ref INTEGER);
+      content TEXT NOT NULL DEFAULT '', thread_type VARCHAR(16), thread_ref INTEGER, user_id INTEGER);
   `);
   // Twice: schema.sql is applied on every boot.
   await pool.query(threadsBlock());

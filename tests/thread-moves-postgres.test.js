@@ -253,6 +253,25 @@ test('thread moves against the full schema', { timeout: 120000 }, async (t) => {
     assert.equal(again.ok, false, 'a closed thread, or a part, breaks up no further');
   });
 
+  await t.test('a break-up the vote applies has its parts filed by the next sweep, once', async () => {
+    const t30 = await request(30, ada, 'Recipe box');
+    const out = await moves.propose(pool, {
+      app, user: bob, thread: await thread(t30), kind: 'breakup', request: 30, deps,
+      parts: [{ title: 'Save a recipe' }, { title: 'Share a recipe' }],
+    });
+    assert.equal(out.move.state, 'pending', 'Ada asked for it; Bob proposed it, so it waits for her');
+    // The project voted for it: the governance machine applies it, in its
+    // own transaction, as rules.applyMove (a rule calls no service).
+    assert.equal(await rules.applyMove(pool, out.move.id), t30);
+    const parts = async () => (await pool.query(
+      'SELECT title FROM requests WHERE app_id = $1 AND part_of = 30 ORDER BY number', [app.id])).rows.map((r) => r.title);
+    assert.deepEqual(await parts(), [], 'nothing filed in the vote\'s transaction');
+    await moves.sweep(pool, { deps });
+    assert.deepEqual(await parts(), ['Save a recipe', 'Share a recipe']);
+    await moves.sweep(pool, { deps });
+    assert.equal((await parts()).length, 2, 'once');
+  });
+
   await t.test('the route is for members: someone who has not joined is asked to', async () => {
     const httpApp = express();
     httpApp.use(express.json());

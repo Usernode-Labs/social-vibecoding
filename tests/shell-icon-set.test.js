@@ -451,8 +451,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     //
     // Its composer was in the static document and drew MicrophoneIcon and
     // ArrowUpIcon there. The other composers draw both only once a
-    // conversation or a dev chat is open.
-    'M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z',
+    // conversation or a dev chat is open. (#6019 follow-up: the AI tab's
+    // Ask Homeroom bot bar draws MicrophoneIcon in the static document
+    // again, so only ArrowUpIcon is behind state.)
     'M12 19V5M5 12l7-7 7 7',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
