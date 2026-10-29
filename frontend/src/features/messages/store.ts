@@ -1153,6 +1153,12 @@ export function followPlatformSlug(): () => void {
   return subscribePlatformSlug(() => { if (state.route.open && !channelToHub()) syncChrome(); });
 }
 
+/** Whether the conversation open here, not embedded elsewhere, is the chat with Homeroom bot (Main). */
+function botOnShow(): boolean {
+  return !!state.route.conversationId && !state.route.embedded
+    && !!state.active && state.active.id === state.route.conversationId && !!state.active.homeroomBot;
+}
+
 export function syncChrome(): void {
   const app = typeof window !== 'undefined' ? window.App : undefined;
   if (!app) return;
@@ -1191,9 +1197,18 @@ export function syncChrome(): void {
     threadRootId: state.route.threadRootId,
     embedded: state.route.embedded,
     activeKind: state.active && state.active.id === state.route.conversationId ? state.active.kind : null,
+    bot: botOnShow(),
   })) {
     app.setBackIcon?.('none');
     app.setHeaderTitle?.(t('messages:store.header.messages'));
+    return;
+  }
+  // #6019: Main, the chat with Homeroom bot, is a level under the AI tab's
+  // page (features/ai/): its arrow goes back there, at every width, and the
+  // bar names it. A thread of it is a level under Main, as any reply thread is.
+  if (botOnShow() && !(isMobile() && state.route.threadRootId)) {
+    app.setBackIcon?.('arrow', '#ai');
+    app.setHeaderTitle?.(t('messages:store.header.main'));
     return;
   }
   const thread = listAside() && !!(state.route.conversationId || state.route.appSlug || state.route.agent);

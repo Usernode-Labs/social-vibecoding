@@ -87,6 +87,7 @@ import { MessagesScreen } from './features/messages';
 import { ParkedStrip, PlatformTabs, SkipToNavigation, StripBack } from './features/nav';
 import { SidePanel } from './features/side-panel';
 import { AgentSessionScreen } from './features/agent-session';
+import { AiScreen } from './features/ai';
 import { WorkshopScreen } from './features/workshop';
 import { ProfileProposalsScreen } from './features/profile/my-proposals';
 import { NotificationsIsland } from './features/notifications';
@@ -310,6 +311,7 @@ export function Shell() {
           `hidden`.
       */}
       <Island name="AgentSessionScreen"><AgentSessionScreen /></Island>
+      <Island name="AiScreen"><AiScreen /></Island>
       {/*
           The Topochain leaderboard used to be its own <main> screen here
           (#topochain-leaderboard-screen, Task 14). The header slim-down

@@ -109,8 +109,8 @@ test('Try again finishes a first version that was built, through a real tap', { 
   );
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
   const conversationId = opened.conversationId;
-  // The request's card in her chat with the bot: everything about it is said
-  // in its thread.
+  // The request's card in her chat with the bot: what the bot says about it
+  // is said in Main beside it (#6019).
   const card = await dm.sendDm(pool, { bot, userId: ada.id, content: '**Club Votes**, its first version' });
   await pool.query(
     `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind)
@@ -214,7 +214,7 @@ test('Try again finishes a first version that was built, through a real tap', { 
   }
   const tap = async (built, content = 'Try again') => {
     const sent = await conversations.sendMessage(pool, { id: ada.id, username: ada.username }, conversationId, {
-      content, reply_to_id: built.said.messageId, thread_root_id: card.messageId,
+      content, reply_to_id: built.said.messageId,
     });
     assert.ok(sent?.message, 'her reply was sent');
     return dm.noteUserMessage(pool, {}, { user: ada, conversationId, message: sent.message, deps });
@@ -252,13 +252,13 @@ test('Try again finishes a first version that was built, through a real tap', { 
     assert.equal(run.build_finish.by, ada.id);
     assert.equal(run.build_error, `proposed on its maker's Try again after: ${UNPROPOSED}`);
     // Said under the tap, then as every first version says it: built and
-    // being tested, in the request's thread.
+    // being tested, in Main (#6019: one conversation, no thread per request).
     const lines = await botSaid(built.said.messageId);
     assert.deepEqual(lines.map((l) => l.content), [
       'Finishing it now. I\'ll tell you here when it\'s ready to try.',
       'Built. Testing it: its checks, and its before and after screens.',
     ]);
-    assert.ok(lines.every((l) => Number(l.thread_root_id) === card.messageId), 'in the request\'s thread');
+    assert.ok(lines.every((l) => l.thread_root_id === null), 'in Main');
     const { rows: posts } = await pool.query(
       'SELECT kind, pending FROM homeroom_bot_posts WHERE run_id = $1 ORDER BY id', [built.runId],
     );

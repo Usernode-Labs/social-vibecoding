@@ -35,7 +35,8 @@ import { CheckIcon, ChevronDownIcon, EllipsisHorizontalIcon } from '@/components
 import { Textarea } from '@/components/ui/textarea';
 import { swatchFor } from '../../group-chat/swatch';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
-import { TitleContent } from '../card/dev-card';
+import { StatusPill, TitleContent } from '../card/dev-card';
+import type { StatusPillState } from '../card/model';
 import { normalizeBotTrack } from '../../messages/api';
 import { TrackCard, trackLinks } from '../../messages/bot-track';
 import type { RequestStatusView, RequestView } from './model';
@@ -48,7 +49,9 @@ import {
   type RequestSpecCard,
 } from './request-model';
 import { requestShots, togglePinShot } from './request-shots';
-import { ThreadItems, pageSlug } from './thread-items';
+import { ThreadItems, pageSlug, useThreadPayload } from './thread-items';
+import { ThreadChanges } from './thread-changes';
+import { requestPill, threadLayout, type ThreadHere } from './thread-model';
 import { TopicBack } from './topic-back';
 import { saveIssueBody } from './topic-head';
 import { OwnAgentLink } from './own-agent-link';
@@ -67,8 +70,13 @@ function host(id: string): Element | null {
   return typeof document === 'undefined' ? null : document.getElementById(id);
 }
 
-/** The sheet's header: what this is, the category, and everything else behind ⋯. */
-export function RequestBar({ r }: { r: RequestView }): ReactNode {
+/**
+ * The sheet's header: what this is, the category, and everything else
+ * behind ⋯. #6019: where the request's work stands rides beside its number,
+ * as a change's status pill rides beside "Change #N" (./change-head.tsx
+ * ChangeBar), once its thread is read (`pill`).
+ */
+export function RequestBar({ r, pill = null }: { r: RequestView; pill?: StatusPillState | null }): ReactNode {
   const t = useMessages('project');
   // F18 (#5683): the bar names the request itself, under a small-caps line
   // that says its number and, once it is settled, how it ended.
@@ -80,7 +88,12 @@ export function RequestBar({ r }: { r: RequestView }): ReactNode {
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
-        <div className="messages-thread-kicker" data-request-kicker="">{kicker}</div>
+        {pill ? (
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="messages-thread-kicker min-w-0" data-request-kicker="">{kicker}</div>
+            <span className="shrink-0" data-request-status={pill.key}><StatusPill s={pill} inline /></span>
+          </div>
+        ) : <div className="messages-thread-kicker" data-request-kicker="">{kicker}</div>}
         <div className="messages-thread-name line-clamp-2 dev-request-bar-title">{r.title}</div>
         {r.category ? <div className="messages-thread-sub" data-request-category="">{r.category}</div> : null}
       </div>
@@ -386,10 +399,22 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   const back = host('gc-thread-back');
   const bar = host('gc-thread-bar');
   const track = useMemo(() => (r.track ? normalizeBotTrack(r.track) : null), [r.track]);
+  // #6019: the request's thread, read once for the page: its changes and a
+  // vote to close follow the request under a rule (./thread-changes.tsx),
+  // and the list under them names the rest.
+  const slug = pageSlug();
+  const here = useMemo<ThreadHere>(() => ({ type: 'request', id: r.number }), [r.number]);
+  const threadRead = useThreadPayload(slug, r.number);
+  const layout = useMemo(() => threadLayout(threadRead.data, here), [threadRead.data, here]);
+  // Once a change is built for it (or a vote to close it is open), the
+  // change's own cards say where it stands, so the steps and the bot's track
+  // give way to them; a closed request still says how it ended.
+  const working = layout.changes.length > 0 || !!layout.close;
+  const pill = requestPill(layout, r.status.closed ? 'closed' : track ? track.state : null, (id) => translate(id));
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
-      {bar ? createPortal(<RequestBar r={r} />, bar) : null}
+      {bar ? createPortal(<RequestBar r={r} pill={pill} />, bar) : null}
       {images.viewer}
       <article className="messages-message dev-request-root" data-ref-issue={r.number} data-request-root={r.number}>
         <Avatar shape="square" size="sm" color={swatchFor(r.asker)} aria-hidden="true">
@@ -404,8 +429,10 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
             <TitleContent t={{ text: r.title, title: r.title, editing: r.titleEditing || undefined }} />
           </h1>
           {editing ? <RequestEditor r={r} onClose={() => setEditing(false)} /> : <RequestWords html={r.bodyHtml} />}
-          <RequestStatus s={r.status} specs={specs} tracked={!!track} slug={r.slug || ''} number={r.number} />
-          {track ? (
+          {working && !r.status.closed ? null : (
+            <RequestStatus s={r.status} specs={specs} tracked={!!track} slug={r.slug || ''} number={r.number} />
+          )}
+          {track && !working ? (
             // 16 Oct 2026 (C4, V3): the same card a request's thread leads
             // with, where it is and why, its bar and its pictures, in place
             // of having to open the chat to find out. Drawn from the board's
@@ -420,8 +447,12 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               {specs.map((card) => <SpecCard key={card.key} card={card} />)}
             </div>
           ) : null}
-          {/* #6019: the changes and votes in this request's thread. */}
-          <ThreadItems slug={pageSlug()} number={r.number} here={{ type: 'request', id: r.number }} />
+          {/* #6019: the changes and the vote to close in this request's
+              thread, under a rule; then the rest of it as a list. */}
+          {threadRead.data ? (
+            <ThreadChanges slug={slug} data={threadRead.data} number={r.number} changes={layout.changes} close={layout.close} onChanged={threadRead.reread} />
+          ) : null}
+          <ThreadItems slug={slug} number={r.number} here={here} payload={threadRead.data} items={layout.listed} onChanged={threadRead.reread} />
         </div>
       </article>
     </>

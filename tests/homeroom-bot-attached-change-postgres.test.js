@@ -262,9 +262,16 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
       user: sam, conversationId: samChat, message,
       deps: { chat: noModel, apiKey: 'sk-test', openMcp: async () => null, seesImages: false },
     });
-    // #6019: this chat is private. Drafted under the reply, with the
-    // change's card, and nothing sent or queued yet.
-    const draft = await reply(samChat, message.id);
+    // #6019: this chat is private. Drafted in a private thread of its own
+    // (Main's line for it quotes his message), with the change's card, and
+    // nothing sent or queued yet.
+    const opener = await reply(samChat, message.id);
+    assert.match(opener.content, /^I drafted that to post on Flat 4B Chores, in a thread only you can see\./);
+    const draft = (await pool.query(
+      `SELECT id, content, reply_to_id, metadata FROM conversation_messages
+        WHERE conversation_id = $1 AND sender_id = $2 AND thread_root_id = $3 ORDER BY id LIMIT 1`,
+      [samChat, bot.id, opener.id],
+    )).rows[0];
     assert.deepEqual(draft.metadata.homeroomBot.answers, ['Post it', 'Keep it private']);
     const { rows: draftObjects } = await pool.query('SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1', [draft.id]);
     assert.deepEqual(draftObjects.map((o) => `${o.object_type}:${o.object_ref}`), [`code_proposal:${pending.id}`]);

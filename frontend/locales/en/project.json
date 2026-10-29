@@ -767,29 +767,17 @@
     "text": "{{count}} to answer",
     "description": "Beside the \"Waiting on you\" heading in What's happening on a project's Workshop tab: how many of the viewer's items need their answer before they can move. {{count}} is that number."
   },
-  "workshop.yourVotes.title": {
-    "text": "Yours, up for a vote",
-    "description": "Heading of a part of the What's happening card on a project's Workshop tab: the viewer's own changes that are up for a vote now."
+  "workshop.upNext.title": {
+    "text": "Up next",
+    "description": "On a project's Workshop tab, in What's happening: the viewer's own work moving without them, soonest first (what is going live, then what is up for a vote and needs nothing from them). The section's heading."
   },
-  "workshop.yourVotes.count_one": {
-    "text": "{{count}} open",
-    "description": "Beside the \"Yours, up for a vote\" heading in What's happening on a project's Workshop tab: how many of the viewer's own changes and group decisions are up for a vote now. {{count}} is that number."
+  "workshop.upNext.count_one": {
+    "text": "{{count}} moving",
+    "description": "On a project's Workshop tab, in What's happening: the viewer's own work moving without them, soonest first (what is going live, then what is up for a vote and needs nothing from them). Beside the heading: how many rows it holds. {{count}} is that number."
   },
-  "workshop.yourVotes.count_other": {
-    "text": "{{count}} open",
-    "description": "Beside the \"Yours, up for a vote\" heading in What's happening on a project's Workshop tab: how many of the viewer's own changes and group decisions are up for a vote now. {{count}} is that number."
-  },
-  "workshop.goingLive.title": {
-    "text": "Going live",
-    "description": "Heading of a part of the What's happening card on a project's Workshop tab: the viewer's changes that were approved and merged and are not live yet, waiting for the release that makes them live."
-  },
-  "workshop.goingLive.count_one": {
-    "text": "{{count}} merged",
-    "description": "Beside the \"Going live\" heading in What's happening on a project's Workshop tab: how many of the viewer's changes were merged and are not live yet. {{count}} is that number."
-  },
-  "workshop.goingLive.count_other": {
-    "text": "{{count}} merged",
-    "description": "Beside the \"Going live\" heading in What's happening on a project's Workshop tab: how many of the viewer's changes were merged and are not live yet. {{count}} is that number."
+  "workshop.upNext.count_other": {
+    "text": "{{count}} moving",
+    "description": "On a project's Workshop tab, in What's happening: the viewer's own work moving without them, soonest first (what is going live, then what is up for a vote and needs nothing from them). Beside the heading: how many rows it holds. {{count}} is that number."
   },
   "workshop.fresh.title": {
     "text": "New for you",
@@ -1286,6 +1274,14 @@
   "needsYou.eyebrow.changeAdvisory": {
     "text": "Change · Your vote is advisory",
     "description": "Small label at the top of an item in the Needs you feed: the item is a proposed change whose outcome this person's vote does not decide — they are not an approver where only approvers decide, or outside every group the project's rules name. Their vote is recorded but does not affect the result. Change is a noun."
+  },
+  "needsYou.eyebrow.ballot": {
+    "text": "Pick one · Changes for one request",
+    "description": "Small label at the top of an item in the Needs you feed: two or more changes (or a change and a proposal to close it) compete for one request, and this person has not picked one yet."
+  },
+  "needsYou.eyebrow.botQuestion": {
+    "text": "Homeroom bot asked you",
+    "description": "Small label at the top of an item in the Needs you feed: a question Homeroom bot asked this person about their request, still unanswered."
   },
   "needsYou.previousItem": {
     "text": "Previous item",
@@ -2978,6 +2974,38 @@
   "topic.thread.move.split": {
     "text": "Proposed: split {{what}} out",
     "description": "Line under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page: someone proposed moving items out of this thread into a thread of their own. {{what}} lists them, for example \"#9\"."
+  },
+  "topic.thread.move.breakup_one": {
+    "text": "Proposed: break #{{number}} up into {{count}} smaller request",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. A waiting break-up of the request into smaller requests in the same thread. {{number}} is the request, {{count}} how many parts."
+  },
+  "topic.thread.move.breakup_other": {
+    "text": "Proposed: break #{{number}} up into {{count}} smaller requests",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. A waiting break-up of the request into smaller requests in the same thread. {{number}} is the request, {{count}} how many parts."
+  },
+  "topic.thread.move.breakUp": {
+    "text": "Break it up",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. Button: opens the form that breaks this request into smaller requests in the same thread."
+  },
+  "topic.thread.move.breakUpAbout": {
+    "text": "Each part becomes a request of its own here, with its own change and vote. #{{number}} closes with the last of them.",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. Over the break-up form. {{number}} is the request being broken up."
+  },
+  "topic.thread.move.partTitle_one": {
+    "text": "Part {{count}}: its title",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. Field in the break-up form: a smaller request's title. {{count}} is which part it is."
+  },
+  "topic.thread.move.partTitle_other": {
+    "text": "Part {{count}}: its title",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. Field in the break-up form: a smaller request's title. {{count}} is which part it is."
+  },
+  "topic.thread.move.partDone": {
+    "text": "Done when…",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. Field in the break-up form: what that smaller request is done when. Optional."
+  },
+  "topic.thread.move.addPart": {
+    "text": "Add a part",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. Button in the break-up form: one more smaller request."
   },
   "topic.thread.move.pending_one": {
     "text": "Happens in {{count}} hour unless someone objects",
@@ -5781,18 +5809,146 @@
   },
   "topic.thread.ballot.label": {
     "text": "Pick one",
-    "description": "Small-caps heading over a ballot on a request's or a change's page: two or more changes for the same piece of work are up for a vote, and the person picks one of them, or Neither."
+    "description": "Spoken name of the one vote between competing changes on a request's or a change's page: two or more changes for the same piece of work (or a change and a proposal to close it) are up for a vote, and the person picks one."
   },
   "topic.thread.ballot.about": {
-    "text": "These changes are for the same thing. The first one approved goes live, and the others close.",
-    "description": "Line under the Pick one heading of the ballot between competing changes: how it is decided."
-  },
-  "topic.thread.ballot.option": {
-    "text": "Change #{{number}}: {{title}}",
-    "description": "One choice of the ballot between competing changes. {{number}} is the change's number, {{title}} its title."
+    "text": "The first to pass {{project}}’s approval rule goes live, and the others close. Neither counts as a No on each.",
+    "description": "Line under the one vote between competing changes: how it is decided. {{project}} is the project's name."
   },
   "topic.thread.ballot.neither": {
     "text": "Neither",
     "description": "The last choice of the ballot between competing changes: the person wants none of them to go live (it votes No on each)."
+  },
+  "topic.thread.page.someone": {
+    "text": "Someone",
+    "description": "Stands in for a person's name on a request's page, under the request: its changes and its vote to close, when the name is not known."
+  },
+  "topic.thread.page.change": {
+    "text": "Change · {{by}}",
+    "description": "Small-caps line over one change on a request's page, under the request: its changes and its vote to close that has no number yet. {{by}} is who built it (a username, or Homeroom bot)."
+  },
+  "topic.thread.page.changeNumbered": {
+    "text": "Change #{{number}} · {{by}}",
+    "description": "Small-caps line over one change on a request's page, under the request: its changes and its vote to close. {{number}} is the change's number, {{by}} who built it (a username, or Homeroom bot). The change's title follows on the next line."
+  },
+  "topic.thread.page.changeLettered": {
+    "text": "Change {{letter}} · {{by}}",
+    "description": "Small-caps line over one of several competing changes on a request's page, under the request: its changes and its vote to close. {{letter}} is the change's letter (A, B, C), {{by}} who built it."
+  },
+  "topic.thread.page.underway": {
+    "text": "Being built. Its votes open once it is up for a vote.",
+    "description": "Line under a change on a request's page, under the request: its changes and its vote to close that is still being built, where its Votes and Testing cards will be."
+  },
+  "topic.thread.page.earlier_one": {
+    "text": "{{count}} earlier reply on this change",
+    "description": "Button under a change on a request's page, under the request: its changes and its vote to close: opens the replies people wrote on the change's own page before. {{count}} is how many."
+  },
+  "topic.thread.page.earlier_other": {
+    "text": "{{count}} earlier replies on this change",
+    "description": "Button under a change on a request's page, under the request: its changes and its vote to close: opens the replies people wrote on the change's own page before. {{count}} is how many."
+  },
+  "topic.thread.page.earlierHide": {
+    "text": "Hide the earlier replies",
+    "description": "Button under a change on a request's page, under the request: its changes and its vote to close, while its earlier replies are open: folds them away again."
+  },
+  "topic.thread.page.rowBy": {
+    "text": "{{by}} · #{{number}}",
+    "description": "Second line of one competing change's row on a request's page, under the request: its changes and its vote to close: who built it and the change's number."
+  },
+  "topic.thread.ballot.close": {
+    "text": "Close it",
+    "description": "A choice of the one vote between a request's changes and a proposal to close the request, in place of Neither: the person wants the request closed with none of the changes."
+  },
+  "topic.thread.ballot.heading": {
+    "text": "{{n}} changes for #{{number}}",
+    "description": "Small-caps heading over competing changes on a request's page, under the request: its changes and its vote to close. {{n}} is how many changes (two or more), {{number}} the request's number."
+  },
+  "topic.thread.ballot.headingClose": {
+    "text": "A change, or closing it",
+    "description": "Small-caps heading on a request's page, under the request: its changes and its vote to close when one change and a proposal to close the request compete in one vote."
+  },
+  "topic.thread.ballot.headingCloseMany": {
+    "text": "{{n}} changes, or closing it",
+    "description": "Small-caps heading on a request's page, under the request: its changes and its vote to close when several changes and a proposal to close the request compete in one vote. {{n}} is how many changes."
+  },
+  "topic.thread.ballot.votes": {
+    "text": "Votes",
+    "description": "Name of the card that holds a vote on a request's page, under the request: its changes and its vote to close, as a change's own Votes card is named."
+  },
+  "topic.thread.ballot.yourPick": {
+    "text": "Up for a vote",
+    "description": "Figure in the corner of the one vote between competing changes, before the person has picked one."
+  },
+  "topic.thread.ballot.picked": {
+    "text": "You voted",
+    "description": "Figure in the corner of the one vote between competing changes, once the person has picked one (they can still change it)."
+  },
+  "topic.thread.ballot.tally": {
+    "text": "{{choice}}: {{yes}} of {{need}} yes votes",
+    "description": "Spoken name of one bar of the vote between competing changes. {{choice}} is the choice (A, B, Close it), {{yes}} its yes votes, {{need}} what the project's approval rule needs."
+  },
+  "topic.thread.ballot.aboutClose": {
+    "text": "The first to pass {{project}}’s approval rule wins: the change goes live, or the request closes.",
+    "description": "Line under the one vote between a request's changes and a proposal to close it: how it is decided. {{project}} is the project's name."
+  },
+  "topic.thread.close.kicker": {
+    "text": "{{by}} proposed closing it",
+    "description": "Small-caps line over a proposal to close the request on a request's page, under the request: its changes and its vote to close. {{by}} is who proposed it. Its reason follows."
+  },
+  "topic.thread.close.by": {
+    "text": "{{by}} proposed closing it",
+    "description": "Second line of the Close it row of the vote between a request's changes and closing it. {{by}} is who proposed closing it."
+  },
+  "topic.thread.close.byWhy": {
+    "text": "{{by}} proposed closing it · {{reason}}",
+    "description": "Second line of the Close it row of the vote between a request's changes and closing it. {{by}} is who proposed it, {{reason}} their reason in their own words."
+  },
+  "topic.thread.close.votes": {
+    "text": "Votes on closing it",
+    "description": "Spoken name of the Votes card of a proposal to close the request, on a request's page, under the request: its changes and its vote to close."
+  },
+  "topic.thread.close.figure": {
+    "text": "{{yes}} of {{need}} yes",
+    "description": "Figure in the corner of the Votes card of a proposal to close the request: {{yes}} yes votes so far of the {{need}} the project's approval rule needs."
+  },
+  "topic.thread.close.yes": {
+    "text": "Yes",
+    "description": "Button on the Votes card of a proposal to close the request: vote yes, close it."
+  },
+  "topic.thread.close.no": {
+    "text": "No",
+    "description": "Button on the Votes card of a proposal to close the request: vote no, keep it open."
+  },
+  "topic.thread.close.note": {
+    "text": "If it passes, every request here closes, and the changes up for a vote close with them.",
+    "description": "Line under the Votes card of a proposal to close the request, before the person has voted: what happens if the vote passes."
+  },
+  "topic.thread.close.saidYes": {
+    "text": "You said yes. If it passes, every request here closes.",
+    "description": "Line under the Votes card of a proposal to close the request, once the person voted yes."
+  },
+  "topic.thread.close.saidNo": {
+    "text": "You said no.",
+    "description": "Line under the Votes card of a proposal to close the request, once the person voted no."
+  },
+  "topic.thread.pill.choosing": {
+    "text": "Pick one",
+    "description": "Status pill beside a request's number in its page's header: two or more changes (or a change and a proposal to close it) are up for one vote between them."
+  },
+  "topic.thread.pill.vote": {
+    "text": "Up for a vote",
+    "description": "Status pill beside a request's number in its page's header: a change built for it is up for a vote."
+  },
+  "topic.thread.pill.close": {
+    "text": "Vote to close",
+    "description": "Status pill beside a request's number in its page's header: a proposal to close the request is up for a vote."
+  },
+  "topic.thread.pill.building": {
+    "text": "Being built",
+    "description": "Status pill beside a request's number in its page's header: a change for it is being built."
+  },
+  "topic.thread.pill.live": {
+    "text": "Live",
+    "description": "Status pill beside a request's number in its page's header: a change built for it went live."
   }
 }

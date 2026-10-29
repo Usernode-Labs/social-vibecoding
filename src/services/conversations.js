@@ -995,12 +995,15 @@ async function conversationRow(db, user, conversationId) {
 // messages only, and neither a deleted message nor one from someone the
 // viewer blocked counts. Shared by the list and by markUnread's answer. A bot
 // moment shown in the main chat as well as its thread (ALSO_IN_CHAT) counts
-// once, here; the bot's quiet lines in a thread do not.
+// once, here; the bot's quiet lines in a thread do not, and neither do the
+// quiet lines it says in the main chat now that a request has no thread
+// there (#6019, `quiet` in its metadata).
 async function countUnread(db, conversationId, userId, cursor) {
   const result = await db.query(
     `SELECT COUNT(*)::int AS count FROM conversation_messages m
       WHERE m.conversation_id = $1 AND m.id > COALESCE($2, 0)
         AND (m.thread_root_id IS NULL OR ${ALSO_IN_CHAT}) AND m.deleted_at IS NULL
+        AND (m.metadata->'homeroomBot'->>'quiet') IS DISTINCT FROM 'true'
         AND m.msg_type = 'message'
         AND m.sender_id IS DISTINCT FROM $3
         AND NOT EXISTS (SELECT 1 FROM user_blocks b

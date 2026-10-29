@@ -2570,6 +2570,51 @@ function closeOfferMeta({ app, name, actionId, issueNumber }) {
   });
 }
 
+// #6019 follow-up: Main's line for a draft the bot opened a private thread
+// for, quoting what the person asked, and the thread's row
+// (private_threads, services/private-threads.js), which the AI tab lists
+// with a lock until the draft is filed, posted or put away. Resolves the
+// line ({ messageId, conversationId }), or null when it could not be sent,
+// and the draft is then said in Main as before.
+async function openDraftThread(pool, { bot, user, conversationId, message, kind, app, name, deps }) {
+  const dm = dmModule(deps);
+  const said = await dm.sendDm(pool, {
+    bot,
+    userId: user.id,
+    content: kind === 'post_reply'
+      ? `I drafted that to post on ${name}, in a thread only you can see. Nothing is posted until you post it.`
+      : `I drafted it as a request on ${name}, in a thread only you can see. Nothing is filed until you file it.`,
+    idempotencyKey: `hrbot-mayor-opened-${message.id}`,
+    replyToId: message.id,
+    threadRootId: false,
+    moment: null,
+    metadata: { kind: 'opened_draft', appSlug: app.slug, appName: name, draft: kind },
+  }).catch((err) => {
+    log.warn('homeroom-bot-mayor', 'Could not open a draft\'s private thread (saying it in Main)', { err: err.message });
+    return null;
+  });
+  if (!said?.messageId) return null;
+  await pool.query(
+    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
+     VALUES ($1, $2, $3, $4, $5, 'open') ON CONFLICT (root_message_id) DO NOTHING`,
+    [user.id, said.conversationId || conversationId, said.messageId, app.id, kind === 'post_reply' ? 'draft_reply' : 'draft_request'],
+  ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not record a draft\'s private thread', { err: err.message }));
+  return said;
+}
+
+// Where a draft's private thread went, once it is decided: filed or posted
+// (`ref` the request's number), or put away. Nothing for a draft said in
+// Main. Never throws.
+async function notePrivateDraft(pool, { userId, messageId, state, ref = null }) {
+  if (!messageId) return;
+  await pool.query(
+    `UPDATE private_threads p SET state = $3, result_ref = COALESCE($4, p.result_ref), updated_at = NOW()
+       FROM conversation_messages m
+      WHERE m.id = $1 AND p.root_message_id = m.thread_root_id AND p.user_id = $2 AND p.state = 'open'`,
+    [Number(messageId), Number(userId), state, ref == null ? null : Number(ref)],
+  ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not note where a draft\'s private thread went', { err: err.message }));
+}
+
 async function offer(pool, { bot, user, conversationId, message, text, offer: o, deps }) {
   const dm = dmModule(deps);
   const name = o.app.name || o.app.slug;
@@ -2613,6 +2658,15 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       `**${name}** · new request: ${o.title}`,
       ...(o.details ? ['', clip(o.details, 1200)] : []),
     ].join('\n');
+  // #6019 follow-up (plan v3: "Drafts: the bot opens a locked thread and
+  // links it from Main"): a draft (a request to file, or words to post) is
+  // put in a private thread of its own, only the person's. Main says so,
+  // quoting what they asked, and the draft is the thread's first reply.
+  // Said in a thread already, it stays there.
+  const draft = kind === 'file_request' || post;
+  const opened = draft && !(message.threadRootId || message.thread_root_id)
+    ? await openDraftThread(pool, { bot, user, conversationId, message, kind, app: o.app, name, deps })
+    : null;
   const sent = await dm.sendDm(pool, {
     bot,
     userId: user.id,
@@ -2620,8 +2674,10 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     idempotencyKey: `hrbot-mayor-${message.id}`,
     // It quotes the message it answers, and that quote is where the
     // request's later news finds what it started from (#3707,
-    // homeroom-bot-dm.js requestStart).
-    replyToId: message.id,
+    // homeroom-bot-dm.js requestStart); in a draft's thread, Main's line
+    // quotes it instead.
+    replyToId: opened ? null : message.id,
+    ...(opened ? { threadRootId: opened.messageId } : {}),
     // The proposal it would withdraw, to open before deciding.
     objects: withdraw || (post && o.sessionId) ? [{ type: 'proposal', appId: Number(o.app.id), sessionId: Number(o.sessionId) }]
       : move || close || post ? [{ type: 'issue', appId: Number(o.app.id), issueNumber: Number(o.issueNumber) }] : null,
@@ -2907,6 +2963,10 @@ async function settleOffer(pool, config, {
       status: 'answered', answer: yes ? yesWord : noWord, chosen: yes ? 'yes' : 'no',
     }, { conversationId: action.conversation_id, userId: user.id }).catch(() => {});
   }
+  // A draft put away: its private thread went nowhere (openDraftThread).
+  if (no && (action.kind === 'file_request' || action.kind === 'post_reply')) {
+    await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'dropped' });
+  }
   if (no && tapped) return { declined: true };
   // The act's claim (`key`) rides with it, so what it calls can tell a
   // failure to retry from one to say.
@@ -2933,6 +2993,7 @@ async function settleOffer(pool, config, {
       user, app, title: action.title, details: action.details, settings, deps, askedText, fileKey: `dm-action:${action.id}`,
     });
     await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);
+    await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'filed', ref: filed.issueNumber });
     const name = app.name || app.slug;
     const builds = liveModule(deps).isLiveFor(settings, app);
     if (builds && filed.queueId) {
@@ -3967,13 +4028,16 @@ async function decidePost(pool, { bot, user, settings, action, yes, ack, deps = 
       return failed(err.message, later);
     }
     if (!posted.ok) return failed(posted.why || 'refused', `I couldn't post it: ${posted.why}. Nothing was posted.`);
+    await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'posted', ref: n });
     require('./homeroom-bot-tray').noteWorkChanged(user.id, deps);
     return ack(revisingLine({ title: session.title, projectName: name, queued: posted.queued ?? null }), {
       objects: [{ type: 'proposal', appId: Number(app.id), sessionId: Number(session.id) }],
     });
   }
   if (!(await requestExists(pool, app.id, n))) return failed('gone', `${name} has no request #${n} any more. Nothing was posted.`);
-  if (!(await canFile(pool, app, user))) {
+  // A change to their own request's plan is the requester's to make, as it
+  // was before it became a draft (postOnRequest keeps its own gates).
+  if (action.title !== 'plan_change' && !(await canFile(pool, app, user))) {
     return failed('join_required', `I couldn't post it: you need to be a member of ${name} first. You can join it from its page.`);
   }
   // What it answers: the message it was drafted under, while that is still
@@ -3985,7 +4049,7 @@ async function decidePost(pool, { bot, user, settings, action, yes, ack, deps = 
   let posted;
   try {
     posted = await dm.postOnRequest(pool, {
-      user, target, text, prepared: action.title !== 'dm_answer', reason: action.title || 'dm_comment', deps,
+      user, target, text, prepared: !['dm_answer', 'plan_change'].includes(action.title), reason: action.title || 'dm_comment', deps,
     });
   } catch (err) {
     log.warn('homeroom-bot-mayor', 'Could not post a drafted reply', { app: app.slug, issueNumber: n, err: err.message });
@@ -3993,6 +4057,15 @@ async function decidePost(pool, { bot, user, settings, action, yes, ack, deps = 
     return failed(err.message, later);
   }
   if (!posted.ok) return failed(posted.why || 'refused', `I couldn't post it: ${posted.why}. Nothing was posted.`);
+  await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'posted', ref: n });
+  // A change to a complicated change's plan (#4488): the plan stops waiting
+  // and is planned again with it (homeroom-bot-dm.js changeOnRequest).
+  if (action.title === 'plan_change') {
+    await dm.notePlanChanged(pool, { user, target, app, deps });
+    return ack(`Posted on ${posted.line}'s public discussion, as you. I'll plan it again with it and send the new plan here.`, {
+      objects: [{ type: 'issue', appId: Number(app.id), issueNumber: n }],
+    });
+  }
   const builds = liveModule(deps).isLiveFor(settings, app);
   return ack(`Posted on ${posted.line}'s public discussion, as you.${builds ? ' I\'ll look at it again now.' : ''}`, {
     objects: [{ type: 'issue', appId: Number(app.id), issueNumber: n }],

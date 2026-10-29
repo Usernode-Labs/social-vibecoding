@@ -126,6 +126,12 @@ test('the rail roots agree with the tab bar\'s own map', () => {
   for (const m of body.matchAll(/'([a-z-]+)': '([a-z]+)'/g)) {
     if (!firstForTab.has(m[2])) firstForTab.set(m[2], m[1]);
   }
+  // The rail's own tabs too (29 Oct 2026): Discover is one there, and this
+  // list is only read at the rail's width.
+  const railBody = nav.match(/RAIL_TAB_FOR_SCREEN = Object\.freeze\(\{([\s\S]*?)\}\)/)[1];
+  for (const m of railBody.matchAll(/'([a-z-]+)': '([a-z]+)'/g)) {
+    if (!firstForTab.has(m[2])) firstForTab.set(m[2], m[1]);
+  }
   assert.deepEqual([...App._RAIL_ROOTS].sort(), [...firstForTab.values()].sort());
 });
 

@@ -284,40 +284,39 @@ async function quotable(pool, conversationId, userId, messageId) {
 }
 
 /**
- * One story per request: the thread a bot message about a request goes in,
- * in the person's chat with the bot, or null for the main chat. The thread
- * is the request's card (homeroom-bot-activity.js, kind 'activity'), which
- * is its first message: everything about the request is said under it. An
- * answer to something the person wrote in a thread goes in that thread.
- * A request with no card in this chat (news about work that started before
- * cards were sent for every request) is said in the main chat, as before.
- * The card itself is never in a thread. Never throws.
+ * The thread a bot message goes in, in the person's chat with the bot, or
+ * null for Main, the chat itself. Main is one conversation (#6019): what the
+ * bot says about a request is said there, beside the request's card, and the
+ * request's own page is its thread. Only an answer to something the person
+ * wrote in a thread of theirs (a private thread, stage 5) goes in that
+ * thread. The threads the bot opened per request before this stay where they
+ * are, readable, and nothing new is added to them. Never throws.
  */
-async function threadRootFor(pool, { conversationId, userId, metadata = null, replyToId = null }) {
+async function threadRootFor(pool, { conversationId, replyToId = null }) {
   try {
     const replyId = conversations.strictId(replyToId);
-    if (replyId) {
-      const { rows: [quoted] = [] } = await pool.query(
-        'SELECT thread_root_id FROM conversation_messages WHERE id = $1 AND conversation_id = $2',
-        [replyId, conversationId],
-      );
-      if (quoted?.thread_root_id) return Number(quoted.thread_root_id);
-    }
-    const n = Number(metadata?.issueNumber);
-    if (!metadata || metadata.kind === 'activity' || !metadata.appSlug || !Number.isInteger(n) || n <= 0) return null;
-    const { rows: [card] = [] } = await pool.query(
-      `SELECT d.message_id
-         FROM homeroom_bot_dm_messages d
-         JOIN apps a ON a.id = d.app_id
-         JOIN conversation_messages m ON m.id = d.message_id AND m.deleted_at IS NULL AND m.thread_root_id IS NULL
-        WHERE d.user_id = $1 AND d.conversation_id = $2 AND a.slug = $3 AND d.issue_number = $4 AND d.kind = 'activity'
-        ORDER BY d.message_id DESC LIMIT 1`,
-      [userId, conversationId, metadata.appSlug, n],
+    if (!replyId) return null;
+    const { rows: [quoted] = [] } = await pool.query(
+      'SELECT thread_root_id FROM conversation_messages WHERE id = $1 AND conversation_id = $2',
+      [replyId, conversationId],
     );
-    return card ? Number(card.message_id) : null;
+    return quoted?.thread_root_id ? Number(quoted.thread_root_id) : null;
   } catch (err) {
-    log.warn('homeroom-bot-dm', 'Could not find a request\'s thread (saying it in the main chat)', { userId, err: err.message });
+    log.warn('homeroom-bot-dm', 'Could not find the thread a reply was in (saying it in Main)', { conversationId, err: err.message });
     return null;
+  }
+}
+
+/** Whether a message is a request's activity card (homeroom-bot-activity.js). Never throws. */
+async function isRequestCard(pool, messageId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM homeroom_bot_dm_messages WHERE message_id = $1 AND kind = 'activity' LIMIT 1`, [messageId],
+    );
+    return rows.length > 0;
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not tell whether a message is a request\'s card (saying it in Main)', { messageId, err: err.message });
+    return true;
   }
 }
 
@@ -474,7 +473,7 @@ function saidOf(kind, info = {}) {
  * `threadRootId` and `alsoInChat` for a moment that rings. What the caller
  * set itself wins.
  */
-function storyMetadata(metadata, { moment = null, threadRootId = null } = {}) {
+function storyMetadata(metadata, { moment = null, threadRootId = null, quiet = false } = {}) {
   if (!metadata) return metadata;
   const said = metadata.said || saidOf(metadata.kind, metadata);
   const ringing = RINGING_MOMENTS.has(moment);
@@ -487,6 +486,10 @@ function storyMetadata(metadata, { moment = null, threadRootId = null } = {}) {
       ? { requestTitle: metadata.firstVersion ? null : (metadata.issueTitle || null) } : {}),
     ...(threadRootId ? { threadRootId } : {}),
     ...(threadRootId && ringing ? { alsoInChat: true } : {}),
+    // #6019: a quiet line about a request, said in Main now that requests
+    // have no thread there: it counts as nothing unread (conversations.js
+    // countUnread), as it did in the thread it used to go in.
+    ...(quiet && !ringing ? { quiet: true } : {}),
   };
 }
 
@@ -581,9 +584,13 @@ async function sendDm(pool, {
   const input = { content: clip(content, conversations.MAX_MESSAGE_LENGTH || 8000) };
   const key = conversations.normalizeIdempotencyKey(idempotencyKey);
   if (key) input.idempotency_key = key;
+  // Main is one conversation (#6019): a message a caller would have put in
+  // a request's thread, under its card, is said in Main beside the card.
+  // A thread of the person's own (a private thread) keeps its messages.
+  const asked = threadRootId === false ? null : conversations.strictId(threadRootId);
   const root = threadRootId === false ? null
-    : (conversations.strictId(threadRootId)
-      || await threadRootFor(pool, { conversationId: opened.conversationId, userId, metadata, replyToId }));
+    : (asked && !(await isRequestCard(pool, asked)) ? asked
+      : await threadRootFor(pool, { conversationId: opened.conversationId, replyToId }));
   if (root) {
     // In a thread, what it answers is the line above it: no quote.
     input.thread_root_id = root;
@@ -606,8 +613,10 @@ async function sendDm(pool, {
     && Number(hello.metadata.issueNumber) === Number(metadata.issueNumber)) {
     hello = { ...hello, metadata: { ...hello.metadata, issueTitle: title } };
   }
+  // Said in Main instead of under the request's card (above).
+  const quiet = !!asked && !root;
   const stored = metadata
-    ? storyMetadata(group ? { ...metadata, group: true } : metadata, { moment: story, threadRootId: root })
+    ? storyMetadata(group ? { ...metadata, group: true } : metadata, { moment: story, threadRootId: root, quiet })
     : null;
   // The notification's detail: homeroom-bot-notify-copy.js words the push,
   // the bell and the email from the story's fields (contract 2.1).
@@ -986,12 +995,16 @@ function wantsStoryTitle(metadata) {
  * #3707: the person's DM message a request of theirs started from, for the
  * bot's later news about it to quote. A request starts in the DM when File
  * it files the bot's offer, and the offer quotes the message it answered
- * (homeroom-bot-mayor.js offer). Null for a request filed anywhere else.
+ * (homeroom-bot-mayor.js offer); a draft in a private thread of its own
+ * (#6019 follow-up) does not, and Main's line that opened the thread does.
+ * Null for a request filed anywhere else.
  */
 async function requestStart(pool, { userId, appId, issueNumber }) {
   const { rows } = await pool.query(
-    `SELECT o.reply_to_id FROM homeroom_bot_dm_actions a
+    `SELECT COALESCE(o.reply_to_id, root.reply_to_id) AS reply_to_id
+       FROM homeroom_bot_dm_actions a
        JOIN conversation_messages o ON o.id = a.message_id
+       LEFT JOIN conversation_messages root ON root.id = o.thread_root_id
       WHERE a.user_id = $1 AND a.app_id = $2 AND a.issue_number = $3 AND a.status = 'done'
       ORDER BY a.id DESC
       LIMIT 1`,
@@ -2415,7 +2428,7 @@ async function changePlan(pool, { bot, user, target, message, deps = {} }) {
   // group: what to change is said there, and its next look plans it again.
   const { rows: [planned] = [] } = await pool.query('SELECT plan FROM homeroom_bot_runs WHERE id = $1', [target.run_id]);
   if (planned?.plan?.complicated === true) {
-    return changeOnRequest(pool, { user, target, text, app, issueNumber, reply, deps });
+    return changeOnRequest(pool, { bot, user, target, text, message, deps });
   }
   await pool.query(
     `UPDATE homeroom_bot_runs
@@ -2451,35 +2464,51 @@ async function changePlan(pool, { bot, user, target, message, deps = {} }) {
 }
 
 /**
- * #4488: Change something under a complicated change's plan: their words are
- * posted on the request's discussion as theirs (postOnRequest, which puts
- * it first in the bot's queue), the plan stops waiting and its card says
- * changes were asked for. Its next look plans it again with them, and the
- * new plan comes here and to the request. Resolves what the bot said back.
+ * #4488: Change something under a complicated change's plan. Their words go
+ * on the request's public discussion as theirs, and its next look plans it
+ * again with them. #6019: the chat with the bot is private, so they are put
+ * under the bot's reply as a draft first (homeroom-bot-mayor.js offerPost,
+ * reason 'plan_change'), and Post it posts them; then notePlanChanged stops
+ * the plan waiting. Resolves what the bot said back.
  */
-async function changeOnRequest(pool, { user, target, text, app, issueNumber, reply, deps = {} }) {
-  const line = `${app.name || app.slug} request #${issueNumber}`;
-  const posted = await postOnRequest(pool, { user, target, text, reason: 'plan_change', deps });
-  if (!posted.ok) return reply(`I couldn't post that on ${line}: ${posted.why}. Nothing was sent.`);
-  await pool.query(
-    `UPDATE homeroom_bot_runs SET awaiting_go_at = NULL, build_ok = COALESCE(build_ok, FALSE),
-            build_error = COALESCE(build_error, 'skipped: its requester asked to change the plan')
-      WHERE id = $1 AND awaiting_go_at IS NOT NULL AND build_session_id IS NULL AND proposal_session_id IS NULL`,
-    [target.run_id],
-  );
-  await pool.query(
-    'UPDATE homeroom_bot_dm_actions SET status = \'declined\', decided_at = NOW(), error = \'changed\' WHERE message_id = $1 AND status = \'open\'',
-    [target.message_id],
-  );
-  // Papote #3: its row on the request says a new plan follows.
-  await require('./homeroom-bot-live').notePlanRows(pool, [target.run_id], 'replaced', { ws: deps.ws || null });
-  await setQuestionState(pool, Number(target.message_id), { status: 'closed', changing: true }, {
-    ws: deps.ws || null, conversationId: target.conversation_id, userId: user.id,
+async function changeOnRequest(pool, { bot, user, target, text, message, deps = {} }) {
+  const mayor = deps.mayor || require('./homeroom-bot-mayor');
+  return mayor.offerPost(pool, {
+    bot, user, conversationId: target.conversation_id || null, message, target, text, reason: 'plan_change', deps,
   });
-  log.info('homeroom-bot-dm', 'A complicated change\'s plan is planned again with its requester\'s words, posted on the request', {
-    app: app.slug, issueNumber, userId: user.id,
-  });
-  return reply(`Thanks. I posted that on ${line}'s public discussion, and I'll plan it again with it and send the new plan here.`);
+}
+
+/**
+ * #4488: what posting a change to a complicated change's plan does after
+ * the words are on the request (decidePost, on Post it): the plan stops
+ * waiting and its card says changes were asked for; its next look plans it
+ * again with them, and the new plan comes to the chat and the request.
+ * `target` is the plan's own message (quotedTarget). Never throws.
+ */
+async function notePlanChanged(pool, { user, target, app, deps = {} }) {
+  try {
+    if (!target?.run_id || !target?.message_id) return;
+    await pool.query(
+      `UPDATE homeroom_bot_runs SET awaiting_go_at = NULL, build_ok = COALESCE(build_ok, FALSE),
+              build_error = COALESCE(build_error, 'skipped: its requester asked to change the plan')
+        WHERE id = $1 AND awaiting_go_at IS NOT NULL AND build_session_id IS NULL AND proposal_session_id IS NULL`,
+      [target.run_id],
+    );
+    await pool.query(
+      'UPDATE homeroom_bot_dm_actions SET status = \'declined\', decided_at = NOW(), error = \'changed\' WHERE message_id = $1 AND status = \'open\'',
+      [target.message_id],
+    );
+    // Papote #3: its row on the request says a new plan follows.
+    await require('./homeroom-bot-live').notePlanRows(pool, [target.run_id], 'replaced', { ws: deps.ws || null });
+    await setQuestionState(pool, Number(target.message_id), { status: 'closed', changing: true }, {
+      ws: deps.ws || null, conversationId: target.conversation_id, userId: user.id,
+    });
+    log.info('homeroom-bot-dm', 'A complicated change\'s plan is planned again with its requester\'s words, posted on the request', {
+      app: app?.slug, issueNumber: Number(target.issue_number), userId: user.id,
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not stop a plan after its change was posted', { runId: target?.run_id, err: err.message });
+  }
 }
 
 /**
@@ -5728,6 +5757,7 @@ module.exports = {
   saidOf,
   storyMetadata,
   threadRootFor,
+  notePlanChanged,
   threadRequest,
   noteStep,
   waitingPhrase,

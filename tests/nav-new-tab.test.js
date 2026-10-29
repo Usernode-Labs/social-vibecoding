@@ -282,9 +282,10 @@ test('the three up-one-level screens pass their own target', () => {
   // arrow when there is a level above, nothing when there is not.
   assert.match(browseJs, /const upToList = onDetail && Browse\._detailOrigin !== 'home';/,
     'browse names the one state with a list above it…');
-  assert.match(browseJs, /App\.setBackIcon\('arrow', upToList \? '#apps' : '\/'\);/,
+  assert.match(browseJs, /App\.setBackIcon\(root \? 'none' : 'arrow', upToList \? '#apps' : \(root \? undefined : '\/'\)\);/,
     '…and that state alone goes up to the list; the list and a detail opened '
-    + 'from a Home card go back to Home, which Discover is a page of (#6019)');
+    + 'from a Home card show nothing on the rail, where Discover is a tab, and '
+    + 'go back to Home on a phone, where it is a page of Home\'s (#6019)');
   assert.match(adminConsoleJs, /setBackIcon\('arrow', inSection \? '#admin' : '#profile'\)/,
     'the admin section chevron pops to the console menu; its root goes up to '
     + 'the Me tab it was opened from');

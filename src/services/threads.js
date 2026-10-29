@@ -168,6 +168,36 @@ async function backfill(pool, { batch = {} } = {}) {
   return counts;
 }
 
+// ── Open and closed (follow-up) ─────────────────────────────────────
+//
+// The schema's threads_refresh_state keeps a thread open while anything in
+// it is, from the moment its triggers exist. Threads made before then took
+// their request's state once, or none, so this sets every thread's state
+// from what it holds, once, behind its own marker.
+const STATE_MARKER_KEY = 'threads_state_v1';
+
+async function refreshStates(pool) {
+  try {
+    const { rows } = await pool.query('SELECT 1 FROM platform_settings WHERE key = $1', [STATE_MARKER_KEY]);
+    if (rows.length) return { skipped: 'done' };
+    const started = Date.now();
+    const { rowCount } = await pool.query(
+      `SELECT threads_refresh_state(id) FROM threads WHERE merged_into IS NULL`
+    );
+    await pool.query(
+      `INSERT INTO platform_settings (key, value, description) VALUES ($1, 'true', $2)
+       ON CONFLICT (key) DO NOTHING`,
+      [STATE_MARKER_KEY, 'Marker: every thread\'s open or closed state was worked out from what it holds (#6019 follow-up). '
+        + 'Deleting it works them out again on the next boot, which is safe.']
+    );
+    log.info('threads', 'Thread states refreshed', { threads: rowCount, ms: Date.now() - started });
+    return { threads: rowCount };
+  } catch (err) {
+    log.error('threads', 'Thread states not refreshed; the next boot tries again', { err: err.message });
+    return { failed: true };
+  }
+}
+
 // ── Followers (stage 2) ─────────────────────────────────────────────
 //
 // A thread's followers are worked out from what is in it, never stored:
@@ -362,8 +392,11 @@ SELECT 'request' AS type, r.id::bigint AS id, r.number, r.title, r.state AS stat
        (SELECT COUNT(*) FROM chat_messages m
          WHERE m.thread_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = r.number
            AND m.msg_type = 'message' AND m.deleted_at IS NULL)::int AS replies,
-       NULL::int AS epoch, NULL::text AS my_vote, NULL::int[] AS closes
-  FROM requests r WHERE r.thread_id = $1
+       NULL::int AS epoch, NULL::text AS my_vote,
+       COALESCE(ru.username, r.author_login) AS author, COALESCE(ru.is_synthetic, FALSE) AS author_bot,
+       NULL::text AS reason, NULL::int AS target, NULL::int[] AS closes
+  FROM requests r LEFT JOIN users ru ON ru.id = r.created_by
+ WHERE r.thread_id = $1
 UNION ALL
 SELECT 'change', cs.id::bigint, cs.pr_number,
        COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, ''), NULLIF(cs.branch_name, '')),
@@ -375,8 +408,9 @@ SELECT 'change', cs.id::bigint, cs.pr_number,
        (SELECT v.vote::text FROM pr_votes v
          WHERE v.session_id = cs.id AND v.user_id = $3
            AND v.approval_epoch IS NOT DISTINCT FROM cs.approval_epoch),
-       COALESCE(cs.linked_issues, '{}')
-  FROM chat_sessions cs
+       cu.username, COALESCE(cu.is_synthetic, FALSE), NULL::text, NULL::int,
+       COALESCE(cs.linked_issues, '{}'::int[])
+  FROM chat_sessions cs LEFT JOIN users cu ON cu.id = cs.user_id
  WHERE cs.thread_id = $1 AND cs.is_headless = FALSE
    AND (cs.status IN ('active', 'promoted', 'merging', 'merged')
         OR (cs.status = 'paused' AND cs.last_activity_at > NOW() - make_interval(days => $2)))
@@ -386,8 +420,16 @@ SELECT CASE WHEN i.kind = 'close_issue' THEN 'close' ELSE 'decision' END, i.id::
        (SELECT COUNT(*) FROM chat_messages m
          WHERE m.thread_id = $1 AND m.thread_type = 'governance' AND m.thread_ref = i.id
            AND m.msg_type = 'message' AND m.deleted_at IS NULL)::int,
-       NULL::int, NULL::text, NULL::int[]
-  FROM issues i WHERE i.thread_id = $1 AND i.kind <> 'general'
+       NULL::int,
+       (SELECT CASE iv.vote WHEN 'up' THEN 'yes' WHEN 'down' THEN 'no' END FROM issue_votes iv
+         WHERE iv.issue_id = i.id AND iv.user_id = $3),
+       iu.username, COALESCE(iu.is_synthetic, FALSE),
+       NULLIF(i.payload->>'reason', ''),
+       CASE WHEN i.kind = 'close_issue' AND (i.payload->>'issueNumber') ~ '^[0-9]{1,9}$'
+            THEN (i.payload->>'issueNumber')::int END,
+       NULL::int[]
+  FROM issues i LEFT JOIN users iu ON iu.id = i.created_by
+ WHERE i.thread_id = $1 AND i.kind <> 'general'
  ORDER BY created_at, type, id`;
 
 // The newest few replies anchored to each change and governance row, for
@@ -438,6 +480,10 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
       status: row.status,
       at: row.created_at,
       replies: Number(row.replies) || 0,
+      // Who made it: the request's asker, the change's builder, the vote's proposer.
+      by: row.author || null,
+      byBot: !!row.author_bot,
+      mine: !!viewerId && row.user_id != null && Number(row.user_id) === Number(viewerId),
     };
     if (row.type === 'change') {
       item.state = issueRefs.stateOf(row.status);
@@ -445,10 +491,15 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
       // Stage 6: what the ballot casts with, and the viewer's own vote.
       item.epoch = row.epoch == null ? null : Number(row.epoch);
       item.myVote = row.my_vote === 'yes' || row.my_vote === 'no' ? row.my_vote : null;
-      // The requests it closes when it merges: changes compete only for those.
-      item.closes = (row.closes || []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+      // The requests it closes when it merges (its linked_issues): changes
+      // compete only where these overlap (closeRivals).
+      item.closes = Array.isArray(row.closes) ? row.closes.map(Number).filter((n) => n > 0) : [];
     } else if (row.type === 'close' || row.type === 'decision') {
       item.folded = foldOf.get(`governance:${row.id}`) || [];
+      // #6019: what the close vote says, and the viewer's own vote on it.
+      item.reason = row.reason || null;
+      item.target = row.target == null ? null : Number(row.target);
+      item.myVote = row.my_vote === 'yes' || row.my_vote === 'no' ? row.my_vote : null;
     }
     items.push(item);
   }
@@ -476,33 +527,36 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
 
 // ── Ballots (stage 6) ────────────────────────────────────────────────
 //
-// Two or more changes up for a vote that would close the same request are
-// one ballot on its page (features/dev-board/topic/thread-ballot.tsx);
-// underneath each keeps its own vote, pinned to its own revision. The first
-// to pass goes live, and the merge closes the others ('superseded',
-// reversible like any close, session-lifecycle.js archiveSession), each
-// saying why in its discussion. Being in one thread is not competing: two
-// parts of one request (each made from it, neither closing it, or each
-// closing a different request) both go live, so a change is a rival only
-// when its linked requests (`linked_issues`, what it closes) overlap the
-// merged change's. A change that closes nothing has no rivals.
+// Changes RIVAL each other only when they would close the same request:
+// their linked_issues (the requests a change closes when it merges) overlap.
+// Being in one thread is not enough. A change that is part of a request and
+// closes nothing (#5997, "part of #5927"), or closes another request in the
+// thread, is never a rival and never on a ballot with the others (found live
+// on prod, 29 Oct). A vote to close competes with the changes that close the
+// request it was filed on.
+//
+// Rivals up for a vote are one ballot on the request's page
+// (features/dev-board/topic/thread-changes.tsx); underneath each keeps its
+// own vote, pinned to its own revision. The first to pass goes live, and the
+// merge closes the others ('superseded', reversible like any close,
+// session-lifecycle.js archiveSession), each saying why in its discussion.
 // Called from the merge's own pass over its requests
 // (issue-close-watcher.js closeAfterMerge). Never throws: a rival left open
 // is still a proposal anyone can withdraw, and the merge must not wait on it.
 async function closeRivals(db, { appId, prNumber, deps = {} }) {
   try {
     const { rows: [won] } = await db.query(
-      `SELECT id, thread_id, COALESCE(linked_issues, '{}') AS closes FROM chat_sessions
+      `SELECT id, thread_id, linked_issues FROM chat_sessions
         WHERE app_id = $1 AND pr_number = $2 AND status = 'merged' AND thread_id IS NOT NULL
         ORDER BY id DESC LIMIT 1`,
       [appId, prNumber]
     );
-    if (!won || !won.closes.length) return [];
+    if (!won) return [];
     const { rows: rivals } = await db.query(
       `SELECT id, status FROM chat_sessions
         WHERE thread_id = $1 AND id <> $2 AND status = 'promoted' AND is_headless = FALSE
-          AND COALESCE(linked_issues, '{}') && $3::int[]`,
-      [won.thread_id, won.id, won.closes]
+          AND COALESCE(linked_issues, '{}'::int[]) && COALESCE($3::int[], '{}'::int[])`,
+      [won.thread_id, won.id, won.linked_issues || []]
     );
     const lifecycle = deps.lifecycle || require('./session-lifecycle');
     const ws = deps.ws || require('./ws');
@@ -526,8 +580,45 @@ async function closeRivals(db, { appId, prNumber, deps = {} }) {
   }
 }
 
+/**
+ * A vote to close passed and closed `closed` (the request it was filed on
+ * and the rest still open in its thread): the changes up for a vote that
+ * would have closed one of them lose to it and close (the governance
+ * machine's `threads.closeChanges` work). A change that closes none of them
+ * stays. Strict, so a failure to read runs the work again; one change that
+ * will not close is logged and the rest still are.
+ */
+async function closeThreadChanges(db, { appId, threadId, closed: numbers = [], closedBy = null, deps = {} }) {
+  const wanted = (Array.isArray(numbers) ? numbers : []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  if (!wanted.length) return [];
+  const { rows } = await db.query(
+    `SELECT id, status FROM chat_sessions
+      WHERE app_id = $1 AND thread_id = $2 AND status = 'promoted' AND is_headless = FALSE
+        AND COALESCE(linked_issues, '{}'::int[]) && $3::int[]
+      ORDER BY id`,
+    [appId, threadId, wanted]
+  );
+  const lifecycle = deps.lifecycle || require('./session-lifecycle');
+  const ws = deps.ws || require('./ws');
+  const closed = [];
+  for (const row of rows) {
+    try {
+      const out = await lifecycle.archiveSession({ pool: db, sessionId: Number(row.id), reason: 'superseded', from: row.status });
+      if (!out.archived) continue;
+      closed.push(Number(row.id));
+      const line = closedBy ? `The vote to close #${closedBy} passed, so this change closes.` : 'The vote to close passed, so this change closes.';
+      await ws.sendSystemMessage(db, appId, line, 'system', null, { type: 'session', ref: Number(row.id) }).catch(() => {});
+    } catch (err) {
+      log.warn('threads', 'A change could not be closed after its thread\'s close vote', { sessionId: Number(row.id), err: err.message });
+    }
+  }
+  if (closed.length) log.info('threads', 'Closed the changes of a thread a vote closed', { appId, threadId, closed });
+  return closed;
+}
+
 module.exports = {
   closeRivals,
+  closeThreadChanges,
   threadForNumber,
   threadById,
   threadPage,
@@ -546,4 +637,6 @@ module.exports = {
   attachSessions,
   attachMessages,
   backfill,
+  STATE_MARKER_KEY,
+  refreshStates,
 };

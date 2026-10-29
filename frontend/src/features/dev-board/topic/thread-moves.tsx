@@ -4,7 +4,11 @@
  *
  *   Proposed: merge into #12. Happens in 23 hours unless someone objects.
  *   [Agree] [Object]
- *   [Move…]  → Merge into #__ | Split one out: (choose)
+ *   [Move…]  → Merge into #__ | Split one out: (choose) | Break it up: parts
+ *
+ * Break it up (#6019 follow-up) turns the thread's request into smaller
+ * requests in the same thread, each with a title and what it is done when;
+ * the request closes with the last of them. It is decided as a merge is.
  *
  * Any member proposes; a requester agrees; anybody objects, which puts it
  * to the project's vote (routes/threads.js, services/thread-moves.js). A
@@ -43,9 +47,10 @@ export function ThreadMoves({ slug, data, onChanged }: {
 }): ReactNode {
   const t = useMessages('project');
   const say = (p: Phrase) => t(p.id, p.values);
-  const [open, setOpen] = useState<'merge' | 'split' | null>(null);
+  const [open, setOpen] = useState<'merge' | 'split' | 'breakup' | null>(null);
   const [into, setInto] = useState('');
   const [item, setItem] = useState('');
+  const [parts, setParts] = useState<Array<{ title: string; doneWhen: string }>>([{ title: '', doneWhen: '' }, { title: '', doneWhen: '' }]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const number = data.thread.number;
@@ -53,6 +58,10 @@ export function ThreadMoves({ slug, data, onChanged }: {
   const moves = data.moves || [];
   const candidates = splittable(data);
   const app = encodeURIComponent(slug);
+  // A thread led by an open request can break it up.
+  const breakable = data.thread.lead === 'request'
+    && data.items.some((i) => i.type === 'request' && i.number === number && i.status === 'open');
+  const filledParts = parts.filter((p) => p.title.trim());
 
   const act = async (path: string, body: unknown) => {
     if (busy) return;
@@ -67,7 +76,11 @@ export function ThreadMoves({ slug, data, onChanged }: {
   const propose = (event: FormEvent) => {
     event.preventDefault();
     if (open === 'merge') void act(`/api/apps/${app}/threads/${number}/moves`, { kind: 'merge', into: Number(into) });
-    else if (open === 'split' && item) {
+    else if (open === 'breakup') {
+      void act(`/api/apps/${app}/threads/${number}/moves`, {
+        kind: 'breakup', request: number, parts: filledParts.map((p) => ({ title: p.title.trim(), doneWhen: p.doneWhen.trim() })),
+      });
+    } else if (open === 'split' && item) {
       const [type, ref] = item.split(':');
       void act(`/api/apps/${app}/threads/${number}/moves`, {
         kind: 'split', items: [type === 'request' ? { type, number: Number(ref) } : { type, id: Number(ref) }],
@@ -109,9 +122,38 @@ export function ThreadMoves({ slug, data, onChanged }: {
               {t('project:topic.thread.move.splitOut')}
             </Button>
           ) : null}
+          {breakable ? (
+            <Button type="button" variant="pillNeutral" size="sm" ink="neutral" aria-pressed={open === 'breakup'} data-thread-move-open="breakup"
+              onClick={() => { setOpen(open === 'breakup' ? null : 'breakup'); setError(null); }}>
+              {t('project:topic.thread.move.breakUp')}
+            </Button>
+          ) : null}
         </div>
       )}
-      {open ? (
+      {open === 'breakup' ? (
+        <form className="flex flex-col gap-2" onSubmit={propose} data-thread-move-form="breakup">
+          <p className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{t('project:topic.thread.move.breakUpAbout', { number: number ?? '' })}</p>
+          {parts.map((part, i) => (
+            <div key={i} className="flex flex-col gap-1" data-thread-move-part={i}>
+              <Input aria-label={t('project:topic.thread.move.partTitle', { count: i + 1 })} placeholder={t('project:topic.thread.move.partTitle', { count: i + 1 })}
+                value={part.title} maxLength={120}
+                onChange={(e) => { const v = e.currentTarget.value; setParts(parts.map((p, j) => (j === i ? { ...p, title: v } : p))); }} />
+              <Input aria-label={t('project:topic.thread.move.partDone')} placeholder={t('project:topic.thread.move.partDone')}
+                value={part.doneWhen} maxLength={600}
+                onChange={(e) => { const v = e.currentTarget.value; setParts(parts.map((p, j) => (j === i ? { ...p, doneWhen: v } : p))); }} />
+            </div>
+          ))}
+          <div className="flex flex-wrap items-center gap-2">
+            {parts.length < 6 ? (
+              <Button type="button" variant="pillNeutral" size="sm" ink="neutral" onClick={() => setParts([...parts, { title: '', doneWhen: '' }])}>
+                {t('project:topic.thread.move.addPart')}
+              </Button>
+            ) : null}
+            <Button type="submit" size="sm" disabled={busy || filledParts.length < 2}>{t('project:topic.thread.move.propose')}</Button>
+          </div>
+        </form>
+      ) : null}
+      {open === 'merge' || open === 'split' ? (
         <form className="flex flex-wrap items-center gap-2" onSubmit={propose} data-thread-move-form={open}>
           {open === 'merge' ? (
             <Input aria-label={t('project:topic.thread.move.number')} placeholder={t('project:topic.thread.move.number')} inputMode="numeric"

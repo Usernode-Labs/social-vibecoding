@@ -94,7 +94,7 @@ const DELIVERY_FOLLOWUP = 'app-delivery';
 // old record is asked again of app-delivery.
 const OWN_REBUILD = 'app.rebuildProduction';
 // The follow-up kinds a retry can queue: those with a handler (services.ts).
-const RETRYABLE_WORK: ReadonlySet<string> = new Set(['github.closeIssue', 'governance.checkTarget', 'bot.requestsClosed']);
+const RETRYABLE_WORK: ReadonlySet<string> = new Set(['github.closeIssue', 'governance.checkTarget', 'bot.requestsClosed', 'threads.closeChanges']);
 const deliveryRequest = (appId: number) => ({
   to: { machine: DELIVERY, key: `app:${appId}` }, event: { type: 'DeployRequested', payload: { appId, reason: 'secret_change' } },
 });
@@ -209,14 +209,19 @@ function apply(
   const line = appliedLine(issue, how, campaignTitle);
   // The row is locked since the facts read it: its payload is current.
   writes.push({ type: 'apply', kind: issue.kind, issueId: issue.id, appId: issue.appId, selfHosted: issue.app.selfHosted,
-    authorId: issue.createdBy, payload: issue.payload, campaignTitle, admin: by?.admin || null, adminId: by?.adminId ?? null });
+    authorId: issue.createdBy, payload: issue.payload, campaignTitle, admin: by?.admin || null, adminId: by?.adminId ?? null,
+    threadRequests: issue.kind === 'close_issue' ? (issue.threadRequests || []) : [] });
   writes.push(chat(event, issue, line, governanceThread(issue)));
   const work: WorkRequest[] = [];
   const asked: { key: string; input: Json }[] = [];
   const push: Push[] = [...(extra.push || [])];
   if (issue.kind === 'close_issue') {
     const n = Number(p.issueNumber);
+    // #6019: a vote to close covers the whole thread: the request it was
+    // filed on and every other request still open in the thread.
+    const others = (issue.threadRequests || []).filter((m) => m !== n);
     writes.push(chat(event, issue, line, { type: 'issue', ref: n }));
+    for (const m of others) writes.push(chat(event, issue, `Issue #${m} closed with #${n} ${how}`, { type: 'issue', ref: m }));
     if (issue.app.repo) {
       let comment = by ? `Closed by admin override (${by.admin}) on Homeroom.` : `Closed by group vote (${tally.upCount}/${tally.required}) on Homeroom.`;
       const reason = typeof p.reason === 'string' ? p.reason.trim() : '';
@@ -224,10 +229,21 @@ function apply(
       work.push({ kind: 'github.closeIssue', key: 'target',
         input: { ...issue.app.repo, number: n, comment, marker: `homeroom-governance:${issueKey(issue.id)}:close`,
           appId: issue.appId, appSlug: issue.app.slug } });
+      for (const m of others) {
+        work.push({ kind: 'github.closeIssue', key: `target:${m}`,
+          input: { ...issue.app.repo, number: m, comment, marker: `homeroom-governance:${issueKey(issue.id)}:close:${m}`,
+            appId: issue.appId, appSlug: issue.app.slug } });
+      }
     }
     // The Homeroom bot's proposals for that request come down once every
     // request they are linked to is closed (services/homeroom-bot-closed-requests.js).
-    work.push({ kind: 'bot.requestsClosed', key: 'bot', input: { appId: issue.appId, closed: [n] } });
+    work.push({ kind: 'bot.requestsClosed', key: 'bot', input: { appId: issue.appId, closed: [n, ...others] } });
+    // #6019: the changes up for a vote that would close one of those
+    // requests lose to it, and close (a change closing nothing stays).
+    if (issue.threadId) {
+      work.push({ kind: 'threads.closeChanges', key: 'changes',
+        input: { appId: issue.appId, threadId: issue.threadId, closedBy: n, closed: [n, ...others] } });
+    }
   } else if (issue.kind === 'secret_change' && !issue.app.selfHosted) {
     asked.push({ key: 'rebuild', input: { appId: issue.appId } });
   } else if (issue.kind === 'rename') {
@@ -622,18 +638,21 @@ async function applyKind(tx: Tx, w: any, dataKey: string, ctx?: WriteContext) {
     case 'featured_illustration':
       await applyProposal(tx, w.appId, p, w.issueId);
       return;
-    case 'close_issue':
+    case 'close_issue': {
       // The platform's open twin rows for the target, and its open bounties
-      // (no merged PR, so nobody earns them).
+      // (no merged PR, so nobody earns them). #6019: every request still
+      // open in its thread goes with it.
+      const numbers = [Number(p.issueNumber), ...(Array.isArray(w.threadRequests) ? w.threadRequests.map(Number) : [])];
       await tx.query(
         `UPDATE issues SET status = 'closed'
-          WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open' AND kind = 'general'`,
-        [w.appId, Number(p.issueNumber)]);
+          WHERE app_id = $1 AND github_issue_number = ANY($2::int[]) AND status = 'open' AND kind = 'general'`,
+        [w.appId, numbers]);
       await tx.query(
         `UPDATE issue_bounties SET status = 'voided', awarded_at = NOW()
-          WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open'`,
-        [w.appId, Number(p.issueNumber)]);
+          WHERE app_id = $1 AND github_issue_number = ANY($2::int[]) AND status = 'open'`,
+        [w.appId, numbers]);
       return;
+    }
     case 'maintenance_campaign': {
       const targetFilter = Array.isArray(p.targetFilter) && p.targetFilter.length ? p.targetFilter : null;
       const { rows: [c] } = await tx.query(

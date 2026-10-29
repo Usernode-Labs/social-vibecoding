@@ -753,12 +753,10 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
 
   // First session, 4 October: Build it collapsed the plan and nothing
   // appeared under it; the build's progress was in a card above the plans.
-  // One story per request: the plan is said in its request's thread, under
-  // the request's card, so Build it is answered there: the card stays the
-  // thread's first message, and a quiet line under the plan says what comes
-  // next. (Before threads, the card moved under the plan; that path is
-  // homeroom-bot-activity.test.js's, for a plan said in the main chat.)
-  await t.test('Build it is answered in the request\'s thread: the card stays, silently, and a quiet line says what is next', async () => {
+  // #6019: Main is one conversation, so the plan is said there, below the
+  // request's card, and Build it moves the card under the plan (B6), where
+  // the person is: one card per request still, ringing nothing.
+  await t.test('Build it is answered in Main: the card moves under the plan, silently', async () => {
     const activity = require('../src/services/homeroom-bot-activity');
     const requester = await dm.requesterOf(pool, app.id, 1);
     // Its card, from when it was queued (or the one an earlier Build it moved).
@@ -769,21 +767,14 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     const above = await activity.requestCard(pool, { userId: maya.id, appId: app.id, issueNumber: 1 });
     assert.ok(above && above.messageId < Number(plan.id), 'the request\'s card sits above its plan');
     const { rows: [planRow] } = await pool.query('SELECT thread_root_id FROM conversation_messages WHERE id = $1', [plan.id]);
-    assert.equal(Number(planRow.thread_root_id), above.messageId, 'the plan is in the card\'s thread');
+    assert.equal(planRow.thread_root_id, null, 'the plan is said in Main');
 
     const tapped = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: plan.meta.actionId, choice: 'build' });
     assert.equal(tapped.ok, true);
     const under = await activity.requestCard(pool, { userId: maya.id, appId: app.id, issueNumber: 1 });
-    assert.equal(under.messageId, above.messageId, 'the same card: the thread\'s first message');
-    const { rows: [line] } = await pool.query(
-      `SELECT id, content, thread_root_id, metadata->'homeroomBot' AS meta FROM conversation_messages
-        WHERE thread_root_id = $1 AND id > $2 ORDER BY id DESC LIMIT 1`,
-      [above.messageId, Number(plan.id)],
-    );
-    assert.equal(line.content, 'Building it now. I\'ll tell you when it\'s ready to try.');
-    assert.equal(line.meta.kind, 'step');
-    const { rows: rang } = await pool.query('SELECT 1 FROM notifications WHERE conversation_message_id = $1', [line.id]);
-    assert.equal(rang.length, 0, 'a quiet line rings nothing');
+    assert.ok(under.messageId > Number(plan.id), 'the card moved under the plan');
+    const { rows: rang } = await pool.query('SELECT 1 FROM notifications WHERE conversation_message_id = $1', [under.messageId]);
+    assert.equal(rang.length, 0, 'and rings nothing');
     // Her project, as creating it makes her (cards are read for projects she can view).
     await pool.query(
       `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at) VALUES ($1, $2, 'member', NOW())
