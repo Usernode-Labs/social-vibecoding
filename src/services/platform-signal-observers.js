@@ -460,6 +460,7 @@ const OBSERVERS = Object.freeze([
   { kinds: ['alerting_silent'], run: alertingSilent },
   { kinds: ['server_errors'], run: lazy('server-errors') },
   { kinds: ['client_errors'], run: lazy('client-errors') },
+  { kinds: ['session_fence_public', 'invite_pitch_failed'], run: lazy('session-fences') },
   { kinds: ['homeroom_crash'], run: lazy('homeroom-crashes') },
   { kinds: ['project_down'], run: lazy('project-down') },
   { kinds: ['bot_health'], run: lazy('bot-health') },

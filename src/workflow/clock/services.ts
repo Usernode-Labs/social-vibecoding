@@ -207,6 +207,13 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/rate-limit-store').prune(pool),
   },
   {
+    // #6002: the reports signed-out pages send with no account (the reads
+    // the session guard cut off, where an invite page landed), 30 days on
+    // (services/ui-telemetry.js pruneAnonymous).
+    name: 'ui-telemetry-anonymous-retention', everyMs: 24 * HOUR,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/ui-telemetry').pruneAnonymous(pool),
+  },
+  {
     // An agent session's delegated connector grants, a week after their turn.
     name: 'delegation-prune', everyMs: HOUR,
     run: async (_ctx: WorkContext, { pool }: JobDeps) => ({ pruned: await legacy('services/mcp-oauth').pruneDelegations(pool) }),

@@ -60,6 +60,10 @@ const PUBLIC_PATHS = [
   // apps and who built them without an account; view-private apps and the
   // self-app are never surfaced. Same privacy tier as the leaderboard.
   '/api/public/',
+  // The content-free reports of a page nobody is signed in to (#6002,
+  // routes/ui-telemetry.js): the reads the session guard cut off and where
+  // an invite page landed. The page sends no cookie, so no session is read.
+  '/api/ui-telemetry/anonymous',
   // Waitlist social-connect OAuth round-trip (two-stage waitlist
   // survey). Pre-login by definition — waitlist signers have no account;
   // the unguessable more_token in the OAuth state is the capability.

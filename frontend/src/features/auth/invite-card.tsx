@@ -201,6 +201,18 @@ export function membersLine(count: number | undefined): string {
 export const INVITE_PREVIEW_WAIT_MS = 8000;
 
 /**
+ * Where an invite page first settled (#6002): the card, the dead-link page,
+ * or the pitch because the read failed or took too long. The first call of
+ * a page wins (UI telemetry keeps it to one per page load), so a card that
+ * arrives after the wait stays `timeout`. Best effort; it changes nothing on
+ * screen.
+ */
+export type InviteSettled = 'card' | 'dead' | 'failed' | 'timeout';
+function reportInviteSettled(settled: InviteSettled): void {
+  try { (window as any).UITelemetry?.inviteSettled?.(settled); } catch { /* best effort */ }
+}
+
+/**
  * The preview of the invite link this page was opened on, and whether it is
  * still on its way.
  *
@@ -221,17 +233,35 @@ export function useInvitePreview(): { preview: InvitePreview | null; pending: bo
   );
   useEffect(() => {
     if (!onInviteLink(location.pathname)) { setPending(false); return undefined; }
+    let settled = false;
+    const settleInvite = (kind: InviteSettled) => {
+      if (settled) return;
+      settled = true;
+      reportInviteSettled(kind);
+    };
     const token = inviteTokenFrom(location.pathname);
     // #5263: no token can look like this, so it is the server's `unknown`
     // without the trip.
-    if (!token) { setPreview({ live: false, reason: 'unknown' }); setPending(false); return undefined; }
+    if (!token) {
+      settleInvite('dead');
+      setPreview({ live: false, reason: 'unknown' }); setPending(false); return undefined;
+    }
     let live = true;
-    const giveUp = setTimeout(() => { if (live) setPending(false); }, INVITE_PREVIEW_WAIT_MS);
+    const giveUp = setTimeout(() => {
+      if (!live) return;
+      settleInvite('timeout');
+      setPending(false);
+    }, INVITE_PREVIEW_WAIT_MS);
     const read = (again: boolean): Promise<void> => fetch(`/api/public/invites/${encodeURIComponent(token)}`)
       .then((res) => res.json())
       .then((body: InvitePreview) => {
         if (!live) return;
-        if (body && typeof body.live === 'boolean') setPreview(body);
+        if (body && typeof body.live === 'boolean') {
+          settleInvite(body.live ? 'card' : 'dead');
+          setPreview(body);
+        } else {
+          settleInvite('failed');
+        }
         setPending(false);
       })
       .catch((err) => {
@@ -239,7 +269,10 @@ export function useInvitePreview(): { preview: InvitePreview | null; pending: bo
         // (lib/api-cache-identity.ts). The preview is the same for anyone,
         // so the boundary cannot have changed it: read it once more.
         if (live && again && err?.name === 'AbortError') return read(false);
-        if (live) setPending(false); /* the landing still works without the card */
+        if (live) {
+          settleInvite('failed');
+          setPending(false); /* the landing still works without the card */
+        }
         return undefined;
       });
     read(true).finally(() => clearTimeout(giveUp));
