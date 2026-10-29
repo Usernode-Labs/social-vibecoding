@@ -516,6 +516,9 @@ test('a 503 github_unavailable carries the reason, and the CLI prints it', () =>
   for (const rel of ['src/routes/proposal-handoff.js', 'src/routes/cli-agent.js']) {
     const src = read(rel);
     assert.doesNotMatch(src, /json\(\{ error: 'github_unavailable' \}\)/, `${rel} says why when it can`);
-    assert.match(src, /json\(githubBudget\.githubUnavailableBody\(err\)\)/);
   }
+  assert.match(read('src/routes/proposal-handoff.js'), /json\(githubBudget\.githubUnavailableBody\(err\)\)/);
+  // A local commit's upload, from either route, is the conductor's
+  // (`proposal.commit`), which answers the host's reason the same way.
+  assert.match(read('src/services/proposal-commit-operation.js'), /return \{ status: 503, \.\.\.githubBudget\.githubUnavailableBody\(err\) \};/);
 });

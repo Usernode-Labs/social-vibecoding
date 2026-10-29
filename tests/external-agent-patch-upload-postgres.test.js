@@ -112,6 +112,9 @@ test('work-order patch uploads against a real PostgreSQL', async (t) => {
   const { pool } = setup;
   const uploads = require('../src/services/external-agent-patch-upload');
   const svc = require('../src/services/external-agent-tasks');
+  // A submission's writes are a conductor's; run here (tests/lib/submission-here.js).
+  const restoreSubmissions = require('./lib/submission-here').submissionsHere();
+  t.after(() => restoreSubmissions());
   const patchSvc = require('../src/services/external-agent-patch');
   const logger = require('../src/services/logger');
   const { externalAgentPatchUploadRoutes } = require('../src/routes/external-agent-patch-upload');

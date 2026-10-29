@@ -423,9 +423,10 @@ const appCreateLimiter = makeLimiter({
 // one request at a time and take repo import, PR sync and check reporting
 // down with it for everybody.
 //
-// `verify-access` is the one that matters more. It does not merely read: it
-// accepts any pending bot invitation for the repo first, so an unbounded
-// caller can drive that side effect repeatedly as well.
+// `verify-access` was the one that mattered more: it accepted any pending
+// bot invitation for the repo first. Importing from GitHub is paused now,
+// and it answers so without calling GitHub (routes/apps.js importRefusal);
+// the bucket is kept with repo-info's.
 //
 // FAILURES COUNT HERE — no skipFailedRequests, unlike the write limiters. A
 // 404 from GitHub has already cost the quota this protects, so refunding it

@@ -66,6 +66,9 @@ function recordFetchResponse(credential, resp, { method = 'GET', url = null } = 
 // pauses this process (services/github-pause.js). `credential` is the one
 // the request authenticates as ('pat', 'installation:<owner>', 'anonymous').
 async function githubFetch(credential, url, init) {
+  if (!['GET', 'HEAD'].includes(String(init?.method || 'GET').toUpperCase())) {
+    require('./code-host-write').requireCodeHostWrite('github.fetch');
+  }
   pause.assertNotPaused({ url: String(url).replace(/\?.*$/, '') });
   const resp = await fetch(url, init);
   await pause.noteResponse(credential, resp);
@@ -80,6 +83,9 @@ async function githubFetch(credential, url, init) {
 function instrument(octokit, credential) {
   if (!octokit || !octokit.hook || typeof octokit.hook.wrap !== 'function') return octokit;
   octokit.hook.wrap('request', async (request, options) => {
+    if (!['GET', 'HEAD'].includes(String(options?.method || 'GET').toUpperCase())) {
+      require('./code-host-write').requireCodeHostWrite('github.request');
+    }
     let caller = 'unknown';
     try { caller = budget.callerFromStack(); } catch (_) { /* bookkeeping only */ }
     const sent = { method: options && options.method, url: options && options.url, caller };
@@ -485,6 +491,7 @@ function isRepoNameExistsError(err) {
 }
 
 async function createRepo(owner, name, { description = '', adoptExisting = false } = {}) {
+  require('./code-host-write').requireCodeHostWrite('github.createRepo');
   if (onGitHost(owner)) return hostedGit().createRepo(owner, name, { description, adoptExisting });
   // New repositories are made on Homeroom's git host. On GitHub they were
   // made on the bot's account with its token, which is never sent again
@@ -531,6 +538,7 @@ async function getReadOctokit(owner) {
 }
 
 async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initial commit' } = {}) {
+  require('./code-host-write').requireCodeHostWrite('github.pushFiles');
   if (onGitHost(owner)) return hostedGit().pushFiles(owner, repo, files, { branch, message });
   const octokit = await getOctokit(owner);
 
@@ -568,6 +576,7 @@ async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initi
 // points a `bench/` branch at it). Without a parent, a checkout of it holds
 // that one commit and none of the repository's history. Resolves its sha.
 async function createRootCommit(owner, repo, files, { message = 'Initial commit' } = {}) {
+  require('./code-host-write').requireCodeHostWrite('github.createRootCommit');
   if (onGitHost(owner)) return hostedGit().createRootCommit(owner, repo, files, { message });
   const octokit = await getOctokit(owner);
   const tree = files.map((f) => ({ path: f.path, mode: '100644', type: 'blob', content: f.content }));
@@ -662,6 +671,7 @@ async function getBlobContent(owner, repo, sha) {
 // user's new dev branch off the auto session's branch so any pushed commits
 // carry over.
 async function createBranch(owner, repo, branchName, fromBranch = 'main') {
+  require('./code-host-write').requireCodeHostWrite('github.createBranch');
   if (onGitHost(owner)) return hostedGit().createBranch(owner, repo, branchName, fromBranch);
   const octokit = await getOctokit(owner);
   const { data: ref } = await octokit.rest.git.getRef({ owner, repo, ref: `heads/${fromBranch}` });
@@ -681,6 +691,7 @@ async function createBranch(owner, repo, branchName, fromBranch = 'main') {
 // failure is safe when the orphaned ref still points at that SHA; a different
 // ref is a hard conflict rather than something we silently overwrite.
 async function ensureBranchAtSha(owner, repo, branchName, sha) {
+  require('./code-host-write').requireCodeHostWrite('github.ensureBranchAtSha');
   if (onGitHost(owner)) return hostedGit().ensureBranchAtSha(owner, repo, branchName, sha);
   const octokit = await getOctokit(owner);
   await octokit.request('GET /repos/{owner}/{repo}/git/commits/{commit_sha}', {
@@ -890,6 +901,7 @@ async function getCommitAt(owner, repo, until, { branch = null } = {}) {
 // `force:false` is intentional even though callers preflight ancestry: it
 // closes the race if another writer moves the ref between compare + update.
 async function advanceBranchToSha(owner, repo, branchName, sha) {
+  require('./code-host-write').requireCodeHostWrite('github.advanceBranchToSha');
   if (onGitHost(owner)) return hostedGit().advanceBranchToSha(owner, repo, branchName, sha);
   const octokit = await getOctokit(owner);
   const { data: ref } = await octokit.request(
@@ -931,6 +943,7 @@ async function advanceBranchToSha(owner, repo, branchName, sha) {
 // for an app back on main before it pushes the change again, when an
 // attempt that pushed was lost before it opened a pull request.
 async function forceBranchToSha(owner, repo, branchName, sha) {
+  require('./code-host-write').requireCodeHostWrite('github.forceBranchToSha');
   if (onGitHost(owner)) return hostedGit().forceBranchToSha(owner, repo, branchName, sha);
   const octokit = await getOctokit(owner);
   const { data: ref } = await octokit.request(
@@ -969,6 +982,7 @@ async function createProposalCommit(owner, repo, {
   committedAt,
   files,
 }) {
+  require('./code-host-write').requireCodeHostWrite('github.createProposalCommit');
   if (onGitHost(owner)) {
     return hostedGit().createProposalCommit(owner, repo, {
       branchName, expectedRemoteParentSha, localParentSha, localParentTreeSha, expectedTreeSha,
@@ -1243,6 +1257,7 @@ async function createPR(owner, repo, {
   branch, title, body, head, headRepo, maintainerCanModify, draft,
 }) {
   if (onGitHost(owner)) return nativePulls().create(owner, repo, { branch, head, title, body, draft });
+  require('./code-host-write').requireCodeHostWrite('github.createPR');
   const octokit = await getOctokit(owner);
   const headRef = head || branch;
   const attempts = createPrRetryDelaysMs.length + 1;
@@ -1384,6 +1399,7 @@ async function listOpenPulls(owner, repo, { perPage = 50 } = {}) {
 
 async function updatePR(owner, repo, prNumber, { title, body } = {}) {
   if (onGitHost(owner)) return nativePulls().update(owner, repo, prNumber, { title, body });
+  require('./code-host-write').requireCodeHostWrite('github.updatePR');
   // Goes through getOctokit (PAT-preferred) so callers get a real
   // @octokit/rest instance with `.rest.pulls.update`, instead of the
   // bare @octokit/app installation client whose surface differs and
@@ -1403,6 +1419,7 @@ async function updatePR(owner, repo, prNumber, { title, body } = {}) {
 // nothing to move.
 async function retargetPR(owner, repo, prNumber, base) {
   if (onGitHost(owner)) return nativePulls().get(owner, repo, prNumber);
+  require('./code-host-write').requireCodeHostWrite('github.retargetPR');
   const octokit = await getOctokit(owner);
   const { data } = await octokit.rest.pulls.update({ owner, repo, pull_number: prNumber, base });
   log.info('github', 'PR retargeted', { repo: `${owner}/${repo}`, pr: prNumber, base });
@@ -1411,6 +1428,7 @@ async function retargetPR(owner, repo, prNumber, base) {
 
 async function closePR(owner, repo, prNumber) {
   if (onGitHost(owner)) return nativePulls().close(owner, repo, prNumber);
+  require('./code-host-write').requireCodeHostWrite('github.closePR');
   const octokit = await getOctokit(owner);
   const { data } = await octokit.rest.pulls.update({
     owner, repo, pull_number: prNumber, state: 'closed',
@@ -1425,6 +1443,7 @@ async function closePR(owner, repo, prNumber) {
 // as "couldn't reopen — fall back to proposing a fresh PR from the branch".
 async function reopenPR(owner, repo, prNumber) {
   if (onGitHost(owner)) return nativePulls().reopen(owner, repo, prNumber);
+  require('./code-host-write').requireCodeHostWrite('github.reopenPR');
   const octokit = await getOctokit(owner);
   const { data } = await octokit.rest.pulls.update({
     owner, repo, pull_number: prNumber, state: 'open',
@@ -1454,6 +1473,7 @@ class HeadMovedError extends Error {
 // A 409 raised specifically by the sha mismatch is re-thrown as a
 // HeadMovedError so the caller can distinguish it from other merge failures.
 async function mergePR(owner, repo, prNumber, sha = null) {
+  require('./code-host-write').requireCodeHostWrite('github.mergePR');
   if (onGitHost(owner)) return nativePulls().merge(owner, repo, prNumber, sha);
   const octokit = await getOctokit(owner);
   const params = {
@@ -1498,6 +1518,7 @@ async function getPR(owner, repo, prNumber) {
 // The GraphQL mutation is the supported transition at the review boundary.
 async function markPrReadyForReview(owner, repo, prNumber, existingPr = null) {
   if (onGitHost(owner)) return nativePulls().markReady(owner, repo, prNumber);
+  require('./code-host-write').requireCodeHostWrite('github.markPrReadyForReview');
   const pr = existingPr || await getPR(owner, repo, prNumber);
   if (pr.draft === false) return pr;
   if (pr.draft !== true) throw new Error(`GitHub did not report PR #${prNumber}'s draft state`);
@@ -1661,6 +1682,7 @@ async function compareFiles(owner, repo, basehead, charBudget = 60000) {
 // never take a person's or a proposal's branch with it. A branch already
 // gone is not an error.
 async function deleteBenchBranch(owner, repo, branchName) {
+  require('./code-host-write').requireCodeHostWrite('github.deleteBenchBranch');
   if (onGitHost(owner)) return hostedGit().deleteBenchBranch(owner, repo, branchName);
   if (typeof branchName !== 'string' || !/^bench\/[A-Za-z0-9._/-]+$/.test(branchName) || branchName.includes('..')) {
     throw new Error(`refusing to delete ${branchName}: not a benchmark branch`);
@@ -1732,164 +1754,16 @@ async function getCloneUrl(owner, repo) {
 // ---------------------------------------------------------------------------
 // "Import existing repo" helpers.
 //
-// These power the new flow where a user pastes a GitHub URL into the
-// create-app modal. None of them are part of the bot-owns-the-repo path —
-// existing apps go through createRepo/pushFiles unchanged.
+// What is left of the flow where a person pasted a GitHub URL to import
+// their repository. Importing from GitHub is paused (it made the bot a
+// collaborator on that repository: routes/apps.js POST /api/apps), so these
+// only read.
 // ---------------------------------------------------------------------------
 
 // Parse the variants we want to accept from the user: { owner, repo } or
 // null (src/workflow/rules/github-url.ts, which the workflow machines read
 // repositories with).
 const { parseGithubUrl } = require('../workflow/rules/github-url.ts');
-
-// The client the import pre-flight acts through: it was the bot's own token,
-// as importing made the bot a collaborator on the person's repository. That
-// token is never sent again ("Who Homeroom is on GitHub" above), so there is
-// none, and importing from GitHub is paused (verifyBotAccess). The test seam
-// (_setOctokitFactoryForTests) stands in for it so the invitation and
-// permission logic below can be unit-tested with stubbed GitHub responses.
-async function botPatOctokit() {
-  if (_octokitFactoryForTests) return _octokitFactoryForTests(null);
-  return null;
-}
-
-// GET /user/repository_invitations returns 30 invitations per page by
-// default, oldest first. usernode-bot is ONE account every importer
-// invites, and invitations nobody finished importing linger until they
-// expire, so the invitation a user sent a minute ago routinely sat past the
-// first page and was never found (#3021). Walk every page, 100 at a time.
-const INVITATION_PAGE_SIZE = 100;
-const INVITATION_MAX_PAGES = 20;
-
-// Find the pending invitation(s) for *this exact repo* and accept them.
-// Used only as a side-effect of the import-flow pre-flight, never as a
-// background poller — that's the user-confirmed scoping rule.
-//
-// Returns true if an invitation was found+accepted, false otherwise.
-// Errors are swallowed by the caller (verifyBotAccess) so a transient
-// invitation-list failure doesn't mask the real problem on the get-repo
-// call that follows.
-async function acceptInvitationFor(owner, repo) {
-  const octokit = await botPatOctokit();
-  if (!octokit) return false;
-  const matches = [];
-  for (let page = 1; page <= INVITATION_MAX_PAGES; page++) {
-    const { data } = await octokit.rest.repos.listInvitationsForAuthenticatedUser({
-      per_page: INVITATION_PAGE_SIZE, page,
-    });
-    const invites = Array.isArray(data) ? data : [];
-    for (const i of invites) {
-      const r = i && i.repository;
-      if (r && r.owner && r.owner.login.toLowerCase() === owner.toLowerCase()
-          && r.name.toLowerCase() === repo.toLowerCase()) {
-        matches.push(i);
-      }
-    }
-    if (invites.length < INVITATION_PAGE_SIZE) break;
-  }
-  // A user who re-invites after an earlier invitation lapsed leaves BOTH
-  // on the list; accepting the expired one first fails and used to end the
-  // attempt with the live one still pending. Skip expired invitations.
-  const live = matches.filter((i) => i.expired !== true);
-  if (live.length === 0) return false;
-  let accepted = false;
-  for (const invite of live) {
-    try {
-      await octokit.rest.repos.acceptInvitationForAuthenticatedUser({ invitation_id: invite.id });
-      log.info('github', 'Accepted repo invitation', { repo: `${owner}/${repo}`, id: invite.id });
-      accepted = true;
-    } catch (err) {
-      log.warn('github', 'Accepting repo invitation failed', { repo: `${owner}/${repo}`, id: invite.id, err: err.message });
-    }
-  }
-  return accepted;
-}
-
-// The pre-flight that gates POST /api/apps when repoUrl is set. The
-// shape of the return value is deliberately wire-friendly: the route
-// just forwards `{ status, error: message }` to the client when ok is
-// false, so the modal can show an actionable hint and stay open.
-async function verifyBotAccess(owner, repo) {
-  const octokit = await botPatOctokit();
-  if (!octokit) {
-    return {
-      ok: false, status: 503, code: 'github_paused',
-      message: 'Importing a repository from GitHub is paused while Homeroom moves off GitHub.',
-    };
-  }
-
-  // Greedy first pass: if the user just invited the bot moments before
-  // clicking submit, the invitation accept turns this into a one-step
-  // flow. Failures here are non-fatal — the get-repo call below will
-  // still produce the correct 404/403 if there's a real access problem.
-  await acceptInvitationFor(owner, repo).catch((err) => {
-    log.warn('github', 'acceptInvitationFor failed (non-fatal)', { repo: `${owner}/${repo}`, err: err.message });
-  });
-
-  let resp;
-  try {
-    resp = await octokit.rest.repos.get({ owner, repo });
-  } catch (err) {
-    if (err.status === 404) {
-      // A private repo is refused below even once the bot can see it, so
-      // this hint must not suggest that inviting the bot makes one work.
-      return {
-        ok: false, status: 404, code: 'not_found',
-        message: `Couldn't find ${owner}/${repo}. Check the URL. Homeroom imports public repositories only.`,
-      };
-    }
-    if (err.status === 401) {
-      return {
-        ok: false, status: 500, code: 'unauthorized',
-        message: 'Platform GitHub credentials are invalid. Contact an admin.',
-      };
-    }
-    return { ok: false, status: 502, code: 'github_error', message: `GitHub error: ${err.message}` };
-  }
-
-  // Public-only enforcement. Homeroom workers run with zero GitHub
-  // credentials inside the container — git pushes flow through a
-  // platform-side proxy instead. That model relies on the worker being
-  // able to `git clone` over unauthenticated HTTPS, which requires the
-  // repo to be public. Reject private imports up front so users get a
-  // clean error rather than a mysterious bootstrap failure later.
-  if (resp.data.private === true) {
-    return {
-      ok: false, status: 400, code: 'private_repo',
-      message: `${owner}/${repo} is a private repository. Homeroom currently supports public repositories only. Switch the repo to public on GitHub and resubmit.`,
-    };
-  }
-
-  // permissions.push covers everyone the bot would actually be able to
-  // commit through (Write, Maintain, Admin all set push:true). It is never
-  // relaxed: read-only is refused for every owner type.
-  const perms = resp.data.permissions || {};
-  if (!perms.push) {
-    // A repository owned by a personal account has no permission levels:
-    // every collaborator on it can push (GitHub docs, "Permission levels
-    // for a personal account repository"). So push:false on a User-owned
-    // repo means the bot is not a collaborator YET — its invitation was
-    // never sent, has lapsed, or could not be accepted — and telling that
-    // user to "grant Write" names a setting their repo does not have.
-    const ownerType = resp.data.owner && resp.data.owner.type;
-    if (ownerType === 'User') {
-      return {
-        ok: false, status: 403, code: 'not_collaborator',
-        message: `\`usernode-bot\` is not a collaborator on ${owner}/${repo} yet. On a personal repository every collaborator can push, so no permission level is needed: invite \`usernode-bot\` under Settings → Collaborators (GitHub invitations expire after 7 days, so re-invite if yours is older) and check again.`,
-      };
-    }
-    return {
-      ok: false, status: 403, code: 'no_push',
-      message: `\`usernode-bot\` has read-only access to ${owner}/${repo}. Grant Write/Maintain and resubmit.`,
-    };
-  }
-  return {
-    ok: true,
-    name: resp.data.name || repo,
-    description: resp.data.description || null,
-    fullName: resp.data.full_name || `${owner}/${repo}`,
-  };
-}
 
 // Lightweight privacy check. Used by:
 //   - worker bootstrap (defense against post-import privacy flips)
@@ -1933,8 +1807,8 @@ async function checkRepoPublic(owner, repo) {
 // deliberately do NOT use the bot token here: the prefill is a
 // convenience, not an oracle, and keeping it unauth means a private
 // repo silently 404s without leaking name/description info that the
-// caller wouldn't otherwise be able to see. Verification on submit
-// (verifyBotAccess) is what actually gates access.
+// caller wouldn't otherwise be able to see. Importing from GitHub is paused
+// (routes/apps.js POST /api/apps), so nothing is gated on it.
 async function fetchPublicRepoInfo(owner, repo) {
   try {
     const resp = await githubFetch('anonymous', `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
@@ -2113,8 +1987,6 @@ module.exports = {
   getCloneUrl,
   safeMention,
   parseGithubUrl,
-  acceptInvitationFor,
-  verifyBotAccess,
   checkRepoPublic,
   fetchPublicRepoInfo,
   // The header builder for read-only PUBLIC GitHub reads (anonymous), for

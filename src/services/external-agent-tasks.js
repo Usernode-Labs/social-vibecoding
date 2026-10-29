@@ -3464,6 +3464,301 @@ function prOpenFailed({ desc, owner, repo, forkOwner, forkRepo, branch }) {
   );
 }
 
+// ── A submission's writes, on a conductor ──────────────────────────────
+//
+// Web asks; a conductor writes (docs/plans/web-and-conductor.md,
+// "Privileged operations"). submitWorkLocked keeps every check and refusal
+// it has always made, then asks for `work.submit` and waits for the answer
+// (services/fork-operations.js), which reads the task, the project and the
+// linked login again and runs openSubmission below. A pull request the
+// platform could not import is removed the same way (`work.discard`).
+//
+// `conductor(p, deps)` is platform-operations' request; the unit tests put
+// their own in its place (tests/lib/submission-here.js) to run the
+// conductor's half in their own process, with the deps they handed
+// submitWork.
+let conductor = (p, deps) => p.op === 'work.submit'
+  ? require('./work-submission-request').request(deps.pool, p)
+  : require('./platform-operations').request(p, { waitMs: require('./fork-operations').WAIT_MS });
+
+// An inline patch is a string, an uploaded one the exact bytes (#4264):
+// either travels base64, which JSONB holds whatever the bytes are.
+function patchPayload(patch) {
+  return (Buffer.isBuffer(patch) ? patch : Buffer.from(String(patch), 'utf8')).toString('base64');
+}
+
+// The conductor's answer in this file's own vocabulary. Its run answers in
+// it already (`{ ok: false, code, message }`); what the operation refused
+// before it ran is a route's (`{ status, error }`), and is handed back the
+// way an import's refusal is, so the connector words it the same; anything
+// else (no conductor took it, it failed, or it is still running) is the
+// platform being unavailable, and retryable.
+function conductorAnswer(out) {
+  const { requestId: _requestId, ...rest } = out || {};
+  if (rest.ok) return rest;
+  // openSubmission's own refusal, whole (fork-operations.js submitHere).
+  if (rest.refused && typeof rest.refused === 'object') return rest.refused;
+  if (rest.code && rest.message && rest.error === undefined) {
+    const { status: _status, ...answer } = rest;
+    return answer;
+  }
+  if (rest.status && rest.status < 500 && rest.code !== 'operation_pending') {
+    const { ok: _ok, status, ...body } = rest;
+    return fail(body.code || (status === 404 ? 'no_access' : 'not_authorized'),
+      body.message || body.error || 'Homeroom refused that submission.',
+      { status, platformResult: { ok: false, status, body } });
+  }
+  return fail('platform_unavailable',
+    rest.pending ? rest.error : 'Homeroom could not open the pull request just now. Try again shortly.',
+    { retryable: true, ...(rest.pending ? { pending: true } : {}) });
+}
+
+async function submitOnConductor(deps, { user, task, mode, branch, forkRepo, patch, uploaded, title, body }) {
+  const out = await conductor({
+    op: 'work.submit', appId: Number(task.app_id), userId: Number(user.id),
+    input: {
+      taskId: Number(task.id), mode, branch: branch || null, forkRepo: forkRepo || null, uploaded: !!uploaded,
+    },
+    payload: {
+      title: title == null ? null : String(title),
+      body: body == null ? null : String(body),
+      ...(mode === 'patch' ? { patch: patchPayload(patch) } : {}),
+    },
+  }, deps);
+  const answer = conductorAnswer(out);
+  return answer.ok ? { ...answer, submissionRequestId: out.requestId || null } : answer;
+}
+
+async function discardOnConductor(deps, { user, task, branch, submissionRequestId = null }) {
+  try {
+    const out = await conductor({
+      op: 'work.discard', appId: Number(task.app_id), userId: Number(user.id),
+      input: { taskId: Number(task.id), branch, submissionRequestId },
+    }, deps);
+    if (!out || !out.ok) {
+      log.warn('external-agent-tasks', 'a branch the platform could not use was not removed', {
+        taskId: Number(task.id), branch, status: out && out.status, err: out && (out.error || out.message),
+      });
+    }
+  } catch (err) {
+    log.warn('external-agent-tasks', 'a branch the platform could not use was not removed', {
+      taskId: Number(task.id), branch, err: err.message,
+    });
+  }
+}
+
+// What a step keeps of a pull request: what the rest of the submission reads
+// (the number and link, and the head's commit and owner for the attribution
+// gate), never GitHub's whole object.
+function prOf(pr) {
+  if (!pr) return null;
+  const h = pr.head || {};
+  return {
+    number: pr.number,
+    html_url: pr.html_url || null,
+    ...(pr.state !== undefined ? { state: pr.state } : {}),
+    head: {
+      sha: h.sha || null,
+      ref: h.ref || null,
+      label: h.label || null,
+      repo: h.repo && h.repo.owner ? { owner: { login: h.repo.owner.login || null } } : null,
+    },
+  };
+}
+
+// What a head write answered, as a step keeps it: its data, never its
+// `cleanup` (the branch is removed by name, below).
+function headOutcome(result) {
+  if (!result || typeof result !== 'object') return result;
+  return Object.fromEntries(Object.entries(result).filter(([, v]) => typeof v !== 'function'));
+}
+
+// The conductor's half of a new-work submission: the head the task's work
+// lands on in the app's repository, and the pull request opened from it.
+// `task` and `link` are what services/fork-operations.js read again; `deps`
+// is { pool, gh } (the tests' own `gh`). Every write is a step, and each
+// tolerates its own earlier try whose answer was lost: the branch is this
+// request's kept name, an apply makes the same commit (its date is kept) and
+// a branch already holding it is the push that landed, and the pull request
+// already open from that branch is the one it opened. Answers
+//
+//   { ok: true, pr, via, platformBranch }   platformBranch: the head this
+//                                           wrote, which the caller removes
+//                                           if no proposal is made of it
+//   a refusal, in submitWorkLocked's words
+async function openSubmission(deps, {
+  user, task, link, mode, branch, forkRepo, patch, uploaded, title, body,
+}, steps = require('./durable-steps').none()) {
+  const { gh } = deps;
+  const slug = task.app_slug;
+  const parsed = repoRef.isHosted(task.repo_url) ? repoRef.ownerRepo(task.repo_url) : gh.parseGithubUrl(task.repo_url);
+  if (!parsed) {
+    return fail('no_repository', 'That app does not have a GitHub repository, so there is nothing to submit.');
+  }
+  const { owner, repo } = parsed;
+  const forkOwner = task.fork_owner;
+  const prTitle = prTitleFor({ title, task, slug });
+  const prBody = prBodyFor({ body, task });
+  const stopped = (err) => require('./durable-steps').isStopped(err);
+
+  // The pull request from a head this request wrote, or the one an earlier
+  // try of it already opened from that branch.
+  const openFrom = (headBranch) => steps.once('pr', async () => {
+    const open = steps.active ? await gh.findOpenPrByBranch(owner, repo, headBranch).catch(() => null) : null;
+    return prOf(open || await gh.createPR(owner, repo, { branch: headBranch, title: prTitle, body: prBody }));
+  });
+  const removeHead = (headBranch) => steps.once('discarded', async () => {
+    await externalAgentHead.removeBranch({ owner, repo, branch: headBranch });
+    return true;
+  });
+
+  if (mode === 'patch') {
+    // ── The patch path ─────────────────────────────────────────────────
+    const named = await steps.once('patch-branch', () => ({
+      branch: externalAgentHead.patchBranchName(user.id, task.id), at: new Date().toISOString(),
+    }));
+    const applied = await steps.once('head', async () => headOutcome(await externalAgentPatch.applyPatch({
+      owner, repo, patch,
+      baseSha: task.base_sha,
+      userId: user.id,
+      taskId: task.id,
+      newBranch: named.branch,
+      commitDate: named.at,
+      // #4264: an uploaded patch is bounded by the upload's own ceiling.
+      ...(uploaded ? { maxBytes: externalAgentPatch.MAX_UPLOADED_PATCH_BYTES } : {}),
+    })));
+    if (!applied.ok) return applied;
+    try {
+      const pr = await openFrom(applied.branch);
+      return { ok: true, pr, via: 'patch', platformBranch: applied.branch };
+    } catch (err) {
+      if (stopped(err)) throw err;
+      await removeHead(applied.branch);
+      const desc = gh.describeGithubError ? gh.describeGithubError(err) : null;
+      log.error('external-agent-tasks', 'PR creation failed for an applied patch', {
+        owner, repo, taskId: task.id, ...(desc || { message: err && err.message }),
+      });
+      return fail('platform_unavailable', 'Homeroom applied the patch but could not open the pull request. Try again shortly.', { retryable: true });
+    }
+  }
+
+  // ── The branch path ──────────────────────────────────────────────────
+  //
+  // "Committed but never pushed" is worth naming precisely rather than
+  // letting GitHub's 422 speak. Everything else about this read is
+  // advisory — see inspectPushedBranch.
+  const pushed = await steps.once('pushed', () => inspectPushedBranch(task, branch, forkRepo));
+  if (pushed === 'unpushed') {
+    return fail(
+      'no_commits',
+      `${branch} has no commits yet — it is still at the commit it started from. `
+      + 'Commit and push the change, then submit again.',
+      { retryable: true }
+    );
+  }
+
+  const existing = await steps.once('existing', async () => {
+    try {
+      return prOf(await gh.findOpenPrByBranch(owner, repo, branch, { headOwner: forkOwner }));
+    } catch (err) {
+      if (stopped(err)) throw err;
+      log.warn('external-agent-tasks', 'open-PR lookup failed', { owner, repo, err: err.message });
+      return null;
+    }
+  });
+  if (existing) return { ok: true, pr: existing, via: 'branch', platformBranch: null };
+
+  // ── Rung 1: the mirror ───────────────────────────────────────────────
+  //
+  // Copy the verified fork branch into the app's own repository and open a
+  // plain same-repo pull request from it. This used to be the last rung,
+  // reached only when both cross-fork creates refused — and for as long as
+  // they did, every connector proposal was a mirror anyway. Making it the
+  // FIRST rung is a choice about who owns the head afterwards: a
+  // `usernode/from-…` branch is one the platform can write, so when main
+  // moves under the proposal the auto-sync and the conflict resolver bring it
+  // up to date the way they do for a native session. A head in the author's
+  // fork cannot be written by anyone but the author, so a fork-tracked
+  // proposal sat at "Conflict resolution failed" until its author came back
+  // (task 153).
+  //
+  // Provenance is verified inside mirrorForkBranch BEFORE anything is copied
+  // — that is where the attribution gate lives for a platform-written head —
+  // against the login the conductor read again, and it is the mirror's own
+  // refusals (somebody else's fork, a branch not built on the recorded base,
+  // a branch GitHub does not have) that are handed back verbatim: each names
+  // what to fix, and a cross-fork create would fail on the same fact with a
+  // worse sentence. Only a refusal about the PLATFORM — no write credential,
+  // the copy itself failed, the ancestry check could not be made — falls
+  // through to rungs 2 and 3.
+  const mirrorName = await steps.once('mirror-branch', () => externalAgentHead.mirrorBranchName(forkOwner, task.id));
+  const mirrored = await steps.once('head', async () => headOutcome(await externalAgentHead.mirrorForkBranch({
+    gh, githubPublic, owner, repo, forkOwner, forkRepo, branch,
+    expectedLogin: link.login,
+    baseSha: task.base_sha,
+    taskId: task.id,
+    targetBranch: mirrorName,
+  })));
+  if (mirrored.ok) {
+    try {
+      const pr = await openFrom(mirrored.branch);
+      return { ok: true, pr, via: 'mirror', platformBranch: mirrored.branch };
+    } catch (err) {
+      if (stopped(err)) throw err;
+      await removeHead(mirrored.branch);
+      const desc = gh.describeGithubError ? gh.describeGithubError(err) : null;
+      log.error('external-agent-tasks', 'same-repo PR failed for a mirrored head', {
+        owner, repo, taskId: task.id, ...(desc || { message: err && err.message }),
+      });
+      return prOpenFailed({ desc, owner, repo, forkOwner, forkRepo, branch });
+    }
+  }
+  if (mirrored.code !== 'platform_unavailable') return mirrored;
+
+  // ── Rungs 2 and 3: the cross-fork pull request ─────────────────────────
+  //
+  // The platform could not write the app repository just now. A proposal
+  // whose head the platform only TRACKS is still a proposal — the group can
+  // review and vote on it, and it merges the same way — so rather than hand
+  // back an error the user can do nothing with, open the pull request from
+  // the fork itself. What is lost is the automatic sync: the topic page says
+  // so, and the author brings the branch up to date and submits again.
+  //
+  // Say out loud that we got here and why. With the mirror first this line
+  // should be rare, so its presence in the log is the signal that the
+  // platform's own write path is unwell — visible without anyone going and
+  // querying `submitted_via`. A retry adopts the pull request an earlier
+  // try opened (resolvePullRequest's own `pr_exists` path).
+  log.warn('external-agent-tasks', 'mirror unavailable — falling back to a cross-fork pull request', {
+    owner,
+    repo,
+    head: `${forkOwner}:${branch}`,
+    taskId: task.id,
+    mirrorCode: mirrored.code || null,
+    mirrorMessage: mirrored.message || null,
+  });
+  const outcome = await steps.once('cross-fork', async () => {
+    const o = await resolvePullRequest({
+      gh, owner, repo, forkOwner, forkRepo, branch,
+      prTitle, prBody,
+      baseSha: task.base_sha,
+      taskId: task.id,
+      expectedLogin: link.login,
+      pushedState: pushed,
+    });
+    if (o.done) return { done: o.done };
+    if (!o.ok) return { failed: true, desc: o.desc || null };
+    return { ok: true, pr: prOf(o.pr), via: o.via };
+  });
+  if (outcome.done) return outcome.done;
+  if (!outcome.ok) {
+    return prOpenFailed({
+      desc: outcome.desc, owner, repo, forkOwner, forkRepo, branch,
+    });
+  }
+  return { ok: true, pr: outcome.pr, via: outcome.via, platformBranch: null };
+}
+
 // ── submit_work, UPDATE mode (#1054) ───────────────────────────────────
 //
 // `proposalId` + `branch` advances a proposal that is ALREADY up for a vote
@@ -3936,6 +4231,16 @@ function submitUpdateTask(deps, params, task) {
   return submitUpdate(deps, { ...params, taskId: task.id }, proposalId);
 }
 
+async function importedSubmission(pool, task, prNumber, branch) {
+  const { rows: [existing] } = await pool.query(
+    `SELECT id, user_id, branch_name FROM chat_sessions
+      WHERE app_id = $1 AND pr_number = $2 AND branch_name = $3
+      ORDER BY id DESC LIMIT 1`,
+    [task.app_id, prNumber, branch]
+  );
+  return existing || null;
+}
+
 async function submitWorkLocked(deps, params) {
   const { pool, config, gh, githubLink, limits } = deps;
   const {
@@ -4104,12 +4409,13 @@ async function submitWorkLocked(deps, params) {
   }
   const { owner, repo } = parsed;
 
-  // `fork_owner` is ALWAYS the linked GitHub login and is never taken from
-  // input — that is the attribution gate's anchor. Only the repository NAME
-  // and the branch may come from the caller, because an agent may well have
-  // forked under a name the platform did not predict. (A hosted app's task
-  // names its own repository there, and takes no fork shape.)
-  const forkOwner = task ? task.fork_owner : link.login;
+  // The fork's OWNER is never taken from input: it is the task's, recorded
+  // from the linked GitHub login, and the conductor checks it against the
+  // login it reads again (openSubmission) — that is the attribution gate's
+  // anchor. Only the repository NAME and the branch may come from the
+  // caller, because an agent may well have forked under a name the platform
+  // did not predict. (A hosted app's task names its own repository there,
+  // and takes no fork shape.)
   const forkRepo = callerForkRepo || (task ? task.fork_repo : repo);
   const branch = callerBranch || (task ? task.branch_name : null);
 
@@ -4322,8 +4628,20 @@ async function submitWorkLocked(deps, params) {
   //
   // It is the ONLY cap on this path, deliberately: a connector submission is
   // an ordinary proposal and gets the ordinary ceiling, admin tier included.
-  const capError = await limits.checkPromotedCap(pool, config, user);
-  if (capError) return fail(capError.code, capError.message, { retryable: true });
+  let recoveredImport = null;
+  const completed = task?.submit_operation?.result;
+  if (completed?.ok && completed.platformBranch && completed.pr?.number) {
+    const existing = await importedSubmission(pool, task, completed.pr.number, completed.platformBranch);
+    if (existing && Number(existing.user_id) === Number(user.id)) {
+      recoveredImport = { ok: true, status: 200, body: { sessionId: Number(existing.id) } };
+    }
+  }
+  // Its own already-imported proposal holds its slot; recovery consumes no
+  // second slot and must not be refused by the cap it filled.
+  if (!recoveredImport) {
+    const capError = await limits.checkPromotedCap(pool, config, user);
+    if (capError) return fail(capError.code, capError.message, { retryable: true });
+  }
 
   // ── Resolve the pull request ─────────────────────────────────────────
   let pr = null;
@@ -4345,145 +4663,28 @@ async function submitWorkLocked(deps, params) {
       return fail('invalid_request', 'That pull request is not open.');
     }
     via = 'pr';
-  } else if (patch) {
-    // ── The patch path ─────────────────────────────────────────────────
-    const applied = await externalAgentPatch.applyPatch({
-      owner, repo, patch,
-      baseSha: task.base_sha,
-      userId: user.id,
-      taskId: task.id,
-      // #4264: an uploaded patch is bounded by the upload's own ceiling.
-      ...(params.uploadedPatch ? { maxBytes: externalAgentPatch.MAX_UPLOADED_PATCH_BYTES } : {}),
-    });
-    if (!applied.ok) return applied;
-    platformOwnedHead = applied;
-    via = 'patch';
-    try {
-      pr = await gh.createPR(owner, repo, {
-        branch: applied.branch,
-        title: prTitleFor({ title, task, slug }),
-        body: prBodyFor({ body, task }),
-      });
-    } catch (err) {
-      await applied.cleanup();
-      const desc = gh.describeGithubError ? gh.describeGithubError(err) : null;
-      log.error('external-agent-tasks', 'PR creation failed for an applied patch', {
-        owner, repo, taskId: task.id, ...(desc || { message: err && err.message }),
-      });
-      return fail('platform_unavailable', 'Homeroom applied the patch but could not open the pull request. Try again shortly.', { retryable: true });
-    }
   } else {
-    // ── The branch path ────────────────────────────────────────────────
+    // ── A new head, and its pull request: a conductor's ─────────────────
     //
-    // "Committed but never pushed" is worth naming precisely rather than
-    // letting GitHub's 422 speak. Everything else about this read is
-    // advisory — see inspectPushedBranch.
-    const pushed = await inspectPushedBranch(task || { fork_owner: forkOwner, base_sha: null }, branch, forkRepo);
-    if (pushed === 'unpushed') {
-      return fail(
-        'no_commits',
-        `${branch} has no commits yet — it is still at the commit it started from. `
-        + 'Commit and push the change, then submit again.',
-        { retryable: true }
-      );
-    }
-
-    try {
-      pr = await gh.findOpenPrByBranch(owner, repo, branch, { headOwner: forkOwner });
-      if (pr) via = 'branch';
-    } catch (err) {
-      log.warn('external-agent-tasks', 'open-PR lookup failed', { owner, repo, err: err.message });
-      pr = null;
-    }
-
-    if (!pr) {
-      // ── Rung 1: the mirror ─────────────────────────────────────────
-      //
-      // Copy the verified fork branch into the app's own repository and
-      // open a plain same-repo pull request from it. This used to be the
-      // last rung, reached only when both cross-fork creates refused — and
-      // for as long as they did, every connector proposal was a mirror
-      // anyway. Making it the FIRST rung is a choice about who owns the
-      // head afterwards: a `usernode/from-…` branch is one the platform can
-      // write, so when main moves under the proposal the auto-sync and the
-      // conflict resolver bring it up to date the way they do for a native
-      // session. A head in the author's fork cannot be written by anyone
-      // but the author, so a fork-tracked proposal sat at "Conflict
-      // resolution failed" until its author came back (task 153).
-      //
-      // Provenance is verified inside mirrorForkBranch BEFORE anything is
-      // copied — that is where the attribution gate lives for a
-      // platform-written head — and it is the mirror's own refusals
-      // (somebody else's fork, a branch not built on the recorded base, a
-      // branch GitHub does not have) that are handed back verbatim: each
-      // names what to fix, and a cross-fork create would fail on the same
-      // fact with a worse sentence. Only a refusal about the PLATFORM —
-      // no write credential, the copy itself failed, the ancestry check
-      // could not be made — falls through to rungs 2 and 3.
-      const prTitle = prTitleFor({ title, task, slug });
-      const prBody = prBodyFor({ body, task });
-      const mirrored = await externalAgentHead.mirrorForkBranch({
-        gh, githubPublic, owner, repo, forkOwner, forkRepo, branch,
-        expectedLogin: link.login,
-        baseSha: task ? task.base_sha : null,
-        taskId: task ? task.id : null,
-      });
-      if (mirrored.ok) {
-        platformOwnedHead = mirrored;
-        via = 'mirror';
-        try {
-          pr = await gh.createPR(owner, repo, { branch: mirrored.branch, title: prTitle, body: prBody });
-        } catch (err) {
-          await mirrored.cleanup();
-          platformOwnedHead = null;
-          const desc = gh.describeGithubError ? gh.describeGithubError(err) : null;
-          log.error('external-agent-tasks', 'same-repo PR failed for a mirrored head', {
-            owner, repo, taskId: task ? task.id : null, ...(desc || { message: err && err.message }),
-          });
-          return prOpenFailed({ desc, owner, repo, forkOwner, forkRepo, branch });
-        }
-      } else if (mirrored.code !== 'platform_unavailable') {
-        return mirrored;
-      } else {
-        // ── Rungs 2 and 3: the cross-fork pull request ─────────────────
-        //
-        // The platform could not write the app repository just now. A
-        // proposal whose head the platform only TRACKS is still a proposal
-        // — the group can review and vote on it, and it merges the same
-        // way — so rather than hand back an error the user can do nothing
-        // with, open the pull request from the fork itself. What is lost
-        // is the automatic sync: the topic page says so, and the author
-        // brings the branch up to date and submits again.
-        //
-        // Say out loud that we got here and why. With the mirror first this
-        // line should be rare, so its presence in the log is the signal
-        // that the platform's own write path is unwell — visible without
-        // anyone going and querying `submitted_via`.
-        log.warn('external-agent-tasks', 'mirror unavailable — falling back to a cross-fork pull request', {
-          owner,
-          repo,
-          head: `${forkOwner}:${branch}`,
-          taskId: task ? task.id : null,
-          mirrorCode: mirrored.code || null,
-          mirrorMessage: mirrored.message || null,
-        });
-        const outcome = await resolvePullRequest({
-          gh, owner, repo, forkOwner, forkRepo, branch,
-          prTitle, prBody,
-          baseSha: task ? task.base_sha : null,
-          taskId: task ? task.id : null,
-          expectedLogin: link.login,
-          pushedState: pushed,
-        });
-        if (outcome.done) return outcome.done;
-        if (!outcome.ok) {
-          return prOpenFailed({
-            desc: outcome.desc, owner, repo, forkOwner, forkRepo, branch,
-          });
-        }
-        pr = outcome.pr;
-        via = outcome.via;
-      }
+    // The patch path and the branch ladder (the mirror, then the cross-fork
+    // create) write the app's repository with the platform's credential, so
+    // a conductor makes them (services/fork-operations.js `work.submit`,
+    // openSubmission below), reading the task, the project and the linked
+    // login again first. Its refusals are this path's own, word for word.
+    const opened = await submitOnConductor(deps, {
+      user, task, mode: patch ? 'patch' : 'branch', branch, forkRepo, patch,
+      uploaded: !!params.uploadedPatch, title, body,
+    });
+    if (!opened.ok) return opened;
+    ({ pr, via } = opened);
+    if (opened.platformBranch) {
+      platformOwnedHead = {
+        branch: opened.platformBranch,
+        // Removed by the conductor too (`work.discard`). Never throws: the
+        // submission is already failing, and a leftover branch is a smaller
+        // problem than a masked error.
+        cleanup: () => discardOnConductor(deps, { user, task, branch: opened.platformBranch, submissionRequestId: opened.submissionRequestId }),
+      };
     }
   }
 
@@ -4524,19 +4725,36 @@ async function submitWorkLocked(deps, params) {
   // path and the close watcher that read it. Empty for a submission that
   // names no request — a plain `slug` + `prNumber` — which stays exactly as
   // it was.
-  const imported = await importProposal(slug, pr.number, {
+  let imported = recoveredImport || await importProposal(slug, pr.number, {
     linkedIssues: linkedIssuesFor(task),
     ...(params.visibleChanges ? { visibleChanges: params.visibleChanges } : {}),
   });
+  let headInUse = false;
+  let importLookupFailed = false;
+  if ((!imported || !imported.ok) && platformOwnedHead && task) {
+    try {
+      // Import may have committed before its HTTP reply or task stamp was
+      // lost. A proposal for this task's exact generated branch is its
+      // recovery handle; it must never be treated as an unused branch.
+      const existing = await importedSubmission(pool, task, pr.number, platformOwnedHead.branch);
+      headInUse = !!existing;
+      if (existing && Number(existing.user_id) === Number(user.id)) {
+        imported = { ok: true, status: 200, body: { sessionId: Number(existing.id) } };
+      }
+    } catch (err) {
+      importLookupFailed = true;
+      log.warn('external-agent-tasks', 'Could not recover a submission import', { taskId: task.id, err: err.message });
+    }
+  }
   if (!imported || !imported.ok) {
-    const retryable = retryableImportFailure(imported);
+    const retryable = retryableImportFailure(imported) || importLookupFailed;
     const context = importFailureContext(imported);
     // A deterministic refusal means the platform-created head has no future
     // owner and is litter. A transport error or 5xx is different: the open PR
     // is the recovery handle the work order already documents. Keep it so the
     // caller can retry with slug + prNumber without consuming another branch
     // or pull-request number.
-    if (platformOwnedHead && !retryable) await platformOwnedHead.cleanup();
+    if (platformOwnedHead && !retryable && !headInUse) await platformOwnedHead.cleanup();
     // The sentence before the code: pr-import's validation answers
     // `{ error: 'invalid_request', message: '<what was wrong>' }`, and
     // reading `error` first reported only the code (the share and update
@@ -4875,4 +5093,7 @@ module.exports = {
   renderPreparedTask,
   prepareWork,
   submitWork,
+  // The conductor's half (services/fork-operations.js `work.submit`).
+  openSubmission,
+  _setConductorForTests(fn) { const prior = conductor; conductor = fn; return prior; },
 };

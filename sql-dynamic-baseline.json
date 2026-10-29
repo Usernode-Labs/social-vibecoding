@@ -502,30 +502,9 @@
     {
       "source": "src/routes/proposal-handoff.js",
       "kind": "structural-template",
-      "fingerprint": "5e36542ef8458d49531f",
-      "count": 1,
-      "preview": "`SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.collab_visibility, a.view_visibility, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN app"
-    },
-    {
-      "source": "src/routes/proposal-handoff.js",
-      "kind": "structural-template",
       "fingerprint": "88f4499c338d7f3adb7a",
       "count": 1,
       "preview": "`SELECT cs.*, a.slug AS app_slug, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 AND cs.user_id = $2 AND cs.app_"
-    },
-    {
-      "source": "src/routes/proposal-handoff.js",
-      "kind": "structural-template",
-      "fingerprint": "bf63b7bb71ed94aa961b",
-      "count": 1,
-      "preview": "`SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.collab_visibility, a.view_visibility, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN app"
-    },
-    {
-      "source": "src/routes/proposal-handoff.js",
-      "kind": "structural-template",
-      "fingerprint": "c9542dc200bfb852bb1e",
-      "count": 1,
-      "preview": "`UPDATE chat_sessions SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5, ${summaryFreshness.INVALIDATE_SQL}, handoff_upload_checked_sha = checks_comm"
     },
     {
       "source": "src/routes/proposal-handoff.js",
@@ -1513,6 +1492,13 @@
       "fingerprint": "dd7dfd2983ae4a231fb1",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET pr_body = $1, ${summaryFreshness.INVALIDATE_SQL} WHERE id = $2`"
+    },
+    {
+      "source": "src/services/proposal-commit-operation.js",
+      "kind": "structural-template",
+      "fingerprint": "c1c902c7f2bcea1a7a3d",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5, ${summaryFreshness.INVALIDATE_SQL}, handoff_upload_checked_sha = checks_comm"
     },
     {
       "source": "src/services/proposal-update.js",

@@ -3766,6 +3766,8 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_source_body_hash V
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_input_version BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_applied_version BIGINT;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_previous_md TEXT;
+-- The applied description and any uncertain host write, serialized by the proposal lock.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_projection JSONB;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_stale BOOLEAN NOT NULL DEFAULT FALSE;
 -- Existing summaries have no recorded input revision. Preserve their words,
 -- but do not assert that they describe today's branch or description.
@@ -7506,6 +7508,9 @@ ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS request_key TEXT;
 --   pr               — the caller named an already-open pull request
 -- `branch` vs `branch_head_repo` is precisely the question "was the missing
 -- head_repo parameter the whole bug?".
+-- A submission keeps its conductor request until the web side consumes its answer.
+ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS submit_operation JSONB;
+
 ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS submitted_branch TEXT;
 ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS submitted_via TEXT;
 ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS submitted_source TEXT;
@@ -16194,6 +16199,27 @@ CREATE TABLE IF NOT EXISTS preview_project_inputs (
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE preview_project_inputs IS 'staging:private';
+
+-- ── A platform operation's large input (services/platform-operations.js) ─
+--
+-- What a platform operation carries past the 64 KB its request may weigh
+-- (src/workflow/platform-operation/machine.ts MAX_INPUT_BYTES): a code-host
+-- write's files or patch, as JSON. Keyed by the request's id and written
+-- before the request is appended (platform-operations request), or in the
+-- transaction that appends it (admit), so the conductor that runs it always
+-- finds it. The operation's run drops it once no write still needs it, a
+-- request refused before it ran has it dropped then, and whatever is left
+-- after two days, the machine's own retention, is deleted by the upload-gc
+-- clock (platform-operations pruneInputs). Private to staging: it is
+-- somebody's source, sent for production to write.
+CREATE TABLE IF NOT EXISTS platform_operation_inputs (
+  request_id  UUID PRIMARY KEY,
+  op          VARCHAR(64) NOT NULL,
+  payload     JSONB NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS platform_operation_inputs_created_idx ON platform_operation_inputs (created_at);
+COMMENT ON TABLE platform_operation_inputs IS 'staging:private';
 
 -- ── Versions: originals and the versions made from them ───────────────
 --

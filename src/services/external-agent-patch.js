@@ -163,9 +163,20 @@ async function patchGrowthBytes(git, baseSha) {
 // rather than overwritten. `cleanup()` is then a no-op: no new ref was
 // written, and rolling the branch back would throw away the commit it just
 // accepted.
+//
+// Applying it twice makes the same push once, for a caller that runs it as a
+// kept step (services/fork-operations.js) and may run it again after an
+// answer it lost: `newBranch` names the fresh branch (the caller's kept name,
+// in the patch namespace) instead of minting one, and `commitDate` dates the
+// commit a plain diff makes (an mbox keeps its own dates), so the second
+// apply makes the same commit. A branch already at that commit is then the
+// push that landed, whether git answers that it is up to date or the lease
+// it named no longer holds.
 async function applyPatch({
   owner, repo, patch, baseSha, userId, taskId, maxBytes, targetBranch = null, sessionId = null,
+  newBranch = null, commitDate = null,
 }) {
+  require('./code-host-write').requireCodeHostWrite('external-agent-patch.applyPatch');
   // An uploaded patch arrives as the exact bytes the agent sent (#4264), so a
   // file in some legacy encoding survives the trip; an inline one is the tool
   // argument's string. Either way the same bytes are written and applied.
@@ -177,6 +188,11 @@ async function applyPatch({
   if (targetBranch != null && !head.validRef(targetBranch)) {
     return fail('invalid_request', 'That proposal branch name is not a valid git ref.');
   }
+  if (newBranch != null && (targetBranch != null || !head.validRef(newBranch)
+      || !String(newBranch).startsWith(head.PATCH_BRANCH_PREFIX))) {
+    return fail('invalid_request', 'A patch\'s new branch has to be named in Homeroom\'s own patch namespace.');
+  }
+  const dated = commitDate != null && Number.isFinite(Date.parse(commitDate)) ? new Date(commitDate).toISOString() : null;
 
   // Size FIRST, before anything is parsed or any process is spawned. Only the
   // upload path raises the ceiling, and never past its own.
@@ -208,8 +224,7 @@ async function applyPatch({
     return fail('platform_unavailable', 'Homeroom cannot write to the app repository right now. Try again shortly.', { retryable: true });
   }
 
-  const branch = targetBranch
-    || `${head.PATCH_BRANCH_PREFIX}u${userId || 0}-t${taskId || 0}-${head.nonce()}`;
+  const branch = targetBranch || newBranch || head.patchBranchName(userId, taskId);
   let pushed = false;
   let headSha = null;
 
@@ -270,7 +285,8 @@ async function applyPatch({
           await git(['apply', '--3way', '--whitespace=nowarn', '--', patchFile]);
           await git(['add', '-A', '--', ':!.usernode-submission.patch']);
           await git(['commit', '--quiet', '-m',
-            `Apply patch submitted through the Homeroom connector\n\nBase: ${baseSha}`]);
+            `Apply patch submitted through the Homeroom connector\n\nBase: ${baseSha}`],
+          dated ? { env: { GIT_AUTHOR_DATE: dated, GIT_COMMITTER_DATE: dated } } : {});
         }
       } catch (err) {
         // `git am` leaves the repo mid-rebase on failure; the tmpdir is
@@ -316,9 +332,13 @@ async function applyPatch({
           // external-agent-head.pushForkBranchToAppBranch reads them.
           const raw = head.redactToken(err && (err.stderr || err.message), credential.token);
           if (/stale info|non-fast-forward|fetch first|rejected/i.test(raw)) {
-            throw new Error('patch_branch_moved');
+            // Already this commit: the same apply's earlier push, landed.
+            if (!(await head.remoteHolds(git, remote, branch, credential, 'HEAD'))) {
+              throw new Error('patch_branch_moved');
+            }
+          } else {
+            throw err;
           }
-          throw err;
         }
       } else {
         await git(['push', remote, `HEAD:refs/heads/${branch}`], { credential });

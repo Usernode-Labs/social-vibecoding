@@ -830,12 +830,10 @@ const HAND_BACK = [
 ].join('\n');
 
 /**
- * What a reference build is given for one brief and pack of a run: the
- * brief, the commit to start from (made now if no trial has made it yet,
- * in which case come back shortly), the pack's guidance and files, how it
- * is judged and how to hand it back, and the references already in.
+ * The run, brief and pack a reference build or its first commit is for:
+ * { ok, run, task, input, repo, pack, pid } or a refusal.
  */
-async function referenceOrder(pool, config, { runId, taskId, packId = 0, deps = {} } = {}) {
+async function scaffoldTarget(pool, { runId, taskId, packId = 0 } = {}) {
   const run = await runRow(pool, runId);
   if (!run) return httpError(404, 'No such run');
   if (run.kind !== 'studio') return httpError(409, 'References are for studio runs');
@@ -854,15 +852,60 @@ async function referenceOrder(pool, config, { runId, taskId, packId = 0, deps = 
   const repo = repoOf(task.repo_url);
   if (!repo) return httpError(409, 'The run\'s app has no repository');
   const pack = pid ? await packs.packRow(pool, pid) : null;
+  return { ok: true, run, task, input, repo, pack, pid };
+}
+
+/**
+ * The first commit for one brief and pack of a studio run, made as the
+ * run's first trial on it would make it (bench/scaffold.js ensure, through
+ * the trial's guarded client): on a conductor, for a reference order that
+ * found none (services/bench-reference-operation.js `bench.scaffold`).
+ * `waitMs` 0: a commit somebody else is making is not waited for, and the
+ * order is asked for again. Resolves scaffold.ensure's answer or a refusal.
+ */
+async function makeScaffold(pool, config, { runId, taskId, packId = 0, deps = {}, claimant = null, waitMs = 0 } = {}) {
+  const t = await scaffoldTarget(pool, { runId, taskId, packId });
+  if (!t.ok) return t;
+  const runner = require('./runner');
+  const github = runner.guardedGithub(deps.github || require('../github'));
+  const user = await runner.ensureBenchUser(pool, config);
+  return scaffold.ensure(pool, {
+    runId: Number(runId), taskId: Number(taskId), pack: t.pack, input: t.input, repo: t.repo, github, user, deps, waitMs, claimant,
+  });
+}
+
+// A conductor asked to make the first commit (`bench.scaffold`), as the one
+// asking (`userId`), nobody waiting: the order says to come back shortly
+// whatever is answered, and the next order asks again.
+async function askScaffold(pool, { runId, taskId, packId, userId }) {
+  if (!userId) return;
+  try {
+    const ticket = await require('../platform-operations').admit(pool, {
+      op: 'bench.scaffold', userId: Number(userId), requestId: crypto.randomUUID(),
+      input: { runId: Number(runId), taskId: Number(taskId), packId: Number(packId) || 0 },
+    });
+    ticket.settle().then((taken) => {
+      if (taken.status === 'refused') log.info('bench', 'No conductor took a reference order\'s first commit; the next order asks again', { runId, taskId, reason: taken.reason || null });
+    }).catch((err) => log.warn('bench', 'Could not settle a first commit\'s request', { runId, taskId, err: err.message }));
+  } catch (err) {
+    log.warn('bench', 'Could not ask for a first commit for a reference order', { runId, taskId, err: err.message });
+  }
+}
+
+/**
+ * What a reference build is given for one brief and pack of a run: the
+ * brief, the commit to start from (asked for now if no trial has made it
+ * yet, in which case come back shortly: `kick`, the asking, is the GET's
+ * own, never a conductor's recheck), the pack's guidance and files, how it
+ * is judged and how to hand it back, and the references already in.
+ */
+async function referenceOrder(pool, config, { runId, taskId, packId = 0, deps = {}, userId = null, kick = true } = {}) {
+  const t = await scaffoldTarget(pool, { runId, taskId, packId });
+  if (!t.ok) return t;
+  const { task, input, pack, pid } = t;
   const ready = await scaffold.readyFor(pool, { runId, taskId, packId: pid || null });
   if (!ready) {
-    // Made now, in the background, as the run's first trial on it would.
-    const runner = require('./runner');
-    const github = runner.guardedGithub(deps.github || require('../github'));
-    Promise.resolve().then(async () => {
-      const user = await runner.ensureBenchUser(pool, config);
-      await scaffold.ensure(pool, { runId: Number(runId), taskId: Number(taskId), pack, input, repo, github, user, deps });
-    }).catch((err) => log.warn('bench', 'Could not make a first commit for a reference order', { runId, taskId, err: err.message }));
+    if (kick) await (deps.askScaffold || askScaffold)(pool, { runId: Number(runId), taskId: Number(taskId), packId: pid, userId });
     return { ok: true, ready: false, retryAfterSeconds: 20 };
   }
   const { rows: refs } = await pool.query(
@@ -949,79 +992,136 @@ async function copyUserBranch({ owner, repo, forkOwner, forkRepo, branch, baseSh
 }
 
 /**
+ * What a hand-in is checked for before anything is written, by its route
+ * and again by the conductor that writes it
+ * (services/bench-reference-operation.js `bench.reference`): the label,
+ * exactly one of patch or branch, the order (made now when `kick`, the
+ * route's own asking), its first commit made, and the run not cancelled.
+ * Resolves { ok, order, label } or a refusal.
+ */
+async function referencePrecheck(pool, config, {
+  runId, taskId, packId = 0, label, patch = null, branch = null, deps = {}, userId = null, kick = true,
+} = {}) {
+  const lbl = String(label || '').trim().toLowerCase();
+  if (!LABEL_RE.test(lbl)) return httpError(400, 'label is 1 to 40 lower-case letters, digits, dots, dashes or underscores (ref-v1)');
+  if (!!patch === !!branch) return httpError(400, 'Send exactly one of patch or branch');
+  const order = await referenceOrder(pool, config, { runId, taskId, packId, deps, userId, kick });
+  if (!order.ok) return order;
+  if (!order.ready) return httpError(409, 'The start commit is still being made. Ask for the order again in a few seconds.', { code: 'not_ready' });
+  const run = await runRow(pool, runId);
+  if (run.status === 'cancelled') return httpError(409, 'The run was cancelled');
+  return { ok: true, order: order.order, label: lbl };
+}
+
+/**
  * Hand in a reference build for one brief and pack of a studio run: a
  * branch on a repository the user's linked GitHub account owns, or a patch.
  * It becomes a trial of its own (`reference:<label>`), copied into the host
  * repository on that trial's branch and captured by the lane like any other
  * build, at no model cost. Resolves { ok, trialId, label, sha, commits }.
+ * The writes are a conductor's (`bench.reference`): this is precheck, then
+ * handInReference.
  */
 async function submitReference(pool, config, {
-  runId, taskId, packId = 0, label, patch = null, repo: repoName = null, branch = null, user, deps = {},
+  runId, taskId, packId = 0, label, patch = null, repo = null, branch = null, user, deps = {}, steps,
 } = {}) {
-  const lbl = String(label || '').trim().toLowerCase();
-  if (!LABEL_RE.test(lbl)) return httpError(400, 'label is 1 to 40 lower-case letters, digits, dots, dashes or underscores (ref-v1)');
-  if (!!patch === !!branch) return httpError(400, 'Send exactly one of patch or branch');
-  const order = await referenceOrder(pool, config, { runId, taskId, packId, deps });
-  if (!order.ok) return order;
-  if (!order.ready) return httpError(409, 'The start commit is still being made. Ask for the order again in a few seconds.', { code: 'not_ready' });
-  const run = await runRow(pool, runId);
-  if (run.status === 'cancelled') return httpError(409, 'The run was cancelled');
-  const host = repoOf(order.order.start.repoUrl);
-  const baseSha = order.order.start.sha;
-  const pid = order.order.packId;
+  const checked = await referencePrecheck(pool, config, { runId, taskId, packId, label, patch, branch, deps, userId: user?.id });
+  if (!checked.ok) return checked;
+  return handInReference(pool, config, { runId, taskId, order: checked.order, label: checked.label, patch, repo, branch, user, deps, steps });
+}
+
+/**
+ * The hand-in's writes, each a step (services/durable-steps.js), so a retry
+ * on a conductor makes one trial, pushes once and pins once: the trial, the
+ * patch applied and pushed (or the branch copied), the trial's branch at
+ * its commit, the trial made ready. `order` and `label` are the precheck's.
+ */
+async function handInReference(pool, config, {
+  runId, taskId, order, label: lbl, patch = null, repo: repoName = null, branch = null, user, deps = {},
+  steps = require('../durable-steps').none(),
+} = {}) {
+  const flows = require('../git-host-flows');
+  const host = repoOf(order.start.repoUrl);
+  const baseSha = order.start.sha;
+  const pid = order.packId;
   const model = `${REFERENCE_PREFIX}${lbl}`;
-  const { rows: [trial] } = await pool.query(
-    `INSERT INTO bench_trials (run_id, task_id, model, attempt, status, item_token, est_cost_usd, context_pack_id, reference_label, base_sha)
-     SELECT $1, $2, $3, COALESCE(MAX(attempt), 0) + 1, 'awaiting', $4, 0, $5, $6, $7
-       FROM bench_trials WHERE run_id = $1 AND task_id = $2 AND model = $3 AND COALESCE(context_pack_id, 0) = COALESCE($5::int, 0)
-     RETURNING id, attempt`,
-    [Number(runId), Number(taskId), model, token(), pid || null, lbl, baseSha],
-  );
+  const itemToken = await steps.once('trial-token', () => token());
+  const trial = await steps.once('trial', async () => {
+    // The insert may have committed before its checkpoint. Adopt only this
+    // request's token, including a trial the lane has already started.
+    const { rows: [existing] } = await pool.query(
+      'SELECT id, attempt FROM bench_trials WHERE item_token = $1', [itemToken]
+    );
+    if (existing) return { id: Number(existing.id), attempt: Number(existing.attempt) };
+    const { rows: [made] } = await pool.query(
+      `INSERT INTO bench_trials (run_id, task_id, model, attempt, status, item_token, est_cost_usd, context_pack_id, reference_label, base_sha)
+       SELECT $1, $2, $3, COALESCE(MAX(attempt), 0) + 1, 'awaiting', $4, 0, $5, $6, $7
+         FROM bench_trials WHERE run_id = $1 AND task_id = $2 AND model = $3 AND COALESCE(context_pack_id, 0) = COALESCE($5::int, 0)
+       RETURNING id, attempt`,
+      [Number(runId), Number(taskId), model, itemToken, pid || null, lbl, baseSha],
+    );
+    return { id: Number(made.id), attempt: Number(made.attempt) };
+  });
   const runner = require('./runner');
   const target = runner.branchFor({ run_id: runId, id: trial.id });
   const drop = () => pool.query("DELETE FROM bench_trials WHERE id = $1 AND status = 'awaiting'", [trial.id]).catch(() => {});
   let copied;
   if (patch) {
-    const applied = await (deps.applyPatch || require('../external-agent-patch').applyPatch)({
+    const applied = await flows.appliedStep(steps, 'applied', (attempt) => (deps.applyPatch || require('../external-agent-patch').applyPatch)({
+      ...attempt,
       owner: host.owner, repo: host.repo, patch, baseSha, userId: user?.id, taskId: trial.id,
-    });
+    }), { owner: host.owner, repo: host.repo, ...(deps.head ? { head: deps.head } : {}) });
     if (!applied.ok) { await drop(); return httpError(applied.code === 'platform_unavailable' ? 502 : 400, applied.message, { code: applied.code, detail: applied.detail || null }); }
+    let refusal = null;
     try {
       const github = runner.guardedGithub(deps.github || require('../github'));
-      await github.ensureBranchAtSha(host.owner, host.repo, target, applied.headSha);
+      await steps.once('pinned', () => github.ensureBranchAtSha(host.owner, host.repo, target, applied.headSha).then(() => true));
     } catch (err) {
+      if (flows.stopped(steps, err)) throw err;
       await drop();
-      return httpError(502, `Homeroom could not keep the patched commit: ${err.message}`, { code: 'platform_unavailable' });
-    } finally {
-      if (applied.cleanup) await Promise.resolve(applied.cleanup()).catch(() => {});
+      refusal = httpError(502, `Homeroom could not keep the patched commit: ${err.message}`, { code: 'platform_unavailable' });
     }
+    // The patch's own branch goes once the trial's branch holds its commit
+    // (or nothing will); a stop leaves it for the next try.
+    await Promise.resolve(applied.cleanup()).catch(() => {});
+    if (refusal) return refusal;
     copied = { headSha: applied.headSha, commits: patchCommits(patch) };
   } else {
-    const githubLink = deps.githubLink || require('../github-link');
-    const link = await githubLink.linkStatus(pool, user?.id);
-    if (!link || !link.linked || !link.login) { await drop(); return httpError(409, 'Link a GitHub account in Settings to hand in a branch, or send a patch', { code: 'github_not_linked' }); }
-    const name = String(repoName || '').trim();
-    const [first, second] = name.includes('/') ? name.split('/') : [null, name];
-    const forkOwner = link.login;
-    if (first && first.toLowerCase() !== forkOwner.toLowerCase()) {
-      await drop();
-      return httpError(400, `The repository must be your own (${forkOwner}/…): Homeroom only takes a reference from your linked GitHub account`, { code: 'fork_mismatch' });
-    }
-    const head = deps.head || require('../external-agent-head');
-    const githubPublic = deps.githubPublic || require('../external-agent-tasks').githubPublic;
-    const verified = await head.verifyForkBranch({ githubPublic, forkOwner, forkRepo: second, branch, expectedLogin: link.login });
-    if (!verified.ok) { await drop(); return httpError(verified.code === 'platform_unavailable' ? 502 : 400, verified.message, { code: verified.code }); }
-    const out = await (deps.copyUserBranch || copyUserBranch)({
-      owner: host.owner, repo: host.repo, forkOwner, forkRepo: second, branch, baseSha, targetBranch: target, head,
+    const out = await steps.once('copied', async () => {
+      const githubLink = deps.githubLink || require('../github-link');
+      const link = await githubLink.linkStatus(pool, user?.id);
+      if (!link || !link.linked || !link.login) return httpError(409, 'Link a GitHub account in Settings to hand in a branch, or send a patch', { code: 'github_not_linked' });
+      const name = String(repoName || '').trim();
+      const [first, second] = name.includes('/') ? name.split('/') : [null, name];
+      const forkOwner = link.login;
+      if (first && first.toLowerCase() !== forkOwner.toLowerCase()) {
+        return httpError(400, `The repository must be your own (${forkOwner}/…): Homeroom only takes a reference from your linked GitHub account`, { code: 'fork_mismatch' });
+      }
+      const head = deps.head || require('../external-agent-head');
+      const githubPublic = deps.githubPublic || require('../external-agent-tasks').githubPublic;
+      const verified = await head.verifyForkBranch({ githubPublic, forkOwner, forkRepo: second, branch, expectedLogin: link.login });
+      if (!verified.ok) return httpError(verified.code === 'platform_unavailable' ? 502 : 400, verified.message, { code: verified.code });
+      return (deps.copyUserBranch || copyUserBranch)({
+        owner: host.owner, repo: host.repo, forkOwner, forkRepo: second, branch, baseSha, targetBranch: target, head,
+      });
     });
     if (!out.ok) { await drop(); return out; }
     copied = out;
   }
-  const { rows: [ready] } = await pool.query(
-    `UPDATE bench_trials SET status = 'pending', capture_sha = $2, build_commits = $3, build_branch = $4
-      WHERE id = $1 AND status = 'awaiting' RETURNING id`,
-    [trial.id, copied.headSha, copied.commits, target],
-  );
+  // Made ready once: a retry finds it ready at the same commit.
+  const ready = await steps.once('ready', async () => {
+    const { rows: [row] } = await pool.query(
+      `UPDATE bench_trials SET status = 'pending', capture_sha = $2, build_commits = $3, build_branch = $4
+        WHERE id = $1 AND status = 'awaiting' RETURNING id`,
+      [trial.id, copied.headSha, copied.commits, target],
+    );
+    if (row) return true;
+    const { rows: [published] } = await pool.query(
+      'SELECT id FROM bench_trials WHERE id = $1 AND capture_sha = $2 AND build_branch = $3',
+      [trial.id, copied.headSha, target]
+    );
+    return !!published;
+  });
   if (!ready) return httpError(409, 'The reference was cancelled while it was copied');
   await require('./lane').reopenRun(pool, runId);
   log.info('bench', 'Reference build handed in', { runId, taskId, trialId: trial.id, label: lbl, via: patch ? 'patch' : 'branch' });
@@ -1488,10 +1588,15 @@ module.exports = {
   reviewRecord,
   trialOut,
   watchRun,
+  scaffoldTarget,
+  makeScaffold,
+  askScaffold,
   referenceOrder,
   patchCommits,
   copyUserBranch,
+  referencePrecheck,
   submitReference,
+  handInReference,
   rerunTrial,
   keepTrial,
   trialRows,

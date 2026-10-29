@@ -39,6 +39,9 @@ const head = require('../src/services/external-agent-head');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const ROUTE_SRC = read('src/routes/proposal-handoff.js');
+// The share's writes are a conductor's: its session and its landing live in
+// the `work.share` operation (services/fork-operations.js).
+const OPS_SRC = read('src/services/fork-operations.js');
 const TOOLS_SRC = read('src/services/mcp-tools.js');
 const POLICY_SRC = read('src/services/cli-api-policy.js');
 
@@ -305,7 +308,11 @@ test('the share route takes the summary and lands it with the commits', () => {
   const parser = ROUTE_SRC.slice(at, ROUTE_SRC.indexOf('function parseUpdateFromForkBody(body)'));
   assert.match(parser, /require\('\.\/votes'\)\.parseImportSummary\(body\)/,
     'the same parser and cap as update-from-fork and pr-import');
-  assert.match(shareRoute(), /summary: input\.summary,/, 'handed to updateProposalFromForkBranch, which stores it');
+  assert.match(shareRoute(), /updatePayload\(updateParams\(input\)\)/, 'the parsed body travels to the operation');
+  assert.match(ROUTE_SRC, /function updateParams\(input\) \{[\s\S]*?summary: input\.summary,/);
+  assert.match(OPS_SRC, /summary: payload\.summary \?\? null,/);
+  assert.match(shareOperation(), /updateProposalFromForkBranch[\s\S]*?\.\.\.params,/,
+    'handed to updateProposalFromForkBranch, which stores it');
 });
 
 test('a plain submit on shared work is refused, and names the call that promotes it', async () => {
@@ -419,39 +426,53 @@ function shareRoute() {
   return m[0];
 }
 
+// The `work.share` operation: what a conductor checks again, and what it writes.
+function shareOperation() {
+  const at = OPS_SRC.indexOf('const share = {');
+  assert.ok(at !== -1, 'the share is an operation');
+  return OPS_SRC.slice(at, OPS_SRC.indexOf('async function dropSession'));
+}
+
 test('the route creates a SHARED, ACTIVE session and hands it to the shared gate', () => {
   const route = shareRoute();
+  const op = shareOperation();
   // Shared at creation: a row that exists unshared, even briefly, is a private
   // session the caller never asked for.
-  assert.match(route, /INSERT INTO chat_sessions[\s\S]*?'active', NOW\(\)/,
+  assert.match(op, /INSERT INTO chat_sessions[\s\S]*?'active', NOW\(\)/,
     'created active (the status that carries a preview and can be promoted) and shared');
   // The attribution gate is NOT re-implemented here.
-  assert.match(route, /proposalUpdate\.updateProposalFromForkBranch/,
+  assert.match(op, /require\('\.\/proposal-update'\)\.updateProposalFromForkBranch/,
     'the fork branch is landed by the same function every other hand-off uses');
-  // The access gate and the cap, both before the insert.
-  const insertAt = route.indexOf('INSERT INTO chat_sessions');
+  // The access gate and the cap, both before anything is asked for or written:
+  // in the route, and again on the conductor (authorize runs before run).
+  const askAt = route.indexOf("op: 'work.share'");
   const capAt = route.indexOf('checkActiveCap');
   const accessAt = route.indexOf('getAppForUser');
-  assert.ok(accessAt !== -1 && capAt !== -1 && insertAt !== -1);
-  assert.ok(accessAt < insertAt, 'app access is checked before anything is written');
-  assert.ok(capAt < insertAt, 'and so is the cap, so a refusal leaves no card');
+  assert.ok(accessAt !== -1 && capAt !== -1 && askAt !== -1);
+  assert.ok(accessAt < askAt, 'app access is checked before anything is written');
+  assert.ok(capAt < askAt, 'and so is the cap, so a refusal leaves no card');
+  const authorize = op.slice(0, op.indexOf('async run('));
+  assert.match(authorize, /checkAppAccess\(pool, app, user, 'collab'\)/);
+  assert.match(authorize, /appNeedsJoin/);
+  assert.match(authorize, /checkActiveCap\(pool, config, user\)/);
 });
 
 test('the row records an APP-REPO branch of the platform\'s own, not the caller\'s fork branch', () => {
-  const route = shareRoute();
+  const op = shareOperation();
   // `branch_name` on a session is the branch in the APP repository —
   // the one the landing pushes to, the one promote opens a pull request from,
   // and the one `platformOwnedBranch` reads to decide, from the row alone,
   // where a source-less session's head lives. The caller's fork branch is a
   // different thing and travels separately, as `branch`.
-  assert.match(route, /externalAgentHead\.shareBranchName\(req\.user\.id\)/,
+  assert.match(op, /require\('\.\/external-agent-head'\)\.shareBranchName\(user\.id\)/,
     'the app-repo branch is minted here');
-  const insert = route.slice(route.indexOf('INSERT INTO chat_sessions'));
+  const insert = op.slice(op.indexOf('INSERT INTO chat_sessions'));
   assert.match(insert, /appRepoBranch,/, 'and it is what the row stores');
-  assert.doesNotMatch(insert.slice(0, insert.indexOf('RETURNING id') + 400), /input\.branch,/,
+  assert.doesNotMatch(insert.slice(0, insert.indexOf('RETURNING id') + 400), /payload\.branch,/,
     "the caller's fork branch name never lands in the app repo's namespace");
   // It still travels to the landing, which reads it from the FORK.
-  assert.match(route, /branch: input\.branch,/);
+  assert.match(ROUTE_SRC, /function updateParams\(input\) \{\n\s+return \{\n\s+branch: input\.branch,/);
+  assert.match(OPS_SRC, /branch: payload\.branch \?\? null,/);
 });
 
 test('a shared branch name is in Homeroom\'s namespace and is always a valid ref', () => {
@@ -485,12 +506,14 @@ test('a mirror will not write a branch name that is not one of ours', async () =
 });
 
 test('a failed hand-off deletes the card it had just created', () => {
-  const route = shareRoute();
-  const failAt = route.indexOf('if (!result.ok)');
+  const op = shareOperation();
+  const failAt = op.indexOf('if (!result.ok)');
   assert.ok(failAt !== -1, 'the failure branch exists');
-  const failBranch = route.slice(failAt);
-  assert.match(failBranch, /DELETE FROM chat_sessions WHERE id = \$1 AND user_id = \$2/,
+  assert.match(op.slice(failAt), /await dropSession\(pool, sessionId, user\.id\);/);
+  assert.match(OPS_SRC, /async function dropSession[\s\S]*?DELETE FROM chat_sessions WHERE id = \$1 AND user_id = \$2/,
     'a half-made card with no commits behind it is worse than the refusal');
+  // And so does a request a conductor refused part way, before its commits landed.
+  assert.match(op, /async abandon\(\{ pool \}, request, steps\) \{[\s\S]*?steps\.scope\('update'\)\.get\('push'\)\?\.ok[\s\S]*?dropSession/);
 });
 
 test('the route is on the connector allowlist', () => {

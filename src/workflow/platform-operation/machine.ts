@@ -15,6 +15,15 @@ export const OPERATIONS: ReadonlySet<string> = new Set([
   'manifest.propose', 'branch.ensure', 'revert.open', 'domain.check', 'domain.teardown', 'app.remove',
   'openrouter.provision', 'openrouter.sync', 'openrouter.disable', 'openrouter.remove',
   'previewProject.create', 'previewProject.build', 'previewProject.deploy', 'previewProject.restart', 'previewProject.remove',
+  // commits
+  'proposal.commit',
+  // git-host flows: a version's suggestion to its original, its updates
+  // down, the App bench studio's reference builds, demo mode's proposals
+  'suggestBack.open', 'upstream.open', 'upstream.skip', 'bench.scaffold', 'bench.reference', 'demo.propose', 'demo.reset',
+  // PR metadata
+  'pr.sync',
+  // fork flows
+  'fork.update', 'work.share', 'work.submit', 'work.discard',
 ]);
 // What an operation's input may weigh: what a route captured, never a file.
 export const MAX_INPUT_BYTES = 64 * 1024;
@@ -59,6 +68,45 @@ export function requested(p: any): Request {
   if (p.op.startsWith('previewProject.') && (!id(p.input.sessionId) || !Number.isSafeInteger(p.input.projectId) || p.input.projectId < 1)) {
     throw new Error('A preview project\'s operation must name its preview and project');
   }
+  // commits: a local agent's commit (services/proposal-commit-operation.js),
+  // a hand-off's upload or a build turn's, which names its turn and lease.
+  // The head it builds on may be none (the branch then says it moved).
+  if (p.op === 'proposal.commit') {
+    const i = p.input;
+    const sha = (v: unknown) => typeof v === 'string' && /^[0-9a-f]{40}$/i.test(v);
+    const rowId = (v: unknown) => /^[1-9][0-9]{0,18}$/.test(String(v ?? ''));
+    if (!id(i.sessionId) || !['handoff', 'turn'].includes(i.surface) || typeof i.branch !== 'string' || !i.branch
+        || ![i.localCommitSha, i.parentSha, i.parentTreeSha, i.treeSha].every(sha)
+        || !(i.expectedParent === null || sha(i.expectedParent))
+        || (i.surface === 'turn' && !(rowId(i.turnId) && rowId(i.leaseId)))) {
+      throw new Error('A commit must name its change, its surface and its commits');
+    }
+  }
+  // git-host flows: each names the project it writes for, or (the bench's)
+  // the studio run, brief and pack; a demo reset the proposals it removes.
+  if (['suggestBack.open', 'upstream.open', 'upstream.skip', 'demo.propose', 'demo.reset'].includes(p.op) && !id(p.appId)) {
+    throw new Error('A project\'s operation must name its project');
+  }
+  if (p.op.startsWith('bench.') && (!id(p.input.runId) || !id(p.input.taskId)
+      || !Number.isSafeInteger(p.input.packId) || p.input.packId < 0)) {
+    throw new Error('A bench operation must name its run, brief and pack');
+  }
+  if (p.op === 'demo.reset' && (!Array.isArray(p.input.sessionIds) || !p.input.sessionIds.every(id))) {
+    throw new Error('A demo reset must name the proposals it removes');
+  }
+  // PR metadata: what a `pr.sync` writes (services/pr-sync-operation.js WRITES).
+  if (p.op === 'pr.sync' && (!id(p.input.sessionId) || !['summary', 'issues', 'title', 'create'].includes(p.input.write))) {
+    throw new Error('A pull request\'s write must name its change and what it writes');
+  }
+  // fork flows (services/fork-operations.js): each is on a project, and names
+  // the proposal or the task it is for; a discard names the branch it removes.
+  if (['fork.update', 'work.share', 'work.submit', 'work.discard'].includes(p.op) && p.appId === null) {
+    throw new Error('A fork flow must name its project');
+  }
+  if (p.op === 'fork.update' && !id(p.input.sessionId)) throw new Error('An update must name its proposal');
+  if ((p.op === 'work.submit' || p.op === 'work.discard') && !id(p.input.taskId)) throw new Error('A submission must name its task');
+  if (p.op === 'work.submit' && p.input.mode !== 'patch' && p.input.mode !== 'branch') throw new Error('A submission must say what it carries');
+  if (p.op === 'work.discard' && (typeof p.input.branch !== 'string' || !p.input.branch)) throw new Error('A discard must name its branch');
   return { op: p.op, requestId: p.requestId, appId: p.appId, userId: p.userId, input: p.input };
 }
 

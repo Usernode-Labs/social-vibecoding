@@ -276,6 +276,33 @@ the caller answers 503 and gives back what it claimed. The operations are:
   conductor reads it, else main), and a change's first-turn branch asked by a
   web process. A conductor's own work keeps making the first-turn branch
   itself, so no work item waits on another. Only `dev/` names are made.
+- `fork.update` and `work.share`: a proposal revision or the first shared
+  session, with current collab access, membership where required, ownership,
+  linked login and capacity checked again. Pushes, PR metadata and revision
+  tails are durable steps, fenced to the original repository, branch and
+  pushed head. A share adopts its own inserted session after a lost reply.
+- `work.submit` and `work.discard`: a new submission's patch or fork branch
+  and PR, and a task's unused branch removal. The task holds its submission
+  request until the web side imports its PR; HTTP retries adopt that request
+  while the conductor continues; its completed answer is retained on the task
+  beyond workflow receipt retention. Finished payload operations checkpoint their
+  answer before deleting their input, so a lost acknowledgement cannot turn
+  a completed submission into an expired one.
+- `proposal.commit`: a local agent's tested commit rebuilt on its change's
+  branch, from a CLI hand-off's upload (POST
+  /api/sessions/:id/proposal-handoff/commits) or a local agent's build turn
+  (POST /api/cli/agent/turns/:id/commit). Its message and files are the
+  request's payload. The conductor reads again that the change is the
+  requester's and open, a hand-off's collab access and that nothing else
+  works on it, a turn's live lease and build turn, and the head the route
+  expected, under the proposal lock for a hand-off; then the commit (the
+  tested tree, moved only from that head), its record (the hand-off's
+  upload, or the turn's head) and a hand-off's draft PR, each a step. A
+  client asking again after its answer was lost finds its own commit on the
+  branch and is answered 200 with that head. On the git host the commit is
+  built in a scratch repository through `services/git-child.js`. A build
+  submission no longer moves the branch: it reads it, and a branch elsewhere
+  is a 409.
 - `revert.open`: an Undo. The route records the request before it answers,
   and answers at once, as before; the conductor makes the revert branch, PR,
   promoted session and announcement, then refreshes the vote panel. A host
@@ -314,6 +341,46 @@ the caller answers 503 and gives back what it claimed. The operations are:
   reservation would give. Whether included keys are offered is the
   non-secret `OPENROUTER_MANAGED_KEYS_ENABLED` where the key is absent (unset,
   the key's presence answers), so a web process can run without the key.
+- `pr.sync` (PR metadata): a change's pull-request title, body and linked
+  issues written to GitHub, and its missing pull request opened, for the
+  platform repository only. A git-host pull request is a row
+  (`native-pulls.js`) and GitHub refuses every other owner before a request
+  is sent, so those writes stay on web and need no credential. The
+  description, linked-issues and title routes keep their checks and database
+  writes (the first two under the proposal's lock, which they let go before
+  asking: the conductor takes it itself), then wait for the write and answer
+  the status it reports as before (one no conductor takes reads as GitHub
+  unavailable, and asking again makes it). A Preview click's recovery on a
+  web process and a clone of an unattended run append the create; it rechecks
+  that the change is still open and the requester's, adopts a pull request
+  already open for the branch, and is tried again while GitHub opens nothing,
+  so a retry never opens a second one.
+
+The git-host flows (services/git-host-flows.js) are the code-host writes the
+routes of versions, the App bench studio and demo mode made themselves. Each
+route keeps its doors and checks and answers as before; a patch or a text it
+was sent travels as the request's payload:
+
+- `suggestBack.open`: a version's changes sent to its original
+  (services/suggest-back-operation.js), rechecked for the version's owner
+  and membership, collab and membership on the original, the promoted cap
+  and the one open suggestion; the patch is built and pushed, the PR opened
+  and the proposal filed as steps, and a retry finds a proposal row its lost
+  reply wrote.
+- `upstream.open` and `upstream.skip`: a member's press on a version's
+  update (services/upstream-operation.js), rechecked for view access and
+  membership, then the clock's own `openUpdate` (and `skipUpdate`), whose
+  plan and pushes, PR, row, promote and members told are steps.
+- `bench.scaffold` and `bench.reference`: a studio reference build's first
+  commit, asked for by its reference order with nobody waiting and claimed
+  as the request's own, and a reference handed in (its trial, the patch's
+  push or the branch's copy, its branch), both a full admin's
+  (services/bench-reference-operation.js).
+- `demo.propose` and `demo.reset`: demo mode's proposal (the patch's push,
+  its PR, the partner's proposal and promote) and its reset (the PRs closed,
+  the rows deleted, main forced back once, the deploy asked), rechecked
+  against demo mode's fences (services/demo-operation.js). A reset's
+  previews are retired by its route first, as before.
 
 An account deletion's provider, worker and stored-file cleanups are the
 `account-deletion` clock's alone, every minute on a conductor; the routes that
@@ -340,10 +407,13 @@ account with reads only (the chart's `platform.web.serviceAccountName`).
 These move web dependencies behind durable commands. Web Pods need no
 Kubernetes write and no OpenRouter management key: they can run as an account
 with reads only, and the chart keeps the key in a Secret only the conductor
-imports. They still hold the code-host credentials (the remaining repository
-writes, and reads made with write-capable tokens) and the database's admin
-login. Moving those callers, then separate database logins, remains SEC-09
-work. The event's source metadata
+imports. Code-host write entry points and transports refuse web with
+`workflow_role_required`, before credential lookup or outside I/O; native
+pull-request metadata remains a database write. Git children use the isolated
+`git-child` environment, including hosted-git mirror plumbing. Web still holds
+code-host credentials for reads with write-capable tokens and the database's
+admin login. Restricted read credentials and the role-specific Secret split,
+then separate database logins, remain SEC-09 work. The event's source metadata
 also remains a convention among trusted processes; it does not authenticate
 a compromised producer.
 

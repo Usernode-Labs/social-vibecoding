@@ -118,15 +118,17 @@ test('Mayor-started, shared and cloned work assigns before it is exposed', () =>
   const fork = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/fork'"),
     sessions.indexOf("router.post('/api/sessions/:id/pause'"));
   assert.doesNotMatch(fork, /INSERT INTO chat_sessions/);
+  // A shared piece of work is made on a conductor (the `work.share`
+  // operation), in the same order.
   orderedSlice(
-    source('src/routes/proposal-handoff.js'),
-    "router.post('/api/apps/:slug/work/share-in-progress'",
-    "router.post('/api/apps/:slug/proposal-handoffs'",
+    source('src/services/fork-operations.js'),
+    'const share = {',
+    'async function dropSession',
     [
       ['session insert', 'INSERT INTO chat_sessions'],
-      ['issuer assignment', 'await topicAttrs.selfAssignProposal('],
+      ['issuer assignment', "await require('./topic-attributes').selfAssignProposal("],
       ['shared broadcast', "pushSessionUpdate({ action: 'shared'"],
-      ['success response', 'return res.json'],
+      ['success response', 'return { ...result, sessionId, shared: true };'],
     ]
   );
 });

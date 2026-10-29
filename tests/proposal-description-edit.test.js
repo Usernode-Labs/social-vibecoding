@@ -28,9 +28,10 @@ function fixture(patch = {}) {
       writes.push(sql);
       row = { ...row, pr_summary_previous_md: row.pr_summary_md,
         pr_summary_md: args[0], pr_summary_source: 'author', pr_summary_stale: false,
-        pr_summary_input_version: Number(row.pr_summary_input_version) + 1 };
+        pr_summary_input_version: Number(row.pr_summary_input_version) + 1, pr_summary_projection: JSON.parse(args[5]) };
       return { rows: [{ ...row }] };
     }
+    if (/SET pr_summary_projection =/.test(sql)) { row.pr_summary_projection = JSON.parse(args[0]); return { rows: [] }; }
     if (/SET pr_body =/.test(sql)) { row.pr_body = args[0]; return { rows: [] }; }
     throw new Error(`Unexpected SQL: ${sql}`);
   } };

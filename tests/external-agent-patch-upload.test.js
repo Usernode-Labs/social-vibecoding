@@ -34,6 +34,9 @@ const express = require('express');
 const uploads = require('../src/services/external-agent-patch-upload');
 const patchSvc = require('../src/services/external-agent-patch');
 const svc = require('../src/services/external-agent-tasks');
+// A submission's writes are a conductor's; this file runs them here, with
+// each test's own fakes (tests/lib/submission-here.js).
+require('./lib/submission-here').submissionsHere();
 const logger = require('../src/services/logger');
 const { redactString } = require('../src/services/log-redaction');
 const { externalAgentPatchUploadRoutes } = require('../src/routes/external-agent-patch-upload');

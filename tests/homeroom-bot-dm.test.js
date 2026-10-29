@@ -508,13 +508,13 @@ test('the short description is suggested for everyone making a project, and ever
   const create = routes.slice(routes.indexOf("router.post('/api/apps', "));
   // Owed with the project, in the route's transaction (its making files it),
   // then said (startFirstVersion: the bot's DM, the early plan).
-  assert.match(create, /const owesFirstVersion = !repoUrlNormalized && !readyMade && !!homeroomBotDm\.normalizeBrief\(req\.body\.brief\);/);
+  assert.match(create, /const owesFirstVersion = !readyMade && !!homeroomBotDm\.normalizeBrief\(req\.body\.brief\);/);
   assert.match(create, /homeroomBotDm\.recordFirstVersion\(db, pool, config, \{ app: appRow, user: req\.user, brief: req\.body\.brief \}\)/);
   assert.match(create, /if \(owesFirstVersion\) \{[\s\S]{0,200}startFirstVersion\(pool, config, \{/);
-  // #3624: an import, a ready-made app or a project with no description is
-  // recorded for the bot instead (so an import's backlog waits), and so is a
-  // fork.
-  assert.match(create, /\} else \{\s*try \{\s*await homeroomBotDm\.noteProjectMade\(pool, \{\s*app: appRow, user: req\.user, origin: repoUrlNormalized \? 'import' : 'blank',/);
+  // #3624: a ready-made app or a project with no description is recorded for
+  // the bot instead, and so is a fork (an import was, before importing from
+  // GitHub was paused).
+  assert.match(create, /\} else \{\s*try \{\s*await homeroomBotDm\.noteProjectMade\(pool, \{\s*app: appRow, user: req\.user, origin: 'blank',/);
   const fork = routes.slice(routes.indexOf("router.post('/api/apps/:slug/fork'"), routes.indexOf("router.get('/api/apps/:slug'"));
   // Recorded for the bot; its insert started its copy (src/workflow/app-creation/).
   assert.match(fork, /noteProjectMade\(pool, \{ app: appRow, user: req\.user, origin: 'fork' \}\)/);

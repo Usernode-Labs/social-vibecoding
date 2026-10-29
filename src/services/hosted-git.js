@@ -9,19 +9,26 @@
 // come here and answer with git: reads from the app's mirror
 // (services/repo-mirror.js), which is a full clone of the git host's
 // repository, and writes built in that mirror and pushed with a
-// compare-and-swap (services/git-host.js). The shapes and the error codes
-// are GitHub's (`branch_conflict`, `branch_moved`, `non_fast_forward`,
-// `tree_mismatch`, a 404 for a missing ref), so callers need no change.
+// compare-and-swap (services/git-host.js); a local agent's commit is built
+// in a scratch repository of its own instead (createProposalCommit, through
+// services/git-child.js), since its files are somebody else's. The shapes
+// and the error codes are GitHub's (`branch_conflict`, `branch_moved`,
+// `non_fast_forward`, `tree_mismatch`, a 404 for a missing ref), so callers
+// need no change.
 
+const { execFile } = require('node:child_process');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const log = require('./logger');
 const gitHost = require('./git-host');
+const gitChild = require('./git-child');
 const repoMirror = require('./repo-mirror');
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
 const SHORT_SHA_RE = /^[0-9a-f]{7,40}$/i;
+// A scratch repository's fetch or push (createProposalCommit).
+const SCRATCH_GIT_TIMEOUT_MS = 120_000;
 
 function notFound(message) {
   const e = new Error(message);
@@ -73,32 +80,32 @@ function splitBasehead(basehead) {
 
 // A tree built in a temporary index: the `base` tree (or nothing), with
 // `writes` ({ path, sha, mode }) and `deletes` (paths) applied.
-async function buildTree(dir, baseTree, { writes = [], deletes = [] }) {
+async function buildTree(dir, baseTree, { writes = [], deletes = [] }, exec = run) {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'hosted-git-index-'));
   const env = { GIT_INDEX_FILE: path.join(tmp, 'index') };
   try {
-    if (baseTree) await run(dir, ['read-tree', baseTree], { env });
-    else await run(dir, ['read-tree', '--empty'], { env });
+    if (baseTree) await exec(dir, ['read-tree', baseTree], { env });
+    else await exec(dir, ['read-tree', '--empty'], { env });
     // --index-info works in a bare repository; mode 0 removes a path.
     // Deletions go first, so a path replaced by a directory (or the other
     // way round) never meets itself.
     const ZERO = '0'.repeat(40);
     if (deletes.length) {
-      await run(dir, ['update-index', '--index-info'], { env, input: deletes.map((p) => `0 ${ZERO}\t${p}\n`).join('') });
+      await exec(dir, ['update-index', '--index-info'], { env, input: deletes.map((p) => `0 ${ZERO}\t${p}\n`).join('') });
     }
     if (writes.length) {
-      await run(dir, ['update-index', '--add', '--index-info'], {
+      await exec(dir, ['update-index', '--add', '--index-info'], {
         env, input: writes.map((w) => `${w.mode || '100644'} ${w.sha}\t${w.path}\n`).join(''),
       });
     }
-    return (await run(dir, ['write-tree'], { env })).trim().toLowerCase();
+    return (await exec(dir, ['write-tree'], { env })).trim().toLowerCase();
   } finally {
     await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
   }
 }
 
-async function writeBlob(dir, content) {
-  return (await run(dir, ['hash-object', '-w', '--stdin'], { input: content })).trim().toLowerCase();
+async function writeBlob(dir, content, exec = run) {
+  return (await exec(dir, ['hash-object', '-w', '--stdin'], { input: content })).trim().toLowerCase();
 }
 
 function identityEnv(identity, { authoredAt = null, committedAt = null } = {}) {
@@ -111,9 +118,9 @@ function identityEnv(identity, { authoredAt = null, committedAt = null } = {}) {
   };
 }
 
-async function commitTree(dir, tree, parents, message, { identity = null, authoredAt = null, committedAt = null } = {}) {
+async function commitTree(dir, tree, parents, message, { identity = null, authoredAt = null, committedAt = null, exec = run } = {}) {
   const args = ['commit-tree', tree, ...parents.flatMap((p) => ['-p', p]), '-F', '-'];
-  return (await run(dir, args, { input: `${String(message || '').trimEnd()}\n`, env: identityEnv(identity, { authoredAt, committedAt }) }))
+  return (await exec(dir, args, { input: `${String(message || '').trimEnd()}\n`, env: identityEnv(identity, { authoredAt, committedAt }) }))
     .trim().toLowerCase();
 }
 
@@ -128,6 +135,7 @@ async function moveRef(owner, repo, dir, branch, expected, sha) {
  * the callers build on with pushFiles). GitHub's repository shape.
  */
 async function createRepo(owner, name, { description = '', adoptExisting = false } = {}) {
+  require('./code-host-write').requireCodeHostWrite('hosted-git.createRepo');
   const made = await gitHost.createRepo(name, { description, adoptExisting: true });
   let adopted = false;
   const existing = await gitHost.readRef(made.name, 'main');
@@ -398,6 +406,7 @@ async function compareFiles(owner, repo, basehead, charBudget = 60000, { cap = 3
 
 /** Commit `files` ({ path, content }) on top of `branch` and move it there. GitHub's commit shape. */
 async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initial commit' } = {}) {
+  require('./code-host-write').requireCodeHostWrite('hosted-git.pushFiles');
   const dir = await mirror(owner, repo);
   const parent = await resolve(dir, branch);
   if (!parent) throw notFound(`Branch ${branch} not found`);
@@ -419,6 +428,7 @@ const FILE_MODES = new Set(['100644', '100755', '120000']);
  * git's (100755, 120000 for a link); text and 100644 otherwise.
  */
 async function createRootCommit(owner, repo, files, { message = 'Initial commit' } = {}) {
+  require('./code-host-write').requireCodeHostWrite('hosted-git.createRootCommit');
   const dir = await mirror(owner, repo);
   const writes = [];
   for (const f of files) {
@@ -430,6 +440,7 @@ async function createRootCommit(owner, repo, files, { message = 'Initial commit'
 }
 
 async function createBranch(owner, repo, branchName, fromBranch = 'main') {
+  require('./code-host-write').requireCodeHostWrite('hosted-git.createBranch');
   const dir = await mirror(owner, repo);
   const from = await resolve(dir, fromBranch);
   if (!from) throw notFound(`Branch ${fromBranch} not found`);
@@ -447,6 +458,7 @@ async function createBranch(owner, repo, branchName, fromBranch = 'main') {
 }
 
 async function ensureBranchAtSha(owner, repo, branchName, sha) {
+  require('./code-host-write').requireCodeHostWrite('hosted-git.ensureBranchAtSha');
   const dir = await mirror(owner, repo, { refs: [sha] });
   if (!(await repoMirror.hasCommit(dir, sha))) throw notFound(`Commit ${sha} not found`);
   const current = await resolve(dir, branchName);
@@ -467,6 +479,7 @@ async function ensureBranchAtSha(owner, repo, branchName, sha) {
 }
 
 async function advanceBranchToSha(owner, repo, branchName, sha) {
+  require('./code-host-write').requireCodeHostWrite('hosted-git.advanceBranchToSha');
   const dir = await mirror(owner, repo, { refs: [sha] });
   const current = await resolve(dir, branchName);
   if (!current) throw notFound(`Branch ${branchName} not found`);
@@ -480,6 +493,7 @@ async function advanceBranchToSha(owner, repo, branchName, sha) {
 }
 
 async function forceBranchToSha(owner, repo, branchName, sha) {
+  require('./code-host-write').requireCodeHostWrite('hosted-git.forceBranchToSha');
   const dir = await mirror(owner, repo, { refs: [sha] });
   const current = await resolve(dir, branchName);
   if (!current) throw notFound(`Branch ${branchName} not found`);
@@ -496,6 +510,7 @@ async function forceBranchToSha(owner, repo, branchName, sha) {
  * conflict rejects with "Revert produced merge conflicts".
  */
 async function revertOnto(owner, repo, sha, { onto = 'main', branch, message }) {
+  require('./code-host-write').requireCodeHostWrite('hosted-git.revertOnto');
   const dir = await mirror(owner, repo, { refs: [sha] });
   const main = await resolve(dir, onto);
   if (!main) throw notFound(`Branch ${onto} not found`);
@@ -516,6 +531,7 @@ async function revertOnto(owner, repo, sha, { onto = 'main', branch, message }) 
 }
 
 async function deleteBenchBranch(owner, repo, branchName) {
+  require('./code-host-write').requireCodeHostWrite('hosted-git.deleteBenchBranch');
   if (typeof branchName !== 'string' || !/^bench\/[A-Za-z0-9._/-]+$/.test(branchName) || branchName.includes('..')) {
     throw new Error(`refusing to delete ${branchName}: not a benchmark branch`);
   }
@@ -525,62 +541,125 @@ async function deleteBenchBranch(owner, repo, branchName) {
   return true;
 }
 
+// ── A local agent's commit, in a scratch repository ─────────────────────
+
+// One git process in a scratch repository (`dir`, or none for `init`),
+// through services/git-child.js: nothing of this process's environment, its
+// HOME beside the repository, and `credential` only when it is handed one.
+// The same shape as run() (resolves stdout), so the plumbing above takes it.
+function scratchGit(home, credential) {
+  return (dir, args, { env = {}, input = null, auth = false } = {}) => new Promise((resolve, reject) => {
+    const child = gitChild.invocation(dir ? ['-C', dir, ...args] : args, { home, credential: auth ? credential : null, env });
+    const proc = execFile('git', child.args, { env: child.env, timeout: SCRATCH_GIT_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        if (!err) return resolve(String(stdout));
+        return reject(coded(`git ${args[0]} failed: ${String(stderr || err.message).trim().slice(0, 500)}`, 'git_failed',
+          { stdout: String(stdout || ''), stderr: String(stderr || ''), exitCode: err.code }));
+      });
+    if (input != null) proc.stdin.end(input);
+  });
+}
+
+// A raw commit object (`git cat-file commit`): its tree, its first parent and
+// its message. A shallow fetch keeps the parent's name in the object.
+function parseCommit(raw) {
+  const text = String(raw || '');
+  const split = text.indexOf('\n\n');
+  const header = split < 0 ? text : text.slice(0, split);
+  let tree = '';
+  let parent = '';
+  for (const line of header.split('\n')) {
+    if (!tree && line.startsWith('tree ')) tree = line.slice(5).trim().toLowerCase();
+    else if (!parent && line.startsWith('parent ')) parent = line.slice(7).trim().toLowerCase();
+  }
+  return { tree, parent, message: split < 0 ? '' : text.slice(split + 2) };
+}
+
 /**
- * The CLI handoff's commit (routes/proposal-handoff.js): the local commit's
- * tree rebuilt from `files` on the branch's head, checked against the tree
- * the agent tested, committed as 'Homeroom CLI' with the local dates, and the
- * branch moved only from the expected parent. GitHub's result and codes.
+ * The CLI handoff's commit and a local agent's (services/github.js
+ * createProposalCommit, asked by services/proposal-commit-operation.js on a
+ * conductor): the local commit's tree rebuilt from `files` on the branch's
+ * head, checked against the tree the agent tested, committed as 'Homeroom
+ * CLI' with the local dates, and the branch moved only from the expected
+ * parent. GitHub's result and codes.
+ *
+ * Made in a scratch repository of its own, never in the shared mirror, and
+ * every git process it starts runs through services/git-child.js: none holds
+ * this process's environment, and the service account reaches only the
+ * fetch, the push and the read of the branch after a refused push, through
+ * git's credential helper, never argv. Only the branch's head is fetched (its
+ * commit, which names its parent, and its tree): a rebuild on top of it needs
+ * nothing else, and the push sends only what is new.
  */
 async function createProposalCommit(owner, repo, {
   branchName, expectedRemoteParentSha, localParentSha, localParentTreeSha, expectedTreeSha,
   localCommitSha, message, authoredAt, committedAt, files, fullMessage,
 }) {
-  const dir = await mirror(owner, repo);
-  const currentSha = await resolve(dir, branchName);
-  if (!currentSha) throw notFound(`Branch ${branchName} not found`);
-  const read = async (sha) => {
-    const out = await run(dir, ['log', '-1', '--format=%T%x1f%P%x1f%B', sha]);
-    const [tree, parents, body] = out.split('\x1f');
-    return { tree: tree.trim(), parent: (parents || '').trim().split(/\s+/)[0] || '', message: body || '' };
+  require('./code-host-write').requireCodeHostWrite('hosted-git.createProposalCommit');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'hosted-git-commit-'));
+  const dir = path.join(root, 'repo.git');
+  const { user, token } = gitHost.settings();
+  const exec = scratchGit(path.join(root, 'home'), { username: user, token });
+  const url = gitHost.cloneUrl(repoOf(owner, repo));
+  const ref = `refs/heads/${branchName}`;
+  const remoteHead = async () => {
+    const out = await exec(dir, ['ls-remote', url, ref], { auth: true });
+    const sha = out.split(/\s+/)[0] || '';
+    return SHA_RE.test(sha) ? sha.toLowerCase() : null;
   };
-  const current = await read(currentSha);
-  const isRetry = (currentSha === expectedRemoteParentSha || current.parent === expectedRemoteParentSha)
-    && current.message.trimEnd() === fullMessage.trimEnd()
-    && current.tree === expectedTreeSha;
-  if (isRetry) {
-    return { sha: currentSha, treeSha: expectedTreeSha, previousSha: current.parent || null, localParentSha, created: false };
-  }
-  if (currentSha !== expectedRemoteParentSha) {
-    throw coded('The proposal branch moved before the local commit was uploaded', 'branch_moved', { currentSha });
-  }
-  if (current.tree !== localParentTreeSha) {
-    throw coded('The local parent tree does not match the proposal branch tree', 'parent_tree_mismatch',
-      { remoteTreeSha: current.tree, localParentTreeSha });
-  }
-  const writes = [];
-  const deletes = [];
-  for (const file of files) {
-    if (file.delete) { deletes.push(file.path); continue; }
-    writes.push({ path: file.path, mode: file.mode, sha: await writeBlob(dir, Buffer.from(file.contentBase64, 'base64')) });
-  }
-  const tree = await buildTree(dir, current.tree, { writes, deletes });
-  if (tree !== expectedTreeSha) {
-    throw coded('The uploaded tree does not match the tested local tree', 'tree_mismatch', { actualTreeSha: tree });
-  }
-  const createdSha = await commitTree(dir, tree, [currentSha], fullMessage, {
-    identity: { name: 'Homeroom CLI', email: 'cli@usernodelabs.org' }, authoredAt, committedAt,
-  });
   try {
-    await moveRef(owner, repo, dir, branchName, currentSha, createdSha);
-  } catch (err) {
-    if (!err || !err.refMoved) throw err;
-    const observed = await gitHost.readRef(repoOf(owner, repo), branchName).catch(() => null);
-    if (observed !== createdSha) throw coded('The proposal branch moved while the local commit was uploaded', 'branch_moved', { currentSha: observed });
+    await exec(null, ['init', '-q', '--bare', dir]);
+    try {
+      await exec(dir, ['fetch', '-q', '--depth=1', '--no-tags', url, `+${ref}:${ref}`], { auth: true });
+    } catch (err) {
+      if (/couldn't find remote ref/i.test(err.stderr || err.message)) throw notFound(`Branch ${branchName} not found`);
+      throw err;
+    }
+    const currentSha = (await exec(dir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])).trim().toLowerCase();
+    const current = parseCommit(await exec(dir, ['cat-file', 'commit', currentSha]));
+    const isRetry = (currentSha === expectedRemoteParentSha || current.parent === expectedRemoteParentSha)
+      && current.message.trimEnd() === fullMessage.trimEnd()
+      && current.tree === expectedTreeSha;
+    if (isRetry) {
+      return { sha: currentSha, treeSha: expectedTreeSha, previousSha: current.parent || null, localParentSha, created: false };
+    }
+    if (currentSha !== expectedRemoteParentSha) {
+      throw coded('The proposal branch moved before the local commit was uploaded', 'branch_moved', { currentSha });
+    }
+    if (current.tree !== localParentTreeSha) {
+      throw coded('The local parent tree does not match the proposal branch tree', 'parent_tree_mismatch',
+        { remoteTreeSha: current.tree, localParentTreeSha });
+    }
+    const writes = [];
+    const deletes = [];
+    for (const file of files) {
+      if (file.delete) { deletes.push(file.path); continue; }
+      writes.push({ path: file.path, mode: file.mode, sha: await writeBlob(dir, Buffer.from(file.contentBase64, 'base64'), exec) });
+    }
+    const tree = await buildTree(dir, current.tree, { writes, deletes }, exec);
+    if (tree !== expectedTreeSha) {
+      throw coded('The uploaded tree does not match the tested local tree', 'tree_mismatch', { actualTreeSha: tree });
+    }
+    const createdSha = await commitTree(dir, tree, [currentSha], fullMessage, {
+      identity: { name: 'Homeroom CLI', email: 'cli@usernodelabs.org' }, authoredAt, committedAt, exec,
+    });
+    // Moved only from the head it was built on (the git server's own ref
+    // lock): a branch moved since is refused, unless it is at this very
+    // commit (a push whose answer was lost).
+    try {
+      await exec(dir, ['push', '--porcelain', `--force-with-lease=${ref}:${currentSha}`, url, `${createdSha}:${ref}`], { auth: true });
+    } catch (err) {
+      if (!/stale info|\(fetch first\)|non-fast-forward|\[rejected\]/i.test(`${err.stdout || ''}\n${err.stderr || err.message}`)) throw err;
+      const observed = await remoteHead().catch(() => null);
+      if (observed !== createdSha) throw coded('The proposal branch moved while the local commit was uploaded', 'branch_moved', { currentSha: observed });
+    }
+    log.info('hosted-git', 'Created a proposal commit from a local tree', {
+      repo: `${owner}/${repo}`, branch: branchName, from: currentSha, to: createdSha, localCommitSha, localParentSha, fileCount: files.length,
+    });
+    return { sha: createdSha, treeSha: expectedTreeSha, previousSha: currentSha, localParentSha, created: true };
+  } finally {
+    await fs.rm(root, { recursive: true, force: true }).catch(() => {});
   }
-  log.info('hosted-git', 'Created a proposal commit from a local tree', {
-    repo: `${owner}/${repo}`, branch: branchName, from: currentSha, to: createdSha, localCommitSha, localParentSha, fileCount: files.length,
-  });
-  return { sha: createdSha, treeSha: expectedTreeSha, previousSha: currentSha, localParentSha, created: true };
 }
 
 module.exports = {

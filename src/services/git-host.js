@@ -149,20 +149,6 @@ function cloneUrl(repo, { internal = true } = {}) {
 
 // ── git, with the service account ─────────────────────────────────────
 
-const CREDENTIAL_HELPER = '!f() { if [ "$1" = get ]; then printf "%s\\n" "username=$USERNODE_GIT_HOST_USER" "password=$USERNODE_GIT_HOST_TOKEN"; fi; }; f';
-
-function gitEnv(extra = {}) {
-  return {
-    PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
-    HOME: process.env.HOME || os.tmpdir(),
-    GIT_CONFIG_NOSYSTEM: '1',
-    GIT_TERMINAL_PROMPT: '0',
-    GIT_ASKPASS: '/bin/false',
-    LC_ALL: 'C',
-    ...extra,
-  };
-}
-
 function redact(text) {
   const { token } = settings();
   let out = String(text || '');
@@ -177,17 +163,16 @@ function redact(text) {
  */
 function git(args, { cwd = undefined, auth = false, timeout = GIT_TIMEOUT_MS, input = null, env: extra = {} } = {}) {
   const s = settings();
-  const config = [
-    '-c', 'credential.helper=',
-    ...(auth ? ['-c', `credential.helper=${CREDENTIAL_HELPER}`] : []),
-    '-c', 'http.followRedirects=false',
-    '-c', 'core.hooksPath=/dev/null',
-  ];
-  // `extra`: the few variables a caller sets for one invocation (an index
-  // file, commit identities and dates); never a credential.
-  const env = gitEnv({ ...extra, ...(auth ? { USERNODE_GIT_HOST_USER: s.user, USERNODE_GIT_HOST_TOKEN: s.token } : {}) });
+  if (args.includes('push') || args.includes('send-pack')) {
+    require('./code-host-write').requireCodeHostWrite('git-host.git.push');
+  }
+  const childGit = require('./git-child').invocation(args, {
+    home: path.join(os.tmpdir(), 'homeroom-git-home'),
+    credential: auth ? { username: s.user, token: s.token } : null,
+    env: extra,
+  });
   return new Promise((resolve, reject) => {
-    const child = execFile('git', [...config, ...args], { cwd, env, timeout, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+    const child = execFile('git', childGit.args, { cwd, env: childGit.env, timeout, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
         const e = new GitHostError(`git ${args[0]} failed: ${redact(stderr || err.message).trim().slice(0, 500)}`, { code: 'git_failed' });
         e.stderr = redact(stderr);
@@ -205,6 +190,9 @@ function git(args, { cwd = undefined, auth = false, timeout = GIT_TIMEOUT_MS, in
 // ── The host's API (only what git cannot do: making a repository) ─────
 
 async function api(method, apiPath, body = undefined, { allow = [] } = {}) {
+  if (!['GET', 'HEAD'].includes(String(method).toUpperCase())) {
+    require('./code-host-write').requireCodeHostWrite('git-host.api.' + method);
+  }
   const s = settings();
   if (!isConfigured()) throw new GitHostError('The git host is not configured', { code: 'not_configured' });
   const resp = await fetch(`${s.internalUrl}/api/v1${apiPath}`, {
@@ -234,6 +222,7 @@ async function api(method, apiPath, body = undefined, { allow = [] } = {}) {
  * takes one that already exists (a retried create) instead of failing.
  */
 async function createRepo(name, { description = '', private: isPrivate = false, adoptExisting = false } = {}) {
+  require('./code-host-write').requireCodeHostWrite('git-host.createRepo');
   const n = assertName(name);
   const s = settings();
   const { status } = await api('POST', `/orgs/${encodeURIComponent(s.org)}/repos`, {
@@ -260,6 +249,7 @@ async function repoExists(repo) {
 
 /** Make the repository private or public (code visibility, plan §5). */
 async function setPrivate(repo, isPrivate) {
+  require('./code-host-write').requireCodeHostWrite('git-host.setPrivate');
   const { owner, name } = nameOf(repo);
   await api('PATCH', `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`, { private: !!isPrivate });
 }
@@ -297,6 +287,7 @@ async function listBranches(repo) {
  * at `gitDir`, which holds the objects. `force` allows non-fast-forwards.
  */
 async function pushRefs(repo, gitDir, refspecs, { force = false } = {}) {
+  require('./code-host-write').requireCodeHostWrite('git-host.pushRefs');
   if (!refspecs.length) return;
   await git(['-C', gitDir, 'push', '--porcelain', ...(force ? ['--force'] : []), cloneUrl(repo), ...refspecs], { auth: true });
 }
@@ -309,6 +300,7 @@ async function pushRefs(repo, gitDir, refspecs, { force = false } = {}) {
  * kept by the git server's own ref lock.
  */
 async function casUpdateRef(repo, gitDir, ref, expected, newSha) {
+  require('./code-host-write').requireCodeHostWrite('git-host.casUpdateRef');
   if (!SHA_RE.test(String(newSha || ''))) throw new GitHostError('casUpdateRef needs a full commit sha', { code: 'invalid_sha' });
   if (expected != null && !SHA_RE.test(String(expected))) throw new GitHostError('casUpdateRef needs a full expected sha', { code: 'invalid_sha' });
   const full = branchRef(ref);
@@ -330,6 +322,7 @@ async function casUpdateRef(repo, gitDir, ref, expected, newSha) {
  * which reads exactly like "already gone".
  */
 async function deleteRef(repo, ref) {
+  require('./code-host-write').requireCodeHostWrite('git-host.deleteRef');
   const full = branchRef(ref);
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'git-host-delete-'));
   try {
@@ -350,6 +343,7 @@ async function deleteRef(repo, ref) {
  * the new commit's sha. For app creation, starters and remixes.
  */
 async function pushInitialFiles(repo, files, { branch = 'main', message = 'Initial commit', author = defaultAuthor() } = {}) {
+  require('./code-host-write').requireCodeHostWrite('git-host.pushInitialFiles');
   const list = Array.isArray(files) ? files : Object.entries(files).map(([p, content]) => ({ path: p, content }));
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'git-host-init-'));
   try {

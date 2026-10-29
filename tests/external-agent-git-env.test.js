@@ -154,3 +154,33 @@ test('applying a submitted patch: no git child holds a secret, and only the fetc
     assert.ok(!home.startsWith(r.dir), `git ${r.sub}'s HOME is not inside the tree`);
   }
 });
+
+test('a .gitconfig a patch adds is a file in the tree, never git\'s own configuration', { timeout: 60000 }, async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-git-config-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const host = await startFakeGitHost(t);
+  const repo = seedRepo(host, root, 'harbour');
+  const marker = path.join(root, 'hook-ran');
+  // A hook the patch ships, and the configuration that would run it with
+  // whatever environment git has, from the two places a HOME inside the
+  // work tree made git read its global configuration.
+  realGit(repo.work, 'checkout', '-q', '-b', 'work');
+  const config = '[core]\n\thooksPath = h\n';
+  fs.writeFileSync(path.join(repo.work, '.gitconfig'), config);
+  fs.mkdirSync(path.join(repo.work, '.config', 'git'), { recursive: true });
+  fs.writeFileSync(path.join(repo.work, '.config', 'git', 'config'), config);
+  fs.mkdirSync(path.join(repo.work, 'h'));
+  fs.writeFileSync(path.join(repo.work, 'h', 'pre-commit'), `#!/bin/sh\nenv > '${marker}'\n`, { mode: 0o755 });
+  realGit(repo.work, 'add', '-A');
+  realGit(repo.work, 'commit', '-qm', 'Ship a hook');
+  // A plain diff, so the patch path makes the commit itself.
+  const patch = realGit(repo.work, 'diff', '--binary', repo.base, 'HEAD');
+
+  plantSecrets(t);
+  const patchSvc = require('../src/services/external-agent-patch');
+  const out = await patchSvc.applyPatch({ owner: ORG, repo: 'harbour', patch, baseSha: repo.base, userId: 3, taskId: 8 });
+  assert.equal(out.ok, true, `${out.code}: ${out.message} ${out.detail || ''}`);
+  assert.equal(fs.existsSync(marker), false, `the patch's hook ran: ${fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').slice(0, 200) : ''}`);
+  // Committed as what it is: the person's own file.
+  assert.equal(realGit(repo.bare, 'show', `${out.headSha}:.gitconfig`), config);
+});

@@ -62,6 +62,7 @@
 // them, because nobody wrote anything the group had not approved.
 
 const log = require('./logger');
+const durableSteps = require('./durable-steps');
 const summaryFreshness = require('./summary-freshness');
 const externalAgentHead = require('./external-agent-head');
 const visibleChangesContract = require('./visible-changes');
@@ -202,6 +203,13 @@ function fail(code, message, extra = {}) {
   return { ok: false, code, message, ...extra };
 }
 
+// What a write answered, as a step keeps it: its data, never a function (a
+// mirror's cleanup), which a checkpoint cannot hold.
+function outcomeOf(result) {
+  if (!result || typeof result !== 'object') return result;
+  return Object.fromEntries(Object.entries(result).filter(([, v]) => typeof v !== 'function'));
+}
+
 // `verifyForkBranch` and `pushForkBranchToAppBranch` speak the mirror path's
 // vocabulary. This path's refusals are named for what the CALLER did wrong,
 // so the two fork-shaped codes are renamed and everything else — including
@@ -297,11 +305,92 @@ async function countVotes(pool, sessionId) {
   }
 }
 
-// deps: { pool, config, gh, githubLink, head, votes, prImportSync,
+// Everything an update is checked for before it takes its lock: the shape
+// of what it carries (a fork branch or a patch, a fork name, the commit a
+// patch was made against, the visible changes) and who may make it
+// (updateAuthority). The update route answers these itself before it asks a
+// conductor (services/fork-operations.js), and the update asks them again
+// where it runs. Answers { refusal } or what the update reads of them.
+async function checkUpdate(deps, params) {
+  const { pool, config } = deps;
+  const gh = deps.gh || require('./github');
+  const githubLink = deps.githubLink || require('./github-link');
+  const head = deps.head || externalAgentHead;
+  const { user, origin } = params;
+
+  // ── Argument shapes, before anything is read ─────────────────────────
+  //
+  // The branch name reaches a `git fetch` argv and the fork name reaches a
+  // URL path, so both are validated by the same predicates the submit path
+  // uses. One definition, in services/external-agent-head.js.
+  const patch = typeof params.patch === 'string' && params.patch.trim() ? params.patch : null;
+  const branch = params.branch ? String(params.branch).trim() : '';
+  if (patch && branch) {
+    return { refusal: fail('invalid_request', 'Send the new work as a patch or as a branch, not both.') };
+  }
+  // A proposal on an app on Homeroom's own git host has no GitHub fork to
+  // read a branch from: its revisions arrive as a patch, which needs no
+  // GitHub link either, since it comes from the proposal's author in this
+  // request (ownershipGate, twice).
+  const hostedRepo = repoRef.isHosted(params.session && params.session.repo_url);
+  if (hostedRepo && !patch) {
+    return { refusal: fail(
+      'patch_required',
+      'This app\'s code is on Homeroom\'s own git host, not on GitHub, so a proposal on it is revised by a patch, '
+      + 'not by a branch pushed to a fork. Call prepare_work with this proposalId for an update work order, then '
+      + 'submit_work with that work order\'s taskId and the patch.',
+      { retryable: false }
+    ) };
+  }
+  if (!patch && !head.validRef(branch)) {
+    return { refusal: fail('invalid_request', 'branch must be the git branch you pushed to your fork.') };
+  }
+  const forkRepoName = params.forkRepo ? String(params.forkRepo).trim() : null;
+  if (forkRepoName && !head.validSegment(forkRepoName)) {
+    return { refusal: fail('invalid_request', 'That fork name is not a valid GitHub repository name.') };
+  }
+  const expectedHeadSha = params.expectedHeadSha
+    ? String(params.expectedHeadSha).trim().toLowerCase()
+    : null;
+  if (expectedHeadSha && !SHA_RE.test(expectedHeadSha)) {
+    return { refusal: fail('invalid_request', 'expectedHeadSha must be a 40-character commit id.') };
+  }
+  // A patch is applied AT a commit, so it has to say which one. Without it
+  // the only candidate is whatever the head is now, which is exactly the
+  // guess the lease exists to rule out.
+  if (patch && !expectedHeadSha) {
+    return { refusal: fail(
+      'invalid_request',
+      'A patch needs expectedHeadSha: the proposal\'s commit it was made against, which is where it is applied.'
+    ) };
+  }
+  let visibleChanges;
+  if (params.visibleChanges !== undefined) {
+    try {
+      visibleChanges = visibleChangesContract.parseIntent(params.visibleChanges);
+    } catch (err) {
+      return { refusal: fail('invalid_visible_changes', err.message) };
+    }
+  }
+
+  const authority = await updateAuthority({ config, pool, gh, githubLink }, {
+    session: params.session, user, origin,
+  });
+  if (authority.refusal) return authority;
+  return { patch, branch, forkRepoName, expectedHeadSha, visibleChanges, link: authority.link };
+}
+
+// deps: { pool, config, steps, gh, githubLink, head, votes, prImportSync,
 //         githubPublic, serialize, busy, beginOperation }
-//   Everything after `pool`/`config` is injectable purely so the tests can
-//   drive this without a database, a git binary or a GitHub account; the
-//   defaults are the real modules.
+//   `steps` are the conductor's (services/fork-operations.js runs this as
+//   the `fork.update` and `work.share` operations): what was read to decide
+//   the push and every write after it is kept as a step, so a retry or a
+//   restart carries on from the last one instead of pushing, renaming or
+//   opening a pull request again, and answers what the first attempt
+//   decided. Without them (tests) every step simply runs.
+//   Everything after `steps` is injectable purely so the tests can drive
+//   this without a database, a git binary or a GitHub account; the defaults
+//   are the real modules.
 //
 // params: { user, session, branch, forkRepo, expectedHeadSha, testing, origin,
 //           patch }
@@ -326,102 +415,18 @@ async function countVotes(pool, sessionId) {
 async function updateProposalFromForkBranch(deps, params) {
   const { pool, config } = deps;
   const gh = deps.gh || require('./github');
-  const githubLink = deps.githubLink || require('./github-link');
   const head = deps.head || externalAgentHead;
   const votes = deps.votes || require('../routes/votes');
   const prImportSync = deps.prImportSync || require('./pr-import-sync');
   const githubPublic = deps.githubPublic || require('./external-agent-tasks').githubPublic;
   // Ordered per session with every other revision writer, on any process.
   const lock = deps.lock || withProposalLock;
+  const steps = deps.steps || durableSteps.none();
 
-  const { user, origin } = params;
-
-  // ── Argument shapes, before anything is read ─────────────────────────
-  //
-  // The branch name reaches a `git fetch` argv and the fork name reaches a
-  // URL path, so both are validated by the same predicates the submit path
-  // uses. One definition, in services/external-agent-head.js.
-  const patch = typeof params.patch === 'string' && params.patch.trim() ? params.patch : null;
-  const branch = params.branch ? String(params.branch).trim() : '';
-  if (patch && branch) {
-    return fail('invalid_request', 'Send the new work as a patch or as a branch, not both.');
-  }
-  // A proposal on an app on Homeroom's own git host has no GitHub fork to
-  // read a branch from: its revisions arrive as a patch, which needs no
-  // GitHub link either, since it comes from the proposal's author in this
-  // request (ownershipGate, twice).
-  const hostedRepo = repoRef.isHosted(params.session && params.session.repo_url);
-  if (hostedRepo && !patch) {
-    return fail(
-      'patch_required',
-      'This app\'s code is on Homeroom\'s own git host, not on GitHub, so a proposal on it is revised by a patch, '
-      + 'not by a branch pushed to a fork. Call prepare_work with this proposalId for an update work order, then '
-      + 'submit_work with that work order\'s taskId and the patch.',
-      { retryable: false }
-    );
-  }
-  if (!patch && !head.validRef(branch)) {
-    return fail('invalid_request', 'branch must be the git branch you pushed to your fork.');
-  }
-  const forkRepoName = params.forkRepo ? String(params.forkRepo).trim() : null;
-  if (forkRepoName && !head.validSegment(forkRepoName)) {
-    return fail('invalid_request', 'That fork name is not a valid GitHub repository name.');
-  }
-  const expectedHeadSha = params.expectedHeadSha
-    ? String(params.expectedHeadSha).trim().toLowerCase()
-    : null;
-  if (expectedHeadSha && !SHA_RE.test(expectedHeadSha)) {
-    return fail('invalid_request', 'expectedHeadSha must be a 40-character commit id.');
-  }
-  // A patch is applied AT a commit, so it has to say which one. Without it
-  // the only candidate is whatever the head is now, which is exactly the
-  // guess the lease exists to rule out.
-  if (patch && !expectedHeadSha) {
-    return fail(
-      'invalid_request',
-      'A patch needs expectedHeadSha: the proposal\'s commit it was made against, which is where it is applied.'
-    );
-  }
-  let visibleChanges;
-  if (params.visibleChanges !== undefined) {
-    try {
-      visibleChanges = visibleChangesContract.parseIntent(params.visibleChanges);
-    } catch (err) {
-      return fail('invalid_visible_changes', err.message);
-    }
-  }
-
-  const gate = ownershipGate(params.session, user);
-  if (gate) return gate;
-
-  if (!gh.isEnabled()) {
-    return fail('platform_unavailable', 'Homeroom cannot reach GitHub right now. Try again shortly.', { retryable: true });
-  }
-  // An unconfigured deployment and an unlinked user are two different
-  // refusals, and the deployment is checked first — otherwise an operator's
-  // missing value is reported as the user's missing click. Neither concerns
-  // a patch on the git host, which no fork is read for.
-  if (!hostedRepo && !githubLink.isEnabled(config)) {
-    return fail(
-      'github_link_unavailable',
-      'This Homeroom deployment has no GitHub OAuth app configured, so it cannot verify which GitHub account is '
-      + 'yours, and a proposal is only advanced from its author\'s verified fork. Ask an admin to set '
-      + 'GITHUB_LINK_CLIENT_ID and GITHUB_LINK_CLIENT_SECRET in the platform variables panel.',
-      { retryable: false }
-    );
-  }
-
-  // FRESHLY READ, every time, and the only source of the fork owner. A
-  // linked account can be disconnected or re-linked to a different GitHub
-  // login between the submission that opened this proposal and this update.
-  const link = hostedRepo ? null : await githubLink.linkStatus(pool, user.id);
-  if (!hostedRepo && (!link || !link.linked || !link.login)) {
-    return fail(
-      'github_not_linked',
-      'Connect your GitHub account first: Homeroom only advances a proposal from a fork it can confirm is yours.',
-      { ...(origin ? { settingsUrl: `${origin}/#settings/connectors` } : {}) }
-    );
-  }
+  const { user } = params;
+  const checked = await checkUpdate(deps, params);
+  if (checked.refusal) return checked.refusal;
+  const { patch, branch, forkRepoName, expectedHeadSha, visibleChanges, link } = checked;
 
   const sessionId = Number(params.session.id);
   return lock(pool, sessionId, async () => {
@@ -430,6 +435,14 @@ async function updateProposalFromForkBranch(deps, params) {
     const session = (await reloadSession(pool, sessionId)) || params.session;
     const reGate = ownershipGate(session, user);
     if (reGate) return reGate;
+
+    // A retry may resume its push and metadata only on the target it first read.
+    const target = await steps.once('target', () => ({
+      repoUrl: session.repo_url, branch: session.branch_name,
+    }));
+    if (target.repoUrl !== session.repo_url || target.branch !== session.branch_name) {
+      return fail('branch_moved', 'This proposal changed its repository or branch. Read its current work order and try again.', { retryable: false });
+    }
 
     // An app on Homeroom's git host is read through repo-ref, as everywhere
     // else; only a GitHub address goes through the GitHub parser.
@@ -442,8 +455,10 @@ async function updateProposalFromForkBranch(deps, params) {
     const { owner, repo } = parsed;
     const forkRepo = forkRepoName || repo;
 
+    // A request that has already moved the head is past this question: the
+    // build its own push started is what would answer it.
     const busy = deps.busy || defaultBusyCheck;
-    if (await busy(session, { pool })) {
+    if (!steps.has('push') && !steps.has('moved') && await busy(session, { pool })) {
       return fail(
         'session_busy',
         'This proposal is in the middle of a build right now. Retry in a minute. Pushing onto it mid-build '
@@ -457,7 +472,7 @@ async function updateProposalFromForkBranch(deps, params) {
     const releaseOperation = beginOperation(sessionId);
     try {
       const ctx = {
-        pool, config, gh, head, votes, prImportSync, githubPublic,
+        pool, config, steps, gh, head, votes, prImportSync, githubPublic,
         prMetadata: deps.prMetadata || require('./pr-metadata'), username: user.username,
         // No linked login on the git host: nothing there is read from a fork.
         session, owner, repo, forkOwner: link ? link.login : null, forkRepo, branch,
@@ -521,6 +536,52 @@ async function updateProposalFromForkBranch(deps, params) {
       releaseOperation();
     }
   });
+}
+
+// Who may advance this proposal, read now: its author while it can still take
+// a revision (ownershipGate), then linkAuthority below. The authority half of
+// updateProposalFromForkBranch, before its lock, and what a conductor reads
+// again before it writes anything for the update (services/fork-operations.js).
+// Answers { refusal } or { link } (null for a proposal on Homeroom's git
+// host, which no fork is read for).
+async function updateAuthority(deps, { session, user, origin = null }) {
+  const gate = ownershipGate(session, user);
+  if (gate) return { refusal: gate };
+  return linkAuthority(deps, { user, hostedRepo: repoRef.isHosted(session && session.repo_url), origin });
+}
+
+// For new work that comes from a GitHub fork: a deployment that can reach
+// GitHub and verify accounts, and the caller's linked login, FRESHLY READ,
+// every time, and the only source of the fork owner (a linked account can be
+// disconnected or re-linked to a different GitHub login between the
+// submission that opened this proposal and this update). A share asks it
+// before it makes the session its landing needs (fork-operations.js).
+async function linkAuthority({ config, pool, gh, githubLink }, { user, hostedRepo, origin = null }) {
+  if (!gh.isEnabled()) {
+    return { refusal: fail('platform_unavailable', 'Homeroom cannot reach GitHub right now. Try again shortly.', { retryable: true }) };
+  }
+  // An unconfigured deployment and an unlinked user are two different
+  // refusals, and the deployment is checked first — otherwise an operator's
+  // missing value is reported as the user's missing click. Neither concerns
+  // a patch on the git host, which no fork is read for.
+  if (!hostedRepo && !githubLink.isEnabled(config)) {
+    return { refusal: fail(
+      'github_link_unavailable',
+      'This Homeroom deployment has no GitHub OAuth app configured, so it cannot verify which GitHub account is '
+      + 'yours, and a proposal is only advanced from its author\'s verified fork. Ask an admin to set '
+      + 'GITHUB_LINK_CLIENT_ID and GITHUB_LINK_CLIENT_SECRET in the platform variables panel.',
+      { retryable: false }
+    ) };
+  }
+  const link = hostedRepo ? null : await githubLink.linkStatus(pool, user.id);
+  if (!hostedRepo && (!link || !link.linked || !link.login)) {
+    return { refusal: fail(
+      'github_not_linked',
+      'Connect your GitHub account first: Homeroom only advances a proposal from a fork it can confirm is yours.',
+      { ...(origin ? { settingsUrl: `${origin}/#settings/connectors` } : {}) }
+    ) };
+  }
+  return { link };
 }
 
 // A managed local upload has already advanced the bot-owned PR branch. Apply
@@ -862,12 +923,28 @@ async function syncSummaryIntoBody({ pool, gh, owner, repo, session, summary, pr
     return 'github_unreadable';
   }
   const alreadySynced = existing === summary || existing.startsWith(`${summary}\n\n`);
-  const prev = previousSummary ? previousSummary.trim() : '';
+  // Every summary writer shares the host-prefix record. An earlier write
+  // may have succeeded before its mirror/acknowledgement was saved; either
+  // its old prefix or its pending replacement can therefore be on the host.
+  const projection = session.pr_summary_projection;
+  const existingHash = summaryFreshness.bodyHash(existing);
+  const noPrefix = projection?.replacementBodyHash === existingHash
+    || (projection?.applied === null && projection.pending?.baseBodyHash === existingHash);
+  const knownPrefixes = noPrefix ? []
+    : projection ? [projection.pending?.to, projection.applied] : [previousSummary];
+  const candidates = knownPrefixes.filter((value) => typeof value === 'string' && value.trim()).map((value) => value.trim());
+  const prev = candidates.sort((a, b) => b.length - a.length).find((value) => existing === value || existing.startsWith(value + '\n\n')) || '';
+  if (!alreadySynced && candidates.length && !prev) return 'github_body_changed';
   let rest = existing;
   if (prev && existing.startsWith(`${prev}\n\n`)) rest = existing.slice(prev.length + 2);
   else if (prev && existing === prev) rest = '';
   const body = alreadySynced ? existing : (rest ? `${summary}\n\n${rest}` : summary);
   if (body !== existing) {
+    // Keep the exact possible host prefix before I/O, shared across summary
+    // operations and synchronous fork updates, so either can recover it.
+    const pending = { applied: prev || null, pending: { from: prev || null, to: summary, baseBodyHash: existingHash } };
+    await pool.query('UPDATE chat_sessions SET pr_summary_projection = $1::jsonb WHERE id = $2', [JSON.stringify(pending), Number(session.id)]);
+    session.pr_summary_projection = pending;
     try {
       await gh.updatePR(owner, repo, session.pr_number, { body });
     } catch (err) {
@@ -877,13 +954,16 @@ async function syncSummaryIntoBody({ pool, gh, owner, repo, session, summary, pr
       return 'github_write_failed';
     }
   }
-  if (alreadySynced && session.pr_body === body) return null;
+  if (alreadySynced && session.pr_body === body && projection?.applied === summary && !projection.pending) return null;
   try {
     await pool.query(
       'UPDATE chat_sessions SET pr_body = $1, pr_summary_source_body_hash = $2 WHERE id = $3',
       [body, summaryFreshness.bodyHash(body), Number(session.id)]
     );
     session.pr_body = body;
+    const applied = { applied: summary };
+    await pool.query('UPDATE chat_sessions SET pr_summary_projection = $1::jsonb WHERE id = $2', [JSON.stringify(applied), Number(session.id)]);
+    session.pr_summary_projection = applied;
   } catch (err) {
     log.warn('proposal-update', 'pull request body rewritten but the mirror write failed', {
       sessionId: Number(session.id), err: err.message,
@@ -895,11 +975,11 @@ async function syncSummaryIntoBody({ pool, gh, owner, repo, session, summary, pr
 
 async function withProposedSummary(ctx, result) {
   if (!ctx.summary || !result || result.ok !== true) return result;
-  const applied = await applyProposedSummary({
+  const applied = await ctx.steps.once('summary', () => applyProposedSummary({
     pool: ctx.pool, gh: ctx.gh, owner: ctx.owner, repo: ctx.repo,
     session: ctx.session, summary: ctx.summary,
     viewerLogin: ctx.expectedLogin, headSha: result.headSha,
-  });
+  }));
   return {
     ...result,
     summaryUpdated: applied.changed,
@@ -1035,12 +1115,24 @@ async function applyProposedDescription({ pool, gh, session, owner, repo, descri
   const closing = prMetadata.buildClosingBlock(prMetadata.parseClosingKeywords(existing));
   let body = closing ? `${description}\n\n${closing}` : description;
   if (visuals) body = prMetadata.upsertVisualsBlock(body, visuals);
-  if (body === existing) return nothing;
+  if (body === existing) {
+    const applied = { applied: null };
+    await pool.query('UPDATE chat_sessions SET pr_summary_projection = $1::jsonb WHERE id = $2', [JSON.stringify(applied), Number(session.id)]);
+    session.pr_summary_projection = applied;
+    return nothing;
+  }
 
   // GitHub is the body source of truth. Invalidate before touching it: a DB
   // failure must not leave an older summary displayed beside newer prose.
   try {
     await summaryFreshness.invalidate(pool, Number(session.id));
+    // This full-body replacement deliberately carries no summary prefix.
+    // Record its exact hash before I/O so a lost host or mirror reply still
+    // proves which body a later summary may prepend to.
+    const replacing = { ...(session.pr_summary_projection || { applied: session.pr_summary_previous_md || null }),
+      replacementBodyHash: summaryFreshness.bodyHash(body) };
+    await pool.query('UPDATE chat_sessions SET pr_summary_projection = $1::jsonb WHERE id = $2', [JSON.stringify(replacing), Number(session.id)]);
+    session.pr_summary_projection = replacing;
     session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
   } catch (err) {
     log.warn('proposal-update', 'could not invalidate the summary before a description edit', {
@@ -1063,6 +1155,9 @@ async function applyProposedDescription({ pool, gh, session, owner, repo, descri
   try {
     await pool.query('UPDATE chat_sessions SET pr_body = $1 WHERE id = $2', [body, Number(session.id)]);
     session.pr_body = body;
+    const applied = { applied: null };
+    await pool.query('UPDATE chat_sessions SET pr_summary_projection = $1::jsonb WHERE id = $2', [JSON.stringify(applied), Number(session.id)]);
+    session.pr_summary_projection = applied;
   } catch (err) {
     log.warn('proposal-update', 'pull request body updated but the mirror write failed', {
       sessionId: Number(session.id), err: err.message,
@@ -1162,6 +1257,14 @@ function normalizeLinkedIssues(linkedIssues) {
 async function updateLinkedIssues({
   pool, gh, session, owner, repo, addIssues, removeIssues,
 }) {
+  const stored = await storeLinkedIssues({ pool, session, addIssues, removeIssues });
+  const projected = await projectLinkedIssues({ pool, gh, session, owner, repo, addIssues, removeIssues });
+  return { ...stored, ...projected };
+}
+
+// The row's half: `linked_issues` moved by the deltas, and the in-memory row
+// with it. Returns { changed, linkedIssues, addedIssues, removedIssues }.
+async function storeLinkedIssues({ pool, session, addIssues, removeIssues }) {
   const prMetadata = require('./pr-metadata');
   const existing = prMetadata.sanitizeIssueNumbers(session.linked_issues);
   const adds = prMetadata.sanitizeIssueNumbers(addIssues);
@@ -1180,15 +1283,27 @@ async function updateLinkedIssues({
       sessionId: Number(session.id), linkedIssues,
     });
   }
+  return { changed, linkedIssues, addedIssues: added, removedIssues: removed };
+}
 
-  const result = {
-    changed,
-    linkedIssues,
-    addedIssues: added,
-    removedIssues: removed,
-    prBodyUpdated: false,
-    prBodyStatus: 'no_pr',
-  };
+// Why the row's pull request body takes no projection of its links, or null
+// when it does (below).
+function linkedIssuesSkipped(session) {
+  if (!session.pr_number) return 'no_pr';
+  if (String(session.source) === 'imported' && !platformOpenedPr(session)) return 'imported_pr';
+  return null;
+}
+
+// The pull request's half, from the row as it stands (its links already
+// stored) and the deltas asked for. Returns { prBodyUpdated, prBodyStatus }.
+// Run where the code host's credential is: on a conductor for a pull
+// request on GitHub (services/pr-sync-operation.js), in place otherwise.
+async function projectLinkedIssues({ pool, gh, session, owner, repo, addIssues, removeIssues }) {
+  const prMetadata = require('./pr-metadata');
+  const adds = prMetadata.sanitizeIssueNumbers(addIssues);
+  const removes = prMetadata.sanitizeIssueNumbers(removeIssues);
+  const linkedIssues = prMetadata.sanitizeIssueNumbers(session.linked_issues);
+  const result = { prBodyUpdated: false, prBodyStatus: 'no_pr' };
 
   // A row with no PR is done: the closing block is assembled from the row
   // when the PR is created (pr-metadata.applyPrMetadata at promote time). A
@@ -1206,9 +1321,9 @@ async function updateLinkedIssues({
   // is asked here, because the linked-issues route shares this seam and reads
   // no GitHub login to hold a fork's owner against. Best-effort like the
   // GitHub rename above — the row is the source of truth either way.
-  if (!session.pr_number) return result;
-  if (String(session.source) === 'imported' && !platformOpenedPr(session)) {
-    result.prBodyStatus = 'imported_pr';
+  const skipped = linkedIssuesSkipped(session);
+  if (skipped) {
+    result.prBodyStatus = skipped;
     return result;
   }
 
@@ -1236,7 +1351,7 @@ async function updateLinkedIssues({
   // write succeeded but GitHub was temporarily unavailable, repeating the
   // same idempotent call must repair the body rather than stop at “already
   // linked”.
-  const managedRemovals = removes.filter((n) => appliedBefore.includes(n));
+  const managedRemovals = removes.filter((n) => appliedBefore.includes(n) && !linkedIssues.includes(n));
   let nextBody = prMetadata.stripClosingLines(previousBody, managedRemovals);
   if (nextBody !== previousBody) {
     nextBody = nextBody.replace(/\n{3,}/g, '\n\n').replace(/\n+$/, '');
@@ -1546,94 +1661,111 @@ async function advanceAppRepoBranch(ctx) {
   // branch best-effort, and a session whose creation failed has a pull request
   // and possibly a tally pinned to it), so it keeps the answer it has always
   // had rather than being quietly re-created underneath a proposal.
-  let liveHead;
-  let firstLanding = false;
-  try {
-    liveHead = await gh.getBranchSha(owner, repo, targetBranch);
-  } catch (err) {
-    // On the git host a branch that is not there is not a first landing (that
-    // is a share, which a hosted app does not take): it is a change whose code
-    // did not come across from GitHub (services/code-missing.js).
-    if (err && err.status === 404 && repoRef.isHosted(session.repo_url)) {
-      return fail(
-        'code_missing',
-        `This proposal's code is not on Homeroom's git host (${targetBranch} is not there): it did not come across `
-        + 'when Homeroom moved off GitHub, so it cannot take a patch. Start a new change instead.',
-        { retryable: false }
-      );
-    }
-    if (err && err.status === 404 && platformOwnedBranch(targetBranch)) {
-      firstLanding = true;
-    } else {
-      log.warn('proposal-update', 'could not read the proposal branch head', {
-        sessionId, targetBranch, err: err.message,
-      });
-      return fail('platform_unavailable', 'Homeroom could not read this proposal\'s current commit. Try again shortly.', { retryable: true });
-    }
-  }
-  if (!firstLanding) {
-    if (!liveHead || !SHA_RE.test(String(liveHead).trim())) {
-      return fail('platform_unavailable', 'Homeroom could not read this proposal\'s current commit. Try again shortly.', { retryable: true });
-    }
-    liveHead = String(liveHead).trim().toLowerCase();
-    if (expectedHeadSha && expectedHeadSha !== liveHead) {
-      return movedError(liveHead);
-    }
-  } else {
-    // `expectedHeadSha` names the commit the caller believes this proposal is
-    // at. There is no such commit, so there is nothing for it to disagree
-    // with — and refusing a first share for naming one would be refusing it
-    // for the caller's optimism rather than for a conflict.
-    liveHead = null;
-  }
-
-  // THE ATTRIBUTION GATE. Run here for the ancestry comparison, and again
-  // inside pushForkBranchToAppBranch immediately before the push — the
-  // second run is the load-bearing one, and this one is not permitted to
-  // replace it.
-  //
-  // #4263. A PATCH has no fork to verify: its content arrived in this
-  // request from the proposal's own author (ownershipGate, twice), and it is
-  // applied ON `liveHead`, so it cannot drop a reviewed commit and needs no
-  // ancestry check. `verified` is filled in from the commit the apply wrote,
-  // below, and everything after the push reads it exactly as for a branch.
-  let verified = null;
-  if (!ctx.patch) {
-    verified = await head.verifyForkBranch({
-      githubPublic, forkOwner, forkRepo, branch, expectedLogin,
-    });
-    if (!verified.ok) return renameHeadFailure(verified, branch);
-  } else if (firstLanding) {
-    // Nothing has landed yet, so there is no commit to apply the patch at.
-    return fail(
-      'invalid_request',
-      'This work has no commits on its branch yet, so there is no commit to apply a patch at. Push a branch to '
-      + 'your fork and submit it with proposalId and branch.',
-      { retryable: false }
-    );
-  }
-
-  if (!firstLanding && verified) {
-    // Nothing to push — but a resubmit may still be correcting the capture
-    // routes, which is the one thing that used to have no way through (#1199).
-    if (verified.headSha === liveHead) return resubmitUnchanged(ctx, liveHead, 'update_branch');
-
-    const ancestry = await checkAncestry({ gh, owner, repo, base: liveHead, head: verified.headSha, branch });
-    if (ancestry) return ancestry;
-  }
-
   // Which of the three tails this push takes, decided from the row read UNDER
   // the lock — `params.session` is the caller's snapshot and may be minutes
   // old, which is long enough for a proposal to have been promoted or a
   // session to have been paused.
+  //
+  // What this request decided before it wrote anything (the head the push
+  // leases against, the fork commit it verified, the votes at risk), kept as
+  // one step: a retry after the push would read the head it moved and answer
+  // "unchanged", or count none of the votes it put at risk.
   const kind = isContinuableStatus(session.status);
   const promoted = kind === 'proposal';
+  const decided = await ctx.steps.once('decided', async () => {
+    let liveHead;
+    let firstLanding = false;
+    try {
+      liveHead = await gh.getBranchSha(owner, repo, targetBranch);
+    } catch (err) {
+      // On the git host a branch that is not there is not a first landing (that
+      // is a share, which a hosted app does not take): it is a change whose code
+      // did not come across from GitHub (services/code-missing.js).
+      if (err && err.status === 404 && repoRef.isHosted(session.repo_url)) {
+        return { fail: fail(
+          'code_missing',
+          `This proposal's code is not on Homeroom's git host (${targetBranch} is not there): it did not come across `
+          + 'when Homeroom moved off GitHub, so it cannot take a patch. Start a new change instead.',
+          { retryable: false }
+        ) };
+      }
+      if (err && err.status === 404 && platformOwnedBranch(targetBranch)) {
+        firstLanding = true;
+      } else {
+        log.warn('proposal-update', 'could not read the proposal branch head', {
+          sessionId, targetBranch, err: err.message,
+        });
+        return { fail: fail('platform_unavailable', 'Homeroom could not read this proposal\'s current commit. Try again shortly.', { retryable: true }) };
+      }
+    }
+    if (!firstLanding) {
+      if (!liveHead || !SHA_RE.test(String(liveHead).trim())) {
+        return { fail: fail('platform_unavailable', 'Homeroom could not read this proposal\'s current commit. Try again shortly.', { retryable: true }) };
+      }
+      liveHead = String(liveHead).trim().toLowerCase();
+      if (expectedHeadSha && expectedHeadSha !== liveHead) {
+        return { fail: movedError(liveHead) };
+      }
+    } else {
+      // `expectedHeadSha` names the commit the caller believes this proposal is
+      // at. There is no such commit, so there is nothing for it to disagree
+      // with — and refusing a first share for naming one would be refusing it
+      // for the caller's optimism rather than for a conflict.
+      liveHead = null;
+    }
 
-  // Votes count only on a proposal that is up for a vote, and the count has
-  // to happen BEFORE the head move that may retire them: once the epoch
-  // moves, none of them is current any more. A session nobody is voting on
-  // has nothing to count and nothing to clear.
-  const votesCleared = promoted ? await countVotes(pool, sessionId) : 0;
+    // THE ATTRIBUTION GATE. Run here for the ancestry comparison, and again
+    // inside pushForkBranchToAppBranch immediately before the push — the
+    // second run is the load-bearing one, and this one is not permitted to
+    // replace it.
+    //
+    // #4263. A PATCH has no fork to verify: its content arrived in this
+    // request from the proposal's own author (ownershipGate, twice), and it is
+    // applied ON `liveHead`, so it cannot drop a reviewed commit and needs no
+    // ancestry check. `verified` is filled in from the commit the apply wrote,
+    // below, and everything after the push reads it exactly as for a branch.
+    let verified = null;
+    if (!ctx.patch) {
+      verified = await head.verifyForkBranch({
+        githubPublic, forkOwner, forkRepo, branch, expectedLogin,
+      });
+      if (!verified.ok) return { fail: renameHeadFailure(verified, branch) };
+    } else if (firstLanding) {
+      // Nothing has landed yet, so there is no commit to apply the patch at.
+      return { fail: fail(
+        'invalid_request',
+        'This work has no commits on its branch yet, so there is no commit to apply a patch at. Push a branch to '
+        + 'your fork and submit it with proposalId and branch.',
+        { retryable: false }
+      ) };
+    }
+
+    if (!firstLanding && verified) {
+      // Nothing to push — but a resubmit may still be correcting the capture
+      // routes, which is the one thing that used to have no way through (#1199).
+      if (verified.headSha === liveHead) return { liveHead, firstLanding, verifiedHeadSha: verified.headSha, unchanged: true };
+
+      const ancestry = await checkAncestry({ gh, owner, repo, base: liveHead, head: verified.headSha, branch });
+      if (ancestry) return { fail: ancestry };
+    }
+
+    // Votes count only on a proposal that is up for a vote, and the count has
+    // to happen BEFORE the head move that may retire them: once the epoch
+    // moves, none of them is current any more. A session nobody is voting on
+    // has nothing to count and nothing to clear.
+    const votesCleared = promoted ? await countVotes(pool, sessionId) : 0;
+    // `at` dates the commit a plain patch makes: the same on a retry, so
+    // applying it again makes the same commit, and its push is the one that
+    // already landed (external-agent-patch.js commitDate).
+    return {
+      liveHead, firstLanding, verifiedHeadSha: verified ? verified.headSha : null, unchanged: false,
+      votesCleared, at: new Date().toISOString(),
+    };
+  });
+  if (decided.fail) return decided.fail;
+  const { liveHead, firstLanding, votesCleared } = decided;
+  let verified = decided.verifiedHeadSha ? { ok: true, headSha: decided.verifiedHeadSha } : null;
+  if (decided.unchanged) return ctx.steps.once('landed', () => resubmitUnchanged(ctx, liveHead, 'update_branch'));
 
   // The lease-less create and the lease-checked advance are the same push with
   // the same gate in front of it; `mirrorForkBranch` is not a second
@@ -1645,16 +1777,22 @@ async function advanceAppRepoBranch(ctx) {
   // `liveHead` and pushed under the same lease: a head that moved since the
   // read above is `branch_moved`, never overwritten. Its refusals are already
   // in the caller's vocabulary, so they pass through unrenamed.
+  //
+  // Kept as a step, and safe to make again when its answer was lost: the
+  // name it pushes to is this request's own, and a branch already holding
+  // what it would push is the push that landed (external-agent-head.js,
+  // external-agent-patch.js).
+  const steps = ctx.steps;
   let pushed;
   if (ctx.patch) {
-    pushed = await ctx.applyPatch({
+    pushed = await steps.once('push', async () => outcomeOf(await ctx.applyPatch({
       owner, repo, patch: ctx.patch, baseSha: liveHead, userId: session.user_id,
-      targetBranch, sessionId,
-    });
+      targetBranch, sessionId, commitDate: decided.at,
+    })));
     if (!pushed.ok) return pushed;
     verified = { ok: true, headSha: String(pushed.headSha || '').trim().toLowerCase() };
   } else {
-    pushed = firstLanding
+    pushed = await steps.once('push', async () => outcomeOf(firstLanding
       ? await head.mirrorForkBranch({
         gh, githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
         targetBranch,
@@ -1662,59 +1800,72 @@ async function advanceAppRepoBranch(ctx) {
       : await head.pushForkBranchToAppBranch({
         githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
         targetBranch, expectedRemoteSha: liveHead, sessionId,
-      });
+      })));
     if (!pushed.ok) return renameHeadFailure(pushed, branch);
   }
 
+  // A later revision may have superseded this request while it was stopped.
+  // Never replay its old metadata or checks over that newer head.
+  if (ctx.steps.resumed) {
+    const current = await gh.getBranchSha(owner, repo, targetBranch);
+    if (String(current).toLowerCase() !== verified.headSha) return movedError(current);
+  }
+
+  // Every write after the push is a step of its own, for the same reason.
   if (session.source !== 'imported') {
     // The push has moved this proposal's code. Keep the previous summary out
     // of every reader even if the later PR metadata or preview work fails.
-    await summaryFreshness.invalidate(pool, sessionId);
+    await steps.once('invalidated', async () => { await summaryFreshness.invalidate(pool, sessionId); return true; });
     session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
   }
 
   // BEFORE the tails, every one of which ends in a capture that reads the
   // routes off this session object (#1199).
-  const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
-  const shotsApplied = await applyShotsRevision({
+  const testingApplied = await steps.once('testing', () => applyTestingMetadata({ pool, session, testing: ctx.testing }));
+  const shotsApplied = await steps.once('shots', () => applyShotsRevision({
     pool, config, session, headSha: verified.headSha,
     visibleChanges: ctx.visibleChanges, headChanged: liveHead !== verified.headSha,
     pin: String(session.source) === 'imported' ? 'imported' : 'reviewed', from: liveHead,
-  });
+  }));
   // And the submitted title: stored for the promote-time lazy PR creation
   // when the row has no PR yet, or a rename of the existing PR when it does.
-  const titleApplied = await applyProposedTitle({
+  const titleApplied = await steps.once('title', () => applyProposedTitle({
     pool, gh, session, owner, repo, title: ctx.title, viewerLogin: ctx.expectedLogin,
-  });
+  }));
   // And the description the group reads (#1323), by the same ownership rule.
-  const descApplied = await applyProposedDescription({
+  const descApplied = await steps.once('description', () => applyProposedDescription({
     pool, gh, session, owner, repo, description: ctx.description, viewerLogin: ctx.expectedLogin,
-  });
+  }));
   // And the request linkage (#1310) — BEFORE the tails for the same reason
   // as the routes: a session tail's promote path builds the PR's `Closes #N`
   // block off this row.
-  const linkedApplied = await applyLinkedIssues({
+  const linkedApplied = await steps.once('linked', () => applyLinkedIssues({
     pool, gh, session, owner, repo, linkedIssues: ctx.linkedIssues,
-  });
+  }));
 
   // A shared session has just gained its first pushed diff (or another
   // revision). Give the group a stable draft PR link before its card is
   // published. A transient GitHub failure does not discard the pushed code;
-  // the next update or promotion can adopt/create the same PR.
+  // the next update or promotion can adopt/create the same PR (pr-metadata
+  // adopts the branch's open one, so a retry opens no second).
   if (kind === 'session' && session.source !== 'imported' && !session.pr_number) {
-    try {
-      await prMetadata.applyPrMetadata({
-        pool, session, repoOwner: owner, repoName: repo,
-        userMessage: '', ccSummary: '', username,
-        userId: session.user_id, allowModelGeneration: false,
-        sourceHeadSha: verified.headSha,
-        preferredTitle: session.proposed_pr_title || session.session_title || null,
-      });
-    } catch (err) {
-      log.warn('proposal-update', 'Draft PR creation deferred after branch push', {
-        sessionId, code: err.code || null, err: err.message,
-      });
-    }
+    await steps.once('draft-pr', async () => {
+      try {
+        await prMetadata.applyPrMetadata({
+          pool, session, repoOwner: owner, repoName: repo,
+          userMessage: '', ccSummary: '', username,
+          userId: session.user_id, allowModelGeneration: false,
+          sourceHeadSha: verified.headSha,
+          preferredTitle: session.proposed_pr_title || session.session_title || null,
+        });
+      } catch (err) {
+        if (durableSteps.isStopped(err)) throw err;
+        log.warn('proposal-update', 'Draft PR creation deferred after branch push', {
+          sessionId, code: err.code || null, err: err.message,
+        });
+      }
+      return true;
+    });
   }
 
   // Everything the three tails agree on. They differ only in what they do to
@@ -1750,6 +1901,22 @@ async function advanceAppRepoBranch(ctx) {
     ...(descApplied.rejected ? { descriptionRejected: descApplied.rejected } : {}),
     linkedIssuesUpdated: linkedApplied,
   };
+
+  return steps.once('landed', () => landOnAppRepoBranch(ctx, {
+    landed, kind, liveHead, headSha: verified.headSha, votesCleared, targetBranch, parts,
+  }));
+}
+
+// What the push is made to mean, by the kind of row it landed on: the tails
+// below. One step (the caller's 'landed'): a retry after it answers what it
+// did rather than syncing, rebuilding or reconciling again.
+async function landOnAppRepoBranch(ctx, {
+  landed, kind, liveHead, headSha, votesCleared, targetBranch, parts,
+}) {
+  const {
+    config, pool, session, sessionId, owner, repo, prImportSync, votes,
+  } = ctx;
+  const verified = { headSha };
 
   // ── Tail 1a: an IMPORTED proposal on a bot-owned branch (#1196) ─────
   //
@@ -2141,117 +2308,140 @@ async function advanceForkHead(ctx) {
     return fail('platform_unavailable', 'Homeroom cannot tell which pull request this proposal follows.', { retryable: false });
   }
 
-  let pr;
-  try {
-    pr = await gh.getPR(owner, repo, prNumber);
-  } catch (err) {
-    log.warn('proposal-update', 'could not read the proposal pull request', { sessionId, prNumber, err: err.message });
-    return fail('platform_unavailable', 'Homeroom could not read this proposal\'s pull request. Try again shortly.', { retryable: true });
-  }
-  if (!pr || pr.merged || (pr.state && pr.state !== 'open')) {
-    return fail(
-      'proposal_closed',
-      `Pull request #${prNumber} is no longer open on GitHub, so this proposal cannot take a new revision.`,
-      { retryable: false }
-    );
-  }
+  // What this request read to decide (the pull request's head, the commit it
+  // replaces, the votes at risk), kept as one step, as on the app repository's
+  // branch: a retry after the head moved would otherwise answer "unchanged".
+  // The pull request itself is read again by a retry that needs it.
+  const steps = ctx.steps;
+  let pr = null;
+  const decided = await steps.once('decided', async () => {
+    try {
+      pr = await gh.getPR(owner, repo, prNumber);
+    } catch (err) {
+      log.warn('proposal-update', 'could not read the proposal pull request', { sessionId, prNumber, err: err.message });
+      return { fail: fail('platform_unavailable', 'Homeroom could not read this proposal\'s pull request. Try again shortly.', { retryable: true }) };
+    }
+    if (!pr || pr.merged || (pr.state && pr.state !== 'open')) {
+      return { fail: fail(
+        'proposal_closed',
+        `Pull request #${prNumber} is no longer open on GitHub, so this proposal cannot take a new revision.`,
+        { retryable: false }
+      ) };
+    }
 
-  // The gate, in the shape this path allows: the head repository must be
-  // owned by the freshly-read linked login. Same comparison
-  // external-agent-tasks.js applies to a submitted PR, against the same
-  // value, and again never against anything the caller passed in.
-  const headOwner = pr.head && pr.head.repo && pr.head.repo.owner && pr.head.repo.owner.login;
-  if (!headOwner || !head.sameLogin(headOwner, expectedLogin)) {
-    return fail(
-      'not_your_fork',
-      `Pull request #${prNumber} comes from ${headOwner ? `${headOwner}'s` : 'another'} repository, not from your `
-      + 'fork. Homeroom only advances a proposal from its author\'s own account.',
-      { retryable: false }
-    );
-  }
-  const prBranch = pr.head && pr.head.ref ? String(pr.head.ref) : '';
-  if (prBranch !== branch) {
-    return fail(
-      'invalid_request',
-      `This proposal follows ${prBranch || 'the pull request\'s own branch'} in your fork, not ${branch}. Push your `
-      + 'new commits to that branch (an open pull request cannot be repointed at a different one), or open a new '
-      + 'proposal from this branch with prepare_work.',
-      { retryable: false }
-    );
-  }
+    // The gate, in the shape this path allows: the head repository must be
+    // owned by the freshly-read linked login. Same comparison
+    // external-agent-tasks.js applies to a submitted PR, against the same
+    // value, and again never against anything the caller passed in.
+    const headOwner = pr.head && pr.head.repo && pr.head.repo.owner && pr.head.repo.owner.login;
+    if (!headOwner || !head.sameLogin(headOwner, expectedLogin)) {
+      return { fail: fail(
+        'not_your_fork',
+        `Pull request #${prNumber} comes from ${headOwner ? `${headOwner}'s` : 'another'} repository, not from your `
+        + 'fork. Homeroom only advances a proposal from its author\'s own account.',
+        { retryable: false }
+      ) };
+    }
+    const prBranch = pr.head && pr.head.ref ? String(pr.head.ref) : '';
+    if (prBranch !== branch) {
+      return { fail: fail(
+        'invalid_request',
+        `This proposal follows ${prBranch || 'the pull request\'s own branch'} in your fork, not ${branch}. Push your `
+        + 'new commits to that branch (an open pull request cannot be repointed at a different one), or open a new '
+        + 'proposal from this branch with prepare_work.',
+        { retryable: false }
+      ) };
+    }
 
-  const verified = await head.verifyForkBranch({
-    githubPublic, forkOwner, forkRepo, branch, expectedLogin,
+    const verified = await head.verifyForkBranch({
+      githubPublic, forkOwner, forkRepo, branch, expectedLogin,
+    });
+    if (!verified.ok) return { fail: renameHeadFailure(verified, branch) };
+
+    const liveHead = pr.head && pr.head.sha ? String(pr.head.sha).toLowerCase() : null;
+    if (!liveHead || liveHead !== verified.headSha) {
+      // GitHub's own two views of the same branch disagree, which it does for a
+      // second or two after a push. Nothing is written on a disagreement.
+      return { fail: fail(
+        'platform_unavailable',
+        'GitHub is still catching up with your push: its pull request and its branch report different commits. '
+        + 'Try again in a few seconds.',
+        { retryable: true }
+      ) };
+    }
+
+    const oldHead = session.imported_pr_head_sha
+      ? String(session.imported_pr_head_sha).toLowerCase()
+      : null;
+    if (expectedHeadSha && oldHead && expectedHeadSha !== oldHead) {
+      return { fail: movedError(oldHead) };
+    }
+    if (oldHead && oldHead === liveHead) return { liveHead, oldHead, unchanged: true };
+
+    if (oldHead) {
+      const ancestry = await checkAncestry({ gh, owner, repo, base: oldHead, head: liveHead, branch });
+      if (ancestry) return { fail: ancestry };
+    }
+
+    return { liveHead, oldHead, unchanged: false, votesCleared: await countVotes(pool, sessionId) };
   });
-  if (!verified.ok) return renameHeadFailure(verified, branch);
-
-  const liveHead = pr.head && pr.head.sha ? String(pr.head.sha).toLowerCase() : null;
-  if (!liveHead || liveHead !== verified.headSha) {
-    // GitHub's own two views of the same branch disagree, which it does for a
-    // second or two after a push. Nothing is written on a disagreement.
-    return fail(
-      'platform_unavailable',
-      'GitHub is still catching up with your push: its pull request and its branch report different commits. '
-      + 'Try again in a few seconds.',
-      { retryable: true }
-    );
+  if (decided.fail) return decided.fail;
+  const { liveHead, oldHead } = decided;
+  if (steps.resumed) {
+    pr = await gh.getPR(owner, repo, prNumber);
+    if (!pr || pr.merged || (pr.state && pr.state !== 'open')) return fail('proposal_closed', 'This pull request is no longer open.', { retryable: false });
+    if (String(pr.head?.sha || '').toLowerCase() !== liveHead) return movedError(pr.head?.sha || null);
   }
-
-  const oldHead = session.imported_pr_head_sha
-    ? String(session.imported_pr_head_sha).toLowerCase()
-    : null;
-  if (expectedHeadSha && oldHead && expectedHeadSha !== oldHead) {
-    return movedError(oldHead);
-  }
-  if (oldHead && oldHead === liveHead) return resubmitUnchanged(ctx, liveHead, 'update_fork_head');
-
-  if (oldHead) {
-    const ancestry = await checkAncestry({ gh, owner, repo, base: oldHead, head: liveHead, branch });
-    if (ancestry) return ancestry;
-  }
-
-  const votesCleared = await countVotes(pool, sessionId);
+  if (decided.unchanged) return steps.once('landed', () => resubmitUnchanged(ctx, liveHead, 'update_fork_head'));
+  const votesCleared = decided.votesCleared;
 
   // Before applyHeadChange, whose own tail re-runs the SHA-pinned checks off
   // this session object (#1199).
-  const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
-  const shotsApplied = await applyShotsRevision({
+  const testingApplied = await steps.once('testing', () => applyTestingMetadata({ pool, session, testing: ctx.testing }));
+  const shotsApplied = await steps.once('shots', () => applyShotsRevision({
     pool, config, session, headSha: liveHead,
     visibleChanges: ctx.visibleChanges, headChanged: oldHead !== liveHead, pin: 'imported', from: oldHead,
-  });
+  }));
   // The request linkage (#1310). On an imported row this stores the DB half
   // only — the close watcher and the Dev board read it — and applyLinkedIssues
   // itself leaves the PR body alone: that body belongs to the pull request's
   // author on GitHub.
-  const linkedApplied = await applyLinkedIssues({
+  const linkedApplied = await steps.once('linked', () => applyLinkedIssues({
     pool, gh, session, owner, repo, linkedIssues: ctx.linkedIssues,
-  });
+  }));
   // And the submitted title (#1319). This path had no title call at all, so
   // an update that MOVED the head — the ordinary way an agent revises a
   // fork-tracked proposal — dropped the name silently even when the author
   // owned every part of it. applyProposedTitle decides whether the rename is
   // the caller's to make; the fork gate above has already proved the head
   // repository is theirs, so for this path it answers yes.
-  const titleApplied = await applyProposedTitle({
+  const titleApplied = await steps.once('title', () => applyProposedTitle({
     pool, gh, session, owner, repo, title: ctx.title, viewerLogin: ctx.expectedLogin,
-  });
+  }));
   // And the description the group reads (#1323), by the same ownership rule.
-  const descApplied = await applyProposedDescription({
+  const descApplied = await steps.once('description', () => applyProposedDescription({
     pool, gh, session, owner, repo, description: ctx.description, viewerLogin: ctx.expectedLogin,
-  });
+  }));
 
   // The existing imported-head machinery, unchanged: it advances the tracked
   // SHA, asks the same classifier what the move cost the approvals (an
   // authored or unknown move bumps the epoch and posts the "earlier votes
   // were cleared" note), re-classifies dapp.json admins and re-runs the
   // SHA-pinned checks and staging build.
-  let moved = null;
-  try {
-    moved = await prImportSync.applyHeadChange({
-      config, pool, session, pr, repo: { owner, repo }, newHead: liveHead, oldHead,
-    });
-  } catch (err) {
-    log.error('proposal-update', 'imported head change failed', { sessionId, err: err.message });
+  // A step like every other write: a retry after it answers what it moved.
+  const moved = await steps.once('moved', async () => {
+    try {
+      if (!pr) pr = await gh.getPR(owner, repo, Number(session.pr_number));
+      return await prImportSync.applyHeadChange({
+        config, pool, session, pr, repo: { owner, repo }, newHead: liveHead, oldHead,
+      });
+    } catch (err) {
+      if (durableSteps.isStopped(err)) throw err;
+      log.error('proposal-update', 'imported head change failed', { sessionId, err: err.message });
+      return { failed: true };
+    }
+  });
+  if (moved && moved.failed) {
     return fail(
       'platform_unavailable',
       'Homeroom could not record your new commit against this proposal. Your push is on GitHub either way, so try '
@@ -2399,6 +2589,10 @@ module.exports = {
   headRepoOwnerOf,
   repoNameFromUrl,
   isContinuableStatus,
+  ownershipGate,
+  updateAuthority,
+  linkAuthority,
+  checkUpdate,
   withProposalLock,
   updateProposalFromForkBranch,
   applyShotsRevision,
@@ -2411,7 +2605,12 @@ module.exports = {
   applyProposedSummary,
   // #3767: the Homeroom bot names its own proposal again after a revision.
   applyProposedTitle,
+  applyProposedDescription,
   syncSummaryIntoBody,
-  // The post-creation issue association seam shared by the UI + connector.
+  // The post-creation issue association seam shared by the UI + connector,
+  // and its two halves: the row, and the pull request's body.
   updateLinkedIssues,
+  storeLinkedIssues,
+  linkedIssuesSkipped,
+  projectLinkedIssues,
 };

@@ -1,7 +1,8 @@
 'use strict';
 
 // Uploads nothing came to own, reclaimed after a day (a week for a staging
-// preview's app files), and closed moderation records past their window.
+// preview's app files), closed moderation records past their window, and
+// platform operations' large inputs no run dropped, after two days.
 // One pass of the `upload-gc` clock (src/workflow/clock/services.ts); each step
 // is an age DELETE, so two passes at once delete nothing twice. A step that
 // fails fails the pass, and the clock tries again sooner: the others ran.
@@ -55,6 +56,15 @@ async function sweep(pool, config) {
   } catch (err) {
     failed ||= err;
     log.warn('upload-retention', 'The moderation retention purge failed', { err: err.message });
+  }
+  try {
+    // What a platform operation carried past its 64 KB input, left by a run
+    // that failed for good or a refusal nobody could drop, past the
+    // machine's own two days (services/platform-operations.js).
+    out.operationInputs = await require('./platform-operations').pruneInputs(pool);
+  } catch (err) {
+    failed ||= err;
+    log.warn('upload-retention', 'The platform operation input sweep failed', { err: err.message });
   }
   if (failed) throw failed;
   const removed = Object.values(out).reduce((n, v) => n + (Number(v) || 0), 0);

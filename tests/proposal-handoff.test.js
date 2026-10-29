@@ -3,6 +3,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { inlineOperations } = require('./lib/inline-operations');
+// The module inline-operations runs operations through (the harness stubs
+// the route's copy of it; see makeHarness).
+const realOperations = require('../src/services/platform-operations');
 
 function stubModule(id, exports) {
   require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
@@ -61,6 +65,10 @@ function makeHarness() {
     // (services/branch-operation.js, tested on its own): answered here as
     // the conductor would, through the stubbed host below.
     operations: require.resolve('../src/services/platform-operations'),
+    // A commit upload is the conductor's `proposal.commit`
+    // (services/proposal-commit-operation.js), run here in this process
+    // (tests/lib/inline-operations.js) through the stubs below.
+    commitOperation: require.resolve('../src/services/proposal-commit-operation'),
     subject: require.resolve('../src/routes/proposal-handoff'),
   };
   const original = new Map(Object.values(ids).map((id) => [id, require.cache[id]]));
@@ -85,8 +93,13 @@ function makeHarness() {
     accessAllowed: true,
     busy: false,
     remoteHead: null,
-    archiveOnAdvance: false,
-    supersedeUploadOnAdvance: false,
+    // A build's read of the branch: what changes while it reads it.
+    archiveOnRead: false,
+    supersedeUploadOnRead: false,
+    // Each collab check, numbered from 1 (the route's, then the
+    // conductor's): a hook may change what the next read sees.
+    accessCalls: 0,
+    onAccessCheck: null,
     uploadHead: '3'.repeat(40),
     reconciliations: [],
     promotedChecks: [],
@@ -281,20 +294,20 @@ function makeHarness() {
       state.github.push(['compare', ...args]);
       return { status: 'ahead', aheadBy: 1 };
     },
+    // Reads only: no route moves a branch (a build reads it; an upload's
+    // commit is the conductor's, through createProposalCommit below).
     getBranchSha: async (...args) => {
       state.github.push(['read', ...args]);
-      return state.remoteHead
+      const head = state.remoteHead
         || state.sessions[0]?.handoff_uploaded_sha
         || state.sessions[0]?.checks_commit_sha
         || state.sessions[0]?.handoff_head_sha
         || BASE;
-    },
-    advanceBranchToSha: async (...args) => {
-      state.github.push(['advance', ...args]);
-      if (state.archiveOnAdvance && state.sessions[0]) state.sessions[0].status = 'archived';
-      if (state.supersedeUploadOnAdvance && state.sessions[0]) {
+      if (state.archiveOnRead && state.sessions[0]) state.sessions[0].status = 'archived';
+      if (state.supersedeUploadOnRead && state.sessions[0]) {
         state.sessions[0].handoff_uploaded_sha = 'f'.repeat(40);
       }
+      return head;
     },
     createProposalCommit: async (...args) => {
       state.github.push(['upload', ...args]);
@@ -362,6 +375,8 @@ function makeHarness() {
     getAppForUser: async () => ({ ...app }),
     checkAppAccess: async (_pool, candidate) => {
       state.accessAppIds.push(candidate.id);
+      state.accessCalls += 1;
+      if (state.onAccessCheck) await state.onAccessCheck(state.accessCalls);
       return state.accessAllowed;
     },
   });
@@ -415,8 +430,22 @@ function makeHarness() {
       return { prNumber: 62, prUrl: args.session.pr_url };
     },
   });
+  // The real module, for the commit's operation: run in this process, as a
+  // conductor runs it, with the requester as the auth middleware reads them.
+  delete require.cache[ids.commitOperation];
+  const operations = realOperations;
+  state.operationUser = { id: 7, username: 'maker' };
+  const restoreOperations = inlineOperations({ pool: () => pool, user: () => state.operationUser });
+  state.operationInputs = restoreOperations.inputs;
+  state.refuseNextOperation = () => restoreOperations.refuseNext();
   stubModule(ids.operations, {
-    async request({ op, input }) {
+    ...operations,
+    async request(p, opts) {
+      if (p.op === 'proposal.commit') {
+        state.commitRequests = [...(state.commitRequests || []), p];
+        return operations.request(p, opts);
+      }
+      const { op, input } = p;
       assert.equal(op, 'branch.ensure');
       assert.equal(input.purpose, 'proposal-start');
       try {
@@ -438,12 +467,14 @@ function makeHarness() {
   return {
     subject, router, state,
     restore() {
+      restoreOperations();
       for (const [id, entry] of original) {
         if (entry) require.cache[id] = entry;
         else delete require.cache[id];
       }
       delete require.cache[ids.pipeline];
       delete require.cache[ids.subject];
+      delete require.cache[ids.commitOperation];
     },
   };
 }
@@ -863,7 +894,10 @@ test('an update may carry a summary, capped exactly as the import caps it', () =
   const routeSrc = require('node:fs').readFileSync(
     require('node:path').join(__dirname, '../src/routes/proposal-handoff.js'), 'utf8');
   const route = routeSrc.slice(routeSrc.indexOf("'/api/apps/:slug/proposals/:id/update-from-fork'"));
-  assert.match(route.slice(0, 3000), /summary: input\.summary/);
+  // …through the update's own fields (updateParams), which travel to the
+  // conductor that runs it (services/fork-operations.js `fork.update`).
+  assert.match(route.slice(0, 3000), /const params = updateParams\(input\);/);
+  assert.match(routeSrc, /function updateParams\(input\) \{[\s\S]*?summary: input\.summary,/);
 });
 
 // #4263. The connector's update work order hands a fix in as a patch, so the
@@ -891,7 +925,8 @@ test('an update may carry a patch instead of a branch, with the commit it was ma
   const routeSrc = require('node:fs').readFileSync(
     require('node:path').join(__dirname, '../src/routes/proposal-handoff.js'), 'utf8');
   const route = routeSrc.slice(routeSrc.indexOf("'/api/apps/:slug/proposals/:id/update-from-fork'"));
-  assert.match(route.slice(0, 3000), /patch: input\.patch/, 'handed to the service that applies it');
+  assert.match(route.slice(0, 3000), /payload: updatePayload\(params\)/, 'handed to the service that applies it');
+  assert.match(routeSrc, /function updateParams\(input\) \{[\s\S]*?patch: input\.patch \?\? null,/);
   // The share route creates a card from a fork branch only: no patch there.
   const share = routeSrc.slice(routeSrc.indexOf('function parseShareInProgressBody(body)'));
   assert.doesNotMatch(share.slice(0, share.indexOf('\n}\n')), /'patch'/);
@@ -904,7 +939,13 @@ test('a commit upload and a build are adopted under the session\'s proposal lock
   // promise chain it replaced did not.
   const routeSrc = require('node:fs').readFileSync(
     require('node:path').join(__dirname, '..', 'src/routes/proposal-handoff.js'), 'utf8');
-  assert.equal((routeSrc.match(/return await proposalUpdate\.withProposalLock\(pool, sessionId, async \(\) => \{/g) || []).length, 2);
+  // The build adopts under the lock; the upload checks under it, and its
+  // commit is written under it again, on the conductor.
+  assert.equal((routeSrc.match(/return await proposalUpdate\.withProposalLock\(pool, sessionId, async \(\) => \{/g) || []).length, 1);
+  assert.equal((routeSrc.match(/const checked = await proposalUpdate\.withProposalLock\(pool, sessionId, async \(\) => \{/g) || []).length, 1);
+  const opSrc = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'src/services/proposal-commit-operation.js'), 'utf8');
+  assert.match(opSrc, /return proposalUpdate\.withProposalLock\(pool, input\.sessionId, async \(\) => \{\n\s+\/\/ Read again under the lock/);
   const pipelineSrc = require('node:fs').readFileSync(
     require('node:path').join(__dirname, '..', 'src/services/handoff-pipeline.js'), 'utf8');
   assert.doesNotMatch(pipelineSrc, /serializeHandoffSubmission|SubmissionTails/);
@@ -1001,7 +1042,7 @@ test('an archive that wins during GitHub adoption prevents a detached build from
       user: { id: 7, username: 'maker' },
     }, mockRes());
     markUploaded(state);
-    state.archiveOnAdvance = true;
+    state.archiveOnRead = true;
 
     const build = routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post');
     const res = mockRes();
@@ -1029,7 +1070,7 @@ test('a newer upload that wins during build verification prevents stale adoption
       user: { id: 7, username: 'maker' },
     }, mockRes());
     markUploaded(state);
-    state.supersedeUploadOnAdvance = true;
+    state.supersedeUploadOnRead = true;
 
     const build = routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post');
     const res = mockRes();
@@ -1868,5 +1909,112 @@ test('paused local uploads and builds retain ownership, busy, lifecycle and idem
     assert.equal(state.revisions.length, 1, 'ready paused retry does not rebuild');
     assert.equal((await invoke(push, pushBody)).body.uploaded, false);
     assert.equal(session.check_state, 'passing');
+  } finally { restore(); }
+});
+
+// SEC-09: the upload's commit and its draft PR are the conductor's
+// `proposal.commit` (services/proposal-commit-operation.js), run here in
+// this process; the route keeps its checks and answers as it always did.
+test('a commit upload asks the conductor, with its files as the payload, and answers as before', async () => {
+  const { router, state, restore } = makeHarness();
+  try {
+    await routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post')({
+      params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true,
+      user: { id: 7, username: 'maker' },
+    }, mockRes());
+    const upload = routeHandler(router, '/api/sessions/:id/proposal-handoff/commits', 'post');
+    const res = mockRes();
+    await upload({ params: { id: '101' }, cliAuthenticated: true, user: { id: 7, username: 'maker' }, body: uploadBody() }, res);
+    assert.equal(res.statusCode, 201);
+    assert.deepEqual(res.body, {
+      ok: true, sessionId: 101, localCommitSha: HEAD, headSha: BOT_HEAD, treeSha: TREE,
+      branch: 'dev/cli-u7-feature-0001', prNumber: 62, prUrl: 'https://github.com/acme/demo/pull/62',
+      uploaded: true, webPath: '/#app/demo/dev/proposals/101',
+    });
+    const [asked] = state.commitRequests;
+    assert.equal(asked.op, 'proposal.commit');
+    assert.equal(asked.appId, 9);
+    assert.equal(asked.userId, 7);
+    assert.deepEqual(asked.input, {
+      surface: 'handoff', sessionId: 101, branch: 'dev/cli-u7-feature-0001', repoUrl: 'https://github.com/acme/demo',
+      expectedParent: BASE, localCommitSha: HEAD, parentSha: BASE, parentTreeSha: '5'.repeat(40), treeSha: TREE,
+      authoredAt: '2026-08-04T01:02:03+04:00', committedAt: '2026-08-04T01:03:04+04:00',
+    }, 'the request carries what the route checked, never a file');
+    assert.deepEqual(asked.payload, { message: 'Implement locally', files: uploadBody().files });
+    assert.equal(state.operationInputs.size, 0, 'the files are dropped once the commit is made');
+    // Each machine reads its own registry: the operation is known to both.
+    const { OPERATIONS, requested } = require('../src/workflow/platform-operation/machine.ts');
+    assert.ok(OPERATIONS.has('proposal.commit'));
+    assert.ok(realOperations.OPERATIONS.has('proposal.commit'));
+    const request = { op: 'proposal.commit', requestId: '00000000-0000-4000-8000-000000000001', appId: 9, userId: 7, input: asked.input };
+    assert.doesNotThrow(() => requested(request));
+    assert.throws(() => requested({ ...request, input: { ...asked.input, treeSha: 'tree' } }), /must name its change/);
+    assert.throws(() => requested({ ...request, input: { ...asked.input, surface: 'turn' } }), /must name its change/,
+      'a turn names its turn and lease');
+
+    // The route writes nothing to the code host itself.
+    const src = fs.readFileSync(require.resolve('../src/routes/proposal-handoff.js'), 'utf8');
+    for (const write of ['createProposalCommit(', 'applyPrMetadata(', 'advanceBranchToSha(']) {
+      assert.equal(src.includes(write), false, `the route no longer calls ${write}`);
+    }
+  } finally { restore(); }
+});
+
+test('the conductor reads the upload\'s authority and head again, and a refused upload writes nothing', async () => {
+  const cases = [
+    // Collab access, gone between the route's check and the conductor's.
+    ['access', (state) => { state.onAccessCheck = (n) => { if (n === 2) state.accessAllowed = false; }; },
+      404, 'Active handoff session not found'],
+    // Another writer moved the head the route expected, between the route's
+    // read and the conductor's read under the proposal lock.
+    ['head', (state) => { state.onAccessCheck = (n) => { if (n === 2) state.sessions[0].checks_commit_sha = '6'.repeat(40); }; },
+      409, 'session_state_changed'],
+    // No conductor took it: refused, never run later.
+    ['no conductor', (state) => state.refuseNextOperation(), 503, 'The platform could not take this right now. Try again in a moment.'],
+  ];
+  for (const [label, arrange, status, error] of cases) {
+    const { router, state, restore } = makeHarness();
+    try {
+      await routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post')({
+        params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true,
+        user: { id: 7, username: 'maker' },
+      }, mockRes());
+      state.accessCalls = 0;
+      arrange(state);
+      const res = mockRes();
+      await routeHandler(router, '/api/sessions/:id/proposal-handoff/commits', 'post')({
+        params: { id: '101' }, cliAuthenticated: true, user: { id: 7, username: 'maker' }, body: uploadBody(),
+      }, res);
+      assert.equal(res.statusCode, status, label);
+      assert.equal(res.body.error, error, label);
+      assert.equal(state.github.filter((call) => call[0] === 'upload').length, 0, `${label}: no commit`);
+      assert.equal(state.prMetadata.length, 0, `${label}: no PR`);
+      assert.equal(state.sessions[0].handoff_uploaded_sha, null, `${label}: nothing recorded`);
+      assert.deepEqual(state.cleared, [], `${label}: the verdict stands`);
+      assert.equal(state.operationInputs.size, 0, `${label}: no files kept`);
+    } finally { restore(); }
+  }
+});
+
+test('a build reads the uploaded branch and moves nothing: a branch elsewhere is refused', async () => {
+  const { router, state, restore } = makeHarness();
+  try {
+    await routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post')({
+      params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true,
+      user: { id: 7, username: 'maker' },
+    }, mockRes());
+    markUploaded(state);
+    state.remoteHead = '9'.repeat(40);
+    const res = mockRes();
+    await routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post')({
+      params: { id: '101' }, cliAuthenticated: true, user: { id: 7, username: 'maker' },
+      body: { schemaVersion: 1, headSha: HEAD, history: [], tests: [] },
+    }, res);
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.body.error, 'branch_moved');
+    assert.equal(state.sessions[0].handoff_head_sha, null, 'nothing adopted');
+    assert.deepEqual(state.revisions, []);
+    // The harness's host has no write a build could call; it read the branch.
+    assert.deepEqual(state.github.at(-1).slice(0, 4), ['read', 'acme', 'demo', 'dev/cli-u7-feature-0001']);
   } finally { restore(); }
 });

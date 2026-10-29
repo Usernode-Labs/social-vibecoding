@@ -684,14 +684,19 @@ test('a copy of an auto run, a CLI hand-off upload and a local agent\'s upload r
   }
   assert.match(clone.slice(refusedAt, refusedAt + 200), /return res\.status\(409\)\.json\(\{ error: codeMissing\.BRANCH_GONE, code: codeMissing\.CODE \}\);/);
 
+  // Both uploads are one conductor operation (`proposal.commit`), which
+  // answers each route's refusal; the routes answer what it says.
   for (const rel of ['src/routes/proposal-handoff.js', 'src/routes/cli-agent.js']) {
-    const src = read(rel);
-    const upload = src.slice(src.indexOf('github.createProposalCommit('));
-    const gone = upload.indexOf('if (err.status === 404 && await codeMissing.branchGone(pool, session) === true) {');
-    assert.ok(gone > 0, `${rel}: a 404 is read for what it is`);
-    assert.ok(gone < upload.indexOf('githubBudget.githubUnavailableBody(err)'), `${rel}: before the 503`);
-    assert.match(upload.slice(gone, gone + 220), /return res\.status\(409\)\.json\(\{ error: codeMissing\.CODE, message: codeMissing\.BRANCH_GONE \}\);/);
+    assert.match(read(rel), /op: 'proposal\.commit'/, `${rel}: the upload is the conductor's`);
   }
+  const op = read('src/services/proposal-commit-operation.js');
+  const upload = op.slice(op.indexOf('github.createProposalCommit('));
+  const refusal = op.slice(op.indexOf('async function hostRefusal('));
+  assert.ok(upload.includes('hostRefusal(pool, request, session, err)'), 'a host refusal is read for what it is');
+  const gone = refusal.indexOf('if (err.status === 404 && await codeMissing.branchGone(pool, session) === true) {');
+  assert.ok(gone > 0, 'a 404 is read for what it is');
+  assert.ok(gone < refusal.indexOf('githubBudget.githubUnavailableBody(err)'), 'before the 503');
+  assert.match(refusal.slice(gone, gone + 220), /return \{ status: 409, error: codeMissing\.CODE, message: codeMissing\.BRANCH_GONE \};/);
 });
 
 test('the way on: start_change carries a change\'s plan to a new change with its own branch, never the old one', () => {
