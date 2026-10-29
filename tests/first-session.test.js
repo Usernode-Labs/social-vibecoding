@@ -174,7 +174,7 @@ test('the Communities and AI steps point at the bar\'s own tabs, the same elemen
   assert.match(bar, /\{ key: 'messages' as const, label: 'core:tabs\.messages', href: '#messages', Icon: ChatIcon \}/);
   assert.match(bar, /\{ key: 'ai' as const, label: 'core:tabs\.ai', href: '#ai', Icon: SparklesIcon \}/);
   assert.deepEqual(['communities', 'messages', 'ai'].map((tab) => message(`core:tabs.${tab}`)),
-    ['Communities', 'Messages', 'AI']);
+    ['Communities', 'Messages', 'Homeroom bot']);
   assert.match(bar, /id=\{`platform-tab-\$\{key\}`\}/);
   assert.equal((bar.match(/id="platform-tabs"/g) || []).length, 1);
 });

@@ -70,7 +70,7 @@ test('the rail reads Home, Discover, Messages, AI, Communities, you; the phone\'
   const phone = css.slice(css.indexOf('/* TWO ORDERS, ONE MARKUP'));
   assert.match(phone, /#platform-tab-discover \{ display: none; \}\s*#platform-tab-home \{ order: -4; \}\s*#platform-tab-workshop \{ order: -3; \}\s*#platform-tab-ai \{ order: -2; \}\s*#platform-tab-messages \{ order: -1; \}/);
   assert.deepEqual(order.find((o) => o[0] === 'discover'), ['discover', 'Discover']);
-  assert.deepEqual(order.find((o) => o[0] === 'ai'), ['ai', 'AI'], 'the Homeroom bot\'s chat');
+  assert.deepEqual(order.find((o) => o[0] === 'ai'), ['ai', 'Homeroom bot'], 'the bot\'s own name (Evan, 29 Oct 2026)');
   assert.deepEqual(order.find((o) => o[0] === 'workshop'), ['workshop', 'Communities'],
     'the key stays `workshop`; the word is Communities');
   assert.match(TABS, /key: 'workshop' as const, label: 'core:tabs\.communities', href: '#communities', Icon: UserGroupIcon/);

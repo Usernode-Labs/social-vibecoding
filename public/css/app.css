@@ -22183,19 +22183,24 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
   line-height: 1.35;
 }
 
-/* "COMMUNITIES" IS THE BAR'S LONGEST WORD. Eleven letters at 11px is about
-   a phone's fifth of the screen — a hair over it in some fonts — so at 390px
-   it was clipped to "Communi…". This one label tightens its tracking and is
-   let out of its cell rather than cut: it is centred, and its seat is wider
-   than the others. Narrower than 375px it drops half a point as well. The
-   rail has room and is left alone. */
+/* "COMMUNITIES" AND "HOMEROOM BOT" ARE THE BAR'S LONG LABELS. Eleven
+   letters at 11px is about a phone's fifth of the screen — a hair over it in
+   some fonts — so at 390px Communities was clipped to "Communi…", and the
+   bot's name (Evan, 29 Oct 2026) is 79px against a fifth's 67-70. These two
+   labels tighten their tracking and are let out of their cells rather than
+   cut: they are centred, and their seats are wider than the others.
+   Narrower than 375px they drop half a point as well. Measured in the bar's
+   own font: the bot's name has 4px to spare at 360 and 375, 8 at 390, and
+   the lit pill around it clears "Messages" by 2px. The rail has room and is
+   left alone. */
 @media (max-width: 767.98px) {
-  /* Communities' seat, the second (#6019), is a little wider than the
-     other four: it holds the longest word, and the bar's other labels (AI
-     in the middle, your name last, which ellipsizes) have room to spare. */
-  #platform-tabs { grid-template-columns: 1fr 1.3fr 1fr 1fr 1fr; }
-  #platform-tab-workshop { overflow: visible; }
-  #platform-tab-workshop .platform-tab-label {
+  /* Communities' seat, the second (#6019), and Homeroom bot's, the third,
+     are a little wider than the other three: they hold the longest words,
+     and the bar's other labels (Home, Messages, and your name last, which
+     ellipsizes) have room to spare in theirs. */
+  #platform-tabs { grid-template-columns: 1fr 1.3fr 1.3fr 1fr 1fr; }
+  :is(#platform-tab-workshop, #platform-tab-ai) { overflow: visible; }
+  :is(#platform-tab-workshop, #platform-tab-ai) .platform-tab-label {
     letter-spacing: -.02em;
     overflow: visible;
     text-overflow: clip;
@@ -22203,8 +22208,8 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
 }
 @media (max-width: 374.98px) {
   /* The smallest phones: every label drops half a point and tightens, the
-     cells lose their 2px sides, and Communities' seat widens a little less. */
-  #platform-tabs { grid-template-columns: 1fr 1.2fr 1fr 1fr 1fr; }
+     cells lose their 2px sides, and the two wide seats widen a little less. */
+  #platform-tabs { grid-template-columns: 1fr 1.2fr 1.2fr 1fr 1fr; }
   .platform-tab { padding: 0; }
   .platform-tab .platform-tab-label { font-size: 10.5px; letter-spacing: -.02em; }
 }
@@ -22465,6 +22470,16 @@ html[data-side-strip="left"] #platform-header {
   html[data-side-strip] #platform-tab-workshop .platform-tab-label {
     font-size: 9.5px;
     letter-spacing: -.02em;
+  }
+  /* The bot's name does not fit a 64px column on one line at any size that
+     still reads, so here it takes two, "Homeroom" over "bot": the cell's
+     54px holds the glyph and both. */
+  html[data-side-strip] #platform-tab-ai .platform-tab-label {
+    font-size: 9.5px;
+    letter-spacing: -.02em;
+    line-height: 1.05;
+    white-space: normal;
+    text-align: center;
   }
 
   /* THE APPS, UNDER COMMUNITIES (Evan, 24 Oct 2026): the app on screen,

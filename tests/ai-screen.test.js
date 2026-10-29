@@ -171,3 +171,16 @@ test('Main\'s column is held inside the window, and the panel takes its place', 
   assert.match(css, /html\[data-side-panel\] #ai-screen \.ai-main-pane \{ display: none; \}/);
   assert.match(css, /html\[data-side-panel\] #ai-screen\[data-ai-docked\] \{ padding-right: var\(--side-panel-w\); \}/);
 });
+
+test('the tab says Homeroom bot: a wide seat on a phone, two lines in the Duo column', () => {
+  assert.equal(message('core:tabs.ai'), 'Homeroom bot');
+  const css = read('public/css/app.css');
+  // Measured in the bar's font: 79px of label in an 83-87px seat at 375-390, 76 in 80 at 360.
+  assert.match(css, /#platform-tabs \{ grid-template-columns: 1fr 1\.3fr 1\.3fr 1fr 1fr; \}/,
+    'Communities, second, and Homeroom bot, third, take the wide seats');
+  assert.match(css, /#platform-tabs \{ grid-template-columns: 1fr 1\.2fr 1\.2fr 1fr 1fr; \}/, 'a little less on the smallest phones');
+  assert.match(css, /:is\(#platform-tab-workshop, #platform-tab-ai\) \.platform-tab-label \{\s+letter-spacing: -\.02em;\s+overflow: visible;\s+text-overflow: clip;\s+\}/,
+    'tightened and let out of the cell rather than cut');
+  assert.match(css, /html\[data-side-strip\] #platform-tab-ai \.platform-tab-label \{\s+font-size: 9\.5px;\s+letter-spacing: -\.02em;\s+line-height: 1\.05;\s+white-space: normal;\s+text-align: center;\s+\}/,
+    'the Duo column: "Homeroom" over "bot"');
+});
