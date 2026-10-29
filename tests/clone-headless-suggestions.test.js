@@ -72,7 +72,7 @@ const SUGGESTIONS = [
 // `outcome` sets src.headless_outcome; `suggestionsRow` is what the
 // "most recent assistant message with suggestions" lookup returns.
 function makeHandler({ outcome, suggestionsRow, repoUrl = null, ccSessionId = null, specMd = '' }) {
-  return async (sql) => {
+  return async (sql, params) => {
     if (/FROM chat_sessions cs\s+JOIN apps a/.test(sql)) {
       return {
         rows: [{
@@ -104,7 +104,7 @@ function makeHandler({ outcome, suggestionsRow, repoUrl = null, ccSessionId = nu
       return { rows: [{ cnt: '0' }] };
     }
     if (/INSERT INTO chat_sessions/.test(sql)) {
-      return { rows: [{ id: 99, app_id: 11, app_slug: 'demo', user_id: 7, cc_session_id: null }] };
+      return { rows: [{ id: 99, app_id: 11, app_slug: 'demo', user_id: 7, cc_session_id: null, session_title: params[9] }] };
     }
     if (/INSERT INTO chat_session_messages[\s\S]*SELECT/.test(sql)) {
       return { rows: [] }; // convo copy
@@ -264,6 +264,7 @@ test('cloning pushed code opens a draft PR on the human branch; a spec clone sta
   const oldEnsure = github.ensureBranchAtSha;
   const oldFetchIssue = github.fetchPublicIssue;
   const oldApply = prMetadata.applyPrMetadata;
+  const oldFindOpen = github.findOpenPrByBranch;
   const branches = [];
   const prs = [];
   github.isEnabled = () => true;
@@ -285,6 +286,8 @@ test('cloning pushed code opens a draft PR on the human branch; a spec clone sta
     result: { ok: true, ...(await branchOperation.run({ pool: conductorPool }, p, VIEWER, require('../src/services/durable-steps').none())) },
   }));
   github.fetchPublicIssue = async () => ({ issue: { title: 'Make the header nicer' } });
+  // Opened once: one already open for the branch would be adopted instead.
+  github.findOpenPrByBranch = async () => null;
   prMetadata.applyPrMetadata = async (args) => {
     prs.push(args);
     args.session.pr_number = 78;
@@ -302,14 +305,52 @@ test('cloning pushed code opens a draft PR on the human branch; a spec clone sta
     }
     assert.equal(prs.length, 2);
     assert.ok(prs.every((call) => call.session.status === undefined || call.session.status === 'active'));
+    assert.ok(prs.every((call) => call.username === 'tester' && call.allowModelGeneration === false
+      && call.preferredTitle === '#42 · Make the header nicer'), 'the deterministic draft, under the new owner\'s and the run\'s names');
     assert.ok(branches.length > 0 && branches.every((item) => item.from === 'auto/issue-42'));
   } finally {
+    github.findOpenPrByBranch = oldFindOpen;
     github.isEnabled = oldEnabled;
     github.getBranchSha = oldGetBranchSha;
     github.ensureBranchAtSha = oldEnsure;
     operations._setTransportForTests(priorTransport);
     github.fetchPublicIssue = oldFetchIssue;
     prMetadata.applyPrMetadata = oldApply;
+  }
+});
+
+test('on the platform repository the clone\'s draft PR is recorded for a conductor, which opens it', async () => {
+  // GitHub's credential is a conductor's (services/pr-sync-operation.js):
+  // the route answers with the clone, and the PR follows (or the promote
+  // that comes next opens it).
+  const prMetadata = require('../src/services/pr-metadata');
+  const operations = require('../src/services/platform-operations');
+  const platformRepo = require('../src/services/repo-ref').platformRepoUrl();
+  const oldEnabled = github.isEnabled;
+  const oldApply = prMetadata.applyPrMetadata;
+  const appended = [];
+  let opened = 0;
+  github.isEnabled = () => true;
+  prMetadata.applyPrMetadata = async () => { opened += 1; };
+  const priorTransport = operations._setTransportForTests(async () => ({
+    status: 'done', requestId: 'r', result: { ok: true, branch: 'dev/x', inheritedCodeBranch: true },
+  }));
+  const priorAppend = operations._setAppendForTests(async (_db, p) => { appended.push(p); return 'r2'; });
+  try {
+    handler = makeHandler({ outcome: 'code', repoUrl: platformRepo });
+    const server = await startServer();
+    try {
+      const { res, body } = await clone(server);
+      assert.equal(res.status, 201);
+      assert.equal(body.session.pr_number, undefined, 'not opened by the web process');
+    } finally { server.close(); }
+    assert.equal(opened, 0);
+    assert.deepEqual(appended, [{ op: 'pr.sync', appId: 11, userId: 7, input: { sessionId: 99, write: 'create', from: 'clone' } }]);
+  } finally {
+    github.isEnabled = oldEnabled;
+    prMetadata.applyPrMetadata = oldApply;
+    operations._setTransportForTests(priorTransport);
+    operations._setAppendForTests(priorAppend);
   }
 });
 

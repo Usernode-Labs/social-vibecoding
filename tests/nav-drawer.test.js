@@ -220,6 +220,8 @@ test('it applies on a phone, on a community\'s own page, and through a switch', 
   assert.equal(drawerApplies({ ...page, subTab: 'topic' }), true, 'a card opened from the page (a deep link too)');
   assert.equal(drawerApplies({ ...page, subTab: 'topic', topicOrigin: '#app/notes/workshop' }), true);
   assert.equal(drawerApplies({ ...page, subTab: 'topic', topicOrigin: '#messages/12' }), false, 'a card opened from Messages');
+  assert.equal(drawerApplies({ ...page, subTab: 'topic', topicOrigin: '#homeroom-bot' }), false,
+    'a thread opened from the Homeroom bot tab\'s page, which goes back there');
   assert.equal(drawerApplies({ ...page, subTab: 'topic', viewMode: 'kanban' }), false, 'a card under the Kanban board');
   assert.equal(drawerApplies({ ...page, subTab: 'sessions' }), false, 'a change\'s own session');
   assert.equal(drawerApplies({ ...page, viewMode: 'kanban' }), false, 'the Kanban board');

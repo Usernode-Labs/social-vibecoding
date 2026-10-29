@@ -127,6 +127,7 @@ const CREDENTIAL_HELPER = '!f() { if [ "$1" = get ]; then printf "%s\\n" "userna
 // service account's. `authFetch`: the base commits are fetched with the same
 // credential too, for a destination that is not public.
 async function push(options) {
+  require('./code-host-write').requireCodeHostWrite('worker-git-push.push');
   const { remoteUrl, branchName, token } = options;
   const { isValidBranchName } = require('./branch-names');
   if (!isValidBranchName(branchName)) throw new Error('Invalid push branch');

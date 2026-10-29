@@ -6,6 +6,12 @@
 //                                     with the project's link preview in its
 //                                     head: for a public project only.
 //   GET /api/public/apps/:slug/cover.png   its 1200 x 630 cover.
+//   GET /embed/:slug                  the project inside a post on X, for a
+//                                     public project somebody with no
+//                                     account can use (services/
+//                                     project-embed.js): the page its link's
+//                                     player card names. A public path, as
+//                                     everybody there is a guest.
 //   GET /robots.txt                   the crawl rules: everything, and the
 //                                     sitemap; nothing on a staging copy.
 //   GET /sitemap.xml                  the front page and the page of every
@@ -24,6 +30,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { listPublicApps } = require('../services/public-app-directory');
 const preview = require('../services/project-preview');
+const embed = require('../services/project-embed');
 const { applyShellDocumentHeaders, shellAssetCacheControl } = require('../services/static-cache');
 const { publicProjectReadLimiter } = require('../middleware/rate-limits');
 const { requestOrigin } = require('./community-invites');
@@ -123,7 +130,10 @@ function projectPreviewRoutes(config) {
       const entry = await entryFor(slug);
       if (!entry) return next();
       const html = await fs.promises.readFile(INDEX_PATH, 'utf8');
-      const tags = preview.previewTags(entry.app, requestOrigin(req) || '', { cover: entry.cover });
+      const tags = preview.previewTags(entry.app, requestOrigin(req) || '', {
+        cover: entry.cover,
+        player: !!embed.embedFor(entry.app, { sign: false }),
+      });
       res.setHeader('Cache-Control', shellAssetCacheControl('index.html'));
       applyShellDocumentHeaders(res, INDEX_PATH);
       return res.type('html').send(preview.withPreview(html, tags, entry.app.name || slug));
@@ -155,6 +165,35 @@ function projectPreviewRoutes(config) {
       log.error('project-preview', 'Drawing a cover failed', { slug, err: err.message });
       return res.status(500).end();
     }
+  });
+
+  // The project inside a post on X. Anything it may not show gets a page
+  // saying so, framed like the real one, so the post shows a line and a way
+  // to Homeroom rather than the browser's own error.
+  router.get('/embed/:slug', publicProjectReadLimiter, async (req, res) => {
+    const origin = requestOrigin(req) || '';
+    const refuse = () => {
+      res.set(embed.embedHeaders(null));
+      return res.status(404).type('html').send(embed.refusedPage(origin));
+    };
+    const slug = String(req.params.slug || '');
+    if (!SLUG_RE.test(slug)) return refuse();
+    try {
+      const entry = await entryFor(slug);
+      const frame = entry ? embed.embedFor(entry.app) : null;
+      if (!frame) return refuse();
+      res.set(embed.embedHeaders(entry.app.url));
+      return res.type('html').send(embed.embedPage(entry.app, origin, frame.token));
+    } catch (err) {
+      log.error('project-preview', 'Serving a project embed failed', { slug, err: err.message });
+      return refuse();
+    }
+  });
+  // `/embed/` is a public path (middleware/auth.js), so nothing else under it
+  // reaches the shell's catch-all.
+  router.get(/^\/embed(?:\/.*)?$/, (req, res) => {
+    res.set(embed.embedHeaders(null));
+    return res.status(404).type('html').send(embed.refusedPage(requestOrigin(req) || ''));
   });
 
   // ── For search engines (Evan, 21 Oct 2026: search traffic is wanted) ──

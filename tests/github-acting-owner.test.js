@@ -151,11 +151,10 @@ test('creating a repository on GitHub is refused: new ones are made on the git h
   assert.equal(calls.length, 0);
 });
 
-test('importing from GitHub, which made the bot a collaborator, is paused', async () => {
-  assert.deepEqual(await github.verifyBotAccess('someone', 'their-repo'), {
-    ok: false, status: 503, code: 'github_paused',
-    message: 'Importing a repository from GitHub is paused while Homeroom moves off GitHub.',
-  });
+test('importing from GitHub, which made the bot a collaborator, has no client left to accept invitations with', () => {
+  // The route answers the pause itself (tests/github-import-paused.test.js).
+  assert.equal(github.verifyBotAccess, undefined);
+  assert.equal(github.acceptInvitationFor, undefined);
 });
 
 // ─── 3. The setting, and an App not installed there ─────────────────────

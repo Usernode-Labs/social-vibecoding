@@ -194,7 +194,7 @@ test('the route holds a connector token to those fields before it reads anything
   const guard = handler.indexOf('createOptions.connectorCreateRefusal(req.body)');
   assert.ok(guard > 0, 'a connector token is held to its fields');
   assert.match(handler, /if \(req\.connectorClientId\) \{\s*const refused = createOptions\.connectorCreateRefusal\(req\.body\);\s*if \(refused\) return res\.status\(400\)/);
-  for (const later of ['parseCreateOptions(', 'github.parseGithubUrl(repoUrl)', 'INSERT INTO apps', 'sendInvite(']) {
+  for (const later of ['parseCreateOptions(', 'importRefusal(repoUrl)', 'INSERT INTO apps', 'sendInvite(']) {
     const at = handler.indexOf(later);
     assert.ok(at > guard, `the refusal comes before ${later}`);
   }

@@ -219,7 +219,9 @@ export const JOBS: readonly Job[] = Object.freeze([
     }),
   },
   {
-    // Uploads nothing took, staging app files, closed moderation records.
+    // Uploads nothing took, staging app files, closed moderation records,
+    // and platform operations' large inputs past their two days
+    // (services/platform-operations.js pruneInputs).
     name: 'upload-gc', everyMs: HOUR,
     run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/upload-retention').sweep(pool, config),
   },

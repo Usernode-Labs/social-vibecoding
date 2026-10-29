@@ -154,3 +154,105 @@ test('applying a submitted patch: no git child holds a secret, and only the fetc
     assert.ok(!home.startsWith(r.dir), `git ${r.sub}'s HOME is not inside the tree`);
   }
 });
+
+test('a .gitconfig a patch adds is a file in the tree, never git\'s own configuration', { timeout: 60000 }, async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-git-config-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const host = await startFakeGitHost(t);
+  const repo = seedRepo(host, root, 'harbour');
+  const marker = path.join(root, 'hook-ran');
+  // A hook the patch ships, and the configuration that would run it with
+  // whatever environment git has, from the two places a HOME inside the
+  // work tree made git read its global configuration.
+  realGit(repo.work, 'checkout', '-q', '-b', 'work');
+  const config = '[core]\n\thooksPath = h\n';
+  fs.writeFileSync(path.join(repo.work, '.gitconfig'), config);
+  fs.mkdirSync(path.join(repo.work, '.config', 'git'), { recursive: true });
+  fs.writeFileSync(path.join(repo.work, '.config', 'git', 'config'), config);
+  fs.mkdirSync(path.join(repo.work, 'h'));
+  fs.writeFileSync(path.join(repo.work, 'h', 'pre-commit'), `#!/bin/sh\nenv > '${marker}'\n`, { mode: 0o755 });
+  realGit(repo.work, 'add', '-A');
+  realGit(repo.work, 'commit', '-qm', 'Ship a hook');
+  // A plain diff, so the patch path makes the commit itself.
+  const patch = realGit(repo.work, 'diff', '--binary', repo.base, 'HEAD');
+
+  plantSecrets(t);
+  const patchSvc = require('../src/services/external-agent-patch');
+  const out = await patchSvc.applyPatch({ owner: ORG, repo: 'harbour', patch, baseSha: repo.base, userId: 3, taskId: 8 });
+  assert.equal(out.ok, true, `${out.code}: ${out.message} ${out.detail || ''}`);
+  assert.equal(fs.existsSync(marker), false, `the patch's hook ran: ${fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').slice(0, 200) : ''}`);
+  // Committed as what it is: the person's own file.
+  assert.equal(realGit(repo.bare, 'show', `${out.headSha}:.gitconfig`), config);
+});
+
+test('fork transports publish only the verified source commit', { timeout: 60000 }, async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fork-source-pin-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const host = await startFakeGitHost(t);
+  const app = seedRepo(host, root, 'pinned-source');
+  // The mirror's depth-one fetch requires the host to accept a shallow head.
+  realGit(app.bare, 'config', 'receive.shallowUpdate', 'true');
+  const target = 'dev/pinned-source';
+  realGit(app.work, 'push', '-q', app.bare, `${app.base}:refs/heads/${target}`);
+  const fork = path.join(root, 'fork-work');
+  const bare = path.join(root, 'fork.git');
+  realGit(root, 'clone', '-q', app.work, fork);
+  realGit(fork, 'checkout', '-q', '-b', 'my-fix');
+  fs.writeFileSync(path.join(fork, 'notes.txt'), 'first\n');
+  realGit(fork, 'add', '-A'); realGit(fork, 'commit', '-qm', 'First revision');
+  const first = realGit(fork, 'rev-parse', 'HEAD').trim();
+  fs.writeFileSync(path.join(fork, 'notes.txt'), 'second\n');
+  realGit(fork, 'add', '-A'); realGit(fork, 'commit', '-qm', 'Second revision');
+  const second = realGit(fork, 'rev-parse', 'HEAD').trim();
+  realGit(root, 'clone', '--bare', '-q', fork, bare);
+
+  // The public API can still report the earlier head when git fetch sees
+  // the later one. Only the user's fork URL is redirected to this fixture.
+  const bin = path.join(root, 'bin'); const trace = path.join(root, 'git.jsonl');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'git'), `#!/usr/bin/env node
+const fs = require('node:fs');
+const { spawnSync } = require('node:child_process');
+const args = process.argv.slice(2).map(a => a === 'https://github.com/forkuser/source.git' ? ${JSON.stringify('file://' + bare)} : a);
+fs.appendFileSync(${JSON.stringify(trace)}, JSON.stringify(args) + '\\n');
+const child = spawnSync(${JSON.stringify(REAL_GIT)}, args, { stdio: 'inherit', env: process.env });
+process.exit(child.status === null ? 1 : child.status);
+`, { mode: 0o755 });
+  const priorPath = process.env.PATH; process.env.PATH = `${bin}:${priorPath}`;
+  t.after(() => { process.env.PATH = priorPath; });
+  const head = require('../src/services/external-agent-head');
+  const reads = (sha) => async (_method, url) => url.includes('/branches/')
+    ? { ok: true, status: 200, body: { commit: { sha } } }
+    : { ok: true, status: 200, body: { owner: { login: 'forkuser' } } };
+  const common = { owner: ORG, repo: 'pinned-source', forkOwner: 'forkuser', forkRepo: 'source',
+    branch: 'my-fix', expectedLogin: 'forkuser', sessionId: 1 };
+  for (const mode of ['mirror', 'update']) {
+    const branch = mode === 'mirror' ? 'usernode/from-forkuser-t1-abcd' : target;
+    const run = (sha, expected = sha) => mode === 'mirror'
+      ? head.mirrorForkBranch({ ...common, gh: {}, githubPublic: reads(sha), targetBranch: branch, expectedSourceSha: expected })
+      : head.pushForkBranchToAppBranch({ ...common, githubPublic: reads(sha), targetBranch: branch,
+        expectedRemoteSha: app.base, expectedSourceSha: expected });
+    const countPushes = () => fs.existsSync(trace)
+      ? fs.readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(args => args.includes('push')).length : 0;
+    const before = countPushes();
+    assert.equal((await run(second, first)).code, 'branch_moved', 'a changed API head is refused');
+    assert.equal((await run(first)).code, 'branch_moved', 'a different fetched commit is refused');
+    assert.equal(countPushes(), before, 'no host push precedes source validation');
+    assert.equal(host.branchSha('pinned-source', branch), mode === 'mirror' ? null : app.base);
+    const made = await run(second);
+    assert.equal(made.ok, true, JSON.stringify(made));
+    assert.equal(made.headSha, second);
+    assert.equal(host.branchSha('pinned-source', branch), second);
+    assert.equal(countPushes(), before + 1);
+  }
+  const studio = require('../src/services/bench/studio');
+  const bench = { ...common, head, baseSha: app.base, targetBranch: 'bench/r1-t5' };
+  const refused = await studio.copyUserBranch({ ...bench, expectedSourceSha: first });
+  assert.equal(refused.code, 'branch_moved', 'a bench copy also validates the fetched commit');
+  assert.equal(host.branchSha('pinned-source', bench.targetBranch), null);
+  const copied = await studio.copyUserBranch({ ...bench, expectedSourceSha: second });
+  assert.equal(copied.ok, true, JSON.stringify(copied));
+  assert.equal(copied.headSha, second);
+  assert.equal(copied.commits, 2);
+  assert.equal(host.branchSha('pinned-source', bench.targetBranch), second);
+});

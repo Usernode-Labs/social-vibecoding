@@ -108,7 +108,7 @@ test('Home is the one tab addressed as a path, so a modified click opens a tab',
   const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
   assert.match(html, /id="platform-tab-home"[^>]*href="\/"/);
   for (const [key, href] of [
-    ['discover', '#apps'], ['messages', '#messages'], ['ai', '#ai'],
+    ['discover', '#apps'], ['messages', '#messages'], ['ai', '#homeroom-bot'],
     ['workshop', '#communities'], ['me', '#profile'],
   ]) {
     assert.match(html, new RegExp(`id="platform-tab-${key}"[^>]*href="${href.replace('#', '\\#')}"`));
@@ -499,7 +499,7 @@ test('every screen change clears the peek, and nothing else does', () => {
   assert.match(mount, /tabNamed = !!tabOverride;/);
   assert.match(mount, /window\.matchMedia\?\.\(SIDEBAR_ROWS_QUERY\)\.addEventListener\?\.\('change', \(\) => \{\n      const \{ screen, tab \} = navStore\.get\(\);\n      if \(!screen \|\| tabNamed\) return;/);
   assert.match(read('public/js/app.js'),
-    /screen === 'app-view' && !inApp\s*\n\s*\? \(App\._isMessagesThread\(\) \? 'messages' : 'workshop'\)/,
+    /screen === 'app-view' && !inApp\s*\n\s*\? \(App\._isMessagesThread\(\) \? 'messages' : App\._isBotTopic\(\) \? 'ai' : 'workshop'\)/,
     'and app.js is the one place that decides which of the two it is');
   // ON A CHANGE, not on every call. Re-asserting the screen you are already
   // on is not navigation, and clearing there yanks the rail out from under
@@ -761,7 +761,7 @@ test('an app\'s channel belongs to its community, and a change to Messages', () 
   // hub now, so it lights Communities and its chevron goes up to the hub. A
   // dev session is still an agent conversation (#2770), a thread of Messages.
   assert.match(read('public/js/app.js'),
-    /screen === 'app-view' && !inApp\s*\n\s*\? \(App\._isMessagesThread\(\) \? 'messages' : 'workshop'\)/);
+    /screen === 'app-view' && !inApp\s*\n\s*\? \(App\._isMessagesThread\(\) \? 'messages' : App\._isBotTopic\(\) \? 'ai' : 'workshop'\)/);
   const appJs = read('public/js/app.js');
   const pred = appJs.slice(appJs.indexOf('  _isMessagesThread() {'));
   assert.match(pred.slice(0, pred.indexOf('\n  },')),

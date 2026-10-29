@@ -132,6 +132,13 @@ const PUBLIC_PATHS = [
   // names again; both list only what the public directory already shows.
   '/robots.txt',
   '/sitemap.xml',
+  // A public project inside a post on X (routes/project-preview.js,
+  // services/project-embed.js). The page is a frame on x.com, where nobody
+  // carries a Homeroom session, so it is the guest view for everybody; the
+  // route answers every path under it, and shows only what the public
+  // directory already shows anybody. (No apostrophes in this list: tests
+  // read its entries as the quoted strings in it.)
+  '/embed/',
   // Challenge artwork (public/illustrations/challenges/). The challenge list
   // it decorates is public (/api/v4/), so the pictures must be too: an image
   // request answered with a redirect body draws a broken picture instead of

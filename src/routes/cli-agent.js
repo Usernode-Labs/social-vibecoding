@@ -30,7 +30,7 @@ const { AGENT_SCOPE } = require('../services/cli-auth-constants');
 const localAgent = require('../services/local-agent');
 const classicSessions = require('../services/classic-sessions');
 const github = require('../services/github');
-const githubBudget = require('../services/github-budget');
+const platformOperations = require('../services/platform-operations');
 const { drainGuard } = require('../services/lifecycle');
 const { openEnded } = require('../middleware/inflight-requests');
 const log = require('../services/logger');
@@ -352,7 +352,9 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
       }
       const { leaseId, ...commitBody } = req.body;
       // eslint-disable-next-line global-require
-      const { parseCommitUploadBody, ValidationError } = require('./proposal-handoff');
+      const {
+        parseCommitUploadBody, ValidationError, commitInput, answerRefusal, COMMIT_WAIT_MS,
+      } = require('./proposal-handoff');
       let input;
       try {
         input = parseCommitUploadBody(commitBody);
@@ -378,7 +380,7 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
       }
 
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.branch_name, a.repo_url
+        `SELECT cs.id, cs.app_id, cs.branch_name, a.repo_url
            FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
           WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status = 'active'`,
         [turn.session_id, req.user.id]
@@ -391,50 +393,29 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
       }
 
       // Multiple commits in one turn upload oldest-first; each expects the
-      // previous bot-owned SHA as its remote parent.
-      const expectedParent = turn.head_sha || turn.base_sha;
-      let uploaded;
+      // previous bot-owned SHA as its remote parent. The commit and the
+      // turn's new head are written on a conductor (`proposal.commit`,
+      // services/proposal-commit-operation.js), which reads the lease, the
+      // turn and the change again first.
+      let out;
       try {
-        uploaded = await github.createProposalCommit(repo.owner, repo.repo, {
-          branchName: session.branch_name,
-          expectedRemoteParentSha: expectedParent,
-          localParentSha: input.parentSha,
-          localParentTreeSha: input.parentTreeSha,
-          expectedTreeSha: input.treeSha,
-          localCommitSha: input.localCommitSha,
-          message: input.message,
-          authoredAt: input.authoredAt,
-          committedAt: input.committedAt,
-          files: input.files,
-        });
+        out = await platformOperations.request({
+          op: 'proposal.commit', appId: session.app_id, userId: req.user.id,
+          input: commitInput('turn', session, turn.head_sha || turn.base_sha, input, {
+            turnId: String(turn.id), leaseId: String(lease.id),
+          }),
+          payload: { message: input.message, files: input.files },
+        }, { waitMs: COMMIT_WAIT_MS });
       } catch (err) {
-        if (['branch_moved', 'tree_mismatch', 'parent_tree_mismatch'].includes(err.code)) {
-          return res.status(409).json({ error: err.code });
-        }
-        // The change's branch did not come across when Homeroom moved off
-        // GitHub (services/code-missing.js, read live): not a GitHub outage.
-        const codeMissing = require('../services/code-missing');
-        if (err.status === 404 && await codeMissing.branchGone(pool, session) === true) {
-          return res.status(409).json({ error: codeMissing.CODE, message: codeMissing.BRANCH_GONE });
-        }
-        const detail = github.describeGithubError(err);
-        // Never log GitHub's response body here: a provider validation error
-        // can echo fields from the uploaded source.
-        log.warn('cli-agent', 'Local agent commit upload failed', {
-          sessionId: Number(session.id), status: detail.status, message: detail.message,
-        });
-        return res.status(503).json(githubBudget.githubUnavailableBody(err));
+        log.error('cli-agent', 'Local agent commit upload failed', { sessionId: Number(session.id), err: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
       }
-
-      const advanced = await localAgent.recordTurnHead(pool, {
-        turnId: turn.id, leaseId: lease.id, headSha: uploaded.sha,
-      });
-      if (!advanced) return res.status(409).json({ error: 'turn_not_running' });
-      return res.status(uploaded.created ? 201 : 200).json({
-        headSha: uploaded.sha,
-        treeSha: uploaded.treeSha,
-        branch: session.branch_name,
-        uploaded: uploaded.created,
+      if (!out.ok) return answerRefusal(res, out);
+      return res.status(out.uploaded ? 201 : 200).json({
+        headSha: out.headSha,
+        treeSha: out.treeSha,
+        branch: out.branch,
+        uploaded: out.uploaded,
       });
     }
   );

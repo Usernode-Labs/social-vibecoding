@@ -567,7 +567,7 @@ test('Homeroom declares its boot parameters and its routing boundary, and no che
   // when the page loads (frontend/src/lib/side-strip.ts), like `?shot=`.
   assert.deepEqual(dapp.bootParams, ['shot', 'details', 'side-strip'],
     '`?flow=` is not one: #5280 made it work on a conversation already open');
-  assert.deepEqual(dapp.routingBoundaries.map((b) => b.route), ['#app/*', '#app/*/app', '#ai']);
+  assert.deepEqual(dapp.routingBoundaries.map((b) => b.route), ['#app/*', '#app/*/app', '#homeroom-bot']);
   const marked = dapp.tests.filter((t) => Object.prototype.hasOwnProperty.call(t, 'coldLoad'));
   assert.deepEqual(marked.map((t) => t.name), [],
     'per-check "coldLoad" is retired and ignored: declare the app\'s "bootParams" or "routingBoundaries" (src/prompts/app-conventions.md)');
@@ -641,11 +641,11 @@ test('a running app never hands its page to the next check: the side panel takes
   assert.ok(appTab('https://s/#app/future-running?path=/x'));
   assert.ok(!appTab(`https://s/#app/${SELF}`), 'Homeroom\'s own App tab');
   assert.ok(appTab(`https://s/#app/${SELF}-fork`), 'the own slug, by exact match only');
-  // The AI tab's page takes the same addresses on a desktop (`#ai`, not
-  // `#ai/main`, which is Messages).
-  const aiPage = (url) => R.routeFromUrl(url) === 'ai';
-  assert.ok(aiPage('https://s/?demo=1#ai'));
-  assert.ok(!aiPage('https://s/#ai/main'));
+  // The Homeroom bot tab's page takes the same addresses on a desktop
+  // (`#homeroom-bot`, not `#homeroom-bot/main`, which is Messages).
+  const aiPage = (url) => R.routeFromUrl(url) === 'homeroom-bot';
+  assert.ok(aiPage('https://s/?demo=1#homeroom-bot'));
+  assert.ok(!aiPage('https://s/#homeroom-bot/main'));
   for (const tests of [homeroomTests(), homeroomTests([future])]) {
     // In a fragment it ends its group. A clean `/app/<slug>` path is a
     // document of its own, and the loop below still holds it to the rule.

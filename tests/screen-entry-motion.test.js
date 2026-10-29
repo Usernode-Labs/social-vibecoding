@@ -53,7 +53,7 @@ test('all twelve screen transitions go through App._entryTransition', () => {
   // the gate to type — and the Workshop screen (#workshop) takes one, because
   // it is a root that replaces the screen you were on. "Your proposals"
   // (#5310, #profile/proposals) made twelve, and Global Chat's removal gave
-  // its one back: eleven. The AI tab's own page (#6019 follow-up, #ai) is a
+  // its one back: eleven. The AI tab's own page (#6019 follow-up, #homeroom-bot) is a
   // root that replaces the screen you were on: twelve.
   const calls = appJs.match(/PlatformUI\.transition\(/g) || [];
   assert.equal(calls.length, 12,

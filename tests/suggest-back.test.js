@@ -43,6 +43,9 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const suggestBack = require('../src/services/suggest-back');
+const suggestBackOperation = require('../src/services/suggest-back-operation');
+const { inlineOperations } = require('./lib/inline-operations');
+const kernelSteps = require('../src/workflow/kernel/steps.ts');
 const head = require('../src/services/external-agent-head');
 const github = require('../src/services/github');
 const communities = require('../src/services/communities');
@@ -306,6 +309,7 @@ function fixture({
         calls.compared.push({ owner, repo, base, head: headRef });
         return { commits, totalCommits: commits.length, files: ['app.js', 'README.md'] };
       },
+      findOpenPrByBranch: async () => null,
       createPR: async (owner, repo, args) => {
         calls.createPR.push({ owner, repo, ...args });
         return { number: 42, html_url: 'https://github.com/usernode-bot/book-club/pull/42', title: args.title, body: args.body, base: { sha: SOURCE_SHA } };
@@ -465,6 +469,99 @@ test('a race past the duplicate read meets the unique index: the stray PR is clo
   assert.equal(fx.calls.cleanups, 1);
 });
 
+// A work item's steps over an in-memory checkpoint, as a conductor keeps
+// them: `next()` is the same send tried again.
+function checkpointed() {
+  let saved = null;
+  let attempt = 0;
+  return {
+    next: () => kernelSteps.steps({ resumeFrom: saved, attempt: ++attempt, triesLeft: 3, checkpoint: async (v) => { saved = v; } }),
+    saved: () => saved,
+    forget: (...keys) => { saved = { ...saved }; for (const k of keys) delete saved[k]; },
+  };
+}
+
+test('a send retried on a conductor pushes nothing again, opens no second PR, and finds the proposal it wrote', async () => {
+  const fx = fixture();
+  const made = [];
+  let failInsert = 1;
+  const pool = {
+    async query(sql, params) {
+      const text = String(sql);
+      if (/SELECT id FROM chat_sessions WHERE app_id = \$1 AND pr_number = \$2 AND suggested_from_app_id = \$3/.test(text)) {
+        return { rows: made.filter((r) => r.appId === params[0] && r.prNumber === params[1]).map((r) => ({ id: r.id })) };
+      }
+      if (/suggested_from_app_id = \$1/.test(text) && /SELECT/.test(text)) {
+        return { rows: made.map((r) => ({ id: r.id, pr_number: r.prNumber, slug: 'book-club' })) };
+      }
+      if (/INSERT INTO chat_sessions/.test(text)) {
+        if (failInsert > 0) { failInsert -= 1; throw new Error('connection reset'); }
+        made.push({ id: 901, appId: params[0], prNumber: params[3] });
+        return { rows: [{ id: 901 }] };
+      }
+      return fx.pool.query(sql, params);
+    },
+  };
+  const send = (steps) => suggestBack.suggest({ pool, config: {}, user: OWNER, fork: COPY, deps: fx.deps, steps });
+
+  // The proposal's row fails once, after the push and the pull request:
+  // nothing is given back while tries are left, and the retry writes only
+  // the row.
+  const item = checkpointed();
+  await assert.rejects(send(item.next()), /connection reset/);
+  assert.deepEqual([fx.calls.applyPatch.length, fx.calls.createPR.length, fx.calls.closed.length, fx.calls.cleanups], [1, 1, 0, 0]);
+  const out = await send(item.next());
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.equal(out.sessionId, 901);
+  assert.deepEqual([fx.calls.applyPatch.length, fx.calls.createPR.length, fx.calls.closed.length, fx.calls.cleanups], [1, 1, 0, 0],
+    'one push, one pull request, nothing closed');
+  assert.equal(made.length, 1);
+
+  // Its row written and its step lost (the process went between the two):
+  // the open suggestion is its own, and the retry finds the row it wrote.
+  item.forget('session', 'topic', 'checks');
+  const again = await send(item.next());
+  assert.equal(again.ok, true, JSON.stringify(again));
+  assert.equal(again.sessionId, 901);
+  assert.equal(made.length, 1, 'no second row');
+  assert.equal(fx.calls.createPR.length, 1);
+
+  // Anybody else's open suggestion is still one.
+  const other = await send(checkpointed().next());
+  assert.equal(other.status, 409);
+  assert.equal(other.body.code, 'already_open');
+});
+
+test('the conductor reads the send\'s authority again: an original its owner can no longer build, a version they cannot see', async () => {
+  const operations = require('../src/services/platform-operations');
+  const fx = fixture({ collab: false });
+  const prior = suggestBackOperation._setDepsForTests(fx.deps);
+  try {
+    const pool = {
+      async query(sql, params) {
+        const text = String(sql);
+        if (/FROM users WHERE id = \$1/.test(text) && /anonymised_at/.test(text)) {
+          return { rows: [{ id: params[0], username: 'remixer', is_admin: false, admin_readonly: false, has_platform_access: true, private_member_since: null, anonymised_at: null }] };
+        }
+        if (/SELECT \* FROM apps WHERE id = \$1/.test(text) && params[0] === COPY.id) return { rows: [COPY] };
+        if (/FROM app_collaborators WHERE app_id = \$1 AND user_id = \$2/.test(text)) {
+          return { rows: params[0] === COPY.id && params[1] === OWNER.id ? [{ '?column?': 1 }] : [] };
+        }
+        return fx.pool.query(sql, params);
+      },
+    };
+    const request = { op: 'suggestBack.open', requestId: 'r', appId: COPY.id, userId: OWNER.id, input: { picked: false } };
+    const out = await operations.run({ pool, config: {} }, request);
+    assert.equal(out.status, 403);
+    assert.equal(out.body.code, 'collab_required');
+    assert.equal(fx.calls.applyPatch.length, 0, 'nothing is built or pushed');
+    const stranger = await operations.run({ pool, config: {} }, { ...request, userId: 77 });
+    assert.equal(stranger.status, 404, 'a version they cannot see');
+  } finally {
+    suggestBackOperation._setDepsForTests(prior);
+  }
+});
+
 test('the schema keeps one open suggestion per copy', () => {
   const schema = read('src/db/schema.sql');
   assert.match(schema, /ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS suggested_from_app_id INTEGER\s+REFERENCES apps\(id\) ON DELETE SET NULL;/);
@@ -610,6 +707,8 @@ test('the route: same-origin only, membership-gated, 201 with the proposal', asy
       if (/SELECT \* FROM apps WHERE slug = \$1/.test(String(sql))) {
         return { rows: params[0] === COPY.slug ? [COPY] : [] };
       }
+      // The conductor reads the version again by its id.
+      if (/SELECT \* FROM apps WHERE id = \$1/.test(String(sql)) && params[0] === COPY.id) return { rows: [COPY] };
       // The copy is Just you: its owner sees it as its one collaborator.
       if (/FROM app_collaborators WHERE app_id = \$1 AND user_id = \$2/.test(String(sql))) {
         return { rows: params[0] === COPY.id && params[1] === OWNER.id ? [{ '?column?': 1 }] : [] };
@@ -621,6 +720,10 @@ test('the route: same-origin only, membership-gated, 201 with the proposal', asy
   app.use(express.json());
   app.use((req, _res, next) => { req.user = OWNER; next(); });
   app.use(suggestBackRoutes({}, { pool: routePool, deps: fx.deps }));
+  // The send is a conductor's (services/suggest-back-operation.js), run here
+  // in the test's own process with the same stand-ins.
+  const conductor = inlineOperations({ pool: () => routePool, user: () => OWNER });
+  const priorDeps = suggestBackOperation._setDepsForTests(fx.deps);
   const server = await new Promise((resolve) => { const s = app.listen(0, () => resolve(s)); });
   const base = `http://127.0.0.1:${server.address().port}/api/apps`;
   try {
@@ -648,12 +751,18 @@ test('the route: same-origin only, membership-gated, 201 with the proposal', asy
     const preview = await fetch(`${base}/${COPY.slug}/suggest-back`);
     assert.equal(preview.status, 200);
     assert.equal((await preview.json()).original.slug, 'book-club');
+    assert.equal(conductor.inputs.size, 0, 'the picks the send was given are dropped once it has run');
   } finally {
     server.close();
+    conductor();
+    suggestBackOperation._setDepsForTests(priorDeps);
   }
 
   const src = read('src/routes/suggest-back.js');
   assert.match(src, /'\/api\/apps\/:slug\/suggest-back',\s+drainGuard,\s+githubLookupLimiter,\s+sameOriginBrowserOnly,\s+requireAppMembership,/);
+  // The route checks and asks; the conductor writes.
+  assert.match(src, /op: 'suggestBack\.open', appId: fork\.id, userId: req\.user\.id/);
+  assert.doesNotMatch(src, /suggestBack\.suggest\(/);
   assert.match(read('server.js'), /require\('\.\/src\/routes\/suggest-back'\)\.suggestBackRoutes\(config\)/);
 });
 

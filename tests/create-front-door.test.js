@@ -377,7 +377,7 @@ test('a setup that stopped says so on the made screen, with Try again or Set sec
 test('the server sketches the idea for both doors, and only the first session answers the join screen and counts in the Journey', () => {
   const src = read('src/routes/apps.js');
   assert.match(src, /const MAKE_ORIGINS = new Set\(\['first-session', 'create'\]\);/);
-  assert.match(src, /if \(MAKE_ORIGINS\.has\(req\.body\.from\) && !repoUrlNormalized && !readyMade\s+&& homeroomBotDm\.normalizeBrief\(req\.body\.brief\)\) \{/);
+  assert.match(src, /if \(MAKE_ORIGINS\.has\(req\.body\.from\) && !readyMade\s+&& homeroomBotDm\.normalizeBrief\(req\.body\.brief\)\) \{/);
   assert.match(src, /\.\.\.\(MAKE_ORIGINS\.has\(req\.body\.from\) \? \{ from: req\.body\.from \} : \{\}\),/);
   // Answering the join screen stays the first session's.
   assert.match(src, /if \(req\.body\.from === 'first-session'\) \{\s+await require\('\.\.\/services\/first-session'\)\.answerJoinScreenByMaking/);

@@ -20,6 +20,7 @@
 
 const { PNG } = require('pngjs');
 const emojiTile = require('./emoji-tile');
+const embed = require('./project-embed');
 
 const WIDTH = 1200;
 const HEIGHT = 630;
@@ -199,12 +200,17 @@ function coverPath(slug) { return `/api/public/apps/${encodeURIComponent(slug)}/
 /**
  * The head tags for a public project's page. `cover`: whether the cover can
  * be drawn (canDrawCover); without it the picture is the project's icon, and
- * the card a small one.
+ * the card a small one. `player`: whether the project can be used in a post
+ * on X (services/project-embed.js embedFor), which makes X's card a frame
+ * around its embed page, with the picture as the still before it plays and
+ * where X runs no players. X shows no player without a picture.
  */
-function previewTags(app, origin, { cover = true } = {}) {
+function previewTags(app, origin, { cover = true, player = false } = {}) {
   const title = app.name || app.slug;
   const description = descriptionOf(app);
   const image = cover ? `${origin}${coverPath(app.slug)}` : (app.icon_url ? `${origin}${app.icon_url}` : null);
+  const playable = Boolean(player && image);
+  const card = playable ? 'player' : (cover ? 'summary_large_image' : 'summary');
   const tags = [
     '<meta property="og:type" content="website">',
     '<meta property="og:site_name" content="Homeroom">',
@@ -215,10 +221,18 @@ function previewTags(app, origin, { cover = true } = {}) {
     // whichever way it was reached (Discover's cards, a share, the sitemap).
     `<link rel="canonical" href="${escapeAttr(pageUrl(origin, app.slug))}">`,
     `<meta name="description" content="${escapeAttr(description)}">`,
-    `<meta name="twitter:card" content="${cover ? 'summary_large_image' : 'summary'}">`,
+    `<meta name="twitter:card" content="${card}">`,
     `<meta name="twitter:title" content="${escapeAttr(title)}">`,
     `<meta name="twitter:description" content="${escapeAttr(description)}">`,
   ];
+  if (playable) {
+    tags.push(
+      `<meta name="twitter:image" content="${escapeAttr(image)}">`,
+      `<meta name="twitter:player" content="${escapeAttr(`${origin}${embed.embedPath(app.slug)}`)}">`,
+      `<meta name="twitter:player:width" content="${embed.PLAYER_WIDTH}">`,
+      `<meta name="twitter:player:height" content="${embed.PLAYER_HEIGHT}">`,
+    );
+  }
   if (image) {
     tags.push(`<meta property="og:image" content="${escapeAttr(image)}">`);
     if (cover) {

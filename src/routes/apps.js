@@ -61,6 +61,9 @@ const MAX_INITIAL_APPROVERS = 20;
 // first answers the join screen, and only it counts in the admin Journey.
 const MAKE_ORIGINS = new Set(['first-session', 'create']);
 
+// What an import from GitHub is answered (importRefusal below).
+const IMPORT_PAUSED = 'Importing a repository from GitHub is paused while Homeroom moves off GitHub.';
+
 // Validate a (collabVisibility, viewVisibility) pair against the
 // invariants (see schema.sql): both must be public|private, and
 // collab-public implies view-public. Returns an error string or null.
@@ -1117,70 +1120,32 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     res.json({ name: info.name, description: info.description });
   });
 
-  // The "Check access" button in the import-existing modal hits this.
-  // It's the same pre-flight POST /api/apps runs on submit (so the
-  // server stays the source of truth even if a client skips the check),
-  // surfaced as its own endpoint so the UI can:
-  //   1. accept any pending bot invitation for this exact repo
-  //   2. confirm Write access
-  //   3. return name/description so the form can prefill the app-name
-  //      field with a sensible default
-  //
-  // githubLookupLimiter (#2519): same shared installation quota as
-  // repo-info above, plus step 1 is a side effect worth bounding on its
-  // own. One bucket covers both routes.
-  // The four dapp.json fields that replace a create answer on an import's
-  // first deploy, read with the deploy's own readers: its name, description,
-  // visibility and approval rule. An unparseable file reads as {}, the way
-  // the deploy reader treats it.
-  async function readImportManifest(parsed) {
-    try {
-      const raw = await github.getFileContent(parsed.owner, parsed.repo, appManifest.MANIFEST_FILENAME);
-      if (raw == null) return {};
-      let json;
-      try { json = JSON.parse(raw); } catch { return {}; }
-      const governance = appManifest.readGovernance(json);
-      return {
-        name: appManifest.readName(json),
-        description: appManifest.readDescription(json),
-        visibility: appManifest.readVisibility(json),
-        governance: governance ? {
-          approvers: governance.approvers || 'anyone',
-          approvals: typeof governance.approvals === 'number' ? governance.approvals : null,
-        } : null,
-      };
-    } catch (err) {
-      log.warn('apps', 'Import dapp.json read failed', { repo: `${parsed.owner}/${parsed.repo}`, err: err.message });
-      return null;
+  // What an import of `url` is answered: a URL that is not a GitHub
+  // repository's, and the platform's own repository (SELF-HOSTING.md
+  // sub-step 2k: the self-app row already exists, and a sibling would share
+  // its code), are refused as they always were; any other is paused.
+  function importRefusal(url) {
+    const parsed = github.parseGithubUrl(url);
+    if (!parsed) return { status: 400, body: { error: 'Repo URL must look like https://github.com/<owner>/<repo>' } };
+    if (isPlatformRepo(parsed, config)) {
+      return { status: 409, body: {
+        error: 'This is the platform repo. The self-app already exists; importing it as a child would create a sibling instance.',
+      } };
     }
+    return { status: 503, body: { error: IMPORT_PAUSED, code: 'github_paused' } };
   }
 
-  router.get('/api/github/verify-access', githubLookupLimiter, async (req, res) => {
-    const parsed = github.parseGithubUrl(req.query.url || '');
-    if (!parsed) return res.status(400).json({ error: 'Repo URL must look like https://github.com/<owner>/<repo>' });
-    // SELF-HOSTING.md sub-step 2k: refuse to import the platform's
-    // own repo as a child app. The self-app row already exists; importing
-    // a sibling would just produce a confused / broken app row sharing
-    // the same code.
-    if (isPlatformRepo(parsed, config)) {
-      return res.status(409).json({
-        error: 'This is the platform repo. The self-app already exists; importing it as a child would create a sibling instance.',
-      });
-    }
-    const verify = await github.verifyBotAccess(parsed.owner, parsed.repo);
-    if (!verify.ok) return res.status(verify.status).json({ error: verify.message, code: verify.code });
-    res.json({
-      ok: true,
-      owner: parsed.owner,
-      repo: parsed.repo,
-      name: verify.name,
-      description: verify.description,
-      fullName: verify.fullName,
-      // What the repo's own dapp.json already says, so the dialog can say
-      // which answers it replaces. {} when there is no dapp.json; null when
-      // it could not be read, which the dialog says as well.
-      manifest: await readImportManifest(parsed),
-    });
+  // The import form's Check (frontend/src/features/first-session/import-repo.tsx)
+  // asks this, and POST /api/apps answers the same on submit. Importing from
+  // GitHub made the bot a collaborator on the person's repository, and the
+  // bot's token is never sent again (services/github.js "Who Homeroom is on
+  // GitHub"), so importing is paused: a URL that names a repository is told
+  // so, after the two refusals that hold whatever the pause.
+  //
+  // githubLookupLimiter (#2519): one bucket with repo-info above.
+  router.get('/api/github/verify-access', githubLookupLimiter, (req, res) => {
+    const refused = importRefusal(req.query.url || '');
+    return res.status(refused.status).json(refused.body);
   });
 
   router.get('/api/me/app-allowance', async (req, res) => {
@@ -1280,29 +1245,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
     const { collabVisibility, viewVisibility, invitees, inviteEmails, governance: rule, description, template } = options;
 
-    // Import-existing pre-flight: parse URL, accept any pending invite
-    // for this exact repo, then verify Write access. Anything other
-    // than `ok` is forwarded to the client with the actionable hint
-    // assembled in github.verifyBotAccess.
-    let repoUrlNormalized = null;
+    // An import is paused (GET /api/github/verify-access above): refused with
+    // the Check's own answer, so a client that skipped Check (or a script
+    // POSTing directly) is told the same.
     if (repoUrl) {
-      const parsed = github.parseGithubUrl(repoUrl);
-      if (!parsed) {
-        return res.status(400).json({ error: 'Repo URL must look like https://github.com/<owner>/<repo>' });
-      }
-      // SELF-HOSTING.md sub-step 2k: same guard as
-      // /api/github/verify-access, but on the submit path so a client
-      // that skipped Check (or a script POSTing directly) can't bypass.
-      if (isPlatformRepo(parsed, config)) {
-        return res.status(409).json({
-          error: 'This is the platform repo. The self-app already exists; importing it as a child would create a sibling instance.',
-        });
-      }
-      const verify = await github.verifyBotAccess(parsed.owner, parsed.repo);
-      if (!verify.ok) {
-        return res.status(verify.status).json({ error: verify.message });
-      }
-      repoUrlNormalized = `https://github.com/${parsed.owner}/${parsed.repo}`;
+      const refused = importRefusal(repoUrl);
+      return res.status(refused.status).json({ error: refused.body.error });
     }
 
     const crypto = require('crypto');
@@ -1374,7 +1322,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // and the card owed from the row once this commits.
       const readyMade = appTemplates.isReadyMade(template);
       const homeroomBotDm = require('../services/homeroom-bot-dm');
-      const owesFirstVersion = !repoUrlNormalized && !readyMade && !!homeroomBotDm.normalizeBrief(req.body.brief);
+      const owesFirstVersion = !readyMade && !!homeroomBotDm.normalizeBrief(req.body.brief);
       // A ready-made app whose starter directory has an original is a
       // version of it (docs/plans/versions.md, services/originals.js
       // linkFor): of a running original, where versions are on, one that
@@ -1422,7 +1370,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
              ON CONFLICT (app_id, user_id) DO NOTHING
            )
            SELECT * FROM new_app`,
-          [name.trim(), slug, repoUrlNormalized, req.user.id, collabVisibility, viewVisibility]
+          [name.trim(), slug, null, req.user.id, collabVisibility, viewVisibility]
         );
 
         appRow = rows[0];
@@ -1514,7 +1462,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         // device's, so the card's "today" is theirs (an unknown or invalid
         // zone reads as UTC there). A ready-made app has its own icon and
         // nothing to sketch.
-        if (MAKE_ORIGINS.has(req.body.from) && !repoUrlNormalized && !readyMade
+        if (MAKE_ORIGINS.has(req.body.from) && !readyMade
             && homeroomBotDm.normalizeBrief(req.body.brief)) {
           await optional('sketch', 'Sketch not owed', () => require('../services/app-sketch').startSketch(db, {
             app: appRow, user: req.user, brief: req.body.brief,
@@ -1567,17 +1515,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         invited += byEmail.invited + byEmail.mailed;
       }
 
-      log.info('apps', repoUrlNormalized ? 'App imported (pending)' : 'App created (pending)', {
-        appId: appRow.id,
-        slug,
-        ...(repoUrlNormalized ? { repoUrl: repoUrlNormalized } : {}),
-      });
+      log.info('apps', 'App created (pending)', { appId: appRow.id, slug });
       events.record(pool, {
         type: events.EVENT_TYPES.APP_CREATED,
         userId: req.user.id,
         appId: appRow.id,
         metadata: {
-          imported: !!repoUrlNormalized,
+          imported: false,
           collabVisibility,
           viewVisibility,
           ...(options.audience ? { audience: options.audience } : {}),
@@ -1620,7 +1564,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       } else {
         try {
           await homeroomBotDm.noteProjectMade(pool, {
-            app: appRow, user: req.user, origin: repoUrlNormalized ? 'import' : 'blank',
+            app: appRow, user: req.user, origin: 'blank',
           });
         } catch (err) {
           log.warn('apps', 'Homeroom bot project not recorded', { appId: appRow.id, err: err.message });

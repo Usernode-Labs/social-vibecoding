@@ -22,7 +22,7 @@ test('description API on PostgreSQL', { skip: !process.env.TEST_DATABASE_URL }, 
       CREATE TABLE user_app_blocks (user_id INT, app_id INT);
       CREATE TABLE chat_sessions (id SERIAL PRIMARY KEY, app_id INT, user_id INT, session_title TEXT,
       status TEXT DEFAULT 'paused', source TEXT DEFAULT 'cli_handoff', is_headless BOOLEAN DEFAULT FALSE,
-      pr_number INT, pr_body TEXT, pr_summary_md TEXT, pr_summary_previous_md TEXT,
+      pr_number INT, pr_body TEXT, pr_summary_md TEXT, pr_summary_previous_md TEXT, pr_summary_projection JSONB,
       pr_summary_source TEXT, pr_summary_stale BOOLEAN DEFAULT TRUE,
       pr_summary_input_version BIGINT DEFAULT 0, pr_summary_applied_version BIGINT DEFAULT 0,
       pr_summary_source_body_hash TEXT, pr_summary_source_head_sha VARCHAR(40),

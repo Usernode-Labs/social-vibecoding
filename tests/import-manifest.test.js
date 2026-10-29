@@ -1,10 +1,10 @@
 'use strict';
 
 // An import's dapp.json decides; the create dialog's answers fill in only
-// what it leaves out (src/services/import-manifest.js), and the check reads
-// the file so the dialog can say which answers the repo replaces
-// (GET /api/github/verify-access). The manifest reader keeps the top-level
-// description, which every surface reads off the stored snapshot.
+// what it leaves out (src/services/import-manifest.js). Importing from
+// GitHub is paused (routes/apps.js importRefusal), so its check reads no
+// file now. The manifest reader keeps the top-level description, which
+// every surface reads off the stored snapshot.
 //
 // Run with: node --test tests/import-manifest.test.js
 
@@ -63,10 +63,7 @@ test('the commit reads the file, leaves one that does not parse alone, and pushe
   assert.equal(pushed.length, 1, 'nothing pushed when there is nothing to add');
 });
 
-test('the import check returns what the repo’s dapp.json says, and the creator commits before the clone', () => {
-  const route = fs.readFileSync(path.join(__dirname, '../src/routes/apps.js'), 'utf8');
-  assert.match(route, /manifest: await readImportManifest\(parsed\),/);
-  assert.match(route, /name: appManifest\.readName\(json\),\s*description: appManifest\.readDescription\(json\),\s*visibility: appManifest\.readVisibility\(json\),/);
+test('the creator commits the answers before the clone', () => {
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
   // In the import's setup step, before its first deploy clones the file.
   const commit = creator.indexOf("require('./import-manifest').commitCreateAnswers(");

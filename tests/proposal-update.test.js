@@ -53,6 +53,7 @@ function fakePool(handlers, queries = []) {
           return { rows: typeof rows === 'function' ? rows(params) : rows };
         }
       }
+      if (sql.includes('UPDATE chat_sessions SET pr_summary_projection')) return { rows: [], rowCount: 1 };
       if (sql.includes('UPDATE chat_sessions SET pr_summary_input_version')) {
         return { rows: [], rowCount: 1 };
       }
@@ -3105,4 +3106,219 @@ test('a patch cannot move a head in the author\'s own fork, or a proposal that i
   const theirs = await runPatch({ session: nativeSession({ user_id: 99 }) }, {}, log);
   assert.equal(theirs.code, 'not_your_proposal');
   assert.equal(log.applied, undefined);
+});
+
+// ── A conductor's retry (services/fork-operations.js) ──────────────────
+//
+// The update runs on a conductor as the `fork.update` operation, with the
+// work item's steps. A process that goes after the push (a release) leaves
+// the push in its checkpoint, and the next try carries on from it: it does
+// not read the moved head and answer "unchanged", push again, or count the
+// votes it already put at risk as none.
+const kernelSteps = require('../src/workflow/kernel/steps.ts');
+
+function keptSteps(store, { stopAt = null } = {}) {
+  const base = kernelSteps.steps({ resumeFrom: store.saved || null, checkpoint: async (v) => { store.saved = v; } });
+  if (!stopAt) return base;
+  const crashing = Object.create(base);
+  let stopped = false;
+  crashing.once = async (key, fn) => {
+    if (key === stopAt && !stopped) { stopped = true; throw new kernelSteps.StepsStopped(); }
+    return base.once(key, fn);
+  };
+  return crashing;
+}
+
+test('a retry after the push carries on from it: one push, the same answer', async () => {
+  const store = {};
+  const log = {};
+  let branchReads = 0;
+  // GitHub reads the head this request moved once its push has landed.
+  const gh = { getBranchSha: async () => { branchReads += 1; return log.push ? FORK_HEAD : NATIVE_HEAD; } };
+  await assert.rejects(
+    svc.updateProposalFromForkBranch({ ...deps({ gh }, log), steps: keptSteps(store, { stopAt: 'testing' }) },
+      { user: USER, session: nativeSession(), branch: 'fix/failing-check', origin: 'https://usernode.test' }),
+    (err) => err.stopped === true
+  );
+  assert.equal(log.push.length, 1, 'the first try pushed');
+  assert.ok(store.saved.push && store.saved.push.ok, 'and its push is in the checkpoint');
+
+  // The next try: the proposal reads busy now (its own build), which is not
+  // a reason to refuse a request that has already moved the head.
+  const again = await svc.updateProposalFromForkBranch(
+    { ...deps({ gh, busy: () => true }, log), steps: keptSteps(store) },
+    { user: USER, session: nativeSession(), branch: 'fix/failing-check', origin: 'https://usernode.test' }
+  );
+  assert.equal(again.ok, true, `${again.code}: ${again.message}`);
+  assert.equal(again.updated, true, 'not "unchanged": the head it reads now is its own push');
+  assert.equal(log.push.length, 1, 'never pushed twice');
+  assert.equal(log.verify.length, 1, 'the fork was read once');
+  assert.equal(branchReads, 2, 'the retry checks that its pushed head still owns the branch');
+  assert.equal(again.previousHeadSha, NATIVE_HEAD);
+  assert.equal(again.headSha, FORK_HEAD);
+  assert.equal(again.votesAtRisk, 4, 'the votes counted before the push, not after it');
+  assert.equal(log.reconcile.length, 1);
+
+  // Asked once more from the finished checkpoint, it answers what it did.
+  const finished = await svc.updateProposalFromForkBranch(
+    { ...deps({ gh }, log), steps: keptSteps(store) },
+    { user: USER, session: nativeSession(), branch: 'fix/failing-check', origin: 'https://usernode.test' }
+  );
+  assert.deepEqual(finished, again);
+  assert.equal(log.push.length, 1);
+  assert.equal(log.reconcile.length, 1, 'the tail ran once');
+});
+
+test('a patch retried after its push applies at the same date, so it makes the same commit', async () => {
+  const store = {};
+  const log = {};
+  await assert.rejects(runPatchWith(store, log, 'invalidated'), (err) => err.stopped === true);
+  const again = await runPatchWith(store, log);
+  assert.equal(again.ok, true, `${again.code}: ${again.message}`);
+  assert.equal(log.applied.length, 1, 'kept: the apply is not made again');
+  assert.ok(Number.isFinite(Date.parse(log.applied[0].commitDate)), 'its commit is dated by the request');
+  assert.equal(log.applied[0].commitDate, store.saved.decided.at, 'and the date is kept with what it decided');
+});
+
+function runPatchWith(store, log, stopAt = null) {
+  return svc.updateProposalFromForkBranch(
+    { ...deps({ applyPatch: applyPatchStub(log), gh: { getBranchSha: async () => log.applied ? FORK_HEAD : NATIVE_HEAD } }, log), steps: keptSteps(store, { stopAt }) },
+    { user: USER, session: nativeSession(), patch: PATCH, expectedHeadSha: NATIVE_HEAD, origin: 'https://usernode.test' }
+  );
+}
+
+test('a fork-tracked proposal retried after its head moved answers the move, not "unchanged"', async () => {
+  const store = {};
+  const log = {};
+  const session = importedSession({ imported_pr_head_sha: NATIVE_HEAD });
+  const pool = (moved) => fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [importedSession({ imported_pr_head_sha: moved ? FORK_HEAD : NATIVE_HEAD })]],
+    ['FROM pr_votes', [{ n: 2 }]],
+  ]);
+  const params = { user: USER, session, branch: 'usernode/add-a-button', origin: 'https://usernode.test' };
+  await assert.rejects(
+    svc.updateProposalFromForkBranch({ ...deps({ session, pool: pool(false) }, log), steps: keptSteps(store, { stopAt: 'description' }) }, params),
+    (err) => err.stopped === true
+  );
+  // The row records the new head by the time the next try reads it.
+  const again = await svc.updateProposalFromForkBranch(
+    { ...deps({ session, pool: pool(true) }, log), steps: keptSteps(store) }, params);
+  assert.equal(again.ok, true, `${again.code}: ${again.message}`);
+  assert.equal(again.updated, true);
+  assert.equal(again.previousHeadSha, NATIVE_HEAD);
+  assert.equal(again.votesAtRisk, 2);
+  assert.equal(log.applied.length, 1, 'the head change was applied once');
+});
+
+
+test('a resumed update refuses a repository or branch changed since its first push', async () => {
+  for (const change of [{ repo_url: 'https://github.com/o/other' }, { branch_name: 'dev/other' }]) {
+    const store = {};
+    const log = {};
+    const params = { user: USER, session: nativeSession(), branch: 'fix/failing-check' };
+    await assert.rejects(svc.updateProposalFromForkBranch(
+      { ...deps({}, log), steps: keptSteps(store, { stopAt: 'testing' }) }, params), (err) => err.stopped === true);
+    const again = await svc.updateProposalFromForkBranch(
+      { ...deps({ session: nativeSession(change) }, log), steps: keptSteps(store) }, params);
+    assert.equal(again.code, 'branch_moved');
+    assert.equal(log.push.length, 1);
+    assert.equal(log.reconcile, undefined);
+  }
+});
+
+test('a resumed update leaves a superseding revision and its checks alone', async () => {
+  const store = {};
+  const log = {};
+  const params = { user: USER, session: nativeSession(), branch: 'fix/failing-check' };
+  await assert.rejects(svc.updateProposalFromForkBranch(
+    { ...deps({}, log), steps: keptSteps(store, { stopAt: 'testing' }) }, params), (err) => err.stopped === true);
+  const again = await svc.updateProposalFromForkBranch({
+    ...deps({ gh: { getBranchSha: async () => OTHER_HEAD } }, log), steps: keptSteps(store),
+  }, params);
+  assert.equal(again.code, 'branch_moved');
+  assert.equal(log.push.length, 1);
+  assert.equal(log.reconcile, undefined);
+});
+
+
+test('a resumed fork update keeps the source commit it decided before the push', async () => {
+  for (const firstLanding of [false, true]) {
+    const store = {};
+    const log = {};
+    let source = FORK_HEAD;
+    let remote = firstLanding ? null : NATIVE_HEAD;
+    let writes = 0;
+    const push = async (args) => {
+      if (args.expectedSourceSha && args.expectedSourceSha !== source) return { ok: false, code: 'branch_moved', message: 'Source changed.' };
+      writes++; remote = source;
+      return { ok: true, headSha: source, branch: args.targetBranch };
+    };
+    const session = nativeSession(firstLanding ? { branch_name: 'usernode/from-evan-abcd', status: 'active' } : {});
+    const d = deps({ session, gh: { getBranchSha: async () => {
+      if (!remote) throw Object.assign(new Error('Not found'), { status: 404 });
+      return remote;
+    } }, head: {
+      verifyForkBranch: async () => ({ ok: true, headSha: source }),
+      pushForkBranchToAppBranch: push, mirrorForkBranch: push,
+    } }, log);
+    const params = { user: USER, session, branch: 'fix/current' };
+    await assert.rejects(svc.updateProposalFromForkBranch({ ...d, steps: keptSteps(store, { stopAt: 'push' }) }, params),
+      (err) => err.stopped === true);
+    assert.equal(store.saved.decided.verifiedHeadSha, FORK_HEAD);
+    source = OTHER_HEAD;
+    const result = await svc.updateProposalFromForkBranch({ ...d, steps: keptSteps(store) }, params);
+    assert.equal(result.code, 'branch_moved');
+    assert.equal(writes, 0);
+    assert.equal(remote, firstLanding ? null : NATIVE_HEAD);
+    assert.equal(log.reconcile, undefined);
+  }
+});
+
+
+test('a resumed fork update adopts its landed commit when its push checkpoint was lost', async () => {
+  for (const firstLanding of [false, true]) {
+    const store = {};
+    const log = {};
+    let source = FORK_HEAD;
+    let remote = firstLanding ? null : NATIVE_HEAD;
+    let writes = 0;
+    const push = async (args) => {
+      if (args.expectedSourceSha && args.expectedSourceSha !== source) return { ok: false, code: 'branch_moved', message: 'Source changed.' };
+      writes++; remote = source;
+      return { ok: true, headSha: source, branch: args.targetBranch };
+    };
+    const session = nativeSession(firstLanding ? { branch_name: 'usernode/from-evan-abcd', status: 'active' } : {});
+    const backing = fakePool([
+      ['FROM chat_sessions cs JOIN apps a', [session]],
+      ['UPDATE chat_sessions', [{ id: session.id }]],
+      ['FROM pr_votes', [{ n: 4 }]],
+    ]);
+    const pool = { async query(...args) {
+      const out = await backing.query(...args);
+      return { ...out, rowCount: out.rows.length };
+    } };
+    const d = { ...deps({ session, pool, gh: { getBranchSha: async () => {
+      if (!remote) throw Object.assign(new Error('Not found'), { status: 404 });
+      return remote;
+    } }, head: {
+      verifyForkBranch: async () => ({ ok: true, headSha: source }),
+      pushForkBranchToAppBranch: push, mirrorForkBranch: push,
+    } }, log), ...sessionParts(log) };
+    const params = { user: USER, session, branch: 'fix/current' };
+    const first = kernelSteps.steps({ checkpoint: async (value) => {
+      if (value.push) throw new kernelSteps.StepsStopped('checkpoint connection lost');
+      store.saved = value;
+    } });
+    await assert.rejects(svc.updateProposalFromForkBranch({ ...d, steps: first }, params), kernelSteps.isStopped);
+    assert.equal(writes, 1);
+    assert.equal(store.saved.push, undefined);
+    assert.equal(remote, FORK_HEAD);
+    source = OTHER_HEAD;
+    const result = await svc.updateProposalFromForkBranch({ ...d, steps: keptSteps(store) }, params);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.headSha, FORK_HEAD, 'the landed revision is completed');
+    assert.equal(writes, 1, 'the newer fork revision is never pushed');
+    assert.equal(store.saved.push.ok, true);
+    assert.equal(firstLanding ? log.started.length : log.reconcile.length, 1, 'its tail runs once');
+  }
 });

@@ -21,6 +21,11 @@
 //
 // open and skip answer the GET's body; fit answers { ok, requestNumber,
 // href, asked, message }. A refusal is { error, code } with its status.
+//
+// open and skip write to the version's repository, so a conductor makes
+// those writes (services/upstream-operation.js `upstream.open` and
+// `upstream.skip`): the route keeps its doors and reads, asks, and answers
+// what the conductor answers.
 
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
@@ -28,6 +33,8 @@ const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const communities = require('../services/communities');
 const offers = require('../services/upstream-offers');
+const platformOperations = require('../services/platform-operations');
+const { refused } = require('../services/git-host-flows');
 const { drainGuard } = require('../services/lifecycle');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const { githubLookupLimiter } = require('../middleware/rate-limits');
@@ -83,8 +90,8 @@ function upstreamRoutes(config, { pool = getPool(config), deps } = {}) {
         if (!app) return;
         const current = await offers.view({ config, pool, app, user: req.user, ...withDeps });
         if (current.offer && READY_STATES.has(current.offer.state)) return res.json(current);
-        const result = await offers.openUpdate({ config, pool, versionId: app.id, ...withDeps });
-        if (!result.ok) return res.status(result.status).json(result.body);
+        const result = await platformOperations.request({ op: 'upstream.open', appId: app.id, userId: req.user.id, input: {} });
+        if (!result.ok) return refused(res, result);
         res.json(await body(req, app));
       } catch (err) {
         fail('Open')(err, req, res);
@@ -99,8 +106,8 @@ function upstreamRoutes(config, { pool = getPool(config), deps } = {}) {
       try {
         const app = await loadVersion(req, res);
         if (!app) return;
-        const result = await offers.skipUpdate({ config, pool, versionId: app.id, user: req.user, ...withDeps });
-        if (!result.ok) return res.status(result.status).json(result.body);
+        const result = await platformOperations.request({ op: 'upstream.skip', appId: app.id, userId: req.user.id, input: {} });
+        if (!result.ok) return refused(res, result);
         res.json(await body(req, app));
       } catch (err) {
         fail('Skip')(err, req, res);

@@ -65,7 +65,7 @@ import { workerStop } from './worker-stop/machine.ts';
 import { workerStopServices, workerInterruptServices } from './worker-stop/services.ts';
 import { workerInterrupt, requestWorkerInterrupt as askWorkerInterrupt } from './worker-stop/interrupt.ts';
 import { requestWorkerStop as askWorkerStop } from './worker-stop/request.ts';
-import { MACHINE as PLATFORM_OPERATION, WORK as OPERATION_WORK, operationKey, platformOperation, singleFlight } from './platform-operation/machine.ts';
+import { MACHINE as PLATFORM_OPERATION, WORK as OPERATION_WORK, operationKey, platformOperation, requested as operationRequested, singleFlight } from './platform-operation/machine.ts';
 import type { Request as OperationRequest } from './platform-operation/machine.ts';
 import { platformOperationServices } from './platform-operation/services.ts';
 import { JOBS as CLOCK_JOBS, JOB_NAMES as CLOCK_JOB_NAMES } from './clock/services.ts';
@@ -1256,23 +1256,54 @@ export function appendWorkerRelease(db: Queryable, p: WorkerReleaseRequest): Pro
 // so it never runs later (503 to the route). An accepted one is waited for up
 // to `waitMs`; past that the answer is `pending` with its request id, and the
 // work still finishes, publishing what it changed as it always did.
+//
+// `requestId`: the caller's own, so asking again is the same request (a
+// replay); by default a new one. `payload`: what the operation carries past
+// its 64 KB input (services/platform-operations.js, "an operation's large
+// input"), kept under the request's id before it is appended, so the
+// conductor always finds it, and dropped when the request is refused for
+// good, or when it was asked again after its run had ended (the keep wrote
+// it anew, and a replay never runs). One still being decided when the route
+// stops waiting may yet run, and keeps it.
 export type OperationOutcome =
   | { status: 'done'; requestId: string; result: Json }
   | { status: 'failed'; requestId: string; error: { message: string; code: string | null } | null }
   | { status: 'pending'; requestId: string }
   | { status: 'refused'; requestId: string; reason: string | null };
-export async function runOperation(p: Omit<OperationRequest, 'requestId'>,
+export async function runOperation(p: Omit<OperationRequest, 'requestId'> & { requestId?: string; payload?: Json },
   { waitMs = 60000, admitMs = 5000 }: { waitMs?: number; admitMs?: number } = {}): Promise<OperationOutcome> {
   const rt = running();
   if (singleFlight(p.op)) throw new Error(`${p.op} is appended, never waited for (appendOperation)`);
-  const requestId = randomUUID(); const key = operationKey({ ...p, requestId });
-  const out = await rt.appendAndWait(PLATFORM_OPERATION, key, { type: 'Requested', payload: { ...p, requestId } },
-    { appId: p.appId, actor: `user:${p.userId}`, source: { kind: 'route', name: OPERATION_WORK }, requestKey: requestId, waitMs: admitMs });
+  const { payload = null, requestId: asked, ...rest } = p;
+  const request = { ...rest, requestId: asked ?? randomUUID() };
+  const { requestId } = request; const key = operationKey(request);
+  if (payload !== null) {
+    operationRequested(request); // a request that cannot be appended keeps nothing
+    await legacy('services/platform-operations').keepInput(kernelPool!, request, payload);
+  }
+  const out = await rt.appendAndWait(PLATFORM_OPERATION, key, { type: 'Requested', payload: request },
+    { appId: request.appId, actor: `user:${request.userId}`, source: { kind: 'route', name: OPERATION_WORK }, requestKey: requestId, waitMs: admitMs });
   const settled = out.status === 'pending' ? (await rt.refuseIfPending(out.eventId, 'operation_unavailable')) ?? out : out;
-  if (settled.status !== 'accepted' && settled.status !== 'replayed') return { status: 'refused', requestId, reason: settled.reason ?? settled.status };
-  return operationOutcome(requestId,
+  // A slot may still hold the event when the refusal's lock wait expires.
+  // It can yet run: retain the caller's recovery handle and large input.
+  if (settled.status === 'pending') return { status: 'pending', requestId };
+  if (settled.status !== 'accepted' && settled.status !== 'replayed') {
+    if (payload !== null && settled.status === 'rejected') await forgetInput(request);
+    return { status: 'refused', requestId, reason: settled.reason ?? settled.status };
+  }
+  const outcome = operationOutcome(requestId,
     await rt.waitFor(PLATFORM_OPERATION, key, i => i.state === 'done' || i.state === 'failed', waitMs));
+  if (payload !== null && settled.status === 'replayed' && outcome.status !== 'pending') await forgetInput(request);
+  return outcome;
 }
+
+// What a request kept for a run that will never read it.
+export async function dropOperationInput(requestId: string): Promise<void> {
+  await legacy('services/platform-operations').dropInput(kernelPool!, requestId);
+}
+// Never instead of the route's answer: one left behind is swept.
+const forgetInput = (r: { op: string; requestId: string }) => dropOperationInput(r.requestId).catch((err: Error) =>
+  log!.warn('workflow', 'Could not drop an operation\'s input', { op: r.op, requestId: r.requestId, message: err.message }));
 
 // What a route is told of an operation's instance as the wait last read it
 // (the kernel answers with that read when the wait runs out): only a

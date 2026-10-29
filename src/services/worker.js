@@ -3016,10 +3016,11 @@ async function _bootstrapWarmContainer(sessionId, {
   // Public-only invariant: the worker carries no GitHub credentials in
   // its env — it relies on the unauthenticated git protocol for clones
   // and fetches. Refuse to spawn against a repo that has gone private
-  // since import. Verified at import time too (verifyBotAccess), but
-  // a user could flip the repo to private on GitHub after import; this
-  // catches that case before we waste a container slot. Imports that
-  // pre-date the public-only enforcement are caught here as well.
+  // since import. Imports checked it too while they ran (importing from
+  // GitHub is paused now), but a user could flip the repo to private on
+  // GitHub after import; this catches that case before we waste a
+  // container slot. Imports that pre-date the public-only enforcement are
+  // caught here as well.
   const privacy = await github.checkRepoPublic(repoOwner, repoName);
   if (!privacy.ok && privacy.code === 'rate_limited') {
     // GitHub refused the check because Homeroom's hourly budget is used up.

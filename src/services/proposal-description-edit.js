@@ -4,6 +4,8 @@ const summaryFreshness = require('./summary-freshness');
 const proposalUpdate = require('./proposal-update');
 const github = require('./github');
 const repoRef = require('./repo-ref');
+const prSync = require('./pr-sync-operation');
+const log = require('./logger');
 
 const MAX_DESCRIPTION_LENGTH = 16000;
 const OPEN_STATUSES = ['active', 'paused', 'promoted', 'merging'];
@@ -58,9 +60,15 @@ const conflict = () => ({
 // A metadata edit shares the revision writers' advisory lock. The
 // version predicate also rejects a summary generation or head invalidation
 // that raced the read. Nothing here touches lifecycle, votes or checks.
+//
+// The pull request's body follows the stored description under the same
+// lock, except on GitHub for the platform repository, whose credential is a
+// conductor's (services/pr-sync-operation.js): that write is asked for once
+// this edit has let the lock go, as the conductor takes it itself, and the
+// edit answers the status it reports, as it answers its own.
 async function edit({ pool, sessionId, userId, input, gh = github,
   lock = proposalUpdate.withProposalLock }) {
-  return lock(pool, sessionId, async () => {
+  const saved = await lock(pool, sessionId, async () => {
     let session = await readEditable(pool, sessionId, userId);
     if (!session) return { status: 404, body: { error: 'Change not found or no longer editable.' } };
     const version = Number(session.pr_summary_input_version || 0);
@@ -71,9 +79,20 @@ async function edit({ pool, sessionId, userId, input, gh = github,
     if (version !== input.expectedVersion && !(unchanged && version === input.expectedVersion + 1)) return conflict();
     let changed = false;
     if (!unchanged) {
+      // Preserve what the host actually carried while newer edits wait for
+      // projection. An uncertain conductor write is finished before another
+      // summary is projected; a synchronously regenerated body is evidence
+      // of a newer applied summary when no such write is outstanding.
+      let projection = session.pr_summary_projection || { applied: session.pr_summary_md || session.pr_summary_previous_md || null };
+      const current = session.pr_summary_md;
+      if (!projection.pending && current && (session.pr_body === current || session.pr_body?.startsWith(current + '\n\n'))) {
+        projection = { applied: current };
+      }
+
       const { rows } = await pool.query(
         `UPDATE chat_sessions
-            SET pr_summary_previous_md = COALESCE(pr_summary_md, pr_summary_previous_md),
+            SET pr_summary_projection = $6::jsonb,
+                pr_summary_previous_md = COALESCE(pr_summary_md, pr_summary_previous_md),
                 pr_summary_md = $1,
                 pr_summary_source = 'author',
                 pr_summary_source_head_sha = CASE WHEN source = 'imported'
@@ -87,7 +106,7 @@ async function edit({ pool, sessionId, userId, input, gh = github,
             AND is_headless = FALSE
             AND status IN ('active', 'paused', 'promoted', 'merging')
           RETURNING *`,
-        [input.description, summaryFreshness.bodyHash(session.pr_body), sessionId, userId, version]
+        [input.description, summaryFreshness.bodyHash(session.pr_body), sessionId, userId, version, JSON.stringify(projection)]
       );
       if (!rows.length) return conflict();
       session = { ...session, ...rows[0] };
@@ -95,6 +114,7 @@ async function edit({ pool, sessionId, userId, input, gh = github,
     }
     let prBodyStatus = session.source === 'imported' ? 'imported_pr' : 'no_pull_request';
     if (session.source !== 'imported' && session.pr_number) {
+      if (prSync.onConductor(session.repo_url)) return { conductor: true, session, changed };
       const repo = repoRef.ownerRepo(session.repo_url);
       const rejected = repo ? await proposalUpdate.syncSummaryIntoBody({
         pool, gh, ...repo, session, summary: input.description,
@@ -102,12 +122,29 @@ async function edit({ pool, sessionId, userId, input, gh = github,
       }) : 'github_unavailable';
       prBodyStatus = rejected || 'synced';
     }
-    return {
-      status: 200,
-      body: { ...snapshot(session), changed, prBodyStatus, prBody: session.pr_body || null },
-      session,
-    };
+    return answer(session, changed, prBodyStatus, session.pr_body);
   });
+  if (!saved.conductor) return saved;
+  const { session, changed } = saved;
+  const synced = await prSync.ask({ appId: session.app_id, userId, sessionId, write: 'summary' });
+  // A conductor that could not answer is a write still owed, said as one
+  // GitHub could not take: asked again with the same description, it is made.
+  if (!synced.ok) {
+    log.warn('proposal-description-edit', 'Description saved; the pull request body was not synchronized', {
+      sessionId: Number(sessionId), status: synced.status || null, error: synced.error || null,
+    });
+    return answer(session, changed, 'github_unavailable', session.pr_body);
+  }
+  session.pr_body = synced.prBody ?? session.pr_body;
+  return answer(session, changed, synced.prBodyStatus || 'synced', session.pr_body);
+}
+
+function answer(session, changed, prBodyStatus, prBody) {
+  return {
+    status: 200,
+    body: { ...snapshot(session), changed, prBodyStatus, prBody: prBody || null },
+    session,
+  };
 }
 
 module.exports = { MAX_DESCRIPTION_LENGTH, OPEN_STATUSES, parseEdit, readEditable, snapshot, edit };

@@ -24,7 +24,11 @@
 //     writes into another app's repository with the platform's credentials;
 //   * is drain-guarded, as every route that starts work is.
 //
-// Both reach the code host, so both share the per-user lookup budget.
+// Both reach the code host, so both share the per-user lookup budget. The
+// POST writes into the original's repository, so a conductor makes the
+// writes (services/suggest-back-operation.js `suggestBack.open`): the route
+// answers the send's own checks (suggest-back.js precheck), asks, and
+// answers what the conductor answers.
 
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
@@ -32,6 +36,8 @@ const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const communities = require('../services/communities');
 const suggestBack = require('../services/suggest-back');
+const platformOperations = require('../services/platform-operations');
+const { refused, answered } = require('../services/git-host-flows');
 const { drainGuard } = require('../services/lifecycle');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const { githubLookupLimiter } = require('../middleware/rate-limits');
@@ -74,12 +80,17 @@ function suggestBackRoutes(config, { pool = getPool(config), deps } = {}) {
       try {
         const fork = await loadCopy(req, res);
         if (!fork) return;
-        const result = await suggestBack.suggest({
-          pool, config, user: req.user, fork, picks: req.body ? req.body.picks : undefined, ...(deps ? { deps } : {}),
+        const checked = await suggestBack.precheck({ pool, config, user: req.user, fork, ...(deps ? { deps } : {}) });
+        if (!checked.ok) return res.status(checked.status).json(checked.body);
+        // The picks travel as the request's large input, as they came.
+        const picks = req.body ? req.body.picks : undefined;
+        const picked = picks !== undefined && picks !== null;
+        const result = await platformOperations.request({
+          op: 'suggestBack.open', appId: fork.id, userId: req.user.id, input: { picked },
+          ...(picked ? { payload: { picks } } : {}),
         });
-        if (!result.ok) return res.status(result.status).json(result.body);
-        const { ok: _ok, ...sent } = result;
-        res.status(201).json({ ok: true, ...sent });
+        if (!result.ok) return refused(res, result);
+        res.status(201).json({ ok: true, ...answered(result) });
       } catch (err) {
         log.error('suggest-back', 'Send failed', { slug: req.params.slug, message: err.message });
         res.status(500).json({ error: 'Internal server error' });

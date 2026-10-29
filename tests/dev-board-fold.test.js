@@ -1706,10 +1706,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // slots.
   // 744 → 745: +1 (#6019) a request's page draws the changes built for it
   // under it, each with its own line. 745 → 747: +2 (#6019 follow-up) the
-  // AI tab's own page, Your work and Up next. 747 → 748: +1 (#6035) a
-  // channel's message box wears the formatting row, Bold through Bulleted
-  // list. 748 leaves 132 slots.
-  checkCap.assertPinned(DAPP.tests.length, 748);
+  // AI tab's own page, Your work and Up next. 747 leaves 133 slots.
+  // 747 → 748: +1: a merge stuck behind a red release run names the step
+  // and the reason on its page (the ?demo=1 release-blocked mock).
+  // 748 → 749: +1 (#6035) a channel's message box wears the formatting
+  // row, Bold through Bulleted list. 749 leaves 131 slots.
+  checkCap.assertPinned(DAPP.tests.length, 749);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

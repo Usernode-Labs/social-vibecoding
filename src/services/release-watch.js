@@ -131,6 +131,40 @@ async function workflowRun(octokit, owner, repo, sha) {
   }
 }
 
+// What a failed run failed on, in its own words: the first failed job, its
+// failed step, and the first error annotation that is not the runner's
+// generic "Process completed with exit code N" (the security gates write one
+// naming the finding, e.g. "decode-uri-component@0.2.2: GHSA-…"). Read once
+// per failed commit (observe records a stall once per sha and kind). Never
+// throws; whatever could not be read is null, and an annotation the token
+// cannot list leaves the job and step on their own.
+async function runFailure(octokit, owner, repo, runId) {
+  const out = { job: null, step: null, reason: null };
+  try {
+    const { data } = await octokit.rest.actions.listJobsForWorkflowRun({
+      owner, repo, run_id: runId, filter: 'latest', per_page: 100,
+    });
+    const job = ((data && data.jobs) || []).find((j) => j && j.conclusion === 'failure');
+    if (!job) return out;
+    out.job = String(job.name || '').slice(0, 120) || null;
+    const step = (job.steps || []).find((s) => s && s.conclusion === 'failure');
+    out.step = step ? String(step.name || '').slice(0, 120) || null : null;
+    try {
+      const { data: annotations } = await octokit.rest.checks.listAnnotations({
+        owner, repo, check_run_id: job.id, per_page: 50,
+      });
+      const first = (annotations || []).find((a) => a && a.annotation_level === 'failure'
+        && a.message && !/^Process completed with exit code \d+\.?$/.test(String(a.message).trim()));
+      out.reason = first ? String(first.message).split('\n')[0].trim().slice(0, 240) || null : null;
+    } catch (err) {
+      log.debug('release-watch', 'Could not read the failed job\'s annotations', { repo: `${owner}/${repo}`, runId, err: err.message });
+    }
+  } catch (err) {
+    log.debug('release-watch', 'Could not read the failed run\'s jobs', { repo: `${owner}/${repo}`, runId, err: err.message });
+  }
+  return out;
+}
+
 // When the release workflow last finished a run on main, as epoch ms: the
 // last time the queue a merge's release waits in moved. Null when there is
 // none to read. Never throws — the verdict falls back to the merge's age.
@@ -244,6 +278,11 @@ async function observe(config, pool, app, head, { now = Date.now(), octokit = nu
     return { status: 'release_stalled', slug: app.slug, sha, running, kind, reported: false, record: previous };
   }
 
+  let failure = { job: null, step: null, reason: null };
+  if (kind === 'workflow_failed' && octokit && run && run.id) {
+    const parsed = require('./github').parseGithubUrl(app.repo_url);
+    if (parsed) failure = await runFailure(octokit, parsed.owner, parsed.repo, run.id);
+  }
   const record = {
     sha,
     prNumber: prNumberFrom(head.subject),
@@ -254,6 +293,9 @@ async function observe(config, pool, app, head, { now = Date.now(), octokit = nu
     runUrl: run ? run.url : null,
     runStatus: run ? run.status : null,
     runConclusion: run ? run.conclusion : null,
+    failedJob: failure.job,
+    failedStep: failure.step,
+    failedReason: failure.reason,
   };
   await pool.query('UPDATE apps SET release_stall = $1 WHERE id = $2', [JSON.stringify(record), app.id]);
   // The record above is cleared once the release catches up; this one is
@@ -321,9 +363,13 @@ async function firstSeenAt(pool, appId, sha, now) {
 function describe(appRow, runningSha = process.env.GIT_SHA || null) {
   const record = asRecord(appRow && appRow.release_stall);
   if (!record || (runningSha && sameSha(record.sha, runningSha))) {
-    return { stalled: false, sha: null, prNumber: null, kind: null, since: null, detectedAt: null, running: null, runUrl: null };
+    return {
+      stalled: false, sha: null, prNumber: null, kind: null, since: null, detectedAt: null, running: null, runUrl: null,
+      failedJob: null, failedStep: null, failedReason: null,
+    };
   }
   const runUrl = /^https:\/\/github\.com\//.test(String(record.runUrl || '')) ? record.runUrl : null;
+  const text = (value) => (typeof value === 'string' && value.trim() ? value.trim() : null);
   return {
     stalled: true,
     sha: record.sha,
@@ -333,6 +379,11 @@ function describe(appRow, runningSha = process.env.GIT_SHA || null) {
     detectedAt: record.detectedAt || null,
     running: record.running || null,
     runUrl,
+    // What a failed run failed on (runFailure); null on an older record or
+    // when it could not be read.
+    failedJob: text(record.failedJob),
+    failedStep: text(record.failedStep),
+    failedReason: text(record.failedReason),
   };
 }
 
@@ -707,6 +758,7 @@ module.exports = {
   WORKFLOW_PATH,
   _forTest: {
     resetOutlook: () => { outlookCache = null; },
+    runFailure,
     OUTLOOK_TTL_MS,
     ROLLOUT_LATE_MS,
   },

@@ -4,7 +4,6 @@
   "tests/app-templates-postgres.test.js": 5,
   "tests/bench-lane-postgres.test.js": 3,
   "tests/bench-shared-plans-postgres.test.js": 2,
-  "tests/bench-studio-postgres.test.js": 1,
   "tests/bot-configs-postgres.test.js": 1,
   "tests/challenge-on-the-spot-postgres.test.js": 2,
   "tests/checks-explanation-postgres.test.js": 2,

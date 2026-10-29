@@ -4,21 +4,19 @@ const crypto = require('node:crypto');
 const express = require('express');
 const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
-const previewWorkflow = require('../services/preview-workflow');
 const communities = require('../services/communities');
 const github = require('../services/github');
 const githubBudget = require('../services/github-budget');
 const stagingRecovery = require('../services/staging-recovery');
 const sessionLifecycle = require('../services/session-lifecycle');
 const proposalUpdate = require('../services/proposal-update');
-const prMetadata = require('../services/pr-metadata');
 const prImportSync = require('../services/pr-import-sync');
-const summaryFreshness = require('../services/summary-freshness');
 const branchNames = require('../services/branch-names');
-const externalAgentHead = require('../services/external-agent-head');
 const topicAttrs = require('../services/topic-attributes');
 const visibleChangesContract = require('../services/visible-changes');
 const repoRef = require('../services/repo-ref');
+const platformOperations = require('../services/platform-operations');
+const forkOperations = require('../services/fork-operations');
 // The connector-error → HTTP status map. It lives in routes/dev-flow.js
 // because tests/dev-flow-routes.test.js scrapes the services' emitted codes
 // against it in both directions; importing it here rather than restating it is
@@ -375,6 +373,40 @@ function requireCli(req, res) {
 
 function requireCliMiddleware(req, res, next) {
   if (requireCli(req, res)) next();
+}
+
+// A local commit's upload is written on a conductor, as `proposal.commit`
+// (services/proposal-commit-operation.js), from here and from a local
+// agent's turn (routes/cli-agent.js). The route asks with what it checked,
+// which the conductor reads again; the message and the files are the
+// operation's payload. Waited for inside the CLI's own deadline for an
+// upload (two minutes: src/cli/main.js, src/cli/agent-command.js).
+const COMMIT_WAIT_MS = 90 * 1000;
+
+function commitInput(surface, session, expectedParent, upload, extra = {}) {
+  return {
+    surface,
+    sessionId: Number(session.id),
+    branch: session.branch_name,
+    repoUrl: session.repo_url,
+    expectedParent: expectedParent || null,
+    localCommitSha: upload.localCommitSha,
+    parentSha: upload.parentSha,
+    parentTreeSha: upload.parentTreeSha,
+    treeSha: upload.treeSha,
+    authoredAt: upload.authoredAt,
+    committedAt: upload.committedAt,
+    ...extra,
+  };
+}
+
+// The conductor's refusal, answered as the route always answered it. A
+// failure of its own is a 500 that says nothing of what failed: a provider's
+// error may echo the uploaded source.
+function answerRefusal(res, out) {
+  const { ok: _ok, status, requestId: _requestId, pending: _pending, ...body } = out;
+  if (!status || status === 500) return res.status(500).json({ error: 'Internal server error' });
+  return res.status(status).json(body);
 }
 
 // The update route's body: the fork branch that carries the new work, two
@@ -872,6 +904,57 @@ async function snapshotSpec(pool, sessionId, content, commitSha = null) {
   return version;
 }
 
+// The update's own fields, from either route's parsed body (the share's has
+// no patch and no recheck).
+function updateParams(input) {
+  return {
+    branch: input.branch,
+    patch: input.patch ?? null,
+    forkRepo: input.forkRepo,
+    expectedHeadSha: input.expectedHeadSha,
+    testing: input.testing,
+    visibleChanges: input.visibleChanges,
+    title: input.title,
+    description: input.description,
+    summary: input.summary,
+    recheck: input.recheck,
+    linkedIssues: input.linkedIssues,
+  };
+}
+
+// The same, as a conductor's operation carries them: its payload, kept beside
+// the request (a patch alone may be 512 KB), the patch in base64, which
+// JSONB holds whatever text it is (services/fork-operations.js reads it).
+function updatePayload(params) {
+  const { patch, ...rest } = params;
+  return { ...rest, ...(patch ? { patch: Buffer.from(patch, 'utf8').toString('base64') } : {}) };
+}
+
+// A refusal as the two fork routes have always answered one. In
+// proposal-update's words ({ code, message }): through the one code→status
+// map, with the same fields. One a conductor's operation gave before it
+// ran, or its being unavailable or still under way, is a route's answer
+// already ({ status, error }); a run that failed is a 500, as the update
+// throwing here always was.
+function sendUpdateRefusal(res, out) {
+  if (out.status === undefined) {
+    return res.status(UPDATE_STATUS_BY_CODE[out.code] || 400).json({
+      error: out.code,
+      message: out.message,
+      ...(out.retryable ? { retryable: true } : {}),
+      ...(out.expectedBase ? { expectedBase: out.expectedBase } : {}),
+      ...(out.headSha ? { headSha: out.headSha } : {}),
+      ...(out.settingsUrl ? { settingsUrl: out.settingsUrl } : {}),
+    });
+  }
+  const { ok: _ok, status, requestId: _requestId, ...body } = out;
+  // The operation failed (it threw on every try): its message is internal.
+  if (status === 500 && !body.code && body.message === undefined) return res.status(500).json({ error: 'Internal server error' });
+  // A slot Homeroom has not decided on freeing yet is not a cap.
+  if (body.error === 'not_decided') res.set('Retry-After', String(sessionLifecycle.NOT_DECIDED_RETRY_AFTER_S));
+  return res.status(status).json(body);
+}
+
 async function loadOwnedHandoff(pool, sessionId, userId) {
   const { rows } = await pool.query(
     `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
@@ -905,7 +988,9 @@ function proposalHandoffRoutes(config) {
   // fields. Every decision about whose fork it is, whether the work sits on
   // the proposal's head and what a moved branch means lives in
   // services/proposal-update.js, which the browser twin and the connector
-  // share.
+  // share. The writes are a conductor's (services/fork-operations.js
+  // `fork.update`): this answers the update's own checks, then asks for them
+  // and answers what they did.
   router.post('/api/apps/:slug/proposals/:id/update-from-fork', proposalJson, drainGuard, async (req, res) => {
     const sessionId = parseSessionId(req.params.id);
     if (!sessionId) return res.status(404).json({ error: 'not_found' });
@@ -920,48 +1005,25 @@ function proposalHandoffRoutes(config) {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
       if (!app) return res.status(404).json({ error: 'App not found' });
-      const { rows } = await pool.query(
-        `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
-                a.collab_visibility, a.view_visibility, ${SESSION_WORK_COLUMNS}
-           FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-          WHERE cs.id = $1 AND cs.app_id = $2`,
-        [sessionId, app.id]
-      );
-      const session = rows[0] || null;
+      const session = await forkOperations.loadProposal(pool, sessionId, app.id);
       if (!session) return res.status(404).json({ error: 'not_found', message: 'That proposal is not on this app.' });
 
-      const result = await proposalUpdate.updateProposalFromForkBranch(
-        { pool, config },
-        {
-          user: req.user,
-          session,
-          branch: input.branch,
-          patch: input.patch,
-          forkRepo: input.forkRepo,
-          expectedHeadSha: input.expectedHeadSha,
-          testing: input.testing,
-          visibleChanges: input.visibleChanges,
-          title: input.title,
-          description: input.description,
-          summary: input.summary,
-          recheck: input.recheck,
-          linkedIssues: input.linkedIssues,
-          origin: config.cliAuthOrigin || null,
-        }
-      );
-      if (!result.ok) {
-        // One shared code→status map, in routes/dev-flow.js, so the connector
-        // and the browser cannot disagree about what a refusal means.
-        const status = UPDATE_STATUS_BY_CODE[result.code] || 400;
-        return res.status(status).json({
-          error: result.code,
-          message: result.message,
-          ...(result.retryable ? { retryable: true } : {}),
-          ...(result.expectedBase ? { expectedBase: result.expectedBase } : {}),
-          ...(result.headSha ? { headSha: result.headSha } : {}),
-          ...(result.settingsUrl ? { settingsUrl: result.settingsUrl } : {}),
-        });
-      }
+      // What the update is checked for before it takes its lock (the shape
+      // of what it carries, whose proposal it is, the account link), answered
+      // here as it always was. The push and every write after it are a
+      // conductor's (services/fork-operations.js `fork.update`), which reads
+      // the authority again and runs the same update.
+      const params = updateParams(input);
+      const checked = await proposalUpdate.checkUpdate({ pool, config }, {
+        ...params, user: req.user, session, origin: config.cliAuthOrigin || null,
+      });
+      if (checked.refusal) return sendUpdateRefusal(res, checked.refusal);
+      const out = await platformOperations.request({
+        op: 'fork.update', appId: app.id, userId: req.user.id,
+        input: { sessionId: session.id }, payload: updatePayload(params),
+      }, { waitMs: forkOperations.WAIT_MS });
+      if (!out.ok) return sendUpdateRefusal(res, out);
+      const { requestId: _requestId, ...result } = out;
       return res.json({
         ...result,
         webPath: changeHashPath(session.app_slug, session.id),
@@ -993,10 +1055,11 @@ function proposalHandoffRoutes(config) {
   // and starting the staging pipeline is a solved problem — it is exactly what
   // proposal-update.updateProposalFromForkBranch does for a revision. A second
   // implementation of it here would be a second place for the attribution gate
-  // to be subtly wrong. So this route only CREATES the empty session and then
+  // to be subtly wrong. So the share only CREATES the empty session and then
   // hands it to that function, which treats it as any other continuable
   // session (isContinuableStatus('active') === 'session') and runs the same
-  // build + capture it runs for everything else.
+  // build + capture it runs for everything else. Both are a conductor's
+  // (services/fork-operations.js `work.share`), as every fork write is.
   //
   // ── status 'active', and the cap that pays for it ────────────────────
   //
@@ -1016,7 +1079,8 @@ function proposalHandoffRoutes(config) {
   //
   // If the hand-off refuses (a branch that is not the caller's, a base that
   // does not match, GitHub unreachable), the session row created moments
-  // earlier is deleted before the error is returned. A half-made card in
+  // earlier is deleted before the error is returned (and so is one whose
+  // request a conductor refused part way, before its commits landed). A half-made card in
   // everyone's In-progress area, with no commits behind it, is worse than the
   // refusal it came from.
   router.post('/api/apps/:slug/work/share-in-progress', proposalJson, drainGuard, communities.requireAppMembership(pool), async (req, res) => {
@@ -1040,103 +1104,23 @@ function proposalHandoffRoutes(config) {
         return res.status(undecided ? 503 : 429).json({ error: capError.code, message: capError.message, retryable: true });
       }
 
-      // ── The branch the ROW carries is the app repository's, not the fork's
-      //
-      // `input.branch` is a branch in the caller's own fork; `branch_name` on
-      // a session is the branch in the APP's repository that everything
-      // downstream reads — the landing below pushes to it, promote opens its
-      // pull request from it, and `platformOwnedBranch` decides from its NAME
-      // that a row with no `source` lives in the app repo. Storing the fork's
-      // name there conflates the two, and puts a name the caller chose into a
-      // namespace the platform owns.
-      //
-      // So it is minted here, in `usernode/from-…`, exactly like the mirror
-      // rung's own heads. The branch does not exist yet — the landing creates
-      // it — and that is the whole reason `updateProposalFromForkBranch` has a
-      // first-landing case: there is no head to lease against on the first
-      // share of a piece of work.
-      const appRepoBranch = externalAgentHead.shareBranchName(req.user.id);
-
-      // `shared_at` at creation, not afterwards: the point of the call is that
-      // the card is visible, and a row that exists unshared for even one
-      // failed statement is a private session the caller never asked for.
-      const { rows: created } = await pool.query(
-        `INSERT INTO chat_sessions
-           (app_id, user_id, branch_name, status, shared_at, session_title,
-            external_agent, last_activity_at)
-         VALUES ($1, $2, $3, 'active', NOW(), $4, $5, NOW())
-         RETURNING id`,
-        [
-          app.id,
-          req.user.id,
-          appRepoBranch,
-          input.title || null,
-          input.externalAgent,
-        ]
-      );
-      const sessionId = created[0].id;
-      await topicAttrs.selfAssignProposal(pool, app.id, sessionId, req.user);
-
-      const { rows } = await pool.query(
-        `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
-                a.collab_visibility, a.view_visibility, ${SESSION_WORK_COLUMNS}
-           FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-          WHERE cs.id = $1`,
-        [sessionId]
-      );
-      const session = rows[0];
-
-      const result = await proposalUpdate.updateProposalFromForkBranch(
-        { pool, config },
-        {
-          user: req.user,
-          session,
-          branch: input.branch,
-          forkRepo: input.forkRepo,
-          expectedHeadSha: input.expectedHeadSha,
-          testing: input.testing,
-          visibleChanges: input.visibleChanges,
-          title: input.title,
-          description: input.description,
-          summary: input.summary,
-          linkedIssues: input.linkedIssues,
-          origin: config.cliAuthOrigin || null,
-        }
-      );
-      if (!result.ok) {
-        await pool.query('DELETE FROM chat_sessions WHERE id = $1 AND user_id = $2', [sessionId, req.user.id])
-          .catch((err) => log.warn('proposal-handoff', 'could not clean up a failed share', {
-            sessionId, err: err.message,
-          }));
-        const status = UPDATE_STATUS_BY_CODE[result.code] || 400;
-        return res.status(status).json({
-          error: result.code,
-          message: result.message,
-          ...(result.retryable ? { retryable: true } : {}),
-          ...(result.expectedBase ? { expectedBase: result.expectedBase } : {}),
-          ...(result.headSha ? { headSha: result.headSha } : {}),
-          ...(result.settingsUrl ? { settingsUrl: result.settingsUrl } : {}),
-        });
-      }
-
-      // Same announcement the owner's Share button makes, so an open Dev board
-      // shows the card without a reload.
-      try {
-        const { pushSessionUpdate } = require('../services/ws');
-        pushSessionUpdate({ action: 'shared', sessionId, appId: app.id, appSlug: app.slug });
-      } catch (err) {
-        log.warn('proposal-handoff', 'share broadcast failed (non-fatal)', { sessionId, err: err.message });
-      }
-
-      log.info('proposal-handoff', 'work shared to in-progress', {
-        userId: req.user.id, slug: app.slug, sessionId, branch: input.branch,
-      });
-      return res.json({
-        ...result,
-        sessionId,
-        shared: true,
-        webPath: changeHashPath(app.slug, sessionId),
-      });
+      // The session the work becomes, its branch in the app's repository and
+      // the landing onto it are a conductor's (services/fork-operations.js
+      // `work.share`), which reads the access, the membership, the cap and
+      // the account link again first, and gives the session back if the
+      // landing refuses: a half-made card in everyone's In-progress area,
+      // with no commits behind it, is worse than the refusal it came from.
+      const out = await platformOperations.request({
+        op: 'work.share', appId: app.id, userId: req.user.id,
+        input: {},
+        payload: {
+          ...updatePayload(updateParams(input)),
+          externalAgent: input.externalAgent,
+        },
+      }, { waitMs: forkOperations.WAIT_MS });
+      if (!out.ok) return sendUpdateRefusal(res, out);
+      const { requestId: _requestId, ...result } = out;
+      return res.json({ ...result, webPath: changeHashPath(app.slug, result.sessionId) });
     } catch (err) {
       log.error('proposal-handoff', 'Share to in-progress failed', { slug: req.params.slug, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
@@ -1451,173 +1435,55 @@ function proposalHandoffRoutes(config) {
         return res.status(500).json({ error: 'Internal server error' });
       }
       try {
-        return await proposalUpdate.withProposalLock(pool, sessionId, async () => {
-        const session = await loadOwnedHandoff(pool, sessionId, req.user.id);
-        if (!session) return res.status(404).json({ error: 'Handoff session not found' });
-        const revisionKind = managedRevisionKind(session);
-        if (!revisionKind) {
-          return res.status(409).json({
-            error: 'proposal_closed',
-            message: `This proposal is ${session.status || 'no longer open'}, so it cannot take a managed revision.`,
-          });
-        }
-        if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'collab'))) {
-          return res.status(404).json({ error: 'Active handoff session not found' });
-        }
-        // A build or checks run going needs no refusal: the upload's
-        // ChecksCleared, below, cancels it in the preview machine.
-        const runtime = checkRuntime(session);
-        if (runtime.session || runtime.pipeline) {
-          return res.status(409).json({
-            error: 'session_busy',
-            message: 'The shared proposal is currently changing. Retry when it finishes.',
-          });
-        }
-        const expectedParent = currentProposalBranchHead(session);
-        const releaseOperation = beginSessionOperation(session.id);
-        try {
-          await releaseOperation.recorded;
-          const repo = repoCoordinates(session);
-          if (!github.isEnabled() || !repo) {
-            return res.status(400).json({ error: 'No GitHub repo configured for this app' });
+        // The route's checks, under the proposal lock so they read what a
+        // writer still holding it leaves. The commit is the conductor's
+        // (services/proposal-commit-operation.js), which takes the lock again
+        // and reads all of this again before it writes anything.
+        const checked = await proposalUpdate.withProposalLock(pool, sessionId, async () => {
+          const session = await loadOwnedHandoff(pool, sessionId, req.user.id);
+          if (!session) return { status: 404, body: { error: 'Handoff session not found' } };
+          if (!managedRevisionKind(session)) {
+            return { status: 409, body: {
+              error: 'proposal_closed',
+              message: `This proposal is ${session.status || 'no longer open'}, so it cannot take a managed revision.`,
+            } };
           }
-          let uploaded;
-          try {
-            uploaded = await github.createProposalCommit(repo.owner, repo.repo, {
-              branchName: session.branch_name,
-              expectedRemoteParentSha: expectedParent,
-              localParentSha: input.parentSha,
-              localParentTreeSha: input.parentTreeSha,
-              expectedTreeSha: input.treeSha,
-              localCommitSha: input.localCommitSha,
-              message: input.message,
-              authoredAt: input.authoredAt,
-              committedAt: input.committedAt,
-              files: input.files,
-            });
-          } catch (err) {
-            if (err.code === 'branch_moved') {
-              return res.status(409).json({
-                error: 'branch_moved',
-                message: 'The proposal branch changed. Fetch its current head and rebase the local commit before retrying.',
-              });
-            }
-            if (err.code === 'tree_mismatch') {
-              return res.status(409).json({
-                error: 'tree_mismatch',
-                message: 'The uploaded files did not reconstruct the tested local Git tree.',
-              });
-            }
-            if (err.code === 'parent_tree_mismatch') {
-              return res.status(409).json({
-                error: 'parent_tree_mismatch',
-                message: 'The local commit parent does not match the current proposal tree. Upload local commits in order or rebase onto the current proposal branch.',
-              });
-            }
-            // The proposal's branch did not come across when Homeroom moved
-            // off GitHub (services/code-missing.js, read live): said so, not
-            // as GitHub being unavailable, which invites a retry.
-            const codeMissing = require('../services/code-missing');
-            if (err.status === 404 && await codeMissing.branchGone(pool, session) === true) {
-              return res.status(409).json({ error: codeMissing.CODE, message: codeMissing.BRANCH_GONE });
-            }
-            const detail = github.describeGithubError(err);
-            // Never log GitHub's response data on this endpoint: a provider
-            // validation error may echo fields from the source upload.
-            log.warn('proposal-handoff', 'Bot-owned commit upload failed', {
-              sessionId: session.id,
-              status: detail.status,
-              requestId: detail.requestId,
-              message: detail.message,
-            });
-            return res.status(503).json(githubBudget.githubUnavailableBody(err));
+          if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'collab'))) {
+            return { status: 404, body: { error: 'Active handoff session not found' } };
           }
-          // The exact local/platform pair is already durable. This can be a
-          // retry before submission or long after its staging checks passed.
-          // Rewriting the row would wrongly erase a valid verdict and preview
-          // even though createProposalCommit just proved the branch unchanged.
-          // A promoted retry still reconciles below: its first response may
-          // have been lost after GitHub moved but before votes were reset.
-          const alreadyRecorded = session.handoff_uploaded_sha === uploaded.sha
-            && session.handoff_local_commit_sha === input.localCommitSha;
-          if (!alreadyRecorded) {
-            // The verdict no longer describes the branch: the preview
-            // machine clears it (ChecksCleared, below).
-            const advanced = await pool.query(
-              `UPDATE chat_sessions
-                SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5,
-                    ${summaryFreshness.INVALIDATE_SQL},
-                    handoff_upload_checked_sha = checks_commit_sha,
-                    last_activity_at = NOW()
-              WHERE id = $2 AND status = $6 AND source = $3
-                AND (CASE
-                       WHEN handoff_uploaded_sha IS NOT NULL
-                        AND handoff_uploaded_sha IS DISTINCT FROM handoff_head_sha
-                        AND checks_commit_sha IS NOT DISTINCT FROM handoff_upload_checked_sha
-                         THEN handoff_uploaded_sha
-                       ELSE COALESCE(checks_commit_sha, handoff_uploaded_sha,
-                                     handoff_head_sha, handoff_base_sha)
-                     END) IS NOT DISTINCT FROM $4`,
-              [uploaded.sha, session.id, SOURCE, expectedParent, input.localCommitSha,
-                session.status]
-            );
-            if (!advanced.rowCount) {
-              return res.status(409).json({ error: 'session_state_changed' });
-            }
-            await previewWorkflow.clear({ session, reason: 'upload' });
+          // A build or checks run going needs no refusal: the upload's
+          // ChecksCleared cancels it in the preview machine.
+          const runtime = checkRuntime(session);
+          if (runtime.session || runtime.pipeline) {
+            return { status: 409, body: {
+              error: 'session_busy',
+              message: 'The shared proposal is currently changing. Retry when it finishes.',
+            } };
           }
-          if (revisionKind === 'session' && !session.pr_number) {
-            try {
-              await prMetadata.applyPrMetadata({
-                pool, session, repoOwner: repo.owner, repoName: repo.repo,
-                userMessage: '', ccSummary: '', username: req.user.username,
-                userId: req.user.id, allowModelGeneration: false,
-                preferredTitle: session.proposed_pr_title || session.session_title || null,
-              });
-            } catch (err) {
-              // The commit is durable. A retry can adopt a PR that GitHub
-              // created before the DB write, or promotion can create it.
-              log.warn('proposal-handoff', 'Draft PR creation deferred after commit upload', {
-                sessionId: session.id, code: err.code || null, err: err.message,
-              });
-            }
+          if (!github.isEnabled() || !repoCoordinates(session)) {
+            return { status: 400, body: { error: 'No GitHub repo configured for this app' } };
           }
-          if (revisionKind === 'proposal') {
-            const reconciled = await proposalUpdate.reconcileManagedCommitUpload(
-              { config, pool },
-              {
-                session: {
-                  ...session,
-                  handoff_uploaded_sha: uploaded.sha,
-                  handoff_local_commit_sha: input.localCommitSha,
-                },
-                expectedHeadSha: uploaded.sha,
-              }
-            );
-            if (!reconciled.ok) {
-              return res.status(UPDATE_STATUS_BY_CODE[reconciled.code]
-                || (reconciled.retryable ? 503 : 409)).json({
-                error: reconciled.code,
-                message: reconciled.message,
-                ...(reconciled.headSha ? { headSha: reconciled.headSha } : {}),
-              });
-            }
-          }
-          return res.status(!alreadyRecorded && uploaded.created ? 201 : 200).json({
-            ok: true,
-            sessionId: Number(session.id),
-            localCommitSha: input.localCommitSha,
-            headSha: uploaded.sha,
-            treeSha: uploaded.treeSha,
-            branch: session.branch_name,
-            prNumber: session.pr_number || null,
-            prUrl: session.pr_url || null,
-            uploaded: alreadyRecorded ? false : uploaded.created,
-            webPath: changeHashPath(session.app_slug, session.id),
-          });
-        } finally {
-          releaseOperation();
-        }
+          return { session, expectedParent: currentProposalBranchHead(session) };
+        });
+        if (checked.body) return res.status(checked.status).json(checked.body);
+        const { session, expectedParent } = checked;
+        const out = await require('../services/platform-operations').request({
+          op: 'proposal.commit', appId: session.app_id, userId: req.user.id,
+          input: commitInput('handoff', session, expectedParent, input),
+          payload: { message: input.message, files: input.files },
+        }, { waitMs: COMMIT_WAIT_MS });
+        if (!out.ok) return answerRefusal(res, out);
+        return res.status(out.uploaded ? 201 : 200).json({
+          ok: true,
+          sessionId: out.sessionId,
+          localCommitSha: out.localCommitSha,
+          headSha: out.headSha,
+          treeSha: out.treeSha,
+          branch: out.branch,
+          prNumber: out.prNumber,
+          prUrl: out.prUrl,
+          uploaded: out.uploaded,
+          webPath: changeHashPath(session.app_slug, session.id),
         });
       } catch (err) {
         log.error('proposal-handoff', 'Failed to upload local commit', { err: err.message });
@@ -1856,9 +1722,18 @@ function proposalHandoffRoutes(config) {
                 return res.status(409).json({ error: 'head_not_descendant_of_previous' });
               }
             }
-            await github.advanceBranchToSha(repo.owner, repo.repo, session.branch_name, input.headSha);
+            // The upload moved the branch to this head (only /commits writes
+            // it, on a conductor, and handoff_uploaded_sha is recorded after
+            // it did), so the build reads it and writes nothing: a branch
+            // somewhere else since is a conflict, as on the promoted path.
+            const remoteHead = await github.getBranchSha(repo.owner, repo.repo, session.branch_name);
+            if (String(remoteHead).toLowerCase() !== input.headSha) {
+              return res.status(409).json({
+                error: 'branch_moved',
+                message: 'The proposal branch changed after this managed commit was uploaded.',
+              });
+            }
           } catch (err) {
-            if (err.code === 'non_fast_forward') return res.status(409).json({ error: 'non_fast_forward' });
             log.warn('proposal-handoff', 'GitHub commit adoption failed', {
               sessionId: session.id, ...github.describeGithubError(err),
             });
@@ -2060,6 +1935,16 @@ function proposalHandoffRoutes(config) {
 
 module.exports = {
   proposalHandoffRoutes,
+  // The hand-off as routes and services/proposal-commit-operation.js read it.
+  loadOwnedHandoff,
+  managedRevisionKind,
+  currentProposalBranchHead,
+  checkRuntime,
+  accessRow,
+  repoCoordinates,
+  commitInput,
+  answerRefusal,
+  COMMIT_WAIT_MS,
   parseStartBody,
   parseContextBody,
   parseBuildBody,

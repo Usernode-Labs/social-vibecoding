@@ -480,8 +480,13 @@ const NO_FALLBACK_PAGES = [
 // no-store by design (unshare must bite immediately), so there is no
 // cached copy to fall back to either way: bypass, and let it load or
 // fail like any plain document.
+//
+// /embed/<slug> is the same kind of page (routes/project-preview.js): a
+// public project as a post on X frames it, a server document with no
+// session that is never the shell. It is no-store too.
 const NO_FALLBACK_PREFIXES = [
   '/reports/',
+  '/embed/',
 ];
 
 // An app's install page: a server page under /app/<slug>/ that is never the

@@ -155,10 +155,11 @@ const TABS = [
   { key: 'discover' as const, label: 'core:tabs.discover', href: '#apps', Icon: CompassIcon },
   { key: 'messages' as const, label: 'core:tabs.messages', href: '#messages', Icon: ChatIcon },
   // #6019: the Homeroom bot's chat, which left the Messages list for a tab
-  // of its own. `#ai` opens it (app.js), and the tab is lit while it is the
+  // of its own. `#homeroom-bot` opens it (app.js; `#ai`, its old address,
+  // still does), and the tab is lit while it is the
   // conversation on screen (the nav store's `bot`). Its glyph is the bot's
   // own picture in line, not a sparkle (29 Oct 2026).
-  { key: 'ai' as const, label: 'core:tabs.ai', href: '#ai', Icon: HomeroomBotIcon },
+  { key: 'ai' as const, label: 'core:tabs.ai', href: '#homeroom-bot', Icon: HomeroomBotIcon },
   { key: 'workshop' as const, label: 'core:tabs.communities', href: '#communities', Icon: UserGroupIcon },
   // "You", signed in or not (N7 of the 19 Oct polish board); the accessible
   // name adds whose account it is — see tabLabel below.

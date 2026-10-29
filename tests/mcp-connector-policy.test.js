@@ -438,8 +438,11 @@ test('the update route is on the list only because it refuses anything but the c
   ).slice(0, 3000);
   assert.match(handler, /getAppForUser\(pool, req\.params\.slug, req\.user, 'collab'/,
     'the app is access-checked at the same bar the browser\'s proposal paths use');
-  assert.match(handler, /WHERE cs\.id = \$1 AND cs\.app_id = \$2/,
+  assert.match(handler, /forkOperations\.loadProposal\(pool, sessionId, app\.id\)/,
     'the handler loads the proposal on the named app, not any proposal by id');
+  const OPS_SRC = fs.readFileSync(path.join(__dirname, '../src/services/fork-operations.js'), 'utf8');
+  assert.match(OPS_SRC.slice(OPS_SRC.indexOf('async function loadProposal')), /^[\s\S]*?WHERE cs\.id = \$1 AND cs\.app_id = \$2/,
+    'by (id, app_id), as the conductor that runs the update loads it again');
   const UPDATE_SRC = fs.readFileSync(
     path.join(__dirname, '../src/services/proposal-update.js'), 'utf8'
   );
@@ -536,22 +539,27 @@ test('the tip’s throttle state is readable by the browser, never by the connec
 
 test('the demo routes are on the list only because every one of them is gated on demo mode, the creator, and full platform admin', () => {
   const DEMO_SRC = fs.readFileSync(path.join(__dirname, '../src/routes/demo-mode.js'), 'utf8');
-  // The gate, in one place: the platform app, anyone but the creator, and an
-  // app not in demo mode are each refused before a handler does anything.
-  // If any of these loosens — an admin override, say — these entries have to
-  // come back off the list.
-  assert.match(DEMO_SRC, /if \(app\.self_hosted\) \{\s*res\.status\(403\)/, 'the platform app is refused');
-  assert.match(DEMO_SRC,
-    /if \(req\.user\?\.id == null \|\| app\.created_by !== req\.user\.id\) \{\s*res\.status\(403\)/,
+  // The gate, in one place (services/demo-operation.js fenceOf, which the
+  // routes' loadDemoApp runs and the conductor runs again before demo mode's
+  // repository writes): the platform app, anyone but the creator, and an app
+  // not in demo mode are each refused before a handler does anything. If any
+  // of these loosens — an admin override, say — these entries have to come
+  // back off the list.
+  const FENCE_SRC = fs.readFileSync(path.join(__dirname, '../src/services/demo-operation.js'), 'utf8');
+  assert.match(FENCE_SRC, /if \(app\.self_hosted\) return \{ status: 403,/, 'the platform app is refused');
+  assert.match(FENCE_SRC,
+    /if \(user\?\.id == null \|\| app\.created_by !== user\.id\) return \{ status: 403,/,
     'anyone but the creator is refused');
-  assert.match(DEMO_SRC, /if \(requireDemoMode && !app\.demo_mode\) \{\s*res\.status\(403\)/,
+  assert.match(FENCE_SRC, /if \(requireDemoMode && !app\.demo_mode\) \{\s*return \{ status: 403,/,
     'an app not in demo mode is refused');
   // …and the admin half is required on top of the creator half, never
   // instead of it: the creator check comes first, this comes after it.
-  const creatorAt = DEMO_SRC.indexOf('app.created_by !== req.user.id');
-  const adminAt = DEMO_SRC.indexOf('if (!req.user.canAdminWrite) {');
+  const creatorAt = FENCE_SRC.indexOf('app.created_by !== user.id');
+  const adminAt = FENCE_SRC.indexOf('if (!user.canAdminWrite) return { status: 403,');
   assert.ok(creatorAt > 0 && adminAt > creatorAt, 'a creator who is not a full platform admin is refused, after the creator check');
-  assert.match(DEMO_SRC, /if \(!req\.user\.canAdminWrite\) \{\s*res\.status\(403\)/);
+  assert.match(DEMO_SRC, /const fenced = demo\.fenceOf\(app, req\.user, \{ requireDemoMode \}\);\s*if \(fenced\) \{\s*res\.status\(fenced\.status\)/,
+    'every route runs the fences');
+  assert.match(FENCE_SRC, /const fenced = fenceOf\(app, user\);\s*if \(fenced\) return/, 'and the conductor runs them again');
   // …and every route goes through it.
   const routes = [...DEMO_SRC.matchAll(/router\.(?:get|post)\('(\/api\/apps\/:slug\/demo[^']*)'/g)].map((m) => m[1]);
   assert.deepEqual(routes.sort(), [

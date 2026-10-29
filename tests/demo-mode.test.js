@@ -99,11 +99,12 @@ stubModule('../src/services/github', {
   getRepoHead: async () => ({ headSha: 'a'.repeat(40) }),
   getBranchSha: async (_o, _r, branch) => {
     if (branch === 'missing') throw new Error('Not Found');
-    return 'c'.repeat(40);
+    return branch === 'main' ? (state.mainMoves ? 'z'.repeat(40) : state.apps.get('demo-app').demo_base_sha) : 'c'.repeat(40);
   },
+  findOpenPrByBranch: async () => null,
   createPR: async (...args) => {
     record('createPR')(...args);
-    if (state.prFails) throw new Error('422 Validation Failed');
+    if (state.prFails) throw Object.assign(new Error('422 Validation Failed'), { status: 422 });
     return { number: 42, html_url: 'https://github.com/usernode-bot/demo-app/pull/42' };
   },
   getBotUsername: async () => 'usernode-bot',
@@ -211,6 +212,11 @@ poolMod.getPool = () => ({
   async query(sql, params = []) {
     const s = sql.replace(/\s+/g, ' ').trim();
     state.queries.push({ sql: s, params });
+    // The conductor reads the app again by its id (services/demo-operation.js).
+    if (s.startsWith('SELECT * FROM apps WHERE id = $1')) {
+      const app = [...state.apps.values()].find((a) => a.id === params[0]);
+      return { rows: app ? [{ ...app }] : [] };
+    }
     if (s.startsWith('SELECT id, username, is_synthetic FROM users WHERE id = $1')) {
       const u = state.users.get(params[0]);
       return { rows: u ? [u] : [] };
@@ -280,11 +286,16 @@ poolMod.getPool = () => ({
 });
 
 const { demoModeRoutes, validBranch } = require('../src/routes/demo-mode');
+const { inlineOperations } = require('./lib/inline-operations');
 
 let server;
 let base;
 let currentUser = CREATOR;
+// demo/propose and demo/reset are a conductor's (services/demo-operation.js),
+// run here in the test's own process against the same world.
+let conductor;
 test.before(async () => {
+  conductor = inlineOperations({ pool: () => poolMod.getPool(), user: () => currentUser });
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => { req.user = currentUser; next(); });
@@ -293,7 +304,7 @@ test.before(async () => {
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${server.address().port}`;
 });
-test.after(() => server && server.close());
+test.after(() => { if (server) server.close(); if (conductor) conductor(); });
 test.beforeEach(() => { resetWorld(); currentUser = CREATOR; });
 
 const call = async (method, p, body) => {
@@ -966,4 +977,186 @@ test('branch and patch are one or the other', async () => {
   assert.match(r.body.error, /branch .* or patch/);
   assert.equal(calls.applyPatch, undefined);
   assert.equal(calls.createPR, undefined);
+});
+
+// ── On a conductor ──────────────────────────────────────────────────────
+//
+// demo/propose and demo/reset write to the app's repository, so a conductor
+// makes those writes (services/demo-operation.js): it runs the fences again
+// before anything is written, and keeps each write as a step, so a retry
+// pushes once, opens one pull request and moves main once.
+
+const operations = require('../src/services/platform-operations');
+const kernelSteps = require('../src/workflow/kernel/steps.ts');
+
+// The world's pool, with the requester's own row as the conductor reads it,
+// and a statement that fails once when `failOnce` says so.
+function conductorPool(user, failOnce) {
+  return {
+    async query(sql, params) {
+      if (/FROM users WHERE id = \$1/.test(sql) && /anonymised_at/.test(sql)) {
+        return { rows: [{ id: user.id, username: user.username, is_admin: !!user.isAdmin, admin_readonly: !!user.adminReadonly,
+          has_platform_access: true, private_member_since: null, anonymised_at: null }] };
+      }
+      if (failOnce.when && failOnce.when(sql)) { failOnce.when = null; throw new Error('connection reset'); }
+      return poolMod.getPool().query(sql, params);
+    },
+  };
+}
+function checkpointed() {
+  let saved = null;
+  let attempt = 0;
+  return () => kernelSteps.steps({ resumeFrom: saved, attempt: ++attempt, triesLeft: 3, checkpoint: async (v) => { saved = v; } });
+}
+
+test('the routes ask a conductor for the repository\'s writes, and make none themselves', () => {
+  const src = read('src/routes/demo-mode.js');
+  assert.match(src, /op: 'demo\.propose', appId: app\.id, userId: req\.user\.id/);
+  assert.match(src, /op: 'demo\.reset', appId: app\.id, userId: req\.user\.id, input: \{ sessionIds:/);
+  assert.doesNotMatch(src, /github\.(createPR|closePR|forceBranchToSha)\(|applyPatch\(/);
+});
+
+test('the conductor runs the fences again: a creator who is no longer a full admin writes nothing', async () => {
+  const request = { op: 'demo.propose', requestId: '00000000-0000-4000-8000-00000000d001', appId: 1, userId: 7,
+    input: { branch: 'demo/animations', title: 'x', hold: false } };
+  const out = await operations.run({ pool: conductorPool(READONLY_ADMIN_CREATOR, {}), config: {} }, request);
+  assert.equal(out.status, 403);
+  assert.match(out.body.error, /full platform admin/);
+  const reset = await operations.run({ pool: conductorPool(READONLY_ADMIN_CREATOR, {}), config: {} },
+    { ...request, op: 'demo.reset', input: { sessionIds: [] } });
+  assert.equal(reset.status, 403);
+  assert.equal(calls.createPR, undefined);
+  assert.equal(calls.forceBranchToSha, undefined);
+});
+
+test('a reset retried after main moved moves it once, deploys once, and says what it removed', async () => {
+  delivery.requested.length = 0;
+  state.sessions.push(
+    { id: 20, app_id: 1, user_id: 50, status: 'merged', pr_number: 52 },
+    { id: 21, app_id: 1, user_id: 50, status: 'promoted', pr_number: 53 },
+  );
+  const fail = { when: (sql) => /INSERT INTO app_activity/.test(sql) };
+  const request = { op: 'demo.reset', requestId: '00000000-0000-4000-8000-00000000d002', appId: 1, userId: 7, input: { sessionIds: [20, 21] } };
+  const item = checkpointed();
+  await assert.rejects(operations.run({ pool: conductorPool(CREATOR, fail), config: {} }, request, item()), /connection reset/);
+  const out = await operations.run({ pool: conductorPool(CREATOR, fail), config: {} }, request, item());
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.equal(out.sessionsRemoved, 2, 'what the first try removed');
+  assert.deepEqual(out.main, { from: 'z'.repeat(40), to: 'b'.repeat(40), moved: true });
+  assert.equal(out.redeploy, 'started');
+  assert.equal(calls.forceBranchToSha.length, 1, 'main moved once');
+  assert.deepEqual(calls.closePR.map((c) => c[2]), [53], 'closed once');
+  assert.deepEqual(delivery.requested, [[1, 'demo_reset']], 'deployed once');
+});
+
+test('a proposal retried after its pull request opened pushes once, opens one PR and files one proposal', async (t) => {
+  const patch = 'diff --git a/app.js b/app.js\n--- a/app.js\n+++ b/app.js\n@@ -1 +1 @@\n-old\n+new\n';
+  const fail = { when: (sql) => /INSERT INTO app_activity/.test(sql) };
+  const request = { op: 'demo.propose', requestId: '00000000-0000-4000-8000-00000000d003', appId: 1, userId: 7,
+    input: { branch: null, title: 'Smooth category animations', hold: false } };
+  const pool = conductorPool(CREATOR, fail);
+  const conductorInputs = new Map([[request.requestId, { ...require('../src/services/git-host-flows').patchPayload(patch), description: '', summary: null, testingPaths: [] }]]);
+  const withInput = {
+    query(sql, params) {
+      if (/^\s*SELECT payload FROM platform_operation_inputs/.test(sql)) {
+        return Promise.resolve({ rows: conductorInputs.has(params[0]) ? [{ payload: conductorInputs.get(params[0]) }] : [] });
+      }
+      if (/^\s*DELETE FROM platform_operation_inputs/.test(sql)) { conductorInputs.delete(params[0]); return Promise.resolve({ rows: [] }); }
+      return pool.query(sql, params);
+    },
+  };
+  const item = checkpointed();
+  const first = item();
+  const lost = Object.create(first);
+  lost.once = async (key, fn) => {
+    if (key === 'pr') { await fn(); throw new kernelSteps.StepsStopped(); }
+    return first.once(key, fn);
+  };
+  await assert.rejects(operations.run({ pool: withInput, config: {} }, request, lost), (err) => err.stopped === true);
+  t.mock.method(require('../src/services/github'), 'findOpenPrByBranch', async () => ({ number: 42, html_url: 'https://github.com/usernode-bot/demo-app/pull/42' }));
+  await assert.rejects(operations.run({ pool: withInput, config: {} }, request, item()), /connection reset/);
+  const out = await operations.run({ pool: withInput, config: {} }, request, item());
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.equal(out.headSha, 'd'.repeat(40));
+  assert.equal(calls.applyPatch.length, 1, 'pushed once');
+  assert.equal(calls.applyPatch[0][0].patch, patch, 'the patch, byte for byte, through the request\'s input');
+  assert.equal(calls.createPR.length, 1, 'one pull request');
+  assert.equal(queriesLike('INSERT INTO chat_sessions').length, 1, 'one proposal');
+  assert.equal(calls.promoteProposal.length, 1);
+  assert.equal(conductorInputs.size, 0, 'its input dropped once answered');
+});
+
+
+test('a reset recovers its deployment obligation after its ref checkpoint is lost', async (t) => {
+  const github = require('../src/services/github');
+  const base = state.apps.get('demo-app').demo_base_sha;
+  let remote = 'e'.repeat(40);
+  let writes = 0;
+  t.mock.method(github, 'getBranchSha', async () => remote);
+  t.mock.method(github, 'forceBranchToSha', async (_o, _r, _branch, to) => {
+    const previousSha = remote; remote = to; writes += 1;
+    return { previousSha, sha: to, updated: previousSha !== to };
+  });
+  let saved = null;
+  let lose = true;
+  const item = () => kernelSteps.steps({ resumeFrom: saved, triesLeft: 3, checkpoint: async (value) => {
+    if (lose && Object.hasOwn(value, 'main')) { lose = false; throw new kernelSteps.StepsStopped(); }
+    saved = value;
+  } });
+  const request = { op: 'demo.reset', requestId: '00000000-0000-4000-8000-00000000d009', appId: 1, userId: 7, input: { sessionIds: [] } };
+  const d = { pool: conductorPool(CREATOR, {}), config: {} };
+  delivery.requested.length = 0;
+  await assert.rejects(operations.run(d, request, item()), kernelSteps.isStopped);
+  assert.equal(remote, base);
+  assert.equal(saved.main, undefined);
+  const out = await operations.run(d, request, item());
+  assert.equal(out.redeploy, 'started');
+  assert.deepEqual(out.main, { from: 'e'.repeat(40), to: base, moved: true });
+  assert.equal(writes, 1, 'an already landed reset is adopted');
+  assert.deepEqual(delivery.requested, [[1, 'demo_reset']]);
+});
+
+
+test('a resumed reset leaves a changed reset target alone', async (t) => {
+  const github = require('../src/services/github');
+  let writes = 0;
+  t.mock.method(github, 'forceBranchToSha', async (_o, _r, _b, to) => { writes += 1; return { previousSha: 'e'.repeat(40), sha: to, updated: true }; });
+  const base = state.apps.get('demo-app').demo_base_sha;
+  const steps = kernelSteps.steps({ resumeFrom: { 'main-target': { from: 'e'.repeat(40), to: base, moved: true } }, checkpoint: async () => {} });
+  state.apps.get('demo-app').demo_base_sha = 'f'.repeat(40);
+  const out = await operations.run({ pool: conductorPool(CREATOR, {}), config: {} },
+    { op: 'demo.reset', appId: 1, userId: 7, input: { sessionIds: [] } }, steps);
+  assert.equal(out.status, 409);
+  assert.match(out.body.error, /target changed/);
+  assert.equal(writes, 0);
+});
+
+
+test('a reset rechecks a head that advanced after its initial no-op plan', async (t) => {
+  const github = require('../src/services/github');
+  const base = state.apps.get('demo-app').demo_base_sha;
+  for (const resumed of [false, true]) {
+    let remote = resumed ? 'e'.repeat(40) : base;
+    let writes = 0; let advance = !resumed;
+    t.mock.method(github, 'getBranchSha', async () => remote);
+    t.mock.method(github, 'forceBranchToSha', async (_o, _r, _b, to) => {
+      const previousSha = remote; remote = to; writes += 1;
+      return { previousSha, sha: to, updated: previousSha !== to };
+    });
+    const steps = kernelSteps.steps({
+      resumeFrom: resumed ? { 'main-target': { from: base, to: base, moved: false } } : null,
+      checkpoint: async (value) => {
+        if (advance && value['main-target']) { advance = false; remote = 'e'.repeat(40); }
+      },
+    });
+    delivery.requested.length = 0;
+    const out = await operations.run({ pool: conductorPool(CREATOR, {}), config: {} },
+      { op: 'demo.reset', appId: 1, userId: 7, input: { sessionIds: [] } }, steps);
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.equal(remote, base);
+    assert.equal(writes, 1);
+    assert.deepEqual(out.main, { from: 'e'.repeat(40), to: base, moved: true });
+    assert.deepEqual(delivery.requested, [[1, 'demo_reset']]);
+    t.mock.restoreAll();
+  }
 });

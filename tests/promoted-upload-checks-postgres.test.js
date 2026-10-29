@@ -183,7 +183,10 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
   const build = routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post');
   const recovery = require('../src/services/staging-recovery');
 
-  const { rows: [author] } = await pool.query(`INSERT INTO users (username, password) VALUES ('author', 'x') RETURNING id`);
+  // The upload's commit is the conductor's (`proposal.commit`), which reads
+  // the requester as the auth middleware does: someone let onto the platform.
+  const { rows: [author] } = await pool.query(
+    `INSERT INTO users (username, password, has_platform_access) VALUES ('author', 'x', TRUE) RETURNING id`);
   const { rows: [app] } = await pool.query(
     `INSERT INTO apps (name, slug, created_by, repo_url) VALUES ('Shop', 'shop', $1, 'https://github.com/acme/shop') RETURNING *`,
     [author.id]);
@@ -329,14 +332,16 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
     await uploadHead(s, H2, H1);
     let r = await row(s);
     assert.equal(r.reviewed_head_sha, H2, 'the upload moved the head people vote on');
-    assert.equal(r.checks_commit_sha, H1, 'and started no checks: the pin is still the old run\'s');
-    assert.equal(r.handoff_upload_checked_sha, H1);
-    assert.equal(r.check_state, null, 'the verdict is cleared');
-    // No assertion on the machine's head here: clearing the verdict leaves a
-    // promoted row owing checks on the head people vote on, and the machine
-    // sweeps that head on its own at the upload's operation end. That it
-    // built H2 once, and that the row's pin never moved to H2 by the upload,
-    // is asserted below.
+    assert.equal(r.handoff_upload_checked_sha, H1, 'and recorded the old run\'s pin: it started no checks itself');
+    // No assertion on the machine's head or the row's pin here: clearing the
+    // verdict leaves a promoted row owing checks on the head people vote on,
+    // and the machine sweeps that head on its own at the upload's operation
+    // end. That operation is the conductor's (`proposal.commit`), which ends
+    // before the route answers, so the sweep may already have moved the pin
+    // to H2. What may not remain is the old head's verdict. That the machine
+    // built H2 once is asserted below.
+    assert.ok([H1, H2].includes(r.checks_commit_sha), `the pin is the old run's or the machine's sweep: ${r.checks_commit_sha}`);
+    assert.ok(r.checks_commit_sha !== H1 || r.check_state === null, 'the old head\'s verdict is cleared');
 
     const res = await submit(s, H2);
     assert.equal(res.statusCode, 202, JSON.stringify(res.body));

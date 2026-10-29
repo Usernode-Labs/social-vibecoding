@@ -2,24 +2,40 @@
  * #ai-screen — the AI tab's main view (#6019 follow-up; plan v3, "the
  * Homeroom bot tab: what needs you comes first, then your private threads,
  * with a lock on the tile, then Up next: what's moving without you, soonest
- * first. Ask Homeroom bot opens Main"). Up next is In progress since 29 Oct
- * 2026, and Needs you here is only the threads you are in; All votes opens
- * every decision you owe, on Communities.
+ * first. Ask Homeroom bot opens Main"). Needs you here is only the threads
+ * you are in; Communities › Needs you has every decision you owe.
  *
- *   Homeroom bot                  Needs you: 2 · In progress: 3
- *   YOUR WORK · 2 NEED YOU                                All votes ›
+ * 29 Oct 2026 (Evan): the first list is Needs you, since it holds other
+ * people's threads too, and only what waits on you; In progress is what is
+ * being worked on; what waits on someone else (other people's votes, a free
+ * builder, somebody to pick it up) is Up next. A thread opens on this page:
+ *
+ *   Homeroom bot                  Needs you: 2 · In progress: 1
+ *   NEEDS YOU · 2
  *   [tile] Dark mode          Garden club · #403              [Vote]
+ *   [tile] A reminder email   Garden club · #410          [Build it]
  *   [lock] A calendar idea    Only you · Not in a community yet
- *   [tile] Print view         Garden club · #388 · Not picked up yet
  *   IN PROGRESS                                        Soonest first
  *   [tile] Weekly digest      Garden club · #401 · Going live
+ *   UP NEXT
+ *   [tile] Search the board   Garden club · #403 · Waiting for votes · you voted Yes
+ *   [tile] Print view         Garden club · #388 · Nobody is building it yet
  *   ▸ LIVE THIS WEEK · 1
  *   ( Ask Homeroom bot )                 ← a phone: opens Main
  *
  * Main, the private conversation with the bot, is the Messages screen's
- * chat with it (`#ai/main`, ../messages). On a phone the Ask bar opens it and
- * a private thread opens as `#ai/thread/<id>`; on a desktop it is docked
- * beside this list (EmbeddedConversation), and a private thread opens in it.
+ * chat with it (`#homeroom-bot/main`, ../messages). On a phone the Ask bar
+ * opens it and a private thread opens as `#homeroom-bot/thread/<id>`; on a
+ * desktop it is docked beside this list (EmbeddedConversation), and a
+ * private thread opens in it.
+ *
+ * A REQUEST, A CHANGE OR A DECISION OPENS HERE TOO. On a wide window in the
+ * column beside the list, in Main's place: the side panel, drawn as this
+ * page's own column (‹ Main and the project's name over the page, no
+ * Expand, no Close; ../side-panel/side-panel.tsx). Anywhere else on its
+ * page, whose back chip says ‹ Homeroom bot and comes back here, with the
+ * project's Workshop beside it (Improve.enterTopicFrom), and the tab bar
+ * keeps Homeroom bot lit (App._isBotTopic).
  *
  * THE FIRST RENDER IS THE PRERENDER: the screen hidden, the bot's name and
  * no rows. The lists load in effects once the screen is shown to somebody
@@ -30,7 +46,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
-import { ChevronDownIcon, ChevronRightIcon, LockIcon, MicrophoneIcon, UserGroupIcon } from '@/components/ui/icons';
+import { ChevronDownIcon, LockIcon, MicrophoneIcon, UserGroupIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -39,11 +55,13 @@ import { EmbeddedConversation } from '../messages';
 import { openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
 import {
-  NEXT_FIRST, foldWork, heroWords, nextWords, yourWork,
+  NEXT_FIRST, foldWork, heroWords, inProgress, isTopicHref, needsYou, nextWords, owedCount, upNext,
   type AiApp, type AiThread, type AiWork, type NeedItem, type Phrase, type Who, type WorkRow,
 } from './model';
 
 const WIDE = '(min-width: 1024px)';
+/** This page's address: where a thread opened from it comes back to. */
+const BOT_PAGE = '#homeroom-bot';
 
 function demoQuery(): string {
   if (typeof window === 'undefined') return '';
@@ -115,26 +133,75 @@ function go(href: string | null): void {
 }
 
 /** The side panel's controller (features/side-panel/), when the shell has one. */
-function sidePanel(): { take?: (route: string) => boolean; close?: () => void } | null {
+function sidePanel(): {
+  take?: (route: string, hint?: { place?: AiApp | null } | null) => boolean;
+  close?: () => void;
+} | null {
   return typeof window === 'undefined' ? null : (window as any).UsernodeReact?.sidePanel || null;
 }
 
+/** The Improve controller, which records where a topic page was opened from. */
+function improve(): { enterTopicFrom?: (href: string) => void } | null {
+  return typeof window === 'undefined' ? null : (window as any).Improve || null;
+}
+
 /**
- * A request, a change or a decision, opened from the list. Beside it on a
- * wide window, in the side panel, which takes Main's place (the list stays
- * where it is); anywhere else, and whenever the panel does not take it, its
- * page.
+ * A request, a change or a decision, opened from the list. On a wide
+ * window in the column beside the list, in Main's place (the side panel,
+ * drawn as this page's column: ‹ Main and its project over it); anywhere
+ * else, and whenever the panel does not take it, its page, which goes back
+ * here.
  */
-function openPublic(href: string | null, docked: boolean): void {
+function openPublic(href: string | null, app: AiApp | null): void {
   if (!href) return;
-  if (docked) {
-    try {
-      if (sidePanel()?.take?.(href.replace(/^#/, ''))) return;
-    } catch {
-      /* the page instead */
-    }
+  try {
+    if (sidePanel()?.take?.(href.replace(/^#/, ''), { place: app })) return;
+  } catch {
+    /* the page instead */
   }
+  if (isTopicHref(href)) improve()?.enterTopicFrom?.(BOT_PAGE);
   go(href);
+}
+
+/** In progress or Up next: rows that each say what they wait on, the first few and Show more. */
+function ThreadSection({ list, title, end, rows }: {
+  list: 'next' | 'up'; title: ReactNode; end?: ReactNode; rows: AiThread[];
+}): ReactNode {
+  const t = useMessages('messages');
+  const say = (p: Phrase) => t(p.id, p.values);
+  const [all, setAll] = useState(false);
+  if (!rows.length) return null;
+  return (
+    <>
+      <SecHead end={end}>{title}</SecHead>
+      <GroupedList tone="plane" data-ai-list={list}>
+        {(all ? rows : rows.slice(0, NEXT_FIRST)).map((row) => (
+          <ListRow
+            key={row.threadId}
+            as="button"
+            chevron={false}
+            onClick={() => openPublic(row.href, row.app)}
+            data-ai-next={list === 'next' ? row.what : undefined}
+            data-ai-up={list === 'up' ? row.what : undefined}
+            leading={<WhoTile app={row.app} who="all" />}
+            title={row.title || ''}
+            titleClassName="whitespace-normal line-clamp-2"
+            subtitle={say(nextWords(row))}
+          />
+        ))}
+        {rows.length > NEXT_FIRST ? (
+          <ListRow
+            as="button"
+            chevron={false}
+            onClick={() => setAll(!all)}
+            aria-expanded={all}
+            title={<span className="text-violet-700 dark:text-violet-300">{all ? t('messages:ai.work.showLess') : t('messages:ai.work.showMore', { count: rows.length - NEXT_FIRST })}</span>}
+            titleClassName="font-semibold"
+          />
+        ) : null}
+      </GroupedList>
+    </>
+  );
 }
 
 export function AiScreen(): ReactNode {
@@ -147,10 +214,20 @@ export function AiScreen(): ReactNode {
   const [work, setWork] = useState<AiWork | null>(null);
   const [needs, setNeeds] = useState<NeedItem[] | null>(null);
   const [allWork, setAllWork] = useState(false);
-  const [allNext, setAllNext] = useState(false);
   const [liveOpen, setLiveOpen] = useState(false);
   const [botId, setBotId] = useState<number | null>(null);
   const [at, setAt] = useState<{ threadRootId: number | null; focusMessageId: number | null } | null>(null);
+  // A boot from the saved session draws this page before the server has
+  // confirmed who you are, and a read made in that window can come back
+  // with nothing; so could the chat docked beside it. `sv:session` (app.js)
+  // is the shell saying who is signed in, so both are asked again then,
+  // rather than staying empty until a reload (29 Oct 2026).
+  const [session, setSession] = useState(0);
+  useEffect(() => {
+    const again = () => setSession((n) => n + 1);
+    document.addEventListener('sv:session', again);
+    return () => document.removeEventListener('sv:session', again);
+  }, []);
 
   // Read on every showing: what is yours changes while you are elsewhere.
   useEffect(() => {
@@ -161,19 +238,20 @@ export function AiScreen(): ReactNode {
     void readJson<{ items?: NeedItem[] }>(`/api/workshop/needs-feed?in=threads${qs ? '&demo=1' : ''}`)
       .then((data) => { if (live) setNeeds(Array.isArray(data?.items) ? data!.items : []); });
     return () => { live = false; };
-  }, [visible]);
+  }, [visible, session]);
 
   // Main beside the list, on a desktop: the chat with the bot, opened once.
   useEffect(() => {
     if (!visible || !wide || botId || typeof window === 'undefined' || !(window as any).App?.user) return;
     void openBotConversation().then((id) => { if (id) setBotId(id); }).catch(() => {});
-  }, [visible, wide, botId]);
+  }, [visible, wide, botId, session]);
 
-  const rows = useMemo(() => yourWork(needs, work), [needs, work]);
+  const rows = useMemo(() => needsYou(needs, work), [needs, work]);
   const folded = useMemo(() => foldWork(rows), [rows]);
-  const next: AiThread[] = work?.next || [];
+  const progress = useMemo(() => inProgress(needs, work), [needs, work]);
+  const waiting = useMemo(() => upNext(needs, work), [needs, work]);
   const live: AiThread[] = work?.live || [];
-  const owed = needs ? needs.length : 0;
+  const owed = owedCount(rows);
   const docked = wide && !!botId;
 
   const openRow = (row: WorkRow) => {
@@ -183,10 +261,10 @@ export function AiScreen(): ReactNode {
         // Main its place back.
         sidePanel()?.close?.();
         setAt({ threadRootId: row.rootId, focusMessageId: null });
-      } else go(`#ai/thread/${row.rootId}`);
+      } else go(`#homeroom-bot/thread/${row.rootId}`);
       return;
     }
-    openPublic(row.href, docked);
+    openPublic(row.href, row.app);
   };
 
   return (
@@ -205,19 +283,15 @@ export function AiScreen(): ReactNode {
             <h1 className="text-[1.375rem] font-bold leading-tight">{t('messages:ai.hero.name')}</h1>
             {work ? (
               <span className="text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-hero-sub="">
-                {say(heroWords(owed, next.length))}
+                {say(heroWords(owed, progress.length))}
               </span>
             ) : null}
           </span>
         </section>
 
-        <SecHead end={needs ? (
-          <a href="/?ws=needs#communities" className="mb-1 inline-flex items-center gap-0.5 text-[13px] font-semibold text-violet-700 dark:text-violet-300" data-ai-answer-all="">
-            {t('messages:ai.work.answerAll')}<ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
-          </a>
-        ) : null}>
-          {t('messages:ai.work.title')}
-          {owed ? <span className="text-[color:var(--lit-ink)]">{` · ${t('messages:ai.work.needCount', { count: owed })}`}</span> : null}
+        {/* Needs you, counted in the label's own ink: a count is not a link. */}
+        <SecHead>
+          {owed ? t('messages:ai.work.titleCount', { count: owed }) : t('messages:ai.work.title')}
         </SecHead>
         <GroupedList tone="plane" data-ai-list="work">
           {work && needs && !rows.length ? (
@@ -250,38 +324,13 @@ export function AiScreen(): ReactNode {
           ) : null}
         </GroupedList>
 
-        {next.length ? (
-          <>
-            <SecHead end={<span className="mb-1 text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:ai.next.soonest')}</span>}>
-              {t('messages:ai.next.title')}
-            </SecHead>
-            <GroupedList tone="plane" data-ai-list="next">
-              {(allNext ? next : next.slice(0, NEXT_FIRST)).map((row) => (
-                <ListRow
-                  key={row.threadId}
-                  as="button"
-                  chevron={false}
-                  onClick={() => openPublic(row.href, docked)}
-                  data-ai-next={row.what}
-                  leading={<WhoTile app={row.app} who="all" />}
-                  title={row.title || ''}
-                  titleClassName="whitespace-normal line-clamp-2"
-                  subtitle={say(nextWords(row))}
-                />
-              ))}
-              {next.length > NEXT_FIRST ? (
-                <ListRow
-                  as="button"
-                  chevron={false}
-                  onClick={() => setAllNext(!allNext)}
-                  aria-expanded={allNext}
-                  title={<span className="text-violet-700 dark:text-violet-300">{allNext ? t('messages:ai.work.showLess') : t('messages:ai.work.showMore', { count: next.length - NEXT_FIRST })}</span>}
-                  titleClassName="font-semibold"
-                />
-              ) : null}
-            </GroupedList>
-          </>
-        ) : null}
+        <ThreadSection
+          list="next"
+          title={t('messages:ai.next.title')}
+          end={<span className="mb-1 text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:ai.next.soonest')}</span>}
+          rows={progress}
+        />
+        <ThreadSection list="up" title={t('messages:ai.up.title')} rows={waiting} />
 
         {live.length ? (
           <>
@@ -304,7 +353,7 @@ export function AiScreen(): ReactNode {
                     key={row.threadId}
                     as="button"
                     chevron={false}
-                    onClick={() => openPublic(row.href, docked)}
+                    onClick={() => openPublic(row.href, row.app)}
                     leading={<WhoTile app={row.app} who="all" />}
                     title={row.title || ''}
                     subtitle={t('messages:ai.live.row', { project: row.app?.name || '', number: row.number || '' })}
@@ -320,7 +369,7 @@ export function AiScreen(): ReactNode {
       {/* Ask Homeroom bot: Main. On a phone a bar over the tab bar; on a
           desktop Main is docked beside the list and this is not drawn. */}
       <div className="ai-askbar messages-composer" data-ai-askbar="">
-        <a href="#ai/main" className="messages-composer-card ai-askbar-card" aria-label={t('messages:ai.ask.label')}>
+        <a href="#homeroom-bot/main" className="messages-composer-card ai-askbar-card" aria-label={t('messages:ai.ask.label')}>
           <span className="ai-askbar-text">{t('messages:ai.ask.label')}</span>
           <span className="messages-composer-action" aria-hidden="true"><MicrophoneIcon className="h-5 w-5" /></span>
         </a>

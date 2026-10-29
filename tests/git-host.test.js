@@ -163,7 +163,12 @@ test('createRepo goes through the host API and adopts an existing one only when 
 
 test('the service token never reaches argv or a URL', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/git-host.js'), 'utf8');
-  assert.match(src, /credential\.helper=\$\{CREDENTIAL_HELPER\}/);
-  assert.match(src, /password=\$USERNODE_GIT_HOST_TOKEN/);
+  assert.match(src, /require\('\.\/git-child'\)\.invocation/);
+  const child = require('../src/services/git-child').invocation(['ls-remote', 'https://git.example.test/apps/x.git'], {
+    home: '/tmp/git-home', credential: { username: 'bot', token: 'sample-token' },
+  });
+  assert.ok(!child.args.join(' ').includes('sample-token'));
+  assert.equal(child.env.USERNODE_GIT_PASSWORD, 'sample-token');
+  assert.equal(child.env.GIT_CONFIG_GLOBAL, '/dev/null');
   assert.doesNotMatch(src, /\$\{s\.token\}@|:\$\{s\.token\}|token\)\}@/);
 });

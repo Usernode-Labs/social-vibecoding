@@ -22,6 +22,32 @@
 // A refusal is an answer ({ ok: false, status, error }), never a retry. The
 // route side, `request`, appends the operation, waits for its answer and
 // returns it in the shape a route answers with.
+//
+// AN OPERATION'S LARGE INPUT. A request carries at most 64 KB
+// (src/workflow/platform-operation/machine.ts MAX_INPUT_BYTES): what a route
+// captured, never a file. What a write needs beyond that (a commit's files,
+// a patch) is its `payload`, any JSON value but null, kept in
+// platform_operation_inputs under the request's id:
+//
+//   request({ op, appId, userId, input, requestId?, payload? }, opts)
+//       a request a route waits for: the payload is written before the
+//       request is appended, so the conductor always finds it, and dropped
+//       if the request is refused (it never runs);
+//   admit(db, { op, appId, userId, requestId, input, payload? })
+//       one nobody waits on: kept in the caller's transaction (`db`), with
+//       the request; dropped if `settle()` says it was refused;
+//   inputOf(pool, requestId) -> payload | null
+//       the op's run reads it on every attempt (never into a step: a step
+//       is kept with the work item). Null: it is gone (dropped, or swept);
+//       the run answers that rather than retry;
+//   dropInput(pool, requestId)
+//       the op's run, once no write still needs it (after its last step
+//       that does; a retry resumes past those steps and does not read it).
+//
+// Anything left after two days, the machine's own retention, is swept
+// (pruneInputs, the upload-gc clock: services/upload-retention.js). Bytes
+// travel base64: JSONB holds no NUL character. The route bounds what it
+// accepts, as it always has; this stores what it is given.
 
 const durableSteps = require('./durable-steps');
 const { permanent } = require('../workflow/work-errors.ts');
@@ -42,6 +68,23 @@ const OPERATIONS = new Map([
   ['previewProject.deploy', () => require('./preview-project-operation')],
   ['previewProject.restart', () => require('./preview-project-operation')],
   ['previewProject.remove', () => require('./preview-project-operation')],
+  // commits
+  ['proposal.commit', () => require('./proposal-commit-operation')],
+  // git-host flows
+  ['suggestBack.open', () => require('./suggest-back-operation')],
+  ['upstream.open', () => require('./upstream-operation')],
+  ['upstream.skip', () => require('./upstream-operation')],
+  ['bench.scaffold', () => require('./bench-reference-operation')],
+  ['bench.reference', () => require('./bench-reference-operation')],
+  ['demo.propose', () => require('./demo-operation')],
+  ['demo.reset', () => require('./demo-operation')],
+  // PR metadata
+  ['pr.sync', () => require('./pr-sync-operation')],
+  // fork flows
+  ['fork.update', () => require('./fork-operations')],
+  ['work.share', () => require('./fork-operations')],
+  ['work.submit', () => require('./fork-operations')],
+  ['work.discard', () => require('./fork-operations')],
 ]);
 
 // The requester as the auth middleware builds `req.user`, read now: an
@@ -80,6 +123,41 @@ async function run(deps, request, steps = durableSteps.none()) {
   return result?.ok === false ? result : { ok: true, ...(result || {}) };
 }
 
+// ── An operation's large input (above) ──────────────────────────────
+const INPUT_RETAIN_DAYS = 2;
+
+function hasPayload(payload) {
+  return payload !== undefined && payload !== null;
+}
+
+// Written before (request) or with (admit) the request it is for; a second
+// write for the same request (a caller asking again under its id) keeps the
+// first.
+async function keepInput(db, { requestId, op }, payload) {
+  await db.query(
+    `INSERT INTO platform_operation_inputs (request_id, op, payload) VALUES ($1, $2, $3::jsonb)
+     ON CONFLICT (request_id) DO NOTHING`,
+    [requestId, op, JSON.stringify(payload)]);
+}
+
+async function inputOf(pool, requestId) {
+  const { rows: [row] } = await pool.query(
+    'SELECT payload FROM platform_operation_inputs WHERE request_id = $1', [requestId]);
+  return row ? row.payload : null;
+}
+
+async function dropInput(pool, requestId) {
+  await pool.query('DELETE FROM platform_operation_inputs WHERE request_id = $1', [requestId]);
+}
+
+// What no run dropped (one that failed for good, one refused while the web
+// side could not drop it) after the machine's own two days.
+async function pruneInputs(pool) {
+  const { rowCount } = await pool.query(
+    'DELETE FROM platform_operation_inputs WHERE created_at < NOW() - make_interval(days => $1)', [INPUT_RETAIN_DAYS]);
+  return rowCount || 0;
+}
+
 // The route's side: the operation's answer, or why there is none yet.
 let transport = (p, o) => require('../workflow/platform.ts').runOperation(p, o);
 
@@ -100,31 +178,56 @@ function answer(outcome) {
   }
 }
 
+// `requestId` (optional) names the request, so the caller can ask again as
+// the same request; `payload` (optional) is its large input (above). With
+// neither, a request is what it always was.
 async function request(p, opts) {
-  return answer(await transport({ appId: null, ...p }, opts));
+  const { payload, ...rest } = p;
+  return answer(await transport({ appId: null, ...rest, ...(hasPayload(payload) ? { payload } : {}) }, opts));
 }
 
 // For an operation nobody waits on, appended in the caller's transaction.
+// Answers the request's id.
+let appender = (db, p) => require('../workflow/platform.ts').appendOperation(db, p);
 function append(db, p) {
-  return require('../workflow/platform.ts').appendOperation(db, { appId: null, ...p });
+  return appender(db, { appId: null, ...p });
 }
 
 // For an operation nobody waits on that a conductor must take now: appended
-// in the caller's transaction (`db`) under the caller's request id; once that
-// has committed, `settle()` says whether a conductor took it: 'accepted',
-// 'refused' (it never runs) or 'unknown' (being decided; it may run).
+// in the caller's transaction (`db`) under the caller's request id, with its
+// `payload` when it has one (above); once that has committed, `settle()`
+// says whether a conductor took it: 'accepted', 'refused' (it never runs,
+// and its payload is dropped) or 'unknown' (being decided; it may run).
 let admitter = {
+  keep: (db, request, payload) => keepInput(db, request, payload),
   append: (db, p) => require('../workflow/platform.ts').appendOperationRequest(db, p),
   settle: (eventId, o) => require('../workflow/platform.ts').settleOperation(eventId, o),
+  drop: (requestId) => require('../workflow/platform.ts').dropOperationInput(requestId),
 };
 async function admit(db, p) {
-  const eventId = await admitter.append(db, { appId: null, ...p });
-  return { settle: (opts) => admitter.settle(eventId, opts) };
+  const { payload, ...rest } = p;
+  const req = { appId: null, ...rest };
+  const kept = hasPayload(payload);
+  if (kept) await admitter.keep(db, req, payload);
+  const eventId = await admitter.append(db, req);
+  return {
+    async settle(opts) {
+      const taken = await admitter.settle(eventId, opts);
+      // Never instead of the answer: one left behind is swept.
+      if (kept && taken.status === 'refused') {
+        await admitter.drop(req.requestId).catch((err) => require('./logger').warn('platform-operations',
+          'Could not drop a refused request\'s input', { op: req.op, requestId: req.requestId, err: err.message }));
+      }
+      return taken;
+    },
+  };
 }
 
 module.exports = {
   run, request, append, admit, requester, OPERATIONS,
+  keepInput, inputOf, dropInput, pruneInputs, INPUT_RETAIN_DAYS,
   _setTransportForTests(fn) { const prior = transport; transport = fn; return prior; },
   _setAdmitForTests(fn) { const prior = admitter; admitter = fn; return prior; },
+  _setAppendForTests(fn) { const prior = appender; appender = fn; return prior; },
   _answerForTests: answer,
 };

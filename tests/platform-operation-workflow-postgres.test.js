@@ -332,6 +332,7 @@ test('privileged operations are conductor work', { timeout: 90000 }, async (t) =
     const kernelSteps = require('../src/workflow/kernel/steps.ts');
     const resumed = kernelSteps.steps({ resumeFrom: { claiming: true }, checkpoint: async () => {}, triesLeft: 2 });
     const session = (await pool.query(`SELECT cs.*, a.slug AS app_slug, a.repo_url FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [id])).rows[0];
+    process.env.PROCESS_ROLE = 'conductor';
     const opened = await votes.checkAndOpenRevert({}, pool, session, { id: p.userId, username: p.username }, { steps: resumed });
     assert.equal(opened.reverted, true);
     assert.equal((await revertRows(id)).length, 1);
@@ -341,6 +342,7 @@ test('privileged operations are conductor work', { timeout: 90000 }, async (t) =
     const fresh = kernelSteps.steps({ resumeFrom: null, checkpoint: async () => {}, triesLeft: 2 });
     const otherSession = (await pool.query(`SELECT cs.*, a.slug AS app_slug, a.repo_url FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [other])).rows[0];
     assert.equal((await votes.checkAndOpenRevert({}, pool, otherSession, { id: p.userId, username: p.username }, { steps: fresh })).inProgress, true);
+    process.env.PROCESS_ROLE = 'web';
   });
 
   await t.test('a competing proposal opened while a request waited to retry is refused; its own is not', async () => {

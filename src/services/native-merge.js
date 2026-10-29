@@ -53,6 +53,7 @@ function messageFor(row) {
 }
 
 async function squashMerge({ owner, repo, number, pinnedSha = null }) {
+  require('./code-host-write').requireCodeHostWrite('native-merge.squashMerge');
   const app = await require('./requests').appFor(owner, repo);
   if (!app) throw refusal(`No app has the repository ${owner}/${repo}`, 404);
   const { rows: [row] } = await db().query(

@@ -58,15 +58,19 @@
 // slot) and is promoted at once, so it reaches the members' Needs you. The
 // clock job `upstream-offers` (workflow/clock/services.ts) marks, opens,
 // refreshes and settles; routes/upstream.js lets members open, skip, or ask
-// Homeroom bot to fit one. Nothing here runs while versions are off
+// Homeroom bot to fit one, and a member's open or skip, which writes to the
+// version's repository, runs on a conductor (services/upstream-operation.js). Nothing here runs while versions are off
 // (services/versions-setting.js), in a platform preview, or without the git
 // host.
 
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const { execFile } = require('node:child_process');
 const log = require('./logger');
 const lineage = require('./upstream-lineage');
+const gitChild = require('./git-child');
+const durableSteps = require('./durable-steps');
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
 const OPEN_STATUSES = Object.freeze(['active', 'promoted', 'merging']);
@@ -90,6 +94,8 @@ const MAX_FIT_DIFF_CHARS = 30_000;
 // How long one fact line or list may be.
 const MAX_FACT_TEXT = 200;
 const MAX_FACT_ITEMS = 20;
+// How long one git command in a scratch repository may run.
+const GIT_TIMEOUT_MS = 120_000;
 // The scratch ref the version's main is fetched to.
 const SCRATCH_MAIN = 'refs/homeroom-scratch/main';
 const SCRATCH_BRANCH = 'refs/homeroom-scratch/branch';
@@ -578,18 +584,53 @@ function canWrite(deps) {
   return process.env.USERNODE_ENV !== 'staging' && !!(deps.gitHost && deps.gitHost.isConfigured());
 }
 
+// A scratch repository's git runs through services/git-child.js, as every
+// git child that reads somebody else's commits does: what git needs and
+// nothing else of this process's environment, its HOME beside the work tree
+// (`home/`, never in it, so a file the original's diff brings is never git's
+// configuration), and the git host's service account only for the
+// invocations that ask for it (`auth`: the fetches and the pushes), through
+// the credential helper. Rejects as services/git-host.js git does: stderr
+// redacted, the exit code in `exitCode`.
+function scratchGit(deps, home, args, { auth = false, env = {}, input = null, timeout = GIT_TIMEOUT_MS } = {}) {
+  const s = deps.gitHost.settings();
+  const child = gitChild.invocation(args, { home, credential: auth ? { username: s.user, token: s.token } : null, env });
+  const redact = (text) => (deps.gitHost.redact ? deps.gitHost.redact(text) : String(text || ''));
+  const sub = args[0] === '-C' ? args[2] : args[0];
+  return new Promise((resolve, reject) => {
+    const proc = execFile('git', child.args, { env: child.env, timeout, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) {
+        const e = new Error(`git ${sub} failed: ${redact(stderr || err.message).trim().slice(0, 500)}`);
+        e.code = 'git_failed';
+        e.stderr = redact(stderr);
+        e.stdout = redact(stdout);
+        e.exitCode = err.code;
+        return reject(e);
+      }
+      return resolve({ stdout: String(stdout), stderr: redact(stderr) });
+    });
+    if (input != null) proc.stdin.end(input);
+  });
+}
+
+// The scratch repository is `<root>/repo`, its git's HOME `<root>/home`.
+const homeOf = (dir) => path.join(path.dirname(dir), 'home');
+
 async function withScratch(label, deps, fn) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), `usernode-update-${String(label).replace(/[^0-9a-z-]/gi, '')}-`));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), `usernode-update-${String(label).replace(/[^0-9a-z-]/gi, '')}-`));
+  const dir = path.join(root, 'repo');
   try {
-    await deps.gitHost.git(['init', '-q', dir]);
+    await fs.mkdir(dir);
+    await fs.mkdir(homeOf(dir));
+    await scratchGit(deps, homeOf(dir), ['init', '-q', dir]);
     return await fn(dir);
   } finally {
-    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(root, { recursive: true, force: true }).catch(() => {});
   }
 }
 
 function runner(deps, dir) {
-  const run = async (args, opts = {}) => String((await deps.gitHost.git(['-C', dir, ...args], opts)).stdout || '');
+  const run = async (args, opts = {}) => String((await scratchGit(deps, homeOf(dir), ['-C', dir, ...args], opts)).stdout || '');
   // A command whose non-zero exit is an answer (merge-tree's 1, grep's 1).
   run.status = async (args, opts = {}) => {
     try {
@@ -600,6 +641,14 @@ function runner(deps, dir) {
     }
   };
   return run;
+}
+
+// `refspecs` pushed to the version's repository from the scratch repository
+// `dir`, with the service account; `force` allows a non-fast-forward
+// (services/git-host.js pushRefs, by the scratch repository's own git).
+async function pushRefs(deps, repo, dir, refspecs, { force = false } = {}) {
+  if (!refspecs.length) return;
+  await runner(deps, dir)(['push', '--porcelain', ...(force ? ['--force'] : []), deps.gitHost.cloneUrl(repo), ...refspecs], { auth: true });
 }
 
 async function hasCommit(run, rev) {
@@ -809,7 +858,7 @@ async function advance({ pool, deps, version, versionRepo, fromSha, theirsSha, s
     const run = runner(deps, dir);
     const remote = deps.gitHost.cloneUrl(versionRepo);
     await run(['fetch', '--no-tags', '-q', remote, theirsSha], { auth: true });
-    await deps.gitHost.pushRefs(versionRepo, dir, [`${theirsSha}:${lineage.UPSTREAM_REF}`], { force: true });
+    await pushRefs(deps, versionRepo, dir, [`${theirsSha}:${lineage.UPSTREAM_REF}`], { force: true });
   });
   await lineage.writeUpstream(pool, version.id, { syncedSha: fromSha, baseSha: theirsSha });
   await pool.query(SQL.setState, [version.id, state, null]);
@@ -852,8 +901,15 @@ async function tellMembers({ pool, deps, versionId, sessionId, platformId }) {
  * move the lineage past it. `soft`: the clock's call, which waits for room
  * under the admins' warning line; a person's press waits only for the limit.
  * Resolves { ok: true, state, sessionId?, prNumber? } or a refusal.
+ *
+ * `steps` (services/durable-steps.js): a member's press runs on a conductor
+ * (services/upstream-operation.js `upstream.open`), where each write is kept
+ * as a step: the plan and its pushes, the pull request, the proposal's row,
+ * its promote and the members told. A retry carries on from the last one
+ * with the commit it planned from, so it pushes nothing twice, opens no
+ * second pull request and tells nobody twice. The clock's call keeps none.
  */
-async function openUpdate({ config, pool, versionId, soft = false, deps: given } = {}) {
+async function openUpdate({ config, pool, versionId, soft = false, deps: given, steps = durableSteps.none() } = {}) {
   const deps = withDefaults(given);
   if (!(await deps.enabled(config, pool))) return refusal(409, 'versions_off', MESSAGES.off);
   if (!canWrite(deps)) return refusal(409, 'unavailable', MESSAGES.unavailable);
@@ -871,37 +927,43 @@ async function openUpdate({ config, pool, versionId, soft = false, deps: given }
   }
   const { version, original, link } = ctx;
   const name = original.name || original.slug;
-  const fromSha = sha(original.main_sha);
-  if (!fromSha) return refusal(409, 'original_not_ready', MESSAGES.originalNotReady(name));
-  if (fromSha === link.syncedSha) {
-    await pool.query(SQL.clearAvailable, [version.id]);
-    return refusal(409, 'up_to_date', MESSAGES.upToDate(name));
+  // What an earlier attempt of this open planned: it carries on with that
+  // update, whatever its original merged since (the clock refreshes it).
+  const resumed = steps.get('plan') || null;
+  const fromSha = resumed ? resumed.fromSha : sha(original.main_sha);
+  if (!resumed) {
+    if (!fromSha) return refusal(409, 'original_not_ready', MESSAGES.originalNotReady(name));
+    if (fromSha === link.syncedSha) {
+      await pool.query(SQL.clearAvailable, [version.id]);
+      return refusal(409, 'up_to_date', MESSAGES.upToDate(name));
+    }
+    const { rows: [already] } = await pool.query(SQL.openSession, [version.id]);
+    if (already) return { ok: true, state: 'open', sessionId: already.id, prNumber: already.pr_number || null, already: true };
+    if (!(await deps.room(config, pool, { soft }))) return refusal(503, 'busy', MESSAGES.busy);
   }
-  const { rows: [already] } = await pool.query(SQL.openSession, [version.id]);
-  if (already) return { ok: true, state: 'open', sessionId: already.id, prNumber: already.pr_number || null, already: true };
-  if (!(await deps.room(config, pool, { soft }))) return refusal(503, 'busy', MESSAGES.busy);
 
   const base = { appId: version.id, fromAppId: original.id, fromSha };
   let plan;
   try {
-    const mergesShas = await updateMergeShas(pool, version.id);
-    plan = await withScratch(`open-${version.id}`, deps, async (dir) => {
+    const mergesShas = resumed ? [] : await updateMergeShas(pool, version.id);
+    ({ plan } = await steps.once('plan', async () => ({ fromSha, plan: await withScratch(`open-${version.id}`, deps, async (dir) => {
       const p = await planIn(dir, {
         deps, ...remotes(deps, ctx), syncedSha: link.syncedSha, baseSha: link.baseSha, fromSha,
         originalName: name, versionName: version.name || version.slug, updateMergeShas: mergesShas,
       });
       if (!p.clean) {
-        await deps.gitHost.pushRefs(ctx.versionRepo, dir, [`${p.theirsSha}:${lineage.OFFER_REF}`], { force: true });
+        await pushRefs(deps, ctx.versionRepo, dir, [`${p.theirsSha}:${lineage.OFFER_REF}`], { force: true });
       } else if (p.empty) {
-        await deps.gitHost.pushRefs(ctx.versionRepo, dir, [`${p.theirsSha}:${lineage.UPSTREAM_REF}`], { force: true });
+        await pushRefs(deps, ctx.versionRepo, dir, [`${p.theirsSha}:${lineage.UPSTREAM_REF}`], { force: true });
       } else {
-        await deps.gitHost.pushRefs(ctx.versionRepo, dir, [
+        await pushRefs(deps, ctx.versionRepo, dir, [
           `${p.headSha}:refs/heads/${branchFor(fromSha)}`, `${p.theirsSha}:${lineage.OFFER_REF}`,
         ], { force: true });
       }
       return p;
-    });
+    }) })));
   } catch (err) {
+    if (durableSteps.isStopped(err) || steps.stopped) throw err;
     const message = deps.gitHost.redact ? deps.gitHost.redact(err && (err.message || String(err))) : String(err && err.message);
     log.warn('upstream-offers', 'Planning an update failed', { app: version.slug, fromSha, err: message });
     await saveOffer(pool, { ...base, state: 'failed', error: message || 'plan_failed' });
@@ -927,8 +989,9 @@ async function openUpdate({ config, pool, versionId, soft = false, deps: given }
   let opened;
   try {
     platformId = await deps.platformUserId(pool);
-    opened = await openPullRequest(deps, ctx.versionRepo, { branch, title: plan.words.title, body: plan.words.body });
+    opened = await steps.once('pr', () => openPullRequest(deps, ctx.versionRepo, { branch, title: plan.words.title, body: plan.words.body }));
   } catch (err) {
+    if (durableSteps.isStopped(err) || steps.stopped) throw err;
     log.warn('upstream-offers', 'Opening the update\'s pull request failed', { app: version.slug, err: err.message });
     await saveOffer(pool, { ...shared, state: 'failed', error: err.message || 'pr_failed' });
     return refusal(503, 'plan_failed', MESSAGES.planFailed);
@@ -936,27 +999,49 @@ async function openUpdate({ config, pool, versionId, soft = false, deps: given }
   const { pr } = opened;
   let sessionId;
   try {
-    const { rows: [row] } = await pool.query(SQL.insertSession, [
-      version.id, platformId, branch, pr.number, pr.html_url || null, plan.words.title, plan.words.body, original.id,
-    ]);
-    sessionId = row.id;
+    sessionId = await steps.once('session', async () => {
+      const { rows: [row] } = await pool.query(SQL.insertSession, [
+        version.id, platformId, branch, pr.number, pr.html_url || null, plan.words.title, plan.words.body, original.id,
+      ]);
+      return row.id;
+    });
   } catch (err) {
+    if (durableSteps.isStopped(err) || steps.stopped) throw err;
     // Another open raced past the read above and met the one-open index:
-    // the pull request this call opened has no proposal.
+    // the pull request this call opened has no proposal. Unless the open
+    // one is this very update's (an earlier attempt's insert committed and
+    // its step was not kept): it carries on with that one.
     if (err && err.code === '23505') {
-      if (opened.created) await deps.github.closePR(ctx.versionRepo.owner, ctx.versionRepo.name, pr.number).catch(() => {});
       const { rows: [won] } = await pool.query(SQL.openSession, [version.id]);
-      if (won) return { ok: true, state: 'open', sessionId: won.id, prNumber: won.pr_number || null, already: true };
+      if (won && Number(won.pr_number) === Number(pr.number)) {
+        sessionId = won.id;
+      } else {
+        if (opened.created) await deps.github.closePR(ctx.versionRepo.owner, ctx.versionRepo.name, pr.number).catch(() => {});
+        if (won) return { ok: true, state: 'open', sessionId: won.id, prNumber: won.pr_number || null, already: true };
+        throw err;
+      }
+    } else {
+      throw err;
     }
-    throw err;
   }
   await saveOffer(pool, { ...shared, state: 'open', sessionId });
 
-  const answer = await deps.promote({
-    sessionId, appId: version.id, userId: platformId, username: PROPOSER_NAME, from: 'active', cap: NO_CAP,
-    pr: { state: 'open', draft: false, merged: false, head: plan.headSha }, expectedHead: plan.headSha,
-    source: { kind: 'system', name: 'upstream-offers' },
-  }).catch((err) => ({ status: 500, body: { error: err.message } }));
+  const answer = await steps.once('promote', async () => {
+    // An earlier attempt's promote that went through without its step
+    // being kept: the change is up already.
+    if (steps.resumed) {
+      const { rows: [now] } = await pool.query(SQL.session, [sessionId]);
+      if (now && ['promoted', 'merging'].includes(now.status)) return { status: 200, body: { ok: true } };
+    }
+    return deps.promote({
+      sessionId, appId: version.id, userId: platformId, username: PROPOSER_NAME, from: 'active', cap: NO_CAP,
+      pr: { state: 'open', draft: false, merged: false, head: plan.headSha }, expectedHead: plan.headSha,
+      source: { kind: 'system', name: 'upstream-offers' },
+    }).catch((err) => {
+      if (durableSteps.isStopped(err)) throw err;
+      return { status: 500, body: { error: err.message } };
+    });
+  });
   if (!answer || answer.status >= 400) {
     // Nobody can put the platform's underway change up for a vote: it is
     // closed, and the update is tried again when its original moves or a
@@ -968,7 +1053,7 @@ async function openUpdate({ config, pool, versionId, soft = false, deps: given }
     await saveOffer(pool, { ...shared, state: 'failed', sessionId, error: why });
     return refusal(503, 'plan_failed', MESSAGES.planFailed);
   }
-  const told = await tellMembers({ pool, deps, versionId: version.id, sessionId, platformId });
+  const told = await steps.once('told', () => tellMembers({ pool, deps, versionId: version.id, sessionId, platformId }));
   log.info('upstream-offers', 'An update is up for a vote', {
     app: version.slug, original: original.slug, sessionId, prNumber: pr.number, brings: plan.brings.length, told,
   });
@@ -1006,7 +1091,7 @@ async function refreshUpdate({ config, pool, versionId, deps: given } = {}) {
       deps, ...remotes(deps, ctx), syncedSha: link.syncedSha, baseSha: link.baseSha, fromSha,
       originalName: name, versionName: version.name || version.slug, updateMergeShas: mergesShas,
     });
-    await deps.gitHost.pushRefs(ctx.versionRepo, dir, [`${p.theirsSha}:${lineage.OFFER_REF}`], { force: true });
+    await pushRefs(deps, ctx.versionRepo, dir, [`${p.theirsSha}:${lineage.OFFER_REF}`], { force: true });
     if (p.clean && !p.empty) {
       await run(['fetch', '--no-tags', '-q', remotes(deps, ctx).versionRemote, `+refs/heads/${branch}:${SCRATCH_BRANCH}`], { auth: true });
       const old = (await run(['rev-parse', `${SCRATCH_BRANCH}^{commit}`])).trim().toLowerCase();
@@ -1088,27 +1173,40 @@ async function settleUpdate({ config, pool, versionId, deps: given } = {}) {
 /**
  * "Skip this update": its proposal closed, and the lineage moved past it
  * without changing any code. Allowed on `open` and `needs_fit`.
+ *
+ * `steps`: a member's press runs on a conductor (`upstream.skip`), where the
+ * close, the plan of a theirs commit never recorded and the move of the
+ * lineage are each kept as a step, so a retry pushes nothing twice and a
+ * skip whose lineage already moved answers as it did.
  */
-async function skipUpdate({ config, pool, versionId, user, deps: given } = {}) {
+async function skipUpdate({ config, pool, versionId, user, deps: given, steps = durableSteps.none() } = {}) {
   const deps = withDefaults(given);
+  const moved = steps.get('advance');
+  if (moved) return { ok: true, state: moved.state };
   if (!(await deps.enabled(config, pool))) return refusal(409, 'versions_off', MESSAGES.off);
   if (!canWrite(deps)) return refusal(409, 'unavailable', MESSAGES.unavailable);
   const row = await readOffer(pool, versionId);
+  // This skip's own close, settled by the clock since (settleUpdate): skipped.
+  if (row && row.state === 'skipped' && steps.has('close')) return { ok: true, state: 'skipped' };
   if (!row || !['open', 'needs_fit'].includes(row.state)) return refusal(409, 'nothing_to_skip', MESSAGES.nothingToSkip);
   const version = await readVersion(pool, versionId);
   const versionRepo = hostedRepo(deps, version);
   if (!version || !versionRepo) return refusal(409, 'unavailable', MESSAGES.unavailable);
+  const moveTo = async (theirsSha, state) => steps.once('advance', async () => {
+    await advance({ pool, deps, version, versionRepo, fromSha: sha(row.from_sha), theirsSha, state });
+    return { state };
+  });
 
   if (row.state === 'open' && row.session_id) {
     if (row.session_status === 'merged') {
-      await advance({ pool, deps, version, versionRepo, fromSha: sha(row.from_sha), theirsSha: sha(row.theirs_sha), state: 'merged' });
+      await moveTo(sha(row.theirs_sha), 'merged');
       return { ok: true, state: 'merged' };
     }
-    if (OPEN_STATUSES.includes(row.session_status)) {
-      const closed = await deps.close({
+    if (OPEN_STATUSES.includes(row.session_status) || steps.has('close')) {
+      const closed = await steps.once('close', () => deps.close({
         sessionId: row.session_id, appId: version.id, reason: 'update-skipped', from: row.session_status,
         userId: null, username: (user && user.username) || null, source: { kind: 'route', name: 'upstream-skip' },
-      });
+      }));
       // Accepted, or appended and not yet decided (`pending`: the proposal
       // machine closes it in a moment): either way it is going.
       const status = closed && typeof closed === 'object' ? closed.status : null;
@@ -1127,16 +1225,16 @@ async function skipUpdate({ config, pool, versionId, user, deps: given } = {}) {
     const ctx = await context({ config, pool, versionId, deps });
     if (!ctx.ok) return refusal(ctx.status, ctx.body.code, ctx.body.error);
     const mergesShas = await updateMergeShas(pool, version.id);
-    theirs = await withScratch(`skip-${version.id}`, deps, async (dir) => {
+    theirs = await steps.once('theirs', () => withScratch(`skip-${version.id}`, deps, async (dir) => {
       const p = await planIn(dir, {
         deps, ...remotes(deps, ctx), syncedSha: ctx.link.syncedSha, baseSha: ctx.link.baseSha, fromSha: sha(row.from_sha),
         originalName: ctx.original.name || ctx.original.slug, versionName: version.name || version.slug, updateMergeShas: mergesShas,
       });
-      await deps.gitHost.pushRefs(versionRepo, dir, [`${p.theirsSha}:${lineage.UPSTREAM_REF}`], { force: true });
+      await pushRefs(deps, versionRepo, dir, [`${p.theirsSha}:${lineage.UPSTREAM_REF}`], { force: true });
       return p.theirsSha;
-    });
+    }));
   }
-  await advance({ pool, deps, version, versionRepo, fromSha: sha(row.from_sha), theirsSha: theirs, state: 'skipped' });
+  await moveTo(theirs, 'skipped');
   log.info('upstream-offers', 'An update was skipped', { app: version.slug, by: user && user.username, fromSha: row.from_sha });
   return { ok: true, state: 'skipped' };
 }

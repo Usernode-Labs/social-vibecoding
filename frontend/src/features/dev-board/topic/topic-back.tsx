@@ -65,7 +65,7 @@ import { ChevronLeftIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
-import { improveStore, topicBackHref, topicWorkshopHref } from '../../improve/improve-store.js';
+import { backsToBot, improveStore, topicBackHref, topicWorkshopHref } from '../../improve/improve-store.js';
 
 function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
   const nav = (window as unknown as {
@@ -84,7 +84,7 @@ function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
 }
 
 /** Where a chip goes: the screen it names. */
-type ChipKey = 'messages' | 'workshop' | 'allItems';
+type ChipKey = 'messages' | 'bot' | 'workshop' | 'allItems';
 
 /**
  * The chip's words by destination, as message ids. The key names the
@@ -92,6 +92,7 @@ type ChipKey = 'messages' | 'workshop' | 'allItems';
  */
 const CHIP_TEXT: Record<ChipKey, { label: string; name: string }> = {
   messages: { label: 'project:topic.back.messages', name: 'project:topic.back.toMessages' },
+  bot: { label: 'project:topic.back.bot', name: 'project:topic.back.toBot' },
   workshop: { label: 'project:topic.back.workshop', name: 'project:topic.back.toWorkshop' },
   allItems: { label: 'project:topic.back.allItems', name: 'project:topic.back.toAllItems' },
 };
@@ -99,12 +100,15 @@ const CHIP_TEXT: Record<ChipKey, { label: string; name: string }> = {
 /**
  * The destination `href` names, as a key: the rule `topicBackLabel`
  * (../../improve/improve-store.js) words. A card opened from a Messages
- * conversation goes back to it (#3103); one opened from All items goes back
- * there when the Workshop reopens on it (#4486); anything else goes back to
- * the Workshop. Read as state, so the chip never compares its own words.
+ * conversation goes back to it (#3103); one opened from the Homeroom bot
+ * tab's page goes back there (29 Oct 2026); one opened from All items goes
+ * back there when the Workshop reopens on it (#4486); anything else goes
+ * back to the Workshop. Read as state, so the chip never compares its own
+ * words.
  */
 function chipFor(href: string, workshopTab: string | null): ChipKey {
   if (href.startsWith('#messages')) return 'messages';
+  if (backsToBot(href)) return 'bot';
   return workshopTab === 'all' && /\/workshop$/.test(href) ? 'allItems' : 'workshop';
 }
 
@@ -135,7 +139,8 @@ export function TopicBack(): ReactNode {
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
   const workshopTab = av && typeof av._workshopTab === 'function' ? av._workshopTab() : null;
   const back = <TopicChip href={href} to={chipFor(href, workshopTab)} />;
-  // #3691: and offers its project's Workshop beside that, styled the same.
+  // #3691: and offers its project's Workshop beside that, styled the same
+  // (a card opened from the Homeroom bot tab's page too).
   const workshop = topicWorkshopHref({ slug, tab, subTab, boardView, topicOrigin });
   if (!workshop) return back;
   return (

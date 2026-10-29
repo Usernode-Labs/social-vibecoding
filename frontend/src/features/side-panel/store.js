@@ -34,6 +34,13 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {boolean} canBack   Is there anywhere for Back to go?
  * @property {boolean} loading   The panel's document has not reported its
  *   first page yet; the frame stays transparent over a spinner until it has.
+ * @property {string} reported   The title the panel's document reported, as
+ *   it said it: on a piece of work that is its project's name, which the
+ *   header row's `title` replaces with the kind ("Proposal").
+ * @property {{ slug: string, name: string, icon_url?: string|null, icon_emoji?: string|null }|null} place
+ *   The project of the page it was opened on, as the door that opened it
+ *   named it (the AI tab's list: its row's tile), or null. Beside the AI
+ *   tab's page the header row draws it as the way to that project.
  */
 
 /** @type {SidePanelState} */
@@ -45,6 +52,8 @@ export const INITIAL = {
   title: '',
   canBack: false,
   loading: false,
+  reported: '',
+  place: null,
 };
 
 export const sidePanelStore = createStore(INITIAL);
