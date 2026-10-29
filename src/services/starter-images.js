@@ -201,8 +201,6 @@ async function currentTreesFor(config, pool) {
     return rendered;
   }
   if (!sources.size) return rendered;
-  const originals = require('./originals');
-  const { getTemplateFiles } = require('./template');
   const recipe = buildRecipe(config);
   const out = [];
   for (const t of rendered) {
@@ -212,11 +210,7 @@ async function currentTreesFor(config, pool) {
     const hit = fromOriginals.get(memoKey);
     if (hit && hit.appId === source.original.id && hit.sha === source.sha) { out.push(hit.tree); continue; }
     try {
-      const tree = await originals.mainTree(source.original, source.sha);
-      const files = originals.versionFiles(tree, getTemplateFiles(t.title, buildSlug(t.id), null, null, { template: t.id }), {
-        name: t.title, templateId: t.id, originalTemplate: source.original.template,
-      });
-      const entry = { id: t.id, title: t.title, files, key: contextKey(files, recipe), original: { slug: source.original.slug, sha: source.sha } };
+      const entry = await originalEntry(config, t, source.original, source.sha);
       fromOriginals.set(memoKey, { appId: source.original.id, sha: source.sha, tree: entry });
       out.push(entry);
     } catch (err) {
@@ -227,6 +221,39 @@ async function currentTreesFor(config, pool) {
     }
   }
   return out;
+}
+
+/**
+ * Ready-made `t` (a currentTrees entry) as built from its original at
+ * `sha`: its files and key, as a version made from that commit computes
+ * them (app-creator.js seedVersion).
+ */
+async function originalEntry(config, t, original, sha) {
+  const originals = require('./originals');
+  const { getTemplateFiles } = require('./template');
+  const tree = await originals.mainTree(original, sha);
+  const files = originals.versionFiles(tree, getTemplateFiles(t.title, buildSlug(t.id), null, null, { template: t.id }), {
+    name: t.title, templateId: t.id, originalTemplate: original.template,
+  });
+  return { id: t.id, title: t.title, files, key: contextKey(files, buildRecipe(config)), original: { slug: original.slug, sha } };
+}
+
+/**
+ * Whether a version of `original` made from ready-made `templateId` at
+ * `sha` would deploy a prebuilt image: the one built from that commit is
+ * ready. Each merge into an original changes the image its ready-mades are
+ * built from, and building the new one takes minutes, so a version made
+ * meanwhile copies an earlier commit (services/originals.js sourceFor).
+ * True where nothing is prebuilt (prebuildsOn, a tree that is not shared),
+ * since no commit is faster to make there.
+ */
+async function readyFromOriginal(config, pool, templateId, original, sha) {
+  if (!prebuildsOn()) return true;
+  const t = currentTrees(config).find((x) => x.id === templateId);
+  if (!t || !t.key) return true;
+  const { key } = await originalEntry(config, t, original, sha);
+  if (!key) return true;
+  return !!(await readyRow(pool, key));
 }
 
 /** Whether this process builds images at all (see NOT IN A STAGING PREVIEW). */
@@ -561,8 +588,10 @@ module.exports = {
   demoList,
   imageFiles,
   imageFor,
+  originalEntry,
   list,
   prebuildsOn,
+  readyFromOriginal,
   requestRebuild,
   targets,
   buildTarget,

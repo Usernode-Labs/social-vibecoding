@@ -36,7 +36,10 @@
  * setup the original's tree at the commit it copies, and versionFiles the
  * files of its first commit. starter-images builds each ready-made's image
  * from the same files (imageSources), so the image a new version deploys is
- * the one its own first commit would build.
+ * the one its own first commit would build. The commit it copies is the
+ * newest of the original's last few whose image is built (readyCommit), so
+ * a version is as quick to make as a ready-made always was, even in the
+ * minutes after a change merges into its original.
  */
 
 const { isUtf8 } = require('buffer');
@@ -58,6 +61,9 @@ const SHA_RE = /^[0-9a-f]{40}$/i;
 // Blob reads at once, and trees kept, per process.
 const READ_CONCURRENCY = 8;
 const TREE_MEMO = 24;
+// How many of an original's latest commits on main a new version may copy
+// (readyCommit).
+const RECENT_COMMITS = 5;
 // The original's governance: the platform's approvers, one of them enough.
 const APPROVALS_REQUIRED = 1;
 
@@ -292,14 +298,47 @@ async function sourceFor(config, pool, row, { env = process.env } = {}) {
     if (!(await available(config, pool, env))) return asBefore('versions_off');
   }
   if (!original) return { original: null, sha: link.syncedSha, tree: null, committed };
-  const sha = (link.syncedSha || String(original.main_sha)).toLowerCase();
+  const head = (link.syncedSha || String(original.main_sha)).toLowerCase();
+  let sha = head;
   try {
+    if (!committed) {
+      sha = await readyCommit(config, pool, original, head, template);
+      if (!sha) return asBefore('image_not_ready', { sha: head });
+    }
     return { original, sha, tree: await mainTree(original, sha), committed };
   } catch (err) {
     if (!committed) return asBefore('tree_unreadable', { err: err.message });
     log.warn('originals', 'The original\'s tree could not be read', { appId: row.id, sha, err: err.message });
     return { original, sha, tree: null, committed };
   }
+}
+
+/**
+ * The commit a new version copies (sourceFor): `head`, its original's main,
+ * when the image built from it for this ready-made is ready
+ * (starter-images.js readyFromOriginal), else the newest of the commits
+ * before it on main whose image is. A change merged since then reaches the
+ * version as its first update (services/upstream-offers.js). Null when none
+ * of the last RECENT_COMMITS has one, as just after an original first comes
+ * up: the project is then made as before.
+ */
+async function readyCommit(config, pool, original, head, template) {
+  const images = require('./starter-images');
+  if (await images.readyFromOriginal(config, pool, template, original, head)) return head;
+  for (const sha of (await recentCommits(original, head)).slice(1)) {
+    if (await images.readyFromOriginal(config, pool, template, original, sha)) return sha;
+  }
+  return null;
+}
+
+// `sha` and the commits before it on the original's main, newest first.
+async function recentCommits(original, sha) {
+  const ref = require('./repo-ref').ownerRepo(original.repo_url);
+  if (!ref) throw new Error('The original has no repository to read');
+  const dir = await require('./repo-mirror').ensureMirror(ref.owner, ref.repo, { refs: [sha] });
+  const { stdout } = await require('./docker').execFileAsync('git',
+    ['-C', dir, 'rev-list', '--first-parent', `--max-count=${RECENT_COMMITS}`, sha], { timeout: 60000 });
+  return String(stdout).split('\n').map((l) => l.trim().toLowerCase()).filter((l) => SHA_RE.test(l));
 }
 
 /**
@@ -465,6 +504,7 @@ module.exports = {
   versionManifest,
   versionMessage,
   _forTest: {
+    RECENT_COMMITS,
     setVersions(fn) { versionsOverride = fn || null; },
     resetTrees() { trees.clear(); },
     joinApprovers,

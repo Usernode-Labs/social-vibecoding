@@ -20,7 +20,8 @@
 //      name, notes and approval rule, and `followOriginal: true`; its
 //      lineage records both commits; and the image key it offers is the one
 //      starter-images builds that ready-made's image under, from the same
-//      original.
+//      original. The commit it copies is the newest of the original's
+//      recent ones whose image is built, so it deploys a prebuilt image.
 //
 // A bare repository over file:// stands in for the git host, as in
 // tests/hosted-git.test.js.
@@ -205,6 +206,7 @@ function makeOriginalRepo(name = 'homeroom-tier-list') {
   }
   git(work, 'add', '-A');
   git(work, 'commit', '-q', '-m', 'Initialize Tier list from Homeroom template');
+  const firstSha = git(work, 'rev-parse', 'HEAD');
   const page = path.join(work, 'public/index.html');
   fs.writeFileSync(page, fs.readFileSync(page, 'utf8').replace('</body>', '<p id="tier-note">Ranked by the group</p>\n</body>'));
   fs.writeFileSync(path.join(work, 'public/icon.png'), PNG);
@@ -217,7 +219,7 @@ function makeOriginalRepo(name = 'homeroom-tier-list') {
   git(work, 'push', '-q', bare, 'HEAD:main');
   const sha = git(work, 'rev-parse', 'HEAD');
   fs.rmSync(work, { recursive: true, force: true });
-  return { sha, repoUrl: `https://git.example.test/apps/${name}` };
+  return { sha, firstSha, repoUrl: `https://git.example.test/apps/${name}` };
 }
 
 let made = null;
@@ -288,7 +290,8 @@ test('a ready-made with checks of its own keeps them in a version of an original
 // The setup, end to end (app-creator.js setUp), as tests/app-creator-failure
 // .test.js runs it: the version's own repository is a stub that records the
 // commit it is given; the original is the git host's real repository.
-function loadCreator({ app, pushed }) {
+// `ready`: the image keys starter-images has built (every one by default).
+function loadCreator({ app, pushed, ready = null }) {
   const ids = {
     github: require.resolve('../src/services/github'),
     dbManager: require.resolve('../src/services/db-manager'),
@@ -303,6 +306,9 @@ function loadCreator({ app, pushed }) {
       queries.push({ sql: String(sql), params });
       if (/SELECT \* FROM apps WHERE id = \$1/.test(sql)) return { rows: [app] };
       if (/FROM apps WHERE id = \$1/.test(sql) && params[0] === 61) return { rows: [original()] };
+      if (/FROM starter_images/.test(sql) && /context_key = \$1 AND image_ref IS NOT NULL/.test(sql)) {
+        return { rows: !ready || ready.has(params[0]) ? [{ context_key: params[0], image_ref: 'registry/starter@sha256:1' }] : [] };
+      }
       if (/UPDATE apps SET upstream/.test(sql)) {
         app.upstream = { ...(app.upstream || {}), ...JSON.parse(params[1]) };
         return { rows: [{ upstream: app.upstream }] };
@@ -413,4 +419,56 @@ test('a setup that resumes finds its own first commit and copies the same commit
   assert.deepEqual(rendered, ['Initialize Games from Homeroom template']);
   assert.equal(out2.sha, 'd'.repeat(40));
   assert.deepEqual({ following: stopped.upstream.following, legacy: stopped.upstream.legacy }, { following: false, legacy: true });
+});
+
+// The image key of `templateId` built from the original at `sha`.
+async function keyAt(templateId, sha) {
+  const starterImages = require('../src/services/starter-images');
+  const t = starterImages.currentTrees(DOCKER).find((x) => x.id === templateId);
+  return (await starterImages.originalEntry(DOCKER, t, original(), sha)).key;
+}
+
+test('a new version copies the newest of its original\'s commits whose image is built, and is made as before when none is', async () => {
+  const o = original();
+  const fresh = (id) => ({
+    id, name: 'Hikes', slug: `hikes-${id}`, status: 'creating', self_hosted: false, template: 'tier-list-hikes',
+    upstream: { appId: 61, slug: 'homeroom-tier-list', following: true },
+  });
+  const prev = process.env.STARTER_PREBUILDS;
+  try {
+    delete process.env.STARTER_PREBUILDS;
+    // Main's image is still building; the one from the commit before it is
+    // ready: that commit is copied, and the change since is its first update.
+    const behind = fresh(81);
+    const pushed = { commits: [], moves: [] };
+    const first = await keyAt('tier-list-hikes', made.firstSha);
+    const { appCreator, pool } = loadCreator({ app: behind, pushed, ready: new Set([first]) });
+    const out = await appCreator.setUp(DOCKER, pool, 81, workContext());
+    assert.equal(out.failed, undefined, JSON.stringify(out.failed));
+    assert.equal(behind.upstream.syncedSha, made.firstSha);
+    assert.doesNotMatch(pushed.commits[0].files.find((f) => f.path === 'public/index.html').content, /id="tier-note"/);
+    assert.equal(out.offer.starter.key, first, 'the image it deploys is built');
+    assert.notEqual(first, await keyAt('tier-list-hikes', o.main_sha));
+
+    // No recent commit's image is built (an original that has just come
+    // up): made from app-templates, linked as an older copy.
+    const none = fresh(82);
+    const rendered = [];
+    const second = loadCreator({ app: none, pushed: { commits: [], moves: [] }, ready: new Set() });
+    require.cache[require.resolve('../src/services/github')].exports.pushFiles = async (owner, repo, files, opts) => {
+      rendered.push(opts.message); return { sha: 'e'.repeat(40) };
+    };
+    await second.appCreator.setUp(DOCKER, second.pool, 82, workContext());
+    assert.deepEqual(rendered, ['Initialize Hikes from Homeroom template']);
+    assert.deepEqual({ following: none.upstream.following, legacy: none.upstream.legacy }, { following: false, legacy: true });
+
+    // Where nothing is prebuilt, no commit is quicker: main is copied.
+    process.env.STARTER_PREBUILDS = 'off';
+    const unbuilt = fresh(83);
+    const third = loadCreator({ app: unbuilt, pushed: { commits: [], moves: [] }, ready: new Set() });
+    await third.appCreator.setUp(DOCKER, third.pool, 83, workContext());
+    assert.equal(unbuilt.upstream.syncedSha, o.main_sha);
+  } finally {
+    if (prev === undefined) delete process.env.STARTER_PREBUILDS; else process.env.STARTER_PREBUILDS = prev;
+  }
 });

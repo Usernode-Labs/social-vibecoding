@@ -119,7 +119,7 @@ commit:
   and LICENSE, dapp.json name, description and governance).
 
 It also writes:
-- `upstream = { appId, slug, following: true, syncedSha: <original main>, baseSha: <that commit> }`;
+- `upstream = { appId, slug, following: true, syncedSha: <the commit copied>, baseSha: <its own first commit> }`;
 - dapp.json `followOriginal: true`.
 
 `template` stays set, and the prebuilt image key is computed from these files.
@@ -129,6 +129,14 @@ to the original when one exists, with `legacy: true`.
 
 `starter-images` renders a ready-made from its original's main tree when
 the original exists, and from app-templates otherwise.
+
+The commit copied is the newest of the original's last five on main whose
+image for this ready-made is built (`originals.readyCommit`). Each merge
+into an original changes its ready-mades' images, and building them takes
+minutes. A version made meanwhile copies the commit before, deploys its
+prebuilt image, and gets the newer change as its first update. When none of
+the five has an image (an original that has just come up), it is made from
+app-templates as above. Where nothing is prebuilt, main is copied.
 
 ## Remixes and lineage (owner: lineage and suggestions)
 
