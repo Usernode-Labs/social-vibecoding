@@ -141,6 +141,11 @@ test('competing changes are one ballot; a pick is votes, cast only where they ch
   const a = { type: 'change', id: 51, number: 8, title: 'Toggle', status: 'promoted', state: 'review', replies: 0, epoch: 2, myVote: null, closes: [7] };
   const b = { type: 'change', id: 52, number: 9, title: 'Schedule', status: 'promoted', state: 'review', replies: 0, epoch: 0, myVote: 'yes', closes: [7] };
   assert.equal(ballotOf(payload([request, a])), null, 'one change is no ballot');
+  // Parts of one request are not rivals: neither closes it (or each closes
+  // a different request), so both go live and no pick takes a Yes back.
+  assert.equal(ballotOf(payload([request, { ...a, closes: [] }, { ...b, closes: [] }])), null, 'two parts, no ballot');
+  assert.equal(ballotOf(payload([request, { ...a, closes: [7] }, { ...b, closes: [11] }])), null, 'different requests, no ballot');
+  assert.equal(ballotOf(payload([request, a, { ...b, closes: [] }])), null, 'a part beside a change that closes it, no ballot');
   const ballot = ballotOf(payload([request, a, b]));
   assert.deepEqual(ballot.options.map((o) => o.id), [51, 52]);
   assert.equal(ballot.pick, 52, 'her Yes on one is her pick');

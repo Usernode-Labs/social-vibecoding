@@ -40,6 +40,7 @@ const checkSignals = require('./check-signals');
 const { sniffImageType } = require('./attachments');
 const requestSpecs = require('./request-specs');
 const connectorUploads = require('./connector-uploads');
+const createOptions = require('./create-options');
 const repoRef = require('./repo-ref');
 const {
   READ_SCOPE,
@@ -104,6 +105,14 @@ const MAX_REQUEST_TITLE_CHARS = 256;    // GitHub's own issue-title limit.
 const { GITHUB_ISSUE_BODY_MAX: MAX_REQUEST_BODY_CHARS } = require('./issue-body-limit'); // GitHub's own issue-body limit.
 const MAX_ANSWER_CHARS = 8000;          // MAX_CHAT_LEN in services/ws.js.
 const MAX_CLOSE_REASON_CHARS = 2000;    // MAX_CLOSE_REASON_LENGTH in routes/issues.js.
+// create_app (#6026). The name: the route takes any non-empty name and caps
+// only the slug it derives, so this is the connector's own bound on a name a
+// person reads on every screen. The brief: MIN_BRIEF_CHARS and
+// MAX_BRIEF_CHARS in services/homeroom-bot-dm.js, which its normalizeBrief
+// applies (tests/mcp-create-app.test.js pins them).
+const CREATE_APP_NAME_MAX = 80;
+const CREATE_APP_BRIEF_MIN = 10;
+const CREATE_APP_BRIEF_MAX = 4000;
 // submit_work's `description`: what share-in-progress and update-from-fork
 // accept, in UTF-8 BYTES (routes/proposal-handoff.js boundedText), and where
 // the create path cuts the pull request body, in characters
@@ -151,6 +160,8 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 //                            only for an agent session's Mayor
 //   submit_work            — opens or advances a proposal, for the group to vote on
 //   create_request         — files on the app's board and as a GitHub issue
+//   create_app             — makes a new project for the caller, spending one
+//                            of their app slots (#6026)
 //   post_spec              — posts a spec on a request, for the group to review
 //   prepare_upload         — mints a one-time command that stores one file
 //                            (a plan, a video, a screenshot) for the two above
@@ -197,6 +208,9 @@ const ACTING_TOOLS = Object.freeze([
   'withdraw_change',
   'submit_work',
   'create_request',
+  // #6026: it starts a real app (repository, container, database) and spends
+  // one of the caller's app slots, so it is asked about like every write.
+  'create_app',
   'post_spec',
   // It files nothing, but it hands out a credential and holds a row for a
   // day, as prepare_work holds a work order.
@@ -3653,6 +3667,108 @@ function registerTools(server, ctx) {
         : appWebPath(origin, slug, 'dev'),
       images: screenshotIds.map((id) => `${origin}/issue-images/${id}`),
       video: videoId ? `${origin}/issue-videos/${videoId}` : null,
+    });
+  });
+
+  // ── create_app ───────────────────────────────────────────────────────
+  //
+  // #6026: make a new project for the connected person, the one the Create
+  // screen's "What do you want to make?" makes, so an assistant that designed
+  // an app with them can start it without sending them to Homeroom first.
+  // External clients only, by omission: the Mayor and a change's worker see
+  // only the tools services/mcp-audiences.js names for them, and their route
+  // lists do not carry POST /api/apps.
+  //
+  // Four fields and no more (createOptions.CONNECTOR_CREATE_FIELDS). Invites,
+  // an import, an approval rule and a starter stay on Homeroom itself, and
+  // the route refuses them from a connector token, so this tool and a raw
+  // call with the same token reach the same narrow door. The person's app
+  // allowance, the server's app limit and the create rate limiter hold as
+  // they do in the browser; their refusals come back in the route's words.
+  server.registerTool('create_app', {
+    title: 'Make a new project',
+    description: `Make a new Homeroom project for the person this connector is signed in as: the same project the Create screen's "What do you want to make?" makes, with them as its only member. Use it when they want something new built, not a change to an app they already have (check list_apps first). It spends one of their app slots and starts a real app with its own repository, container and database, so confirm the name with them before calling. \`audience\` defaults to "invited": a private community nobody else is in yet; they invite people from its page. With a \`brief\`, Homeroom bot builds the first version from it, as it does on the Create screen. Without one the project starts from the empty starter for a coding agent to build: once get_app reports it running, file its first request with create_request, then prepare_work and submit_work as for any change. It invites nobody, tells nobody else and puts nothing to a vote.`,
+    inputSchema: {
+      name: z.string().describe(`What to call it, as the person would say it. At most ${CREATE_APP_NAME_MAX} characters.`),
+      description: z.string().optional().describe(`One line about what it is, shown on its page and in Discover. At most ${createOptions.DESCRIPTION_MAX} characters.`),
+      audience: z.enum(['invited', 'solo', 'open']).optional().describe('Who it is for. "invited" (the default): a private community they can invite people into. "solo": just them. "open": a public community anyone can see, join and build.'),
+      brief: z.string().optional().describe(`What it should do, in the person's words, ${CREATE_APP_BRIEF_MIN} to ${CREATE_APP_BRIEF_MAX} characters. Only when Homeroom bot should build the first version; leave it out when a coding agent will.`),
+    },
+    outputSchema: {
+      slug: z.string(),
+      name: z.string(),
+      status: z.string(),
+      audience: z.enum(['invited', 'solo', 'open']),
+      // Who builds the first version: Homeroom bot from the brief, or the
+      // caller's own coding agent.
+      firstVersion: z.enum(['homeroom_bot', 'yours']),
+      webPath: z.string(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ name, description, audience, brief }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    const cleanName = String(name || '').trim();
+    if (!cleanName) return toolError('invalid_request', 'name is required.');
+    // Checked, never fixed: a project made under a shortened name is not the
+    // one the person agreed to.
+    const nameCheck = checkWriteLength(cleanName, {
+      field: 'name', max: CREATE_APP_NAME_MAX, hint: 'Choose a shorter name with the person, then call create_app again.',
+    });
+    if (!nameCheck.ok) return writeLengthError(nameCheck);
+    const line = description == null ? '' : String(description).trim();
+    const lineCheck = checkWriteLength(line, {
+      field: 'description', max: createOptions.DESCRIPTION_MAX, hint: 'Say what it is in one shorter line, then call create_app again.',
+    });
+    if (!lineCheck.ok) return writeLengthError(lineCheck);
+    const wanted = audience == null ? 'invited' : audience;
+    if (!createOptions.AUDIENCES.has(wanted)) {
+      return toolError('invalid_request', 'audience must be "invited", "solo" or "open".');
+    }
+    const words = brief == null ? '' : String(brief).trim();
+    if (words && words.length < CREATE_APP_BRIEF_MIN) {
+      return toolError('invalid_request', `A brief needs at least ${CREATE_APP_BRIEF_MIN} characters; leave it out when a coding agent will build the first version.`);
+    }
+    const briefCheck = checkWriteLength(words, {
+      field: 'brief', max: CREATE_APP_BRIEF_MAX, hint: 'Shorten the brief, then call create_app again.',
+    });
+    if (!briefCheck.ok) return writeLengthError(briefCheck);
+    const result = await callPlatform(baseUrl, accessToken, 'POST', '/api/apps', {
+      name: nameCheck.value,
+      audience: wanted,
+      ...(lineCheck.value ? { description: lineCheck.value } : {}),
+      ...(briefCheck.value ? { brief: briefCheck.value } : {}),
+    });
+    if (!result.ok) {
+      // Out of app slots is the person's allowance, not this connection's
+      // permission: said as such, so they are not told to reconnect.
+      if (result.status === 403 && result.body && result.body.code === 'app_allowance_exhausted') {
+        return toolError('app_allowance_exhausted', platformWords(result.body).message
+          || 'All of this person\'s app slots are in use. They can ask for more from the app allowance panel on Homeroom.');
+      }
+      if (result.status === 409) {
+        const said = (platformWords(result.body).message || 'A project with that name already exists').replace(/[.!?]?\s*$/, '.');
+        return toolError('name_taken', `${said} Choose another name with the person.`);
+      }
+      return platformError(result);
+    }
+    const app = (result.body && result.body.app) || {};
+    const slug = typeof app.slug === 'string' ? app.slug : '';
+    if (!requireSlug(slug)) {
+      return toolError('platform_error', 'Homeroom made the project but did not say what it is called. Call list_apps to find it before making another.');
+    }
+    const byBot = !!(result.body && result.body.homeroomBot);
+    return toolResult({
+      slug,
+      name: untrusted(app.name || nameCheck.value, CREATE_APP_NAME_MAX),
+      status: typeof app.status === 'string' ? app.status : 'creating',
+      audience: wanted,
+      firstVersion: byBot ? 'homeroom_bot' : 'yours',
+      webPath: appWebPath(origin, slug),
+      nextStep: byBot
+        ? 'Homeroom bot is building the first version from the brief while the project is set up, as it does for a project made on the Create screen. The person follows it on the project\'s page (webPath) and in their messages from Homeroom bot; do not build a first version of your own as well.'
+        : 'Homeroom is setting the project up, which takes a minute or two. Call get_app with this slug until its status is running, then file its first request with create_request and build it with prepare_work and submit_work like any change. The person can open webPath to invite people.',
     });
   });
 
@@ -10366,6 +10482,9 @@ module.exports = {
   MCP_REQUEST_BODY_KB,
   MAX_ANSWER_CHARS,
   MAX_CLOSE_REASON_CHARS,
+  CREATE_APP_NAME_MAX,
+  CREATE_APP_BRIEF_MIN,
+  CREATE_APP_BRIEF_MAX,
   MAX_CONVENTIONS_CHARS,
   PLATFORM_INTERNAL_URL,
   ACTING_TOOLS,
