@@ -141,6 +141,11 @@ test('requests are rows: filed, listed, numbered, closed, reopened and commented
   // A number some row already holds (imported after the counter started) is skipped.
   await pool.query(`INSERT INTO requests (app_id, number, title, source) VALUES ($1, 62, 'Imported', 'board')`, [hosted.id]);
   assert.equal((await requests.create('apps', 'todo-list-b91765', { title: 'Next' })).number, 63);
+  // So is a pull request's: GitHub numbers those on its own, and #6002 was
+  // once a request and an unrelated change at the same time.
+  await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, pr_title, status, pr_number) VALUES ($1, 1, 'From GitHub', 'promoted', 64)`, [hosted.id]);
+  assert.equal((await requests.create('apps', 'todo-list-b91765', { title: 'After the pull request' })).number, 65);
   await appNumbers.reserveThrough(hosted.id, 80, { db: pool });
   assert.equal((await requests.create('apps', 'todo-list-b91765', { title: 'After import' })).number, 81);
 

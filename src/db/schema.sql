@@ -16391,11 +16391,20 @@ $$;
 -- A change's thread: its first linked request's, else the request it was
 -- made from, else its own by PR number. A draft with none of these has no
 -- thread yet; it gets one when it is linked or opens its pull request.
+--
+-- Its own is numbered by its PR number only while no request holds that
+-- number. On a project still on GitHub the pull requests are GitHub's
+-- numbers and the requests Homeroom's (services/app-numbers.js), so the two
+-- can meet: Change #6002 and Request #6002 were two unrelated things, and
+-- the change landed in the request's thread. Such a change gets a thread
+-- of its own with no number. Only a link puts a change in a request's
+-- thread.
 CREATE OR REPLACE FUNCTION session_thread_id(p_app_id INTEGER, p_linked INTEGER[], p_from INTEGER,
                                              p_pr INTEGER, p_branch TEXT, p_title TEXT)
 RETURNS BIGINT LANGUAGE plpgsql AS $$
 DECLARE
   kind TEXT;
+  tid BIGINT;
 BEGIN
   IF p_linked IS NOT NULL AND cardinality(p_linked) > 0 AND p_linked[array_lower(p_linked, 1)] > 0 THEN
     RETURN thread_for_number(p_app_id, p_linked[array_lower(p_linked, 1)]);
@@ -16405,6 +16414,12 @@ BEGIN
   END IF;
   IF p_pr IS NOT NULL AND p_pr > 0 THEN
     kind := thread_kind_for_branch(p_branch);
+    IF EXISTS (SELECT 1 FROM requests WHERE app_id = p_app_id AND number = p_pr) THEN
+      INSERT INTO threads (app_id, kind, title)
+      VALUES (p_app_id, kind, CASE WHEN kind = 'decision' THEN p_title END)
+      RETURNING id INTO tid;
+      RETURN tid;
+    END IF;
     RETURN thread_for_number(p_app_id, p_pr, kind, CASE WHEN kind = 'decision' THEN p_title END);
   END IF;
   RETURN NULL;

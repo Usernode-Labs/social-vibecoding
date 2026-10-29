@@ -1752,7 +1752,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
               stands, its shots; its replies are the thread's stream. #2605:
               no build surface here: the ⋯'s Build door leaves for it. */}
           {body.thread ? (
-            <ChangeThreadHead id={id ? Number(id) : null} card={card} body={body} v={body.thread} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} threadNumber={Number(linkedIssues[0]) || Number(session?.pr_number) || null} />
+            <ChangeThreadHead id={id ? Number(id) : null} card={card} body={body} v={body.thread} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} threadNumber={Number(session?.pr_number) || Number(linkedIssues[0]) || null} threadAsChange={Number(session?.pr_number) > 0} />
           ) : null}
           {id ? (
             <DetailsSheet

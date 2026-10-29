@@ -198,6 +198,62 @@ async function refreshStates(pool) {
   }
 }
 
+// ── Changes that shared a request's number (follow-up) ───────────────
+//
+// Until session_thread_id learned otherwise, a change that links no request
+// joined the thread numbered by its PR number, and on a project still on
+// GitHub that number can be an unrelated request's: Change #6002 sat in
+// Request #6002's thread. This moves each such change to a thread of its
+// own with no number, once, behind its own marker. Its replies go with it
+// (chat_sessions_carry_thread_messages), both threads' states are worked out
+// again (threads_follow_state), and its people go with it, since followers
+// are derived. A change
+// that links the request, or was made from it, stays.
+const NUMBERS_MARKER_KEY = 'threads_pr_numbers_v1';
+
+const COLLIDED_SQL = `
+  SELECT s.id, s.app_id, s.branch_name, s.pr_title
+    FROM chat_sessions s
+    JOIN threads t ON t.id = s.thread_id
+   WHERE t.number = s.pr_number
+     AND EXISTS (SELECT 1 FROM requests r WHERE r.app_id = s.app_id AND r.number = s.pr_number)
+     AND NOT (s.pr_number = ANY(COALESCE(s.linked_issues, '{}'::int[])))
+     AND s.created_from_issue_number IS DISTINCT FROM s.pr_number
+   ORDER BY s.id`;
+
+async function separateNumberCollisions(pool) {
+  try {
+    const { rows: done } = await pool.query('SELECT 1 FROM platform_settings WHERE key = $1', [NUMBERS_MARKER_KEY]);
+    if (done.length) return { skipped: 'done' };
+    const started = Date.now();
+    const { rows } = await pool.query(COLLIDED_SQL);
+    for (const row of rows) {
+      await pool.query(
+        `WITH made AS (
+           INSERT INTO threads (app_id, kind, title)
+           SELECT $2, k.kind, CASE WHEN k.kind = 'decision' THEN $4 END
+             FROM (SELECT thread_kind_for_branch($3) AS kind) k
+           RETURNING id
+         )
+         UPDATE chat_sessions SET thread_id = (SELECT id FROM made) WHERE id = $1`,
+        [row.id, row.app_id, row.branch_name, row.pr_title]
+      );
+    }
+    await pool.query(
+      `INSERT INTO platform_settings (key, value, description) VALUES ($1, 'true', $2)
+       ON CONFLICT (key) DO NOTHING`,
+      [NUMBERS_MARKER_KEY, 'Marker: every change that was in a request\'s thread only because its PR number was the '
+        + 'request\'s got a thread of its own (#6019 follow-up). Deleting it runs the pass again on the next boot, '
+        + 'which is safe: it moves only changes still in that state.']
+    );
+    log.info('threads', 'Changes moved out of requests that shared their number', { changes: rows.length, ms: Date.now() - started });
+    return { changes: rows.length };
+  } catch (err) {
+    log.error('threads', 'Changes sharing a request\'s number not moved; the next boot tries again', { err: err.message });
+    return { failed: true };
+  }
+}
+
 // ── Followers (stage 2) ─────────────────────────────────────────────
 //
 // A thread's followers are worked out from what is in it, never stored:
@@ -257,9 +313,15 @@ SELECT user_id FROM thread_followers WHERE thread_id = $1 AND muted_at IS NOT NU
 /** The thread a stored message belongs to, with what a notification about it needs. */
 async function threadOfMessage(db, { appId, messageId }) {
   const { rows } = await db.query(
-    `SELECT m.thread_id, m.thread_type, m.thread_ref, t.number, t.kind, a.repo_url,
+    `SELECT m.thread_id, m.thread_type, m.thread_ref, t.kind, a.repo_url,
+            -- A change's own thread with no number (session_thread_id: its
+            -- PR number is a request's) is named by its change.
+            COALESCE(t.number, (SELECT s.pr_number FROM chat_sessions s
+                                 WHERE s.thread_id = t.id AND s.pr_number IS NOT NULL
+                                 ORDER BY s.id LIMIT 1)) AS number,
             EXISTS (SELECT 1 FROM chat_sessions s
-                     WHERE s.thread_id = t.id AND s.pr_number = t.number) AS change_led
+                     WHERE s.thread_id = t.id
+                       AND (s.pr_number = t.number OR (t.number IS NULL AND s.pr_number IS NOT NULL))) AS change_led
        FROM chat_messages m
        JOIN apps a ON a.id = m.app_id
        LEFT JOIN threads t ON t.id = m.thread_id AND t.app_id = m.app_id
@@ -336,25 +398,30 @@ const FOLDED_REPLIES = 3;
  * The thread a number names in `appId`: the number's own (a request's, or a
  * change's that leads one), else the thread of the change whose pull
  * request has that number, which may lead a request's thread; then wherever
- * a merge took it. Numbers are one sequence per app, so a number is at most
- * one of these. Null when there is none.
+ * a merge took it. Null when there is none.
+ *
+ * `asChange`: the number is a pull request's, so the change's own thread
+ * answers first. A change's page asks this way. On a project still on
+ * GitHub a pull request can share its number with an unrelated request
+ * (services/app-numbers.js), and the number's own thread is the request's.
  */
-async function threadForNumber(db, { appId, number }) {
-  const n = Number(number);
-  if (!appId || !Number.isSafeInteger(n) || n <= 0) return null;
-  let { rows } = await db.query(
-    'SELECT id, app_id, number, kind, title, state, merged_into FROM threads WHERE app_id = $1 AND number = $2',
-    [appId, n]
-  );
-  if (!rows[0]) {
-    ({ rows } = await db.query(
-      `SELECT t.id, t.app_id, t.number, t.kind, t.title, t.state, t.merged_into
+const CHANGE_THREAD_SQL = `SELECT t.id, t.app_id, t.number, t.kind, t.title, t.state, t.merged_into
          FROM chat_sessions s JOIN threads t ON t.id = s.thread_id
         WHERE s.app_id = $1 AND s.pr_number = $2
-        ORDER BY s.id DESC LIMIT 1`,
+        ORDER BY s.id DESC LIMIT 1`;
+
+async function threadForNumber(db, { appId, number, asChange = false }) {
+  const n = Number(number);
+  if (!appId || !Number.isSafeInteger(n) || n <= 0) return null;
+  let rows = [];
+  if (asChange) ({ rows } = await db.query(CHANGE_THREAD_SQL, [appId, n]));
+  if (!rows[0]) {
+    ({ rows } = await db.query(
+      'SELECT id, app_id, number, kind, title, state, merged_into FROM threads WHERE app_id = $1 AND number = $2',
       [appId, n]
     ));
   }
+  if (!rows[0] && !asChange) ({ rows } = await db.query(CHANGE_THREAD_SQL, [appId, n]));
   return followMerges(db, rows[0] || null);
 }
 
@@ -507,7 +574,11 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
   const leadsChange = number != null
     && items.some((i) => i.type === 'change' && i.number === number)
     && !items.some((i) => i.type === 'request' && i.number === number);
-  const lead = number == null ? 'decision' : leadsChange ? 'change' : 'request';
+  // A change's own thread with no number (session_thread_id) is the
+  // change's, not a decision's.
+  const lead = number == null
+    ? (thread.kind === 'work' && items.some((i) => i.type === 'change') ? 'change' : 'decision')
+    : leadsChange ? 'change' : 'request';
   const follow = viewerId
     ? await followState(db, { threadId: thread.id, appId: thread.app_id, userId: viewerId, owner, repo })
     : null;
@@ -639,4 +710,6 @@ module.exports = {
   backfill,
   STATE_MARKER_KEY,
   refreshStates,
+  NUMBERS_MARKER_KEY,
+  separateNumberCollisions,
 };
