@@ -142,11 +142,17 @@ test('every attach trigger fires only on rows with no thread and cannot fail the
   const triggers = [...BLOCK.matchAll(/CREATE TRIGGER (\w+)\s+(BEFORE|AFTER) ([A-Z ,_a-z]+?) ON (\w+)\s+FOR EACH ROW WHEN \(([^)]*\)?[^)]*)\)\s+EXECUTE FUNCTION (\w+)\(\);/g)];
   assert.deepEqual(triggers.map((m) => m[1]).sort(), [
     'chat_messages_attach_thread', 'chat_sessions_attach_thread', 'chat_sessions_attach_thread_later',
-    'chat_sessions_carry_thread_messages', 'issues_attach_thread', 'requests_attach_thread',
+    'chat_sessions_carry_thread_messages', 'chat_sessions_thread_state', 'chat_sessions_thread_state_new',
+    'issues_attach_thread', 'issues_thread_state', 'issues_thread_state_new',
+    'requests_attach_thread', 'requests_thread_state', 'requests_thread_state_new',
   ]);
   for (const m of triggers) {
     const [, name, , , , when, fn] = m;
-    if (name !== 'chat_sessions_carry_thread_messages') assert.match(when, /NEW\.thread_id IS NULL/, name);
+    // The follow-up's state triggers look only at a new state or thread
+    // (threads_refresh_state); the attach triggers only at rows with none.
+    if (/_thread_state_new$/.test(name)) assert.match(when, /NEW\.thread_id IS NOT NULL/, name);
+    else if (/_thread_state$/.test(name)) assert.match(when, /IS DISTINCT FROM NEW\.(state|status)/, name);
+    else if (name !== 'chat_sessions_carry_thread_messages') assert.match(when, /NEW\.thread_id IS NULL/, name);
     const body = new RegExp(`CREATE OR REPLACE FUNCTION ${fn}\\(\\) RETURNS TRIGGER[\\s\\S]*?\\$\\$;`).exec(BLOCK);
     assert.ok(body, `${fn} is defined in the block`);
     assert.match(body[0], /EXCEPTION WHEN OTHERS THEN/, `${fn} catches whatever goes wrong`);

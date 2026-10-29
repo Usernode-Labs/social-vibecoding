@@ -3973,7 +3973,9 @@ async function decidePost(pool, { bot, user, settings, action, yes, ack, deps = 
     });
   }
   if (!(await requestExists(pool, app.id, n))) return failed('gone', `${name} has no request #${n} any more. Nothing was posted.`);
-  if (!(await canFile(pool, app, user))) {
+  // A change to their own request's plan is the requester's to make, as it
+  // was before it became a draft (postOnRequest keeps its own gates).
+  if (action.title !== 'plan_change' && !(await canFile(pool, app, user))) {
     return failed('join_required', `I couldn't post it: you need to be a member of ${name} first. You can join it from its page.`);
   }
   // What it answers: the message it was drafted under, while that is still
@@ -3985,7 +3987,7 @@ async function decidePost(pool, { bot, user, settings, action, yes, ack, deps = 
   let posted;
   try {
     posted = await dm.postOnRequest(pool, {
-      user, target, text, prepared: action.title !== 'dm_answer', reason: action.title || 'dm_comment', deps,
+      user, target, text, prepared: !['dm_answer', 'plan_change'].includes(action.title), reason: action.title || 'dm_comment', deps,
     });
   } catch (err) {
     log.warn('homeroom-bot-mayor', 'Could not post a drafted reply', { app: app.slug, issueNumber: n, err: err.message });
@@ -3993,6 +3995,14 @@ async function decidePost(pool, { bot, user, settings, action, yes, ack, deps = 
     return failed(err.message, later);
   }
   if (!posted.ok) return failed(posted.why || 'refused', `I couldn't post it: ${posted.why}. Nothing was posted.`);
+  // A change to a complicated change's plan (#4488): the plan stops waiting
+  // and is planned again with it (homeroom-bot-dm.js changeOnRequest).
+  if (action.title === 'plan_change') {
+    await dm.notePlanChanged(pool, { user, target, app, deps });
+    return ack(`Posted on ${posted.line}'s public discussion, as you. I'll plan it again with it and send the new plan here.`, {
+      objects: [{ type: 'issue', appId: Number(app.id), issueNumber: n }],
+    });
+  }
   const builds = liveModule(deps).isLiveFor(settings, app);
   return ack(`Posted on ${posted.line}'s public discussion, as you.${builds ? ' I\'ll look at it again now.' : ''}`, {
     objects: [{ type: 'issue', appId: Number(app.id), issueNumber: n }],

@@ -16559,6 +16559,95 @@ BEGIN
   END IF;
 END $$;
 
+-- A thread is open while anything in it is: an open request, a change
+-- being made or up for a vote, or a governance vote (a request's `general`
+-- twin is the request's own copy, not a vote, so it does not count). When
+-- the last of them closes the thread closes, and a request reopened or a
+-- change added opens it again. A thread a merge closed (`merged_into`)
+-- stays closed. Like the attach triggers, this never fails the write it
+-- rides on.
+CREATE OR REPLACE FUNCTION threads_refresh_state(p_thread BIGINT) RETURNS VOID
+LANGUAGE plpgsql AS $$
+DECLARE
+  busy BOOLEAN;
+BEGIN
+  IF p_thread IS NULL THEN RETURN; END IF;
+  SELECT EXISTS (SELECT 1 FROM requests WHERE thread_id = p_thread AND state = 'open')
+      OR EXISTS (SELECT 1 FROM chat_sessions WHERE thread_id = p_thread
+                  AND status IN ('active', 'paused', 'promoted', 'merging'))
+      OR EXISTS (SELECT 1 FROM issues WHERE thread_id = p_thread AND status = 'open' AND kind <> 'general')
+    INTO busy;
+  IF busy THEN
+    UPDATE threads SET state = 'open', closed_at = NULL
+     WHERE id = p_thread AND merged_into IS NULL AND state = 'closed';
+  ELSE
+    UPDATE threads SET state = 'closed', closed_at = NOW()
+     WHERE id = p_thread AND merged_into IS NULL AND state = 'open';
+  END IF;
+END $$;
+
+CREATE OR REPLACE FUNCTION threads_follow_state() RETURNS TRIGGER
+LANGUAGE plpgsql AS $$
+BEGIN
+  BEGIN
+    PERFORM threads_refresh_state(NEW.thread_id);
+    IF TG_OP = 'UPDATE' AND OLD.thread_id IS DISTINCT FROM NEW.thread_id THEN
+      PERFORM threads_refresh_state(OLD.thread_id);
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'threads: could not refresh a thread''s state: %', SQLERRM;
+  END;
+  RETURN NULL;
+END $$;
+
+-- Only a new state or thread is worth the look: requests, governance rows
+-- and above all changes are written for other reasons all the time.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'requests_thread_state'
+                  AND tgrelid = 'requests'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER requests_thread_state
+      AFTER UPDATE OF state, thread_id ON requests
+      FOR EACH ROW WHEN (OLD.state IS DISTINCT FROM NEW.state OR OLD.thread_id IS DISTINCT FROM NEW.thread_id)
+      EXECUTE FUNCTION threads_follow_state();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'requests_thread_state_new'
+                  AND tgrelid = 'requests'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER requests_thread_state_new
+      AFTER INSERT ON requests
+      FOR EACH ROW WHEN (NEW.thread_id IS NOT NULL)
+      EXECUTE FUNCTION threads_follow_state();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'issues_thread_state'
+                  AND tgrelid = 'issues'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER issues_thread_state
+      AFTER UPDATE OF status, thread_id ON issues
+      FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM NEW.status OR OLD.thread_id IS DISTINCT FROM NEW.thread_id)
+      EXECUTE FUNCTION threads_follow_state();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'issues_thread_state_new'
+                  AND tgrelid = 'issues'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER issues_thread_state_new
+      AFTER INSERT ON issues
+      FOR EACH ROW WHEN (NEW.thread_id IS NOT NULL)
+      EXECUTE FUNCTION threads_follow_state();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'chat_sessions_thread_state'
+                  AND tgrelid = 'chat_sessions'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER chat_sessions_thread_state
+      AFTER UPDATE OF status, thread_id ON chat_sessions
+      FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM NEW.status OR OLD.thread_id IS DISTINCT FROM NEW.thread_id)
+      EXECUTE FUNCTION threads_follow_state();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'chat_sessions_thread_state_new'
+                  AND tgrelid = 'chat_sessions'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER chat_sessions_thread_state_new
+      AFTER INSERT ON chat_sessions
+      FOR EACH ROW WHEN (NEW.thread_id IS NOT NULL)
+      EXECUTE FUNCTION threads_follow_state();
+  END IF;
+END $$;
+
 -- ── Thread followers (stage 2 of #6019) ────────────────────────────────
 -- Who hears about a new post in a thread is worked out from the thread
 -- itself (services/threads.js FOLLOWERS_SQL): whoever asked for one of its

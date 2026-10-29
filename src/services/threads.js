@@ -168,6 +168,36 @@ async function backfill(pool, { batch = {} } = {}) {
   return counts;
 }
 
+// ── Open and closed (follow-up) ─────────────────────────────────────
+//
+// The schema's threads_refresh_state keeps a thread open while anything in
+// it is, from the moment its triggers exist. Threads made before then took
+// their request's state once, or none, so this sets every thread's state
+// from what it holds, once, behind its own marker.
+const STATE_MARKER_KEY = 'threads_state_v1';
+
+async function refreshStates(pool) {
+  try {
+    const { rows } = await pool.query('SELECT 1 FROM platform_settings WHERE key = $1', [STATE_MARKER_KEY]);
+    if (rows.length) return { skipped: 'done' };
+    const started = Date.now();
+    const { rowCount } = await pool.query(
+      `SELECT threads_refresh_state(id) FROM threads WHERE merged_into IS NULL`
+    );
+    await pool.query(
+      `INSERT INTO platform_settings (key, value, description) VALUES ($1, 'true', $2)
+       ON CONFLICT (key) DO NOTHING`,
+      [STATE_MARKER_KEY, 'Marker: every thread\'s open or closed state was worked out from what it holds (#6019 follow-up). '
+        + 'Deleting it works them out again on the next boot, which is safe.']
+    );
+    log.info('threads', 'Thread states refreshed', { threads: rowCount, ms: Date.now() - started });
+    return { threads: rowCount };
+  } catch (err) {
+    log.error('threads', 'Thread states not refreshed; the next boot tries again', { err: err.message });
+    return { failed: true };
+  }
+}
+
 // ── Followers (stage 2) ─────────────────────────────────────────────
 //
 // A thread's followers are worked out from what is in it, never stored:
@@ -537,4 +567,6 @@ module.exports = {
   attachSessions,
   attachMessages,
   backfill,
+  STATE_MARKER_KEY,
+  refreshStates,
 };

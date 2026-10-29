@@ -843,13 +843,13 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const n = ack.metadata.homeroomBot.issueNumber;
     assert.ok(n > 0);
 
-    // One story: "I'm building it now" is a quiet line in the request's
-    // thread, under its card; the post is told it reached her, so it does
-    // not tag her instead.
+    // One conversation (#6019): "I'm building it now" is a quiet line in
+    // Main, beside the request's card; the post is told it reached her, so
+    // it does not tag her instead.
     const building = await dm.relayIssuePost({ pool, app: notes, issueNumber: n, kind: 'spec', postId: 37071, bot, dm: { building: true } });
     assert.equal(building.quiet, true, 'quiet: no bell, no push');
     const line = await read(building);
-    assert.equal(line.threadRootId, ack.id, 'in the request\'s thread');
+    assert.equal(line.threadRootId, null, 'in Main, beside the card');
     assert.equal(line.metadata.homeroomBot.kind, 'step');
     assert.equal(await dm.untaggedRequester(pool, { appId: notes.id, issueNumber: n, bot, told: building }), ada.username);
     const held = await dm.noteOverAllowance(pool, {
@@ -869,13 +869,13 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     // the change (the merge-followups machine), with a button that opens
     // the app (5 October: its own, which no card the bot cannot attach
     // takes with it), the proposal's card, and the app's address as its link.
-    // One story: every change's requester hears it is live, in the request's
-    // thread and the main chat, with its Open button.
+    // One story: every change's requester hears it is live, in Main (#6019:
+    // beside the request's card, no thread of its own), with its Open button.
     const live = await dm.noteProposalMerged(pool, { id: built.id });
     const liveMsg = await read(live);
     assert.equal(liveMsg.content, 'It\'s live. Open Note board to see it.');
-    assert.equal(liveMsg.threadRootId, ack.id);
-    assert.deepEqual([liveMsg.metadata.homeroomBot.moment, liveMsg.metadata.homeroomBot.said, liveMsg.metadata.homeroomBot.alsoInChat], ['live', 'live', true]);
+    assert.equal(liveMsg.threadRootId, null);
+    assert.deepEqual([liveMsg.metadata.homeroomBot.moment, liveMsg.metadata.homeroomBot.said, liveMsg.metadata.homeroomBot.alsoInChat], ['live', 'live', undefined]);
 
     // A request filed anywhere else started nowhere here; one whose start
     // she deleted is still told, without the quote.

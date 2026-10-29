@@ -59,15 +59,18 @@ async function connectPool() {
     CREATE TABLE platform_settings (key TEXT PRIMARY KEY, value TEXT, description TEXT);
     CREATE TABLE requests (
       id BIGSERIAL PRIMARY KEY, app_id INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-      number INTEGER NOT NULL, title TEXT NOT NULL DEFAULT '', UNIQUE (app_id, number));
+      number INTEGER NOT NULL, title TEXT NOT NULL DEFAULT '',
+      state VARCHAR(8) NOT NULL DEFAULT 'open', UNIQUE (app_id, number));
     CREATE TABLE issues (
       id SERIAL PRIMARY KEY, app_id INTEGER REFERENCES apps(id) ON DELETE CASCADE,
       github_issue_number INTEGER, title VARCHAR(512) NOT NULL,
-      kind VARCHAR(32) NOT NULL DEFAULT 'general', payload JSONB NOT NULL DEFAULT '{}'::jsonb);
+      kind VARCHAR(32) NOT NULL DEFAULT 'general', payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status VARCHAR(32) NOT NULL DEFAULT 'open');
     CREATE TABLE chat_sessions (
       id SERIAL PRIMARY KEY, app_id INTEGER REFERENCES apps(id) ON DELETE CASCADE,
       branch_name VARCHAR(255), pr_number INTEGER, pr_title VARCHAR(256),
-      linked_issues INTEGER[] NOT NULL DEFAULT '{}', created_from_issue_number INTEGER);
+      linked_issues INTEGER[] NOT NULL DEFAULT '{}', created_from_issue_number INTEGER,
+      status VARCHAR(32) NOT NULL DEFAULT 'active');
     CREATE TABLE chat_messages (
       id SERIAL PRIMARY KEY, app_id INTEGER REFERENCES apps(id) ON DELETE CASCADE,
       content TEXT NOT NULL DEFAULT '', thread_type VARCHAR(16), thread_ref INTEGER);
@@ -286,4 +289,57 @@ test('the backfill attaches every row that was there before, and running it agai
     [again.requests, again.issues, again.sessions, again.messages], [0, 0, 0, 0], 'nothing left to attach');
   assert.equal(await count(), threadsBefore, 'and no thread made twice');
   assert.deepEqual(await shape(), attached);
+});
+
+test('a thread closes when nothing in it is open, and opens again when something is', async (t) => {
+  if (ctx.skip) return t.skip(ctx.skip);
+  const a = await app('state');
+  const req = await one('INSERT INTO requests (app_id, number, title) VALUES ($1, 41, $2) RETURNING id', [a, 'Dark mode']);
+  const change = await one(
+    `INSERT INTO chat_sessions (app_id, pr_number, linked_issues, status) VALUES ($1, 42, '{41}', 'promoted') RETURNING id`, [a]);
+  const twin = await one(`INSERT INTO issues (app_id, github_issue_number, title) VALUES ($1, 41, 'Dark mode') RETURNING id`, [a]);
+  const state = async () => (await threadByNumber(a, 41)).state;
+  assert.equal(await state(), 'open');
+
+  // The change merges: the request is still open, so the thread is.
+  await ctx.pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [change.id]);
+  assert.equal(await state(), 'open');
+  // The request closes too. Its `general` twin is still open, but it is the
+  // request's copy, not a vote: the thread closes.
+  await ctx.pool.query(`UPDATE requests SET state = 'closed' WHERE id = $1`, [req.id]);
+  assert.equal(await state(), 'closed');
+  assert.ok((await threadByNumber(a, 41)).closed_at, 'with the time it closed');
+
+  // A vote to close it, or the request reopened, opens it again.
+  const close = await one(
+    `INSERT INTO issues (app_id, title, kind, payload) VALUES ($1, 'Close #41', 'close_issue', '{"issueNumber": 41}') RETURNING id`, [a]);
+  assert.equal(await state(), 'open');
+  await ctx.pool.query(`UPDATE issues SET status = 'closed' WHERE id = $1`, [close.id]);
+  assert.equal(await state(), 'closed');
+  await ctx.pool.query(`UPDATE requests SET state = 'open' WHERE id = $1`, [req.id]);
+  assert.equal(await state(), 'open');
+  assert.equal((await threadByNumber(a, 41)).closed_at, null);
+  void twin;
+
+  // A thread a merge closed stays closed, whatever is reopened in it.
+  const into = await one('INSERT INTO threads (app_id, number) VALUES ($1, 99) RETURNING id', [a]);
+  await ctx.pool.query(`UPDATE threads SET merged_into = $2, state = 'closed' WHERE app_id = $1 AND number = 41`, [a, into.id]);
+  await ctx.pool.query(`UPDATE requests SET state = 'closed' WHERE id = $1`, [req.id]);
+  await ctx.pool.query(`UPDATE requests SET state = 'open' WHERE id = $1`, [req.id]);
+  assert.equal(await state(), 'closed');
+});
+
+test('the one-time pass sets every thread\'s state from what it holds, once', async (t) => {
+  if (ctx.skip) return t.skip(ctx.skip);
+  const threads = require('../src/services/threads');
+  const a = await app('state-pass');
+  await ctx.pool.query(`INSERT INTO requests (app_id, number, title, state) VALUES ($1, 51, 'Done', 'closed'), ($1, 52, 'Open', 'open')`, [a]);
+  // As before the triggers: both threads open.
+  await ctx.pool.query(`UPDATE threads SET state = 'open', closed_at = NULL WHERE app_id = $1`, [a]);
+  await ctx.pool.query('DELETE FROM platform_settings WHERE key = $1', [threads.STATE_MARKER_KEY]);
+  const first = await threads.refreshStates(ctx.pool);
+  assert.ok(first.threads >= 2, JSON.stringify(first));
+  assert.equal((await threadByNumber(a, 51)).state, 'closed');
+  assert.equal((await threadByNumber(a, 52)).state, 'open');
+  assert.deepEqual(await threads.refreshStates(ctx.pool), { skipped: 'done' });
 });
