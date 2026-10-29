@@ -57,13 +57,15 @@ test('the query reads the column for proposals and a typed NULL for decisions, i
   const sql = route.NEEDS_FEED_SQL;
   // #6019: then the thread and the requests it closes, for a ballot's choices.
   assert.match(sql, /cs\.staging_url::text AS staging_url,\s+-- #6019[^\n]*\n\s+-- choices below\.\n\s+cs\.thread_id, cs\.linked_issues\s+FROM chat_sessions cs/);
-  assert.match(sql, /NULL::text AS staging_url, NULL::bigint AS thread_id, NULL::int\[\] AS linked_issues\s+FROM issues i/);
+  // A decision carries its thread too (29 Oct 2026), for the Homeroom bot
+  // tab's Needs you, which lists only the threads you are in.
+  assert.match(sql, /NULL::text AS staging_url, i\.thread_id, NULL::int\[\] AS linked_issues\s+FROM issues i/);
   assert.match(sql, /o\.requires_explicit_approval, o\.explicit_approval_reason, o\.staging_url,/);
   // Every arm of the UNION ends on the same columns, so a positional
   // mismatch cannot put a decision's payload where the URL goes.
   const [proposals, decisions, questions] = sql.split('UNION ALL');
   assert.match(proposals, /explicit_approval_reason::text,[\s\S]*?staging_url,[\s\S]*?cs\.thread_id, cs\.linked_issues\s+FROM chat_sessions/);
-  assert.match(decisions, /explicit_approval_reason,\s+NULL::text AS staging_url, NULL::bigint AS thread_id, NULL::int\[\] AS linked_issues\s+FROM issues/);
+  assert.match(decisions, /explicit_approval_reason,\s+NULL::text AS staging_url, i\.thread_id, NULL::int\[\] AS linked_issues\s+FROM issues/);
   assert.match(questions, /NULL::boolean, NULL::text, NULL::text, NULL::bigint, NULL::int\[\]\s+FROM homeroom_bot_dm_messages q/,
     'and the bot\'s questions, #6019');
   assert.ok(route.NEEDS_FEED_MAX > 0, 'still bounded');

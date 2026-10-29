@@ -7,9 +7,11 @@
 //   1. A person's threads are the ones they are in by the followers' rule:
 //      asked for it, built in it, voted in it, wrote in it, or chose Notify
 //      me; never one they muted, or one in a private project they are not in.
-//   2. Each is in one list: Up next (being made, up for a vote they voted on
-//      or own, merging, going live), Waiting (nothing in flight), Live this
-//      week. A vote they still owe is Needs you's, so it is in none.
+//   2. Each is in one list: In progress (theirs, being made, up for a vote
+//      they voted on or own, merging, going live), Waiting (nothing in
+//      flight), Live this week. A vote they still owe is Needs you's, so it
+//      is in none, and one they only voted or wrote in is in progress
+//      without asking anything of them, so it is not listed (29 Oct 2026).
 //   3. Private threads are their own threads in the chat with the bot that
 //      have gone nowhere yet, and the bot's drafts for them.
 //
@@ -77,10 +79,23 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   // Hers, with Bob's change up for a vote she has not voted on: Needs you's.
   await request(app, 2, ada, 'Dark mode');
   await change(app, 3, bob, 2, 'promoted', { promotedAt: new Date() });
-  // Bob's, which she voted on: Up next.
+  // Bob's, which she only voted on: nothing left for her, so not listed.
   await request(app, 4, bob, 'Search');
   const searched = await change(app, 5, bob, 4, 'promoted', { promotedAt: new Date(Date.now() - 3600000) });
   await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [searched.id, ada.id]);
+  // Hers, with Bob's change she voted Yes on: In progress, saying so.
+  await request(app, 12, ada, 'Filters');
+  const filters = await change(app, 13, bob, 12, 'promoted', { promotedAt: new Date(Date.now() - 2 * 3600000) });
+  await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [filters.id, ada.id]);
+  // Hers, which Homeroom bot is building; and Bob's, being built, where she
+  // only wrote.
+  await request(app, 14, ada, 'Calendar');
+  await change(app, 15, bot, 14, 'active');
+  await request(app, 16, bob, 'Export');
+  await change(app, 17, bob, 16, 'active');
+  await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref) VALUES ($1, $2, 'csv please', 'issue', 16)`,
+    [app.id, ada.id]);
   // Hers, merged and going live; and hers, live yesterday. Only the merge
   // machine makes a merged row that is not live yet (schema.sql
   // chat_sessions_inserted_merged_live), so the first is written as it.
@@ -110,11 +125,15 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
 
   const work = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } });
   const titles = (list) => list.map((r) => `${r.title}:${r.what}`);
-  assert.deepEqual(titles(work.next), ['Digest:going_live', 'Search:vote'], 'soonest first');
+  assert.deepEqual(titles(work.next), ['Digest:going_live', 'Filters:vote', 'Calendar:building'], 'hers only, soonest first');
+  assert.equal(work.next.find((r) => r.title === 'Filters').myVote, 'yes');
+  assert.equal(work.next.find((r) => r.title === 'Calendar').by, 'bot', 'Homeroom bot is building it');
   assert.deepEqual(titles(work.waiting).sort(), ['Print view:not_picked_up', 'Tags:not_picked_up'].sort());
   assert.deepEqual(titles(work.live), ['Badges:live']);
   const all = [...work.next, ...work.waiting, ...work.live];
   assert.ok(!all.some((r) => r.title === 'Dark mode'), 'a vote she owes is Needs you\'s');
+  assert.ok(!all.some((r) => r.title === 'Search'), 'one she only voted on');
+  assert.ok(!all.some((r) => r.title === 'Export'), 'one she only wrote in, being built');
   assert.ok(!all.some((r) => r.title === 'Muted one'), 'muted');
   assert.ok(!all.some((r) => r.title === 'Secret'), 'a private project she is not in');
   assert.equal(work.waiting.find((r) => r.title === 'Tags').threadId, Number(tags.thread_id));

@@ -2,11 +2,13 @@
  * The AI tab's main view (#6019 follow-up), its pure part: what each list
  * holds and what each row says. ./index.tsx draws it.
  *
- *   Your work   what needs you first (the Needs you feed, GET
- *               /api/workshop/needs-feed), each with one pill for what you
- *               owe; then your private threads, with a lock on the tile; then
- *               yours waiting on someone, saying where each stands.
- *   Up next     yours moving without you, soonest first (GET /api/ai/work).
+ *   Your work   what needs you first (the Needs you feed for the threads
+ *               you are in, GET /api/workshop/needs-feed?in=threads), each
+ *               with one pill for what you owe; then your private threads,
+ *               with a lock on the tile; then yours waiting on someone,
+ *               saying where each stands.
+ *   In progress yours moving without you, soonest first, each saying what
+ *               it waits on (GET /api/ai/work).
  *   Live        yours that went live this week, folded.
  *
  * A row's words are phrases (an id and its values), translated where they
@@ -40,6 +42,10 @@ export interface AiThread {
   what: 'going_live' | 'merging' | 'vote' | 'building' | 'not_picked_up' | 'live';
   at: string | null;
   quietDays?: number;
+  /** Up for a vote: how you voted, if you have. */
+  myVote?: 'yes' | 'no' | null;
+  /** Being made: by Homeroom bot, by you, or by someone else. */
+  by?: 'bot' | 'you' | 'someone';
 }
 
 export interface AiWork {
@@ -88,7 +94,7 @@ export interface WorkRow {
   rootId: number | null;
 }
 
-/** How many rows of Your work, and of Up next, show before Show more. */
+/** How many rows of Your work, and of In progress, show before Show more. */
 export const WORK_FIRST = 8;
 export const NEXT_FIRST = 4;
 /**
@@ -195,12 +201,17 @@ const NEXT_WORDS: Record<string, string> = {
   building: 'messages:ai.next.building',
 };
 
-/** Pure: one Up next row's second line: its project, and what happens next. */
+/** Pure: one In progress row's second line: its project, and what it waits on. */
 export function nextWords(t: AiThread): Phrase {
-  return { id: NEXT_WORDS[t.what] || 'messages:ai.next.vote', values: where(t.app, t.number) };
+  const values = where(t.app, t.number);
+  if (t.what === 'vote' && t.myVote === 'yes') return { id: 'messages:ai.next.voteYes', values };
+  if (t.what === 'vote' && t.myVote === 'no') return { id: 'messages:ai.next.voteNo', values };
+  if (t.what === 'building' && t.by === 'bot') return { id: 'messages:ai.next.botBuilding', values };
+  if (t.what === 'building' && t.by === 'you') return { id: 'messages:ai.next.youBuilding', values };
+  return { id: NEXT_WORDS[t.what] || 'messages:ai.next.vote', values };
 }
 
-/** Pure: the hero's line under the bot's name: what needs you, what is up next. */
+/** Pure: the hero's line under the bot's name: what needs you, what is in progress. */
 export function heroWords(needs: number, next: number): Phrase {
   if (needs > 0) return { id: 'messages:ai.hero.both', values: { needs, next } };
   return { id: 'messages:ai.hero.next', values: { next } };

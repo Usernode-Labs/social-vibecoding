@@ -3904,12 +3904,12 @@
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Its heading, the bot's name, beside its picture."
   },
   "ai.hero.both": {
-    "text": "Needs you: {{needs}} · Up next: {{next}}",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Line under the heading: {{needs}} is how many decisions wait on the person, {{next}} how many of their pieces of work are moving without them."
+    "text": "Needs you: {{needs}} · In progress: {{next}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Line under the heading: {{needs}} is how many decisions wait on the person in the threads they are in, {{next}} how many of their pieces of work are in progress without them."
   },
   "ai.hero.next": {
-    "text": "Up next: {{next}}",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Line under the heading when nothing waits on the person: {{next}} is how many of their pieces of work are moving without them."
+    "text": "In progress: {{next}}",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Line under the heading when nothing waits on the person: {{next}} is how many of their pieces of work are in progress without them."
   },
   "ai.work.title": {
     "text": "Your work",
@@ -3924,8 +3924,8 @@
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Beside the Your work label: how many of its rows wait on the person. {{count}} is that number."
   },
   "ai.work.answerAll": {
-    "text": "Answer all",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Link beside the Your work label: opens the Needs you feed, one decision at a time."
+    "text": "All votes",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Link beside the Your work label: opens Needs you on the Communities screen, every decision the person can vote on in every project they are a member of, not only the threads they are in that this list shows."
   },
   "ai.work.empty": {
     "text": "Nothing needs you right now, and nothing of yours is waiting. Ask Homeroom bot to start something.",
@@ -3992,8 +3992,8 @@
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row that waits on the person, when it says no more than that."
   },
   "ai.next.title": {
-    "text": "Up next",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Label over the list of the person's work moving without them."
+    "text": "In progress",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Label over the list of the person's own work (what they asked for, built or follow) moving without them: being built, up for a vote, going live. Each row says what it is waiting on."
   },
   "ai.next.soonest": {
     "text": "Soonest first",
@@ -4008,12 +4008,28 @@
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Second line of an Up next row: its change was approved and is being merged."
   },
   "ai.next.vote": {
-    "text": "{{project}} · #{{number}} · Up for a vote",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Second line of an Up next row: its change is up for a vote the person already voted on."
+    "text": "{{project}} · #{{number}} · Waiting for votes",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Second line of an In progress row: its change is up for a vote and waits for other people's votes; the person's own does not need giving (a change they made on Homeroom counts as their yes)."
+  },
+  "ai.next.voteYes": {
+    "text": "{{project}} · #{{number}} · Waiting for votes · you voted Yes",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Second line of an In progress row: its change is up for a vote, the person voted Yes on it, and it waits for other people's votes. \"Yes\" is the vote button's label; keep it the same as the button."
+  },
+  "ai.next.voteNo": {
+    "text": "{{project}} · #{{number}} · Waiting for votes · you voted No",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Second line of an In progress row: its change is up for a vote, the person voted No on it, and it waits for other people's votes. \"No\" is the vote button's label; keep it the same as the button."
   },
   "ai.next.building": {
     "text": "{{project}} · #{{number}} · Being built",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Second line of an Up next row: a change for it is being built."
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Second line of an In progress row: somebody other than the person and Homeroom bot is building a change for it."
+  },
+  "ai.next.botBuilding": {
+    "text": "{{project}} · #{{number}} · Homeroom bot is building it",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Second line of an In progress row: Homeroom bot, the platform's builder bot (a name), is building a change for it. \"it\" is the request or thread the row is."
+  },
+  "ai.next.youBuilding": {
+    "text": "{{project}} · #{{number}} · You're building it",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Second line of an In progress row: the person themself is building a change for it. \"it\" is the request or thread the row is."
   },
   "ai.live.title_one": {
     "text": "Live this week · {{count}}",

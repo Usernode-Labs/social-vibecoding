@@ -3,7 +3,8 @@
 // The AI tab's main view (#6019 follow-up): frontend/src/features/ai/.
 // Plan v3: "what needs you comes first, then your private threads, with a
 // lock on the tile, then Up next: what's moving without you, soonest first.
-// Ask Homeroom bot opens Main."
+// Ask Homeroom bot opens Main." Up next is In progress since 29 Oct 2026,
+// and Needs you here is the threads you are in (?in=threads).
 //
 // What this pins:
 //   1. Your work's order: the Needs you feed, then private threads, then the
@@ -87,21 +88,42 @@ test('a long queue of votes folds to three, so your private threads still show',
   assert.deepEqual(foldWork(rows).map((r) => r.key), [
     'need:proposal:1', 'need:proposal:2', 'need:proposal:3',
     'private:91', 'private:92', 'waiting:5',
-  ], 'the heading counts the other six and Answer all opens them');
+  ], 'the heading counts the other six and Show more opens them');
   assert.equal(rows.length, 12, 'Show more still opens every row, in order');
   const many = { ...work, private: Array.from({ length: 12 }, (_, i) => ({ rootId: 100 + i, title: `Idea ${i}`, kind: 'idea', app: null, at: null })) };
   assert.equal(foldWork(yourWork(needs, many)).length, WORK_FIRST, 'and the fold is never longer than the first eight');
 });
 
-test('Up next says what happens next, and the hero counts it', () => {
+test('In progress says what each waits on, and the hero counts it', () => {
   const { nextWords, heroWords } = loadTsx(MODEL);
-  const row = (what) => ({ threadId: 1, number: 7, app, what });
-  assert.deepEqual(['going_live', 'merging', 'vote', 'building'].map((w) => words(nextWords(row(w)))), [
+  const row = (what, extra = {}) => ({ threadId: 1, number: 7, app, what, ...extra });
+  assert.deepEqual([
+    row('going_live'), row('merging'),
+    row('vote', { myVote: 'yes' }), row('vote', { myVote: 'no' }), row('vote', { myVote: null }),
+    row('building', { by: 'bot' }), row('building', { by: 'you' }), row('building', { by: 'someone' }),
+  ].map((r) => words(nextWords(r))), [
     'Garden club · #7 · Going live', 'Garden club · #7 · Merging',
-    'Garden club · #7 · Up for a vote', 'Garden club · #7 · Being built',
+    'Garden club · #7 · Waiting for votes · you voted Yes', 'Garden club · #7 · Waiting for votes · you voted No',
+    'Garden club · #7 · Waiting for votes',
+    'Garden club · #7 · Homeroom bot is building it', 'Garden club · #7 · You\'re building it',
+    'Garden club · #7 · Being built',
   ]);
-  assert.equal(words(heroWords(2, 3)), 'Needs you: 2 · Up next: 3');
-  assert.equal(words(heroWords(0, 3)), 'Up next: 3');
+  assert.equal(message('messages:ai.next.title'), 'In progress');
+  assert.equal(words(heroWords(2, 3)), 'Needs you: 2 · In progress: 3');
+  assert.equal(words(heroWords(0, 3)), 'In progress: 3');
+});
+
+test('Needs you here is the threads you are in; All votes opens every one you owe', () => {
+  const src = read('frontend/src/features/ai/index.tsx');
+  assert.match(src, /readJson<\{ items\?: NeedItem\[\] \}>\(`\/api\/workshop\/needs-feed\?in=threads\$\{qs \? '&demo=1' : ''\}`\)/);
+  assert.match(src, /<SecHead end=\{needs \? \(\s*<a href="\/\?ws=needs#communities"/, 'shown even when nothing here needs you');
+  assert.equal(message('messages:ai.work.answerAll'), 'All votes');
+  const route = read('src/routes/workshop-overview.js');
+  assert.match(route, /pool\.query\(req\.query\.in === 'threads' \? NEEDS_FEED_IN_THREADS_SQL : NEEDS_FEED_SQL, \[/);
+  const { NEEDS_FEED_SQL, NEEDS_FEED_IN_THREADS_SQL } = require('../src/routes/workshop-overview');
+  assert.match(NEEDS_FEED_IN_THREADS_SQL, /AND \(o\.kind = 'question'\s+OR \(o\.thread_id IN \(SELECT mine\.thread_id FROM/, 'the bot\'s questions to you show wherever they are');
+  assert.match(NEEDS_FEED_IN_THREADS_SQL, /f\.muted_at IS NOT NULL/, 'not a thread you muted');
+  assert.ok(!NEEDS_FEED_SQL.includes('thread_followers f'), 'Communities › Needs you keeps every decision owed');
 });
 
 test('the first render is the prerender: hidden, the bot\'s name, no rows; lists in effects', () => {
@@ -111,7 +133,6 @@ test('the first render is the prerender: hidden, the bot\'s name, no rows; lists
   // Data only once the screen is shown to somebody signed in.
   assert.match(src, /if \(!visible \|\| typeof window === 'undefined' \|\| !\(window as any\)\.App\?\.user\) return undefined;/);
   assert.match(src, /readJson<AiWork>\(`\/api\/ai\/work\$\{qs\}`\)/);
-  assert.match(src, /readJson<\{ items\?: NeedItem\[\] \}>\(`\/api\/workshop\/needs-feed\$\{qs\}`\)/);
   // Main docked beside it only on a wide window, after mount.
   assert.match(src, /const \[wide, setWide\] = useState\(false\);/);
   assert.match(src, /\{docked \? \(\s*<aside className="ai-main-pane"/);
@@ -151,7 +172,7 @@ test('on a wide window: Main has its name over it, and a public row opens in the
   assert.equal(message('messages:ai.main.sub'), 'Your chat with Homeroom bot. Only you can see it.');
   // A request, a change or a decision: the panel takes it when Main is docked; its page otherwise.
   assert.match(src, /if \(docked\) \{\s+try \{\s+if \(sidePanel\(\)\?\.take\?\.\(href\.replace\(\/\^#\/, ''\)\)\) return;/);
-  assert.equal((src.match(/onClick=\{\(\) => openPublic\(row\.href, docked\)\}/g) || []).length, 2, 'Up next and Live this week');
+  assert.equal((src.match(/onClick=\{\(\) => openPublic\(row\.href, docked\)\}/g) || []).length, 2, 'In progress and Live this week');
   assert.match(src, /openPublic\(row\.href, docked\);\s+\};/, 'and Your work');
   // A private thread is Main's: the panel gives its place back first.
   assert.match(src, /sidePanel\(\)\?\.close\?\.\(\);\s+setAt\(\{ threadRootId: row\.rootId, focusMessageId: null \}\);/);
