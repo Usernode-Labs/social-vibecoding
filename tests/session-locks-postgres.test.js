@@ -11,10 +11,12 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Pool } = require('pg');
+const { Pool, Client } = require('pg');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const { createSessionLocks, BUSY } = require('../src/db/session-locks');
+const { connectionName, connectionOptions } = require('../src/db/connection-options');
+const { waitFor, deferred } = require('./lib/wait-for');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 test('session locks on a lock connection of their own', { timeout: 60000 }, async (t) => {
@@ -26,18 +28,47 @@ test('session locks on a lock connection of their own', { timeout: 60000 }, asyn
   }
   const other = new Pool({ connectionString: DSN, max: 2 });
   t.after(async () => { await pool.end(); await other.end(); });
+  // How many advisory locks are granted on `key` right now: a holder is
+  // visible in pg_locks, a waiter is not (it polls pg_try_advisory_lock).
+  const grantedOn = async (k) => (await other.query(
+    `SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted AND classid = $1::oid AND objid = $2::oid`,
+    [k[0], k[1]])).rows[0].n;
+  // b's lock connection is what the default makeClient builds (the same
+  // application_name the termination queries below select on), counting the
+  // try-lock answers that were refused: a test can wait for its waiter to
+  // have asked instead of sleeping for it.
+  let clients = 0;
+  let refusals = 0;
+  let lastRefusedClient = 0;
+  const makeCountingClient = (connectionString) => {
+    const client = new Client({
+      connectionString,
+      ...connectionOptions(null, { name: connectionName('locks'), idleInTransactionMs: 0 }),
+      query_timeout: 10000,
+    });
+    const n = ++clients;
+    const query = client.query.bind(client);
+    client.query = async (...args) => {
+      const answer = await query(...args);
+      const row = answer && Array.isArray(answer.rows) ? answer.rows[0] : null;
+      if (row && row.got === false) { refusals += 1; lastRefusedClient = n; }
+      return answer;
+    };
+    return client;
+  };
   const a = createSessionLocks({ idleMs: 0 });
-  const b = createSessionLocks({ idleMs: 0 });
+  const b = createSessionLocks({ idleMs: 0, makeClient: makeCountingClient });
   const key = [990001, Math.floor(Math.random() * 1e6)];
 
   await t.test('it excludes another process, which waits or is told it is busy', async () => {
     let release;
     const gate = new Promise((r) => { release = r; });
     const held = a.withSessionLock(pool, key, async () => { await gate; return 'a'; });
-    await sleep(100);
+    await waitFor(async () => (await grantedOn(key)) === 1, { label: 'a to hold the lock' });
     assert.equal(await b.ifSessionLockFree(pool, key, async () => 'b'), BUSY);
+    const refusedBefore = refusals;
     const waiting = b.withSessionLock(pool, key, async () => 'b');
-    await sleep(150);
+    await waitFor(() => refusals > refusedBefore, { label: 'b to be refused the lock while a holds it' });
     release();
     assert.deepEqual(await Promise.all([held, waiting]), ['a', 'b']);
   });
@@ -46,10 +77,14 @@ test('session locks on a lock connection of their own', { timeout: 60000 }, asyn
     const order = [];
     let release;
     const gate = new Promise((r) => { release = r; });
-    const first = a.withSessionLock(pool, key, async () => { order.push('1:in'); await gate; order.push('1:out'); });
-    await sleep(50);
+    const entered = deferred();
+    const first = a.withSessionLock(pool, key, async () => { order.push('1:in'); entered.resolve(); await gate; order.push('1:out'); });
+    await entered.promise;
     assert.equal(await a.ifSessionLockFree(pool, key, async () => 'x'), BUSY, 'busy here too');
     const second = a.withSessionLock(pool, key, async () => { order.push('2:in'); });
+    // The second holder waits in-process on this process's own queue for the
+    // key and touches nothing observable (a waiter is never in pg_locks).
+    // fixed wait: that absence is the assertion, and has no event to wait for.
     await sleep(100);
     assert.deepEqual(order, ['1:in']);
     release();
@@ -98,7 +133,7 @@ test('session locks on a lock connection of their own', { timeout: 60000 }, asyn
     assert.equal(c.openConnections(), 1, 'kept');
     await c.withSessionLock(pool, key, async () => {});
     assert.equal(c.openConnections(), 1, 'reused');
-    await sleep(350);
+    await waitFor(() => c.openConnections() === 0, { label: 'the idle lock connection to close' });
     assert.equal(c.openConnections(), 0, 'closed once idle');
   });
 
@@ -108,13 +143,15 @@ test('session locks on a lock connection of their own', { timeout: 60000 }, asyn
     let aIn = false;
     let bRanBesideA = null;
     const held = a.withSessionLock(pool, key, async () => { aIn = true; await gate; aIn = false; return 'a'; });
-    await sleep(100);
+    await waitFor(async () => (await grantedOn(key)) === 1, { label: 'a to hold the lock' });
+    const refusedBefore = refusals;
     const waiting = b.withSessionLock(pool, key, async () => { bRanBesideA = aIn; return 'b'; }, { unlockedOnError: true });
-    await sleep(150);
+    await waitFor(() => refusals > refusedBefore, { label: 'b to be refused the lock while a holds it' });
     // End only the waiter's lock connection (the one holding no lock).
+    const clientsBefore = clients;
     await other.query(`SELECT pg_terminate_backend(a.pid) FROM pg_stat_activity a WHERE a.application_name LIKE 'homeroom-%-locks' AND a.datname = current_database()
       AND NOT EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.locktype = 'advisory' AND l.granted)`);
-    await sleep(1500);
+    await waitFor(() => lastRefusedClient > clientsBefore, { label: 'the waiter to be refused again on a new connection' });
     assert.equal(bRanBesideA, null, 'still waiting while the other holds it');
     release();
     assert.deepEqual(await Promise.all([held, waiting]), ['a', 'b']);
@@ -122,15 +159,15 @@ test('session locks on a lock connection of their own', { timeout: 60000 }, asyn
   });
 
   await t.test('the connection closes when no lock is held, and one that died is replaced', async () => {
-    await sleep(50);
+    await waitFor(() => a.openConnections() === 0, { label: 'the lock connection to close while no lock is held' });
     assert.equal(a.openConnections(), 0, 'closed with no lock held');
     let release;
     const gate = new Promise((r) => { release = r; });
     const held = a.withSessionLock(pool, key, async () => { await gate; return 'held'; });
-    await sleep(100);
+    await waitFor(async () => (await grantedOn(key)) === 1, { label: 'a to hold the lock' });
     assert.equal(a.openConnections(), 1);
     await other.query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name LIKE 'homeroom-%-locks' AND datname = current_database() AND pid <> pg_backend_pid()`);
-    await sleep(100);
+    await waitFor(async () => (await grantedOn(key)) === 0, { label: 'the ended connection to give up the lock' });
     release();
     assert.equal(await held, 'held', 'the holder ran on');
     assert.equal(await b.withSessionLock(pool, key, async () => 'next'), 'next', 'the lock is free again');
@@ -209,16 +246,19 @@ test('a lock still held when its pool ends goes only after the pool\'s own conne
     `SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted AND classid = $1::oid AND objid = $2::oid`, key)).rows[0].n;
   let release;
   const claim = locks.withSessionLock(pool, key, () => new Promise((r) => { release = r; }));
-  await sleep(100);
+  await waitFor(async () => (await held()) === 1, { label: 'the lock to be held' });
   assert.equal(await held(), 1);
   // A connection still checked out: the pool's end waits for it.
   const busy = await pool.connect();
   const ended = pool.end();
+  // The pool's end must not reach the lock while its connection is checked
+  // out, and there is no event for "the lock has STILL not gone".
+  // fixed wait: the observation window is the absence check itself.
   await sleep(200);
   assert.equal(await held(), 1, 'the lock outlasts the pool connection still open');
   busy.release();
   await ended;
-  for (let i = 0; i < 50 && (await held()) > 0; i++) await sleep(20);
+  await waitFor(async () => (await held()) === 0, { label: 'the lock to be released' });
   assert.equal(await held(), 0, 'and goes once the pool has ended');
   release();
   await claim.catch(() => {});
