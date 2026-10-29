@@ -1875,6 +1875,33 @@ form.agent-session-composer:focus-within {
 .messages-format-btn svg { width: 18px; height: 18px; stroke-width: 1.8; }
 .messages-format-btn:hover { background: var(--messages-surface-2); }
 .messages-format-btn:disabled { opacity: .35; }
+/* #6035: the draft drawn as it will be sent, above the field. It appears
+   only once the message carries formatting, so a plain message's box keeps
+   its one row; the field below still holds the source that gets sent. It is
+   a look, not a control: no pointer target, so a mention or a `#channel` in
+   it cannot navigate away mid-draft. */
+.messages-format-preview {
+  margin: 2px 2px 6px;
+  padding: 6px 10px 4px;
+  max-height: 128px;
+  overflow-y: auto;
+  border-radius: 12px;
+  background: var(--messages-surface-2);
+}
+.messages-format-preview-label {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 15px;
+}
+.messages-format-preview-body { pointer-events: none; }
+.messages-format-preview .messages-markdown.gc-msg-content {
+  font-size: 15px;
+  line-height: 1.35;
+}
+.messages-format-preview-body > :first-child { margin-top: 0; }
+.messages-format-preview-body > :last-child { margin-bottom: 0; }
 /* #1955 — the one "+" and the two named rows it opens. The wrapper is the
    positioning context AND the outside-press boundary, so the menu has to
    live inside it rather than beside the button. */
@@ -1952,6 +1979,9 @@ form.agent-session-composer:focus-within {
   .messages-composer-card > .messages-pending-object:first-child,
   .messages-composer-card > .dc-attach-strip:first-child { margin-top: 4px; }
   .messages-composer-input { min-height: 36px; padding: 7px 4px; }
+  /* #6035: the preview is one screenful shorter on a phone, where the
+     keyboard already takes half the page. */
+  .messages-format-preview { max-height: 96px; }
   .messages-send { width: 36px; height: 36px; }
   /* The "+" sits in its menu's wrapper, which as a block would hold it on a
      text line whose strut can add a few pixels under it: a flex box is

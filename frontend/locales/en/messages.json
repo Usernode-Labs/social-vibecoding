@@ -1871,6 +1871,10 @@
     "text": "Bulleted list",
     "description": "Tooltip and accessible name of a formatting button above a channel's message box: turns the selected lines, or the cursor's line, into bullet points. Pressing it again removes the bullets."
   },
+  "composer.format.preview": {
+    "text": "Preview",
+    "description": "Small label and accessible name of the live preview inside a community channel's message box: it shows the message being written with its formatting applied, as it will look once sent."
+  },
   "object.kind.app": {
     "text": "App",
     "description": "Small label on a card for something shared in a message, and on the item waiting in the message box: the item is an app."

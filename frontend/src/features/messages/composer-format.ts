@@ -107,8 +107,12 @@ function heading(value: string, start: number, end: number): FormatSelection {
   const level = headingLevel(first);
   // No prefix, then large (#), medium (##), small (###), then plain again.
   const target = level >= 3 ? 0 : level + 1;
+  // A blank line is still a line: the prefix goes in, so the heading shows
+  // before a word is typed (Drea, #6035). Only a selection that has words in
+  // it leaves its blank lines alone, as a list and a quote do.
+  const onlyBlank = !first;
   return lines(value, start, end, (line) => {
-    if (!line.trim()) return line;
+    if (!line.trim() && !onlyBlank) return line;
     const blockPrefix = BLOCK_PREFIX.exec(line)?.[0] || '';
     const rest = line.slice(blockPrefix.length);
     const body = rest.replace(HEADING_PREFIX, '');
@@ -120,8 +124,12 @@ function prefixLines(value: string, start: number, end: number, prefix: string):
   const { lines: block } = lineBlock(value, start, end);
   const nonEmpty = block.filter((line) => line.trim() !== '');
   const remove = nonEmpty.length > 0 && nonEmpty.every((line) => line.startsWith(prefix));
+  // Clicking Quote or Bulleted list on an empty line puts the marker there,
+  // ready to type after (Drea, #6035), the way the inline buttons put their
+  // pair at the caret. A selection with words in it keeps blank lines blank.
+  const onlyBlank = nonEmpty.length === 0;
   return lines(value, start, end, (line) => {
-    if (!line.trim()) return line;
+    if (!line.trim() && !onlyBlank) return line;
     if (remove) return line.startsWith(prefix) ? line.slice(prefix.length) : line;
     return line.startsWith(prefix) ? line : prefix + line;
   });
@@ -138,4 +146,17 @@ export function applyFormat(value: string, start: number, end: number, kind: For
   if (kind === 'quote') return prefixLines(value, from, to, '> ');
   if (kind === 'bullet') return prefixLines(value, from, to, '- ');
   return inline(value, from, to, MARKERS[kind]);
+}
+
+// What a formatted draft carries: the inline markers the row writes, the
+// markers marked also reads (`~~`, a code span), and the line prefixes that
+// start a heading, a quote or a bullet. A draft with none of these is drawn
+// the same either way, so the composer keeps its preview away (Drea, #6035).
+const PAIR_MARKERS = [/\*\*[^\n]*\*\*/, /__[^\n]*__/, /\+\+[^\n]*\+\+/, /~~[^\n]*~~/, /`[^`\n]+`/];
+const EMPHASIS = /(?:^|[\s(])[_*][^\s_*][^\n]*[_*](?=$|[\s).,!?;:])/;
+const LINE_MARKERS = /(?:^|\n)[ \t]{0,3}(?:#{1,3}[ \t]|>[ \t]?|[-*+][ \t])/;
+
+/** Whether `value` holds formatting worth showing back to its writer. */
+export function hasFormatting(value: string): boolean {
+  return LINE_MARKERS.test(value) || EMPHASIS.test(value) || PAIR_MARKERS.some((rule) => rule.test(value));
 }

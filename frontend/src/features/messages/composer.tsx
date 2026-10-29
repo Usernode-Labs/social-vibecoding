@@ -3,13 +3,13 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Chan
 import { ArrowUpIcon, ArrowUpTrayIcon, BoldIcon, HeadingIcon, ItalicIcon, ListBulletIcon, PaperClipIcon, PlusIcon, QuoteIcon, UnderlineIcon } from '@/components/ui/icons';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import * as api from './api';
-import { applyFormat, type FormatKind } from './composer-format';
+import { applyFormat, hasFormatting, type FormatKind } from './composer-format';
 import { waitingFor } from './waiting-for';
 import { channels, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setReply, takePendingAttach, takePendingShare, useMessagesSnapshot } from './store';
 import { mirrorsReplies } from './bot-question';
 import { botRequestNames, threadsAllowed } from './bot-shared';
 import type { ConversationUser, MessageAttachment, SharedObjectCard, SharedObjectReference, StagedObject } from './types';
-import { fileSize, pendingObjectLabel, senderName } from './format';
+import { fileSize, MessageMarkdown, pendingObjectLabel, senderName } from './format';
 import { plainText } from './plain-text';
 import { useAutoGrow } from '../../lib/use-auto-grow';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
@@ -560,6 +560,11 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const planReply = reply?.sender.bot && reply.metadata?.homeroomBot?.kind === 'plan' ? reply.metadata.homeroomBot : null;
   // Where the count turns amber, and the only length a phone shows it at.
   const nearLimit = value.length > 7600;
+  // #6035, Drea: the draft as it will be sent, drawn by the same renderer a
+  // sent message is. It is shown once the draft carries formatting, so a
+  // plain message's box stays the one row it was; the field keeps the
+  // source that gets sent.
+  const preview = isChannel && hasFormatting(value) && plainText(value).length > 0 ? value.trim() : null;
 
   return (
     <div className={`messages-composer platform-safe-bar ${inThread ? 'messages-composer-thread' : ''} ${dragging ? 'messages-composer-dragging' : ''}`} {...drop.handlers}>
@@ -587,6 +592,14 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
                 <span className="messages-emoji-option-code">:{item.shortcode}:</span>
               </button>
             ))}
+          </div>
+        </div>
+      ) : null}
+      {preview ? (
+        <div className="messages-format-preview" role="group" aria-label={t('messages:composer.format.preview')}>
+          <span className="messages-format-preview-label" aria-hidden="true">{t('messages:composer.format.preview')}</span>
+          <div className="messages-format-preview-body">
+            <MessageMarkdown content={preview} />
           </div>
         </div>
       ) : null}

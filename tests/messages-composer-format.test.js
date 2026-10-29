@@ -22,7 +22,7 @@ const { loadTsx } = require('./lib/render-tsx');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
 const COMPOSER = read('frontend/src/features/messages/composer.tsx');
-const { applyFormat } = loadTsx('frontend/src/features/messages/composer-format.ts');
+const { applyFormat, hasFormatting } = loadTsx('frontend/src/features/messages/composer-format.ts');
 
 test('bold, italic and underline wrap the selection and select the same words', () => {
   const bold = applyFormat('hello world', 0, 5, 'bold');
@@ -87,6 +87,38 @@ test('a heading sits after a quote or bullet marker', () => {
   assert.equal(applyFormat('- a line', 2, 2, 'heading').value, '- # a line');
 });
 
+test('quote, bullet and heading show up before a word is typed', () => {
+  const bullet = applyFormat('', 0, 0, 'bullet');
+  assert.equal(bullet.value, '- ');
+  assert.deepEqual([bullet.start, bullet.end], [2, 2]);
+
+  const quote = applyFormat('', 0, 0, 'quote');
+  assert.equal(quote.value, '> ');
+  assert.deepEqual([quote.start, quote.end], [2, 2]);
+
+  const heading = applyFormat('', 0, 0, 'heading');
+  assert.equal(heading.value, '# ');
+  assert.deepEqual([heading.start, heading.end], [2, 2]);
+
+  const middle = applyFormat('one\n\ntwo', 4, 4, 'bullet');
+  assert.equal(middle.value, 'one\n- \ntwo');
+  assert.deepEqual([middle.start, middle.end], [6, 6]);
+});
+
+test('a selection with words leaves its blank lines blank', () => {
+  assert.equal(applyFormat('a\n\nb', 0, 5, 'bullet').value, '- a\n\n- b');
+  assert.equal(applyFormat('a\n\nb', 0, 5, 'quote').value, '> a\n\n> b');
+});
+
+test('hasFormatting tells a formatted draft from a plain one', () => {
+  for (const plain of ['hello there', '2 * 3 = 6', 'snake_case_name', 'a - b']) {
+    assert.equal(hasFormatting(plain), false, `${JSON.stringify(plain)} is plain`);
+  }
+  for (const formatted of ['**bold**', '_italic_', '++under++', '~~gone~~', '`code`', '# head', '> quote', '- item']) {
+    assert.equal(hasFormatting(formatted), true, `${JSON.stringify(formatted)} is formatted`);
+  }
+});
+
 test('the result is cut at the composer’s 8000 characters', () => {
   const long = 'x'.repeat(8000);
   const result = applyFormat(long, 7990, 8000, 'bold');
@@ -112,6 +144,19 @@ test('a press keeps the field focused and takes Ctrl/Cmd+B and I', () => {
   assert.match(COMPOSER, /function onFormatKey\(/);
   assert.match(COMPOSER, /key !== 'b' && key !== 'i'/);
   assert.match(COMPOSER, /if \(onFormatKey\(event\)\) return;/);
+});
+
+test('a formatted draft is drawn as it will be sent, above the field', () => {
+  // Drea, #6035: the writer sees the formatted result while typing, not
+  // only after Send. A plain draft draws no preview (it would be the field
+  // twice), and the field keeps the source that gets sent.
+  assert.match(COMPOSER, /const preview = isChannel && hasFormatting\(value\) && plainText\(value\)\.length > 0 \? value\.trim\(\) : null;/);
+  assert.match(COMPOSER, /className="messages-format-preview" role="group" aria-label=\{t\('messages:composer\.format\.preview'\)\}/);
+  assert.match(COMPOSER, /<MessageMarkdown content=\{preview\} \/>/);
+  assert.ok(message('messages:composer.format.preview'), 'the preview label is in the messages catalog');
+  const previewAt = COMPOSER.indexOf('messages-format-preview');
+  const fieldAt = COMPOSER.indexOf('<div className="flex items-end gap-1.5">');
+  assert.ok(previewAt > 0 && previewAt < fieldAt, 'the preview sits above the field');
 });
 
 test('the shared renderer understands ++underline++ and lets <u> through', () => {
