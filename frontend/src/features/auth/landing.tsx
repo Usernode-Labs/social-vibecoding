@@ -644,8 +644,74 @@ export const SIGNING_IN_MAX_MS = 20_000;
  * shows, which after a sign-out is while the sign-out round trip is still
  * settling, so one refused request is usually a moment rather than an outage.
  */
-const APPS_ATTEMPTS = 3;
-const APPS_RETRY_MS = 1000;
+export const APPS_ATTEMPTS = 3;
+export const APPS_RETRY_MS = 1000;
+
+/**
+ * The read of the public directory, GET /api/public/apps, made for the
+ * landing (loadLandingApps below). `show` is told when an attempt starts
+ * (`failed(false)` brings the placeholders back), when the list is in, and
+ * when the last attempt failed. A read already running IS the read: Try
+ * again pressed mid-flight joins it rather than starting a second one.
+ * Exported so tests/session-guard-screens.test.js can run it through the
+ * real session guard.
+ */
+export function createAppsReader(
+  show: { failed(failed: boolean): void; apps(list: PublicApp[]): void },
+  wait: (ms: number) => Promise<unknown> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+): () => Promise<void> {
+  let inFlight: Promise<void> | null = null;
+  return () => {
+    if (inFlight) return inFlight;
+    const read = async () => {
+      // A retry, automatic or from Try again, shows the placeholders again.
+      show.failed(false);
+      // ONE HICCUP IS NOT A FAILURE. This read runs as the landing first
+      // shows, which after a sign-out is while the sign-out round trip is
+      // still settling; a single failed request used to leave Discover saying
+      // it could not load, with nothing to do about it until a reload
+      // (#6007). So an attempt that fails is tried again twice, a second
+      // apart, and only the last one failing is reported.
+      for (let attempt = 1; attempt <= APPS_ATTEMPTS; attempt += 1) {
+        try {
+          const res = await fetch('/api/public/apps?include_wallets=0');
+          if (!res.ok) throw new Error('http ' + res.status);
+          const data = await res.json();
+          const list: PublicApp[] = (data && data.apps) || [];
+          // NOTHING RENDERS THIS LIST any more — the directory grid is gone. It
+          // is still fetched, and this is the whole of why:
+          //
+          //   * `?shot=anon-back` needs an app the viewer would actually open
+          //     (not gated, has a URL) to script its two guest open/back cycles,
+          //     and takes it from here (see runAnonBackShot);
+          //   * the scroller's pull-to-refresh runs this callback, so a pull
+          //     still re-checks whether the platform redeployed
+          //     (App._refreshOrReload);
+          //   * `_loadLandingApps` is one of the nine names the legacy router
+          //     patches over;
+          //   * a shared link to a project, opened while signed out, opens the
+          //     project's read-only page when it is public and titles its
+          //     sign-in sheet with the project's name otherwise (#5264);
+          //   * it IS the guest Discover (features/guest/guest-discover.tsx):
+          //     every card there is a row of it.
+          show.apps(list);
+          show.failed(false);
+          return;
+        } catch {
+          // No list is cleared here: one read before stays on screen, and the
+          // shot and the shared-link lookup still see it.
+          if (attempt === APPS_ATTEMPTS) {
+            show.failed(true);
+            return;
+          }
+          await wait(APPS_RETRY_MS);
+        }
+      }
+    };
+    inFlight = read().finally(() => { inFlight = null; });
+    return inFlight;
+  };
+}
 
 /**
  * A "You're in" link that may be spent as the page opens (Evan, 12 Oct
@@ -926,8 +992,6 @@ export function LandingScreen() {
     appsLoaded: false,
     appsReady: null as Promise<void> | null,
     appsList: [] as PublicApp[],
-    // The read under way, so Try again joins it rather than starting another.
-    appsInFlight: null as Promise<void> | null,
     openSlug: null as string | null,
     // #931: launch-cover state for the in-page viewer. The generation counter
     // makes a superseded open's `load`/timers inert (same contract as
@@ -1246,60 +1310,14 @@ export function LandingScreen() {
     }
   }, [clearViewerCover, refreshHeader, st]);
 
-  const loadLandingApps = useCallback(async () => {
-    // A read already running IS the read: Try again pressed mid-flight joins
-    // it rather than starting a second one.
-    if (st.appsInFlight) return st.appsInFlight;
-    const read = async () => {
-      // A retry, automatic or from Try again, shows the placeholders again.
-      setAppsFailed(false);
-      // ONE HICCUP IS NOT A FAILURE. This read runs as the landing first
-      // shows, which after a sign-out is while the sign-out round trip is
-      // still settling; a single failed request used to leave Discover saying
-      // it could not load, with nothing to do about it until a reload
-      // (#6007). So an attempt that fails is tried again twice, a second
-      // apart, and only the last one failing is reported.
-      for (let attempt = 1; attempt <= APPS_ATTEMPTS; attempt += 1) {
-        try {
-          const res = await fetch('/api/public/apps?include_wallets=0');
-          if (!res.ok) throw new Error('http ' + res.status);
-          const data = await res.json();
-          const list: PublicApp[] = (data && data.apps) || [];
-          // NOTHING RENDERS THIS LIST any more — the directory grid is gone. It
-          // is still fetched, and this is the whole of why:
-          //
-          //   * `?shot=anon-back` needs an app the viewer would actually open
-          //     (not gated, has a URL) to script its two guest open/back cycles,
-          //     and takes it from here (see runAnonBackShot);
-          //   * the scroller's pull-to-refresh runs this callback, so a pull
-          //     still re-checks whether the platform redeployed
-          //     (App._refreshOrReload);
-          //   * `_loadLandingApps` is one of the nine names the legacy router
-          //     patches over;
-          //   * a shared link to a project, opened while signed out, opens the
-          //     project's read-only page when it is public and titles its
-          //     sign-in sheet with the project's name otherwise (#5264);
-          //   * it IS the guest Discover (features/guest/guest-discover.tsx):
-          //     every card there is a row of it.
-          st.appsList = list;
-          setApps(list as GuestApp[]);
-          setAppsFailed(false);
-          return;
-        } catch {
-          // No list is cleared here: one read before stays on screen, and the
-          // shot and the shared-link lookup still see it.
-          if (attempt === APPS_ATTEMPTS) {
-            setAppsFailed(true);
-            return;
-          }
-          await new Promise((resolve) => setTimeout(resolve, APPS_RETRY_MS));
-        }
-      }
-    };
-    const flight = read().finally(() => { st.appsInFlight = null; });
-    st.appsInFlight = flight;
-    return flight;
-  }, [st]);
+  const readApps = useMemo(() => createAppsReader({
+    failed: setAppsFailed,
+    apps: (list) => {
+      st.appsList = list;
+      setApps(list as GuestApp[]);
+    },
+  }), [st]);
+  const loadLandingApps = useCallback(() => readApps(), [readApps]);
 
   /**
    * The whole `?shot=anon-back` script's time budget, held well under the
