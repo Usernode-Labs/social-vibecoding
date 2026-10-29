@@ -879,6 +879,14 @@
     "text": "edited",
     "description": "Small muted word after a chat message's time when its author changed the message after sending it. Lower case."
   },
+  "group.row.showMore": {
+    "text": "Show more",
+    "description": "Button under a long message in a thread or a request's discussion that is cut off after about fifteen lines: shows the whole message."
+  },
+  "group.row.showLess": {
+    "text": "Show less",
+    "description": "Button under a long message in a thread or a request's discussion after it was opened: cuts it back to about fifteen lines."
+  },
   "group.row.deleted": {
     "text": "Message deleted",
     "description": "Shown in place of a chat message's content after its author deleted it."
