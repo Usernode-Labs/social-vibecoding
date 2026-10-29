@@ -1107,9 +1107,11 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
       : <RichMessage id="project:topic.request.stream.postedSpecVersion" values={{ author: spec.sharedBy, version: spec.version }} components={[<b />]} />;
   } else if (gh) {
     glyph = '📋';
-    text = msg.usernameMissing
-      ? <RichMessage id="project:topic.request.stream.postedSpecSystem" components={[<b />]} />
-      : <RichMessage id="project:topic.request.stream.postedSpec" values={{ author: displayName(msg.username) }} components={[<b />]} />;
+    text = msg.planMirror
+      ? <RichMessage id="project:topic.request.stream.postedSpecVersion" values={{ author: msg.planMirror.author, version: msg.planMirror.version }} components={[<b />]} />
+      : msg.usernameMissing
+        ? <RichMessage id="project:topic.request.stream.postedSpecSystem" components={[<b />]} />
+        : <RichMessage id="project:topic.request.stream.postedSpec" values={{ author: displayName(msg.username) }} components={[<b />]} />;
   } else if (claim) {
     glyph = '✋';
     text = <RichMessage id="project:topic.request.stream.claimed" values={{ member: claim[1] }} components={[<b />]} />;
