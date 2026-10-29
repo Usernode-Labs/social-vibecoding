@@ -63,7 +63,15 @@ test('every screen root but the app view belongs to a tab', () => {
 test('the five tabs are the five the bar renders', () => {
   const { TAB_FOR_SCREEN } = loadTsx('frontend/src/features/nav/nav-store.js');
   const sections = [...new Set(Object.values(TAB_FOR_SCREEN))].sort();
-  assert.deepEqual(sections, ['discover', 'home', 'me', 'messages', 'workshop']);
+  // #6019: four are screens' own tabs; the fifth, AI, is the Messages
+  // screen while the Homeroom bot's chat is on it (the nav store's `bot`).
+  assert.deepEqual(sections, ['home', 'me', 'messages', 'workshop']);
+  const bar = read('frontend/src/features/nav/tab-bar.tsx');
+  const keys = [...bar.matchAll(/key: '([a-z]+)' as const/g)].map((m) => m[1]);
+  assert.deepEqual(keys, ['home', 'workshop', 'ai', 'messages', 'me']);
+  assert.match(bar, /const tab = routedTab === 'messages' && bot \? 'ai' : routedTab;/);
+  assert.match(read('frontend/src/features/messages/store.ts'),
+    /bot: !!state\.route\.open && !!botId && state\.route\.conversationId === botId,/);
 });
 
 // ── 2. The render ─────────────────────────────────────────────────────
@@ -71,7 +79,7 @@ test('the five tabs are the five the bar renders', () => {
 test('the initial render is the markup the prerender ships', () => {
   const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
 
-  for (const key of ['home', 'discover', 'messages', 'workshop', 'me']) {
+  for (const key of ['home', 'workshop', 'ai', 'messages', 'me']) {
     assert.match(html, new RegExp(`id="platform-tab-${key}"`), `#platform-tab-${key} renders`);
   }
   assert.match(html, /id="platform-tabs"/);
@@ -94,8 +102,8 @@ test('Home is the one tab addressed as a path, so a modified click opens a tab',
   const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
   assert.match(html, /id="platform-tab-home"[^>]*href="\/"/);
   for (const [key, href] of [
-    ['discover', '#apps'], ['messages', '#messages'],
-    ['workshop', '#communities'], ['me', '#profile'],
+    ['workshop', '#communities'], ['ai', '#ai'],
+    ['messages', '#messages'], ['me', '#profile'],
   ]) {
     assert.match(html, new RegExp(`id="platform-tab-${key}"[^>]*href="${href.replace('#', '\\#')}"`));
   }

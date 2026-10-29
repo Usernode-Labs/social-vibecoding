@@ -5261,22 +5261,11 @@ const AppView = {
       // (#2776) Unless this was the Workshop tab returning to the card you
       // left: that one goes quietly back to the app selector instead.
       if (!ok || !AppView._findTopicItem()) {
-        const fallBack = () => {
-          if (App._abandonWorkshopResume?.()) return;
-          if (ref.kind === 'gov' && window.PlatformUI && PlatformUI.toast) {
-            PlatformUI.toast(PlatformI18n.t('changes:discussion.openFailed'));
-          }
-          App.switchTab('dev');
-        };
-        // #6019: a request address with a change's number is that change.
-        if (ref.kind === 'issue' && ref.id) {
-          const here = AppView._devTopic;
-          void AppView._openByThread('issue', ref.id, () => AppView._devTopic === here).then((moved) => {
-            if (!moved && AppView._devTopic === here) fallBack();
-          });
-          return;
+        if (App._abandonWorkshopResume?.()) return;
+        if (ref.kind === 'gov' && window.PlatformUI && PlatformUI.toast) {
+          PlatformUI.toast(PlatformI18n.t('changes:discussion.openFailed'));
         }
-        fallBack();
+        App.switchTab('dev');
         return;
       }
     };
@@ -5428,7 +5417,16 @@ const AppView = {
   // each fetcher is best-effort and swallows its own errors.
   async _fetchTopicItem(ref) {
     if (ref.kind === 'gov') return AppView._fetchGovProposalById(ref.id);
-    if (ref.kind === 'issue') return AppView._fetchIssueByNumber(ref.id);
+    if (ref.kind === 'issue') {
+      const row = await AppView._fetchIssueByNumber(ref.id);
+      if (row) return row;
+      // #6019: a request address with a change's number is that change.
+      // Asked before the page settles as missing, so a number that is
+      // neither still falls back to the board at the moment it always did.
+      const here = AppView._devTopic;
+      await AppView._openByThread('issue', ref.id, () => AppView._devTopic === here);
+      return null;
+    }
     return AppView._fetchProposalById(ref.id);
   },
 

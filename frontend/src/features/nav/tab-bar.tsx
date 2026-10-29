@@ -68,8 +68,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ChatIcon,
   CogIcon,
-  CompassIcon,
   HomeIcon,
+  SparklesIcon,
   Squares2X2Icon,
   UserGroupIcon,
   UserIcon,
@@ -101,17 +101,17 @@ import { schedulePress, type PendingPress } from './tab-press';
 /**
  * The five tabs, in order.
  *
- * WHY THESE FIVE, and why in this order: Home is the launcher, Discover is
- * everyone else's projects, Communities is the ones you are in, Messages is
- * the people and agents you talk to, and Me is your own account. Challenges,
- * Settings, Wallet, Validator and Admin are all reached from Me, which is
- * why five is enough — a sixth tab would be a section nobody visits daily.
+ * WHY THESE FIVE, and why in this order (#6019, decided 29 Oct 2026): Home
+ * is the launcher, Communities is the ones you are in, AI is your chat with
+ * the Homeroom bot, Messages is the people and agents you talk to, and Me is
+ * your own account. Challenges, Settings, Wallet, Validator and Admin are
+ * all reached from Me, which is why five is enough — a sixth tab would be a
+ * section nobody visits daily.
  *
- * MESSAGES SITS IN THE MIDDLE, COMMUNITIES FOURTH. Communities took the
- * centre seat when it was renamed from "Workshop" (#3261), on the argument
- * that most visits would go through it. In use the thumb's first stop was
- * still the people and agents you talk to, so Messages has its centre seat
- * back and Communities sits beside you, fourth. Communities' key is still
+ * DISCOVER IS A PAGE OF HOME'S NOW, not a tab: Home's Discover block opens
+ * it, Back returns to Home, and Home stays lit on it (nav-store.js). Its
+ * place went to AI, the one conversation everybody has, which used to be
+ * the first row of Messages. Communities' key is still
  * `workshop`: the key names the screen (`#workshop-screen`) and the
  * declared checks select on `#platform-tab-workshop`, while the words a
  * person sees are Communities and `#communities` (AGENTS.md, "Communities
@@ -138,9 +138,12 @@ const TABS = [
     href: '/',
     Icon: HomeIcon,
   },
-  { key: 'discover' as const, label: 'core:tabs.discover', href: '#apps', Icon: CompassIcon },
-  { key: 'messages' as const, label: 'core:tabs.messages', href: '#messages', Icon: ChatIcon },
   { key: 'workshop' as const, label: 'core:tabs.communities', href: '#communities', Icon: UserGroupIcon },
+  // #6019: the Homeroom bot's chat, which left the Messages list for a tab
+  // of its own. `#ai` opens it (app.js), and the tab is lit while it is the
+  // conversation on screen (the nav store's `bot`).
+  { key: 'ai' as const, label: 'core:tabs.ai', href: '#ai', Icon: SparklesIcon },
+  { key: 'messages' as const, label: 'core:tabs.messages', href: '#messages', Icon: ChatIcon },
   // "You", signed in or not (N7 of the 19 Oct polish board); the accessible
   // name adds whose account it is — see tabLabel below.
   { key: 'me' as const, label: 'core:tabs.me', href: '#profile', Icon: UserIcon },
@@ -850,7 +853,10 @@ export function PlatformTabs() {
   // visible, and the routes that hide it (an app, chromeless, the signed-out
   // shell) publish `false` once the router has run.
   const visible = useVisibility('platform-tabs', true);
-  const { tab, messages, communities, screen, peek, peekOut, railOpen, viewer } = useStoreState(navStore);
+  const { tab: routedTab, messages, communities, ai, bot, screen, peek, peekOut, railOpen, viewer } = useStoreState(navStore);
+  // #6019: the Homeroom bot's chat is on the Messages screen, and is the AI
+  // tab's: AI is lit there, not Messages.
+  const tab = routedTab === 'messages' && bot ? 'ai' : routedTab;
   // THE COMMUNITY THE FOURTH TAB IS ON (../workshop/community-scope.ts). Read
   // from storage by this effect, which is flushed with the hydration itself
   // (main.tsx hydrates in flushSync), so before the first paint; the viewer's
@@ -1125,6 +1131,8 @@ export function PlatformTabs() {
                 declared check keeps finding it inside the Messages tab.
             */}
             {key === 'messages' ? <TabBadge count={messages} label={t('core:tabs.unreadConversations')} /> : null}
+            {/* #6019: the bot's chat has something unread. */}
+            {key === 'ai' ? <TabBadge count={ai} id="platform-tabs-ai-badge" label={t('core:tabs.unreadAi')} /> : null}
             {/*
                 THE CHANNELS' COUNT, on Communities. A project's channel lives
                 on its hub now, not in Messages, so "something was said in a

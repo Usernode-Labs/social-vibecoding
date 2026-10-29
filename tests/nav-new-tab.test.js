@@ -282,11 +282,9 @@ test('the three up-one-level screens pass their own target', () => {
   // arrow when there is a level above, nothing when there is not.
   assert.match(browseJs, /const upToList = onDetail && Browse\._detailOrigin !== 'home';/,
     'browse names the one state with a list above it…');
-  assert.match(browseJs, /const backMode = upToList \? 'arrow' : 'none';/,
-    '…and that state alone gets the chevron; the list and a detail opened '
-    + 'from a Home card are roots of this screen and show nothing');
-  assert.match(browseJs, /setBackIcon\(backMode, upToList \? '#apps' : undefined\)/,
-    'the list-bound chevron keeps its explicit parent target');
+  assert.match(browseJs, /App\.setBackIcon\('arrow', upToList \? '#apps' : '\/'\);/,
+    '…and that state alone goes up to the list; the list and a detail opened '
+    + 'from a Home card go back to Home, which Discover is a page of (#6019)');
   assert.match(adminConsoleJs, /setBackIcon\('arrow', inSection \? '#admin' : '#profile'\)/,
     'the admin section chevron pops to the console menu; its root goes up to '
     + 'the Me tab it was opened from');
