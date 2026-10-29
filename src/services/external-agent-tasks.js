@@ -3566,13 +3566,6 @@ function prOf(pr) {
   };
 }
 
-// What a head write answered, as a step keeps it: its data, never its
-// `cleanup` (the branch is removed by name, below).
-function headOutcome(result) {
-  if (!result || typeof result !== 'object') return result;
-  return Object.fromEntries(Object.entries(result).filter(([, v]) => typeof v !== 'function'));
-}
-
 // The conductor's half of a new-work submission: the head the task's work
 // lands on in the app's repository, and the pull request opened from it.
 // `task` and `link` are what services/fork-operations.js read again; `deps`
@@ -3617,7 +3610,7 @@ async function openSubmission(deps, {
     const named = await steps.once('patch-branch', () => ({
       branch: externalAgentHead.patchBranchName(user.id, task.id), at: new Date().toISOString(),
     }));
-    const applied = await steps.once('head', async () => headOutcome(await externalAgentPatch.applyPatch({
+    const applied = await steps.once('head', async () => await externalAgentPatch.applyPatch({
       owner, repo, patch,
       baseSha: task.base_sha,
       userId: user.id,
@@ -3626,7 +3619,7 @@ async function openSubmission(deps, {
       commitDate: named.at,
       // #4264: an uploaded patch is bounded by the upload's own ceiling.
       ...(uploaded ? { maxBytes: externalAgentPatch.MAX_UPLOADED_PATCH_BYTES } : {}),
-    })));
+    }));
     if (!applied.ok) return applied;
     try {
       const pr = await openFrom(applied.branch);
@@ -3692,13 +3685,14 @@ async function openSubmission(deps, {
   // the copy itself failed, the ancestry check could not be made — falls
   // through to rungs 2 and 3.
   const mirrorName = await steps.once('mirror-branch', () => externalAgentHead.mirrorBranchName(forkOwner, task.id));
-  const mirrored = await steps.once('head', async () => headOutcome(await externalAgentHead.mirrorForkBranch({
-    gh, githubPublic, owner, repo, forkOwner, forkRepo, branch,
-    expectedLogin: link.login,
-    baseSha: task.base_sha,
-    taskId: task.id,
-    targetBranch: mirrorName,
-  })));
+  const mirrored = await flows.forkStep(steps, 'head', {
+    gh, owner, repo, targetBranch: mirrorName,
+    verify: () => externalAgentHead.verifyForkBranch({ githubPublic, forkOwner, forkRepo, branch, expectedLogin: link.login }),
+    push: (expectedSourceSha) => externalAgentHead.mirrorForkBranch({
+      gh, githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin: link.login,
+      baseSha: task.base_sha, taskId: task.id, targetBranch: mirrorName, expectedSourceSha,
+    }),
+  });
   if (mirrored.ok) {
     try {
       const pr = await openFrom(mirrored.branch);

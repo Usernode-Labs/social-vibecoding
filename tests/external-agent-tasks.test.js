@@ -947,22 +947,13 @@ const PUSHED_BRANCH = {
   },
 };
 
-// The mirror is the FIRST rung of the branch path (task 153), and its
-// provenance read is a public GET of the fork repository. None of the
-// fixtures below stub that read, so on the real helper it fails CLOSED as
-// `platform_unavailable` — never with a thrown error, fakeFetch's refusal is
-// caught inside githubPublic — and the ladder falls through to the
-// cross-fork rungs those tests were written for. Tests ABOUT the ladder say
-// so explicitly with `withMirrorUnavailable`; tests about the mirror itself
-// stub it with `withStubbedMirror` further down.
+// Orchestration fixtures replace the public verification and the mirror;
+// the real transports and attribution checks have their own behavioral tests.
 function withMirrorUnavailable(fn, onCall) {
-  const headSvc = require('../src/services/external-agent-head');
-  const real = headSvc.mirrorForkBranch;
-  headSvc.mirrorForkBranch = async (args) => {
+  return withStubbedMirror(async (args) => {
     if (onCall) onCall(args);
     return { ok: false, code: 'platform_unavailable', message: 'no write credential', retryable: true };
-  };
-  return Promise.resolve(fn()).finally(() => { headSvc.mirrorForkBranch = real; });
+  }, fn);
 }
 
 function submitPool(queries, extra = []) {
@@ -3126,8 +3117,10 @@ test('the fork OWNER is always the linked login and is never taken from input', 
 function withStubbedMirror(stub, fn) {
   const headSvc = require('../src/services/external-agent-head');
   const real = headSvc.mirrorForkBranch;
+  const realVerify = headSvc.verifyForkBranch;
   headSvc.mirrorForkBranch = stub;
-  return Promise.resolve(fn()).finally(() => { headSvc.mirrorForkBranch = real; });
+  headSvc.verifyForkBranch = async () => ({ ok: true, headSha: '89abcdef0123456789abcdef0123456789abcdef' });
+  return Promise.resolve(fn()).finally(() => { headSvc.mirrorForkBranch = real; headSvc.verifyForkBranch = realVerify; });
 }
 
 // A head the platform wrote and could not use is removed by name, on the

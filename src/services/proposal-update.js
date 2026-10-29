@@ -203,13 +203,6 @@ function fail(code, message, extra = {}) {
   return { ok: false, code, message, ...extra };
 }
 
-// What a write answered, as a step keeps it: its data, never a function (a
-// mirror's cleanup), which a checkpoint cannot hold.
-function outcomeOf(result) {
-  if (!result || typeof result !== 'object') return result;
-  return Object.fromEntries(Object.entries(result).filter(([, v]) => typeof v !== 'function'));
-}
-
 // `verifyForkBranch` and `pushForkBranchToAppBranch` speak the mirror path's
 // vocabulary. This path's refusals are named for what the CALLER did wrong,
 // so the two fork-shaped codes are renamed and everything else — including
@@ -1785,34 +1778,24 @@ async function advanceAppRepoBranch(ctx) {
   const steps = ctx.steps;
   let pushed;
   if (ctx.patch) {
-    pushed = await steps.once('push', async () => outcomeOf(await ctx.applyPatch({
+    pushed = await steps.once('push', async () => await ctx.applyPatch({
       owner, repo, patch: ctx.patch, baseSha: liveHead, userId: session.user_id,
       targetBranch, sessionId, commitDate: decided.at,
-    })));
+    }));
     if (!pushed.ok) return pushed;
     verified = { ok: true, headSha: String(pushed.headSha || '').trim().toLowerCase() };
   } else {
-    pushed = await steps.once('push', async () => {
-      // A push can land before its checkpoint does. Its decided commit on
-      // this target is the completed push, even if the source fork moved
-      // meanwhile; finish that revision's metadata and checks.
-      if (steps.resumed && decided.verifiedHeadSha) {
-        let current = null;
-        try { current = await gh.getBranchSha(owner, repo, targetBranch); }
-        catch (err) { if (err.status !== 404) throw err; }
-        if (String(current).toLowerCase() === decided.verifiedHeadSha) {
-          return { ok: true, headSha: decided.verifiedHeadSha, branch: targetBranch };
-        }
-      }
-      return outcomeOf(firstLanding
-        ? await head.mirrorForkBranch({
+    pushed = await require('./git-host-flows').forkStep(steps, 'push', {
+      gh, owner, repo, targetBranch, source: verified,
+      push: (expectedSourceSha) => firstLanding
+        ? head.mirrorForkBranch({
           gh, githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
-          targetBranch, expectedSourceSha: decided.verifiedHeadSha,
+          targetBranch, expectedSourceSha,
         })
-        : await head.pushForkBranchToAppBranch({
+        : head.pushForkBranchToAppBranch({
           githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
-          targetBranch, expectedRemoteSha: liveHead, sessionId, expectedSourceSha: decided.verifiedHeadSha,
-        }));
+          targetBranch, expectedRemoteSha: liveHead, sessionId, expectedSourceSha,
+        }),
     });
     if (!pushed.ok) return renameHeadFailure(pushed, branch);
   }

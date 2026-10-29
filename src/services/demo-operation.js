@@ -339,10 +339,25 @@ async function reset({ pool }, request, user, steps) {
     return ids.length;
   });
 
-  const main = await steps.once('main', async () => {
+  let planned = await steps.once('main-target', async () => {
     if (!githubUp || !app.demo_base_sha) return null;
-    const moved = await github.forceBranchToSha(repo.owner, repo.repo, 'main', app.demo_base_sha);
-    return { from: moved.previousSha, to: moved.sha, moved: !!moved.updated };
+    const from = await github.getBranchSha(repo.owner, repo.repo, 'main');
+    return { from, to: app.demo_base_sha, moved: from !== app.demo_base_sha };
+  });
+  const target = steps.get('main') || planned;
+  if (target && target.to !== app.demo_base_sha) return failed(409, { error: 'The demo reset target changed. Reset again.' });
+  const main = await steps.once('main', async () => {
+    if (planned) {
+      const current = await github.getBranchSha(repo.owner, repo.repo, 'main');
+      if (current !== planned.to) {
+        if (!planned.moved) {
+          planned = { ...planned, from: current, moved: true };
+          await steps.set('main-target', planned);
+        }
+        await github.forceBranchToSha(repo.owner, repo.repo, 'main', planned.to);
+      }
+    }
+    return planned;
   });
   await refreshPartnerStanding(pool, app, partner, user.id);
 

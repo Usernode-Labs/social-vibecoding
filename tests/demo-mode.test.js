@@ -99,7 +99,7 @@ stubModule('../src/services/github', {
   getRepoHead: async () => ({ headSha: 'a'.repeat(40) }),
   getBranchSha: async (_o, _r, branch) => {
     if (branch === 'missing') throw new Error('Not Found');
-    return 'c'.repeat(40);
+    return branch === 'main' ? (state.mainMoves ? 'z'.repeat(40) : state.apps.get('demo-app').demo_base_sha) : 'c'.repeat(40);
   },
   findOpenPrByBranch: async () => null,
   createPR: async (...args) => {
@@ -1084,4 +1084,79 @@ test('a proposal retried after its pull request opened pushes once, opens one PR
   assert.equal(queriesLike('INSERT INTO chat_sessions').length, 1, 'one proposal');
   assert.equal(calls.promoteProposal.length, 1);
   assert.equal(conductorInputs.size, 0, 'its input dropped once answered');
+});
+
+
+test('a reset recovers its deployment obligation after its ref checkpoint is lost', async (t) => {
+  const github = require('../src/services/github');
+  const base = state.apps.get('demo-app').demo_base_sha;
+  let remote = 'e'.repeat(40);
+  let writes = 0;
+  t.mock.method(github, 'getBranchSha', async () => remote);
+  t.mock.method(github, 'forceBranchToSha', async (_o, _r, _branch, to) => {
+    const previousSha = remote; remote = to; writes += 1;
+    return { previousSha, sha: to, updated: previousSha !== to };
+  });
+  let saved = null;
+  let lose = true;
+  const item = () => kernelSteps.steps({ resumeFrom: saved, triesLeft: 3, checkpoint: async (value) => {
+    if (lose && Object.hasOwn(value, 'main')) { lose = false; throw new kernelSteps.StepsStopped(); }
+    saved = value;
+  } });
+  const request = { op: 'demo.reset', requestId: '00000000-0000-4000-8000-00000000d009', appId: 1, userId: 7, input: { sessionIds: [] } };
+  const d = { pool: conductorPool(CREATOR, {}), config: {} };
+  delivery.requested.length = 0;
+  await assert.rejects(operations.run(d, request, item()), kernelSteps.isStopped);
+  assert.equal(remote, base);
+  assert.equal(saved.main, undefined);
+  const out = await operations.run(d, request, item());
+  assert.equal(out.redeploy, 'started');
+  assert.deepEqual(out.main, { from: 'e'.repeat(40), to: base, moved: true });
+  assert.equal(writes, 1, 'an already landed reset is adopted');
+  assert.deepEqual(delivery.requested, [[1, 'demo_reset']]);
+});
+
+
+test('a resumed reset leaves a changed reset target alone', async (t) => {
+  const github = require('../src/services/github');
+  let writes = 0;
+  t.mock.method(github, 'forceBranchToSha', async (_o, _r, _b, to) => { writes += 1; return { previousSha: 'e'.repeat(40), sha: to, updated: true }; });
+  const base = state.apps.get('demo-app').demo_base_sha;
+  const steps = kernelSteps.steps({ resumeFrom: { 'main-target': { from: 'e'.repeat(40), to: base, moved: true } }, checkpoint: async () => {} });
+  state.apps.get('demo-app').demo_base_sha = 'f'.repeat(40);
+  const out = await operations.run({ pool: conductorPool(CREATOR, {}), config: {} },
+    { op: 'demo.reset', appId: 1, userId: 7, input: { sessionIds: [] } }, steps);
+  assert.equal(out.status, 409);
+  assert.match(out.body.error, /target changed/);
+  assert.equal(writes, 0);
+});
+
+
+test('a reset rechecks a head that advanced after its initial no-op plan', async (t) => {
+  const github = require('../src/services/github');
+  const base = state.apps.get('demo-app').demo_base_sha;
+  for (const resumed of [false, true]) {
+    let remote = resumed ? 'e'.repeat(40) : base;
+    let writes = 0; let advance = !resumed;
+    t.mock.method(github, 'getBranchSha', async () => remote);
+    t.mock.method(github, 'forceBranchToSha', async (_o, _r, _b, to) => {
+      const previousSha = remote; remote = to; writes += 1;
+      return { previousSha, sha: to, updated: previousSha !== to };
+    });
+    const steps = kernelSteps.steps({
+      resumeFrom: resumed ? { 'main-target': { from: base, to: base, moved: false } } : null,
+      checkpoint: async (value) => {
+        if (advance && value['main-target']) { advance = false; remote = 'e'.repeat(40); }
+      },
+    });
+    delivery.requested.length = 0;
+    const out = await operations.run({ pool: conductorPool(CREATOR, {}), config: {} },
+      { op: 'demo.reset', appId: 1, userId: 7, input: { sessionIds: [] } }, steps);
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.equal(remote, base);
+    assert.equal(writes, 1);
+    assert.deepEqual(out.main, { from: 'e'.repeat(40), to: base, moved: true });
+    assert.deepEqual(delivery.requested, [[1, 'demo_reset']]);
+    t.mock.restoreAll();
+  }
 });

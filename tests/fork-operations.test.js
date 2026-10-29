@@ -735,3 +735,73 @@ test('a pull request whose create response is unknown is adopted before cleanup'
   host.findOpenPrByBranch = async () => { throw Object.assign(new Error('lookup failed'), { status: 503 }); };
   await assert.rejects(flows.openPr(host, 'apps','demo',{branch:'b'}), (err) => !flows.permanentPrRefusal(err));
 });
+
+
+test('a new-work mirror keeps its source and recovers an unsaved push', async (t) => {
+  const svc = require('../src/services/external-agent-tasks');
+  const head = require('../src/services/external-agent-head');
+  const { steps: makeSteps, StepsStopped, isStopped } = require('../src/workflow/kernel/steps.ts');
+  for (const stopAt of ['head-source', 'head']) {
+    await t.test(stopAt, async (t) => {
+      let source = HEAD; let remote = null; let writes = 0; let saved = null; let lose = true;
+      t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ commit: { sha: source } }), { status: 200 }));
+      t.mock.method(head, 'verifyForkBranch', async () => ({ ok: true, headSha: source }));
+      t.mock.method(head, 'mirrorForkBranch', async (args) => {
+        assert.equal(args.expectedSourceSha, HEAD);
+        writes += 1; remote = source;
+        return { ok: true, headSha: remote, branch: args.targetBranch };
+      });
+      const gh = { parseGithubUrl: () => ({ owner: 'acme', repo: 'demo' }),
+        getBranchSha: async () => { if (!remote) throw Object.assign(new Error('Absent'), { status: 404 }); return remote; },
+        findOpenPrByBranch: async () => null,
+        createPR: async () => ({ number: 88, head: { sha: remote } }) };
+      const item = () => makeSteps({ resumeFrom: saved, checkpoint: async (value) => {
+        if (lose && Object.hasOwn(value, stopAt)) {
+          lose = false;
+          if (stopAt === 'head-source') saved = value;
+          throw new StepsStopped();
+        }
+        saved = value;
+      } });
+      const args = { user: { id: 7 }, task: { id: 31, app_id: 9, app_slug: 'demo', repo_url: APP.repo_url,
+        fork_owner: 'evan', base_sha: '0'.repeat(40) }, link: { login: 'evan' }, mode: 'branch', branch: 'work', forkRepo: 'demo' };
+      await assert.rejects(svc.openSubmission({ gh }, args, item()), isStopped);
+      source = NEW_HEAD;
+      const out = await svc.openSubmission({ gh }, args, item());
+      if (stopAt === 'head-source') {
+        assert.equal(out.code, 'branch_moved');
+        assert.equal(writes, 0);
+      } else {
+        assert.equal(out.ok, true);
+        assert.equal(out.pr.head.sha, HEAD);
+        assert.equal(writes, 1);
+      }
+    });
+  }
+});
+
+
+test('an uncertain mirror reply is recovered before a cross-fork fallback', async (t) => {
+  const svc = require('../src/services/external-agent-tasks');
+  const head = require('../src/services/external-agent-head');
+  const { steps: makeSteps } = require('../src/workflow/kernel/steps.ts');
+  let remote = null; const opened = []; let mirrors = 0;
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ commit: { sha: HEAD } }), { status: 200 }));
+  t.mock.method(head, 'verifyForkBranch', async () => ({ ok: true, headSha: HEAD }));
+  t.mock.method(head, 'mirrorForkBranch', async () => {
+    mirrors += 1; remote = HEAD;
+    return { ok: false, code: 'platform_unavailable', message: 'Reply lost' };
+  });
+  const gh = { parseGithubUrl: () => ({ owner: 'acme', repo: 'demo' }),
+    getBranchSha: async () => remote,
+    findOpenPrByBranch: async () => null,
+    createPR: async (_o, _r, input) => { opened.push(input); return { number: 88, head: { sha: remote } }; } };
+  const out = await svc.openSubmission({ gh }, { user: { id: 7 }, task: {
+    id: 31, app_id: 9, app_slug: 'demo', repo_url: APP.repo_url, fork_owner: 'evan', base_sha: '0'.repeat(40),
+  }, link: { login: 'evan' }, mode: 'branch', branch: 'work', forkRepo: 'demo' }, makeSteps({ checkpoint: async () => {} }));
+  assert.equal(out.ok, true);
+  assert.equal(out.via, 'mirror');
+  assert.equal(mirrors, 1);
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].head, undefined, 'the recovered mirror opens the same-repo PR');
+});

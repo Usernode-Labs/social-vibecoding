@@ -163,9 +163,6 @@ function redact(text) {
  */
 function git(args, { cwd = undefined, auth = false, timeout = GIT_TIMEOUT_MS, input = null, env: extra = {} } = {}) {
   const s = settings();
-  if (args.includes('push') || args.includes('send-pack')) {
-    require('./code-host-write').requireCodeHostWrite('git-host.git.push');
-  }
   const childGit = require('./git-child').invocation(args, {
     home: path.join(os.tmpdir(), 'homeroom-git-home'),
     credential: auth ? { username: s.user, token: s.token } : null,

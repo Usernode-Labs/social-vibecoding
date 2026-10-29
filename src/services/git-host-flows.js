@@ -26,7 +26,6 @@
 //       body, and a run that failed for good as the throw it replaces
 //       ("Internal server error"); a success without the request's id.
 
-const log = require('./logger');
 const durableSteps = require('./durable-steps');
 
 function patchPayload(patch) {
@@ -42,19 +41,34 @@ function stopped(steps, err) {
   return !!(steps && steps.stopped) || durableSteps.isStopped(err);
 }
 
-// The branch an apply pushed, removed from the app's repository with the
-// same credential the apply used (external-agent-head.deleteBranch, which
-// logs and never throws).
-async function discardBranch({ owner, repo, branch, head = require('./external-agent-head') }) {
-  if (!branch) return;
-  let credential;
-  try {
-    credential = await head.resolveWriteCredential(owner);
-  } catch (err) {
-    log.warn('git-host-flows', 'Could not remove a pushed branch', { owner, repo, branch, err: err.message });
-    return;
-  }
-  await head.deleteBranch({ owner, repo, branch, credential });
+// Pin the source before a write. On retry, the target can prove that the
+// write landed even when its checkpoint did not; never substitute a newer
+// source revision. A transport still verifies the fetched commit before push.
+async function forkStep(steps, key, { gh, owner, repo, targetBranch, source, verify, push, adopt }) {
+  if (steps.has(key)) return steps.once(key, () => null);
+  let fresh;
+  const pinned = source || await steps.once(key + '-source', async () => (fresh = await verify()));
+  if (!pinned.ok) return pinned;
+  return steps.once(key, async () => {
+    const recover = async () => {
+      let current = null;
+      try { current = await gh.getBranchSha(owner, repo, targetBranch); }
+      catch (err) { if (err.status !== 404) throw err; }
+      return String(current).toLowerCase() === pinned.headSha
+        ? (adopt ? adopt(pinned.headSha) : { ok: true, headSha: pinned.headSha, branch: targetBranch }) : null;
+    };
+    if (steps.resumed) {
+      const landed = await recover();
+      if (landed) return landed;
+    }
+    if (verify) {
+      fresh ||= await verify();
+      if (!fresh.ok) return fresh;
+      if (fresh.headSha !== pinned.headSha) return require('./external-agent-head').sourceMoved(fresh.headSha);
+    }
+    const out = await push(pinned.headSha, fresh || pinned);
+    return out?.code === 'platform_unavailable' ? await recover() || out : out;
+  });
 }
 
 async function appliedStep(steps, key, apply, { owner, repo, head } = {}) {
@@ -70,7 +84,7 @@ async function appliedStep(steps, key, apply, { owner, repo, head } = {}) {
     return rest;
   });
   const cleanup = broom
-    || (kept && kept.ok && kept.branch ? () => discardBranch({ owner, repo, branch: kept.branch, ...(head ? { head } : {}) })
+    || (kept && kept.ok && kept.branch ? () => (head || require('./external-agent-head')).removeBranch({ owner, repo, branch: kept.branch })
       : async () => {});
   return { ...kept, cleanup };
 }
@@ -110,4 +124,4 @@ function answered(out) {
   return rest;
 }
 
-module.exports = { patchPayload, patchOf, stopped, discardBranch, appliedStep, openPr, permanentPrRefusal, refused, answered };
+module.exports = { patchPayload, patchOf, stopped, forkStep, appliedStep, openPr, permanentPrRefusal, refused, answered };

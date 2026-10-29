@@ -245,4 +245,14 @@ process.exit(child.status === null ? 1 : child.status);
     assert.equal(host.branchSha('pinned-source', branch), second);
     assert.equal(countPushes(), before + 1);
   }
+  const studio = require('../src/services/bench/studio');
+  const bench = { ...common, head, baseSha: app.base, targetBranch: 'bench/r1-t5' };
+  const refused = await studio.copyUserBranch({ ...bench, expectedSourceSha: first });
+  assert.equal(refused.code, 'branch_moved', 'a bench copy also validates the fetched commit');
+  assert.equal(host.branchSha('pinned-source', bench.targetBranch), null);
+  const copied = await studio.copyUserBranch({ ...bench, expectedSourceSha: second });
+  assert.equal(copied.ok, true, JSON.stringify(copied));
+  assert.equal(copied.headSha, second);
+  assert.equal(copied.commits, 2);
+  assert.equal(host.branchSha('pinned-source', bench.targetBranch), second);
 });

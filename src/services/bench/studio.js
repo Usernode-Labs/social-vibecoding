@@ -958,7 +958,7 @@ function patchCommits(patch) {
  * credential for the push, as the connector's mirror does
  * (services/external-agent-head.js).
  */
-async function copyUserBranch({ owner, repo, forkOwner, forkRepo, branch, baseSha, targetBranch, head }) {
+async function copyUserBranch({ owner, repo, forkOwner, forkRepo, branch, baseSha, targetBranch, head, expectedSourceSha }) {
   const credential = await head.resolveWriteCredential(owner);
   let out = null;
   try {
@@ -966,6 +966,9 @@ async function copyUserBranch({ owner, repo, forkOwner, forkRepo, branch, baseSh
       await git(['fetch', '--no-tags', '--depth', '500', head.sourceCloneUrl(forkOwner, forkRepo), branch]);
       const { stdout: sha } = await git(['rev-parse', 'FETCH_HEAD']);
       const headSha = String(sha).trim().toLowerCase();
+      if (expectedSourceSha && headSha !== expectedSourceSha) {
+        throw Object.assign(new Error('The source branch changed during fetch'), { code: 'branch_moved' });
+      }
       try {
         await git(['merge-base', '--is-ancestor', baseSha, headSha]);
       } catch {
@@ -983,6 +986,7 @@ async function copyUserBranch({ owner, repo, forkOwner, forkRepo, branch, baseSh
       out = { headSha, commits: Number(count) };
     });
   } catch (err) {
+    if (err.code === 'branch_moved') return httpError(409, 'The source branch changed. Read its current head and hand it in again.', { code: 'branch_moved' });
     if (err.code === 'base_mismatch') return httpError(409, `${branch} is not built on the start commit ${baseSha}. Start from that commit (fetch it from the order's branch) and push again.`, { code: 'base_mismatch' });
     if (err.code === 'no_commits') return httpError(409, `${branch} has no commits on top of the start commit.`, { code: 'no_commits' });
     log.warn('bench', 'Could not copy a reference branch', { forkOwner, forkRepo, err: head.redactToken(err.message, credential.token) });
@@ -1011,23 +1015,6 @@ async function referencePrecheck(pool, config, {
   const run = await runRow(pool, runId);
   if (run.status === 'cancelled') return httpError(409, 'The run was cancelled');
   return { ok: true, order: order.order, label: lbl };
-}
-
-/**
- * Hand in a reference build for one brief and pack of a studio run: a
- * branch on a repository the user's linked GitHub account owns, or a patch.
- * It becomes a trial of its own (`reference:<label>`), copied into the host
- * repository on that trial's branch and captured by the lane like any other
- * build, at no model cost. Resolves { ok, trialId, label, sha, commits }.
- * The writes are a conductor's (`bench.reference`): this is precheck, then
- * handInReference.
- */
-async function submitReference(pool, config, {
-  runId, taskId, packId = 0, label, patch = null, repo = null, branch = null, user, deps = {}, steps,
-} = {}) {
-  const checked = await referencePrecheck(pool, config, { runId, taskId, packId, label, patch, branch, deps, userId: user?.id });
-  if (!checked.ok) return checked;
-  return handInReference(pool, config, { runId, taskId, order: checked.order, label: checked.label, patch, repo, branch, user, deps, steps });
 }
 
 /**
@@ -1087,25 +1074,30 @@ async function handInReference(pool, config, {
     if (refusal) return refusal;
     copied = { headSha: applied.headSha, commits: patchCommits(patch) };
   } else {
-    const out = await steps.once('copied', async () => {
-      const githubLink = deps.githubLink || require('../github-link');
-      const link = await githubLink.linkStatus(pool, user?.id);
-      if (!link || !link.linked || !link.login) return httpError(409, 'Link a GitHub account in Settings to hand in a branch, or send a patch', { code: 'github_not_linked' });
-      const name = String(repoName || '').trim();
-      const [first, second] = name.includes('/') ? name.split('/') : [null, name];
-      const forkOwner = link.login;
-      if (first && first.toLowerCase() !== forkOwner.toLowerCase()) {
-        return httpError(400, `The repository must be your own (${forkOwner}/…): Homeroom only takes a reference from your linked GitHub account`, { code: 'fork_mismatch' });
-      }
-      const head = deps.head || require('../external-agent-head');
-      const githubPublic = deps.githubPublic || require('../external-agent-tasks').githubPublic;
-      const verified = await head.verifyForkBranch({ githubPublic, forkOwner, forkRepo: second, branch, expectedLogin: link.login });
-      if (!verified.ok) return httpError(verified.code === 'platform_unavailable' ? 502 : 400, verified.message, { code: verified.code });
-      return (deps.copyUserBranch || copyUserBranch)({
-        owner: host.owner, repo: host.repo, forkOwner, forkRepo: second, branch, baseSha, targetBranch: target, head,
-      });
+    const head = deps.head || require('../external-agent-head');
+    const github = deps.github || require('../github');
+    const out = await flows.forkStep(steps, 'copied', {
+      gh: github, owner: host.owner, repo: host.repo, targetBranch: target,
+      verify: async () => {
+        const link = await (deps.githubLink || require('../github-link')).linkStatus(pool, user?.id);
+        if (!link || !link.linked || !link.login) return httpError(409, 'Link a GitHub account in Settings to hand in a branch, or send a patch', { code: 'github_not_linked' });
+        const name = String(repoName || '').trim();
+        const [first, second] = name.includes('/') ? name.split('/') : [null, name];
+        if (first && first.toLowerCase() !== link.login.toLowerCase()) {
+          return httpError(400, `The repository must be your own (${link.login}/…): Homeroom only takes a reference from your linked GitHub account`, { code: 'fork_mismatch' });
+        }
+        const githubPublic = deps.githubPublic || require('../external-agent-tasks').githubPublic;
+        return { ...await head.verifyForkBranch({ githubPublic, forkOwner: link.login, forkRepo: second, branch, expectedLogin: link.login }),
+          forkOwner: link.login, forkRepo: second };
+      },
+      push: (expectedSourceSha, source) => (deps.copyUserBranch || copyUserBranch)({
+        owner: host.owner, repo: host.repo, forkOwner: source.forkOwner, forkRepo: source.forkRepo,
+        branch, baseSha, targetBranch: target, head, expectedSourceSha,
+      }),
+      adopt: async (headSha) => ({ ok: true, headSha,
+        commits: (await github.compareCommitAncestry(host.owner, host.repo, baseSha, headSha)).aheadBy }),
     });
-    if (!out.ok) { await drop(); return out; }
+    if (!out.ok) { await drop(); return out.status ? out : httpError(out.code === 'platform_unavailable' ? 502 : out.code === 'branch_moved' ? 409 : 400, out.message, { code: out.code }); }
     copied = out;
   }
   // Made ready once: a retry finds it ready at the same commit.
@@ -1595,7 +1587,6 @@ module.exports = {
   patchCommits,
   copyUserBranch,
   referencePrecheck,
-  submitReference,
   handInReference,
   rerunTrial,
   keepTrial,

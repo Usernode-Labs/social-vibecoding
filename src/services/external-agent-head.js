@@ -671,6 +671,7 @@ module.exports = {
   sourceCloneUrl,
   withScratchRepo,
   verifyForkBranch,
+  sourceMoved,
   mirrorForkBranch,
   pushForkBranchToAppBranch,
   deleteBranch,

@@ -211,16 +211,32 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
     assert.ok(watch.firstCommits.some((f) => f.taskId === taskId && f.packId === pack.id && f.status === 'ready'));
   });
 
+  async function submitReference({ deps = {}, ...given }) {
+    const request = { op: 'bench.reference', requestId: crypto.randomUUID(), appId: null, userId: given.user.id,
+      input: { runId: given.runId, taskId: given.taskId, packId: given.packId || 0 } };
+    const prior = benchOperation._setDepsForTests(deps);
+    await operations.keepInput(pool, request, { label: given.label,
+      ...(given.patch ? { patchB64: Buffer.from(given.patch).toString('base64') } : {}),
+      repo: given.repo || null, branch: given.branch || null });
+    try { return await operations.run({ pool, config: {} }, request); }
+    finally { benchOperation._setDepsForTests(prior); await operations.dropInput(pool, request.requestId); }
+  }
+
   let refTrial;
   await t.test('a reference handed in is a trial of its own; the same label again is its next attempt', async () => {
     const taskId = launched.briefs[0].taskId;
     const common = { runId: run.id, taskId, packId: pack.id, user: { id: evan.id } };
-    assert.equal((await studio.submitReference(pool, {}, { ...common, label: 'Ref V1', patch: 'x' })).status, 400);
-    assert.equal((await studio.submitReference(pool, {}, { ...common, label: 'ref-v1', patch: 'x', branch: 'b' })).status, 400);
-    const notLinked = await studio.submitReference(pool, {}, {
+    assert.equal((await submitReference({ ...common, label: 'Ref V1', patch: 'x' })).status, 400);
+    assert.equal((await submitReference({ ...common, label: 'ref-v1', patch: 'x', branch: 'b' })).status, 400);
+    const notLinked = await submitReference({
       ...common, label: 'ref-v1', repo: 'bread', branch: 'main', deps: { githubLink: { linkStatus: async () => ({ linked: false }) } },
     });
     assert.equal(notLinked.code, 'github_not_linked');
+    const notOwned = await submitReference({ ...common, label: 'ref-v1', repo: 'bread', branch: 'main', deps: {
+      githubLink: { linkStatus: async () => ({ linked: true, login: 'evan' }) },
+      head: { verifyForkBranch: async () => ({ ok: false, code: 'fork_mismatch', message: 'Not your branch' }) },
+    } });
+    assert.equal(notOwned.status, 400, 'the verification refusal keeps its caller-visible status');
     const { rows: [{ n: left }] } = await pool.query("SELECT COUNT(*)::int AS n FROM bench_trials WHERE status = 'awaiting'");
     assert.equal(left, 0, 'a refused hand-in leaves nothing behind');
 
@@ -230,7 +246,7 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
       github: { ensureBranchAtSha: async (o, r, branch, sha) => { pins.push([branch, sha]); } },
     };
     const patch = `From ${SHA('1')} Mon Sep 17 00:00:00 2001\nSubject: one\n\nFrom ${SHA('2')} Mon Sep 17 00:00:00 2001\nSubject: two\n`;
-    const v1 = await studio.submitReference(pool, {}, { ...common, label: 'ref-v1', patch, deps: refDeps });
+    const v1 = await submitReference({ ...common, label: 'ref-v1', patch, deps: refDeps });
     assert.equal(v1.ok, true, v1.error);
     assert.equal(v1.attempt, 1);
     assert.equal(v1.commits, 2);
@@ -238,7 +254,7 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
     assert.deepEqual(pins, [[`bench/r${run.id}-t${v1.trialId}`, SHA('b')]]);
     const { rows: [row] } = await pool.query('SELECT status, capture_sha, reference_label, context_pack_id, base_sha FROM bench_trials WHERE id = $1', [v1.trialId]);
     assert.deepEqual(row, { status: 'pending', capture_sha: SHA('b'), reference_label: 'ref-v1', context_pack_id: pack.id, base_sha: SHA('a') });
-    const v1b = await studio.submitReference(pool, {}, { ...common, label: 'ref-v1', patch, deps: refDeps });
+    const v1b = await submitReference({ ...common, label: 'ref-v1', patch, deps: refDeps });
     assert.equal(v1b.attempt, 2);
     refTrial = v1.trialId;
     const watch = await studio.watchRun(pool, run.id);
@@ -314,6 +330,50 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
     const { rows } = await pool.query("SELECT id, status, capture_sha FROM bench_trials WHERE run_id = $1 AND reference_label = 'ref-retry'", [run.id]);
     assert.deepEqual(rows.map((r) => [Number(r.id), r.status, r.capture_sha]), [[out.trialId, 'running', SHA('c')]], 'one trial');
     assert.equal(await operations.inputOf(pool, requestId), null, 'the hand-in is dropped once answered');
+  });
+
+  await t.test('a branch reference keeps its source across interrupted copies', async (t) => {
+    for (const stopAt of ['copied-source', 'copied']) {
+      await t.test(stopAt, async () => {
+        let source = SHA('d'); let remote = null; let copies = 0; let saved = null; let lose = true;
+        const target = { runId: run.id, taskId: launched.briefs[0].taskId, packId: pack.id };
+        const prior = benchOperation._setDepsForTests({
+          githubLink: { linkStatus: async () => ({ linked: true, login: 'evan' }) },
+          head: { verifyForkBranch: async () => ({ ok: true, headSha: source }) },
+          github: {
+            getBranchSha: async () => { if (!remote) throw Object.assign(new Error('Absent'), { status: 404 }); return remote; },
+            compareCommitAncestry: async (_o, _r, base, head) => { assert.equal(head, SHA('d')); return { aheadBy: 2 }; },
+          },
+          copyUserBranch: async (args) => {
+            assert.equal(args.expectedSourceSha, SHA('d'));
+            copies += 1; remote = source;
+            return { ok: true, headSha: remote, commits: 2 };
+          },
+        });
+        try {
+          const request = { op: 'bench.reference', requestId: crypto.randomUUID(), appId: null, userId: evan.id, input: target };
+          await operations.keepInput(pool, request, { label: stopAt, repo: 'evan/bread', branch: 'work' });
+          const item = () => kernelSteps.steps({ resumeFrom: saved, triesLeft: 3, checkpoint: async (value) => {
+            if (lose && Object.hasOwn(value, stopAt)) {
+              lose = false;
+              if (stopAt === 'copied-source') saved = value;
+              throw new kernelSteps.StepsStopped();
+            }
+            saved = value;
+          } });
+          await assert.rejects(operations.run({ pool, config: {} }, request, item()), kernelSteps.isStopped);
+          source = SHA('e');
+          const out = await operations.run({ pool, config: {} }, request, item());
+          if (stopAt === 'copied-source') {
+            assert.equal(out.code, 'branch_moved'); assert.equal(out.status, 409); assert.equal(copies, 0);
+          } else {
+            assert.equal(out.ok, true, JSON.stringify(out)); assert.equal(out.sha, SHA('d')); assert.equal(out.commits, 2); assert.equal(copies, 1);
+            const { rows: [trial] } = await pool.query('SELECT capture_sha, status FROM bench_trials WHERE id = $1', [out.trialId]);
+            assert.deepEqual(trial, { capture_sha: SHA('d'), status: 'pending' });
+          }
+        } finally { benchOperation._setDepsForTests(prior); }
+      });
+    }
   });
 
   await t.test('a re-run is the arm\'s next attempt; a build is kept only while it has a branch', async () => {
