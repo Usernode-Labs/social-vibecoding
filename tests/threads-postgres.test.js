@@ -10,7 +10,8 @@
 //
 //   1. Every new row is attached by the rule the plan names: a request by its
 //      number; a change by its first linked request, else the request it was
-//      made from, else its own PR number (a manifest branch makes a decision);
+//      made from, else its own PR number (a manifest branch makes a decision),
+//      with no number when a request holds that one;
 //      a request's twin and a proposal to close by a number; any other
 //      governance row a decision of its own; a message by its anchor.
 //   2. A draft that gets its thread later takes its replies with it.
@@ -149,6 +150,71 @@ test('a change joins its first linked request, else its origin, else its own PR 
   }
   assert.equal((await one('SELECT thread_kind_for_branch($1) AS k', ['renamed-thing/a'])).k, 'work');
   assert.equal((await one('SELECT thread_kind_for_branch(NULL) AS k')).k, 'work');
+});
+
+// On a project still on GitHub a pull request's number is GitHub's and a
+// request's Homeroom's, so they can be the same number: Change #6002 and
+// Request #6002 were unrelated, and the change sat in the request's thread.
+test('a change never joins a request\'s thread only because they share a number', async (t) => {
+  if (ctx.skip) return t.skip(ctx.skip);
+  const threads = require('../src/services/threads');
+  const a = await app('shared-numbers');
+  await ctx.pool.query(`INSERT INTO requests (app_id, number, title) VALUES ($1, 6002, 'Guardrail 1')`, [a]);
+  const request = await threadByNumber(a, 6002);
+  const stranger = await one(`INSERT INTO chat_sessions (app_id, pr_number, branch_name, pr_title)
+                              VALUES ($1, 6002, 'sec-09/pods', 'SEC-09') RETURNING id, thread_id`, [a]);
+  const linked = await one(`INSERT INTO chat_sessions (app_id, pr_number, linked_issues) VALUES ($1, 5996, '{6002}') RETURNING id, thread_id`, [a]);
+  const made = await one(`INSERT INTO chat_sessions (app_id, pr_number, created_from_issue_number) VALUES ($1, 6007, 6002) RETURNING id, thread_id`, [a]);
+  const decision = await one(`INSERT INTO chat_sessions (app_id, pr_number, branch_name, pr_title)
+                              VALUES ($1, 6002, 'visibility/x-1730000000', 'Open it up') RETURNING id, thread_id`, [a]);
+
+  const own = await one('SELECT * FROM threads WHERE id = $1', [stranger.thread_id]);
+  assert.notEqual(String(own.id), String(request.id), 'the change has a thread of its own');
+  assert.deepEqual([own.number, own.kind, own.title], [null, 'work', null], 'with no number, so no request can land in it');
+  assert.equal(String(linked.thread_id), String(request.id), 'a change that links the request is in its thread');
+  assert.equal(String(made.thread_id), String(request.id), 'as is one made from it');
+  const decisionThread = await one('SELECT * FROM threads WHERE id = $1', [decision.thread_id]);
+  assert.deepEqual([decisionThread.number, decisionThread.kind, decisionThread.title], [null, 'decision', 'Open it up']);
+  assert.notEqual(String(decisionThread.id), String(own.id));
+
+  // Its page reads its thread as the change's; the number alone is the request's.
+  assert.equal(String((await threads.threadForNumber(ctx.pool, { appId: a, number: 6002 })).id), String(request.id));
+  const asChange = await threads.threadForNumber(ctx.pool, { appId: a, number: 6002, asChange: true });
+  assert.equal(String(asChange.id), String(decision.thread_id), 'the newest change with that number, as before');
+  assert.equal(String((await threads.threadForNumber(ctx.pool, { appId: a, number: 5996, asChange: true })).id), String(request.id),
+    'a linked change\'s page reads the request\'s thread');
+  assert.equal((await threads.threadForNumber(ctx.pool, { appId: a, number: 6100, asChange: true })), null);
+  await ctx.pool.query(`INSERT INTO requests (app_id, number, title) VALUES ($1, 6101, 'Alone')`, [a]);
+  assert.equal(String((await threads.threadForNumber(ctx.pool, { appId: a, number: 6101, asChange: true })).id),
+    String((await threadByNumber(a, 6101)).id), 'with no change by that number, the number\'s own thread');
+});
+
+test('the one-time pass moves a change out of a request\'s thread it joined by number, once', async (t) => {
+  if (ctx.skip) return t.skip(ctx.skip);
+  const threads = require('../src/services/threads');
+  const a = await app('number-pass');
+  await ctx.pool.query(`INSERT INTO requests (app_id, number, title) VALUES ($1, 700, 'Guardrail 2')`, [a]);
+  const request = await threadByNumber(a, 700);
+  // As the old rule left it: the change in the request's thread, with its reply.
+  const stray = await one(`INSERT INTO chat_sessions (app_id, pr_number, branch_name, status, thread_id)
+                           VALUES ($1, 700, 'feature/stray', 'promoted', $2) RETURNING id`, [a, request.id]);
+  const reply = await one(`INSERT INTO chat_messages (app_id, thread_type, thread_ref, content, thread_id)
+                           VALUES ($1, 'session', $2, 'looks good', $3) RETURNING id`, [a, stray.id, request.id]);
+  const linked = await one(`INSERT INTO chat_sessions (app_id, pr_number, linked_issues, status) VALUES ($1, 701, '{700}', 'promoted') RETURNING id, thread_id`, [a]);
+  const oneOwn = await one(`INSERT INTO chat_sessions (app_id, pr_number, linked_issues, status, thread_id)
+                            VALUES ($1, 700, '{700}', 'promoted', $2) RETURNING id`, [a, request.id]);
+
+  await ctx.pool.query('DELETE FROM platform_settings WHERE key = $1', [threads.NUMBERS_MARKER_KEY]);
+  const first = await threads.separateNumberCollisions(ctx.pool);
+  assert.equal(first.changes, 1, JSON.stringify(first));
+  const moved = await threadOf('chat_sessions', stray.id);
+  assert.notEqual(String(moved), String(request.id));
+  assert.equal((await one('SELECT number FROM threads WHERE id = $1', [moved])).number, null);
+  assert.equal(String(await threadOf('chat_messages', reply.id)), String(moved), 'its reply went with it');
+  assert.equal((await one('SELECT state FROM threads WHERE id = $1', [moved])).state, 'open', 'and its thread is open');
+  assert.equal(String(await threadOf('chat_sessions', linked.id)), String(request.id), 'a change that links the request stays');
+  assert.equal(String(await threadOf('chat_sessions', oneOwn.id)), String(request.id), 'so does one that closes its own number');
+  assert.deepEqual(await threads.separateNumberCollisions(ctx.pool), { skipped: 'done' });
 });
 
 test('a draft that gets its thread later takes its replies with it, and keeps the thread after', async (t) => {

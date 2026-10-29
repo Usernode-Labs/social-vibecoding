@@ -36,7 +36,10 @@ const START_SQL = `
 
 /**
  * The next number for `appId`, taken. A number some row already holds (one
- * imported after the counter started) is skipped, never reused.
+ * imported after the counter started) is skipped, never reused. That
+ * includes a pull request's: on a project still on GitHub, GitHub numbers
+ * the pull requests and its counter knows nothing of this one, so a request
+ * must not take a number a pull request already has (#6002 was both).
  */
 async function next(appId, { db = getPool() } = {}) {
   const id = Number(appId);
@@ -50,6 +53,7 @@ async function next(appId, { db = getPool() } = {}) {
     const { rows: [taken] } = await db.query(
       `SELECT 1 FROM requests WHERE app_id = $1 AND number = $2
        UNION ALL SELECT 1 FROM native_pulls WHERE app_id = $1 AND number = $2
+       UNION ALL SELECT 1 FROM chat_sessions WHERE app_id = $1 AND pr_number = $2
        LIMIT 1`, [id, number]);
     if (!taken) return number;
   }

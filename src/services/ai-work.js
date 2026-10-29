@@ -185,7 +185,9 @@ const NEXT_ORDER = { going_live: 0, merging: 1, vote: 2, building: 3 };
 function shapeThread(row, viewerId, now) {
   const stand = standing(row, viewerId, now);
   if (!stand) return null;
-  const number = row.number == null ? null : Number(row.number);
+  // A change's own thread with no number (its PR number is a request's) is
+  // named by its change.
+  const number = row.number != null ? Number(row.number) : row.pr_number != null ? Number(row.pr_number) : null;
   const title = row.request_title || row.change_title || row.thread_title || null;
   return {
     threadId: Number(row.id),

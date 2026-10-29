@@ -383,15 +383,17 @@ export const ChangeGates = forwardRef<HTMLDivElement, { id: number | null; card:
   },
 );
 
-export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSaved, threadNumber = null }: {
+export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSaved, threadNumber = null, threadAsChange = false }: {
   id: number | null;
   card: DevCardModel;
   body: TopicBody;
   v: ChangeThreadView;
   linkedIssues: number[];
   onIssuesSaved: (issues: number[]) => void;
-  /** #6019: a number in the change's thread: its first request's, else its own. */
+  /** #6019: a number in the change's thread: its own pull request's, else its first request's. */
   threadNumber?: number | null;
+  /** `threadNumber` is its own pull request's: its thread is read as the change's (a request may share it). */
+  threadAsChange?: boolean;
 }): ReactNode {
   const t = useMessages('project');
   const images = useInlineImageViewer();
@@ -536,7 +538,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
             />
           ) : null}
           {/* #6019: the requests, other changes and votes in its thread. */}
-          {id ? <ThreadItems slug={pageSlug()} number={threadNumber} here={{ type: 'change', id }} /> : null}
+          {id ? <ThreadItems slug={pageSlug()} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} /> : null}
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
           {v.codeMissing ? <CodeMissingNotice /> : null}
           {v.waitsFor || v.baseNotMain ? <StackNotice v={v} /> : null}

@@ -92,7 +92,8 @@ test('its first render is nothing; the thread is read in an effect', () => {
   assert.equal(html, '');
   const src = read(ITEMS);
   assert.match(src, /useEffect\(\(\) => \{\s+if \(!revision\) setData\(null\);/, 'cleared on a new page, kept while a move re-reads it');
-  assert.match(src, /`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/threads\/\$\{number\}`/);
+  assert.match(src, /`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/threads\/\$\{number\}\$\{asChange \? '\?as=change' : ''\}`/,
+    'a change\'s page reads its own thread (a request may share its number)');
   assert.match(src, /`\/api\/threads\/\$\{threadId\}`/, 'a decision is read by its thread');
   assert.match(src, /fetch\(`\/api\/threads\/\$\{data\.thread\.id\}\/follow`, \{\s+method: 'PUT'/);
   assert.match(src, /import \{ GroupedList, ListRow, SectionHeader \} from '@\/components\/ui\/grouped-list';/,
@@ -107,10 +108,10 @@ test('the request, change and decision pages draw it', () => {
   assert.match(head, /<ThreadChanges slug=\{slug\} data=\{threadRead\.data\} number=\{r\.number\} changes=\{layout\.changes\} close=\{layout\.close\} onChanged=\{threadRead\.reread\} \/>/);
   assert.match(head, /<ThreadItems slug=\{slug\} number=\{r\.number\} here=\{here\} payload=\{threadRead\.data\} items=\{layout\.listed\} onChanged=\{threadRead\.reread\} \/>/);
   assert.match(read('frontend/src/features/dev-board/topic/change-head.tsx'),
-    /<ThreadItems slug=\{pageSlug\(\)\} number=\{threadNumber\} here=\{\{ type: 'change', id \}\} \/>/);
+    /<ThreadItems slug=\{pageSlug\(\)\} number=\{threadNumber\} asChange=\{threadAsChange\} here=\{\{ type: 'change', id \}\} \/>/);
   const topic = read('frontend/src/features/dev-board/topic/topic-head.tsx');
-  assert.match(topic, /threadNumber=\{Number\(linkedIssues\[0\]\) \|\| Number\(session\?\.pr_number\) \|\| null\}/,
-    'a change\'s thread is its first request\'s, else its own');
+  assert.match(topic, /threadNumber=\{Number\(session\?\.pr_number\) \|\| Number\(linkedIssues\[0\]\) \|\| null\} threadAsChange=\{Number\(session\?\.pr_number\) > 0\}/,
+    'a change\'s page reads its own thread by its pull request, else its first request\'s');
   assert.match(topic, /threadId=\{Number\(item\.thread_id\)\}/);
 });
 

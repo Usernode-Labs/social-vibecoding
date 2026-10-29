@@ -53,7 +53,7 @@ export function pageSlug(): string | null {
  * again after something on the page changed it (a vote, a move). Null until
  * it is read, so the page's first paint is the one it had before.
  */
-export function useThreadPayload(slug: string | null, number: number | null, threadId: number | null = null, skip = false): {
+export function useThreadPayload(slug: string | null, number: number | null, threadId: number | null = null, skip = false, asChange = false): {
   data: ThreadPayload | null;
   setData: (update: (was: ThreadPayload | null) => ThreadPayload | null) => void;
   reread: () => void;
@@ -63,7 +63,7 @@ export function useThreadPayload(slug: string | null, number: number | null, thr
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     if (!revision) setData(null);
-    const path = skip ? null : number && slug ? `/api/apps/${encodeURIComponent(slug)}/threads/${number}`
+    const path = skip ? null : number && slug ? `/api/apps/${encodeURIComponent(slug)}/threads/${number}${asChange ? '?as=change' : ''}`
       : threadId ? `/api/threads/${threadId}` : null;
     if (!path) return undefined;
     let live = true;
@@ -72,14 +72,19 @@ export function useThreadPayload(slug: string | null, number: number | null, thr
       .then((json) => { if (live) setData(json && Array.isArray(json.items) ? json : null); })
       .catch(() => { if (live) setData(null); });
     return () => { live = false; };
-  }, [slug, number, threadId, revision, skip]);
+  }, [slug, number, threadId, revision, skip, asChange]);
   return { data, setData, reread: () => setRevision((n) => n + 1) };
 }
 
-export function ThreadItems({ slug, number = null, threadId = null, here, payload, items, onChanged }: {
+export function ThreadItems({ slug, number = null, asChange = false, threadId = null, here, payload, items, onChanged }: {
   slug: string | null;
   /** Any number in the thread: the request's, or the change's own. */
   number?: number | null;
+  /**
+   * `number` is the change's own pull request number: read that change's
+   * thread, which a request sharing the number does not lead.
+   */
+  asChange?: boolean;
   /** Or the thread itself, for a decision that has no number. */
   threadId?: number | null;
   here: ThreadHere;
@@ -91,7 +96,7 @@ export function ThreadItems({ slug, number = null, threadId = null, here, payloa
 }): ReactNode {
   const t = useMessages('project');
   const controlled = payload !== undefined;
-  const own = useThreadPayload(slug, number, threadId, controlled);
+  const own = useThreadPayload(slug, number, threadId, controlled, asChange);
   const data = controlled ? payload : own.data;
   const setData = controlled ? null : own.setData;
   const changed = onChanged || own.reread;

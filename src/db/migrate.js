@@ -64,6 +64,9 @@ async function migrate(config) {
   // And, once, whether each thread is open or closed (the follow-up's
   // threads_refresh_state keeps that current from now on).
   await require('../services/threads').refreshStates(pool);
+  // And, once, the changes that sat in a request's thread only because their
+  // PR number was the request's.
+  await require('../services/threads').separateNumberCollisions(pool);
   log.info('db', 'Schema up to date');
   finishPhase('schemaMs');
 

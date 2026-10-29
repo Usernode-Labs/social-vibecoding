@@ -56,14 +56,18 @@ function threadsRoutes() {
   // thread with its own number, so `dev/issues/<n>` and `dev/changes/<n>`
   // land on the same thread, and a merged thread answers with the one it went
   // into (`thread.number` says which). Readable signed out on a public
-  // project, as the request and the change are.
+  // project, as the request and the change are. `?as=change`: the number
+  // is a pull request's, and the change's own thread answers (a change's
+  // page asks this way; threads.threadForNumber says why).
   router.get('/api/apps/:slug/threads/:number', async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     try {
       if (!/^[1-9][0-9]{0,8}$/.test(req.params.number)) return res.status(404).json({ error: 'Thread not found' });
       const found = await visibleApp('slug', req.params.slug, req.user);
       if (!found) return res.status(404).json({ error: 'App not found' });
-      const thread = await threads.threadForNumber(pool, { appId: found.app.id, number: Number(req.params.number) });
+      const thread = await threads.threadForNumber(pool, {
+        appId: found.app.id, number: Number(req.params.number), asChange: req.query.as === 'change',
+      });
       // A number with no thread (a demo fixture's, or a row the backfill has
       // not reached) is an answer, not an error: every request and change
       // page asks on open, and a 404 is a console error on that page.
