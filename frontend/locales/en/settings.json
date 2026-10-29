@@ -2147,6 +2147,26 @@
     "text": "Tell your coding agents how to work",
     "description": "One muted line under the Agent instructions & skills row in the phone's Settings menu, saying what the page is for: files that customise how the AI coding agent behaves when it builds. Keep it short; it is cut to one line."
   },
+  "nav.tag.beta": {
+    "text": "Beta",
+    "description": "A small grey label at the end of a row in the Settings menu (the Experimental row), saying the features behind it are still being tried and may change. One short word."
+  },
+  "nav.status.linked_one": {
+    "text": "{{count}} linked",
+    "description": "Muted words at the end of the Linked accounts or Linked phones row in the Settings menu: how many accounts (GitHub, X) or phones are linked. Shown only when at least one is. Keep it short."
+  },
+  "nav.status.linked_other": {
+    "text": "{{count}} linked",
+    "description": "Muted words at the end of the Linked accounts or Linked phones row in the Settings menu: how many accounts (GitHub, X) or phones are linked. Shown only when at least one is. Keep it short."
+  },
+  "nav.status.connected_one": {
+    "text": "{{count}} connected",
+    "description": "Muted words at the end of the Connectors & CLI row in the Settings menu: how many AI chat apps (connectors) and command-line credentials are connected to the account. Shown only when at least one is. Keep it short."
+  },
+  "nav.status.connected_other": {
+    "text": "{{count}} connected",
+    "description": "Muted words at the end of the Connectors & CLI row in the Settings menu: how many AI chat apps (connectors) and command-line credentials are connected to the account. Shown only when at least one is. Keep it short."
+  },
   "nav.group.account": {
     "text": "Account",
     "description": "Heading over a group of rows in the Settings menu: who you are and how you sign in."

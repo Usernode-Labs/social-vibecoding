@@ -28,6 +28,14 @@
  *               code mark.
  *   null        nothing usable (empty, or not http(s)): no link.
  *
+ * And whether an app's stored address (`apps.repo_url`) is a repository at
+ * all, through `isRepoAddress`: a loose browser-side match that accepts at
+ * least everything the server's src/services/repo-ref.js `parse` does, so
+ * the screens that offer "this app" as a request's target (the feedback
+ * dialog, comment mode) never refuse an address the server would accept
+ * (#5887). tests/repo-address-table.test.js runs one table of addresses
+ * through both.
+ *
  * Plain JS with no import, like ./plain-store.js: classic scripts under
  * public/js cannot import from the bundle, so the module also publishes
  * itself as `window.RepoLink` (main.tsx imports it before anything renders),
@@ -81,22 +89,6 @@ export function isGithubUrl(url) {
   return linkKind(url) === 'github';
 }
 
-// An address that names a repository: a web address with an owner and a name
-// after its host, or the short SSH form git reads (`git@host:owner/name.git`).
-// The host is not asked about here — app repositories live on Homeroom's own
-// git host, on GitHub and on other git servers alike (#5940) — only that the
-// address has an owner and a name. src/services/repo-ref.js is the server's
-// own parser and the real gate; this is the browser's copy of the same
-// question, used by Suggest an improvement and comment mode.
-const REPO_WEB = /^https?:\/\/[^/\s]+\/[^/\s]+\/[^/\s]+/i;
-const REPO_SSH = /^[^\s/@]+@[^/\s:]+:[^/\s]+\/[^/\s]+(?:\.git)?$/;
-
-/** @param {unknown} url */
-export function namesRepo(url) {
-  const s = text(url);
-  return !!s && (REPO_WEB.test(s) || REPO_SSH.test(s));
-}
-
 /**
  * An anchor's attributes for `url`: a Homeroom page opens in place, at its
  * route; anything else in a new tab, with no handle on this window. Null when
@@ -124,7 +116,29 @@ export function requestRoute(slug, number) {
   return s && Number.isInteger(n) && n > 0 ? `#app/${encodeURIComponent(s)}/dev/issues/${n}` : '';
 }
 
-const RepoLink = { linkKind, homeroomRoute, isGithubUrl, linkAttrs, requestRoute, namesRepo };
+// The screens' rule since #5940: any http(s) host followed by at least two
+// path segments. Deliberately loose: a git host may sit under a path
+// (GIT_HOST_URL=https://forge.example.org/git), and the server is the gate.
+const WEB_REPO = /^https?:\/\/[^/\s]+\/[^/\s]+\/[^/\s]+/i;
+const GITHUB_SSH = /^git@github\.com:[\w.-]+\/[\w.-]+?(?:\.git)?$/i;
+
+/**
+ * Whether `url` may be a repository's address: any http(s) host followed by
+ * at least an owner and a name (more path, a query or a fragment allowed),
+ * or GitHub's `git@github.com:owner/name`. The browser cannot know which host
+ * is Homeroom's git host, or under which path (GIT_HOST_URL is the
+ * server's), so it stays loose and leaves the real decision to the server.
+ * It must never refuse what the server's repo-ref.js accepts: that is how
+ * "this app" was greyed out for every project (#5887).
+ * @param {unknown} url
+ * @returns {boolean}
+ */
+export function isRepoAddress(url) {
+  const s = text(url);
+  return !!s && (WEB_REPO.test(s) || GITHUB_SSH.test(s));
+}
+
+const RepoLink = { linkKind, homeroomRoute, isGithubUrl, linkAttrs, requestRoute, isRepoAddress };
 
 if (typeof window !== 'undefined') {
   /** @type {any} */ (window).RepoLink = RepoLink;

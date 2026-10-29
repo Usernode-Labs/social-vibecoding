@@ -1480,15 +1480,11 @@ test('comment mode opens on demand into a host of its own, once, and C asks it t
   assert.doesNotMatch(read('frontend/src/features/dialogs/feedback.tsx'), />\s*Detailed\s*</);
   // The dialog's rule for when a request can go to the app, read the same way.
   // #5940: any repository address with an owner and a name, not only
-  // github.com (app repositories are on Homeroom's own git host now).
-  // #6016: one shared helper answers it, so this file and the dialog cannot
-  // drift apart again.
-  assert.match(src, /import \{ namesRepo \} from '\.\.\/\.\.\/lib\/repo-link\.js';/);
-  assert.equal((src.match(/!namesRepo\(data\.repo_url\) \|\| data\.self_hosted/g) || []).length, 2);
-  const dialog = read('frontend/src/features/dialogs/feedback-controller.js');
-  assert.match(dialog, /import \{ namesRepo \} from '\.\.\/\.\.\/lib\/repo-link\.js';/);
-  assert.match(dialog, /const hasRepo = namesRepo\(repoUrl\);/);
-  assert.doesNotMatch(src + dialog, /\^https\?:/);
+  // github.com (app repositories are on Homeroom's own git host now). One
+  // shared helper, run against the server's rule in
+  // tests/repo-address-table.test.js (#6016).
+  assert.ok(src.includes(`!isRepoAddress(data.repo_url) || data.self_hosted`));
+  assert.ok(read('frontend/src/features/dialogs/feedback-controller.js').includes(`const hasRepo = isRepoAddress(appData?.repo_url);`));
   assert.doesNotMatch(src, /github\\\.com/);
 });
 

@@ -72,6 +72,7 @@ import { BotRequestCardView, BotStatusChip } from './bot-request';
 import { ImageViewer, openInViewer, useInlineImageViewer } from '../image-viewer/image-viewer';
 import { downloadLabel, downloadableImages, saveImages, useCanSaveImage } from '../image-viewer/save-image';
 import { EventRow } from './proposal-event';
+import { Body } from './long-body';
 import { QuietCard } from './quiet-card';
 import { swatchFor } from './swatch';
 import { LinkEmbeds } from '../messages/link-cards';
@@ -142,19 +143,8 @@ function BotOfferButtons({ id, offer }: { id: number | null; offer: BotOfferView
   );
 }
 
-/**
- * The sanitized markdown the module produced.
- *
- * Memoised on the STRING, so the `{__html}` wrapper keeps its identity across
- * re-renders. React diffs host props by reference and re-assigns `innerHTML`
- * whenever that object is new — even for an identical string — which on a long
- * transcript means every row's body is rewritten on every reaction. The Dev
- * board hit exactly this and its note is in features/dev-board/board-frame.tsx.
- */
-function Body({ html }: { html: string }) {
-  const wrapper = useMemo(() => ({ __html: html }), [html]);
-  return <div className="gc-msg-content" dangerouslySetInnerHTML={wrapper} />;
-}
+// `Body`, the sanitized markdown the module produced, lives in
+// ./long-body.tsx since it folds a long message behind "Show more" (#6022).
 
 /**
  * The quoted reply above a message (#15).
@@ -1107,9 +1097,11 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
       : <RichMessage id="project:topic.request.stream.postedSpecVersion" values={{ author: spec.sharedBy, version: spec.version }} components={[<b />]} />;
   } else if (gh) {
     glyph = '📋';
-    text = msg.usernameMissing
-      ? <RichMessage id="project:topic.request.stream.postedSpecSystem" components={[<b />]} />
-      : <RichMessage id="project:topic.request.stream.postedSpec" values={{ author: displayName(msg.username) }} components={[<b />]} />;
+    text = msg.planMirror
+      ? <RichMessage id="project:topic.request.stream.postedSpecVersion" values={{ author: msg.planMirror.author, version: msg.planMirror.version }} components={[<b />]} />
+      : msg.usernameMissing
+        ? <RichMessage id="project:topic.request.stream.postedSpecSystem" components={[<b />]} />
+        : <RichMessage id="project:topic.request.stream.postedSpec" values={{ author: displayName(msg.username) }} components={[<b />]} />;
   } else if (claim) {
     glyph = '✋';
     text = <RichMessage id="project:topic.request.stream.claimed" values={{ member: claim[1] }} components={[<b />]} />;

@@ -73,8 +73,8 @@ import {
 
 import { useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
-import { namesRepo } from '../../lib/repo-link.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { isRepoAddress } from '../../lib/repo-link.js';
 import { KB_OPEN_CLASS, PHONE_QUERY } from '../../lib/keyboard-open';
 import { textFocused } from '../../lib/browser-scroll';
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
@@ -176,7 +176,7 @@ function appTarget(): AppTarget | null {
       const sameApp = !!(data && data.slug === pv.slug);
       if (sameApp) {
         if (!slug || !data) return null;
-        if (!namesRepo(data.repo_url) || data.self_hosted) return null;
+        if (!isRepoAddress(data.repo_url) || data.self_hosted) return null;
         return { slug, name: data.name || slug };
       }
       if (pv.self_hosted) return null;
@@ -186,7 +186,7 @@ function appTarget(): AppTarget | null {
 
   if (!slug || !data) return null;
   if (w.App?.currentTab !== 'app' && w.App?.currentTab !== 'dev') return null;
-  if (!namesRepo(data.repo_url) || data.self_hosted) return null;
+  if (!isRepoAddress(data.repo_url) || data.self_hosted) return null;
   return { slug, name: data.name || slug };
 }
 

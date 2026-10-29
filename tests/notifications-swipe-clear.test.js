@@ -289,9 +289,11 @@ test('at a desk an unread row carries its ×, beside the row and never inside it
   assert.ok(plain, 'the plain row sits first in a slot of its own');
   // The row is a <button>, so a second button inside it would be invalid
   // markup and would take the row's click. The × follows the row's close,
-  // and on a card it sits on the card's corner.
+  // and on a card it sits inside the card's corner (#5929: across the
+  // card's edge it read as a rendering glitch), saying what it does to a
+  // pointer as well as to a screen reader.
   assert.match(plain,
-    /<\/button><button type="button" data-notification-clear="10" aria-label="Clear notification" class="absolute -left-1\.5 -top-1\.5 z-\[2\] /);
+    /<\/button><button type="button" data-notification-clear="10" aria-label="Clear notification" title="Mark as read" class="absolute left-1\.5 top-1\.5 z-\[2\] /);
   assert.equal((plain.match(/data-notification-clear/g) || []).length, 1);
   // Hidden and untouchable until the slot is hovered or holds keyboard focus.
   assert.match(plain, /pointer-events-none opacity-0 transition-opacity /);

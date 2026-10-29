@@ -103,7 +103,8 @@ test('#3490: Homeroom bot\'s spec comment splits into its sentence and the spec'
   const code = APP_VIEW.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
   const fn = code.match(/\n {2}_botSpecOf\(c\) \{([\s\S]*?)\n {2}\},/);
   assert.ok(fn, '_botSpecOf() found');
-  const AppView = { _isBotCommentAuthor: (a) => a === 'usernode-bot' };
+  // #6020: a posted plan's comment is the one other shape it reads.
+  const AppView = { _isBotCommentAuthor: (a) => a === 'usernode-bot', _isPlanMirror: () => null };
   const botSpecOf = (c) => vm.runInNewContext(`(function (c) {${fn[1]}})(c)`, { AppView, c });
   // Exactly what the bot writes (services/homeroom-bot-live.js), not a copy.
   const live = require('../src/services/homeroom-bot-live');
@@ -147,7 +148,8 @@ test('#3693: a spec the comments route clipped is still a spec, not raw markers'
   const code = APP_VIEW.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
   const fn = code.match(/\n {2}_botSpecOf\(c\) \{([\s\S]*?)\n {2}\},/);
   assert.ok(fn, '_botSpecOf() found');
-  const AppView = { _isBotCommentAuthor: (a) => a === 'usernode-bot' };
+  // #6020: a posted plan's comment is the one other shape it reads.
+  const AppView = { _isBotCommentAuthor: (a) => a === 'usernode-bot', _isPlanMirror: () => null };
   const botSpecOf = (c) => vm.runInNewContext(`(function (c) {${fn[1]}})(c)`, { AppView, c });
   const live = require('../src/services/homeroom-bot-live');
   const github = require('../src/services/github');
