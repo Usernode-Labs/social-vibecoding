@@ -35,6 +35,9 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const svc = require('../src/services/external-agent-tasks');
+// A submission's writes are a conductor's; this file runs them here, with
+// each test's own fakes (tests/lib/submission-here.js).
+require('./lib/submission-here').submissionsHere();
 const shotsContract = require('../src/services/visible-changes');
 const shotsFixture = require('./fixtures/shots');
 
@@ -104,6 +107,7 @@ const BASE_SHA = `ba5e${'0'.repeat(34)}fe`;
 function baseGh(overrides = {}) {
   return {
     isEnabled: () => true,
+    findOpenPrByBranch: async () => null,
     parseGithubUrl: (url) => {
       const m = /github\.com\/([^/]+)\/([^/.]+)/.exec(String(url || ''));
       return m ? { owner: m[1], repo: m[2] } : null;
@@ -943,22 +947,13 @@ const PUSHED_BRANCH = {
   },
 };
 
-// The mirror is the FIRST rung of the branch path (task 153), and its
-// provenance read is a public GET of the fork repository. None of the
-// fixtures below stub that read, so on the real helper it fails CLOSED as
-// `platform_unavailable` — never with a thrown error, fakeFetch's refusal is
-// caught inside githubPublic — and the ladder falls through to the
-// cross-fork rungs those tests were written for. Tests ABOUT the ladder say
-// so explicitly with `withMirrorUnavailable`; tests about the mirror itself
-// stub it with `withStubbedMirror` further down.
+// Orchestration fixtures replace the public verification and the mirror;
+// the real transports and attribution checks have their own behavioral tests.
 function withMirrorUnavailable(fn, onCall) {
-  const headSvc = require('../src/services/external-agent-head');
-  const real = headSvc.mirrorForkBranch;
-  headSvc.mirrorForkBranch = async (args) => {
+  return withStubbedMirror(async (args) => {
     if (onCall) onCall(args);
     return { ok: false, code: 'platform_unavailable', message: 'no write credential', retryable: true };
-  };
-  return Promise.resolve(fn()).finally(() => { headSvc.mirrorForkBranch = real; });
+  }, fn);
 }
 
 function submitPool(queries, extra = []) {
@@ -967,6 +962,8 @@ function submitPool(queries, extra = []) {
     ['UPDATE chat_sessions SET external_agent', []],
     ['UPDATE external_agent_tasks', []],
     ...extra,
+    ['SELECT id, user_id, branch_name FROM chat_sessions', []],
+    ['SELECT id FROM chat_sessions WHERE app_id', []],
   ], queries);
 }
 
@@ -1654,10 +1651,16 @@ test('a mirror the platform wrote skips the PR-level owner check — a named PR 
   // Provenance is proven before the copy instead.
   assert.match(SRC, /if \(!platformOwnedHead\) \{/);
   assert.match(SRC, /const mismatch = attributionError\(pr, link\.login\);/);
-  // platformOwnedHead is only ever set on the two paths that WRITE a head.
-  const assignments = [...SRC.matchAll(/platformOwnedHead = (\w+);/g)]
-    .map((m) => m[1]).filter((n) => n !== 'null');
-  assert.deepEqual(assignments.sort(), ['applied', 'mirrored']);
+  // platformOwnedHead is only ever set from the head the conductor says it
+  // WROTE (openSubmission's platformBranch), and that is set on exactly the
+  // two paths that write one: the patch and the mirror.
+  const assignments = [...SRC.matchAll(/platformOwnedHead = (\S+)/g)].map((m) => m[1]);
+  assert.deepEqual(assignments, ['null;', '{']);
+  assert.match(SRC, /if \(opened\.platformBranch\) \{\n\s+platformOwnedHead = \{/);
+  const opening = SRC.slice(SRC.indexOf('async function openSubmission'), SRC.indexOf('// ── submit_work, UPDATE mode'));
+  const written = [...opening.matchAll(/via: '(\w+)', platformBranch: (\w+)\.branch/g)].map((m) => `${m[1]}:${m[2]}`);
+  assert.deepEqual(written.sort(), ['mirror:mirrored', 'patch:applied']);
+  assert.equal((opening.match(/platformBranch: null/g) || []).length, 2, 'an adopted or cross-fork PR wrote no head');
   // A caller-named prNumber takes the `pr` branch, which never assigns it.
   const prBranch = SRC.slice(SRC.indexOf('if (prNumber) {'), SRC.indexOf("via = 'pr';"));
   assert.doesNotMatch(prBranch, /platformOwnedHead =/);
@@ -2025,10 +2028,15 @@ test('a patch without a taskId is refused — there is no commit to apply it at'
 test('the caps run BEFORE a patch is applied, so a refusal leaves no branch', async () => {
   // Same guarantee the branch path has always had, extended to the path
   // that writes a commit with the platform's own credentials.
-  const capIndex = SRC.indexOf('checkPromotedCap');
-  const patchIndex = SRC.indexOf('externalAgentPatch.applyPatch');
+  // The patch is applied on a conductor (openSubmission), which submitWork
+  // asks for only after the cap.
+  const body = SRC.slice(SRC.indexOf('async function submitWorkLocked'));
+  const capIndex = body.indexOf('checkPromotedCap');
+  const patchIndex = body.indexOf('await submitOnConductor(deps');
   assert.ok(capIndex > 0 && patchIndex > 0);
   assert.ok(capIndex < patchIndex, 'the promoted-session cap is checked first');
+  assert.ok(SRC.indexOf('externalAgentPatch.applyPatch') > SRC.indexOf('async function openSubmission'),
+    'and the apply is the conductor\'s');
   // And it is the ONLY cap here: the connector-only proposal cap that used to
   // sit beside it counted a strict subset of the same queue, and held full
   // admins below the ceiling the browser gives them.
@@ -3091,10 +3099,15 @@ test('a caller-supplied branch is validated, then used in place of the suggestio
 test('the fork OWNER is always the linked login and is never taken from input', () => {
   // The anchor of the whole attribution gate. A caller may name a fork
   // REPOSITORY (agents fork under unexpected names) but never an owner.
-  assert.match(SRC, /const forkOwner = task \? task\.fork_owner : link\.login;/);
+  // The conductor's half (openSubmission) takes it from the task it read
+  // again, and checks it against the login it read again.
+  const opening = SRC.slice(SRC.indexOf('async function openSubmission'), SRC.indexOf('// ── submit_work, UPDATE mode'));
+  assert.match(opening, /const forkOwner = task\.fork_owner;/);
+  assert.match(opening, /expectedLogin: link\.login,/);
   const submitBody = SRC.slice(SRC.indexOf('async function submitWorkLocked'), SRC.indexOf('function prTitleFor'));
   assert.doesNotMatch(submitBody, /params\.forkOwner/);
   assert.doesNotMatch(submitBody, /forkOwner = callerForkOwner/);
+  assert.doesNotMatch(opening, /forkOwner: (?!forkOwner)/, 'no owner travels in the request');
 });
 
 // ── The mirror, through submitWork ─────────────────────────────────────
@@ -3104,8 +3117,19 @@ test('the fork OWNER is always the linked login and is never taken from input', 
 function withStubbedMirror(stub, fn) {
   const headSvc = require('../src/services/external-agent-head');
   const real = headSvc.mirrorForkBranch;
+  const realVerify = headSvc.verifyForkBranch;
   headSvc.mirrorForkBranch = stub;
-  return Promise.resolve(fn()).finally(() => { headSvc.mirrorForkBranch = real; });
+  headSvc.verifyForkBranch = async () => ({ ok: true, headSha: '89abcdef0123456789abcdef0123456789abcdef' });
+  return Promise.resolve(fn()).finally(() => { headSvc.mirrorForkBranch = real; headSvc.verifyForkBranch = realVerify; });
+}
+
+// A head the platform wrote and could not use is removed by name, on the
+// conductor (`work.discard`, external-agent-head removeBranch): recorded here.
+function withRemovedBranches(removed, fn) {
+  const headSvc = require('../src/services/external-agent-head');
+  const real = headSvc.removeBranch;
+  headSvc.removeBranch = async (args) => { removed.push(args); return true; };
+  return Promise.resolve(fn()).finally(() => { headSvc.removeBranch = real; });
 }
 
 test('the mirror is the first rung: the verified fork branch is copied and a same-repo PR opens', async () => {
@@ -3166,7 +3190,7 @@ test('the mirror is the first rung: the verified fork branch is copied and a sam
 });
 
 test('a mirrored branch the platform cannot import is removed, not left on the app', async () => {
-  let cleaned = false;
+  const removed = [];
   const gh = ghWithDiagnostics({
     findOpenPrByBranch: async () => null,
     createPR: async () => ({ number: 98, html_url: 'x', head: { repo: { owner: { login: 'usernode-bot' } } } }),
@@ -3174,22 +3198,23 @@ test('a mirrored branch the platform cannot import is removed, not left on the a
   const result = await withStubbedMirror(
     async () => ({
       ok: true, branch: 'usernode/from-someuser-t31-cafe', credential: 'pat',
-      cleanup: async () => { cleaned = true; },
+      cleanup: async () => { throw new Error('removed by name, on the conductor'); },
     }),
-    () => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
+    () => withRemovedBranches(removed, () => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
       { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
       {
         user: { id: 3 }, taskId: 31,
         importProposal: async () => ({ ok: false, status: 409, body: { error: 'already imported' } }),
       }
-    ))
+    )))
   );
   assert.equal(result.code, 'import_failed');
-  assert.equal(cleaned, true, 'a head the platform wrote and could not use is litter — remove it');
+  assert.deepEqual(removed, [{ owner: 'usernode-bot', repo: 'recipe-box', branch: 'usernode/from-someuser-t31-cafe' }],
+    'a head the platform wrote and could not use is litter — remove it');
 });
 
 test('a transient import failure keeps the mirrored head and open PR for a free retry', async () => {
-  let cleaned = false;
+  const removed = [];
   const gh = ghWithDiagnostics({
     findOpenPrByBranch: async () => null,
     createPR: async () => ({
@@ -3201,9 +3226,8 @@ test('a transient import failure keeps the mirrored head and open PR for a free 
   const result = await withStubbedMirror(
     async () => ({
       ok: true, branch: 'usernode/from-someuser-t31-fade', credential: 'pat',
-      cleanup: async () => { cleaned = true; },
     }),
-    () => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
+    () => withRemovedBranches(removed, () => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
       { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
       {
         user: { id: 3 }, taskId: 31,
@@ -3218,7 +3242,7 @@ test('a transient import failure keeps the mirrored head and open PR for a free 
           },
         }),
       }
-    ))
+    )))
   );
 
   assert.equal(result.code, 'import_failed');
@@ -3227,7 +3251,7 @@ test('a transient import failure keeps the mirrored head and open PR for a free 
   assert.equal(result.prNumber, 99);
   assert.equal(result.stage, 'visible_changes');
   assert.equal(result.field, 'visibleChanges');
-  assert.equal(cleaned, false, 'the PR head is the recovery handle, not litter');
+  assert.deepEqual(removed, [], 'the PR head is the recovery handle, not litter');
   assert.match(result.message, /PR #99 remains open/);
   assert.match(result.message, /slug "recipe-box" and prNumber 99/);
 });
@@ -3285,6 +3309,8 @@ test('slug + branch with no taskId finds the caller’s open work for that app',
   const created = [];
   const pool = fakePool([
     ["a.slug = $2 AND t.status = 'open'", [TASK_ROW]],
+    // The conductor reads the task it found again, by its id.
+    ["WHERE t.id = $1 AND t.user_id = $2 AND t.status = 'open'", [TASK_ROW]],
     ['UPDATE chat_sessions SET external_agent', []],
     ['UPDATE external_agent_tasks', []],
   ], queries);
@@ -5166,4 +5192,25 @@ test('reusing a work order moves it to the launchpad that asked', async () => {
   assert.ok(move, 'the existing order is re-pointed');
   assert.match(move.sql, /SET origin_session_id = \$3/);
   assert.deepEqual(move.params, [71, 3, 990404]);
+});
+
+test('a submission recovers its imported proposal after the import reply or task stamp was lost', async () => {
+  const removed = [];
+  const queries = [];
+  const branch = 'usernode/from-someuser-t31-cafe';
+  const gh = ghWithDiagnostics({
+    findOpenPrByBranch: async () => null,
+    createPR: async () => ({ number: 98, html_url: 'x', head: { repo: { owner: { login: 'usernode-bot' } } } }),
+  });
+  const result = await withStubbedMirror(async () => ({ ok: true, branch }), () => withRemovedBranches(removed,
+    () => withFetch(PUSHED_BRANCH, [], () => svc.submitWork({
+      pool: submitPool(queries, [['SELECT id, user_id, branch_name FROM chat_sessions', [{ id: 81, user_id: 3, branch_name: branch }]]]),
+      config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits,
+    }, { user: { id: 3 }, taskId: 31,
+      importProposal: async () => ({ ok: false, status: 409, body: { error: 'already imported' } }),
+    }))));
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.proposalId, 81);
+  assert.deepEqual(removed, []);
+  assert.ok(queries.some((q) => /SET status = 'submitted'/.test(q.sql) && q.params[1] === 81));
 });

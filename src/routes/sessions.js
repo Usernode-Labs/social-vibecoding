@@ -8,6 +8,7 @@ const log = require('../services/logger');
 const llm = require('../services/llm');
 const github = require('../services/github');
 const platformOperations = require('../services/platform-operations');
+const prSync = require('../services/pr-sync-operation');
 const proposalUpdate = require('../services/proposal-update');
 const webFetch = require('../services/web-fetch');
 const prMetadata = require('../services/pr-metadata');
@@ -2214,6 +2215,19 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             error: 'invalid_request', message: 'A proposal can link at most 50 issues.',
           } } };
         }
+        // On GitHub for the platform repository the body is a conductor's
+        // to write (services/pr-sync-operation.js), and it takes this lock
+        // itself: the links are stored here, the body asked for below.
+        if (prSync.onConductor(session.repo_url)) {
+          const stored = await proposalUpdate.storeLinkedIssues({ pool, session, addIssues, removeIssues });
+          const skipped = proposalUpdate.linkedIssuesSkipped(session);
+          return {
+            session,
+            result: { ...stored, prBodyUpdated: false, prBodyStatus: skipped || 'no_pr' },
+            project: !skipped,
+            admin: !owner,
+          };
+        }
         const repo = repoRef.ownerRepo(session.repo_url);
         const result = await proposalUpdate.updateLinkedIssues({
           pool,
@@ -2231,6 +2245,23 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.status(outcome.response.status).json(outcome.response.body);
       }
       const { session, result } = outcome;
+      if (outcome.project) {
+        const projected = await prSync.ask({
+          appId: session.app_id, userId: req.user.id, sessionId, write: 'issues',
+          addIssues, removeIssues, ...(outcome.admin ? { admin: true } : {}),
+        });
+        if (projected.ok) {
+          result.prBodyUpdated = !!projected.prBodyUpdated;
+          result.prBodyStatus = projected.prBodyStatus || 'github_unavailable';
+        } else {
+          // The links are stored; the body is still owed, as when GitHub
+          // could not take it, and asking again with the same deltas makes it.
+          result.prBodyStatus = 'github_unavailable';
+          log.warn('sessions', 'Linked issues stored; the pull request body was not updated', {
+            sessionId, status: projected.status || null, error: projected.error || null,
+          });
+        }
+      }
 
       if (result.changed) {
         try {
@@ -2315,7 +2346,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (!session) return res.status(404).json({ error: 'Session not found' });
 
       let githubUpdated = false;
-      if (session.pr_number) {
+      if (session.pr_number && prSync.onConductor(session.repo_url)) {
+        // GitHub's copy of the platform repository's pull request is a
+        // conductor's to write (services/pr-sync-operation.js), from the
+        // title stored above; it says whether GitHub took it.
+        const renamed = await prSync.ask({ appId: session.app_id, userId: req.user.id, sessionId, write: 'title' });
+        githubUpdated = renamed.ok === true && renamed.githubUpdated === true;
+        if (!renamed.ok) {
+          log.warn('sessions', 'Proposal title saved; its GitHub rename was not made', {
+            sessionId, prNumber: session.pr_number, status: renamed.status || null, error: renamed.error || null,
+          });
+        }
+      } else if (session.pr_number) {
         const fullRepo = proposalUpdate.repoNameFromUrl(session.repo_url);
         if (fullRepo) {
           const [owner, repo] = fullRepo.split('/');
@@ -3663,14 +3705,20 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // The unattended source remains PR-free. Once someone clones its code
       // into their own session, the inherited pushed diff belongs to a human
       // change and can be reviewed on a draft PR immediately.
+      // On GitHub for the platform repository it is a conductor's to open
+      // (services/pr-sync-operation.js), recorded here and opened once this
+      // answers; promoting the clone opens it too if it is not there yet.
       if (inheritedCodeBranch && ['code', 'spec_code'].includes(src.headless_outcome)) {
         try {
-          await prMetadata.applyPrMetadata({
-            pool, session, repoOwner, repoName,
-            userMessage: '', ccSummary: '', username: req.user.username,
-            userId: req.user.id, allowModelGeneration: false,
-            preferredTitle: cloneTitle || null,
-          });
+          if (prSync.onConductor(src.repo_url)) {
+            await prSync.append(pool, {
+              appId: src.app_id, userId: req.user.id, sessionId: session.id, write: 'create', from: 'clone',
+            });
+          } else {
+            await prSync.openMissingPr({
+              config, pool, session, owner: repoOwner, repo: repoName, from: 'clone', username: req.user.username,
+            });
+          }
         } catch (err) {
           log.warn('sessions', 'Draft PR creation deferred after headless clone', {
             sessionId: session.id, code: err.code || null, err: err.message,
@@ -6590,7 +6638,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // error) we broadcast `staging_failed` so the loader surfaces a concrete
       // reason.
       const { broadcastGlobal } = require('../services/ws');
-      stagingRecovery.rebuildSessionStaging({ config, pool, session, reason: 'preview-click' })
+      stagingRecovery.rebuildSessionStaging({ config, pool, session, reason: 'preview-click', requesterId: req.user.id })
         .then((result) => {
           if (result === 'skipped') {
             broadcastGlobal({

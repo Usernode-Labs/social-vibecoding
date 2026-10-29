@@ -102,6 +102,18 @@ function shareBranchName(userId) {
   return `${MIRROR_BRANCH_PREFIX}u${Number(userId) || 0}-s${nonce()}`;
 }
 
+// The names a submission's new head takes in the app's repository: a mirror
+// of the author's fork branch, or the branch a patch is applied onto. Minted
+// once by whoever keeps it (services/fork-operations.js keeps it as a step,
+// so a retry pushes to the same branch rather than making another).
+function mirrorBranchName(forkOwner, taskId) {
+  return `${MIRROR_BRANCH_PREFIX}${forkOwner}-t${Number(taskId) || 0}-${nonce()}`;
+}
+
+function patchBranchName(userId, taskId) {
+  return `${PATCH_BRANCH_PREFIX}u${Number(userId) || 0}-t${Number(taskId) || 0}-${nonce()}`;
+}
+
 function sameLogin(a, b) {
   return String(a || '').toLowerCase() === String(b || '').toLowerCase();
 }
@@ -294,6 +306,19 @@ async function verifyForkBranch({
   return { ok: true, headSha: String(headSha).toLowerCase(), ownerLogin: actualOwner };
 }
 
+function sourceMoved(headSha) {
+  return { ok: false, code: 'branch_moved', retryable: false, headSha,
+    message: 'The fork branch changed while this update was waiting. Read its current head and submit again.' };
+}
+
+async function checkFetchedSource(git, expectedSha) {
+  const { stdout } = await git(['rev-parse', 'FETCH_HEAD']);
+  const fetched = String(stdout).trim().toLowerCase();
+  if (fetched !== expectedSha) throw Object.assign(new Error('The source branch changed during fetch'), {
+    code: 'source_moved', headSha: fetched,
+  });
+}
+
 // ── The mirror ─────────────────────────────────────────────────────────
 //
 // Copy a verified branch out of the user's fork into the app's own repo,
@@ -303,8 +328,9 @@ async function verifyForkBranch({
 // leave a stray branch on somebody's app.
 async function mirrorForkBranch({
   gh, githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
-  baseSha, taskId, targetBranch,
+  baseSha, taskId, targetBranch, expectedSourceSha = null,
 }) {
+  require('./code-host-write').requireCodeHostWrite('external-agent-head.mirrorForkBranch');
   // `targetBranch` names a branch the CALLER already recorded — #1347's share
   // path, where the session row is written before the commits land and has to
   // carry the name the landing will use. Without it the name is minted below,
@@ -330,6 +356,7 @@ async function mirrorForkBranch({
     githubPublic, forkOwner, forkRepo, branch, expectedLogin,
   });
   if (!verified.ok) return verified;
+  if (expectedSourceSha && verified.headSha !== String(expectedSourceSha).toLowerCase()) return sourceMoved(verified.headSha);
 
   // The recorded base commit is the platform's own value, so "is this
   // actually built on the work we handed out?" is answerable and worth
@@ -363,7 +390,10 @@ async function mirrorForkBranch({
     }
   }
 
-  const mirrorBranch = targetBranch || `${MIRROR_BRANCH_PREFIX}${forkOwner}-t${taskId || 0}-${nonce()}`;
+  // A name already holding the fork's commit (an earlier try of the same
+  // request whose answer was lost) takes the same push again: git answers
+  // that it is up to date.
+  const mirrorBranch = targetBranch || mirrorBranchName(forkOwner, taskId);
   let credential;
   try {
     credential = await resolveWriteCredential(owner);
@@ -384,10 +414,12 @@ async function mirrorForkBranch({
       // not do.
       await git(['fetch', '--depth', '1', '--no-tags',
         sourceCloneUrl(forkOwner, forkRepo), branch]);
+      await checkFetchedSource(git, verified.headSha);
       await git(['push', appRemote(owner, repo),
         `FETCH_HEAD:refs/heads/${mirrorBranch}`], { credential });
     });
   } catch (err) {
+    if (err.code === 'source_moved') return sourceMoved(err.headSha);
     log.error('external-agent-head', 'mirror push failed', {
       owner, repo, forkOwner, credential: credential.source,
       err: redactToken(err && err.message, credential.token),
@@ -436,8 +468,9 @@ const UPDATE_FETCH_DEPTH = 50;
 
 async function pushForkBranchToAppBranch({
   githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
-  targetBranch, expectedRemoteSha, sessionId,
+  targetBranch, expectedRemoteSha, sessionId, expectedSourceSha = null,
 }) {
+  require('./code-host-write').requireCodeHostWrite('external-agent-head.pushForkBranchToAppBranch');
   // THE ATTRIBUTION GATE, unchanged and unrelaxed. This path writes into the
   // app's own repository with the platform's credentials on behalf of a
   // proposal that is already up for a vote, so if anything it matters more
@@ -446,6 +479,7 @@ async function pushForkBranchToAppBranch({
     githubPublic, forkOwner, forkRepo, branch, expectedLogin,
   });
   if (!verified.ok) return verified;
+  if (expectedSourceSha && verified.headSha !== String(expectedSourceSha).toLowerCase()) return sourceMoved(verified.headSha);
 
   if (!validRef(targetBranch)) {
     return { ok: false, code: 'invalid_request', message: 'That proposal branch name is not a valid git ref.' };
@@ -492,11 +526,22 @@ async function pushForkBranchToAppBranch({
         });
         await git(['fetch', '--no-tags', forkUrl, branch]);
       }
-      await git(['push', `--force-with-lease=${lease}`,
-        appRemote(owner, repo),
-        `FETCH_HEAD:refs/heads/${targetBranch}`], { credential });
+      await checkFetchedSource(git, verified.headSha);
+      try {
+        await git(['push', `--force-with-lease=${lease}`,
+          appRemote(owner, repo),
+          `FETCH_HEAD:refs/heads/${targetBranch}`], { credential });
+      } catch (err) {
+        // The lease no longer holds because the branch already IS what this
+        // push would make it: an earlier try of the same request landed and
+        // its answer was lost (services/fork-operations.js retries from its
+        // last step). That push is this one, not a branch somebody moved.
+        if (await remoteHolds(git, appRemote(owner, repo), targetBranch, credential)) return;
+        throw err;
+      }
     });
   } catch (err) {
+    if (err.code === 'source_moved') return sourceMoved(err.headSha);
     // Redacted twice on purpose, once for the classification below and once at
     // the log call itself. The remote URL carries no token any more, but a
     // redaction applied at the log line is one a reader (and
@@ -545,20 +590,57 @@ async function pushForkBranchToAppBranch({
   return { ok: true, headSha: verified.headSha, credential: credential.source };
 }
 
+// Whether `branch` at `remote` (the app repository the push went to) is at
+// the commit this scratch repo fetched (FETCH_HEAD, or HEAD for a patch's
+// commit): the read a push whose lease failed makes before it calls the
+// branch moved. Any failure to read answers no, which leaves the refusal as
+// it was.
+async function remoteHolds(git, remoteUrl, branch, credential, rev = 'FETCH_HEAD') {
+  try {
+    const { stdout: local } = await git(['rev-parse', rev]);
+    const { stdout: remote } = await git(['ls-remote', remoteUrl, `refs/heads/${branch}`], { credential });
+    const sha = String(remote || '').trim().split(/\s+/)[0];
+    return !!sha && sha.toLowerCase() === String(local || '').trim().toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 // Best-effort removal of a branch this module wrote. Never throws: it runs
 // on a path that is already failing, and a leftover branch is a smaller
 // problem than a masked error. `credential` is resolveWriteCredential's.
 async function deleteBranch({ owner, repo, branch, credential }) {
+  require('./code-host-write').requireCodeHostWrite('external-agent-head.deleteBranch');
   try {
     await withScratchRepo('cleanup', async ({ git }) => {
       await git(['push', appRemote(owner, repo), '--delete', branch], { credential });
     });
     log.info('external-agent-head', 'removed branch after a failed submission', { owner, repo, branch });
+    return true;
   } catch (err) {
+    if (/remote ref does not exist/i.test(String(err.stderr || err.message))) return true;
     log.warn('external-agent-head', 'could not remove branch after a failed submission', {
       owner, repo, branch, err: redactToken(err && err.message, credential && credential.token),
     });
+    return false;
   }
+}
+
+// The same, for a caller that holds no credential of its own: a branch a
+// submission wrote and could not use (services/fork-operations.js
+// `work.discard`, and the submission's own cleanup). Never throws either.
+async function removeBranch({ owner, repo, branch }) {
+  require('./code-host-write').requireCodeHostWrite('external-agent-head.removeBranch');
+  let credential;
+  try {
+    credential = await resolveWriteCredential(owner);
+  } catch (err) {
+    log.warn('external-agent-head', 'could not remove branch after a failed submission: no write credential', {
+      owner, repo, branch, err: err && err.message,
+    });
+    return false;
+  }
+  return deleteBranch({ owner, repo, branch, credential });
 }
 
 // git's error text names the remote, and before the credential helper the
@@ -579,6 +661,8 @@ module.exports = {
   nonce,
   isMirrorNamespace,
   shareBranchName,
+  mirrorBranchName,
+  patchBranchName,
   sameLogin,
   validSegment,
   validRef,
@@ -587,8 +671,11 @@ module.exports = {
   sourceCloneUrl,
   withScratchRepo,
   verifyForkBranch,
+  sourceMoved,
   mirrorForkBranch,
   pushForkBranchToAppBranch,
   deleteBranch,
+  removeBranch,
+  remoteHolds,
   redactToken,
 };

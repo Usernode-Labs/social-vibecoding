@@ -261,6 +261,7 @@ async function commitShas(owner, repo, number, { cap = 300 } = {}) {
 
 /** Merge it, squashed, at exactly `sha` when given (services/native-merge.js). */
 async function merge(owner, repo, number, sha = null) {
+  require('./code-host-write').requireCodeHostWrite('native-pulls.merge');
   return require('./native-merge').squashMerge({ owner, repo, number, pinnedSha: sha });
 }
 

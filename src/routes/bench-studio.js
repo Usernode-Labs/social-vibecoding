@@ -22,6 +22,12 @@
 //       spends the platform's money: it must name its cap, and a cap over
 //       CONNECTOR_CONFIRM_CAP_USD needs `confirmLargeCap`.
 //
+// A reference build's writes to the studio's host repository (its first
+// commit, its push and its branch) are a conductor's
+// (services/bench-reference-operation.js): the reference order asks for the
+// first commit and answers as it did, and a hand-in answers its own checks,
+// asks, and answers what the conductor answers.
+//
 // Watching is open by design (the person driving a studio run chooses what to
 // change next); a classic run's per-trial reads are refused while it waits
 // for the judge (studio.trialRows, studio.trialDetail), so blind grading
@@ -38,6 +44,8 @@ const packs = require('../services/bench/packs');
 const data = require('../services/bench/connector-data');
 const suites = require('../services/bench/suites');
 const taste = require('../services/bench/taste');
+const platformOperations = require('../services/platform-operations');
+const flows = require('../services/git-host-flows');
 
 const CONSOLE = '/api/admin/homeroom-bot/bench/studio';
 const CONNECTOR_CONFIRM_CAP_USD = 100;
@@ -161,7 +169,7 @@ function benchStudioRoutes(config) {
     const id = idParam(req.params.id);
     const taskId = idParam(req.query?.taskId);
     if (!id || !taskId) return bad('runId and taskId are required');
-    return studio.referenceOrder(pool, config, { runId: id, taskId, packId: Number(req.query?.packId) || 0 });
+    return studio.referenceOrder(pool, config, { runId: id, taskId, packId: Number(req.query?.packId) || 0, userId: req.user.id });
   }));
   router.post('/api/bot-studio/launch', requireAdminWrite, benchRunLimiter, sameOriginBrowserOnly, handler('Studio launch (connector)', launch('connector')));
   router.post('/api/bot-studio/runs/:id/references', requireAdminWrite, benchStudioLimiter, sameOriginBrowserOnly, handler('Studio reference (connector)', async (req) => {
@@ -169,12 +177,20 @@ function benchStudioRoutes(config) {
     const b = req.body || {};
     const taskId = idParam(b.taskId);
     if (!id || !taskId) return bad('runId and taskId are required');
-    const out = await studio.submitReference(pool, config, {
-      runId: id, taskId, packId: Number(b.packId) || 0, label: b.label, patch: b.patch || null, repo: b.repo || null,
-      branch: b.branch || null, user: req.user,
+    const packId = Number(b.packId) || 0;
+    const patch = b.patch || null;
+    const branch = b.branch || null;
+    const checked = await studio.referencePrecheck(pool, config, { runId: id, taskId, packId, label: b.label, patch, branch, userId: req.user.id });
+    if (!checked.ok) return checked;
+    const out = await platformOperations.request({
+      op: 'bench.reference', userId: req.user.id, input: { runId: id, taskId, packId },
+      payload: { label: b.label ?? null, ...(patch ? flows.patchPayload(patch) : {}), repo: b.repo || null, branch },
     });
     if (out.ok) log.info('bench', 'Studio reference handed in', { by: req.user.username, runId: id, taskId, trialId: out.trialId, label: out.label });
-    return out;
+    // A run that failed for good is the throw it replaces.
+    if (!out.ok && (out.status || 500) === 500 && !out.code) return { ok: false, status: 500, error: 'Internal server error' };
+    const { requestId: _requestId, ...answer } = out;
+    return answer;
   }));
   router.post('/api/bot-studio/trials/:id/rerun', requireAdminWrite, benchStudioLimiter, sameOriginBrowserOnly, handler('Studio rerun (connector)', trialAct('rerun')));
   router.post('/api/bot-studio/trials/:id/cancel', requireAdminWrite, benchStudioLimiter, sameOriginBrowserOnly, handler('Studio cancel (connector)', trialAct('cancel')));

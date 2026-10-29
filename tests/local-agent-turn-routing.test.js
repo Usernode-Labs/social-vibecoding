@@ -57,9 +57,11 @@ const db = {
       id: 42, status: 'active', branch_name: 'dev/x', session_title: 'Add a button',
       handoff_base_sha: null, checks_commit_sha: null, handoff_uploaded_sha: null,
       agent_session_id: null, is_headless: false, source: 'cli_handoff',
-      app_slug: 'demo-app', repo_url: 'https://github.com/o/r',
+      app_id: 3, app_slug: 'demo-app', repo_url: 'https://github.com/o/r',
     };
     this.updated = null;
+    // How many more reads of the lease find it (null: every one).
+    this.leaseReads = null;
   },
 };
 
@@ -83,6 +85,10 @@ const pool = {
     }
     if (/UPDATE cli_access_tokens/.test(sql)) return { rows: [] };
     if (/FROM session_agent_leases/.test(sql)) {
+      if (db.leaseReads !== null) {
+        if (db.leaseReads <= 0) return { rows: [] };
+        db.leaseReads -= 1;
+      }
       return { rows: db.lease ? [db.lease] : [] };
     }
     if (/INSERT INTO session_agent_leases/.test(sql)) {
@@ -511,4 +517,62 @@ test('the agent prefix is denied to the generic MCP api_read/api_write bridge', 
     assert.equal(policy.isCliApiPath(path), false, path);
   }
   assert.ok(policy.DENIED_PREFIXES.includes('/api/cli'));
+});
+
+// ── commit upload: the conductor's ─────────────────────────────────────────
+//
+// SEC-09: the commit and the turn's new head are written on a conductor
+// (`proposal.commit`, services/proposal-commit-operation.js), run here in this
+// process (tests/lib/inline-operations.js). The route keeps its checks and
+// answers as it did; the conductor reads the lease and the turn again.
+
+const COMMIT_BODY = {
+  leaseId: '7', schemaVersion: 1,
+  localCommitSha: 'd'.repeat(40), parentSha: 'a'.repeat(40), parentTreeSha: 'b'.repeat(40), treeSha: 'c'.repeat(40),
+  message: 'Add the button', authoredAt: '2026-08-06T00:00:00Z', committedAt: '2026-08-06T00:00:00Z',
+  files: [{ path: 'x.js', mode: '100644', contentBase64: 'eA==' }],
+};
+
+function commitHarness(t) {
+  const { inlineOperations } = require('./lib/inline-operations');
+  const github = require('../src/services/github');
+  const uploads = [];
+  t.mock.method(github, 'isEnabled', () => true);
+  t.mock.method(github, 'createProposalCommit', async (owner, repo, args) => {
+    uploads.push({ owner, repo, ...args });
+    return { sha: 'e'.repeat(40), treeSha: args.expectedTreeSha, previousSha: args.expectedRemoteParentSha, localParentSha: args.localParentSha, created: true };
+  });
+  const restore = inlineOperations({ pool: () => pool, user: () => ({ id: 5, username: 'dev' }) });
+  t.after(restore);
+  return { uploads, inputs: restore.inputs };
+}
+
+test('a build turn\'s commit is made on the conductor and becomes the turn\'s head', async (t) => {
+  const { uploads, inputs } = commitHarness(t);
+  db.turn.base_sha = 'a'.repeat(40);
+  const r = await call('POST', '/api/cli/agent/turns/11/commit', COMMIT_BODY);
+  assert.equal(r.status, 201, JSON.stringify(r.json));
+  assert.deepEqual(r.json, { headSha: 'e'.repeat(40), treeSha: 'c'.repeat(40), branch: 'dev/x', uploaded: true });
+  assert.equal(uploads.length, 1);
+  assert.equal(uploads[0].owner, 'o');
+  assert.equal(uploads[0].branchName, 'dev/x');
+  assert.equal(uploads[0].expectedRemoteParentSha, 'a'.repeat(40), 'from the turn\'s base');
+  assert.equal(uploads[0].message, 'Add the button');
+  assert.deepEqual(uploads[0].files, COMMIT_BODY.files);
+  assert.match(db.updated.sql, /SET head_sha = \$3/);
+  assert.deepEqual(db.updated.params, ['11', '7', 'e'.repeat(40)]);
+  assert.equal(inputs.size, 0, 'the files are dropped once committed');
+});
+
+test('a lease lost between the route and the conductor refuses the commit before it is made', async (t) => {
+  const { uploads, inputs } = commitHarness(t);
+  db.turn.base_sha = 'a'.repeat(40);
+  // The route's own read finds it; the conductor's does not.
+  db.leaseReads = 1;
+  const r = await call('POST', '/api/cli/agent/turns/11/commit', COMMIT_BODY);
+  assert.equal(r.status, 409);
+  assert.equal(r.json.error, 'lease_lost');
+  assert.equal(uploads.length, 0, 'nothing reached the code host');
+  assert.equal(db.updated, null, 'the turn row was not advanced');
+  assert.equal(inputs.size, 0, 'no files kept');
 });

@@ -164,25 +164,38 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
     assert.equal((await studio.watchRun(pool, 99999)).status, 404);
   });
 
+  // The studio's writes to its host repository are a conductor's
+  // (services/bench-reference-operation.js), run here in the test's process.
+  const operations = require('../src/services/platform-operations');
+  const benchOperation = require('../src/services/bench-reference-operation');
+  const { inlineOperations } = require('./lib/inline-operations');
+  const kernelSteps = require('../src/workflow/kernel/steps.ts');
+  const scaffoldGithub = { calls: [], createRootCommit: async () => SHA('a'), deleteBenchBranch: async () => {}, ensureBranchAtSha: async () => {} };
+  const priorDeps = benchOperation._setDepsForTests({
+    github: scaffoldGithub,
+    makeSketch: async () => ({ design: { kind: 'card', emoji: '🍞', tagline: 'Bread by the gram', points: ['Pick a bread'] }, model: 'm' }),
+  });
+  t.after(() => benchOperation._setDepsForTests(priorDeps));
+
   let order;
-  await t.test('a reference order waits for the first commit, then hands it out with the pack', async () => {
+  await t.test('a reference order asks a conductor for the first commit, then hands it out with the pack', async () => {
     const taskId = launched.briefs[0].taskId;
     assert.equal((await studio.referenceOrder(pool, {}, { runId: run.id, taskId, packId: 4242 })).status, 400, 'a pack the run was not launched with');
-    const github = { createRootCommit: async () => SHA('a'), deleteBenchBranch: async () => {}, ensureBranchAtSha: async () => {} };
-    const waiting = await studio.referenceOrder(pool, {}, {
-      runId: run.id, taskId, packId: pack.id,
-      deps: { github, makeSketch: async () => ({ design: { kind: 'card', emoji: '🍞', tagline: 'Bread by the gram', points: ['Pick a bread'] }, model: 'm' }) },
-    });
-    assert.equal(waiting.ok, true);
-    assert.equal(waiting.ready, false);
+    const conductor = inlineOperations({ pool: () => pool, user: () => ({ id: evan.id, username: 'evan', isAdmin: true }) });
     let ready = null;
-    for (let i = 0; i < 50 && !ready; i += 1) {
-      // eslint-disable-next-line no-await-in-loop
+    try {
+      const waiting = await studio.referenceOrder(pool, {}, { runId: run.id, taskId, packId: pack.id, userId: evan.id });
+      assert.equal(waiting.ok, true);
+      assert.equal(waiting.ready, false);
+      assert.equal(await scaffold.readyFor(pool, { runId: run.id, taskId, packId: pack.id }), null, 'the order itself writes nothing');
+      const [made] = await conductor.drain();
+      assert.equal(made.ok, true, JSON.stringify(made));
+      assert.equal(made.made, true);
       ready = await scaffold.readyFor(pool, { runId: run.id, taskId, packId: pack.id });
-      // eslint-disable-next-line no-await-in-loop
-      if (!ready) await new Promise((r) => { setTimeout(r, 50); });
+    } finally {
+      conductor();
     }
-    assert.ok(ready, 'the first commit was made in the background');
+    assert.ok(ready, 'the first commit was made on the conductor');
     const out = await studio.referenceOrder(pool, {}, { runId: run.id, taskId, packId: pack.id });
     assert.equal(out.ready, true);
     order = out.order;
@@ -198,16 +211,32 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
     assert.ok(watch.firstCommits.some((f) => f.taskId === taskId && f.packId === pack.id && f.status === 'ready'));
   });
 
+  async function submitReference({ deps = {}, ...given }) {
+    const request = { op: 'bench.reference', requestId: crypto.randomUUID(), appId: null, userId: given.user.id,
+      input: { runId: given.runId, taskId: given.taskId, packId: given.packId || 0 } };
+    const prior = benchOperation._setDepsForTests(deps);
+    await operations.keepInput(pool, request, { label: given.label,
+      ...(given.patch ? { patchB64: Buffer.from(given.patch).toString('base64') } : {}),
+      repo: given.repo || null, branch: given.branch || null });
+    try { return await operations.run({ pool, config: {} }, request); }
+    finally { benchOperation._setDepsForTests(prior); await operations.dropInput(pool, request.requestId); }
+  }
+
   let refTrial;
   await t.test('a reference handed in is a trial of its own; the same label again is its next attempt', async () => {
     const taskId = launched.briefs[0].taskId;
     const common = { runId: run.id, taskId, packId: pack.id, user: { id: evan.id } };
-    assert.equal((await studio.submitReference(pool, {}, { ...common, label: 'Ref V1', patch: 'x' })).status, 400);
-    assert.equal((await studio.submitReference(pool, {}, { ...common, label: 'ref-v1', patch: 'x', branch: 'b' })).status, 400);
-    const notLinked = await studio.submitReference(pool, {}, {
+    assert.equal((await submitReference({ ...common, label: 'Ref V1', patch: 'x' })).status, 400);
+    assert.equal((await submitReference({ ...common, label: 'ref-v1', patch: 'x', branch: 'b' })).status, 400);
+    const notLinked = await submitReference({
       ...common, label: 'ref-v1', repo: 'bread', branch: 'main', deps: { githubLink: { linkStatus: async () => ({ linked: false }) } },
     });
     assert.equal(notLinked.code, 'github_not_linked');
+    const notOwned = await submitReference({ ...common, label: 'ref-v1', repo: 'bread', branch: 'main', deps: {
+      githubLink: { linkStatus: async () => ({ linked: true, login: 'evan' }) },
+      head: { verifyForkBranch: async () => ({ ok: false, code: 'fork_mismatch', message: 'Not your branch' }) },
+    } });
+    assert.equal(notOwned.status, 400, 'the verification refusal keeps its caller-visible status');
     const { rows: [{ n: left }] } = await pool.query("SELECT COUNT(*)::int AS n FROM bench_trials WHERE status = 'awaiting'");
     assert.equal(left, 0, 'a refused hand-in leaves nothing behind');
 
@@ -217,7 +246,7 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
       github: { ensureBranchAtSha: async (o, r, branch, sha) => { pins.push([branch, sha]); } },
     };
     const patch = `From ${SHA('1')} Mon Sep 17 00:00:00 2001\nSubject: one\n\nFrom ${SHA('2')} Mon Sep 17 00:00:00 2001\nSubject: two\n`;
-    const v1 = await studio.submitReference(pool, {}, { ...common, label: 'ref-v1', patch, deps: refDeps });
+    const v1 = await submitReference({ ...common, label: 'ref-v1', patch, deps: refDeps });
     assert.equal(v1.ok, true, v1.error);
     assert.equal(v1.attempt, 1);
     assert.equal(v1.commits, 2);
@@ -225,7 +254,7 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
     assert.deepEqual(pins, [[`bench/r${run.id}-t${v1.trialId}`, SHA('b')]]);
     const { rows: [row] } = await pool.query('SELECT status, capture_sha, reference_label, context_pack_id, base_sha FROM bench_trials WHERE id = $1', [v1.trialId]);
     assert.deepEqual(row, { status: 'pending', capture_sha: SHA('b'), reference_label: 'ref-v1', context_pack_id: pack.id, base_sha: SHA('a') });
-    const v1b = await studio.submitReference(pool, {}, { ...common, label: 'ref-v1', patch, deps: refDeps });
+    const v1b = await submitReference({ ...common, label: 'ref-v1', patch, deps: refDeps });
     assert.equal(v1b.attempt, 2);
     refTrial = v1.trialId;
     const watch = await studio.watchRun(pool, run.id);
@@ -234,6 +263,117 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
     assert.equal(ref.armLabel, 'reference ref-v1 + warm theme v2');
     const again = await studio.referenceOrder(pool, {}, { runId: run.id, taskId, packId: pack.id });
     assert.deepEqual(again.order.references.map((x) => x.label), ['ref-v1', 'ref-v1']);
+  });
+
+  await t.test('a first commit another request is making is not waited for; a retried request takes its own claim over', async () => {
+    const taskId = launched.briefs[0].taskId;
+    // Pack 0 of the same brief: nobody has made its first commit yet.
+    await pool.query("INSERT INTO bench_scaffolds (run_id, task_id, context_pack_id, claimed_by) VALUES ($1, $2, NULL, 'op:another')", [run.id, taskId]);
+    const requestId = crypto.randomUUID();
+    const request = { op: 'bench.scaffold', requestId, appId: null, userId: evan.id, input: { runId: run.id, taskId, packId: 0 } };
+    const started = Date.now();
+    const busy = await operations.run({ pool, config: {} }, request);
+    assert.equal(busy.ok, true);
+    assert.equal(busy.made, false, 'another request\'s claim, fresh: left to it');
+    assert.ok(Date.now() - started < 5000, 'and not waited for');
+    // This request's own claim (an earlier attempt that died making it).
+    await pool.query("UPDATE bench_scaffolds SET claimed_by = $3 WHERE run_id = $1 AND task_id = $2 AND context_pack_id IS NULL", [run.id, taskId, `op:${requestId}`]);
+    const mine = await operations.run({ pool, config: {} }, request);
+    assert.equal(mine.made, true, JSON.stringify(mine));
+    assert.equal((await scaffold.readyFor(pool, { runId: run.id, taskId, packId: null })).sha, SHA('a'));
+    // A requester who is no longer a full admin asks nothing.
+    await pool.query('UPDATE users SET admin_readonly = TRUE WHERE id = $1', [evan.id]);
+    try {
+      assert.equal((await operations.run({ pool, config: {} }, { ...request, requestId: crypto.randomUUID() })).status, 403);
+    } finally {
+      await pool.query('UPDATE users SET admin_readonly = FALSE WHERE id = $1', [evan.id]);
+    }
+  });
+
+  await t.test('a hand-in on a conductor retried after its push and its pin writes neither again', async () => {
+    const taskId = launched.briefs[0].taskId;
+    const calls = { apply: 0, pin: 0 };
+    benchOperation._setDepsForTests({
+      applyPatch: async () => { calls.apply += 1; return { ok: true, headSha: SHA('c'), branch: 'usernode/patch-x', cleanup: () => {} }; },
+      github: { ensureBranchAtSha: async () => { calls.pin += 1; } },
+    });
+    let failReady = true;
+    let loseTrial = true;
+    let loseReady = true;
+    let loseCleanup = true;
+    const flaky = {
+      async query(sql, params) {
+        if (failReady && /UPDATE bench_trials SET status = 'pending'/.test(String(sql))) { failReady = false; return Promise.reject(new Error('connection reset')); }
+        const out = await pool.query(sql, params);
+        if (loseTrial && /INSERT INTO bench_trials/.test(String(sql))) { loseTrial = false; throw new Error('lost trial reply'); }
+        if (loseReady && /UPDATE bench_trials SET status = 'pending'/.test(String(sql))) {
+          loseReady = false;
+          await asTransition(pool, "UPDATE bench_trials SET status = 'running' WHERE id = $1", [params[0]]);
+          throw new Error('lost ready reply');
+        }
+        if (loseCleanup && /DELETE FROM platform_operation_inputs/.test(String(sql))) { loseCleanup = false; throw new Error('lost cleanup reply'); }
+        return out;
+      },
+    };
+    const requestId = crypto.randomUUID();
+    const request = { op: 'bench.reference', requestId, appId: null, userId: evan.id, input: { runId: run.id, taskId, packId: pack.id } };
+    await operations.keepInput(pool, request, { label: 'ref-retry', patchB64: Buffer.from(`From ${SHA('3')} Mon Sep 17 00:00:00 2001\n`).toString('base64'), repo: null, branch: null });
+    let saved = null;
+    const steps = (attempt) => kernelSteps.steps({ resumeFrom: saved, attempt, triesLeft: 3, checkpoint: async (v) => { saved = v; } });
+    await assert.rejects(operations.run({ pool: flaky, config: {} }, request, steps(1)), /lost trial reply/);
+    await assert.rejects(operations.run({ pool: flaky, config: {} }, request, steps(2)), /connection reset/);
+    await assert.rejects(operations.run({ pool: flaky, config: {} }, request, steps(3)), /lost ready reply/);
+    await assert.rejects(operations.run({ pool: flaky, config: {} }, request, steps(4)), /lost cleanup reply/);
+    const out = await operations.run({ pool: flaky, config: {} }, request, steps(5));
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.deepEqual(calls, { apply: 1, pin: 1 }, 'one push, one pin');
+    const { rows } = await pool.query("SELECT id, status, capture_sha FROM bench_trials WHERE run_id = $1 AND reference_label = 'ref-retry'", [run.id]);
+    assert.deepEqual(rows.map((r) => [Number(r.id), r.status, r.capture_sha]), [[out.trialId, 'running', SHA('c')]], 'one trial');
+    assert.equal(await operations.inputOf(pool, requestId), null, 'the hand-in is dropped once answered');
+  });
+
+  await t.test('a branch reference keeps its source across interrupted copies', async (t) => {
+    for (const stopAt of ['copied-source', 'copied']) {
+      await t.test(stopAt, async () => {
+        let source = SHA('d'); let remote = null; let copies = 0; let saved = null; let lose = true;
+        const target = { runId: run.id, taskId: launched.briefs[0].taskId, packId: pack.id };
+        const prior = benchOperation._setDepsForTests({
+          githubLink: { linkStatus: async () => ({ linked: true, login: 'evan' }) },
+          head: { verifyForkBranch: async () => ({ ok: true, headSha: source }) },
+          github: {
+            getBranchSha: async () => { if (!remote) throw Object.assign(new Error('Absent'), { status: 404 }); return remote; },
+            compareCommitAncestry: async (_o, _r, base, head) => { assert.equal(head, SHA('d')); return { aheadBy: 2 }; },
+          },
+          copyUserBranch: async (args) => {
+            assert.equal(args.expectedSourceSha, SHA('d'));
+            copies += 1; remote = source;
+            return { ok: true, headSha: remote, commits: 2 };
+          },
+        });
+        try {
+          const request = { op: 'bench.reference', requestId: crypto.randomUUID(), appId: null, userId: evan.id, input: target };
+          await operations.keepInput(pool, request, { label: stopAt, repo: 'evan/bread', branch: 'work' });
+          const item = () => kernelSteps.steps({ resumeFrom: saved, triesLeft: 3, checkpoint: async (value) => {
+            if (lose && Object.hasOwn(value, stopAt)) {
+              lose = false;
+              if (stopAt === 'copied-source') saved = value;
+              throw new kernelSteps.StepsStopped();
+            }
+            saved = value;
+          } });
+          await assert.rejects(operations.run({ pool, config: {} }, request, item()), kernelSteps.isStopped);
+          source = SHA('e');
+          const out = await operations.run({ pool, config: {} }, request, item());
+          if (stopAt === 'copied-source') {
+            assert.equal(out.code, 'branch_moved'); assert.equal(out.status, 409); assert.equal(copies, 0);
+          } else {
+            assert.equal(out.ok, true, JSON.stringify(out)); assert.equal(out.sha, SHA('d')); assert.equal(out.commits, 2); assert.equal(copies, 1);
+            const { rows: [trial] } = await pool.query('SELECT capture_sha, status FROM bench_trials WHERE id = $1', [out.trialId]);
+            assert.deepEqual(trial, { capture_sha: SHA('d'), status: 'pending' });
+          }
+        } finally { benchOperation._setDepsForTests(prior); }
+      });
+    }
   });
 
   await t.test('a re-run is the arm\'s next attempt; a build is kept only while it has a branch', async () => {

@@ -217,3 +217,72 @@ test('a declared secret\'s value goes with its proposal, so one still opening ke
   assert.deepEqual(applied, { valueApplied: true });
   assert.equal(appSecrets.setValue.mock.calls[0].arguments[3], 's3cret');
 });
+
+test('in a route test, a request\'s payload travels beside it and its run reads and drops it (tests/lib/inline-operations.js)', async (t) => {
+  const { inlineOperations } = require('./lib/inline-operations');
+  const seen = [];
+  operations.OPERATIONS.set('test.payload', () => ({
+    authorize: async () => null,
+    run: async ({ pool }, request) => {
+      const payload = await operations.inputOf(pool, request.requestId);
+      seen.push(request);
+      await operations.dropInput(pool, request.requestId);
+      return { size: payload ? payload.patch.length : null };
+    },
+  }));
+  t.after(() => operations.OPERATIONS.delete('test.payload'));
+  // No database at all: the helper keeps payloads itself.
+  const conductor = inlineOperations({
+    pool: () => ({ query: async () => { throw new Error('no database in this test'); } }),
+    user: () => ({ id: 7, username: 'maya' }),
+  });
+  t.after(conductor);
+
+  const patch = 'x'.repeat(MAX_INPUT_BYTES * 2);
+  const out = await operations.request({ op: 'test.payload', userId: 7, input: { n: 1 }, payload: { patch } });
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.equal(out.size, patch.length);
+  assert.deepEqual(Object.keys(seen[0]).sort(), ['appId', 'input', 'op', 'requestId', 'userId'], 'never in the request');
+  assert.equal(conductor.inputs.size, 0, 'dropped by its run');
+
+  const requestId = randomUUID();
+  assert.equal((await operations.request({ op: 'test.payload', userId: 7, input: {}, requestId, payload: { patch: 'ab' } })).requestId, requestId);
+  conductor.refuseNext();
+  assert.equal((await operations.request({ op: 'test.payload', userId: 7, input: {}, payload: { patch: 'cd' } })).status, 503);
+  assert.equal(conductor.inputs.size, 0, 'a refused request keeps nothing');
+
+  const admitted = randomUUID();
+  const ticket = await operations.admit(null, { op: 'test.payload', userId: 7, requestId: admitted, input: {}, payload: { patch: 'efg' } });
+  assert.deepEqual(conductor.inputs.get(admitted), { patch: 'efg' }, 'kept with the request');
+  assert.deepEqual(await ticket.settle(), { status: 'accepted' });
+  assert.deepEqual(await conductor.drain(), [{ ok: true, size: 3 }]);
+  assert.equal(conductor.inputs.size, 0);
+
+  conductor.refuseNext();
+  const lost = randomUUID();
+  const refused = await operations.admit(null, { op: 'test.payload', userId: 7, requestId: lost, input: {}, payload: { patch: 'h' } });
+  assert.equal((await refused.settle()).status, 'refused');
+  assert.equal(conductor.inputs.has(lost), false, 'dropped once refused');
+  assert.deepEqual(await conductor.drain(), []);
+});
+
+test('the git-host flows name their project, or their studio run, brief and pack, and both sides know them', () => {
+  const base = { requestId: randomUUID(), userId: 7, appId: 3, input: {} };
+  for (const op of ['suggestBack.open', 'upstream.open', 'upstream.skip', 'demo.propose']) {
+    assert.equal(requested({ ...base, op }).op, op);
+    assert.throws(() => requested({ ...base, op, appId: null }), /name its project/, op);
+  }
+  assert.throws(() => requested({ ...base, op: 'demo.reset' }), /proposals it removes/);
+  assert.throws(() => requested({ ...base, op: 'demo.reset', input: { sessionIds: ['4'] } }), /proposals it removes/);
+  assert.deepEqual(requested({ ...base, op: 'demo.reset', input: { sessionIds: [4, 5] } }).input, { sessionIds: [4, 5] });
+  const bench = { ...base, appId: null, input: { runId: 1, taskId: 2, packId: 0 } };
+  for (const op of ['bench.scaffold', 'bench.reference']) {
+    assert.equal(requested({ ...bench, op }).op, op);
+    for (const input of [{ runId: 1, taskId: 2, packId: -1 }, { taskId: 2, packId: 0 }, { runId: 1, taskId: 2 }]) {
+      assert.throws(() => requested({ ...bench, op, input }), /run, brief and pack/, `${op} ${JSON.stringify(input)}`);
+    }
+  }
+  // The machine's list and the conductor's are the same list.
+  const { OPERATIONS: machineOps } = require('../src/workflow/platform-operation/machine.ts');
+  assert.deepEqual([...machineOps].sort(), [...operations.OPERATIONS.keys()].sort());
+});

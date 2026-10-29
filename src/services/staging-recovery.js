@@ -422,8 +422,7 @@ const workflow = () => require('./preview-workflow');
 // where CC finished but post-processing died before opening the PR.
 // 'promoted'/'merging' sessions always already have one, so that branch is
 // a no-op for them.
-async function rebuildSessionStaging({ config, pool, session, reason, headSha = null }) {
-  const { broadcastGlobal } = require('./ws');
+async function rebuildSessionStaging({ config, pool, session, reason, headSha = null, requesterId = null }) {
   // A preview the machine is building has nothing to heal yet, and one that
   // keeps failing waits out the machine's retry: a boot or a heal pass is not
   // a reason to try it again (on 10 Oct 2026 a restart rebuilt one to twelve
@@ -558,53 +557,23 @@ async function rebuildSessionStaging({ config, pool, session, reason, headSha = 
   // on an imported session is a broken row, not an invitation to open a
   // second PR from someone else's fork. The `imported` guard makes that
   // explicit rather than relying on pr_number always being set.
+  //
+  // The pull request of a change on GitHub for the platform repository is
+  // a conductor's to open (services/pr-sync-operation.js): a web process
+  // (a Preview click) records it for one, on behalf of whoever asked; a
+  // process that runs the workflow opens it itself.
   if (!session.pr_number && !imported && !session.is_headless) {
+    const prSync = require('./pr-sync-operation');
+    const role = require('./process-role');
     try {
-      // username + latest user message give applyPrMetadata the same
-      // signals the live dev-turn path has; without the username the
-      // fallback title would read "undefined's changes".
-      const { rows: ctxRows } = await pool.query(
-        `SELECT u.username,
-                (SELECT content FROM chat_session_messages
-                  WHERE session_id = cs.id AND role = 'user'
-                  ORDER BY id DESC LIMIT 1) AS last_user_message
-           FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
-          WHERE cs.id = $1`,
-        [session.id]
-      );
-      const username = ctxRows[0]?.username || session.username || 'someone';
-      const recoveredUserMessage = ctxRows[0]?.last_user_message || '';
-      const prMetadata = require('./pr-metadata');
-      const limits = require('./limits');
-      let metadataApiKey = null;
-      let metadataGenerationAllowed = false;
-      try {
-        const billing = await limits.resolveBillingPath(
-          pool, config.dataEncryptionKey, session.user_id,
-        );
-        if (!billing.error) {
-          metadataApiKey = billing.apiKey;
-          metadataGenerationAllowed = true;
-        }
-      } catch (err) {
-        log.warn('staging-recovery', 'PR metadata billing resolve failed; using deterministic draft', {
-          sessionId: session.id, err: err.message,
+      if (prSync.onConductor(session.repo_url) && !role.runsWorkflow(role.processRole())) {
+        await prSync.append(pool, {
+          appId: session.app_id, userId: requesterId || session.user_id, sessionId: session.id,
+          write: 'create', from: 'staging',
         });
+      } else {
+        await prSync.openMissingPr({ config, pool, session, owner, repo, from: 'staging' });
       }
-      await prMetadata.applyPrMetadata({
-        pool, session, repoOwner: owner, repoName: repo,
-        userMessage: recoveredUserMessage,
-        ccSummary: '',
-        username,
-        apiKey: metadataApiKey,
-        userId: session.user_id,
-        allowModelGeneration: metadataGenerationAllowed,
-        // Same as the promote-time lazy creation: an author-submitted title
-        // names the recovered PR verbatim.
-        preferredTitle: session.proposed_pr_title || null,
-        broadcast: (event, data) =>
-          broadcastGlobal({ ...data, type: 'session_event', sessionId: session.id, event }),
-      });
     } catch (err) {
       log.warn('staging-recovery', 'Recovery PR creation via applyPrMetadata failed', {
         sessionId: session.id, code: err.code || null,

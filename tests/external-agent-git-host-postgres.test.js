@@ -39,6 +39,9 @@ const github = require('../src/services/github');
 const gitHost = require('../src/services/git-host');
 const requests = require('../src/services/requests');
 const svc = require('../src/services/external-agent-tasks');
+// A submission's writes are a conductor's; this file runs them here, against
+// the real git host and database (tests/lib/submission-here.js).
+require('./lib/submission-here').submissionsHere();
 const proposalUpdate = require('../src/services/proposal-update');
 const patchUploads = require('../src/services/external-agent-patch-upload');
 const commitIdentity = require('../src/services/commit-identity');

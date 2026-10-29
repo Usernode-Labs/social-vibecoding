@@ -52,6 +52,8 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const gitHost = require('../src/services/git-host');
 const offers = require('../src/services/upstream-offers');
 const lineage = require('../src/services/upstream-lineage');
+const upstreamOperation = require('../src/services/upstream-operation');
+const { inlineOperations } = require('./lib/inline-operations');
 
 const { SQL, factsOf } = offers;
 
@@ -693,6 +695,35 @@ test('skip: an update going in right now cannot be skipped', async () => {
   assert.equal(s.offers.get(12).state, 'open');
 });
 
+test('a resumed skip keeps the close decision it received', async () => {
+  const kernelSteps = require('../src/workflow/kernel/steps.ts');
+  const fx = fixture();
+  const { s, deps } = seed(fx);
+  const opened = await offers.openUpdate({ config: {}, pool: s.pool, versionId: 12, deps });
+  const before = ref(fx.ver, lineage.UPSTREAM_REF);
+  const previousLineage = { ...s.apps.get(12).upstream };
+  let closes = 0;
+  deps.close = async () => { closes += 1; return { status: 'rejected', reason: 'merging' }; };
+  const stop = new AbortController();
+  let saved;
+  const steps = kernelSteps.steps({ signal: stop.signal, checkpoint: async (value) => {
+    saved = value;
+    if (value.close) stop.abort();
+  } });
+  await assert.rejects(offers.skipUpdate({ config: {}, pool: s.pool, versionId: 12, user: MEMBER, deps, steps }),
+    kernelSteps.isStopped);
+  assert.deepEqual(saved.close, { status: 'rejected', reason: 'merging' });
+  s.sessions.get(opened.sessionId).status = 'merging';
+  const resumed = kernelSteps.steps({ resumeFrom: saved, attempt: 2, checkpoint: async (value) => { saved = value; } });
+  const out = await offers.skipUpdate({ config: {}, pool: s.pool, versionId: 12, user: MEMBER, deps, steps: resumed });
+  assert.equal(out.body.code, 'merging');
+  assert.equal(closes, 1, 'the saved decision is read without closing again');
+  assert.equal(ref(fx.ver, lineage.UPSTREAM_REF), before, 'no upstream ref is advanced');
+  assert.deepEqual(s.apps.get(12).upstream, previousLineage, 'no lineage is advanced');
+  assert.equal(s.offers.get(12).state, 'open');
+  assert.equal(resumed.has('advance'), false);
+});
+
 test('refresh: an open update whose original moved again is planned again and its branch moved', async () => {
   const fx = fixture();
   const { s, deps, calls } = seed(fx);
@@ -900,10 +931,10 @@ test('the clock job is registered for the newest build, with a target worker', (
 
 // ── 5. The routes ────────────────────────────────────────────────────
 
-async function mountRoutes({ s, deps, user = MEMBER }) {
-  const express = require('express');
-  const { upstreamRoutes } = require('../src/routes/upstream');
-  const routePool = {
+// The pool the routes (and the conductor's recheck) read: the store, and
+// the version's access and membership.
+function routePoolOf(s) {
+  return {
     async query(sql, params) {
       const text = String(sql);
       if (/^SELECT \* FROM apps WHERE slug = \$1$/.test(text)) {
@@ -921,10 +952,20 @@ async function mountRoutes({ s, deps, user = MEMBER }) {
       return s.pool.query(sql, params);
     },
   };
+}
+
+async function mountRoutes({ s, deps, user = MEMBER }) {
+  const express = require('express');
+  const { upstreamRoutes } = require('../src/routes/upstream');
+  const routePool = routePoolOf(s);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => { req.user = user; next(); });
   app.use(upstreamRoutes({}, { pool: routePool, deps }));
+  // open and skip are a conductor's (services/upstream-operation.js), run
+  // here in the test's own process with the same stand-ins.
+  const conductor = inlineOperations({ pool: () => routePool, user: () => user });
+  const priorDeps = upstreamOperation._setDepsForTests(deps);
   const server = await new Promise((resolve) => { const srv = app.listen(0, () => resolve(srv)); });
   const base = `http://127.0.0.1:${server.address().port}/api/apps`;
   const call = async (method, url, body, headers = { 'sec-fetch-site': 'same-origin' }) => {
@@ -933,7 +974,10 @@ async function mountRoutes({ s, deps, user = MEMBER }) {
     });
     return { status: res.status, body: await res.json() };
   };
-  return { call, close: () => server.close() };
+  return {
+    call,
+    close: () => { server.close(); conductor(); upstreamOperation._setDepsForTests(priorDeps); },
+  };
 }
 
 test('GET /upstream: the version\'s side, every field present', async () => {
@@ -1018,6 +1062,81 @@ test('routes: share is for managers; a non-member is asked to join; a project th
   } finally {
     owner.close();
   }
+});
+
+test('a member\'s open and skip are a conductor\'s: membership read again, and a retry pushes, opens and tells nothing twice', async (t) => {
+  const operations = require('../src/services/platform-operations');
+  const kernelSteps = require('../src/workflow/kernel/steps.ts');
+  const fx = fixture();
+  const { s, deps, calls } = seed(fx);
+  // Every git child of a scratch repository asks for the service account's
+  // settings once.
+  let git = 0;
+  const counted = { ...gitHost, settings: () => { git += 1; return gitHost.settings(); } };
+  const prior = upstreamOperation._setDepsForTests({ ...deps, gitHost: counted });
+  t.after(() => upstreamOperation._setDepsForTests(prior));
+  const routePool = routePoolOf(s);
+  let failOnce = null;
+  const pool = {
+    async query(sql, params) {
+      if (/FROM users WHERE id = \$1/.test(sql) && /anonymised_at/.test(sql)) {
+        return { rows: [{ id: params[0], username: params[0] === MEMBER.id ? 'ada' : 'zed', is_admin: false, admin_readonly: false,
+          has_platform_access: true, private_member_since: null, anonymised_at: null }] };
+      }
+      if (failOnce && failOnce(sql, params)) { failOnce = null; throw new Error('connection reset'); }
+      return routePool.query(sql, params);
+    },
+  };
+  const item = () => {
+    let saved = null; let attempt = 0;
+    return () => kernelSteps.steps({ resumeFrom: saved, attempt: ++attempt, checkpoint: async (v) => { saved = v; } });
+  };
+  const ask = (op, userId, steps) => operations.run({ pool, config: {} }, { op, requestId: 'r', appId: 12, userId, input: {} }, steps);
+
+  // Somebody who can no longer see the version, or who sees it and is not
+  // a member, is refused before anything is pushed, as the route refuses them.
+  const hidden = await ask('upstream.open', 77, item()());
+  assert.deepEqual([hidden.status, hidden.body], [404, { error: 'App not found' }]);
+  s.apps.get(12).view_visibility = 'public';
+  s.apps.get(12).collab_visibility = 'public';
+  const outsider = await ask('upstream.open', 77, item()());
+  assert.equal(outsider.status, 403);
+  assert.equal(outsider.body.code, 'join_required');
+  assert.equal(git, 0);
+  assert.equal(calls.prs.length, 0);
+
+  // The row's write after the proposal is made fails once: the retry carries
+  // on from the plan, the pull request and the proposal it kept.
+  const open = item();
+  failOnce = (sql, params) => sql === SQL.saveOffer && params[3] === 'open';
+  await assert.rejects(ask('upstream.open', MEMBER.id, open()), /connection reset/);
+  const pushed = git;
+  assert.ok(pushed > 0);
+  const opened = await ask('upstream.open', MEMBER.id, open());
+  assert.equal(opened.ok, true, JSON.stringify(opened));
+  assert.equal(opened.state, 'open');
+  assert.equal(git, pushed, 'no git at all on the retry: the plan and its pushes were kept');
+  assert.equal(calls.prs.length, 1, 'one pull request');
+  assert.equal(calls.promotes.length, 1);
+  assert.equal(calls.notified.length, 1, 'the members are told once');
+  assert.equal(s.offers.get(12).state, 'open');
+
+  // A skip whose lineage move fails once closes the proposal once.
+  const skip = item();
+  failOnce = (sql, params) => sql === SQL.setState && params[1] === 'skipped';
+  await assert.rejects(ask('upstream.skip', MEMBER.id, skip()), /connection reset/);
+  const skipped = await ask('upstream.skip', MEMBER.id, skip());
+  assert.deepEqual(skipped, { ok: true, state: 'skipped' });
+  assert.equal(calls.closes.length, 1, 'closed once');
+  assert.equal(s.offers.get(12).state, 'skipped');
+  assert.equal(s.apps.get(12).upstream.syncedSha, fx.fromSha, 'the lineage moved past it');
+});
+
+test('routes: open and skip ask a conductor, and write nothing themselves', () => {
+  const src = read('src/routes/upstream.js');
+  assert.match(src, /platformOperations\.request\(\{ op: 'upstream\.open', appId: app\.id, userId: req\.user\.id, input: \{\} \}\)/);
+  assert.match(src, /platformOperations\.request\(\{ op: 'upstream\.skip', appId: app\.id, userId: req\.user\.id, input: \{\} \}\)/);
+  assert.doesNotMatch(src, /offers\.(openUpdate|skipUpdate)\(/);
 });
 
 test('routes: the doors are in the order every route that writes a repository mounts them', () => {

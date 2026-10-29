@@ -1490,7 +1490,7 @@ function keptTriage(t) {
 }
 
 /**
- * A reference build (services/bench/studio.js submitReference): an app a
+ * A reference build (services/bench/studio.js handInReference): an app a
  * Claude Code session built from the same first commit and pack, copied
  * into the trial's branch when it was handed in (capture_sha). It is judged
  * like the bot's builds and so goes through the same screenshot step, in the

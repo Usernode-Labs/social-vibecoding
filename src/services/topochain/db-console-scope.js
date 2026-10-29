@@ -297,6 +297,10 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // What a preview sent for a build or a deploy, kept for the conductor:
   // its source and its env (the project's own settings and secrets).
   preview_project_inputs: ['files', 'env'],
+  // What a platform operation carries past its request's 64 KB, kept for the
+  // conductor (services/platform-operations.js): a commit's files or a
+  // patch. Which operation and request it is for, and when, stay readable.
+  platform_operation_inputs: ['payload'],
   // Social identity is private account metadata. The short-lived OAuth row
   // additionally contains the callback-state hash and live PKCE verifier.
   user_social_identities: ['provider_subject', 'handle'],

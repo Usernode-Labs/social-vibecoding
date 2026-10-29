@@ -788,6 +788,28 @@ async function agentSessionRequests(pool, sessionId, live, ctx) {
   ctx.personTitle = person && person !== changeName ? person : null;
 }
 
+// A pull request already open for the session's branch that the row never
+// learned (whatever opened it went before writing the number down), made
+// the session's: its number, address, title and body recorded and the
+// in-memory row moved to match. Its title becomes the known-applied one, so
+// applyPrMetadata's update gate compares against what is on the host (and
+// #249's mirror keeps the display name consistent meanwhile); #1333: its
+// body is adopted too, as the description is part of what is already there.
+async function adoptOpenPr(pool, session, existing, { why = null } = {}) {
+  session.pr_number = existing.number;
+  session.pr_url = existing.html_url;
+  session.pr_title = existing.title || null;
+  session.session_title = existing.title || session.session_title;
+  session.pr_body = existing.body || null;
+  await pool.query(
+    `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, session_title = COALESCE($3, session_title), pr_body = $4 WHERE id = $5`,
+    [existing.number, existing.html_url, existing.title || null, existing.body || null, session.id]
+  );
+  log.info('pr-metadata', `Adopted existing PR${why ? ` ${why}` : ''}`, {
+    sessionId: session.id, prNumber: existing.number, branch: session.branch_name,
+  });
+}
+
 // Either open a new PR with the generated title/body, or update the
 // existing PR's title/body on GitHub when it changed. Persists to DB
 // and fires a broadcast callback so connected clients update in real
@@ -1069,6 +1091,7 @@ async function applyPrMetadata({
            pr_summary_applied_version = CASE WHEN pr_summary_input_version = $11 AND NOT $14::boolean THEN $11 ELSE pr_summary_applied_version END,
            pr_summary_stale = CASE WHEN pr_summary_input_version = $11 AND NOT $14::boolean THEN FALSE ELSE pr_summary_stale END,
            pr_title_fallback = $8,
+           pr_summary_projection = CASE WHEN pr_summary_input_version = $11 THEN jsonb_build_object('applied', $7::text) ELSE pr_summary_projection END,
            pr_body = CASE WHEN pr_summary_input_version = $11 THEN $9 ELSE pr_body END
          WHERE id = $10 RETURNING pr_summary_md, pr_summary_stale`,
         [pr.number, pr.html_url, prTitle, linkedIssues, testingBlock || null, visualsBlock || null,
@@ -1107,23 +1130,7 @@ async function applyPrMetadata({
           });
           return null;
         }
-        session.pr_number = existing.number;
-        session.pr_url = existing.html_url;
-        // Adopt GitHub's current title as the known-applied title so the
-        // update gate below compares against reality (and #249's mirror
-        // keeps the session display name consistent in the meantime).
-        session.pr_title = existing.title || null;
-        session.session_title = existing.title || session.session_title;
-        // #1333. Adopting a PR adopts its body as well — the row is learning
-        // what is already on GitHub, and the description is part of that.
-        session.pr_body = existing.body || null;
-        await pool.query(
-          `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, session_title = COALESCE($3, session_title), pr_body = $4 WHERE id = $5`,
-          [existing.number, existing.html_url, existing.title || null, existing.body || null, session.id]
-        );
-        log.info('pr-metadata', 'Adopted existing PR after pr_exists', {
-          sessionId: session.id, prNumber: existing.number, branch: session.branch_name,
-        });
+        await adoptOpenPr(pool, session, existing, { why: 'after pr_exists' });
         if (broadcast) broadcast('pr_created', { prNumber: existing.number, prUrl: existing.html_url, prTitle: existing.title });
         // Fall through to the existing-PR path below.
       } else {
@@ -1215,6 +1222,7 @@ async function applyPrMetadata({
          pr_summary_source_body_hash = CASE WHEN pr_summary_input_version = $8 AND $11::boolean THEN $10 ELSE pr_summary_source_body_hash END,
          pr_summary_applied_version = CASE WHEN pr_summary_input_version = $8 AND $11::boolean THEN $8 ELSE pr_summary_applied_version END,
          pr_summary_stale = CASE WHEN pr_summary_input_version = $8 AND $11::boolean THEN FALSE ELSE pr_summary_stale END,
+         pr_summary_projection = CASE WHEN pr_summary_input_version = $8 THEN jsonb_build_object('applied', $5::text) ELSE pr_summary_projection END,
          pr_body = CASE WHEN pr_summary_input_version = $8 THEN $6 ELSE pr_body END,
          pr_title_fallback = FALSE WHERE id = $7 RETURNING pr_summary_md, pr_summary_stale`,
       [prTitle, linkedIssues, testingBlock || null, visualsBlock || null,
@@ -1233,7 +1241,7 @@ async function applyPrMetadata({
 }
 
 module.exports = {
-  generatePrMetadata, applyPrMetadata, deterministicPrMetadataDraft, sanitizeIssueNumbers,
+  generatePrMetadata, applyPrMetadata, adoptOpenPr, deterministicPrMetadataDraft, sanitizeIssueNumbers,
   buildClosingBlock, buildTestingBlock, parseClosingKeywords,
   buildVisualsBlock, upsertVisualsBlock, extractVisualsBlock,
   buildShotsBlock, upsertShotsBlock, extractShotsBlock, syncShotsPrBlock,
