@@ -1,8 +1,8 @@
 'use strict';
 
 // Featured apps: the admin-curated list the signed-out landing's Featured and
-// every user's "Find more apps" row read (`featured_apps`), and the directory
-// review an app needs before it can be on it. These are the routes Admin >
+// every user's "Find more apps" row read (`featured_apps`), and the flag that
+// takes an app out of Discover and Featured. These are the routes Admin >
 // Featured apps calls, under /api/admin, and the ones a full admin's
 // connector session reaches through its own doors
 // (routes/featured-admin.js): one handler, two doors, so the console and the
@@ -40,8 +40,7 @@ function featuredAppsAdminRoutes(pool) {
     try {
       const { rows: featured } = await pool.query(
         `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id, fa.sort_order,
-                a.featured_illustration, a.main_sha, a.last_deploy_at, a.directory_review_status,
-                a.directory_reviewed_at, a.directory_reviewed_sha
+                a.featured_illustration, a.directory_review_status, a.directory_reviewed_at
            FROM featured_apps fa
            JOIN apps a ON a.id = fa.app_id
           WHERE NOT a.self_hosted
@@ -49,8 +48,7 @@ function featuredAppsAdminRoutes(pool) {
       );
       const { rows: available } = await pool.query(
         `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id,
-                a.featured_illustration, a.main_sha, a.last_deploy_at, a.directory_review_status,
-                a.directory_reviewed_at, a.directory_reviewed_sha
+                a.featured_illustration, a.directory_review_status, a.directory_reviewed_at
            FROM apps a
           WHERE NOT a.self_hosted
             AND NOT EXISTS (SELECT 1 FROM featured_apps f WHERE f.app_id = a.id)
@@ -69,9 +67,8 @@ function featuredAppsAdminRoutes(pool) {
         // draws the app icon, and the section flags that so the gap is
         // visible. A boolean, not the record: the list has no use for framing.
         has_illustration: !!(r.featured_illustration && r.featured_illustration.url),
-        main_sha: r.main_sha || null,
-        last_deploy_at: r.last_deploy_at || null,
-        directory_review_status: r.directory_review_status || 'unreviewed',
+        // Where it stands in Discover, its flag included
+        // (services/discovery-curation.js).
         directory: discoveryCuration.describe(r),
       });
       res.json({ featured: featured.map(shape), available: available.map(shape) });
@@ -81,54 +78,47 @@ function featuredAppsAdminRoutes(pool) {
     }
   });
 
-  // Review the exact version the admin opened. The row lock and deployment
-  // snapshot check prevent a deploy during review from certifying untested
-  // code. This never launches a probe or changes app access/visibility.
-  router.put('/api/admin/apps/:slug/directory-review', requireAdminWrite, async (req, res) => {
-    const { status, confirmWorking, mainSha, lastDeployAt } = req.body || {};
-    if (!discoveryCuration.REVIEW_STATES.has(status)) {
-      return res.status(400).json({ error: 'Choose unreviewed, working, demo, or broken.' });
-    }
-    if (status === 'working' && confirmWorking !== true) {
-      return res.status(400).json({ error: 'Confirm that you tested the app’s main flow before marking it working.' });
+  // Flag an app, or clear its flag. A flagged app is left out of Discover
+  // and Featured everywhere (services/discovery-curation.js), so flagging
+  // one also takes it off the featured list, in the same transaction: a
+  // flagged app is never featured. Clearing the flag lists it again but
+  // does not feature it again. Nothing else about the app changes: not its
+  // access, its visibility or its members.
+  router.put('/api/admin/apps/:slug/discover-flag', requireAdminWrite, async (req, res) => {
+    const { flagged } = req.body || {};
+    if (typeof flagged !== 'boolean') {
+      return res.status(400).json({ error: 'Send flagged: true to flag the app, or false to clear its flag.' });
     }
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       const { rows } = await client.query(
-        `SELECT id, self_hosted, status, main_sha, last_deploy_at, icon_emoji, icon_image_id
-           FROM apps WHERE slug = $1 FOR UPDATE`, [req.params.slug]
+        'SELECT id, self_hosted FROM apps WHERE slug = $1 FOR UPDATE', [req.params.slug]
       );
       const app = rows[0];
       if (!app || app.self_hosted) {
         await client.query('ROLLBACK');
         return res.status(404).json({ error: 'App not found' });
       }
-      if (status === 'working') {
-        if (app.status !== 'running' || !app.main_sha || !discoveryCuration.hasIcon(app)) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({ error: 'A reviewed working app must be running, have a deployed version, and have an image or emoji icon.' });
-        }
-        if (mainSha !== app.main_sha || lastDeployAt === undefined
-          || (lastDeployAt !== null && discoveryCuration.timestamp(lastDeployAt) === null)
-          || discoveryCuration.timestamp(lastDeployAt) !== discoveryCuration.timestamp(app.last_deploy_at)) {
-          await client.query('ROLLBACK');
-          return res.status(409).json({ error: 'The app changed while you were reviewing it. Refresh and test the current version.' });
-        }
-      }
       await client.query(
         `UPDATE apps SET directory_review_status = $2::text,
-           directory_reviewed_at = CASE WHEN $2::text = 'unreviewed' THEN NULL ELSE NOW() END,
-           directory_reviewed_sha = CASE WHEN $2::text = 'unreviewed' THEN NULL ELSE main_sha END
-         WHERE id = $1`, [app.id, status]
+           directory_reviewed_at = CASE WHEN $3::boolean THEN NOW() ELSE NULL END,
+           directory_reviewed_sha = NULL
+         WHERE id = $1`,
+        [app.id, flagged ? discoveryCuration.FLAGGED : discoveryCuration.UNFLAGGED, flagged]
       );
+      let unfeatured = false;
+      if (flagged) {
+        const removed = await client.query('DELETE FROM featured_apps WHERE app_id = $1', [app.id]);
+        unfeatured = removed.rowCount > 0;
+      }
       await client.query('COMMIT');
-      log.info('admin', 'Directory review updated', { by: req.user.username, slug: req.params.slug, status, sha: app.main_sha });
-      return res.json({ ok: true });
+      log.info('admin', 'Discover flag updated', { by: req.user.username, slug: req.params.slug, flagged, unfeatured });
+      return res.json({ ok: true, flagged, unfeatured });
     } catch (err) {
       try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
-      log.error('admin', 'Directory review failed', { message: err.message });
-      return res.status(500).json({ error: 'Could not save the directory review.' });
+      log.error('admin', 'Discover flag failed', { message: err.message });
+      return res.status(500).json({ error: 'Could not save the flag.' });
     } finally {
       client.release();
     }
@@ -163,8 +153,7 @@ function featuredAppsAdminRoutes(pool) {
       const ids = [];
       for (const slug of slugs) {
         const { rows } = await client.query(
-          `SELECT id, self_hosted, status, main_sha, last_deploy_at, icon_emoji, icon_image_id,
-                  directory_review_status, directory_reviewed_at, directory_reviewed_sha
+          `SELECT id, self_hosted, icon_emoji, icon_image_id, directory_review_status
              FROM apps WHERE slug = $1 FOR UPDATE`,
           [slug]
         );
@@ -176,9 +165,11 @@ function featuredAppsAdminRoutes(pool) {
           await client.query('ROLLBACK');
           return res.status(400).json({ error: `The platform app cannot be featured: ${slug}` });
         }
-        if (discoveryCuration.describe(rows[0]).tier !== 'ready') {
+        // An icon for its card, and no flag (services/discovery-curation.js).
+        const refusal = discoveryCuration.featureRefusal(rows[0]);
+        if (refusal) {
           await client.query('ROLLBACK');
-          return res.status(400).json({ error: `Review ${slug} as working and add an icon before featuring it.` });
+          return res.status(400).json({ error: `${slug} ${refusal}` });
         }
         ids.push(rows[0].id);
       }

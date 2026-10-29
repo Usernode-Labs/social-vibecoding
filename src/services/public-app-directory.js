@@ -9,6 +9,7 @@ const { productionHostname } = require('./caddy');
 const { loadContributors, shapeContributor } = require('./contributors');
 const { APP_CATEGORIES } = require('./app-manifest');
 const { signinEnabled } = require('./edge-gate');
+const { FLAGGED_STATES } = require('./discovery-curation');
 
 // Apps that do not currently have a usable deployment never appear in the
 // public directory. View-private and self-hosted rows are filtered in SQL too.
@@ -21,7 +22,9 @@ const DESCRIPTION_MAX = 200;
 // The same rule as listPublicApps' WHERE clause, for a single app row that
 // carries self_hosted, moderation_suspended_at, view_visibility and status.
 // A per-slug public read uses it so it answers for exactly the apps the
-// directory lists, and no others.
+// directory lists, and no others, with one exception: an app an admin
+// flagged (services/discovery-curation.js) is left out of the list but still
+// answers by slug. A flag takes an app out of Discover, not off the web.
 function isPublicDirectoryApp(app) {
   return Boolean(app)
     && !app.self_hosted
@@ -124,7 +127,9 @@ async function listPublicApps(pool, { includeWallets = true, slug = null } = {})
   // a user counts iff they ever spent >= 60s on the app on a single day AND
   // visited within 10 days. One query returns one row per app. `slug`
   // narrows it to one app (the guest project page's overview), under the
-  // same WHERE clause as the list.
+  // same WHERE clause as the list, less the flag: the list (the guest
+  // Discover, the app-facing directory, the sitemap) leaves flagged apps
+  // out, and the one app asked for by slug answers flagged or not.
   const { rows: apps } = await pool.query(
     `SELECT a.id, a.name, a.slug, a.status, a.collab_visibility,
               a.view_visibility, a.created_at, a.last_deploy_at,
@@ -181,9 +186,10 @@ async function listPublicApps(pool, { includeWallets = true, slug = null } = {})
           AND a.view_visibility = 'public'
           AND a.status <> ALL($1::text[])
           AND ($2::text IS NULL OR a.slug = $2)
+          AND ($2::text IS NOT NULL OR a.directory_review_status <> ALL($3::text[]))
         ORDER BY COALESCE(au.cnt, 0) DESC,
                  a.last_deploy_at DESC NULLS LAST, a.created_at DESC`,
-    [HIDDEN_APP_STATUSES, slug]
+    [HIDDEN_APP_STATUSES, slug, FLAGGED_STATES]
   );
 
   const byApp = await loadContributors(pool, apps.map((app) => app.id));

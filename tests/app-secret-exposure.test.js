@@ -166,14 +166,14 @@ const ROLES = [
   { label: 'admin viewing a private app', user: { id: 300, username: 'admin', isAdmin: true }, visibility: 'private', collaborators: [] },
 ];
 
-test('#1523: list and detail publish the same deployment-aware directory classification', async () => {
+test('#1523: list and detail publish the same directory classification, the flag included', async () => {
   appRow = makeAppRow({ icon_emoji: '🧩', main_sha: 'a'.repeat(40),
-    directory_review_status: 'working', directory_reviewed_sha: 'a'.repeat(40),
-    directory_reviewed_at: '2026-09-01T13:00:00.000Z', last_deploy_at: '2026-09-01T12:00:00.000Z' });
+    directory_review_status: 'unreviewed', directory_reviewed_at: '2026-09-01T13:00:00.000Z',
+    last_deploy_at: '2026-09-01T12:00:00.000Z' });
   collaboratorIds = new Set(); currentUser = { id: 999, username: 'viewer' };
   const server = await startServer();
   try {
-    for (const [status, tier] of [['working', 'ready'], ['demo', 'more'], ['broken', 'more'], ['unreviewed', 'unreviewed']]) {
+    for (const [status, tier] of [['unreviewed', 'listed'], ['working', 'listed'], ['demo', 'hidden'], ['broken', 'hidden']]) {
       appRow.directory_review_status = status;
       const list = await fetch(`http://127.0.0.1:${server.address().port}/api/apps`).then((r) => r.json());
       const detail = await fetch(`http://127.0.0.1:${server.address().port}/api/apps/private-notes`).then((r) => r.json());

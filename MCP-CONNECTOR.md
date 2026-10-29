@@ -377,17 +377,17 @@ writes are acting tools; the reads are `get_`/`list_`.
 
 A full platform admin's connector also curates the featured apps, the one
 ordered list (at most 12) that the signed-out landing's Featured and every
-user's "Find more apps" row on Home read, as Admin › Featured apps does. An
-app can be on it only once it is reviewed working on the version it runs and
-has an icon, so the review is a tool too. The charter's `featured-apps`
-section is the procedure a session follows: it never marks an app working on
-its own judgment.
+user's "Find more apps" row on Home read, as Admin › Featured apps does. Any
+app with an icon can be on it; there is no review. The one editorial state is
+an admin's flag, which takes an app out of Discover and Featured everywhere,
+so the flag is a tool too. The charter's `featured-apps` section is the
+procedure a session follows: it flags an app only when the person asks.
 
 | Tool | What it actually does |
 |---|---|
-| `list_featured_apps` | The list in order, and the apps that could be added (`search`, `readyOnly`, `limit`), each with the version it runs and its directory review (`canFeature` when it is reviewed working on that version with an icon). Read-only |
-| `set_featured_apps` | Sets the whole list, first to last; an app left out is taken off. Every app in it, the featured ones too, must be reviewed working on the version it runs |
-| `review_app_for_directory` | Records an app's review: `working` (with `confirmWorking: true` and the `mainSha` and `lastDeployAt` the list reported, refused if it deployed since), `demo`, `broken` or `unreviewed` |
+| `list_featured_apps` | The list in order, and every other app (`search`, `readyOnly`, `flaggedOnly`, `limit`), each with where it stands in Discover and whether it is flagged (`canFeature` when it has an icon and no flag). Read-only |
+| `set_featured_apps` | Sets the whole list, first to last; an app left out is taken off. Every app in it needs an icon and no flag |
+| `set_discover_flag` | Flags an app (`flagged: true`), which takes it out of Discover and off the featured list at once, or clears the flag, which lists it again without featuring it |
 
 The routes sit at `/api/featured-admin` (`routes/featured-admin.js`), because
 a connector can never reach `/api/admin`. Each is gated `requireAdminWrite`

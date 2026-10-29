@@ -313,13 +313,6 @@
       ],
       "why": "Example of a six-digit code in a placeholder; digits only."
     },
-    "frontend/src/features/apps/browse-list.tsx": {
-      "texts": [
-        "Not yet reviewed",
-        "Reviewed working"
-      ],
-      "why": "Not displayed. They are the server's directory.label vocabulary (src/services/discovery-curation.js), kept as constants that a row's server label is compared with to decide whether the tier heading already says it. What is displayed reads discover:list.label.notYetReviewed and discover:list.heading.*."
-    },
     "frontend/src/features/apps/browse-screen.tsx": {
       "texts": [
         "&times;"

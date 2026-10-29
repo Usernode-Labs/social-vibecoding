@@ -58,14 +58,14 @@ test('the checker uses PostgreSQL Parse + Describe without executing queries', (
   assert.equal(pkg.devDependencies.typescript, '6.0.3');
 });
 
-test('directory reviews give the shared status parameter one explicit PostgreSQL type', () => {
-  const review = inventory.queries.find(({ text }) => (
+test('the Discover flag write gives each parameter one explicit PostgreSQL type', () => {
+  const flag = inventory.queries.find(({ text }) => (
     text.startsWith('UPDATE apps SET directory_review_status = $2')
   ));
-  assert.ok(review, 'the admin review write must reach PostgreSQL validation');
-  assert.match(review.text, /directory_review_status = \$2::text/);
-  assert.match(review.text, /directory_reviewed_at = CASE WHEN \$2::text = 'unreviewed' THEN NULL/);
-  assert.match(review.text, /directory_reviewed_sha = CASE WHEN \$2::text = 'unreviewed' THEN NULL/);
+  assert.ok(flag, 'the admin flag write must reach PostgreSQL validation');
+  assert.match(flag.text, /directory_review_status = \$2::text/);
+  assert.match(flag.text, /directory_reviewed_at = CASE WHEN \$3::boolean THEN NOW\(\) ELSE NULL END/);
+  assert.match(flag.text, /directory_reviewed_sha = NULL/);
 });
 
 test('proposal unit suites run SQL validation against the worker PostgreSQL 17 planner', () => {

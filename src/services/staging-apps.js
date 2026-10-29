@@ -19,9 +19,8 @@ function catalogFixtures(curation = false) {
     created_at: new Date().toISOString(),
     last_deploy_at: new Date().toISOString(),
     main_sha: '0000000000000000000000000000000000000001',
-    directory_reviewed_sha: '0000000000000000000000000000000000000001',
-    directory_reviewed_at: new Date().toISOString(),
-    directory_review_status: 'working',
+    directory_review_status: 'unreviewed',
+    directory_reviewed_at: null,
     url: null,
     version: null,
     deployProgress: null,
@@ -126,21 +125,17 @@ function catalogFixtures(curation = false) {
       created_at: demoAgo(400 * 24), last_deploy_at: demoAgo(300 * 24),
     },
   ];
+  // ?curation=1: one app of each kind Discover tells apart
+  // (services/discovery-curation.js). Listed (and featured), flagged by an
+  // admin (in no list, whatever its user count), and one with no icon to draw
+  // (under Show more).
   if (curation) apps.push(
-    { ...base, id: 990031, slug: 'directory-sample-working', name: 'Directory sample working',
+    { ...base, id: 990031, slug: 'directory-sample-listed', name: 'Directory sample listed',
       icon_emoji: '🧩', featured: true, featured_order: -1 },
-    { ...base, id: 990032, slug: 'directory-sample-unreviewed', name: 'Directory sample unreviewed',
-      icon_emoji: '🌱', directory_review_status: 'unreviewed', directory_reviewed_at: null },
-    { ...base, id: 990033, slug: 'directory-sample-demo', name: 'Directory sample demo',
-      icon_emoji: '🎭', directory_review_status: 'demo', active_users: 9999 },
-    { ...base, id: 990034, slug: 'directory-sample-broken', name: 'Directory sample needs fixes',
-      icon_emoji: '🔧', directory_review_status: 'broken', active_users: 9998 },
+    { ...base, id: 990033, slug: 'directory-sample-flagged', name: 'Directory sample flagged',
+      icon_emoji: '🚩', directory_review_status: 'broken', directory_reviewed_at: new Date().toISOString(),
+      active_users: 9999 },
     { ...base, id: 990035, slug: 'directory-sample-no-icon', name: 'Directory sample needs an icon' },
-    // Reviewed as working at an older commit than the one it runs: the
-    // admin console's "Needs re-review", which Discover shows as not yet
-    // reviewed (#3911).
-    { ...base, id: 990036, slug: 'directory-sample-updated', name: 'Directory sample updated',
-      icon_emoji: '🔁', directory_reviewed_sha: '0000000000000000000000000000000000000000' },
   );
   return apps.map((app) => ({ ...app, directory: discoveryCuration.describe(app) }));
 }
@@ -165,8 +160,6 @@ async function seedCatalog(pool, config = {}) {
       "SELECT id FROM users WHERE id = 900001 AND username = 'staging-demo-user' AND password = 'staging-demo-not-a-login'");
     if (!owner.rows.length) throw new Error('Staging catalog fixture owner is missing or conflicts with an existing user');
     const sampleSha = crypto.createHash('sha1').update('homeroom-persisted-staging-catalog-v1').digest('hex');
-    // What a fixture reviewed at an older commit than it runs was reviewed at.
-    const priorSha = crypto.createHash('sha1').update('homeroom-persisted-staging-catalog-v0').digest('hex');
     const activeUsers = [];
     for (let i = 1; i <= 12; i++) {
       const username = `staging-demo-catalog-${i}`;
@@ -183,11 +176,11 @@ async function seedCatalog(pool, config = {}) {
       // completely different cloned app. Never overwrite that app's owner.
       await db.query(
         `INSERT INTO apps (name, slug, status, created_by, view_visibility, icon_emoji, created_at,
-           main_sha, directory_reviewed_sha, directory_reviewed_at, directory_review_status)
-         VALUES ($1, $2, 'running', 900001, 'public', $3, $4, $5, $7, NOW(), $6)
+           main_sha, directory_review_status, directory_reviewed_at)
+         VALUES ($1, $2, 'running', 900001, 'public', $3, $4, $5, $6, $7)
          ON CONFLICT (slug) DO NOTHING`,
         [fixture.name, fixture.slug, fixture.icon_emoji, fixture.created_at, sampleSha, fixture.directory_review_status,
-          fixture.directory_reviewed_sha === fixture.main_sha ? sampleSha : priorSha]);
+          fixture.directory_reviewed_at]);
       const found = await db.query('SELECT * FROM apps WHERE slug = $1', [fixture.slug]);
       const app = found.rows[0];
       if (!app || app.created_by !== 900001 || app.self_hosted || app.repo_url || app.container_id || app.runtime_name) {

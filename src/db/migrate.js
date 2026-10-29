@@ -7836,9 +7836,9 @@ async function seedStagingHomeLayout(pool, config) {
 
 // Home screen's Discover row + the #admin/featured-apps section. Append the
 // synthetic apps created by seedStagingYourApps, even when the clone already
-// has a featured list: those real apps may not have working reviews yet.
-// Preserve their ordering and review state. Only the synthetic fixtures are
-// certified here, and ON CONFLICT keeps their positions on subsequent boots.
+// has a featured list, preserving its ordering. Only the synthetic fixtures
+// are added here, never one an admin flagged, and ON CONFLICT keeps their
+// positions on subsequent boots.
 //
 // Chess Arena is deliberately NOT a candidate: seedStagingYourApps
 // favorites it for every capture identity, so leaving it out exercises the
@@ -7851,24 +7851,21 @@ async function seedStagingFeaturedApps(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
   try {
-    // #1523: explicitly synthetic fixtures for captures and the reversible
-    // Discover-add check. Never certify a production-cloned app as tested.
+    // Explicitly synthetic fixtures for captures and the reversible
+    // Discover-add check: a featured app needs an icon for its card.
     await pool.query(
-      `UPDATE apps SET icon_emoji = '🧩',
-         main_sha = '0000000000000000000000000000000000000001',
-         directory_review_status = 'working', directory_reviewed_at = NOW(),
-         directory_reviewed_sha = '0000000000000000000000000000000000000001'
+      `UPDATE apps SET icon_emoji = '🧩'
        WHERE slug IN ('staging-demo-puzzle-chain', 'staging-demo-word-garden',
                       'staging-demo-pixel-racer')
          AND created_by = (SELECT id FROM users WHERE username = 'staging-demo-user')
-         AND directory_review_status = 'unreviewed'`
+         AND icon_emoji IS NULL AND icon_image_id IS NULL`
     );
     const { rows: candidates } = await pool.query(
       `SELECT id FROM apps
         WHERE slug IN ('staging-demo-puzzle-chain', 'staging-demo-word-garden',
                        'staging-demo-pixel-racer')
           AND created_by = (SELECT id FROM users WHERE username = 'staging-demo-user')
-          AND directory_review_status = 'working'
+          AND directory_review_status NOT IN ('demo', 'broken')
         ORDER BY id ASC`
     );
     for (const candidate of candidates) {

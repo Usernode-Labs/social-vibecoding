@@ -2052,7 +2052,7 @@ function adminRoutes(config) {
 
   // ── Featured apps ──────────────────────────────────────────
   //
-  // The admin-curated list and the directory review it needs
+  // The admin-curated list and the flag that takes an app out of Discover
   // (routes/admin-featured-apps.js), here behind the router-level
   // adminMiddleware above, and also behind a full admin's connector doors
   // (routes/featured-admin.js).
