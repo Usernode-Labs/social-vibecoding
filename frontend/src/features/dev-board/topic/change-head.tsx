@@ -228,14 +228,11 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false }:
       {action ? <div className="dev-change-gate-act">{action}</div> : null}
       {why ? (
         <p className="dev-change-gate-why" data-change-gate-why={explanation ? 'explained' : 'own-words'}>
-          {why}
+          {page ? `${why} ` : why}
           {page ? (
-            <>
-              {' '}
-              <button type="button" className="dev-change-gate-link" data-change-gate-page="" onClick={openPage}>
-                {t('project:topic.change.gate.openPage')}
-              </button>
-            </>
+            <button type="button" className="dev-change-gate-link" data-change-gate-page="" onClick={openPage}>
+              {t('project:topic.change.gate.openPage')}
+            </button>
           ) : null}
         </p>
       ) : null}
