@@ -578,10 +578,10 @@ test('the guest bar: the wordmark at the column\'s left, Sign in and Sign up at 
   // finger).
   const actions = header.slice(header.indexOf('data-landing-actions'));
   assert.match(actions.slice(0, 300), /hiddenLast\(session \|\| !guestPages, guestTop \? 'flex shrink-0 items-center gap-1\.5' : `absolute bottom-4 right-4 /);
-  assert.match(actions, /data-landing-sign-in=""\s+className=\{hiddenLast\(session \|\| !guestPages, 'un-touch-target h-7 rounded-full px-2 /);
+  assert.match(actions, /data-landing-sign-in=""\s+className=\{hiddenLast\(session \|\| !guestPages, 'un-touch-target -my-2 min-h-11 rounded-full px-2 /);
   assert.match(actions, /onClick=\{\(\) => \{ noteSignUpFrom\('header_sign_in'\); setSheet\('signin'\); \}\}/);
   assert.match(actions, /<Button\s+type="button"\s+variant="pillAccent"\s+size="none"\s+ink="solid"\s+data-landing-sign-up=""/);
-  assert.match(actions, /data-landing-sign-up=""\s+className=\{guestTop \? 'un-touch-target h-7 /);
+  assert.match(actions, /data-landing-sign-up=""\s+className=\{guestTop \? 'un-touch-target -my-2 min-h-11 /);
   assert.doesNotMatch(header, /<a[\s>]/, 'still no anchor in the bar');
   // A project's page keeps its title centred and clear of the buttons.
   assert.match(header, /id="landing-header-title"\s+className="flex-1 min-w-0 px-10 /);
