@@ -136,7 +136,15 @@ test('privileged operations are conductor work', { timeout: 90000 }, async (t) =
       await settle(1);
       assert.equal((await web.waitForEvent(id, 1000)).status, 'rejected', change);
     }
-    await assert.rejects(ask({ ...p, op: 'shell.exec', input: {} }), /known kind/);
+    await assert.rejects(ask({ ...p, op: 'shell; exec', input: {} }), /name its kind/);
+    // A well-formed operation this build does not know is admitted and left
+    // queued: its work is a kind only a conductor that knows it claims.
+    const later = await ask({ ...(await project()), op: 'later.operation', input: {} });
+    await settle(1);
+    assert.equal((await web.waitForEvent(later.id, 1000)).status, 'accepted');
+    assert.equal((await instance(later.key)).state, 'queued');
+    const { rows: work } = await pool.query('SELECT kind, status FROM wf_work WHERE machine = $1 AND key = $2', [MACHINE, later.key]);
+    assert.deepEqual(work.map((w) => w.kind), ['operation.later.operation']);
   });
 
   await t.test('authority lost after admission refuses before any write', async () => {

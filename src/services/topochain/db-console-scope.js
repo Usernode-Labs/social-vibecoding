@@ -294,6 +294,9 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // error, image and host are what debugging it needs and stay readable.
   preview_project_tokens: ['token_hash'],
   preview_projects: ['db_password'],
+  // What a preview sent for a build or a deploy, kept for the conductor:
+  // its source and its env (the project's own settings and secrets).
+  preview_project_inputs: ['files', 'env'],
   // Social identity is private account metadata. The short-lived OAuth row
   // additionally contains the callback-state hash and live PKCE verifier.
   user_social_identities: ['provider_subject', 'handle'],

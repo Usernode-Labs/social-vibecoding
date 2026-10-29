@@ -260,13 +260,17 @@ the waitlist like anybody else. The `INVITE_TREE_BUDGETS` setting is gone;
 remove `config.inviteTreeBudgets` from overrides that set it.
 
 For OpenRouter managed keys, set `secrets.openrouterManagementApiKey` in the
-same SOPS-encrypted values file. With `secrets.create: true`, it maps to
-`OPENROUTER_MANAGEMENT_API_KEY` in the platform Secret, imported through the
-Deployment's `envFrom`. The field defaults to an empty string and is optional
-for chart installation. With `secrets.create: false`, supply
-`OPENROUTER_MANAGEMENT_API_KEY` in `secrets.existingSecret` instead. Release the
-updated chart and sync through Argo CD; the secrets checksum triggers a rollout
-when the value changes.
+same SOPS-encrypted values file. With `secrets.create: true` and the conductor
+on, it maps to `OPENROUTER_MANAGEMENT_API_KEY` in a Secret of the conductor's
+own, `<fullname>-conductor`, which only the conductor's Deployment imports: the
+web Pods ask the conductor for every managed key, and read
+`OPENROUTER_MANAGED_KEYS_ENABLED`, which the chart sets from whether the key is
+configured, to know whether keys are offered. With the conductor off, the key
+is in the platform Secret, as before. The field defaults to an empty string and
+is optional for chart installation. With `secrets.create: false`, supply
+`OPENROUTER_MANAGEMENT_API_KEY` in `secrets.existingSecret` instead; every
+platform Pod then imports it. Release the updated chart and sync through Argo
+CD; the secrets checksum triggers a rollout when the value changes.
 
 For mobile push, merge these fields into the same SOPS-encrypted
 `platform.secrets.sops.yaml` file's existing `secrets` block:
@@ -602,6 +606,16 @@ preview rebuild is not required just to change its capture URL.
 The platform reads its own Deployment for `/api/version` and admin status.
 The chart binds `social-platform-runtime` to a Role with only `get` on that
 Deployment and injects its namespace and name, including fullname overrides.
+
+With the conductor on, `platform.web.serviceAccountName` gives the web Pods an
+account of their own; the rollout Role above is bound to it as well. They
+change nothing in the cluster (custom domains, app deletion and every runtime
+change run on the conductor), so the infra repository's
+`social-vibecoding-foundation` chart, which owns the platform's accounts and
+their Roles in the app, worker and build namespaces, grants it reads only.
+Create that account before setting the value: a Pod naming an account that
+does not exist is not created. Empty, the web Pods run as
+`social-platform-runtime`, as the conductor does.
 Incomplete rollouts, controller failures, paused rollouts, and unavailable API
 reads remain distinct. This reports Argo-applied rollout state; image build and
 chart publication progress remain in the `Build Kubernetes images` workflow.
