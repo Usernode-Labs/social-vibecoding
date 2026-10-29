@@ -186,7 +186,7 @@ function fakeOutsideWorld({ dispatched, costUsd = 0.5, hold = null }) {
       isInFlight: () => false, getActiveTurnMode: () => null, stopTurn: async () => {}, stopTurnByJournal: async () => { stoppedTurns.push(1); },
       clearPendingStop: () => {}, destroyCcVolume: async (id) => { destroyed.push(id); }, finishTurn: async () => true,
     }],
-    [require('../src/services/shots-diff'), { screensFor: async () => [], unchangedStories: () => new Set() }],
+    [require('../src/services/shots-diff-worker'), { screensFor: async () => [], unchangedStories: () => new Set() }],
   ];
   const removed = [];
   const destroyed = [];
