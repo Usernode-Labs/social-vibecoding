@@ -107,3 +107,15 @@ test('#ai is the page; #ai/main and #ai/thread/<id> are Main, on the Messages sc
   assert.match(store, /if \(botOnShow\(\) && !\(isMobile\(\) && state\.route\.threadRootId\)\) \{\s+app\.setBackIcon\?\.\('arrow', '#ai'\);/);
   assert.match(read('frontend/src/features/nav-drawer/messages-drawer.ts'), /if \(at\.conversationId && at\.bot\) return false;/);
 });
+
+test('the screen renders as the prerender does: hidden, the bot\'s name, Your work, the Ask bar, no rows', () => {
+  const { renderComponent } = require('./lib/render-tsx');
+  const html = renderComponent('frontend/src/features/ai/index.tsx', 'AiScreen', {});
+  // (React hoists the bot's picture as an image preload ahead of it.)
+  assert.match(html, /^(<link rel="preload" as="image" href="\/brand\/homeroom-mark\.png"\/>)?<main id="ai-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" data-page-bounce=""/);
+  assert.match(html, /<h1 class="[^"]*">Homeroom bot<\/h1>/);
+  assert.match(html, /Your work/);
+  assert.match(html, /<a href="#ai\/main" class="messages-composer-card ai-askbar-card" aria-label="Ask Homeroom bot">/);
+  assert.ok(!html.includes('data-ai-row'), 'no rows before the effects read them');
+  assert.ok(!html.includes('data-ai-main'), 'and Main is not docked before mount');
+});
