@@ -296,16 +296,16 @@
     "description": "Shown in place of Discover's list when a type chip is pressed and the filter chip above leaves no app of that type (no search text)."
   },
   "list.heading.recommended": {
-    "text": "Recommended for you",
-    "description": "Heading over the first group of rows in Discover's default list: apps picked by the platform's admins that the viewer has not joined yet."
+    "text": "Featured",
+    "description": "Heading over the first group of rows in Discover's default list: apps Homeroom's staff picked to feature that the viewer has not joined yet. Not a personal recommendation, so it does not say \"for you\"."
   },
   "list.heading.moreApps": {
     "text": "More apps",
-    "description": "Heading over the rest of Discover's default list, below the \"Recommended for you\" group."
+    "description": "Heading over the rest of Discover's default list, below the \"Featured\" group."
   },
   "list.heading.allApps": {
     "text": "All apps",
-    "description": "Heading over Discover's default list when there is no \"Recommended for you\" group above it."
+    "description": "Heading over Discover's default list when there is no \"Featured\" group above it."
   },
   "list.more.note": {
     "text": "Demos and apps needing fixes, setup, or an icon are still available below and in search.",

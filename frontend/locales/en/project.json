@@ -3219,6 +3219,42 @@
     "text": "Where this request is",
     "description": "Accessible name of the card on a request's page that shows how far the request has come: asked, plan written, built, voted in."
   },
+  "topic.request.ownAgent.summary": {
+    "text": "Build it with your own Claude Code",
+    "description": "Folded line under the status card on a request's page; opening it shows a link that hands this request to Claude Code on the web, on the person's own Claude plan. \"Claude Code\" is a product name."
+  },
+  "topic.request.ownAgent.lead": {
+    "text": "Claude Code opens with a prompt to build this request already typed. Check it and press send. It runs on your own Claude plan.",
+    "description": "Explains, on a request's page, what the \"Open in Claude Code\" link below it does."
+  },
+  "topic.request.ownAgent.open": {
+    "text": "Open in Claude Code",
+    "description": "Link on a request's page that opens Claude Code on the web in a new tab with a prompt to build this request already typed. \"Claude Code\" is a product name."
+  },
+  "topic.request.ownAgent.needsHeading": {
+    "text": "You need",
+    "description": "Heading over the short list, on a request's page, of what the person needs for the \"Open in Claude Code\" link to work."
+  },
+  "topic.request.ownAgent.needs.plan": {
+    "text": "A Claude Pro, Max, Team or Enterprise plan with Claude Code on the web",
+    "description": "First item of the \"You need\" list under the \"Open in Claude Code\" link on a request's page. Plan names are product names."
+  },
+  "topic.request.ownAgent.needs.github": {
+    "text": "GitHub connected at claude.ai/code",
+    "description": "Second item of the \"You need\" list under the \"Open in Claude Code\" link on a request's page: the person has connected their GitHub account in Claude Code on the web."
+  },
+  "topic.request.ownAgent.needs.connector": {
+    "text": "Homeroom connected in Claude",
+    "description": "Third item of the \"You need\" list under the \"Open in Claude Code\" link on a request's page: the Homeroom connector is added to the person's Claude account. Followed by a tick when done, or an \"Add it\" link."
+  },
+  "topic.request.ownAgent.needs.connectorAdd": {
+    "text": "Add it",
+    "description": "Link after \"Homeroom connected in Claude\" on a request's page, when Homeroom cannot see the connector yet: opens the connector settings that show how to add it."
+  },
+  "topic.request.ownAgent.needs.done": {
+    "text": "Done",
+    "description": "Screen-reader text after a \"You need\" item on a request's page that is already set up, read in place of the tick."
+  },
   "topic.request.status.specVersionReady": {
     "text": "Plan v{{version}} is ready for comments.",
     "description": "Sentence in the status card on a request's page once a plan (the written description of the change that would answer the request) has been posted. {{version}} is the plan's version number; \"v\" abbreviates version."

@@ -7689,6 +7689,14 @@ WHERE t.session_id = s.id
 -- means "just issue_number", exactly what it always meant.
 ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS linked_issues INTEGER[] NOT NULL DEFAULT '{}';
 
+-- Where a work order was started from, when the agent says (#5987):
+-- 'claude_code_link' is the "Open in Claude Code" link, whose prompt asks
+-- prepare_work to record it. NULL is every other way in, and every row from
+-- before the link existed: the baseline #4856 counted. prepare_work keeps
+-- only values it knows (externalAgentTasks.STARTED_FROM), so this stays a
+-- count, not a free-text field an agent can write anything into.
+ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS started_from TEXT;
+
 -- ── External-agent patch uploads (#4264) ─────────────────────────────
 --
 -- A patch reached submit_work only as a tool ARGUMENT, which the coding agent

@@ -31,11 +31,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { SectionHeading } from '@/components/ui/field';
-import { Switch } from '@/components/ui/switch';
 
 import { useMessages } from '../../../lib/i18n/react';
 import { useWindowEvent } from '../../../lib/legacy-dom';
 
+import { HELP, PrivacySwitch } from './privacy-text';
 import { UsageAnalyticsSection } from './usage-analytics';
 
 type WhoCanContact = 'shared' | 'anyone';
@@ -134,7 +134,7 @@ export function PrivacySection() {
   return (
     <div data-settings-section="contact-privacy" className="hidden">
       <div id="settings-contact-privacy-section">
-        <SectionHeading title={t('settings:privacy.whoCanMessage.title')}>
+        <SectionHeading title={t('settings:privacy.whoCanMessage.title')} blurbClassName="dark:text-zinc-400">
           {t('settings:privacy.whoCanMessage.intro')}
         </SectionHeading>
         <div
@@ -161,7 +161,7 @@ export function PrivacySection() {
                   <span className={`block text-sm text-zinc-800 dark:text-zinc-200 ${on ? 'font-semibold' : 'font-normal'}`}>
                     {t(option.label)}
                   </span>
-                  <span className="block text-xs text-zinc-500 dark:text-zinc-500 mt-0.5 leading-relaxed">
+                  <span className={`block ${HELP} mt-0.5`}>
                     {t(option.description)}
                   </span>
                 </span>
@@ -170,18 +170,14 @@ export function PrivacySection() {
           })}
         </div>
         <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <Switch
-              id="settings-profile-discoverable"
-              checked={!!settings?.discoverable}
-              disabled={!settings || saving}
-              onChange={(e) => { void save({ discoverable: e.currentTarget.checked }); }}
-            />
-            <span className="text-sm text-zinc-800 dark:text-zinc-200">
-              {t('settings:privacy.discoverable.label')}
-            </span>
-          </label>
-          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+          <PrivacySwitch
+            id="settings-profile-discoverable"
+            label={t('settings:privacy.discoverable.label')}
+            checked={!!settings?.discoverable}
+            disabled={!settings || saving}
+            onChange={(e) => { void save({ discoverable: e.currentTarget.checked }); }}
+          />
+          <p className={`${HELP} mt-2`}>
             {t(settings?.discoverable
               ? 'settings:privacy.discoverable.descriptionOn'
               : 'settings:privacy.discoverable.descriptionOff')}

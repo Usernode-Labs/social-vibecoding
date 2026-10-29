@@ -161,7 +161,7 @@ test('a thread\'s card is the track once the tray has one for the request, and a
   assert.match(head, /<div className="dev-request-track" data-request-track=\{r\.trackPending \? 'pending' : track\.state\} inert=\{!!r\.trackPending\}>\s*<TrackCard track=\{track\} title=\{r\.title\} links=\{trackLinks\(track, \{ request: false \}\)\} pictures \/>/, 'the request\'s page draws the same card');
   // Polish board #12: one row of steps on the page, the track card's, and
   // the card unseen while the page is drawn from the board's older row.
-  assert.match(head, /<RequestStatus s=\{r\.status\} specs=\{specs\} tracked=\{!!track\} \/>/);
+  assert.match(head, /<RequestStatus s=\{r\.status\} specs=\{specs\} tracked=\{!!track\} slug=\{r\.slug \|\| ''\} number=\{r\.number\} \/>/);
   assert.match(head, /\{s\.closed \|\| tracked \? null : \(\s*<ol className="dev-request-steps">/);
   assert.match(read('public/css/app.css'), /\.dev-request-track\[data-request-track="pending"\] \{ visibility: hidden; \}/);
 });

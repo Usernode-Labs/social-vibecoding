@@ -446,6 +446,30 @@ test('prepare_work records the work order at the UPSTREAM base commit', async ()
   assert.equal(insert.params[5], result.branch);
 });
 
+// #5987: the "Open in Claude Code" link's prompt passes startedFrom, and the
+// task row records it so those tasks can be counted. Anything else is dropped.
+test('prepare_work records where a task was started from, and only a known value', async () => {
+  const run = async (startedFrom) => {
+    const queries = [];
+    const pool = fakePool([['INSERT INTO external_agent_tasks', [{ id: 31 }]]], queries);
+    const result = await withFetch(FORK_READY, [], () => svc.prepareWork(
+      { pool, config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
+      {
+        user: { id: 3 }, app: APP, issueNumber: 4, brief: 'x',
+        clientName: 'Claude — claude.ai', origin: 'https://usernode.example', startedFrom,
+      }
+    ));
+    assert.equal(result.ok, true);
+    const insert = queries.find((q) => q.sql.includes('INSERT INTO external_agent_tasks'));
+    assert.match(insert.sql, /started_from\)/);
+    return insert.params[13];
+  };
+  assert.equal(await run('claude_code_link'), 'claude_code_link');
+  assert.equal(await run(undefined), null);
+  assert.equal(await run('anything-else'), null);
+  assert.deepEqual([...svc.STARTED_FROM], ['claude_code_link']);
+});
+
 test('a missing fork still produces a work order — it is the agent’s job now', async () => {
   const queries = [];
   const pool = fakePool([['INSERT INTO external_agent_tasks', [{ id: 32 }]]], queries);
@@ -5088,8 +5112,8 @@ test('preparing records the launchpad it was prepared in', async () => {
   assert.equal(result.ok, true);
 
   const insert = queries.find((q) => /INSERT INTO external_agent_tasks/.test(q.sql));
-  assert.match(insert.sql, /origin_session_id, linked_issues\)/, 'the column is written');
-  assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10, \$11, \$12, \$13\)/,
+  assert.match(insert.sql, /origin_session_id, linked_issues, started_from\)/, 'the column is written');
+  assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10, \$11, \$12, \$13, \$14\)/,
     'and the placeholder list grew with it');
   assert.equal(insert.params[11], 990404, 'with the session that asked');
 
