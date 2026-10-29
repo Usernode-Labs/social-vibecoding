@@ -344,8 +344,8 @@
     "description": "Title shown in the header bar, and as the browser tab's title, on the Communities screen, which lists the communities the person is in."
   },
   "title.ai": {
-    "text": "AI",
-    "description": "Title in the app header on the AI tab's page: the person's work with Homeroom bot, beside Main, their private chat with it. The tab's own name."
+    "text": "Homeroom bot",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the Homeroom bot page, where the person chats with Homeroom bot, Homeroom's AI assistant. The bot's name, the same as its navigation tab."
   },
   "title.platformStatus": {
     "text": "Platform status",
