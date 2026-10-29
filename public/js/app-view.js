@@ -5080,6 +5080,10 @@ const AppView = {
       const id = await AppView._sessionIdForChange(ref.pr);
       if (AppView._devTopic !== pending || !document.getElementById('dev-topic-thread')) return;
       if (!id) {
+        // #6019: numbers are one sequence per app, so a change address
+        // with a request's number is that request's thread.
+        if (await AppView._openByThread('proposal', ref.pr, () => AppView._devTopic === pending)) return;
+        if (AppView._devTopic !== pending) return;
         if (App._abandonWorkshopResume?.()) return;
         App.switchTab('dev');
         return;
@@ -5257,11 +5261,22 @@ const AppView = {
       // (#2776) Unless this was the Workshop tab returning to the card you
       // left: that one goes quietly back to the app selector instead.
       if (!ok || !AppView._findTopicItem()) {
-        if (App._abandonWorkshopResume?.()) return;
-        if (ref.kind === 'gov' && window.PlatformUI && PlatformUI.toast) {
-          PlatformUI.toast(PlatformI18n.t('changes:discussion.openFailed'));
+        const fallBack = () => {
+          if (App._abandonWorkshopResume?.()) return;
+          if (ref.kind === 'gov' && window.PlatformUI && PlatformUI.toast) {
+            PlatformUI.toast(PlatformI18n.t('changes:discussion.openFailed'));
+          }
+          App.switchTab('dev');
+        };
+        // #6019: a request address with a change's number is that change.
+        if (ref.kind === 'issue' && ref.id) {
+          const here = AppView._devTopic;
+          void AppView._openByThread('issue', ref.id, () => AppView._devTopic === here).then((moved) => {
+            if (!moved && AppView._devTopic === here) fallBack();
+          });
+          return;
         }
-        App.switchTab('dev');
+        fallBack();
         return;
       }
     };
@@ -5329,6 +5344,37 @@ const AppView = {
     // Resolves after the first paint or the fallback, so openTopic's
     // awaiting callers (submitImportPr and friends) keep their contract.
     await settled;
+  },
+
+  // #6019: a request's address and a change's share one number sequence
+  // (services/app-numbers.js), so a number the page asked for as the other
+  // kind still names one thing. Ask its thread (routes/threads.js) what the
+  // number is and open that instead: `asked` is the kind the address said
+  // ('issue' or 'proposal'). Resolves whether it moved; `still()` says
+  // whether the page that asked is still the one on screen.
+  async _openByThread(asked, number, still) {
+    const slug = App.currentApp || AppView.appData?.slug;
+    const n = Number(number);
+    if (!slug || !Number.isInteger(n) || n <= 0) return false;
+    let data = null;
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/threads/${n}${AppView._demoQS()}`);
+      if (res.ok) data = await res.json();
+    } catch {
+      data = null;
+    }
+    if (!data || !Array.isArray(data.items) || (still && !still())) return false;
+    const change = data.items.find((i) => i.type === 'change' && Number(i.number) === n);
+    const request = data.items.find((i) => i.type === 'request' && Number(i.number) === n);
+    if (asked === 'issue' && change) {
+      await AppView.openTopic('proposal', Number(change.id));
+      return true;
+    }
+    if (asked === 'proposal' && request) {
+      await AppView.openTopic('issue', n);
+      return true;
+    }
+    return false;
   },
 
   // #4367: the session a change's pull request number names on this app, or

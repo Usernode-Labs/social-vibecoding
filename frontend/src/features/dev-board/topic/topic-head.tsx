@@ -50,6 +50,7 @@ import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { TopicBack } from './topic-back';
 import { RequestHead, RequestWords } from './request-head';
 import { ChangeThreadHead } from './change-head';
+import { ThreadItems, pageSlug } from './thread-items';
 import { DescriptionEditor } from './description-editor';
 import { ISSUE_BODY_MAX } from '../../../lib/issue-body-limit';
 import { linkKind } from '../../../lib/repo-link.js';
@@ -712,6 +713,9 @@ function Transcript({ t: section }: { t: TranscriptSection }): ReactNode {
     </div>
   );
 }
+
+// The governance rows a decision's page shows (routes/issues.js governance/:id).
+const GOVERNANCE_KINDS = new Set(['secret_change', 'rename', 'close_issue', 'maintenance_campaign', 'featured_illustration']);
 
 export function TopicHead(): ReactNode {
   const { card, body, item } = useStoreState(topicHeadStore);
@@ -1751,7 +1755,8 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
               stands, its shots; its replies are the thread's stream. #2605:
               no build surface here: the ⋯'s Build door leaves for it. */}
           {body.thread ? (
-            <ChangeThreadHead id={id ? Number(id) : null} card={card} body={body} v={body.thread} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} />
+            <ChangeThreadHead id={id ? Number(id) : null} card={card} body={body} v={body.thread} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues}
+              threadNumber={Number(linkedIssues[0]) || Number(session?.pr_number) || null} />
           ) : null}
           {id ? (
             <DetailsSheet
@@ -1779,6 +1784,14 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
             {body.closedBand ? <ClosedBand b={body.closedBand} /> : null}
             {body.addressedBy ? <AddressedBy r={body.addressedBy} /> : null}
             <DevCard model={card} />
+            {/* #6019: a decision's thread, and the viewer's Notify me / Mute for it. */}
+            {GOVERNANCE_KINDS.has(item?.kind) && Number(item?.thread_id) > 0 ? (
+              <ThreadItems
+                slug={pageSlug()}
+                threadId={Number(item.thread_id)}
+                here={{ type: item.kind === 'close_issue' ? 'close' : 'decision', id: Number(item.id) }}
+              />
+            ) : null}
           </div>
           <TopicBodySections body={owner ? { ...body, transcript: null } : body} />
         </>

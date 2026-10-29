@@ -38,6 +38,34 @@ import { FeedThread } from '../dev-board/card/feed-thread';
 import { readAskStream } from '../dev-board/workshop/ask-stream';
 import type { ReviewItem } from './model';
 
+/**
+ * #6019: Discussion is the thread's. A change built for a request talks on
+ * the request (#5007), so it opens there; a change of its own talks on
+ * itself, and a decision on its governance row. Nothing is drawn until the
+ * thread has said which, so the sheet never shows one stream and then
+ * another.
+ */
+function ThreadTalk({ item }: { item: ReviewItem }): ReactNode {
+  const own = item.kind === 'governance' ? { type: 'governance', ref: item.id } : { type: 'session', ref: item.id };
+  const asks = item.kind === 'proposal' && !!item.number;
+  const [anchor, setAnchor] = useState<{ type: string; ref: number } | null>(asks ? null : own);
+  useEffect(() => {
+    if (!asks) { setAnchor(own); return undefined; }
+    let live = true;
+    fetch(`/api/apps/${encodeURIComponent(item.app.slug)}/threads/${item.number}`, { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!live) return;
+        const lead = data && data.thread && data.thread.lead === 'request' ? Number(data.thread.number) : 0;
+        setAnchor(lead > 0 ? { type: 'issue', ref: lead } : own);
+      })
+      .catch(() => { if (live) setAnchor(own); });
+    return () => { live = false; };
+  }, [item.app.slug, item.number, item.id, item.kind]);
+  if (!anchor) return null;
+  return <FeedThread slug={item.app.slug} type={anchor.type} refId={anchor.ref} canPost />;
+}
+
 export type SheetState = 'ask' | 'voted' | 'reason' | 'askq' | 'talk' | 'try';
 export type Vote = 'yes' | 'no';
 
@@ -261,7 +289,7 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
         {pair()}
         {sub(t('communities:review.help.talk'))}
         <div className="rf-body rf-thread">
-          <FeedThread slug={item.app.slug} type="session" refId={item.id} canPost />
+          <ThreadTalk item={item} />
         </div>
       </>
     );

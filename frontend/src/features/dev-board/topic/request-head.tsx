@@ -48,6 +48,7 @@ import {
   type RequestSpecCard,
 } from './request-model';
 import { requestShots, togglePinShot } from './request-shots';
+import { ThreadItems, pageSlug } from './thread-items';
 import { TopicBack } from './topic-back';
 import { saveIssueBody } from './topic-head';
 
@@ -414,6 +415,8 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               {specs.map((card) => <SpecCard key={card.key} card={card} />)}
             </div>
           ) : null}
+          {/* #6019: the changes and votes in this request's thread. */}
+          <ThreadItems slug={pageSlug()} number={r.number} here={{ type: 'request', id: r.number }} />
         </div>
       </article>
     </>

@@ -119,6 +119,11 @@ test('thread followers against the full schema', { timeout: 120000 }, async (t) 
     return { status: res.status, body: await res.json().catch(() => null) };
   }
 
+  async function read(who, path) {
+    const res = await fetch(`${base}${path}`, { headers: who ? { 'x-test-user': String(who.id) } : {} });
+    return { status: res.status, body: await res.json().catch(() => null) };
+  }
+
   const alice = await user('tf_alice'); // files request #7
   const bob = await user('tf_bob'); // builds the change for it
   const carol = await user('tf_carol'); // votes on that change
@@ -217,5 +222,64 @@ test('thread followers against the full schema', { timeout: 120000 }, async (t) 
     assert.equal((await follow(erin, secret.thread_id, true)).status, 404, 'a project you cannot see has no threads for you');
     const { rows } = await pool.query('SELECT 1 FROM thread_followers WHERE user_id = $1', [erin.id]);
     assert.equal(rows.length, 0, 'nothing was stored for it');
+  });
+
+  // ── Stage 3: the thread page's read ────────────────────────────────
+
+  await t.test('a thread by any number in it: the request, its change and what was said on each', async () => {
+    const page = await read(erin, `/api/apps/${app.slug}/threads/7`);
+    assert.equal(page.status, 200);
+    assert.deepEqual(page.body.thread, { id: thread, number: 7, kind: 'work', lead: 'request', title: null, state: 'open' });
+    const items = page.body.items.map((i) => `${i.type}:${i.number}:${i.replies}`);
+    assert.deepEqual(items, ['request:7:4', 'change:8:3'], 'oldest first, each with its people\'s replies');
+    const change = page.body.items.find((i) => i.type === 'change');
+    assert.equal(change.state, 'review');
+    assert.deepEqual(change.folded.map((r) => `${r.username}:${r.text}`),
+      ['tf_dave:Does it follow the system setting?', 'tf_dave:Pushed a fix.', 'tf_frank:Looks right now.'],
+      'the newest replies fold under the change, in the order they were said');
+    assert.deepEqual(page.body.follow, { state: 'none', chosen: false });
+    const byChange = await read(erin, `/api/apps/${app.slug}/threads/8`);
+    assert.equal(byChange.body.thread.id, thread, 'the change\'s own number is the same thread');
+    assert.equal((await read(null, `/api/apps/${app.slug}/threads/7`)).body.follow, null, 'signed out: readable, no button');
+  });
+
+  await t.test('a change of its own leads its thread; a decision is read by its id', async () => {
+    const solo = await read(bob, `/api/apps/${app.slug}/threads/20`);
+    assert.equal(solo.body.thread.lead, 'change');
+    assert.deepEqual(solo.body.follow, { state: 'following', chosen: false }, 'its builder follows it');
+    const { rows: [rename] } = await pool.query(`SELECT thread_id FROM issues WHERE kind = 'rename' AND app_id = $1`, [app.id]);
+    const decision = await read(carol, `/api/threads/${rename.thread_id}`);
+    assert.equal(decision.status, 200);
+    assert.equal(decision.body.thread.lead, 'decision');
+    assert.deepEqual(decision.body.items.map((i) => `${i.type}:${i.replies}`), ['decision:1']);
+    assert.equal(decision.body.items[0].folded[0].text, 'I like it.');
+  });
+
+  await t.test('a change nobody else can see yet is not listed for them, but is for its builder', async () => {
+    const { rows: [draft] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues) VALUES ($1, $2, 'active', '{7}') RETURNING id`,
+      [app.id, bob.id]
+    );
+    const types = async (who) => (await read(who, `/api/apps/${app.slug}/threads/7`)).body.items
+      .filter((i) => i.type === 'change').map((i) => i.id);
+    assert.ok(!(await types(erin)).includes(draft.id), 'a private draft stays private');
+    assert.ok((await types(bob)).includes(draft.id), 'its builder sees it');
+    await pool.query('UPDATE chat_sessions SET shared_at = NOW() WHERE id = $1', [draft.id]);
+    assert.ok((await types(erin)).includes(draft.id), 'once shared, everyone does');
+  });
+
+  await t.test('a blocked person\'s replies are not folded for the one who blocked them', async () => {
+    await pool.query('INSERT INTO user_blocks (blocker_id, blocked_user_id) VALUES ($1, $2)', [erin.id, dave.id]);
+    const page = await read(erin, `/api/apps/${app.slug}/threads/7`);
+    const change = page.body.items.find((i) => i.type === 'change' && i.number === 8);
+    assert.ok(change.folded.every((r) => r.username !== 'tf_dave'));
+    await pool.query('DELETE FROM user_blocks WHERE blocker_id = $1', [erin.id]);
+  });
+
+  await t.test('the read answers only for a project the viewer may see, and a number it holds', async () => {
+    assert.equal((await read(erin, `/api/apps/${app.slug}/threads/999`)).status, 404);
+    assert.equal((await read(erin, `/api/apps/${app.slug}/threads/abc`)).status, 404);
+    assert.equal((await read(erin, '/api/apps/tf-hidden/threads/1')).status, 404);
+    assert.equal((await read(erin, '/api/threads/999999')).status, 404);
   });
 });

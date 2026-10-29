@@ -2615,6 +2615,86 @@
     "text": "{{count}} replies",
     "description": "Line under a change, over the replies to it, on the change's page: how many replies people have written. {{count}} is that number. Reply is a noun."
   },
+  "topic.thread.label": {
+    "text": "In this thread",
+    "description": "Small-caps label over a list on a request's or a change's page: the thread a request's or a change's page is in: every request, change and vote about one piece of work, listed under the page's own post."
+  },
+  "topic.thread.item.request": {
+    "text": "Request #{{number}}",
+    "description": "What one row of the list is, in its grey line: a request (something people asked a project for). {{number}} is its number. The list is the thread a request's or a change's page is in: every request, change and vote about one piece of work, listed under the page's own post."
+  },
+  "topic.thread.item.change": {
+    "text": "Change #{{number}}",
+    "description": "What one row of the list is, in its grey line: a change (a proposed edit to the project that people vote on). {{number}} is its number. The list is the thread a request's or a change's page is in: every request, change and vote about one piece of work, listed under the page's own post."
+  },
+  "topic.thread.item.changeUnnumbered": {
+    "text": "A change",
+    "description": "What one row of the list is, in its grey line, for a change that has no number yet. A change is a proposed edit to the project that people vote on."
+  },
+  "topic.thread.item.close": {
+    "text": "Vote to close",
+    "description": "What one row of the list is, in its grey line: a vote on closing the request without building it."
+  },
+  "topic.thread.item.decision": {
+    "text": "Decision",
+    "description": "What one row of the list is, in its grey line: a decision the project's people vote on, such as renaming it."
+  },
+  "topic.thread.state.open": {
+    "text": "Open",
+    "description": "Where a request in the list stands: nobody has closed it."
+  },
+  "topic.thread.state.closed": {
+    "text": "Closed",
+    "description": "Where a request in the list stands: it was closed."
+  },
+  "topic.thread.state.underway": {
+    "text": "Being made",
+    "description": "Where a change in the list stands: someone is still building it."
+  },
+  "topic.thread.state.voting": {
+    "text": "Up for a vote",
+    "description": "Where a change, a vote to close or a decision in the list stands: people are voting on it now."
+  },
+  "topic.thread.state.live": {
+    "text": "Live",
+    "description": "Where a change in the list stands: it was voted in and is part of the project now."
+  },
+  "topic.thread.state.settled": {
+    "text": "Settled",
+    "description": "Where a vote to close or a decision in the list stands: the vote is over."
+  },
+  "topic.thread.replies_one": {
+    "text": "{{count}} reply",
+    "description": "How many replies people wrote on one item in the list. {{count}} is that number. Reply is a noun."
+  },
+  "topic.thread.replies_other": {
+    "text": "{{count}} replies",
+    "description": "How many replies people wrote on one item in the list. {{count}} is that number. Reply is a noun."
+  },
+  "topic.thread.follow.notifyMe": {
+    "text": "Notify me",
+    "description": "Button beside the list on a request's or a change's page, for someone who is not following the thread: get a notification whenever someone replies on anything in it."
+  },
+  "topic.thread.follow.notifyMeHint": {
+    "text": "Get a notification when someone replies on anything in this thread.",
+    "description": "Hover text of the Notify me button on a request's or a change's page."
+  },
+  "topic.thread.follow.mute": {
+    "text": "Mute",
+    "description": "The same button for someone who is following the thread (they asked, built, voted or posted there, or pressed Notify me): stop its replies notifying them."
+  },
+  "topic.thread.follow.muteHint": {
+    "text": "Replies here notify you. Press to stop them.",
+    "description": "Hover text of the Mute button on a request's or a change's page."
+  },
+  "topic.thread.follow.muted": {
+    "text": "Muted",
+    "description": "The same button once the thread is muted: its replies do not notify the person. Pressing it again unmutes the thread."
+  },
+  "topic.thread.follow.mutedHint": {
+    "text": "Muted: replies here do not notify you, until you reply yourself. Press to unmute.",
+    "description": "Hover text of the button on a request's or a change's page while the thread is muted."
+  },
   "topic.change.stream.noReplies": {
     "text": "No replies yet",
     "description": "Line under a change, on its page, when nobody has replied to it."

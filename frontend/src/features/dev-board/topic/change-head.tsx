@@ -44,6 +44,7 @@ import type { ActionSpec, DevCardModel } from '../card/model';
 import type { ChangeGateView, ChangeThreadView, FixChecksView, TopicBody } from './model';
 import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
+import { ThreadItems, pageSlug } from './thread-items';
 import { TopicBack } from './topic-back';
 import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view';
 import { IncludedIn, IssueAssociations, ProposalBody, SummaryMore } from './topic-head';
@@ -327,13 +328,15 @@ function ShotsCard({ s }: { s: NonNullable<ChangeThreadView['shots']> }): ReactN
   );
 }
 
-export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSaved }: {
+export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSaved, threadNumber = null }: {
   id: number | null;
   card: DevCardModel;
   body: TopicBody;
   v: ChangeThreadView;
   linkedIssues: number[];
   onIssuesSaved: (issues: number[]) => void;
+  /** #6019: a number in the change's thread: its first request's, else its own. */
+  threadNumber?: number | null;
 }): ReactNode {
   const t = useMessages('project');
   const images = useInlineImageViewer();
@@ -493,6 +496,8 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
               thread={{ thanks }}
             />
           ) : null}
+          {/* #6019: the requests, other changes and votes in its thread. */}
+          {id ? <ThreadItems slug={pageSlug()} number={threadNumber} here={{ type: 'change', id }} /> : null}
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
           {v.codeMissing ? <CodeMissingNotice /> : null}
           {v.waitsFor || v.baseNotMain ? <StackNotice v={v} /> : null}
