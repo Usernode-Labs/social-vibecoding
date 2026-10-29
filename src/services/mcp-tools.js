@@ -6453,6 +6453,9 @@ function registerTools(server, ctx) {
       nextStep: 'It is now up for a vote'
         + `${proposalRef(result.proposalId, result.prNumber) ? ` as ${proposalRef(result.proposalId, result.prNumber)}` : ''}. `
         + 'Checks and the staging preview build automatically — use get_proposal to follow it. It merges when the group approves it.'
+        // 29 Oct 2026: a coding agent's submission is not its author's yes
+        // (governance-rules.ts, `madeByAgent`), so say where theirs is cast.
+        + ' Submitting it is not a vote: tell the user their own yes counts once they tap Yes on it on Homeroom.'
         + testingRouteNote(testing, false)
         + await unlinkedRequestsNote(result),
     });

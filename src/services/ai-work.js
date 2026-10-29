@@ -61,7 +61,7 @@ SELECT t.id, t.number, t.kind, t.title AS thread_title, t.state, t.created_at, t
        req.title AS request_title, req.state AS request_state, req.updated_at AS request_at,
        ch.id AS change_id, ch.pr_number, ch.status AS change_status, ch.user_id AS change_user,
        ch.title AS change_title, ch.promoted_at, ch.merged_at, ch.live_at, ch.last_activity_at,
-       ch.voted
+       ch.voted, ch.by_agent
   FROM threads t
   JOIN mine ON mine.thread_id = t.id
   JOIN apps a ON a.id = t.app_id
@@ -78,7 +78,8 @@ SELECT t.id, t.number, t.kind, t.title AS thread_title, t.state, t.created_at, t
            COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, '')) AS title,
            EXISTS (SELECT 1 FROM pr_votes v
                     WHERE v.session_id = cs.id AND v.user_id = $1
-                      AND v.approval_epoch IS NOT DISTINCT FROM cs.approval_epoch) AS voted
+                      AND v.approval_epoch IS NOT DISTINCT FROM cs.approval_epoch) AS voted,
+           (cs.external_agent IS NOT NULL) AS by_agent
       FROM chat_sessions cs
      WHERE cs.thread_id = t.id AND cs.is_headless = FALSE
        AND cs.status IN ('active', 'paused', 'promoted', 'merging', 'merged')
@@ -164,7 +165,9 @@ function standing(row, viewerId, now = new Date()) {
   if (row.state !== 'open') return null;
   if (status === 'merging') return { group: 'next', what: 'merging', at: iso(row.merged_at || row.promoted_at) };
   if (status === 'promoted') {
-    if (!row.voted && !theirs) return null;
+    // Owed by everyone but its author, and by its author too when a coding
+    // agent submitted it for them: their yes is a tap (governance-rules.ts).
+    if (!row.voted && (!theirs || row.by_agent)) return null;
     return { group: 'next', what: 'vote', at: iso(row.promoted_at) };
   }
   if (status === 'active' || status === 'paused') {

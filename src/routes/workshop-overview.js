@@ -175,8 +175,12 @@ const BALLOT_THREAD_SQL = (cs) => `${cs}.thread_id IS NOT NULL AND cardinality($
          EXISTS (SELECT 1 FROM chat_sessions rb WHERE ${RIVAL_SQL(cs, 'rb')})
       OR EXISTS (SELECT 1 FROM issues cb WHERE ${RIVAL_CLOSE_SQL(cs, 'cb')}))`;
 
+// A change is owed by everyone but its author, and by its author too when a
+// coding agent submitted it for them (`external_agent`): proposing that way
+// is not their yes, and their tap is (governance-rules.ts). Nor is it their
+// pick on a ballot.
 const OWED_PROPOSALS_WHERE = `cs.status = 'promoted'
-       AND cs.user_id IS DISTINCT FROM $1
+       AND (cs.user_id IS DISTINCT FROM $1 OR cs.external_agent IS NOT NULL)
        AND NOT EXISTS (
          SELECT 1 FROM pr_votes pv
           WHERE pv.session_id = cs.id
@@ -187,7 +191,7 @@ const OWED_PROPOSALS_WHERE = `cs.status = 'promoted'
        AND NOT (${BALLOT_THREAD_SQL('cs')} AND (
              EXISTS (SELECT 1 FROM chat_sessions rv
                       WHERE ${RIVAL_SQL('cs', 'rv')}
-                        AND (rv.id < cs.id OR rv.user_id = $1
+                        AND (rv.id < cs.id OR (rv.user_id = $1 AND rv.external_agent IS NULL)
                              OR EXISTS (SELECT 1 FROM pr_votes pb
                                          WHERE pb.session_id = rv.id AND pb.user_id = $1
                                            AND ${currentVotePredicateSql('pb', 'rv')})))
