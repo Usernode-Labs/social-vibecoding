@@ -2872,7 +2872,12 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'get_checkout_status',
     'get_connector_guidance', 'get_demo_status',
     // #3556. One app discussion thread, read through the transcript route.
-    'get_discussion', 'get_homeroom_bot',
+    'get_discussion',
+    // A project's card picture and any change to it waiting for a vote
+    // (routes/app-illustrations.js). External clients only, like the
+    // uploads its counterpart takes.
+    'get_featured_illustration',
+    'get_homeroom_bot',
     // #4884. One discussion message whole, when the page cut the thread.
     'get_message',
     'get_platform_build', 'get_platform_conventions', 'get_proposal',
@@ -2924,6 +2929,10 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // close". It files the proposal; the vote decides, and the platform
     // closes the issue only when it passes.
     'propose_close_request',
+    // A new card picture for a project, sent ahead with prepare_upload: it
+    // opens the project's vote, as the Featured illustration editor's Save
+    // does, and the card changes only when that passes.
+    'propose_featured_illustration',
     'rate_homeroom_bot_run',
     'recheck_change',
     // #3654. Grading a finished benchmark run again: full platform admins only.
@@ -3175,6 +3184,7 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
     'label_bench_task', 'launch_bench_run', 'launch_bench_studio', 'launch_shots_eval',
     'move_challenge',
     'post_message', 'post_spec', 'prepare_upload', 'prepare_work', 'promote_change', 'propose_close_request',
+    'propose_featured_illustration',
     'rate_homeroom_bot_run', 'recheck_change', 'regrade_bench_run', 'remove_challenge', 'reorder_challenges', 'rerun_bench_trial',
     'retire_test_account',
     'run_challenge_scoring',
@@ -3320,7 +3330,7 @@ test('whoami hands the model the canonical name and the exact shipped rules', ()
 
 test('every write tool checks its scope before it does anything', () => {
   const writeTools = [
-    'create_request', 'prepare_upload', 'prepare_work', 'submit_work',
+    'create_request', 'prepare_upload', 'propose_featured_illustration', 'prepare_work', 'submit_work',
     'start_platform_build', 'answer_questions', 'submit_platform_build',
     'demo_mode', 'demo_propose', 'demo_promote', 'demo_vote', 'demo_reset',
   ];

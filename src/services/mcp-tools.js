@@ -215,6 +215,9 @@ const ACTING_TOOLS = Object.freeze([
   // It files nothing, but it hands out a credential and holds a row for a
   // day, as prepare_work holds a work order.
   'prepare_upload',
+  // A new card picture for a project: it opens a vote in the project's
+  // group rather than changing the card (routes/app-illustrations.js).
+  'propose_featured_illustration',
   'post_message',
   'propose_close_request',
   'prepare_work',
@@ -3840,6 +3843,159 @@ function registerTools(server, ctx) {
         nextStep: `Run the command${filePath === 'FILE' ? ', with FILE replaced by the file\'s path' : ''}. When it answers `
           + `"ok":true, pass ${minted.uploadId} as ${field}. If it is refused, it says why and the command `
           + 'stays usable; once a file is stored, the command is spent.',
+      });
+    });
+  }
+
+  // ── Featured illustrations ───────────────────────────────────────────
+  //
+  // The picture on a project's card in Discover, on Home's Discover rail and
+  // on the signed-out landing, as the project's Featured illustration editor
+  // sets it (frontend/src/features/apps/featured-illustration-editor.tsx).
+  // Two tools over the editor's own route, /api/apps/:slug/featured-
+  // illustration (routes/app-illustrations.js), which checks that the person
+  // may manage the app and, on a write, opens the group's vote rather than
+  // changing the card: the picture changes when the vote passes, as it does
+  // after the editor's Save.
+  //
+  // A tool call cannot carry an image, so the pictures go ahead with
+  // prepare_upload (kind "screenshot": a still image) and are named here by
+  // their uploadIds, as create_request's screenshotUploadIds are. The
+  // connector reads each one back for its owner, holds it to the editor's
+  // own limit (1 MB, a smaller cap than a screenshot's) and sends the pair
+  // to the route exactly as the editor's PUT does. External clients only,
+  // like prepare_upload.
+  if (offersImages) {
+    const ILLUSTRATION_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,99}$/;
+    // routes/app-illustrations.js validateImage: the most one picture may be.
+    const ILLUSTRATION_MAX_BYTES = 1024 * 1024;
+    const { TONES: ILLUSTRATION_TONES } = require('../routes/app-illustrations');
+    const illustrationPath = (slug) => `/api/apps/${slug}/featured-illustration`;
+    const absolute = (p) => (typeof p === 'string' && p.startsWith('/app-illustrations/') ? `${origin}${p}` : null);
+    const framingOut = (f) => (f && typeof f === 'object' ? {
+      url: absolute(f.url),
+      darkUrl: absolute(f.darkUrl),
+      zoom: typeof f.zoom === 'number' ? f.zoom : null,
+      x: typeof f.x === 'number' ? f.x : null,
+      y: typeof f.y === 'number' ? f.y : null,
+      tint: typeof f.tint === 'string' && ILLUSTRATION_TONES.includes(f.tint) ? f.tint : null,
+    } : null);
+    const proposalOut = (p) => (p && typeof p === 'object' && Number.isInteger(p.id) ? {
+      id: p.id,
+      url: typeof p.href === 'string' && p.href.startsWith('#') ? `${origin}/${p.href}` : null,
+    } : null);
+    // The route's refusals in its own words, with a code for each.
+    const illustrationRefusal = (result) => {
+      const b = result.body && typeof result.body === 'object' ? result.body : {};
+      const message = typeof b.error === 'string' && b.error.trim() ? clip(b.error.trim(), 500) : `Homeroom returned HTTP ${result.status}.`;
+      if (result.status === 403 && b.code !== 'join_required') return toolError('managers_only', `${message} Nothing was changed.`);
+      if (result.status === 409) {
+        return toolError('conflict', `${message} Nothing was changed.`, b.pending ? { pending: proposalOut(b.pending) } : {});
+      }
+      if (result.status === 400) return toolError('invalid_request', `${message} Nothing was changed.`);
+      return platformError(result);
+    };
+
+    server.registerTool('get_featured_illustration', {
+      title: 'Featured illustration: the card picture',
+      description: 'The picture on a project\'s card in Discover, Home\'s Discover rail and the signed-out landing, as its Featured illustration editor shows it: the light image, the dark one if it has one, how it is framed (zoom, x, y) and its card colour (tint), or null when the card draws the project\'s icon instead. `pending` is the change to it that is waiting for the group\'s vote, if one is. Only people who may manage the project can read it: its creator, its admins and full platform admins.',
+      inputSchema: {
+        slug: z.string().min(1).max(100),
+      },
+      outputSchema: { slug: z.string(), illustration: z.any(), pending: z.any(), nextStep: z.string() },
+      annotations: readAnnotations,
+    }, async ({ slug }) => {
+      const guard = scopeGuard(READ_SCOPE);
+      if (guard) return guard;
+      const s = String(slug || '').trim();
+      if (!ILLUSTRATION_SLUG_RE.test(s)) return toolError('invalid_request', 'slug is not an app slug.');
+      const r = await callPlatform(baseUrl, accessToken, 'GET', illustrationPath(s));
+      if (!r.ok) return illustrationRefusal(r);
+      const b = r.body || {};
+      const pending = proposalOut(b.pending);
+      return readResult('get_featured_illustration', {
+        slug: s,
+        illustration: framingOut(b.illustration),
+        pending,
+        nextStep: pending
+          ? 'A change to this picture is already up for the group\'s vote: another can be proposed once it settles.'
+          : 'To propose a new picture, send it with prepare_upload (kind "screenshot") and call propose_featured_illustration.',
+      });
+    });
+
+    server.registerTool('propose_featured_illustration', {
+      title: 'Featured illustration: propose a new card picture',
+      description: `Propose a new picture for a project's card in Discover, Home's Discover rail and the signed-out landing, as its Featured illustration editor's Save does. It does not change the card: it opens a vote in the project's group, and the picture changes when the vote passes; \`proposal\` links to it. Send each picture first with prepare_upload (kind "screenshot"), then pass the uploadIds here: \`lightUploadId\` for the light theme, and \`darkUploadId\` for the dark one, or null to drop the dark picture. Each must be a PNG or JPEG under 1 MB; a square about 1024 px, with its subject centred, fits every card (the landing crops it to 16:10 around the centre). Leave out a picture to keep the one the card has. \`zoom\` (0.5 to 3), \`x\` and \`y\` (-100 to 100) frame it, and keep the card's current framing when left out (1, 0, 0 for a card with none); \`tint\` is the card colour, one of ${ILLUSTRATION_TONES.join(', ')}. Only the project's creator, its admins and full platform admins may propose one, and only one change can wait for a vote at a time.`,
+      inputSchema: {
+        slug: z.string().min(1).max(100),
+        lightUploadId: z.number().int().positive().optional().describe('The uploadId prepare_upload (kind "screenshot") answered with for the light picture.'),
+        darkUploadId: z.number().int().positive().nullable().optional().describe('The uploadId for the dark picture, or null to drop the dark picture the card has.'),
+        zoom: z.number().min(0.5).max(3).optional(),
+        x: z.number().min(-100).max(100).optional(),
+        y: z.number().min(-100).max(100).optional(),
+        tint: z.enum(ILLUSTRATION_TONES).optional().describe('The card colour behind the picture.'),
+      },
+      outputSchema: { slug: z.string(), proposal: z.any(), nextStep: z.string() },
+      annotations: writeAnnotations,
+    }, async ({ slug, lightUploadId, darkUploadId, zoom, x, y, tint }) => {
+      const guard = scopeGuard(WRITE_SCOPE);
+      if (guard) return guard;
+      const s = String(slug || '').trim();
+      if (!ILLUSTRATION_SLUG_RE.test(s)) return toolError('invalid_request', 'slug is not an app slug. Nothing was changed.');
+      if (lightUploadId == null && darkUploadId === undefined && zoom === undefined && x === undefined && y === undefined && tint === undefined) {
+        return toolError('invalid_request', 'Pass a lightUploadId, a darkUploadId, or new framing or tint: there is nothing to propose. Nothing was changed.');
+      }
+      if (lightUploadId != null && darkUploadId != null && lightUploadId === darkUploadId) {
+        return toolError('invalid_request', 'lightUploadId and darkUploadId name the same upload: send each picture with its own prepare_upload command. Nothing was changed.');
+      }
+      // Each picture, read back for its owner and held to the editor's limit.
+      const picture = async (uploadId, field) => {
+        const taken = await connectorUploads.takeImage(pool, { userId: user.id, uploadId, field });
+        if (!taken.ok) return taken;
+        const { data } = taken;
+        if (data.length > ILLUSTRATION_MAX_BYTES) {
+          return {
+            ok: false, code: 'invalid_images',
+            message: `The ${field === 'darkUploadId' ? 'dark' : 'light'} picture is ${Math.round(data.length / 1024)} KB, and a card picture must be under 1 MB. Save it smaller, as a JPEG for example, and send it again.`,
+          };
+        }
+        return { ok: true, base64: data.toString('base64') };
+      };
+      const body = {};
+      if (lightUploadId != null) {
+        const light = await picture(lightUploadId, 'lightUploadId');
+        if (!light.ok) return toolError(light.code, `${light.message} Nothing was changed.`);
+        body.light = light.base64;
+      }
+      if (darkUploadId === null) body.dark = null;
+      else if (darkUploadId !== undefined) {
+        const dark = await picture(darkUploadId, 'darkUploadId');
+        if (!dark.ok) return toolError(dark.code, `${dark.message} Nothing was changed.`);
+        body.dark = dark.base64;
+      }
+      // Framing the call leaves out keeps the card's own, as the editor does.
+      let current = null;
+      if (zoom === undefined || x === undefined || y === undefined) {
+        const read = await callPlatform(baseUrl, accessToken, 'GET', illustrationPath(s));
+        if (!read.ok) return illustrationRefusal(read);
+        current = read.body && read.body.illustration && typeof read.body.illustration === 'object' ? read.body.illustration : null;
+      }
+      const kept = (value, key, fallback) => (value !== undefined ? value
+        : (current && typeof current[key] === 'number' ? current[key] : fallback));
+      body.zoom = kept(zoom, 'zoom', 1);
+      body.x = kept(x, 'x', 0);
+      body.y = kept(y, 'y', 0);
+      if (tint !== undefined) body.tint = tint;
+      const r = await callPlatform(baseUrl, accessToken, 'PUT', illustrationPath(s), Buffer.from(JSON.stringify(body), 'utf8'));
+      if (!r.ok) return illustrationRefusal(r);
+      // Proposed, so the uploads are done with. Their pictures now travel in
+      // the proposal; the unlinked copies are swept with every other one.
+      const used = [lightUploadId, darkUploadId].filter((id) => id != null);
+      if (used.length) await connectorUploads.consumeUploads(pool, { userId: user.id, uploadIds: used });
+      return toolResult({
+        slug: s,
+        proposal: proposalOut(r.body && r.body.proposal),
+        nextStep: 'Up for the project\'s vote: the card keeps its current picture until the vote passes. Share `proposal` with the group; get_featured_illustration shows it as pending meanwhile.',
       });
     });
   }

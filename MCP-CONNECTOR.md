@@ -157,6 +157,7 @@ issue, a build — and the platform merges none of it without a group vote:
 |---|---|
 | `submit_work` | Opens or advances a proposal, for the group to vote on |
 | `create_request` | Files on the app's board and as a GitHub issue |
+| `propose_featured_illustration` | Opens a vote in the project's group on a new card picture, as the project's Featured illustration editor does; the card changes only when the vote passes. Only people who may manage the project can call it |
 | `create_app` | Makes a new project for the caller alone, spending one of their app slots; invites nobody and touches no other project, and what is built in it goes to its own vote (#6026) |
 | `prepare_work` | Claims the request on the app's board; mints a work order |
 | `close_work_order` | Puts away one of the user's own unsubmitted work orders, freeing its slot; touches no branch, proposal or vote |

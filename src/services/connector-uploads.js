@@ -320,6 +320,26 @@ async function takeUpload(pool, { userId, uploadId, kind, field }) {
   return { ok: true, uploadId: id, kind, mediaId: String(row.media_id || ''), bytes: Number(row.bytes) || 0 };
 }
 
+// A screenshot upload's own bytes, for a tool that hands the picture itself
+// to a route instead of linking it by id: propose_featured_illustration,
+// whose route (routes/app-illustrations.js) keeps the picture in the
+// proposal it opens. The owner's own, and only while it is linked to no
+// request.
+async function takeImage(pool, { userId, uploadId, field }) {
+  const taken = await takeUpload(pool, { userId, uploadId, kind: 'screenshot', field });
+  if (!taken.ok) return taken;
+  const { rows } = await pool.query(
+    `SELECT data FROM issue_screenshots
+      WHERE id = $1 AND user_id = $2 AND issue_number IS NULL`,
+    [taken.mediaId, userId]
+  );
+  const data = rows && rows[0] && Buffer.isBuffer(rows[0].data) ? rows[0].data : null;
+  if (!data) {
+    return fail('upload_not_found', `Upload ${taken.uploadId}'s picture is gone. Ask prepare_upload for a new command and send it again.`);
+  }
+  return { ok: true, uploadId: taken.uploadId, data };
+}
+
 // After a call that used them: the rows are done with. A video's or a
 // screenshot's file stays, linked to its request. Never fatal; the sweep
 // removes anything left over.
@@ -357,5 +377,6 @@ module.exports = {
   authenticateUpload,
   storeUpload,
   takeUpload,
+  takeImage,
   consumeUploads,
 };
