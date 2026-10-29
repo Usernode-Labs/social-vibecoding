@@ -250,6 +250,14 @@ export type CommunityPayload = {
   visibility?: { build: 'public' | 'private'; view: 'public' | 'private' } | null;
   /** #4666: a change to who can see and change it already up for a vote. */
   who_decides_change?: { session_id: number; pr_number: number | null; title: string | null } | null;
+  /**
+   * VERSIONS (docs/plans/versions.md). On a version, the original it was
+   * made from and whether it gets that original's updates; null on
+   * everything else. Absent from a server that predates versions.
+   */
+  made_from?: { slug: string; name: string | null; following: boolean } | null;
+  /** On an original, how many versions were made of it and how many get its updates; null otherwise. */
+  versions?: { count: number; following: number } | null;
 };
 
 /**
@@ -624,6 +632,43 @@ export function HeroActive({ activity }: { activity: CommunityPayload['activity'
  * record of the app (improveStore, the header chip's), else the community
  * record's name and a letter.
  */
+/**
+ * WHERE IT CAME FROM, OR WHAT CAME OF IT (docs/plans/versions.md): one line
+ * under who it is for. On a version, "Made from Tier list · Gets its updates"
+ * (or "Doesn't get its updates"), the original's name opening its page; on
+ * an original, "214 versions · 160 get its updates". A note about the
+ * project, not a status, so it is text in the line above's muted ink, as
+ * Discover's line is. Nothing on a project that is neither, nothing for a
+ * zero ("0 versions"), and nothing from a server that sends neither field.
+ * Pure: it reads the community record the hero already has.
+ */
+export function HeroLineage({ data }: { data: CommunityPayload }): ReactNode {
+  const t = useMessages('project');
+  const from = data.made_from;
+  if (from && typeof from === 'object' && from.slug) {
+    return (
+      <span className="dev-ws-hero-lineage" data-ws-made-from={from.slug}>
+        <RichMessage
+          id={from.following ? 'project:communityCard.lineage.madeFrom.gets' : 'project:communityCard.lineage.madeFrom.doesNotGet'}
+          values={{ project: from.name || from.slug }}
+          components={[<a className="dev-ws-hero-lineage-link" href={`#app/${encodeURIComponent(from.slug)}`} />]}
+        />
+      </span>
+    );
+  }
+  const v = data.versions;
+  const count = v ? Math.max(0, Math.floor(Number(v.count) || 0)) : 0;
+  if (!v || !count) return null;
+  const following = Math.min(count, Math.max(0, Math.floor(Number(v.following) || 0)));
+  return (
+    <span className="dev-ws-hero-lineage" data-ws-versions={String(count)}>
+      {!following ? t('project:communityCard.lineage.versions.count', { count })
+        : count === 1 ? t('project:communityCard.lineage.versions.oneGetsUpdates')
+          : t('project:communityCard.lineage.versions.manyGetUpdates', { count: following, versions: count })}
+    </span>
+  );
+}
+
 function HeroIdentity({ slug, name, iconUrl, iconEmoji, data, member }: {
   slug: string;
   name: string;
@@ -653,6 +698,7 @@ function HeroIdentity({ slug, name, iconUrl, iconEmoji, data, member }: {
             />
           )}
         </span>
+        <HeroLineage data={data} />
       </span>
     </div>
   );

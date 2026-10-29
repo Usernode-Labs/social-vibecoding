@@ -18,6 +18,14 @@
  * place's; how a change gets in is its Approval rules card. The hub points
  * at them rather than drawing them twice.
  *
+ * VERSIONS (docs/plans/versions.md). A version made from another project,
+ * its original, gets the UPDATE card under the hero when the original has
+ * changed and that change is waiting to be looked at, or, on a version that
+ * does not get its updates, once, when the original has moved on since
+ * (UpdateCard). An original gets FROM ITS VERSIONS after For you: the
+ * suggestions its versions sent, what went live in them lately, and how its
+ * last update went down (FromVersionsCard).
+ *
  * A project Homeroom bot is still building gets its FIRST VERSION card
  * first, right under the hero: where the build stands, and the way to the
  * bot's chat when the bot waits on its maker (FirstVersionCard below). Once
@@ -58,7 +66,7 @@ import { useEffect, useId, useRef, useState, type ReactNode, type Ref } from 're
 import { Button } from '@/components/ui/button';
 import { SectionHeader, ListRow } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
-import { BallotIcon, BoardIcon, ChatIcon, CheckIcon, ChevronRightIcon, ClockIcon } from '@/components/ui/icons';
+import { ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, BoardIcon, ChatIcon, CheckIcon, ChevronRightIcon, ClockIcon, SparklesIcon } from '@/components/ui/icons';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
@@ -75,6 +83,11 @@ import { open as openConversation, openBot } from '../../messages/store';
 import type { DevWorkshopView, ListRow as BoardRow } from '../card/model';
 import { isNeedsSeen, needsRowKey, useNeedsSeen } from '../../workshop/needs-seen';
 import { reloadCommunity, type CommunityPayload, type HubFirstVersion } from './community-card';
+import { useHubDismissed, type HubCard } from './hub-dismissed';
+import {
+  askToFit, goTo, upstreamAction, useUpstream, useVersionsSummary,
+  type UpstreamState, type VersionsSummary,
+} from '../../versions/upstream';
 
 /** How often the hub reads the project again while its first version is being built. */
 export const FIRST_VERSION_POLL_MS = 15000;
@@ -967,3 +980,242 @@ export function RecentlyLive({ slug, rows, onAll, own = null, ident = null }: {
   );
 }
 
+
+/* ── Versions: the Update card, on a version ───────────────────────────── */
+
+/**
+ * Which Update card a version's hub draws, and the name it is closed under
+ * on this device (./hub-dismissed.ts), or null for none. Pure, for the tests.
+ *
+ *   - `available`: the original changed and nothing has been made of it yet
+ *     (a version nobody has visited lately waits for this card). See the
+ *     update makes it a change and opens it.
+ *   - `fit`: the change clashes with the version's own (`needs_fit`). Ask
+ *     Homeroom bot to fit it files the request that builds it.
+ *   - `behind`: a version that does not get its updates, once the original
+ *     has moved on since it last took them, its one-time card.
+ *
+ * An update already up as a change (`open`) is a vote, and Needs you shows
+ * it; nothing is drawn for it here, nor while versions are switched off.
+ * "Not now" closes the card for that one update (`update:<its commit>`),
+ * so the next one shows again; the behind card is once per device.
+ */
+export function updateCardOf(up: UpstreamState | null | undefined): { kind: 'available' | 'fit' | 'behind'; key: HubCard } | null {
+  if (!up || !up.enabled || !up.original) return null;
+  const offer = up.offer;
+  const name = (kind: string) => `update:${(offer && offer.fromSha) || kind}` as HubCard;
+  if (offer && offer.state === 'available') return { kind: 'available', key: name('available') };
+  if (offer && offer.state === 'needs_fit') return { kind: 'fit', key: name('fit') };
+  if (offer && offer.state === 'open') return null;
+  if (!up.following && up.behind) return { kind: 'behind', key: 'update:behind' };
+  return null;
+}
+
+/** The first of the original's changes the update brings, and how many more, or ''. */
+export function bringsLine(brings: Array<{ title: string }> | null | undefined): string {
+  const titles = (brings || []).map((b) => b && b.title).filter(Boolean);
+  if (!titles.length) return '';
+  return titles.length > 1
+    ? translate('project:hub.update.bringsMore', { title: titles[0], count: titles.length - 1 })
+    : titles[0];
+}
+
+/**
+ * THE UPDATE CARD (docs/plans/versions.md): under the hero of a version
+ * whose original has changed, for its members. Its words and buttons are
+ * the share card's shape (a title, a line, a row of pills): "Update from
+ * Tier list", what it brings, See the update and Not now; or, on a version
+ * that does not get its updates, "Tier list has changed since you made
+ * this". Reads GET /api/apps/:slug/upstream in an effect, so it draws
+ * nothing until that answers (the island rule) and nothing on a project
+ * that is not a version.
+ */
+export function UpdateCard({ slug, data }: { slug: string; data: CommunityPayload | null }): ReactNode {
+  const t = useMessages('project');
+  const wanted = !!(slug && data && data.made_from && data.is_member);
+  const up = useUpstream(slug, wanted);
+  const card = updateCardOf(up);
+  const [closed, close] = useHubDismissed(slug, card ? card.key : 'update:none');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [asked, setAsked] = useState<string | null>(null);
+  // Once Homeroom bot was asked (`asked` is the request's address), the card
+  // stays to say so, whatever the record says next.
+  if (!wanted || !up || !up.original) return null;
+  if (asked === null && (!card || closed)) return null;
+  const project = up.original.name;
+  const offer = up.offer;
+  const kind = card ? card.kind : 'fit';
+  const title = kind === 'behind'
+    ? t('project:hub.update.titleBehind', { project })
+    : t('project:hub.update.title', { project });
+  const conflicts = offer ? offer.conflicts.length : 0;
+  const line = kind === 'behind' ? t('project:hub.update.behindLine')
+    : kind === 'fit' && conflicts ? t('project:hub.update.clash', { count: conflicts })
+      : bringsLine(offer && offer.brings) || t('project:hub.update.ready');
+
+  const see = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const next = await upstreamAction(slug, 'open', {}, 'project:hub.update.failed');
+      const o = next && next.offer;
+      const href = (o && o.href) || (o && o.sessionId ? changeHref(slug, o.sessionId) : '');
+      if (!href) throw new Error(t('project:hub.update.failed'));
+      goTo(href);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('project:hub.update.failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const fit = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      setAsked((await askToFit(slug, 'project:hub.update.failed')) || '');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('project:hub.update.failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="dev-ws-strip dev-ws-share dev-ws-update" data-ws-update={kind}>
+      <div className="dev-ws-head">
+        <span className="dev-ws-head-title">{title}</span>
+      </div>
+      {asked !== null ? (
+        <p className="dev-ws-strip-text" role="status" data-ws-update-asked="">
+          <RichMessage
+            id="project:hub.update.fitAsked"
+            components={[asked ? <a className="dev-ws-link" href={asked} /> : <span />]}
+          />
+        </p>
+      ) : (
+        <>
+          <p className="dev-ws-strip-text" data-ws-update-line="">{line}</p>
+          {error ? <p className="dev-ws-share-sent" role="alert">{error}</p> : null}
+          <div className="dev-ws-share-actions">
+            {kind === 'fit' ? (
+              <Button type="button" variant="pillAccent" size="sm" data-ws-update-fit="" disabled={busy} onClick={() => { void fit(); }}>
+                {t('project:hub.update.fit')}
+              </Button>
+            ) : (
+              <Button type="button" variant="pillAccent" size="sm" data-ws-update-see="" disabled={busy} onClick={() => { void see(); }}>
+                {busy ? t('project:hub.update.opening') : t('project:hub.update.see')}
+              </Button>
+            )}
+            <Button type="button" variant="pillNeutral" size="sm" ink="neutral" data-ws-update-later="" disabled={busy} onClick={close}>
+              {t('project:hub.update.notNow')}
+            </Button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+/* ── Versions: From its versions, on an original ───────────────────────── */
+
+/** The Suggestions row's line: the one suggestion and who sent it, or the first and how many more. Pure. */
+export function suggestionsLine(v: Pick<VersionsSummary, 'suggestions'>): string {
+  const first = v.suggestions[0];
+  if (!first) return '';
+  if (v.suggestions.length > 1) {
+    return translate('project:hub.versions.suggestions.more', { title: first.title, count: v.suggestions.length - 1 });
+  }
+  return first.from
+    ? translate('project:hub.versions.suggestions.from', { title: first.title, version: first.from.name })
+    : translate('project:hub.versions.suggestions.fromPrivate', { title: first.title });
+}
+
+/** The "Lately in its versions" row's line: the newest change, where, and how many more. Pure. */
+export function latelyLine(v: Pick<VersionsSummary, 'lately'>): string {
+  const lately = v.lately;
+  const first = lately && lately.rows[0];
+  if (!lately || !first || !first.from) return '';
+  const more = Math.max(0, lately.changes - 1);
+  return more
+    ? translate('project:hub.versions.lately.firstMore', { title: first.title, version: first.from.name, count: more })
+    : translate('project:hub.versions.lately.first', { title: first.title, version: first.from.name });
+}
+
+/** The "Your last update" row's line, the parts with nothing in them left out. Pure. */
+export function lastUpdateLine(v: Pick<VersionsSummary, 'lastUpdate'>): string {
+  const u = v.lastUpdate;
+  if (!u || !u.offered) return '';
+  const values = { took: u.took, offered: u.offered, skipped: u.skipped, deciding: u.deciding };
+  if (u.skipped && u.deciding) return translate('project:hub.versions.last.all', values);
+  if (u.deciding) return translate('project:hub.versions.last.noSkipped', values);
+  if (u.skipped) return translate('project:hub.versions.last.noDeciding', values);
+  return translate('project:hub.versions.last.took', values);
+}
+
+/**
+ * FROM ITS VERSIONS (docs/plans/versions.md): on an original's hub, after
+ * For you, under its small-caps label, one card of rows as For you is:
+ * Suggestions (what its versions sent it, the first one's door), Lately in
+ * its versions (what went live in them, from the public ones and the ones
+ * that share it), and Your last update (how many took it, skipped it, are
+ * deciding). A row with nothing to say is left out, and so is the section
+ * while nobody has made a version (the community record's `versions`).
+ * Reads GET /api/apps/:slug/versions in an effect.
+ */
+export function FromVersionsCard({ slug, data }: { slug: string; data: CommunityPayload | null }): ReactNode {
+  const t = useMessages('project');
+  const headId = useId();
+  const wanted = !!(slug && data && data.versions && Number(data.versions.count) > 0);
+  const v = useVersionsSummary(slug, wanted);
+  if (!wanted || !v || !v.count) return null;
+  const suggestions = suggestionsLine(v);
+  const lately = latelyLine(v);
+  const last = lastUpdateLine(v);
+  if (!suggestions && !lately && !last) return null;
+  const first = v.suggestions[0];
+  const firstHref = first ? (first.href || (first.sessionId ? changeHref(slug, first.sessionId) : '')) : '';
+  return (
+    <section className="dev-ws-hub-section" data-ws-hub-versions="" aria-labelledby={headId}>
+      <SectionHeader id={headId} className={HUB_HEAD}>{t('project:hub.versions.title')}</SectionHeader>
+      <div className="dev-ws-strip dev-ws-foryou">
+        {suggestions ? (
+          <ListRow
+            {...(firstHref ? { as: 'a' as const, href: firstHref } : {})}
+            inset="none"
+            chevron={!!firstHref}
+            className="dev-ws-foryou-row"
+            data-ws-versions-suggestions={String(v.suggestions.length)}
+            leading={<IconTile size="xs"><ArrowUpTrayIcon aria-hidden="true" /></IconTile>}
+            title={t('project:hub.versions.suggestions.title')}
+            subtitle={suggestions}
+          />
+        ) : null}
+        {lately ? (
+          <ListRow
+            inset="none"
+            chevron={false}
+            className="dev-ws-foryou-row"
+            data-ws-versions-lately={String(v.lately ? v.lately.changes : 0)}
+            leading={<IconTile size="xs"><SparklesIcon aria-hidden="true" /></IconTile>}
+            title={t('project:hub.versions.lately.title')}
+            subtitle={lately}
+          />
+        ) : null}
+        {last ? (
+          <ListRow
+            inset="none"
+            chevron={false}
+            className="dev-ws-foryou-row"
+            data-ws-versions-last=""
+            leading={<IconTile size="xs"><ArrowPathIcon aria-hidden="true" /></IconTile>}
+            title={t('project:hub.versions.last.title')}
+            subtitle={last}
+          />
+        ) : null}
+      </div>
+    </section>
+  );
+}

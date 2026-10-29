@@ -22,7 +22,7 @@
  *    popover.
  *
  * SHARE leads that card (the prototype's About sheet lists "More": Share,
- * Add to home screen, Remix). It is not one of Home.menuItemsFor's
+ * Add to home screen, Make your own). It is not one of Home.menuItemsFor's
  * items, so it is its own row: a flag on the descriptor (`canShare`, the same
  * gate the mark menu's "Share app" uses) and Browse.shareDetailApp behind it.
  *
@@ -65,7 +65,7 @@ type ActionView = {
   index: number;
   label: string;
   title: string | null;
-  /** The line under the label, when the menu item has one (Remix). */
+  /** The line under the label, when the menu item has one (Make your own). */
   sub?: string | null;
   danger: boolean;
   disabled: boolean;
@@ -82,6 +82,8 @@ export type DetailView =
     slug: string;
     versionPillHtml: string;
     forkedFrom: { name: string; deleted?: boolean; href: string | null } | null;
+    /** An original's "214 versions · 160 get its updates" (Browse.versionsLineFor), or null. */
+    versions?: string | null;
     updatedRel: string | null;
     canOpen: boolean;
     openLabel: string;
@@ -233,7 +235,9 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
             <div className="mt-2" dangerouslySetInnerHTML={{ __html: view.versionPillHtml }} />
           ) : null}
           {/*
-              Fork lineage, directly under the version it qualifies — the row
+              Lineage ("Made from <original>", a version of another app,
+              docs/plans/versions.md), directly under the version it
+              qualifies — the row
               that used to be the drawer footer's last line, moved to the app's
               own page (see Browse._renderDetail). Amber is retained as the
               lineage colour, and it stays TEXT rather than a filled pill: it
@@ -258,6 +262,12 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
                 </span>
               )}
             </p>
+          ) : null}
+          {/* An original's versions: how many people made their own, and how
+              many get its updates. Muted text like the Updated line under
+              it, a fact about the app rather than a status. */}
+          {view.versions ? (
+            <p id="browse-detail-versions" className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{view.versions}</p>
           ) : null}
           {view.updatedRel ? (
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{t('discover:detail.updated', { when: view.updatedRel })}</p>

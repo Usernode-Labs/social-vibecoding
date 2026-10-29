@@ -56,7 +56,7 @@ import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 
 import {
-  AppWindowIcon, ArrowRightIcon, BookmarkIcon, BookmarkSolidIcon, ArrowUpTrayIcon, ChevronLeftIcon, ChevronRightIcon, CogIcon, EllipsisHorizontalIcon, GitHubIcon, GlobeIcon, HashIcon, KeyIcon, LightBulbIcon, LockIcon,
+  AppWindowIcon, ArrowPathIcon, ArrowRightIcon, BookmarkIcon, BookmarkSolidIcon, ArrowUpTrayIcon, ChevronLeftIcon, ChevronRightIcon, CogIcon, EllipsisHorizontalIcon, GitHubIcon, GlobeIcon, HashIcon, KeyIcon, LightBulbIcon, LockIcon,
   PencilSparklesIcon, PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
@@ -64,7 +64,8 @@ import { useMessages } from '../../lib/i18n/react';
 import { callAppView } from './card/fold';
 import { Improve } from '../improve/improve-controller.js';
 import { FeaturedIllustrationEditor } from '../apps/featured-illustration-editor';
-import { SuggestBackDialog, suggestBackTarget } from './suggest-back-dialog';
+import { SuggestBackDialog, suggestBackTarget, versionOfApp } from './suggest-back-dialog';
+import { UpdatesSheet } from '../versions/updates-sheet';
 
 export interface DevActionsRowProps {
   illustrationApp?: any;
@@ -252,19 +253,26 @@ export function DevPlusMenu({
   const t = useMessages('project');
   const [editingIllustration, setEditingIllustration] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
+  const [updating, setUpdating] = useState(false);
   useEffect(() => {
     callAppView('_rewirePlusMenu');
   }, []);
   // The pin row's glyph: filled while it is pinned.
   const PinIcon = pin?.pinned ? BookmarkSolidIcon : BookmarkIcon;
-  // "Suggest this back": on a remix, for its owner, the copy's changes sent
-  // to the app it came from as a proposal (./suggest-back-dialog.tsx). The
-  // open app's payload is `illustrationApp` (AppView.appData), which carries
-  // the resolved `forked_from` and `created_by`.
+  // "Suggest to <original>": on a version (docs/plans/versions.md), for its
+  // owner, some of its own changes sent to the app it was made from, picked
+  // one by one (./suggest-back-dialog.tsx). The open app's payload is
+  // `illustrationApp` (AppView.appData), which carries the resolved
+  // `upstream_link` (or, from an older server, `forked_from`) and
+  // `created_by`.
   const viewerId = typeof window === 'undefined'
     ? null
     : ((window as unknown as { App?: { user?: { id?: number } } }).App?.user?.id ?? null);
   const suggestTarget = selfHosted ? null : suggestBackTarget(illustrationApp, viewerId);
+  // "Updates from <original>": on any version whose original is still
+  // there, whether it gets the original's updates and, on a private one,
+  // whether it shares what it makes (../versions/updates-sheet.tsx).
+  const versionOf = selfHosted ? null : versionOfApp(illustrationApp);
   /*
       #2478 — ONE string for the "+" button's tooltip and its accessible
       name. The button's only child is a glyph, so a screen reader announced
@@ -289,6 +297,7 @@ export function DevPlusMenu({
   {/* The native modal reparents its card under body. Portal there too so React's delegated events stay on the card's ancestor. */}
   {editingIllustration && illustrationApp ? createPortal(<FeaturedIllustrationEditor key={illustrationApp.slug} app={illustrationApp} onClose={() => setEditingIllustration(false)} />, document.body) : null}
   {suggesting && suggestTarget && illustrationApp ? createPortal(<SuggestBackDialog key={illustrationApp.slug} slug={illustrationApp.slug} copyName={illustrationApp.name || illustrationApp.slug} original={suggestTarget} onClose={() => setSuggesting(false)} />, document.body) : null}
+  {updating && versionOf && illustrationApp ? createPortal(<UpdatesSheet key={illustrationApp.slug} slug={illustrationApp.slug} original={versionOf} onClose={() => setUpdating(false)} />, document.body) : null}
     {/*
         The wrapper is the menu's containing block (`.dev-ws-plus` is
         `position: relative` in app.css). Hidden outright for a read-only
@@ -521,16 +530,27 @@ export function DevPlusMenu({
                 : t('project:menu.secrets.appSub')}
               dividerCls={PLUS_ROW_DIVIDER_CLS}
             />
-            {/* Suggest this back and Remix (#4045, the owner, 7 Oct): the
-                last rows of the Settings & rules sheet, so the ⋯ itself
-                ends at that row. */}
+            {/* Updates from, Suggest to and Make your own (#4045, the owner,
+                7 Oct; docs/plans/versions.md): the last rows of the Settings
+                & rules sheet, so the ⋯ itself ends at that row. The first
+                two are a version's, about the original it was made from. */}
+            {versionOf ? (
+              <PlusRow
+                data-plus="updates"
+                icon={<ArrowPathIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                title={t('project:menu.updates.title', { project: versionOf.name })}
+                sub={versionOf.following ? t('project:menu.updates.on') : t('project:menu.updates.off')}
+                dividerCls={PLUS_ROW_DIVIDER_CLS}
+                onClick={() => { callAppView('_closePlusMenu'); setUpdating(true); }}
+              />
+            ) : null}
             {suggestTarget ? (
               <PlusRow
                 data-plus="suggest-back"
                 icon={<ArrowUpTrayIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                title={t('project:menu.suggestBack.title')}
-                sub={t('project:menu.suggestBack.sub', { project: suggestTarget.name })}
-                dividerCls={PLUS_ROW_DIVIDER_CLS}
+                title={t('project:menu.suggestBack.title', { project: suggestTarget.name })}
+                sub={t('project:menu.suggestBack.sub')}
+                dividerCls={versionOf ? '' : PLUS_ROW_DIVIDER_CLS}
                 onClick={() => { callAppView('_closePlusMenu'); setSuggesting(true); }}
               />
             ) : null}
@@ -546,7 +566,7 @@ export function DevPlusMenu({
             </div>
           </>
         )}
-        {/* A read-only viewer has no settings: Remix is the menu's one row. */}
+        {/* A read-only viewer has no settings: Make your own is the menu's one row. */}
         {readOnly && !selfHosted ? (
           <PlusRow
             data-plus="fork"

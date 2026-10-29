@@ -17,10 +17,22 @@
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 const PLATFORM_API_BASE = process.env.USERNODE_PLATFORM_API_V1_URL || process.env.USERNODE_PLATFORM_API_URL;
 
+// The words this project was made with (words.json beside this file, which
+// Homeroom writes when the project is made; the page's {{...}} come from the
+// same file). Every project made from this starter runs this same code, and
+// only its words.json differs. A missing or unreadable file reads as none.
+const WORDS = (() => {
+  try {
+    const parsed = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, 'words.json'), 'utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+})();
 // How this app answers, set when the project was made: 'slots' (people
 // take slots of a given size) or 'rsvp' (everyone says if they are coming).
 // A new event is this kind; the screen draws every event by its own kind.
-const MODE = '{{SHEET_MODE}}' === 'rsvp' ? 'rsvp' : 'slots';
+const MODE = WORDS.SHEET_MODE === 'rsvp' ? 'rsvp' : 'slots';
 const KINDS = ['slots', 'rsvp'];
 const ANSWERS = ['going', 'maybe', 'cant'];
 

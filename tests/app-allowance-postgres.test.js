@@ -62,6 +62,8 @@ test('app allowances: migration, create/fork, requests and admin review', async 
         created_by INTEGER REFERENCES users(id), status VARCHAR(32),
         collab_visibility VARCHAR(16) DEFAULT 'public', view_visibility VARCHAR(16) DEFAULT 'public',
         self_hosted BOOLEAN DEFAULT FALSE, forked_from JSONB,
+        -- A copy is a version of its original (docs/plans/versions.md).
+        upstream JSONB,
         -- #4666: a new project's approval rule (You or the group) is written on create.
         governance_rules JSONB,
         -- The workflow makes a new project (src/workflow/app-creation/).

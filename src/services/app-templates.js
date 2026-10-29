@@ -36,14 +36,26 @@
  *                        so several entries can share one app:
  *     api.js             the app's own routes and tables (server.js mounts
  *                        it after the sign-in check and awaits its migrate);
- *     public/index.html  the screen, with `{{APP_NAME}}`,
- *                        `{{DEV_CONSOLE_FORWARDER}}` and the entry's own
- *                        `fill` values filled in at creation;
+ *                        what an entry fills that the server needs (a
+ *                        sign-up sheet's mode) it reads from words.json;
+ *     public/index.html  the screen, with `{{DEV_CONSOLE_FORWARDER}}` filled
+ *                        in at creation, and `{{APP_NAME}}` and the entry's
+ *                        own `fill` names left for the generated server to
+ *                        fill each time it serves the page;
  *     public/app.js      the screen's script, which holds no placeholder:
  *                        what an entry fills is in the page, so one script
  *                        serves every entry that shares the directory.
  *   an entry below       its title, summary, icon, features, tables and the
  *                        declared `tests` the new repository ships with.
+ *
+ * WORDS IN CONFIG (docs/plans/versions.md). An entry's `fill` is written,
+ * as it is, to words.json at the new repository's root, and nothing is
+ * filled into its code: the generated server.js fills the page's
+ * placeholders from it at run time, escaped for HTML, as it fills the
+ * project's name, and the api.js files that need one read it. So every
+ * project made from one starter directory runs identical code (and the
+ * ready-made originals' changes reach their versions as a plain diff);
+ * words.json is each project's own and never travels between them.
  *
  * A ready-made app also has an example picture: its main screen with a few
  * sample entries, at a phone's size (public/illustrations/starters/<id>.png,
@@ -742,11 +754,13 @@ const VERBATIM = /^public\/vendor\//;
 
 /**
  * A starter's own files, as `{ path, content }` with the placeholders
- * filled in: its `shared` directory's (the game room every game starter
- * plays in), then its own, which win where both have a path. `fill` maps
- * a placeholder name (APP_NAME, or one of the entry's own `fill` names) to
- * its text, already escaped for where it lands. Empty for `empty`, which
- * has none.
+ * `fill` names filled in: its `shared` directory's (the game room every
+ * game starter plays in), then its own, which win where both have a path.
+ * `fill` maps a placeholder name to its text, already escaped for where it
+ * lands; a new project's is only the dev-console forwarder
+ * (services/template.js), and every other placeholder is left for its
+ * server to fill at run time from words.json (see WORDS IN CONFIG above).
+ * Empty for `empty`, which has none.
  */
 function starterFiles(id, fill = {}) {
   if (!isTemplate(id) || id === DEFAULT_TEMPLATE) return [];
@@ -769,11 +783,14 @@ function starterFiles(id, fill = {}) {
 /**
  * Which revision of a starter a project was seeded from: the first 12 hex
  * characters of a SHA-256 over its `shared` directory's files and then its
- * own, by path, as they are on disk, before the placeholders are filled (so
+ * own, by path, as they are on disk (the entries' words are not in them, so
  * the four tier lists made from one revision share it). app-creator writes
- * it to apps.template_version with the first commit, so a later change to
- * every copy of a starter can tell which copies already carry what the
- * starter has since gained. Null for `empty`, which has no files of its own.
+ * it to apps.template_version with a first commit made from these files, so
+ * a later change to every copy of a starter can tell which copies already
+ * carry what the starter has since gained. A version made from a ready-made
+ * original records no revision of this: its first commit is the original's
+ * tree, and its lineage (apps.upstream.syncedSha) says which. Null for
+ * `empty`, which has no files of its own.
  */
 function versionOf(id) {
   if (!isTemplate(id) || id === DEFAULT_TEMPLATE) return null;

@@ -97,7 +97,9 @@ import {
   ApprovalLine, CommunityCard, HubCardClose, ShareItCard, canLeave,
   communityPending, leaveCommunity, useCommunity,
 } from './community-card';
-import { FirstVersionCard, ForYouCard, HubSkeleton, RecentlyLive, hubAlone, owesVote } from './hub-cards';
+import {
+  FirstVersionCard, ForYouCard, FromVersionsCard, HubSkeleton, RecentlyLive, UpdateCard, hubAlone, owesVote,
+} from './hub-cards';
 import { CommunityAsk } from '../../notify-ask/community-ask';
 import { useHubDismissed } from './hub-dismissed';
 import { ProjectDiscussion } from './project-discussion';
@@ -5090,6 +5092,13 @@ export function DevWorkshop(): ReactNode {
       {slug ? (
         <FirstVersionCard slug={slug} data={community} emoji={app.iconEmoji || null} onSeePlan={() => openTab('plan')} />
       ) : null}
+      {/* ── A version's update from its original (docs/plans/versions.md) ──
+          Under the hero, on a version whose original has changed and whose
+          change nobody has looked at yet ("Update from Tier list", See the
+          update, Not now), or once on a version that does not get its
+          updates. An update already up for a vote is Needs you's, in For
+          you. See ./hub-cards.tsx UpdateCard. */}
+      {slug ? <UpdateCard slug={slug} data={community} /> : null}
       {/* ── Getting it going: Share it, then what to change (15 Oct 2026) ──
           A project that is just yours has its Share it card first, how it
           grows, then #2573's "What do you want to change?" for an app
@@ -5140,6 +5149,11 @@ export function DevWorkshop(): ReactNode {
           onDiscussion={() => openTab('discussion')}
         />
       ) : null}
+      {/* FROM ITS VERSIONS, on an original (docs/plans/versions.md): what
+          its versions sent it, what went live in them lately, and how its
+          last update went down. Nothing on a project nobody has made a
+          version of. See ./hub-cards.tsx FromVersionsCard. */}
+      {slug ? <FromVersionsCard slug={slug} data={community} /> : null}
       {slug ? <RecentlyLive slug={slug} rows={v.recentLive} onAll={() => openTab('workshop')} own={ownLive} ident={recentIdent} /> : null}
       {/* Start a new change was the hub's last line; it is the hero's ⋯
           now (../actions-row.tsx), as well as the Homeroom menu's. */}

@@ -4,9 +4,9 @@
 //
 // Two screens in one page: the polls (each open one with its options, votes
 // and bars, then the decided ones with what won) and starting a new poll.
-// What the polls are about was filled into index.html when the project was
-// made; this script is the same for every topic and reads the option
-// example from #open-polls.
+// What the polls are about is this project's words (words.json), which
+// server.js fills into index.html as it serves it; this script is the same
+// for every topic and reads the option example from #open-polls.
 //
 // Rendering builds elements and sets textContent, never innerHTML with
 // people's words in it, so an option called "<b>hi</b>" shows exactly that.

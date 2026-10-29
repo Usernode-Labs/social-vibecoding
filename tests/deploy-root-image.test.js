@@ -66,6 +66,7 @@ stub(ids.appManifest, {
   reconcileAppAdmins: async () => {},
   reconcileAppTopics: async () => null,
   reconcileAppScreenshot: async () => {},
+  reconcileAppFollow: async () => false,
   reconcileAppIcon: async () => {},
   MAX_APP_NAME_LENGTH: 64,
 });

@@ -881,6 +881,18 @@ function readCategory(parsed) {
   return null;
 }
 
+// `"followOriginal": true | false`: whether a version gets its original's
+// updates (docs/plans/versions.md). Only a boolean says anything; anything
+// else reads as null (absent), which leaves the version's link as it is.
+// Never throws.
+function readFollowOriginal(parsed) {
+  const raw = parsed?.followOriginal;
+  if (raw == null) return null;
+  if (typeof raw === 'boolean') return raw;
+  log.warn('app-manifest', 'Ignoring a followOriginal that is not true or false', { value: raw });
+  return null;
+}
+
 // Allowed values for the optional top-level `visibility` block (issue
 // #124). `build` maps to apps.collab_visibility, `view` to
 // apps.view_visibility — same value set as the DB columns.
@@ -1525,6 +1537,7 @@ function read(cloneDir) {
     platform_env: platformEnv,
     topics: readTopics(parsed),
     category: readCategory(parsed),
+    followOriginal: readFollowOriginal(parsed),
   };
 }
 
@@ -1924,7 +1937,9 @@ async function reconcileAppVisibility(pool, app, manifest) {
  *   - policy →invited with an EMPTY roster: auto-seed the app creator
  *     as an approver member so a child app can never lock itself out
  *     (the self-app has no created_by; the governed gate's full-admin
- *     fallback covers it);
+ *     fallback covers it). Never on an app that uses another's roster
+ *     (apps.approvers_from_app_id, the ready-made originals): its roster
+ *     is that app's, and a row of its own would count for nothing;
  *   - flush the governance cache (services/governance.js);
  *   - group-chat system message + `governance_changed` app update;
  *   - GOVERNANCE_CHANGED analytics event.
@@ -1976,9 +1991,12 @@ async function applyGovernanceChange(pool, app, { approverPolicy, approvalsRequi
       );
       if (!members.length) {
         const { rows: creatorRows } = await pool.query(
-          'SELECT created_by FROM apps WHERE id = $1', [app.id]
+          'SELECT created_by, approvers_from_app_id FROM apps WHERE id = $1', [app.id]
         );
-        const creatorId = creatorRows[0]?.created_by || null;
+        // Approved by another app's roster: nothing of its own to seed.
+        const linked = creatorRows[0]?.approvers_from_app_id != null;
+        const creatorId = linked ? null : (creatorRows[0]?.created_by || null);
+        if (linked) log.info('app-manifest', 'No approver seeded: this app uses another app\'s approvers', { appId: app.id });
         if (creatorId) {
           await pool.query(
             `INSERT INTO app_approvers (app_id, user_id, status, accepted_at)
@@ -2364,6 +2382,35 @@ async function reconcileAppScreenshot(pool, app, manifest) {
 }
 
 /**
+ * Deploy-time following reconcile (docs/plans/versions.md) — sibling of
+ * reconcileAppVisibility / reconcileAppGovernance. A version's dapp.json
+ * `followOriginal` is the source of truth for `apps.upstream.following`:
+ * whether its original's merged changes are offered to it as updates
+ * (services/upstream-offers.js). Changing the line is a vote like any
+ * other (POST /api/apps/:slug/follow-pr opens that proposal), and it
+ * applies here, on the rebuild its merge triggered.
+ *
+ * An absent line, or a project that is not a version (no link), is a
+ * no-op: the line never makes a link. Best-effort like its siblings.
+ */
+async function reconcileAppFollow(pool, app, manifest) {
+  const follow = manifest ? manifest.followOriginal : null;
+  if (typeof follow !== 'boolean') return false;
+  const { rows } = await pool.query(
+    `UPDATE apps SET upstream = upstream || jsonb_build_object('following', $2::boolean)
+      WHERE id = $1 AND upstream IS NOT NULL
+        AND upstream->'following' IS DISTINCT FROM to_jsonb($2::boolean)
+      RETURNING id`,
+    [app.id, follow]
+  );
+  if (!rows.length) return false;
+  log.info('app-manifest', 'Reconciled following its original from dapp.json', {
+    appId: app.id, slug: app.slug, following: follow,
+  });
+  return true;
+}
+
+/**
  * Load + validate the icon image file the manifest points at, from the
  * freshly-cloned working tree. Returns `{ data, contentType, sha256 }`
  * or null on any validation failure (missing file, symlink escaping the
@@ -2574,6 +2621,7 @@ module.exports = {
   readDescription,
   MAX_DESCRIPTION_LENGTH,
   readCategory,
+  readFollowOriginal,
   APP_CATEGORIES,
   readLlm,
   readVisibility,
@@ -2611,6 +2659,7 @@ module.exports = {
   reconcileAppVisibility,
   reconcileAppGovernance,
   reconcileAppScreenshot,
+  reconcileAppFollow,
   reconcileAppIcon,
   reconcileAppAdmins,
   reconcileAppTopics,

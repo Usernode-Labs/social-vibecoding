@@ -1,28 +1,34 @@
 'use strict';
 
-// "Suggest this back": a remix's owner sends the copy's changes to the app it
-// was copied from, as a proposal there.
+// "Suggest to <original>": a version's owner sends its own changes to the
+// project it was made from, as a proposal there (docs/plans/versions.md,
+// "Suggestions up").
 //
-//   src/services/suggest-back.js   the rules, the diff and the chain
+//   src/services/suggest-back.js   the rules, the patch and the chain
 //   src/routes/suggest-back.js     GET (the confirmation) and POST (send)
 //   frontend/src/features/dev-board/suggest-back-dialog.tsx and the ⋯ row
 //                                  in ./actions-row.tsx
 //
 // Pinned here:
-//   1. what is sent: the diff from the copy's first commit to its main, with
-//      `.claude/homeroom-canonical-repo` left out and dapp.json's name,
-//      visibility, admins and governance kept as the ORIGINAL's, applying
-//      at the original's source commit (real git, local repositories);
+//   1. what is sent: each picked commit of the version's own, with the
+//      paths that never travel left out and dapp.json's name, visibility,
+//      admins, governance, description and followOriginal kept as the
+//      ORIGINAL's, applying at the original's synced commit with
+//      `git am --3way` (real git, local repositories); a pick that builds on
+//      a change that was not picked is refused in words saying so;
 //   2. the guards, in the order a person meets them: owner only, copies
 //      made before the lineage commits existed, the original gone, not a
 //      collaborator ("Ask to join to suggest changes."), not a member
 //      (`join_required` for the original), the proposal cap, one open
-//      suggestion per copy, the patch bounds, and a patch that no longer
-//      applies ("The original has changed too much since you remixed it.");
-//   3. what lands: an imported, active proposal owned by the copy's owner,
-//      tagged with the copy, whose preview and checks start;
-//   4. the route's doors (same-origin, the membership gate, 201/refusals);
-//   5. the dialog's words and who the ⋯ offers the row to.
+//      suggestion per version, the picks, the patch bounds, and a patch that
+//      no longer applies;
+//   3. what lands: an imported, active proposal owned by the version's
+//      owner, tagged with the version, titled "Suggested by <version>",
+//      whose preview and checks start;
+//   4. the link read from apps.upstream (a legacy one resolved first), and
+//      the updates the version took left out of "your changes";
+//   5. the route's doors (same-origin, the membership gate, 201/refusals);
+//   6. the dialog's words and who the ⋯ offers the row to.
 //
 // Run with: node --test tests/suggest-back.test.js
 
@@ -60,30 +66,32 @@ test('lineage: a copy needs both recorded commits; older copies are told why', (
   assert.match(suggestBack.MESSAGES.lineageMissing, /made before Homeroom kept track/);
 });
 
-test('dapp.json: the copy\'s name, visibility, admins and governance stay behind', () => {
-  assert.deepEqual([...suggestBack.EXCLUDED_MANIFEST_KEYS], ['name', 'visibility', 'admins', 'governance']);
-  assert.deepEqual([...suggestBack.EXCLUDED_PATHS], ['.claude/homeroom-canonical-repo']);
+test('dapp.json: the version\'s name, visibility, admins, governance, description and following stay behind', () => {
+  assert.deepEqual([...suggestBack.EXCLUDED_MANIFEST_KEYS],
+    ['name', 'visibility', 'admins', 'governance', 'description', 'followOriginal']);
+  assert.deepEqual([...suggestBack.EXCLUDED_PATHS],
+    ['words.json', '.claude/homeroom-canonical-repo', 'README.md', 'CLAUDE.md', 'LICENSE']);
   const base = JSON.stringify({ name: 'Book Club (remix)', description: 'Read together' });
   const onlyExcluded = JSON.stringify({
-    name: 'Renamed', description: 'Read together',
+    name: 'Renamed', description: 'Read with friends', followOriginal: false,
     visibility: { build: 'public', view: 'public' }, admins: ['me'], governance: { approvers: 'invited' },
   });
   assert.deepEqual(suggestBack.mergeManifest(base, onlyExcluded, '{}'), { changed: false },
-    'a rename or an audience change is not a change to the original');
+    'a rename, a new description or an audience change is not a change to the original');
 
   const target = JSON.stringify({ name: 'Book Club', admins: ['owner'], description: 'Read together', tests: [1] });
-  const head = JSON.stringify({ name: 'Renamed', description: 'Read with friends', icon: { emoji: '📚' } });
+  const head = JSON.stringify({ name: 'Renamed', description: 'Mine', icon: { emoji: '📚' } });
   const merged = suggestBack.mergeManifest(base, head, target);
   assert.equal(merged.changed, true);
-  assert.deepEqual(merged.keys, ['description', 'icon']);
+  assert.deepEqual(merged.keys, ['icon']);
   assert.deepEqual(JSON.parse(merged.text), {
-    name: 'Book Club', admins: ['owner'], description: 'Read with friends', tests: [1], icon: { emoji: '📚' },
-  }, 'the original keeps its own name and admins; the copy\'s other changes carry over');
+    name: 'Book Club', admins: ['owner'], description: 'Read together', tests: [1], icon: { emoji: '📚' },
+  }, 'the original keeps its own name, admins and description; the version\'s other changes carry over');
   assert.deepEqual(Object.keys(JSON.parse(merged.text)), ['name', 'admins', 'description', 'tests', 'icon'],
     'the original\'s key order, new keys after it');
 
   const removed = suggestBack.mergeManifest(JSON.stringify({ name: 'x', tests: [1] }), JSON.stringify({ name: 'x' }), target);
-  assert.equal('tests' in JSON.parse(removed.text), false, 'a key the copy removed is removed');
+  assert.equal('tests' in JSON.parse(removed.text), false, 'a key the version removed is removed');
   assert.equal(suggestBack.mergeManifest('{', '{"a":1}', '{}').unreadable, true, 'unreadable JSON is left alone');
 });
 
@@ -111,6 +119,12 @@ function git(cwd, ...args) {
   }).trim();
 }
 
+function commitAll(dir, message) {
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-q', '-m', message);
+  return git(dir, 'rev-parse', 'HEAD');
+}
+
 function fixtureRepos() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suggest-back-'));
   const orig = path.join(dir, 'orig');
@@ -121,64 +135,125 @@ function fixtureRepos() {
     name: 'Book Club', visibility: { build: 'public', view: 'public' }, description: 'Read together',
   }, null, 2)}\n`);
   fs.writeFileSync(path.join(orig, 'app.js'), 'console.log("hi");\n');
-  git(orig, 'add', '-A');
-  git(orig, 'commit', '-q', '-m', 'init');
-  const sourceSha = git(orig, 'rev-parse', 'HEAD');
+  fs.writeFileSync(path.join(orig, 'list.js'), 'const books = [];\n');
+  fs.writeFileSync(path.join(orig, 'README.md'), '# Book Club\n');
+  const sourceSha = commitAll(orig, 'init');
 
-  // The copy, as app-forker leaves it: the same tree, renamed, with its own
-  // canonical-repo pointer, as one history-free commit.
+  // The version, as app-forker leaves it: the same tree, renamed, with its
+  // own canonical-repo pointer, as one history-free commit.
   fs.mkdirSync(copy);
   git(copy, 'init', '-q', '-b', 'main');
   fs.writeFileSync(path.join(copy, 'app.js'), 'console.log("hi");\n');
+  fs.writeFileSync(path.join(copy, 'list.js'), 'const books = [];\n');
+  fs.writeFileSync(path.join(copy, 'README.md'), '# Book Club\n');
   fs.writeFileSync(path.join(copy, 'dapp.json'), `${JSON.stringify({
-    name: 'Book Club (remix)', description: 'Read together',
+    name: 'Book Club (remix)', description: 'Read together', followOriginal: true,
   }, null, 2)}\n`);
   fs.mkdirSync(path.join(copy, '.claude'));
-  fs.writeFileSync(path.join(copy, '.claude', 'homeroom-canonical-repo'), 'https://github.com/bot/copy\n');
-  git(copy, 'add', '-A');
-  git(copy, 'commit', '-q', '-m', 'Forked from book-club');
-  const forkBaseSha = git(copy, 'rev-parse', 'HEAD');
+  fs.writeFileSync(path.join(copy, '.claude', 'homeroom-canonical-repo'), 'https://git.example.test/apps/copy\n');
+  const forkBaseSha = commitAll(copy, 'Forked from book-club');
 
-  // What its owner then changed: code, a binary file, dapp.json (a rename,
-  // which stays behind, and a new description, which goes), and the pointer.
+  // What its owner then changed, as three merged changes:
+  //   1. code, a binary file, dapp.json (a rename and a new description,
+  //      which stay behind, and an icon, which goes), its README and its
+  //      repository pointer (which stay behind);
+  //   2. a list of books, on its own;
+  //   3. a sort on the list 2 made, so it builds on 2.
   fs.writeFileSync(path.join(copy, 'app.js'), 'console.log("hi");\nconsole.log("dark mode");\n');
   fs.writeFileSync(path.join(copy, 'icon.bin'), Buffer.from([0, 1, 2, 3, 255]));
+  fs.writeFileSync(path.join(copy, 'README.md'), '# My Book Club\n');
   fs.writeFileSync(path.join(copy, 'dapp.json'), `${JSON.stringify({
-    name: 'My Book Club', description: 'Read with friends', visibility: { build: 'private', view: 'private' },
+    name: 'My Book Club', description: 'Read with friends', followOriginal: true,
+    visibility: { build: 'private', view: 'private' }, icon: { emoji: '📚' },
   }, null, 2)}\n`);
-  fs.writeFileSync(path.join(copy, '.claude', 'homeroom-canonical-repo'), 'https://github.com/bot/elsewhere\n');
-  git(copy, 'add', '-A');
-  git(copy, 'commit', '-q', '-m', 'Add dark mode');
-  const copyHeadSha = git(copy, 'rev-parse', 'HEAD');
-  return { dir, orig, copy, sourceSha, forkBaseSha, copyHeadSha };
+  fs.writeFileSync(path.join(copy, '.claude', 'homeroom-canonical-repo'), 'https://git.example.test/apps/elsewhere\n');
+  const darkSha = commitAll(copy, 'Add dark mode (#1)');
+  fs.writeFileSync(path.join(copy, 'list.js'), 'const books = ["Dune", "Emma"];\n');
+  const listSha = commitAll(copy, 'Start the list (#2)');
+  fs.writeFileSync(path.join(copy, 'list.js'), 'const books = ["Dune", "Emma"].sort();\n');
+  const sortSha = commitAll(copy, 'Sort the list (#3)');
+  const changes = [
+    { sha: darkSha, title: 'Add dark mode' },
+    { sha: listSha, title: 'Start the list' },
+    { sha: sortSha, title: 'Sort the list' },
+  ];
+  return { dir, orig, copy, sourceSha, forkBaseSha, copyHeadSha: sortSha, changes };
 }
 
-test('the patch carries the copy\'s changes, not what makes it a different app, and applies at the source commit', async () => {
+function build(fx, picks) {
+  return head.withScratchRepo('suggest-test', ({ dir, git: run }) => suggestBack.buildPatch({
+    git: run, dir, copyRemote: fx.copy, originalRemote: fx.orig,
+    baseSha: fx.forkBaseSha, copyHeadSha: fx.copyHeadSha, syncedSha: fx.sourceSha,
+    picks, changes: fx.changes,
+  }));
+}
+
+// Apply it where the service applies it: the original at its synced
+// commit, as an mbox, with `git am --3way`.
+function applyOnOriginal(fx, patch) {
+  const check = path.join(fx.dir, `check-${Math.random().toString(36).slice(2)}`);
+  git(fx.dir, 'clone', '-q', fx.orig, check);
+  git(check, 'checkout', '-q', '--detach', fx.sourceSha);
+  const file = path.join(fx.dir, 'p.mbox');
+  fs.writeFileSync(file, patch);
+  git(check, 'am', '--3way', '--keep-non-patch', file);
+  return check;
+}
+
+test('each picked change travels on its own, without what makes the version a different project, and applies at the synced commit', async () => {
   const fx = fixtureRepos();
   try {
-    const built = await head.withScratchRepo('suggest-test', ({ dir, git: run }) => suggestBack.buildPatch({
-      git: run, dir, copyRemote: fx.copy, originalRemote: fx.orig,
-      forkBaseSha: fx.forkBaseSha, copyHeadSha: fx.copyHeadSha, sourceSha: fx.sourceSha,
-    }));
-    assert.deepEqual(built.files.sort(), ['app.js', 'dapp.json', 'icon.bin']);
-    assert.deepEqual(built.manifestKeys, ['description']);
-    assert.doesNotMatch(built.patch, /homeroom-canonical-repo/, 'the copy\'s own repository pointer stays behind');
+    const built = await build(fx, fx.changes);
+    assert.deepEqual(built.files.sort(), ['app.js', 'dapp.json', 'icon.bin', 'list.js']);
+    assert.deepEqual(built.manifestKeys, ['icon']);
+    assert.deepEqual(built.sent, ['Add dark mode', 'Start the list', 'Sort the list']);
+    assert.match(built.patch, /^From [0-9a-f]{40} /, 'an mbox, which applyPatch applies with git am');
+    assert.equal((built.patch.match(/^From [0-9a-f]{40} /gm) || []).length, 4, 'one message per change, and one for dapp.json');
+    assert.doesNotMatch(built.patch, /homeroom-canonical-repo|README\.md/, 'its repository pointer and README stay behind');
     assert.match(built.patch, /GIT binary patch/, 'binary-safe');
-    assert.doesNotMatch(built.patch, /My Book Club|private/, 'its name and audience stay behind');
-    assert.match(built.patch, /"description": "Read with friends"/);
+    assert.doesNotMatch(built.patch, /My Book Club|private|Read with friends|followOriginal/,
+      'its name, audience, description and following stay behind');
 
-    // Apply it where the service applies it: the original at sourceSha.
-    const check = path.join(fx.dir, 'check');
-    git(fx.dir, 'clone', '-q', fx.orig, check);
-    git(check, 'checkout', '-q', '--detach', fx.sourceSha);
-    fs.writeFileSync(path.join(fx.dir, 'p.patch'), built.patch);
-    git(check, 'apply', '--3way', '--whitespace=nowarn', path.join(fx.dir, 'p.patch'));
+    const check = applyOnOriginal(fx, built.patch);
     const manifest = JSON.parse(fs.readFileSync(path.join(check, 'dapp.json'), 'utf8'));
     assert.deepEqual(manifest, {
-      name: 'Book Club', visibility: { build: 'public', view: 'public' }, description: 'Read with friends',
-    }, 'the original keeps its name and audience');
+      name: 'Book Club', visibility: { build: 'public', view: 'public' }, description: 'Read together',
+      icon: { emoji: '📚' },
+    }, 'the original keeps its name, audience and description');
     assert.match(fs.readFileSync(path.join(check, 'app.js'), 'utf8'), /dark mode/);
+    assert.equal(fs.readFileSync(path.join(check, 'list.js'), 'utf8'), 'const books = ["Dune", "Emma"].sort();\n');
+    assert.equal(fs.readFileSync(path.join(check, 'README.md'), 'utf8'), '# Book Club\n');
     assert.deepEqual([...fs.readFileSync(path.join(check, 'icon.bin'))], [0, 1, 2, 3, 255]);
+    assert.equal(git(check, 'log', '--format=%s', '-1', 'HEAD~1'), 'Sort the list (#3)', 'each change keeps its own message');
+  } finally {
+    fs.rmSync(fx.dir, { recursive: true, force: true });
+  }
+});
+
+test('only the picked changes are sent', async () => {
+  const fx = fixtureRepos();
+  try {
+    const built = await build(fx, [fx.changes[1]]);
+    assert.deepEqual(built.files, ['list.js']);
+    assert.deepEqual(built.manifestKeys, [], 'dapp.json only changed in a change that was not picked');
+    const check = applyOnOriginal(fx, built.patch);
+    assert.equal(fs.readFileSync(path.join(check, 'list.js'), 'utf8'), 'const books = ["Dune", "Emma"];\n');
+    assert.doesNotMatch(fs.readFileSync(path.join(check, 'app.js'), 'utf8'), /dark mode/);
+  } finally {
+    fs.rmSync(fx.dir, { recursive: true, force: true });
+  }
+});
+
+test('a pick that builds on a change that was not picked is refused, naming it', async () => {
+  const fx = fixtureRepos();
+  try {
+    await assert.rejects(build(fx, [fx.changes[2]]), (err) => {
+      assert.ok(err instanceof suggestBack.DependsOnUnpicked);
+      assert.equal(err.pick.title, 'Sort the list');
+      return true;
+    });
+    assert.equal(suggestBack.MESSAGES.dependsOnUnpicked('Sort the list'),
+      '“Sort the list” builds on one of your changes you did not pick. Pick that one too, or leave this one out.');
   } finally {
     fs.rmSync(fx.dir, { recursive: true, force: true });
   }
@@ -203,15 +278,18 @@ function fixture({
   original = ORIGINAL, collab = true, member = true, cap = null, open = null,
   applied = { ok: true, branch: 'usernode/patch-u5-ts12-x', headSha: APPLIED_SHA },
   built = { patch: 'diff --git a/app.js b/app.js\n', files: ['app.js'], manifestKeys: [] },
-  insertError = null,
+  insertError = null, commits = [{ sha: HEAD_SHA, subject: 'Add dark mode (#1)' }], updateMerges = [],
 } = {}) {
-  const calls = { queries: [], applyPatch: [], createPR: [], kicks: [], cleanups: 0, closed: [], pushes: [] };
+  const calls = { queries: [], applyPatch: [], createPR: [], kicks: [], cleanups: 0, closed: [], pushes: [], compared: [], resolved: [] };
   const pool = {
     async query(sql, params = []) {
       const text = String(sql);
       calls.queries.push({ sql: text, params });
       if (/SELECT \* FROM apps WHERE id = \$1/.test(text)) return { rows: original && params[0] === original.id ? [original] : [] };
       if (/suggested_from_app_id = \$1/.test(text) && /SELECT/.test(text)) return { rows: open ? [open] : [] };
+      if (/upstream_from_app_id IS NOT NULL AND merge_commit_sha IS NOT NULL/.test(text)) {
+        return { rows: updateMerges.map((m) => ({ merge_commit_sha: m })) };
+      }
       if (/INSERT INTO chat_sessions/.test(text)) {
         if (insertError) throw insertError;
         return { rows: [{ id: 901 }] };
@@ -224,7 +302,10 @@ function fixture({
       parseGithubUrl: github.parseGithubUrl,
       isEnabled: () => true,
       getRepoHead: async () => ({ headSha: HEAD_SHA }),
-      compareCommitSubjects: async () => ({ commits: [{ sha: HEAD_SHA, subject: 'Add dark mode' }], totalCommits: 1, files: ['app.js'] }),
+      compareCommitSubjects: async (owner, repo, base, headRef) => {
+        calls.compared.push({ owner, repo, base, head: headRef });
+        return { commits, totalCommits: commits.length, files: ['app.js', 'README.md'] };
+      },
       createPR: async (owner, repo, args) => {
         calls.createPR.push({ owner, repo, ...args });
         return { number: 42, html_url: 'https://github.com/usernode-bot/book-club/pull/42', title: args.title, body: args.body, base: { sha: SOURCE_SHA } };
@@ -235,7 +316,7 @@ function fixture({
     head: {
       resolveWriteCredential: async () => ({ token: 'tok', source: 'pat' }),
       authenticatedRemote: (_t, owner, repo) => `${owner}/${repo}`,
-      withScratchRepo: async () => built,
+      withScratchRepo: async () => (typeof built === 'function' ? built() : built),
       redactToken: (m) => m,
     },
     externalAgentPatch: {
@@ -252,12 +333,13 @@ function fixture({
     topicAttrs: { selfAssignProposal: async () => {} },
     prImportSync: { kickImportedChecks: (args) => { calls.kicks.push(args); } },
     ws: { pushSessionUpdate: (p) => calls.pushes.push(p) },
+    lineage: { resolveLegacy: async (_config, _pool, app) => { calls.resolved.push(app.id); return null; } },
   };
   return { pool, deps, calls };
 }
 
-async function send(fx, { user = OWNER, fork = COPY } = {}) {
-  return suggestBack.suggest({ pool: fx.pool, config: {}, user, fork, deps: fx.deps });
+async function send(fx, { user = OWNER, fork = COPY, picks } = {}) {
+  return suggestBack.suggest({ pool: fx.pool, config: {}, user, fork, picks, deps: fx.deps });
 }
 
 test('only the copy\'s owner can send, and only from a copy', async () => {
@@ -275,7 +357,7 @@ test('a copy made before the lineage commits were recorded says so, and sends no
   const out = await send(fx, { fork: { ...COPY, forked_from: { appId: 3, slug: 'book-club' } } });
   assert.equal(out.status, 409);
   assert.equal(out.body.code, 'lineage_missing');
-  assert.match(out.body.error, /made before Homeroom kept track of where a remix starts/);
+  assert.match(out.body.error, /made before Homeroom kept track of where a version starts/);
   assert.equal(out.body.original.name, 'Book Club');
   assert.equal(fx.calls.applyPatch.length, 0);
 });
@@ -312,7 +394,7 @@ test('the proposal cap and one open suggestion per copy', async () => {
   const dup = await send(fx);
   assert.equal(dup.status, 409);
   assert.equal(dup.body.code, 'already_open');
-  assert.match(dup.body.error, /already sent this copy’s changes to Book Club/);
+  assert.match(dup.body.error, /already suggested this version’s changes to Book Club/);
   assert.equal(dup.body.open.href, '#app/book-club/dev/proposals/700');
   const read = fx.calls.queries.find((q) => /suggested_from_app_id = \$1/.test(q.sql));
   assert.match(read.sql, /status IN \('active', 'promoted', 'merging'\)/);
@@ -327,7 +409,7 @@ test('no changes, the patch bounds, and a patch that no longer applies', async (
 
   const empty = await send(fixture({ built: { patch: '', files: [], manifestKeys: [] } }));
   assert.equal(empty.body.code, 'no_changes');
-  assert.equal(empty.body.error, 'Your copy has no changes to send since you remixed it.');
+  assert.equal(empty.body.error, 'Your version has no changes to send since you made it.');
 
   const ci = await send(fixture({ built: { patch: 'x', files: ['.github/workflows/x.yml'], manifestKeys: [] } }));
   assert.equal(ci.body.code, 'forbidden_path');
@@ -335,7 +417,7 @@ test('no changes, the patch bounds, and a patch that no longer applies', async (
   const fx = fixture({ applied: { ok: false, code: 'patch_did_not_apply', message: 'raw' } });
   const moved = await send(fx);
   assert.equal(moved.status, 409);
-  assert.equal(moved.body.error, 'The original has changed too much since you remixed it.');
+  assert.equal(moved.body.error, 'The original has changed too much since you made your version.');
   assert.equal(fx.calls.createPR.length, 0);
 });
 
@@ -355,8 +437,9 @@ test('a sent suggestion is an active imported proposal on the original, owned by
 
   const [pr] = fx.calls.createPR;
   assert.equal(pr.branch, 'usernode/patch-u5-ts12-x');
-  assert.equal(pr.title, 'Add dark mode (from Book Club (remix))');
-  assert.match(pr.body, /Suggested back from \*\*Book Club \(remix\)\*\*/);
+  assert.equal(pr.title, 'Suggested by Book Club (remix): Add dark mode');
+  assert.match(pr.body, /Suggested by \*\*Book Club \(remix\)\*\*, a version of this project, by remixer\./);
+  assert.match(pr.body, /Its changes:\n\n- Add dark mode/);
   assert.match(pr.body, /Not sent: Book Club \(remix\)’s name, who can see it, its admins or its data\./);
 
   const insert = fx.calls.queries.find((q) => /INSERT INTO chat_sessions/.test(q.sql));
@@ -407,6 +490,115 @@ test('the preview lists the commits, and says why Send cannot go ahead', async (
   assert.equal(joinFirst.reason.code, 'join_required', 'the dialog still offers Send: pressing it asks to Join');
 });
 
+// ── 3b. Picks, the link, and the updates the version took ────────────
+
+const SYNCED_SHA = 'e'.repeat(40);
+const VERSION_BASE_SHA = 'f'.repeat(40);
+const OWN_SHA = '1'.repeat(40);
+const UPDATE_SHA = '2'.repeat(40);
+const RENAMED_UPDATE_SHA = '3'.repeat(40);
+
+test('picks: all by default, only the version\'s own, never none', () => {
+  const changes = [{ sha: OWN_SHA, title: 'A' }, { sha: HEAD_SHA, title: 'B' }];
+  assert.deepEqual(suggestBack.choosePicks(undefined, changes).picks, changes);
+  assert.deepEqual(suggestBack.choosePicks([HEAD_SHA.toUpperCase(), OWN_SHA], changes).picks, changes,
+    'in the version\'s own order, whatever order they came in');
+  assert.deepEqual(suggestBack.choosePicks([HEAD_SHA], changes).picks, [changes[1]]);
+  assert.equal(suggestBack.choosePicks([], changes).error.body.code, 'nothing_picked');
+  assert.equal(suggestBack.choosePicks(['9'.repeat(40)], changes).error.body.code, 'unknown_pick');
+  assert.equal(suggestBack.choosePicks('all', changes).error.body.code, 'invalid_picks');
+});
+
+test('the confirmation lists the version\'s own changes, newest last, leaving out the updates it took', async () => {
+  const fx = fixture({
+    commits: [
+      { sha: UPDATE_SHA, subject: 'Update from Book Club (#4)' },
+      { sha: RENAMED_UPDATE_SHA, subject: 'Better colours (#5)' },
+      { sha: OWN_SHA, subject: 'Start the list (#6)' },
+      { sha: HEAD_SHA, subject: 'Add dark mode (#7)' },
+    ],
+    updateMerges: [RENAMED_UPDATE_SHA],
+  });
+  const view = await suggestBack.preview({ pool: fx.pool, user: OWNER, fork: COPY, deps: fx.deps });
+  assert.deepEqual(view.changes, [
+    { sha: OWN_SHA, title: 'Start the list' },
+    { sha: HEAD_SHA, title: 'Add dark mode' },
+  ], 'an update by its proposal, or by its subject, is not one of yours');
+  assert.deepEqual(view.commits, ['Start the list', 'Add dark mode']);
+  assert.equal(view.commitCount, 2);
+  assert.equal(view.fileCount, 1, 'README.md never travels, so it is not counted');
+  const updates = fx.calls.queries.find((q) => /upstream_from_app_id IS NOT NULL AND merge_commit_sha IS NOT NULL/.test(q.sql));
+  assert.deepEqual(updates.params, [COPY.id]);
+});
+
+test('a version whose only commits are updates it took has nothing to send; an unread list leaves Send offered', async () => {
+  let fx = fixture({ commits: [{ sha: UPDATE_SHA, subject: 'Update from Book Club (#4)' }] });
+  let view = await suggestBack.preview({ pool: fx.pool, user: OWNER, fork: COPY, deps: fx.deps });
+  assert.equal(view.ready, false);
+  assert.deepEqual(view.reason, { code: 'no_changes', error: 'Your version has no changes to send since you made it.' });
+  assert.equal((await send(fx)).body.code, 'no_changes');
+
+  fx = fixture();
+  fx.deps.github.compareCommitSubjects = async () => { throw new Error('slow'); };
+  view = await suggestBack.preview({ pool: fx.pool, user: OWNER, fork: COPY, deps: fx.deps });
+  assert.equal(view.ready, true, 'the send reads the list again');
+  assert.equal(view.reason, null);
+});
+
+test('a send with picks the version does not have, or none, is refused before anything is built', async () => {
+  const fx = fixture({ built: () => assert.fail('built') });
+  assert.equal((await send(fx, { picks: ['9'.repeat(40)] })).body.code, 'unknown_pick');
+  assert.equal((await send(fx, { picks: [] })).body.error, 'Pick at least one of your changes to suggest.');
+  assert.equal(fx.calls.applyPatch.length, 0);
+});
+
+test('a pick that builds on an unpicked change, or one that does not fit, is refused in words', async () => {
+  const pick = { sha: HEAD_SHA, title: 'Sort the list' };
+  let out = await send(fixture({ built: () => { throw new suggestBack.DependsOnUnpicked(pick); } }), { picks: [HEAD_SHA] });
+  assert.equal(out.status, 409);
+  assert.equal(out.body.code, 'depends_on_unpicked');
+  assert.match(out.body.error, /“Sort the list” builds on one of your changes you did not pick/);
+  assert.equal(out.body.sha, HEAD_SHA);
+  out = await send(fixture({ built: () => { throw new suggestBack.DoesNotFit(pick); } }));
+  assert.equal(out.body.code, 'original_moved');
+});
+
+test('the link is read from apps.upstream: the version\'s base and the original\'s synced commit', async () => {
+  const version = {
+    ...COPY, forked_from: null,
+    upstream: { appId: 3, slug: 'book-club', following: true, syncedSha: SYNCED_SHA, baseSha: VERSION_BASE_SHA },
+  };
+  const fx = fixture();
+  const out = await send(fx, { fork: version });
+  assert.equal(out.ok, true);
+  assert.equal(fx.calls.compared[0].base, VERSION_BASE_SHA, 'its changes since its base');
+  assert.equal(fx.calls.applyPatch[0].baseSha, SYNCED_SHA, 'applied where the version last took the original');
+  assert.equal(fx.calls.resolved.length, 0, 'a planned link is not looked for');
+});
+
+test('a legacy link has its commits looked for first, and says so when they cannot be found', async () => {
+  const legacy = { ...COPY, forked_from: null, upstream: { appId: 3, slug: 'book-club', legacy: true } };
+  let fx = fixture();
+  let out = await send(fx, { fork: legacy });
+  assert.equal(out.body.code, 'lineage_missing');
+  assert.deepEqual(fx.calls.resolved, [COPY.id]);
+
+  fx = fixture();
+  fx.deps.lineage.resolveLegacy = async () => ({ appId: 3, syncedSha: SYNCED_SHA, baseSha: VERSION_BASE_SHA, legacy: false });
+  out = await send(fx, { fork: legacy });
+  assert.equal(out.ok, true);
+  assert.equal(fx.calls.applyPatch[0].baseSha, SYNCED_SHA);
+});
+
+test('the words people read say version, never remix or copy', () => {
+  for (const [key, value] of Object.entries(suggestBack.MESSAGES)) {
+    const text = typeof value === 'function' ? value('Book Club') : value;
+    assert.doesNotMatch(text, /remix|\bcop(y|ies)\b|fork|upstream|template|—/i, key);
+  }
+  assert.equal(suggestBack.prTitle('Book Club picks', ['A', 'B']), 'Suggested by Book Club picks: A, B');
+  assert.ok(suggestBack.prTitle('X', ['y'.repeat(300)]).length <= 256);
+});
+
 // ── 4. The route ──────────────────────────────────────────────────────
 
 test('the route: same-origin only, membership-gated, 201 with the proposal', async () => {
@@ -439,6 +631,14 @@ test('the route: same-origin only, membership-gated, 201 with the proposal', asy
     const missing = await fetch(`${base}/nope/suggest-back`, { method: 'POST', headers: { 'sec-fetch-site': 'same-origin' } });
     assert.equal(missing.status, 404);
 
+    const unknown = await fetch(`${base}/${COPY.slug}/suggest-back`, {
+      method: 'POST',
+      headers: { 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' },
+      body: JSON.stringify({ picks: ['9'.repeat(40)] }),
+    });
+    assert.equal(unknown.status, 400, 'picks are read from the body');
+    assert.equal((await unknown.json()).code, 'unknown_pick');
+
     const ok = await fetch(`${base}/${COPY.slug}/suggest-back`, { method: 'POST', headers: { 'sec-fetch-site': 'same-origin' } });
     assert.equal(ok.status, 201);
     const body = await ok.json();
@@ -459,9 +659,9 @@ test('the route: same-origin only, membership-gated, 201 with the proposal', asy
 
 // ── 5. The dialog and the ⋯ row ───────────────────────────────────────
 
-test('the ⋯ offers "Suggest this back" to the copy\'s owner only', () => {
+test('the ⋯ offers "Suggest to <original>" to the version\'s owner only', () => {
   const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
-  const { suggestBackTarget, changeLines } = loadTsx('frontend/src/features/dev-board/suggest-back-dialog.tsx');
+  const { suggestBackTarget, changeLines, versionOfApp, pickableChanges } = loadTsx('frontend/src/features/dev-board/suggest-back-dialog.tsx');
   const resolved = { ...COPY, forked_from: { appId: 3, slug: 'book-club', name: 'Book Club', linkable: true } };
   assert.deepEqual(suggestBackTarget(resolved, 5), { slug: 'book-club', name: 'Book Club' });
   assert.equal(suggestBackTarget(resolved, 6), null, 'not for anyone else');
@@ -469,6 +669,16 @@ test('the ⋯ offers "Suggest this back" to the copy\'s owner only', () => {
   assert.equal(suggestBackTarget({ ...resolved, forked_from: null }, 5), null, 'not for an app that is not a copy');
   assert.equal(suggestBackTarget({ ...resolved, forked_from: { ...resolved.forked_from, linkable: false } }, 5), null,
     'not when the original is gone');
+  // Versions (docs/plans/versions.md): a ready-made version has no
+  // `forked_from`; the one-app read's `upstream_link` links it, and wins.
+  const linked = { ...COPY, forked_from: null, upstream_link: { slug: 'tier-list', name: 'Tier list', following: true, linkable: true } };
+  assert.deepEqual(suggestBackTarget(linked, 5), { slug: 'tier-list', name: 'Tier list' });
+  assert.deepEqual(versionOfApp(linked), { slug: 'tier-list', name: 'Tier list', following: true });
+  assert.deepEqual(versionOfApp(resolved), { slug: 'book-club', name: 'Book Club', following: false },
+    'an older server\'s forked_from says nothing of updates');
+  assert.equal(versionOfApp({ ...linked, upstream_link: { ...linked.upstream_link, linkable: false } }), null);
+  assert.deepEqual(pickableChanges({ changes: [{ sha: 'a1', title: 'Rate out of 10' }, { sha: '', title: 'x' }] }), [{ sha: 'a1', title: 'Rate out of 10' }]);
+  assert.deepEqual(pickableChanges({}), [], 'an older server has no pick list');
 
   assert.deepEqual(changeLines({ commits: ['A', 'B'], commitCount: 5, fileCount: 3 }), ['A', 'B', 'and 3 more']);
   assert.deepEqual(changeLines({ commits: [], commitCount: 0, fileCount: 1 }), ['1 file changed']);
@@ -481,8 +691,11 @@ test('the ⋯ offers "Suggest this back" to the copy\'s owner only', () => {
     globalThis.window = { App: { user: { id: 5 } } };
     const html = renderToHtml(createElement(DevPlusMenu, props));
     assert.match(html, /data-plus="suggest-back"/);
-    assert.match(html, />Suggest this back</);
-    assert.match(html, />Send your changes to Book Club as a proposal</);
+    assert.match(html, />Suggest to Book Club</);
+    assert.match(html, />Pick which of your changes to send</);
+    assert.match(html, /data-plus="updates"/, 'and Updates from <original>');
+    assert.match(html, />Updates from Book Club</);
+    assert.match(html, />Doesn’t get its updates</);
     globalThis.window = { App: { user: { id: 6 } } };
     assert.doesNotMatch(renderToHtml(createElement(DevPlusMenu, props)), /suggest-back/);
   } finally {
@@ -495,12 +708,16 @@ test('the dialog says what goes, what does not, and who votes', () => {
   const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
   const { SuggestBackDialog } = loadTsx('frontend/src/features/dev-board/suggest-back-dialog.tsx');
   const html = renderToHtml(createElement(SuggestBackDialog, {
-    slug: 'book-club-remix', copyName: 'Book Club (remix)', original: { slug: 'book-club', name: 'Book Club' }, onClose() {},
+    slug: 'book-club-picks', copyName: 'Book club picks', original: { slug: 'book-club', name: 'Book Club' }, onClose() {},
   }));
   const text = html.replace(/<[^>]*>/g, '').replace(/&#x27;/g, "'");
-  assert.match(text, /Suggest this back to Book Club/);
-  assert.match(text, /Your changes since you remixed go to Book Club as a proposal\. Its members try it and vote, like any other change\./);
-  assert.match(text, /Not sent: Book Club \(remix\)’s name, who can see it, its admins or its data\./);
+  assert.match(text, /Suggest to Book Club/);
+  // An original the platform approves keeps a suggestion in review rather
+  // than putting it to a vote, so the words promise no vote.
+  assert.match(text, /Pick the changes to send\. They go to Book Club as a suggestion, for the people who decide its changes to try\./);
+  assert.match(text, /Your name and words stay yours\. Not sent: Book club picks’s name, who can see it, its admins or its data\./);
+  assert.match(text, /If it goes in, every version that gets Book Club’s updates is given it, yours included\./);
+  assert.doesNotMatch(text, /remix|rewrite|reword/i, 'it promises nothing about rewording the changes');
   assert.match(text, /Loading your changes…/, 'the list loads after the dialog opens, never in a render');
   assert.match(html, />Cancel</);
   assert.match(html, /data-suggest-send="true" disabled=""[^>]*>Send to Book Club</, 'Send waits for the list');

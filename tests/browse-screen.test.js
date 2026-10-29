@@ -1496,6 +1496,20 @@ test('the detail page keeps its action closures off the store, reachable by inde
   assert.equal(ran.length, 2, 'a stale index is inert, never a crash');
 });
 
+// ── Versions on the app's page (docs/plans/versions.md) ──────────────────
+
+test('versionsLineFor: an original says how many versions it has and how many get its updates; a zero says nothing', () => {
+  const { Browse } = makeBrowse();
+  assert.equal(Browse.versionsLineFor(app({ versions: { count: 214, following: 160 } })), '214 versions · 160 get its updates');
+  assert.equal(Browse.versionsLineFor(app({ versions: { count: 214, following: 1 } })), '214 versions · 1 gets its updates');
+  assert.equal(Browse.versionsLineFor(app({ versions: { count: 1, following: 1 } })), '1 version · it gets its updates');
+  assert.equal(Browse.versionsLineFor(app({ versions: { count: 5, following: 0 } })), '5 versions');
+  assert.equal(Browse.versionsLineFor(app({ versions: { count: 0, following: 0 } })), null, 'no line before the first version');
+  assert.equal(Browse.versionsLineFor(app({ versions: null })), null, 'not an original');
+  assert.equal(Browse.versionsLineFor(app({})), null, 'a server that predates versions');
+  assert.equal(Browse.versionsLineFor(null), null);
+});
+
 // ── Share on the app's page (the prototype's About sheet: More, then Share) ──
 
 test("shareUrlFor: the app's public link, behind the same gate as the menu's Share app", () => {

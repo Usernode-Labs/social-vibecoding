@@ -50,6 +50,18 @@
  * database (and arms no clock), and not with STARTER_PREBUILDS=off. A preview still uses an image production
  * built under the same key.
  *
+ * FROM THE ORIGINALS (docs/plans/versions.md). Where versions are on and a
+ * ready-made's starter directory has its original running at a known main
+ * (services/originals.js), a new project made from it is a version of that
+ * original, whose first commit is the original's main tree with its own
+ * words (app-creator.js seedVersion). So that ready-made's image is built
+ * from the same files (originals.versionFiles over the original's tree and
+ * this ready-made's words.json, plus the per-project files, which are in
+ * .dockerignore anyway), and its key is the one such a version computes.
+ * Each changes when the original's main does; the tree is read again only
+ * then. Without an original, or with versions off, the ready-made is
+ * rendered from app-templates as before.
+ *
  * The platform never deletes a registry image (docs/app-data-retention.md),
  * so a project keeps running the image it was made with. A registry cleanup
  * policy of the cluster's own must keep `homeroom-starter-*`.
@@ -170,6 +182,80 @@ function currentTrees(config) {
   return list;
 }
 
+/**
+ * currentTrees, with each ready-made whose directory's original is running
+ * at a known main built from that original instead (see FROM THE
+ * ORIGINALS): what the clock builds, Admin > Templates lists and a Rebuild
+ * queues. An entry keeps its rendered tree when the original's cannot be
+ * read. Memoised per entry by the original's commit, so a run reads only
+ * the originals' rows unless one has moved.
+ */
+const fromOriginals = new Map();
+async function currentTreesFor(config, pool) {
+  const rendered = currentTrees(config);
+  let sources;
+  try {
+    sources = await require('./originals').imageSources(config, pool);
+  } catch (err) {
+    log.warn('starter-images', 'Could not read the originals; ready-mades are built from app-templates', { err: err.message });
+    return rendered;
+  }
+  if (!sources.size) return rendered;
+  const recipe = buildRecipe(config);
+  const out = [];
+  for (const t of rendered) {
+    const source = sources.get(appTemplates.dirOf(t.id));
+    if (!source) { out.push(t); continue; }
+    const memoKey = `${recipe}\0${t.id}`;
+    const hit = fromOriginals.get(memoKey);
+    if (hit && hit.appId === source.original.id && hit.sha === source.sha) { out.push(hit.tree); continue; }
+    try {
+      const entry = await originalEntry(config, t, source.original, source.sha);
+      fromOriginals.set(memoKey, { appId: source.original.id, sha: source.sha, tree: entry });
+      out.push(entry);
+    } catch (err) {
+      log.warn('starter-images', 'Could not read an original; this ready-made is built from app-templates', {
+        template: t.id, original: source.original.slug, err: err.message,
+      });
+      out.push(t);
+    }
+  }
+  return out;
+}
+
+/**
+ * Ready-made `t` (a currentTrees entry) as built from its original at
+ * `sha`: its files and key, as a version made from that commit computes
+ * them (app-creator.js seedVersion).
+ */
+async function originalEntry(config, t, original, sha) {
+  const originals = require('./originals');
+  const { getTemplateFiles } = require('./template');
+  const tree = await originals.mainTree(original, sha);
+  const files = originals.versionFiles(tree, getTemplateFiles(t.title, buildSlug(t.id), null, null, { template: t.id }), {
+    name: t.title, templateId: t.id, originalTemplate: original.template,
+  });
+  return { id: t.id, title: t.title, files, key: contextKey(files, buildRecipe(config)), original: { slug: original.slug, sha } };
+}
+
+/**
+ * Whether a version of `original` made from ready-made `templateId` at
+ * `sha` would deploy a prebuilt image: the one built from that commit is
+ * ready. Each merge into an original changes the image its ready-mades are
+ * built from, and building the new one takes minutes, so a version made
+ * meanwhile copies an earlier commit (services/originals.js sourceFor).
+ * True where nothing is prebuilt (prebuildsOn, a tree that is not shared),
+ * since no commit is faster to make there.
+ */
+async function readyFromOriginal(config, pool, templateId, original, sha) {
+  if (!prebuildsOn()) return true;
+  const t = currentTrees(config).find((x) => x.id === templateId);
+  if (!t || !t.key) return true;
+  const { key } = await originalEntry(config, t, original, sha);
+  if (!key) return true;
+  return !!(await readyRow(pool, key));
+}
+
 /** Whether this process builds images at all (see NOT IN A STAGING PREVIEW). */
 function prebuildsOn(env = process.env) {
   return env.USERNODE_ENV !== 'staging' && String(env.STARTER_PREBUILDS || '').toLowerCase() !== 'off';
@@ -235,11 +321,18 @@ async function buildingNow(pool, key) {
 
 // ── Building ──────────────────────────────────────────────────────────────
 
+// A tree an original gave carries git's modes (services/originals.js
+// mainTree): an executable stays one, and a link is made a link.
 function writeTree(dir, files) {
   for (const f of files) {
     const filePath = path.join(dir, f.path);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    if (f.mode === '120000') {
+      fs.symlinkSync(String(f.content), filePath);
+      continue;
+    }
     fs.writeFileSync(filePath, f.content);
+    if (f.mode === '100755') fs.chmodSync(filePath, 0o755);
   }
 }
 
@@ -275,7 +368,7 @@ async function pushSource(t) {
  * Resolves what it did; never throws for a failed build.
  */
 async function buildTarget(config, pool, input) {
-  const t = currentTrees(config).find((x) => x.id === input?.template && x.key === input?.key && x.files);
+  const t = (await currentTreesFor(config, pool)).find((x) => x.id === input?.template && x.key === input?.key && x.files);
   // Not a key of this build: an older one asked for it, or the starter
   // changed since. Nothing to build.
   if (!t) return { skipped: 'not_current' };
@@ -338,7 +431,7 @@ async function buildTarget(config, pool, input) {
  */
 async function targets(config, pool) {
   if (!prebuildsOn()) return { off: true };
-  const list = currentTrees(config).filter((t) => t.key && t.files);
+  const list = (await currentTreesFor(config, pool)).filter((t) => t.key && t.files);
   await ensureRows(pool, list);
   const due = await dueRows(pool, list);
   return {
@@ -393,7 +486,7 @@ async function imageFor(config, pool, { key, slug }, { waitMs = WAIT_MS, pollMs 
  * image it last had under any key.
  */
 async function list(config, pool) {
-  const current = currentTrees(config);
+  const current = await currentTreesFor(config, pool);
   const { rows } = await pool.query(
     `SELECT template, context_key, status, image_ref, build_ref, engine, source_sha, build_ms,
             error, attempts, started_at, built_at, updated_at
@@ -467,7 +560,7 @@ function demoList(config, now = Date.now()) {
  * ready-made app or has no key, or whose build is under way.
  */
 async function requestRebuild(config, pool, id) {
-  const t = currentTrees(config).find((x) => x.id === id);
+  const t = (await currentTreesFor(config, pool)).find((x) => x.id === id);
   if (!t || !t.key) return false;
   if ((await liveKeys(pool)).has(t.key)) return false;
   await ensureRows(pool, [t]);
@@ -491,13 +584,16 @@ module.exports = {
   buildSlug,
   contextKey,
   currentTrees,
+  currentTreesFor,
   demoList,
   imageFiles,
   imageFor,
+  originalEntry,
   list,
   prebuildsOn,
+  readyFromOriginal,
   requestRebuild,
   targets,
   buildTarget,
-  _forTest: { pushSource, resetTrees: () => trees.clear(), resetSource: () => { sourceRepo = null; } },
+  _forTest: { pushSource, resetTrees: () => { trees.clear(); fromOriginals.clear(); }, resetSource: () => { sourceRepo = null; } },
 };

@@ -190,7 +190,7 @@ const NEXT_STEPS = [
  * description decides the first two lines, and who the project is for the
  * last: on a Just me project the one vote is the creator's
  * (services/active-users.js counts its one member, so one Yes merges). A
- * fork (a "remix") always starts as Just you (POST /api/apps/:slug/fork), so
+ * fork (a "version", Make your own) always starts as Just you (POST /api/apps/:slug/fork), so
  * its last line is the Just me one. Exported and pure for
  * tests/create-progress-view.test.js.
  */
