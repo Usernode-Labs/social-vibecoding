@@ -35,6 +35,9 @@ const VOTES_SRC = fs.readFileSync(
 test('the allowlist permits exactly the routes the tools need', () => {
   const allowed = [
     ['GET', '/api/apps'],
+    // #6026 — create_app: a new project for the caller. The route narrows a
+    // connector token to four fields; the test below pins that.
+    ['POST', '/api/apps'],
     // Demo mode (routes/demo-mode.js): creator-only and demo-mode-only; the
     // gate test at the end of this file is what earns these their entries.
     ['POST', '/api/apps/recipe-box/demo-mode'],
@@ -140,7 +143,15 @@ test('fail-closed: anything not listed is refused', () => {
     ['GET', '/api/feedback/screenshot'],
     // Right path, wrong method.
     ['DELETE', '/api/apps/recipe-box/issues'],
-    ['POST', '/api/apps'],
+    ['PUT', '/api/apps'],
+    ['DELETE', '/api/apps'],
+    ['PATCH', '/api/apps'],
+    // Making a project is the collection's POST alone: nothing under an app
+    // (its settings, members or visibility) comes with it.
+    ['POST', '/api/apps/recipe-box'],
+    ['PATCH', '/api/apps/recipe-box'],
+    ['POST', '/api/apps/recipe-box/collaborators'],
+    ['POST', '/api/apps/recipe-box/visibility-pr'],
     ['POST', '/api/sessions/412'],
     ['GET', '/api/sessions/412/linked-issues'],
     ['POST', '/api/sessions/412/linked-issues'],
@@ -829,4 +840,42 @@ test('the challenge doors are allowed, full-admin gated first, and each opens on
         `${name} is full-admin gated, then limited, then guarded`);
     }
   }
+});
+
+// #6026 — create_app. Making a project decides something for the caller
+// alone, so the route earns its entry by narrowing a connector token to a
+// project for the person who connected it and nothing more.
+test('create is on the list only because the route narrows a connector to its own project', () => {
+  const appsSrc = fs.readFileSync(path.join(__dirname, '../src/routes/apps.js'), 'utf8');
+  const start = appsSrc.indexOf("router.post('/api/apps',");
+  assert.ok(start > 0, 'the create route exists');
+  const handler = appsSrc.slice(start, appsSrc.indexOf('router.', start + 30));
+  assert.match(handler, /if \(req\.connectorClientId\) \{\s*const refused = createOptions\.connectorCreateRefusal\(req\.body\);/,
+    'a connector token is refused anything but its four fields');
+  const createOptions = require('../src/services/create-options');
+  assert.deepEqual([...createOptions.CONNECTOR_CREATE_FIELDS], ['name', 'audience', 'description', 'brief']);
+  for (const reach of ['invitees', 'inviteEmails', 'repoUrl', 'governance', 'template']) {
+    assert.ok(createOptions.connectorCreateRefusal({ name: 'x', [reach]: 'anything' }), `${reach} is refused from a connector`);
+  }
+
+  // And the tool sends exactly those fields, so the narrow door is the one
+  // it uses.
+  const toolStart = TOOLS_SRC.indexOf("server.registerTool('create_app'");
+  assert.ok(toolStart > 0, 'create_app is registered');
+  const toolEnd = TOOLS_SRC.indexOf('server.registerTool(', toolStart + 10);
+  const tool = TOOLS_SRC.slice(toolStart, toolEnd);
+  const call = tool.slice(tool.indexOf("callPlatform(baseUrl, accessToken, 'POST', '/api/apps'"));
+  const body = call.slice(0, call.indexOf('});') + 3);
+  for (const reach of ['invitees', 'inviteEmails', 'repoUrl', 'governance', 'template', 'from:']) {
+    assert.ok(!body.includes(reach), `create_app never sends ${reach}`);
+  }
+
+  // The delegated kinds still cannot make a project.
+  for (const kind of ['agent_mayor', 'worker_read']) {
+    assert.equal(policy.isDelegatedApiRequest(kind, 'POST', '/api/apps'), false, `${kind} cannot create`);
+  }
+  const audiences = require('../src/services/mcp-audiences');
+  assert.equal(audiences.toolVisibleTo('agent_mayor', 'create_app'), false);
+  assert.equal(audiences.toolVisibleTo('worker_read', 'create_app'), false);
+  assert.equal(audiences.toolVisibleTo('external', 'create_app'), true);
 });

@@ -260,6 +260,42 @@ function parseCreateOptions(body = {}, { imported = false } = {}) {
 }
 
 /**
+ * ── From a connector ──────────────────────────────────────────────────
+ *
+ * #6026: a connector token (a chat product the person connected) may make a
+ * project for that person and nothing more: its name, who it is for, its one
+ * line and what it should do (the connector's create_app). Invites reach
+ * other people, an import reaches a GitHub repository, and an approval rule
+ * and a starter are choices the Create screen walks a person through; `from`
+ * and the rest name doors a connector did not come through. All of them stay
+ * on Homeroom itself. Refused rather than dropped, like everything else here:
+ * a field a caller sent and lost would make a different project from the one
+ * it asked for.
+ *
+ * A connector that names no audience gets the Create screen's own default, a
+ * private community (`connectorCreateBody`), never the older-client fallback
+ * of two public visibility fields.
+ */
+const CONNECTOR_CREATE_FIELDS = Object.freeze(['name', 'audience', 'description', 'brief']);
+
+/** The sentence a connector's create is refused with, or null when it may go ahead. */
+function connectorCreateRefusal(body) {
+  const fields = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  const extra = Object.keys(fields)
+    .filter((key) => !CONNECTOR_CREATE_FIELDS.includes(key) && fields[key] !== undefined && fields[key] !== null);
+  if (!extra.length) return null;
+  const named = extra.slice(0, 5).map((key) => key.slice(0, 40)).join(', ');
+  return `A connector makes a project from ${CONNECTOR_CREATE_FIELDS.join(', ')} only. `
+    + `Set ${named}${extra.length > 5 ? ' and the rest' : ''} on Homeroom itself, from the project’s page.`;
+}
+
+/** A connector's create body as parseCreateOptions should read it: a private community unless it says otherwise. */
+function connectorCreateBody(body) {
+  const fields = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  return fields.audience == null ? { ...fields, audience: 'invited' } : fields;
+}
+
+/**
  * The block a new repository's dapp.json carries for a governance choice, in
  * the shape readGovernance reads back. Null for the default rule, so a
  * default project's dapp.json stays the one-line `{ "secrets": [] }` it
@@ -281,6 +317,9 @@ module.exports = {
   AUDIENCES,
   MAX_INVITEES,
   DESCRIPTION_MAX,
+  CONNECTOR_CREATE_FIELDS,
+  connectorCreateRefusal,
+  connectorCreateBody,
   parseCreateOptions,
   governanceBlock,
   visibilityForAudience,

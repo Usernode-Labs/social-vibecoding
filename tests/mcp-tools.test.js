@@ -2833,6 +2833,9 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // #4266. Puts away one of the user's own unsubmitted work orders, freeing
     // its slot; list_my_work_orders, below, is the list it is chosen from.
     'close_work_order',
+    // #6026. A new project for the connected person, the one the Create
+    // screen makes; tests/mcp-create-app.test.js.
+    'create_app',
     'create_bench_context_pack', 'create_request',
     // Test accounts for first-run testing (create_test_account,
     // create_test_phone_sign_in, send_test_release_email, list_test_accounts,
@@ -3156,6 +3159,8 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
     'add_bench_task', 'add_challenge',
     'cancel_bench_run', 'cancel_bench_trial', 'cancel_shots_eval',
     'close_work_order',
+    // #6026: it starts a real app and spends one of the caller's app slots.
+    'create_app',
     'create_bench_context_pack', 'create_request', 'create_test_account', 'create_test_phone_sign_in',
     'delete_challenge_scoring_rule', 'delete_challenge_template',
     'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
