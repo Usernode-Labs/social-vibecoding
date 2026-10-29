@@ -1304,6 +1304,16 @@ function stagingMockProposals(viewer) {
         },
       ],
     },
+    // #6006: a third change OWNED by the viewer, which a coding agent
+    // submitted for them, up for a vote with its checks passing. Proposing it
+    // that way was not their yes, so it waits on them (Waiting on you, "Needs
+    // your Yes") rather than moving on without them.
+    {
+      ...mk(9000495, 900495,
+        '[Mock] Your change from Claude Code: waiting for your Yes',
+        0.4, 0, 0, 0, { required: 3, windowEndsAt: null }),
+      external_agent: 'claude-code',
+    },
   ];
   // Spread the community-voted priority/assignee across a few rows (the mk
   // factory otherwise stamps every proposal high / staging-tester) so the
@@ -1362,11 +1372,12 @@ function stagingMockProposals(viewer) {
   });
 }
 
-// #4772: the two ?demo=1 mocks the viewer owns (`user`, { id, username },
-// when known), so the Workshop's sections of their work are reviewable: one
-// up for a vote, one that needs their fix. Without a user they stay mocks
-// nobody owns.
-const OWN_DEMO_PROPOSALS = new Set([9000493, 9000494]);
+// #4772: the ?demo=1 mocks the viewer owns (`user`, { id, username }, when
+// known), so the Workshop's sections of their work are reviewable: one up
+// for a vote, one that needs their fix, and (#6006) one a coding agent
+// submitted that waits for their Yes. Without a user they stay mocks nobody
+// owns.
+const OWN_DEMO_PROPOSALS = new Set([9000493, 9000494, 9000495]);
 function ownDemoProposals(rows, user) {
   if (!user || user.id == null || !user.username) return rows;
   return rows.map((row) => (OWN_DEMO_PROPOSALS.has(row.id)

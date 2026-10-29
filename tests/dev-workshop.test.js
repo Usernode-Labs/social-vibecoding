@@ -2708,6 +2708,36 @@ test('#5229: a back and forth with Homeroom bot is not Waiting on you, even from
   assert.ok(!html.includes('data-ws-mine-section="waiting"'), 'nothing is waiting on me');
 });
 
+test('#6006: a change a coding agent submitted for you waits on your Yes, then moves on', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  const mine = { status: 'promoted', username: 'me', user_id: 1, created_at: at(1), promoted_at: at(1),
+    last_message_at: at(1), linked_issues: [], my_vote: null, check_state: 'passing' };
+  AppView._proposals.push(
+    { ...mine, id: 61, pr_number: 61, pr_title: 'Made on Homeroom' },
+    { ...mine, id: 63, pr_number: 63, pr_title: 'From Claude Code', external_agent: 'claude-code' },
+    { ...mine, id: 64, pr_number: 64, pr_title: 'From Codex, voted', external_agent: 'codex', my_vote: 'yes' },
+    { ...mine, id: 65, pr_number: 65, pr_title: 'A first version', external_agent: 'claude-code', first_version: true },
+  );
+  const v = AppView._workshopView();
+  const rows = Object.fromEntries(plain(v.mine.rows).map((r) => [r.key, r]));
+  assert.deepEqual(Object.fromEntries(Object.entries(rows).map(([k, r]) => [k, r.group])), {
+    'mine:proposal:61': 'vote', 'mine:proposal:63': 'waiting', 'mine:proposal:64': 'vote', 'mine:proposal:65': 'vote',
+  }, 'only the agent\'s submission still owed my Yes waits on me');
+  assert.deepEqual(rows['mine:proposal:63'].brief.tags[0], { label: message('changes:workshop.row.tag.yourYes'), tone: 'warn' });
+  assert.ok(rows['mine:proposal:63'].brief.vote.ask, 'its row carries the Vote');
+  // A viewer who may only read cannot vote, so nothing waits on them.
+  const appData = AppView.appData;
+  AppView.appData = { ...appData, can_collaborate: false };
+  assert.equal(AppView._workshopOwesYes(AppView._proposals.find((p) => p.id === 63)), false);
+  AppView.appData = appData;
+  const html = workshopHtml(AppView, 'workshop');
+  const from = html.indexOf('data-ws-mine-section="waiting"');
+  const waiting = html.slice(from, html.indexOf('data-ws-mine-section="next"'));
+  assert.ok(from >= 0 && waiting.includes('data-ws-row="mine:proposal:63"'));
+  assert.match(waiting, /<span class="dev-ws-hrow-tag" data-tone="warn">Needs your Yes<\/span>/);
+});
+
 test('#4772: a change of yours needs your fix only when it is yours to fix', () => {
   const AppView = makeAppView();
   seed(AppView);
