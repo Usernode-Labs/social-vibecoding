@@ -384,6 +384,9 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
   const href = `#app/${encodeURIComponent(slug)}/workshop`;
   // The App row, which the close control hands the focus to before it goes.
   const appRef = useRef<HTMLAnchorElement | null>(null);
+  // While Home is on show, a section row can be dragged onto My apps (#6025).
+  // A pin keeps its own drag-out to unpin, so it is not one of these.
+  const dragToHome = !pin && sidebarRows && screen === 'home-screen';
   return (
     <Fragment>
       <a
@@ -391,8 +394,11 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
         href={href}
         data-rail-community={slug}
         // The browser's own link drag would take the pointer and cancel the
-        // placement gesture (#6025).
-        draggable={false}
+        // placement gesture (#6025). It is set on the node, not rendered as an
+        // attribute: the row's open tag is markup the sidebar's checks read.
+        ref={(el) => {
+          if (el) el.draggable = !dragToHome;
+        }}
         {...(open ? { 'data-rail-open': '' } : {})}
         {...(pin ? { 'data-rail-pinned': '' } : {})}
         title={name}

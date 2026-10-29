@@ -169,16 +169,21 @@ test('#6025: the community rows drag onto My apps while Home is on show', () => 
   assert.equal(mod.RAIL_DRAG_ITEMS, '.platform-rail-community[data-rail-community]',
     'the rows, not their App line or the places under them');
 
-  // A rendered row carries the slug the recognizer reads and refuses the
-  // browser's own link drag, which would otherwise take the pointer.
+  // A rendered row carries the slug the recognizer reads, and its open tag is
+  // unchanged: the browser's own link drag, which would otherwise take the
+  // pointer, is refused on the node (a ref) rather than as an attribute.
   const html = renderComponent(RAIL, 'RailCommunityRow', {
     slug: 'block-game',
     here: { sidebarRows: true, screen: 'home-screen', onPage: null, onApp: null, live: [] },
   });
   assert.match(html, /data-rail-community="block-game"/);
-  assert.match(html, /draggable="false"/);
+  assert.doesNotMatch(html, /draggable/, 'no attribute on the row');
 
   const src = read(RAIL);
+  assert.match(src, /const dragToHome = !pin && sidebarRows && screen === 'home-screen';/,
+    'a section row, and only while Home is on show');
+  assert.match(src, /ref=\{\(el\) => \{\n {10}if \(el\) el\.draggable = !dragToHome;/,
+    'the node refuses the link drag while the row can be dragged onto My apps');
   assert.match(src, /const onHome = here\.sidebarRows && here\.screen === 'home-screen';/,
     'only while the sidebar holds and Home is the screen on show');
   assert.match(src, /ref=\{railRef\}/, 'the section the recognizer attaches to');
