@@ -108,7 +108,7 @@ test('Home is the one tab addressed as a path, so a modified click opens a tab',
   const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
   assert.match(html, /id="platform-tab-home"[^>]*href="\/"/);
   for (const [key, href] of [
-    ['discover', '#apps'], ['messages', '#messages'], ['ai', '#ai'],
+    ['discover', '#apps'], ['messages', '#messages'], ['ai', '#homeroom-bot'],
     ['workshop', '#communities'], ['me', '#profile'],
   ]) {
     assert.match(html, new RegExp(`id="platform-tab-${key}"[^>]*href="${href.replace('#', '\\#')}"`));

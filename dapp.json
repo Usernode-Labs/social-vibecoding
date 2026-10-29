@@ -776,8 +776,8 @@
       "reason": "The App tab's long form, the same running app: the side panel takes the next address change the same way."
     },
     {
-      "route": "#ai",
-      "reason": "The AI tab's page: on a desktop the side panel opens a request, a change or a conversation beside it, in the place of the docked chat (frontend/src/features/side-panel/controller.ts canTake), so the next address change is not drawn in the page."
+      "route": "#homeroom-bot",
+      "reason": "The Homeroom bot tab's page (#ai, its old address, lands here): on a desktop the side panel opens a request, a change or a conversation beside it, in the place of the docked chat (frontend/src/features/side-panel/controller.ts canTake), so the next address change is not drawn in the page."
     }
   ],
   "tests": [
@@ -2810,6 +2810,12 @@
       "expectText": "Merged; goes live in the next release (about"
     },
     {
+      "name": "A merge stuck behind a red release says what blocked it, the release step and its error, not a looping Going live (29 Oct 2026)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9100038",
+      "expectSelector": "[data-change-gate=\"votes\"] .dev-change-gate-note",
+      "expectText": "is blocked at “Audit all three lockfiles”: example-package@1.0.0"
+    },
+    {
       "name": "Checks card says an author's commit started the run (#1144), in Details (B10b)",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000022",
       "expectText": "Triggered by a new commit on this proposal."
@@ -3044,7 +3050,7 @@
     {
       "name": "The desktop rail's destination order: Home, Discover, Messages, AI, Communities, then you (#6019; the markup is the rail's order and app.css lays the phone's bar out as Home, Communities, AI, Messages, You); Messages' nested conversations follow it, and the communities you pinned, then your others, sit just above the Communities tab (D, v3)",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-rail-conversations + #platform-tab-ai[href=\"#ai\"] + #platform-rail-pinned + #platform-rail-communities + #platform-tab-workshop + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-rail-conversations + #platform-tab-ai[href=\"#homeroom-bot\"] + #platform-rail-pinned + #platform-rail-communities + #platform-tab-workshop + #platform-tab-me"
     },
     {
       "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
@@ -5130,13 +5136,13 @@
     },
     {
       "name": "#6019: the AI tab opens on its own page: Your work, with a private idea locked to you (Only you · Not in a community yet)",
-      "path": "/?demo=1#ai",
+      "path": "/?demo=1#homeroom-bot",
       "expectSelector": "#ai-screen:not(.hidden) [data-ai-list=\"work\"] [data-ai-row=\"private\"][data-who=\"solo\"]",
       "expectText": "Not in a community yet"
     },
     {
       "name": "#6019: the AI tab's Up next lists your work moving without you, soonest first (going live before up for a vote)",
-      "path": "/?demo=1#ai",
+      "path": "/?demo=1#homeroom-bot",
       "expectSelector": "#ai-screen:not(.hidden) [data-ai-list=\"next\"] [data-ai-next=\"going_live\"] ~ [data-ai-next=\"vote\"]",
       "expectText": "Going live"
     }

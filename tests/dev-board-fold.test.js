@@ -1707,7 +1707,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 744 → 745: +1 (#6019) a request's page draws the changes built for it
   // under it, each with its own line. 745 → 747: +2 (#6019 follow-up) the
   // AI tab's own page, Your work and Up next. 747 leaves 133 slots.
-  checkCap.assertPinned(DAPP.tests.length, 747);
+  // 747 → 748: +1: a merge stuck behind a red release run names the step
+  // and the reason on its page (the ?demo=1 release-blocked mock).
+  // 748 leaves 132 slots.
+  checkCap.assertPinned(DAPP.tests.length, 748);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

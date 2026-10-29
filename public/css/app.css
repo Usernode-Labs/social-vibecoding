@@ -17980,8 +17980,12 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    (data-ai-docked), the way the prototype drew it. */
 #ai-screen .ai-askbar {
   position: fixed;
-  left: 0;
-  right: 0;
+  /* Where the page's own content is (the rail and its gutter, mirrored on
+     the far edge), so on a wide window whose Main is not docked (yet, or at
+     all) the bar is the page's and never runs under the sidebar. Both are 0
+     on a phone. */
+  left: calc(var(--platform-rail-w, 0px) + var(--platform-gutter, 0px));
+  right: var(--platform-gutter, 0px);
   bottom: var(--platform-tabs-h, 56px);
   z-index: 25;
   padding: 6px 12px 8px;

@@ -5397,14 +5397,24 @@ const App = {
         return;
       }
       if (parts[0] === 'ai') {
-        // #6019: the AI tab. `#ai` is its own page (features/ai/): what
-        // needs you, your private threads, Up next. Main, the chat with the
-        // bot, is a conversation of the Messages screen (`#ai/main`), so the
-        // screen comes up and the store opens the chat, which then names
-        // itself in the address (`#messages/<id>`), with its arrow back to
-        // `#ai`; the AI tab is lit while it is on screen
-        // (features/nav/tab-bar.tsx). `#ai/thread/<id>` opens one of its
-        // threads.
+        // The Homeroom bot tab's OLD address (29 Oct 2026): an ALIAS, as
+        // `#discover` is for `#apps`. Rewritten in place (replaceState fires
+        // no hashchange, so it neither re-routes nor adds a Back step), and
+        // handled below as the new address.
+        try {
+          history.replaceState(null, '', '#homeroom-bot' + (parts.length > 1 ? '/' + parts.slice(1).join('/') : ''));
+        } catch (err) { /* non-fatal: navigation below still works */ }
+        parts[0] = 'homeroom-bot';
+      }
+      if (parts[0] === 'homeroom-bot') {
+        // #6019: the Homeroom bot tab. `#homeroom-bot` is its own page
+        // (features/ai/): what needs you, your private threads, In progress.
+        // Main, the chat with the bot, is a conversation of the Messages
+        // screen (`#homeroom-bot/main`), so the screen comes up and the store
+        // opens the chat, which then names itself in the address
+        // (`#messages/<id>`), with its arrow back to `#homeroom-bot`; the tab
+        // is lit while it is on screen (features/nav/tab-bar.tsx).
+        // `#homeroom-bot/thread/<id>` opens one of its threads.
         App.setChromeless(false);
         if (parts[1] !== 'main' && parts[1] !== 'thread') {
           App.navigateToAi();
@@ -7462,9 +7472,9 @@ const App = {
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
-  // #6019 follow-up: the AI tab's own page (features/ai/), a tab root like
-  // the Workshop. Main, the chat with the bot, is the Messages screen's
-  // (`#ai/main`), a level under it. The page keeps no state of its own to
+  // #6019 follow-up: the Homeroom bot tab's own page (features/ai/), a tab
+  // root like the Workshop. Main, the chat with the bot, is the Messages
+  // screen's (`#homeroom-bot/main`), a level under it. The page keeps no state of its own to
   // leave, so nothing has to exit it: the next screen's reveal hides it.
   navigateToAi() {
     if (App._revealedScreen === 'ai-screen' && !App.currentApp) return;
@@ -9597,9 +9607,10 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
     case 'settings': return 'settings-screen';
     case 'admin': return 'admin-screen';
     case 'messages': return 'messages-screen';
+    case 'homeroom-bot':
     case 'ai': return ['main', 'thread'].includes(frag.split('/')[1])
       ? 'messages-screen'                    // #6019: Main, the bot's chat, in the inbox's screen
-      : 'ai-screen';                         // the AI tab's own page
+      : 'ai-screen';                         // the Homeroom bot tab's own page (#ai: its old address)
     case 'chat': return 'messages-screen';   // Global Chat's, removed: the inbox
     case 'agent': return 'agent-session-screen';
     case 'leaderboard': return 'leaderboard-screen';

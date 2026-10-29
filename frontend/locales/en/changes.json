@@ -1055,6 +1055,10 @@
     "text": "Going live",
     "description": "Headline over the steps on the page of a change that was merged while the new version of the app is still being deployed."
   },
+  "page.steps.headline.releaseBlocked": {
+    "text": "Release blocked",
+    "description": "Headline over the steps on the page of a change that was merged, but whose automatic release failed one of its steps (for example a security check), so it is not live and will not be until that is fixed."
+  },
   "page.steps.headline.live": {
     "text": "Live",
     "description": "Headline over the steps on the page of a merged change that is part of the running app. An adjective."
@@ -5482,6 +5486,18 @@
   "badge.pill.stuckTitle": {
     "text": "This change was approved, but the update that makes it live is stuck.",
     "description": "Tooltip of the status pill on a change's card when it reads \"Stuck going live\"."
+  },
+  "badge.pill.blocked": {
+    "text": "Release blocked",
+    "description": "Label of the status pill on a change's card when the change was approved and merged, but the automatic release that would make it live failed one of its steps (for example a security check), so it cannot go live until that is fixed."
+  },
+  "release.blocked.withReason": {
+    "text": "The release that makes this change live is blocked at “{{where}}”: {{reason}}",
+    "description": "Tooltip of the \"Release blocked\" pill and the line under the steps on a merged change's page. {{where}} is the name of the release step that failed (for example \"Audit all three lockfiles\"); {{reason}} is that step's own error line, in English, often a package name and an advisory id."
+  },
+  "release.blocked.where": {
+    "text": "The release that makes this change live is blocked at “{{where}}”.",
+    "description": "Same as the previous line, when the failing step gave no reason. {{where}} is the name of the release step that failed."
   },
   "badge.pill.failed": {
     "text": "Couldn’t go live",
