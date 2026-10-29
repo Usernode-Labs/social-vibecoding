@@ -767,29 +767,17 @@
     "text": "{{count}} to answer",
     "description": "Beside the \"Waiting on you\" heading in What's happening on a project's Workshop tab: how many of the viewer's items need their answer before they can move. {{count}} is that number."
   },
-  "workshop.yourVotes.title": {
-    "text": "Yours, up for a vote",
-    "description": "Heading of a part of the What's happening card on a project's Workshop tab: the viewer's own changes that are up for a vote now."
+  "workshop.upNext.title": {
+    "text": "Up next",
+    "description": "On a project's Workshop tab, in What's happening: the viewer's own work moving without them, soonest first (what is going live, then what is up for a vote and needs nothing from them). The section's heading."
   },
-  "workshop.yourVotes.count_one": {
-    "text": "{{count}} open",
-    "description": "Beside the \"Yours, up for a vote\" heading in What's happening on a project's Workshop tab: how many of the viewer's own changes and group decisions are up for a vote now. {{count}} is that number."
+  "workshop.upNext.count_one": {
+    "text": "{{count}} moving",
+    "description": "On a project's Workshop tab, in What's happening: the viewer's own work moving without them, soonest first (what is going live, then what is up for a vote and needs nothing from them). Beside the heading: how many rows it holds. {{count}} is that number."
   },
-  "workshop.yourVotes.count_other": {
-    "text": "{{count}} open",
-    "description": "Beside the \"Yours, up for a vote\" heading in What's happening on a project's Workshop tab: how many of the viewer's own changes and group decisions are up for a vote now. {{count}} is that number."
-  },
-  "workshop.goingLive.title": {
-    "text": "Going live",
-    "description": "Heading of a part of the What's happening card on a project's Workshop tab: the viewer's changes that were approved and merged and are not live yet, waiting for the release that makes them live."
-  },
-  "workshop.goingLive.count_one": {
-    "text": "{{count}} merged",
-    "description": "Beside the \"Going live\" heading in What's happening on a project's Workshop tab: how many of the viewer's changes were merged and are not live yet. {{count}} is that number."
-  },
-  "workshop.goingLive.count_other": {
-    "text": "{{count}} merged",
-    "description": "Beside the \"Going live\" heading in What's happening on a project's Workshop tab: how many of the viewer's changes were merged and are not live yet. {{count}} is that number."
+  "workshop.upNext.count_other": {
+    "text": "{{count}} moving",
+    "description": "On a project's Workshop tab, in What's happening: the viewer's own work moving without them, soonest first (what is going live, then what is up for a vote and needs nothing from them). Beside the heading: how many rows it holds. {{count}} is that number."
   },
   "workshop.fresh.title": {
     "text": "New for you",

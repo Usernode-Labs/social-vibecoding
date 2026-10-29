@@ -3879,7 +3879,7 @@ function MineLines({ rows, slug, openKey, onOpen }: {
  * leaves out a part with no rows.
  */
 function MineSection({ section, title, count, ask = false, rows, slug, openKey, onOpen }: {
-  section: 'waiting' | 'vote' | 'live';
+  section: 'waiting' | 'vote' | 'live' | 'next';
   title: string;
   count: string;
   ask?: boolean;
@@ -4932,6 +4932,8 @@ export function DevWorkshop(): ReactNode {
   const workRows = mineIn('work');
   const voteRows = mineIn('vote');
   const liveRows = mineIn('live');
+  // Up next, soonest first: going live, then up for a vote.
+  const nextRows = [...liveRows, ...voteRows];
   const anyMine = waitingRows.length + workRows.length + voteRows.length + liveRows.length > 0;
   // Your work stays when the viewer has nothing anywhere (#2182: it says so);
   // with something in another section, an empty Your work is left out.
@@ -5359,31 +5361,20 @@ export function DevWorkshop(): ReactNode {
               </div>
             </div>
           ) : null}
-          {/* ── Yours, up for a vote ── (#4772) the viewer's own changes and
-              group decisions up for a vote that need nothing from them. The
-              one part that keeps two lines a row: the vote's pill and Vote
-              end the first, its tags are the second. */}
-          {voteRows.length ? (
+          {/* ── Up next ── (#6019 follow-up; plan v3's Up next, which
+              replaced #4772's "Yours, up for a vote" and "Going live") the
+              viewer's own work moving without them, soonest first: what is
+              going live, then what is up for a vote and needs nothing from
+              them. One line a row, each ending with where it stands. A change
+              going live is left out of What happened meanwhile
+              (`goingLiveKeys`), and is its news once live, so it is listed
+              once at any point. */}
+          {nextRows.length ? (
             <MineSection
-              section="vote"
-              title={t('project:workshop.yourVotes.title')}
-              count={t('project:workshop.yourVotes.count', { count: voteRows.length })}
-              rows={voteRows}
-              slug={slug}
-              openKey={sideKey}
-              onOpen={openItem}
-            />
-          ) : null}
-          {/* ── Going live ── (#4715, #4772) the viewer's merged changes that
-              are not live yet, until the release lands. They are left out of
-              What happened meanwhile (`goingLiveKeys`), and are its news
-              once live, so a change is listed once at any point. */}
-          {liveRows.length ? (
-            <MineSection
-              section="live"
-              title={t('project:workshop.goingLive.title')}
-              count={t('project:workshop.goingLive.count', { count: liveRows.length })}
-              rows={liveRows}
+              section="next"
+              title={t('project:workshop.upNext.title')}
+              count={t('project:workshop.upNext.count', { count: nextRows.length })}
+              rows={nextRows}
               slug={slug}
               openKey={sideKey}
               onOpen={openItem}
