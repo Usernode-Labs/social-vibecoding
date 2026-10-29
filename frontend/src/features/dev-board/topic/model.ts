@@ -561,6 +561,8 @@ export interface RequestView {
    */
   editor: { issue: number; markdown: string; source: string | null; canEdit: boolean };
   status: RequestStatusView;
+  /** #5987: the app's slug, which the "Open in Claude Code" link names. */
+  slug?: string;
   /**
    * 16 Oct 2026: where Homeroom bot's work on it is, as the server words it
    * (services/homeroom-bot-track.js), read field by field by
@@ -591,6 +593,11 @@ export interface RequestStatusView {
    * its change), so no "Plan v1 is ready for comments." after it.
    */
   botSays?: boolean;
+  /**
+   * #5987: starting work on it is still open to this viewer, so the page
+   * offers "Build it with your own Claude Code" under the card.
+   */
+  ownAgent?: boolean;
 }
 
 /** #4455: one part of a Votes or Testing card's bar. */
