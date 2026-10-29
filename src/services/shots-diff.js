@@ -23,6 +23,11 @@ const { densityFor } = require('./shots-files');
 // Compared pixels, after averaging down to CSS pixels.
 const MAX_PIXELS = 1920 * 1440;
 const MAX_REGIONS = 12;
+// A crop with too many plausible placements is ambiguous. Bound both the
+// pixel work and retained placements instead of spending minutes scoring
+// every patch of a repetitive screen (and searching an ever-growing list).
+const MAX_LOCATE_CHECKS = 8_000_000;
+const MAX_LOCATE_MATCHES = 128;
 // Two channels closer than this are the same colour: antialiasing and image
 // compression move a pixel a little, a change moves it a lot.
 const TOLERANCE = 28;
@@ -222,45 +227,47 @@ function locateAll(screen, crop, limit = 8) {
       if (q(crop.d, i) !== bg) detail.push([x, y, i]);
     }
   }
+  // Plain backgrounds identify no particular element, however many places
+  // match them. Keep the pixel-difference regions without guessing a crop.
+  if (detail.length < 12) return [];
   const pts = [];
-  if (detail.length >= 12) {
-    const step = Math.max(1, Math.floor(detail.length / 64));
-    for (let k = 0; k < detail.length && pts.length < 64; k += step) pts.push(detail[k]);
-  } else {
-    for (let gy = 0; gy < 6; gy += 1) {
-      for (let gx = 0; gx < 8; gx += 1) {
-        const x = Math.round(1 + (gx / 7) * (crop.w - 3));
-        const y = Math.round(1 + (gy / 5) * (crop.h - 3));
-        pts.push([x, y, (y * crop.w + x) * 4]);
-      }
-    }
-  }
+  const step = Math.max(1, Math.floor(detail.length / 64));
+  for (let k = 0; k < detail.length && pts.length < 64; k += step) pts.push(detail[k]);
   const allowed = Math.max(2, Math.floor(pts.length / 10));
+  let remaining = MAX_LOCATE_CHECKS;
+  const gridSize = Math.ceil(crop.w / 3) * Math.ceil(crop.h / 3);
+  const rejectAt = Math.ceil(gridSize * 0.15);
   const offShare = (x, y) => {
-    let seen = 0;
     let off = 0;
     for (let cy = 0; cy < crop.h; cy += 3) {
       for (let cx = 0; cx < crop.w; cx += 3) {
-        seen += 1;
+        if (--remaining < 0) return null;
         if (differs(screen.d, ((y + cy) * screen.w + x + cx) * 4, crop.d, (cy * crop.w + cx) * 4)) off += 1;
+        if (off >= rejectAt) return 1;
       }
     }
-    return off / seen;
+    return off / gridSize;
   };
   const found = [];
   for (let y = 0; y <= screen.h - crop.h; y += 1) {
     for (let x = 0; x <= screen.w - crop.w; x += 1) {
       let miss = 0;
       for (const [px, py, ci] of pts) {
+        if (--remaining < 0) return [];
         if (differs(screen.d, ((y + py) * screen.w + x + px) * 4, crop.d, ci) && ++miss > allowed) break;
       }
       if (miss > allowed) continue;
       const off = offShare(x, y);
+      // Discard partial search results: a later match could be better.
+      if (off === null) return [];
       if (off >= 0.15) continue;
       // A match a pixel or two over from one already kept is the same place:
       // keep whichever of the two matches better.
       const near = found.find((hit) => Math.abs(hit.box[0] - x) <= 2 && Math.abs(hit.box[1] - y) <= 2);
-      if (!near) found.push({ box: [x, y, crop.w, crop.h], off });
+      if (!near) {
+        if (found.length >= MAX_LOCATE_MATCHES) return [];
+        found.push({ box: [x, y, crop.w, crop.h], off });
+      }
       else if (off < near.off) { near.box = [x, y, crop.w, crop.h]; near.off = off; }
     }
   }
@@ -345,9 +352,8 @@ const areaOf = (region) => Math.max(
 // screens are the same image share one screen, with an area for each; the
 // first change's after screen is the one shown, since the agent may have
 // hovered something different for each. `stories` are the ready ones, in the
-// declaration's order. It yields between screens and between element shots:
-// each step takes about a tenth of a second, and this runs in the platform's
-// own process.
+// declaration's order. Production callers use shots-diff-worker so decoding
+// and matching cannot block health responses or workflow lease renewals.
 async function screensFor(stories, files) {
   const find = (storyId, viewport, side, variant) => files.find((file) => file.storyId === storyId
     && file.viewport === viewport && file.side === side && file.variant === variant && file.media === 'png');

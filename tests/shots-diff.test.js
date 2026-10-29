@@ -80,6 +80,20 @@ test('an element shot is found by its detail, not by the plain background around
   assert.equal(diff.locate(page, stranger), null);
 });
 
+test('blank and repetitive crops are ambiguous instead of scoring every placement', () => {
+  const blank = screen(1280, 800);
+  assert.deepEqual(diff.locateAll(blank, crop(blank, 0, 0, 188, 90)), []);
+  const stripes = screen(600, 400, Array.from({ length: 60 }, (_, i) => [i * 10, 0, 5, 400, [30, 30, 40]]));
+  assert.deepEqual(diff.locateAll(stripes, crop(stripes, 0, 0, 188, 90)), []);
+});
+
+test('a few repeated elements are still located so the changed one can be selected', () => {
+  const page = screen(200, 180, [...glyphs(40, 30, 10), ...glyphs(40, 130, 10)]);
+  const matches = diff.locateAll(page, crop(page, 30, 20, 100, 30));
+  assert.ok(matches.some(([x, y]) => x === 30 && Math.abs(y - 20) <= 2));
+  assert.ok(matches.some(([x, y]) => x === 30 && Math.abs(y - 120) <= 2));
+});
+
 test('changes on one screen share it, each area tied to the change whose element shot it holds', async () => {
   const base = [...glyphs(10, 10, 20), [20, 40, 80, 20, [37, 99, 235]], [120, 40, 80, 20, [37, 99, 235]], ...glyphs(20, 120, 10)];
   const before = screen(240, 200, base);
