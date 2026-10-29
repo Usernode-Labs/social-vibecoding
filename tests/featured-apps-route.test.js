@@ -64,6 +64,7 @@ stub(ids.rateLimits, {
   mailTestLimiter: (_req, _res, next) => next(),
   smsTestLimiter: (_req, _res, next) => next(),
   smsTestNumberLimiter: (_req, _res, next) => next(),
+  featuredAdminLimiter: (_req, _res, next) => next(),
 });
 stub(ids.status, { snapshot: async () => ({}) });
 
@@ -112,15 +113,16 @@ poolMod.getPool = () => ({
 });
 
 const { adminRoutes } = require('../src/routes/admin');
+const { featuredAdminRoutes } = require('../src/routes/featured-admin');
 const express = require('express');
 
 let currentUser = null;
 
-function startServer() {
+function startServer(routes = adminRoutes) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => { req.user = currentUser; next(); });
-  app.use(adminRoutes({}));
+  app.use(routes({}));
   return new Promise((resolve) => {
     const server = app.listen(0, () => resolve(server));
   });
@@ -452,17 +454,94 @@ test('GET returns display-ordered featured rows plus what is available', async (
   }
 });
 
+// ── The connector's doors (routes/featured-admin.js) ─────────────
+//
+// A full admin's connector session reaches the same handlers through
+// /api/featured-admin/*, since a connector token never reaches /api/admin.
+// The door adds its own gate (full admins only, the read included) and hands
+// the request on at the console's path.
+
+async function call(server, method, endpoint, body) {
+  const res = await fetch(`http://127.0.0.1:${server.address().port}${endpoint}`, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return { status: res.status, body: await res.json().catch(() => ({})) };
+}
+
+test('the connector\'s doors hand on to the console\'s own handlers for a full admin', async () => {
+  reset();
+  featuredRows = [{ slug: 'alpha', name: 'Alpha', status: 'running', icon_emoji: '🧩', sort_order: 0 }];
+  availableRows = [{ slug: 'beta', name: 'Beta', status: 'running', icon_emoji: '🧩' }];
+  currentUser = FULL_ADMIN;
+  const server = await startServer(featuredAdminRoutes);
+  try {
+    const read = await call(server, 'GET', '/api/featured-admin/featured-apps');
+    assert.equal(read.status, 200);
+    assert.deepEqual(read.body.featured.map((r) => r.slug), ['alpha']);
+    assert.deepEqual(read.body.available.map((r) => r.slug), ['beta']);
+    assert.equal(read.body.featured[0].directory.tier, 'unreviewed', 'with the review the console shows');
+
+    queries = [];
+    const set = await call(server, 'PUT', '/api/featured-admin/featured-apps', { slugs: ['gamma', 'alpha'] });
+    assert.equal(set.status, 200);
+    assert.deepEqual(set.body.slugs, ['gamma', 'alpha']);
+    assert.deepEqual(queries.filter((q) => /INSERT INTO featured_apps/.test(q.sql)).map((q) => q.params), [[13, 0, 1], [11, 1, 1]]);
+    // The console's own rules: an unreviewed app is refused, naming it.
+    appsBySlug.beta.directory_review_status = 'unreviewed';
+    const refused = await call(server, 'PUT', '/api/featured-admin/featured-apps', { slugs: ['beta'] });
+    assert.equal(refused.status, 400);
+    assert.match(refused.body.error, /Review beta as working/);
+
+    queries = [];
+    const review = await call(server, 'PUT', '/api/featured-admin/apps/alpha/directory-review', { status: 'demo' });
+    assert.equal(review.status, 200);
+    assert.ok(queries.some((q) => /^UPDATE apps SET directory_review_status/.test(q.sql) && q.params[1] === 'demo'));
+  } finally {
+    server.close();
+  }
+});
+
+test('the doors are closed to a view-only admin, the read included, and open nothing else', async () => {
+  reset();
+  currentUser = VIEW_ONLY;
+  let server = await startServer(featuredAdminRoutes);
+  try {
+    assert.equal((await call(server, 'GET', '/api/featured-admin/featured-apps')).status, 403);
+    assert.equal((await call(server, 'PUT', '/api/featured-admin/featured-apps', { slugs: [] })).status, 403);
+    assert.equal((await call(server, 'PUT', '/api/featured-admin/apps/alpha/directory-review', { status: 'demo' })).status, 403);
+    assert.ok(!queries.some((q) => /featured_apps|directory_review/.test(q.sql)), 'no query ran');
+  } finally {
+    server.close();
+  }
+  currentUser = FULL_ADMIN;
+  server = await startServer(featuredAdminRoutes);
+  try {
+    // Only the three doors: the console's path itself is not served here.
+    assert.equal((await call(server, 'GET', '/api/featured-admin/apps/alpha/directory-review')).status, 404);
+    assert.equal((await call(server, 'GET', '/api/admin/featured-apps')).status, 404);
+  } finally {
+    server.close();
+  }
+});
+
 // ── Source pins: the queries exclude the self-app on both sides ──
 
 test('both queries exclude the self-hosted row', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/admin.js'), 'utf8');
+  // The handlers live in their own module, mounted by admin.js behind its
+  // adminMiddleware and by the connector's doors (routes/featured-admin.js).
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/admin-featured-apps.js'), 'utf8');
   const block = src.slice(
     src.indexOf("router.get('/api/admin/featured-apps'"),
-    src.indexOf('// ── Anthropic credits')
+    src.indexOf('// Review the exact version')
   );
-  assert.ok(block.length > 500, 'located the featured-apps block');
+  assert.ok(block.length > 500, 'located the featured-apps read');
   assert.equal((block.match(/NOT a\.self_hosted/g) || []).length, 2,
     'featured list and available list both filter it out');
+  const admin = fs.readFileSync(path.join(__dirname, '..', 'src/routes/admin.js'), 'utf8');
+  assert.ok(admin.indexOf("router.use('/api/admin', adminMiddleware);") < admin.indexOf('router.use(featuredAppsAdminRoutes(pool));'),
+    'admin.js mounts them behind its admin gate');
 });
 
 // ── Admin console section ────────────────────────────────────────

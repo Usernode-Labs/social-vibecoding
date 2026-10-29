@@ -373,6 +373,30 @@ session validate and write alike. Only the listed doors open: deleting an
 event, the CSV export, users and the SQL console are not among them. The
 writes are acting tools; the reads are `get_`/`list_`.
 
+### Admin only: featured apps
+
+A full platform admin's connector also curates the featured apps, the one
+ordered list (at most 12) that the signed-out landing's Featured and every
+user's "Find more apps" row on Home read, as Admin › Featured apps does. An
+app can be on it only once it is reviewed working on the version it runs and
+has an icon, so the review is a tool too. The charter's `featured-apps`
+section is the procedure a session follows: it never marks an app working on
+its own judgment.
+
+| Tool | What it actually does |
+|---|---|
+| `list_featured_apps` | The list in order, and the apps that could be added (`search`, `readyOnly`, `limit`), each with the version it runs and its directory review (`canFeature` when it is reviewed working on that version with an icon). Read-only |
+| `set_featured_apps` | Sets the whole list, first to last; an app left out is taken off. Every app in it, the featured ones too, must be reviewed working on the version it runs |
+| `review_app_for_directory` | Records an app's review: `working` (with `confirmWorking: true` and the `mainSha` and `lastDeployAt` the list reported, refused if it deployed since), `demo`, `broken` or `unreviewed` |
+
+The routes sit at `/api/featured-admin` (`routes/featured-admin.js`), because
+a connector can never reach `/api/admin`. Each is gated `requireAdminWrite`
+first, the read included, and both writes then `featuredAdminLimiter` and
+`sameOriginBrowserOnly`. Each hands the request to the console's own handler
+(`routes/admin-featured-apps.js`) at the same path under `/api/admin`, so the
+console and a connector session validate and write alike. The writes are
+acting tools; the read is a `list_`.
+
 ---
 
 ## 3. The allowlist Homeroom ships
