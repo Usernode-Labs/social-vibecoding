@@ -12,7 +12,9 @@
  *     stays clean. Everyone sees this.
  *   - #4481: the blocks that hold a screenshot are lifted out of the words,
  *     so the fold at four lines folds only the words and the pictures are
- *     always shown under them. Everyone sees this too.
+ *     always shown under them. Everyone sees this too. So is the block that
+ *     holds an attached video's player: a walkthrough clip at the end of a
+ *     long request was folded away behind "Show more" with the words.
  *
  * Both work on the markup DevChat.renderMarkdown built and sanitised: it is
  * parsed with DOMParser (an inert document: nothing in it loads or runs),
@@ -27,6 +29,8 @@ import { readPins, type PinData } from '../../comment-pin/pin-data';
 
 /** Where the platform keeps a request's screenshots (src/routes/feedback.js `buildScreenshotsEmbed`). */
 export const SHOT_PATH = '/issue-images/';
+/** Where it keeps a request's video (src/routes/feedback.js `buildVideoEmbed`), which DevChat.renderMarkdown draws as a player. */
+export const VIDEO_PATH = '/issue-videos/';
 
 /** Past this far across the picture, the note goes on the pin's left. */
 export const NOTE_LEFT_FROM = 0.6;
@@ -62,7 +66,7 @@ export function pinToggleLabel(shown: boolean, many = false): string {
 export interface RequestShots {
   /** The words, to fold; the markup as given when nothing changed. */
   words: string;
-  /** The lifted blocks, to show under the fold; empty unless the lift took any. */
+  /** The lifted blocks (screenshots and an attached video), to show under the fold; empty unless the lift took any. */
   shots: string;
 }
 
@@ -104,6 +108,23 @@ function imagesIn(node: Node, out: Element[] = []): Element[] {
 }
 
 const isShot = (img: Element) => (img.getAttribute('src') || '').includes(SHOT_PATH);
+
+/** Every attached video's player under `node`, in document order. */
+function videosIn(node: Node, out: Element[] = []): Element[] {
+  for (const child of Array.from(node.childNodes)) {
+    if (isTag(child, 'VIDEO')) {
+      if ((child.getAttribute('src') || '').includes(VIDEO_PATH)) out.push(child);
+    } else if (child.nodeType === ELEMENT) videosIn(child, out);
+  }
+  return out;
+}
+
+/** A block of the words that holds a screenshot or an attached video, so it is shown outside the fold. */
+function holdsMedia(node: Element): boolean {
+  if (isTag(node, 'IMG')) return isShot(node);
+  if (isTag(node, 'VIDEO')) return (node.getAttribute('src') || '').includes(VIDEO_PATH);
+  return imagesIn(node).some(isShot) || videosIn(node).length > 0;
+}
 
 function make(doc: Document, tag: string, className: string): Element {
   const el = doc.createElement(tag);
@@ -185,7 +206,7 @@ export function requestShots(
 ): RequestShots {
   const same = { words: html, shots: '' };
   const pins = html.includes('#pin=');
-  const lifts = html.includes(SHOT_PATH);
+  const lifts = html.includes(SHOT_PATH) || html.includes(VIDEO_PATH);
   if (!html || !(pins || lifts)) return same;
   const root = parse(html);
   const doc = root && root.ownerDocument;
@@ -205,7 +226,7 @@ export function requestShots(
   if (lifts) {
     const blocks = blocksOf(root);
     const lifted = Array.from(blocks.childNodes).filter((node): node is Element =>
-      node.nodeType === ELEMENT && (isTag(node, 'IMG') ? isShot(node) : imagesIn(node).some(isShot)));
+      node.nodeType === ELEMENT && holdsMedia(node));
     if (lifted.length) {
       const box = doc.createElement('div');
       // The lifted blocks keep the renderer's box, so they are styled as they were.

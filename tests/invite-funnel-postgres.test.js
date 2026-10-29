@@ -32,6 +32,7 @@ const path = require('node:path');
 const { Pool } = require('pg');
 
 const journey = require('../src/services/journey');
+const { waitFor } = require('./lib/wait-for');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
@@ -100,6 +101,37 @@ test('invite opens, sign-ins and joins through the real routes, against the full
   require('../src/services/ws').pushNotificationToUser = () => {};
   const invites = require('../src/services/community-invites');
 
+  // The routes and the service answer before their news goes: they fire and
+  // forget `inviteActivity.noteOpened(…)`, `journeyEvents.noteInviteSignedIn(…)`
+  // and, inside the service, `void require('./invite-activity').noteJoined(…)`,
+  // which each write a row after the response has gone. Keep the promises
+  // those calls return instead of sleeping "long enough": a read of the row
+  // waits for the call that writes it, and a read that must find nothing new
+  // waits for the call that could have added it. `events.record` is fire and
+  // forget too (the invite_opened and invite_link_redeemed rows), so it is
+  // kept the same way. Each patched export is restored once the suite is done.
+  const activity = require('../src/services/invite-activity');
+  const journeyEvents = require('../src/services/journey-events');
+  const eventLog = require('../src/services/events');
+  const real = {
+    noteOpened: activity.noteOpened,
+    noteJoined: activity.noteJoined,
+    noteInviteSignedIn: journeyEvents.noteInviteSignedIn,
+    record: eventLog.record,
+  };
+  const pending = [];
+  const keep = (done) => { pending.push(done); return done; };
+  activity.noteOpened = (...args) => keep(real.noteOpened(...args));
+  activity.noteJoined = (...args) => keep(real.noteJoined(...args));
+  journeyEvents.noteInviteSignedIn = (...args) => keep(real.noteInviteSignedIn(...args));
+  eventLog.record = (...args) => keep(real.record(...args));
+  t.after(() => {
+    activity.noteOpened = real.noteOpened;
+    activity.noteJoined = real.noteJoined;
+    journeyEvents.noteInviteSignedIn = real.noteInviteSignedIn;
+    eventLog.record = real.record;
+  });
+
   async function user(username, { daysOld = 0 } = {}) {
     const { rows } = await pool.query(
       `INSERT INTO users (username, password, has_platform_access, created_at)
@@ -162,15 +194,23 @@ test('invite opens, sign-ins and joins through the real routes, against the full
     `SELECT id, detail FROM notifications WHERE user_id = $1 AND kind = 'invite_opened' ORDER BY id`, [maya.id])).rows;
   const eventsOf = async (type) => (await pool.query(
     `SELECT user_id, metadata FROM events WHERE event_type = $1 ORDER BY id`, [type])).rows;
-  // The open is counted after the answer goes (fire and forget): wait for
-  // its row.
-  const settled = async (n) => {
-    for (let i = 0; i < 60; i += 1) {
-      const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM community_invite_opens');
-      if (rows[0].n >= n) break;
-      await new Promise((r) => setTimeout(r, 50));
+  // Every fire-and-forget call made so far has settled: its row is written,
+  // or known to be one it did not write. A call makes further ones as it
+  // goes (noteOpened records its invite_opened event at the end), so this
+  // takes what is pending, waits for it, and looks again.
+  const drained = async () => {
+    for (let batch = pending.splice(0); batch.length; batch = pending.splice(0)) {
+      await Promise.all(batch);
     }
-    await new Promise((r) => setTimeout(r, 150));
+  };
+  // The open is counted after the answer goes (fire and forget): wait for
+  // the call's promise, and for its row.
+  const settled = async (n) => {
+    await drained();
+    await waitFor(async () => {
+      const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM community_invite_opens');
+      return rows[0].n >= n;
+    }, { label: `${n} invite open(s) recorded` });
   };
 
   let firstBrowser = null;
@@ -197,22 +237,25 @@ test('invite opens, sign-ins and joins through the real routes, against the full
     const read1 = await get(`/api/invite-links/by-token/${token}`, { who: sam, cookie: firstBrowser });
     assert.equal(read1.status, 200);
     assert.equal(read1.body.mine, null);
-    let notices = [];
-    for (let i = 0; i < 60 && !notices.length; i += 1) {
-      notices = await opensNotices();
-      if (!notices.length) await new Promise((r) => setTimeout(r, 50));
-    }
+    // The signed-in read fires its open and forgets it: wait for the notice
+    // it rings.
+    const notices = await waitFor(async () => {
+      const rows = await opensNotices();
+      return rows.length ? rows : null;
+    }, { label: '"Someone opened your invite", now they are signed in' });
     assert.equal(notices.length, 1, '"Someone opened your invite", now they are signed in');
     assert.equal(notices[0].detail, null, 'one person');
     await get(`/api/invite-links/by-token/${token}`, { who: sam, cookie: firstBrowser });
-    await new Promise((r) => setTimeout(r, 200));
+    // Wait for what that read sent, so "still nothing new" is a fact about
+    // a finished call rather than a 200 ms window.
+    await drained();
     assert.equal((await opensNotices())[0].detail, null, 'opening it again is not news');
     assert.equal((await eventsOf('invite_opened')).length, 2, 'their open was the signed-out one: not counted twice');
     assert.deepEqual((await eventsOf('invite_signed_in')).map((e) => [e.user_id, e.metadata.how, e.metadata.inviteId]),
       [[sam.id, 'was_signed_in', link.link.id]], 'once per person per link');
     // The maker reading their own link is in no step.
     await get(`/api/invite-links/by-token/${token}`, { who: maya });
-    await new Promise((r) => setTimeout(r, 200));
+    await drained();
     assert.equal((await eventsOf('invite_signed_in')).length, 1);
   });
 
@@ -238,13 +281,14 @@ test('invite opens, sign-ins and joins through the real routes, against the full
     assert.equal((await signInCarrying(dan, danBrowser)).status, 'joined');
     const signedIn = (await eventsOf('invite_signed_in')).map((e) => [e.user_id, e.metadata.how]);
     assert.deepEqual(signedIn, [[sam.id, 'was_signed_in'], [carol.id, 'signed_up'], [dan.id, 'signed_in']]);
-    let joins = [];
-    for (let i = 0; i < 60 && joins.length < 1; i += 1) {
-      joins = (await pool.query(
-        `SELECT detail FROM notifications WHERE user_id = $1 AND kind = 'member_joined'`, [maya.id])).rows;
-      if (!joins.length) await new Promise((r) => setTimeout(r, 50));
-    }
-    await new Promise((r) => setTimeout(r, 200));
+    // The join's news goes after it: wait for the notice, then for the
+    // second join's note (both fold into the one notice).
+    const joins = await waitFor(async () => {
+      const { rows } = await pool.query(
+        `SELECT detail FROM notifications WHERE user_id = $1 AND kind = 'member_joined'`, [maya.id]);
+      return rows.length ? rows : null;
+    }, { label: '"Joined through your invite"' });
+    await drained();
     assert.equal(joins.length, 1, '"Joined through your invite"');
     assert.deepEqual((await opensNotices()).map((n) => n.detail), [null],
       'the open notice is still Sam alone: Carol and Dan were never on it');
@@ -272,7 +316,7 @@ test('invite opens, sign-ins and joins through the real routes, against the full
     // The shell comes back to the link signed in: the standing read, then Join.
     const standing = await get(`/api/invite-links/by-token/${token}`, { who: erin, cookie: erinBrowser });
     assert.equal(standing.body.live, true);
-    await new Promise((r) => setTimeout(r, 200));
+    await drained();
     assert.deepEqual(await mine(), [['signed_in', link.link.id]], 'the read after it does not make her already signed in');
     const joined = await post(`/api/invite-links/by-token/${token}/redeem`, { who: erin });
     assert.equal(joined.status, 200);
@@ -295,7 +339,7 @@ test('invite opens, sign-ins and joins through the real routes, against the full
     // Following it again, or reading it now, is no second sign-in.
     await post(`/api/invite-links/by-token/${token}/redeem`, { who: fay });
     await get(`/api/invite-links/by-token/${token}`, { who: fay });
-    await new Promise((r) => setTimeout(r, 200));
+    await drained();
     assert.equal((await eventsOf('invite_signed_in')).length, 5);
     // The link's maker following her own link is in no step.
     await post(`/api/invite-links/by-token/${token}/redeem`, { who: maya });

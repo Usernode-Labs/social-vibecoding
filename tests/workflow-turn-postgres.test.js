@@ -19,6 +19,7 @@ const { createRuntime } = require('../src/workflow/kernel/index.ts');
 const { turnMachine, agentKey, MACHINE, WORK, INTERRUPTED_TEXT, MAX_TURN_MS } = require('../src/workflow/turn/machine.ts');
 const { TURN_STOP } = require('../src/workflow/rules/turn-stop.ts');
 const { asTransition } = require('./lib/as-transition');
+const { waitFor, within, deferred } = require('./lib/wait-for');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -296,7 +297,7 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
       await ask(c, 'turn-s');
       await rt.drain();
       const running = rt.runServices();
-      await new Promise((r) => setTimeout(r, 50));
+      await waitFor(() => runs(c).length === 1, { label: 'the turn\'s run to start' });
       await send(c, 'StopRequested', { by: 'ada' });
       await rt.drain();
       assert.equal((await instance(c)).data.running.stoppedBy, 'ada');
@@ -333,7 +334,7 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
       await send(c, 'Asked', { turnId: 'next', kind: 'agent', input: {} });
       await rt.drain();
       const running = rt.runServices();
-      await new Promise((r) => setTimeout(r, 50));
+      await waitFor(() => runs(c).length === 1, { label: 'the turn\'s run to start' });
       const [item] = await items(c, WORK.run);
       const change = await ownedChange(c, item.id);
       const c2 = await pool.connect();
@@ -553,6 +554,7 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     const during = [];
     mayorRun = async () => {
       during.push(await claimOf());
+      // fixed wait: the window in which a renewal would have shown; an absence check that can only miss a bug, never flake.
       await new Promise((r) => setTimeout(r, 100));
       during.push(await claimOf());
     };
@@ -581,6 +583,21 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     const exits = [];
     const was = turns.LOST_LEASE.exit;
     turns.LOST_LEASE.exit = (code) => { exits.push(code); };
+    // endOnLostLease (services/turns.js) reads its item's status before it
+    // decides to end the process: counting that read waits for the decision
+    // instead of sleeping past it.
+    let leaseCheck = null;
+    const query = pool.query;
+    pool.query = function countedLeaseCheck(...args) {
+      const text = typeof args[0] === 'string' ? args[0] : args[0] && args[0].text;
+      const result = query.apply(this, args);
+      if (typeof text === 'string' && text.includes('SELECT status FROM wf_work WHERE id = $1')) {
+        const checked = leaseCheck;
+        const done = () => setImmediate(() => { if (checked) checked.resolve(); });
+        result.then(done, done);
+      }
+      return result;
+    };
     const withItem = async (status) => {
       const c = await conversation();
       const ctx = await ctxFor(c, `h10-${status}`);
@@ -599,8 +616,17 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     };
     const runAborting = async ({ ctx, abort }, reason) => {
       reset();
-      mayorRun = async () => { abort.abort(reason); await new Promise((r) => setTimeout(r, 150)); };
-      await turns.run(ctx, { config: {}, pool });
+      const checked = deferred();
+      // A stopping process returns from the abort at once, before any read.
+      const waiting = reason && reason.stopping === true ? null : checked;
+      leaseCheck = waiting;
+      try {
+        mayorRun = async () => { abort.abort(reason); };
+        await turns.run(ctx, { config: {}, pool });
+        if (waiting) await within(checked.promise, 5000, 'the turn to read its item after its lease was lost');
+      } finally {
+        leaseCheck = null;
+      }
     };
     try {
       await runAborting(await withItem('running'), new LeaseLost());
@@ -611,6 +637,7 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
       await runAborting(await withItem('running'), new LeaseLost({ stopping: true }));
       assert.deepEqual(exits, [], 'a process stopping ends by itself');
     } finally {
+      pool.query = query;
       turns.LOST_LEASE.exit = was;
     }
   });
@@ -706,6 +733,22 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     input: { sessionId: c.id, userId: c.user.id, messageText: 'Add a toggle', selectedModel: 'claude-x', isOpenRouterSession: false,
       turnAttachments: [{ id: 'f1' }], userMessageId: 77, clientMessageId: 'c-1', turnId, kind: 'classic', instanceKey: c.key, ...input },
   });
+  // watchClassicStop (services/turns.js) reads `stoppedBy` once per poll:
+  // counting those reads lets a Stop test wait for the watcher's next looks
+  // instead of sleeping through them. Only before it acts, though: once a
+  // Stop is applied the watcher returns at `acted` before its SELECT, so an
+  // "applied once" check is bounded by the turn's own end (unwatch) instead.
+  const stopPolls = { n: 0 };
+  function countStopPolls() {
+    const query = pool.query;
+    pool.query = function countedStopPoll(...args) {
+      const text = typeof args[0] === 'string' ? args[0] : args[0] && args[0].text;
+      if (typeof text === 'string' && text.includes("data->'running'->>'stoppedBy'")) stopPolls.n += 1;
+      return query.apply(this, args);
+    };
+    return () => { pool.query = query; };
+  }
+  const pollsAfter = (n, more, label) => waitFor(() => stopPolls.n >= n + more, { label });
 
   await t.test('C1 a dev chat turn runs the Mayor with what was asked, its payer read as it runs, its owner this item', async () => {
     classic.turns.length = 0;
@@ -739,24 +782,29 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     const gate = new Promise((r) => { release = r; });
     classicRun = () => gate;
     work.answer = () => new Promise(() => {});
+    const stopCounting = countStopPolls();
     try {
       await send(c, 'Asked', { turnId: 'c2', kind: 'classic', input: {} });
       await rt.drain();
+      const pollsBefore = stopPolls.n;
       const running = turns.run(classicCtx(c, 'c2'), { config: {}, pool });
-      await new Promise((r) => setTimeout(r, 80));
+      await pollsAfter(pollsBefore, 2, 'the Stop watcher\'s first two reads with nothing to apply');
       assert.deepEqual(classic.stops, [], 'nothing until a person stops it');
       // The Stop route, from any process: the turn's instance is where it lands.
       const { rows: [owner] } = await pool.query(require('../src/workflow/session-work.ts').TURN_OWNER_SQL, [c.id]);
       assert.deepEqual({ ...owner }, { machine: 'turn', key: c.key }, 'a Mayor turn with no record yet is found by its instance');
       await send(c, 'StopRequested', { by: 'ada' });
       await rt.drain();
-      await new Promise((r) => setTimeout(r, 120));
-      assert.equal(classic.stops.length, 1, 'applied once');
+      await waitFor(() => classic.stops.length >= 1, { label: 'the turn\'s Stop to be applied' });
       assert.deepEqual([classic.stops[0].sessionId, classic.stops[0].forwarded, classic.stops[0].user.username, classic.stops[0].user.id],
         [c.id, true, 'ada', c.user.id], 'through the turn\'s own handle, past the routing it already went through');
       release();
       await running;
+      // The watcher stops with the turn: once its run has ended, no second
+      // application can come.
+      assert.equal(classic.stops.length, 1, 'applied once');
     } finally {
+      stopCounting();
       turns.STOP_POLL.ms = was; classicRun = async () => {}; work.answer = null; release();
     }
   });
@@ -800,15 +848,16 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
       const running = turns.run(classicCtx(c, 'c2b'), { config: {}, pool });
       await send(c, 'StopRequested', { by: 'ada' });
       await rt.drain();
-      await new Promise((r) => setTimeout(r, 100));
-      assert.ok(classic.stops.length >= 2, 'asked again while there is no handle');
-      handle = true;
-      await new Promise((r) => setTimeout(r, 100));
+      await waitFor(() => classic.stops.length >= 2, { label: 'the Stop asked again while there is no handle' });
       const applied = classic.stops.length;
-      await new Promise((r) => setTimeout(r, 100));
-      assert.equal(classic.stops.length, applied, 'and not again once it landed');
+      handle = true;
+      await waitFor(() => classic.stops.length > applied, { label: 'the Stop to land once the handle exists' });
+      const landed = classic.stops.length;
       release();
       await running;
+      // The watcher stops with the turn (unwatch): once its run has ended, no
+      // second application can come.
+      assert.equal(classic.stops.length, landed, 'and not again once it landed');
     } finally {
       turns.STOP_POLL.ms = was.ms; sessionsRoutes.requestSessionStop = was.stop;
       classicRun = async () => {}; work.answer = null; release();
@@ -969,12 +1018,15 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
       // return would settle the item as done, its run still 'generating').
       resetHeadless();
       turns.RECOVERY_RETRY.ms = 500;
-      headlessRun = async (args) => { args.onRetained(new Error('worker unreachable')); };
+      const started = deferred();
+      headlessRun = async (args) => { args.onRetained(new Error('worker unreachable')); started.resolve(); };
       headlessResume = async (args) => { args.onRetained(new Error('still')); };
       const abort = new AbortController();
       const stopped = turns.run({ ...headlessCtx(c, 'a2e'), signal: abort.signal }, { config: {}, pool });
       const { LeaseLost } = require('../src/workflow/kernel/services.ts');
-      setTimeout(() => abort.abort(new LeaseLost({ stopping: true })), 50);
+      // Stopped once the run has said it was retained, not after a fixed wait.
+      await started.promise;
+      abort.abort(new LeaseLost({ stopping: true }));
       await assert.rejects(stopped, /work stopped with its process/);
       assert.equal(headless.failed.length, 0, 'nor failed: the next claim carries it on');
     } finally {
@@ -1114,41 +1166,5 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
       forceStop.run = wasForce;
       await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [c.id]);
     }
-  });
-
-  // ── 6. Global Chat: request-scoped, its Stop from any process ───────
-  await t.test('G1 a Stop is stamped on the thread\'s running turn and read by it; a later turn is not stopped by it', async () => {
-    const store = require('../src/services/global-chat/store');
-    const { rows: [u] } = await pool.query(`INSERT INTO users (username, password) VALUES ($1, 'x') RETURNING id`, [`gc_${++seq}`]);
-    const thread = await store.createThread(pool, u.id);
-    const args = { userId: u.id, threadId: thread.id };
-    assert.equal(await store.requestTurnCancel(pool, args), null, 'nothing runs: nothing to stop');
-    const first = await store.claimTurn(pool, args);
-    assert.equal(await store.turnCancelled(pool, args), false);
-    assert.equal(await store.requestTurnCancel(pool, args), first);
-    assert.equal(await store.turnCancelled(pool, args), true, 'the turn reads it on whichever process runs it');
-    await store.releaseTurn(pool, { ...args, turnId: first });
-    await store.claimTurn(pool, args);
-    assert.equal(await store.turnCancelled(pool, args), false, 'a Stop of one turn never stops the next');
-    await store.deleteThread(pool, u.id, thread.id);
-    assert.equal(await store.turnCancelled(pool, args), true, 'nor runs one on a thread that was deleted');
-  });
-
-  await t.test('G2 usage a turn never settled is settled as an interrupted error at its estimate, once no turn could settle it', async () => {
-    const accounting = require('../src/services/global-chat/accounting');
-    const { rows: [u] } = await pool.query(`INSERT INTO users (username, password) VALUES ($1, 'x') RETURNING id`, [`gu_${++seq}`]);
-    const row = async (age, outcome = 'unknown') => (await pool.query(
-      `INSERT INTO global_chat_usage (id, user_id, cost_usd, cost_source, outcome, created_at)
-       VALUES (gen_random_uuid(), $1, 0.01, 'catalog_estimate', $2, NOW() - make_interval(mins => $3)) RETURNING id`,
-      [u.id, outcome, age])).rows[0].id;
-    const left = await row(30);
-    const running = await row(2);
-    const settled = await row(30, 'success');
-    assert.deepEqual(await accounting.settleAbandonedReservations(pool), { settled: 1 });
-    const read = async (id) => (await pool.query('SELECT outcome, error_code, cost_usd::text AS cost FROM global_chat_usage WHERE id = $1', [id])).rows[0];
-    assert.deepEqual({ ...(await read(left)) }, { outcome: 'error', error_code: 'interrupted', cost: '0.01000000' }, 'kept at its estimate');
-    assert.equal((await read(running)).outcome, 'unknown', 'a turn may still settle it');
-    assert.equal((await read(settled)).outcome, 'success');
-    assert.deepEqual(await accounting.settleAbandonedReservations(pool), { settled: 0 });
   });
 });

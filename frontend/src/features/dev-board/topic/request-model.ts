@@ -60,10 +60,24 @@ export interface RequestSpecCard {
  *     said twice, and it leaves the stream.
  *   - Without one, the bot's comment is the only place the spec is, so it
  *     stays: a spec card, and the line saying it was posted.
+ *   - #6020: Homeroom's comment for a plan posted here ("**evan** posted a
+ *     plan for this request (version 2)…", `planMirror`) leaves only where
+ *     the thread has evan's own line for version 2. Another person's plan,
+ *     or another version, never stands in for it: without its line, a
+ *     comment that carries the plan is that plan's card, and a link-only one
+ *     stays as it was written.
  */
 export function requestStream(rows: TranscriptMessage[]): { rows: TranscriptMessage[]; specs: RequestSpecCard[] } {
   const shared = rows.some((m) => m.kind === 'spec_share' && !!m.specShare);
-  const kept = shared ? rows.filter((m) => !(m.kind === 'github' && m.githubSpec)) : rows;
+  const announced = (mirror: { author: string; version: number }) => rows.some((m) => m.kind === 'spec_share'
+    && !!m.specShare && !m.specShare.sharedByUnknown
+    && String(m.specShare.sharedBy).toLowerCase() === mirror.author.toLowerCase()
+    && Number(m.specShare.version) === mirror.version);
+  const kept = rows.filter((m) => {
+    if (m.kind !== 'github') return true;
+    if (m.planMirror) return !announced(m.planMirror);
+    return !(shared && m.githubSpec);
+  });
   const specs: RequestSpecCard[] = [];
   const bySession = new Map<string, number>();
   for (const m of kept) {
@@ -90,8 +104,8 @@ export function requestStream(rows: TranscriptMessage[]): { rows: TranscriptMess
         key: `g${m.key || specs.length}`,
         title: m.githubSpec.title || t('project:topic.request.spec.untitled'),
         version: null,
-        by: displayName(m.username),
-        bySystem: !!m.usernameMissing,
+        by: m.planMirror ? m.planMirror.author : displayName(m.username),
+        bySystem: !m.planMirror && !!m.usernameMissing,
         at: m.at || null,
         time: m.time,
         timeTitle: m.timeTitle,

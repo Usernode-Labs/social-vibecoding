@@ -7,8 +7,10 @@
 //
 // The preview-projects block of src/db/schema.sql is lifted out and run as
 // written (twice, since schema.sql runs on every boot), in a scratch schema
-// beside the few tables it reads. Only the outside world is stubbed: the
-// project database's creation, the git host, the build and the runtime.
+// beside the few tables it reads. The git host is NOT stubbed: a stand-in
+// (tests/lib/fake-git-host.js) keeps bare repositories behind a loopback
+// server, so the source push and the build's fetch are real git. Only the
+// project database's creation, the image build and the runtime are stubbed.
 //
 // Set TEST_DATABASE_URL to run it; without a reachable server it skips (the
 // unit-suite container has none).
@@ -18,6 +20,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
+const { startFakeGitHost, fetchLikeABuild } = require('./lib/fake-git-host');
 
 const DSN = process.env.TEST_DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -93,12 +96,12 @@ test('projects made inside a platform preview, against a real PostgreSQL', async
   const setup = await connectPool();
   if (setup.skip) { t.skip(setup.skip); return; }
   const { pool } = setup;
+  const host = await startFakeGitHost(t);
   const savedEnv = process.env.USERNODE_ENV;
   process.env.USERNODE_ENV = 'production';
 
   const projects = require('../src/services/preview-projects');
   const dbManager = require('../src/services/db-manager');
-  const gitHost = require('../src/services/git-host');
   const runtime = require('../src/services/application-runtime');
   const retention = require('../src/services/build-retention-guard');
   const { previewProjectsRoutes } = require('../src/routes/preview-projects');
@@ -106,21 +109,19 @@ test('projects made inside a platform preview, against a real PostgreSQL', async
   const calls = [];
   const saved = {
     create: dbManager.createPreviewProjectDatabase, drop: dbManager.dropDatabase, url: dbManager.connectionUrl,
-    isConfigured: gitHost.isConfigured, createRepo: gitHost.createRepo, push: gitHost.pushInitialFiles,
-    repoUrl: gitHost.repoUrl, deleteRef: gitHost.deleteRef, setPrivate: gitHost.setPrivate,
     build: runtime.build, deploy: runtime.deploy, remove: runtime.remove, withBuildUse: retention.withBuildUse,
   };
   dbManager.createPreviewProjectDatabase = async (name) => { calls.push(['db', name]); return { password: `pw-${name}`, server: 'preview', url: 'postgres://x' }; };
   dbManager.dropDatabase = async (name) => { calls.push(['drop', name]); };
   dbManager.connectionUrl = (name, password, { server }) => `postgres://${name}_owner:${password}@${server}.db.test/${name}`;
-  gitHost.isConfigured = () => true;
-  gitHost.createRepo = async (name, opts) => { calls.push(['repo', name, opts.private]); return { name }; };
-  gitHost.pushInitialFiles = async (repo, files, { branch }) => { calls.push(['push', repo, branch, files.length]); return 'A'.repeat(40); };
-  gitHost.repoUrl = (name) => `https://git.example.test/apps/${name}`;
-  gitHost.setPrivate = async (repo, isPrivate) => { calls.push(['visibility', repo, isPrivate]); };
-  gitHost.deleteRef = async (repo, ref) => { calls.push(['branch', repo, ref]); };
   retention.withBuildUse = async (_c, fn) => fn();
-  runtime.build = async (_c, args) => { calls.push(['build', args.app.slug, args.app.id, args.revision, args.environment]); return { imageRef: 'reg/preview-project@sha256:1', buildRef: 'b1' }; };
+  // The build fetches the source the way a real one does: no credential
+  // offered, git's own fetch, so a source it cannot read fails the build.
+  runtime.build = async (_c, args) => {
+    const checked = await fetchLikeABuild(args.app.repo_url, args.revision);
+    calls.push(['build', args.app.slug, args.app.id, args.revision, args.environment, Object.keys(checked.files).sort()]);
+    return { imageRef: 'reg/preview-project@sha256:1', buildRef: 'b1' };
+  };
   runtime.deploy = async (_c, args) => {
     calls.push(['deploy', args.app.slug, args.environment, args.sessionId, args.runtimeName, args.env.USERNODE_ENV, args.env.DATABASE_URL.includes('pw-')]);
     return { runtimeName: args.runtimeName, hostname: `${args.app.slug}--s${args.sessionId}.example.test` };
@@ -140,10 +141,6 @@ test('projects made inside a platform preview, against a real PostgreSQL', async
 
   t.after(async () => {
     Object.assign(dbManager, { createPreviewProjectDatabase: saved.create, dropDatabase: saved.drop, connectionUrl: saved.url });
-    Object.assign(gitHost, {
-      isConfigured: saved.isConfigured, createRepo: saved.createRepo, pushInitialFiles: saved.push,
-      repoUrl: saved.repoUrl, deleteRef: saved.deleteRef, setPrivate: saved.setPrivate,
-    });
     Object.assign(runtime, { build: saved.build, deploy: saved.deploy, remove: saved.remove });
     retention.withBuildUse = saved.withBuildUse;
     if (savedEnv === undefined) delete process.env.USERNODE_ENV;
@@ -194,9 +191,14 @@ test('projects made inside a platform preview, against a real PostgreSQL', async
     const build = calls.find((c) => c[0] === 'build');
     assert.match(build[1], /^preview-project-\d+$/, 'built under a slug no app has');
     assert.match(build[2], /^pp-\d+$/);
-    assert.equal(build[3], 'a'.repeat(40));
-    assert.ok(calls.some((c) => c[0] === 'repo' && c[2] === false), 'the source repository is public: builds fetch it with no credential');
-    assert.ok(calls.some((c) => c[0] === 'visibility' && c[2] === false), 'and one made private before is turned public');
+    const [row] = (await pool.query("SELECT id, source_branch, source_sha FROM preview_projects WHERE slug = 'tier'")).rows;
+    const branch = `project-${row.id}-b1`;
+    assert.equal(row.source_branch, branch);
+    assert.equal(host.exists(projects.SOURCE_REPO), true, 'the source repository is on the host');
+    assert.equal(host.isPrivate(projects.SOURCE_REPO), false, 'and it is public: builds fetch it with no credential');
+    assert.equal(host.branchSha(projects.SOURCE_REPO, branch), row.source_sha, 'the build fetched the branch the source was pushed to');
+    assert.equal(build[3], row.source_sha);
+    assert.deepEqual(build[5], ['server.js']);
 
     assert.equal((await call(token, 'POST', '/api/preview-projects/tier/deploy', { imageRef: 'reg/other@sha256:9', env: {} })).status, 409);
     res = await call(token, 'POST', '/api/preview-projects/tier/deploy', { imageRef: built.imageRef, env: { USERNODE_APP_ID: '41', USERNODE_ENV: 'production' } });
@@ -220,6 +222,7 @@ test('projects made inside a platform preview, against a real PostgreSQL', async
     assert.equal(res.body.removed, true);
     assert.equal((await pool.query("SELECT 1 FROM preview_projects WHERE slug = 'tier'")).rows.length, 0);
     assert.ok(calls.some((c) => c[0] === 'drop' && c[1] === dbName));
+    assert.equal(host.branchSha(projects.SOURCE_REPO, branch), null, 'its source branch went with it');
   });
 
   await t.test('a preview can make up to its cap', async () => {

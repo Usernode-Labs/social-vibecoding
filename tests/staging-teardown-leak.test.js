@@ -398,6 +398,8 @@ test('the proposal machine\'s close retires the preview for good, whether or not
   const close = src.slice(start, src.indexOf('\n}\n', start));
   // (`told`: the app's merge queue, when the close ends an attempt or a
   // sync it was waiting on.)
-  assert.match(close, /messages: \[toPreview\(d, 'RetireRequested', \{ reason: 'archived', terminal: true \}\), \.\.\.told\]/);
+  // (`stacked`: a change merged into main on GitHub tells the changes stacked
+  // on it, src/workflow/rules/pr-base.ts.)
+  assert.match(close, /messages: \[toPreview\(d, 'RetireRequested', \{ reason: 'archived', terminal: true \}\), \.\.\.told, \.\.\.stacked\]/);
   assert.doesNotMatch(close, /staging_(container_id|runtime_name|url)/, 'the close reads no staging column to decide it');
 });

@@ -345,6 +345,26 @@ test('the blocks that hold a screenshot leave the words, in the renderer\'s box'
   assert.deepEqual({ ...loose }, { words: `${ask}\n`, shots: SHOT_BLOCK() }, 'markup with no box of its own');
 });
 
+test('an attached video\'s block leaves the words too, after the screenshots, so a long request never folds its clip away', () => {
+  const ask = '<p class="dc-p">The walkthrough.</p>';
+  const clip = `<p class="dc-p"><strong>Video:</strong><br><video class="dc-inline-video" src="https://app.example/issue-videos/${'f6'.repeat(16)}" controls playsinline preload="metadata"></video></p>`;
+  // As the parser writes it back: boolean attributes take an empty value.
+  const clipOut = clip.replace('controls playsinline', 'controls="" playsinline=""');
+  const out = shots.requestShots(words(ask, SHOT_BLOCK(), clip), { parse });
+  assert.equal(out.words, words(ask, '', ''));
+  assert.equal(out.shots, `<div class="dev-issue-body">${SHOT_BLOCK()}${clipOut}</div>`,
+    'the stills, then the clip, in the renderer\'s box');
+
+  const alone = shots.requestShots(words(ask, clip), { parse });
+  assert.equal(alone.words, words(ask, ''));
+  assert.equal(alone.shots, words(clipOut), 'a clip with no screenshots is lifted on its own');
+
+  // A video that is not the request's own attachment stays where it is.
+  const other = '<p class="dc-p"><video src="https://example.com/a.mp4"></video></p>';
+  const html = words(ask, other);
+  assert.deepEqual({ ...shots.requestShots(html, { parse }) }, { words: html, shots: '' });
+});
+
 test('a picture that is not a screenshot stays in the words', () => {
   const other = `<p>${picture('https://example.com/diagram.png', 'A diagram')}</p>`;
   const html = words('<p>See</p>', other);

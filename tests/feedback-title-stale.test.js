@@ -91,6 +91,8 @@ function makeHarness({ previewTitle = 'Partial Title' } = {}) {
   const sandbox = {
     // The binding the controller's i18n import gives it (the import line is stripped above).
     t: englishPlatformI18n().t,
+    // And its repo-link import: the shared repository-address rule (#6016).
+    isRepoAddress: require('./lib/repo-link').repoLink.isRepoAddress,
     console: { ...console, warn: () => {}, debug: () => {} },
     URLSearchParams,
     location: { search: '', hash: '', pathname: '/' },

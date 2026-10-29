@@ -15,6 +15,7 @@ const { Pool } = require('pg');
 
 const eviction = require('../src/services/worker-eviction');
 const unpushedCommits = require('../src/services/worker-unpushed-commit');
+const { waitFor, deferred } = require('./lib/wait-for');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -150,13 +151,18 @@ test('idle workers are the eviction clock\'s, against the full PostgreSQL schema
     let release;
     const gate = new Promise((r) => { release = r; });
     const realEvict = worker.evictWorker;
-    worker.evictWorker = async (id) => { runtime.evicted.push(id); await gate; };
+    const entered = deferred();
+    worker.evictWorker = async (id) => { runtime.evicted.push(id); entered.resolve(); await gate; };
     try {
       const swept = sweep();
-      for (let i = 0; i < 200 && !runtime.evicted.length; i++) await new Promise((r) => setTimeout(r, 10));
+      await waitFor(() => runtime.evicted.length > 0, { label: 'the eviction under way' });
+      // The holder is inside the session lock before the note is started, so
+      // the window below only has to catch a note that did not wait.
+      await entered.promise;
       assert.deepEqual(runtime.evicted, [evicting], 'the eviction is under way');
       let noted = false;
       const note = eviction.noteUsed(pool, evicting).then(() => { noted = true; });
+      // fixed wait: an absence check — nothing observable says the note has queued behind the in-process session lock, and a shorter window could only under-detect a note that failed to wait.
       await new Promise((r) => setTimeout(r, 300));
       assert.equal(noted, false, 'its note of use waits for the eviction');
       release();
@@ -178,13 +184,6 @@ test('idle workers are the eviction clock\'s, against the full PostgreSQL schema
     return { sessionId: id, appId: app.id, userId: user.id, configVersion: 2, reason: 'promoted-pause', requestedAt: r.at, turnId: null };
   }
   const release = target => eviction.releaseRequested(pool, target, { worker });
-  async function until(check) {
-    const deadline = Date.now() + 3000;
-    while (!check()) {
-      if (Date.now() >= deadline) throw new Error('worker release fixture did not reach its gate');
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-  }
   await t.test('requested removal checks its claim again after reading runtime identity', async () => {
     reset(); const target = await requested(); const remove = worker.removeWorker;
     worker.removeWorker = async (id, options) => {
@@ -203,8 +202,9 @@ test('idle workers are the eviction clock\'s, against the full PostgreSQL schema
     worker.removeWorker = async (id, options) => { reached = true; await gate; return remove(id, options); };
     let running; let noting;
     try {
-      running = release(target); await until(() => reached);
+      running = release(target); await waitFor(() => reached, { label: 'the requested removal under way' });
       let noted = false; noting = eviction.noteUsed(pool, target.sessionId).then(() => { noted = true; });
+      // fixed wait: an absence check — the removal holds the in-process session lock and nothing observable says the note has queued behind it; a shorter window could only under-detect a note that failed to wait.
       await new Promise(resolve => setTimeout(resolve, 50)); assert.equal(noted, false);
       unblock(); assert.deepEqual(await running, { released: true }); await noting;
       assert.deepEqual(runtime.evicted, [target.sessionId]);
@@ -223,13 +223,13 @@ test('idle workers are the eviction clock\'s, against the full PostgreSQL schema
     try {
       running = release(target);
       const refusal = assert.rejects(running, /lost its session lock/);
-      await until(() => reached);
+      await waitFor(() => reached, { label: 'the requested removal under way' });
       const { rows: [lock] } = await pool.query(`SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND granted
         AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
         AND classid::bigint = $1 AND objid::bigint = $2`, [WORKER_EVICTION_LOCK, target.sessionId]);
       assert.ok(lock, 'only the synthetic fixture database lock is targeted');
       await pool.query('SELECT pg_terminate_backend($1)', [lock.pid]);
-      await until(() => locks.openConnections() === 0);
+      await waitFor(() => locks.openConnections() === 0, { label: 'the terminated lock connection gone' });
       unblock(); await refusal; assert.deepEqual(runtime.evicted, []);
     } finally { unblock(); await Promise.allSettled([running]); worker.removeWorker = remove; }
   });
@@ -248,8 +248,9 @@ test('idle workers are the eviction clock\'s, against the full PostgreSQL schema
     const preparing = eviction.noteUsed(pool, target.sessionId, { prepare: async () => { reached = true; await gate; } });
     let releasing;
     try {
-      await until(() => reached); let finished = false;
+      await waitFor(() => reached, { label: 'the preparation holding the lock' }); let finished = false;
       releasing = release(target).then(out => { finished = true; return out; });
+      // fixed wait: an absence check — the release waits on the in-process session lock preparation holds, and nothing observable says it has queued; a shorter window could only under-detect a release that failed to wait.
       await new Promise(resolve => setTimeout(resolve, 50)); assert.equal(finished, false);
       unblock(); await preparing;
       assert.deepEqual(await releasing, { skipped: 'changed_or_used' });

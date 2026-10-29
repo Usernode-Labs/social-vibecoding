@@ -30,6 +30,8 @@ function harness({ response = { firstFeedback: moment }, ok = true, patchResult 
   const sandbox = {
     // The binding the controller's i18n import gives it (the import line is stripped above).
     t: englishPlatformI18n().t,
+    // And its repo-link import: the shared repository-address rule (#6016).
+    isRepoAddress: require('./lib/repo-link').repoLink.isRepoAddress,
     // The controller's KUDOS_PARKED import, stripped above too: these suites
     // drive the bounty row with the switch off (#5249). The parked state is
     // pinned in tests/feedback-bounty-ui.test.js.

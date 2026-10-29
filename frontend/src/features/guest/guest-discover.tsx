@@ -467,7 +467,8 @@ export function GuestDiscover({ apps, failed, hero, primaryClass, onOpenInside, 
   const featured = useMemo(() => (browsing ? featuredApps(all, tryable) : []), [all, browsing, tryable]);
   const list = useMemo(() => {
     const above = new Set(featured.map((a) => a.slug));
-    return sortApps(filterApps(all, query, category), sort).filter((a) => !above.has(a.slug));
+    // Sorted, then searched: the search's exact-name lead must survive the sort (#5891).
+    return filterApps(sortApps(all, sort), query, category).filter((a) => !above.has(a.slug));
   }, [all, query, category, sort, featured]);
   useEffect(() => { setRowsShown(ROWS_STEP); }, [query, category, sort]);
   const wide = typeof window !== 'undefined' && window.matchMedia?.('(min-width: 768px)').matches;

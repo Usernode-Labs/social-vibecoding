@@ -79,19 +79,46 @@ test('an oversized spec is refused with the numbers, never kept as its projectio
   assert.equal(longMd.limitChars, specs.MAX_SPEC_MARKDOWN_CHARS);
 });
 
-test('the GitHub copy says who posted it and where it is whole, and says when it is clipped', () => {
-  const short = specs.specCommentText({
-    username: 'ada', version: 2, markdown: MARKDOWN, format: 'html', webPath: 'https://h.example/#app/a/dev/issues/9',
+test('#6020: the comment on the request links to the plan and never carries it', () => {
+  const text = specs.specCommentText({
+    username: 'ada', version: 2, markdown: MARKDOWN, webPath: 'https://h.example/#app/a/dev/issues/9',
   });
-  assert.match(short, /^\*\*ada\*\* posted a plan for this request \(version 2\)\./);
-  assert.match(short, /before\/after screens are in the plan card on Homeroom: https:\/\/h\.example/);
-  assert.match(short, /<details><summary>The plan<\/summary>/);
-  assert.ok(short.includes(MARKDOWN));
-  assert.doesNotMatch(short, /@ada/, 'no @mention of the poster');
+  assert.equal(text,
+    '**ada** posted a plan for this request (version 2): "Pre-fill the make screen". '
+    + '[Read the plan on Homeroom](https://h.example/#app/a/dev/issues/9)');
+  assert.doesNotMatch(text, /<details>|<summary>/, 'no fold for the request page to draw as raw markers');
+  assert.doesNotMatch(text, /User-facing changes|waitlist answer/, 'none of the plan itself');
+  assert.doesNotMatch(text, /@ada/, 'no @mention of the poster');
 
-  const long = 'z'.repeat(specs.MAX_COMMENT_SPEC_CHARS + 10);
-  const clipped = specs.specCommentText({ username: 'ada', version: 1, markdown: long, format: 'markdown' });
-  assert.match(clipped, new RegExp(`The first ${specs.MAX_COMMENT_SPEC_CHARS} of ${long.length} characters`));
+  // Through the renderer the thread uses: the link's address is exactly the
+  // plan's, with no sentence punctuation run on into it.
+  const { marked } = require('marked');
+  const html = marked.parse(text, { gfm: true });
+  assert.match(html, /<a href="https:\/\/h\.example\/#app\/a\/dev\/issues\/9">Read the plan on Homeroom<\/a>/);
+
+  const noLink = specs.specCommentText({ username: '', version: 1, markdown: 'no title here' });
+  assert.equal(noLink, '**Someone** posted a plan for this request (version 1). It is in the plan card on Homeroom.');
+
+  // Even a plan far longer than a comment is only the one line.
+  const long = specs.specCommentText({ username: 'ada', version: 1, markdown: `# T\n\n${'z'.repeat(100000)}`, webPath: 'https://h.example/x' });
+  assert.ok(long.length < 200);
+});
+
+test('#6020: when the plan\'s line never reached the thread, the comment carries the plan itself', () => {
+  // Nothing on the request page opens this version then (the link would land
+  // on a page with no card for it), so the plan travels in the comment, and
+  // the page draws it as the plan's card (AppView._botSpecOf).
+  const text = specs.specCommentText({
+    username: 'ada', version: 2, markdown: MARKDOWN, webPath: 'https://h.example/#app/a/dev/issues/9', announced: false,
+  });
+  assert.match(text, /^\*\*ada\*\* posted a plan for this request \(version 2\): "Pre-fill the make screen"\.\n/);
+  assert.match(text, /<details><summary>The plan<\/summary>/);
+  assert.ok(text.includes(MARKDOWN), 'the whole plan, readable where the comment is');
+  assert.doesNotMatch(text, /h\.example/, 'no link to a page that cannot open it');
+
+  const huge = 'z'.repeat(specs.MAX_COMMENT_SPEC_CHARS + 10);
+  const clipped = specs.specCommentText({ username: 'ada', version: 1, markdown: huge, announced: false });
+  assert.match(clipped, new RegExp(`The first ${specs.MAX_COMMENT_SPEC_CHARS} of ${huge.length} characters`));
 });
 
 test('the thread card is the spec card the bot and the share route post', () => {
@@ -193,6 +220,9 @@ test('the first post opens a paused, branchless record linked to the request, an
   assert.equal(deps.sent.comments.length, 1);
   assert.deepEqual([deps.sent.comments[0].owner, deps.sent.comments[0].repo, deps.sent.comments[0].number],
     ['acme', 'cool-app', 4041]);
+  assert.equal(deps.sent.comments[0].body,
+    '**ada** posted a plan for this request (version 1): "Spinner on the being-made screen". '
+    + '[Read the plan on Homeroom](https://h.example/#app/cool-app/dev/issues/4041)');
 });
 
 test('a repost is the next version on the same record', async () => {
@@ -230,6 +260,14 @@ test('a failed write stores nothing, and a failed card or comment never takes th
   }, fakeDeps({ cardThrows: true, commentThrows: true }));
   assert.equal(out.version, 1, 'stored and readable');
   assert.equal(out.commentPosted, false);
+
+  // #6020: a failed card makes the comment carry the plan, not a bare link.
+  const deps = fakeDeps({ cardThrows: true });
+  await specs.postRequestSpec(fakePool(), {
+    app: APP, repo: REPO, issueNumber: 1, user: ADA, text: HTML, webPath: 'https://h.example/#app/cool-app/dev/issues/1',
+  }, deps);
+  assert.equal(deps.sent.comments.length, 1);
+  assert.match(deps.sent.comments[0].body, /<details><summary>The plan<\/summary>[\s\S]*Spinner on the being-made screen/);
 });
 
 test('a refused spec reaches no database', async () => {
@@ -425,4 +463,32 @@ test('the post route gets its own body limit, scoped to that one path', () => {
   assert.ok(scoped > 0, 'the spec path has its own test');
   assert.match(server.slice(scoped, scoped + 120), /return express\.json\(\{ limit: '1mb' \}\)/);
   assert.match(server, /app\.use\(requestSpecRoutes\(config\)\);/);
+});
+
+test('posting a plan keeps the screenshots its text shows, by linking the author\'s own to the request', async () => {
+  const a = 'a1'.repeat(16);
+  const b = 'b2'.repeat(16);
+  const plan = `<article data-spec><h1>Threads</h1><p>Every discussion becomes a thread.</p><section data-spec-tab="user">`
+    + `<div class="spec-strip"><figure><img src="/issue-images/${a}" alt="Step 1"><figcaption>In Main.</figcaption></figure>`
+    + `<figure><img src="/issue-images/${b}" alt="Step 2"><figcaption>The draft.</figcaption></figure></div>`
+    + '</section><section data-spec-tab="tech"><p>How.</p></section></article>';
+  const pool = fakePool();
+  await specs.postRequestSpec(pool, { app: APP, repo: REPO, issueNumber: 6019, user: ADA, text: plan }, fakeDeps());
+  const link = pool.calls.find((c) => /UPDATE issue_screenshots/.test(c.sql));
+  assert.ok(link, 'the pictures are stamped with the request');
+  assert.deepEqual(link.params, [[a, b], 'acme', 'cool-app', 6019, 7]);
+  assert.match(link.sql, /WHERE id = ANY\(\$1::varchar\[\]\) AND user_id = \$5 AND issue_number IS NULL/,
+    'only the author\'s own, and only ones no request has yet');
+  const commit = pool.calls.findIndex((c) => /^COMMIT$/.test(c.sql));
+  assert.ok(pool.calls.indexOf(link) > commit, 'after the plan is stored, never inside its transaction');
+
+  // A plan with no pictures, or a markdown one, links nothing.
+  const plain = fakePool();
+  await specs.postRequestSpec(plain, { app: APP, repo: REPO, issueNumber: 6019, user: ADA, text: HTML }, fakeDeps());
+  assert.ok(!plain.calls.some((c) => /issue_screenshots/.test(c.sql)));
+
+  // A failed link never takes the post back.
+  const failing = fakePool({ failOn: /UPDATE issue_screenshots/ });
+  const out = await specs.postRequestSpec(failing, { app: APP, repo: REPO, issueNumber: 6019, user: ADA, text: plan }, fakeDeps());
+  assert.equal(out.version, 1);
 });

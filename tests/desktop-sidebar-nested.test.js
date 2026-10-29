@@ -82,6 +82,49 @@ test('which conversations: the bot, then the four most recent of either section,
   assert.deepEqual(railConversations([], new Map()), []);
 });
 
+test('#5693: under Agents the sidebar seats the bot and the chats that ask for you only', () => {
+  const { railCandidates, railConversations } = loadTsx('frontend/src/features/messages/rail-inbox.ts');
+  const { agentAsksForYou, buildInbox } = loadTsx('frontend/src/features/messages/inbox.ts');
+  const at = (h) => new Date(Date.UTC(2026, 9, 18, h)).toISOString();
+  // The list's own sources, merged the way the Messages screen merges them.
+  const sessions = [
+    { key: 'proposed', lastActivityAt: at(12), busy: false, awaitingInput: false },
+    { key: 'paused', lastActivityAt: at(11) },
+    { key: 'asks', lastActivityAt: at(4), busy: false, awaitingInput: true },
+    { key: 'building', lastActivityAt: at(3), busy: true, awaitingInput: false },
+    { key: 'order', lastActivityAt: at(2), kind: 'task' },
+  ];
+  const mayors = [
+    { id: 1, lastActivityAt: at(13), busy: false },
+    { id: 2, lastActivityAt: at(1), busy: true },
+  ];
+  const inbox = buildInbox({
+    conversations: [
+      { id: 99, lastActivityAt: at(0), homeroomBot: true },
+      { id: 7, lastActivityAt: at(10) },
+    ],
+    sessions,
+    mayors,
+  });
+  const seats = (bySession, byMayor) => railCandidates(inbox, (entry) => agentAsksForYou(entry, bySession, byMayor));
+  const bySession = new Map(sessions.map((item) => [item.key, item]));
+  const byMayor = new Map(mayors.map((item) => [String(item.id), item]));
+  const keys = (rows) => rows.map((row) => row.key);
+  assert.deepEqual(keys(seats(bySession, byMayor)),
+    ['person:99', 'session:asks', 'session:building', 'session:order', 'mayor:2', 'person:7'],
+    'waiting on you, at work, an open work order and a busy agent chat are seated; the proposed, paused and idle ones are not, however recent');
+  // The sidebar seats the bot and the four most recent of what is left.
+  assert.deepEqual(keys(railConversations(seats(bySession, byMayor), new Map())),
+    ['person:99', 'session:asks', 'session:building', 'session:order', 'person:7']);
+  // An agent that finishes leaves its seat on the next redraw.
+  const done = new Map(bySession);
+  done.set('building', { ...bySession.get('building'), busy: false });
+  const idleMayor = new Map([['1', mayors[0]], ['2', { ...mayors[1], busy: false }]]);
+  assert.deepEqual(keys(seats(done, idleMayor)), ['person:99', 'session:asks', 'session:order', 'person:7']);
+  // With nothing going on, Agents is the bot alone; People are untouched.
+  assert.deepEqual(keys(seats(new Map(), new Map())), ['person:99', 'person:7']);
+});
+
 test('the places: the column\'s own list, topics after two behind "Show N more", the one you are on kept', () => {
   const places = {
     channels: [
@@ -125,7 +168,7 @@ test('the markup: the conversations follow Messages, empty in the prerender, and
   // The inbox publishes the rows from the whole merge, not the search's answer.
   const inbox = read('frontend/src/features/messages/index.tsx');
   assert.match(inbox, /const railOpenKey = inbox\.find\(isOpen\)\?\.key \|\| null;/);
-  assert.match(inbox, /const rows = railConversations\(inbox\)\n/);
+  assert.match(inbox, /const rows = railConversations\(railCandidates\(inbox, asksForYou\)\)\n/);
 });
 
 test('the motion: one clock for both parts, on the content\'s own height', () => {

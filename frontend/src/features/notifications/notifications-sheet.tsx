@@ -756,9 +756,10 @@ type ScreenRowProps = {
  * #5580: THE CARD. On Unread a row is a card in its project's stack
  * (./notification-stacks.tsx): the shell's card (white, 20px, one hairline),
  * the time at its top right where iOS keeps it, and no project name on its
- * meta line, since the heading over the stack says it. Its × sits on the
- * card's corner. Its bookmark takes the time's place while the pointer is
- * over the card; on a phone, where nothing hovers, Save is the swipe's first
+ * meta line, since the heading over the stack says it. Its × sits inside the
+ * card's corner. Its bookmark appears beside the time while the pointer is
+ * over the card, and the time steps aside for it rather than going (#5929:
+ * a hovered card was the one card with no time); on a phone, where nothing hovers, Save is the swipe's first
  * button beside Clear. A card about a request or a proposal has a chevron at
  * its foot (a 44px target) that opens its history under its words, and on a
  * phone pressing and holding the card does the same, the way iOS opens a
@@ -1037,14 +1038,18 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
   // #5775: an older folded card is the exception (cardSave): it saves its
   // newest notification, the one it opens, and says so with the filled
   // bookmark beside its time once it is saved.
-  // #5580: on a card it takes the time's place while the pointer is over
-  // it, and on a phone the swipe's Save stands in for it.
+  // #5580: on a card it shows at the top right while the pointer is over
+  // it, the time stepping aside for it (#5929), and on a phone the swipe's
+  // Save stands in for it.
   const bookmark = (groupIds && !cardSave) || (card && touch) ? null : (
     <button
       type="button"
       data-notification-save={view.id}
       aria-pressed={view.saved ? 'true' : 'false'}
       aria-label={t(view.saved ? 'notifications:row.unsave' : 'notifications:row.save')}
+      // #5929: a pointer gets the same words as a screen reader: the bare
+      // bookmark said nothing about what it does.
+      title={t(view.saved ? 'notifications:row.unsave' : 'notifications:row.save')}
       className={card
         ? 'absolute right-2 top-1.5 flex h-8 w-8 items-center justify-center rounded-full '
           + 'transition-opacity hover:bg-black/[.04] dark:hover:bg-white/[.06] '
@@ -1126,10 +1131,16 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
           aria-label={groupIds
             ? t('notifications:row.clearGroupLabel', { count: groupIds.length })
             : t('notifications:row.clearLabel')}
+          // #5929: and says what clearing is to a pointer: it marks read.
+          title={groupIds
+            ? t('notifications:row.clearGroupTip', { count: groupIds.length })
+            : t('notifications:row.clearTip')}
           // Hidden until the pointer is over the slot or something in it has
           // keyboard focus, and untouchable while hidden, so a click on the
           // corner of the tile opens the row as it always did.
-          className={(card ? 'absolute -left-1.5 -top-1.5 z-[2] flex h-5 w-5 items-center justify-center rounded-full ' : 'absolute left-1.5 top-2 flex h-5 w-5 items-center justify-center rounded-full ')
+          // #5929: on a card it sits inside the corner of the card, not across
+          // its edge, where it read as a rendering glitch.
+          className={(card ? 'absolute left-1.5 top-1.5 z-[2] flex h-5 w-5 items-center justify-center rounded-full ' : 'absolute left-1.5 top-2 flex h-5 w-5 items-center justify-center rounded-full ')
             + 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/10 hover:bg-zinc-50 '
             + 'dark:bg-zinc-900 dark:text-zinc-100 dark:ring-white/15 dark:hover:bg-zinc-800 '
             + 'pointer-events-none opacity-0 transition-opacity '
@@ -1191,7 +1202,7 @@ function CardWords({ view, card, hasHistory, saveOnHover }: {
   view: ScreenRowView;
   card: CardPlace;
   hasHistory: boolean;
-  /** The bookmark takes the time's place while the pointer is over the card. */
+  /** The bookmark shows beside the time while the pointer is over the card (#5929: the time stays). */
   saveOnHover: boolean;
 }): ReactNode {
   const t = useMessages('notifications');
@@ -1234,7 +1245,7 @@ function CardWords({ view, card, hasHistory, saveOnHover }: {
             <time
               title={view.timeTitle}
               className={saveOnHover
-                ? 'shrink-0 group-hover/notif:invisible group-has-[:focus-visible]/notif:invisible'
+                ? 'shrink-0 group-hover/notif:mr-7 group-has-[:focus-visible]/notif:mr-7'
                 : 'shrink-0'}
             >
               {view.time}

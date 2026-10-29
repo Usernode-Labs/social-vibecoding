@@ -440,6 +440,12 @@ export interface TranscriptMessage {
    * as a spec card and an event line, not as a comment.
    */
   githubSpec?: { title: string | null; markdown: string; html: string } | null;
+  /**
+   * #6020: the comment Homeroom writes on a request when a plan is posted on
+   * it (`AppView._isPlanMirror`): whose plan, and which version. The
+   * thread's own line for that author and version says the same.
+   */
+  planMirror?: { author: string; version: number } | null;
 }
 
 /**

@@ -48,6 +48,7 @@
 import './screenshot-select';
 
 import { t } from '../../lib/i18n/runtime';
+import { isRepoAddress } from '../../lib/repo-link.js';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import { publishVisibility } from '../../lib/visibility-store';
 
@@ -1505,13 +1506,13 @@ export function init() {
 
     // ── #3940: video attachment ────────────────────────────────────
     // One clip per issue, chosen alongside the images above. MP4/WebM/MOV
-    // only, up to 50 MB and (read from the file's metadata here, enforced
-    // client-side only) 60 seconds. The clip uploads on its own with a
+    // only, up to 50 MB, and as long as fits in that: a narrated walkthrough
+    // of a change runs a few minutes, and the size is what storage and the
+    // upload actually pay for. The clip uploads on its own with a
     // progress bar — fetch gives no upload progress, so this one is an
     // XMLHttpRequest. The server re-checks size and magic bytes on every
     // upload and caps the issue at one clip (src/routes/feedback.js).
     const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
-    const MAX_VIDEO_SECONDS = 60;
     const videoBtn = document.getElementById('feedback-video-btn');
     const videoLabel = videoBtn.querySelector('[data-video-label]');
     const videoInput = document.getElementById('feedback-video-input');
@@ -1632,10 +1633,10 @@ export function init() {
       xhr.send(entry.blob);
     });
 
-    // The 60-second rule needs the clip's metadata, and the same load
-    // proves the browser can decode it at all. A Blob-backed WebM without
-    // a duration header reports Infinity until seeked past the end — ask
-    // once, then read it back.
+    // Loading the clip's metadata proves the browser can decode it at all,
+    // which is what the thumbnail's preview needs. A Blob-backed WebM
+    // without a duration header reports Infinity until seeked past the
+    // end — ask once, then read it back.
     const videoDurationSeconds = (objectUrl) => new Promise((resolve) => {
       const probe = document.createElement('video');
       probe.preload = 'metadata';
@@ -1687,10 +1688,6 @@ export function init() {
       if (video !== entry) return;
       if (seconds === null) {
         abandon(true, t('dialogs:feedback.video.unreadable'));
-        return;
-      }
-      if (seconds > MAX_VIDEO_SECONDS + 0.25) {
-        abandon(true, t('dialogs:feedback.video.tooLong'));
         return;
       }
       entry.stateEl.textContent = t('dialogs:feedback.video.uploading');
@@ -2515,13 +2512,12 @@ export function init() {
       // "This app" is only selectable when an app with a real repo is
       // open. Otherwise the button stays visible but grayed-out/disabled
       // so users can still see both choices, and we default to platform.
-      // #5940: any http(s) repository address with an owner and a name
-      // counts, not only github.com: app repositories live on Homeroom's
-      // own git host now (src/services/repo-ref.js), and the server, which
-      // parses the address properly, is the real gate.
+      // #5940: a repository address on any host counts, not only
+      // github.com: app repositories live on Homeroom's own git host now.
+      // One rule, shared with comment mode and tested against the server's
+      // src/services/repo-ref.js (../../lib/repo-link.js, #6016).
       const appData = (typeof AppView !== 'undefined' && AppView.appData) || null;
-      const repoUrl = appData?.repo_url || '';
-      const hasRepo = /^https?:\/\/[^/\s]+\/[^/\s]+\/[^/\s]+/.test(repoUrl);
+      const hasRepo = isRepoAddress(appData?.repo_url);
       // An app is "open" whenever its view is mounted — on the running
       // App tab OR the Dev screen. Both `currentApp` and `appData` are
       // cleared together by AppView.close() (on navigateHome /

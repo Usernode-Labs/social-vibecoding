@@ -12,6 +12,7 @@
  */
 
 import { isNative, type PublicApp } from '../auth/shared';
+import { rankSearch } from '../../lib/search-rank.js';
 
 /** A row of GET /api/public/apps, with the fields the guest pages read. */
 export interface GuestApp extends PublicApp {
@@ -131,14 +132,22 @@ export function presentCategories(apps: readonly GuestApp[]): string[] {
   return CATEGORIES.filter((c) => have.has(c));
 }
 
-/** What a search and a kind leave of the directory. */
+/**
+ * What a search and a kind leave of the directory, in its order, except that
+ * a project whose name IS what was typed leads (#5891): the
+ * search reads descriptions too, so without it a popular project that only
+ * mentions the name came first. The rule is lib/search-rank.js, every app
+ * search's: any case, Latin accents set aside. Sort first, then filter, or
+ * the sort undoes the lead (guest-discover.tsx).
+ */
 export function filterApps(apps: readonly GuestApp[], query: string, category: string | null): GuestApp[] {
-  const q = query.trim().toLowerCase();
-  return apps.filter((a) => {
-    if (category && a.category !== category) return false;
-    if (!q) return true;
-    return `${a.name} ${a.description || ''}`.toLowerCase().includes(q);
-  });
+  const kind = category ? apps.filter((a) => a.category === category) : apps;
+  return rankSearch(
+    kind,
+    query,
+    (a: GuestApp) => [a.name],
+    (a: GuestApp) => [`${a.name} ${a.description || ''}`],
+  ) as GuestApp[];
 }
 
 /**

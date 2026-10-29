@@ -701,6 +701,17 @@ export interface ChangeThreadView {
    */
   codeMissing?: boolean;
   /**
+   * An import stacked on another open change's branch
+   * (src/workflow/rules/pr-base.ts, `AppView._stackedView`): the change it
+   * waits for, said above Votes and Testing with a door to its page.
+   */
+  waitsFor?: { sessionId: number; number: number | null; title: string | null; href: string };
+  /**
+   * An import whose pull request targets a branch that is neither main nor
+   * an open change's: that branch, and the notice says what a person does.
+   */
+  baseNotMain?: { branch: string };
+  /**
    * VERSIONS (docs/plans/versions.md): on an update, the change a version
    * was given by the project it was made from, what it brings from there and
    * what it does here (the proposal read's `upstream`, passed through by

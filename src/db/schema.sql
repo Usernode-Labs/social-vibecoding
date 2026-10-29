@@ -7740,6 +7740,52 @@ CREATE TABLE IF NOT EXISTS external_agent_patch_uploads (
 );
 COMMENT ON TABLE external_agent_patch_uploads IS 'staging:private';
 
+-- ── Connector uploads: a plan, a video or a screenshot ───────────────
+-- The work-order patch upload above, for the other big things a coding agent
+-- hands Homeroom through the connector. post_spec took a plan only as a
+-- string inside the tool call, and a plan with drawn screens runs to
+-- hundreds of KB; create_request took screenshots only as base64 and a video
+-- not at all. prepare_upload now mints one row here and prints a curl
+-- command; the agent sends the file with it, and post_spec or
+-- create_request names the row's id instead of carrying the bytes.
+-- services/connector-uploads.js has the whole design.
+--
+-- One table, because each credential is for ONE upload: the row is the
+-- credential (token_hash, SHA-256 only; the token itself is printed in the
+-- prepare_upload answer to its owner and nowhere else) and, once the file
+-- has come, a record of it. A used row takes no second upload, so a token
+-- that leaked cannot swap the bytes its owner is about to submit.
+--
+-- A plan's text is kept in `data` until post_spec posts it. A video or a
+-- screenshot goes where the feedback dialog's clips and stills go
+-- (issue_videos, issue_screenshots), unlinked, and `media_id` names that row;
+-- create_request links it to the request exactly as Send feedback does, and
+-- an upload nobody files is swept from there after 24 hours like any other.
+-- The row itself is deleted once its file is used, and swept a day after it
+-- expires.
+--
+-- `staging:private`: unpublished work and credential hashes.
+CREATE TABLE IF NOT EXISTS connector_uploads (
+  id            BIGSERIAL PRIMARY KEY,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind          VARCHAR(16) NOT NULL CHECK (kind IN ('plan', 'video', 'screenshot')),
+  token_hash    TEXT NOT NULL UNIQUE CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at    TIMESTAMPTZ NOT NULL,
+  stored_at     TIMESTAMPTZ,
+  content_type  VARCHAR(32),
+  bytes         INTEGER CHECK (bytes IS NULL OR bytes > 0),
+  sha256        TEXT,
+  data          BYTEA,
+  media_id      VARCHAR(32)
+);
+COMMENT ON TABLE connector_uploads IS 'staging:private';
+COMMENT ON COLUMN connector_uploads.token_hash IS 'staging:private';
+CREATE INDEX IF NOT EXISTS connector_uploads_user_idx
+  ON connector_uploads (user_id, created_at);
+CREATE INDEX IF NOT EXISTS connector_uploads_expiry_idx
+  ON connector_uploads (expires_at);
+
 -- ── Generic agent backend (Codex/OpenRouter BYOK; plan.md PR1) ───────
 -- chat_sessions today pins Claude continuity via cc_session_id. To add a
 -- second coding-agent backend (codex_openrouter) without breaking the
@@ -16174,3 +16220,26 @@ CREATE TABLE IF NOT EXISTS upstream_offers (
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_upstream_offers_state ON upstream_offers (state, updated_at);
+
+-- An imported pull request's base on GitHub, and the change it waits for
+-- (src/workflow/rules/pr-base.ts). "Merged" means "in main": a change whose
+-- base is not main is never merged by Homeroom, and a merge GitHub made into
+-- another branch is never recorded as merged. On 28 Oct 2026 #5957, stacked
+-- on #5956's branch, was merged into that branch and recorded merged.
+--   imported_pr_base_ref = the branch GitHub merges the pull request into
+--                          when that is NOT its repository's default branch
+--                          ("main": GitHub's default_branch), as last read
+--                          (the import, every look at the pull request, the
+--                          promote). NULL: the default branch, or not read
+--                          yet (the merge attempt reads GitHub's own answer).
+--   waits_for_session_id = the open change of the same app whose branch that
+--                          base is. It stays out of the merge queue until
+--                          that change is on main; then its pull request is
+--                          retargeted to main and synced with it. NULL when
+--                          the base is main, or no open change has it (then
+--                          it is refused at promotion).
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS imported_pr_base_ref TEXT;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS waits_for_session_id INTEGER
+  REFERENCES chat_sessions(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS chat_sessions_waits_for_idx
+  ON chat_sessions (waits_for_session_id) WHERE waits_for_session_id IS NOT NULL;

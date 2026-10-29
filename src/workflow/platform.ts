@@ -57,7 +57,7 @@ import { MACHINE as RELEASE, releaseKey, releaseMachine } from './release/machin
 import { releaseServices } from './release/services.ts';
 import type { Adoption } from './release/services.ts';
 import { MACHINE as CLOCK, clock, clockKey } from './clock/machine.ts';
-import { clockServices } from './clock/services.ts';
+import { clockServices, newestBuild } from './clock/services.ts';
 import { MACHINE as WORKER_RELEASE, WORK as RELEASE_WORKER, releaseKey as workerReleaseKey, workerRelease } from './worker-release/machine.ts';
 import type { Request as WorkerReleaseRequest } from './worker-release/machine.ts';
 import { workerReleaseServices } from './worker-release/services.ts';
@@ -269,6 +269,10 @@ export async function startWorkflow(config: any, opts: { loops: boolean; preview
   };
   const started = createPlatformRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, release: bootRelease(),
+    // A kind only the newest build claims (WorkHandler.newestOnly): a
+    // preview's build. The newest build is the newest-only clocks' own,
+    // read on the runtime's own pool, never waiting behind the app's.
+    newest: () => newestBuild(workflowPool),
     publish: (q, pushes) => publishPushes(q, pushes, { badges: !!config.mobilePushEnabled }),
   });
   try {
@@ -325,11 +329,54 @@ export async function startWorkflowLoops(): Promise<void> {
     await runtime.append(CLOCK, clockKey(job.name), { type: 'Arm', payload: {
       job: job.name, everyMs: job.everyMs, firstDueAt: new Date().toISOString(), onDemand: false,
     } }, { requestKey: `arm:${release}`, source: { kind: 'system', name: 'release' } });
+    void pullInSecurityClock(job, release).catch((err: Error) =>
+      log!.warn('workflow', 'Could not pull the preview retirement clock in', { message: err.message }));
   }
   await runtime.append(RELEASE, releaseKey(release), { type: 'Booted', payload: { release } },
     { requestKey: `booted:${release}`, source: { kind: 'system', name: 'boot' } });
   await runtime.start({ loops: true });
   loopsHere = true;
+}
+
+// A new build's web Pods serve only once this clock has recorded a proof
+// scoped to the build (services/platform-preview-startup.js beforeServe). An
+// existing clock keeps its next minute tick, and an older conductor that
+// claims a tick skips it (`older_build`) and puts the next a minute off, so
+// the web Pod of 28 Oct 2026 waited 98 s, most of its rollout. Until the
+// proof is there, this conductor pulls the next run in. Only through Arm's
+// own rule, which every build applies alike (a due time further off than
+// one interval comes in to it): an Arm at PULL_IN_INTERVAL_MS, then one at
+// the job's interval, so whichever conductor handles them the run is due at
+// once and the interval is the job's again. Its run here is the boot scan
+// (no second inventory); an older conductor's skip is pulled in again.
+// Bounded by web's own wait; a lost process leaves at most a one-second
+// interval, which the next conductor's boot Arm puts back.
+const PULL_IN_FOR_MS = 180_000;
+const PULL_IN_EVERY_MS = 2_000;
+const PULL_IN_INTERVAL_MS = 1_000;
+async function pullInSecurityClock(job: { name: string; everyMs: number }, release: string): Promise<void> {
+  const startup = legacy('services/platform-preview-startup');
+  const key = clockKey(job.name);
+  const me = randomUUID().slice(0, 8);
+  const arm = (everyMs: number, requestKey: string) => runtime!.append(CLOCK, key,
+    { type: 'Arm', payload: { job: job.name, everyMs, onDemand: false } },
+    { requestKey, source: { kind: 'system', name: 'release' } });
+  const deadline = Date.now() + PULL_IN_FOR_MS;
+  for (let n = 0; runtime && Date.now() < deadline; n += 1) {
+    const proven = await startup.proven(appConfig, kernelPool);
+    const { rows: [clock] } = await kernelPool!.query(
+      `SELECT state, (data->>'everyMs')::bigint AS every,
+              (data->>'due')::timestamptz > clock_timestamp() + make_interval(secs => $3) AS later
+         FROM wf_instances WHERE machine = $1 AND key = $2`,
+      [CLOCK, key, PULL_IN_EVERY_MS / 1000]);
+    if (!clock) return;
+    if (!proven && clock.state === 'waiting' && clock.later) await arm(PULL_IN_INTERVAL_MS, `pull-in:${release}:${me}:${n}`);
+    if (Number(clock.every) !== job.everyMs || (!proven && clock.state === 'waiting' && clock.later)) {
+      await arm(job.everyMs, `pull-back:${release}:${me}:${n}`);
+    }
+    if (proven) return;
+    await new Promise((resolve) => setTimeout(resolve, PULL_IN_EVERY_MS).unref?.());
+  }
 }
 
 // What a new build owes what an older one left, in order (release/services.ts):
@@ -1388,9 +1435,11 @@ const count = (n: unknown) => (Number.isInteger(n) && (n as number) >= 0 ? n as 
 // merged-by-hand clock, services/proposal-scans.js). The proposal machine
 // decides what follows (PrLooked). A merge carries the tally read here: the
 // counted Yes votes on the version that merged, and the app's active
-// members. Resolves whether the machine took it.
+// members. `base`: the branch it merged into (a merge into any branch but
+// main is never recorded as merged, rules/pr-base.ts). Resolves whether the
+// machine took it.
 export async function prLooked(m: { sessionId: number; appId: number; from: string; merged: boolean; closed: boolean;
-  mergeSha: string | null; mergedAt: string | null; closedAt: string | null }): Promise<boolean> {
+  mergeSha: string | null; mergedAt: string | null; closedAt: string | null; base?: string | null }): Promise<boolean> {
   const pool = kernelPool!;
   let tally = null;
   if (m.merged) {
@@ -1406,11 +1455,22 @@ export async function prLooked(m: { sessionId: number; appId: number; from: stri
   // The same reading within a minute (the webhook's and the clock's) is one
   // event; a close still settling is looked at again on the next run.
   const out = await proposalEvent('PrLooked', { from: m.from, merged: m.merged, closed: m.closed, mergeSha: m.mergeSha,
-    mergedAt: m.mergedAt, closedAt: m.closedAt, readAt: new Date().toISOString(), tally },
+    mergedAt: m.mergedAt, closedAt: m.closedAt, readAt: new Date().toISOString(), tally, base: m.base ?? null, baseRead: true },
   { sessionId: m.sessionId, appId: m.appId, source: sys('pr-look'), waitMs: 5000,
     requestKey: `pr-looked:${m.sessionId}:${what}:${m.mergedAt || m.closedAt || '-'}:${Math.floor(Date.now() / 60000)}` });
   // Taken once decided: one still pending is the next look's to report again.
   return typeof out === 'object' && out != null && ['accepted', 'replayed'].includes((out as any).status);
+}
+
+// A look found a stacked import still based on the branch of the change it
+// waited for, which is on main now (rules/pr-base.ts): it moves onto main, as
+// its parent's own merge would have told it. One an hour per pair: a move
+// under way answers a second ask, and one that failed for good is not asked
+// again every look.
+export async function parentMerged(p: { sessionId: number; appId: number; parentId: number }): Promise<void> {
+  await proposalEvent('ParentMerged', { parentId: p.parentId },
+    { sessionId: p.sessionId, appId: p.appId, source: sys('pr-look'),
+      requestKey: `parent-merged:${p.sessionId}:${p.parentId}:${Math.floor(Date.now() / 3600000)}` });
 }
 
 // The platform's own app now runs `sha` (its release booting): every merge
@@ -1907,6 +1967,9 @@ const PROMOTE_REFUSALS = new Map<string, Reply>([
   ['pr_merged', { status: 409, body: { error: 'This change was already merged on GitHub, so there is nothing to vote on.' } }],
   ['pr_closed', { status: 409, body: { error: 'This change was closed on GitHub, so it can\'t ask for approval.' } }],
   ['pr_draft', { status: 409, body: { error: 'This pull request is a draft on GitHub. Its author marks it ready for review before it can go up for a vote.' } }],
+  // rules/pr-base.ts: a change merges into main, or waits for the open change
+  // whose branch it is built on; any other base has neither.
+  ['pr_base_not_main', { status: 409, body: { error: 'This pull request is based on a branch other than main, and no open change in this project is built on that branch. Change its base to main on GitHub, or bring in the change it builds on first, then put it up for a vote.', code: 'pr_base_not_main' } }],
   ['merged', { status: 409, body: { error: 'This change was already merged.' } }],
 ]);
 const PROMOTE_FAILURES = new Map<string, number>([
@@ -1923,7 +1986,7 @@ const PROMOTE_FAILURES = new Map<string, number>([
 // the page hears when it is).
 export async function promoteProposal(p: {
   sessionId: number; appId: number; userId: number; username: string | null; from: string; cap: number;
-  pr: { state: string; draft: boolean; merged: boolean; head: string | null } | null;
+  pr: { state: string; draft: boolean; merged: boolean; head: string | null; base?: string | null } | null;
   expectedHead?: string | null; viaAgent?: boolean; ownOperation?: string | null; source?: Source; waitMs?: number;
 }): Promise<Reply> {
   const outcome = await proposalEvent('Promote', promotePayload(p),

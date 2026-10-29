@@ -266,6 +266,53 @@ export function CodeMissingNotice(): ReactNode {
   );
 }
 
+/**
+ * Where its pull request merges, when that is not main
+ * (src/workflow/rules/pr-base.ts). Stacked on another open change's branch
+ * (`v.waitsFor`): it goes live only after that change does, and the notice
+ * names it, with a door to its page. Based on a branch no open change has
+ * (`v.baseNotMain`): it says what a person does about it. Said once, above
+ * Votes and Testing, as CodeMissingNotice is.
+ */
+export function StackNotice({ v }: { v: ChangeThreadView }): ReactNode {
+  const t = useMessages('project');
+  const w = v.waitsFor;
+  if (w) {
+    const door = (
+      <a
+        href={w.href}
+        className="font-semibold underline"
+        data-change-waits-for-link={w.sessionId}
+        onClick={(event) => {
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          (window as any).AppView?.openTopic?.('proposal', w.sessionId);
+        }}
+      />
+    );
+    return (
+      <Alert variant="notice" density="compact" className="mt-3" data-change-waits-for={w.sessionId}>
+        <span>
+          <RichMessage
+            id={!w.number ? 'project:topic.change.waitsForUnnumbered'
+              : w.title ? 'project:topic.change.waitsFor' : 'project:topic.change.waitsForUntitled'}
+            values={{ number: w.number ?? '', title: w.title || '' }}
+            components={[door]}
+          />
+        </span>
+      </Alert>
+    );
+  }
+  if (v.baseNotMain) {
+    return (
+      <Alert variant="notice" density="compact" className="mt-3" data-change-base-not-main="">
+        <span>{t('project:topic.change.baseNotMain', { branch: v.baseNotMain.branch })}</span>
+      </Alert>
+    );
+  }
+  return null;
+}
+
 /** The Before and after card: the shots, or the line that says where they are. */
 function ShotsCard({ s }: { s: NonNullable<ChangeThreadView['shots']> }): ReactNode {
   const t = useMessages('project');
@@ -460,6 +507,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           ) : null}
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
           {v.codeMissing ? <CodeMissingNotice /> : null}
+          {v.waitsFor || v.baseNotMain ? <StackNotice v={v} /> : null}
           <div ref={pair} className="dev-change-pair">
             <GateCard which="votes" g={v.votes} action={voteAction} id={id} />
             <GateCard which="testing" g={v.testing} action={testAction} rerun={withFix ? testingActions : null} id={id} />

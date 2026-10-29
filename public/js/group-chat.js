@@ -2231,6 +2231,19 @@ const GroupChat = {
     for (const child of Array.from(scroll.children)) ro.observe(child);
   },
 
+  // #6022: a long message the reader opens ("Show more", or tabbing into
+  // its folded part) grows below the line they are reading. A follower that
+  // is pinned to the bottom would answer that growth by jumping to the new
+  // bottom, past everything just revealed. So the scroller holding `el`
+  // stops following; the reader's own next scroll to the bottom pins it
+  // again, as any scroll does.
+  holdReadingPosition(el) {
+    if (!el) return;
+    const holds = (box) => !!box && (box === el || (typeof box.contains === 'function' && box.contains(el)));
+    if (holds(GroupChat._threadScrollEl())) GroupChat._threadPinned = false;
+    if (holds(document.getElementById('gc-messages'))) GroupChat._lockedToBottom = false;
+  },
+
   // Paint the active thread's cached messages into #gc-thread-messages.
   renderThread(opts) {
     const a = GroupChat.activeThread;

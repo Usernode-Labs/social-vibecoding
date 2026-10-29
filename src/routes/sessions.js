@@ -108,6 +108,9 @@ async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId, { al
             cs.freshness_error, cs.check_phase, cs.check_trigger, cs.checks_progress,
             cs.platform_env_state, cs.platform_env_detail,
             cs.check_error_detail, cs.requires_explicit_approval,
+            cs.imported_pr_base_ref, cs.waits_for_session_id,
+            (SELECT jsonb_build_object('id', w.id, 'prNumber', w.pr_number, 'title', w.pr_title, 'status', w.status)
+               FROM chat_sessions w WHERE w.id = cs.waits_for_session_id) AS waits_for,
             (SELECT jsonb_object_agg(
                       sv.kind || '_' || sv.capture_index || '_' || sv.media,
                       jsonb_build_object(
@@ -498,7 +501,7 @@ const MANUAL_SESSION_TITLE_MAX = 256;
 // browser — are phased out. New work starts in an agent session, whose
 // Mayor creates each change through POST /api/apps/:slug/sessions on a
 // delegated grant; nothing else may create one any more (not a browser, a
-// shell cached before the switch, a CLI token, nor Global Chat's loopback),
+// shell cached before the switch, nor a CLI token),
 // and forking a chat into a new classic session is retired with them. Only
 // the creation routes read this.
 //

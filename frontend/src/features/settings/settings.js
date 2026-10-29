@@ -224,6 +224,9 @@
 
     // ── Screen state ─────────────────────────────────────────────────────
     _open: false,
+    // #5995: counts behind the menu's rows, reported by the pages' own loads.
+    _navStatus: {},
+    _navStatusPaint: false,
     // Which PAGE is showing (or would show on a viewport crossing) — a page
     // key, never a part key (see SECTIONS). It doubles as "last visited in
     // this tab": open() keeps it when it is still a visible page, so
@@ -332,8 +335,8 @@
 
       // ── AI models & usage ───────────────────────────────────────────────
       // #5994 split the old "AI & building" group, which mixed the allowance,
-      // the connectors, the agent instructions and a global chat, into this
-      // group and the next: each row is faster to find under a heading that
+      // the connectors and the agent instructions, into this group and the
+      // next: each row is faster to find under a heading that
       // says what it is about.
       // The allowance leads: it is the figure most builders open Settings to
       // find. OpenRouter follows it — the included key and the default
@@ -403,13 +406,11 @@
 
       // ── Advanced ────────────────────────────────────────────────────────
       // #5994: the features you switch on to try, at the foot of the menu
-      // rather than among the AI rows. Experimental is the page of switches;
-      // Global Chat is itself an experimental feature, with a page of its
-      // own settings. Unlike #1554's "Advanced", this group never collapses
+      // rather than among the AI rows. Experimental is the page of switches.
+      // Unlike #1554's "Advanced", this group never collapses
       // (see tests/settings-screen.test.js, "no group collapses"): it is a
       // heading like the four above it, and every row stays visible.
       { key: 'experimental', label: 'settings:nav.part.experimental', group: 'settings:nav.group.advanced' },
-      { key: 'global-chat', label: 'settings:nav.part.globalChat', group: 'settings:nav.group.advanced' },
     ],
 
     // The label of each page that holds more than one part. A page of one
@@ -435,6 +436,25 @@
       'agent-files': 'settings:nav.subtitle.agentFiles',
     },
 
+    // #5995: a small grey "Beta" label on the rows of features still being
+    // tried, keyed by page. Words, not a colour: at most one per row.
+    TAGS: {
+      experimental: 'settings:nav.tag.beta',
+    },
+
+    // #5995: how much is set up behind a row, said in words at its trailing
+    // edge ("2 linked"), keyed by page: [message, the counts summed]. The
+    // counts come from the lists the pages already load when Settings opens
+    // (_setNavStatus); a count never reported, or a zero, shows nothing.
+    // Connectors & CLI counts the connected chat apps alone: that list is
+    // active grants only, while the CLI list is paged credential history
+    // (revoked and expired rows included), so it cannot give a whole count.
+    STATUS: {
+      'linked-accounts': ['settings:nav.status.linked', ['socialIdentities']],
+      phones: ['settings:nav.status.linked', ['phones']],
+      connectors: ['settings:nav.status.connected', ['connectors']],
+    },
+
     // Extra words the nav's filter box matches for each part, beyond its own
     // label and its page's. Lower case, space separated: the words people
     // type for a thing, not the words the pane uses for it.
@@ -454,7 +474,6 @@
       connectors: 'settings:nav.keywords.connectors',
       cli: 'settings:nav.keywords.cli',
       'agent-files': 'settings:nav.keywords.agentFiles',
-      'global-chat': 'settings:nav.keywords.globalChat',
       experimental: 'settings:nav.keywords.experimental',
       theme: 'settings:nav.keywords.theme',
       'dev-console': 'settings:nav.keywords.devConsole',
@@ -1345,6 +1364,47 @@
       };
     },
 
+    // #5995: a page's load reports how many things it lists. Only a success
+    // reports; a failed or missing list leaves the row without a count.
+    //
+    // The repaint is DEFERRED to a microtask, never run inline: a React pane
+    // reports from an effect (./sections/linked-phones.tsx), and the nav
+    // store flushes synchronously (flushSync), which React refuses inside an
+    // effect with a console error. Several reports in one tick paint once.
+    _setNavStatus(key, count) {
+      const next = Number.isFinite(count) && count >= 0 ? count : null;
+      const prev = Object.prototype.hasOwnProperty.call(Settings._navStatus, key) ? Settings._navStatus[key] : null;
+      if (next === prev) return;
+      if (next === null) delete Settings._navStatus[key];
+      else Settings._navStatus[key] = next;
+      if (Settings._navStatusPaint) return;
+      Settings._navStatusPaint = true;
+      Promise.resolve().then(() => {
+        Settings._navStatusPaint = false;
+        if (Settings._open) Settings._renderNav();
+      });
+    },
+
+    // The trailing words for a page's row: '' when it counts nothing, when no
+    // count has arrived yet, or when the sum is zero. Zero says nothing.
+    _navStatusText(pageKey) {
+      const entry = Settings.STATUS[pageKey];
+      if (!entry) return '';
+      const [id, keys] = entry;
+      let count = 0;
+      for (const k of keys) {
+        if (Object.prototype.hasOwnProperty.call(Settings._navStatus, k)) count += Settings._navStatus[k];
+      }
+      return count > 0 ? tr(id, { count }) : '';
+    },
+
+    // The trailing extras both nav hosts draw on a row: a status phrase and a
+    // tag. A row with a tag shows only the tag (one thing on a row's edge).
+    _navExtras(pageKey) {
+      const tag = Settings.TAGS[pageKey] ? tr(Settings.TAGS[pageKey]) : '';
+      return { tag, status: tag ? '' : Settings._navStatusText(pageKey) };
+    },
+
     // Desktop sidebar rows, grouped under headings — one row per PAGE.
     //
     // A DESCRIPTOR, not HTML, since #1191 slice 6 conversion 8 —
@@ -1375,6 +1435,7 @@
           + (p.key === active
             ? 'font-semibold bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)] shadow-[inset_0_0_0_1px_var(--lit-line)]'
             : 'font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
+        ...Settings._navExtras(p.key),
         ...Settings._filterTerms(p),
       });
       return Settings._groupedSections().map((g, i) => ({
@@ -1398,6 +1459,7 @@
           key: p.key,
           label: Settings.str(p.label),
           subtitle: Settings.SUBTITLES[p.key] ? tr(Settings.SUBTITLES[p.key]) : '',
+          ...Settings._navExtras(p.key),
           ...Settings._filterTerms(p),
         })),
       }));
@@ -2120,6 +2182,7 @@
           // The connector surface is production-only; hide rather than
           // showing a section that can't work here.
           section.classList.add('hidden');
+          this._setNavStatus('connectors', null);
           return;
         }
         if (!response.ok) throw new Error(tr('settings:connectors.load.failed'));
@@ -2129,10 +2192,13 @@
         }
         section.classList.remove('hidden');
         this._connectors = data.connectors;
+        this._setNavStatus('connectors', data.connectors.length);
         this._connectorHint = data.hint || null;
         this._renderConnectors();
       } catch (err) {
         if (loadId !== this._connectorLoadId) return;
+        // A failed reload says nothing rather than an old count.
+        this._setNavStatus('connectors', null);
         this._publishConnectors({ phase: 'idle', connectors: [] });
         status.textContent = err.message || tr('settings:connectors.load.failed');
         status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
@@ -2335,6 +2401,7 @@
         });
         if (response.status === 404) {
           section.classList.add('hidden');
+          this._setNavStatus('socialIdentities', null);
           return;
         }
         if (!response.ok) throw new Error(`Social identity request failed (${response.status})`);
@@ -2347,8 +2414,12 @@
         // calls _loadGithubLink after attribution changes. The value is now
         // the provider-neutral response.
         this._githubLink = data;
+        this._setNavStatus('socialIdentities', ['github', 'x']
+          .filter((provider) => data.providers[provider] && data.providers[provider].linked).length);
         this._renderGithubLink();
       } catch {
+        // A failed reload says nothing rather than an old count.
+        this._setNavStatus('socialIdentities', null);
         this._publishSocialIdentity({
           phase: 'error',
           message: tr('settings:socialIdentity.load.failed'),

@@ -728,6 +728,9 @@ module.exports = {
   dbNameOf,
   view,
   createProject,
+  // A test seam: preview-projects-source-repo.test.js runs a real build's
+  // source push and fetch through it.
+  runBuild,
   startBuild,
   startDeploy,
   restart,

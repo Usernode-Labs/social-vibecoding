@@ -42,9 +42,12 @@ export interface Job {
 // started, not by when its release was first seen, so a rollback to an older
 // build, or a rollout of the same build with another configuration, is the
 // newest once it serves. A platform with no process recorded (a test) has no
-// older build.
+// older build. A process is recorded from its start (services/processes.js
+// start, before its boot's own retirement), so a newer build is the newest
+// while it still boots. The runtime asks the same for the work only the
+// newest build claims (platform.ts newest, WorkHandler.newestOnly).
 const LIVE_SECONDS = 45;
-async function newestBuild(pool: any): Promise<boolean> {
+export async function newestBuild(pool: any): Promise<boolean> {
   const own = String(process.env.GIT_SHA || '').trim().slice(0, 40) || null;
   const { rows: [newest] } = await pool.query(
     `SELECT release FROM platform_processes
@@ -169,13 +172,6 @@ export const JOBS: readonly Job[] = Object.freeze([
     // dispatched them.
     name: 'local-agent-leases', everyMs: MIN,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/local-agent').sweepExpiredLeases(pool).then((n: number) => ({ released: n })),
-  },
-  {
-    // Global Chat usage a turn never settled (its request's process went
-    // mid-call): an error at its estimate, once no turn could still settle
-    // it (services/global-chat/accounting.js).
-    name: 'global-chat-usage-settle', everyMs: 15 * MIN,
-    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/global-chat/accounting').settleAbandonedReservations(pool),
   },
   {
     // A coding record no work item holds (the old orphan sweep's and
@@ -596,8 +592,16 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { config }: JobDeps) => legacy('services/staging-reap').tellStaleEnv(config),
   },
   {
+    // The platform's previews made under another data policy than this
+    // build's, retired (its result is the web's readiness proof). Then the
+    // ones a checks run is going against whose runtime is gone (this run's
+    // retirement or a boot's took it) are reported lost, so the machine
+    // rebuilds them rather than check a runtime that is gone.
     name: 'preview-data-policy', everyMs: MIN, leaseMs: 10 * MIN, newestOnly: true,
-    run: (_ctx: WorkContext, { config, pool, previewRetirement }: JobDeps) => legacy('services/platform-preview-startup').check(config, pool, previewRetirement),
+    run: async (ctx: WorkContext, { config, pool, previewRetirement }: JobDeps) => {
+      const startup = legacy('services/platform-preview-startup');
+      return startup.tellRetired(config, await startup.check(config, pool, previewRetirement), { signal: ctx.signal });
+    },
   },
   {
     // Staging databases nothing can reach any more (no session, build or

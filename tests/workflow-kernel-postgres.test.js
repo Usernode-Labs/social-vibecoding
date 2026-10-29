@@ -11,6 +11,7 @@ const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime, defineMachine, inspect, NONE, ok, reject } = require('../src/workflow/kernel/index.ts');
 const { CLAIM_LOCKS, PURGE_LOCK } = require('../src/workflow/kernel/services.ts');
+const { waitFor } = require('./lib/wait-for');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -225,7 +226,18 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     });
     const send = (key, payload, requestKey) => r.append(machine, key, { type: 'Shout', payload },
       { requestKey: requestKey || `push-${++seq}`, source: { kind: 'route' }, actor: 'user:1', appId: 7 });
-    const settle = async () => { await r.drain(); await sleep(150); };
+    // Notifications arrive in commit order: one of our own sent after the
+    // drain is heard only once everything the drain published has been, so
+    // wait for it and drop it, leaving only what the events themselves said.
+    let settleMark = 0;
+    const settle = async () => {
+      await r.drain();
+      const control = { control: ++settleMark };
+      await pool.query('SELECT pg_notify($1, $2)', ['kt_push', JSON.stringify(control)]);
+      await waitFor(() => heard.some((m) => m.control === control.control),
+        { label: 'the settle control notification to be heard after the drain' });
+      heard.splice(heard.findIndex((m) => m.control === control.control), 1);
+    };
     try {
       await r.append(machine, 'kp', { type: 'Create', payload: {} }, { requestKey: 'kp-create', source: { kind: 'route' }, appId: 7 });
       await r.append(machine, 'kpx', { type: 'Create', payload: {} }, { requestKey: 'kpx-create', source: { kind: 'route' }, appId: 7 });
@@ -393,9 +405,11 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
       await holder.query('ROLLBACK');
       holder.release();
     }
-    await sleep(600);
-    await quick.drain();
-    const row = await inst('k16-wait');
+    const row = await waitFor(async () => {
+      await quick.drain();
+      const w = await inst('k16-wait');
+      return w.flag === null ? w : null;
+    }, { label: 'the stalled event\'s backoff to pass and its retry to succeed' });
     assert.equal(row.flag, null, 'success clears the stall');
     assert.equal(Number(row.version), 2);
   });
@@ -431,9 +445,10 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.deepEqual([(await event(created)).status, (await event(created)).attempts], ['pending', 1]);
     assert.deepEqual([(await born('b1')).state, (await born('b1')).flag, Number((await born('b1')).version)], [NONE, 'stalled', 0]);
     await flag('birth-slow', false);
-    await sleep(600);
-    await slow.drain();
-    assert.equal((await event(created)).result, 'accepted');
+    await waitFor(async () => {
+      await slow.drain();
+      return (await event(created)).result === 'accepted';
+    }, { label: 'the timed-out creation\'s backoff to pass and its retry to be accepted' });
     assert.deepEqual([(await born('b1')).state, (await born('b1')).flag, Number((await born('b1')).version)], ['alive', null, 1]);
     // A throw: faulted, later events held, and a retry creates it as if nothing happened.
     const r = make({ machine: birth });
@@ -463,7 +478,11 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
         { requestKey: 'k15-new-a', source: { kind: 'route' }, db: caller });
       const b = await route('k15-new', 'Create', { start: 2, sleepMs: 400 });
       const first = rt.processNext();          // takes B (A is not visible yet) and sleeps in its facts
-      await sleep(100);
+      // B is being applied inside its facts' pg_sleep only now: COMMIT then
+      // lands while that head holds the instance it is about to create.
+      await waitFor(async () => (await pool.query(
+        `SELECT 1 FROM pg_stat_activity WHERE state = 'active' AND query LIKE '%pg_sleep%' AND pid <> pg_backend_pid()`
+      )).rows.length > 0, { label: 'the new instance\'s head to be copying inside pg_sleep' });
       await caller.query('COMMIT');
       const late = second.processNext();       // takes A, the head now
       await Promise.all([first, late]);
@@ -490,7 +509,10 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
         { requestKey: 'k1-late-add', source: { kind: 'route' }, actor: 'user:1', db: caller });
       const original = await route('k1-late', 'Add', { n: 1, sleepMs: 400 }, { requestKey: 'k1-late-add' });
       const first = rt.processNext();
-      await sleep(100);
+      // The original is applying inside pg_sleep when the copy is committed.
+      await waitFor(async () => (await pool.query(
+        `SELECT 1 FROM pg_stat_activity WHERE state = 'active' AND query LIKE '%pg_sleep%' AND pid <> pg_backend_pid()`
+      )).rows.length > 0, { label: 'the original\'s head to be copying inside pg_sleep' });
       await caller.query('COMMIT');
       await Promise.all([first, second.processNext()]);
       assert.equal((await event(original)).result, 'accepted');
@@ -602,7 +624,10 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await route('k7', 'Work', { workKey: 'k7-w' });
     await rt.drain();
     const run = rt.runServices();
-    await sleep(100);
+    // Its checkpoint is the step it had done when its lease is taken away.
+    await waitFor(async () => (await pool.query(
+      `SELECT checkpoint->>'step' AS step FROM wf_work WHERE work_key = 'k7-w'`)).rows[0]?.step === 'submitted',
+    { label: 'the handler to checkpoint its step' });
     await pool.query(`UPDATE wf_work SET lease_until = now() - interval '1 second' WHERE work_key = 'k7-w'`);
     release();
     await run;
@@ -649,6 +674,8 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
       // Held: the slot's picks wait while `picks` is set; it polls every 1 ms.
       let picks = null;
       let letPicksGo = () => {};
+      let pickReached = () => {};
+      const pickHeld = new Promise((resolve) => { pickReached = resolve; });
       const own = held ? new Pool({ connectionString: String(url), max: 4 }) : null;
       const wrapped = new WeakSet();
       const heldPool = held && new Proxy(own, {
@@ -660,7 +687,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
                 wrapped.add(c);
                 const query = c.query.bind(c);
                 c.query = async (...a) => {
-                  if (picks && typeof a[0] === 'string' && a[0].includes('WITH pick AS')) await picks;
+                  if (picks && typeof a[0] === 'string' && a[0].includes('WITH pick AS')) { pickReached(); await picks; }
                   return query(...a);
                 };
               }
@@ -673,15 +700,17 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
       });
       const r = make({ slots: 1, ...(held ? { pool: heldPool, pollMs: 1 } : {}) });
       await r.start({ loops: true, slots: false });
-      while (started.size < 2) await sleep(20);
+      await waitFor(() => started.size >= 2, { label: 'both handlers to start' });
       if (held) {
         picks = new Promise((resolve) => { letPicksGo = resolve; });
-        await sleep(30); // its slot is now in a pick
+        await pickHeld; // its slot is now in a pick
       }
       const stopped = r.stop();
       release();
       if (held) {
-        while ((await pool.query('SELECT status FROM wf_work WHERE work_key = $1', [`${key}-done`])).rows[0].status === 'running') await sleep(10);
+        await waitFor(async () => (await pool.query(
+          'SELECT status FROM wf_work WHERE work_key = $1', [`${key}-done`])).rows[0].status !== 'running',
+        { label: 'the finished result to be in before the held pick may apply it' });
         letPicksGo();
       }
       await stopped;
@@ -736,14 +765,19 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
         WHERE id = (SELECT claim_id FROM w) AND outcome = 'running'`, [workKey]);
     for (let i = 0; i < 3; i++) {
       // As the service loop does: claim again until a slot is free and the item is due.
-      while (seen.length < i + 1) { void r.runServices(); await sleep(50); }
+      await waitFor(() => { void r.runServices(); return seen.length >= i + 1; },
+        { label: `k7r attempt ${i + 1} to start`, everyMs: 50 });
+      // Its checkpoint is in before the attempt is taken from it.
+      await waitFor(async () => (await pool.query(
+        `SELECT checkpoint->>'step' AS step FROM wf_work WHERE work_key = 'k7r-w'`)).rows[0]?.step === String(i + 1),
+      { label: `k7r attempt ${i + 1} to checkpoint its step` });
       await stopped('k7r-w');
     }
     // Three lost attempts and maxAttempts 2: a plain handler would be exhausted by now.
-    while ((await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7r-w'`)).rows[0].status === 'running') {
+    await waitFor(async () => {
       await r.runServices();
-      await sleep(50);
-    }
+      return (await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7r-w'`)).rows[0].status !== 'running';
+    }, { label: 'k7r to report' });
     let item = (await pool.query(`SELECT * FROM wf_work WHERE work_key = 'k7r-w'`)).rows[0];
     assert.equal(item.status, 'reported');
     assert.equal(item.attempt_count, 4);
@@ -760,13 +794,14 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await route('k7x', 'Work', { workKey: 'k7x-w' });
     await rt.drain();
     for (let i = 0; i < 4; i++) {
-      while (tries < i + 1) { void r.runServices(); await sleep(50); }
+      await waitFor(() => { void r.runServices(); return tries >= i + 1; },
+        { label: `k7x attempt ${i + 1} to start`, everyMs: 50 });
       await stopped('k7x-w');
     }
-    while ((await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7x-w'`)).rows[0].status === 'running') {
+    await waitFor(async () => {
       await r.runServices();
-      await sleep(50);
-    }
+      return (await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7x-w'`)).rows[0].status !== 'running';
+    }, { label: 'k7x to run out of attempts' });
     await rt.drain();
     item = (await pool.query(`SELECT * FROM wf_work WHERE work_key = 'k7x-w'`)).rows[0];
     assert.equal(item.status, 'settled');
@@ -788,13 +823,14 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await route('k7q', 'Work', { workKey: 'k7q-w' });
     await rt.drain();
     for (let i = 0; i < 3; i++) {
-      while (runs < i + 1) { void r.runServices(); await sleep(50); }
+      await waitFor(() => { void r.runServices(); return runs >= i + 1; },
+        { label: `k7q attempt ${i + 1} to start`, everyMs: 50 });
       await lapse('k7q-w');
     }
-    while ((await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7q-w'`)).rows[0].status !== 'reported') {
+    await waitFor(async () => {
       await r.runServices();
-      await sleep(50);
-    }
+      return (await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k7q-w'`)).rows[0].status === 'reported';
+    }, { label: 'k7q to report' });
     await rt.drain();
     assert.equal(runs, 4, 'three lapses in a row, and it still runs');
     assert.deepEqual((await inst('k7q')).data.results.map((x) => x.slice(0, 2)), [['ok', 'k7q-w']]);
@@ -825,7 +861,10 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await route('k7f', 'Work', { workKey: 'k7f-w' });
     await rt.drain();
     const running = r.runServices();
-    while (!(await pool.query(`SELECT 1 FROM wf_work WHERE work_key = 'k7f-w' AND status = 'running'`)).rows.length) await sleep(20);
+    await waitFor(async () => (await pool.query(
+      `SELECT 1 FROM wf_work WHERE work_key = 'k7f-w' AND status = 'running'`)).rows.length > 0,
+    { label: 'the work item to be running' });
+    // fixed wait: lease renewals must have run before renewing fails
     await sleep(250);
     failRenew = true;
     const { rows: [{ lease_until: until }] } = await pool.query(`SELECT lease_until FROM wf_work WHERE work_key = 'k7f-w'`);
@@ -860,6 +899,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
       try {
         while (Date.now() < stopAt && !ctx.signal.aborted) {
           await ctx.checkpoint({ at: Date.now() });
+          // fixed wait: work spanning several 800 ms lease periods, step by step
           await sleep(100);
         }
         return { done: true };
@@ -880,6 +920,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
         assert.equal(w.live, true, 'the lease holds while its handler runs');
         checks += 1;
       }
+      // fixed wait: a fixed-interval sample of the lease while the handler runs
       await sleep(40);
     }
     await running;
@@ -916,7 +957,11 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     let aborted = false;
     handlers['k18-run'] = async (ctx) => {
       started();
-      while (!ctx.signal.aborted) await sleep(20);
+      // Runs until its signal aborts: the cancel, not a poll, ends it.
+      await new Promise((resolve) => {
+        if (ctx.signal.aborted) resolve();
+        else ctx.signal.addEventListener('abort', resolve, { once: true });
+      });
       aborted = true;
       return { late: true };
     };
@@ -1075,13 +1120,13 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await r.start({ loops: true });
     try {
       await route('k11-wake', 'Create');
-      await sleep(300);  // the loop has looked and gone to sleep, a minute away at the earliest
+      // fixed wait: the loop must have looked and gone back to sleep (a minute away at the earliest) before the deadline is set
+      await sleep(300);
       const started = Date.now();
       await route('k11-wake', 'Arm', { ms: 700 });
-      while (!(await inst('k11-wake'))?.data?.ticks) {
-        assert.ok(Date.now() - started < 5000, 'fired by its own announcement, not the 60 s fallback');
-        await sleep(50);
-      }
+      await waitFor(async () => (await inst('k11-wake'))?.data?.ticks, {
+        label: 'the timer to fire from its own announcement, not the 60 s fallback', timeoutMs: 5000,
+      });
       assert.ok(Date.now() - started >= 600, 'not before it was due');
     } finally {
       await r.stop();
@@ -1098,16 +1143,17 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await b.start({ loops: true });
     // A drain that runs out of time says what held it (an event in backoff,
     // or an instance a fault or a stall flagged), not just that it did.
-    const deadline = Date.now() + 30000;
-    for (;;) {
-      const { rows: left } = await pool.query(
-        `SELECT e.key, e.type, e.attempts, e.retry_at, e.error, i.flag, i.flag_detail FROM wf_events e
-           LEFT JOIN wf_instances i ON i.machine = e.machine AND i.key = e.key
-          WHERE e.key LIKE 'k15-%' AND e.status <> 'processed' ORDER BY e.id`);
-      if (!left.length) break;
-      assert.ok(Date.now() < deadline, `events drained; ${left.length} left, first: ${JSON.stringify(left.slice(0, 3))}`);
-      await sleep(50);
-    }
+    const leftRows = async () => (await pool.query(
+      `SELECT e.key, e.type, e.attempts, e.retry_at, e.error, i.flag, i.flag_detail FROM wf_events e
+         LEFT JOIN wf_instances i ON i.machine = e.machine AND i.key = e.key
+        WHERE e.key LIKE 'k15-%' AND e.status <> 'processed' ORDER BY e.id`)).rows;
+    await waitFor(async () => !(await leftRows()).length, {
+      label: 'the events to drain', timeoutMs: 30000, everyMs: 50,
+      detail: async () => {
+        const left = await leftRows();
+        return `${left.length} left, first: ${JSON.stringify(left.slice(0, 3))}`;
+      },
+    });
     await a.stop();
     await b.stop();
     for (const key of keys) {
@@ -1140,7 +1186,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await a.start({ loops: true });
     await b.start({ loops: true });
     // One process quiesces with its items running (a release's drain): they still count.
-    await sleep(500);
+    await waitFor(() => gate.length === 2, { label: 'both processes to have an item running' });
     await a.quiesce();
     const deadline = Date.now() + 20000;
     let done = 0;
@@ -1150,6 +1196,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
         `SELECT count(*)::int AS n FROM wf_work WHERE key = 'k20' AND status = 'running' AND lease_until > now()`)).rows[0].n;
       assert.ok(running <= 2, `at most two running across both processes (saw ${running})`);
       if (gate.length) { gate.shift()(); done += 1; }
+      // fixed wait: it gives the other process time to try to exceed the limit
       await sleep(150);
     }
     assert.equal(most, 2, 'two at once, never more');
@@ -1181,28 +1228,29 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await rt.drain();
     await r.start({ loops: true });
     try {
-      while (gates.size < 1) await sleep(20);
+      await waitFor(() => gates.size >= 1, { label: 'the first item to run' });
+      // fixed wait: the claim count is measured over this window
       await sleep(300);
       const before = claims;
+      // fixed wait: the claim count is measured over this window
       await sleep(1500);
       assert.ok(claims - before <= 1, `a full kind is left alone (claimed ${claims - before} times in 1.5 s)`);
       const first = [...gates.keys()][0];
-      const ended = Date.now();
       gates.get(first)();
-      while (gates.size < 2) {
-        assert.ok(Date.now() - ended < 3000, 'the next item is claimed as soon as one ends');
-        await sleep(20);
-      }
+      await waitFor(() => gates.size >= 2, {
+        label: 'the next item to be claimed as soon as one ends', timeoutMs: 3000,
+      });
     } finally {
       for (const g of gates.values()) g();
       await r.stop();
     }
     // What it left (a stop gives the leases up) finishes, so no later test meets it.
     for (const key of keys) handlers[key] = async () => ({ done: key });
-    while ((await pool.query(`SELECT count(*)::int AS n FROM wf_work WHERE key = 'k20f' AND status IN ('queued', 'running')`)).rows[0].n) {
+    await waitFor(async () => {
       await rt.runServices();
-      await sleep(20);
-    }
+      return (await pool.query(
+        `SELECT count(*)::int AS n FROM wf_work WHERE key = 'k20f' AND status IN ('queued', 'running')`)).rows[0].n === 0;
+    }, { label: 'the items it left to finish' });
     await rt.drain();
   });
 
@@ -1332,7 +1380,11 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
       { requestKey: 'k17r-b', source: { kind: 'route' }, actor: 'user:1', waitMs: 50 });
     assert.equal(slow.status, 'pending');
     const deciding = rt.drain();
-    await sleep(200);
+    // The slot is inside the event's pg_sleep, so its row is decided under
+    // the refusal below.
+    await waitFor(async () => (await pool.query(
+      `SELECT 1 FROM pg_stat_activity WHERE state = 'active' AND query LIKE '%pg_sleep%' AND pid <> pg_backend_pid()`
+    )).rows.length > 0, { label: 'the deciding head to be copying inside pg_sleep' });
     const answer = await rt.refuseIfPending(slow.eventId, 'expired');
     await deciding;
     assert.equal(answer.status, 'accepted', 'the decision under way, not a refusal');
