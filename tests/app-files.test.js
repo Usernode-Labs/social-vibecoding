@@ -1,11 +1,12 @@
 // Tests for the app file-storage service (#752, src/services/app-files.js):
-// the pure image validation + quota logic, and the write/delete ordering
-// contracts against a fake pool and a fake object store (no Postgres, no
-// MinIO). Contracts pinned here:
+// the pure image/audio validation + quota logic, and the write/delete
+// ordering contracts against a fake pool and a fake object store (no
+// Postgres, no MinIO). Contracts pinned here:
 //
-//  - images only, magic-byte sniffed, extension must match the bytes;
-//  - the 5 MB file cap and the app/user/staging quota caps with their
-//    structured error codes;
+//  - images and audio only, magic-byte sniffed, extension must match
+//    the bytes (audio: Ogg/Opus and MP3);
+//  - the per-kind size caps (5 MB images, 25 MB audio) and the
+//    app/user/staging quota caps with their structured error codes;
 //  - upload writes the OBJECT first and rolls it back if the metadata
 //    INSERT fails (no orphaned rows pointing at nothing);
 //  - delete removes the OBJECT first and keeps the row when that fails
@@ -24,6 +25,16 @@ const PNG = Buffer.concat([
   Buffer.alloc(16, 1),
 ]);
 const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(16, 1)]);
+// An Ogg page whose identification header (inside the first 64 bytes)
+// names Opus.
+const OPUS = Buffer.concat([
+  Buffer.from('OggS'), Buffer.alloc(20, 0), Buffer.from('OpusHead'), Buffer.alloc(20, 0),
+]);
+// An Ogg page that carries no Opus identification header (Vorbis, say).
+const OGG_NO_OPUS = Buffer.concat([Buffer.from('OggS'), Buffer.alloc(40, 0)]);
+const MP3_ID3 = Buffer.concat([Buffer.from('ID3'), Buffer.alloc(32, 0)]);
+// A bare MPEG Layer III frame sync (0xFF 0xFB is the common MP3 one).
+const MP3_FRAME = Buffer.concat([Buffer.from([0xff, 0xfb, 0x90, 0x64]), Buffer.alloc(32, 0)]);
 
 // ── validateImageUpload ─────────────────────────────────────────────
 
@@ -67,11 +78,84 @@ test('rejects empty files and bad filenames', () => {
   assert.equal(appFiles.validateImageUpload({ filename: 'x'.repeat(300) + '.png', data: PNG }).ok, false);
 });
 
-test('rejects oversized files with file_too_large', () => {
+test('rejects oversized images with file_too_large', () => {
   const big = Buffer.concat([PNG, Buffer.alloc(appFiles.MAX_FILE_BYTES, 1)]);
   const v = appFiles.validateImageUpload({ filename: 'big.png', data: big });
   assert.equal(v.ok, false);
   assert.equal(v.code, 'file_too_large');
+  assert.match(v.error, /Image too large \(max 5 MB\)/);
+});
+
+// ── audio validation ────────────────────────────────────────────────
+
+test('accepts Opus audio under .opus and .ogg', () => {
+  for (const name of ['narration.opus', 'narration.ogg']) {
+    const v = appFiles.validateUpload({ filename: name, data: OPUS });
+    assert.equal(v.ok, true, name);
+    assert.equal(v.contentType, 'audio/ogg');
+  }
+});
+
+test('accepts MP3 with an ID3 tag and with a bare Layer III frame sync', () => {
+  for (const data of [MP3_ID3, MP3_FRAME]) {
+    const v = appFiles.validateUpload({ filename: 'narration.mp3', data });
+    assert.equal(v.ok, true);
+    assert.equal(v.contentType, 'audio/mpeg');
+  }
+});
+
+test('rejects Ogg without an Opus header', () => {
+  const v = appFiles.validateUpload({ filename: 'narration.ogg', data: OGG_NO_OPUS });
+  assert.equal(v.ok, false);
+  assert.equal(v.code, 'invalid_audio');
+  assert.match(v.error, /doesn't look like valid Opus or MP3 audio/);
+});
+
+test('rejects image bytes named as audio', () => {
+  const v = appFiles.validateUpload({ filename: 'narration.opus', data: PNG });
+  assert.equal(v.ok, false);
+  assert.equal(v.code, 'invalid_audio');
+});
+
+test('rejects audio bytes whose extension names the other audio format', () => {
+  // Ogg/Opus bytes named .mp3.
+  const v = appFiles.validateUpload({ filename: 'narration.mp3', data: OPUS });
+  assert.equal(v.ok, false);
+  assert.equal(v.code, 'invalid_audio');
+  assert.match(v.error, /extension doesn't match its actual audio format/);
+});
+
+test('sniffAudioType returns null for JPEG bytes and empty input', () => {
+  assert.equal(appFiles.sniffAudioType(JPEG), null);
+  assert.equal(appFiles.sniffAudioType(Buffer.alloc(0)), null);
+});
+
+test('accepts a 6 MB audio file, still under the 25 MB audio cap', () => {
+  const sixMb = Buffer.concat([OPUS, Buffer.alloc(6 * 1024 * 1024, 0)]);
+  const v = appFiles.validateUpload({ filename: 'narration.opus', data: sixMb });
+  assert.equal(v.ok, true);
+  assert.equal(v.contentType, 'audio/ogg');
+});
+
+test('rejects audio over 25 MB with file_too_large', () => {
+  const tooBig = Buffer.concat([OPUS, Buffer.alloc(appFiles.MAX_AUDIO_FILE_BYTES, 0)]);
+  const v = appFiles.validateUpload({ filename: 'narration.mp3', data: tooBig });
+  assert.equal(v.ok, false);
+  assert.equal(v.code, 'file_too_large');
+  assert.match(v.error, /Audio too large \(max 25 MB\)/);
+});
+
+test('unknown extensions are still invalid_image', () => {
+  for (const name of ['narration.wav', 'narration.txt']) {
+    const v = appFiles.validateUpload({ filename: name, data: OPUS });
+    assert.equal(v.ok, false, name);
+    assert.equal(v.code, 'invalid_image');
+  }
+});
+
+test('UPLOAD_BODY_LIMIT sits above the audio file cap', () => {
+  const bytes = parseInt(appFiles.UPLOAD_BODY_LIMIT, 10) * 1024 * 1024;
+  assert.ok(bytes > appFiles.MAX_AUDIO_FILE_BYTES);
 });
 
 // ── quotaVerdict ────────────────────────────────────────────────────
@@ -82,14 +166,16 @@ test('quota verdict: fits under all caps', () => {
   }), null);
 });
 
-test('quota verdict: per-app cap (2 GB)', () => {
+test('quota verdict: per-app cap (10 GB)', () => {
+  assert.equal(appFiles.PER_APP_CAP, 10 * 1024 * 1024 * 1024);
   const v = appFiles.quotaVerdict({
     size: 1000, appBytes: appFiles.PER_APP_CAP - 10, userBytes: 0, stagingBytes: 0, staging: false,
   });
   assert.equal(v.code, 'app_quota_exceeded');
 });
 
-test('quota verdict: per-user cap (200 MB)', () => {
+test('quota verdict: per-user cap (1 GB)', () => {
+  assert.equal(appFiles.PER_USER_PER_APP_CAP, 1 * 1024 * 1024 * 1024);
   const v = appFiles.quotaVerdict({
     size: 1000, appBytes: 0, userBytes: appFiles.PER_USER_PER_APP_CAP - 10, stagingBytes: 0, staging: false,
   });
@@ -171,6 +257,19 @@ test('storeAppFile: object then row, returns the file shape', async () => {
   assert.match(r.file.url, /\/app-files\//);
   assert.deepEqual(store.ops[0].slice(0, 2), ['put', 7]);
   assert.ok(pool.calls.some((c) => /INSERT INTO app_files/.test(c.sql)));
+});
+
+test('storeAppFile: stores an MP3 as audio/mpeg', async () => {
+  const pool = fakePool();
+  const store = fakeStore();
+  const r = await appFiles.storeAppFile(pool, store, {
+    appId: 7, userId: 5, filename: 'narration.mp3', visibility: 'public', staging: false, data: MP3_ID3,
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.file.contentType, 'audio/mpeg');
+  assert.equal(store.ops[0][3], 'audio/mpeg');
+  const insert = pool.calls.find((c) => /INSERT INTO app_files/.test(c.sql));
+  assert.equal(insert.params[4], 'audio/mpeg');
 });
 
 test('storeAppFile: failed INSERT rolls the object back', async () => {

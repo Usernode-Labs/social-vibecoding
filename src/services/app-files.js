@@ -1,10 +1,10 @@
 'use strict';
 
-// App file storage (#752): user-uploaded images apps store through the
-// platform. Bytes live in the MinIO object-store sidecar (compose
-// service `usernode-minio`, reachable only from the platform over the
-// internal `usernode-storage` network); Postgres's `app_files` table
-// holds metadata only (ownership, quotas, visibility).
+// App file storage (#752): user-uploaded images and audio apps store
+// through the platform. Bytes live in the MinIO object-store sidecar
+// (compose service `usernode-minio`, reachable only from the platform
+// over the internal `usernode-storage` network); Postgres's `app_files`
+// table holds metadata only (ownership, quotas, visibility).
 //
 // Layout mirrors services/attachments.js: everything that doesn't take
 // a `pool` or a `store` is PURE so tests/app-files.test.js can exercise
@@ -17,21 +17,29 @@ const { sniffImageType, fileExt } = require('./attachments');
 const log = require('./logger');
 
 // ── Limits ──────────────────────────────────────────────────────────
-// v1 accepts images only (the issue's scope). 5 MB fits phone JPEGs;
-// there is deliberately no server-side resizing (that would need a
-// native dep like sharp) — apps should downscale client-side.
+// Images stay at 5 MB: that fits phone JPEGs, and there is deliberately
+// no server-side resizing (that would need a native dep like sharp) —
+// apps should downscale large camera photos client-side.
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
+// Server-generated narration is longer: 25 MB is roughly 30 minutes of
+// speech in Opus or MP3.
+const MAX_AUDIO_FILE_BYTES = 25 * 1024 * 1024;
 // Object storage removes the DB-bloat constraint, so the caps are
-// generous: ~a hundred phone photos per user per app.
-const PER_APP_CAP = 2 * 1024 * 1024 * 1024; // 2 GB
-const PER_USER_PER_APP_CAP = 200 * 1024 * 1024; // 200 MB
+// generous: images and audio share one allowance.
+const PER_APP_CAP = 10 * 1024 * 1024 * 1024; // 10 GB
+const PER_USER_PER_APP_CAP = 1 * 1024 * 1024 * 1024; // 1 GB
 // Staging-preview uploads (bridge relay path) are capped tighter and
 // GC'd by the server.js sweeper after STAGING_GC_DAYS regardless.
 const STAGING_PER_APP_CAP = 100 * 1024 * 1024; // 100 MB
 const STAGING_GC_DAYS = 7;
 
-// Mirrors attachments.js's image map (not exported there; images-only
-// v1 keeps this a 4-line duplication rather than a cross-module export).
+// The raw-body parser's limit. It must exceed MAX_AUDIO_FILE_BYTES so
+// the service's own structured size check fires before the parser's
+// PayloadTooLarge.
+const UPLOAD_BODY_LIMIT = '26mb';
+
+// Mirrors attachments.js's image map (not exported there; this keeps a
+// 4-line duplication rather than a cross-module export).
 const IMAGE_EXT_TYPES = {
   png: 'image/png',
   jpg: 'image/jpeg',
@@ -40,13 +48,41 @@ const IMAGE_EXT_TYPES = {
   webp: 'image/webp',
 };
 
+// Accepted narration extensions and what their bytes must be.
+const AUDIO_EXT_TYPES = {
+  opus: 'audio/ogg',
+  ogg: 'audio/ogg',
+  mp3: 'audio/mpeg',
+};
+
 // ── Pure validation ─────────────────────────────────────────────────
 
-// Image-only upload validation. Returns { ok: true, contentType } or
-// { ok: false, code, error } with a user-facing message. Same rules as
-// attachments.validateUpload's image branch: magic-byte sniff, never
-// trust the client's Content-Type, extension must agree with the bytes.
-function validateImageUpload({ filename, data }) {
+// Magic-byte sniff for the audio kinds app storage accepts. Returns the
+// detected content type or null; never trusts the client's Content-Type.
+//   - Ogg: the buffer opens with `OggS`, and the first page's
+//     identification header (searched within the first 64 bytes, to
+//     allow for the page's segment table) says `OpusHead`. Ogg files
+//     carrying another codec (Vorbis, say) are not accepted.
+//   - MP3: an `ID3` tag prefix, or a bare MPEG frame sync whose layer
+//     bits are Layer III. The mask keeps the sync bits and the layer
+//     bits, so JPEG's `FF D8` and AAC's ADTS sync are not matched.
+function sniffAudioType(buf) {
+  if (!Buffer.isBuffer(buf) || !buf.length) return null;
+  if (buf.length >= 4 && buf.subarray(0, 4).toString('latin1') === 'OggS') {
+    const head = buf.subarray(0, 64).toString('latin1');
+    return head.includes('OpusHead') ? 'audio/ogg' : null;
+  }
+  if (buf.length >= 3 && buf.subarray(0, 3).toString('latin1') === 'ID3') return 'audio/mpeg';
+  if (buf.length >= 2 && buf[0] === 0xff && (buf[1] & 0xe6) === 0xe2) return 'audio/mpeg';
+  return null;
+}
+
+// Upload validation for images and audio. Returns { ok: true, contentType }
+// or { ok: false, code, error } with a user-facing message. Same rules as
+// attachments.validateUpload's image branch: magic-byte sniff, never trust
+// the client's Content-Type, extension must agree with the bytes. The
+// extension picks the kind, so each kind has its own size limit.
+function validateUpload({ filename, data }) {
   const name = String(filename || '').trim();
   if (!name || name.length > 256) {
     return { ok: false, code: 'invalid_image', error: 'Bad filename (must be 1-256 characters)' };
@@ -54,17 +90,41 @@ function validateImageUpload({ filename, data }) {
   if (!Buffer.isBuffer(data) || !data.length) {
     return { ok: false, code: 'invalid_image', error: 'Empty file' };
   }
+  const ext = fileExt(name);
+  const imageType = IMAGE_EXT_TYPES[ext];
+  const audioType = AUDIO_EXT_TYPES[ext];
+  if (!imageType && !audioType) {
+    return {
+      ok: false, code: 'invalid_image',
+      error: `"${name}" isn't a supported file type (PNG, JPEG, GIF, WebP, Opus or MP3)`,
+    };
+  }
+  if (audioType) {
+    if (data.length > MAX_AUDIO_FILE_BYTES) {
+      return {
+        ok: false, code: 'file_too_large',
+        error: `Audio too large (max ${Math.round(MAX_AUDIO_FILE_BYTES / 1024 / 1024)} MB)`,
+      };
+    }
+    const sniffed = sniffAudioType(data);
+    if (!sniffed) {
+      return {
+        ok: false, code: 'invalid_audio',
+        error: `"${name}" doesn't look like valid Opus or MP3 audio`,
+      };
+    }
+    if (sniffed !== audioType) {
+      return {
+        ok: false, code: 'invalid_audio',
+        error: `"${name}" extension doesn't match its actual audio format`,
+      };
+    }
+    return { ok: true, contentType: sniffed };
+  }
   if (data.length > MAX_FILE_BYTES) {
     return {
       ok: false, code: 'file_too_large',
       error: `Image too large (max ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB)`,
-    };
-  }
-  const ext = fileExt(name);
-  if (!IMAGE_EXT_TYPES[ext]) {
-    return {
-      ok: false, code: 'invalid_image',
-      error: `"${name}" isn't a supported image type (PNG, JPEG, GIF, or WebP)`,
     };
   }
   const sniffed = sniffImageType(data);
@@ -74,7 +134,7 @@ function validateImageUpload({ filename, data }) {
       error: `"${name}" doesn't look like a valid PNG/JPEG/GIF/WebP image`,
     };
   }
-  if (sniffed !== IMAGE_EXT_TYPES[ext]) {
+  if (sniffed !== imageType) {
     return {
       ok: false, code: 'invalid_image',
       error: `"${name}" extension doesn't match its actual image format`,
@@ -82,6 +142,9 @@ function validateImageUpload({ filename, data }) {
   }
   return { ok: true, contentType: sniffed };
 }
+
+// Kept as an alias so existing callers and tests keep working.
+const validateImageUpload = validateUpload;
 
 function normalizeVisibility(raw) {
   return raw === 'private' ? 'private' : 'public';
@@ -247,7 +310,7 @@ async function storeAppFile(pool, store, { appId, userId, filename, visibility, 
   if (!store) {
     return { ok: false, status: 503, code: 'storage_unavailable', error: 'File storage is unavailable right now' };
   }
-  const verdict = validateImageUpload({ filename, data });
+  const verdict = validateUpload({ filename, data });
   if (!verdict.ok) {
     return { ok: false, status: 400, code: verdict.code, error: verdict.error };
   }
@@ -354,11 +417,16 @@ async function sweepStagingFiles(pool, store, { limit = 200 } = {}) {
 
 module.exports = {
   MAX_FILE_BYTES,
+  MAX_AUDIO_FILE_BYTES,
+  UPLOAD_BODY_LIMIT,
   PER_APP_CAP,
   PER_USER_PER_APP_CAP,
   STAGING_PER_APP_CAP,
   STAGING_GC_DAYS,
   IMAGE_EXT_TYPES,
+  AUDIO_EXT_TYPES,
+  sniffAudioType,
+  validateUpload,
   validateImageUpload,
   normalizeVisibility,
   quotaVerdict,

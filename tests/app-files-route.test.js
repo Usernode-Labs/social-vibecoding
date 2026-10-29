@@ -265,7 +265,8 @@ test('shell upload is view-gated: 404 when access denied', async () => {
 });
 
 test('shell upload surfaces quota codes', async () => {
-  poolQueryHandler = shellPoolHandler({ userBytes: 200 * 1024 * 1024 });
+  const appFiles = require('../src/services/app-files');
+  poolQueryHandler = shellPoolHandler({ userBytes: appFiles.PER_USER_PER_APP_CAP });
   const server = await startShellServer(fakeStore());
   try {
     const res = await fetch(
@@ -274,6 +275,44 @@ test('shell upload surfaces quota codes', async () => {
     );
     assert.equal(res.status, 400);
     assert.equal((await res.json()).code, 'user_quota_exceeded');
+  } finally {
+    server.close();
+  }
+});
+
+test('shell upload accepts a 6 MB MP3 through the raw parser as audio/mpeg', async () => {
+  const handler = shellPoolHandler();
+  poolQueryHandler = handler;
+  accessGrants = { view: { id: 7 } };
+  // 6 MB is over the image cap but under the audio cap, so this also
+  // pins that the route body limit was raised above the old 6mb.
+  const mp3 = Buffer.concat([Buffer.from('ID3'), Buffer.alloc(6 * 1024 * 1024, 0)]);
+  const server = await startShellServer(fakeStore());
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${server.address().port}/api/apps/demo/files?filename=narration.mp3`,
+      { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'X-Usernode-App-Bridge': 'isolated-v2' }, body: mp3 }
+    );
+    assert.equal(res.status, 200);
+    const j = await res.json();
+    assert.equal(j.contentType, 'audio/mpeg');
+    assert.equal(handler.inserts.length, 1);
+    assert.equal(handler.inserts[0][4], 'audio/mpeg');
+  } finally {
+    server.close();
+  }
+});
+
+test('serves an audio/ogg row with that Content-Type and nosniff', async () => {
+  poolQueryHandler = async () => ({
+    rows: [{ app_id: 7, filename: 'narration.ogg', content_type: 'audio/ogg', visibility: 'public' }],
+  });
+  const server = await startServeServer(fakeStore());
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/app-files/${GOOD_ID}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'audio/ogg');
+    assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
   } finally {
     server.close();
   }
@@ -320,7 +359,8 @@ test('shell delete is uploader-only (stored row belongs to user 5)', async () =>
   }
 });
 
-test('shell usage reports sums and caps', async () => {
+test('shell usage reports sums and the new caps', async () => {
+  const appFiles = require('../src/services/app-files');
   poolQueryHandler = shellPoolHandler({ appBytes: 1234, userBytes: 234 });
   const server = await startShellServer(fakeStore());
   try {
@@ -329,7 +369,10 @@ test('shell usage reports sums and caps', async () => {
     const j = await res.json();
     assert.equal(j.appBytes, 1234);
     assert.equal(j.userBytes, 234);
-    assert.ok(j.appCapBytes > j.userCapBytes);
+    assert.equal(j.appCapBytes, 10 * 1024 * 1024 * 1024);
+    assert.equal(j.userCapBytes, 1024 * 1024 * 1024);
+    assert.equal(j.appCapBytes, appFiles.PER_APP_CAP);
+    assert.equal(j.userCapBytes, appFiles.PER_USER_PER_APP_CAP);
   } finally {
     server.close();
   }

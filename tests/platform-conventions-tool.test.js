@@ -84,7 +84,7 @@ test('the slugs an agent is most likely to ask for are the obvious ones', () => 
     'proposal-tests-ci-for-proposals',
     'per-app-secrets-dapp-json',
     'app-llm-access-the-platform-claude-proxy',
-    'app-file-storage-user-uploaded-images',
+    'app-file-storage-user-uploaded-images-and-audio',
     'native-feel-ui-kit-centrally-hosted-usernode-native',
     // The one an agent must be told NOT to follow — it has to be reachable
     // for that neutralisation to make sense.

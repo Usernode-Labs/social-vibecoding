@@ -121,9 +121,9 @@ function appFileShellRoutes(config, deps = {}) {
   // guarded parent. This protocol header grants no user/app authority.
   router.use('/api/apps/:slug/files', currentAppBridge);
 
-  // Limit must exceed MAX_FILE_BYTES so the service's structured
+  // Limit must exceed MAX_AUDIO_FILE_BYTES so the service's structured
   // file_too_large error fires before the parser's PayloadTooLarge.
-  const rawBody = express.raw({ type: 'application/octet-stream', limit: '6mb' });
+  const rawBody = express.raw({ type: 'application/octet-stream', limit: appFiles.UPLOAD_BODY_LIMIT });
 
   // Upload on behalf of the app iframe. Uploading requires the same
   // access as using the app ('view'); 404 on deny so private apps

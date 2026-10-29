@@ -115,7 +115,7 @@ Ordered by how badly an agent working offline gets each one wrong.
    forwarded iframe token, billed to their own budget under a consent
    grant. Uploads go through `usernode.uploadFile()` (bridge) or
    `USERNODE_STORAGE_URL` (server); persist the returned URL, never
-   image bytes in Postgres. Both are absent in staging — detect and
+   file bytes in Postgres. Both are absent in staging — detect and
    degrade. App-directory reads use `USERNODE_PLATFORM_API_V1_URL`,
    never a hardcoded host. Handle checks use `usernode.lookupUser()` /
    `searchUsers()` — never a guess from users your app has already seen.
@@ -1894,14 +1894,14 @@ platform's Settings → "App AI permissions"; revocation is immediate,
 so treat `grant_required` as a state that can appear at any time, not
 just on first use.
 
-## App file storage — user-uploaded images
+## App file storage — user-uploaded images and audio
 
 Apps that let users upload photos (avatars, "here's how mine turned
-out" shots, attachment images) store them **platform-side** and
-persist only the returned URL in their own database. **Never store
-image bytes in your Postgres DB** (base64/bytea columns bloat the DB
-and its staging clones) and never build your own disk storage — the
-app container has no persistent volume.
+out" shots, attachment images) or that generate spoken narration store
+them **platform-side** and persist only the returned URL in their own
+database. **Never store file bytes in your Postgres DB** (base64/bytea
+columns bloat the DB and its staging clones) and never build your own
+disk storage — the app container has no persistent volume.
 
 Two ways in; both return the same shape. Persist `url` (to render)
 and `id` (to delete later) in your own tables:
@@ -1914,20 +1914,27 @@ and `id` (to delete later) in your own tables:
 
 Limits and rules (both paths):
 
-- **Images only**: PNG, JPEG, GIF, WebP — sniffed from the bytes, and
-  the file extension must match. Max **5 MB** per file. There is no
+- **Images**: PNG, JPEG, GIF, WebP — sniffed from the bytes, and the
+  file extension must match. Max **5 MB** per file. There is no
   server-side resizing: downscale large camera photos client-side
   (canvas) before uploading.
-- **Quotas**: 2 GB per app, 200 MB per user per app (staging-preview
-  uploads: 100 MB per app, auto-deleted after 7 days). Structured
-  error codes on rejection: `file_too_large`, `invalid_image`,
+- **Audio**: Opus (as `.opus` or `.ogg`) and MP3 (`.mp3`) — sniffed
+  from the bytes, and the file extension must match. An `.ogg` must
+  carry Opus; other codecs inside it are refused. Max **25 MB** per
+  file, roughly 30 minutes of speech.
+- **Quotas**: 10 GB per app, 1 GB per user per app, shared by images
+  and audio (staging-preview uploads: 100 MB per app, auto-deleted
+  after 7 days). Structured error codes on rejection:
+  `file_too_large`, `invalid_image`, `invalid_audio`,
   `app_quota_exceeded`, `user_quota_exceeded`,
   `staging_quota_exceeded`, `storage_unavailable`.
 - **Visibility**: `public` (default) serves the file to anyone with
   the link — the unguessable id is the access control, right for
   content the app shows to all its users. `private` additionally
   requires a platform user token at view time: render those as
-  `<img src="${url}?token=${theIframeToken}">`.
+  `<img src="${url}?token=${theIframeToken}">` (or
+  `<audio src="${url}?token=${theIframeToken}">` for narration). Files
+  are served whole; there is no range/skip-ahead support.
 - **Files are immutable** — there is no overwrite; upload a new file
   and update your stored URL. Deleting makes the URL 404 for fresh
   fetches immediately.
@@ -1946,7 +1953,9 @@ try {
 ```
 
 - `usernode.uploadFile(file, { visibility })` — uploads a `File`/`Blob`
-  as the signed-in user, resolves the stored-file shape above.
+  as the signed-in user, resolves the stored-file shape above. It keeps
+  a 5 MB check before sending, so small images and short audio clips fit
+  but long narration does not: send those through the server path below.
 - `usernode.deleteFile(id)` — deletes one of the **current user's
   own** uploads (use it for "remove my photo" flows).
 - `usernode.getStorageUsage()` — resolves `{ appBytes, appCapBytes,
@@ -1977,7 +1986,8 @@ const STORAGE_ENABLED = !!process.env.USERNODE_STORAGE_TOKEN;
 ```
 
 Endpoints (auth headers exactly like the LLM proxy — the app token
-plus the user's forwarded iframe token):
+plus the user's forwarded iframe token). This is the path for long
+narration, which the browser helper's 5 MB check would refuse:
 
 ```js
 // Upload: raw bytes, filename/visibility as query params (NOT multipart)
