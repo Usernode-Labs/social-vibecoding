@@ -237,6 +237,27 @@ export function buildInbox(input: {
 }
 
 /**
+ * Whether an agent entry asks for you, so it is never folded behind "N older
+ * chats" and has a seat in the sidebar (#5693): a change waiting on your
+ * answer, an agent at work, or an open work order. #5289: an open work order
+ * is work in flight on the person's own machine, and since the bell lost its
+ * Messages filter this list is the only place it shows. There are few of
+ * them: each closes once it is shared or submitted. Pure.
+ */
+export function agentAsksForYou(
+  entry: { kind: string; key: string },
+  sessions: { get(key: string): { kind?: string; awaitingInput?: boolean; busy?: boolean } | undefined },
+  mayors: { get(key: string): { busy?: boolean } | undefined },
+): boolean {
+  if (entry.kind === 'session') {
+    const session = sessions.get(entry.key.slice('session:'.length));
+    return !!session && (session.kind === 'task' || !!session.awaitingInput || !!session.busy);
+  }
+  if (entry.kind === 'mayor') return !!mayors.get(entry.key.slice('mayor:'.length))?.busy;
+  return false;
+}
+
+/**
  * Which of a section's entries are drawn. A folded section draws its pinned
  * row alone (the bot's, in Agents). Agents draws the pinned row, the newest
  * AGENTS_SHOWN of what was active in the last AGENTS_RECENT_DAYS days, the
