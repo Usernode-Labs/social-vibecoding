@@ -76,6 +76,7 @@ import {
   spendReleaseLink,
 } from './sign-in-sheet';
 import { Story } from './story';
+import { cardCover, morph, projectHero } from '../guest/card-morph';
 import { GuestDiscover } from '../guest/guest-discover';
 import { type GuestIntent, GuestProject } from '../guest/guest-project';
 import { type GuestApp, linksToWorkshop, NEW_ACCOUNTS_WAIT, projectHash } from '../guest/guest-data';
@@ -1617,7 +1618,14 @@ export function LandingScreen() {
   const onBack = useCallback(() => {
     if (st.openSlug) { live.current.closeLandingApp(); return; }
     // Discover in the app goes back to the story it was opened from.
-    location.hash = appDiscover && !guestProject ? '#landing' : '#apps';
+    const to = appDiscover && !guestProject ? '#landing' : '#apps';
+    // From a project's page its band shrinks into its card (features/guest/card-morph.ts).
+    if (guestProject && to === '#apps') {
+      const slug = guestProject.slug;
+      morph(projectHero(slug), () => { location.hash = to; }, () => cardCover(slug));
+      return;
+    }
+    location.hash = to;
   }, [st, appDiscover, guestProject]);
   useEffect(() => {
     try {
@@ -2223,9 +2231,7 @@ export function LandingScreen() {
             <GuestDiscover
               apps={apps}
               failed={appsFailed && !apps}
-              primaryClass={PRIMARY_PILL}
               signedIn={waitingGuest}
-              onOpenInside={(app) => { void live.current.openLandingApp(app); }}
               onRetry={() => { st.appsReady = live.current.loadLandingApps(); }}
               hero={waitingGuest ? (
                 <WaitlistCard email={sessionEmail()} />

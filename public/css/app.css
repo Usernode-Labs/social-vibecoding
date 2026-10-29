@@ -3046,6 +3046,29 @@ html[data-un-vt]:has(#platform-tabs.hidden)::view-transition-old(platform-tabs) 
   }
 }
 
+/* The guest card opens into its page (frontend/src/features/guest/
+   card-morph.ts): the picture a visitor taps on the guest Discover grows into
+   the project page's colour band, and back shrinks it into the card again.
+   The group keeps the card's rounded corners and clips what it carries, and
+   both snapshots fill it, cropped rather than stretched, the page's from its
+   top left so its title is what arrives first. The page itself cross-fades
+   under it at the default speed. Reduce Motion never gets here: card-morph
+   swaps the page without a transition then. */
+::view-transition-group(guest-hero) {
+  animation-duration: 0.4s;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+  overflow: hidden;
+  border-radius: 20px;
+}
+::view-transition-old(guest-hero),
+::view-transition-new(guest-hero) {
+  height: 100%;
+  object-fit: cover;
+}
+::view-transition-new(guest-hero) {
+  object-position: left top;
+}
+
 /* Infinite decorative effects keep compositing even when the user is idle.
    Their state must remain legible without motion: lifecycle colors stay in
    place and busy session dots gain a static ring.  Functional progress

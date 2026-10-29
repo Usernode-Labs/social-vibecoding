@@ -168,12 +168,19 @@ export function featuredApps(apps: readonly GuestApp[], tryable: (app: GuestApp)
 
 /**
  * A count shows only when it is big enough to read as busy (a public app's
- * median is one person active, and a card that says "1 person active" reads
- * as a project nobody uses). Under these, a card says what changed lately.
+ * median is one person active, and "1 person active" reads as a project
+ * nobody uses): the project page's band says how many built it and used it
+ * from these (./guest-project.tsx).
  */
 export const MIN_MEMBERS = 25;
 export const MIN_ACTIVE = 10;
 export const MIN_BUILDERS = 5;
+/**
+ * A Discover card's people pill (a profile glyph and how many used it
+ * lately) shows from this many. Lower than the band's sentence: on the
+ * picture it is a figure beside others, not a claim on its own.
+ */
+export const MIN_PEOPLE = 5;
 /** "Updated …" reaches this far back; older says nothing. */
 export const UPDATED_WITHIN_MS = 30 * 24 * 60 * 60 * 1000;
 
