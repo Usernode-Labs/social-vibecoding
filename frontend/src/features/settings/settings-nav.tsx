@@ -74,7 +74,17 @@ interface Filterable {
   parts: FilterPart[];
 }
 
-interface NavItem extends Filterable {
+/**
+ * #5995: what a row says at its trailing edge, from ../settings.js's
+ * `_navExtras`. `status` is a count in words ("2 linked"), '' when there is
+ * nothing to count; `tag` is a small "Beta" label. Never both on one row.
+ */
+interface RowExtras {
+  status: string;
+  tag: string;
+}
+
+interface NavItem extends Filterable, RowExtras {
   active: boolean;
   className: string;
 }
@@ -86,7 +96,7 @@ interface NavGroup {
 }
 
 /** A phone menu row: a page, and the one line under it when its name needs one. */
-interface MenuItem extends Filterable {
+interface MenuItem extends Filterable, RowExtras {
   subtitle: string;
 }
 
@@ -357,6 +367,18 @@ const HIT_PARTS = 'block text-xs font-normal text-zinc-500 dark:text-zinc-400';
 // The Sign out hit: a hit row in the button's own red, an action and not a page.
 const SIGN_OUT_HIT_ROW = 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors text-red-700 dark:text-red-400 hover:bg-red-500/10';
 const SIGN_OUT_TITLE = 'font-normal text-red-700 dark:text-red-400';
+// #5995: a row's count, in muted words; a settled state gets no colour.
+const NAV_STATUS = 'shrink-0 text-xs font-normal text-zinc-500 dark:text-zinc-400';
+const MENU_STATUS = 'shrink-0 text-[0.8125rem] text-zinc-500 dark:text-zinc-400';
+// The "Beta" label: a small grey pill, no accent (colour is for actions).
+const BETA_TAG = 'shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold leading-4 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300';
+
+/** A row's trailing words or tag, or nothing. */
+function RowTrailing({ extras, statusClassName }: { extras: RowExtras; statusClassName: string }) {
+  if (extras.tag) return <span data-settings-nav-tag="" className={BETA_TAG}>{extras.tag}</span>;
+  if (extras.status) return <span data-settings-nav-status="" className={statusClassName}>{extras.status}</span>;
+  return null;
+}
 
 /**
  * One sidebar row. Navigation, not a tab set (QA 2026-09-24 Q20): a tab
@@ -373,7 +395,12 @@ function NavRow({ item }: { item: NavItem }) {
       className={item.className}
       onClick={() => navClick(item.key)}
     >
-      {item.label}
+      {item.tag || item.status ? (
+        <span className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate">{item.label}</span>
+          <RowTrailing extras={item} statusClassName={NAV_STATUS} />
+        </span>
+      ) : item.label}
     </button>
   );
 }
@@ -511,6 +538,9 @@ export function SettingsMobileMenu() {
                 // #5995: the few rows whose name does not say what is behind
                 // it carry one muted line (Settings.SUBTITLES); the rest none.
                 subtitle={item.subtitle || undefined}
+                // #5995: how much is set up ("2 linked"), or a "Beta" label,
+                // before the chevron. Nothing when there is nothing to say.
+                trailing={item.tag || item.status ? <RowTrailing extras={item} statusClassName={MENU_STATUS} /> : undefined}
                 onClick={() => navClick(item.key)}
               />
             ))}

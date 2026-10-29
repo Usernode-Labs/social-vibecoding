@@ -71,6 +71,12 @@ const PLATFORM_LABEL: Record<string, string> = {
   ios: 'settings:phones.platform.ios',
 };
 
+/** #5995: the Settings menu's count on this row, or null for none. */
+function reportPhones(count: number | null) {
+  (window as { Settings?: { _setNavStatus?(key: string, count: number | null): void } })
+    .Settings?._setNavStatus?.('phones', count);
+}
+
 export function LinkedPhonesSection() {
   const t = useMessages('settings');
   const [phones, setPhones] = useState<LinkedPhone[] | null>(null);
@@ -89,11 +95,20 @@ export function LinkedPhonesSection() {
       if (seq !== generation.current) return;
       if (next) { setPhones(next); setError(''); }
     } catch {
-      if (seq === generation.current) setError(t('settings:phones.loadFailed'));
+      if (seq !== generation.current) return;
+      setError(t('settings:phones.loadFailed'));
+      // #5995: a failed reload clears the menu's count rather than leaving
+      // an old one; the next good load reports again (it sets a new list).
+      reportPhones(null);
     }
   }, [t]);
 
   useEffect(() => { void load(); }, [load]);
+  // #5995: the Settings menu's "1 linked" on this row. A loaded list (or one
+  // an unlink shortened) reports its length; a failed load reports nothing.
+  useEffect(() => {
+    if (phones) reportPhones(phones.length);
+  }, [phones]);
   useWindowEvent('usernode:settings-section', () => { void load(); });
 
   const unlink = async (phone: LinkedPhone) => {
