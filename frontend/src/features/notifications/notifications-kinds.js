@@ -34,7 +34,7 @@ export const NOTIFICATION_KIND_FILTERS = Object.freeze({
   // or a conversation.
   mentions: Object.freeze([
     'mention', 'issue_mention', 'conversation_mention',
-    'reply', 'thread_reply', 'issue_thread_reply',
+    'reply', 'thread_reply', 'issue_thread_reply', 'change_thread_reply',
     'conversation_reply', 'conversation_thread_reply',
   ]),
   // Something you can accept: to build or approve on a project, to join a

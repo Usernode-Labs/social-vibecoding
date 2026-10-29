@@ -741,6 +741,8 @@ app.use(feedbackRoutes(config));
 // #5048: requests only platform admins can see, kept off GitHub.
 app.use(require('./src/routes/private-requests').privateRequestRoutes(config));
 app.use(notificationsRoutes(config));
+// #6019: a thread's Notify me and Mute, and (stage 3) the thread page's read.
+app.use(require('./src/routes/threads').threadsRoutes(config));
 app.use(collaboratorRoutes(config));
 // Session-authenticated user directory for the shell's iframe bridge
 // relay (#1195) — must be AFTER authMiddleware; req.user is required.

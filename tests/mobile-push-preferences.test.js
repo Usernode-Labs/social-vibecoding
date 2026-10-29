@@ -50,6 +50,8 @@ const CURRENT_KINDS = [
   // #4535: a message in a request's discussion you filed or posted in. A
   // direct interaction beside thread_reply, the same sense of reply.
   'issue_thread_reply',
+  // #6019: its twin for a thread a change or a decision leads.
+  'change_thread_reply',
   // #2386's two: a friend request and its acceptance — one person reaching
   // you directly, so they join direct_interactions.
   'friend_request', 'friend_accept',

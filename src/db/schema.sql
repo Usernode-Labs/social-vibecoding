@@ -2844,6 +2844,9 @@ END $$;
 -- #4535 adds 'issue_thread_reply': somebody posted in a request's
 -- discussion thread you filed or posted in; chat_message_id is the new
 -- message, thread_ref the request's number and `detail` that number too.
+-- #6019 adds 'change_thread_reply': the same for a thread a change or a
+-- decision leads, to everyone who follows it; `detail` is the change's
+-- number, or empty for a decision filed as a governance row.
 -- #3181 adds 'session_stalled': a dev-session turn ended without finishing
 -- (an error, a timeout, a lost worker, or a system pause mid-turn);
 -- session_id points to the session, like 'session_done'.
@@ -5799,6 +5802,8 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   -- #4535: a message in a request's discussion you filed or posted in.
   -- A reply in the same sense, so the same category beside thread_reply.
   ('issue_thread_reply', 'direct_interactions', TRUE),
+  -- #6019: its twin for a thread a change or a decision leads.
+  ('change_thread_reply', 'direct_interactions', TRUE),
   -- #2386: a friend request and its acceptance are one person reaching you
   -- directly, which is what this category already promises.
   ('friend_request', 'direct_interactions', TRUE),
@@ -5882,7 +5887,7 @@ ON CONFLICT (kind) DO UPDATE
       default_enabled = EXCLUDED.default_enabled;
 DELETE FROM mobile_push_kind_categories
  WHERE kind NOT IN (
-   'mention', 'issue_mention', 'reply', 'thread_reply', 'issue_thread_reply',
+   'mention', 'issue_mention', 'reply', 'thread_reply', 'issue_thread_reply', 'change_thread_reply',
    'collab_invite', 'collab_invite_accepted',
    'approver_invite', 'approver_invite_accepted', 'spec_shared',
    'session_done', 'test_alert', 'auto_solve_done', 'stale_pr', 'check_failed',
@@ -16459,3 +16464,26 @@ BEGIN
       EXECUTE FUNCTION threads_attach_message();
   END IF;
 END $$;
+
+-- ── Thread followers (stage 2 of #6019) ────────────────────────────────
+-- Who hears about a new post in a thread is worked out from the thread
+-- itself (services/threads.js FOLLOWERS_SQL): whoever asked for one of its
+-- requests, built one of its changes, voted on anything in it, or posted in
+-- it before. Nothing is copied here to keep in step, so an item that moves
+-- to another thread takes its people with it.
+--
+-- This table holds only what a person chose for one thread: Notify me
+-- (`muted_at` NULL), which follows a thread they have no part in yet, or
+-- Mute (`muted_at` set), which stops every post in it ringing them until
+-- they choose Notify me or post there again. Without a row, the derived
+-- rule applies.
+CREATE TABLE IF NOT EXISTS thread_followers (
+  thread_id  BIGINT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  muted_at   TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (thread_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS thread_followers_user_idx ON thread_followers (user_id);
+COMMENT ON TABLE thread_followers IS 'staging:private';

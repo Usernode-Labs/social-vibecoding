@@ -168,3 +168,67 @@ test('a decision branch is every manifest branch the code makes', () => {
   for (const prefix of made) assert.ok(listed.includes(prefix), `${prefix}/ is a decision branch`);
   assert.ok(made.has('visibility') && made.has('governance') && made.has('admins'));
 });
+
+// ── Stage 2: followers, Notify me and Mute, one fan-out ────────────────
+// The SQL runs against PostgreSQL in thread-followers-postgres.test.js and,
+// for a request's own people, app-chat-postgres.test.js.
+
+const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+
+test('followers are worked out from the thread; the table holds only what a person chose', () => {
+  const table = /CREATE TABLE IF NOT EXISTS thread_followers \(([\s\S]*?)\n\);/.exec(BLOCK);
+  assert.ok(table, 'thread_followers is in the threads block');
+  assert.match(table[1], /PRIMARY KEY \(thread_id, user_id\)/);
+  assert.match(table[1], /muted_at\s+TIMESTAMPTZ,/);
+  assert.doesNotMatch(table[1], /reason/, 'nothing derived is copied into it');
+  assert.match(BLOCK, /COMMENT ON TABLE thread_followers IS 'staging:private';/, 'who muted what is nobody else\'s');
+  const sql = threads.FOLLOWERS_SQL;
+  for (const source of ['FROM issues i', 'FROM requests r', 'FROM homeroom_bot_requesters b',
+    'FROM feedback_reports f', 'FROM chat_sessions s', 'FROM pr_votes v', 'FROM issue_votes v', 'FROM chat_messages m']) {
+    assert.ok(sql.includes(source), source);
+  }
+  assert.match(sql, /EXCEPT\s+SELECT user_id FROM thread_followers WHERE thread_id = \$1 AND muted_at IS NOT NULL/,
+    'Mute wins over every reason to follow');
+  assert.match(sql, /m\.msg_type = 'message'\s+AND m\.deleted_at IS NULL/, 'a deleted or system line makes nobody a follower');
+  assert.match(sql, /JOIN users u ON u\.id = m\.user_id AND u\.is_synthetic = FALSE/);
+});
+
+test('every post about a piece of work goes through the one fan-out, which unmutes its sender first', () => {
+  const ws = read('src/services/ws.js');
+  assert.match(ws, /const TOPIC_THREAD_TYPES = new Set\(\['issue', 'session', 'governance'\]\);/);
+  const block = ws.slice(ws.indexOf('if (thread && TOPIC_THREAD_TYPES.has(thread.type))'));
+  assert.ok(block.indexOf('threads.unmuteOnPost') < block.indexOf('notifications.createThreadNotifications'));
+  assert.doesNotMatch(ws, /createIssueThreadNotifications/, 'the request-only rule is only a fallback now');
+  const notifications = read('src/services/notifications.js');
+  const fanOut = notifications.slice(notifications.indexOf('async function createThreadNotifications'));
+  assert.match(fanOut, /filterToCollaborators[\s\S]*categoryKey: 'thread_replies'[\s\S]*user_blocks/,
+    'the same gates as before: membership, Replies to you, blocks');
+  assert.match(fanOut, /requestLed \? 'issue_thread_reply' : 'change_thread_reply'/);
+});
+
+test('change_thread_reply is registered wherever issue_thread_reply is', () => {
+  const kind = 'change_thread_reply';
+  assert.match(SCHEMA_SQL, /\('change_thread_reply', 'direct_interactions', TRUE\)/);
+  const kept = /DELETE FROM mobile_push_kind_categories\s+WHERE kind NOT IN \(([\s\S]*?)\);/.exec(SCHEMA_SQL)[1];
+  assert.ok(kept.includes(`'${kind}'`), 'the reaper keeps it');
+  assert.ok(require('../src/services/mobile-push-preferences').KIND_TO_CATEGORY.get(kind), 'push category');
+  assert.equal(require('../src/services/notification-preferences').categoryForKind(kind), 'thread_replies');
+  assert.ok(require('../src/services/notifications').ACTION_COMPLETIONS.message_sent.kinds.includes(kind));
+  assert.match(read('src/services/mobile-push-policy.js'), /case 'change_thread_reply': \{/);
+  assert.match(read('src/services/test-notifications.js'), /kind: 'change_thread_reply'/);
+  assert.match(read('frontend/src/features/notifications/notifications-kinds.js'), /'issue_thread_reply', 'change_thread_reply'/);
+  const bell = read('frontend/src/features/notifications/notifications.js');
+  assert.match(bell, /const chatKinds = new Set\(\[[^\]]*'change_thread_reply'\]\)/);
+  assert.match(bell, /row\.chat\.changeReply[\s\S]*row\.chat\.decisionReply/);
+  const en = JSON.parse(read('frontend/locales/en/notifications.json'));
+  assert.equal(en['row.chat.changeReply'].text, 'Replied on change #{{number}}');
+  assert.equal(en['row.chat.decisionReply'].text, 'Replied on a decision');
+});
+
+test('Notify me and Mute: a same-origin write, for a thread the viewer may see', () => {
+  const route = read('src/routes/threads.js');
+  assert.match(route, /router\.put\('\/api\/threads\/:id\/follow', sameOriginBrowserOnly,/);
+  assert.match(route, /checkAppAccess\(pool, app, user, 'view'\)/, 'seeing the project is enough');
+  assert.doesNotMatch(route, /requireAppMembership/, 'following is not taking part');
+  assert.match(read('server.js'), /require\('\.\/src\/routes\/threads'\)\.threadsRoutes\(config\)/);
+});
