@@ -11392,10 +11392,22 @@ const AppView = {
   },
 
   /**
+   * #6006: a change of the viewer's that a coding agent submitted for them
+   * is not their yes until they tap it (governance-rules.ts), so until they
+   * vote it waits on them. One made on Homeroom carries its author's yes and
+   * stays Up next, and a project's first version asks nobody's vote (D1).
+   */
+  _workshopOwesYes(p) {
+    return !!p && p.status === 'promoted' && !!p.external_agent && !p.my_vote
+      && p.first_version !== true && !AppView.readOnly;
+  },
+
+  /**
    * #4772: one row of the viewer's work, filed in its What's happening
    * section (`group`): Waiting on you when Homeroom bot waits on them for it
-   * (`waitingOn`, _workshopWaitingOn) or it is a change of theirs that needs
-   * their fix; Going live when it is merged or being merged; Yours, up for a
+   * (`waitingOn`, _workshopWaitingOn), it is a change of theirs that needs
+   * their fix, or one a coding agent submitted that still needs their own
+   * Yes (_workshopOwesYes); Going live when it is merged or being merged; Yours, up for a
    * vote for the rest of their changes and decisions up for a vote; else
    * Your work. A row waiting on them for the bot leads its tags with why.
    */
@@ -11404,10 +11416,12 @@ const AppView = {
     const key = AppView._workshopItemKey(kind, item);
     const w = waitingOn && key ? waitingOn.get(key) : null;
     let group = 'work';
-    if (w || (kind === 'proposal' && AppView._workshopNeedsFix(item))) group = 'waiting';
+    const owesYes = kind === 'proposal' && AppView._workshopOwesYes(item);
+    if (w || owesYes || (kind === 'proposal' && AppView._workshopNeedsFix(item))) group = 'waiting';
     else if (kind === 'merged' || (kind === 'proposal' && item.status === 'merging')) group = 'live';
     else if (kind === 'proposal' || kind === 'gov') group = 'vote';
-    const tag = w ? AppView._workshopWaitingTag(w) : null;
+    const tag = w ? AppView._workshopWaitingTag(w)
+      : owesYes ? { label: PlatformI18n.t('changes:workshop.row.tag.yourYes'), tone: 'warn' } : null;
     const brief = tag && row.brief ? { ...row.brief, tags: [tag, ...row.brief.tags] } : row.brief;
     return { ...row, brief, group };
   },
