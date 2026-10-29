@@ -260,7 +260,30 @@ async function close(owner, repo, number, { reason = null, closedBy = null } = {
     `state = 'closed', state_reason = $3, closed_at = COALESCE(closed_at, NOW()), closed_by = COALESCE($4, closed_by)`,
     [why, closedBy]);
   log.info('requests', 'Request closed', { repo: `${owner}/${repo}`, number, reason: why });
+  await closeWithItsParts(owner, repo, number);
   return raw;
+}
+
+// #6019 follow-up: a request broken up into smaller ones (a thread move,
+// workflow/rules/thread-moves.ts applyBreakup) closes with the last of its
+// parts. Never fails the close it follows.
+async function closeWithItsParts(owner, repo, number) {
+  try {
+    const app = await requireApp(owner, repo);
+    const { rows: [part] } = await db().query(
+      'SELECT part_of FROM requests WHERE app_id = $1 AND number = $2 AND part_of IS NOT NULL', [app.id, Number(number)]);
+    if (!part) return;
+    const { rows: open } = await db().query(
+      `SELECT 1 FROM requests WHERE app_id = $1 AND part_of = $2 AND state = 'open' LIMIT 1`, [app.id, part.part_of]);
+    if (open.length) return;
+    const { rows: [big] } = await db().query(
+      `SELECT state FROM requests WHERE app_id = $1 AND number = $2`, [app.id, part.part_of]);
+    if (!big || big.state !== 'open') return;
+    await close(owner, repo, part.part_of, { reason: 'completed' });
+    log.info('requests', 'A broken-up request closed with its last part', { repo: `${owner}/${repo}`, number: part.part_of });
+  } catch (err) {
+    log.warn('requests', 'Could not close a broken-up request with its last part', { number, err: err.message });
+  }
 }
 
 async function reopen(owner, repo, number) {

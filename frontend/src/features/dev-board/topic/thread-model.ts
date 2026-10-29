@@ -72,9 +72,13 @@ export interface ThreadPayload {
 
 export interface ThreadMove {
   id: number;
-  kind: 'merge' | 'split';
+  kind: 'merge' | 'split' | 'breakup';
   state: 'pending' | 'voting' | 'applied' | 'refused';
-  input: { into?: number; intoNumber?: number | null; items?: Array<{ type: ThreadItemType; number?: number; id?: number }> };
+  input: {
+    into?: number; intoNumber?: number | null; items?: Array<{ type: ThreadItemType; number?: number; id?: number }>;
+    /** A break-up (#6019 follow-up): the request, and the smaller ones it becomes. */
+    request?: number; parts?: Array<{ title: string; doneWhen?: string }>;
+  };
   deadline: string;
   agreed: number[];
   governanceId: number | null;
@@ -193,6 +197,8 @@ export function moveLines(move: ThreadMove, now: number = Date.now()): { what: P
   const items = move.input.items || [];
   const what: Phrase = move.kind === 'merge'
     ? { id: 'project:topic.thread.move.merge', values: { number: move.input.intoNumber ?? '?' } }
+    : move.kind === 'breakup'
+    ? { id: 'project:topic.thread.move.breakup', values: { number: move.input.request ?? '?', count: (move.input.parts || []).length } }
     : {
       id: 'project:topic.thread.move.split',
       values: { what: items.map((i) => (i.type === 'request' ? `#${i.number}` : i.type)).join(', ') },

@@ -16730,3 +16730,21 @@ CREATE TABLE IF NOT EXISTS thread_moves (
 );
 CREATE INDEX IF NOT EXISTS thread_moves_due_idx ON thread_moves (deadline) WHERE state = 'pending';
 CREATE UNIQUE INDEX IF NOT EXISTS thread_moves_one_open_idx ON thread_moves (thread_id) WHERE state IN ('pending', 'voting');
+
+-- Break-up (#6019 follow-up): a big request broken into smaller requests in
+-- the same thread, each with its own done-when, change and vote, decided as
+-- a merge or a split is (Evan, 29 Oct 2026). `input` names the request and
+-- the parts; applying it files them (workflow/rules/thread-moves.ts), each
+-- `part_of` the big request, which closes with the last of them
+-- (services/requests.js close).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conname = 'thread_moves_kind_check' AND conrelid = 'thread_moves'::regclass
+                    AND pg_get_constraintdef(oid) LIKE '%breakup%') THEN
+    ALTER TABLE thread_moves DROP CONSTRAINT IF EXISTS thread_moves_kind_check;
+    ALTER TABLE thread_moves ADD CONSTRAINT thread_moves_kind_check CHECK (kind IN ('merge', 'split', 'breakup'));
+  END IF;
+END $$;
+ALTER TABLE requests ADD COLUMN IF NOT EXISTS part_of INTEGER CHECK (part_of IS NULL OR part_of > 0);
+CREATE INDEX IF NOT EXISTS requests_part_of_idx ON requests (app_id, part_of) WHERE part_of IS NOT NULL;

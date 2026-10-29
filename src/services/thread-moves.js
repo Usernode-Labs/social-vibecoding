@@ -89,12 +89,30 @@ async function splitItems(db, { thread, items }) {
   return { items: picked };
 }
 
+// Break-up (#6019 follow-up): a big request into at most this many smaller
+// ones, each a title and what it is done when.
+const MAX_PARTS = 6;
+
+/** Pure: a break-up's parts, cleaned, or an error. */
+function partsOf(parts) {
+  const list = (Array.isArray(parts) ? parts : [])
+    .map((p) => ({
+      title: String(p?.title || '').trim().slice(0, 120),
+      doneWhen: String(p?.doneWhen || '').trim().slice(0, 600),
+    }))
+    .filter((p) => p.title);
+  if (list.length < 2) return { error: 'Break it into at least two smaller requests, each with a title.' };
+  if (list.length > MAX_PARTS) return { error: `Break it into at most ${MAX_PARTS} smaller requests.` };
+  return { parts: list };
+}
+
 /**
  * Propose a move of `thread` (in `app`): `{ kind: 'merge', into }` (another
- * thread's number) or `{ kind: 'split', items }`. Resolves
- * { ok, move } or { ok: false, status, error }.
+ * thread's number), `{ kind: 'split', items }`, or `{ kind: 'breakup',
+ * request, parts }` (a request of the thread into smaller ones in it).
+ * Resolves { ok, move } or { ok: false, status, error }.
  */
-async function propose(pool, { app, user, thread, kind, into = null, items = null, deps = {} }) {
+async function propose(pool, { app, user, thread, kind, into = null, items = null, request = null, parts = null, deps = {} }) {
   if (!thread || Number(thread.app_id) !== Number(app.id)) return { ok: false, status: 404, error: 'Thread not found' };
   if (thread.state !== 'open' || thread.merged_into) return { ok: false, status: 409, error: 'That thread is closed.' };
   if (thread.kind === 'decision') return { ok: false, status: 409, error: 'A decision is decided by its own vote, and stays its own thread.' };
@@ -116,8 +134,20 @@ async function propose(pool, { app, user, thread, kind, into = null, items = nul
     if (picked.error) return { ok: false, status: 422, error: picked.error };
     input = { items: picked.items };
     words = `split ${picked.items.map((i) => (i.type === 'request' ? `#${i.number}` : i.type)).join(', ')} out of this thread`;
+  } else if (kind === 'breakup') {
+    const big = Number(request) || Number(thread.number);
+    const { rows: [req] } = await pool.query(
+      `SELECT number, state, part_of FROM requests WHERE app_id = $1 AND number = $2 AND thread_id = $3`,
+      [app.id, big, thread.id]
+    );
+    if (!req || req.state !== 'open') return { ok: false, status: 409, error: `#${big} is not an open request in this thread.` };
+    if (req.part_of) return { ok: false, status: 409, error: `#${big} is already a part of #${req.part_of}.` };
+    const cleaned = partsOf(parts);
+    if (cleaned.error) return { ok: false, status: 422, error: cleaned.error };
+    input = { request: big, parts: cleaned.parts };
+    words = `break #${big} up into ${cleaned.parts.length} smaller requests`;
   } else {
-    return { ok: false, status: 422, error: 'A move is a merge or a split.' };
+    return { ok: false, status: 422, error: 'A move is a merge, a split or a break-up.' };
   }
   const requesters = await requestersOf(pool, touched);
   const agreed = requesters.includes(Number(user.id)) ? [Number(user.id)] : [];
@@ -176,11 +206,19 @@ async function decide(pool, { move, thread = null, appId, deps = {}, why }) {
   }
   if (result == null) return null;
   const into = await threads.threadById(pool, result);
-  const text = move.kind === 'merge'
-    ? `Merged into #${into?.number ?? '?'}${why === 'agreed' ? ', as everyone who asked agreed' : ', as nobody objected'}.`
-    : `Split out into #${into?.number ?? '?'}${why === 'agreed' ? ', as everyone who asked agreed' : ', as nobody objected'}.`;
+  const because = why === 'agreed' ? ', as everyone who asked agreed' : ', as nobody objected';
+  let text;
+  if (move.kind === 'breakup') {
+    const { rows: [after] } = await pool.query('SELECT input FROM thread_moves WHERE id = $1', [move.id]);
+    const filed = Array.isArray(after?.input?.filed) ? after.input.filed : [];
+    text = `Broken up into ${filed.map((n) => `#${n}`).join(', ')}${because}. #${move.input.request} closes with the last of them.`;
+  } else {
+    text = move.kind === 'merge'
+      ? `Merged into #${into?.number ?? '?'}${because}.`
+      : `Split out into #${into?.number ?? '?'}${because}.`;
+  }
   await say(pool, { appId, thread: thread || (await threads.threadById(pool, move.thread_id)), deps, text });
-  if (into) await say(pool, { appId, thread: into, deps, text });
+  if (into && move.kind !== 'breakup') await say(pool, { appId, thread: into, deps, text });
   log.info('thread-moves', 'Applied a thread move', { moveId: Number(move.id), kind: move.kind, why });
   return result;
 }
@@ -216,6 +254,8 @@ async function object(pool, { app, user, moveId, reason = null, deps = {} }) {
   const thread = await threads.threadById(pool, move.thread_id);
   const what = move.kind === 'merge'
     ? `Merge #${thread?.number ?? '?'} into #${move.input.intoNumber ?? '?'}`
+    : move.kind === 'breakup'
+    ? `Break #${move.input.request ?? '?'} up into ${(move.input.parts || []).length} smaller requests`
     : `Split ${(move.input.items || []).map((i) => (i.type === 'request' ? `#${i.number}` : i.type)).join(', ')} out of #${thread?.number ?? '?'}`;
   const payload = { moveId: Number(move.id), kind: move.kind, threadNumber: thread?.number ?? null, intoNumber: move.input.intoNumber ?? null };
   const { rows: [claimed] } = await pool.query(
@@ -275,4 +315,6 @@ async function sweep(pool, { deps = {} } = {}) {
   return { applied, refused: refused || 0 };
 }
 
-module.exports = { WINDOW_MS, propose, agree, object, openMoves, sweep, requestersOf, shape };
+module.exports = {
+  MAX_PARTS,
+  partsOf, WINDOW_MS, propose, agree, object, openMoves, sweep, requestersOf, shape };

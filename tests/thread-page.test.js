@@ -269,3 +269,18 @@ test('the request\'s changes are drawn from their own pages\' reads, and the bal
   assert.match(items, /data\.follow && here\.type !== 'request' \? <ThreadBallot slug=\{slug\} data=\{data\} here=\{here\} onChanged=\{changed\} \/> : null/,
     'a change\'s page still draws its ballot in the list');
 });
+
+// #6019 follow-up: a big request broken into smaller requests in the same
+// thread, decided as a merge is.
+test('a break-up says what it does and when; its form needs two parts', () => {
+  const { moveLines } = loadTsx(MODEL);
+  const lines = moveLines({
+    id: 3, kind: 'breakup', state: 'pending', deadline: new Date(Date.now() + 5 * 3600000).toISOString(),
+    input: { request: 20, parts: [{ title: 'Plot map' }, { title: 'Sowing calendar' }] }, agreed: [], governanceId: null,
+  });
+  assert.equal(`${words(lines.what)}. ${words(lines.when)}`, 'Proposed: break #20 up into 2 smaller requests. Happens in 5 hours unless someone objects');
+  const src = read('frontend/src/features/dev-board/topic/thread-moves.tsx');
+  assert.match(src, /const breakable = data\.thread\.lead === 'request'\s+&& data\.items\.some\(\(i\) => i\.type === 'request' && i\.number === number && i\.status === 'open'\);/);
+  assert.match(src, /disabled=\{busy \|\| filledParts\.length < 2\}/);
+  assert.match(src, /kind: 'breakup', request: number, parts: filledParts\.map/);
+});

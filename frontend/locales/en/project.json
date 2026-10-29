@@ -2975,6 +2975,38 @@
     "text": "Proposed: split {{what}} out",
     "description": "Line under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page: someone proposed moving items out of this thread into a thread of their own. {{what}} lists them, for example \"#9\"."
   },
+  "topic.thread.move.breakup_one": {
+    "text": "Proposed: break #{{number}} up into {{count}} smaller request",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. A waiting break-up of the request into smaller requests in the same thread. {{number}} is the request, {{count}} how many parts."
+  },
+  "topic.thread.move.breakup_other": {
+    "text": "Proposed: break #{{number}} up into {{count}} smaller requests",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. A waiting break-up of the request into smaller requests in the same thread. {{number}} is the request, {{count}} how many parts."
+  },
+  "topic.thread.move.breakUp": {
+    "text": "Break it up",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. Button: opens the form that breaks this request into smaller requests in the same thread."
+  },
+  "topic.thread.move.breakUpAbout": {
+    "text": "Each part becomes a request of its own here, with its own change and vote. #{{number}} closes with the last of them.",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. Over the break-up form. {{number}} is the request being broken up."
+  },
+  "topic.thread.move.partTitle_one": {
+    "text": "Part {{count}}: its title",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. Field in the break-up form: a smaller request's title. {{count}} is which part it is."
+  },
+  "topic.thread.move.partTitle_other": {
+    "text": "Part {{count}}: its title",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. Field in the break-up form: a smaller request's title. {{count}} is which part it is."
+  },
+  "topic.thread.move.partDone": {
+    "text": "Done when…",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. Field in the break-up form: what that smaller request is done when. Optional."
+  },
+  "topic.thread.move.addPart": {
+    "text": "Add a part",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. Button in the break-up form: one more smaller request."
+  },
   "topic.thread.move.pending_one": {
     "text": "Happens in {{count}} hour unless someone objects",
     "description": "Second half of the line under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page about a proposed merge or split: when it happens on its own. {{count}} is the hours left."
