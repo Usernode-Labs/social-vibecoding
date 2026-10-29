@@ -1,17 +1,18 @@
 'use strict';
 
 // #6019: Homeroom bot's questions in Needs you. The bot asks in a request's
-// public discussion, so Needs you lists the questions nobody answered yet,
+// public discussion, so Needs you holds the questions nobody answered yet,
 // each opening its request, where it is answered; the chat with the bot is
 // private (homeroom-bot-mayor.js offerPost).
 //
 // What this pins:
-//   1. GET /api/workshop/bot-questions answers the viewer's own open
-//      questions, newest first, on projects not suspended, in the shape the
-//      list draws; signed out, a 401.
-//   2. The list draws nothing until it has a question, and each row opens
-//      its request's page.
-//   3. Communities' Needs you mounts it above the votes.
+//   1. GET /api/workshop/bot-questions still answers the viewer's own open
+//      questions (kept for a client still loading the block it fed), newest
+//      first, on projects not suspended; signed out, a 401.
+//   2. The questions are an arm of the Needs you feed itself and of its
+//      counts (workshop-overview.js), so a badge and the feed agree, and a
+//      feed card opens its request's page.
+//   3. The block of its own is gone from Communities' Needs you.
 //
 // Run with: node --test tests/needs-bot-questions.test.js
 
@@ -21,7 +22,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
 
-const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { loadTsx } = require('./lib/render-tsx');
 const { message } = require('./lib/platform-i18n');
 
 // The routes take their pool from db/pool at load, so the fake is put in
@@ -40,7 +41,7 @@ require('../src/db/pool').getPool = () => ({
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
-const LIST = 'frontend/src/features/workshop/bot-questions.tsx';
+const REEL = 'frontend/src/features/workshop/needs-reel.tsx';
 
 test('the read is the viewer\'s own open questions, newest first, on projects not suspended', () => {
   const { BOT_QUESTIONS_SQL, BOT_QUESTIONS_MAX } = require('../src/routes/workshop-overview');
@@ -72,21 +73,40 @@ test('the route answers in the list\'s shape, and 401 signed out', async () => {
   }
 });
 
-test('the list draws nothing until a question lands, and each row opens its request', () => {
-  assert.equal(renderComponent(LIST, 'BotQuestions', {}), '', 'the first render is the prerender\'s');
-  const { questionHref } = loadTsx(LIST);
-  assert.equal(questionHref({ appSlug: 'seed-swap', issueNumber: 7 }), '#app/seed-swap/dev/issues/7');
-  const src = read(LIST);
-  assert.match(src, /fetch\('\/api\/workshop\/bot-questions'/);
-  assert.match(src, /if \(!rows\.length\) return null;/, 'nothing asked says nothing');
-  assert.match(src, /import \{ GroupedList, ListRow, SectionHeader \} from '@\/components\/ui\/grouped-list';/);
-  assert.equal(message('communities:needs.botAsked.label'), 'Homeroom bot asked you');
-  assert.equal(message('communities:needs.botAsked.where', { project: 'Seed swap', number: 7 }), 'Seed swap · Request #7');
+test('the questions are an arm of the feed and of its counts', () => {
+  const overview = require('../src/routes/workshop-overview');
+  assert.match(overview.NEEDS_FEED_SQL, /SELECT 'question', q\.app_id, q\.message_id,/);
+  assert.match(overview.NEEDS_FEED_SQL, /WHERE q\.user_id = \$1 AND q\.question_status = 'open'/);
+  const src = read('src/routes/workshop-overview.js');
+  assert.match(src, /owed_questions AS \(\s+SELECT q\.app_id, COUNT\(\*\)::int AS n,\s+array_agg\('question:' \|\| q\.message_id\) AS keys/,
+    'counted where the votes are, under keys the seen record takes');
+  assert.match(src, /\(COALESCE\(op\.n, 0\) \+ COALESCE\(og\.n, 0\) \+ COALESCE\(oq\.n, 0\)\) AS needs/);
+  assert.match(src, /SELECT 'needs', 'question', q\.app_id, q\.message_id,/, 'and listed with the rows behind the counts');
+  const [item] = overview.shapeNeedsFeed([{
+    kind: 'question', id: 9, title: 'Newest first?', author: 'homeroom_bot', number: 7,
+    at: '2026-10-29T10:00:00Z', slug: 'seed-swap', name: 'Seed swap',
+  }]);
+  assert.equal(item.kind, 'question');
+  assert.equal(item.number, 7);
+  assert.equal(item.staging_url, undefined, 'no preview: it is not a change');
 });
 
-test('Communities\' Needs you mounts it above the votes', () => {
+test('a question\'s card opens its request, where it is answered', () => {
+  const { reelRows } = loadTsx(REEL);
+  const [row] = reelRows([{
+    kind: 'question', id: 9, title: 'Newest first?', summary: null, author: 'homeroom_bot', number: 7, epoch: null,
+    at: '2026-10-29T10:00:00Z', yes: null, no: null, app: { slug: 'seed-swap', name: 'Seed swap', icon_url: null, icon_emoji: null },
+  }]);
+  assert.equal(row.card.attrs['data-issue-row'], '7', 'its request page is where the card opens');
+  assert.equal(row.card.attrs['data-bot-question'], '9');
+  assert.equal(row.yes, null);
+  assert.equal(row.no, null, 'answered on the page, so the sheet opens it');
+  assert.equal(row.askAbout, null, 'no vote, so no key the seen record could mistake for a change\'s');
+  assert.equal(message('project:needsYou.eyebrow.botQuestion'), 'Homeroom bot asked you');
+});
+
+test('Communities\' Needs you no longer draws a block of its own', () => {
   const screen = read('frontend/src/features/workshop/index.tsx');
-  const list = screen.indexOf('<BotQuestions />');
-  assert.ok(list > 0);
-  assert.ok(list < screen.indexOf('<ReviewFlow') && list < screen.indexOf('<NeedsReel'), 'above the votes, in either look');
+  assert.doesNotMatch(screen, /BotQuestions/);
+  assert.ok(!fs.existsSync(path.join(ROOT, 'frontend/src/features/workshop/bot-questions.tsx')));
 });

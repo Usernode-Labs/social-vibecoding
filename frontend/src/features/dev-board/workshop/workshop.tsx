@@ -2003,7 +2003,11 @@ const FeedItem = memo(function FeedItem({ row, index, tint, near, voted, wide, s
           // decide (an advisory vote, or a test account's uncounted one),
           // it says that instead — the words the change's own card uses.
           <span className="dev-ws-eyebrow">
-            {row.card.attrs && row.card.attrs['data-gov-row']
+            {row.card.attrs && row.card.attrs['data-ballot']
+              ? t('project:needsYou.eyebrow.ballot')
+              : row.card.attrs && row.card.attrs['data-bot-question']
+                ? t('project:needsYou.eyebrow.botQuestion')
+                : row.card.attrs && row.card.attrs['data-gov-row']
               ? t('project:needsYou.eyebrow.groupDecision')
               : row.yes && (row.yes.advisory || row.yes.uncounted)
                 ? t('project:needsYou.eyebrow.changeAdvisory')

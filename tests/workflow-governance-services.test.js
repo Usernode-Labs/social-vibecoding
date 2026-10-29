@@ -106,7 +106,7 @@ test('governance.checkTarget reports whether the target is still open', async ()
 });
 
 test('its handlers are the kinds a retry may queue; none is left for an older release\'s rebuild or campaign', () => {
-  // machine.ts RETRYABLE_WORK lists the same three: a handler added here is
+  // machine.ts RETRYABLE_WORK lists the same four: a handler added here is
   // retryable only once it is added there too.
-  assert.deepEqual(Object.keys(services).sort(), ['bot.requestsClosed', 'github.closeIssue', 'governance.checkTarget']);
+  assert.deepEqual(Object.keys(services).sort(), ['bot.requestsClosed', 'github.closeIssue', 'governance.checkTarget', 'threads.closeChanges']);
 });

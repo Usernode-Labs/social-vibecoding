@@ -34,7 +34,7 @@
  * clashes with the version's own changes, Ask Homeroom bot to fit it.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { forwardRef, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { Html } from '../../../lib/html';
@@ -155,7 +155,7 @@ function FixRow({ fix, rerun }: { fix: FixChecksView; rerun: ReactNode }): React
  * beside it (`fix`, `rerun`). From the tap until the build conversation's
  * turn ends it reads "Fixing", with a door into that conversation.
  */
-function GateCard({ which, g, action, rerun = null, id, repeat = false }: {
+export function GateCard({ which, g, action, rerun = null, id, repeat = false }: {
   which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null; repeat?: boolean;
 }): ReactNode {
   const t = useMessages('project');
@@ -339,18 +339,11 @@ function ShotsCard({ s }: { s: NonNullable<ChangeThreadView['shots']> }): ReactN
   );
 }
 
-export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSaved, threadNumber = null }: {
-  id: number | null;
-  card: DevCardModel;
-  body: TopicBody;
-  v: ChangeThreadView;
-  linkedIssues: number[];
-  onIssuesSaved: (issues: number[]) => void;
-  /** #6019: a number in the change's thread: its first request's, else its own. */
-  threadNumber?: number | null;
-}): ReactNode {
-  const t = useMessages('project');
-  const images = useInlineImageViewer();
+/**
+ * The buttons on a change's two cards, from its card model: Yes and No (or
+ * Propose) on Votes; Preview or Open app, the re-run and Fix it on Testing.
+ */
+function gateActions(card: DevCardModel, v: ChangeThreadView) {
   const all: ActionSpec[] = card.actions || [];
   const yes = all.find((a) => isVoteSpec(a, 'yes'));
   const no = all.find((a) => isVoteSpec(a, 'no'));
@@ -370,6 +363,40 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
         : (preview && !(v.testing.actions || []).some((a) => a.key === 'retry-preview') ? <ActionButton a={preview} /> : null)}
     </>
   ) : null;
+  return { voteAction, testAction, withFix, testingActions };
+}
+
+/**
+ * A change's Votes and Testing cards, one above the other, with their
+ * buttons: its own page draws them under its summary, and #6019's request
+ * page under each change in the request's thread (./thread-changes.tsx).
+ */
+export const ChangeGates = forwardRef<HTMLDivElement, { id: number | null; card: DevCardModel; v: ChangeThreadView }>(
+  function ChangeGates({ id, card, v }, ref) {
+    const { voteAction, testAction, withFix, testingActions } = gateActions(card, v);
+    return (
+      <div ref={ref} className="dev-change-pair">
+        <GateCard which="votes" g={v.votes} action={voteAction} id={id} />
+        <GateCard which="testing" g={v.testing} action={testAction} rerun={withFix ? testingActions : null} id={id} />
+      </div>
+    );
+  },
+);
+
+export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSaved, threadNumber = null }: {
+  id: number | null;
+  card: DevCardModel;
+  body: TopicBody;
+  v: ChangeThreadView;
+  linkedIssues: number[];
+  onIssuesSaved: (issues: number[]) => void;
+  /** #6019: a number in the change's thread: its first request's, else its own. */
+  threadNumber?: number | null;
+}): ReactNode {
+  const t = useMessages('project');
+  const images = useInlineImageViewer();
+  // The Votes card's buttons, for its repeat in the pin host.
+  const { voteAction } = gateActions(card, v);
   const thanks = v.thanks && id ? <span className="contents" data-kudos-host={id} data-kudos-face="thread"></span> : null;
   const issues = body.issues || [];
   const back = host('gc-thread-back');
@@ -513,10 +540,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
           {v.codeMissing ? <CodeMissingNotice /> : null}
           {v.waitsFor || v.baseNotMain ? <StackNotice v={v} /> : null}
-          <div ref={pair} className="dev-change-pair">
-            <GateCard which="votes" g={v.votes} action={voteAction} id={id} />
-            <GateCard which="testing" g={v.testing} action={testAction} rerun={withFix ? testingActions : null} id={id} />
-          </div>
+          <ChangeGates ref={pair} id={id} card={card} v={v} />
           {v.upstream ? <UpstreamDecline u={v.upstream} id={id} /> : null}
           {v.shots ? <ShotsCard s={v.shots} /> : null}
         </div>

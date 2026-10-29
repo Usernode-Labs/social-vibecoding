@@ -180,7 +180,7 @@ test('the change\'s page: the notice above Votes and Testing, in the project pag
   const src = read(head);
   // The stacked-change notice (tests/proposal-stacked-render.test.js) sits
   // between the two.
-  assert.match(src, /\{v\.codeMissing \? <CodeMissingNotice \/> : null\}\s*\{v\.waitsFor \|\| v\.baseNotMain \? <StackNotice v=\{v\} \/> : null\}\s*<div ref=\{pair\} className="dev-change-pair">/,
+  assert.match(src, /\{v\.codeMissing \? <CodeMissingNotice \/> : null\}\s*\{v\.waitsFor \|\| v\.baseNotMain \? <StackNotice v=\{v\} \/> : null\}\s*<ChangeGates ref=\{pair\} id=\{id\} card=\{card\} v=\{v\} \/>/,
     'above the Votes and Testing cards, which stay as they are');
 });
 

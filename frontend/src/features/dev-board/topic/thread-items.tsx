@@ -48,22 +48,22 @@ export function pageSlug(): string | null {
   return (w && w.AppView && w.AppView.appData && w.AppView.appData.slug) || (w && w.App && w.App.currentApp) || null;
 }
 
-export function ThreadItems({ slug, number = null, threadId = null, here }: {
-  slug: string | null;
-  /** Any number in the thread: the request's, or the change's own. */
-  number?: number | null;
-  /** Or the thread itself, for a decision that has no number. */
-  threadId?: number | null;
-  here: ThreadHere;
-}): ReactNode {
-  const t = useMessages('project');
+/**
+ * A page's read of its thread (routes/threads.js), and a way to read it
+ * again after something on the page changed it (a vote, a move). Null until
+ * it is read, so the page's first paint is the one it had before.
+ */
+export function useThreadPayload(slug: string | null, number: number | null, threadId: number | null = null, skip = false): {
+  data: ThreadPayload | null;
+  setData: (update: (was: ThreadPayload | null) => ThreadPayload | null) => void;
+  reread: () => void;
+} {
   const [data, setData] = useState<ThreadPayload | null>(null);
-  const [busy, setBusy] = useState(false);
   // Read again after a move changed the thread (./thread-moves.tsx).
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     if (!revision) setData(null);
-    const path = number && slug ? `/api/apps/${encodeURIComponent(slug)}/threads/${number}`
+    const path = skip ? null : number && slug ? `/api/apps/${encodeURIComponent(slug)}/threads/${number}`
       : threadId ? `/api/threads/${threadId}` : null;
     if (!path) return undefined;
     let live = true;
@@ -72,9 +72,36 @@ export function ThreadItems({ slug, number = null, threadId = null, here }: {
       .then((json) => { if (live) setData(json && Array.isArray(json.items) ? json : null); })
       .catch(() => { if (live) setData(null); });
     return () => { live = false; };
-  }, [slug, number, threadId, revision]);
-  const rows = useMemo(() => threadRows(data, here), [data, here.type, here.id]);
-  const button = followButton(data ? data.follow : null);
+  }, [slug, number, threadId, revision, skip]);
+  return { data, setData, reread: () => setRevision((n) => n + 1) };
+}
+
+export function ThreadItems({ slug, number = null, threadId = null, here, payload, items, onChanged }: {
+  slug: string | null;
+  /** Any number in the thread: the request's, or the change's own. */
+  number?: number | null;
+  /** Or the thread itself, for a decision that has no number. */
+  threadId?: number | null;
+  here: ThreadHere;
+  /** The page's own read, when it has one (./request-head.tsx): then this reads nothing itself. */
+  payload?: ThreadPayload | null;
+  /** The items the list names, when the page draws the rest itself. */
+  items?: ThreadPayload['items'];
+  onChanged?: () => void;
+}): ReactNode {
+  const t = useMessages('project');
+  const controlled = payload !== undefined;
+  const own = useThreadPayload(slug, number, threadId, controlled);
+  const data = controlled ? payload : own.data;
+  const setData = controlled ? null : own.setData;
+  const changed = onChanged || own.reread;
+  const [follow, setFollow] = useState<ThreadPayload['follow'] | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setFollow(undefined); }, [data]);
+  const shown = useMemo(() => (data && items ? { ...data, items } : data), [data, items]);
+  const rows = useMemo(() => threadRows(shown, here), [shown, here.type, here.id]);
+  const followNow = follow === undefined ? (data ? data.follow : null) : follow;
+  const button = followButton(followNow);
   if (!data || (!rows.length && !button)) return null;
   const say = (p: Phrase | string) => (typeof p === 'string' ? p : t(p.id, p.values));
 
@@ -90,7 +117,9 @@ export function ThreadItems({ slug, number = null, threadId = null, here }: {
       });
       if (!res.ok) throw new Error(String(res.status));
       const now = await res.json();
-      setData((was) => (was ? { ...was, follow: { state: now.state, chosen: !!now.chosen } } : was));
+      const next = { state: now.state, chosen: !!now.chosen };
+      if (setData) setData((was) => (was ? { ...was, follow: next } : was));
+      else setFollow(next);
     } catch {
       // The button says what is stored; a write that failed changed nothing.
     } finally {
@@ -112,7 +141,7 @@ export function ThreadItems({ slug, number = null, threadId = null, here }: {
             ink="neutral"
             layout="iconRow"
             className="shrink-0"
-            data-thread-follow={data.follow ? data.follow.state : ''}
+            data-thread-follow={followNow ? followNow.state : ''}
             aria-pressed={button.pressed}
             disabled={busy}
             title={t(button.hint)}
@@ -153,10 +182,11 @@ export function ThreadItems({ slug, number = null, threadId = null, here }: {
           ))}
         </GroupedList>
       ) : null}
-      {/* Stage 6: competing changes, as one ballot. */}
-      {data.follow ? <ThreadBallot data={data} onChanged={() => setRevision((n) => n + 1)} /> : null}
+      {/* Stage 6: competing changes, as one ballot. A request's page draws
+          it with its changes (./thread-changes.tsx). */}
+      {data.follow && here.type !== 'request' ? <ThreadBallot slug={slug} data={data} here={here} onChanged={changed} /> : null}
       {/* Stage 6: merging and splitting, for a signed-in viewer. */}
-      {slug && data.follow ? <ThreadMoves slug={slug} data={data} onChanged={() => setRevision((n) => n + 1)} /> : null}
+      {slug && data.follow ? <ThreadMoves slug={slug} data={data} onChanged={changed} /> : null}
     </section>
   );
 }
