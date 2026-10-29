@@ -50,6 +50,7 @@ import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { TopicBack } from './topic-back';
 import { RequestHead, RequestWords } from './request-head';
 import { ChangeThreadHead } from './change-head';
+import { changeDetailAsk, changeDetailRow, mergeChangePatch } from './change-detail-refresh';
 import { DescriptionEditor } from './description-editor';
 import { ISSUE_BODY_MAX } from '../../../lib/issue-body-limit';
 import { linkKind } from '../../../lib/repo-link.js';
@@ -1690,17 +1691,13 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
         if (!abort.signal.aborted) freshInFlight = false;
       }
     }
+    // The three ways of being told, in ./change-detail-refresh.ts.
     const refresh = (event: Event) => {
-      const detail = (event as CustomEvent).detail;
-      if (detail && typeof detail === 'object') {
-        if (Number(detail.id) !== Number(id)) return;
-        if (detail.row) { setLoaded(detail.row); setError(''); return; }
-        if (detail.patch) {
-          setLoaded((current: any) => (current && Number(current.id) === Number(id) ? { ...current, ...detail.patch } : current));
-        }
-        return;
-      }
-      if (Number(detail) === Number(id)) setRevision((n) => n + 1);
+      const ask = changeDetailAsk((event as CustomEvent).detail, id);
+      if (!ask) return;
+      if ('row' in ask) { setLoaded(ask.row); setError(''); return; }
+      if ('patch' in ask) { setLoaded((current: any) => mergeChangePatch(current, id, ask.patch)); return; }
+      setRevision((n) => n + 1);
     };
     const seen = () => { if (skipped && document.visibilityState !== 'hidden') void load(); };
     // Its own read and the roster it reads with it (readChangeDetail).
@@ -1727,7 +1724,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
   // This page's read wins over the lighter cached row, except for a vote
   // still on its way to the server: the voter's Yes stays on the button
   // from the click, not from whichever read lands after it.
-  const session = item && loaded?.id === id ? withPendingVote(av, { ...item, ...loaded }) : item;
+  const session = item && loaded?.id === id ? withPendingVote(av, changeDetailRow(item, loaded)) : item;
   const built = session && av ? av._topicViewFor(['active', 'paused'].includes(session.status) ? 'session' : 'proposal', session) : null;
   const card = built?.card || initialCard;
   const body: TopicBody = built?.body || initialBody;
