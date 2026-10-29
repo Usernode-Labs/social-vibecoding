@@ -16199,6 +16199,24 @@ const AppView = {
     return /\[bot\]$/.test(a) || a === 'usernode-bot' || a.endsWith('-bot');
   },
 
+  // #6020: the comment Homeroom writes on a request when somebody posts a
+  // plan on it (services/request-specs.js specCommentText), as
+  // { author, version }, or null. Native requests write it as `homeroom`
+  // (services/requests.js `comment`); it opens "**evan** posted a plan for
+  // this request (version 2)". When the plan's own line made it into the
+  // thread it is one line and a link; when that line failed, it carries the
+  // plan under a fold, as every one did before. The page leaves it out only
+  // where the thread has that author's line for that version
+  // (request-model.ts `requestStream`). Only this shape: Homeroom bot's own
+  // plan comments, with their questions before the fold, are not touched.
+  _isPlanMirror(c) {
+    if (!c) return null;
+    const a = (c.author || '').toString().toLowerCase();
+    if (a !== 'homeroom' && !AppView._isBotCommentAuthor(a)) return null;
+    const m = /^\*\*([^*\n]+)\*\* posted a plan for this request \(version (\d+)\)/.exec(String(c.body || ''));
+    return m ? { author: m[1], version: Number(m[2]) } : null;
+  },
+
   // #3490: Homeroom bot's spec, as it writes one on the request it is
   // building (services/homeroom-bot-live.js specCommentText): a sentence
   // saying what it is, then the spec inside `<details><summary>The
@@ -16214,7 +16232,7 @@ const AppView = {
   // matched nothing, and the markers were back on screen as text. A clipped
   // spec is drawn as a spec too, ending in the clip's own "… [truncated]".
   _botSpecOf(c) {
-    if (!c || !AppView._isBotCommentAuthor(c.author)) return null;
+    if (!c || !(AppView._isBotCommentAuthor(c.author) || AppView._isPlanMirror(c))) return null;
     const m = /^([\s\S]*?)<details>\s*<summary>\s*The (?:spec|plan)\s*<\/summary>([\s\S]*?)(?:<\/details>\s*)?$/
       .exec(String(c.body || ''));
     if (!m) return null;
@@ -16294,6 +16312,7 @@ const AppView = {
         voteRef: null,
         specShare: null,
         githubSpec: spec ? { title: spec.title, markdown: spec.body, html: renderSpec(spec.body) } : null,
+        planMirror: AppView._isPlanMirror(c),
       };
     });
     const item = AppView._findItem('issue', Number(number));
