@@ -94,6 +94,12 @@ confirmed attacks or unique CVEs.
   MinIO 7 is a downgrade. MinIO consumes object-store responses, so
   attacker-controlled object names, metadata or responses require further
   reachability review. No general non-applicability claim is made.
+  **Added 29 October:** GHSA-qr28-fpjm-wq7f (HIGH, published that day) is a
+  quadratic decode in decode-uri-component 0.2.2, which query-string 7.1.3
+  calls only from its parse path. MinIO 8.0.7, the latest release, calls only
+  `query-string.stringify`, so the decode is not reached; the only fixed
+  release (0.5.1) is ESM-only. It has an exact version/advisory exception
+  expiring **November 28, 2026**.
 - **Firebase Admin 13:** its older Firestore/Storage request stack retains uuid
   findings, propagated through retry-request, teeny-request and google-gax.
   The advisory concerns buffer-writing UUID APIs; v4 request-ID generation is
@@ -119,7 +125,8 @@ confirmed attacks or unique CVEs.
   no affected archive-extraction symbols in the upstream linux/arm64 binary,
   but did find linked HTTP/2 symbols. **The HTTP/2 finding remains affected;
   reachability is not dismissed.** Both matches are explicitly retained with
-  standalone-only exceptions expiring **October 30, 2026**. A vendor update
+  standalone-only exceptions expiring **November 13, 2026** (extended on
+  October 29, when 0.38.1 was still the latest release). A vendor update
   and amd64 assessment remain necessary. Kubernetes platform images contain
   neither Docker CLI nor Buildx. Copying the same-version upstream binaries
   removes Alpine's Go 1.26.9 certificate finding without changing Docker's API
