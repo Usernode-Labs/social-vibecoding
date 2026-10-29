@@ -150,7 +150,7 @@ async function validateForShare(pool, user, raw, { conversationId = null } = {})
          FROM issues
         WHERE id = $1 AND app_id = $2
           AND kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign',
-                       'featured_illustration')`,
+                       'featured_illustration', 'thread_move')`,
       [ref.objectRef, app.id]
     ));
   } else if (ref.type === 'spec') {
@@ -274,7 +274,7 @@ async function hydrateOne(pool, user, ref) {
            FROM issues i LEFT JOIN users u ON u.id = i.created_by
           WHERE i.id = $1 AND i.app_id = $2
             AND i.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign',
-                           'featured_illustration')`,
+                           'featured_illustration', 'thread_move')`,
         [ref.object_ref, app.id]
       );
       if (!rows.length) return unavailable(ref);

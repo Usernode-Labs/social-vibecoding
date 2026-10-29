@@ -298,15 +298,37 @@ const Browse = {
     // have to agree or the later one silently wins — which is exactly how a
     // first attempt at #2639 changed only app.js and did nothing at all.
     // App._BACK_SLOT is the other writer; 'browse-screen' is a root there.
+    //
+    // #6019: ON A PHONE DISCOVER IS A PAGE OF HOME'S, not a tab, so the list
+    // level and a detail opened from a Home card have an arrow back to Home.
+    // ON THE DESKTOP RAIL IT IS A TAB (29 Oct 2026): those two show nothing,
+    // as #2718's review had it, because the rail beside them is the way out.
+    // A detail opened from the list goes up to the list on both.
     const upToList = onDetail && Browse._detailOrigin !== 'home';
-    const backMode = upToList ? 'arrow' : 'none';
-    App.setBackIcon(backMode, upToList ? '#apps' : undefined);
+    const root = !upToList && !!App._discoverIsTab?.();
+    App.setBackIcon(root ? 'none' : 'arrow', upToList ? '#apps' : (root ? undefined : '/'));
+    Browse._watchLayout();
     if (onDetail) {
       const app = Browse.appBySlug(Browse._slug);
       App.setHeaderTitle(app?.name || Browse._slug);
     } else {
       App.setHeaderTitle(PlatformI18n.t('discover:browse.headerTitle'));
     }
+  },
+
+  // A window resized across 768px with Discover open changes what its back
+  // slot is (a tab root on the rail, a page of Home's on a phone), so the
+  // chrome is synced again there. Installed once, on the first sync.
+  _layoutWatched: false,
+  _watchLayout() {
+    if (Browse._layoutWatched) return;
+    Browse._layoutWatched = true;
+    try {
+      window.matchMedia?.('(min-width: 768px)')?.addEventListener?.('change', () => {
+        const screen = document.getElementById('browse-screen');
+        if (screen && !screen.classList.contains('hidden')) Browse._syncChrome();
+      });
+    } catch (_) { /* no matchMedia: nothing to follow */ }
   },
 
   // ── Data ──────────────────────────────────────────────────────────
@@ -962,10 +984,9 @@ const Browse = {
 
   // ── Row rendering ─────────────────────────────────────────────────
 
-  // The row's second line. There is no description column on `apps` (and
-  // dapp.json carries descriptions only per-secret), so this is derived
-  // META, not prose: who's using it, when it last shipped, and the status
-  // word when the app isn't actually running.
+  // The row's facts line, under the app's own sentence (aboutLine) when it
+  // has one. This is derived META, not prose: who's using it, when it last
+  // shipped, and the status word when the app isn't actually running.
   //
   // It ADAPTS to the current sort (#1383), so the number a row was ranked by
   // is the number the row shows — a list ordered by merged proposals whose
@@ -1011,6 +1032,19 @@ const Browse = {
     return bits.length ? joinFacts(bits) : '';
   },
 
+  // What the app is, in its own words (#5928): the manifest's one-line
+  // description, the sentence Home's cards (HomePanels.appBlurb), the About
+  // sheet and the guest directory already show. `manifest_snapshot` rides
+  // every GET /api/apps row. Absent on many apps, and then the row says
+  // nothing rather than a filler line. Pure — unit-tested.
+  aboutLine(app) {
+    const snap = app && app.manifest_snapshot;
+    const raw = snap && typeof snap === 'object' ? snap.description : null;
+    if (typeof raw !== 'string') return null;
+    const text = raw.replace(/\s+/g, ' ').trim();
+    return text ? text.slice(0, 160) : null;
+  },
+
   // One app-store row, as DATA: icon · name + meta + status pills · Add
   // button. ./browse-list.tsx renders it; the same descriptor is the desktop
   // box, because the layout switch is pure CSS (.browse-row in app.css).
@@ -1033,6 +1067,7 @@ const Browse = {
       directoryTier: Browse.directoryTier(app),
       slug: app.slug,
       name: app.name || app.slug,
+      about: Browse.aboutLine(app),
       meta: Browse.metaLine(app, Browse._sort),
       status: app.status || '',
       statusDot: app.status === 'running' ? 'running'
@@ -1241,6 +1276,26 @@ const Browse = {
     let items = [];
     try { items = Home.menuItemsFor(app) || []; } catch (err) { items = []; }
     return items.filter((i) => i && !Browse.DETAIL_EXCLUDED_KEYS.includes(i.key));
+  },
+
+  // ── Versions (docs/plans/versions.md) ───────────────────────────
+  //
+  // An original's line on its page: how many versions people have made of
+  // it, and how many of those get its updates, "214 versions · 160 get its
+  // updates", from the app payload's `versions: {count, following}` (the
+  // one-app read adds it; null on an app nobody has made a version of). A
+  // zero says nothing: no line before the first version, and no "0 get its
+  // updates". One message per shape, because the second number's verb agrees
+  // with it. Pure — unit-tested in tests/browse-screen.test.js.
+  versionsLineFor(app) {
+    const v = app && app.versions;
+    if (!v || typeof v !== 'object') return null;
+    const count = Math.max(0, Math.floor(Number(v.count) || 0));
+    const following = Math.min(count, Math.max(0, Math.floor(Number(v.following) || 0)));
+    if (!count) return null;
+    if (!following) return PlatformI18n.t('discover:detail.versions.count', { count });
+    if (count === 1) return PlatformI18n.t('discover:detail.versions.oneGetsUpdates');
+    return PlatformI18n.t('discover:detail.versions.manyGetUpdates', { count: following, versions: count });
   },
 
   // ── Share (the prototype's About sheet: More, then Share) ─────────
@@ -1479,7 +1534,8 @@ const Browse = {
           includePrContext: false,
         })
       : '';
-    // Fork lineage — "⑂ Remixed from <name>", under the version chip.
+    // Lineage — "Made from <name>", under the version chip: the app is a
+    // version of another (docs/plans/versions.md).
     //
     // This was the hamburger drawer's last footer row, painted by
     // AppView.renderForkBadge() into a slot by id and revealed through
@@ -1494,7 +1550,11 @@ const Browse = {
     // filled Browse._apps, this reads. A source that has been deleted comes
     // back as `linkable: false` with the literal name "<deleted>", and
     // renders as inert text — the same two states the badge had.
-    const forkRef = app.forked_from;
+    //
+    // A ready-made made from its platform original has no `forked_from`:
+    // its link is the one-app read's `upstream_link` (`{ slug, name,
+    // following, linkable }`), the same shape where it matters here.
+    const forkRef = app.forked_from || app.upstream_link;
     const forkedFrom = (forkRef && typeof forkRef === 'object')
       ? {
           name: forkRef.name || '<deleted>',
@@ -1535,6 +1595,7 @@ const Browse = {
         // chip that would then have two owners. '' draws no wrapper at all.
         versionPillHtml: pillHtml,
         forkedFrom,
+        versions: Browse.versionsLineFor(app),
         updatedRel,
         canOpen,
         openLabel: canOpen
@@ -1552,8 +1613,8 @@ const Browse = {
           index: i,
           label: a.label,
           title: a.title || null,
-          // The line under the label, for an item that has one (Remix's
-          // "Make your own copy"); absent for every other row.
+          // The line under the label, for an item that has one (Make your
+          // own's "Your own version to change"); absent for every other row.
           ...(a.sub ? { sub: a.sub } : {}),
           danger: !!a.danger,
           disabled: !!a.disabled,

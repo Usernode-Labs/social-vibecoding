@@ -1433,7 +1433,7 @@
     {
       "name": "The app detail page opens from a browse row (?shot=browse-detail)",
       "path": "/?shot=browse-detail#apps",
-      "expectText": "Make your own copy",
+      "expectText": "Your own version to change",
       "expectSelector": "#browse-detail #browse-detail-open"
     },
     {
@@ -1483,10 +1483,10 @@
       "expectText": "See all"
     },
     {
-      "name": "Directory leads with Recommended for you and keeps demos under Show more (#1523, #5267)",
+      "name": "Directory leads with Featured and keeps demos under Show more (#1523, #5267, #5928)",
       "path": "/?demo=1&curation=1&sort=recommended#apps",
       "expectSelector": "#browse-list:has(h2 ~ [data-slug=\"directory-sample-working\"][data-directory-state=\"working\"]):not(:has(.browse-row[data-slug=\"directory-sample-demo\"])) button[aria-controls=\"browse-more-apps\"][aria-expanded=\"false\"]",
-      "expectText": "Recommended for you"
+      "expectText": "Featured"
     },
     {
       "name": "Show more is on every sort, not just Recommended (#1912)",
@@ -1550,9 +1550,9 @@
       "expectSelector": "#app-list .app-card:not(:has(.users-badge)):not(:has(.status-dot))"
     },
     {
-      "name": "Browse renders app-store rows with a Join button, under a bar with no back slot (#2639, #2718)",
+      "name": "Discover renders app-store rows with a Join button, under a bar with no back slot on the desktop rail, where Discover is a tab of its own and lit (#2639, #2718; #6019)",
       "path": "/#apps",
-      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn.hidden) #browse-list .browse-row .browse-add-btn",
+      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn.hidden):has(#platform-tabs #platform-tab-discover[aria-current=\"page\"]) #browse-list .browse-row .browse-add-btn",
       "expectText": "Discover"
     },
     {
@@ -3038,9 +3038,9 @@
       "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#platform-mark-btn) #notifications-btn"
     },
     {
-      "name": "The bar's destination order: Home, Discover, Messages in the middle, Communities, then you (#1443); on a wide window Messages' nested conversations follow it, and the communities you pinned, then your others, sit just above the Communities tab (D, v3)",
+      "name": "The desktop rail's destination order: Home, Discover, Messages, AI, Communities, then you (#6019; the markup is the rail's order and app.css lays the phone's bar out as Home, Communities, AI, Messages, You); Messages' nested conversations follow it, and the communities you pinned, then your others, sit just above the Communities tab (D, v3)",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-rail-conversations + #platform-rail-pinned + #platform-rail-communities + #platform-tab-workshop[href=\"#communities\"] + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-rail-conversations + #platform-tab-ai[href=\"#ai\"] + #platform-rail-pinned + #platform-rail-communities + #platform-tab-workshop + #platform-tab-me"
     },
     {
       "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
@@ -3408,9 +3408,9 @@
       "expectText": "Integrations & automation"
     },
     {
-      "name": "Settings opens with a filter box over an uncollapsed menu, Account current",
+      "name": "Settings opens with a filter box and every group open, Account current",
       "path": "/#settings",
-      "expectSelector": "#settings-nav-desktop:has(input#settings-filter-desktop[type=\"search\"]):not(:has([aria-expanded])) [data-settings-nav=\"account\"][aria-current=\"page\"]"
+      "expectSelector": "#settings-nav-desktop:has(input#settings-filter-desktop[type=\"search\"]):not(:has([aria-expanded=\"false\"])):has([data-settings-group-fold][aria-expanded=\"true\"]) [data-settings-nav=\"account\"][aria-current=\"page\"] svg"
     },
     {
       "name": "An old part address opens the page that holds it: #settings/cli marks Connectors & CLI current",
@@ -3638,9 +3638,9 @@
       "expectSelector": ".fork-tag"
     },
     {
-      "name": "The app's own page shows the Remixed-from label",
+      "name": "The app's own page shows the Made-from label",
       "path": "/#apps/staging-demo-fork",
-      "expectText": "Remixed from"
+      "expectText": "Made from"
     },
     {
       "name": "Fork lineage renders under the version it qualifies",
@@ -4433,7 +4433,7 @@
       "expectText": "Filters"
     },
     {
-      "name": "?sort= orders the touch directory, under a bar with no back slot (#1383, #2718)",
+      "name": "?sort= orders the touch directory, under a bar with no back slot on the desktop rail, where Discover is a tab of its own (#1383, #2718; #6019)",
       "path": "/?sort=new&un-platform=ios#apps",
       "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn.hidden) #browse-list[data-sort=\"new\"] .browse-row"
     },
@@ -4844,7 +4844,7 @@
       "expectSelector": "#platform-tabs > #platform-rail-pinned.hidden[role=\"group\"][aria-labelledby=\"platform-rail-pinned-label\"] + #platform-rail-communities"
     },
     {
-      "name": "#2800: you are the sidebar's foot, straight after the Communities tab (its All row), with your Settings beside you",
+      "name": "#2800: you are the sidebar's foot, straight after the Communities tab (its All row), with your Settings beside you (#6019: the rail ends Messages, AI, Communities)",
       "path": "/?demo=1",
       "expectSelector": "#platform-tabs > #platform-tab-workshop + a#platform-tab-me + a#platform-rail-settings:last-child"
     },
@@ -5037,9 +5037,9 @@
       "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-active-change]:has([data-agent-session-checks-reason]) a[href$=\"/dev/proposals/990802\"]"
     },
     {
-      "name": "Workshop: What's happening files your work in sections of one card: Waiting on you and Going live one line a row, Yours, up for a vote two (#4772)",
+      "name": "Workshop: What's happening files your work in sections of one card, one line a row: Waiting on you, then Up next, going live before up for a vote (#4772, #6019)",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-workshop .dev-ws-tabbody > [data-ws-part=\"happening\"] + [data-ws-happening] > [data-ws-mine-section=\"waiting\"]:has(.dev-ws-hrow) ~ [data-ws-mine-section=\"vote\"]:has(.dev-ws-lrow) ~ [data-ws-mine-section=\"live\"] .dev-ws-hrow[data-ws-row]"
+      "expectSelector": "#dev-workshop .dev-ws-tabbody > [data-ws-part=\"happening\"] + [data-ws-happening] > [data-ws-mine-section=\"waiting\"]:has(.dev-ws-hrow) ~ [data-ws-mine-section=\"next\"] .dev-ws-hrow[data-ws-row]"
     },
     {
       "name": "A request Homeroom bot is building says where it is on its own page, as its thread in the chat does: its status word and try, where it is and why, and the five steps with the one it is on lit (16 Oct 2026)",
@@ -5098,11 +5098,11 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out, 3 loads: Discover shows project cards, not \"could not load\" (#6015)",
+      "name": "Signed out, 3 loads: Discover shows project cards, each a picture and one link to its page with no Try it on the card, not \"could not load\" (#6015)",
       "path": "/?shot=anon#apps",
       "repeat": 3,
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen:not(.hidden):not(:has([data-guest-retry])) [data-guest-discover] [data-guest-card=\"staging-landing-open\"]",
+      "expectSelector": "#auth-landing-screen:not(.hidden):not(:has([data-guest-retry])) [data-guest-discover] [data-guest-card=\"staging-landing-open\"]:has(> [data-guest-card-cover]):not(:has([data-guest-try])) a[data-guest-card-link][href=\"/app/staging-landing-open\"]",
       "allowConsoleErrors": true
     },
     {
@@ -5118,6 +5118,23 @@
       "persona": "guest",
       "expectSelector": "#auth-landing-screen:not(.hidden) [data-guest-project=\"staging-landing-open\"]",
       "allowConsoleErrors": true
+    },
+    {
+      "name": "#6019: a request's changes follow it under a rule, each with its own line and a door to its page (staging fixture: the changes built for #900001)",
+      "path": "/#app/usernode-2d5619/dev/issues/900001",
+      "expectSelector": "#gc-thread-head .dev-request-root > .min-w-0 > [data-thread-changes] [data-thread-change-line] > button[data-thread-change-open]"
+    },
+    {
+      "name": "#6019: the AI tab opens on its own page: Your work, with a private idea locked to you (Only you · Not in a community yet)",
+      "path": "/?demo=1#ai",
+      "expectSelector": "#ai-screen:not(.hidden) [data-ai-list=\"work\"] [data-ai-row=\"private\"][data-who=\"solo\"]",
+      "expectText": "Not in a community yet"
+    },
+    {
+      "name": "#6019: the AI tab's Up next lists your work moving without you, soonest first (going live before up for a vote)",
+      "path": "/?demo=1#ai",
+      "expectSelector": "#ai-screen:not(.hidden) [data-ai-list=\"next\"] [data-ai-next=\"going_live\"] ~ [data-ai-next=\"vote\"]",
+      "expectText": "Going live"
     }
   ],
   "governance": {

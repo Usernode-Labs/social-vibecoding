@@ -37,6 +37,8 @@ type RowView = {
   directoryTier?: 'ready' | 'unreviewed' | 'more';
   slug: string;
   name: string;
+  /** The app's one-line description, from its dapp.json (#5928), or null. */
+  about?: string | null;
   meta: string;
   status: string;
   statusDot: string;
@@ -56,21 +58,32 @@ function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Browse : null) || null;
 }
 
-const ADD_BASE = 'browse-add-btn shrink-0 inline-flex items-center gap-1 rounded-full '
-  + 'border px-3 py-1.5 text-xs font-medium transition-colors ';
-// Join and Open are the same filled neutral pill, the App Store's Get / Open
-// (#5267). A joined row used to say "✓ Joined", and down a directory where
-// most rows were joined that was a column of a state nobody needed told; it
-// now offers the next thing to do with the app, opening it. Filled neutral,
-// not an accent outline: the row sits on a white card, and an outlined
-// control on a floating surface is the shape the language never draws (see
-// the `neutral` variant in @/components/ui/button.tsx).
-const ADD_FILL = 'border-transparent bg-zinc-100 dark:bg-zinc-800 text-zinc-900 '
-  + 'dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700';
+// The 44px tap height (#5928) holds at every width below the shell's `md`
+// (768px), the whole phone-and-small-tablet range, not only the <640px phone
+// grid in app.css; from md the row is a desktop box and the pill its own
+// compact size. Written on the element, so the rendered row carries it.
+const TAP = 'min-h-[44px] md:min-h-0';
+// The box both pills share, after the primitive's radius-and-fill variant.
+// `browse-add-btn` is the hook the row's click guard and the declared checks
+// select on.
+const ADD_BOX = `browse-add-btn shrink-0 inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium ${TAP}`;
+// Join and Open are the App Store's Get / Open (#5267). A joined row used to
+// say "✓ Joined", and down a directory where most rows were joined that was a
+// column of a state nobody needed told; it now offers the next thing to do
+// with the app, opening it. Both are filled pills, never an accent outline:
+// the row sits on a white card, and an outlined control on a floating surface
+// is the shape the language never draws (see the `neutral` variant in
+// @/components/ui/button.tsx).
+//
+// They are not the same weight (#5928). Join is the action the directory
+// asks of you, so it is Button's `pillAccent` (the blue `violet`, which marks
+// an action); Open is the quieter `pillNeutral`, since a joined app is
+// already yours and the row itself opens it too. A column of identical grey
+// pills read as one state.
 // Leave (#5953) is the quiet one beside Open: no fill, muted words that
 // darken under the pointer. Leaving asks first (Home.setMembership, whose
 // confirm is the red one), so the button itself does not need to shout.
-const LEAVE = 'browse-leave-btn shrink-0 inline-flex items-center rounded-full px-2.5 py-1.5 '
+const LEAVE = `browse-leave-btn shrink-0 inline-flex items-center rounded-full px-2.5 py-1.5 ${TAP} `
   + 'text-xs font-medium text-zinc-500 dark:text-zinc-400 transition-colors '
   + 'hover:text-zinc-900 dark:hover:text-zinc-100';
 
@@ -144,11 +157,15 @@ function Row({ view, eager = false }: {
 
   // No `type` on Join / Open: the hand-written row shipped a bare <button>,
   // and it sits in no form, so the default submit type is inert either way.
+  // Both draw through @/components/ui/button's pills (#5928).
   // Both keep `browse-add-btn` and `data-added`: the row's own click skips
   // that class, and the declared checks select on the pair.
   const primary = !view.added ? (
-    <button
-      className={ADD_BASE + ADD_FILL}
+    <Button
+      variant="pillAccent"
+      size="none"
+      ink="solid"
+      className={ADD_BOX}
       data-slug={view.slug}
       data-added="false"
       data-action="join"
@@ -166,10 +183,13 @@ function Row({ view, eager = false }: {
           visible label is one short word and the accessible name
           carries the rest, "Join <app>". */}
       {t('discover:list.join.action')}
-    </button>
+    </Button>
   ) : view.canOpen ? (
-    <button
-      className={ADD_BASE + ADD_FILL}
+    <Button
+      variant="pillNeutral"
+      size="none"
+      ink="neutral"
+      className={ADD_BOX}
       data-slug={view.slug}
       data-added="true"
       data-action="open"
@@ -181,7 +201,7 @@ function Row({ view, eager = false }: {
       }}
     >
       {t('discover:list.open.action')}
-    </button>
+    </Button>
   ) : null;
   const leave = view.canLeave ? (
     <button
@@ -241,6 +261,14 @@ function Row({ view, eager = false }: {
           {/* `truncate`, not just `block` (QA 2026-09-24 Q10): the subtitle box
               clips, so without its own ellipsis this line was cut mid-word
               ("Reviewed workir") on a phone. */}
+          {/* What the app is, in its own words (#5928), above the facts: the
+              name alone ("Sheep countrr", "block-game") rarely says it.
+              One line, ellipsised; the whole sentence is its own
+              tooltip. Not `text-xs`: dapp.json's directory check reads a
+              meta line whose first child is not the small review label. */}
+          {view.about ? (
+            <span className="browse-row-about block truncate text-zinc-700 dark:text-zinc-300" title={view.about}>{view.about}</span>
+          ) : null}
           {label ? (
             <span className="block truncate text-xs text-zinc-600 dark:text-zinc-400">{label}</span>
           ) : null}

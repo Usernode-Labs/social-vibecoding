@@ -28,9 +28,18 @@ const commitIdentity = require('./commit-identity');
 //   - `governance`: who approves the original's proposals says nothing
 //     about the copy, which starts on the platform default.
 // Each stays votable later like any other line in the copy's dapp.json.
+//
+// A fourth is the original's own and is replaced rather than dropped:
+// `followOriginal`, whether the version gets its original's updates
+// (docs/plans/versions.md). The original's says whether IT follows the
+// project it was made from; the version's is the maker's choice (the
+// route's `follow`, on unless they turned it off), written last, so it is a
+// line of the version's dapp.json its group can vote to change later
+// (POST /api/apps/:slug/follow-pr; app-manifest.reconcileAppFollow).
 const FORK_STRIPPED_MANIFEST_KEYS = Object.freeze(['admins', 'visibility', 'governance']);
+const FOLLOW_KEY = 'followOriginal';
 
-function rewriteDappName(dir, name) {
+function rewriteDappName(dir, name, { follow = true } = {}) {
   const p = path.join(dir, 'dapp.json');
   let obj = null;
   try {
@@ -41,6 +50,8 @@ function rewriteDappName(dir, name) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) obj = {};
   obj.name = name;
   for (const key of FORK_STRIPPED_MANIFEST_KEYS) delete obj[key];
+  delete obj[FOLLOW_KEY];
+  obj[FOLLOW_KEY] = follow !== false;
   fs.writeFileSync(p, `${JSON.stringify(obj, null, 2)}\n`);
 }
 
@@ -149,7 +160,7 @@ async function stripGitEntries(dir) {
   }
 }
 
-async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDir }) {
+async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDir, follow = true }) {
   // The copy is made where new repositories are: Homeroom's git host
   // (botUsername is its organisation, services/github.js getBotUsername),
   // pushed as its service account. Without a git host, botUsername is a
@@ -194,9 +205,10 @@ async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDi
   // Flatten to a history-free tree: strip every .git (the top-level dir and
   // any submodule .git files) plus .gitmodules, so `git add -A` commits
   // the materialised working tree (submodule contents become plain
-  // files) rather than gitlinks. Then rewrite the display name.
+  // files) rather than gitlinks. Then rewrite the display name, and say
+  // whether the version gets the original's updates.
   await flattenTree(tempDir);
-  rewriteDappName(tempDir, forkName);
+  rewriteDappName(tempDir, forkName, { follow });
   writeConnectorScaffold(tempDir);
 
   // Create the fork's repository, then force-push our single squashed

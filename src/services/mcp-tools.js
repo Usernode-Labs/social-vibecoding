@@ -40,6 +40,7 @@ const checkSignals = require('./check-signals');
 const { sniffImageType } = require('./attachments');
 const requestSpecs = require('./request-specs');
 const connectorUploads = require('./connector-uploads');
+const createOptions = require('./create-options');
 const repoRef = require('./repo-ref');
 const {
   READ_SCOPE,
@@ -104,6 +105,14 @@ const MAX_REQUEST_TITLE_CHARS = 256;    // GitHub's own issue-title limit.
 const { GITHUB_ISSUE_BODY_MAX: MAX_REQUEST_BODY_CHARS } = require('./issue-body-limit'); // GitHub's own issue-body limit.
 const MAX_ANSWER_CHARS = 8000;          // MAX_CHAT_LEN in services/ws.js.
 const MAX_CLOSE_REASON_CHARS = 2000;    // MAX_CLOSE_REASON_LENGTH in routes/issues.js.
+// create_app (#6026). The name: the route takes any non-empty name and caps
+// only the slug it derives, so this is the connector's own bound on a name a
+// person reads on every screen. The brief: MIN_BRIEF_CHARS and
+// MAX_BRIEF_CHARS in services/homeroom-bot-dm.js, which its normalizeBrief
+// applies (tests/mcp-create-app.test.js pins them).
+const CREATE_APP_NAME_MAX = 80;
+const CREATE_APP_BRIEF_MIN = 10;
+const CREATE_APP_BRIEF_MAX = 4000;
 // submit_work's `description`: what share-in-progress and update-from-fork
 // accept, in UTF-8 BYTES (routes/proposal-handoff.js boundedText), and where
 // the create path cuts the pull request body, in characters
@@ -151,6 +160,8 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 //                            only for an agent session's Mayor
 //   submit_work            — opens or advances a proposal, for the group to vote on
 //   create_request         — files on the app's board and as a GitHub issue
+//   create_app             — makes a new project for the caller, spending one
+//                            of their app slots (#6026)
 //   post_spec              — posts a spec on a request, for the group to review
 //   prepare_upload         — mints a one-time command that stores one file
 //                            (a plan, a video, a screenshot) for the two above
@@ -197,6 +208,9 @@ const ACTING_TOOLS = Object.freeze([
   'withdraw_change',
   'submit_work',
   'create_request',
+  // #6026: it starts a real app (repository, container, database) and spends
+  // one of the caller's app slots, so it is asked about like every write.
+  'create_app',
   'post_spec',
   // It files nothing, but it hands out a credential and holds a row for a
   // day, as prepare_work holds a work order.
@@ -288,6 +302,12 @@ const ACTING_TOOLS = Object.freeze([
   // Writes a notification of every kind into a test account's bell, and
   // rings its phone.
   'send_test_notifications',
+  // Featured apps (routes/featured-admin.js): admin-only, and neither changes
+  // an app, but each changes what people see at once: the list the
+  // signed-out landing's Featured and Home's "Find more apps" read, or the
+  // review that lets an app be on it.
+  'set_featured_apps',
+  'review_app_for_directory',
 ]);
 
 // One conventions section, at most. The largest current section (the native
@@ -3656,6 +3676,108 @@ function registerTools(server, ctx) {
     });
   });
 
+  // ── create_app ───────────────────────────────────────────────────────
+  //
+  // #6026: make a new project for the connected person, the one the Create
+  // screen's "What do you want to make?" makes, so an assistant that designed
+  // an app with them can start it without sending them to Homeroom first.
+  // External clients only, by omission: the Mayor and a change's worker see
+  // only the tools services/mcp-audiences.js names for them, and their route
+  // lists do not carry POST /api/apps.
+  //
+  // Four fields and no more (createOptions.CONNECTOR_CREATE_FIELDS). Invites,
+  // an import, an approval rule and a starter stay on Homeroom itself, and
+  // the route refuses them from a connector token, so this tool and a raw
+  // call with the same token reach the same narrow door. The person's app
+  // allowance, the server's app limit and the create rate limiter hold as
+  // they do in the browser; their refusals come back in the route's words.
+  server.registerTool('create_app', {
+    title: 'Make a new project',
+    description: `Make a new Homeroom project for the person this connector is signed in as: the same project the Create screen's "What do you want to make?" makes, with them as its only member. Use it when they want something new built, not a change to an app they already have (check list_apps first). It spends one of their app slots and starts a real app with its own repository, container and database, so confirm the name with them before calling. \`audience\` defaults to "invited": a private community nobody else is in yet; they invite people from its page. With a \`brief\`, Homeroom bot builds the first version from it, as it does on the Create screen. Without one the project starts from the empty starter for a coding agent to build: once get_app reports it running, file its first request with create_request, then prepare_work and submit_work as for any change. It invites nobody, tells nobody else and puts nothing to a vote.`,
+    inputSchema: {
+      name: z.string().describe(`What to call it, as the person would say it. At most ${CREATE_APP_NAME_MAX} characters.`),
+      description: z.string().optional().describe(`One line about what it is, shown on its page and in Discover. At most ${createOptions.DESCRIPTION_MAX} characters.`),
+      audience: z.enum(['invited', 'solo', 'open']).optional().describe('Who it is for. "invited" (the default): a private community they can invite people into. "solo": just them. "open": a public community anyone can see, join and build.'),
+      brief: z.string().optional().describe(`What it should do, in the person's words, ${CREATE_APP_BRIEF_MIN} to ${CREATE_APP_BRIEF_MAX} characters. Only when Homeroom bot should build the first version; leave it out when a coding agent will.`),
+    },
+    outputSchema: {
+      slug: z.string(),
+      name: z.string(),
+      status: z.string(),
+      audience: z.enum(['invited', 'solo', 'open']),
+      // Who builds the first version: Homeroom bot from the brief, or the
+      // caller's own coding agent.
+      firstVersion: z.enum(['homeroom_bot', 'yours']),
+      webPath: z.string(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ name, description, audience, brief }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    const cleanName = String(name || '').trim();
+    if (!cleanName) return toolError('invalid_request', 'name is required.');
+    // Checked, never fixed: a project made under a shortened name is not the
+    // one the person agreed to.
+    const nameCheck = checkWriteLength(cleanName, {
+      field: 'name', max: CREATE_APP_NAME_MAX, hint: 'Choose a shorter name with the person, then call create_app again.',
+    });
+    if (!nameCheck.ok) return writeLengthError(nameCheck);
+    const line = description == null ? '' : String(description).trim();
+    const lineCheck = checkWriteLength(line, {
+      field: 'description', max: createOptions.DESCRIPTION_MAX, hint: 'Say what it is in one shorter line, then call create_app again.',
+    });
+    if (!lineCheck.ok) return writeLengthError(lineCheck);
+    const wanted = audience == null ? 'invited' : audience;
+    if (!createOptions.AUDIENCES.has(wanted)) {
+      return toolError('invalid_request', 'audience must be "invited", "solo" or "open".');
+    }
+    const words = brief == null ? '' : String(brief).trim();
+    if (words && words.length < CREATE_APP_BRIEF_MIN) {
+      return toolError('invalid_request', `A brief needs at least ${CREATE_APP_BRIEF_MIN} characters; leave it out when a coding agent will build the first version.`);
+    }
+    const briefCheck = checkWriteLength(words, {
+      field: 'brief', max: CREATE_APP_BRIEF_MAX, hint: 'Shorten the brief, then call create_app again.',
+    });
+    if (!briefCheck.ok) return writeLengthError(briefCheck);
+    const result = await callPlatform(baseUrl, accessToken, 'POST', '/api/apps', {
+      name: nameCheck.value,
+      audience: wanted,
+      ...(lineCheck.value ? { description: lineCheck.value } : {}),
+      ...(briefCheck.value ? { brief: briefCheck.value } : {}),
+    });
+    if (!result.ok) {
+      // Out of app slots is the person's allowance, not this connection's
+      // permission: said as such, so they are not told to reconnect.
+      if (result.status === 403 && result.body && result.body.code === 'app_allowance_exhausted') {
+        return toolError('app_allowance_exhausted', platformWords(result.body).message
+          || 'All of this person\'s app slots are in use. They can ask for more from the app allowance panel on Homeroom.');
+      }
+      if (result.status === 409) {
+        const said = (platformWords(result.body).message || 'A project with that name already exists').replace(/[.!?]?\s*$/, '.');
+        return toolError('name_taken', `${said} Choose another name with the person.`);
+      }
+      return platformError(result);
+    }
+    const app = (result.body && result.body.app) || {};
+    const slug = typeof app.slug === 'string' ? app.slug : '';
+    if (!requireSlug(slug)) {
+      return toolError('platform_error', 'Homeroom made the project but did not say what it is called. Call list_apps to find it before making another.');
+    }
+    const byBot = !!(result.body && result.body.homeroomBot);
+    return toolResult({
+      slug,
+      name: untrusted(app.name || nameCheck.value, CREATE_APP_NAME_MAX),
+      status: typeof app.status === 'string' ? app.status : 'creating',
+      audience: wanted,
+      firstVersion: byBot ? 'homeroom_bot' : 'yours',
+      webPath: appWebPath(origin, slug),
+      nextStep: byBot
+        ? 'Homeroom bot is building the first version from the brief while the project is set up, as it does for a project made on the Create screen. The person follows it on the project\'s page (webPath) and in their messages from Homeroom bot; do not build a first version of your own as well.'
+        : 'Homeroom is setting the project up, which takes a minute or two. Call get_app with this slug until its status is running, then file its first request with create_request and build it with prepare_work and submit_work like any change. The person can open webPath to invite people.',
+    });
+  });
+
   // ── prepare_upload ───────────────────────────────────────────────────
   //
   // The connector's half of services/connector-uploads.js: mint a one-time
@@ -5142,6 +5264,8 @@ function registerTools(server, ctx) {
         .describe('Your checkout\'s current commit — the output of `git rev-parse HEAD`. Pass it whenever this conversation has a checkout and the result reports `checkout`: whether what you are holding is the app\'s code at all, and how far it has drifted. Costs nothing when it is fine and catches a stale fork before you write against it rather than at submit_work.'),
       remoteUrl: z.string().optional()
         .describe('Your checkout\'s origin remote — the output of `git remote get-url origin`. Only meaningful alongside headSha, and it is what identifies a FORK: without it the check can say the commit is behind but not that origin is a different repository from the app\'s own.'),
+      startedFrom: z.string().max(64).optional()
+        .describe('Only when the prompt you were given names it: where this task was started from, e.g. `claude_code_link` for Homeroom\'s "Open in Claude Code" link. Recorded so those tasks can be counted; an unknown value is ignored.'),
     },
     outputSchema: {
       taskId: z.number(),
@@ -5231,7 +5355,7 @@ function registerTools(server, ctx) {
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
-  }, async ({ slug, requestNumber, requestNumbers, brief, restart, proposalId, headSha, remoteUrl }) => {
+  }, async ({ slug, requestNumber, requestNumbers, brief, restart, proposalId, headSha, remoteUrl, startedFrom }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
     if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
@@ -5342,6 +5466,9 @@ function registerTools(server, ctx) {
       // #4264: a one-time upload command in the work order, for a patch too
       // big to retype into submit_work. New work only; the service decides.
       patchUpload: true,
+      // #5987: the "Open in Claude Code" link's prompt names it; the service
+      // keeps only a value it knows.
+      startedFrom,
       specs: requestSpecsToBuild,
     });
     // #4266: at the work-order cap, name the two tools that let the caller see
@@ -6332,6 +6459,9 @@ function registerTools(server, ctx) {
       nextStep: 'It is now up for a vote'
         + `${proposalRef(result.proposalId, result.prNumber) ? ` as ${proposalRef(result.proposalId, result.prNumber)}` : ''}. `
         + 'Checks and the staging preview build automatically — use get_proposal to follow it. It merges when the group approves it.'
+        // 29 Oct 2026: a coding agent's submission is not its author's yes
+        // (governance-rules.ts, `madeByAgent`), so say where theirs is cast.
+        + ' Submitting it is not a vote: tell the user their own yes counts once they tap Yes on it on Homeroom.'
         + testingRouteNote(testing, false)
         + await unlinkedRequestsNote(result),
     });
@@ -10037,6 +10167,159 @@ function registerTools(server, ctx) {
     });
   }
 
+  // ── Featured apps (full platform admins only) ────────────────────────
+  //
+  // Three tools over routes/featured-admin.js, whose every door hands the
+  // call on to the console's own /api/admin route
+  // (routes/admin-featured-apps.js): the list in its order beside every app
+  // that could be added (list_featured_apps), the whole list set in a new
+  // order (set_featured_apps), and an app's directory review of the version
+  // it is running (review_app_for_directory), which an app needs, as
+  // working, before it can be featured. They do what Admin > Featured apps
+  // does, so an admin can curate the signed-out landing's Featured and every
+  // user's "Find more apps" row from a conversation. The charter's
+  // "featured-apps" section is the procedure.
+  //
+  // Admin-only three times over, like the challenge tools: registered only
+  // for a full admin's connector, refused in every handler for anybody else
+  // before any call, and refused by every route (requireAdminWrite), which
+  // is the wall that counts. App names come back as untrusted data.
+  if (user && user.canAdminWrite) {
+    const featuredAdminOnly = () => (user && user.canAdminWrite
+      ? null
+      : toolError('admin_only', 'Featured apps are curated by full platform admins.'));
+    // routes/admin-featured-apps.js FEATURED_MAX: the route refuses more.
+    const FEATURED_MAX = 12;
+    const FEATURED_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+    const FEATURED_SHA_RE = /^[0-9a-f]{7,64}$/;
+    const FEATURED_WORD_RE = /^[a-z_]{1,32}$/;
+    const featuredWord = (v) => (typeof v === 'string' && FEATURED_WORD_RE.test(v) ? v : null);
+    const featuredTime = (v) => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? v.slice(0, 40) : null);
+    // One app as the console's list draws it (services/discovery-curation.js
+    // describe() is its review): numbers, words and ids, and its name as
+    // untrusted data.
+    const featuredAppOut = (a) => {
+      const d = a && typeof a.directory === 'object' && a.directory ? a.directory : {};
+      const tier = featuredWord(d.tier) || 'unreviewed';
+      return {
+        slug: FEATURED_SLUG_RE.test(String(a?.slug || '')) ? a.slug : null,
+        name: untrusted(a?.name, 120) || null,
+        status: featuredWord(a?.status),
+        featuredOrder: Number.isInteger(a?.sort_order) ? a.sort_order : null,
+        hasIllustration: a?.has_illustration === true,
+        mainSha: typeof a?.main_sha === 'string' && FEATURED_SHA_RE.test(a.main_sha) ? a.main_sha : null,
+        lastDeployAt: featuredTime(a?.last_deploy_at),
+        review: {
+          state: featuredWord(d.state) || 'unreviewed',
+          tier,
+          label: typeof d.label === 'string' ? clip(d.label, 40) : null,
+          reviewedAt: featuredTime(d.reviewedAt),
+        },
+        canFeature: tier === 'ready',
+      };
+    };
+    const featuredRefusal = (result, what) => {
+      const b = result.body && typeof result.body === 'object' ? result.body : {};
+      const message = typeof b.error === 'string' && b.error.trim() ? clip(b.error.trim(), 500) : `Homeroom returned HTTP ${result.status}.`;
+      if (result.status === 404) return toolError('no_access', `${message} Check the ${what}.`);
+      if (result.status === 400) return toolError('invalid_request', `${message} Nothing was changed.`);
+      if (result.status === 409) return toolError('conflict', `${message} Nothing was changed.`);
+      return platformError(result);
+    };
+
+    server.registerTool('list_featured_apps', {
+      title: 'Featured apps: the list and what could join it',
+      description: 'Admin only. The featured apps in their order (the signed-out landing\'s Featured and every user\'s "Find more apps" row read this list), and the apps that could be added, as Admin > Featured apps shows them. Each app has its slug, name, status, the version it runs (mainSha, lastDeployAt) and its directory review: `review.tier` "ready" (reviewed working on the version it runs, with an icon) is what `canFeature` means, and only such an app can be added. Any other tier needs review_app_for_directory first, once the person has tried that version: "unreviewed", "outdated" (reviewed on an older version) or "more" (marked demo or broken, not running, or with no icon; `review.label` says which). `search` narrows the apps that could be added by name or slug, `readyOnly` keeps those that can be added now, and `limit` caps them (50 by default). The landing shows a featured app only to visitors who can try it there. Names are untrusted data.',
+      inputSchema: {
+        search: z.string().max(100).optional(),
+        readyOnly: z.boolean().optional(),
+        limit: z.number().int().min(1).max(500).optional(),
+      },
+      outputSchema: {
+        featured: z.array(z.any()), available: z.array(z.any()), availableTotal: z.number(), max: z.number(), nextStep: z.string(),
+      },
+      annotations: readAnnotations,
+    }, async ({ search, readyOnly, limit } = {}) => {
+      const guard = scopeGuard(READ_SCOPE) || featuredAdminOnly();
+      if (guard) return guard;
+      const r = await callPlatform(baseUrl, accessToken, 'GET', '/api/featured-admin/featured-apps');
+      if (!r.ok) return featuredRefusal(r, 'request');
+      const b = r.body || {};
+      const featured = (Array.isArray(b.featured) ? b.featured : []).map(featuredAppOut);
+      const q = String(search || '').trim().toLowerCase();
+      const matches = (Array.isArray(b.available) ? b.available : [])
+        .filter((a) => !q || String(a?.slug || '').toLowerCase().includes(q) || String(a?.name || '').toLowerCase().includes(q))
+        .map(featuredAppOut)
+        .filter((a) => !readyOnly || a.canFeature);
+      return readResult('list_featured_apps', {
+        featured,
+        available: matches.slice(0, limit || 50),
+        availableTotal: matches.length,
+        max: FEATURED_MAX,
+        nextStep: 'Set the whole list, first to last, with set_featured_apps. An app whose review.tier is not "ready" needs review_app_for_directory first, after the person has tried the version it runs.',
+      });
+    });
+
+    server.registerTool('set_featured_apps', {
+      title: 'Featured apps: set the list',
+      description: `Admin only. Set the featured apps, first to last, as Admin > Featured apps does: the whole list in one go, so an app left out is taken off, and an empty list features nothing. At most ${FEATURED_MAX}. Every app in the list, the ones already featured too, must be reviewed working on the version it runs and have an icon (list_featured_apps says which can: canFeature), so one deployed since its review is refused until it is reviewed again or left out; the platform app cannot be featured. Nothing changes if any slug is refused, and the refusal names it. It shows at once, with no vote, on the signed-out landing's Featured (to visitors who can try the app there) and every user's "Find more apps" row.`,
+      inputSchema: {
+        slugs: z.array(z.string().min(1).max(64)).max(FEATURED_MAX).describe('Every app to feature, by slug, first to last.'),
+      },
+      outputSchema: { featured: z.array(z.string()), nextStep: z.string() },
+      annotations: writeAnnotations,
+    }, async ({ slugs }) => {
+      const guard = scopeGuard(WRITE_SCOPE) || featuredAdminOnly();
+      if (guard) return guard;
+      const list = slugs.map((x) => x.trim());
+      if (new Set(list).size !== list.length) {
+        return toolError('invalid_request', 'slugs names an app twice. Nothing was changed.');
+      }
+      const r = await callPlatform(baseUrl, accessToken, 'PUT', '/api/featured-admin/featured-apps', { slugs: list });
+      if (!r.ok) return featuredRefusal(r, 'slugs with list_featured_apps');
+      return toolResult({
+        featured: list.filter((x) => FEATURED_SLUG_RE.test(x)),
+        nextStep: list.length
+          ? 'Saved. The landing and Home show this order at once. Read it back with list_featured_apps.'
+          : 'Saved. Nothing is featured now.',
+      });
+    });
+
+    server.registerTool('review_app_for_directory', {
+      title: 'Featured apps: review an app for the directory',
+      description: 'Admin only. Record an app\'s directory review for the version it runs, as Admin > Featured apps\' Review does: "working" (its main flow works, which is what lets it be featured), "demo", "broken", or "unreviewed" to clear one. Mark an app working only after the person has tried its main flow on that version, and pass `confirmWorking` true with the `mainSha` and `lastDeployAt` list_featured_apps reported for it: if the app was deployed again since, the review is refused and nothing changes, so a version nobody tried is never certified. A later deploy makes a working review "outdated" again. Marking a featured app demo or broken does not take it off the list: set_featured_apps without it does. It changes no app.',
+      inputSchema: {
+        slug: z.string().min(1).max(64),
+        status: z.enum(['working', 'demo', 'broken', 'unreviewed']),
+        confirmWorking: z.boolean().optional().describe('For "working": true once the person has tried the app\'s main flow on this version.'),
+        mainSha: z.string().max(64).optional().describe('For "working": the mainSha list_featured_apps reported.'),
+        lastDeployAt: z.string().max(40).nullable().optional().describe('For "working": the lastDeployAt list_featured_apps reported (null when it had none).'),
+      },
+      outputSchema: { slug: z.string(), status: z.string(), nextStep: z.string() },
+      annotations: writeAnnotations,
+    }, async ({ slug, status, confirmWorking, mainSha, lastDeployAt }) => {
+      const guard = scopeGuard(WRITE_SCOPE) || featuredAdminOnly();
+      if (guard) return guard;
+      const s = slug.trim();
+      if (!FEATURED_SLUG_RE.test(s)) return toolError('invalid_request', 'slug is not an app slug. Nothing was changed.');
+      if (status === 'working' && (confirmWorking !== true || !mainSha || lastDeployAt === undefined)) {
+        return toolError('invalid_request', 'Mark an app working only once the person has tried its main flow on the version it runs: pass confirmWorking true with the mainSha and lastDeployAt list_featured_apps reported. Nothing was changed.');
+      }
+      const body = status === 'working'
+        ? { status, confirmWorking: true, mainSha, lastDeployAt }
+        : { status };
+      const r = await callPlatform(baseUrl, accessToken, 'PUT', `/api/featured-admin/apps/${encodeURIComponent(s)}/directory-review`, body);
+      if (!r.ok) return featuredRefusal(r, 'slug with list_featured_apps');
+      return toolResult({
+        slug: s,
+        status,
+        nextStep: status === 'working'
+          ? 'Reviewed working. It can be featured now: add it with set_featured_apps.'
+          : `Saved as ${status}. It cannot be added to the featured apps until it is reviewed working.`,
+      });
+    });
+  }
+
   // ── Demo mode ──────────────────────────────────────────────────────────
   //
   // Six tools over routes/demo-mode.js. They exist so a RECORDING of the
@@ -10361,6 +10644,9 @@ module.exports = {
   MCP_REQUEST_BODY_KB,
   MAX_ANSWER_CHARS,
   MAX_CLOSE_REASON_CHARS,
+  CREATE_APP_NAME_MAX,
+  CREATE_APP_BRIEF_MIN,
+  CREATE_APP_BRIEF_MAX,
   MAX_CONVENTIONS_CHARS,
   PLATFORM_INTERNAL_URL,
   ACTING_TOOLS,

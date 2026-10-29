@@ -29,13 +29,21 @@ test('the event names a known operation, its request, requester and project, and
   assert.deepEqual(requested(ok), ok);
   assert.deepEqual(requested({ ...ok, appId: null }).appId, null);
   for (const [why, bad] of [
-    ['unknown operation', { ...ok, op: 'shell.exec' }],
+    ['an operation that is not area.verb', { ...ok, op: 'shell; exec' }],
+    ['no operation', { ...ok, op: undefined }],
     ['no request id', { ...ok, requestId: 'x' }],
     ['no requester', { ...ok, userId: null }],
     ['a project that is not an id', { ...ok, appId: '3' }],
     ['an input that is not an object', { ...ok, input: ['a'] }],
     ['an oversized input', { ...ok, input: { blob: 'x'.repeat(MAX_INPUT_BYTES) } }],
+    ['a preview project\'s step without its preview', { ...ok, op: 'previewProject.build', input: { projectId: 4 } }],
+    ['a preview project\'s step without its project', { ...ok, op: 'previewProject.remove', input: { sessionId: 9 } }],
   ]) assert.throws(() => requested(bad), Error, why);
+  // One this build does not know is still a request: its work waits for a
+  // conductor that knows it, instead of an older one refusing it in a rollout.
+  assert.equal(requested({ ...ok, op: 'later.operation' }).op, 'later.operation');
+  const step = { ...ok, appId: null, op: 'previewProject.deploy', input: { sessionId: 9, projectId: 4 } };
+  assert.deepEqual(requested(step), step, 'a preview project\'s step names its preview and project, never the files or env it runs with');
 });
 
 test('a route answers the operation, a refusal, a pending request or a failure', () => {
@@ -162,10 +170,13 @@ test('branches are made only under dev/, and a proposal start only on its reques
 
 test('every settings route asks for a manifest proposal the conductor knows how to recheck and open', () => {
   const { FLAVORS } = require('../src/services/manifest-proposal-operation');
-  const apps = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'apps.js'), 'utf8');
-  const asked = [...apps.matchAll(/proposeManifest\(res, app, req\.user, '([a-z-]+)'/g)].map((m) => m[1]).sort();
+  // The settings routes: routes/apps.js, and the versions' follow-pr
+  // (routes/versions.js).
+  const routes = ['apps.js', 'versions.js']
+    .map((f) => fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', f), 'utf8')).join('\n');
+  const asked = [...routes.matchAll(/proposeManifest\(res, app, req\.user, '([a-z-]+)'/g)].map((m) => m[1]).sort();
   assert.deepEqual(asked, [...FLAVORS.keys()].sort());
-  assert.doesNotMatch(apps, /renamePr\.create[A-Za-z]+PR\(|topicsPr\.createTopicsPR\(|whoDecides\.createWhoDecidesPR\(/,
+  assert.doesNotMatch(routes, /renamePr\.create[A-Za-z]+PR\(|topicsPr\.createTopicsPR\(|whoDecides\.createWhoDecidesPR\(|followPr\.createFollowPR\(/,
     'no settings route writes to the code host itself');
 });
 

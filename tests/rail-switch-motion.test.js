@@ -65,9 +65,11 @@ function harness({ wide = true, railHidden = false } = {}) {
 
 // ── #2797: a rail press swaps in place ───────────────────────────────────
 
-test('a push into any of the rail\'s five places is a cut on the desktop layout', () => {
+test('a push into any of the rail\'s places is a cut on the desktop layout', () => {
   const { App, element } = harness();
-  for (const id of ['home-screen', 'browse-screen', 'messages-screen', 'workshop-screen', 'profile-screen']) {
+  // #6019: AI is the Messages screen's bot chat, and Discover a page of
+  // Home's that pushes in like any other page.
+  for (const id of ['home-screen', 'messages-screen', 'workshop-screen', 'profile-screen']) {
     const screen = element(id);
     assert.equal(App._entryTransition('push', screen), 'none', `${id} is a tab switch`);
     assert.equal(screen.getAttribute('data-entered'), 'none',
@@ -122,6 +124,12 @@ test('the rail roots agree with the tab bar\'s own map', () => {
   const body = nav.match(/TAB_FOR_SCREEN = Object\.freeze\(\{([\s\S]*?)\}\)/)[1];
   const firstForTab = new Map();
   for (const m of body.matchAll(/'([a-z-]+)': '([a-z]+)'/g)) {
+    if (!firstForTab.has(m[2])) firstForTab.set(m[2], m[1]);
+  }
+  // The rail's own tabs too (29 Oct 2026): Discover is one there, and this
+  // list is only read at the rail's width.
+  const railBody = nav.match(/RAIL_TAB_FOR_SCREEN = Object\.freeze\(\{([\s\S]*?)\}\)/)[1];
+  for (const m of railBody.matchAll(/'([a-z-]+)': '([a-z]+)'/g)) {
     if (!firstForTab.has(m[2])) firstForTab.set(m[2], m[1]);
   }
   assert.deepEqual([...App._RAIL_ROOTS].sort(), [...firstForTab.values()].sort());

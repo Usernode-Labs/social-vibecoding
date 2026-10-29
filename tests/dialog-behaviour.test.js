@@ -439,8 +439,8 @@ test('fork: takes its source from the open payload, POSTs to /fork', () => {
   const src = dialog('fork-app.tsx');
   assert.match(src, /useDialog<ForkSource>\('fork'/);
   assert.match(src, /inputRef\.current\.value = src\?\.name\s*\? t\('dialogs:fork\.defaultName\.named', \{ app: src\.name \}\)/,
-    'the "<name> (remix)" default is suggested');
-  assert.equal(message('dialogs:fork.defaultName.named', { app: 'Book Club' }), 'Book Club (remix)');
+    'the "<name> (my version)" default is suggested');
+  assert.equal(message('dialogs:fork.defaultName.named', { app: 'Book Club' }), 'Book Club (my version)');
   assert.match(src, /\/fork`/);
   // #1549: the 201 only starts the asynchronous copy. Keep the dialog open
   // on the same progress report as create/import so a real failure reason is

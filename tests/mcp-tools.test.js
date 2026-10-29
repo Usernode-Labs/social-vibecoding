@@ -2833,6 +2833,9 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // #4266. Puts away one of the user's own unsubmitted work orders, freeing
     // its slot; list_my_work_orders, below, is the list it is chosen from.
     'close_work_order',
+    // #6026. A new project for the connected person, the one the Create
+    // screen makes; tests/mcp-create-app.test.js.
+    'create_app',
     'create_bench_context_pack', 'create_request',
     // Test accounts for first-run testing (create_test_account,
     // create_test_phone_sign_in, send_test_release_email, list_test_accounts,
@@ -2892,6 +2895,7 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'list_apps', 'list_bench_context_packs', 'list_bench_grading_queue', 'list_bench_runs',
     'list_bench_suites', 'list_bench_trials', 'list_bot_configs',
     'list_challenge_events', 'list_challenge_templates',
+    'list_featured_apps',
     'list_my_proposals',
     // #4266. Exactly the work orders prepare_work's open-work-order cap counts.
     'list_my_work_orders',
@@ -2928,6 +2932,10 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'remove_challenge', 'reorder_challenges',
     'rerun_bench_trial',
     'retire_test_account',
+    // Featured apps (routes/featured-admin.js, which hands each call to the
+    // console's own /api/admin route): the list, its order, and the review an
+    // app needs to be on it. Registered only for a full platform admin.
+    'review_app_for_directory',
     'run_challenge_scoring',
     // The configurations' writes: a version saved, a role set, a scope's
     // side-build budget set, a pick.
@@ -2940,6 +2948,7 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'send_test_notifications',
     'send_test_release_email',
     'set_bot_config_budget', 'set_bot_config_role',
+    'set_featured_apps',
     // The bot's settings, as the console's Save saves them: full admins only.
     'set_homeroom_bot_settings',
     'start_change',
@@ -3156,6 +3165,8 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
     'add_bench_task', 'add_challenge',
     'cancel_bench_run', 'cancel_bench_trial', 'cancel_shots_eval',
     'close_work_order',
+    // #6026: it starts a real app and spends one of the caller's app slots.
+    'create_app',
     'create_bench_context_pack', 'create_request', 'create_test_account', 'create_test_phone_sign_in',
     'delete_challenge_scoring_rule', 'delete_challenge_template',
     'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
@@ -3164,11 +3175,15 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
     'move_challenge',
     'post_message', 'post_spec', 'prepare_upload', 'prepare_work', 'promote_change', 'propose_close_request',
     'rate_homeroom_bot_run', 'recheck_change', 'regrade_bench_run', 'remove_challenge', 'reorder_challenges', 'rerun_bench_trial',
-    'retire_test_account', 'run_challenge_scoring',
+    'retire_test_account',
+    // Featured apps: full admins only.
+    'review_app_for_directory',
+    'run_challenge_scoring',
     // The Homeroom bot's configurations: full admins only.
     // Before & after shots evals: full admins only.
     // The programme's challenges: full admins only.
     'save_bot_config', 'save_challenge_event', 'save_challenge_scoring_rule', 'save_challenge_template', 'save_shots_config', 'send_test_notifications', 'send_test_release_email', 'set_bot_config_budget', 'set_bot_config_role',
+    'set_featured_apps',
     'set_homeroom_bot_settings', 'start_change',
     'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_bot_config_pick',
     'submit_platform_build', 'submit_shots_eval_pick', 'submit_work', 'sync_change',

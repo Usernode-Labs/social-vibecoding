@@ -4998,6 +4998,10 @@ function voteRoutes(config) {
         proposal.code_missing = await codeMissing.forSession(pool, {
           ...proposal, app_id: gatedApp.id, repo_url: gatedApp.repo_url,
         });
+        // An update from this version's original (services/upstream-offers.js):
+        // what it brings, what it does here, and where it stands, for the
+        // change page's From <original> card. Null for any other change.
+        proposal.upstream = await require('../services/upstream-offers').changeView(pool, proposal.id);
       }
 
       // #3669: the proposal page's own read must carry the same per-row

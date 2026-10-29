@@ -183,8 +183,10 @@ test('every predicate names the viewer, and the route refuses one it has not got
   const sql = route.COUNTS_SQL;
   // Five populations, each gated on $1. Without this the anonymous case is
   // not a smaller answer, it is the whole platform's. #4538 added a ninth:
-  // MY_PROPOSALS_WHERE's bot-request predicate, also on $1.
-  assert.equal((sql.match(/\$1/g) || []).length, 9,
+  // MY_PROPOSALS_WHERE's bot-request predicate, also on $1. #6019 added four
+  // in OWED_PROPOSALS_WHERE (a ballot owed once: the viewer's rival, vote,
+  // close and close vote) and one for the bot's questions (OWED_QUESTIONS_WHERE).
+  assert.equal((sql.match(/\$1/g) || []).length, 14,
     'the viewer appears in every CTE predicate and in the collaborator join');
 
   // The refusal itself, driven rather than grepped: `getPool` is called once
@@ -218,7 +220,7 @@ test('the visibility filter is GET /api/apps\'s, so the two lists cannot disagre
     'the clause this mirrors is still the one /api/apps applies');
   // And only apps with something on them are returned: the client reads a
   // missing slug as two zeroes, so a row per app would be payload for nothing.
-  assert.match(sql, /\+ COALESCE\(op\.n, 0\) \+ COALESCE\(og\.n, 0\)\) > 0/);
+  assert.match(sql, /\+ COALESCE\(op\.n, 0\) \+ COALESCE\(og\.n, 0\) \+ COALESCE\(oq\.n, 0\)\) > 0/);
 });
 
 test('#5023: the Workshop asks GET /api/apps for joined rows only, not the whole catalog', () => {
@@ -1165,7 +1167,7 @@ test('#3051: the items query reads the counts\' own five predicates, once each',
   const src = read('src/routes/workshop-overview.js');
   // One definition per population, interpolated into both queries.
   for (const name of ['MY_SESSIONS_WHERE', 'MY_PROPOSALS_WHERE', 'MY_GOVERNANCE_WHERE',
-    'OWED_PROPOSALS_WHERE', 'OWED_GOVERNANCE_WHERE']) {
+    'OWED_PROPOSALS_WHERE', 'OWED_GOVERNANCE_WHERE', 'OWED_QUESTIONS_WHERE']) {
     assert.equal((src.match(new RegExp(`const ${name} = `, 'g')) || []).length, 1, `${name} is defined once`);
     // The owed populations are read a third time, by the Needs you feed
     // (#3270), so the tab's cards and the counts beside it cannot disagree,
@@ -1186,9 +1188,10 @@ test('#3051: the items query reads the counts\' own five predicates, once each',
   assert.equal((items.match(new RegExp(require('../src/services/governance-kinds')
     .governanceKindsSql('i').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 2,
   'both `issues` branches read governance proposals, never the request board');
-  // Five branches, in the order the sections are named.
+  // Six branches, in the order the sections are named: #6019 added the bot's
+  // open questions to what is owed.
   const sections = [...items.matchAll(/SELECT '(working|needs)'/g)].map((m) => m[1]);
-  assert.deepEqual(sections, ['working', 'working', 'working', 'needs', 'needs']);
+  assert.deepEqual(sections, ['working', 'working', 'working', 'needs', 'needs', 'needs']);
 });
 
 test('#3051: the items read is bounded per app and in all', () => {

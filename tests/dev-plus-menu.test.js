@@ -12,7 +12,7 @@
 //   - data-plus="rename" / data-plus="secrets" render for every
 //     non-read-only viewer; the App settings nesting is gone (#645), and
 //     "Settings & rules" is one row that opens them on top (#4045).
-//   - Read-only viewers still get only the fork row ("Remix").
+//   - Read-only viewers still get only the fork row ("Make your own").
 //   - Old #app/<slug>/dev/settings deep links normalize to the card list.
 //
 // Run with: node --test tests/dev-plus-menu.test.js
@@ -235,7 +235,7 @@ test('"+" menu has rename and secrets items in its Settings & rules panel, no Ap
   assert.equal(message('project:menu.settings.title'), 'Settings & rules');
   assert.ok(FRAME_SRC.indexOf('id="dev-plus-settings"') < FRAME_SRC.indexOf('data-plus="rename"')
     && FRAME_SRC.indexOf('data-plus="secrets"') < FRAME_SRC.indexOf('data-plus="suggest-back"'),
-    'rename and secrets are inside the settings panel, and Suggest this back and Remix end it (the owner, 7 Oct)');
+    'rename and secrets are inside the settings panel, and Suggest to <original> and Make your own end it (the owner, 7 Oct)');
   assert.ok(FRAME_SRC.includes('data-plus="rename"'), 'rename item present');
   assert.match(FRAME_SRC, /data-plus="rename"[\s\S]{0,160}title=\{t\('project:menu\.rename\.title'\)\}/, 'rename label present');
   assert.equal(message('project:menu.rename.title'), 'App display name');
@@ -271,7 +271,7 @@ test('read-only viewers get only Fork in the "+" menu', () => {
   // Read-only also swaps the "+" button's tooltip and, on the self-app,
   // hides the button outright.
   assert.ok(FRAME_SRC.includes("? t('project:menu.button.remix')"), 'read-only tooltip names the one row it opens');
-  assert.equal(message('project:menu.button.remix'), 'Remix: make your own copy');
+  assert.equal(message('project:menu.button.remix'), 'Make your own version');
   // Tolerant of layout classes before the gate: #1440 added `ml-auto` here
   // and broke a version of this that pinned the exact string, and the "+"
   // moving to the end of the Workshop's tab strip swapped the Tailwind

@@ -21,6 +21,7 @@ const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
 const renamePr = require('../services/rename-pr');
 const topicsPr = require('../services/topics-pr');
 const platformOperations = require('../services/platform-operations');
+const versionLinks = require('../services/version-links');
 const places = require('../services/places');
 const { drainGuard } = require('../services/lifecycle');
 const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter, firstSessionMomentLimiter } = require('../middleware/rate-limits');
@@ -70,23 +71,24 @@ const validateVisibilityCombo = createOptions.visibilityComboError;
 // A source must have finished the durable parts of provisioning before a
 // fork can take a repository snapshot. `awaiting_secrets` is safe: its repo
 // is complete and only private deploy input is missing. People see a fork
-// as a "remix", so these messages say so.
+// as making their own version of a project (docs/plans/versions.md, "Words
+// on screen"), so these messages say so.
 // Keeping this as a shared message builder lets both initial fork and Retry
 // reject the known race before creating another async failure row.
 function forkSourceReadinessError(sourceApp) {
-  if (!sourceApp) return 'The app this copy came from no longer exists.';
-  if (sourceApp.self_hosted) return 'Homeroom itself cannot be remixed.';
+  if (!sourceApp) return 'The project this version came from no longer exists.';
+  if (sourceApp.self_hosted) return 'You cannot make your own version of Homeroom itself.';
   if (sourceApp.status === 'creating') {
-    return 'This app is still being set up. Try remixing it again once it is ready.';
+    return 'This project is still being set up. Try making your own version again once it is ready.';
   }
   if (sourceApp.status === 'error') {
-    return 'This app cannot be remixed until its setup error is fixed.';
+    return 'You can make your own version of this project once its setup error is fixed.';
   }
   if (!['running', 'awaiting_secrets'].includes(sourceApp.status)) {
-    return 'This app is not ready to remix yet.';
+    return 'This project is not ready for you to make your own version yet.';
   }
   if (!sourceApp.repo_url) {
-    return 'This app is not ready to remix yet because its code is still being set up.';
+    return 'This project is not ready for you to make your own version yet, because its code is still being set up.';
   }
   return null;
 }
@@ -1255,6 +1257,20 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       return res.status(400).json({ error: 'App name is required' });
     }
 
+    // #6026: a connector token (services/cli-api-policy.js lets it knock on
+    // this door for the connector's create_app) makes a project for the
+    // person who connected it and nothing more: a name, who it is for, its
+    // one line and what it should do. Invites, an import, an approval rule
+    // and a starter are refused here, not merely left out of the tool, so a
+    // raw call with the same token reaches the same narrow door. One that
+    // names no audience is the Create screen's private community, never the
+    // older-client default of two public fields below.
+    if (req.connectorClientId) {
+      const refused = createOptions.connectorCreateRefusal(req.body);
+      if (refused) return res.status(400).json({ error: 'invalid_request', message: refused });
+      req.body = createOptions.connectorCreateBody(req.body);
+    }
+
     // Who it is for, who is invited and who approves (communities, stage
     // 3; services/create-options.js). A body with none of them is an older
     // client and keeps today's visibility fields and defaults.
@@ -1359,6 +1375,21 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const readyMade = appTemplates.isReadyMade(template);
       const homeroomBotDm = require('../services/homeroom-bot-dm');
       const owesFirstVersion = !repoUrlNormalized && !readyMade && !!homeroomBotDm.normalizeBrief(req.body.brief);
+      // A ready-made app whose starter directory has an original is a
+      // version of it (docs/plans/versions.md, services/originals.js
+      // linkFor): of a running original, where versions are on, one that
+      // gets its updates, whose setup makes its first commit from the
+      // original's main (app-creator.js seedStarter); else made from
+      // app-templates as before, and linked as an older copy. Never a
+      // reason the create fails: without a link it is made as before.
+      let originalLink = null;
+      if (readyMade) {
+        try {
+          originalLink = await require('../services/originals').linkFor(config, pool, template);
+        } catch (err) {
+          log.warn('apps', 'Could not find the ready-made\'s original', { template, err: err.message });
+        }
+      }
       const db = await pool.connect();
       let appRow;
       // A part of the create that is never a reason it fails: under a
@@ -1464,6 +1495,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           appRow = templated[0] || appRow;
         }
 
+        // Its link to its original, read by its setup (originalLink above).
+        if (originalLink) {
+          await optional('version_link', 'Not linked to its original', async () => {
+            const link = await require('../services/upstream-lineage').writeUpstream(db, appRow.id, originalLink);
+            if (link) appRow = { ...appRow, upstream: originalLink };
+          });
+        }
+
         // The card of the idea, and with it the project's icon
         // (services/app-sketch.js): owed now, made by the setup before the
         // repository's first commit, which carries it. Only from "What do you
@@ -1546,6 +1585,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           ...(rule ? { approverPolicy: rule.approverPolicy, approvalsRequired: rule.approvalsRequired } : {}),
           ...(description ? { described: true } : {}),
           ...(template !== appTemplates.DEFAULT_TEMPLATE ? { template } : {}),
+          ...(originalLink && originalLink.following ? { versionOf: originalLink.slug } : {}),
           // Which door it came through: the first session's "What do you
           // want to make?" (the admin Journey's first session, journey.js
           // firstSession, counts only these) or the Create button's, which
@@ -1635,9 +1675,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   });
 
   // Fork an existing app into a brand-new, independent app owned by the
-  // forker (people see this as "Remix"). Mirrors POST /api/apps: same
-  // quota/cap gate, same slug derivation, same insert-CTE (app row +
-  // creator membership) — plus a reference-only `forked_from`. Its insert
+  // forker (people see this as making their own version of it). Mirrors
+  // POST /api/apps: same quota/cap gate, same slug derivation, same
+  // insert-CTE (app row + creator membership) — plus a reference-only
+  // `forked_from` and the version's `upstream` link. Its insert
   // starts its making (src/workflow/app-creation/), which copies the
   // source's code into a new repository and gives the copy an EMPTY
   // database of its own. Nobody's data, keys,
@@ -1646,6 +1687,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     const { name } = req.body;
     if (!name?.trim()) {
       return res.status(400).json({ error: 'App name is required' });
+    }
+    // Whether the version gets the original's updates (docs/plans/versions.md):
+    // on unless the maker turned it off. Written into its link below and into
+    // its dapp.json as `followOriginal` (app-forker.rewriteDappName), where
+    // its group can vote to change it later.
+    const follow = req.body?.follow === undefined ? true : req.body.follow;
+    if (typeof follow !== 'boolean') {
+      return res.status(400).json({ error: 'follow must be true or false' });
     }
 
     try {
@@ -1694,20 +1743,32 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // what the copy changed later can be told apart from what it copied.
       //
       // A copy always starts as Just you (private to build, private to
-      // view), whatever the source's audience: what the remixer made is
+      // view), whatever the source's audience: what its maker made is
       // theirs until they invite people or open it up. The worker strips
       // the copied dapp.json's `visibility` block so the first deploy does
       // not put the source's audience back.
+      const forkedAt = new Date().toISOString();
       const forkedFrom = JSON.stringify({
         appId: sourceApp.id,
         slug: sourceApp.slug,
-        forkedAt: new Date().toISOString(),
+        forkedAt,
+      });
+      // The version's link to its original (apps.upstream, services/
+      // upstream-lineage.js): the same reference, whether it gets the
+      // original's updates, and since when. The worker adds the two commits
+      // updates and suggestions are planned from (app-creator.copyFork).
+      // `forked_from` stays as it was for its older readers.
+      const upstream = JSON.stringify({
+        appId: sourceApp.id,
+        slug: sourceApp.slug,
+        following: follow,
+        since: forkedAt,
       });
       const { rows } = await pool.query(
         `WITH new_app AS (
            INSERT INTO apps (name, slug, created_by, status,
-                             collab_visibility, view_visibility, forked_from)
-           VALUES ($1, $2, $3, 'creating', 'private', 'private', $4::jsonb)
+                             collab_visibility, view_visibility, forked_from, upstream)
+           VALUES ($1, $2, $3, 'creating', 'private', 'private', $4::jsonb, $5::jsonb)
            RETURNING *
          ), membership AS (
            INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
@@ -1715,7 +1776,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
            ON CONFLICT (app_id, user_id) DO NOTHING
          )
          SELECT * FROM new_app`,
-        [name.trim(), slug, req.user.id, forkedFrom]
+        [name.trim(), slug, req.user.id, forkedFrom, upstream]
       );
       const appRow = rows[0];
       log.info('apps', 'App fork (pending)', { appId: appRow.id, slug, sourceSlug: sourceApp.slug });
@@ -1983,6 +2044,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       appPayload.custom_domain = domainRow ? { hostname: domainRow.hostname, status: domainRow.status } : null;
       appPayload.share_url = shareUrl(url, domainRow && domainRow.status === 'live' ? appPayload.custom_domain : null);
       await attachForkLineage(pool, appPayload);
+      // Versions (docs/plans/versions.md): on a version, the original it was
+      // made from and whether it gets its updates; on an original, how many
+      // versions it has (services/version-links.js). Best-effort: a read
+      // that fails says nothing about either, never a failed page.
+      Object.assign(appPayload, await versionLinks.appFields(pool, appRow, req.user).catch((err) => {
+        log.warn('apps', 'Could not read the versions of an app', { slug: appRow.slug, message: err.message });
+        return { upstream_link: null, versions: null };
+      }));
       res.json({ app: appPayload });
     } catch (err) {
       log.error('apps', 'Failed to get app', { message: err.message });
@@ -3978,13 +4047,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         sourceApp = await findForkSource(pool, appRow);
         if (!sourceApp && !appRow.repo_url) {
           return res.status(409).json({
-            error: 'The app this copy came from no longer exists, so the copy cannot be retried.',
+            error: 'The project this version came from no longer exists, so it cannot be set up again.',
           });
         }
         if (sourceApp && !appRow.repo_url) {
           if (!(await appAccess.checkAppAccess(pool, sourceApp, req.user, 'view'))) {
             return res.status(403).json({
-              error: 'You no longer have access to the app this copy came from.',
+              error: 'You no longer have access to the project this version came from.',
             });
           }
           const readinessError = forkSourceReadinessError(sourceApp);
@@ -4204,14 +4273,17 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // The invited approvers by name, so the Workshop's rule line ("evan
       // or snait says yes") is drawn once rather than said as a count first
       // and rewritten when GET /approvers answered (polish board #13). Only
-      // for a reader that route would answer: it is collab-read.
+      // for a reader that route would answer: it is collab-read. A project
+      // that uses another's approvers (apps.approvers_from_app_id, the
+      // ready-made originals: the platform's) names that roster.
       let approverNames = null;
       if (gov.approverPolicy === 'invited' && canChat) {
         const { rows: approverRows } = await pool.query(
           `SELECT u.username
              FROM app_approvers ap
              JOIN users u ON u.id = ap.user_id
-            WHERE ap.app_id = $1 AND ap.status = 'member'
+            WHERE ap.app_id = COALESCE((SELECT a.approvers_from_app_id FROM apps a WHERE a.id = $1), $1)
+              AND ap.status = 'member'
             ORDER BY LOWER(u.username)`,
           [app.id]
         );
@@ -4316,6 +4388,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (channel && places.generalMuted(placesPayload)) {
         channel = { ...channel, unread_count: 0, muted: true };
       }
+      // Versions (services/version-links.js). Best-effort, like the reads
+      // above: one that fails is no line, never a failed hub.
+      const versionFields = await versionLinks.communityFields(pool, app).catch((err) => {
+        log.warn('apps', 'Could not read the versions for the hub', { slug: app.slug, message: err.message });
+        return { made_from: null, versions: null };
+      });
       res.json({
         slug: app.slug,
         name: app.name,
@@ -4358,6 +4436,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           pr_number: pendingWhoDecides.pr_number,
           title: pendingWhoDecides.pr_title || null,
         } : null,
+        // Versions (docs/plans/versions.md): what a version was made from
+        // and whether it gets its updates, and an original's versions, for
+        // the hero's line (versionFields, read above).
+        made_from: versionFields.made_from,
+        versions: versionFields.versions,
       });
     } catch (err) {
       log.error('apps', 'Failed to load community', { message: err.message });
@@ -4628,4 +4711,7 @@ module.exports = {
   // #2524: the activity guard and its two bounds, so the contract is
   // unit-testable without standing up the whole app router.
   activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,
+  // The refusals of making your own version, for their words
+  // (tests/app-fork-retry-route.test.js).
+  forkSourceReadinessError,
 };

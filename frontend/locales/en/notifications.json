@@ -1563,6 +1563,14 @@
     "text": "Replied on a request",
     "description": "First line of a notification: somebody posted in the discussion of a request the viewer filed or posted in, when the request's number is not known. \"Request\" is a noun: something people asked a project for. The message is on the line below."
   },
+  "row.chat.changeReply": {
+    "text": "Replied on change #{{number}}",
+    "description": "First line of a notification: somebody posted in the discussion of a change (a proposed edit to a project that people vote on) the viewer built, voted on or posted in. {{number}} is the change's number. \"Change\" is a noun. The message is on the line below."
+  },
+  "row.chat.decisionReply": {
+    "text": "Replied on a decision",
+    "description": "First line of a notification: somebody posted in the discussion of a decision the viewer voted on or posted in, such as renaming a project. \"Decision\" is a noun: something a project's people vote on. The message is on the line below."
+  },
   "row.projectOpened.label": {
     "text": "It’s open: ready to use",
     "description": "A notification row in the notifications sheet: a project the reader joined while it was still being made has just gone live. The project's name is shown on the line beside it. \"It\" is the project."

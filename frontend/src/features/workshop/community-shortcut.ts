@@ -22,6 +22,11 @@
  *
  * Inside a running app the app's document has the keyboard, so the key is
  * the app's own there.
+ *
+ * While Settings is on screen, ⌘K goes to its "Find a setting" box instead
+ * (../settings/filter-shortcut.ts, #5996): that listener is on `document`,
+ * runs before this one on `window`, and prevents the default, so this
+ * stands down on `defaultPrevented` without knowing about Settings.
  */
 
 import { EMBEDDED_PANEL_CLASS } from '../../lib/side-panel-mode';

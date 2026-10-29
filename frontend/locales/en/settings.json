@@ -879,6 +879,22 @@
     "text": "Sign out",
     "description": "Search result in the Settings search box, in red, shown when the person typed something like \"sign out\" or \"log out\": choosing it signs them out of Homeroom."
   },
+  "nav.filter.recent.heading": {
+    "text": "Recent searches",
+    "description": "Small heading over the list of the person's last few searches, shown under the Settings search box (\"Find a setting\") while the box is empty."
+  },
+  "nav.filter.recent.clear": {
+    "text": "Clear",
+    "description": "Button beside the \"Recent searches\" heading under the Settings search box: it forgets every recent search on this device."
+  },
+  "nav.filter.recent.clearAria": {
+    "text": "Clear recent searches",
+    "description": "Screen-reader name of the Clear button beside \"Recent searches\" under the Settings search box."
+  },
+  "nav.filter.recent.again": {
+    "text": "Search again for “{{query}}”",
+    "description": "Screen-reader name of a row in the Settings search box's recent searches. {{query}} is exactly what the person typed before; choosing the row searches for it again. Keep the quotation marks around it, in the target language's style."
+  },
   "accountRows.native.name": {
     "text": "Wallet and node",
     "description": "Accessible name of the group at the foot of the Settings menu that holds the wallet, node and staking rows of the Homeroom mobile app. Node means the blockchain node running on the phone."
@@ -1410,6 +1426,14 @@
   "privacy.discoverable.descriptionOn": {
     "text": "Anyone on Homeroom can find your username when they search for someone to message, mention or invite.",
     "description": "Explanation under the \"Let people find my profile\" switch in Settings > Privacy while the switch is on: who can find you now."
+  },
+  "privacy.state.on": {
+    "text": "On",
+    "description": "Small word after a switch's label in Settings > Privacy (\"Let people find my profile\", \"Share usage analytics\") while that switch is on."
+  },
+  "privacy.state.off": {
+    "text": "Off",
+    "description": "Small word after a switch's label in Settings > Privacy (\"Let people find my profile\", \"Share usage analytics\") while that switch is off."
   },
   "privacy.loadFailed": {
     "text": "Couldn't load your privacy settings. Try again in a moment.",
@@ -2195,6 +2219,34 @@
     "text": "Other",
     "description": "Heading over rows in the Settings menu that belong to no named group. A fallback that is not normally seen."
   },
+  "nav.group.pinned": {
+    "text": "Pinned",
+    "description": "Heading over the group at the top of the Settings menu that holds the pages the person pinned there, in the order they chose."
+  },
+  "nav.pin.add": {
+    "text": "Pin {{page}} to the top",
+    "description": "Tooltip and accessible name of the small bookmark button at the end of a Settings menu row. Pressing it moves that page into the Pinned group at the top of the menu. {{page}} is the page's name, for example Language."
+  },
+  "nav.pin.remove": {
+    "text": "Unpin {{page}}",
+    "description": "Tooltip and accessible name of the filled bookmark button on a pinned row of the Settings menu. Pressing it sends the page back to its usual group. {{page}} is the page's name."
+  },
+  "nav.pin.up": {
+    "text": "Move {{page}} up",
+    "description": "Tooltip and accessible name of the up arrow on a pinned row of the Settings menu. Pressing it moves the page one place up among the pinned pages. {{page}} is the page's name."
+  },
+  "nav.pin.down": {
+    "text": "Move {{page}} down",
+    "description": "Tooltip and accessible name of the down arrow on a pinned row of the Settings menu. Pressing it moves the page one place down among the pinned pages. {{page}} is the page's name."
+  },
+  "nav.fold.hide": {
+    "text": "Hide {{group}}",
+    "description": "Tooltip and accessible name of the arrow beside a group's heading in the Settings menu while the group is open. Pressing it folds the group down to its heading. {{group}} is the group's heading, for example Advanced."
+  },
+  "nav.fold.show": {
+    "text": "Show {{group}}",
+    "description": "Tooltip and accessible name of the arrow beside a folded group's heading in the Settings menu. Pressing it opens the group again. {{group}} is the group's heading."
+  },
   "nav.keywords.profile": {
     "text": "name display photo avatar picture bio public page",
     "description": "Not shown on screen. Extra search words for \"Profile\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
@@ -2260,7 +2312,7 @@
     "description": "Not shown on screen. Extra search words for \"Experimental\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.theme": {
-    "text": "dark light mode appearance sidebar",
+    "text": "dark light mode appearance sidebar system automatic device color colour night",
     "description": "Not shown on screen. Extra search words for \"Theme\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.devConsole": {
@@ -2268,11 +2320,11 @@
     "description": "Not shown on screen. Extra search words for \"Developer console\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.accessibility": {
-    "text": "text size font bigger larger zoom read contrast",
+    "text": "text size font bigger larger zoom read contrast high normal accessible vision",
     "description": "Not shown on screen. Extra search words for \"Accessibility\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.language": {
-    "text": "locale translate",
+    "text": "locale translate english auto device",
     "description": "Not shown on screen. Extra search words for \"Language\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.alerts": {

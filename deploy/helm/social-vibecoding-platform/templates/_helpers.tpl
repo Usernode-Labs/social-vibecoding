@@ -27,6 +27,15 @@ capabilities:
   drop: ["ALL"]
 {{- end -}}
 
+{{/*
+Whether the chart keeps a Secret for the conductor alone (templates/secret.yaml):
+when it makes the Secrets, and a conductor runs apart from the web Pods.
+Empty is false.
+*/}}
+{{- define "social-vibecoding-platform.conductorSecret" -}}
+{{- if and .Values.enabled .Values.secrets.create .Values.platform.enabled .Values.platform.conductor.enabled -}}true{{- end -}}
+{{- end -}}
+
 {{- define "social-vibecoding-platform.secretName" -}}
 {{- if .Values.secrets.create -}}
 {{ include "social-vibecoding-platform.fullname" . }}
@@ -147,6 +156,9 @@ administrative connection and a psql).
 
 {{- define "social-vibecoding-platform.validate" -}}
 {{- if .Values.enabled -}}
+  {{- if and .Values.platform.web.serviceAccountName (not .Values.platform.conductor.enabled) -}}
+    {{- fail "platform.web.serviceAccountName needs platform.conductor.enabled: with the conductor off the platform Pods do its work, as social-platform-runtime" -}}
+  {{- end -}}
   {{- if or .Values.platform.enabled .Values.migration.enabled -}}
     {{- if not (regexMatch "^[a-f0-9]{40}$" .Values.release.sourceRevision) -}}
       {{- fail "release.sourceRevision must be the full Git commit SHA when platform or migration is enabled" -}}

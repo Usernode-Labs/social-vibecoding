@@ -49,7 +49,7 @@
 import { createStore } from '../../lib/plain-store.js';
 
 /**
- * @typedef {'home'|'discover'|'messages'|'workshop'|'me'} TabKey
+ * @typedef {'home'|'discover'|'workshop'|'ai'|'messages'|'me'} TabKey
  */
 
 /**
@@ -66,15 +66,34 @@ import { createStore } from '../../lib/plain-store.js';
  */
 export const TAB_FOR_SCREEN = Object.freeze({
   'home-screen': 'home',
-  'browse-screen': 'discover',
+  // #6019: on a phone Discover is a page of Home's, opened from its
+  // Discover block, so Home stays lit on it. The desktop rail has a
+  // Discover tab of its own (RAIL_TAB_FOR_SCREEN below).
+  'browse-screen': 'home',
   'messages-screen': 'messages',
   'agent-session-screen': 'messages',
+  // #6019 follow-up: the AI tab's own page. Main, the chat with the bot, is
+  // a conversation of the Messages screen, lit as AI by the bar itself.
+  'ai-screen': 'ai',
   'workshop-screen': 'workshop',
   'profile-screen': 'me',
   'leaderboard-screen': 'me',
   'settings-screen': 'me',
   'admin-screen': 'me',
   'profile-proposals-screen': 'me',
+});
+
+/**
+ * Where the desktop rail answers differently (Evan, 29 Oct 2026): it keeps a
+ * Discover tab under Home, so Discover is a root there and lights its own
+ * tab. Read from 768px up, the width app.css turns the bar into the rail at
+ * (./sidebar-rows.ts SIDEBAR_ROWS_QUERY); App._backSlotFor agrees, giving
+ * the screen no back arrow there.
+ *
+ * @type {Readonly<Record<string, TabKey>>}
+ */
+export const RAIL_TAB_FOR_SCREEN = Object.freeze({
+  'browse-screen': 'discover',
 });
 
 /**
@@ -91,6 +110,12 @@ export const TAB_FOR_SCREEN = Object.freeze({
  *   prerendered document shows.
  * @property {number} messages  Unread conversations, for the Messages tab's
  *   badge. Zero renders no badge element at all, which is the prerender.
+ * @property {number} ai  Unread messages in the Homeroom bot's chat, for the
+ *   AI tab's badge (#6019: the chat is the AI tab's, and left the Messages
+ *   list). Zero renders no badge, which is the prerender.
+ * @property {boolean} bot  The Homeroom bot's chat is the conversation on the
+ *   Messages screen: the AI tab is lit there instead of Messages. Written by
+ *   the Messages store; false is the prerender.
  * @property {number} communities  Channels of your communities with unread
  *   messages (#general among them, as Homeroom's), for the Communities tab's
  *   badge. Written by the Messages store, which already loads both lists.
@@ -136,6 +161,8 @@ const INITIAL = {
   tab: null,
   messages: 0,
   communities: 0,
+  ai: 0,
+  bot: false,
   viewer: null,
   privateMember: false,
   identityNeeded: false,
@@ -177,8 +204,9 @@ export const navStore = createStore(INITIAL);
  * a screen added later cannot quietly fall through to "no tab".
  *
  * @param {string} screenId
+ * @param {boolean} [rail] The desktop rail is the layout (768px and up).
  * @returns {TabKey|null}
  */
-export function tabForScreen(screenId) {
-  return TAB_FOR_SCREEN[screenId] || null;
+export function tabForScreen(screenId, rail = false) {
+  return (rail && RAIL_TAB_FOR_SCREEN[screenId]) || TAB_FOR_SCREEN[screenId] || null;
 }

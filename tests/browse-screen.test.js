@@ -1166,6 +1166,21 @@ test('rowView: an app-store row — icon, name, meta, Join state', () => {
   assert.doesNotMatch(BROWSE_SRC, /card-add-btn/, 'the corner badge is a real button now');
 });
 
+test('#5928: rowView carries the app\'s own one-line description, or nothing', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [
+    app({ slug: 'said', name: 'Said', manifest_snapshot: { description: '  Count   sheep\nbefore bed.  ' } }),
+    app({ slug: 'blank', name: 'Blank', manifest_snapshot: { description: '   ' } }),
+    app({ slug: 'none', name: 'None', manifest_snapshot: null }),
+    app({ slug: 'long', name: 'Long', manifest_snapshot: { description: 'x'.repeat(400) } }),
+  ];
+  Browse.render();
+  assert.equal(rowFor(state, 'said').about, 'Count sheep before bed.', 'whitespace folded');
+  assert.equal(rowFor(state, 'blank').about, null, 'no filler for a blank description');
+  assert.equal(rowFor(state, 'none').about, null);
+  assert.equal(rowFor(state, 'long').about.length, 160, 'capped as Home\'s cards cap it');
+});
+
 test('browse rows: the layout switch is pure CSS on the container', () => {
   // Narrow: a hairline-divided vertical list. md+: a 2/3-column grid whose
   // rows pick up a box treatment from .browse-row in app.css. No
@@ -1481,6 +1496,20 @@ test('the detail page keeps its action closures off the store, reachable by inde
   assert.equal(ran.length, 2, 'a stale index is inert, never a crash');
 });
 
+// ── Versions on the app's page (docs/plans/versions.md) ──────────────────
+
+test('versionsLineFor: an original says how many versions it has and how many get its updates; a zero says nothing', () => {
+  const { Browse } = makeBrowse();
+  assert.equal(Browse.versionsLineFor(app({ versions: { count: 214, following: 160 } })), '214 versions · 160 get its updates');
+  assert.equal(Browse.versionsLineFor(app({ versions: { count: 214, following: 1 } })), '214 versions · 1 gets its updates');
+  assert.equal(Browse.versionsLineFor(app({ versions: { count: 1, following: 1 } })), '1 version · it gets its updates');
+  assert.equal(Browse.versionsLineFor(app({ versions: { count: 5, following: 0 } })), '5 versions');
+  assert.equal(Browse.versionsLineFor(app({ versions: { count: 0, following: 0 } })), null, 'no line before the first version');
+  assert.equal(Browse.versionsLineFor(app({ versions: null })), null, 'not an original');
+  assert.equal(Browse.versionsLineFor(app({})), null, 'a server that predates versions');
+  assert.equal(Browse.versionsLineFor(null), null);
+});
+
 // ── Share on the app's page (the prototype's About sheet: More, then Share) ──
 
 test("shareUrlFor: the app's public link, behind the same gate as the menu's Share app", () => {
@@ -1592,14 +1621,11 @@ test('showDetail / showList publish the level, which drives both containers', ()
 
   Browse.showList();
   assert.equal(state.level, 'list');
-  // #2639 gave the list the house, because #1569's bare root header had left
-  // the directory with no way out but the chip menu. #2718's review takes it
-  // away again and the reason is the same one read forwards: Discover is a
-  // TAB now, so the way out is the bar under it and the house would be the
-  // Home tab twice. The detail level is unchanged above: a drill-in still
-  // borrows the chevron.
-  assert.equal(chrome.backIcon, 'none');
-  assert.equal(chrome.backHref, undefined, 'an empty slot needs no target');
+  // #6019: Discover is a page of Home's now, not a tab (#2718 had made it
+  // one, with an empty corner), so the list's way out is an arrow back to
+  // Home, where its Discover section opened it.
+  assert.equal(chrome.backIcon, 'arrow');
+  assert.equal(chrome.backHref, '/', 'back to Home');
   assert.equal(chrome.title, 'Discover');
 });
 
@@ -1625,11 +1651,11 @@ test('handleBack goes HOME when the detail page was entered from home', () => {
   Browse.noteDetailOrigin('home');
   Browse.showDetail('a');
   assert.equal(Browse._detailOrigin, 'home');
-  // #2718 review: no button at all. An arrow would promise a list level this
-  // detail never came through, and the house is the Home tab twice over. What
-  // survives is the BEHAVIOUR below — the OS back gesture and the tab bar
-  // both still leave the screen rather than showing a list nobody visited.
-  assert.equal(chrome.backIcon, 'none', 'a detail with no list above it shows no slot');
+  // #6019: an arrow back to Home, where it came from, rather than up to a
+  // list level this detail never came through. The BEHAVIOUR below is the
+  // same: Back leaves the screen rather than showing a list nobody visited.
+  assert.equal(chrome.backIcon, 'arrow', 'a detail with no list above it goes back to Home');
+  assert.equal(chrome.backHref, '/');
   assert.equal(Browse.handleBack(), true, 'still claims the gesture');
   assert.equal(chrome.wentHome, 1, 'leaves the screen instead of showing the list');
   assert.equal(location.hash, '',

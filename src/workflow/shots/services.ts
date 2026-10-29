@@ -122,8 +122,8 @@ export function shotsServices({ config, pool }: Deps): Record<string, WorkHandle
     [WORK.publish]: {
       maxAttempts: 3,
       leaseMs: 120000,
-      async run({ input }): Promise<Json> {
-        return { verdict: await orchestrator().compareScreens(pool, { runId: input.runId, verdict: input.verdict }) };
+      async run({ input, signal }): Promise<Json> {
+        return { verdict: await orchestrator().compareScreens(pool, { runId: input.runId, verdict: input.verdict, signal }) };
       },
     },
 

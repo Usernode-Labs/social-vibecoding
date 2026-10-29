@@ -66,7 +66,7 @@ test('B5: every place Messages names the bot names it, with an AI badge beside i
   assert.match(read('frontend/src/features/messages/store.ts'), /state\.active\.peer\.displayName/, 'the typing line');
 });
 
-test('B5: the bot\'s DM is the first row, pinned first in Agents, and a search keeps the sections', () => {
+test('B5, #6019: the bot\'s DM is the AI tab, not a row of Messages, and a search keeps the sections', () => {
   const { buildInbox } = loadTsx('frontend/src/features/messages/inbox.ts');
   const conversations = [
     { id: 1, lastActivityAt: '2026-10-04T10:00:00Z', kind: 'direct' },
@@ -74,11 +74,10 @@ test('B5: the bot\'s DM is the first row, pinned first in Agents, and a search k
     { id: 3, lastActivityAt: '2026-10-03T10:00:00Z', kind: 'direct' },
   ];
   const merged = buildInbox({ conversations, agents: [] });
-  assert.deepEqual(merged.map((e) => e.key), ['person:2', 'person:1', 'person:3']);
-  assert.deepEqual(merged.map((e) => e.section), ['agents', 'people', 'people']);
-  assert.equal(merged[0].pinned, true);
+  assert.deepEqual(merged.map((e) => e.key), ['person:1', 'person:3']);
+  assert.deepEqual(merged.map((e) => e.section), ['people', 'people']);
   // 16 Oct 2026: a search narrows each section rather than mixing them on
-  // one clock, so the bot's chat is still first under Agents.
+  // one clock.
   assert.match(read('frontend/src/features/messages/index.tsx'), /const found = inbox\.filter\(matches\);/);
 });
 

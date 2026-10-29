@@ -364,6 +364,23 @@ async function authorIsBot(pool, authorId) {
   }
 }
 
+// Whether a coding agent submitted the change for its author (chat_sessions.
+// external_agent: the connector's submit_work, or a local agent's hand-off).
+// Its author's proposing is not their yes until they tap it on Homeroom
+// (governance-rules.ts). Only a change has one; a request never does. A
+// failed read answers true, the stricter reading, as authorIsBot's does.
+async function madeByAgent(pool, kind, id) {
+  const n = parseInt(id, 10);
+  if (kind === 'issue' || !Number.isFinite(n)) return false;
+  try {
+    const res = await pool.query('SELECT external_agent FROM chat_sessions WHERE id = $1', [n]);
+    return !!(res && res.rows && res.rows[0] && res.rows[0].external_agent);
+  } catch (err) {
+    log.warn('governance', 'Could not read whether a coding agent submitted a proposal; counting no author yes for it', { id: n, err: err.message });
+    return true;
+  }
+}
+
 // Electorate resolution: who counts, and how many of them there are
 // (src/workflow/rules/electorate.ts). Exposed for serializers that
 // batch-count many rows. `appMeta` ({ selfHosted, collabPrivate }) is passed
@@ -529,6 +546,23 @@ async function botAuthoredBatch(pool, kind, ids) {
   }
 }
 
+// The changes of `ids` a coding agent submitted (madeByAgent above): a Set
+// of ids. A failed read counts every one as an agent's.
+async function agentMadeBatch(pool, kind, ids) {
+  const list = (ids || []).map((id) => parseInt(id, 10)).filter(Number.isFinite);
+  if (kind === 'issue' || !list.length) return new Set();
+  try {
+    const res = await pool.query(
+      `SELECT id FROM chat_sessions WHERE id = ANY($1::int[]) AND external_agent IS NOT NULL`,
+      [list]
+    );
+    return new Set(((res && res.rows) || []).map((r) => parseInt(r.id, 10)));
+  } catch (err) {
+    log.warn('governance', 'Could not read which proposals a coding agent submitted; counting no author yes for any', { err: err.message });
+    return new Set(list);
+  }
+}
+
 /**
  * For a serializer that batch-counts many proposals on ONE app: what
  * computeGate needs to answer a rules project's gate, read once. Null for a
@@ -537,12 +571,13 @@ async function botAuthoredBatch(pool, kind, ids) {
  */
 async function rulesContext(pool, appId, gov, kind, ids) {
   if (!gov || !gov.rules) return null;
-  const [facts, voters, botAuthored] = await Promise.all([
+  const [facts, voters, botAuthored, agentMade] = await Promise.all([
     rulesFacts(pool, appId, gov),
     voterSetsBatch(pool, kind, ids),
     botAuthoredBatch(pool, kind, ids),
+    agentMadeBatch(pool, kind, ids),
   ]);
-  return { facts, voters, botAuthored };
+  return { facts, voters, botAuthored, agentMade };
 }
 
 /** The computeGate options for one proposal out of a rulesContext. */
@@ -553,6 +588,7 @@ function rulesGateOpts(ctx, id, authorId, explicitReason) {
     voters: ctx.voters.get(parseInt(id, 10)) || { yes: new Set(), no: new Set() },
     authorId: authorId ?? null,
     authorIsBot: !!(ctx.botAuthored && ctx.botAuthored.has(parseInt(id, 10))),
+    madeByAgent: !!(ctx.agentMade && ctx.agentMade.has(parseInt(id, 10))),
     memberCount: ctx.facts.memberCount,
     ...(explicitReason !== undefined ? { explicitReason } : {}),
   };
@@ -618,12 +654,14 @@ async function governedGate(pool, appId, {
     : (kind === 'pr' ? await isFirstVersion(pool, id) : false);
   if (gov.rules) {
     // #4666: a rules project reads who voted and what its groups are; the
-    // author always, because proposing counts as their yes, and whether they
-    // are a person, because only a person's proposing does.
-    const [facts, voters, author] = await Promise.all([
+    // author always, because proposing counts as their yes, whether they
+    // are a person, because only a person's proposing does, and whether a
+    // coding agent put it up for them, because then it does not either.
+    const [facts, voters, author, byAgent] = await Promise.all([
       rulesFacts(pool, appId, gov, { fresh }),
       voterSets(pool, kind, id),
       authorId !== undefined ? authorId : proposalAuthorId(pool, kind, id),
+      madeByAgent(pool, kind, id),
     ]);
     const reason = explicitApproval
       ? (explicitReason !== undefined ? explicitReason : await storedExplicitReason(pool, kind, id))
@@ -631,6 +669,7 @@ async function governedGate(pool, appId, {
     return computeGate(gov, facts.membersActive, voters.yes.size, voters.no.size, openedAt, now, {
       explicitApproval, explicitReason: reason, authorId: author, voters,
       authorIsBot: author != null ? await authorIsBot(pool, author) : false,
+      madeByAgent: byAgent,
       rulesFacts: facts, memberCount: facts.memberCount,
       firstVersion: first,
     });
@@ -763,7 +802,9 @@ module.exports = {
   rulesContext,
   rulesGateOpts,
   botAuthoredBatch,
+  agentMadeBatch,
   authorIsBot,
+  madeByAgent,
   firstVersionSql,
   isFirstVersion,
   applyFirstVersion: gateRules.applyFirstVersion,

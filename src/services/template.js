@@ -7,6 +7,7 @@ const repoRef = require('./repo-ref');
 // `dependencies` in services/app-templates.js), with their lockfile entries.
 const extraPackages = require('../templates/node-app/extra-packages.json');
 const appTemplates = require('./app-templates');
+const { WORDS_PATH } = require('./upstream-lineage');
 
 // Forwarder snippet injected into every scaffolded app's public/index.html.
 // Captures console.log/info/warn/error/debug + uncaught errors +
@@ -560,28 +561,49 @@ const EMPTY_SERVER = {
 `,
 };
 
-// A starter's page carries no project's name: `{{APP_NAME}}` stands where
-// it shows, and server.js fills it in from USERNODE_APP_NAME each time the
-// page is served (starterPage). So every project made from one ready-made
-// app is the same code, and runs the same prebuilt image
-// (services/starter-images.js); `fallback` is the name a plain local
-// `node server.js`, with no platform around it, shows instead.
+// A starter's page carries no project's name and none of its words:
+// `{{APP_NAME}}` stands where the name shows, and server.js fills it in from
+// USERNODE_APP_NAME each time the page is served (starterPage); the entry's
+// own placeholders (`{{ITEM_PLURAL}}`, a sign-up sheet's `{{SHEET_MODE}}`)
+// are filled the same way from words.json, which getTemplateFiles writes
+// beside it (services/app-templates.js, WORDS IN CONFIG). So every project
+// made from one starter directory is the same code, every one made from one
+// ready-made app runs the same prebuilt image (services/starter-images.js),
+// and a version of a ready-made original takes its original's changes as a
+// plain diff; `fallback` is the name a plain local `node server.js`, with
+// no platform around it, shows instead. fillPage below is the same fill,
+// for a caller that serves the page itself.
 function starterPage(fallback) {
-  return `// The screen, with this project's name in it. The name is not written into
-// public/index.html: the platform hands it to the container
-// (USERNODE_APP_NAME), so every project made from the same Homeroom starter
-// runs the same code, and a renamed project shows its new name from its next
-// deploy. {{APP_NAME}} in the page is where it goes, escaped for HTML.
-// Served here rather than by express.static below, which would send the
-// placeholder; like the static file it replaces, it needs no sign-in.
+  return `// The screen, with this project's name and words in it. Neither is written
+// into public/index.html: the platform hands the name to the container
+// (USERNODE_APP_NAME), and the words this project was made with (what a tier
+// list ranks, a sign-up sheet's mode) are in words.json beside this file. So
+// every project made from the same Homeroom starter runs the same code, and
+// a renamed project shows its new name from its next deploy. {{APP_NAME}}
+// and each {{KEY}} words.json names are where they go, escaped for HTML; a
+// placeholder words.json does not name is left as it is. Served here rather
+// than by express.static below, which would send the placeholders; like the
+// static file it replaces, it needs no sign-in.
 const fs = require('fs');
 const APP_NAME = process.env.USERNODE_APP_NAME || ${JSON.stringify(fallback)};
 function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+function words() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(__dirname, 'words.json'), 'utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
 function page() {
+  const said = words();
   return fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8')
-    .replace(/\\{\\{APP_NAME\\}\\}/g, escapeHtml(APP_NAME));
+    .replace(/\\{\\{([A-Z_]+)\\}\\}/g, (whole, key) => {
+      if (key === 'APP_NAME') return escapeHtml(APP_NAME);
+      return Object.prototype.hasOwnProperty.call(said, key) && typeof said[key] === 'string' ? escapeHtml(said[key]) : whole;
+    });
 }
 app.get(['/', '/index.html'], (_req, res) => res.type('html').send(page()));
 
@@ -1447,29 +1469,69 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
   ];
   if (!starter) return card ? withCard(files, appName, sketch) : files;
   // A starter's own screen replaces the Press! page, and its api.js and
-  // scripts join the shared plumbing.
-  // The entry's own `fill` (what a tier list ranks) lands in the page's
-  // markup, so it is escaped. The project's name is not filled in: its
-  // `{{APP_NAME}}` stays for server.js to fill at runtime (starterPage).
+  // scripts join the shared plumbing. Only the dev-console forwarder is
+  // filled in: the project's name and the entry's own `fill` (what a tier
+  // list ranks) stay as placeholders for server.js to fill at run time
+  // (starterPage), the words from words.json, written here as the entry
+  // has them (services/app-templates.js, WORDS IN CONFIG).
   const own = appTemplates.starterFiles(template, {
-    ...Object.fromEntries(Object.entries(starter.fill || {}).map(([key, value]) => [key, escapeHtml(value)])),
     DEV_CONSOLE_FORWARDER: DEV_CONSOLE_FORWARDER.trim(),
   });
+  const words = wordsFile(starter);
+  if (words) own.push(words);
   const ownPaths = new Set(own.map((f) => f.path));
   const all = [...files.filter((f) => !ownPaths.has(f.path)), ...own];
   return card ? withCard(all, appName, sketch) : all;
 }
 
-// A starter's files with the project's name written into its page, for a
-// caller that serves the page itself or runs it under another project's
-// name: the App bench, whose previews run as its host app
-// (services/bench/scaffold.js, taste.js), and the example pictures
-// (scripts/render-starter-examples.js). A new project keeps `{{APP_NAME}}`
-// for its server.js (starterPage); the empty scaffold has none to fill.
-function fillAppName(files, appName) {
+// words.json for a starter entry: its `fill`, as it is, and nothing else.
+// None for an entry with nothing to fill (a grocery list, a game).
+function wordsFile(starter) {
+  const fill = starter && starter.fill;
+  if (!fill || !Object.keys(fill).length) return null;
+  return { path: WORDS_PATH, content: `${JSON.stringify({ ...fill }, null, 2)}\n` };
+}
+
+// A starter's page as its server.js serves it (starterPage): each
+// placeholder the files' own words.json names filled in, and the project's
+// name too when `appName` is given, escaped exactly as server.js escapes
+// them. Anything else is left as it is. For a caller that serves the page
+// itself or runs it under another project's name, and for the tests that
+// read a page as people see it.
+function fillPage(files, { appName = null } = {}) {
+  const wordsAt = files.find((f) => f.path === WORDS_PATH);
+  let said = {};
+  try {
+    const parsed = wordsAt ? JSON.parse(String(wordsAt.content)) : null;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) said = parsed;
+  } catch (_) {
+    said = {};
+  }
   return files.map((f) => (f.path === 'public/index.html'
-    ? { ...f, content: f.content.replace(/\{\{APP_NAME\}\}/g, escapeHtml(appName)) }
+    ? {
+      ...f,
+      content: String(f.content).replace(/\{\{([A-Z_]+)\}\}/g, (whole, key) => {
+        if (key === 'APP_NAME') return appName == null ? whole : escapePage(appName);
+        return Object.prototype.hasOwnProperty.call(said, key) && typeof said[key] === 'string' ? escapePage(said[key]) : whole;
+      }),
+    }
     : f));
+}
+
+// The same five characters starterPage's escapeHtml escapes.
+function escapePage(text) {
+  return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// A starter's files with the project's name and its words written into its
+// page, for a caller that serves the page itself or runs it under another
+// project's name: the App bench, whose previews run as its host app
+// (services/bench/scaffold.js, taste.js), and the example pictures
+// (scripts/render-starter-examples.js). A new project keeps its
+// placeholders for its server.js (starterPage); the empty scaffold has none
+// to fill.
+function fillAppName(files, appName) {
+  return fillPage(files, { appName });
 }
 
 // The first session's card (services/app-sketch.js), when it was ready in
@@ -1520,7 +1582,14 @@ Update \`README.md\` when what the app does changes.
 it in with the project's name (\`USERNODE_APP_NAME\`, which the platform
 sets) each time it serves the page, so the name follows the project when it
 is renamed. Keep it wherever the name shows.
-
+${starter.fill && Object.keys(starter.fill).length ? `
+The page's other placeholders (${Object.keys(starter.fill).map((k) => `\`{{${k}}}\``).join(', ')}) are
+this project's words, kept in \`words.json\` at the repository root:
+\`server.js\` fills them in the same way, and \`api.js\` reads the ones it
+needs from the same file. To change what the app calls things, change
+\`words.json\`; keep the placeholders in the page and the code that reads
+the file, so this app's code stays the same as the code it was made from.
+` : ''}
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` and the bridge
 \`<script>\` when rewriting the HTML: both are platform infrastructure.
 The screen is built from the design kit, which is not placeholder either:
@@ -1721,6 +1790,7 @@ function escapeHtml(str) {
 module.exports = {
   getTemplateFiles,
   fillAppName,
+  fillPage,
   getConnectorScaffoldFiles,
   // The Empty starter's design kit (its tokens and components), for the
   // early first look's prompt (first-version-early-look.js).

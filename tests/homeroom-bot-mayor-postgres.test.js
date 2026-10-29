@@ -511,16 +511,26 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(await dm.weeklySpentCents(pool, ada.id), before, 'chatting is not building time: her week is untouched');
   });
 
-  await t.test('an answer in her own words is passed on: posted on the request, and the request goes first', async () => {
+  await t.test('an answer in her own words is drafted, and posted on the request, first in the queue, on Post it', async () => {
     threadPosts.length = 0;
     const chat = scripted([
       [['answer_question', {}]],
       (req) => {
         assert.deepEqual(lastToolResult(req, 'answer_question').ok, true);
-        return [['reply', { text: 'Posted. I\'ll look at it again next.' }]];
+        assert.match(lastToolResult(req, 'answer_question').shown, /nothing is posted until they tap Post it/);
+        return [['reply', { text: 'Here is your answer for the request.' }]];
       },
     ]);
     const sent = await turn('dark first please', chat);
+    // #6019: this chat is private. The answer waits under the reply.
+    const draft = await read(sent);
+    assert.deepEqual(draft.metadata.homeroomBot.answers, ['Post it', 'Keep it private']);
+    assert.match(draft.content, /^Here is your answer for the request\.\n\n\*\*Seed swap\*\* · request #4:\n\n> dark first please$/);
+    assert.equal(threadPosts.length, 0, 'nothing is public before the tap');
+    const ack = await mayor.decideOffer(pool, CONFIG, {
+      bot, user: ada, settings, message: await say('Post it', { reply_to_id: sent.messageId }), deps: {},
+    });
+    assert.match((await read(ack)).content, /^Posted on Seed swap request #4's public discussion, as you\./);
     assert.equal(threadPosts.length, 1);
     assert.match(threadPosts[0].msg.content, /^dark first please\n\n\(Answered in a chat with Homeroom bot\.\)$/,
       'her own words, as she wrote them, never the model\'s');
@@ -818,12 +828,21 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal((await read(off)).reply.content, 'hello?');
 
     // The offer quotes what asked for it; File it is answered quoting the tap.
+    // #6019 follow-up: the draft is in a private thread of its own, and
+    // Main's line that opened it quotes what asked for it.
     const ask = await say('could you add tags to note board?');
     const offered = await run(ask, [
       [['offer_request', { project: 'note-board', title: 'Tags', details: 'Tag notes to find them.' }]],
       [['reply', { text: 'Want me to file this?' }]],
     ]);
-    assert.equal((await read(offered)).reply.id, ask.id);
+    const draftCard = await read(offered);
+    assert.ok(draftCard.threadRootId, 'the draft is in a thread of its own');
+    const openedLine = await read({ messageId: draftCard.threadRootId });
+    assert.equal(openedLine.reply.id, ask.id);
+    assert.match(openedLine.content, /^I drafted it as a request on Note board, in a thread only you can see\./);
+    const { rows: [privateRow] } = await pool.query(
+      'SELECT kind, state FROM private_threads WHERE root_message_id = $1', [draftCard.threadRootId]);
+    assert.deepEqual(privateRow, { kind: 'draft_request', state: 'open' }, 'the AI tab lists it, locked');
     const tap = await say('File it', { reply_to_id: offered.messageId });
     const ack = await read(await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: tap, deps: {} }));
     // #3767: what answers the tap is the request's card, and it quotes where
@@ -832,14 +851,17 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(ack.reply.id, ask.id);
     const n = ack.metadata.homeroomBot.issueNumber;
     assert.ok(n > 0);
+    const { rows: [filedRow] } = await pool.query(
+      'SELECT state, result_ref FROM private_threads WHERE root_message_id = $1', [draftCard.threadRootId]);
+    assert.deepEqual(filedRow, { state: 'filed', result_ref: n }, 'filed, it leaves the AI tab\'s private threads');
 
-    // One story: "I'm building it now" is a quiet line in the request's
-    // thread, under its card; the post is told it reached her, so it does
-    // not tag her instead.
+    // One conversation (#6019): "I'm building it now" is a quiet line in
+    // Main, beside the request's card; the post is told it reached her, so
+    // it does not tag her instead.
     const building = await dm.relayIssuePost({ pool, app: notes, issueNumber: n, kind: 'spec', postId: 37071, bot, dm: { building: true } });
     assert.equal(building.quiet, true, 'quiet: no bell, no push');
     const line = await read(building);
-    assert.equal(line.threadRootId, ack.id, 'in the request\'s thread');
+    assert.equal(line.threadRootId, null, 'in Main, beside the card');
     assert.equal(line.metadata.homeroomBot.kind, 'step');
     assert.equal(await dm.untaggedRequester(pool, { appId: notes.id, issueNumber: n, bot, told: building }), ada.username);
     const held = await dm.noteOverAllowance(pool, {
@@ -859,13 +881,13 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     // the change (the merge-followups machine), with a button that opens
     // the app (5 October: its own, which no card the bot cannot attach
     // takes with it), the proposal's card, and the app's address as its link.
-    // One story: every change's requester hears it is live, in the request's
-    // thread and the main chat, with its Open button.
+    // One story: every change's requester hears it is live, in Main (#6019:
+    // beside the request's card, no thread of its own), with its Open button.
     const live = await dm.noteProposalMerged(pool, { id: built.id });
     const liveMsg = await read(live);
     assert.equal(liveMsg.content, 'It\'s live. Open Note board to see it.');
-    assert.equal(liveMsg.threadRootId, ack.id);
-    assert.deepEqual([liveMsg.metadata.homeroomBot.moment, liveMsg.metadata.homeroomBot.said, liveMsg.metadata.homeroomBot.alsoInChat], ['live', 'live', true]);
+    assert.equal(liveMsg.threadRootId, null);
+    assert.deepEqual([liveMsg.metadata.homeroomBot.moment, liveMsg.metadata.homeroomBot.said, liveMsg.metadata.homeroomBot.alsoInChat], ['live', 'live', undefined]);
 
     // A request filed anywhere else started nowhere here; one whose start
     // she deleted is still told, without the quote.
@@ -1186,7 +1208,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE id > $1', [turnsBefore]);
   });
 
-  await t.test('#3733: an answer passed on before the model failed is said, never "try again"', async () => {
+  await t.test('#3733, #6019: an answer drafted before the model failed is still put under the reply, never "try again"', async () => {
     threadPosts.length = 0;
     await dm.relayIssuePost({
       pool, app: notes, issueNumber: 6, kind: 'question', postId: 37331, bot,
@@ -1200,15 +1222,20 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     };
     const sent = await turn('by link please', failsAfter);
     const msg = await read(sent);
-    assert.equal(threadPosts.length, 1, 'posted once; "try again" would have posted it twice');
-    assert.equal(msg.content, 'I posted your answer on Note board request #6\'s public discussion, and I\'ll look at the request again next.');
+    assert.equal(threadPosts.length, 0, 'nothing is public before the tap');
+    assert.equal(msg.content, 'This chat is private. Want me to post this on request #6\'s public discussion, as you?\n\n'
+      + '**Note board** · request #6:\n\n> by link please');
+    assert.deepEqual(msg.metadata.homeroomBot.answers, ['Post it', 'Keep it private']);
     const { rows: objects } = await pool.query(
       'SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1', [sent.messageId],
     );
     assert.deepEqual(objects.map((o) => `${o.object_type}:${o.object_ref}`), ['github_issue:6']);
     const row = await lastTurn();
     assert.equal(row.error, 'provider_unavailable');
-    assert.equal(row.fallback, 'posted');
+    // Posted once on the tap, never twice: the draft is decided once.
+    await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: await say('Post it', { reply_to_id: sent.messageId }), deps: {} });
+    await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: await say('Post it', { reply_to_id: sent.messageId }), deps: {} });
+    assert.equal(threadPosts.length, 1);
   });
 
   await t.test('#3733: an answer with nothing in it is asked again', async () => {
@@ -1388,7 +1415,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   const clearQueue = () => forgetRequests(notes.id, 5);
   let settledMessage = null;
 
-  await t.test('#3740: a clear ask sends the change to the right proposal, as a reply there, and its follow-up goes first', async () => {
+  await t.test('#3740, #6019: a clear ask drafts the change for the right proposal; Post it sends it there, and its follow-up goes first', async () => {
     await clearQueue();
     threadPosts.length = 0;
     // The bot offered the change in its last answer; she says yes.
@@ -1413,12 +1440,21 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       [['revise_proposal', { proposal: proposal.id, change: 'Drop the pin icon from each note.' }]],
       (req) => {
         result = lastToolResult(req, 'revise_proposal');
-        return [['reply', { text: 'Done: I sent that to the Pin notes proposal and I\'m changing it next.' }]];
+        return [['reply', { text: 'Here is the change for the Pin notes proposal.' }]];
       },
     ]));
     assert.equal(result.ok, true);
     assert.deepEqual(result.proposal, { proposal: proposal.id, project: 'note-board', projectName: 'Note board', number: 5, title: 'Pin notes' });
-    assert.match(result.queued, /^At the front of your queue/);
+    assert.match(result.shown, /nothing is posted, and nothing changes, until they tap Post it/);
+    // #6019: drafted under the reply; nothing is posted or queued yet.
+    assert.equal(threadPosts.length, 0, 'the draft sends nothing');
+    assert.equal(await queueRow(), null, 'and queues nothing');
+    const draft = await read(sent);
+    assert.deepEqual(draft.metadata.homeroomBot.answers, ['Post it', 'Keep it private']);
+    assert.match(draft.content, /\*\*Note board\*\* · the change for request #5:\n\n> Oh, yeah update it\?/);
+    await mayor.decideOffer(pool, CONFIG, {
+      bot, user: ada, settings, message: await say('Post it', { reply_to_id: sent.messageId }), deps: {},
+    });
     // Posted where a reply typed in the proposal's discussion lands, as hers.
     assert.equal(threadPosts.length, 1);
     assert.equal(threadPosts[0].userId, ada.id);
@@ -1427,7 +1463,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(threadPosts[0].msg.content,
       'Oh, yeah update it?\n\n(Sent in a chat with Homeroom bot. The change asked for, as Homeroom bot understood it: Drop the pin icon from each note.)',
       'her own words, and the change as the bot understood it, said to be that');
-    assert.equal(result.posted.endsWith(threadPosts[0].msg.content), true, 'the model is told exactly what was posted');
+    assert.equal(result.drafted.endsWith(threadPosts[0].msg.content), true, 'the model is told exactly what would be posted');
     // Its follow-up is first in the queue: the loop's follow-up lane takes it.
     const row = await queueRow();
     assert.deepEqual({ ...row, started_at: undefined }, { priority: 0, reason: 'dm_revise', requested_by: ada.id, started_at: undefined });
@@ -1467,15 +1503,18 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const running = (await progressSvc.progressFor(pool, { userId: ada.id, settings })).rightNow.find((e) => e.project === 'note-board' && e.number === 5);
     assert.equal(running.stage, 'revising');
     assert.equal((await tray.workFor(pool, { user: ada, settings })).now.find((j) => j.issueNumber === 5 && j.appSlug === 'note-board').phase, 'following_up');
-    // A second ask while that runs is still sent, and says honestly when it is read.
+    // A second ask while that runs is still drafted, and sent on Post it.
     threadPosts.length = 0;
     let result = null;
-    await turn('also make the pin blue', scripted([
+    const second = await turn('also make the pin blue', scripted([
       [['revise_proposal', { project: 'note-board', number: 5, change: 'Make the pin blue.' }]],
-      (req) => { result = lastToolResult(req, 'revise_proposal'); return [['reply', { text: 'Sent.' }]]; },
+      (req) => { result = lastToolResult(req, 'revise_proposal'); return [['reply', { text: 'Here it is.' }]]; },
     ]));
     assert.equal(result.ok, true);
-    assert.match(result.queued, /^You are following up on this proposal right now; you read this as soon as that finishes\.$/);
+    assert.equal(threadPosts.length, 0);
+    await mayor.decideOffer(pool, CONFIG, {
+      bot, user: ada, settings, message: await say('Post it', { reply_to_id: second.messageId }), deps: {},
+    });
     assert.equal(threadPosts.length, 1);
     await clearQueue();
   });
@@ -1673,7 +1712,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(fine.length, 1);
   });
 
-  await t.test('#3768: she can have the bot add her words to a request that exists, as hers', async () => {
+  await t.test('#3768, #6019: she can have the bot draft her words for a request that exists, posted as hers on Post it', async () => {
     await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
     await forgetRequests(notes.id, 6);
     threadPosts.length = 0;
@@ -1682,12 +1721,20 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       (req) => {
         const r = lastToolResult(req, 'comment_on_request');
         assert.equal(r.ok, true);
-        assert.match(r.next, /You look at the request again next/);
+        assert.match(r.shown, /nothing is posted until they tap Post it/);
+        // A reply that says it was posted is put right: nothing was.
         return [['reply', { text: 'I posted that on Note board request #6 and I\'ll look at it again next.' }]];
       },
     ]);
     const sent = await turn('add to the share request that it should be by link', chat);
-    assert.equal((await read(sent)).content, 'I posted that on Note board request #6 and I\'ll look at it again next.');
+    assert.equal((await read(sent)).content,
+      'I haven\'t posted that anywhere yet.\n\n**Note board** · request #6:\n\n'
+      + '> add to the share request that it should be by link\n> \n'
+      + '> (Sent in a chat with Homeroom bot. What they asked to add, as Homeroom bot understood it: Share by link, not by email.)');
+    assert.equal(threadPosts.length, 0, 'nothing is public before the tap');
+    await mayor.decideOffer(pool, CONFIG, {
+      bot, user: ada, settings, message: await say('Post it', { reply_to_id: sent.messageId }), deps: {},
+    });
     assert.equal(threadPosts.length, 1);
     assert.equal(threadPosts[0].msg.thread.ref, 6);
     assert.equal(threadPosts[0].msg.content,
@@ -1773,8 +1820,19 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       bot, user: ada, settings, config: CONFIG, deps: { domain: 'app.test' }, userText: 'add that undo should last ten seconds',
       cards: [], appIds: new Set(), messageId: asked.id, ...extra,
     });
-    const commented = await mayor.commentOnRequest(pool, ctx(), { project: 'note-board', number: 77, comment: 'Undo lasts ten seconds' });
+    const turnCtx = ctx();
+    const commented = await mayor.commentOnRequest(pool, turnCtx, { project: 'note-board', number: 77, comment: 'Undo lasts ten seconds' });
     assert.equal(commented.ok, true, commented.error);
+    // #6019: drafted; Post it posts it (decidePost, as a tap does).
+    assert.equal(threadPosts.length, 0);
+    assert.deepEqual([turnCtx.offer.kind, turnCtx.offer.issueNumber], ['post_reply', 77]);
+    await mayor.decidePost(pool, {
+      bot, user: ada, settings, yes: true, ack: async () => null, deps: {},
+      action: {
+        id: 0, app_id: notes.id, source_issue_number: 77, details: turnCtx.offer.details, title: turnCtx.offer.title,
+        target_message_id: null, session_id: null,
+      },
+    });
     assert.equal(threadPosts.length, 1);
     assert.equal(threadPosts[0].msg.thread.ref, 77);
     await forgetRequests(notes.id, 77);

@@ -1651,9 +1651,24 @@ const cardEl = (slug) => ({
 });
 
 /** Arm the rail recognizer and hand back its options. */
-function armRail(Home, attachCalls) {
-  const detach = Home._attachDiscoverPlacement({ querySelectorAll: () => [] });
+function armRail(Home, attachCalls, opts) {
+  const detach = Home._attachDiscoverPlacement({ querySelectorAll: () => [] }, opts);
   return { opts: attachCalls[attachCalls.length - 1].opts, detach };
+}
+
+/** A sidebar community row, as the recognizer hands it to Home (#6025). */
+const railRowEl = (slug) => ({
+  dataset: { railCommunity: slug },
+  classList: { contains: () => false, add: () => {}, remove: () => {} },
+});
+
+/** Arm the sidebar's own recognizer, the way RailCommunities does (#6025). */
+function armSidebar(Home, attachCalls) {
+  const listEl = { querySelectorAll: () => [] };
+  const detach = Home._attachDiscoverPlacement(listEl, {
+    itemSelector: '.platform-rail-community[data-rail-community]',
+  });
+  return { listEl, opts: attachCalls[attachCalls.length - 1].opts, detach };
 }
 
 test('the rail arms the SAME recognizer the grid does, and excludes demo tiles', () => {
@@ -1794,6 +1809,90 @@ test('an incoming add does not let a deferred reload race its own POST', async (
   assert.equal(loaded, 0, 'toggleAdded owns the repaint on this path');
   assert.equal(Home._reloadPending, false);
   assert.equal(Home._rerenderPending, false);
+});
+
+// ── The SIDEBAR's community rows are the same recognizer's second source
+//    (#6025) ────────────────────────────────────────────────────────────
+//
+// RailCommunities attaches this recognizer to #platform-rail-communities
+// while Home is on show, naming its own rows with `itemSelector`. A row
+// carries `data-rail-community` rather than `data-slug`, and both name the
+// same app slug, so the drop is the Discover drop unchanged: place it in the
+// cell where it was let go, then add it.
+
+test('a sidebar row is carried as the same incoming app a Discover card is', () => {
+  const { Home, attachCalls, HomeLayout } = makeHome();
+  seedLayout(Home);
+  const { listEl, opts } = armSidebar(Home, attachCalls);
+
+  assert.equal(attachCalls[0].listEl, listEl, 'attached to the sidebar section itself');
+  assert.equal(opts.itemSelector, '.platform-rail-community[data-rail-community]');
+  opts.onLift(railRowEl('newcomer'));
+  assert.equal(Home._dragActive, true);
+  assert.deepEqual({ ...Home._incoming },
+    { type: 'app', slug: 'newcomer', col: 0, row: HomeLayout.MAX_ROWS });
+  assert.equal(Home._itemFor(railRowEl('newcomer')), Home._incoming,
+    'the row resolves to the incoming item through its own data attribute');
+});
+
+test('a community dropped on My apps is placed AND added, as Add does', async () => {
+  const { Home, attachCalls, fetchCalls } = makeHome();
+  seedLayout(Home);
+  Home._apps.push(app('newcomer'));
+  Home.render = () => {};
+  const { opts } = armSidebar(Home, attachCalls);
+
+  opts.onLift(railRowEl('newcomer'));
+  opts.onPlace(railRowEl('newcomer'), { col: 2, row: 1 });
+  assert.equal(fetchCalls.filter((c) => c.method === 'POST').length, 0,
+    'the membership write waits for the gesture to be over');
+  opts.onSettle(true);
+  await flush();
+
+  const put = fetchCalls.find((c) => c.method === 'PUT' && c.url === '/api/home-layout');
+  assert.ok(put, 'the cell is written');
+  const landed = put.body.items.find((i) => i.slug === 'newcomer');
+  assert.deepEqual([landed.col, landed.row], [2, 1], 'at the cell it was dropped in');
+
+  const post = fetchCalls.find((c) => c.url === '/api/apps/newcomer/favorite');
+  assert.ok(post, 'and the app is added to My apps');
+  assert.deepEqual(post.body, { favorited: true });
+  assert.equal(Home._apps.find((a) => a.slug === 'newcomer').is_favorited, true);
+});
+
+test('a community drag released off the grid writes nothing', async () => {
+  const { Home, attachCalls, fetchCalls } = makeHome();
+  seedLayout(Home);
+  Home._apps.push(app('newcomer'));
+  Home.render = () => {};
+  const { opts } = armSidebar(Home, attachCalls);
+
+  opts.onLift(railRowEl('newcomer'));
+  opts.onSettle(false);
+  await flush();
+
+  assert.equal(fetchCalls.filter((c) => c.method !== 'GET').length, 0,
+    'a drop outside the grid is a cancellation, not an add');
+  assert.equal(Home._apps.find((a) => a.slug === 'newcomer').is_favorited, false);
+});
+
+test('a community whose app is already in My apps moves that tile, adding nothing', () => {
+  const { Home, attachCalls } = makeHome();
+  seedLayout(Home);
+  const { opts } = armSidebar(Home, attachCalls);
+
+  opts.onLift(railRowEl('a'));
+  assert.equal(Home._incoming, null, 'it already has a tile, so nothing is arriving');
+  assert.deepEqual({ ...Home._itemFor(railRowEl('a')) },
+    { type: 'app', slug: 'a', col: 0, row: 0 });
+});
+
+test('with no itemSelector the Discover card selector is unchanged', () => {
+  const { Home, attachCalls } = makeHome();
+  seedLayout(Home);
+  const { opts } = armRail(Home, attachCalls);
+  assert.equal(opts.itemSelector, '.app-card[data-slug]:not([data-demo])',
+    'the sidebar names its own rows; everything else keeps Discover\'s');
 });
 
 test('?shot=discover-drag is re-applied when the lane\'s cards actually arrive', () => {

@@ -624,7 +624,14 @@ function chatRoutes(config) {
       topicIndex = params.length;
     } else if (thread) {
       params.push(thread.type, thread.ref);
-      where += ' AND m.thread_type = $2 AND m.thread_ref = $3';
+      // #6019: a request's page reads its whole thread: what was said on
+      // every request in it (a thread holds more than one once two were
+      // merged), oldest first. A change's and a decision's own replies stay
+      // folded under their rows on the page, so they are not read here.
+      where += thread.type === 'issue'
+        ? ` AND m.thread_type = $2 AND (m.thread_ref = $3 OR (m.thread_id IS NOT NULL AND m.thread_id = (
+              SELECT r.thread_id FROM requests r WHERE r.app_id = $1 AND r.number = $3)))`
+        : ' AND m.thread_type = $2 AND m.thread_ref = $3';
       // #5249: a request's or a proposal's thread does not draw the system
       // lines a kudos bounty wrote there ("… placed a bounty (kudos) on
       // issue #n", "Bounty on issue #n (k kudos) awarded to …") while kudos

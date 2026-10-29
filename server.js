@@ -703,6 +703,12 @@ app.use(demoModeRoutes(config));
 // "Suggest this back": a remix's owner sends the copy's changes to the app
 // it was copied from, as a proposal there (routes/suggest-back.js).
 app.use(require('./src/routes/suggest-back').suggestBackRoutes(config));
+// A version's updates from its original: read, open, skip, fit, share
+// (routes/upstream.js, services/upstream-offers.js).
+app.use(require('./src/routes/upstream').upstreamRoutes(config));
+// Versions: an original's hub ("From its versions") and a version's vote on
+// whether it gets its original's updates (routes/versions.js).
+app.use(require('./src/routes/versions').versionsRoutes(config));
 app.use(kudosRoutes(config));
 // Public read-only apps + contributors API. Mounted after authMiddleware
 // like kudosRoutes; reachable anonymously via the `/api/public/` prefix in
@@ -736,6 +742,10 @@ app.use(require('./src/routes/test-accounts').testAccountRoutes(config));
 // rules) through a full admin's connector session: each door hands on to the
 // console's own /api/v4/admin route (routes/challenge-admin.js).
 app.use(require('./src/routes/challenge-admin').challengeAdminRoutes(config));
+// Featured apps (the landing's Featured and Home's "Find more apps") and the
+// directory review they need, through a full admin's connector session: each
+// door hands on to the console's own /api/admin route (routes/featured-admin.js).
+app.use(require('./src/routes/featured-admin').featuredAdminRoutes(config));
 app.use(adminSupportRoutes(config));
 app.use(adminUserMergeRoutes(config));
 app.use(dashboardRoutes(config));
@@ -744,6 +754,10 @@ app.use(feedbackRoutes(config));
 // #5048: requests only platform admins can see, kept off GitHub.
 app.use(require('./src/routes/private-requests').privateRequestRoutes(config));
 app.use(notificationsRoutes(config));
+// #6019: a thread's Notify me and Mute, and (stage 3) the thread page's read.
+app.use(require('./src/routes/threads').threadsRoutes(config));
+// #6019 follow-up: the AI tab's main view (Your work, Up next, Live this week).
+app.use(require('./src/routes/ai-work').aiWorkRoutes(config));
 app.use(collaboratorRoutes(config));
 // Session-authenticated user directory for the shell's iframe bridge
 // relay (#1195) — must be AFTER authMiddleware; req.user is required.

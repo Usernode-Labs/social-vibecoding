@@ -278,6 +278,22 @@ test('the status card says what Homeroom bot is really doing, or waiting for', (
   assert.equal(button({ what: 'queued' }).label, 'Homeroom bot is on it');
 });
 
+// #5987: "Build it with your own Claude Code" is offered only where starting
+// work on the request is still open to this viewer.
+test('the status card offers your own Claude Code only on a request still open to start', () => {
+  const av = appView();
+  assert.equal(av._requestStatusView(issue()).ownAgent, true);
+  assert.equal(av._topicViewFor('issue', (av._ghIssues = [issue()])[0]).body.request.slug, 'example');
+  assert.equal(av._requestStatusView(issue({ state: 'closed' })).ownAgent, false, 'closed');
+  assert.equal(av._requestStatusView(issue({ addressed_by: { sessionId: 9, state: 'merged', prNumber: 12, title: 'T' } })).ownAgent, false, 'voted in');
+  assert.equal(av._requestStatusView(issue({ addressed_by: { sessionId: 9, state: 'review', prNumber: 12, title: 'T' } })).ownAgent, false, 'waiting for approval');
+  assert.equal(av._requestStatusView(issue({ bot: { what: 'building', since: null } })).ownAgent, false, 'the bot is on it');
+  assert.equal(av._requestStatusView(issue({ botAwaits: { kind: 'question', messageId: 5 } })).ownAgent, false, 'the bot is waiting');
+  assert.equal(av._requestStatusView(issue({ myPrSessionId: 77 })).ownAgent, false, 'your own session');
+  av.appData = { slug: 'example', can_collaborate: false };
+  assert.equal(av._requestStatusView(issue()).ownAgent, false, 'read-only');
+});
+
 test('⋯ holds the work rows first, then the author\'s edits and the tags', () => {
   const av = appView();
   const row = issue({ myPrSessionId: 77 });

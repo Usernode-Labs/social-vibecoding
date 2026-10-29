@@ -53,11 +53,13 @@ test('every action row has a glyph, and every glyph is decoration', () => {
   // separately to prove the self-hosted wording never leaks into the other.
   // "Make it private" (a public community's, on the hub) left the hero for
   // this menu in the UI overhaul's follow-up, and "Start a new change" left
-  // the foot of the hub for its top (#852 review). "Suggest this back" is a
-  // remix owner's (./suggest-back-dialog.tsx). #4045: "Make it public" and
-  // Leave left the hero's row for it too (Leave was the Joined pill).
-  // #4045: "Settings & rules" is a row too, the one that opens the settings,
-  // and Remix is written twice: last in the settings sheet, and alone on the
+  // the foot of the hub for its top (#852 review). "Suggest to <original>"
+  // is a version owner's (./suggest-back-dialog.tsx), and "Updates from
+  // <original>" any version's (docs/plans/versions.md). #4045: "Make it
+  // public" and Leave left the hero's row for it too (Leave was the Joined
+  // pill). #4045: "Settings & rules" is a row too, the one that opens the
+  // settings, and Make your own is written twice: last in the settings sheet,
+  // and alone on the
   // menu of a read-only viewer, who has no settings. #4405: Custom domain,
   // under App settings, for whoever manages the project. #4417: Topics,
   // after the display name, the other change that is a proposal to dapp.json.
@@ -65,8 +67,8 @@ test('every action row has a glyph, and every glyph is decoration', () => {
   // see & change it", which opens the sheet that sets both who can see it and
   // how its changes are approved. 18 Oct 2026: Pin to sidebar, a member's,
   // after "Import a pull request".
-  assert.equal(rows.length, 18,
-    'new-change, issue, import-pr, pin, settings, who-decides, leave, app-settings, domain, featured-illustration, members x2, rename, topics, secrets, suggest-back, fork x2');
+  assert.equal(rows.length, 19,
+    'new-change, issue, import-pr, pin, settings, who-decides, leave, app-settings, domain, featured-illustration, members x2, rename, topics, secrets, updates, suggest-back, fork x2');
   const icons = menu.match(/icon=\{<([A-Za-z]+Icon) className=\{PLUS_ICON_CLS\} aria-hidden="true" \/>\}/g) || [];
   assert.equal(icons.length, rows.length, 'one glyph per row, all aria-hidden');
   // No <button data-plus> survives outside the shared shell — a hand-written
@@ -85,7 +87,7 @@ test('the subtitles survive: this is not the chip menu’s one-line row', () => 
   assert.match(menu, /data-plus="import-pr"[\s\S]{0,240}sub=\{t\('project:menu\.importPr\.sub'\)\}/);
   assert.match(message('project:menu.importPr.sub'), /^Your computer · your own tools\. You have already built it/);
   assert.match(menu, /title=\{t\('project:menu\.remix\.title'\)\}\s+sub=\{t\('project:menu\.remix\.sub'\)\}/);
-  assert.deepEqual([message('project:menu.remix.title'), message('project:menu.remix.sub')], ['Remix', 'Make your own copy']);
+  assert.deepEqual([message('project:menu.remix.title'), message('project:menu.remix.sub')], ['Make your own', 'Your own version to change']);
   assert.match(FRAME, /const PLUS_SUB_CLS = 'block text-xs/);
 });
 

@@ -107,7 +107,11 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
         social.usernode.io/serves-requests: "true"
         {{- end }}
     spec:
-      serviceAccountName: social-platform-runtime
+      {{- $account := "social-platform-runtime" }}
+      {{- if and (eq .processRole "web") .Values.platform.web.serviceAccountName }}
+      {{- $account = .Values.platform.web.serviceAccountName }}
+      {{- end }}
+      serviceAccountName: {{ $account }}
       automountServiceAccountToken: true
       {{- with include "social-vibecoding-platform.databasePrimaryAffinity" . }}
       {{- . | nindent 6 }}
@@ -158,6 +162,11 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
                 name: social-build-policy
             - secretRef:
                 name: {{ include "social-vibecoding-platform.secretName" . }}
+            {{- if and (eq .processRole "conductor") (include "social-vibecoding-platform.conductorSecret" .) }}
+            # What only the conductor may hold (templates/secret.yaml).
+            - secretRef:
+                name: {{ include "social-vibecoding-platform.fullname" . }}-conductor
+            {{- end }}
           env:
             - name: PLATFORM_NAMESPACE
               valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
@@ -231,6 +240,11 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - {name: LOG_LEVEL, value: {{ .Values.config.logLevel | quote }}}
             - {name: FIREBASE_PHONE_AUTH_ENABLED, value: {{ .Values.config.firebasePhoneAuthEnabled | quote }}}
             - {name: PREVIEW_PROJECTS_ENABLED, value: {{ .Values.config.previewProjects | quote }}}
+            {{- if .Values.secrets.create }}
+            # Whether managed OpenRouter keys are offered, said without the key,
+            # which the web Pods do not hold (src/services/openrouter-managed-keys.js).
+            - {name: OPENROUTER_MANAGED_KEYS_ENABLED, value: {{ ternary "true" "false" (not (empty .Values.secrets.openrouterManagementApiKey)) | quote }}}
+            {{- end }}
             - {name: WORKER_MEMORY, value: {{ .Values.config.workerMemory | quote }}}
             - {name: WORKER_MEMORY_PLATFORM_REPO, value: {{ .Values.config.workerMemoryPlatformRepo | quote }}}
             - {name: PLATFORM_SIGNALS, value: {{ .Values.config.platformSignals.mode | default "shadow" | quote }}}

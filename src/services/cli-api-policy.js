@@ -98,6 +98,17 @@ function isCliApiPath(pathname) {
 // makes them safe, and tests/mcp-connector-policy.test.js pins it.
 const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/apps' },
+  // #6026 — create_app: making a new project for the person who connected,
+  // the one the Create screen makes. On the list because the route narrows a
+  // connector token to exactly that (routes/apps.js, create-options.js
+  // connectorCreateRefusal): a name, who it is for, its one line and what it
+  // should do, and a private community unless it says otherwise. Invites,
+  // imports, approval rules and starters are refused, so nobody else is
+  // invited or told, no GitHub repository is touched, and membership changes
+  // only by the creator's own row. The person's app allowance, the server's
+  // app limit and the create rate limiter hold exactly as they do in the
+  // browser. Delegated tokens keep their own lists, which do not carry it.
+  { method: 'POST', pattern: '/api/apps' },
   { method: 'GET', pattern: '/api/apps/:slug' },
   { method: 'GET', pattern: '/api/apps/:slug/github-issues' },
   // A request's GitHub comments — the other half of its discussion, read by
@@ -354,6 +365,18 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'PUT', pattern: '/api/challenge-admin/challenge-scoring/rules/:id' },
   { method: 'DELETE', pattern: '/api/challenge-admin/challenge-scoring/rules/:id' },
   { method: 'POST', pattern: '/api/challenge-admin/challenge-scoring/run' },
+  // Featured apps (routes/featured-admin.js): the list the signed-out
+  // landing's Featured and every user's "Find more apps" row read, and the
+  // directory review an app needs before it can be on it, as Admin > Featured
+  // apps manages them. The same gate first on every handler
+  // (requireAdminWrite), the read included; every write then limited per
+  // person and refused to a browser on another origin. Each one hands on to
+  // the console's own /api/admin route (routes/admin-featured-apps.js), which
+  // a connector can never reach directly. They change what people see on the
+  // landing and Home, never an app.
+  { method: 'GET', pattern: '/api/featured-admin/featured-apps' },
+  { method: 'PUT', pattern: '/api/featured-admin/featured-apps' },
+  { method: 'PUT', pattern: '/api/featured-admin/apps/:slug/directory-review' },
   // The browser languages people use, and where the translation step stands
   // (routes/ui-telemetry.js): a read, behind the same full-admin gate.
   { method: 'GET', pattern: '/api/browser-languages' },

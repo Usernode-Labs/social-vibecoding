@@ -142,7 +142,7 @@ test('every read tool returns through readResult and no others do', () => {
     'get_platform_build', 'get_platform_conventions', 'get_proposal', 'get_recent_shots',
     'get_request', 'get_run_report', 'get_shots_eval', 'get_shots_eval_pair', 'get_shots_eval_shots', 'get_spec', 'get_spec_format', 'list_apps', 'list_bench_context_packs', 'list_bench_grading_queue', 'list_bench_runs',
     'list_bench_suites', 'list_bench_trials', 'list_bot_configs',
-    'list_challenge_events', 'list_challenge_templates', 'list_my_proposals',
+    'list_challenge_events', 'list_challenge_templates', 'list_featured_apps', 'list_my_proposals',
     'list_my_work_orders', 'list_recent_shots', 'list_requests', 'list_shots_configs', 'list_shots_evals',
     'list_test_accounts', 'whoami',
   ]);

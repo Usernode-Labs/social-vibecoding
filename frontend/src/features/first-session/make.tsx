@@ -237,6 +237,9 @@ const TILE_OFF = 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
 
 /** The tile that is the plain description box. */
 export const OWN_IDEA = 'idea';
+
+/** Who a new project is for (services/create-options.js): Just me, A group, A community. */
+export type CreateAudience = 'solo' | 'invited' | 'open';
 /** The fourth tile while nothing from "Something else…" holds it. */
 export const MORE_TILE = 'more';
 
@@ -366,6 +369,7 @@ export const MAKE_ROOT_UNDER_HEADER = 'platform-kb-surface platform-under-header
 
 export function MakeScreen({
   who, onMade, onLookAround, entry = 'first-session', onClose, startImport = false, underHeader = false, idea = null,
+  audience = 'invited',
 }: {
   who: string;
   onMade: (made: Made) => void;
@@ -384,6 +388,12 @@ export function MakeScreen({
    * one, the screen opens on Your own idea with it in the box.
    */
   idea?: string | null;
+  /**
+   * #6019 follow-up: who a project made from a private thread's idea is for
+   * (Just me, A group, A community), as the person answered there. Create
+   * and the first session make it a private project otherwise.
+   */
+  audience?: CreateAudience;
 }) {
   const t = useMessages('onboarding');
   const waitlistIdea = typeof idea === 'string' && idea.trim() ? idea : null;
@@ -395,7 +405,8 @@ export function MakeScreen({
   // Make it, or (from Create only) Import it.
   const [mode, setMode] = useState<'make' | 'import'>(fromCreate && startImport ? 'import' : 'make');
   // N9: Create's form as it was last left (keptDraft), read once at mount.
-  const [draft] = useState(() => (fromCreate && !startImport && keptDraft?.who === who ? keptDraft : null));
+  // An idea handed in (a private thread's) wins over a kept draft.
+  const [draft] = useState(() => (fromCreate && !startImport && !waitlistIdea && keptDraft?.who === who ? keptDraft : null));
   const [brief, setBrief] = useState(draft ? draft.brief : waitlistIdea ?? '');
   const [name, setName] = useState(draft ? draft.name : '');
   // The tile picked: a template, Your own idea, or nothing yet.
@@ -646,7 +657,7 @@ export function MakeScreen({
     try {
       const reply = await postCreateApp({
         name: name.trim(),
-        audience: 'invited',
+        audience,
         ...(ready ? { template: ready.template } : { brief: text.trim(), ...(starter ? { template: starter.template } : {}) }),
         // A ready-made app's description is the choice's own line. A game or
         // Your own words is built from what they typed, so the line is only

@@ -92,7 +92,7 @@ test('describeGovernance matches the platform wording', () => {
 // INSERTs, and returns empty rows for everything else (chat insert,
 // event insert, notifications) so best-effort side effects no-op.
 
-function mockPool(appRow, { members = [], createdBy = null } = {}) {
+function mockPool(appRow, { members = [], createdBy = null, approversFrom = null } = {}) {
   const calls = [];
   return {
     calls,
@@ -107,8 +107,8 @@ function mockPool(appRow, { members = [], createdBy = null } = {}) {
       if (/SELECT 1 FROM app_approvers WHERE app_id = \$1 AND status = 'member'/.test(sql)) {
         return { rows: members };
       }
-      if (/SELECT created_by FROM apps/.test(sql)) {
-        return { rows: [{ created_by: createdBy }] };
+      if (/SELECT created_by, approvers_from_app_id FROM apps/.test(sql)) {
+        return { rows: [{ created_by: createdBy, approvers_from_app_id: approversFrom }] };
       }
       return { rows: [] };
     },
@@ -173,6 +173,19 @@ test('reconcile: → invited with an empty roster auto-seeds the creator', async
   assert.ok(seed, 'empty roster must seed the creator');
   assert.equal(seed.params[0], 6);
   assert.equal(seed.params[1], 42);
+});
+
+// docs/plans/versions.md: a ready-made original's approvers are the
+// platform's (apps.approvers_from_app_id), so its own roster stays empty
+// and its creator (the platform's own account) is never seeded into it.
+test('reconcile: → invited on an app that uses another app\'s approvers seeds nothing', async () => {
+  const pool = mockPool({ id: 8, slug: 'homeroom-tier-list', approver_policy: 'anyone', approvals_required: null },
+    { members: [], createdBy: 42, approversFrom: 1 });
+  const changed = await appManifest.reconcileAppGovernance(pool, { id: 8 },
+    { governance: { approvers: 'invited', approvals: 1 } });
+  assert.equal(changed, true);
+  assert.ok(!pool.calls.some((c) => /INSERT INTO app_approvers/.test(c.sql)));
+  assert.deepEqual(updates(pool)[0].params, ['invited', 1, 8]);
 });
 
 test('reconcile: → invited with no creator (self-app) seeds nothing', async () => {

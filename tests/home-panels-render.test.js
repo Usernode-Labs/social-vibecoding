@@ -2113,15 +2113,20 @@ test('Discover draws no chrome of its own; its control is in the section heading
 // #4184: the home section's heading is "Discover Communities". Only the
 // heading: the tab bar's "Discover", the link beside it and the panel
 // registry's title keep their words.
-test('the Discover section is headed Discover Communities; the tab and the link keep theirs', () => {
+test('the Discover section is headed Discover Communities; the page and the link keep theirs', () => {
   const heading = renderDiscover().match(/<h2 class="home-area-label[\s\S]*?<\/h2>/)[0];
   assert.match(heading, /<span class="min-w-0 flex-1 truncate[^"]*">Discover Communities<\/span>/,
     'the label truncates rather than wraps at 320px, beside the link');
   // Polish N3: the link is "See all", as Challenges' is, not an "apps"
   // beside a heading that says communities.
   assert.match(heading, /aria-label="See all communities"[^>]*><span class="whitespace-nowrap">See all<\/span>/);
+  // #6019: on a phone Discover is a page, not a tab, and this section is its
+  // door; the desktop rail keeps a Discover tab (29 Oct 2026), which app.css
+  // hides below 768px.
   const bar = fs.readFileSync(path.join(__dirname, '../frontend/src/features/nav/tab-bar.tsx'), 'utf8');
   assert.match(bar, /key: 'discover' as const, label: 'core:tabs\.discover', href: '#apps'/);
+  const css = fs.readFileSync(path.join(__dirname, '../public/css/app.css'), 'utf8');
+  assert.match(css, /@media \(max-width: 767\.98px\) \{\n  #platform-tab-discover \{ display: none; \}/);
   assert.equal(message('core:tabs.discover'), 'Discover');
 });
 

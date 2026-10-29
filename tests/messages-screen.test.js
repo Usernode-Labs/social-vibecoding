@@ -40,16 +40,19 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
     'the retired row tag stays retired');
   assert.match(html, /id="platform-tabs-badge"/, 'the tab is what can carry a count');
   // The bar's order, pinned as a declared check. `+` rather than `~`: the
-  // five tabs are adjacent siblings. Messages sits in the middle;
-  // Communities (key `workshop`) comes after it, beside you. D (18 Oct
-  // 2026): the communities you pinned, then your others, sit between
-  // Messages and the Communities tab, drawn only on a desktop, and the
-  // strip's apps that sat before Me (#4417) are gone: each community's app
-  // is a row under it. v3: Messages' nested conversations follow it, an
-  // empty element when shut.
+  // tabs are adjacent siblings. The markup is the desktop rail's order
+  // (#6019, 29 Oct 2026): Home, Discover, Messages, AI, Communities (key
+  // `workshop`), you; app.css lays the phone's five out as Home,
+  // Communities, AI, Messages, you. v3: Messages' nested conversations
+  // follow it, an empty element when shut. D (18 Oct 2026): the communities
+  // you pinned, then your others, sit just above the Communities tab, drawn
+  // only on a desktop.
+  // Most hrefs are left out: the runner clips a selector at 256 characters
+  // (tests/proposal-tests-manifest.test.js), and the render tests pin them.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
-    === '#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-rail-conversations'
-      + ' + #platform-rail-pinned + #platform-rail-communities + #platform-tab-workshop[href="#communities"] + #platform-tab-me'),
+    === '#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages'
+      + ' + #platform-rail-conversations + #platform-tab-ai[href="#ai"] + #platform-rail-pinned'
+      + ' + #platform-rail-communities + #platform-tab-workshop + #platform-tab-me'),
   'a declared check pins the bar order');
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
   // Membership INSIDE the array literal. The previous form,

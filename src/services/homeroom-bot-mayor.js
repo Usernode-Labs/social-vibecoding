@@ -190,6 +190,11 @@ const KEEP_HERE = 'Keep it here';
 // requests (the request page's own "Propose to close").
 const PROPOSE_CLOSE = 'Propose to close';
 const KEEP_OPEN = 'Keep it open';
+// #6019: the answers under words from this private chat that would go on a
+// public discussion as the person's own. Nothing written here goes public
+// without Post it.
+const POST_IT = 'Post it';
+const KEEP_PRIVATE = 'Keep it private';
 // The answers under each kind of offer (homeroom_bot_dm_actions.kind), the
 // one that does it first.
 const OFFER_ANSWERS = Object.freeze({
@@ -197,6 +202,7 @@ const OFFER_ANSWERS = Object.freeze({
   withdraw_proposal: Object.freeze([WITHDRAW_IT, KEEP_IT]),
   move_request: Object.freeze([MOVE_IT, KEEP_HERE]),
   close_request: Object.freeze([PROPOSE_CLOSE, KEEP_OPEN]),
+  post_reply: Object.freeze([POST_IT, KEEP_PRIVATE]),
 });
 
 /**
@@ -365,13 +371,16 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- A new project\'s plan waits for them before you build its first version (progress says so). They start it',
     '  with Build it under the plan, or change it by replying to the plan with what to change; say so. You cannot',
     '  press Build it for them.',
-    '- When their message answers a question you asked them, pass it on (answer_question). Their message is posted',
-    '  word for word on the request\'s public discussion, where the group can see it; say so.',
-    '- Change one of your own changes that is up for a vote when they clearly ask you to (revise_proposal). Their',
-    '  message is posted in the change\'s public discussion under their name, with the change as you understood',
-    '  it, and you follow up on it next, as on any reply there: you update the change (its votes are cleared) or',
-    '  ask them one question. Say so. When it is not clear what they want changed, or which change, ask them, or',
-    '  offer it ("Want me to update the change to ...?"), and call revise_proposal once they say yes.',
+    '- This chat is private. Nothing in it goes on a public discussion unless they tap Post it under a draft:',
+    '  answer_question, comment_on_request and revise_proposal each draft their words for that. Never say',
+    '  something was posted.',
+    '- When their message answers a question you asked them, draft it as their answer (answer_question). Posted, it',
+    '  goes word for word on the request\'s public discussion, where the group can see it; say so.',
+    '- Change one of your own changes that is up for a vote when they clearly ask you to (revise_proposal). It drafts',
+    '  their message for the change\'s public discussion, with the change as you understood it; once they tap Post',
+    '  it, you follow up on it, as on any reply there: you update the change (its votes are cleared) or ask them',
+    '  one question. Say so. When it is not clear what they want changed, or which change, ask them, or offer it',
+    '  ("Want me to update the change to ...?"), and call revise_proposal once they say yes.',
     '- A change of yours they attached to their message (the conversation says so, with its proposal id) is the one',
     '  they are writing about. While it is waiting for approval, a problem they report with it, or anything they want',
     '  different in it, is for that change: call revise_proposal with its proposal id. Never offer a new',
@@ -392,8 +401,8 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- When they ask you to close a request, or say one is done and can be closed, offer a vote on closing it',
     '  (offer_close_request). Nothing happens until they tap Propose to close under your message, and it closes only',
     '  if its group votes for it, so never say it was closed.',
-    '- Add their words to a request that already exists when they ask you to (comment_on_request): posted on its',
-    '  public discussion under their name, and you look at the request again next. Say so.',
+    '- Add their words to a request that already exists when they ask you to (comment_on_request): drafted for its',
+    '  public discussion under their name; once they tap Post it, you look at the request again. Say so.',
     '- Start one of their requests now when they ask you to (start_request): it goes to the front of your queue,',
     '  and the result says whether you are on it or what it still waits for. Say exactly that.',
     '- Withdraw one of your own changes that is still open when the person who asked for its request, or the',
@@ -563,7 +572,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'answer_question',
-      description: 'Their message answers a question you asked them about a request: pass it on. Their message is posted, word for word, on that request\'s public discussion as theirs, and you look at the request again next. Without project and number it answers your newest open question.',
+      description: 'Their message answers a question you asked them about a request: draft it as their answer. It goes under your reply with Post it and Keep it private; once they tap Post it, their message is posted, word for word, on that request\'s public discussion as theirs, and you look at the request again. Nothing is posted before that: this chat is private. Without project and number it answers your newest open question.',
       parameters: {
         type: 'object',
         properties: {
@@ -578,7 +587,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'revise_proposal',
-      description: 'They clearly asked you to change one of YOUR OWN proposals that is up for a vote (one you built for a request), or reported a problem with one they attached to their message. This sends the change to that proposal the way a reply in its discussion does: their message is posted there, word for word, under their name, with the change as you understood it, and you follow up on it next: you change the proposal (its votes are cleared) or ask them one question. Call it only when they clearly asked for the change, or said yes when you offered it; when what they want, or which proposal, is unclear, ask instead. The result says what was sent and queued, or why nothing was. One per turn.',
+      description: 'They clearly asked you to change one of YOUR OWN proposals that is up for a vote (one you built for a request), or reported a problem with one they attached to their message. This drafts the change for that proposal\'s discussion, under your reply with Post it and Keep it private: once they tap Post it, their message is posted there, word for word, under their name, with the change as you understood it, and you follow up on it the way you do a reply in its discussion: you change the proposal (its votes are cleared) or ask them one question. Nothing is posted or changed before that: this chat is private. Call it only when they clearly asked for the change, or said yes when you offered it; when what they want, or which proposal, is unclear, ask instead. The result says what was sent and queued, or why nothing was. One per turn.',
       parameters: {
         type: 'object',
         properties: {
@@ -596,7 +605,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'comment_on_request',
-      description: 'They clearly asked you to add something to a request that already exists (a comment, a detail, a change of mind): post it on that request\'s public discussion. Their message is posted word for word under their name, with what they asked to add as you understood it, and you look at the request again next. Call it only when they asked; when it is unclear which request, ask. One per turn.',
+      description: 'They clearly asked you to add something to a request that already exists (a comment, a detail, a change of mind): draft it for that request\'s public discussion, under your reply with Post it and Keep it private; nothing is posted until they tap Post it, since this chat is private. Posted, it goes word for word under their name, with what they asked to add as you understood it, and you look at the request again next. Call it only when they asked; when it is unclear which request, ask. One per turn.',
       parameters: {
         type: 'object',
         properties: {
@@ -1837,18 +1846,24 @@ async function runTool(pool, ctx, name, args) {
           };
         }
         ctx.appIds.add(Number(target.app_id));
-        // What is posted is THEIR message, never words the model chose: it
-        // appears under their name on a public discussion.
+        // What would be posted is THEIR message, never words the model
+        // chose: it would appear under their name on a public discussion.
+        // #6019: this chat is private, so it is a draft until they tap Post
+        // it (decidePost).
         const text = clip(ctx.userText, 3500);
         if (!text) return { ok: false, error: 'Their message has no words to pass on.' };
-        const posted = await dm.postOnRequest(pool, { user, target, text, deps: { ...deps, answerMessageId: ctx.messageId } });
-        ctx.cards.push({ type: 'issue', appId: Number(target.app_id), issueNumber: Number(target.issue_number) });
-        // #3733: said even if the model fails after this, so they are never
-        // told to send it again.
-        if (posted.ok) ctx.posted = posted.line;
-        return posted.ok
-          ? { ok: true, posted: `on ${posted.line}'s public discussion`, next: 'You look at the request again next.' }
-          : { ok: false, error: `Could not post it: ${posted.why}.` };
+        if (ctx.offer) return { ok: false, error: 'You already put one thing under this reply for them to decide; one per turn. Nothing was drafted.' };
+        const { rows: [app] } = await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [target.app_id]);
+        if (!app) return { ok: false, error: 'No such project.' };
+        ctx.offer = {
+          kind: 'post_reply', app, issueNumber: Number(target.issue_number), title: 'dm_answer', details: text,
+          targetMessageId: target.message_id || null,
+        };
+        return {
+          ok: true,
+          drafted: `their answer, for ${app.name || app.slug} request #${Number(target.issue_number)}'s public discussion`,
+          shown: 'They see it under your reply with Post it and Keep it private. This chat is private: nothing is posted until they tap Post it, so never say it was posted.',
+        };
       }
       case 'revise_proposal': return await reviseProposal(pool, ctx, args);
       case 'withdraw_proposal': return await withdrawProposal(pool, ctx, args);
@@ -2536,10 +2551,68 @@ function closeOfferText({ name, issueNumber, text = null, title, why = null }) {
   ].join('\n');
 }
 
+// #6019: words from this chat, as they would be posted on a public
+// discussion under the person's name, waiting for Post it.
+function postOfferText({ name, issueNumber, revise = false, text = null, draft }) {
+  const where = revise ? `the change for request #${issueNumber}` : `request #${issueNumber}`;
+  return [
+    text || `This chat is private. Want me to post this on ${where}'s public discussion, as you?`,
+    '',
+    `**${name}** · ${where}:`,
+    '',
+    ...String(draft || '').split('\n').map((line) => `> ${line}`),
+  ].join('\n');
+}
+
 function closeOfferMeta({ app, name, actionId, issueNumber }) {
   return confirmMeta('close_request', {
     app, name, actionId, question: `Propose closing request #${issueNumber} on ${name}?`,
   });
+}
+
+// #6019 follow-up: Main's line for a draft the bot opened a private thread
+// for, quoting what the person asked, and the thread's row
+// (private_threads, services/private-threads.js), which the AI tab lists
+// with a lock until the draft is filed, posted or put away. Resolves the
+// line ({ messageId, conversationId }), or null when it could not be sent,
+// and the draft is then said in Main as before.
+async function openDraftThread(pool, { bot, user, conversationId, message, kind, app, name, deps }) {
+  const dm = dmModule(deps);
+  const said = await dm.sendDm(pool, {
+    bot,
+    userId: user.id,
+    content: kind === 'post_reply'
+      ? `I drafted that to post on ${name}, in a thread only you can see. Nothing is posted until you post it.`
+      : `I drafted it as a request on ${name}, in a thread only you can see. Nothing is filed until you file it.`,
+    idempotencyKey: `hrbot-mayor-opened-${message.id}`,
+    replyToId: message.id,
+    threadRootId: false,
+    moment: null,
+    metadata: { kind: 'opened_draft', appSlug: app.slug, appName: name, draft: kind },
+  }).catch((err) => {
+    log.warn('homeroom-bot-mayor', 'Could not open a draft\'s private thread (saying it in Main)', { err: err.message });
+    return null;
+  });
+  if (!said?.messageId) return null;
+  await pool.query(
+    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
+     VALUES ($1, $2, $3, $4, $5, 'open') ON CONFLICT (root_message_id) DO NOTHING`,
+    [user.id, said.conversationId || conversationId, said.messageId, app.id, kind === 'post_reply' ? 'draft_reply' : 'draft_request'],
+  ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not record a draft\'s private thread', { err: err.message }));
+  return said;
+}
+
+// Where a draft's private thread went, once it is decided: filed or posted
+// (`ref` the request's number), or put away. Nothing for a draft said in
+// Main. Never throws.
+async function notePrivateDraft(pool, { userId, messageId, state, ref = null }) {
+  if (!messageId) return;
+  await pool.query(
+    `UPDATE private_threads p SET state = $3, result_ref = COALESCE($4, p.result_ref), updated_at = NOW()
+       FROM conversation_messages m
+      WHERE m.id = $1 AND p.root_message_id = m.thread_root_id AND p.user_id = $2 AND p.state = 'open'`,
+    [Number(messageId), Number(userId), state, ref == null ? null : Number(ref)],
+  ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not note where a draft\'s private thread went', { err: err.message }));
 }
 
 async function offer(pool, { bot, user, conversationId, message, text, offer: o, deps }) {
@@ -2553,15 +2626,22 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
   const withdraw = o.kind === 'withdraw_proposal';
   const move = o.kind === 'move_request';
   const close = o.kind === 'close_request';
-  const kind = withdraw || move || close ? o.kind : 'file_request';
+  // #6019: words from this chat waiting to go public as theirs, on a
+  // request (`issueNumber`), or on the change it asks to revise (`sessionId`).
+  const post = o.kind === 'post_reply';
+  const kind = withdraw || move || close || post ? o.kind : 'file_request';
   const { rows: [action] } = await pool.query(
-    `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title, details, session_id, source_issue_number)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-    [user.id, conversationId, o.app.id, kind, o.title, o.details || null, withdraw ? o.sessionId : null,
-      move || close ? o.issueNumber : null],
+    `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title, details, session_id, source_issue_number,
+                                          target_message_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+    [user.id, conversationId, o.app.id, kind, o.title, o.details || null,
+      withdraw || (post && o.sessionId) ? o.sessionId : null,
+      move || close || post ? o.issueNumber : null, post && o.targetMessageId ? Number(o.targetMessageId) : null],
   );
   const moveSvc = require('./homeroom-bot-move');
-  const body = move
+  const body = post
+    ? postOfferText({ name, issueNumber: o.issueNumber, revise: !!o.sessionId, text, draft: o.details })
+    : move
     ? moveSvc.moveOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details })
     : close
     ? closeOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details })
@@ -2578,6 +2658,15 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       `**${name}** · new request: ${o.title}`,
       ...(o.details ? ['', clip(o.details, 1200)] : []),
     ].join('\n');
+  // #6019 follow-up (plan v3: "Drafts: the bot opens a locked thread and
+  // links it from Main"): a draft (a request to file, or words to post) is
+  // put in a private thread of its own, only the person's. Main says so,
+  // quoting what they asked, and the draft is the thread's first reply.
+  // Said in a thread already, it stays there.
+  const draft = kind === 'file_request' || post;
+  const opened = draft && !(message.threadRootId || message.thread_root_id)
+    ? await openDraftThread(pool, { bot, user, conversationId, message, kind, app: o.app, name, deps })
+    : null;
   const sent = await dm.sendDm(pool, {
     bot,
     userId: user.id,
@@ -2585,12 +2674,18 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     idempotencyKey: `hrbot-mayor-${message.id}`,
     // It quotes the message it answers, and that quote is where the
     // request's later news finds what it started from (#3707,
-    // homeroom-bot-dm.js requestStart).
-    replyToId: message.id,
+    // homeroom-bot-dm.js requestStart); in a draft's thread, Main's line
+    // quotes it instead.
+    replyToId: opened ? null : message.id,
+    ...(opened ? { threadRootId: opened.messageId } : {}),
     // The proposal it would withdraw, to open before deciding.
-    objects: withdraw ? [{ type: 'proposal', appId: Number(o.app.id), sessionId: Number(o.sessionId) }]
-      : move || close ? [{ type: 'issue', appId: Number(o.app.id), issueNumber: Number(o.issueNumber) }] : null,
-    metadata: move ? moveSvc.moveOfferMeta({ app: o.app, actionId: action.id })
+    objects: withdraw || (post && o.sessionId) ? [{ type: 'proposal', appId: Number(o.app.id), sessionId: Number(o.sessionId) }]
+      : move || close || post ? [{ type: 'issue', appId: Number(o.app.id), issueNumber: Number(o.issueNumber) }] : null,
+    metadata: post ? confirmMeta('post_reply', {
+      app: o.app, name, actionId: action.id,
+      question: o.sessionId ? `Post this on the change for request #${o.issueNumber} on ${name}?` : `Post this on request #${o.issueNumber} on ${name}?`,
+    })
+      : move ? moveSvc.moveOfferMeta({ app: o.app, actionId: action.id })
       : close ? closeOfferMeta({ app: o.app, name, actionId: action.id, issueNumber: o.issueNumber })
       : o.guess ? guessMeta({ app: o.app, name, actionId: action.id })
       : confirmMeta(kind, {
@@ -2630,6 +2725,8 @@ const OFFER_WORDS = Object.freeze({
   // #4525: the close offer's own words. "Propose to close" is the request
   // page's own button text.
   close_request: { yes: new Set(['propose to close', 'propose to close it', 'propose closing it']), no: new Set(['keep it open']) },
+  // #6019: the draft's own words.
+  post_reply: { yes: new Set(['post it', 'post it please', 'please post it']), no: new Set(['keep it private']) },
 });
 const PLAIN_YES = new Set(['yes', 'yes please', 'yep', 'yeah', 'yup', 'sure', 'ok', 'okay', 'do it', 'go ahead', 'please do', 'file', 'go for it']);
 const PLAIN_NO = new Set(['no', 'nope', 'no thanks', 'cancel', 'don\'t', 'dont']);
@@ -2866,6 +2963,10 @@ async function settleOffer(pool, config, {
       status: 'answered', answer: yes ? yesWord : noWord, chosen: yes ? 'yes' : 'no',
     }, { conversationId: action.conversation_id, userId: user.id }).catch(() => {});
   }
+  // A draft put away: its private thread went nowhere (openDraftThread).
+  if (no && (action.kind === 'file_request' || action.kind === 'post_reply')) {
+    await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'dropped' });
+  }
   if (no && tapped) return { declined: true };
   // The act's claim (`key`) rides with it, so what it calls can tell a
   // failure to retry from one to say.
@@ -2875,6 +2976,7 @@ async function settleOffer(pool, config, {
     return require('./homeroom-bot-move').decideMove(pool, config, { bot, user, settings, action, yes, ack, deps: actDeps });
   }
   if (action.kind === 'close_request') return decideClose(pool, { user, action, yes, ack, deps: actDeps });
+  if (action.kind === 'post_reply') return decidePost(pool, { bot, user, settings, action, yes, ack, deps: actDeps });
   if (no) return ack('OK, I won\'t file it.');
   const { rows: apps } = await pool.query(
     `SELECT ${require('./app-access').nonSecretAppColumnList()} FROM apps WHERE id = $1`, [action.app_id],
@@ -2891,6 +2993,7 @@ async function settleOffer(pool, config, {
       user, app, title: action.title, details: action.details, settings, deps, askedText, fileKey: `dm-action:${action.id}`,
     });
     await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);
+    await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'filed', ref: filed.issueNumber });
     const name = app.name || app.slug;
     const builds = liveModule(deps).isLiveFor(settings, app);
     if (builds && filed.queueId) {
@@ -3193,25 +3296,21 @@ async function commentOnRequest(pool, ctx, args) {
   if (!(await canFile(pool, app, user))) {
     return { ok: false, error: `They are not a member of ${name}, so they cannot post on its requests. They can join it from its page. Nothing was posted.` };
   }
+  // #6019: this chat is private. What would go on the request is drafted
+  // under the reply, and posted only when they tap Post it (decidePost).
+  if (ctx.offer) return { ok: false, error: 'You already put one thing under this reply for them to decide; one per turn. Nothing was drafted.' };
   const dm = dmModule(deps);
   const open = await dm.newestOpenQuestion(pool, user.id, { appId: app.id, issueNumber: n });
-  const target = open || { app_id: app.id, issue_number: n, question_status: null };
   const text = commentText(ctx.userText, comment);
-  const posted = await dm.postOnRequest(pool, {
-    user, target, text, prepared: true, reason: 'dm_comment', deps: { ...deps, answerMessageId: ctx.messageId },
-  });
-  if (!posted.ok) return { ok: false, error: `Could not post it: ${posted.why}. Nothing was posted.` };
-  ctx.commented = posted.line;
-  ctx.cards.push({ type: 'issue', appId: Number(app.id), issueNumber: n });
-  require('./homeroom-bot-tray').noteWorkChanged(user.id, deps);
-  const builds = liveModule(deps).isLiveFor(ctx.settings, app);
+  ctx.offer = {
+    kind: 'post_reply', app, issueNumber: n, title: 'dm_comment', details: clip(text, 3500),
+    targetMessageId: open?.message_id || null,
+  };
   return {
     ok: true,
-    posted: `on ${posted.line}'s public discussion, under their name, where the group can see it: ${text}`,
-    ...(open ? { answered: 'It also answers the question you asked them there.' } : {}),
-    next: builds
-      ? 'You look at the request again next, with this in it.'
-      : `You do not build on ${name}, so it is there for the group.`,
+    drafted: `for ${name} request #${n}'s public discussion, under their name: ${text}`,
+    ...(open ? { answers: 'Posted, it also answers the question you asked them there.' } : {}),
+    shown: 'They see it under your reply with Post it and Keep it private. This chat is private: nothing is posted until they tap Post it, so never say it was posted.',
   };
 }
 
@@ -3483,26 +3582,43 @@ async function reviseProposal(pool, ctx, args) {
     };
   }
   const text = revisionText(ctx.userText, change);
-  const posted = await dm.postOnProposal(pool, {
-    user, app, sessionId: session.id, issueNumber, text, deps,
-    payerId: theirs || !requester ? null : user.id,
-  });
-  if (!posted.ok) return { ok: false, error: `Could not send it: ${posted.why}. Nothing was queued.` };
-  ctx.revised = true;
-  ctx.cards.push({ type: 'proposal', appId: Number(app.id), sessionId: Number(session.id) });
-  require('./homeroom-bot-tray').noteWorkChanged(payer, deps);
+  // A fix asked for in a project's own chat (homeroom-bot-chat.js
+  // reviseFromMessage) was said in public, and goes to the change at once.
+  if (ctx.inPublic) {
+    const posted = await dm.postOnProposal(pool, {
+      user, app, sessionId: session.id, issueNumber, text, deps,
+      payerId: theirs || !requester ? null : user.id,
+    });
+    if (!posted.ok) return { ok: false, error: `Could not send it: ${posted.why}. Nothing was queued.` };
+    ctx.revised = true;
+    ctx.cards.push({ type: 'proposal', appId: Number(app.id), sessionId: Number(session.id) });
+    require('./homeroom-bot-tray').noteWorkChanged(payer, deps);
+    return {
+      ok: true,
+      proposal: { proposal: Number(session.id), project: app.slug, projectName: name, number: issueNumber, title: session.title || null },
+      posted: `in the proposal's public discussion, under their name, where the group can see it: ${text}`,
+      queued: posted.queued === true
+        ? 'At the front of your queue: you follow up on it ahead of anything else waiting, as on any reply there.'
+        : posted.queued === false
+          ? 'You are following up on this proposal right now; you read this as soon as that finishes.'
+          : 'You read it on your next look at the project, as any reply there.',
+      next: theirs
+        ? 'You read what they asked and change the proposal (which clears its votes, so the group looks again), or ask them one question if something is missing. What you do is posted in its discussion, and a change or a question reaches them here too.'
+        : 'You read what they asked and change the proposal (which clears its votes, so the group looks again), or ask one question if something is missing, in its discussion, where they can see it.',
+    };
+  }
+  // #6019: this chat is private. The revision is drafted under the reply,
+  // and posted in the change's discussion, which is what queues it, only
+  // when they tap Post it (decidePost).
+  if (ctx.offer) return { ok: false, error: 'You already put one thing under this reply for them to decide; one per turn. Nothing was drafted.' };
+  ctx.offer = {
+    kind: 'post_reply', app, issueNumber, sessionId: Number(session.id), title: 'revise', details: clip(text, 3500),
+  };
   return {
     ok: true,
     proposal: { proposal: Number(session.id), project: app.slug, projectName: name, number: issueNumber, title: session.title || null },
-    posted: `in the proposal's public discussion, under their name, where the group can see it: ${text}`,
-    queued: posted.queued === true
-      ? 'At the front of your queue: you follow up on it ahead of anything else waiting, as on any reply there.'
-      : posted.queued === false
-        ? 'You are following up on this proposal right now; you read this as soon as that finishes.'
-        : 'You read it on your next look at the project, as any reply there.',
-    next: theirs
-      ? 'You read what they asked and change the proposal (which clears its votes, so the group looks again), or ask them one question if something is missing. What you do is posted in its discussion, and a change or a question reaches them here too.'
-      : 'You read what they asked and change the proposal (which clears its votes, so the group looks again), or ask one question if something is missing, in its discussion, where they can see it.',
+    drafted: `for the proposal's public discussion, under their name: ${text}`,
+    shown: 'They see it under your reply with Post it and Keep it private. This chat is private: nothing is posted, and nothing changes, until they tap Post it. Then you follow up on it as on any reply there: you change the proposal (which clears its votes) or ask one question. Never say it was posted or changed.',
   };
 }
 
@@ -3593,16 +3709,10 @@ async function reviseAttached(pool, config, { bot, user, settings, conversationI
       log.info('homeroom-bot-mayor', 'A DM message carried a change it could not be sent to', { sessionId: change.id, error: result?.error });
       return null;
     }
-    log.info('homeroom-bot-mayor', 'Sent a DM message to the change it carries', { sessionId: change.id, userId: user.id });
-    return dmModule(deps).sendDm(pool, {
-      bot, userId: user.id, replyToId: message.id, idempotencyKey: `hrbot-revise-${message.id}`, moment: 'reply',
-      content: revisingLine({
-        title: result.proposal?.title, projectName: result.proposal?.projectName,
-        queued: /^At the front/.test(result.queued || '') ? true : /right now/.test(result.queued || '') ? false : null,
-      }),
-      objects: ctx.cards,
-      metadata: { kind: 'chat' },
-    });
+    // #6019: this chat is private. The change is drafted under the reply,
+    // and sent to the change's discussion only on Post it (decidePost).
+    log.info('homeroom-bot-mayor', 'Drafted a DM message for the change it carries', { sessionId: change.id, userId: user.id });
+    return offer(pool, { bot, user, conversationId, message, text: null, offer: ctx.offer, deps });
   })();
 }
 
@@ -3872,6 +3982,112 @@ async function offerCloseRequest(pool, ctx, args) {
     request: { project: app.slug, number: gate.issueNumber, title: gate.issue.title },
     shown: 'They see it under your reply with Propose to close and Keep it open. Nothing happens until they tap Propose to close, and then the request\'s group votes on closing it: never say it was closed.',
   };
+}
+
+/**
+ * #6019: a tap under words from this private chat waiting to go public.
+ * Post it posts them as the person's own, exactly as drafted: on the
+ * request's discussion (homeroom-bot-dm.js postOnRequest, which answers the
+ * question or ask they replied to and puts the request first in the queue),
+ * or on the change they asked to revise (postOnProposal, which queues the
+ * revision), every gate read again now. Keep it private posts nothing.
+ */
+async function decidePost(pool, { bot, user, settings, action, yes, ack, deps = {} }) {
+  if (!yes) return ack('OK, it stays here in our chat. Nothing was posted.');
+  const failed = async (error, text) => {
+    await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
+    return ack(text);
+  };
+  const later = 'I couldn\'t post it just now. Try again in a minute.';
+  const dm = dmModule(deps);
+  const { rows } = await pool.query('SELECT slug FROM apps WHERE id = $1', [action.app_id]);
+  const app = rows[0] ? await findApp(pool, rows[0].slug) : null;
+  const n = Number(action.source_issue_number);
+  const text = String(action.details || '').trim();
+  if (!app || !Number.isInteger(n) || n <= 0 || !text) return failed('gone', 'I couldn\'t post it: that request is gone. Nothing was posted.');
+  const name = app.name || app.slug;
+  if (action.session_id) {
+    const { rows: [session] } = await pool.query(
+      `SELECT id, status, COALESCE(NULLIF(pr_title, ''), NULLIF(session_title, '')) AS title
+         FROM chat_sessions WHERE id = $1 AND app_id = $2`,
+      [Number(action.session_id), app.id],
+    );
+    if (!session || session.status !== 'promoted') {
+      return failed('not_promoted', 'That change isn\'t up for a vote any more, so there is nothing to change. Nothing was posted.');
+    }
+    const requester = await dm.requesterOf(pool, app.id, n);
+    const theirs = requester && Number(requester.userId) === Number(user.id);
+    let posted;
+    try {
+      posted = await dm.postOnProposal(pool, {
+        user, app, sessionId: Number(session.id), issueNumber: n, text, deps, payerId: theirs || !requester ? null : user.id,
+      });
+    } catch (err) {
+      log.warn('homeroom-bot-mayor', 'Could not post a drafted revision', { app: app.slug, issueNumber: n, err: err.message });
+      if (retryAct(err, deps.actKey)) throw err;
+      return failed(err.message, later);
+    }
+    if (!posted.ok) return failed(posted.why || 'refused', `I couldn't post it: ${posted.why}. Nothing was posted.`);
+    await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'posted', ref: n });
+    require('./homeroom-bot-tray').noteWorkChanged(user.id, deps);
+    return ack(revisingLine({ title: session.title, projectName: name, queued: posted.queued ?? null }), {
+      objects: [{ type: 'proposal', appId: Number(app.id), sessionId: Number(session.id) }],
+    });
+  }
+  if (!(await requestExists(pool, app.id, n))) return failed('gone', `${name} has no request #${n} any more. Nothing was posted.`);
+  // A change to their own request's plan is the requester's to make, as it
+  // was before it became a draft (postOnRequest keeps its own gates).
+  if (action.title !== 'plan_change' && !(await canFile(pool, app, user))) {
+    return failed('join_required', `I couldn't post it: you need to be a member of ${name} first. You can join it from its page.`);
+  }
+  // What it answers: the message it was drafted under, while that is still
+  // this request's; else the request's open question; else just the request.
+  const quoted = action.target_message_id ? await dm.quotedTarget(pool, user.id, Number(action.target_message_id)) : null;
+  const target = (quoted && Number(quoted.app_id) === Number(app.id) && Number(quoted.issue_number) === n ? quoted : null)
+    || await dm.newestOpenQuestion(pool, user.id, { appId: app.id, issueNumber: n })
+    || { app_id: app.id, issue_number: n, question_status: null };
+  let posted;
+  try {
+    posted = await dm.postOnRequest(pool, {
+      user, target, text, prepared: !['dm_answer', 'plan_change'].includes(action.title), reason: action.title || 'dm_comment', deps,
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not post a drafted reply', { app: app.slug, issueNumber: n, err: err.message });
+    if (retryAct(err, deps.actKey)) throw err;
+    return failed(err.message, later);
+  }
+  if (!posted.ok) return failed(posted.why || 'refused', `I couldn't post it: ${posted.why}. Nothing was posted.`);
+  await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'posted', ref: n });
+  // A change to a complicated change's plan (#4488): the plan stops waiting
+  // and is planned again with it (homeroom-bot-dm.js changeOnRequest).
+  if (action.title === 'plan_change') {
+    await dm.notePlanChanged(pool, { user, target, app, deps });
+    return ack(`Posted on ${posted.line}'s public discussion, as you. I'll plan it again with it and send the new plan here.`, {
+      objects: [{ type: 'issue', appId: Number(app.id), issueNumber: n }],
+    });
+  }
+  const builds = liveModule(deps).isLiveFor(settings, app);
+  return ack(`Posted on ${posted.line}'s public discussion, as you.${builds ? ' I\'ll look at it again now.' : ''}`, {
+    objects: [{ type: 'issue', appId: Number(app.id), issueNumber: n }],
+  });
+}
+
+/**
+ * #6019: words the person wrote in this chat, about request `target`, put
+ * under the bot's reply as a draft to Post it on the request's public
+ * discussion (decidePost). The chat is private; nothing in it goes public
+ * without that tap. `reason` is why it would be posted, for the queue.
+ */
+async function offerPost(pool, { bot, user, conversationId, message, target, text, reason = 'dm_answer', deps = {} }) {
+  const { rows: [app] } = await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [target.app_id]);
+  if (!app || !message?.id) return null;
+  return offer(pool, {
+    bot, user, conversationId, message, text: null, deps,
+    offer: {
+      kind: 'post_reply', app, issueNumber: Number(target.issue_number), title: reason,
+      details: clip(String(text || '').trim(), 3500), targetMessageId: target.message_id || null,
+    },
+  });
 }
 
 /**
@@ -4206,6 +4422,8 @@ module.exports = {
   closeGate,
   offerCloseRequest,
   decideClose,
+  offerPost,
+  decidePost,
   // #3772, #3769, #3768, #3771
   REQUEST_TIMEOUT_MS,
   DEFER_DELAYS_MS,

@@ -14,6 +14,7 @@ import { flushSync } from 'react-dom';
 
 import { navStore, tabForScreen } from './nav-store.js';
 import { parkedStore, setParked, setRunningApp } from './parked-store.js';
+import { SIDEBAR_ROWS_QUERY } from './sidebar-rows';
 import { forgetPin, loadPins, pinApp, pinDropStore, pinStatus, pinnedAppsStore, readPinnedApps } from './pinned-apps-store.js';
 import { forgetRecentApp, readRecentApps, recentAppsStore, rememberRecentApp } from './recent-apps-store.js';
 import {
@@ -34,7 +35,35 @@ pinDropStore.setFlush(flushSync);
 
 export { navStore, parkedStore };
 
+// The desktop rail is the layout (./sidebar-rows.ts): from 768px up, where it
+// keeps a Discover tab of its own (nav-store.js RAIL_TAB_FOR_SCREEN). Asked
+// when a screen is revealed, which is after hydration, so the lit tab is not
+// part of the prerender's question. Unreadable answers the phone.
+function railLayout(): boolean {
+  try {
+    return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      && window.matchMedia(SIDEBAR_ROWS_QUERY).matches;
+  } catch {
+    return false;
+  }
+}
+
+// Whether the router named the lit tab itself (setScreen's tabOverride): a
+// window resized across 768px then leaves it alone.
+let tabNamed = false;
+
 if (typeof window !== 'undefined') {
+  // A WINDOW RESIZED ACROSS 768px with Discover open moves its light: from
+  // its own tab on the rail to Home on the phone's bar, and back. App.js
+  // moves the header's back slot at the same width (_watchRailBreakpoint).
+  try {
+    window.matchMedia?.(SIDEBAR_ROWS_QUERY).addEventListener?.('change', () => {
+      const { screen, tab } = navStore.get();
+      if (!screen || tabNamed) return;
+      const next = tabForScreen(screen, railLayout());
+      if (next !== tab) navStore.set({ tab: next });
+    });
+  } catch { /* no matchMedia: nothing to follow */ }
   // A community left drops its pin on the account, so it goes from the
   // sidebar too (Home.MEMBERSHIP_EVENT, dispatched once the leave landed).
   if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
@@ -84,9 +113,10 @@ if (typeof window !== 'undefined') {
       // Nothing in the shipped router does that today, which is the whole
       // reason to fix it here rather than trust that nothing ever will.
       const changed = navStore.get().screen !== screen;
+      tabNamed = !!tabOverride;
       navStore.set({
         screen,
-        tab: tabOverride || (screen ? tabForScreen(screen) : null),
+        tab: tabOverride || (screen ? tabForScreen(screen, railLayout()) : null),
         ...(changed ? { peek: false, peekOut: false } : null),
       });
     },

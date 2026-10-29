@@ -362,11 +362,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // card's points moved into the short story over the guest Discover, which
     // the landing prerenders, so "Vote on what changes" and "Ask for what you
     // want" draw them in the cold document.
-    // SparklesIcon came back to this list with #3358: #platform-mark-btn
-    // draws the Homeroom mark again (#3318 had swapped it for a sparkle), and
-    // every other sparkle (Messages' agent rows, the Workshop rail, a
-    // session's header) renders after mount.
-    'M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z',
+    // SparklesIcon LEFT this list again with #6019: the AI tab draws it on
+    // the bar, which the shell prerenders. CompassIcon is off it too: the
+    // desktop rail keeps the Discover tab (29 Oct 2026), and the markup is
+    // the same at every width (app.css hides it on a phone).
     // THE MESSAGE ACTIONS (#2387): the hover bar's smile and reply arrow, the
     // ⋯ menu's thread, copy, link, envelope, flag and struck circle, and the
     // emoji picker's heart and cup tabs. Every one draws only once a row is
@@ -383,6 +382,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // "Invite to community" row's mark in the app chip's menu, and that row
     // left the menu for the hub's Invite (#3362).
     'M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244',
+    // ArrowTopRightOnSquareIcon (#5927): the menu's mark on a link that leaves
+    // Homeroom (Privacy, the About pane's Code row, Add Homeroom when it opens
+    // the browser), each drawn only once the menu is open and knows the link.
+    'M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25',
     // THE UI OVERHAUL put three more behind state. ChatIcon's bubble was the
     // menu's "Go to app discussion" row, which left for the hub's channel;
     // the menu's "Show more" under Agent sessions still draws it, after
@@ -452,8 +455,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     //
     // Its composer was in the static document and drew MicrophoneIcon and
     // ArrowUpIcon there. The other composers draw both only once a
-    // conversation or a dev chat is open.
-    'M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z',
+    // conversation or a dev chat is open. (#6019 follow-up: the AI tab's
+    // Ask Homeroom bot bar draws MicrophoneIcon in the static document
+    // again, so only ArrowUpIcon is behind state.)
     'M12 19V5M5 12l7-7 7 7',
   ];
   assert.deepEqual(absent.sort(), expected.sort());

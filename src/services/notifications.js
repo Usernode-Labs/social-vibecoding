@@ -23,6 +23,11 @@
 // thread, to the request's filer and everybody who posted there before
 // (chat_message_id is the message; thread_ref the issue number, which
 // `detail` also carries).
+// #6019 adds 'change_thread_reply': a message in a thread led by a change or
+// a decision, to everyone who follows it (createThreadNotifications);
+// `detail` is the change's number, or empty for a decision filed as a
+// governance row. 'issue_thread_reply' is the same for a thread a request
+// leads.
 // #3952 adds 'issue_mention': somebody named you with @ in a request they
 // filed (`detail` is its number, like 'issue_opened'). #4271: it stands in
 // for 'issue_opened' when you would get both (notifyIssueFiled).
@@ -59,6 +64,7 @@ const notificationPreferences = require('./notification-preferences');
 const notificationBookmarks = require('./notification-bookmarks');
 const { PARKED_NOTIFICATION_KINDS } = require('./kudos-parked');
 const repoRef = require('./repo-ref');
+const threads = require('./threads');
 
 // #5249: a parked feature's rows (kudos, while it is parked) are neither
 // listed nor counted. Built from the frozen constant in kudos-parked.js,
@@ -559,6 +565,70 @@ async function createIssueThreadNotifications(pool, {
       )
      RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, detail, created_at`,
     [ids, appId, messageId, senderId, String(Number(issueNumber))]
+  );
+  return rows;
+}
+
+// #6019 (threads, stage 2): a message in the discussion of anything a
+// thread holds (a request's, a change's, a governance row's) goes to
+// everyone who follows that thread (services/threads.js FOLLOWERS_SQL:
+// requesters, builders, voters, earlier posters and whoever chose Notify me,
+// less whoever chose Mute), with the same exclusions as above: the sender,
+// `excludeUserIds` (a mention or a quote wins), a blocked pair either way,
+// a member who left a collab-private app, and the per-app "Replies to you"
+// switch. A request's discussion reaches the people #4535's rule reached,
+// plus the thread's builders and voters; a change's and a decision's,
+// which notified nobody before, now reach theirs.
+//
+// The kind says what leads the thread, so its row can name it: a request
+// ('issue_thread_reply', `detail` its number, as before), or a change or a
+// decision ('change_thread_reply', `detail` the change's number, or none for
+// a decision filed as a governance row). A message the attach trigger could
+// not place (it logs why) falls back to #4535's rule for a request.
+async function createThreadNotifications(pool, {
+  appId, messageId, senderId, excludeUserIds = [],
+}) {
+  if (!appId || !messageId) return [];
+  const message = await threads.threadOfMessage(pool, { appId, messageId });
+  if (!message) return [];
+  if (!message.thread_id) {
+    if (message.thread_type !== 'issue') return [];
+    return createIssueThreadNotifications(pool, {
+      appId, messageId, issueNumber: message.thread_ref, senderId, excludeUserIds,
+    });
+  }
+  const m = repoRef.ownerRepo(message.repo_url);
+  const followers = await threads.followerIds(pool, {
+    threadId: message.thread_id,
+    appId,
+    beforeMessageId: messageId,
+    owner: m ? m.owner : null,
+    repo: m ? m.repo : null,
+  });
+  const skip = new Set([senderId, ...excludeUserIds].map(Number));
+  let ids = followers.filter((id) => !skip.has(id));
+  if (!ids.length) return [];
+  ids = await filterToCollaborators(pool, appId, ids);
+  if (!ids.length) return [];
+  ids = await notificationPreferences.filterUsersByCategory(pool, {
+    userIds: ids, appId, categoryKey: 'thread_replies',
+  });
+  if (!ids.length) return [];
+  const number = Number(message.number) > 0 ? Number(message.number) : null;
+  const requestLed = number != null && !message.change_led;
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind, detail)
+     SELECT recipient, $2, $3, $4, $5::varchar, $6::text
+       FROM UNNEST($1::int[]) AS recipient
+      WHERE NOT EXISTS (
+        SELECT 1 FROM user_blocks blocked
+         WHERE (blocked.blocker_id = recipient AND blocked.blocked_user_id = $4)
+            OR (blocked.blocker_id = $4 AND blocked.blocked_user_id = recipient)
+      )
+     RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, detail, created_at`,
+    [ids, appId, messageId, senderId,
+      requestLed ? 'issue_thread_reply' : 'change_thread_reply',
+      number != null ? String(number) : null]
   );
   return rows;
 }
@@ -1942,8 +2012,10 @@ const ACTION_COMPLETIONS = {
   // posting in the app clears it, and it lights the message's unread dot.
   // #4535: 'issue_thread_reply' joins it — posting in a request's
   // discussion reads it, so its rows clear the same way.
+  // #6019: and 'change_thread_reply', its twin for a change's or a
+  // decision's thread.
   message_sent: {
-    kinds: ['mention', 'reply', 'reaction', 'thread_reply', 'issue_thread_reply'],
+    kinds: ['mention', 'reply', 'reaction', 'thread_reply', 'issue_thread_reply', 'change_thread_reply'],
     scope: 'app_id',
   },
   // #161: opening a dev session is the canonical "user saw it" signal —
@@ -2381,6 +2453,7 @@ module.exports = {
   createReplyNotification,
   createThreadReplyNotifications,
   createIssueThreadNotifications,
+  createThreadNotifications,
   createReactionNotification,
   createStalePrNotification,
   createIssueOpenedNotifications,

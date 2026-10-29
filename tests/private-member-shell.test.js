@@ -29,12 +29,12 @@ test('the private member\'s walk: the three cards every newcomer gets, and no wa
   assert.deepEqual(steps.map((s) => s.screen), ['home', 'home', 'home']);
   assert.deepEqual(steps.map((s) => s.target), [
     '#app-list .app-card[data-slug="best-brunch"]',
-    '#platform-tab-messages',
+    '#platform-tab-ai',
     '#platform-tab-workshop',
   ]);
   assert.deepEqual(steps.map((s) => [s.title, s.text]), [
     ['Welcome to Homeroom', 'Best Brunch lives here, on Home.'],
-    ['Homeroom bot', 'It\'s in Messages. Ask it to make any changes to Best Brunch.'],
+    ['Homeroom bot', 'It\'s in AI. Ask it to make any changes to Best Brunch.'],
     ['Communities', 'Best Brunch\'s hub is here. Invite people and decide what changes.'],
   ]);
   // The group's app from a ready-made starter: its example on the bot card.

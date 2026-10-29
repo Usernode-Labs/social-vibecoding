@@ -27,6 +27,9 @@ export interface Issue {
   createdAt: string;
   githubIssueNumber: number | null;
   app: { slug: string; name: string; selfHosted: boolean; repo: { owner: string; repo: string } | null; locked: boolean };
+  /** #6019: the thread it is in, and for a close vote the other requests still open in it. */
+  threadId: number | null;
+  threadRequests: number[];
 }
 
 export interface Facts {
@@ -52,7 +55,7 @@ interface VoteRow { userId: number; vote: string; counts: boolean; admin: boolea
 async function readIssue(tx: Tx, issueId: number) {
   const { rows: [r] } = await tx.query(
     `SELECT i.id, i.app_id, i.kind, i.status, i.title, i.payload, i.created_by, i.created_at,
-            i.github_issue_number, u.username AS author_name,
+            i.github_issue_number, u.username AS author_name, i.thread_id,
             a.slug, a.name, a.self_hosted, a.repo_url, a.locked
        FROM issues i
        JOIN apps a ON a.id = i.app_id
@@ -65,7 +68,19 @@ async function readIssue(tx: Tx, issueId: number) {
     createdBy: r.created_by, authorName: r.author_name, createdAt: new Date(r.created_at).toISOString(),
     githubIssueNumber: r.github_issue_number,
     app: { slug: r.slug, name: r.name, selfHosted: !!r.self_hosted, repo: parseRepo(r.repo_url), locked: !!r.locked },
+    threadId: r.thread_id == null ? null : Number(r.thread_id),
+    threadRequests: [],
   };
+  // #6019: a vote to close covers its whole thread, so it closes every
+  // request still open in it, not only the one it was filed on.
+  if (issue.kind === 'close_issue' && issue.threadId) {
+    const { rows } = await tx.query(
+      `SELECT number FROM requests
+        WHERE thread_id = $1 AND app_id = $2 AND state = 'open' AND number <> $3
+        ORDER BY number`,
+      [issue.threadId, issue.appId, Number(issue.payload.issueNumber) || 0]);
+    issue.threadRequests = rows.map((row: any) => Number(row.number));
+  }
   return issue;
 }
 
@@ -183,6 +198,12 @@ async function readRefusal(tx: Tx, issue: Issue, dataKey: string): Promise<strin
       return typeof p.instructions === 'string' && p.instructions.trim() ? null : 'missing_instructions';
     case 'featured_illustration':
       return missingProposalImage(tx, issue.appId, p, issue.id);
+    case 'thread_move': {
+      // #6019: the move it votes on, still waiting for this vote.
+      if (!(Number(p.moveId) > 0)) return 'missing_move';
+      const { rows: [move] } = await tx.query('SELECT state FROM thread_moves WHERE id = $1', [Number(p.moveId)]);
+      return move && move.state === 'voting' ? null : 'move_decided';
+    }
     case 'secret_change': {
       const key = String(p.key || '').trim();
       if (!key) return 'missing_key';

@@ -5080,6 +5080,10 @@ const AppView = {
       const id = await AppView._sessionIdForChange(ref.pr);
       if (AppView._devTopic !== pending || !document.getElementById('dev-topic-thread')) return;
       if (!id) {
+        // #6019: numbers are one sequence per app, so a change address
+        // with a request's number is that request's thread.
+        if (await AppView._openByThread('proposal', ref.pr, () => AppView._devTopic === pending)) return;
+        if (AppView._devTopic !== pending) return;
         if (App._abandonWorkshopResume?.()) return;
         App.switchTab('dev');
         return;
@@ -5331,6 +5335,37 @@ const AppView = {
     await settled;
   },
 
+  // #6019: a request's address and a change's share one number sequence
+  // (services/app-numbers.js), so a number the page asked for as the other
+  // kind still names one thing. Ask its thread (routes/threads.js) what the
+  // number is and open that instead: `asked` is the kind the address said
+  // ('issue' or 'proposal'). Resolves whether it moved; `still()` says
+  // whether the page that asked is still the one on screen.
+  async _openByThread(asked, number, still) {
+    const slug = App.currentApp || AppView.appData?.slug;
+    const n = Number(number);
+    if (!slug || !Number.isInteger(n) || n <= 0) return false;
+    let data = null;
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/threads/${n}${AppView._demoQS()}`);
+      if (res.ok) data = await res.json();
+    } catch {
+      data = null;
+    }
+    if (!data || !Array.isArray(data.items) || (still && !still())) return false;
+    const change = data.items.find((i) => i.type === 'change' && Number(i.number) === n);
+    const request = data.items.find((i) => i.type === 'request' && Number(i.number) === n);
+    if (asked === 'issue' && change) {
+      await AppView.openTopic('proposal', Number(change.id));
+      return true;
+    }
+    if (asked === 'proposal' && request) {
+      await AppView.openTopic('issue', n);
+      return true;
+    }
+    return false;
+  },
+
   // #4367: the session a change's pull request number names on this app, or
   // null — from the server, which applies the proposal page's own visibility.
   async _sessionIdForChange(pr) {
@@ -5382,7 +5417,16 @@ const AppView = {
   // each fetcher is best-effort and swallows its own errors.
   async _fetchTopicItem(ref) {
     if (ref.kind === 'gov') return AppView._fetchGovProposalById(ref.id);
-    if (ref.kind === 'issue') return AppView._fetchIssueByNumber(ref.id);
+    if (ref.kind === 'issue') {
+      const row = await AppView._fetchIssueByNumber(ref.id);
+      if (row) return row;
+      // #6019: a request address with a change's number is that change.
+      // Asked before the page settles as missing, so a number that is
+      // neither still falls back to the board at the moment it always did.
+      const here = AppView._devTopic;
+      await AppView._openByThread('issue', ref.id, () => AppView._devTopic === here);
+      return null;
+    }
     return AppView._fetchProposalById(ref.id);
   },
 
@@ -5929,6 +5973,8 @@ const AppView = {
         canEdit: AppView._canEditIssueAuthor(issue),
       },
       status: AppView._requestStatusView(issue),
+      // #5987: the app the "Open in Claude Code" link names.
+      slug: (AppView.appData && AppView.appData.slug) || App.currentApp || '',
       // 16 Oct 2026: where Homeroom bot's work on it is, as every surface
       // draws it (routes/issues.js track): the page's track card.
       track: issue.track || null,
@@ -6081,6 +6127,12 @@ const AppView = {
       // The sentence is Homeroom bot's state, plan included: no "Plan v1 is
       // ready for comments." after it (request-head.tsx).
       botSays: !merged && (!!(waitingOnBot && waitingOnBot.kind === 'question') || !!upForVote || !!(st && st.key === 'bot')),
+      // #5987: offer "Build it with your own Claude Code" under the card only
+      // where starting work on it is still open to this viewer: an open
+      // request with no change built for it, nobody's bot on it, and no
+      // session of the viewer's own already working on it.
+      ownAgent: !closed && !merged && !ref && !AppView.readOnly && !bot && !waitingOnBot
+        && !issue.myPrSessionId && !(st && st.key === 'in_review'),
     };
   },
 
@@ -7180,6 +7232,10 @@ const AppView = {
       // Its code did not come across from GitHub (_codeMissing): the page
       // says so in a notice above Votes and Testing (change-head.tsx).
       codeMissing: kind !== 'gov' && AppView._codeMissing(item),
+      // Versions (docs/plans/versions.md): an update from the original this
+      // version was made from, as the proposal read gives it; change-head.tsx
+      // draws its From card and Skip this update. Null on any other change.
+      upstream: (item && item.upstream && typeof item.upstream === 'object') ? item.upstream : null,
       // Stacked on another change's branch, or based on a branch no open
       // change has (_stackedOn): said in a notice above Votes and Testing,
       // with a door to the change it waits for.
@@ -10461,7 +10517,7 @@ const AppView = {
       if (!keep(issuesData)) {
         AppView._govProposals = (issuesData.issues || [])
           .filter((i) => i.kind === 'secret_change' || i.kind === 'rename' || i.kind === 'close_issue'
-            || i.kind === 'maintenance_campaign' || i.kind === 'featured_illustration');
+            || i.kind === 'maintenance_campaign' || i.kind === 'featured_illustration' || i.kind === 'thread_move');
       }
       if (!keep(promotedData)) AppView._proposalsCtx = {
         majority,

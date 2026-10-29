@@ -208,7 +208,7 @@ test('a remix whose source is gone, or not ready to copy, fails without touching
     forkerStubs: { findForkSource: async () => ({ id: 7, slug: 'source-app', repo_url: null }) },
   });
   out = await made.appCreator.setUp({}, made.pool, 42, workContext());
-  assert.match(out.failed.reason, /not ready to copy/);
+  assert.match(out.failed.reason, /not ready for you to make your own version yet/);
   assert.ok(!made.queries.some((q) => /SET repo_url/.test(q.sql)));
 });
 
@@ -227,6 +227,36 @@ test('a remix copies its source into its own repository, and records the lineage
   const write = queries.find((q) => /SET repo_url = \$1/.test(q.sql));
   assert.match(write.sql, /forked_from = CASE/);
   assert.deepEqual(JSON.parse(write.params[1]), { sourceSha: 'e'.repeat(40), forkBaseSha: 'D'.repeat(40) });
+  // The version's link to its original gets the same two commits, under the
+  // names updates and suggestions plan from (docs/plans/versions.md).
+  assert.match(write.sql, /upstream = CASE WHEN jsonb_typeof\(upstream\) = 'object'\s+THEN upstream \|\| \$4::jsonb/);
+  assert.deepEqual(JSON.parse(write.params[3]), { syncedSha: 'e'.repeat(40), baseSha: 'd'.repeat(40), legacy: false });
+});
+
+test('a version passes its maker\'s choice of updates to the copy, and one whose commits git did not give is legacy', async () => {
+  const copies = [];
+  const stubs = (mainSha) => ({
+    findForkSource: async () => ({ id: 7, slug: 'source-app', repo_url: 'https://github.com/acme/source-app' }),
+    copyRepoTree: async (args) => { copies.push(args); return { repoUrl: 'https://x/y', mainSha, sourceSha: 'e'.repeat(40) }; },
+    forkLineageShas: (c) => ({ sourceSha: c.sourceSha || null, forkBaseSha: c.mainSha || null }),
+  });
+  let made = loadAppCreator({
+    app: row({ forked_from: { appId: 7 }, upstream: { appId: 7, slug: 'source-app', following: false } }),
+    forkerStubs: stubs('f'.repeat(40)),
+  });
+  await made.appCreator.setUp({}, made.pool, 42, workContext());
+  assert.equal(copies[0].follow, false, 'the maker turned updates off');
+  made = loadAppCreator({
+    app: row({ forked_from: { appId: 7 }, upstream: { appId: 7, slug: 'source-app', following: true } }),
+    forkerStubs: stubs(null),
+  });
+  await made.appCreator.setUp({}, made.pool, 42, workContext());
+  assert.equal(copies[1].follow, true);
+  const write = made.queries.find((q) => /SET repo_url = \$1/.test(q.sql));
+  assert.deepEqual(JSON.parse(write.params[3]), { legacy: true }, 'found when first needed');
+  made = loadAppCreator({ app: row({ forked_from: { appId: 7 } }), forkerStubs: stubs('f'.repeat(40)) });
+  await made.appCreator.setUp({}, made.pool, 42, workContext());
+  assert.equal(copies[2].follow, false, 'a row from before the choice does not follow');
 });
 
 test('a project that is no longer being made is not set up', async () => {

@@ -96,7 +96,8 @@ test('a form left from Create is kept and opens filled; a made project clears it
   }
 
   // Read once at mount, for Create only, and not over the import form.
-  assert.match(MAKE, /const \[draft\] = useState\(\(\) => \(fromCreate && !startImport && keptDraft\?\.who === who \? keptDraft : null\)\);/,
+  // #6019 follow-up: an idea handed in (a private thread's) wins over it.
+  assert.match(MAKE, /const \[draft\] = useState\(\(\) => \(fromCreate && !startImport && !waitlistIdea && keptDraft\?\.who === who \? keptDraft : null\)\);/,
     'only the person who left it gets it back');
   for (const field of ['brief', 'name', 'picked', 'choice', 'words', 'written', 'nameTyped', 'rule']) {
     assert.match(MAKE, new RegExp(`useState[^\\n]*\\(draft \\? draft\\.${field} : `), `${field} opens as it was left`);

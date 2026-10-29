@@ -488,7 +488,7 @@ test('the make screen sends the longer description, never with an import', () =>
   assert.match(src, /maxLength=\{BRIEF_MAX\}/, 'the field stops at the maximum');
   // The description is the plain box or a template's sentence (`text`),
   // unless the choice is a ready-made app, which has nothing to build.
-  assert.match(src, /audience: 'invited',\s+\.\.\.\(ready \? \{ template: ready\.template \} : \{ brief: text\.trim\(\), \.\.\.\(starter \? \{ template: starter\.template \} : \{\}\) \}\),/,
+  assert.match(src, /audience,\s+\.\.\.\(ready \? \{ template: ready\.template \} : \{ brief: text\.trim\(\), \.\.\.\(starter \? \{ template: starter\.template \} : \{\}\) \}\),/,
     'a ready-made app has nothing to build; a game preset sends its starter beside the brief');
   // The import sends its repository, and no description to build from.
   const imp = src.slice(src.indexOf('const importRepo = useCallback('), src.indexOf('const formClass ='));
@@ -518,7 +518,7 @@ test('the short description is suggested for everyone making a project, and ever
   const fork = routes.slice(routes.indexOf("router.post('/api/apps/:slug/fork'"), routes.indexOf("router.get('/api/apps/:slug'"));
   // Recorded for the bot; its insert started its copy (src/workflow/app-creation/).
   assert.match(fork, /noteProjectMade\(pool, \{ app: appRow, user: req\.user, origin: 'fork' \}\)/);
-  assert.match(fork, /forked_from\)\s+VALUES \(\$1, \$2, \$3, 'creating', 'private', 'private', \$4::jsonb\)/);
+  assert.match(fork, /forked_from, upstream\)\s+VALUES \(\$1, \$2, \$3, 'creating', 'private', 'private', \$4::jsonb, \$5::jsonb\)/);
   // Every project is live, so nothing reads who made which any more; what
   // was made without a description is recorded only for somebody the bot
   // works for, and an import's record is what holds its backlog back.
@@ -702,9 +702,10 @@ test('the DM screen draws the bot\'s question and badge, and the reply bar names
   assert.match(row, /message\.sender\.bot && \(message\.metadata\?\.homeroomBot\?\.question \|\| message\.metadata\?\.homeroomBot\?\.actions\?\.length\)\s*&& !isTwoQuestions\(message\) && !isReadyMessage\(message\)\s*\? <BotQuestion/);
   assert.match(row, /messages-bot-badge/);
   const composer = read('frontend/src/features/messages/composer.tsx');
-  assert.match(composer, /\{postedNote\(reply\.metadata\.homeroomBot, 'reply'\)\}/);
-  assert.equal(message('messages:bot.posted.reply.request', { project: 'Ear Trainer', number: 3 }), 'Your reply is posted on Ear Trainer request #3’s public discussion.');
-  assert.equal(message('messages:bot.posted.reply.firstVersion', { project: 'Ear Trainer' }), 'Your reply is posted on Ear Trainer’s first-version request’s public discussion.');
+  // #6019: this chat is private. A typed reply comes back as a draft with
+  // Post it (homeroom-bot-mayor.js offerPost), and the reply bar says so.
+  assert.match(composer, /\{t\('messages:bot\.draft\.reply'\)\}/);
+  assert.equal(message('messages:bot.draft.reply'), 'Your reply stays in this chat until you tap Post it.');
   const css = read('public/css/app.css');
   for (const cls of ['.messages-bot-badge', '.messages-bot-answers button', '.messages-bot-note', '.messages-bot-default']) {
     assert.ok(css.includes(cls), cls);

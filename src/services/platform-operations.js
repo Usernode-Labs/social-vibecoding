@@ -37,6 +37,11 @@ const OPERATIONS = new Map([
   ['openrouter.sync', () => require('./openrouter-key-operation')],
   ['openrouter.disable', () => require('./openrouter-key-operation')],
   ['openrouter.remove', () => require('./openrouter-key-operation')],
+  ['previewProject.create', () => require('./preview-project-operation')],
+  ['previewProject.build', () => require('./preview-project-operation')],
+  ['previewProject.deploy', () => require('./preview-project-operation')],
+  ['previewProject.restart', () => require('./preview-project-operation')],
+  ['previewProject.remove', () => require('./preview-project-operation')],
 ]);
 
 // The requester as the auth middleware builds `req.user`, read now: an
@@ -104,8 +109,22 @@ function append(db, p) {
   return require('../workflow/platform.ts').appendOperation(db, { appId: null, ...p });
 }
 
+// For an operation nobody waits on that a conductor must take now: appended
+// in the caller's transaction (`db`) under the caller's request id; once that
+// has committed, `settle()` says whether a conductor took it: 'accepted',
+// 'refused' (it never runs) or 'unknown' (being decided; it may run).
+let admitter = {
+  append: (db, p) => require('../workflow/platform.ts').appendOperationRequest(db, p),
+  settle: (eventId, o) => require('../workflow/platform.ts').settleOperation(eventId, o),
+};
+async function admit(db, p) {
+  const eventId = await admitter.append(db, { appId: null, ...p });
+  return { settle: (opts) => admitter.settle(eventId, opts) };
+}
+
 module.exports = {
-  run, request, append, requester, OPERATIONS,
+  run, request, append, admit, requester, OPERATIONS,
   _setTransportForTests(fn) { const prior = transport; transport = fn; return prior; },
+  _setAdmitForTests(fn) { const prior = admitter; admitter = fn; return prior; },
   _answerForTests: answer,
 };

@@ -3844,6 +3844,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           : null;
         // #4452: how long testing usually takes on this app.
         detail.checks_estimate = await require('../services/checks-estimate').forApp(pool, session.app_id);
+        // An update from this version's original, as the proposal read
+        // carries it (services/upstream-offers.js changeView); null otherwise.
+        detail.upstream = await require('../services/upstream-offers').changeView(pool, session.id);
       }
       // `?results=failing`: the change page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).
