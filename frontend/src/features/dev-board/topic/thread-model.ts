@@ -36,6 +36,8 @@ export interface ThreadItem {
   /** Stage 6, a change: the approval epoch a vote is cast under, and the viewer's vote on it. */
   epoch?: number | null;
   myVote?: 'yes' | 'no' | null;
+  /** A change: the requests it closes when it merges, which it competes for. */
+  closes?: number[];
 }
 
 export interface ThreadFollow {
@@ -213,7 +215,19 @@ export interface Ballot {
 
 export function ballotOf(payload: ThreadPayload | null): Ballot | null {
   if (!payload) return null;
-  const options = payload.items.filter((i) => i.type === 'change' && i.state === 'review');
+  // Competing is closing the same request: two parts of one request, or
+  // changes that close different requests in the thread, are not a ballot,
+  // and a pick must never take a Yes back from one of them. The request
+  // most changes up for a vote would close is the one they compete for.
+  const review = payload.items.filter((i) => i.type === 'change' && i.state === 'review');
+  const byRequest = new Map<number, ThreadItem[]>();
+  for (const change of review) {
+    for (const n of new Set(change.closes || [])) byRequest.set(n, [...(byRequest.get(n) || []), change]);
+  }
+  let options: ThreadItem[] = [];
+  for (const [, list] of [...byRequest.entries()].sort((x, y) => x[0] - y[0])) {
+    if (list.length > options.length) options = list;
+  }
   if (options.length < 2) return null;
   const yes = options.filter((o) => o.myVote === 'yes');
   const pick = yes.length === 1 ? yes[0].id
