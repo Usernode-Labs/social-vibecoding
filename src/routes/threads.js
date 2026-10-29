@@ -19,16 +19,19 @@ function threadsRoutes() {
 
   // The project, if the viewer may see it; null otherwise.
   async function visibleApp(where, value, user) {
-    const { rows: apps } = await pool.query(
-      where === 'slug'
-        ? `SELECT id, slug, created_by, self_hosted, collab_visibility, view_visibility,
-                  moderation_suspended_at, repo_url
-             FROM apps WHERE slug = $1`
-        : `SELECT id, slug, created_by, self_hosted, collab_visibility, view_visibility,
-                  moderation_suspended_at, repo_url
-             FROM apps WHERE id = $1`,
-      [value]
-    );
+    const { rows: apps } = where === 'slug'
+      ? await pool.query(
+        `SELECT id, slug, created_by, self_hosted, collab_visibility, view_visibility,
+                moderation_suspended_at, repo_url
+           FROM apps WHERE slug = $1`,
+        [value]
+      )
+      : await pool.query(
+        `SELECT id, slug, created_by, self_hosted, collab_visibility, view_visibility,
+                moderation_suspended_at, repo_url
+           FROM apps WHERE id = $1`,
+        [value]
+      );
     const app = apps[0];
     if (!app || !(await appAccess.checkAppAccess(pool, app, user, 'view'))) return null;
     const m = repoRef.ownerRepo(app.repo_url);

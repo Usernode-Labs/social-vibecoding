@@ -702,9 +702,10 @@ test('the DM screen draws the bot\'s question and badge, and the reply bar names
   assert.match(row, /message\.sender\.bot && \(message\.metadata\?\.homeroomBot\?\.question \|\| message\.metadata\?\.homeroomBot\?\.actions\?\.length\)\s*&& !isTwoQuestions\(message\) && !isReadyMessage\(message\)\s*\? <BotQuestion/);
   assert.match(row, /messages-bot-badge/);
   const composer = read('frontend/src/features/messages/composer.tsx');
-  assert.match(composer, /\{postedNote\(reply\.metadata\.homeroomBot, 'reply'\)\}/);
-  assert.equal(message('messages:bot.posted.reply.request', { project: 'Ear Trainer', number: 3 }), 'Your reply is posted on Ear Trainer request #3’s public discussion.');
-  assert.equal(message('messages:bot.posted.reply.firstVersion', { project: 'Ear Trainer' }), 'Your reply is posted on Ear Trainer’s first-version request’s public discussion.');
+  // #6019: this chat is private. A typed reply comes back as a draft with
+  // Post it (homeroom-bot-mayor.js offerPost), and the reply bar says so.
+  assert.match(composer, /\{t\('messages:bot\.draft\.reply'\)\}/);
+  assert.equal(message('messages:bot.draft.reply'), 'Your reply stays in this chat until you tap Post it.');
   const css = read('public/css/app.css');
   for (const cls of ['.messages-bot-badge', '.messages-bot-answers button', '.messages-bot-note', '.messages-bot-default']) {
     assert.ok(css.includes(cls), cls);

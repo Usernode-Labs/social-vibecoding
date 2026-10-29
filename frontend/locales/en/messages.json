@@ -1651,6 +1651,10 @@
     "text": "Your reply is posted on the project request #{{number}}’s public discussion.",
     "description": "Note in the message box while replying to a message from Homeroom bot about a request: the reply is copied to that request's public discussion. The project's name is not known; {{number}} is the request number, keep the #."
   },
+  "bot.draft.reply": {
+    "text": "Your reply stays in this chat until you tap Post it.",
+    "description": "Small note under the reply being written, in the person's private chat with Homeroom bot, when the reply answers one of the bot's questions or asks about a request: the chat is private, so the reply is not posted on the request's public discussion until the person taps the Post it button the bot puts under its answer. \"Post it\" is that button's label."
+  },
   "bot.thanks.usually": {
     "text": "usually {{from}} to {{to}} min",
     "description": "Note beside \"Building\" on the card Homeroom bot sends after the person approved its plan: the usual range of time a build takes. {{from}} and {{to}} are numbers of minutes; \"min\" abbreviates minutes."

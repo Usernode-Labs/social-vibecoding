@@ -11847,7 +11847,7 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_dm_actions (
   error           TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   decided_at      TIMESTAMPTZ,
-  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request', 'close_request')),
+  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request', 'close_request', 'post_reply')),
   CONSTRAINT homeroom_bot_dm_actions_status_check
     CHECK (status IN ('open', 'done', 'declined', 'failed'))
 );
@@ -11863,14 +11863,24 @@ COMMENT ON TABLE homeroom_bot_dm_actions IS 'staging:private';
 -- request there; `issue_number` is the request it became on Homeroom's.
 -- #4525: `close_request`, an offer to open a vote on closing request
 -- `source_issue_number` of `app_id` (Propose to close / Keep it open).
+-- #6019: `post_reply`, words written in the person's private chat with the
+-- bot, waiting to go on a public discussion as theirs (Post it / Keep it
+-- private): `details` is exactly what would be posted, on request
+-- `source_issue_number` of `app_id`, or on proposal `session_id` when it
+-- asks for that change to be revised; `title` is why (dm_answer,
+-- dm_comment, plan_change, revise). Nothing in the chat goes public without
+-- that tap.
 ALTER TABLE homeroom_bot_dm_actions
   ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE;
 ALTER TABLE homeroom_bot_dm_actions ADD COLUMN IF NOT EXISTS source_issue_number INTEGER;
+-- #6019: the bot's own message a `post_reply` answers (its question, or the
+-- ask a reply was quoting), so Post it settles that one.
+ALTER TABLE homeroom_bot_dm_actions ADD COLUMN IF NOT EXISTS target_message_id INTEGER;
 DO $$
 BEGIN
   ALTER TABLE homeroom_bot_dm_actions DROP CONSTRAINT IF EXISTS homeroom_bot_dm_actions_kind_check;
   ALTER TABLE homeroom_bot_dm_actions ADD CONSTRAINT homeroom_bot_dm_actions_kind_check
-    CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request', 'close_request'));
+    CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request', 'close_request', 'post_reply'));
 END $$;
 
 -- The bot's own knobs, admin-tunable from its console section. `mode` is

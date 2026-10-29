@@ -35,7 +35,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { changeHref } from '../../lib/change-href';
 import { callAppView } from '../dev-board/card/fold';
 import { FeedThread } from '../dev-board/card/feed-thread';
-import { readAskStream } from '../dev-board/workshop/ask-stream';
+import { openBot } from '../messages/store';
 import type { ReviewItem } from './model';
 
 /**
@@ -116,10 +116,9 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   const [shared, setShared] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [asks, setAsks] = useState<AskMsg[]>([]);
-  const [question, setQuestion] = useState('');
 
   // A new change starts with an empty line, no answer and no questions.
-  useEffect(() => { setLine(''); setChoice(null); setShared(null); setAsks([]); setQuestion(''); }, [item.key]);
+  useEffect(() => { setLine(''); setChoice(null); setShared(null); setAsks([]); }, [item.key]);
 
   const whyChoices: { key: NoChoice; text: string }[] = [
     { key: 'notWorking', text: t('communities:review.why.notWorking') },
@@ -160,36 +159,13 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
     return () => { live = false; };
   }, [state, item.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const ask = async (q: string) => {
-    const text = q.trim();
-    if (!text || asks.some((m) => m.pending)) return;
-    setQuestion('');
-    setAsks((cur) => [...cur, { who: 'you', text }, { who: 'ai', text: t('communities:review.ask.reading'), pending: true }]);
-    const tail = (msg: AskMsg) => setAsks((cur) => {
-      if (!cur.length || !cur[cur.length - 1].pending) return cur;
-      return [...cur.slice(0, -1), msg];
-    });
-    let answer = t('communities:review.ask.failed');
-    try {
-      const res = await fetch(`/api/apps/${encodeURIComponent(item.app.slug)}/workshop/ask`, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
-        body: JSON.stringify({ target: { kind: 'proposal', ref: item.id }, question: text }),
-      });
-      const stream = (res.headers.get('content-type') || '').includes('text/event-stream');
-      if (!res.ok || !stream || !res.body) {
-        const data = await res.json().catch(() => ({}));
-        if (typeof data.error === 'string' && data.error.trim()) answer = data.error.trim();
-      } else {
-        const out = await readAskStream(res.body, (soFar) => tail({ who: 'ai', text: soFar, pending: true }));
-        if (out.error) answer = out.error;
-        else if (out.text.trim()) answer = out.text.trim();
-      }
-    } catch {
-      answer = t('communities:review.ask.offline');
-    }
-    tail({ who: 'ai', text: answer });
+  // #6019: Ask privately is the AI tab's chat with Homeroom bot now, with
+  // this change attached (messages/store.ts openBot, as the change page's
+  // Ask for changes does). The questions asked here before stay readable.
+  const askInAi = () => {
+    void openBot(item.kind === 'governance'
+      ? { type: 'governance', proposalId: item.id, appSlug: item.app.slug, title: item.title }
+      : { type: 'proposal', sessionId: item.id, appSlug: item.app.slug, title: item.title });
   };
 
   const cast = async (v: Vote, reason?: string): Promise<boolean> => {
@@ -261,26 +237,15 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
         {pair()}
         {sub(t('communities:review.help.ask'))}
         <div className="rf-body">
-          <p className="rf-note">{t('communities:review.ask.note')}</p>
+          <p className="rf-note">{t('communities:review.ask.inAiNote')}</p>
+          {asks.length ? <p className="rf-note">{t('communities:review.ask.earlier')}</p> : null}
           {asks.map((m, i) => (m.who === 'you'
             ? <div key={i} className="rf-me">{m.text}</div>
             : <div key={i} className="rf-ai"><small>{Icon.spark}<span>{t('communities:review.ask.who')}</span></small><p>{m.text}</p></div>))}
-          {asks.length ? null : (
-            <div className="rf-chips">
-              <button type="button" className="rf-chip" onClick={() => ask(t('communities:review.ask.q1'))}>{t('communities:review.ask.q1')}</button>
-              <button type="button" className="rf-chip" onClick={() => ask(t('communities:review.ask.q2'))}>{t('communities:review.ask.q2')}</button>
-            </div>
-          )}
         </div>
-        <form className="rf-ask-form" onSubmit={(e: FormEvent) => { e.preventDefault(); void ask(question); }}>
-          <input
-            aria-label={t('communities:review.ask.placeholder')}
-            placeholder={t('communities:review.ask.placeholder')}
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-          />
-          <button type="submit" className="rf-go" disabled={!question.trim()}>{t('communities:review.ask.send')}</button>
-        </form>
+        <div className="rf-ask-form">
+          <button type="button" className="rf-go" data-rf-ask-in-ai="" onClick={askInAi}>{t('communities:review.ask.inAi')}</button>
+        </div>
       </>
     );
   } else if (state === 'talk') {
