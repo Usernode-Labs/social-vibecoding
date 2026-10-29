@@ -3147,6 +3147,11 @@
       "expectText": "#general"
     },
     {
+      "name": "#6035: a community channel's message box wears the formatting row, Bold through Bulleted list, above the field",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-composer-card > .messages-format-bar[role=\"toolbar\"] > .messages-format-btn[data-format=\"bold\"] ~ .messages-format-btn[data-format=\"bullet\"]"
+    },
+    {
       "name": "#2783: ...while #123 in a message still reads as an issue reference, not a channel",
       "path": "/?demo=1#messages/910004",
       "expectSelector": ".messages-message .messages-markdown span.gc-ref.gc-ref-issue[data-ref-number=\"488\"]"

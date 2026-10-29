@@ -1843,6 +1843,34 @@
     "text": "Send message",
     "description": "Accessible name of the arrow button beside the message box: sends the message."
   },
+  "composer.format.bar": {
+    "text": "Formatting",
+    "description": "Accessible name of the row of formatting buttons above a community channel's message box; it groups the six buttons that format the message being written."
+  },
+  "composer.format.bold": {
+    "text": "Bold",
+    "description": "Tooltip and accessible name of a formatting button above a channel's message box: makes the selected text bold, or starts bold text at the cursor. Pressing it again removes the bold."
+  },
+  "composer.format.italic": {
+    "text": "Italic",
+    "description": "Tooltip and accessible name of a formatting button above a channel's message box: makes the selected text italic, or starts italic text at the cursor. Pressing it again removes the italic."
+  },
+  "composer.format.underline": {
+    "text": "Underline",
+    "description": "Tooltip and accessible name of a formatting button above a channel's message box: underlines the selected text, or starts underlined text at the cursor. Pressing it again removes the underline."
+  },
+  "composer.format.heading": {
+    "text": "Heading",
+    "description": "Tooltip and accessible name of a formatting button above a channel's message box: turns the cursor's line into a heading, and pressing it again steps through large, medium and small before plain text."
+  },
+  "composer.format.quote": {
+    "text": "Quote",
+    "description": "Tooltip and accessible name of a formatting button above a channel's message box: turns the selected lines, or the cursor's line, into a quote. Pressing it again removes the quote."
+  },
+  "composer.format.bullets": {
+    "text": "Bulleted list",
+    "description": "Tooltip and accessible name of a formatting button above a channel's message box: turns the selected lines, or the cursor's line, into bullet points. Pressing it again removes the bullets."
+  },
   "object.kind.app": {
     "text": "App",
     "description": "Small label on a card for something shared in a message, and on the item waiting in the message box: the item is an app."

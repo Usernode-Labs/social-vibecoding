@@ -463,6 +463,19 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // Ask Homeroom bot bar draws MicrophoneIcon in the static document
     // again, so only ArrowUpIcon is behind state.)
     'M12 19V5M5 12l7-7 7 7',
+    // ── #6035: the channel composer's formatting row ───────────────────
+    //
+    // Bold (two paths), Italic, Underline, Heading, Quote and Bulleted list
+    // draw above a community channel's message box, which mounts only once a
+    // channel conversation is open, so none of them is in the prerendered
+    // document.
+    'M7 4.5h6.25a3.75 3.75 0 0 1 0 7.5H7V4.5Z',
+    'M7 12h7a3.75 3.75 0 0 1 0 7.5H7V12Z',
+    'M10 4.5h7.5M6.5 19.5H14M14.5 4.5l-5 15',
+    'M7 4.5v6.75a5 5 0 0 0 10 0V4.5M5 20h14',
+    'M6 4.5v15M18 4.5v15M6 12h12',
+    'M7.5 7.5H11V11H7.5V7.5Zm0 0v3.5c0 2.25-1 3.75-2.5 4.75M16.5 7.5H20V11h-3.5V7.5Zm0 0v3.5c0 2.25-1 3.75-2.5 4.75',
+    'M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });

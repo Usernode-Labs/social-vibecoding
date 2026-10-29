@@ -983,3 +983,29 @@ export const CupIcon = stroked('CupIcon', [
   'M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V8Z',
   'M7 2v2M11 2v2M15 2v2',
 ]);
+
+// ── The channel composer's formatting row (#6035) ──────────────────────
+// Six marks in the field's own grey, sitting above the message as a label
+// bar rather than a toolbar with a fill. Each is drawn on the same 24 grid
+// and stroke as the rest of the set; the letterforms are line drawings so
+// they read as glyphs, not as bold text beside lighter text.
+export const BoldIcon = stroked('BoldIcon', [
+  'M7 4.5h6.25a3.75 3.75 0 0 1 0 7.5H7V4.5Z',
+  'M7 12h7a3.75 3.75 0 0 1 0 7.5H7V12Z',
+]);
+
+export const ItalicIcon = stroked('ItalicIcon', 'M10 4.5h7.5M6.5 19.5H14M14.5 4.5l-5 15');
+
+export const UnderlineIcon = stroked('UnderlineIcon', 'M7 4.5v6.75a5 5 0 0 0 10 0V4.5M5 20h14');
+
+export const HeadingIcon = stroked('HeadingIcon', 'M6 4.5v15M18 4.5v15M6 12h12');
+
+export const QuoteIcon = stroked(
+  'QuoteIcon',
+  'M7.5 7.5H11V11H7.5V7.5Zm0 0v3.5c0 2.25-1 3.75-2.5 4.75M16.5 7.5H20V11h-3.5V7.5Zm0 0v3.5c0 2.25-1 3.75-2.5 4.75',
+);
+
+export const ListBulletIcon = stroked(
+  'ListBulletIcon',
+  'M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z',
+);

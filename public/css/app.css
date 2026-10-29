@@ -1851,6 +1851,30 @@ form.agent-session-composer:focus-within {
 .messages-composer-action svg { stroke-width: 1.8; }
 .messages-composer-action:hover { background: var(--messages-surface-2); }
 .messages-composer-action:disabled { opacity: .35; }
+/* #6035: the channel composer's formatting row. The same grey glyph buttons
+   as the "+" beside the field, without its circle: a light background on
+   hover, one thin line between the row and the field. */
+.messages-format-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px 4px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--app-sheet-line);
+}
+.messages-format-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  transition: background 150ms;
+}
+.messages-format-btn svg { width: 18px; height: 18px; stroke-width: 1.8; }
+.messages-format-btn:hover { background: var(--messages-surface-2); }
+.messages-format-btn:disabled { opacity: .35; }
 /* #1955 — the one "+" and the two named rows it opens. The wrapper is the
    positioning context AND the outside-press boundary, so the menu has to
    live inside it rather than beside the button. */
