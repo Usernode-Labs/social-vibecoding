@@ -3831,6 +3831,26 @@
     "text": "Post it",
     "description": "Button at the top of a thread the person started in their private chat with Homeroom bot (the AI tab): posts what they wrote in an existing request's or change's discussion, as their own message."
   },
+  "privateThread.newProject": {
+    "text": "New project",
+    "description": "The head of a private thread in the person's chat with Homeroom bot (the AI tab): only they can see it until they file it, post it, or start a project from it. Button: asks who a project made from the thread's idea would be for."
+  },
+  "privateThread.whoFor": {
+    "text": "It isn't in a community yet. Who is it for?",
+    "description": "The head of a private thread in the person's chat with Homeroom bot (the AI tab): only they can see it until they file it, post it, or start a project from it. Shown after New project, over three choices that each open Create with the thread's words."
+  },
+  "privateThread.forMe": {
+    "text": "Just me",
+    "description": "The head of a private thread in the person's chat with Homeroom bot (the AI tab): only they can see it until they file it, post it, or start a project from it. Choice under \"Who is it for?\": a project only the person is in."
+  },
+  "privateThread.forGroup": {
+    "text": "A group",
+    "description": "The head of a private thread in the person's chat with Homeroom bot (the AI tab): only they can see it until they file it, post it, or start a project from it. Choice under \"Who is it for?\": a private project for people the person invites."
+  },
+  "privateThread.forCommunity": {
+    "text": "A community",
+    "description": "The head of a private thread in the person's chat with Homeroom bot (the AI tab): only they can see it until they file it, post it, or start a project from it. Choice under \"Who is it for?\": a public project anyone can join."
+  },
   "privateThread.project": {
     "text": "Project",
     "description": "Label of the project picker in the File it / Post it form of a private thread with Homeroom bot."

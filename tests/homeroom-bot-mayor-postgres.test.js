@@ -828,12 +828,21 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal((await read(off)).reply.content, 'hello?');
 
     // The offer quotes what asked for it; File it is answered quoting the tap.
+    // #6019 follow-up: the draft is in a private thread of its own, and
+    // Main's line that opened it quotes what asked for it.
     const ask = await say('could you add tags to note board?');
     const offered = await run(ask, [
       [['offer_request', { project: 'note-board', title: 'Tags', details: 'Tag notes to find them.' }]],
       [['reply', { text: 'Want me to file this?' }]],
     ]);
-    assert.equal((await read(offered)).reply.id, ask.id);
+    const draftCard = await read(offered);
+    assert.ok(draftCard.threadRootId, 'the draft is in a thread of its own');
+    const openedLine = await read({ messageId: draftCard.threadRootId });
+    assert.equal(openedLine.reply.id, ask.id);
+    assert.match(openedLine.content, /^I drafted it as a request on Note board, in a thread only you can see\./);
+    const { rows: [privateRow] } = await pool.query(
+      'SELECT kind, state FROM private_threads WHERE root_message_id = $1', [draftCard.threadRootId]);
+    assert.deepEqual(privateRow, { kind: 'draft_request', state: 'open' }, 'the AI tab lists it, locked');
     const tap = await say('File it', { reply_to_id: offered.messageId });
     const ack = await read(await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: tap, deps: {} }));
     // #3767: what answers the tap is the request's card, and it quotes where
@@ -842,6 +851,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(ack.reply.id, ask.id);
     const n = ack.metadata.homeroomBot.issueNumber;
     assert.ok(n > 0);
+    const { rows: [filedRow] } = await pool.query(
+      'SELECT state, result_ref FROM private_threads WHERE root_message_id = $1', [draftCard.threadRootId]);
+    assert.deepEqual(filedRow, { state: 'filed', result_ref: n }, 'filed, it leaves the AI tab\'s private threads');
 
     // One conversation (#6019): "I'm building it now" is a quiet line in
     // Main, beside the request's card; the post is told it reached her, so

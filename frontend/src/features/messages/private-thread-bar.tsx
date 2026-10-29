@@ -11,6 +11,12 @@
  * small form with the words to go public, which they can change first. Once
  * one has been done the head says where the thread went.
  *
+ * An idea for no project yet has a third door (#6019 follow-up, plan v3:
+ * "an idea with no community yet: Who is it for? starts a new project"):
+ * New project asks who it is for (Just me, A group, A community) and opens
+ * Create with the thread's words as the idea and that audience
+ * (App.showCreateModal, first-session's make screen).
+ *
  * The first render is nothing: where the thread stands is read in an effect.
  */
 
@@ -32,7 +38,8 @@ export interface PrivateThreadState {
   href?: string | null;
 }
 
-type Door = 'file' | 'post';
+type Door = 'file' | 'post' | 'new';
+type Audience = 'solo' | 'invited' | 'open';
 
 /** The projects to pick from: the communities the viewer is in, in the switcher's order. Pure. */
 export function projectChoices(scope: { list: string[] | null; info: Record<string, { name?: string }> }): Array<{ slug: string; name: string }> {
@@ -62,7 +69,7 @@ export function PrivateThreadBar({ rootId, text }: { rootId: number; text: strin
     return () => { live = false; };
   }, [rootId]);
   // The projects to pick from are read once a door is opened.
-  useEffect(() => (door ? warmCommunities(0) : undefined), [door]);
+  useEffect(() => (door && door !== 'new' ? warmCommunities(0) : undefined), [door]);
 
   if (!where) return null;
   if (where.state === 'filed' || where.state === 'posted') {
@@ -76,6 +83,10 @@ export function PrivateThreadBar({ rootId, text }: { rootId: number; text: strin
   }
 
   const choices = projectChoices(scope);
+  const startProject = (audience: Audience) => {
+    const app = typeof window !== 'undefined' ? (window as any).App : null;
+    app?.showCreateModal?.({ idea: text, audience });
+  };
   const opening = (next: Door) => {
     setDoor(next);
     setError(null);
@@ -119,8 +130,21 @@ export function PrivateThreadBar({ rootId, text }: { rootId: number; text: strin
         <Button type="button" variant="pillNeutral" size="sm" ink="neutral" data-private-door="post" aria-pressed={door === 'post'} onClick={() => opening('post')}>
           {t('messages:privateThread.postIt')}
         </Button>
+        <Button type="button" variant="pillNeutral" size="sm" ink="neutral" data-private-door="new" aria-pressed={door === 'new'} onClick={() => opening('new')}>
+          {t('messages:privateThread.newProject')}
+        </Button>
       </div>
-      {door ? (
+      {door === 'new' ? (
+        <div className="mt-2 flex flex-col gap-2" data-private-form="new">
+          <p className="messages-bot-note">{t('messages:privateThread.whoFor')}</p>
+          <div className="messages-bot-answers" role="group" aria-label={t('messages:privateThread.whoFor')}>
+            <button type="button" className="messages-bot-primary" data-private-audience="solo" onClick={() => startProject('solo')}><span>{t('messages:privateThread.forMe')}</span></button>
+            <button type="button" className="messages-bot-secondary" data-private-audience="invited" onClick={() => startProject('invited')}><span>{t('messages:privateThread.forGroup')}</span></button>
+            <button type="button" className="messages-bot-secondary" data-private-audience="open" onClick={() => startProject('open')}><span>{t('messages:privateThread.forCommunity')}</span></button>
+          </div>
+        </div>
+      ) : null}
+      {door === 'file' || door === 'post' ? (
         <form className="mt-2 flex flex-col gap-2" onSubmit={(event) => { void send(event); }} data-private-form={door}>
           <Select aria-label={t('messages:privateThread.project')} value={project} onChange={(e) => setProject(e.currentTarget.value)} required>
             <option value="">{t('messages:privateThread.chooseProject')}</option>

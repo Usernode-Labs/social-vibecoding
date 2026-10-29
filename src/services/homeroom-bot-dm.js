@@ -995,12 +995,16 @@ function wantsStoryTitle(metadata) {
  * #3707: the person's DM message a request of theirs started from, for the
  * bot's later news about it to quote. A request starts in the DM when File
  * it files the bot's offer, and the offer quotes the message it answered
- * (homeroom-bot-mayor.js offer). Null for a request filed anywhere else.
+ * (homeroom-bot-mayor.js offer); a draft in a private thread of its own
+ * (#6019 follow-up) does not, and Main's line that opened the thread does.
+ * Null for a request filed anywhere else.
  */
 async function requestStart(pool, { userId, appId, issueNumber }) {
   const { rows } = await pool.query(
-    `SELECT o.reply_to_id FROM homeroom_bot_dm_actions a
+    `SELECT COALESCE(o.reply_to_id, root.reply_to_id) AS reply_to_id
+       FROM homeroom_bot_dm_actions a
        JOIN conversation_messages o ON o.id = a.message_id
+       LEFT JOIN conversation_messages root ON root.id = o.thread_root_id
       WHERE a.user_id = $1 AND a.app_id = $2 AND a.issue_number = $3 AND a.status = 'done'
       ORDER BY a.id DESC
       LIMIT 1`,
