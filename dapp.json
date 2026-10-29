@@ -2812,6 +2812,7 @@
     {
       "name": "A merge stuck behind a red release says what blocked it, the release step and its error, not a looping Going live (29 Oct 2026)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9100038",
+      "expectSelector": "[data-change-gate=\"votes\"] .dev-change-gate-note",
       "expectText": "is blocked at “Audit all three lockfiles”: example-package@1.0.0"
     },
     {

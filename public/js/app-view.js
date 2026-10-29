@@ -7368,7 +7368,11 @@ const AppView = {
       // (change-head.tsx, frontend/src/lib/release-eta.ts).
       const release = !item.included_in_session_id && pill.key === 'deploying' && AppView._releaseSentence(item)
         ? item.release : null;
-      if (!release && !item.included_in_session_id && Object.prototype.hasOwnProperty.call(LIVE, pill.key)) note.push(PlatformI18n.t(LIVE[pill.key]));
+      // Stuck behind a red release run: what blocked it, where anyone reads
+      // the page, not only in the pill's tooltip and the steps under Details.
+      const blocked = pill.key === 'deployment_stalled' ? AppView._releaseBlockSentence(item) : null;
+      if (blocked && !item.included_in_session_id) note.push(blocked);
+      else if (!release && !item.included_in_session_id && Object.prototype.hasOwnProperty.call(LIVE, pill.key)) note.push(PlatformI18n.t(LIVE[pill.key]));
       return {
         name: PlatformI18n.t('changes:page.votes.name'), figure: PlatformI18n.t('changes:page.votes.figure.votedIn'), tone: 'done', done: true,
         segments: [{ weight: 1, pct: 100, state: 'done' }], label: PlatformI18n.t('changes:page.votes.label.votedIn'), note,

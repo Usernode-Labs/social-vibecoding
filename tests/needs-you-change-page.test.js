@@ -189,6 +189,12 @@ test('the thread view carries the card’s status pill, and none where there is 
   assert.equal(blocked.body.steps.detail, why);
   const noReason = av._topicViewFor('proposal', { ...PR, status: 'merged', merged_at: '2026-09-19T12:00:00Z', live_at: null, deployment_state: 'stalled', release_block: { ...block, reason: null } });
   assert.equal(noReason.body.steps.detail, message('changes:release.blocked.where', { where: 'Audit all three lockfiles' }));
+  // And on the page itself, where anyone reads it: the Votes card's note
+  // (the steps are under Details, the pill's sentence a tooltip).
+  const stuckItem = { ...PR, status: 'merged', merged_at: '2026-09-19T12:00:00Z', live_at: null, deployment_state: 'stalled' };
+  assert.ok(av._changeVotesView({ ...stuckItem, release_block: block }, null).note.includes(why));
+  assert.ok(!av._changeVotesView({ ...stuckItem, release_block: block }, null).note.includes(message('changes:page.votes.note.stuck')));
+  assert.ok(av._changeVotesView(stuckItem, null).note.includes(message('changes:page.votes.note.stuck')), 'no block named: the plain words');
   // Up for a vote: the same words the card's pill shows there.
   const voting = av._topicViewFor('proposal', PR);
   assert.equal(voting.body.thread.status.key, 'needs_vote');
