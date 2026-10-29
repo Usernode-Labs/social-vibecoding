@@ -64,7 +64,10 @@ function threadsRoutes() {
       const found = await visibleApp('slug', req.params.slug, req.user);
       if (!found) return res.status(404).json({ error: 'App not found' });
       const thread = await threads.threadForNumber(pool, { appId: found.app.id, number: Number(req.params.number) });
-      if (!thread) return res.status(404).json({ error: 'Thread not found' });
+      // A number with no thread (a demo fixture's, or a row the backfill has
+      // not reached) is an answer, not an error: every request and change
+      // page asks on open, and a 404 is a console error on that page.
+      if (!thread) return res.json({ thread: null });
       const page = await threads.threadPage(pool, {
         thread, viewerId: req.user ? req.user.id : null, owner: found.owner, repo: found.repo,
       });

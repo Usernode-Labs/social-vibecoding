@@ -1550,9 +1550,9 @@
       "expectSelector": "#app-list .app-card:not(:has(.users-badge)):not(:has(.status-dot))"
     },
     {
-      "name": "Browse renders app-store rows with a Join button, under a bar with no back slot (#2639, #2718)",
+      "name": "Discover renders app-store rows with a Join button, under a bar whose back arrow goes Home (#2639, #2718; #6019, Discover is a page of Home's)",
       "path": "/#apps",
-      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn.hidden) #browse-list .browse-row .browse-add-btn",
+      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn:not(.hidden)) #browse-list .browse-row .browse-add-btn",
       "expectText": "Discover"
     },
     {
@@ -4433,9 +4433,9 @@
       "expectText": "Filters"
     },
     {
-      "name": "?sort= orders the touch directory, under a bar with no back slot (#1383, #2718)",
+      "name": "?sort= orders the touch directory, under a bar whose back arrow goes Home (#1383, #2718; #6019, Discover is a page of Home's)",
       "path": "/?sort=new&un-platform=ios#apps",
-      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn.hidden) #browse-list[data-sort=\"new\"] .browse-row"
+      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn:not(.hidden)) #browse-list[data-sort=\"new\"] .browse-row"
     },
     {
       "name": "Sorting by activity shows what it sorted on (#1383), in live words (B10d)",

@@ -277,7 +277,11 @@ test('thread followers against the full schema', { timeout: 120000 }, async (t) 
   });
 
   await t.test('the read answers only for a project the viewer may see, and a number it holds', async () => {
-    assert.equal((await read(erin, `/api/apps/${app.slug}/threads/999`)).status, 404);
+    // A number with no thread is an answer, not a 404: every request and
+    // change page asks on open, and a 404 is a console error there.
+    const none = await read(erin, `/api/apps/${app.slug}/threads/999`);
+    assert.equal(none.status, 200);
+    assert.deepEqual(none.body, { thread: null });
     assert.equal((await read(erin, `/api/apps/${app.slug}/threads/abc`)).status, 404);
     assert.equal((await read(erin, '/api/apps/tf-hidden/threads/1')).status, 404);
     assert.equal((await read(erin, '/api/threads/999999')).status, 404);
