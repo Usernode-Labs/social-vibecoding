@@ -27,6 +27,7 @@ const { proposal, sessionKey, MACHINE, WORK } = require('../src/workflow/proposa
 const { mergeQueue, MACHINE: QUEUE, appKey } = require('../src/workflow/merge-queue/machine.ts');
 const { readLine } = require('../src/workflow/merge-queue/facts.ts');
 const prBase = require('../src/workflow/rules/pr-base.ts');
+const { waitFor } = require('./lib/wait-for');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const SHA = (c) => c.repeat(40).slice(0, 40);
@@ -222,7 +223,7 @@ test('stacked imports against the full PostgreSQL schema', { timeout: 240000 }, 
     work.hold.set(WORK.gate, new Promise((r) => { release = r; }));
     await want(a);
     const run = settle();
-    for (let i = 0; i < 200 && !callsFor(WORK.gate, s).length; i++) await new Promise((r) => setTimeout(r, 10));
+    await waitFor(() => callsFor(WORK.gate, s).length, { label: 'the gate is asked about the stacked change' });
     // A look read its base meanwhile: it is stacked on the parent's branch.
     await prBase.recordBase(pool, { sessionId: s.id, appId: a.id, base: parent.branch_name });
     release();
@@ -411,10 +412,7 @@ test('stacked imports against the full PostgreSQL schema', { timeout: 240000 }, 
     await rt.fireTimers();
     await settle();
   };
-  const until = async (fn, what) => {
-    for (let i = 0; i < 500 && !(await fn()); i++) await new Promise((r) => setTimeout(r, 10));
-    if (!(await fn())) assert.fail(`${what} never happened`);
-  };
+  const until = (fn, what) => waitFor(fn, { label: what });
 
   await t.test('S10 a change waiting for a parent up for its own vote does not go quiet; one waiting for a draft, or for nothing, does', async () => {
     defaults();
