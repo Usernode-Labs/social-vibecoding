@@ -38,6 +38,20 @@ export function governanceServices({ config, pool }: Deps): Record<string, WorkH
       },
     },
 
+    // #6019: a vote to close passed, so the changes up for a vote that would
+    // have closed one of its requests close (services/threads.js
+    // closeThreadChanges, strict).
+    'threads.closeChanges': {
+      maxAttempts: 3,
+      backoffMs: backoff,
+      async run({ input }): Promise<Json> {
+        const closed = await legacy('services/threads').closeThreadChanges(pool, {
+          appId: input.appId, threadId: input.threadId, closed: input.closed ?? [], closedBy: input.closedBy ?? null,
+        });
+        return { closed };
+      },
+    },
+
     // Whether a close proposal's target is still open on GitHub. A target
     // closed by hand there is announced by nothing else.
     'governance.checkTarget': {
