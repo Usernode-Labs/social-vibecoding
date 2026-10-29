@@ -259,6 +259,46 @@ function svgTitle(raw) {
   return cleanInline(decodeEntities(pick.replace(/<[^>]*>/g, ''))).trim();
 }
 
+// A plan's text may show screenshots uploaded to Homeroom, by path
+// (`/issue-images/<32 hex>`) or at the platform's own address; the viewer
+// (frontend/src/lib/spec-html.ts planImagePath) loads nothing else. The
+// markdown copy names them at the full address. Null for anything else, or
+// when the platform's address is not known.
+const PLAN_IMAGE_PATH_RE = /^\/issue-images\/([a-f0-9]{32})$/i;
+
+function planImageId(src) {
+  const value = String(src || '').trim();
+  const path = PLAN_IMAGE_PATH_RE.exec(value);
+  if (path) return path[1].toLowerCase();
+  const domain = require('./caddy').USERNODE_DOMAIN;
+  if (!domain) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.host !== domain || url.search || url.hash) return null;
+    const m = PLAN_IMAGE_PATH_RE.exec(url.pathname);
+    return m ? m[1].toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+function planImageUrl(src) {
+  const id = planImageId(src);
+  const domain = require('./caddy').USERNODE_DOMAIN;
+  return id && domain ? `https://${domain}/issue-images/${id}` : null;
+}
+
+/** Every uploaded screenshot an HTML plan's text shows, by id, in order, once each. */
+function planImageIds(html) {
+  const ids = [];
+  for (const tok of tokenize(String(html || ''))) {
+    if (tok.type !== 'open' || tok.name !== 'img') continue;
+    const id = planImageId(tok.attrs && tok.attrs.src);
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
 /**
  * The markdown projection of an HTML spec. Shaped like a conforming markdown
  * spec ("# Title", "## User-facing changes", "## Technical implementation",
@@ -387,7 +427,16 @@ function specHtmlToMarkdown(html) {
         if (link) emit('[');
         continue;
       }
-      if (name === 'img') { if (attrs.alt) emit(`[image: ${cleanInline(attrs.alt).trim()}]`); continue; }
+      if (name === 'img') {
+        // A plan's own picture (a screenshot uploaded to Homeroom) is a
+        // markdown image at its full address, so the GitHub issue shows it
+        // too; anything else the viewer would not load stays its words.
+        const shot = planImageUrl(attrs.src);
+        const alt = cleanInline(attrs.alt || '').trim();
+        if (shot) emit(`![${alt.replace(/[[\]]/g, '')}](${shot})`);
+        else if (alt) emit(`[image: ${alt}]`);
+        continue;
+      }
       if (name === 'figcaption') { blank(); line = '*'; continue; }
       if (BLOCK.has(name)) { blank(); continue; }
       continue;
@@ -533,6 +582,8 @@ function screenStats(text) {
 }
 
 module.exports = {
+  planImageIds,
+  planImageUrl,
   MAX_SPEC_HTML_CHARS,
   SCREEN_SIZES,
   SCREEN_CHAR_BUDGET,

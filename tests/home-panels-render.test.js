@@ -2287,7 +2287,9 @@ test('the Discover rail is a fixed-width row that bleeds to both screen edges', 
   // as a lane's count changed, and the rail's whole affordance is that the row
   // continues past the edge at a constant rhythm.
   assert.match(css, /\.home-discover-card \{[^}]*flex: 0 0 auto/);
-  assert.match(css, /\.home-discover-card \{[^}]*width: 9\.5rem/);
+  assert.match(css, /\.home-discover-card \{[^}]*width: 11\.25rem/);
+  // …and the art block grew with it (#6012), keeping its ratio: 180 × 120 / 152.
+  assert.match(css, /\.home-discover-art \{[^}]*height: 8\.875rem/);
 
   // IT BLEEDS. The negative inline margin cancels the section's px-3 gutter so
   // the first card starts on the text's left edge and the last runs off the

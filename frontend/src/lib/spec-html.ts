@@ -67,13 +67,13 @@ const MAX_CHANGES = 3;
 const PROSE_TAGS = [
   'a', 'b', 'strong', 'i', 'em', 'code', 'pre', 'h3', 'h4', 'h5', 'p', 'br', 'ol', 'ul', 'li',
   'div', 'span', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'hr', 'del', 'small',
-  'sub', 'sup', 'mark', 'kbd', 'figure', 'figcaption',
+  'sub', 'sup', 'mark', 'kbd', 'figure', 'figcaption', 'img',
   'svg', 'g', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'text',
   'tspan', 'title', 'desc',
 ];
 
 const PROSE_ATTRS = [
-  'class', 'href', 'start', 'colspan', 'rowspan', 'role', 'aria-label',
+  'class', 'href', 'start', 'colspan', 'rowspan', 'role', 'aria-label', 'src', 'alt',
   'd', 'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'r', 'rx', 'ry', 'dx', 'dy',
   'width', 'height', 'viewBox', 'preserveAspectRatio', 'points', 'transform',
   'fill', 'fill-rule', 'fill-opacity', 'stroke', 'stroke-width', 'stroke-linecap',
@@ -139,6 +139,22 @@ function geometryOf(el: Element): Geometry {
 
 function sameOriginPath(url: string): boolean {
   return /^\/(?!\/)/.test(url);
+}
+
+// A plan's own pictures in its text: a screenshot uploaded to Homeroom
+// (prepare_upload, kind "screenshot"), by its path or this origin's full
+// address. Nothing else loads: another host, a data: URI or any other path
+// is dropped, so a plan's text can show what its author uploaded and no more.
+const PLAN_IMAGE_RE = /^\/issue-images\/[a-f0-9]{32}$/i;
+
+function planImagePath(src: string): string | null {
+  const value = String(src || '').trim();
+  if (PLAN_IMAGE_RE.test(value)) return value;
+  try {
+    const url = new URL(value);
+    if (url.origin === window.location.origin && !url.search && !url.hash && PLAN_IMAGE_RE.test(url.pathname)) return url.pathname;
+  } catch { /* not an address */ }
+  return null;
 }
 
 function stripExternalCss(css: string): string {
@@ -314,6 +330,14 @@ function sanitizeProse(container: Element): string {
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
     RETURN_DOM_FRAGMENT: true,
+  });
+  fragment.querySelectorAll('img').forEach((img) => {
+    const path = planImagePath(img.getAttribute('src') || '');
+    if (!path) { img.remove(); return; }
+    img.setAttribute('src', path);
+    img.setAttribute('loading', 'lazy');
+    img.setAttribute('decoding', 'async');
+    if (!img.hasAttribute('alt')) img.setAttribute('alt', '');
   });
   fragment.querySelectorAll('a').forEach((a) => {
     const href = a.getAttribute('href') || '';

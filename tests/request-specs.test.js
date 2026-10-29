@@ -426,3 +426,31 @@ test('the post route gets its own body limit, scoped to that one path', () => {
   assert.match(server.slice(scoped, scoped + 120), /return express\.json\(\{ limit: '1mb' \}\)/);
   assert.match(server, /app\.use\(requestSpecRoutes\(config\)\);/);
 });
+
+test('posting a plan keeps the screenshots its text shows, by linking the author\'s own to the request', async () => {
+  const a = 'a1'.repeat(16);
+  const b = 'b2'.repeat(16);
+  const plan = `<article data-spec><h1>Threads</h1><p>Every discussion becomes a thread.</p><section data-spec-tab="user">`
+    + `<div class="spec-strip"><figure><img src="/issue-images/${a}" alt="Step 1"><figcaption>In Main.</figcaption></figure>`
+    + `<figure><img src="/issue-images/${b}" alt="Step 2"><figcaption>The draft.</figcaption></figure></div>`
+    + '</section><section data-spec-tab="tech"><p>How.</p></section></article>';
+  const pool = fakePool();
+  await specs.postRequestSpec(pool, { app: APP, repo: REPO, issueNumber: 6019, user: ADA, text: plan }, fakeDeps());
+  const link = pool.calls.find((c) => /UPDATE issue_screenshots/.test(c.sql));
+  assert.ok(link, 'the pictures are stamped with the request');
+  assert.deepEqual(link.params, [[a, b], 'acme', 'cool-app', 6019, 7]);
+  assert.match(link.sql, /WHERE id = ANY\(\$1::varchar\[\]\) AND user_id = \$5 AND issue_number IS NULL/,
+    'only the author\'s own, and only ones no request has yet');
+  const commit = pool.calls.findIndex((c) => /^COMMIT$/.test(c.sql));
+  assert.ok(pool.calls.indexOf(link) > commit, 'after the plan is stored, never inside its transaction');
+
+  // A plan with no pictures, or a markdown one, links nothing.
+  const plain = fakePool();
+  await specs.postRequestSpec(plain, { app: APP, repo: REPO, issueNumber: 6019, user: ADA, text: HTML }, fakeDeps());
+  assert.ok(!plain.calls.some((c) => /issue_screenshots/.test(c.sql)));
+
+  // A failed link never takes the post back.
+  const failing = fakePool({ failOn: /UPDATE issue_screenshots/ });
+  const out = await specs.postRequestSpec(failing, { app: APP, repo: REPO, issueNumber: 6019, user: ADA, text: plan }, fakeDeps());
+  assert.equal(out.version, 1);
+});
