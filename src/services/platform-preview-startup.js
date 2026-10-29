@@ -47,6 +47,26 @@ async function check(config, pool, bootResult = null, { boot = false } = {}) {
   return { ...result, scope: proofScope, checkedAt: time.since };
 }
 
+// The clock's run, after check: a retirement deletes runtimes out of band,
+// and the preview machine still says they serve. A run going against one
+// fails every page (28 Oct 2026). So every run, whichever process makes it,
+// reports lost the platform's previews being checked whose runtime is gone
+// (staging-recovery lookForGoneRuns): this run's retirement may have taken
+// them, or a conductor's boot, which the clock's next run often does not
+// see as its own. The machine stops each run and builds the preview again;
+// the vote-backed ones the preview-runtimes clock reports. Never fails the
+// run, whose result is the web's readiness proof.
+async function tellRetired(config, result, { signal = null } = {}) {
+  if (!result || result.skipped) return result;
+  try {
+    const { lost } = await require('./staging-recovery').lookForGoneRuns(config, { appSlug: policy.PLATFORM_SLUG, signal });
+    return lost > 0 ? { ...result, lost } : result;
+  } catch (error) {
+    require('./logger').warn('preview-policy', 'Could not tell the preview machine what retirement removed', { message: error.message });
+    return result;
+  }
+}
+
 async function beforeServe(config, pool, { timeoutMs = WAIT_MS, pollMs = 500,
   now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
   if (process.env.USERNODE_ENV === 'staging') return { skipped: 'staging' };
@@ -87,4 +107,4 @@ async function proven(config, pool) {
   try { return !!(await latestProof(pool, scope(config))); } catch { return false; }
 }
 
-module.exports = { JOB, MAX_AGE_MS, WAIT_MS, check, beforeServe, proven };
+module.exports = { JOB, MAX_AGE_MS, WAIT_MS, check, tellRetired, beforeServe, proven };

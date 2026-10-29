@@ -12,7 +12,7 @@
 //     account (the uid is the lookup key, not the number).
 //   - One account per number: a different uid with the same number is
 //     refused phone_in_use and the user row it inserted is ROLLED BACK.
-//   - An admin account is refused, the email code's way.
+//   - An admin account signs in with its phone, the email code's way.
 //   - An ID token is spent once against the real phone_sign_in_tokens.
 //   - The route boundary: 404 not_offered when the flow is off, and the
 //     session-mint guard answers 409 over a live session.
@@ -256,7 +256,7 @@ test('real PostgreSQL phone sign-up and sign-in follow the account rules', async
           'the loser’s user row must be rolled back, not left behind',
         );
 
-        // ── An admin account signs in with its password, never a phone ──
+        // ── An admin account signs in with its phone, like any account ──
         const adminRow = (await pool.query(
           `INSERT INTO users (username, password, is_admin, password_set, needs_username_choice)
            VALUES ('admin-with-phone', 'x', TRUE, TRUE, FALSE) RETURNING id`
@@ -266,10 +266,34 @@ test('real PostgreSQL phone sign-up and sign-in follow the account rules', async
            VALUES ($1, 'firebase-uid-3', '+15557654321')`,
           [adminRow.id]
         );
-        const refused = await phoneAuth.signIn(
+        const adminSignIn = await phoneAuth.signIn(
           pool, { uid: 'firebase-uid-3', phoneNumber: '+15557654321' }, { createSession }
         );
-        assert.deepEqual(refused, { refuse: 'admin_password_required' });
+        assert.equal(adminSignIn.next, 'signed-in');
+        assert.equal(adminSignIn.userId, adminRow.id);
+        assert.equal(adminSignIn.user.isAdmin, true);
+
+        // A number linked under the other provider (`sms:<number>`) is
+        // re-keyed to the Firebase uid that just proved it, admin or not.
+        const smsAdminRow = (await pool.query(
+          `INSERT INTO users (username, password, is_admin, password_set, needs_username_choice)
+           VALUES ('admin-with-sms-phone', 'x', TRUE, TRUE, FALSE) RETURNING id`
+        )).rows[0];
+        await pool.query(
+          `INSERT INTO user_phone_identities (user_id, firebase_uid, phone_e164)
+           VALUES ($1, 'sms:+15557654322', '+15557654322')`,
+          [smsAdminRow.id]
+        );
+        const rekeyed = await phoneAuth.signIn(
+          pool, { uid: 'firebase-uid-4', phoneNumber: '+15557654322' }, { createSession }
+        );
+        assert.equal(rekeyed.next, 'signed-in');
+        assert.equal(rekeyed.userId, smsAdminRow.id);
+        assert.equal(rekeyed.user.isAdmin, true);
+        assert.equal((await pool.query(
+          'SELECT firebase_uid FROM user_phone_identities WHERE phone_e164 = $1',
+          ['+15557654322']
+        )).rows[0].firebase_uid, 'firebase-uid-4');
 
         // ── The route is fail-closed when the flow is not offered ──
         const offApp = express();

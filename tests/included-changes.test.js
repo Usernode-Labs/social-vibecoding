@@ -105,7 +105,7 @@ test('the change page reads the carrying change, and undo refuses', () => {
   assert.match(select, /LEFT JOIN chat_sessions inc ON inc\.id = cs\.included_in_session_id`;/);
   const undo = src.slice(src.indexOf("router.post('/api/sessions/:id/undo'"), src.indexOf("router.post('/api/sessions/:id/admin-merge'"));
   assert.match(undo, /if \(session\.included_in_session_id\) \{\s+return res\.status\(409\)\.json\(\{\s+error: 'This change went live as part of another change\. Undo that change instead\.',/);
-  assert.ok(undo.indexOf('included_in_session_id') < undo.indexOf('checkAndOpenRevert('), 'refused before a revert is opened');
+  assert.ok(undo.indexOf('included_in_session_id') < undo.indexOf("op: 'revert.open'"), 'refused before a revert is opened');
   const schema = read('src/db/schema.sql');
   assert.match(schema, /ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS included_in_session_id INTEGER\s+REFERENCES chat_sessions\(id\) ON DELETE SET NULL;/);
 });

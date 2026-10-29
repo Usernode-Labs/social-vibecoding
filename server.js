@@ -68,7 +68,6 @@ const { appFileServeRoutes, appFileShellRoutes } = require('./src/routes/app-fil
 const appStorageRoutes = require('./src/routes/app-storage');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
 const { credentialRoutes } = require('./src/routes/credentials');
-const { globalChatRoutes } = require('./src/routes/global-chat');
 const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
 const appPlatformApiRoutes = require('./src/routes/app-platform-api');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
@@ -252,6 +251,14 @@ app.use(require('./src/routes/alerts-webhook').alertsWebhookRoutes(config));
 // parser, and the caller is a sandbox with no session, authenticated by the
 // task's own token. src/routes/external-agent-patch-upload.js has the rest.
 app.use(require('./src/routes/external-agent-patch-upload').externalAgentPatchUploadRoutes(config));
+
+// ── Connector uploads: a plan, a video or a screenshot ─────────────────────
+// The same door for the other large things a coding agent hands the
+// connector (post_spec's plan, create_request's video and screenshots). HERE
+// for the patch upload's reasons: raw bytes under any Content-Type, from a
+// sandbox with no session, authenticated by the upload's own one-time token.
+// src/routes/connector-uploads.js has the rest.
+app.use(require('./src/routes/connector-uploads').connectorUploadRoutes(config));
 
 // ── Projects made inside a platform preview ────────────────────────────────
 // A platform preview asks production for the database, build and runtime of
@@ -665,7 +672,6 @@ app.use(require('./src/routes/sign-in-providers').signInProviderRoutes(config));
 // (src/services/firebase-phone-auth.js).
 app.use(require('./src/routes/phone-auth').phoneAuthRoutes(config));
 app.use(credentialRoutes(config));
-app.use(globalChatRoutes(config));
 app.use(appRoutes(config));
 app.use(illustrationRoutes(config));
 // Shell relay for usernode.uploadFile()/deleteFile()/getStorageUsage()

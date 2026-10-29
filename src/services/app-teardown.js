@@ -69,8 +69,19 @@ async function removeRuntimeIfDeleted(config, pool, app, { who = 'deploy' } = {}
   }
 }
 
-async function teardownApp(pool, config, app) {
-  await removeApp(pool, config, app);
+// The runtime, its edge and the database are removed where their
+// credentials are used: a process that runs the workflow removes them
+// itself; a web process asks a conductor (services/app-removal-operation.js),
+// on behalf of `userId`, the person whose gates the caller checked. Throws
+// with the refusal's status when the conductor refuses or cannot be reached.
+async function teardownApp(pool, config, app, { userId = null } = {}) {
+  const role = require('./process-role');
+  if (role.runsWorkflow(role.processRole())) return removeApp(pool, config, app);
+  if (!userId) throw new Error('Removing an app from a web process needs the person who asked');
+  const out = await require('./platform-operations').request(
+    { op: 'app.remove', appId: app.id, userId, input: {} }, { waitMs: 180000 });
+  if (out.reason === 'preview_retiring') throw new PreviewNotRetiredError(out.sessionId, 'on the conductor');
+  if (!out.ok) throw Object.assign(new Error(out.error || 'The app was not removed'), { status: out.status, reason: out.reason });
 }
 
 async function removeApp(pool, config, app) {
@@ -180,4 +191,4 @@ async function retirePreviews(pool, app) {
   }
 }
 
-module.exports = { teardownApp, isTearingDown, removeRuntimeIfDeleted, PreviewNotRetiredError };
+module.exports = { teardownApp, removeApp, isTearingDown, removeRuntimeIfDeleted, PreviewNotRetiredError };

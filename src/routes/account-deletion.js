@@ -33,6 +33,10 @@ function accountDeletionRoutes(config, { pool = getPool(config) } = {}) {
       res.json({ passwordRequired: rows[0].password_set });
     } catch (err) { sendError(res, err); }
   });
+  // The provider, worker and stored-file cleanups a deletion queues are
+  // carried out by the account-deletion clock, on a conductor, within a
+  // minute (src/workflow/clock/services.ts): a web process holds no
+  // credential they need.
   router.delete('/api/auth/account', browser, limiter, async (req, res) => {
     try {
       res.locals.accountDeletionResponse = true;
@@ -43,7 +47,6 @@ function accountDeletionRoutes(config, { pool = getPool(config) } = {}) {
       res.clearCookie('session', { path: '/' });
       res.clearCookie(require('../services/browser-api-cache').SCOPE_COOKIE, { path: '/' });
       res.json(result);
-      void cleanup.sweep(pool, config).catch(() => {});
     } catch (err) { sendError(res, err); }
   });
 
@@ -56,7 +59,6 @@ function accountDeletionRoutes(config, { pool = getPool(config) } = {}) {
       await pool.query(`UPDATE account_deletion_tasks SET next_attempt_at = NOW()
         WHERE deletion_id = $1 AND state = 'pending'`, [req.params.id]);
       res.json({ ok: true });
-      void cleanup.sweep(pool, config).catch(() => {});
     } catch (err) { sendError(res, err); }
   });
   // Ambiguous provider creation must be reconciled with the provider first.
@@ -77,7 +79,6 @@ function accountDeletionRoutes(config, { pool = getPool(config) } = {}) {
       await db.query('UPDATE account_deletions SET completed_at = NULL WHERE id = $1', [req.params.id]);
       await db.query('COMMIT');
       res.json({ ok: true });
-      void cleanup.sweep(pool, config).catch(() => {});
     } catch (err) { await db.query('ROLLBACK').catch(() => {}); sendError(res, err); }
     finally { db.release(); }
   });

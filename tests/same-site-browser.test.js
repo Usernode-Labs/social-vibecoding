@@ -220,6 +220,9 @@ const EXEMPT = new Map([
   // #4264: a coding agent's sandbox, authenticated by the task's one-time
   // upload token in Authorization; no cookie is read.
   ['external-agent-patch-upload.js POST /api/external-tasks/:taskId/patch', TOKEN],
+  // A coding agent's machine, authenticated by the connector upload's
+  // one-time token in Authorization; no cookie is read.
+  ['connector-uploads.js POST /api/connector-uploads/:uploadId', TOKEN],
   // A platform preview's own process, in the cluster, authenticated by the
   // credential production gave it (services/preview-projects.js); no cookie
   // is read, and a call through any proxy is refused.
@@ -232,9 +235,6 @@ const EXEMPT = new Map([
   ['sms-webhooks.js POST /api/sms/webhooks/brevo', 'Brevo\'s SMS webhook bearer token (BREVO_SMS_WEBHOOK_TOKEN); no cookie or browser session authorizes a callback'],
   ['sms-webhooks.js POST /api/sms/webhooks/twilio', 'Twilio\'s X-Twilio-Signature HMAC keyed by TWILIO_AUTH_TOKEN over TWILIO_STATUS_CALLBACK_URL; no cookie or browser session authorizes a callback'],
   ['alerts-webhook.js POST /api/internal/alerts', 'Alertmanager\'s bearer token (ALERTMANAGER_WEBHOOK_TOKEN); no cookie or browser session authorizes a call'],
-  ['global-chat.js POST /api/global-chat/threads/:id/direct-actions', JSON_FIELD],
-  ['global-chat.js POST /api/global-chat/threads/:id/inline-actions', JSON_FIELD],
-  ['global-chat.js POST /api/global-chat/actions/:token/confirm', JSON_FIELD],
   ['internal.js POST /api/internal/shots/:runId/shot', TOKEN],
   ['internal.js POST /api/internal/shots/:runId/closeup', TOKEN],
   ['internal.js POST /api/internal/shots/:runId/skip', TOKEN],

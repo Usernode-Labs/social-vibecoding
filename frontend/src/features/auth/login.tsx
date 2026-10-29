@@ -929,11 +929,11 @@ export function LoginScreen() {
       const data = await res.json();
       setOtpStatus(null);
       if (!res.ok || !data.ok) {
-        // A correct code the server will not sign in with (an admin account,
-        // or one whose email address was never confirmed) is not a mistyped
-        // code: carry the address over to the password form rather than
-        // leaving the person on a step that cannot succeed.
-        if (data.code === 'password_required' || data.code === 'admin_password_required') {
+        // A correct code the server will not sign in with (an account whose
+        // email address was never confirmed) is not a mistyped code: carry
+        // the address over to the password form rather than leaving the
+        // person on a step that cannot succeed.
+        if (data.code === 'password_required') {
           showLoginBaseView();
           if (username.current) username.current.value = st.otpEmail || '';
           setLoginError(data.error || translate(PASSWORD_ACCOUNT_MSG));

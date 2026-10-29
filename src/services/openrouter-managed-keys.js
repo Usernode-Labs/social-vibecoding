@@ -88,6 +88,15 @@ class ManagedOpenRouterError extends Error {
   }
 }
 
+// Whether company-funded keys are offered (config.js
+// openrouterManagedKeysEnabled), which a process that never uses the
+// management key itself can answer: the explicit setting, else the key's
+// presence.
+function managedKeysEnabled(config) {
+  if (typeof config?.openrouterManagedKeysEnabled === 'boolean') return config.openrouterManagedKeysEnabled;
+  return !!config?.openrouterManagementApiKey;
+}
+
 function managementOptions(config) {
   return {
     apiKey: config.openrouterManagementApiKey,
@@ -186,7 +195,7 @@ async function chooseDefaultModel({ pool, userId, apiKey, config }) {
   }
 }
 
-async function provision({ pool, userId, config }) {
+async function provisionHere({ pool, userId, config }) {
   if (!config.openrouterManagementApiKey) {
     throw new ManagedOpenRouterError(
       503,
@@ -342,7 +351,7 @@ async function provision({ pool, userId, config }) {
 // pasted a personal key gets `byok_configured`. Both are skips here.
 async function ensureIncludedKey({ pool, userId, config, reason = 'signup' }) {
   if (!userId) return { created: false, skipped: 'no_user' };
-  if (!config?.openrouterManagementApiKey) {
+  if (!managedKeysEnabled(config)) {
     return { created: false, skipped: 'not_configured' };
   }
   if (!config.codexOpenrouterEnabled) {
@@ -391,7 +400,7 @@ async function managedRowById(pool, id) {
   return rows[0] || null;
 }
 
-async function setDisabled({ pool, id, disabled, config, actorId }) {
+async function setDisabledHere({ pool, id, disabled, config, actorId }) {
   if (!config.openrouterManagementApiKey) {
     throw new ManagedOpenRouterError(503, 'not_configured', 'OpenRouter management is not configured.');
   }
@@ -429,7 +438,7 @@ async function setDisabled({ pool, id, disabled, config, actorId }) {
   return { id: Number(id), status: disabled ? 'disabled' : 'active' };
 }
 
-async function remove({ pool, id, config, actorId }) {
+async function removeHere({ pool, id, config, actorId }) {
   if (!config.openrouterManagementApiKey) {
     throw new ManagedOpenRouterError(503, 'not_configured', 'OpenRouter management is not configured.');
   }
@@ -487,10 +496,10 @@ function syncable(state, config) {
   return Boolean(state?.managed_key_id
     && ['active', 'disabled'].includes(state.managed_status)
     && state.remote_key_hash
-    && config?.openrouterManagementApiKey);
+    && managedKeysEnabled(config));
 }
 
-async function syncAllowance({ pool, userId, state, config, allowance }) {
+async function syncAllowanceHere({ pool, userId, state, config, allowance }) {
   if (!syncable(state, config)) return state;
   const target = allowance || await resolveAllowance(pool, userId);
   const id = state.managed_key_id;
@@ -561,9 +570,77 @@ async function applyAllowance({ pool, userId, state, config, target }) {
   }
 }
 
+// The company-funded key this account holds, issued and saved, in the shape
+// provision() resolves (its default model is not kept): what a provisioning
+// that finished before its result could be recorded answers with.
+async function issuedKey(pool, userId) {
+  const state = await stateForUser(pool, userId);
+  if (state?.managed_status !== 'active' || state.credential_status !== 'valid') return null;
+  const meta = await credentialStore.readMetadata({ pool, userId, ...OPENROUTER });
+  if (meta?.status !== 'valid' || meta.metadata?.source !== MANAGED_SOURCE) return null;
+  return {
+    revision: meta.revision, defaultModel: null, keyInfo: meta.metadata?.keyInfo || null,
+    managed: { id: state.managed_key_id, status: 'active' },
+  };
+}
+
+// ── Where the management key is used ────────────────────────────────────
+//
+// A key is created, limited, disabled or deleted only where the workflow
+// runs (docs/plans/web-and-conductor.md, "Privileged operations"): on a web
+// process each of these is a platform operation a conductor makes
+// (services/openrouter-key-operation.js), on behalf of the account itself,
+// or of the full admin who asked. A workflow process (the bot, a turn, the
+// cleanup clock) makes them itself. Callers see the same results and the
+// same ManagedOpenRouterError refusals either way.
+function onWorkflowProcess() {
+  const role = require('./process-role');
+  return role.runsWorkflow(role.processRole());
+}
+
+async function viaConductor(op, userId, input) {
+  const out = await require('./platform-operations').request({ op, appId: null, userId, input });
+  if (out.ok) return out.value;
+  throw new ManagedOpenRouterError(out.status || 502, out.code || 'operation_failed',
+    out.error || 'OpenRouter keys could not be changed right now. Try again in a moment.');
+}
+
+function provision(args) {
+  return onWorkflowProcess() ? provisionHere(args) : viaConductor('openrouter.provision', args.userId, {});
+}
+
+function setDisabled(args) {
+  return onWorkflowProcess() ? setDisabledHere(args)
+    : viaConductor('openrouter.disable', args.actorId, { id: Number(args.id), disabled: !!args.disabled });
+}
+
+function remove(args) {
+  return onWorkflowProcess() ? removeHere(args) : viaConductor('openrouter.remove', args.actorId, { id: Number(args.id) });
+}
+
+// `actorId`: who asked, when it is not the account itself (an admin setting
+// its weekly cap). A web process asks only when the key is out of line with
+// the allowance, and keeps the state it has when the conductor cannot.
+async function syncAllowance(args) {
+  if (onWorkflowProcess()) return syncAllowanceHere(args);
+  const { pool, userId, state, config } = args;
+  if (!syncable(state, config)) return state;
+  const target = args.allowance || await resolveAllowance(pool, userId);
+  if (Math.round(Number(state.daily_limit_usd) * 100) === target.cents && state.limit_reset === LIMIT_RESET) return state;
+  try {
+    return (await viaConductor('openrouter.sync', args.actorId || userId, { userId: Number(userId) })) || state;
+  } catch (err) {
+    log.warn('openrouter-managed', 'managed key allowance sync not made; the key keeps its current limit', {
+      userId, managedKeyId: state.managed_key_id, err: err.message,
+    });
+    return state;
+  }
+}
+
 module.exports = {
   ManagedOpenRouterError,
   NOT_CONFIGURED_USER_MESSAGE,
+  managedKeysEnabled,
   OPENROUTER,
   LIMIT_RESET,
   publicState,
@@ -576,4 +653,10 @@ module.exports = {
   syncAllowance,
   setDisabled,
   remove,
+  // A conductor's own (services/openrouter-key-operation.js).
+  provisionHere,
+  issuedKey,
+  setDisabledHere,
+  removeHere,
+  syncAllowanceHere,
 };

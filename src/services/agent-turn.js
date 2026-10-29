@@ -202,7 +202,7 @@ async function resolveCodexRuntimeContext({
   // outside this management path. Sync failures remain best-effort and are
   // retried after the managed-key service's short backoff.
   if (meta.metadata?.source === managedOpenRouter.MANAGED_SOURCE
-      && config.openrouterManagementApiKey) {
+      && managedOpenRouter.managedKeysEnabled(config)) {
     try {
       await managedOpenRouter.syncAllowance({
         pool, userId, config,

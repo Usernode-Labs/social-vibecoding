@@ -195,6 +195,11 @@ export interface WorkHandler {
   // the code of the build that asked for it (release/machine.ts), never an
   // older build's still running during a rollout.
   ownRelease?: boolean;
+  // Claimed only while this process runs the newest build (the runtime's
+  // `newest`): an older build still running during a rollout leaves it to
+  // the newer one, which claims it once it starts. Unlike ownRelease, the
+  // item names no build: whichever is newest when it is claimed runs it.
+  newestOnly?: boolean;
 }
 
 // What a producer gets back for an event.
