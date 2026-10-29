@@ -41,14 +41,16 @@ import {
 } from '@/components/ui/icons';
 import { IconTile } from '@/components/ui/icon-tile';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 
 import { changeHref } from '../../lib/change-href';
 import { useMessages } from '../../lib/i18n/react';
 import { audienceLine, reloadCommunity, useCommunity } from '../dev-board/workshop/community-card';
 import {
   currentValue, groupKey, groupLabel, groupNameProblem, groupSize, matchPreset, MAX_AT_LEAST,
-  MAX_GROUPS, MAX_RULES, presetName, presetOf, presetValue, rulePhrase, ruleToday, sameValue,
-  valueProblem, type Group, type Kind, type PresetKey, type Rule, type RulesValue,
+  MAX_GROUPS, MAX_RULES, MIN_MINIMUM, minOf, presetName, presetOf, presetValue, rulePhrase,
+  ruleSignature, ruleToday, sameValue, valueProblem, type Group, type Kind, type PresetKey, type Rule,
+  type RulesValue,
 } from '../who-decides/model';
 import { Face, PlaysOut, PresetTiles, Picked, type Viewer } from '../who-decides/parts';
 import { proposeWhoDecides } from '../who-decides/propose';
@@ -61,7 +63,10 @@ type Visibility = 'private' | 'public';
 type Choice = { kind: 'preset'; key: PresetKey } | { kind: 'own'; value: RulesValue };
 
 interface GroupDraft { index: number | null; name: string; people: string[] }
-interface RuleDraft { index: number | null; group: string; kind: Kind; n: number }
+interface RuleDraft { index: number | null; group: string; kind: Kind; n: number; min: number | null }
+
+/** Where a rule's minimum starts when it is switched on. */
+const DEFAULT_MIN = 10;
 
 const KINDS: readonly Kind[] = ['atLeast', 'percentOfActive', 'percentOfEveryone', 'majority'];
 const KIND_IDS: Record<Kind, { label: string; sub: string }> = {
@@ -294,14 +299,16 @@ export function WhoDecidesDialog() {
   function editRule(index: number | null) {
     const r = index != null && draft ? draft.rules[index] : null;
     setRuleDraft(r
-      ? { index, group: r.group, kind: r.kind, n: r.n ?? (r.kind === 'atLeast' ? 1 : 50) }
-      : { index: null, group: 'members', kind: 'atLeast', n: 2 });
+      ? { index, group: r.group, kind: r.kind, n: r.n ?? (r.kind === 'atLeast' ? 1 : 50), min: minOf(r) }
+      : { index: null, group: 'members', kind: 'atLeast', n: 2, min: null });
     setScreen('rule');
   }
 
   function ruleOf(d: RuleDraft): Rule {
     if (d.group === 'creator') return { group: 'creator', kind: 'atLeast', n: 1 };
-    return { group: d.group, kind: d.kind, n: d.kind === 'majority' ? null : d.n };
+    const rule: Rule = { group: d.group, kind: d.kind, n: d.kind === 'majority' ? null : d.n };
+    // A minimum goes with a majority or a share; "a number of people" is one already.
+    return d.kind !== 'atLeast' && d.min != null ? { ...rule, min: d.min } : rule;
   }
 
   function saveRule() {
@@ -500,7 +507,7 @@ export function WhoDecidesDialog() {
         <SectionHeader className="px-1 pb-2 pt-4">{t('dialogs:whoDecides.own.rules')}</SectionHeader>
         <GroupedList className="mx-0" data-who-rules="">
           {draft.rules.map((r, i) => (
-            <div key={`${r.group}-${r.kind}-${r.n}`}>
+            <div key={ruleSignature(r)}>
               {i > 0 ? (
                 <div className="flex items-center gap-2 px-4" aria-hidden="true">
                   <span className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
@@ -642,7 +649,7 @@ export function WhoDecidesDialog() {
             <SectionHeader className="px-1 pb-2 pt-5">{t('dialogs:whoDecides.group.usedBy', { count: usedBy.length })}</SectionHeader>
             <GroupedList className="mx-0">
               {usedBy.map((r) => (
-                <ListRow key={`${r.kind}-${r.n}`} title={rulePhrase(r, { groups: draft.groups, creator })}
+                <ListRow key={ruleSignature(r)} title={rulePhrase(r, { groups: draft.groups, creator })}
                   subtitle={ruleToday(r, { ...ctx, groups: draft.groups.map((g) => (groupKey(g.name) === editingKey ? { ...g, people: groupDraft.people } : g)) })}
                   chevron={false} titleClassName="whitespace-normal" subtitleClassName="whitespace-normal" />
               ))}
@@ -677,7 +684,7 @@ export function WhoDecidesDialog() {
     const ruleCtx = { ...ctx, groups: draft.groups };
     const isPct = ruleDraft.kind === 'percentOfActive' || ruleDraft.kind === 'percentOfEveryone';
     const others = draft.rules.filter((_, i) => i !== ruleDraft.index);
-    const duplicate = others.some((r) => r.group === rule.group && r.kind === rule.kind && (r.n ?? null) === (rule.n ?? null));
+    const duplicate = others.some((r) => ruleSignature(r) === ruleSignature(rule));
     const set = (patch: Partial<RuleDraft>) => setRuleDraft({ ...ruleDraft, ...patch });
     const size = groupSize(rule.group, ruleCtx);
     return (
@@ -728,6 +735,30 @@ export function WhoDecidesDialog() {
                 </div>
               ) : null}
             </GroupedList>
+            {ruleDraft.kind !== 'atLeast' ? (
+              <GroupedList className="mx-0 mt-3" data-who-rule-min="">
+                <label htmlFor="who-rule-min" className="flex cursor-pointer select-none items-center justify-between gap-3 px-4 py-3">
+                  <span className="min-w-0">
+                    <span className="block text-[15px] font-[650]">{t('dialogs:whoDecides.rule.min.title')}</span>
+                    <span className="block text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{t('dialogs:whoDecides.rule.min.sub')}</span>
+                  </span>
+                  <Switch id="who-rule-min" checked={ruleDraft.min != null}
+                    onChange={(event) => set({ min: event.target.checked ? DEFAULT_MIN : null })} />
+                </label>
+                {ruleDraft.min != null ? (
+                  <div className="flex items-center justify-between px-4 py-3">
+                    <span className="text-[15px] font-[650]">{t('dialogs:whoDecides.rule.min.label')}</span>
+                    <span className="flex items-center gap-2">
+                      <Button type="button" aria-label={t('dialogs:whoDecides.rule.fewer')} variant="pillNeutral" size="sm" ink="neutral" className="h-11 w-11 !px-0 text-xl"
+                        onClick={() => set({ min: Math.max(MIN_MINIMUM, (ruleDraft.min ?? DEFAULT_MIN) - 1) })}>−</Button>
+                      <span className="min-w-[3.5rem] text-center text-[17px] font-bold tabular-nums" data-who-rule-min-n="">{ruleDraft.min}</span>
+                      <Button type="button" aria-label={t('dialogs:whoDecides.rule.more')} variant="pillNeutral" size="sm" ink="neutral" className="h-11 w-11 !px-0 text-xl"
+                        onClick={() => set({ min: Math.min(MAX_AT_LEAST, (ruleDraft.min ?? DEFAULT_MIN) + 1) })}>+</Button>
+                    </span>
+                  </div>
+                ) : null}
+              </GroupedList>
+            ) : null}
           </>
         ) : null}
 

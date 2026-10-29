@@ -2092,7 +2092,7 @@ function sameRules(a, b) {
   const canon = (v) => (v ? JSON.stringify({
     preset: v.preset || null,
     groups: (v.groups || []).map((g) => ({ name: g.name, people: g.people || [], ids: g.ids || [] })),
-    rules: (v.rules || []).map((r) => ({ group: r.group, kind: r.kind, n: r.n ?? null })),
+    rules: (v.rules || []).map((r) => ({ group: r.group, kind: r.kind, n: r.n ?? null, min: r.min ?? null })),
   }) : null);
   return canon(a) === canon(b);
 }

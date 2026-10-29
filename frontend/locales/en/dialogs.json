@@ -3271,6 +3271,18 @@
     "text": "More",
     "description": "Accessible name of the stepper's plus button."
   },
+  "whoDecides.rule.min.title": {
+    "text": "Also need a minimum",
+    "description": "Switch on the rule screen of the Who can see & change it sheet, where one approval rule is edited, under How many, for a Majority over time or % rule: turns on a fewest number of yeses the rule needs."
+  },
+  "whoDecides.rule.min.sub": {
+    "text": "It can’t go live on fewer yeses than this. Never more than the group has, so it keeps working if someone leaves.",
+    "description": "Line under the Also need a minimum switch on the rule screen of the Who can see & change it sheet, where one approval rule is edited: the rule never passes on fewer yeses than the number set, and the number is capped at the group's size."
+  },
+  "whoDecides.rule.min.label": {
+    "text": "At least",
+    "description": "Label of the stepper that sets a rule's minimum number of yeses, on the rule screen of the Who can see & change it sheet, where one approval rule is edited. The number follows it, so it reads \"At least 10\"."
+  },
   "whoDecides.rule.today.title": {
     "text": "Today",
     "description": "Section label over what the rule asks for with the project as it is now."
@@ -3307,13 +3319,37 @@
     "text": "{{percent}}% of the active people in {{group}} say yes",
     "description": "A rule, said as a clause. {{percent}} is a whole number; {{group}} is a group's name."
   },
+  "whoDecides.rule.phrase.percentOfActiveMin_one": {
+    "text": "{{percent}}% of the active people in {{group}} say yes, and at least {{count}} of them",
+    "description": "A rule, said as a clause, with a minimum number of yeses. {{percent}} is a whole number; {{group}} is a group's name; {{count}} is the minimum."
+  },
+  "whoDecides.rule.phrase.percentOfActiveMin_other": {
+    "text": "{{percent}}% of the active people in {{group}} say yes, and at least {{count}} of them",
+    "description": "A rule, said as a clause, with a minimum number of yeses. {{percent}} is a whole number; {{group}} is a group's name; {{count}} is the minimum."
+  },
   "whoDecides.rule.phrase.percentOfEveryone": {
     "text": "{{percent}}% of everyone in {{group}} says yes",
     "description": "A rule, said as a clause. {{percent}} is a whole number; {{group}} is a group's name."
   },
+  "whoDecides.rule.phrase.percentOfEveryoneMin_one": {
+    "text": "{{percent}}% of everyone in {{group}} says yes, and at least {{count}} of them",
+    "description": "A rule, said as a clause, with a minimum number of yeses. {{percent}} is a whole number; {{group}} is a group's name; {{count}} is the minimum."
+  },
+  "whoDecides.rule.phrase.percentOfEveryoneMin_other": {
+    "text": "{{percent}}% of everyone in {{group}} says yes, and at least {{count}} of them",
+    "description": "A rule, said as a clause, with a minimum number of yeses. {{percent}} is a whole number; {{group}} is a group's name; {{count}} is the minimum."
+  },
   "whoDecides.rule.phrase.majority": {
     "text": "Most active people in {{group}} say yes, over time",
     "description": "A rule, said as a clause: the platform's usual vote over a group. {{group}} is a group's name."
+  },
+  "whoDecides.rule.phrase.majorityMin_one": {
+    "text": "Most active people in {{group}} say yes, over time, and at least {{count}} of them",
+    "description": "A rule, said as a clause: the platform's usual vote over a group, with a minimum number of yeses. {{group}} is a group's name; {{count}} is the minimum."
+  },
+  "whoDecides.rule.phrase.majorityMin_other": {
+    "text": "Most active people in {{group}} say yes, over time, and at least {{count}} of them",
+    "description": "A rule, said as a clause: the platform's usual vote over a group, with a minimum number of yeses. {{group}} is a group's name; {{count}} is the minimum."
   },
   "whoDecides.rule.today.empty": {
     "text": "Can’t pass until {{group}} has someone in it.",
@@ -3342,6 +3378,22 @@
   "whoDecides.rule.today.majority": {
     "text": "Group vote’s math, or a quiet wait if nobody objects.",
     "description": "Line under Today on the rule screen of the Who can see & change it sheet, where one approval rule is edited, for a Majority over time rule: it counts like the Group vote preset, or a change goes live after a quiet wait when nobody votes no."
+  },
+  "whoDecides.rule.today.majorityMin_one": {
+    "text": "Group vote’s math, or a quiet wait if nobody objects, and never fewer than {{count}} yes.",
+    "description": "Line under Today on the rule screen of the Who can see & change it sheet, where one approval rule is edited, for a Majority over time rule with a minimum: it counts like the Group vote preset, or a change goes live after a quiet wait when nobody votes no, but never on fewer yeses than {{count}}, which is never more than the group has."
+  },
+  "whoDecides.rule.today.majorityMin_other": {
+    "text": "Group vote’s math, or a quiet wait if nobody objects, and never fewer than {{count}} yeses.",
+    "description": "Line under Today on the rule screen of the Who can see & change it sheet, where one approval rule is edited, for a Majority over time rule with a minimum: it counts like the Group vote preset, or a change goes live after a quiet wait when nobody votes no, but never on fewer yeses than {{count}}, which is never more than the group has."
+  },
+  "whoDecides.rule.today.percentOfActiveMin_one": {
+    "text": "Counts only people who have been active lately, and never fewer than {{count}} yes.",
+    "description": "Line under Today on the rule screen of the Who can see & change it sheet, where one approval rule is edited, for a rule counting a share of the active people with a minimum: only recently active people are counted, and it never goes live on fewer yeses than {{count}}, which is never more than the group has."
+  },
+  "whoDecides.rule.today.percentOfActiveMin_other": {
+    "text": "Counts only people who have been active lately, and never fewer than {{count}} yeses.",
+    "description": "Line under Today on the rule screen of the Who can see & change it sheet, where one approval rule is edited, for a rule counting a share of the active people with a minimum: only recently active people are counted, and it never goes live on fewer yeses than {{count}}, which is never more than the group has."
   },
   "whoDecides.rule.today.unknown": {
     "text": "Depends on how many people the group has.",

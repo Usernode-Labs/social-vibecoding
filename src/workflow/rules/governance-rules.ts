@@ -55,6 +55,19 @@
  *                        eased threshold, the minimum window and the quiet
  *                        wait, exactly as Group vote has always worked.
  *
+ * A majority or percentage rule can also carry a `minimum`, the fewest
+ * yeses it passes on:
+ *
+ *   { "group": "members", "majority": true, "minimum": 10 }
+ *
+ * "Most active people in All members say yes, over time, and at least 10 of
+ * them": the rule passes when its measure does AND the yeses reach the
+ * minimum, on the quiet wait too, so silence alone never ships a change in a
+ * small group. The minimum counts the yeses its own rule counts (votes as
+ * cast on majority, proposing included on a percentage; below) and is never
+ * more than the group has, so a group that shrinks never makes the rule
+ * impossible. An atLeast rule takes none: it is one already.
+ *
  * Only yeses count toward a rule; a No still does what it always did on the
  * majority rule (raises the bar, arms the takedown clock).
  *
@@ -111,11 +124,17 @@ export const MAX_RULES = 5;
 export const MAX_GROUPS = 10;
 export const MAX_GROUP_PEOPLE = 50;
 export const MAX_AT_LEAST = 50;
+// A minimum of one says nothing: every rule already needs a yes.
+export const MIN_MINIMUM = 2;
 export const GROUP_NAME_MAX = 32;
 const USERNAME_MAX = 64;
 
-/** One rule, normalised: `group` is a built-in key or a named group's key; `n` is null for majority. */
-export interface Rule { group: string; kind: Measure; n: number | null }
+/**
+ * One rule, normalised: `group` is a built-in key or a named group's key; `n`
+ * is null for majority; `min`, on a majority or percentage rule that has one,
+ * is the fewest yeses it passes on (absent when it has none).
+ */
+export interface Rule { group: string; kind: Measure; n: number | null; min?: number | null }
 export interface Group { name: string; people: string[] }
 export interface RulesValue { preset: PresetKey | null; groups: Group[]; rules: Rule[] }
 
@@ -216,9 +235,11 @@ function parseRule(raw: unknown, i: number, groupKeys: Set<string>): Rule {
   }
   const kind = present[0];
   const v = raw[kind];
+  const min = parseMinimum(raw.minimum, kind, i);
+  const withMin = (rule: Rule): Rule => (min != null ? { ...rule, min } : rule);
   if (kind === 'majority') {
     if (v !== true) throw new RulesError(`governance.rules[${i}].majority must be true`);
-    return { group: g, kind, n: null };
+    return withMin({ group: g, kind, n: null });
   }
   if (kind === 'atLeast') {
     if (!Number.isInteger(v) || v < 1 || v > MAX_AT_LEAST) {
@@ -229,7 +250,19 @@ function parseRule(raw: unknown, i: number, groupKeys: Set<string>): Rule {
   if (!Number.isInteger(v) || v < 1 || v > 100) {
     throw new RulesError(`governance.rules[${i}].${kind} must be a whole number from 1 to 100`);
   }
-  return { group: g, kind, n: v };
+  return withMin({ group: g, kind, n: v });
+}
+
+/** A rule's `minimum`, or null when it has none; throws on one it cannot take. */
+function parseMinimum(v: unknown, kind: Measure, i: number): number | null {
+  if (v == null) return null;
+  if (kind === 'atLeast') {
+    throw new RulesError(`governance.rules[${i}].minimum goes with majority or a percentage; atLeast is a minimum already`);
+  }
+  if (!Number.isInteger(v) || (v as number) < MIN_MINIMUM || (v as number) > MAX_AT_LEAST) {
+    throw new RulesError(`governance.rules[${i}].minimum must be a whole number from ${MIN_MINIMUM} to ${MAX_AT_LEAST}`);
+  }
+  return v as number;
 }
 
 /**
@@ -293,8 +326,10 @@ export function readRulesBlock(raw: unknown): { value: RulesValue | null; error:
   }
 }
 
+// A rule without a minimum keeps the signature it always had.
 function ruleSignature(r: Rule): string {
-  return `${r.group}:${r.kind}:${r.kind === 'majority' ? '' : r.n}`;
+  const min = r.kind !== 'atLeast' && r.min != null ? `:min${r.min}` : '';
+  return `${r.group}:${r.kind}:${r.kind === 'majority' ? '' : r.n}${min}`;
 }
 
 /** The preset a rule list is the same as, or null. Order does not matter. */
@@ -321,7 +356,9 @@ export function blockFor({ preset = null, groups = [], rules = [] }: Partial<Rul
   if (groups.length) out.groups = groups.map((g) => ({ name: g.name, people: [...g.people] }));
   out.rules = rules.map((r) => {
     const group = BUILT_IN_GROUPS.includes(r.group) ? r.group : (nameOf.get(r.group) || r.group);
-    return r.kind === 'majority' ? { group, majority: true } : { group, [r.kind]: r.n };
+    const rule: Record<string, unknown> = r.kind === 'majority' ? { group, majority: true } : { group, [r.kind]: r.n };
+    if (r.min != null && r.kind !== 'atLeast') rule.minimum = r.min;
+    return rule;
   });
   return out;
 }
@@ -339,7 +376,10 @@ export function storedForm(value: Partial<RulesValue>, idsByGroup: Map<string, n
       people: [...(g.people || [])],
       ids: [...(idsByGroup.get(groupKey(g.name)) || [])],
     })),
-    rules: (value.rules || []).map((r) => ({ group: r.group, kind: r.kind, n: r.kind === 'majority' ? null : r.n })),
+    rules: (value.rules || []).map((r) => ({
+      group: r.group, kind: r.kind, n: r.kind === 'majority' ? null : r.n,
+      ...(r.min != null && r.kind !== 'atLeast' ? { min: r.min } : {}),
+    })),
   };
 }
 
@@ -446,14 +486,41 @@ export interface RuleResult {
   group: string; kind: Measure; n: number | null; size: number; yes: number; no: number;
   authorYes: boolean; empty: boolean; known: boolean;
   need: number | null; passed: boolean; gate: Gate | null;
+  // The rule's minimum, and the yeses it asks for today (never more than the
+  // group has); both null on a rule without one.
+  min: number | null; minNeed: number | null;
+}
+
+/**
+ * A majority rule's gate under its minimum: the bar is never below it, and
+ * while the yeses are short of it nothing can merge, the quiet wait included,
+ * so no clock is shown counting down to a merge that cannot happen. The
+ * rejection side is the gate's own: a change the group is voting down still
+ * closes on schedule.
+ */
+function underMinimum(gate: Gate, yes: number, minNeed: number): Gate {
+  const required = Math.max(gate.required, minNeed);
+  if (yes >= minNeed) return { ...gate, required };
+  return {
+    ...gate,
+    required,
+    thresholdMet: false,
+    mergeable: false,
+    windowMs: 0,
+    windowEndsAt: null,
+    windowElapsed: true,
+    lazyArmed: false,
+    lazyWindowMs: null,
+  };
 }
 
 /**
  * Evaluate one rule. `ctx`: { facts, voters, counts, authorId, openedAt,
  * now, noTimers, memberFloor (null | { applies, met }), mergeGate,
  * applyNoTimerMerge }. Returns the rule's own status:
- *   { group, kind, n, size, yes, no, need, passed, empty, gate }
- * where `gate` is the mergeGate object for a majority rule.
+ *   { group, kind, n, size, yes, no, need, passed, empty, gate, min, minNeed }
+ * where `gate` is the mergeGate object for a majority rule and `need` already
+ * includes the minimum.
  */
 export function evaluateRule(rule: Rule, ctx: EvalContext): RuleResult {
   const tally = groupTally(rule.group, ctx);
@@ -468,9 +535,14 @@ export function evaluateRule(rule: Rule, ctx: EvalContext): RuleResult {
     yes += 1;
     authorYes = true;
   }
+  // The minimum counts the yeses its own rule counts: votes as cast on the
+  // majority rule, proposing included on a percentage. Capped at the group's
+  // size like atLeast, so a shrinking group never makes it impossible.
+  const min = rule.kind !== 'atLeast' && rule.min != null ? rule.min : null;
+  const minNeed = min != null ? Math.min(min, Math.max(tally.size, 1)) : null;
   const base = {
     group: rule.group, kind: rule.kind, n: rule.n, size: tally.size, yes, no: tally.no,
-    authorYes, empty: tally.size === 0, known: tally.known,
+    authorYes, empty: tally.size === 0, known: tally.known, min, minNeed,
   };
   if (tally.size === 0 && rule.group !== 'members') {
     return { ...base, need: null, passed: false, gate: null };
@@ -479,6 +551,7 @@ export function evaluateRule(rule: Rule, ctx: EvalContext): RuleResult {
     const electorate = rule.group === 'members' ? tally.active : Math.max(tally.size, 1);
     let gate = ctx.mergeGate(electorate, yes, tally.no, ctx.openedAt, ctx.now);
     if (ctx.noTimers) gate = ctx.applyNoTimerMerge(gate, ctx.memberFloor);
+    if (minNeed != null) gate = underMinimum(gate, yes, minNeed);
     return { ...base, need: gate.required, passed: tally.known && !!gate.mergeable, gate };
   }
   const n = rule.n as number;
@@ -486,6 +559,7 @@ export function evaluateRule(rule: Rule, ctx: EvalContext): RuleResult {
   if (rule.kind === 'atLeast') need = Math.min(n, Math.max(tally.size, 1));
   else if (rule.kind === 'percentOfEveryone') need = Math.max(1, Math.ceil((n / 100) * tally.size));
   else need = Math.max(1, Math.ceil((n / 100) * Math.max(tally.active, 1)));
+  if (minNeed != null) need = Math.max(need, minNeed);
   return { ...base, need, passed: tally.known && yes >= need, gate: null };
 }
 

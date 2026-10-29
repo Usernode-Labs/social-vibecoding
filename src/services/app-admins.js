@@ -164,7 +164,7 @@ function canonicalRules(value) {
     groups: (value.groups || [])
       .map((g) => ({ name: String(g.name).toLowerCase(), people: (g.people || []).map((p) => String(p).toLowerCase()).sort() }))
       .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
-    rules: (value.rules || []).map((r) => `${r.group}:${r.kind}:${r.n ?? ''}`).sort(),
+    rules: (value.rules || []).map((r) => `${r.group}:${r.kind}:${r.n ?? ''}${r.min != null ? `:min${r.min}` : ''}`).sort(),
   };
 }
 

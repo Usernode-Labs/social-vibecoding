@@ -269,6 +269,14 @@ test('changing how changes are approved IS a change, reason governance', () => w
   assert.equal(r.reason, 'governance');
 }));
 
+test('changing only a rule’s minimum IS a change to how changes are approved', () => withGithub({
+  base: json({ governance: { rules: [{ group: 'creator', atLeast: 1 }, { group: 'members', majority: true, minimum: 10 }] } }),
+  head: json({ governance: { rules: [{ group: 'creator', atLeast: 1 }, { group: 'members', majority: true, minimum: 2 }] } }),
+}, async () => {
+  const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' });
+  assert.deepEqual(r.reasons, ['governance'], 'lowering the minimum goes by who decides');
+}));
+
 test('a platform variable: adding one IS a change; re-describing it is NOT', async () => {
   const base = json({ platform_env: [{ key: 'FEATURE_X', description: 'old words', group: 'A' }] });
   await withGithub({
