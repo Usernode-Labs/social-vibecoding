@@ -314,8 +314,8 @@ function fixture({
       closePR: async (owner, repo, n) => { calls.closed.push(n); },
     },
     head: {
-      resolveWriteCredential: async () => ({ token: 'tok', source: 'pat' }),
-      authenticatedRemote: (_t, owner, repo) => `${owner}/${repo}`,
+      resolveWriteCredential: async () => ({ token: 'tok', username: 'x-access-token', source: 'installation' }),
+      appRemote: (owner, repo) => `${owner}/${repo}`,
       withScratchRepo: async () => (typeof built === 'function' ? built() : built),
       redactToken: (m) => m,
     },

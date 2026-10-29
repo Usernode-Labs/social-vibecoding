@@ -290,6 +290,11 @@ async function firstMisfit(git, dir, baseSha, patches) {
  * keys that travel, one more message carrying them over onto the original's
  * dapp.json at `syncedSha`.
  *
+ * The two fetches from the repositories (`copyRemote`, `originalRemote`,
+ * credential-free addresses) are the only invocations handed `credential`
+ * (external-agent-head.resolveWriteCredential): `git am` and the rest run
+ * on the version's commits with none.
+ *
  * `changes` are all the version's own changes and `picks` the chosen ones,
  * [{ sha, title }] oldest first. The picks are applied on the version's
  * `baseSha` in turn first. One that does not apply there, when all of the
@@ -299,9 +304,9 @@ async function firstMisfit(git, dir, baseSha, patches) {
  * { patch, files, manifestKeys, sent: [titles] }.
  */
 async function buildPatch({
-  git, dir, copyRemote, originalRemote, baseSha, copyHeadSha, syncedSha, picks, changes = picks,
+  git, dir, copyRemote, originalRemote, credential = null, baseSha, copyHeadSha, syncedSha, picks, changes = picks,
 }) {
-  await git(['fetch', '--no-tags', copyRemote, baseSha, copyHeadSha]);
+  await git(['fetch', '--no-tags', copyRemote, baseSha, copyHeadSha], { credential });
   const spec = diffPathspec();
   const fs = require('fs/promises');
   const path = require('path');
@@ -341,7 +346,7 @@ async function buildPatch({
   let manifestKeys = [];
   const manifestSteps = picked.map((p) => p.manifest).filter(Boolean);
   if (manifestSteps.length) {
-    await git(['fetch', '--no-tags', '--depth', '1', originalRemote, syncedSha]);
+    await git(['fetch', '--no-tags', '--depth', '1', originalRemote, syncedSha], { credential });
     const targetText = await showFile(git, syncedSha, MANIFEST_PATH);
     let text = targetText;
     const keys = new Set();
@@ -652,8 +657,9 @@ async function suggest({ pool, config, user, fork, picks: rawPicks, deps = defau
     built = await deps.head.withScratchRepo(`suggest-${fork.id}`, ({ dir, git }) => buildPatch({
       git,
       dir,
-      copyRemote: deps.head.authenticatedRemote(credential.token, copyRepo.owner, copyRepo.repo),
-      originalRemote: deps.head.authenticatedRemote(credential.token, originalRepo.owner, originalRepo.repo),
+      copyRemote: deps.head.appRemote(copyRepo.owner, copyRepo.repo),
+      originalRemote: deps.head.appRemote(originalRepo.owner, originalRepo.repo),
+      credential,
       baseSha: link.baseSha,
       copyHeadSha,
       syncedSha: link.syncedSha,
