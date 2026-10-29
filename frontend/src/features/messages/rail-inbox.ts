@@ -22,6 +22,14 @@
  * A conversation that did not exist when the page loaded can still take a
  * seat by its own clock, and the rows stay five.
  *
+ * ONLY THE AGENT CHATS THAT ARE ACTIVE (#5693). An agent chat had a seat for
+ * being recent, so a change already up for a vote, or a session nobody had
+ * touched in days, stayed in the sidebar with no way to take it out. Under
+ * Agents the sidebar now seats the Homeroom bot and the chats that ask for
+ * you: an agent at work, a change waiting on your answer, an open work order
+ * (the list's own `asksForYou`, ./index.tsx). The rest are still on the
+ * Messages page, under "N older chats". People are unchanged.
+ *
  * The list's own module works the rows out (./index.tsx ConversationList,
  * which already holds every source the inbox merges) and publishes them
  * here, so the sidebar draws plain data and nothing is fetched twice.
@@ -86,6 +94,17 @@ export function railConversations<T extends { key: string; section: InboxSection
   const picked = [...pinned, ...rest].slice(0, limit);
   // Under the inbox's headings, each in the order picked.
   return INBOX_SECTIONS.flatMap((section) => picked.filter((entry) => entry.section === section));
+}
+
+/**
+ * The entries the sidebar may seat (#5693): every person, the pinned bot,
+ * and the agent chats `active` says are going on. Pure.
+ */
+export function railCandidates<T extends { section: InboxSection; pinned?: boolean }>(
+  entries: readonly T[],
+  active: (entry: T) => boolean,
+): T[] {
+  return entries.filter((entry) => entry.section !== 'agents' || entry.pinned || active(entry));
 }
 
 /** The list's module says what the sidebar draws, when it changes. */

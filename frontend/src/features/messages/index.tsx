@@ -117,8 +117,8 @@ import { changeRowWords } from '../agent-session/transcript';
 import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { SessionRow, type SessionRowView } from '../improve/session-row';
-import { INBOX_QUERY_MAX, INBOX_SECTIONS, buildInbox, savedInboxQuery, shownInSection, type AppDiscussion, type InboxSection } from './inbox';
-import { publishRailInbox, railConversations, type RailConversation } from './rail-inbox';
+import { INBOX_QUERY_MAX, INBOX_SECTIONS, agentAsksForYou, buildInbox, savedInboxQuery, shownInSection, type AppDiscussion, type InboxSection } from './inbox';
+import { publishRailInbox, railCandidates, railConversations, type RailConversation } from './rail-inbox';
 import { useSidebarRows } from '../nav/sidebar-rows';
 import type { ConversationDetail, ConversationMessage, ConversationSummary, DiscussionMessage, MessagesAgentThread } from './types';
 
@@ -847,25 +847,16 @@ function ConversationList({ drawer = false, litId = null }: {
   // (./rail-inbox.ts), from the whole inbox, whatever the search box holds.
   const railOpenKey = inbox.find(isOpen)?.key || null;
   useEffect(() => {
-    const rows = railConversations(inbox)
+    // #5693: an agent chat is seated only while it asks for you.
+    const rows = railConversations(railCandidates(inbox, asksForYou))
       .map(railRow)
       .filter((row): row is RailConversation => !!row);
     publishRailInbox({ rows, openKey: railOpenKey, page: !(snap.route.conversationId || snap.route.appSlug || snap.route.agent) });
   });
   // An agent row that asks for you is never behind "Show N more": a change
   // waiting on you ("Needs you") or an agent at work.
-  const asksForYou = (entry: { kind: string; key: string }) => {
-    if (entry.kind === 'session') {
-      const session = bySession.get(entry.key.slice('session:'.length));
-      // #5289: an open work order is work in flight on the person's own
-      // machine, and since the bell lost its Messages filter this list is the
-      // only place it shows, so it is never folded behind "N older chats".
-      // There are few of them: each closes once it is shared or submitted.
-      return !!session && (session.kind === 'task' || session.awaitingInput || session.busy);
-    }
-    if (entry.kind === 'mayor') return !!byMayor.get(entry.key.slice('mayor:'.length))?.busy;
-    return false;
-  };
+  // (./inbox.ts asksForYou, shared with the sidebar's seats, #5693).
+  const asksForYou = (entry: { kind: string; key: string }) => agentAsksForYou(entry, bySession, byMayor);
 
   // 16 Oct 2026: what the Homeroom bot's row says. What waits on you and
   // what it is doing, in the words of its chat's own activity bar
