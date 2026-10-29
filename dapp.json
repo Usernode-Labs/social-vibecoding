@@ -1550,9 +1550,9 @@
       "expectSelector": "#app-list .app-card:not(:has(.users-badge)):not(:has(.status-dot))"
     },
     {
-      "name": "Discover renders app-store rows with a Join button, under a bar whose back arrow goes Home (#2639, #2718; #6019, Discover is a page of Home's)",
+      "name": "Discover renders app-store rows with a Join button, under a bar with no back slot on the desktop rail, where Discover is a tab of its own and lit (#2639, #2718; #6019)",
       "path": "/#apps",
-      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn:not(.hidden)) #browse-list .browse-row .browse-add-btn",
+      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn.hidden):has(#platform-tabs #platform-tab-discover[aria-current=\"page\"]) #browse-list .browse-row .browse-add-btn",
       "expectText": "Discover"
     },
     {
@@ -3038,9 +3038,9 @@
       "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#platform-mark-btn) #notifications-btn"
     },
     {
-      "name": "The bar's destination order: Home, Communities, AI, Messages, then you (#6019, Discover is a page of Home's); on a wide window the communities you pinned, then your others, sit just above the Communities tab (D, v3), and Messages' nested conversations follow it",
+      "name": "The desktop rail's destination order: Home, Discover, Messages, AI, Communities, then you (#6019; the markup is the rail's order and app.css lays the phone's bar out as Home, Communities, AI, Messages, You); Messages' nested conversations follow it, and the communities you pinned, then your others, sit just above the Communities tab (D, v3)",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-home + #platform-rail-pinned + #platform-rail-communities + #platform-tab-workshop[href=\"#communities\"] + #platform-tab-ai[href=\"#ai\"] + #platform-tab-messages + #platform-rail-conversations + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-rail-conversations + #platform-tab-ai[href=\"#ai\"] + #platform-rail-pinned + #platform-rail-communities + #platform-tab-workshop + #platform-tab-me"
     },
     {
       "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
@@ -4433,9 +4433,9 @@
       "expectText": "Filters"
     },
     {
-      "name": "?sort= orders the touch directory, under a bar whose back arrow goes Home (#1383, #2718; #6019, Discover is a page of Home's)",
+      "name": "?sort= orders the touch directory, under a bar with no back slot on the desktop rail, where Discover is a tab of its own (#1383, #2718; #6019)",
       "path": "/?sort=new&un-platform=ios#apps",
-      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn:not(.hidden)) #browse-list[data-sort=\"new\"] .browse-row"
+      "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn.hidden) #browse-list[data-sort=\"new\"] .browse-row"
     },
     {
       "name": "Sorting by activity shows what it sorted on (#1383), in live words (B10d)",
@@ -4844,9 +4844,9 @@
       "expectSelector": "#platform-tabs > #platform-rail-pinned.hidden[role=\"group\"][aria-labelledby=\"platform-rail-pinned-label\"] + #platform-rail-communities"
     },
     {
-      "name": "#2800: you are the sidebar's foot, after Messages and its conversations (#6019 seated Messages beside you), with your Settings beside you",
+      "name": "#2800: you are the sidebar's foot, straight after the Communities tab (its All row), with your Settings beside you (#6019: the rail ends Messages, AI, Communities)",
       "path": "/?demo=1",
-      "expectSelector": "#platform-tabs > #platform-rail-conversations + a#platform-tab-me + a#platform-rail-settings:last-child"
+      "expectSelector": "#platform-tabs > #platform-tab-workshop + a#platform-tab-me + a#platform-rail-settings:last-child"
     },
     {
       "name": "#4417, v3: on a desktop a project's places are nested under its row in the sidebar, the place on show lit there (Needs you), with no column beside it",

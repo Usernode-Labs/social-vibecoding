@@ -5878,9 +5878,18 @@ const App = {
   _TAB_REVEAL_WAIT_MS: 250,
 
   // The rail's own places: the roots its tabs navigate to. #6019: AI is the
-  // Messages screen's bot chat, and Discover is a page of Home's, not a root.
-  _RAIL_ROOTS: ['home-screen', 'messages-screen',
+  // Messages screen's bot chat. Discover is one of them: the rail keeps its
+  // tab (29 Oct 2026), and this list is only read at the rail's width.
+  _RAIL_ROOTS: ['home-screen', 'browse-screen', 'messages-screen',
     'workshop-screen', 'profile-screen'],
+
+  // Whether Discover is a tab of its own: on the desktop rail, from 768px,
+  // it is (lit, a root, no back arrow); on a phone it is a page of Home's,
+  // with an arrow back to Home (#6019). nav-store.js RAIL_TAB_FOR_SCREEN
+  // lights the tab by the same width, and browse.js asks this too.
+  _discoverIsTab() {
+    return !App._isPhoneLayout();
+  },
 
   // Whether entering `screenEl` with `preferred` is a switch between places
   // on the desktop rail. The rail has to be on screen now (not hidden inside
@@ -8781,8 +8790,10 @@ const App = {
   // a tab it is not the root of is listed here with that tab's address.
   _BACK_SLOT: {
     'home-screen': ['none'],
-    // #6019: Discover is a page of Home's (its Discover block opens it), so
-    // its list level has an arrow back to Home. browse.js publishes the same.
+    // #6019: on a phone Discover is a page of Home's (its Discover block
+    // opens it), so its list level has an arrow back to Home. On the desktop
+    // rail it is a tab, a root, and _backSlotFor answers 'none' there.
+    // browse.js publishes the same.
     'browse-screen': ['arrow', '/'],
     'messages-screen': ['none'],
     'workshop-screen': ['none'],
@@ -8882,6 +8893,9 @@ const App = {
   _backSlotFor(revealId) {
     const slot = App._BACK_SLOT[revealId];
     if (!slot) return ['home'];
+    // The table says the phone's answer for Discover, a page of Home's. On
+    // the desktop rail it is a tab of its own, a root: nothing in the slot.
+    if (revealId === 'browse-screen' && App._discoverIsTab()) return ['none'];
     if (revealId === 'app-view') {
       // THE DISCUSSION IS A LEVEL INSIDE MESSAGES, not a program to step out
       // of (#2718 review, twice). `/app/<slug>/dev/chat` is a ROW IN THE

@@ -159,8 +159,8 @@ test('the places: the column\'s own list, topics after two behind "Show N more",
 
 test('the markup: the conversations follow Messages, empty in the prerender, and nothing is nested there', () => {
   const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
-  assert.match(html, /<span class="platform-tab-label">Messages<\/span><\/a><div id="platform-rail-conversations" class="platform-rail-conversations"><\/div><a id="platform-tab-me"/,
-    'Messages sits beside you now (#6019), its conversations between');
+  assert.match(html, /<span class="platform-tab-label">Messages<\/span><\/a><div id="platform-rail-conversations" class="platform-rail-conversations"><\/div><a id="platform-tab-ai"/,
+    'Messages, its conversations, then AI (#6019, the rail\'s order: Evan, 29 Oct 2026)');
   assert.doesNotMatch(html, /platform-rail-nest/);
   const src = read('frontend/src/features/nav/rail-conversations.tsx');
   assert.match(src, /const open = sidebarRows && screen === 'messages-screen' && tab === 'messages';/);
@@ -220,7 +220,8 @@ test('the look: one indent a level, one unbroken line, the parent unfilled; AI a
   assert.match(css, /\.platform-rail-community\[data-rail-open\]\[aria-current="page"\],\n  \.platform-tabs:has\(#platform-rail-conversations > \[data-nest="open"\] \[aria-current="page"\]\) #platform-tab-messages\[aria-current="page"\] \{\n    background: transparent;/);
   assert.match(css, /--platform-rail-full: 212px;/, 'the deeper rows need 212px');
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
-  // #6019: Discover is a page of Home's; its seat is AI's.
+  // #6019: AI is a sparkle. The rail keeps Discover's compass under Home
+  // (29 Oct 2026); on a phone it is a page of Home's.
   assert.match(bar, /\{ key: 'ai' as const, label: 'core:tabs\.ai', href: '#ai', Icon: SparklesIcon \}/);
-  assert.doesNotMatch(bar, /key: 'discover'/);
+  assert.match(bar, /\{ key: 'discover' as const, label: 'core:tabs\.discover', href: '#apps', Icon: CompassIcon \}/);
 });

@@ -299,17 +299,36 @@ const Browse = {
     // first attempt at #2639 changed only app.js and did nothing at all.
     // App._BACK_SLOT is the other writer; 'browse-screen' is a root there.
     //
-    // #6019: DISCOVER IS A PAGE OF HOME'S NOW, not a tab, so the list level
-    // and a detail opened from a Home card have an arrow back to Home; a
-    // detail opened from the list goes up to the list.
+    // #6019: ON A PHONE DISCOVER IS A PAGE OF HOME'S, not a tab, so the list
+    // level and a detail opened from a Home card have an arrow back to Home.
+    // ON THE DESKTOP RAIL IT IS A TAB (29 Oct 2026): those two show nothing,
+    // as #2718's review had it, because the rail beside them is the way out.
+    // A detail opened from the list goes up to the list on both.
     const upToList = onDetail && Browse._detailOrigin !== 'home';
-    App.setBackIcon('arrow', upToList ? '#apps' : '/');
+    const root = !upToList && !!App._discoverIsTab?.();
+    App.setBackIcon(root ? 'none' : 'arrow', upToList ? '#apps' : (root ? undefined : '/'));
+    Browse._watchLayout();
     if (onDetail) {
       const app = Browse.appBySlug(Browse._slug);
       App.setHeaderTitle(app?.name || Browse._slug);
     } else {
       App.setHeaderTitle(PlatformI18n.t('discover:browse.headerTitle'));
     }
+  },
+
+  // A window resized across 768px with Discover open changes what its back
+  // slot is (a tab root on the rail, a page of Home's on a phone), so the
+  // chrome is synced again there. Installed once, on the first sync.
+  _layoutWatched: false,
+  _watchLayout() {
+    if (Browse._layoutWatched) return;
+    Browse._layoutWatched = true;
+    try {
+      window.matchMedia?.('(min-width: 768px)')?.addEventListener?.('change', () => {
+        const screen = document.getElementById('browse-screen');
+        if (screen && !screen.classList.contains('hidden')) Browse._syncChrome();
+      });
+    } catch (_) { /* no matchMedia: nothing to follow */ }
   },
 
   // ── Data ──────────────────────────────────────────────────────────

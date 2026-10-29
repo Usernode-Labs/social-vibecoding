@@ -22088,10 +22088,10 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
    than the others. Narrower than 375px it drops half a point as well. The
    rail has room and is left alone. */
 @media (max-width: 767.98px) {
-  /* Communities' seat, the fourth, is a little wider than the other four:
-     it holds the longest word, and the bar's other labels (Messages in the
-     middle, your name last, which ellipsizes) have room to spare. */
-  #platform-tabs { grid-template-columns: 1fr 1fr 1fr 1.3fr 1fr; }
+  /* Communities' seat, the second (#6019), is a little wider than the
+     other four: it holds the longest word, and the bar's other labels (AI
+     in the middle, your name last, which ellipsizes) have room to spare. */
+  #platform-tabs { grid-template-columns: 1fr 1.3fr 1fr 1fr 1fr; }
   #platform-tab-workshop { overflow: visible; }
   #platform-tab-workshop .platform-tab-label {
     letter-spacing: -.02em;
@@ -22102,9 +22102,26 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
 @media (max-width: 374.98px) {
   /* The smallest phones: every label drops half a point and tightens, the
      cells lose their 2px sides, and Communities' seat widens a little less. */
-  #platform-tabs { grid-template-columns: 1fr 1fr 1fr 1.2fr 1fr; }
+  #platform-tabs { grid-template-columns: 1fr 1.2fr 1fr 1fr 1fr; }
   .platform-tab { padding: 0; }
   .platform-tab .platform-tab-label { font-size: 10.5px; letter-spacing: -.02em; }
+}
+
+/* TWO ORDERS, ONE MARKUP (Evan, 29 Oct 2026). The tabs' markup is the
+   desktop rail's order, Home, Discover, Messages, AI, Communities, then you,
+   so a keyboard on a desktop moves through them in the order it sees
+   (features/nav/tab-bar.tsx TABS). The phone's bar keeps #6019's order,
+   Home · Communities · AI · Messages · You, as five cells: `order` lays it
+   out, and the Discover tab is the rail's alone (Home's Discover block opens
+   the page there). The orders are below zero so the side strip's own
+   (`order: 1` for the app you left, `2` for you, further down) still come
+   after the four. You keeps the default, last in the markup. */
+@media (max-width: 767.98px) {
+  #platform-tab-discover { display: none; }
+  #platform-tab-home { order: -4; }
+  #platform-tab-workshop { order: -3; }
+  #platform-tab-ai { order: -2; }
+  #platform-tab-messages { order: -1; }
 }
 
 /* A QUIET GREY DISC, NOT THE BELL'S RED (#2912). This used to be the same
@@ -23284,8 +23301,9 @@ html.un-kb #platform-parked {
 
      An auto top margin and nothing else: no reordering in the markup, no
      second element, no id moved. The margin is on the rule drawn above Me
-     now (below), which pins the pair to the foot. The DOM order is still the reading order a
-     screen reader announces and the order the phone's bar lays out, and this
+     now (below), which pins the pair to the foot. The DOM order is this
+     rail's own reading order (the phone's bar lays its five out with
+     `order`: "TWO ORDERS, ONE MARKUP" above), and this
      rule lives inside the desktop media query because on a phone the five
      are a row across the foot and an auto margin there would drop Me out of
      line with its four neighbours.

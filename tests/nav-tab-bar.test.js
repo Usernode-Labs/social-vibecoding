@@ -60,15 +60,21 @@ test('every screen root but the app view belongs to a tab', () => {
     'the app view is not one of the platform\'s sections; the bar is hidden there');
 });
 
-test('the five tabs are the five the bar renders', () => {
-  const { TAB_FOR_SCREEN } = loadTsx('frontend/src/features/nav/nav-store.js');
+test('the tabs are the ones the bar renders', () => {
+  const { TAB_FOR_SCREEN, RAIL_TAB_FOR_SCREEN, tabForScreen } = loadTsx('frontend/src/features/nav/nav-store.js');
   const sections = [...new Set(Object.values(TAB_FOR_SCREEN))].sort();
-  // #6019: four are screens' own tabs; the fifth, AI, is the Messages
-  // screen while the Homeroom bot's chat is on it (the nav store's `bot`).
+  // #6019: on a phone four are screens' own tabs; the fifth, AI, is the
+  // Messages screen while the Homeroom bot's chat is on it (the nav store's
+  // `bot`). The desktop rail adds Discover's (29 Oct 2026).
   assert.deepEqual(sections, ['home', 'me', 'messages', 'workshop']);
+  assert.deepEqual({ ...RAIL_TAB_FOR_SCREEN }, { 'browse-screen': 'discover' });
+  assert.equal(tabForScreen('browse-screen'), 'home', 'a phone lights Home on Discover');
+  assert.equal(tabForScreen('browse-screen', true), 'discover', 'the rail lights its Discover tab');
+  assert.equal(tabForScreen('home-screen', true), 'home', 'and answers as the phone everywhere else');
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   const keys = [...bar.matchAll(/key: '([a-z]+)' as const/g)].map((m) => m[1]);
-  assert.deepEqual(keys, ['home', 'workshop', 'ai', 'messages', 'me']);
+  // The rail's order is the markup's; app.css orders the phone's five.
+  assert.deepEqual(keys, ['home', 'discover', 'messages', 'ai', 'workshop', 'me']);
   assert.match(bar, /const tab = routedTab === 'messages' && bot \? 'ai' : routedTab;/);
   assert.match(read('frontend/src/features/messages/store.ts'),
     /bot: !!state\.route\.open && !!botId && state\.route\.conversationId === botId,/);
@@ -79,7 +85,7 @@ test('the five tabs are the five the bar renders', () => {
 test('the initial render is the markup the prerender ships', () => {
   const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
 
-  for (const key of ['home', 'workshop', 'ai', 'messages', 'me']) {
+  for (const key of ['home', 'discover', 'messages', 'ai', 'workshop', 'me']) {
     assert.match(html, new RegExp(`id="platform-tab-${key}"`), `#platform-tab-${key} renders`);
   }
   assert.match(html, /id="platform-tabs"/);
@@ -102,8 +108,8 @@ test('Home is the one tab addressed as a path, so a modified click opens a tab',
   const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
   assert.match(html, /id="platform-tab-home"[^>]*href="\/"/);
   for (const [key, href] of [
-    ['workshop', '#communities'], ['ai', '#ai'],
-    ['messages', '#messages'], ['me', '#profile'],
+    ['discover', '#apps'], ['messages', '#messages'], ['ai', '#ai'],
+    ['workshop', '#communities'], ['me', '#profile'],
   ]) {
     assert.match(html, new RegExp(`id="platform-tab-${key}"[^>]*href="${href.replace('#', '\\#')}"`));
   }
@@ -487,7 +493,11 @@ test('every screen change clears the peek, and nothing else does', () => {
   // which lights Workshop. TAB_FOR_SCREEN cannot say so — a screen in that
   // map is a tab ROOT, and tests/header-back-home.test.js derives "shows no
   // back control" from being in it, which the app view's ✕ contradicts.
-  assert.match(mount, /tab: tabOverride \|\| \(screen \? tabForScreen\(screen\) : null\),/);
+  assert.match(mount, /tab: tabOverride \|\| \(screen \? tabForScreen\(screen, railLayout\(\)\) : null\),/);
+  // The rail's width decides Discover's light (29 Oct 2026), and a window
+  // resized across it moves the light, unless the router named the tab.
+  assert.match(mount, /tabNamed = !!tabOverride;/);
+  assert.match(mount, /window\.matchMedia\?\.\(SIDEBAR_ROWS_QUERY\)\.addEventListener\?\.\('change', \(\) => \{\n      const \{ screen, tab \} = navStore\.get\(\);\n      if \(!screen \|\| tabNamed\) return;/);
   assert.match(read('public/js/app.js'),
     /screen === 'app-view' && !inApp\s*\n\s*\? \(App\._isMessagesThread\(\) \? 'messages' : 'workshop'\)/,
     'and app.js is the one place that decides which of the two it is');

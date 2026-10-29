@@ -3,7 +3,8 @@
  * starts at.
  *
  * On every desktop window, from 768px, the rail is one 212px sidebar for the
- * whole platform: Home, Discover and Messages, then the communities you
+ * whole platform: Home, Discover, Messages and AI (#6019), then the
+ * communities you
  * pinned (./rail-pinned.tsx) and your communities under a Communities heading
  * (./rail-communities.tsx), each with its app as the first row under it, and
  * you at its foot. The community you are in nests its places under its row,
