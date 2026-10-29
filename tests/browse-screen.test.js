@@ -1166,6 +1166,21 @@ test('rowView: an app-store row — icon, name, meta, Join state', () => {
   assert.doesNotMatch(BROWSE_SRC, /card-add-btn/, 'the corner badge is a real button now');
 });
 
+test('#5928: rowView carries the app\'s own one-line description, or nothing', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [
+    app({ slug: 'said', name: 'Said', manifest_snapshot: { description: '  Count   sheep\nbefore bed.  ' } }),
+    app({ slug: 'blank', name: 'Blank', manifest_snapshot: { description: '   ' } }),
+    app({ slug: 'none', name: 'None', manifest_snapshot: null }),
+    app({ slug: 'long', name: 'Long', manifest_snapshot: { description: 'x'.repeat(400) } }),
+  ];
+  Browse.render();
+  assert.equal(rowFor(state, 'said').about, 'Count sheep before bed.', 'whitespace folded');
+  assert.equal(rowFor(state, 'blank').about, null, 'no filler for a blank description');
+  assert.equal(rowFor(state, 'none').about, null);
+  assert.equal(rowFor(state, 'long').about.length, 160, 'capped as Home\'s cards cap it');
+});
+
 test('browse rows: the layout switch is pure CSS on the container', () => {
   // Narrow: a hairline-divided vertical list. md+: a 2/3-column grid whose
   // rows pick up a box treatment from .browse-row in app.css. No

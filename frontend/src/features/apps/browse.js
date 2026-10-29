@@ -962,10 +962,9 @@ const Browse = {
 
   // ── Row rendering ─────────────────────────────────────────────────
 
-  // The row's second line. There is no description column on `apps` (and
-  // dapp.json carries descriptions only per-secret), so this is derived
-  // META, not prose: who's using it, when it last shipped, and the status
-  // word when the app isn't actually running.
+  // The row's facts line, under the app's own sentence (aboutLine) when it
+  // has one. This is derived META, not prose: who's using it, when it last
+  // shipped, and the status word when the app isn't actually running.
   //
   // It ADAPTS to the current sort (#1383), so the number a row was ranked by
   // is the number the row shows — a list ordered by merged proposals whose
@@ -1011,6 +1010,19 @@ const Browse = {
     return bits.length ? joinFacts(bits) : '';
   },
 
+  // What the app is, in its own words (#5928): the manifest's one-line
+  // description, the sentence Home's cards (HomePanels.appBlurb), the About
+  // sheet and the guest directory already show. `manifest_snapshot` rides
+  // every GET /api/apps row. Absent on many apps, and then the row says
+  // nothing rather than a filler line. Pure — unit-tested.
+  aboutLine(app) {
+    const snap = app && app.manifest_snapshot;
+    const raw = snap && typeof snap === 'object' ? snap.description : null;
+    if (typeof raw !== 'string') return null;
+    const text = raw.replace(/\s+/g, ' ').trim();
+    return text ? text.slice(0, 160) : null;
+  },
+
   // One app-store row, as DATA: icon · name + meta + status pills · Add
   // button. ./browse-list.tsx renders it; the same descriptor is the desktop
   // box, because the layout switch is pure CSS (.browse-row in app.css).
@@ -1033,6 +1045,7 @@ const Browse = {
       directoryTier: Browse.directoryTier(app),
       slug: app.slug,
       name: app.name || app.slug,
+      about: Browse.aboutLine(app),
       meta: Browse.metaLine(app, Browse._sort),
       status: app.status || '',
       statusDot: app.status === 'running' ? 'running'
