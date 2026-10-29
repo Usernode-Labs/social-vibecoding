@@ -1411,6 +1411,14 @@
     "text": "Anyone on Homeroom can find your username when they search for someone to message, mention or invite.",
     "description": "Explanation under the \"Let people find my profile\" switch in Settings > Privacy while the switch is on: who can find you now."
   },
+  "privacy.state.on": {
+    "text": "On",
+    "description": "Small word after a switch's label in Settings > Privacy (\"Let people find my profile\", \"Share usage analytics\") while that switch is on."
+  },
+  "privacy.state.off": {
+    "text": "Off",
+    "description": "Small word after a switch's label in Settings > Privacy (\"Let people find my profile\", \"Share usage analytics\") while that switch is off."
+  },
   "privacy.loadFailed": {
     "text": "Couldn't load your privacy settings. Try again in a moment.",
     "description": "Error on the Settings > Privacy page when reading the current settings from the server failed."
