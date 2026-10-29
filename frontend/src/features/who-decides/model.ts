@@ -11,8 +11,12 @@ import { t as translate } from '../../lib/i18n/runtime';
 export type PresetKey = 'you_or_the_group' | 'two_yeses' | 'open_floor' | 'group_vote';
 export type Kind = 'atLeast' | 'percentOfActive' | 'percentOfEveryone' | 'majority';
 
-/** A rule: whose yes, and how many. `group` is a built-in key or a named group's key. */
-export interface Rule { group: string; kind: Kind; n: number | null }
+/**
+ * A rule: whose yes, and how many. `group` is a built-in key or a named group's
+ * key; `min`, on a majority or a share that has one, is the fewest yeses it
+ * goes live on.
+ */
+export interface Rule { group: string; kind: Kind; n: number | null; min?: number | null }
 /** A named group, by the usernames in it. */
 export interface Group { name: string; people: string[] }
 /** A rule list, with the groups it can name. `preset` when it is one by name. */
@@ -24,6 +28,8 @@ export const BUILT_IN_GROUPS = ['creator', 'members', 'admins'] as const;
 export const MAX_RULES = 5;
 export const MAX_GROUPS = 10;
 export const MAX_AT_LEAST = 50;
+/** The smallest minimum a rule takes (the server's MIN_MINIMUM). */
+export const MIN_MINIMUM = 2;
 export const GROUP_NAME_MAX = 32;
 
 /** The server's table (governance-rules.js PRESETS), rule for rule. */
@@ -43,16 +49,22 @@ export function isBuiltIn(group: string): boolean {
   return (BUILT_IN_GROUPS as readonly string[]).includes(group);
 }
 
-function signature(r: Rule): string {
-  return `${r.group}:${r.kind}:${r.kind === 'majority' ? '' : r.n}`;
+/** What tells two rules apart, the server's ruleSignature: a minimum makes a different rule. */
+export function ruleSignature(r: Rule): string {
+  return `${r.group}:${r.kind}:${r.kind === 'majority' ? '' : r.n}${minOf(r) != null ? `:min${minOf(r)}` : ''}`;
+}
+
+/** A rule's minimum, or null: an "at least" rule never has one. */
+export function minOf(r: Rule): number | null {
+  return r.kind !== 'atLeast' && r.min != null ? r.min : null;
 }
 
 /** The preset a rule list is the same as, in any order, or null. */
 export function matchPreset(rules: readonly Rule[]): PresetKey | null {
   if (!rules.length) return null;
-  const sig = rules.map(signature).sort().join('|');
+  const sig = rules.map(ruleSignature).sort().join('|');
   for (const key of PRESET_KEYS) {
-    if (PRESETS[key].map(signature).sort().join('|') === sig) return key;
+    if (PRESETS[key].map(ruleSignature).sort().join('|') === sig) return key;
   }
   return null;
 }
@@ -74,7 +86,9 @@ export function blockFor(value: RulesValue): Record<string, unknown> {
   if (value.groups.length) out.groups = value.groups.map((g) => ({ name: g.name, people: [...g.people] }));
   out.rules = value.rules.map((r) => {
     const group = isBuiltIn(r.group) ? r.group : (nameOf.get(r.group) || r.group);
-    return r.kind === 'majority' ? { group, majority: true } : { group, [r.kind]: r.n };
+    const rule: Record<string, unknown> = r.kind === 'majority' ? { group, majority: true } : { group, [r.kind]: r.n };
+    if (minOf(r) != null) rule.minimum = minOf(r);
+    return rule;
   });
   return out;
 }
@@ -111,7 +125,10 @@ export function currentValue(approval: ApprovalPayload | null | undefined): Rule
   if (!approval) return null;
   if (approval.mode === 'rules' && Array.isArray(approval.rules) && approval.rules.length) {
     const groups = (approval.groups || []).map((g) => ({ name: g.name, people: [...(g.people || [])] }));
-    const rules = approval.rules.map((r) => ({ group: r.group, kind: r.kind, n: r.kind === 'majority' ? null : r.n }));
+    const rules = approval.rules.map((r): Rule => {
+      const rule: Rule = { group: r.group, kind: r.kind, n: r.kind === 'majority' ? null : r.n };
+      return minOf(r) != null ? { ...rule, min: minOf(r) } : rule;
+    });
     const preset = groups.length ? null : (approval.preset || matchPreset(rules));
     return { preset, groups, rules };
   }
@@ -186,9 +203,22 @@ export function rulePhrase(rule: Rule, ctx: { groups: readonly Group[]; creator:
       : translate('dialogs:whoDecides.rule.phrase.creatorNobody');
   }
   const group = groupLabel(rule.group, ctx.groups);
-  if (rule.kind === 'majority') return translate('dialogs:whoDecides.rule.phrase.majority', { group });
-  if (rule.kind === 'percentOfActive') return translate('dialogs:whoDecides.rule.phrase.percentOfActive', { group, percent: rule.n ?? 0 });
-  if (rule.kind === 'percentOfEveryone') return translate('dialogs:whoDecides.rule.phrase.percentOfEveryone', { group, percent: rule.n ?? 0 });
+  const min = minOf(rule);
+  if (rule.kind === 'majority') {
+    return min != null
+      ? translate('dialogs:whoDecides.rule.phrase.majorityMin', { group, count: min })
+      : translate('dialogs:whoDecides.rule.phrase.majority', { group });
+  }
+  if (rule.kind === 'percentOfActive') {
+    return min != null
+      ? translate('dialogs:whoDecides.rule.phrase.percentOfActiveMin', { group, percent: rule.n ?? 0, count: min })
+      : translate('dialogs:whoDecides.rule.phrase.percentOfActive', { group, percent: rule.n ?? 0 });
+  }
+  if (rule.kind === 'percentOfEveryone') {
+    return min != null
+      ? translate('dialogs:whoDecides.rule.phrase.percentOfEveryoneMin', { group, percent: rule.n ?? 0, count: min })
+      : translate('dialogs:whoDecides.rule.phrase.percentOfEveryone', { group, percent: rule.n ?? 0 });
+  }
   return translate('dialogs:whoDecides.rule.phrase.atLeast', { group, count: rule.n ?? 1 });
 }
 
@@ -209,11 +239,22 @@ export function ruleToday(rule: Rule, ctx: { groups: readonly Group[]; creator: 
   if (rule.group === 'creator' && rule.kind !== 'majority' && ctx.creator) {
     return translate('dialogs:whoDecides.rule.today.creator', { creator: ctx.creator });
   }
-  if (rule.kind === 'majority') return translate('dialogs:whoDecides.rule.today.majority');
-  if (rule.kind === 'percentOfActive') return translate('dialogs:whoDecides.rule.today.percentOfActive');
+  // The minimum as it stands today: never more than the group has.
+  const min = minOf(rule);
+  const minNeed = min != null && size != null ? Math.min(min, Math.max(size, 1)) : min;
+  if (rule.kind === 'majority') {
+    return minNeed != null
+      ? translate('dialogs:whoDecides.rule.today.majorityMin', { count: minNeed })
+      : translate('dialogs:whoDecides.rule.today.majority');
+  }
+  if (rule.kind === 'percentOfActive') {
+    return minNeed != null
+      ? translate('dialogs:whoDecides.rule.today.percentOfActiveMin', { count: minNeed })
+      : translate('dialogs:whoDecides.rule.today.percentOfActive');
+  }
   if (size == null) return translate('dialogs:whoDecides.rule.today.unknown');
   if (rule.kind === 'percentOfEveryone') {
-    const need = Math.max(1, Math.ceil(((rule.n ?? 0) / 100) * size));
+    const need = Math.max(1, Math.ceil(((rule.n ?? 0) / 100) * size), minNeed ?? 0);
     return translate('dialogs:whoDecides.rule.today.percentOfEveryone', { need, total: size });
   }
   const need = Math.min(rule.n ?? 1, Math.max(size, 1));
@@ -263,7 +304,7 @@ export function valueProblem(value: RulesValue): string | null {
   }
   const seen = new Set<string>();
   for (const r of value.rules) {
-    const s = signature(r);
+    const s = ruleSignature(r);
     if (seen.has(s)) return translate('dialogs:whoDecides.own.problem.duplicate');
     seen.add(s);
   }

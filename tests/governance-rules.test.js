@@ -275,6 +275,125 @@ test('any one rule passing is enough', () => {
   assert.equal(gate(govFor(value), { author: MAYA, yes: [SNAIT, EVAN], f }).passedBy.group, 'members');
 });
 
+// ── A minimum on a majority or a share ────────────────────────────────
+
+const ids = (n, from = 1) => Array.from({ length: n }, (_, i) => from + i);
+
+function withMinimum(rule) {
+  return govFor(rules.parseRulesBlock({ rules: [rule] }));
+}
+
+test('a majority or a share can carry a minimum, written and read back as one', () => {
+  const v = rules.parseRulesBlock({
+    rules: [
+      { group: 'creator', atLeast: 1 },
+      { group: 'members', majority: true, minimum: 10 },
+      { group: 'members', percentOfActive: 50, minimum: 3 },
+    ],
+  });
+  assert.deepEqual(v.rules, [
+    { group: 'creator', kind: 'atLeast', n: 1 },
+    { group: 'members', kind: 'majority', n: null, min: 10 },
+    { group: 'members', kind: 'percentOfActive', n: 50, min: 3 },
+  ]);
+  const block = rules.blockFor(v);
+  assert.deepEqual(block.rules[1], { group: 'members', majority: true, minimum: 10 });
+  assert.deepEqual(rules.parseRulesBlock(block).rules, v.rules);
+  // Stored and read back by the gate with it.
+  const stored = rules.storedForm(v);
+  assert.deepEqual(stored.rules[1], { group: 'members', kind: 'majority', n: null, min: 10 });
+  assert.deepEqual(governance.rulesFromColumn(stored).rules, v.rules);
+});
+
+test('a minimum makes a rule list no preset, so it is never written as one', () => {
+  const v = rules.parseRulesBlock({ rules: [{ group: 'creator', atLeast: 1 }, { group: 'members', majority: true, minimum: 10 }] });
+  assert.equal(rules.matchPreset(v.rules), null);
+  assert.equal('preset' in rules.blockFor(v), false);
+  assert.match(rules.describeRules(v), /its own rules/);
+  // The same rule with and without a minimum are two rules.
+  assert.doesNotThrow(() => rules.parseRulesBlock({ rules: [
+    { group: 'members', majority: true }, { group: 'members', majority: true, minimum: 10 },
+  ] }));
+});
+
+test('the strict reader refuses a minimum it cannot take', () => {
+  const bad = [
+    { group: 'members', atLeast: 2, minimum: 5 },
+    { group: 'members', majority: true, minimum: 1 },
+    { group: 'members', majority: true, minimum: rules.MAX_AT_LEAST + 1 },
+    { group: 'members', percentOfEveryone: 50, minimum: 2.5 },
+    { group: 'members', majority: true, minimum: '10' },
+  ];
+  for (const r of bad) assert.throws(() => rules.parseRulesBlock({ rules: [r] }), rules.RulesError, JSON.stringify(r));
+});
+
+test('a minimum in a small group is everyone in it, and never more', () => {
+  // Four members: a minimum of 10 asks for all four yeses.
+  const gov = withMinimum({ group: 'members', majority: true, minimum: 10 });
+  const short = gate(gov, { author: MAYA, yes: [MAYA, SNAIT, EVAN] });
+  assert.equal(short.mergeable, false);
+  assert.equal(short.required, 4);
+  assert.equal(short.rules[0].need, 4);
+  assert.equal(short.rules[0].min, 10);
+  // Group vote alone would have taken three.
+  assert.equal(gate(preset('group_vote'), { author: MAYA, yes: [MAYA, SNAIT, EVAN] }).mergeable, true);
+  assert.equal(gate(gov, { author: MAYA, yes: [MAYA, SNAIT, EVAN, ANA] }).mergeable, true);
+});
+
+test('a minimum above the eased bar is the bar; below it, it changes nothing', () => {
+  // Thirty active members, nobody opposed: Group vote's eased bar is 9.
+  const f = facts({ memberCount: 30, membersActive: 30 });
+  assert.equal(gate(preset('group_vote'), { author: 1, yes: ids(9), f }).required, 9);
+  const ten = withMinimum({ group: 'members', majority: true, minimum: 10 });
+  const nine = gate(ten, { author: 1, yes: ids(9), f });
+  assert.equal(nine.required, 10);
+  assert.equal(nine.thresholdMet, false);
+  assert.equal(nine.mergeable, false);
+  const reached = gate(ten, { author: 1, yes: ids(10), f });
+  assert.equal(reached.thresholdMet, true);
+  const five = withMinimum({ group: 'members', majority: true, minimum: 5 });
+  const plain = gate(preset('group_vote'), { author: 1, yes: ids(9), f });
+  const eased = gate(five, { author: 1, yes: ids(9), f });
+  for (const k of ['required', 'thresholdMet', 'windowEndsAt', 'mergeable']) assert.deepEqual(eased[k], plain[k], k);
+});
+
+test('a minimum holds on the quiet wait: silence alone never ships it', () => {
+  const weekAgo = new Date(NOW - 8 * DAY).toISOString();
+  const lone = { author: MAYA, yes: [MAYA], openedAt: weekAgo };
+  // One unopposed yes, a week on: Group vote ships it.
+  assert.equal(gate(preset('group_vote'), lone).mergeable, true);
+  const g = gate(withMinimum({ group: 'members', majority: true, minimum: 10 }), lone);
+  assert.equal(g.mergeable, false);
+  assert.equal(g.lazyArmed, false);
+  assert.equal(g.windowEndsAt, null, 'no clock counts down to a merge that cannot happen');
+});
+
+test('a change the group votes down under a minimum still closes on schedule', () => {
+  const weekAgo = new Date(NOW - 8 * DAY).toISOString();
+  const down = { author: MAYA, no: [SNAIT, ANA, EVAN], openedAt: weekAgo };
+  const plain = gate(preset('group_vote'), down);
+  const g = gate(withMinimum({ group: 'members', majority: true, minimum: 10 }), down);
+  assert.equal(plain.rejectable, true);
+  for (const k of ['rejectionArmed', 'rejectionEndsAt', 'rejectable']) assert.deepEqual(g[k], plain[k], k);
+});
+
+test('a share with a minimum counts the author’s yes toward both', () => {
+  // Half of four members is two; the minimum of three is the bar.
+  const gov = withMinimum({ group: 'members', percentOfEveryone: 50, minimum: 3 });
+  assert.equal(gate(gov, { author: MAYA, yes: [SNAIT] }).mergeable, false);
+  const g = gate(gov, { author: MAYA, yes: [SNAIT, ANA] });
+  assert.equal(g.mergeable, true);
+  assert.equal(g.rules[0].need, 3);
+});
+
+test('the creator’s yes still ships a change beside a members rule with a minimum', () => {
+  const gov = govFor(rules.parseRulesBlock({ rules: [
+    { group: 'creator', atLeast: 1 }, { group: 'members', majority: true, minimum: 10 },
+  ] }));
+  assert.equal(gate(gov, { author: MAYA, yes: [EVAN] }).mergeable, true);
+  assert.equal(gate(gov, { author: MAYA, yes: [MAYA, SNAIT] }).mergeable, false);
+});
+
 // ── Changes to who decides ────────────────────────────────────────────
 
 test('who decides goes by You or the group whatever the project picked', () => {

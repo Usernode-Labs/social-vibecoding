@@ -372,7 +372,12 @@ export function rulesFromColumn(raw: unknown): StoredRules | null {
   const rules: Rule[] = v.rules.filter((r: any) => r && typeof r.group === 'string'
     && ['atLeast', 'percentOfActive', 'percentOfEveryone', 'majority'].includes(r.kind)
     && (BUILT_IN_GROUPS.includes(r.group) || keys.has(r.group)))
-    .map((r: any) => ({ group: r.group, kind: r.kind, n: r.kind === 'majority' ? null : parseInt(r.n, 10) || 1 }));
+    .map((r: any) => {
+      const rule: Rule = { group: r.group, kind: r.kind, n: r.kind === 'majority' ? null : parseInt(r.n, 10) || 1 };
+      // A minimum a rule cannot take is dropped, as an unreadable rule is.
+      const min = r.min != null && r.kind !== 'atLeast' ? parseInt(r.min, 10) : NaN;
+      return Number.isFinite(min) && min >= 1 ? { ...rule, min } : rule;
+    });
   if (!rules.length) return null;
   const preset = typeof v.preset === 'string' && (PRESET_KEYS as readonly string[]).includes(v.preset) ? v.preset as PresetKey : null;
   return { preset, groups, rules };
@@ -611,7 +616,7 @@ export interface GovernedGate extends Gate {
   creatorYes?: boolean;
   partial?: boolean;
   passedBy?: { group: string; kind: string; n: number | null } | null;
-  rules?: Array<{ group: string; kind: string; n: number | null; size: number; yes: number; need: number | null; passed: boolean; empty: boolean }>;
+  rules?: Array<{ group: string; kind: string; n: number | null; size: number; yes: number; need: number | null; passed: boolean; empty: boolean; min?: number }>;
   // Set (true) only when the first-version rule let it through
   // (applyFirstVersion); absent otherwise.
   firstVersion?: boolean;
@@ -860,6 +865,7 @@ export function computeRulesGate(
     rules: results.map((r) => ({
       group: r.group, kind: r.kind, n: r.n, size: r.size, yes: r.yes, need: r.need,
       passed: r.passed, empty: r.empty,
+      ...(r.min != null ? { min: r.min } : {}),
     })),
   };
 }
