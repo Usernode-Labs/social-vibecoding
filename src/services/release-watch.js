@@ -361,6 +361,15 @@ async function carriedBy(pool, appId, sha, runningSha) {
           AND LOWER(serving.merge_commit_sha) = LOWER($3)
           AND (COALESCE(recorded.merged_at, recorded.created_at), recorded.id)
               <= (COALESCE(serving.merged_at, serving.created_at), serving.id)
+          -- The recorded commit's own merge is its newest row: a merge carried
+          -- to main inside a later one names that one's commit from its own,
+          -- earlier, place in the order.
+          AND NOT EXISTS (
+            SELECT 1 FROM chat_sessions newer
+             WHERE newer.app_id = recorded.app_id AND newer.status = 'merged'
+               AND LOWER(newer.merge_commit_sha) = LOWER($2)
+               AND (COALESCE(newer.merged_at, newer.created_at), newer.id)
+                   > (COALESCE(recorded.merged_at, recorded.created_at), recorded.id))
         LIMIT 1`,
       [appId, sha, runningSha]
     );

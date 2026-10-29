@@ -177,6 +177,61 @@ test('included.find names each carried change with the head that matched', async
   assert.deepEqual(out, { found: [{ id: 3, head: 'c'.repeat(40) }, { id: 4, head: 'd'.repeat(40) }] });
 });
 
+test('carried.find names the later merge whose pull request lists the commit and whose merge the build contains', async (t) => {
+  const day = Date.now() - 24 * 60 * 60 * 1000;
+  const row = (id, pr, sha, { carrier = { id, pr, title: `PR ${pr}` }, at = day + id * 60 * 1000 } = {}) => ({ id, pr_number: pr,
+    merge_commit_sha: sha, merged_at: new Date(at), carrier_id: carrier.id, carrier_pr_number: carrier.pr, carrier_pr_title: carrier.title });
+  let candidates = [row(6, 9, 'd'.repeat(40)), row(7, 10, 'e'.repeat(40)), row(8, 11, 'F'.repeat(40), { carrier: { id: 12, pr: 14, title: 'Main' } })];
+  const lists = new Map([[9, { shas: ['c'.repeat(40)], complete: true }]]);
+  gh.listPullRequestCommitShas = async (_o, _r, n) => {
+    const l = lists.get(n);
+    if (l instanceof Error) throw l;
+    return l || { shas: ['B'.repeat(40)], complete: true };
+  };
+  const compared = [];
+  gh.compareCommitAncestry = async (_o, _r, base) => { compared.push(base); return { status: base === 'f'.repeat(40) ? 'ahead' : 'diverged' }; };
+  t.after(() => { delete gh.compareCommitAncestry; });
+  const { asked, handlers: h } = withRows(() => candidates);
+  const input = { sessionId: 5, appId: 2, owner: 'acme', repo: 'shop', mergeSha: 'b'.repeat(40),
+    mergedAt: new Date(day).toISOString(), release: '1'.repeat(40), after: null };
+  const at = (r) => r.merged_at.toISOString();
+  // #8 lists it and is in the build; it went to main inside #12 (carried
+  // or included there), which is the carrier.
+  assert.deepEqual((await call(h, WORK.carrier, input)).carrier, { sessionId: 12, prNumber: 14, prTitle: 'Main', mergeSha: 'f'.repeat(40) });
+  assert.deepEqual(asked[0].params, [2, 5, input.mergedAt, 0, []]);
+  assert.deepEqual(compared, ['e'.repeat(40), 'f'.repeat(40)], 'only a pull request that lists the commit is compared');
+  // None in this build: #6 is ruled out for good; #7 and #8 list it, so
+  // they are read again, and the next look goes on past #8.
+  gh.compareCommitAncestry = async () => ({ status: 'diverged' });
+  const none = await call(h, WORK.carrier, input);
+  assert.deepEqual(none, { carrier: null, scanned: { mergedAt: at(candidates[2]), id: 8, recheck: [7, 8] } });
+  await call(h, WORK.carrier, { ...input, after: none.scanned });
+  assert.deepEqual(asked.at(-1).params, [2, 5, at(candidates[2]), 8, [7, 8]]);
+  // A list cut short, or one GitHub would not show (a 404 is also what a
+  // token without access gets), rules nothing out either; a merge commit
+  // GitHub no longer has is not the carrier.
+  lists.set(9, { shas: [], complete: false });
+  lists.set(10, Object.assign(new Error('HTTP 404'), { status: 404 }));
+  gh.compareCommitAncestry = async () => { throw Object.assign(new Error('HTTP 404'), { status: 404 }); };
+  assert.deepEqual((await call(h, WORK.carrier, input)).scanned.recheck, [6, 7, 8]);
+  // What it read again and now rules out is dropped; the cursor stays.
+  lists.set(9, { shas: ['c'.repeat(40)], complete: true });
+  assert.deepEqual((await call(h, WORK.carrier, { ...input, after: { mergedAt: at(candidates[2]), id: 8, recheck: [6] } })).scanned,
+    { mergedAt: at(candidates[2]), id: 8, recheck: [7, 8] });
+  // It reads a merge of the last hour, but leaves it for a later look: a
+  // merge recorded late could still come before it.
+  lists.delete(10);
+  candidates = [row(6, 9, 'd'.repeat(40)), row(20, 21, 'a'.repeat(40), { at: Date.now() - 5 * 60 * 1000 })];
+  assert.deepEqual((await call(h, WORK.carrier, input)).scanned, { mergedAt: at(candidates[0]), id: 6, recheck: [] });
+  // A pull request GitHub no longer has is passed by; any other failure is retried.
+  candidates = [row(7, 10, 'e'.repeat(40)), row(8, 11, 'F'.repeat(40))];
+  lists.set(10, Object.assign(new Error('HTTP 404'), { status: 404 }));
+  gh.compareCommitAncestry = async () => ({ status: 'ahead' });
+  assert.equal((await call(h, WORK.carrier, input)).carrier.sessionId, 8);
+  gh.compareCommitAncestry = async () => { throw Object.assign(new Error('HTTP 502'), { status: 502 }); };
+  await assert.rejects(call(h, WORK.carrier, input), /HTTP 502/);
+});
+
 test('the journey runs strict, so a failure is retried', async () => {
   const { handlers: h } = withRows((sql) => (/FROM apps/.test(sql) ? [{ id: 2 }] : [{ id: 5, app_id: 2 }]));
   await call(h, WORK.journey, { sessionId: 5, sha: 'a'.repeat(40), at: '2026-10-09T00:00:00.000Z' });

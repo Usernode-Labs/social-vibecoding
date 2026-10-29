@@ -185,6 +185,8 @@ function connectorUploadRoutes(config, deps = {}) {
       kind: stored.kind,
       bytes: stored.bytes,
       sha256: stored.sha256,
+      // Where a video or a screenshot is served, for a plan's text to show.
+      ...(stored.path ? { path: stored.path } : {}),
       nextStep: uploads.nextStepFor(stored.kind, stored.uploadId),
     });
   };

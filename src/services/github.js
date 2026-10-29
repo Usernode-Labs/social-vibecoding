@@ -1397,6 +1397,18 @@ async function updatePR(owner, repo, prNumber, { title, body } = {}) {
   return data;
 }
 
+// Point a pull request at another base branch: a stacked change whose parent
+// has landed on main is retargeted to main (src/workflow/rules/pr-base.ts).
+// A pull request on the git host always merges into main, so there is
+// nothing to move.
+async function retargetPR(owner, repo, prNumber, base) {
+  if (onGitHost(owner)) return nativePulls().get(owner, repo, prNumber);
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.pulls.update({ owner, repo, pull_number: prNumber, base });
+  log.info('github', 'PR retargeted', { repo: `${owner}/${repo}`, pr: prNumber, base });
+  return data;
+}
+
 async function closePR(owner, repo, prNumber) {
   if (onGitHost(owner)) return nativePulls().close(owner, repo, prNumber);
   const octokit = await getOctokit(owner);
@@ -2073,6 +2085,7 @@ module.exports = {
   findOpenPrByBranch,
   listOpenPulls,
   updatePR,
+  retargetPR,
   closePR,
   reopenPR,
   mergePR,

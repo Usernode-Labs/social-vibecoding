@@ -57,6 +57,13 @@ const FIXTURE_HEADS = {
   9311: 'f0e9d8c7b6a5049382716f5e4d3c2b1a09f8e7d6',
   // #846: the "just imported, preview still building" fixture.
   9312: 'c4d3b2a1908f7e6d5c4b3a29180f7e6d5c4b3a29',
+  // The fixture stacked on #9310's branch (src/workflow/rules/pr-base.ts).
+  9313: 'd5e4c3b2a1f0e9d8c7b6a5948372615f4e3d2c1b',
+};
+// The seeded fixtures whose pull request is based on another branch than
+// main: a look reads the same base the seed stored, so it keeps waiting.
+const FIXTURE_BASES = {
+  9313: 'staging-fixture/imported-pr',
 };
 
 // Importable candidates surfaced by listOpenPulls (not tied to any DB row
@@ -75,6 +82,9 @@ const CANDIDATES = [
 
 // prNumber -> integer revision. Absent = revision 0.
 const _rev = new Map();
+// prNumber -> the base a retarget moved it to (retargetPR). Absent = the
+// catalog's own base.
+const _base = new Map();
 
 function currentRev(prNumber) {
   return _rev.get(Number(prNumber)) || 0;
@@ -100,6 +110,7 @@ function currentHead(prNumber) {
 // Reset all in-memory revision state (used by tests for isolation).
 function _resetForTests() {
   _rev.clear();
+  _base.clear();
 }
 
 function isEnabled() {
@@ -113,7 +124,7 @@ function metaFor(prNumber) {
     number: n,
     title: c ? c.title : `[Mock] Imported PR #${n}`,
     headRef: c ? c.headRef : `mock/pr-${n}`,
-    baseRef: c ? c.baseRef : 'main',
+    baseRef: _base.get(n) || (c ? c.baseRef : FIXTURE_BASES[n] || 'main'),
     author: c ? c.author : 'octo-mock',
     headRepo: (c && c.headRepo) || null,
   };
@@ -184,6 +195,14 @@ async function mergePR(owner, repo, prNumber, sha = null) {
   return { sha: mergeSha, merged: true, message: 'mock merge' };
 }
 
+// A stacked pull request moved onto main once the change under it landed
+// (src/workflow/rules/pr-base.ts).
+async function retargetPR(owner, repo, prNumber, base) {
+  _base.set(Number(prNumber), String(base));
+  log.info('github-mock', 'Mock PR retargeted', { prNumber: Number(prNumber), base });
+  return getPR(owner, repo, prNumber);
+}
+
 // Minimal octokit shim so pr-import-sync.refreshDriftState (which calls
 // getReadOctokit(...).rest.repos.compareCommits) works in mock mode: report
 // the branch as up to date (behind_by 0), so drift refresh is a clean no-op.
@@ -205,6 +224,7 @@ module.exports = {
   getPR,
   listChangedFiles,
   mergePR,
+  retargetPR,
   getOctokit,
   getReadOctokit: getOctokit,
   HeadMovedError,

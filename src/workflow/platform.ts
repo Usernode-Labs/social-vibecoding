@@ -57,7 +57,7 @@ import { MACHINE as RELEASE, releaseKey, releaseMachine } from './release/machin
 import { releaseServices } from './release/services.ts';
 import type { Adoption } from './release/services.ts';
 import { MACHINE as CLOCK, clock, clockKey } from './clock/machine.ts';
-import { clockServices } from './clock/services.ts';
+import { clockServices, newestBuild } from './clock/services.ts';
 import { MACHINE as WORKER_RELEASE, WORK as RELEASE_WORKER, releaseKey as workerReleaseKey, workerRelease } from './worker-release/machine.ts';
 import type { Request as WorkerReleaseRequest } from './worker-release/machine.ts';
 import { workerReleaseServices } from './worker-release/services.ts';
@@ -269,6 +269,10 @@ export async function startWorkflow(config: any, opts: { loops: boolean; preview
   };
   const started = createPlatformRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, release: bootRelease(),
+    // A kind only the newest build claims (WorkHandler.newestOnly): a
+    // preview's build. The newest build is the newest-only clocks' own,
+    // read on the runtime's own pool, never waiting behind the app's.
+    newest: () => newestBuild(workflowPool),
     publish: (q, pushes) => publishPushes(q, pushes, { badges: !!config.mobilePushEnabled }),
   });
   try {
@@ -1388,9 +1392,11 @@ const count = (n: unknown) => (Number.isInteger(n) && (n as number) >= 0 ? n as 
 // merged-by-hand clock, services/proposal-scans.js). The proposal machine
 // decides what follows (PrLooked). A merge carries the tally read here: the
 // counted Yes votes on the version that merged, and the app's active
-// members. Resolves whether the machine took it.
+// members. `base`: the branch it merged into (a merge into any branch but
+// main is never recorded as merged, rules/pr-base.ts). Resolves whether the
+// machine took it.
 export async function prLooked(m: { sessionId: number; appId: number; from: string; merged: boolean; closed: boolean;
-  mergeSha: string | null; mergedAt: string | null; closedAt: string | null }): Promise<boolean> {
+  mergeSha: string | null; mergedAt: string | null; closedAt: string | null; base?: string | null }): Promise<boolean> {
   const pool = kernelPool!;
   let tally = null;
   if (m.merged) {
@@ -1406,11 +1412,22 @@ export async function prLooked(m: { sessionId: number; appId: number; from: stri
   // The same reading within a minute (the webhook's and the clock's) is one
   // event; a close still settling is looked at again on the next run.
   const out = await proposalEvent('PrLooked', { from: m.from, merged: m.merged, closed: m.closed, mergeSha: m.mergeSha,
-    mergedAt: m.mergedAt, closedAt: m.closedAt, readAt: new Date().toISOString(), tally },
+    mergedAt: m.mergedAt, closedAt: m.closedAt, readAt: new Date().toISOString(), tally, base: m.base ?? null, baseRead: true },
   { sessionId: m.sessionId, appId: m.appId, source: sys('pr-look'), waitMs: 5000,
     requestKey: `pr-looked:${m.sessionId}:${what}:${m.mergedAt || m.closedAt || '-'}:${Math.floor(Date.now() / 60000)}` });
   // Taken once decided: one still pending is the next look's to report again.
   return typeof out === 'object' && out != null && ['accepted', 'replayed'].includes((out as any).status);
+}
+
+// A look found a stacked import still based on the branch of the change it
+// waited for, which is on main now (rules/pr-base.ts): it moves onto main, as
+// its parent's own merge would have told it. One an hour per pair: a move
+// under way answers a second ask, and one that failed for good is not asked
+// again every look.
+export async function parentMerged(p: { sessionId: number; appId: number; parentId: number }): Promise<void> {
+  await proposalEvent('ParentMerged', { parentId: p.parentId },
+    { sessionId: p.sessionId, appId: p.appId, source: sys('pr-look'),
+      requestKey: `parent-merged:${p.sessionId}:${p.parentId}:${Math.floor(Date.now() / 3600000)}` });
 }
 
 // The platform's own app now runs `sha` (its release booting): every merge
@@ -1907,6 +1924,9 @@ const PROMOTE_REFUSALS = new Map<string, Reply>([
   ['pr_merged', { status: 409, body: { error: 'This change was already merged on GitHub, so there is nothing to vote on.' } }],
   ['pr_closed', { status: 409, body: { error: 'This change was closed on GitHub, so it can\'t ask for approval.' } }],
   ['pr_draft', { status: 409, body: { error: 'This pull request is a draft on GitHub. Its author marks it ready for review before it can go up for a vote.' } }],
+  // rules/pr-base.ts: a change merges into main, or waits for the open change
+  // whose branch it is built on; any other base has neither.
+  ['pr_base_not_main', { status: 409, body: { error: 'This pull request is based on a branch other than main, and no open change in this project is built on that branch. Change its base to main on GitHub, or bring in the change it builds on first, then put it up for a vote.', code: 'pr_base_not_main' } }],
   ['merged', { status: 409, body: { error: 'This change was already merged.' } }],
 ]);
 const PROMOTE_FAILURES = new Map<string, number>([
@@ -1923,7 +1943,7 @@ const PROMOTE_FAILURES = new Map<string, number>([
 // the page hears when it is).
 export async function promoteProposal(p: {
   sessionId: number; appId: number; userId: number; username: string | null; from: string; cap: number;
-  pr: { state: string; draft: boolean; merged: boolean; head: string | null } | null;
+  pr: { state: string; draft: boolean; merged: boolean; head: string | null; base?: string | null } | null;
   expectedHead?: string | null; viaAgent?: boolean; ownOperation?: string | null; source?: Source; waitMs?: number;
 }): Promise<Reply> {
   const outcome = await proposalEvent('Promote', promotePayload(p),

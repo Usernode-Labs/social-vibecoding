@@ -35,6 +35,7 @@ export const WORK = Object.freeze({
   verify: 'delivery.verify',
   retire: 'worker.retire',
   find: 'included.find',
+  carrier: 'carried.find',
   issues: 'issues.closeAfterMerge',
   closePr: 'github.closePullRequest',
   journey: 'journey.changeLive',
@@ -55,6 +56,7 @@ type Role = 'merge' | 'included';
 interface Followup { kind: string; input: Json; status: 'pending' | 'done' | 'failed' | 'exhausted' | 'retried'; error?: string }
 interface Tally { yes: number; required: number | null; active: number | null }
 interface CarrierRef { sessionId: number; prNumber: number | null; prTitle: string | null }
+interface CarrierScan { mergedAt: string; id: number; recheck: number[] }
 
 export interface Data {
   sessionId: number;
@@ -72,6 +74,8 @@ export interface Data {
   tally: Tally | null;
   selfHosted: boolean;
   includedIn: CarrierRef | null;   // role 'included': the change that carried it
+  carriedBy?: CarrierRef | null;   // role 'merge': the later merge that brought its commit to main (carried.find)
+  carrierScan?: CarrierScan | null; // role 'merge': how far carried.find has read, and what it reads again
   included: number[];              // role 'merge': the changes it carried, as found
   deliveries: number;              // app-delivery requests so far (app.deliver items, in a merge recorded before)
   delivery?: typeof DELIVERY;      // the deploy is asked of app-delivery (absent: self-hosted, or a merge recorded before every deploy was app-delivery's)
@@ -157,7 +161,9 @@ const EVENTS = {
     message: text(p?.message) || 'the deploy failed',
     missingSecrets: Array.isArray(p?.missingSecrets) ? p.missingSecrets.map(String) : null,
   }),
-  CarrierDelivered: (p: any) => ({ sha: sha(p?.sha, 'sha') }),
+  // `mergeSha`: the carrier's merge commit, which a carrier that was itself
+  // carried to main has changed (absent from a message sent before).
+  CarrierDelivered: (p: any) => ({ sha: sha(p?.sha, 'sha'), mergeSha: sha(p?.mergeSha, 'mergeSha') }),
   CarrierDeployFailed: (p: any) => ({ message: text(p?.message) || 'the deploy failed' }),
   RetryDelivery: () => ({}),
   RetryFollowup: (p: any) => {
@@ -171,6 +177,10 @@ const BOOT_CLOCK_MARGIN_MS = 5 * 60 * 1000;
 // How long to wait before looking again at a shots run that keeps the
 // change's worker (worker.retire).
 const RETIRE_RECHECK_MS = 2 * 60 * 1000;
+// How long after its merge a merge missing from a build looks for the merge
+// that carried it (carried.find): a stacked pull request's parent merges
+// within days. One stuck for good stops asking GitHub on every release.
+const CARRIER_LOOK_MS = 30 * 24 * 60 * 60 * 1000;
 
 // ── Copy ────────────────────────────────────────────────────────────────
 
@@ -224,7 +234,7 @@ function toLive(e: Event<any>, data: Data, deliveredSha: string | null, ctx: Tra
   const work: WorkRequest[] = [...(x.work || []),
     { kind: WORK.journey, key: 'journey', input: { sessionId: d.sessionId, sha: deliveredSha, at: d.mergedAt } }];
   const messages = [...(x.messages || []), ...d.included.map((id) => ({
-    to: { machine: MACHINE, key: sessionKey(id) }, event: { type: 'CarrierDelivered', payload: { sha: deliveredSha } },
+    to: { machine: MACHINE, key: sessionKey(id) }, event: { type: 'CarrierDelivered', payload: { sha: deliveredSha, mergeSha: d.mergeSha } },
   }))];
   const push = [...(x.push || []), voteUpdate(d, { live: true })];
   if (d.role === 'merge') push.push(appVersion({ appId: d.appId, appSlug: d.appSlug, sha: deliveredSha, prNumber: d.prNumber }));
@@ -487,10 +497,45 @@ function resultOf(status: Followup['status']) {
     if (p.kind === WORK.verify && status === 'done' && result.contains && s.name !== 'live') {
       return toLive(e, d, result.sha || null, ctx);
     }
+    // Off main (the build neither contains it nor is behind it): a merge into
+    // another pull request's branch (a stacked one) never reaches main by its
+    // own commit, so it looks for the later merge that carried it
+    // (carried.find), once per build, for a month, from the merges it has
+    // ruled out.
+    if (p.kind === WORK.verify && status === 'done' && (result as { status?: string }).status === 'diverged' && s.name !== 'live'
+        && d.role === 'merge' && !d.carriedBy && d.repo && d.mergeSha && result.sha && !d.followups[`carrier:${result.sha}`]
+        && ctx.now.getTime() - Date.parse(d.mergedAt) <= CARRIER_LOOK_MS) {
+      const work: WorkRequest[] = [{ kind: WORK.carrier, key: `carrier:${result.sha}`, input: {
+        ...d.repo, appId: d.appId, sessionId: d.sessionId, mergeSha: d.mergeSha, mergedAt: d.mergedAt, release: result.sha,
+        after: (d.carrierScan ?? null) as Json,
+      } }];
+      return { next: { name: s.name, data: track(d, work) }, work };
+    }
     // A shots run still works in the worker: the same retire, later.
     if (p.kind === WORK.retire && status === 'done' && (result as { waiting?: string }).waiting) {
       return outcome(s.name, d, { work: [{ kind: WORK.retire, key: `worker~${ctx.version + 1}`, input: prev.input,
         notBefore: new Date(ctx.now.getTime() + RETIRE_RECHECK_MS) }] });
+    }
+    // The build that looked contains the carrier's merge commit: the merge
+    // now names that commit and the change it went live inside, its row too
+    // (project: "Live, included in #N", and its Undo is that change's).
+    // None yet: the merges it ruled out are not read again.
+    const looked = result as { carrier?: CarrierRef & { mergeSha: string } | null; scanned?: CarrierScan | null };
+    if (p.kind === WORK.carrier && status === 'done' && looked.carrier && s.name !== 'live' && !d.carriedBy) {
+      const c = looked.carrier;
+      const release = String((prev.input as { release?: string }).release);
+      return toLive(e, { ...d, mergeSha: c.mergeSha,
+        carriedBy: { sessionId: c.sessionId, prNumber: c.prNumber, prTitle: c.prTitle } }, release, ctx);
+    }
+    // Two looks may answer out of order: the one that read further stands.
+    const scanned = looked.scanned;
+    if (p.kind === WORK.carrier && status === 'done' && scanned && Number.isInteger(scanned.id) && !Number.isNaN(Date.parse(scanned.mergedAt))) {
+      const scan: CarrierScan = { mergedAt: new Date(scanned.mergedAt).toISOString(), id: scanned.id,
+        recheck: (Array.isArray(scanned.recheck) ? scanned.recheck : []).filter(Number.isInteger).slice(0, 50) };
+      const was = d.carrierScan;
+      const further = !was || Date.parse(scan.mergedAt) > Date.parse(was.mergedAt)
+        || (Date.parse(scan.mergedAt) === Date.parse(was.mergedAt) && scan.id >= was.id);
+      if (further) return { next: { name: s.name, data: { ...d, carrierScan: scan } } };
     }
     if (p.kind === WORK.find && status === 'done') {
       // `found` carries each change's matched head.
@@ -539,7 +584,8 @@ function resultOf(status: Followup['status']) {
 
 // An included change whose carrier is now live: it is live too, and its
 // thread, which said it goes live with the carrier, says it is.
-function carrierLive(e: Event<any>, d: Data, ctx: TransitionContext): Outcome<MFState> {
+function carrierLive(e: Event<any>, data: Data, ctx: TransitionContext): Outcome<MFState> {
+  const d = e.payload.mergeSha ? { ...data, mergeSha: e.payload.mergeSha } : data;
   const line = liveLine(prRow(d), prRow(d.includedIn!));
   return toLive(e, d, e.payload.sha, ctx, { writes: [chat(e, d.appId, d.sessionId, line)] });
 }
@@ -644,8 +690,10 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
     // merge queue hears every merge and main's verdict on it. 8: the
     // preview is retired and main is checked by message; the requests a
     // merge closes are looked at twice, and their close proposals are told
-    // by message once the close is confirmed.
-    version: 8,
+    // by message once the close is confirmed. 9: a merge off main looks for
+    // the merge that carried it there (carried.find), and a change goes live
+    // with its carrier's merge commit (CarrierDelivered's mergeSha).
+    version: 9,
     events: EVENTS,
     create: ['Merged', 'Included'],
     terminal: ['live'],
@@ -772,8 +820,19 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
             WHERE id = $1`,
           [d.sessionId, d.mergedAt, live, d.mergeSha, d.includedIn?.sessionId ?? null,
             d.tally?.required ?? null, d.tally?.active ?? null]);
-      } else if (live && before.name !== 'live') {
-        await tx.query('UPDATE chat_sessions SET live_at = $2 WHERE id = $1', [d.sessionId, live]);
+      } else {
+        // Carried: the row names the commit that brought it to main, and a
+        // merge the change it went live inside (its Undo is that change's).
+        const prior = (before as Going).data;
+        if (d.mergeSha !== prior.mergeSha) {
+          await tx.query('UPDATE chat_sessions SET merge_commit_sha = $2 WHERE id = $1', [d.sessionId, d.mergeSha]);
+        }
+        if (d.carriedBy && !prior.carriedBy) {
+          await tx.query('UPDATE chat_sessions SET included_in_session_id = $2 WHERE id = $1', [d.sessionId, d.carriedBy.sessionId]);
+        }
+        if (live && before.name !== 'live') {
+          await tx.query('UPDATE chat_sessions SET live_at = $2 WHERE id = $1', [d.sessionId, live]);
+        }
       }
     },
   });
