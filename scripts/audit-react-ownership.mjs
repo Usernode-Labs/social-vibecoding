@@ -203,6 +203,8 @@ const OWNED = [
   // pane is covered by the #messages-sheet entry above, and the deep link
   // below puts a seeded conversation (src/db/migrate.js, id 990801) in it.
   { sel: '#agent-session-screen', when: '#agent/' },
+  // The AI tab's own page (#6019 follow-up, features/ai/index.tsx).
+  { sel: '#ai-screen', when: '#ai' },
 
   // The AI-credit row in Settings → Anthropic API key
   // (features/header/ai-budget.tsx). It used to be an empty
@@ -393,7 +395,7 @@ const OWNED = [
 const ROUTES = [
   '?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990411',
   '?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401',
-  '#home', '#apps', '#apps/recipebot', '#workshop', '#settings', '#settings/app-ai',
+  '#home', '#apps', '#apps/recipebot', '#workshop', '#ai', '#settings', '#settings/app-ai',
   '#settings/email', '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/linked-accounts', '#settings/experimental', '#profile', '#leaderboard', '#leaderboard/challenges', '#messages', '#notifications',
   '#agent/990801', '#agent/990801/changes', '#messages/agent/990801',
   '#app/recipebot', '#app/recipebot/app', '#app/recipebot/dev', '#app/recipebot/dev/chat',

@@ -46,7 +46,7 @@ const JOURNEY_SCREENS = Object.freeze(new Set([
 // as steps (journey.js) and as landings in the page-load report.
 const NAV_SCREENS = Object.freeze(new Set([
   'home', 'discover', 'communities', 'challenges', 'profile', 'my_proposals',
-  'settings', 'messages', 'assistant', 'agent_session', 'app', 'project',
+  'settings', 'messages', 'assistant', 'agent_session', 'ai', 'app', 'project',
   'username_sheet', 'terms_sheet', 'join_sheet', 'tour',
 ]));
 const SCREENS = Object.freeze(new Set([...JOURNEY_SCREENS, ...NAV_SCREENS]));

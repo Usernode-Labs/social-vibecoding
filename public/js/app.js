@@ -5397,13 +5397,19 @@ const App = {
         return;
       }
       if (parts[0] === 'ai') {
-        // #6019: the AI tab, the Homeroom bot's chat. It is a conversation
-        // of the Messages screen, so the screen comes up on its list and the
-        // store opens the chat, which then names itself in the address
-        // (`#messages/<id>`), and the AI tab is lit while it is on screen
+        // #6019: the AI tab. `#ai` is its own page (features/ai/): what
+        // needs you, your private threads, Up next. Main, the chat with the
+        // bot, is a conversation of the Messages screen (`#ai/main`), so the
+        // screen comes up and the store opens the chat, which then names
+        // itself in the address (`#messages/<id>`), with its arrow back to
+        // `#ai`; the AI tab is lit while it is on screen
         // (features/nav/tab-bar.tsx). `#ai/thread/<id>` opens one of its
         // threads.
         App.setChromeless(false);
+        if (parts[1] !== 'main' && parts[1] !== 'thread') {
+          App.navigateToAi();
+          return;
+        }
         App.navigateToMessages(null);
         const root = parts[1] === 'thread' ? App._numericSegment(parts[2]) : null;
         const messages = window.UsernodeReact?.messages;
@@ -5881,7 +5887,7 @@ const App = {
   // Messages screen's bot chat. Discover is one of them: the rail keeps its
   // tab (29 Oct 2026), and this list is only read at the rail's width.
   _RAIL_ROOTS: ['home-screen', 'browse-screen', 'messages-screen',
-    'workshop-screen', 'profile-screen'],
+    'workshop-screen', 'profile-screen', 'ai-screen'],
 
   // Whether Discover is a tab of its own: on the desktop rail, from 768px,
   // it is (lit, a root, no back arrow); on a phone it is a page of Home's,
@@ -5922,7 +5928,7 @@ const App = {
   SCREEN_IDS: ['app-view', 'home-screen', 'browse-screen',
     'workshop-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
     'settings-screen', 'messages-screen',
-    'agent-session-screen', 'profile-proposals-screen'],
+    'agent-session-screen', 'profile-proposals-screen', 'ai-screen'],
 
   // Reveal `revealId`, hide every other screen root (except any id in
   // `keepAlso`), and publish the incoming screen's default back slot.
@@ -6481,6 +6487,7 @@ const App = {
     'settings-screen': 'settings',
     'messages-screen': 'messages',
     'agent-session-screen': 'agent_session',
+    'ai-screen': 'ai',
   }),
 
   _navPending: null,
@@ -6903,6 +6910,9 @@ const App = {
     // Your proposals (#5310). React-owned end to end, same as Workshop —
     // features/profile/my-proposals.tsx takes useVisibilityHiddenClass.
     'profile-proposals-screen',
+    // The AI tab's main view (#6019 follow-up): features/ai/index.tsx takes
+    // useVisibilityHiddenClass from its first commit, same seam.
+    'ai-screen',
   ],
 
   // The publish/read half of that seam. The state is a plain object on
@@ -7447,6 +7457,32 @@ const App = {
       // Nothing in the left slot: the Workshop is a tab root, and its tab is
       // on screen beside it. _showOnlyScreen publishes that from App._BACK_SLOT
       // — see the table for why a root shows no glyph at all.
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
+  // #6019 follow-up: the AI tab's own page (features/ai/), a tab root like
+  // the Workshop. Main, the chat with the bot, is the Messages screen's
+  // (`#ai/main`), a level under it. The page keeps no state of its own to
+  // leave, so nothing has to exit it: the next screen's reveal hides it.
+  navigateToAi() {
+    if (App._revealedScreen === 'ai-screen' && !App.currentApp) return;
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
+    if (App._inBrowse) App._exitBrowse();
+    if (App._inMessages) App._exitMessages();
+    if (App._inProfileProposals) App._exitProfileProposals();
+    if (App._inWorkshop) App._exitWorkshop();
+    const screen = document.getElementById('ai-screen');
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('ai-screen');
+      App._enterScreenChrome();
+      App.setHeaderTitle(PlatformI18n.t('shell:title.ai'));
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
@@ -8797,6 +8833,9 @@ const App = {
     'browse-screen': ['arrow', '/'],
     'messages-screen': ['none'],
     'workshop-screen': ['none'],
+    // #6019 follow-up: the AI tab's page is a tab root; Main is a level
+    // under it (the Messages store's syncChrome points its arrow here).
+    'ai-screen': ['none'],
     'profile-screen': ['none'],
     'app-view': ['close'],
     'agent-session-screen': ['arrow', '#messages'],
@@ -9556,7 +9595,9 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
     case 'settings': return 'settings-screen';
     case 'admin': return 'admin-screen';
     case 'messages': return 'messages-screen';
-    case 'ai': return 'messages-screen';     // #6019: the bot's chat, in the inbox's screen
+    case 'ai': return ['main', 'thread'].includes(frag.split('/')[1])
+      ? 'messages-screen'                    // #6019: Main, the bot's chat, in the inbox's screen
+      : 'ai-screen';                         // the AI tab's own page
     case 'chat': return 'messages-screen';   // Global Chat's, removed: the inbox
     case 'agent': return 'agent-session-screen';
     case 'leaderboard': return 'leaderboard-screen';

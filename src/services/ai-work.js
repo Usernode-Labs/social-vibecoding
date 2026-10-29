@@ -57,7 +57,7 @@ WITH mine AS (
   UNION SELECT thread_id FROM thread_followers WHERE user_id = $1 AND muted_at IS NULL
 )
 SELECT t.id, t.number, t.kind, t.title AS thread_title, t.state, t.created_at, t.closed_at,
-       a.slug, a.name, a.icon_emoji, a.icon_color, a.icon_image_id,
+       a.slug, a.name, a.icon_emoji, a.icon_image_id,
        req.title AS request_title, req.state AS request_state, req.updated_at AS request_at,
        ch.id AS change_id, ch.pr_number, ch.status AS change_status, ch.user_id AS change_user,
        ch.title AS change_title, ch.promoted_at, ch.merged_at, ch.live_at, ch.last_activity_at,
@@ -101,7 +101,7 @@ SELECT t.id, t.number, t.kind, t.title AS thread_title, t.state, t.created_at, t
 // posted one is a public thread now, and listed there.
 const PRIVATE_SQL = `
 SELECT m.id AS root_id, m.content, m.created_at, p.kind, a.slug, a.name,
-       a.icon_emoji, a.icon_color, a.icon_image_id,
+       a.icon_emoji, a.icon_image_id,
        (SELECT MAX(r.created_at) FROM conversation_messages r
          WHERE r.thread_root_id = m.id AND r.deleted_at IS NULL) AS last_at
   FROM conversations c
@@ -119,15 +119,25 @@ SELECT m.id AS root_id, m.content, m.created_at, p.kind, a.slug, a.name,
                      WHERE r.thread_root_id = m.id AND r.deleted_at IS NULL), m.created_at) DESC
  LIMIT $3`;
 
+// The project as the Needs you feed names it (routes/workshop-overview.js),
+// so one tile draws both (features/apps/app-card-view.tsx AppIconContent).
 function appOf(row) {
   if (!row.slug) return null;
   return {
     slug: row.slug,
     name: row.name || row.slug,
-    iconEmoji: row.icon_emoji || null,
-    iconColor: row.icon_color || null,
-    iconUrl: row.icon_image_id ? `/app-icons/${row.icon_image_id}` : null,
+    icon_url: row.icon_image_id ? `/app-icons/${row.icon_image_id}` : null,
+    icon_emoji: row.icon_emoji || null,
   };
+}
+
+// The page a thread opens on: its request's, else its change's, else the
+// project's Workshop (a decision filed as a governance row has no number).
+function hrefOf(row) {
+  const slug = encodeURIComponent(row.slug);
+  if (row.number != null && row.request_title != null) return `#app/${slug}/dev/issues/${Number(row.number)}`;
+  if (row.pr_number != null) return `#app/${slug}/dev/changes/${Number(row.pr_number)}`;
+  return `#app/${slug}/workshop`;
 }
 
 function firstLine(text, max = 90) {
@@ -184,6 +194,7 @@ function shapeThread(row, viewerId, now) {
     title,
     app: appOf(row),
     change: row.change_id ? { id: Number(row.change_id), number: row.pr_number == null ? null : Number(row.pr_number) } : null,
+    href: hrefOf(row),
     ...stand,
   };
 }

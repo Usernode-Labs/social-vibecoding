@@ -63,10 +63,10 @@ test('every screen root but the app view belongs to a tab', () => {
 test('the tabs are the ones the bar renders', () => {
   const { TAB_FOR_SCREEN, RAIL_TAB_FOR_SCREEN, tabForScreen } = loadTsx('frontend/src/features/nav/nav-store.js');
   const sections = [...new Set(Object.values(TAB_FOR_SCREEN))].sort();
-  // #6019: on a phone four are screens' own tabs; the fifth, AI, is the
-  // Messages screen while the Homeroom bot's chat is on it (the nav store's
-  // `bot`). The desktop rail adds Discover's (29 Oct 2026).
-  assert.deepEqual(sections, ['home', 'me', 'messages', 'workshop']);
+  // #6019: each of the five is a screen's own tab. AI is its own page, and
+  // stays lit over Main, the Messages screen's chat with the bot (the nav
+  // store's `bot`). The desktop rail adds Discover's (29 Oct 2026).
+  assert.deepEqual(sections, ['ai', 'home', 'me', 'messages', 'workshop']);
   assert.deepEqual({ ...RAIL_TAB_FOR_SCREEN }, { 'browse-screen': 'discover' });
   assert.equal(tabForScreen('browse-screen'), 'home', 'a phone lights Home on Discover');
   assert.equal(tabForScreen('browse-screen', true), 'discover', 'the rail lights its Discover tab');

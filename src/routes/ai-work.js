@@ -15,7 +15,7 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // view's declared checks and its before & after shots have something to
 // draw on a copy where the fixture account is in no thread.
 function demoWork() {
-  const app = { slug: 'staging-demo-app', name: 'Staging demo app', iconEmoji: null, iconColor: null, iconUrl: null };
+  const app = { slug: 'staging-demo-app', name: 'Staging demo app', icon_url: null, icon_emoji: null };
   const now = Date.now();
   const at = (hours) => new Date(now - hours * 3600000).toISOString();
   return {
@@ -24,14 +24,14 @@ function demoWork() {
       { rootId: -9102, title: 'Staging demo draft: sort by date', kind: 'draft_request', app, at: at(5) },
     ],
     next: [
-      { threadId: -9201, number: 9201, kind: 'work', title: 'Staging demo: dark mode', app, change: { id: -9201, number: 9202 }, group: 'next', what: 'going_live', at: at(1) },
-      { threadId: -9203, number: 9203, kind: 'work', title: 'Staging demo: search the board', app, change: { id: -9203, number: 9204 }, group: 'next', what: 'vote', at: at(20) },
+      { threadId: -9201, number: 9201, kind: 'work', title: 'Staging demo: dark mode', app, change: { id: -9201, number: 9202 }, href: '#app/staging-demo-app/dev/issues/9201', group: 'next', what: 'going_live', at: at(1) },
+      { threadId: -9203, number: 9203, kind: 'work', title: 'Staging demo: search the board', app, change: { id: -9203, number: 9204 }, href: '#app/staging-demo-app/dev/issues/9203', group: 'next', what: 'vote', at: at(20) },
     ],
     waiting: [
-      { threadId: -9205, number: 9205, kind: 'work', title: 'Staging demo: print view', app, change: null, group: 'waiting', what: 'not_picked_up', at: at(240), quietDays: 10 },
+      { threadId: -9205, number: 9205, kind: 'work', title: 'Staging demo: print view', app, change: null, href: '#app/staging-demo-app/dev/issues/9205', group: 'waiting', what: 'not_picked_up', at: at(240), quietDays: 10 },
     ],
     live: [
-      { threadId: -9206, number: 9206, kind: 'work', title: 'Staging demo: weekly digest', app, change: { id: -9206, number: 9207 }, group: 'live', what: 'live', at: at(30) },
+      { threadId: -9206, number: 9206, kind: 'work', title: 'Staging demo: weekly digest', app, change: { id: -9206, number: 9207 }, href: '#app/staging-demo-app/dev/issues/9206', group: 'live', what: 'live', at: at(30) },
     ],
   };
 }

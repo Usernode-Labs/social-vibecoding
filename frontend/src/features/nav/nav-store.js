@@ -72,6 +72,9 @@ export const TAB_FOR_SCREEN = Object.freeze({
   'browse-screen': 'home',
   'messages-screen': 'messages',
   'agent-session-screen': 'messages',
+  // #6019 follow-up: the AI tab's own page. Main, the chat with the bot, is
+  // a conversation of the Messages screen, lit as AI by the bar itself.
+  'ai-screen': 'ai',
   'workshop-screen': 'workshop',
   'profile-screen': 'me',
   'leaderboard-screen': 'me',

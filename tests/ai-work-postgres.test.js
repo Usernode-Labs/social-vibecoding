@@ -118,7 +118,8 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   assert.ok(!all.some((r) => r.title === 'Muted one'), 'muted');
   assert.ok(!all.some((r) => r.title === 'Secret'), 'a private project she is not in');
   assert.equal(work.waiting.find((r) => r.title === 'Tags').threadId, Number(tags.thread_id));
-  assert.deepEqual(work.next[0].app, { slug: 'aw-seeds', name: 'Seed swap', iconEmoji: null, iconColor: null, iconUrl: null });
+  assert.deepEqual(work.next[0].app, { slug: 'aw-seeds', name: 'Seed swap', icon_url: null, icon_emoji: null });
+  assert.equal(work.next[0].href, '#app/aw-seeds/dev/issues/6', 'a request\'s thread opens on its page');
 
   // Private threads: her own message with replies, and the bot's draft for her.
   const convo = await one(`INSERT INTO conversations (kind) VALUES ('direct') RETURNING id`);

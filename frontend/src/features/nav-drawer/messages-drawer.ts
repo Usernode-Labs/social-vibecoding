@@ -56,11 +56,16 @@ export function messagesDrawerApplies(at: {
   embedded?: boolean;
   /** The open conversation's kind, once it is known. */
   activeKind?: string | null;
+  /** #6019: the open conversation is the chat with Homeroom bot, the AI tab's Main. */
+  bot?: boolean;
 }): boolean {
   if (!at.phone || !at.open || at.embedded) return false;
   if (at.appSlug || at.threadRootId) return false;
   if (at.agent && !onTheDrawer(at.agent)) return false;
   if (at.conversationId && at.activeKind === 'channel') return false;
+  // Main is the AI tab's, a level under its own page, not one of the inbox's
+  // conversations: its way back is the AI tab, not a pan to the inbox.
+  if (at.conversationId && at.bot) return false;
   return true;
 }
 
