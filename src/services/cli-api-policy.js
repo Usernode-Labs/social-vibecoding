@@ -143,6 +143,15 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // after 24 hours. Only the issues route above can put it on the board, and
   // only for the caller who uploaded it.
   { method: 'POST', pattern: '/api/feedback/screenshot' },
+  // A project's card picture (routes/app-illustrations.js):
+  // get_featured_illustration and propose_featured_illustration. The read and
+  // the editor's own PUT, behind the route's gate, which admits only people
+  // who may manage the app (its creator, its admins, full platform admins).
+  // The PUT decides nothing either: it opens the group's vote on the new
+  // picture, and the card changes only when the vote passes. The route's
+  // POST, PATCH and DELETE stay off the list: the tool needs none of them.
+  { method: 'GET', pattern: '/api/apps/:slug/featured-illustration' },
+  { method: 'PUT', pattern: '/api/apps/:slug/featured-illustration' },
   // Specs on a request (routes/request-specs.js): post_spec, get_spec and
   // get_request. A post decides nothing either: it stores the caller's own
   // plan on the caller's own planning record, behind the same membership and
