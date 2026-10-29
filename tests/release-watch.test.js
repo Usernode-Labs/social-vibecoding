@@ -192,6 +192,8 @@ test('a red release workflow is reported at once: the record and the admins noti
     sha: MERGED, prNumber: 2589, kind: 'workflow_failed',
     since: new Date(T0).toISOString(), detectedAt: new Date(now).toISOString(),
     running: RUNNING, runUrl: RUN_URL, runStatus: 'completed', runConclusion: 'failure',
+    // This token cannot list the run's jobs: what failed stays unsaid.
+    failedJob: null, failedStep: null, failedReason: null,
   });
   assert.equal(pool.queries.find((q) => /SET release_stall = \$1/.test(q.sql)).params[1], 10);
 
@@ -200,6 +202,60 @@ test('a red release workflow is reported at once: the record and the admins noti
   assert.equal(posted.length, 0);
   assert.deepEqual(notified, [{ appId: 10, detail: 'release_stalled' }]);
   assert.equal(pushed.length, 1, 'the notification is pushed, not only inserted');
+});
+
+// A failed run's jobs and the failed job's annotations, as GitHub returns them
+// (29 Oct 2026: the lockfile audit failed on a new advisory).
+function failedRun(annotations = [], { annotationsError = null, reads = [] } = {}) {
+  const octokit = actions({ status: 'completed', conclusion: 'failure' });
+  octokit.rest.actions.listJobsForWorkflowRun = async (params) => {
+    reads.push(['jobs', params]);
+    return { data: { jobs: [
+      { id: 501, name: 'Plan image release', conclusion: 'success', steps: [{ name: 'Set up job', conclusion: 'success' }] },
+      { id: 502, name: 'Audit all three lockfiles', conclusion: 'failure', steps: [
+        { name: 'Set up job', conclusion: 'success' },
+        { name: 'Run node scripts/security-audit.js', conclusion: 'failure' },
+        { name: 'Run actions/upload-artifact@v4', conclusion: 'success' },
+      ] },
+      { id: 503, name: 'Publish atomic Helm release', conclusion: 'skipped', steps: [] },
+    ] } };
+  };
+  octokit.rest.checks = { listAnnotations: async (params) => {
+    reads.push(['annotations', params]);
+    if (annotationsError) throw annotationsError;
+    return { data: annotations };
+  } };
+  return octokit;
+}
+
+test('a red release says what failed: the failed job, its step and its first error line', async () => {
+  reset();
+  const reads = [];
+  const pool = makePool();
+  const octokit = failedRun([
+    { annotation_level: 'warning', message: 'Node.js 20 is deprecated.' },
+    { annotation_level: 'failure', message: 'Process completed with exit code 1.' },
+    { annotation_level: 'failure', message: 'decode-uri-component@0.2.2: GHSA-qr28-fpjm-wq7f\nsecond line' },
+  ], { reads });
+  const result = await releaseWatch.observe({}, pool, selfApp(), HEAD, { now: T0 + 90 * 1000, octokit });
+  assert.equal(result.kind, 'workflow_failed');
+  const [record] = written(pool);
+  assert.equal(record.failedJob, 'Audit all three lockfiles');
+  assert.equal(record.failedStep, 'Run node scripts/security-audit.js');
+  assert.equal(record.failedReason, 'decode-uri-component@0.2.2: GHSA-qr28-fpjm-wq7f', 'the first line, never the runner\'s exit line');
+  assert.deepEqual(reads, [
+    ['jobs', { owner: 'Usernode-Labs', repo: 'social-vibecoding', run_id: 35461203746, filter: 'latest', per_page: 100 }],
+    ['annotations', { owner: 'Usernode-Labs', repo: 'social-vibecoding', check_run_id: 502, per_page: 50 }],
+  ]);
+});
+
+test('annotations the token cannot read leave the failed job and step on their own', async () => {
+  const failure = await releaseWatch._forTest.runFailure(failedRun([], { annotationsError: new Error('Resource not accessible by integration') }),
+    'Usernode-Labs', 'social-vibecoding', 35461203746);
+  assert.deepEqual(failure, { job: 'Audit all three lockfiles', step: 'Run node scripts/security-audit.js', reason: null });
+  const generic = await releaseWatch._forTest.runFailure(failedRun([{ annotation_level: 'failure', message: 'Process completed with exit code 1.' }]),
+    'Usernode-Labs', 'social-vibecoding', 35461203746);
+  assert.equal(generic.reason, null, 'only the runner\'s exit line is no reason');
 });
 
 test('a release still within its normal time says nothing', async () => {
@@ -459,14 +515,25 @@ test('describe: the API block, resolved against the build that is answering', ()
     sha: MERGED, prNumber: 2589, kind: 'workflow_failed', since: new Date(T0).toISOString(),
     detectedAt: new Date(T0 + 2 * MIN).toISOString(), running: RUNNING, runUrl: RUN_URL,
   };
-  const quiet = { stalled: false, sha: null, prNumber: null, kind: null, since: null, detectedAt: null, running: null, runUrl: null };
+  const quiet = {
+    stalled: false, sha: null, prNumber: null, kind: null, since: null, detectedAt: null, running: null, runUrl: null,
+    failedJob: null, failedStep: null, failedReason: null,
+  };
   assert.deepEqual(releaseWatch.describe(null, RUNNING), quiet);
   assert.deepEqual(releaseWatch.describe({}, RUNNING), quiet, 'a row from before the column');
   assert.deepEqual(releaseWatch.describe({ release_stall: null }, RUNNING), quiet);
   assert.deepEqual(releaseWatch.describe({ release_stall: record }, RUNNING), {
     stalled: true, sha: MERGED, prNumber: 2589, kind: 'workflow_failed',
     since: record.since, detectedAt: record.detectedAt, running: RUNNING, runUrl: RUN_URL,
-  });
+    failedJob: null, failedStep: null, failedReason: null,
+  }, 'a record from before the failure was read');
+  assert.deepEqual(releaseWatch.describe({ release_stall: {
+    ...record, failedJob: 'Audit all three lockfiles', failedStep: 'Run node scripts/security-audit.js', failedReason: '  ',
+  } }, RUNNING), {
+    stalled: true, sha: MERGED, prNumber: 2589, kind: 'workflow_failed',
+    since: record.since, detectedAt: record.detectedAt, running: RUNNING, runUrl: RUN_URL,
+    failedJob: 'Audit all three lockfiles', failedStep: 'Run node scripts/security-audit.js', failedReason: null,
+  }, 'what failed, and an empty reason reads as none');
   assert.deepEqual(releaseWatch.describe({ release_stall: JSON.stringify(record) }, RUNNING).stalled, true, 'JSONB as text');
   // The build that is answering IS the stalled commit: the release landed
   // and the poller has not cleared the row yet. Resolved.

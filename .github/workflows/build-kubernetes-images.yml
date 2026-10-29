@@ -42,7 +42,38 @@ jobs:
           image_npm_root="$(npm root --global)"
           rm -rf "$image_npm_root/npm/node_modules/undici"
           mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
+      # A finding blocks only when this change introduces it: compared with a
+      # pull request's base, or, for a release, with what is live (the newest
+      # stable chart's source revision). One production already ships is
+      # reported as a warning (scripts/security-findings.js). With no
+      # readable baseline every finding blocks, as before.
+      - uses: azure/setup-helm@v4
+        if: github.event_name != 'pull_request'
+        with:
+          version: v3.19.0
+      - name: Read the live release
+        id: live
+        if: github.event_name != 'pull_request'
+        run: node scripts/live-release.js
+      - name: Fetch the baseline commit
+        id: baseline
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          LIVE_SHA: ${{ steps.live.outputs.revision }}
+        run: |
+          revision="${BASE_SHA:-$LIVE_SHA}"
+          if [ -n "$BASE_SHA" ]; then name="the pull request's base"; else name="the live release"; fi
+          if [[ "$revision" =~ ^[a-f0-9]{40}$ ]] && git fetch --no-tags --depth=1 origin "$revision"; then
+            echo "revision=$revision" >> "$GITHUB_OUTPUT"
+            echo "name=$name (${revision:0:9})" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=Security baseline::No baseline commit could be read; every finding blocks."
+          fi
       - run: node scripts/security-audit.js
+        env:
+          SECURITY_BASELINE_REVISION: ${{ steps.baseline.outputs.revision }}
+          SECURITY_BASELINE_NAME: ${{ steps.baseline.outputs.name }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -158,14 +189,28 @@ jobs:
           buildkitd-config-inline: |
             [registry."docker.io"]
               mirrors = ["mirror.gcr.io"]
+      # The live image of this component is the baseline: a finding on a
+      # package it already ships, at the same version, is reported rather than
+      # blocking (scripts/check-image-security.sh). Standalone and the starter
+      # have no live image and keep the strict rule.
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - name: Read the live release
+        id: live
+        run: node scripts/live-release.js
       - name: Build and scan the finished image
         shell: bash
         env:
           COMPONENT: ${{ matrix.component }}
           DOCKERFILE: ${{ matrix.dockerfile }}
           CONTEXT: ${{ matrix.context }}
+          LIVE_DIGEST: ${{ steps.live.outputs[matrix.component] }}
         run: |
           set -euo pipefail
+          if [ -n "$LIVE_DIGEST" ]; then
+            export BASELINE_IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/social-vibecoding-$COMPONENT@$LIVE_DIGEST"
+          fi
           if [ "$COMPONENT" = starter ]; then
             node scripts/security-starter.js "$RUNNER_TEMP/starter-source"
             CONTEXT="$RUNNER_TEMP/starter-source"
@@ -524,11 +569,26 @@ jobs:
           provenance: mode=max
           sbom: true
 
+      # The live image of this component is the baseline: a finding on a
+      # package it already ships, at the same version, is reported rather than
+      # blocking the release (scripts/check-image-security.sh).
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - name: Read the live release
+        id: live
+        run: node scripts/live-release.js
       - name: Verify runtime and scan the exact image SBOM
         env:
           IMAGE: ${{ steps.reuse.outputs.image }}@${{ steps.reuse.outputs.digest || steps.build.outputs.digest }}
           REPORT: ${{ runner.temp }}/security-${{ matrix.component }}
-        run: sh scripts/check-published-image.sh "$IMAGE" "$REPORT" "${{ matrix.component }}"
+          LIVE_DIGEST: ${{ steps.live.outputs[matrix.component] }}
+          REGISTRY_OWNER: ${{ steps.registry.outputs.owner }}
+        run: |
+          if [ -n "$LIVE_DIGEST" ]; then
+            export BASELINE_IMAGE="ghcr.io/$REGISTRY_OWNER/social-vibecoding-${{ matrix.component }}@$LIVE_DIGEST"
+          fi
+          sh scripts/check-published-image.sh "$IMAGE" "$REPORT" "${{ matrix.component }}"
 
       - name: Upload image security evidence
         if: always()

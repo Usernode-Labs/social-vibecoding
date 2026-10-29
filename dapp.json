@@ -2810,6 +2810,12 @@
       "expectText": "Merged; goes live in the next release (about"
     },
     {
+      "name": "A merge stuck behind a red release says what blocked it, the release step and its error, not a looping Going live (29 Oct 2026)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9100038",
+      "expectSelector": "[data-change-gate=\"votes\"] .dev-change-gate-note",
+      "expectText": "is blocked at “Audit all three lockfiles”: example-package@1.0.0"
+    },
+    {
       "name": "Checks card says an author's commit started the run (#1144), in Details (B10b)",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000022",
       "expectText": "Triggered by a new commit on this proposal."

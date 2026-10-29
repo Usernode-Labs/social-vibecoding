@@ -381,6 +381,56 @@ test('self-hosted deployment stalls mark the matching pending proposal', async (
   assert.deepEqual(order.params, [1, stalled, running], 'the recorded commit is ordered against the running one');
 });
 
+test('a red release holds back every merge it would carry, and each says what blocked it', async () => {
+  // 29 Oct 2026: four merges after the live build; the release run for the
+  // newest of them failed its lockfile audit. A later merge's own run is
+  // still on its way and is not called stuck.
+  const shas = ['e', 'd', 'c', 'b', 'a'].map((c) => c.repeat(40));
+  const rows = makeRows(5).map((row, i) => ({
+    ...row,
+    merge_commit_sha: shas[i],
+    merged_at: new Date(Date.UTC(2026, 9, 29, 18, 40 - 3 * i)).toISOString(),
+  }));
+  const stall = {
+    sha: shas[1], kind: 'workflow_failed', since: rows[1].merged_at, detectedAt: '2026-10-29T18:38:00Z',
+    runUrl: 'https://github.com/Usernode-Labs/social-vibecoding/actions/runs/40932250255',
+    failedJob: 'Audit all three lockfiles', failedStep: 'Run node scripts/security-audit.js',
+    failedReason: 'decode-uri-component@0.2.2: GHSA-qr28-fpjm-wq7f',
+  };
+  const { routes, captured } = loadVotes({
+    mergedRows: rows,
+    app: { self_hosted: true, main_sha: shas[4], release_stall: stall },
+    deploymentBoundary: { ...rows[4], pending_count: 4 },
+  });
+  const { payload } = await callMerged(routes, captured, {});
+  assert.deepEqual(payload.merged.map((row) => row.deployment_state), ['deploying', 'stalled', 'stalled', 'stalled', 'deployed']);
+  const block = {
+    job: 'Audit all three lockfiles', step: 'Run node scripts/security-audit.js',
+    reason: 'decode-uri-component@0.2.2: GHSA-qr28-fpjm-wq7f', runUrl: stall.runUrl,
+  };
+  assert.deepEqual(payload.merged.map((row) => row.release_block || null), [null, block, block, block, null]);
+});
+
+test('a release that is only late marks just the commit it waits on, with no block named', async () => {
+  const shas = ['c', 'b', 'a'].map((ch) => ch.repeat(40));
+  const rows = makeRows(3).map((row, i) => ({
+    ...row,
+    merge_commit_sha: shas[i],
+    merged_at: new Date(Date.UTC(2026, 9, 29, 18, 40 - 3 * i)).toISOString(),
+  }));
+  const { routes, captured } = loadVotes({
+    mergedRows: rows,
+    app: {
+      self_hosted: true, main_sha: shas[2],
+      release_stall: { sha: shas[0], kind: 'workflow_running', since: rows[0].merged_at, detectedAt: '2026-10-29T19:00:00Z' },
+    },
+    deploymentBoundary: { ...rows[2], pending_count: 2 },
+  });
+  const { payload } = await callMerged(routes, captured, {});
+  assert.deepEqual(payload.merged.map((row) => row.deployment_state), ['stalled', 'deploying', 'deployed']);
+  assert.ok(payload.merged.every((row) => !row.release_block));
+});
+
 // Several merges, one release (#3872): newest first, a merge still on its way,
 // the release that is running, and an earlier merge the record names. That
 // one never ran by itself; the running build carries it.
