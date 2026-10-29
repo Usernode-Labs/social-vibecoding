@@ -6472,6 +6472,18 @@ const AppView = {
     if (!item || !item.included_in_session_id) return null;
     return { number: parseInt(item.included_in_pr_number, 10) || 0 };
   },
+  // A merge stuck behind a red release run, in the run's own words: the job
+  // that failed and its first error line (routes/votes.js release_block, read
+  // by services/release-watch.js runFailure). Null when there is none to say,
+  // and the change keeps its plain "stuck" words.
+  _releaseBlockSentence(item) {
+    const block = item && item.deployment_state === 'stalled' ? item.release_block : null;
+    const where = block && (block.job || block.step);
+    if (!where) return null;
+    return block.reason
+      ? PlatformI18n.t('changes:release.blocked.withReason', { where, reason: block.reason })
+      : PlatformI18n.t('changes:release.blocked.where', { where });
+  },
   // The hero's status for a merged change, a whole message for each state of
   // its release: alone, or with the change it went live inside.
   HERO_MERGED_IDS: {
@@ -6609,16 +6621,19 @@ const AppView = {
     // Every step done is merged, which is live only once production runs it
     // (live_at, null until then).
     const goingLive = merged && item.live_at === null;
-    // A merge of Homeroom itself: when the platform's next release carries it.
-    const release = goingLive ? AppView._releaseSentence(item) : null;
+    // A merge of Homeroom itself: when the platform's next release carries it,
+    // or, stuck behind a red release run, what blocked it.
+    const blocked = goingLive ? AppView._releaseBlockSentence(item) : null;
+    const release = goingLive && !blocked ? AppView._releaseSentence(item) : null;
     return {
-      headline: goingLive ? PlatformI18n.t('changes:page.steps.headline.goingLive')
+      headline: blocked ? PlatformI18n.t('changes:page.steps.headline.releaseBlocked')
+        : goingLive ? PlatformI18n.t('changes:page.steps.headline.goingLive')
         : req ? req.headline : (merged ? (included
           ? (included.number
             ? PlatformI18n.t('changes:page.steps.headline.liveIncludedIn', { number: included.number })
             : PlatformI18n.t('changes:page.steps.headline.liveIncludedInAnother'))
           : PlatformI18n.t('changes:page.steps.headline.live')) : PlatformI18n.t('changes:page.steps.headline.standing')),
-      detail: release ? PlatformI18n.t('changes:page.steps.detail.release', { release }) : req ? (req.detail || null) : null,
+      detail: blocked || (release ? PlatformI18n.t('changes:page.steps.detail.release', { release }) : req ? (req.detail || null) : null),
       done: req ? req.done : null,
       total: req ? req.total : null,
       rows: out,
@@ -24210,8 +24225,10 @@ const AppView = {
           title: releaseWords ? PlatformI18n.t('changes:badge.pill.releaseTitle', { release: releaseWords }) : PlatformI18n.t('changes:badge.pill.goingLiveTitle') };
       }
       if (p.deployment_state === 'stalled') {
-        return { ...base, tier: 0, key: 'deployment_stalled', label: PlatformI18n.t('changes:badge.pill.stuck'), tone: 'blocked', lock: false, advisory: 0,
-          title: PlatformI18n.t('changes:badge.pill.stuckTitle') };
+        // Stuck behind a red release run: the pill names what blocked it.
+        const blocked = AppView._releaseBlockSentence(p);
+        return { ...base, tier: 0, key: 'deployment_stalled', label: PlatformI18n.t(blocked ? 'changes:badge.pill.blocked' : 'changes:badge.pill.stuck'), tone: 'blocked', lock: false, advisory: 0,
+          title: blocked || PlatformI18n.t('changes:badge.pill.stuckTitle') };
       }
       if (p.deployment_kind === 'child') {
         if (p.deployment_state === 'pending') {

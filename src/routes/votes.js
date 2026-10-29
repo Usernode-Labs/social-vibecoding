@@ -1392,6 +1392,15 @@ function stagingMockProposalFor(id, user) {
 
 // The ?demo=1 merged change that waits for the platform's next release.
 const DEMO_GOING_LIVE_ID = 9100035;
+// ?demo=1: a merge stuck behind a red release run (annotateDeploymentState's
+// release_block), in the words the lockfile gate writes.
+const DEMO_RELEASE_BLOCKED_ID = 9100038;
+const DEMO_RELEASE_BLOCK = Object.freeze({
+  job: 'Audit all three lockfiles',
+  step: 'Run node scripts/security-audit.js',
+  reason: 'example-package@1.0.0: GHSA-demo-demo-demo (staging demo)',
+  runUrl: null,
+});
 
 // #194: staging demo rows for the Completed (merged) list, mirroring
 // stagingMockProposals. Lets ?demo=1 verify the new clickable Completed
@@ -1574,7 +1583,18 @@ function stagingMockMerged(viewer) {
     mineGoingLive.user_id = viewer.id;
     mineGoingLive.username = viewer.username;
   }
-  return [autoMerged, goingLive, mineGoingLive, inheritedAttrs, undone].concat(titles.map((t, i) => mk(
+  // A change merged into Homeroom whose release run failed a step: its card
+  // says "Release blocked" and its page names the step and the reason. The
+  // /merged demo block and the by-id read give it DEMO_RELEASE_BLOCK.
+  // 9100038 is DEMO_RELEASE_BLOCKED_ID, spelled out for the same reason as
+  // 9100035 above.
+  const releaseBlocked = {
+    ...mk(9100038, 910138,
+      '[Mock] Release-blocked test: merged into Homeroom, its release failed a security check', 0, 0),
+    merged_at: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+    live_at: null,
+  };
+  return [autoMerged, goingLive, mineGoingLive, releaseBlocked, inheritedAttrs, undone].concat(titles.map((t, i) => mk(
     9100001 + i,
     910101 + i,
     `[Mock] Completed: ${t}`,
@@ -1736,11 +1756,30 @@ async function annotateDeploymentState(config, pool, app, rows) {
     stall = releaseWatch.describe(null);
   }
   const stalledSha = stall.stalled ? normalizedSha(stall.sha) : null;
+  // A red release run blocks every merge it would have carried, not only
+  // the commit it ran on: each change merged after the live build and up
+  // to that commit is stuck behind it, and says why (release_block). The
+  // commit's own row orders the rest; on a page that does not hold it, its
+  // commit time does (the drift poller records it as `since`).
+  const blockedBy = stall.stalled && stall.kind === 'workflow_failed' ? stall : null;
+  const stalledRow = stalledSha ? prRows.find((row) => normalizedSha(row.merge_commit_sha) === stalledSha) : null;
+  const stalledAt = Date.parse(stall.since || '');
+  const heldBack = (row) => {
+    if (!blockedBy) return false;
+    if (stalledRow) return !isAfterDeploymentBoundary(row, stalledRow);
+    const at = deploymentOrder(row).at;
+    return Number.isFinite(stalledAt) && at > 0 && at <= stalledAt;
+  };
   for (const row of prRows) {
     if (!isAfterDeploymentBoundary(row, boundary)) {
       row.deployment_state = 'deployed';
-    } else if (stalledSha && normalizedSha(row.merge_commit_sha) === stalledSha) {
+    } else if ((stalledSha && normalizedSha(row.merge_commit_sha) === stalledSha) || heldBack(row)) {
       row.deployment_state = 'stalled';
+      if (blockedBy) {
+        row.release_block = {
+          job: blockedBy.failedJob, step: blockedBy.failedStep, reason: blockedBy.failedReason, runUrl: blockedBy.runUrl,
+        };
+      }
     } else {
       row.deployment_state = 'deploying';
     }
@@ -4883,6 +4922,11 @@ function voteRoutes(config) {
           goingLiveDemo.deployment_state = 'deploying';
           goingLiveDemo.release = require('../services/release-watch').demoRelease();
         }
+        const blockedDemo = rows.find((row) => row.row_type === 'pr' && Number(row.id) === DEMO_RELEASE_BLOCKED_ID);
+        if (blockedDemo) {
+          blockedDemo.deployment_state = 'stalled';
+          blockedDemo.release_block = { ...DEMO_RELEASE_BLOCK };
+        }
         deployment = {
           kind: 'child', state: 'pending',
           runningSha: 'dddddddddddddddddddddddddddddddddddddddd',
@@ -5163,7 +5207,13 @@ function voteRoutes(config) {
       // release carries it (services/release-watch.js), which the page says
       // as "Merged; goes live in the next release (about 8 minutes)". A
       // child app's merge goes live with its own deploy and keeps its words.
-      if (proposal.status === 'merged' && proposal.live_at === null && !proposal.release) {
+      if (IS_STAGING && req.query.demo === '1' && Number(proposal.id) === DEMO_RELEASE_BLOCKED_ID) {
+        proposal = { ...proposal, deployment_state: 'stalled', live_at: null, release_block: { ...DEMO_RELEASE_BLOCK } };
+      }
+      // A change stuck behind a red release has no estimate: its page says
+      // what blocked it instead (release_block).
+      if (proposal.status === 'merged' && proposal.live_at === null && !proposal.release
+          && proposal.deployment_state !== 'stalled') {
         const releaseWatch = require('../services/release-watch');
         if (IS_STAGING && req.query.demo === '1' && Number(proposal.id) === DEMO_GOING_LIVE_ID) {
           proposal = { ...proposal, release: releaseWatch.demoRelease() };

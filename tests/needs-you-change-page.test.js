@@ -177,6 +177,18 @@ test('the thread view carries the card’s status pill, and none where there is 
     message('changes:badge.pill.stuck'));
   assert.equal(av._topicViewFor('proposal', { ...PR, status: 'merged', merged_at: '2026-09-19T12:00:00Z', deployment_kind: 'child', deployment_state: 'failed' }).body.thread.status.label,
     message('changes:badge.pill.failed'));
+  // Stuck behind a red release run (29 Oct 2026): the pill and the steps say
+  // what blocked it, in the run's own words, instead of "Going live".
+  const block = { job: 'Audit all three lockfiles', step: 'Run node scripts/security-audit.js', reason: 'decode-uri-component@0.2.2: GHSA-qr28-fpjm-wq7f' };
+  const blocked = av._topicViewFor('proposal', { ...PR, status: 'merged', merged_at: '2026-09-19T12:00:00Z', live_at: null, deployment_state: 'stalled', release_block: block });
+  assert.equal(blocked.body.thread.status.key, 'deployment_stalled');
+  assert.equal(blocked.body.thread.status.label, message('changes:badge.pill.blocked'));
+  const why = message('changes:release.blocked.withReason', { where: 'Audit all three lockfiles', reason: block.reason });
+  assert.equal(blocked.body.thread.status.title, why);
+  assert.equal(blocked.body.steps.headline, message('changes:page.steps.headline.releaseBlocked'));
+  assert.equal(blocked.body.steps.detail, why);
+  const noReason = av._topicViewFor('proposal', { ...PR, status: 'merged', merged_at: '2026-09-19T12:00:00Z', live_at: null, deployment_state: 'stalled', release_block: { ...block, reason: null } });
+  assert.equal(noReason.body.steps.detail, message('changes:release.blocked.where', { where: 'Audit all three lockfiles' }));
   // Up for a vote: the same words the card's pill shows there.
   const voting = av._topicViewFor('proposal', PR);
   assert.equal(voting.body.thread.status.key, 'needs_vote');
