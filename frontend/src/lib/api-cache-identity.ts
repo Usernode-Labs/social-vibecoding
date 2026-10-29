@@ -33,6 +33,32 @@ export function authWriteKeepsSession(pathname: string): boolean {
   return KEEPS_SESSION.some(route => route.test(pathname));
 }
 
+/**
+ * Public reads whose answer is the same for anyone: their handler runs no
+ * optionalSessionAuth and reads no req.user or req.cookies (the invite
+ * preview counts its open by a browser cookie, in a helper, and answers the
+ * same), so no session boundary can have changed it, and a sign-in or
+ * sign-out never cuts them off. Fenced, a logout round trip spanning a read and its one retry left an
+ * invite link on the waitlist pitch and the waiting room with no countries
+ * (#6014). This is a list, not the /api/public/ prefix: a public route may
+ * still read the cookie (GET /api/public/profiles/:username answers the
+ * viewer's own friendship), and everything not listed stays fenced.
+ * tests/session-guard-screens.test.js fails if a listed route reads one.
+ */
+export const PUBLIC_READS_FOR_ANYONE = Object.freeze([
+  '/api/public/apps',
+  '/api/public/invites/:token',
+  '/api/public/invites/:token/picture',
+  '/api/public/invites/:token/icon.png',
+  '/api/public/waitlist/options',
+]);
+const FOR_ANYONE = PUBLIC_READS_FOR_ANYONE
+  .map(route => new RegExp(`^${route.replace(/\./g, '\\.').replace(/:[a-z]+/g, '[^/]+')}$`));
+
+export function publicReadIsForAnyone(pathname: string): boolean {
+  return FOR_ANYONE.some(route => route.test(pathname));
+}
+
 export function readApiCacheScope(doc: Pick<Document, 'cookie'> | undefined = typeof document !== 'undefined' ? document : undefined): string | null {
   try {
     if (!doc) return null;
@@ -223,6 +249,7 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
     const mutation = auth && req.method !== 'GET' && req.method !== 'HEAD'
       && !authWriteKeepsSession(url.pathname);
     const identityRead = req.method === 'GET' && url.pathname === '/api/auth/me';
+    const forAnyone = (req.method === 'GET' || req.method === 'HEAD') && publicReadIsForAnyone(url.pathname);
     if (mutation) { reset({ broadcast: true }); }
     // Native restoration installs its HttpOnly cookie outside this document.
     // Wait for that boundary, then confirm its new identity before cache use.
@@ -252,6 +279,9 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
       && verifiedNativeEpoch !== before.nativeEpoch;
     const res = await send(new Request(req, { headers,
       cache: permitted && req.cache !== 'no-store' ? 'reload' : 'no-store' }));
+    // A read whose answer is the same for anyone (PUBLIC_READS_FOR_ANYONE)
+    // is never fenced: no session boundary can have changed it.
+    if (forAnyone) return res;
     const responseScope = /^[a-f0-9]{64}$/.test(res.headers.get(API_SCOPE_HEADER) || '')
       ? res.headers.get(API_SCOPE_HEADER) : null;
     let context = before;
