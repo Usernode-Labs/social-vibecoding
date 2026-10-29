@@ -440,13 +440,20 @@ test('standalone server pages never fall back to the SPA shell', () => {
 // a logged-out recipient, turning a deliberately unauthenticated link
 // into an auth wall. They must bypass the worker entirely.
 test('report share links never fall back to the SPA shell', () => {
-  assert.deepEqual(NO_FALLBACK_PREFIXES, ['/reports/']);
+  assert.deepEqual(NO_FALLBACK_PREFIXES, ['/reports/', '/embed/']);
   assert.equal(
     classify('GET', `/reports/${'a'.repeat(32)}`, 'text/html', 'navigate'),
     'bypass'
   );
   // Malformed tokens 404 server-side; the worker still stays out of the way.
   assert.equal(classify('GET', '/reports/not-a-token', 'text/html', 'navigate'), 'bypass');
+});
+
+// The same for a public project inside a post on X (/embed/<slug>,
+// routes/project-preview.js): a server page for a visitor with no session.
+test('a project embed never falls back to the SPA shell', () => {
+  assert.equal(classify('GET', '/embed/game-corner', 'text/html', 'navigate'), 'bypass');
+  assert.equal(classify('GET', '/app/game-corner', 'text/html', 'navigate'), 'navigate');
 });
 
 test('unparseable URLs are bypassed', () => {

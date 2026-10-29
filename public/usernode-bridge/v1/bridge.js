@@ -6940,15 +6940,46 @@
   // and every other response passes through untouched. An app can also ask
   // for the sheet itself with `usernode.askForAccount({ action })`.
   //
+  // One frame is a guest's too: Homeroom's embed page, where a public app
+  // shows inside a post on X (src/services/project-embed.js), marks its frame
+  // with `un-embed=1`. Nobody can sign in inside a post, so there the page
+  // draws the sheet and opens Homeroom in a tab of its own: this hands it the
+  // prompt, `{ __usernode_embed: "account", action }`, and draws nothing.
+  //
   // Drawn in a closed shadow root, like the Homeroom button.
   /* __USERNODE_GUEST_START__ */
   (function () {
-    if (_inIframe || _hasNativeChannel) return;
+    var embedded = _inIframe && !_hasNativeChannel && embedMarked();
+    if ((_inIframe && !embedded) || _hasNativeChannel) return;
     if (window.__usernodePlatformShell || window.__usernodeGuestSheet) return;
     window.__usernodeGuestSheet = true;
 
     var HOST_ID = "__un-guest";
     var ACCOUNT_PATH = "/__usernode_access";
+
+    // The embed page marks only the frame's first address, so the mark is
+    // kept for the frame's later pages too (an app's own links, a reload).
+    // Called on the block's first line, before any `var` here is assigned.
+    function embedMarked() {
+      var EMBED_KEY = "__un_embed";
+      var store = null;
+      try { store = window.sessionStorage || null; } catch (_) { store = null; }
+      var marked = false;
+      try { marked = /(?:^|[?&])un-embed=1(?:&|$)/.test(String(location.search || "")); } catch (_) { marked = false; }
+      if (marked) {
+        try { if (store) store.setItem(EMBED_KEY, "1"); } catch (_) {}
+        return true;
+      }
+      try { return !!store && store.getItem(EMBED_KEY) === "1"; } catch (_) { return false; }
+    }
+
+    // The embed page's own sheet asks instead.
+    function askEmbed(action) {
+      try {
+        window.parent.postMessage({ __usernode_embed: "account", action: cleanAction(action) }, "*");
+        return true;
+      } catch (_) { return false; }
+    }
 
     function sameOrigin(url) {
       try {
@@ -7078,6 +7109,7 @@
     }
 
     function show(action) {
+      if (embedded) return askEmbed(action);
       var u = build();
       if (!u) return false;
       var named = cleanAction(action);
@@ -7150,7 +7182,7 @@
     }
 
     function showStrip() {
-      if (!guestHinted()) return;
+      if (embedded || !guestHinted()) return;
       var u = build();
       if (u) u.strip.hidden = false;
     }

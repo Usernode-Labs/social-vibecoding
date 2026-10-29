@@ -450,7 +450,7 @@ function makeElement(tag) {
 }
 const tick = () => new Promise((r) => setImmediate(r));
 
-async function runBridge(file, { inIframe = false, cookie = '', responses = {} } = {}) {
+async function runBridge(file, { inIframe = false, cookie = '', responses = {}, search = '?x=1', storage = null } = {}) {
   const body = makeElement('body');
   const listeners = {};
   const document = {
@@ -458,7 +458,9 @@ async function runBridge(file, { inIframe = false, cookie = '', responses = {} }
     createElement: makeElement,
     addEventListener(t, fn) { (listeners[t] = listeners[t] || []).push(fn); },
   };
-  const location = { href: 'https://photo-wall.example.org/feed?x=1', origin: 'https://photo-wall.example.org', pathname: '/feed', search: '?x=1' };
+  const location = { href: `https://photo-wall.example.org/feed${search}`, origin: 'https://photo-wall.example.org', pathname: '/feed', search };
+  // What the bridge says to the page around it (the embed page, in a post).
+  const posted = [];
   const makeRes = (url) => {
     const r = responses[url] || { status: 200, type: 'application/json', body: {} };
     return {
@@ -472,6 +474,8 @@ async function runBridge(file, { inIframe = false, cookie = '', responses = {} }
     document, location, URL,
     fetch: (url) => Promise.resolve(makeRes(new URL(url, location.href).href)),
     usernode: {},
+    sessionStorage: storage,
+    parent: { postMessage: (message, target) => posted.push({ message, target }) },
   };
   window.window = window;
   const sandbox = { window, document, location, URL, Promise, setImmediate };
@@ -485,7 +489,13 @@ async function runBridge(file, { inIframe = false, cookie = '', responses = {} }
     const by = (cls) => all.find((e) => e.className === cls);
     return { all, sheet: by('sheet'), strip: by('strip'), title: by('title'), text: by('text') };
   };
-  return { window, parts, tick };
+  // Plain copies: what the sandbox built has the sandbox's own prototypes.
+  return { window, parts, tick, get posted() { return JSON.parse(JSON.stringify(posted)); } };
+}
+
+function memoryStorage() {
+  const m = new Map();
+  return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), _m: m };
 }
 
 for (const file of BRIDGE) {
@@ -548,6 +558,54 @@ test('never inside the platform’s frame', async () => {
   for (let i = 0; i < 5; i += 1) await tick();
   assert.equal(env.parts(), null);
   assert.equal(env.window.usernode.askForAccount, undefined);
+  assert.deepEqual(env.posted, [], 'and it says nothing to the shell');
+});
+
+// Homeroom's embed page (src/services/project-embed.js) frames a public app
+// inside a post on X with `un-embed=1`; there the page draws the sheet.
+for (const file of BRIDGE) {
+  test(`${file}: inside the embed page, the prompt goes to the page and nothing is drawn`, async () => {
+    const storage = memoryStorage();
+    const env = await runBridge(file, {
+      inIframe: true, search: '?token=abc&un-embed=1', storage, cookie: '__Host-usernode_guest=1',
+      responses: { 'https://photo-wall.example.org/api/photos': { status: 401, type: 'application/json', body: { error: 'account_required', action: 'post a photo' } } },
+    });
+    assert.equal(env.parts(), null, 'no strip: the page has its own bar');
+    const res = await env.window.fetch('/api/photos', { method: 'POST' });
+    assert.equal(res.status, 401, 'the app still gets its answer, untouched');
+    for (let i = 0; i < 5; i += 1) await tick();
+    assert.equal(env.parts(), null, 'no sheet in the frame');
+    assert.deepEqual(env.posted, [{ message: { __usernode_embed: 'account', action: 'post a photo' }, target: '*' }]);
+    assert.equal(env.window.usernode.askForAccount({ action: 'join the game' }), true, 'the app can ask too');
+    assert.deepEqual(env.posted[1].message, { __usernode_embed: 'account', action: 'join the game' });
+    assert.equal(env.window.usernode.askForAccount({ action: 'x'.repeat(61) }), true);
+    assert.equal(env.posted[2].message.action, null, 'an action too long to say is not passed on');
+    assert.equal(storage.getItem('__un_embed'), '1', 'the mark outlives the first address');
+  });
+}
+
+test('the embed mark is kept for the frame\'s later pages, and is never read outside a frame', async () => {
+  const storage = memoryStorage();
+  storage.setItem('__un_embed', '1');
+  const later = await runBridge(BRIDGE[0], {
+    inIframe: true, storage,
+    responses: { 'https://photo-wall.example.org/api/a': { status: 401, type: 'application/json', body: { error: 'account_required' } } },
+  });
+  await later.window.fetch('/api/a');
+  for (let i = 0; i < 5; i += 1) await tick();
+  assert.deepEqual(later.posted.map((p) => p.message), [{ __usernode_embed: 'account', action: null }]);
+  // A top-level page draws its own sheet, mark or no mark.
+  const top = await runBridge(BRIDGE[0], {
+    search: '?un-embed=1', storage,
+    responses: { 'https://photo-wall.example.org/api/a': { status: 401, type: 'application/json', body: { error: 'account_required' } } },
+  });
+  await top.window.fetch('/api/a');
+  for (let i = 0; i < 5; i += 1) await tick();
+  assert.equal(top.parts().sheet.hidden, false);
+  assert.deepEqual(top.posted, []);
+  // A frame with no mark at all (the shell's own) stays silent.
+  const shell = await runBridge(BRIDGE[0], { inIframe: true, search: '?token=abc&un-embedded=1', storage: memoryStorage() });
+  assert.equal(shell.window.usernode.askForAccount, undefined);
 });
 
 test('the bridge copy carries no em dash', () => {
