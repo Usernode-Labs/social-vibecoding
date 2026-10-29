@@ -178,7 +178,7 @@ test('Accessibility is a one-part page in Preferences, right after Appearance', 
   assert.equal(message('settings:nav.part.accessibility'), 'Accessibility');
   assert.match(settings, /accessibility: 'settings:nav\.keywords\.accessibility',/);
   assert.equal(message('settings:nav.keywords.accessibility'),
-    'text size font bigger larger zoom read contrast');
+    'text size font bigger larger zoom read contrast high normal accessible vision');
 });
 
 // ── The catalog ──────────────────────────────────────────────────────────
