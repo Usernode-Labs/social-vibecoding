@@ -91,6 +91,18 @@ export interface WorkRow {
 /** How many rows of Your work, and of Up next, show before Show more. */
 export const WORK_FIRST = 8;
 export const NEXT_FIRST = 4;
+/**
+ * How many of what needs you show before Show more. The heading counts the
+ * rest and Answer all opens them, so a long queue of votes never buries your
+ * private threads under it.
+ */
+export const NEEDS_FIRST = 3;
+
+/** Pure: Your work before Show more: the first NEEDS_FIRST of what needs you, then the rest in order, WORK_FIRST rows in all. */
+export function foldWork(rows: WorkRow[]): WorkRow[] {
+  let needs = 0;
+  return rows.filter((row) => !row.key.startsWith('need:') || ++needs <= NEEDS_FIRST).slice(0, WORK_FIRST);
+}
 
 const PILLS: Record<string, string> = {
   proposal: 'messages:ai.pill.vote',

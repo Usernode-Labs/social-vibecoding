@@ -37,7 +37,7 @@ import { EmbeddedConversation } from '../messages';
 import { openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
 import {
-  NEXT_FIRST, WORK_FIRST, heroWords, nextWords, yourWork,
+  NEXT_FIRST, foldWork, heroWords, nextWords, yourWork,
   type AiApp, type AiThread, type AiWork, type NeedItem, type Phrase, type Who, type WorkRow,
 } from './model';
 
@@ -145,6 +145,7 @@ export function AiScreen(): ReactNode {
   }, [visible, wide, botId]);
 
   const rows = useMemo(() => yourWork(needs, work), [needs, work]);
+  const folded = useMemo(() => foldWork(rows), [rows]);
   const next: AiThread[] = work?.next || [];
   const live: AiThread[] = work?.live || [];
   const owed = needs ? needs.length : 0;
@@ -193,7 +194,7 @@ export function AiScreen(): ReactNode {
           {work && needs && !rows.length ? (
             <p className="px-4 py-3 text-[0.9375rem] text-zinc-500 dark:text-zinc-400" data-ai-empty="">{t('messages:ai.work.empty')}</p>
           ) : null}
-          {(allWork ? rows : rows.slice(0, WORK_FIRST)).map((row) => (
+          {(allWork ? rows : folded).map((row) => (
             <ListRow
               key={row.key}
               as="button"
@@ -208,13 +209,13 @@ export function AiScreen(): ReactNode {
               trailing={row.pill ? <span className={PILL}>{say(row.pill)}</span> : undefined}
             />
           ))}
-          {rows.length > WORK_FIRST ? (
+          {rows.length > folded.length ? (
             <ListRow
               as="button"
               chevron={false}
               onClick={() => setAllWork(!allWork)}
               aria-expanded={allWork}
-              title={<span className="text-violet-700 dark:text-violet-300">{allWork ? t('messages:ai.work.showLess') : t('messages:ai.work.showMore', { count: rows.length - WORK_FIRST })}</span>}
+              title={<span className="text-violet-700 dark:text-violet-300">{allWork ? t('messages:ai.work.showLess') : t('messages:ai.work.showMore', { count: rows.length - folded.length })}</span>}
               titleClassName="font-semibold"
             />
           ) : null}

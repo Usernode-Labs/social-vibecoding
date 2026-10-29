@@ -70,6 +70,29 @@ test('Your work: what needs you, then private threads, then yours waiting, each 
   assert.equal(yourWork(null, null).length, 0);
 });
 
+test('a long queue of votes folds to three, so your private threads still show', () => {
+  const { yourWork, foldWork, NEEDS_FIRST, WORK_FIRST } = loadTsx(MODEL);
+  const needs = Array.from({ length: 9 }, (_, i) => ({ kind: 'proposal', id: i + 1, number: 500 + i, title: `Change ${i}`, app }));
+  const work = {
+    private: [
+      { rootId: 91, title: 'A calendar idea', kind: 'idea', app: null, at: null },
+      { rootId: 92, title: 'Sort by date', kind: 'draft_request', app, at: null },
+    ],
+    next: [],
+    waiting: [{ threadId: 5, number: 388, kind: 'work', title: 'Print view', app, change: null, href: '#app/garden/dev/issues/388', group: 'waiting', what: 'not_picked_up', at: null }],
+    live: [],
+  };
+  const rows = yourWork(needs, work);
+  assert.equal(NEEDS_FIRST, 3);
+  assert.deepEqual(foldWork(rows).map((r) => r.key), [
+    'need:proposal:1', 'need:proposal:2', 'need:proposal:3',
+    'private:91', 'private:92', 'waiting:5',
+  ], 'the heading counts the other six and Answer all opens them');
+  assert.equal(rows.length, 12, 'Show more still opens every row, in order');
+  const many = { ...work, private: Array.from({ length: 12 }, (_, i) => ({ rootId: 100 + i, title: `Idea ${i}`, kind: 'idea', app: null, at: null })) };
+  assert.equal(foldWork(yourWork(needs, many)).length, WORK_FIRST, 'and the fold is never longer than the first eight');
+});
+
 test('Up next says what happens next, and the hero counts it', () => {
   const { nextWords, heroWords } = loadTsx(MODEL);
   const row = (what) => ({ threadId: 1, number: 7, app, what });
