@@ -200,8 +200,8 @@ function byClock(a: InboxEntry, b: InboxEntry): number {
  * says which section it belongs to so the view can head them.
  *
  * #general and an app's channel are drawn on their communities' hubs, never
- * here. #18 (WP3): the Homeroom bot's DM (`homeroomBot`, set by the server)
- * is drawn as the DM it is (`kind: 'person'`), pinned first in Agents.
+ * here, and #6019 sends the Homeroom bot's DM (`homeroomBot`, set by the
+ * server) the same way: it is the AI tab, so its row is not in this list.
  */
 export function buildInbox(input: {
   conversations: Array<{ id: number; lastActivityAt: string; kind?: string; homeroomBot?: boolean }>;
@@ -210,17 +210,13 @@ export function buildInbox(input: {
   /** Agent sessions (#2779), newest activity first like everything else. */
   mayors?: Array<{ id: number; lastActivityAt: string | null }>;
 }): InboxEntry[] {
-  const bot: InboxEntry[] = [];
   const agents: InboxEntry[] = [];
   const people: InboxEntry[] = [];
   for (const item of input.conversations) {
-    // #general is the Homeroom community's channel, drawn on its hub.
-    if (item.kind === 'channel') continue;
-    const key = `person:${item.id}`;
-    const entry: InboxEntry = item.homeroomBot
-      ? { key, kind: 'person', section: 'agents', at: item.lastActivityAt, pinned: true }
-      : { key, kind: 'person', section: 'people', at: item.lastActivityAt };
-    (item.homeroomBot ? bot : people).push(entry);
+    // #general is the Homeroom community's channel, drawn on its hub; the
+    // bot's chat is the AI tab.
+    if (item.kind === 'channel' || item.homeroomBot) continue;
+    people.push({ key: `person:${item.id}`, kind: 'person', section: 'people', at: item.lastActivityAt });
   }
   for (const item of input.sessions || []) {
     agents.push({ key: `session:${item.key}`, kind: 'session', section: 'agents', at: item.lastActivityAt || null });
@@ -233,7 +229,7 @@ export function buildInbox(input: {
   // own source gave them — which for conversations is the server's.
   agents.sort(byClock);
   people.sort(byClock);
-  return [...bot, ...agents, ...people];
+  return [...agents, ...people];
 }
 
 /**

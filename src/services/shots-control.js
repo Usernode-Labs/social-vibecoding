@@ -19,6 +19,8 @@
 const planContract = require('./visible-changes');
 const shots = require('./shots-files');
 const shotsDiff = require('./shots-diff');
+const comparison = require('./shots-diff-worker');
+const log = require('./logger');
 const closeups = require('./shots-closeups');
 const homeTile = require('./shots-home-tile');
 
@@ -676,8 +678,16 @@ async function wantedCloseups(db, control) {
     .every((side) => control.saved.has(shots.slotKey({ storyId: story.id, viewport: viewport.name, side, variant: 'context' })))));
   if (!stories.length) return [];
   const files = await filesFor(db, control.runId);
-  const screens = await shotsDiff.screensFor(stories,
-    files.filter((file) => file.variant !== 'closeup' && file.theme !== 'dark'));
+  let screens;
+  try {
+    screens = await comparison.screensFor(stories,
+      files.filter((file) => file.variant !== 'closeup' && file.theme !== 'dark'));
+  } catch (error) {
+    log.warn('shots', 'Could not compare screens for close-ups', {
+      runId: control.runId, code: error?.code, error: String(error?.message || error).slice(0, 300),
+    });
+    return [];
+  }
   const stillDensity = (screen) => control.saved.get(shots.slotKey({
     storyId: screen.shot, viewport: screen.viewport, side: 'head', variant: 'context',
   }))?.density || 1;

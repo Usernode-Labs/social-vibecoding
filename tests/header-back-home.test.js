@@ -644,25 +644,23 @@ test('the bell renders BEFORE the mark, to its left', () => {
 //
 // So this asserts BOTH writers agree, not just the one that reads first.
 
-test('both writers of the bar agree that the Browse list is a tab root', () => {
+test('both writers of the bar agree that the Browse list goes back to Home', () => {
   const browse = fs.readFileSync(
     path.join(__dirname, '..', 'frontend/src/features/apps/browse.js'), 'utf8'
   );
 
-  // #2718 review: Discover is a TAB now, so the list level shows nothing —
-  // the bar is on screen beside it and a corner control that goes home is a
-  // second way to press a button already in view. The empty bar #2639 fixed
-  // is not back: what fixed it was giving the viewer a way out, and the tab
-  // bar is a better one than the house.
+  // #6019: Discover is a PAGE OF HOME'S now, opened from Home's Discover
+  // section, not a tab, so the list level has an arrow back to Home (#2718
+  // had made it a tab root with an empty corner).
   //
   // Writer 1: the screen reveal, through the table.
   const at = APP_JS.indexOf('  _showOnlyScreen(revealId, keepAlso) {');
   const body = APP_JS.slice(at, APP_JS.indexOf('\n  },', at));
   assert.match(body, /App\.setBackIcon\(\.\.\.App\._backSlotFor\(revealId\)\);/);
-  assert.match(APP_JS, /'browse-screen': \['none'\],/, 'and the table calls it a root');
+  assert.match(APP_JS, /'browse-screen': \['arrow', '\/'\],/, 'and the table sends it up to Home');
 
   // Writer 2: Browse's own chrome sync, which runs after it and so decides.
-  assert.match(browse, /const backMode = upToList \? 'arrow' : 'none';/,
+  assert.match(browse, /App\.setBackIcon\('arrow', upToList \? '#apps' : '\/'\);/,
     'the list level agrees with the table');
   assert.doesNotMatch(browse, /: 'home';/,
     'no remaining house in the chrome sync');
@@ -679,10 +677,11 @@ test('the detail level keeps its own two answers', () => {
   const browse = fs.readFileSync(
     path.join(__dirname, '..', 'frontend/src/features/apps/browse.js'), 'utf8'
   );
-  // Unchanged by #2639: up to the list normally, home when the detail was
-  // opened from a Home card and there is no list behind it.
+  // Up to the list normally, and back to Home when the detail was opened
+  // from a Home card and there is no list behind it (#6019: an arrow, as the
+  // list's own).
   assert.match(browse, /const upToList = onDetail && Browse\._detailOrigin !== 'home';/);
-  assert.match(browse, /App\.setBackIcon\(backMode, upToList \? '#apps' : undefined\)/);
+  assert.match(browse, /App\.setBackIcon\('arrow', upToList \? '#apps' : '\/'\);/);
 });
 
 test('the back-slot table and the tab map agree about what is a root', () => {
@@ -713,10 +712,12 @@ test('the back-slot table and the tab map agree about what is a root', () => {
 
   // The tab bar's own hrefs, so the arrow lands where the tab does rather than
   // at an address this test made up.
-  const HREF = { home: '/', discover: '#apps', messages: '#messages', workshop: '#workshop', me: '#profile' };
-  // The root of each tab: the screen its tab navigates to.
+  const HREF = { home: '/', messages: '#messages', workshop: '#workshop', me: '#profile' };
+  // The root of each tab: the screen its tab navigates to. #6019: AI is the
+  // Messages screen's bot chat, so no screen maps to it; Discover is a page
+  // of Home's.
   const ROOT = {
-    home: 'home-screen', discover: 'browse-screen', messages: 'messages-screen',
+    home: 'home-screen', messages: 'messages-screen',
     workshop: 'workshop-screen', me: 'profile-screen',
   };
 

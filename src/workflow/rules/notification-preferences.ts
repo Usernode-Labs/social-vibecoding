@@ -149,7 +149,10 @@ export const APP_CATEGORY_DEFINITIONS: readonly Category[] = Object.freeze([
     // promise, so the same switch governs it too
     // (createIssueThreadNotifications checks it) — one place to turn the
     // conversation follow-ups off.
-    kinds: Object.freeze(['reply', 'thread_reply', 'issue_thread_reply']),
+    //
+    // #6019 adds `change_thread_reply`: the same for a thread a change or a
+    // decision leads (createThreadNotifications checks it too).
+    kinds: Object.freeze(['reply', 'thread_reply', 'issue_thread_reply', 'change_thread_reply']),
   }),
   Object.freeze({
     key: 'proposal_votes',

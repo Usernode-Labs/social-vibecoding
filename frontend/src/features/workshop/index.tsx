@@ -123,6 +123,7 @@ import { takeCounts, votesWaiting } from './community-scope';
 // (expectNeedsDoor): its own line, beside the tab's one definition above.
 import { communityScopeStore } from './community-scope';
 import { NeedsReel, type NeedsFeedItem } from './needs-reel';
+import { BotQuestions } from './bot-questions';
 import { ReviewFlow } from '../review-flow/review-flow';
 import { useReviewFlowEnabled } from '../review-flow/settings';
 import { unseenNeeds, useNeedsSeen } from './needs-seen';
@@ -928,6 +929,8 @@ export function WorkshopScreen() {
             {/* ONE FEED, EVERYTHING MIXED (#3270): every decision owed by you
                 across your projects, one per screen, newest first, drawn by
                 a project's own Needs you feed (#3488). See ./needs-reel.tsx. */}
+            {/* #6019: what Homeroom bot asked you, answered on its request. */}
+            {state.error ? null : <BotQuestions />}
             {state.error ? null : reviewFlow ? (
               // EXPERIMENTAL (Settings, Experimental, "New Needs you"; off by
               // default, kept on the device): the same feed as a list of

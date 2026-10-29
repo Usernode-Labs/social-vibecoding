@@ -49,7 +49,7 @@
 import { createStore } from '../../lib/plain-store.js';
 
 /**
- * @typedef {'home'|'discover'|'messages'|'workshop'|'me'} TabKey
+ * @typedef {'home'|'workshop'|'ai'|'messages'|'me'} TabKey
  */
 
 /**
@@ -66,7 +66,9 @@ import { createStore } from '../../lib/plain-store.js';
  */
 export const TAB_FOR_SCREEN = Object.freeze({
   'home-screen': 'home',
-  'browse-screen': 'discover',
+  // #6019: Discover is a page of Home's now, opened from its Discover
+  // block, so Home stays lit on it.
+  'browse-screen': 'home',
   'messages-screen': 'messages',
   'agent-session-screen': 'messages',
   'workshop-screen': 'workshop',
@@ -91,6 +93,12 @@ export const TAB_FOR_SCREEN = Object.freeze({
  *   prerendered document shows.
  * @property {number} messages  Unread conversations, for the Messages tab's
  *   badge. Zero renders no badge element at all, which is the prerender.
+ * @property {number} ai  Unread messages in the Homeroom bot's chat, for the
+ *   AI tab's badge (#6019: the chat is the AI tab's, and left the Messages
+ *   list). Zero renders no badge, which is the prerender.
+ * @property {boolean} bot  The Homeroom bot's chat is the conversation on the
+ *   Messages screen: the AI tab is lit there instead of Messages. Written by
+ *   the Messages store; false is the prerender.
  * @property {number} communities  Channels of your communities with unread
  *   messages (#general among them, as Homeroom's), for the Communities tab's
  *   badge. Written by the Messages store, which already loads both lists.
@@ -136,6 +144,8 @@ const INITIAL = {
   tab: null,
   messages: 0,
   communities: 0,
+  ai: 0,
+  bot: false,
   viewer: null,
   privateMember: false,
   identityNeeded: false,

@@ -2844,6 +2844,9 @@ END $$;
 -- #4535 adds 'issue_thread_reply': somebody posted in a request's
 -- discussion thread you filed or posted in; chat_message_id is the new
 -- message, thread_ref the request's number and `detail` that number too.
+-- #6019 adds 'change_thread_reply': the same for a thread a change or a
+-- decision leads, to everyone who follows it; `detail` is the change's
+-- number, or empty for a decision filed as a governance row.
 -- #3181 adds 'session_stalled': a dev-session turn ended without finishing
 -- (an error, a timeout, a lost worker, or a system pause mid-turn);
 -- session_id points to the session, like 'session_done'.
@@ -5799,6 +5802,8 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   -- #4535: a message in a request's discussion you filed or posted in.
   -- A reply in the same sense, so the same category beside thread_reply.
   ('issue_thread_reply', 'direct_interactions', TRUE),
+  -- #6019: its twin for a thread a change or a decision leads.
+  ('change_thread_reply', 'direct_interactions', TRUE),
   -- #2386: a friend request and its acceptance are one person reaching you
   -- directly, which is what this category already promises.
   ('friend_request', 'direct_interactions', TRUE),
@@ -5882,7 +5887,7 @@ ON CONFLICT (kind) DO UPDATE
       default_enabled = EXCLUDED.default_enabled;
 DELETE FROM mobile_push_kind_categories
  WHERE kind NOT IN (
-   'mention', 'issue_mention', 'reply', 'thread_reply', 'issue_thread_reply',
+   'mention', 'issue_mention', 'reply', 'thread_reply', 'issue_thread_reply', 'change_thread_reply',
    'collab_invite', 'collab_invite_accepted',
    'approver_invite', 'approver_invite_accepted', 'spec_shared',
    'session_done', 'test_alert', 'auto_solve_done', 'stale_pr', 'check_failed',
@@ -11850,7 +11855,7 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_dm_actions (
   error           TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   decided_at      TIMESTAMPTZ,
-  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request', 'close_request')),
+  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request', 'close_request', 'post_reply')),
   CONSTRAINT homeroom_bot_dm_actions_status_check
     CHECK (status IN ('open', 'done', 'declined', 'failed'))
 );
@@ -11866,14 +11871,24 @@ COMMENT ON TABLE homeroom_bot_dm_actions IS 'staging:private';
 -- request there; `issue_number` is the request it became on Homeroom's.
 -- #4525: `close_request`, an offer to open a vote on closing request
 -- `source_issue_number` of `app_id` (Propose to close / Keep it open).
+-- #6019: `post_reply`, words written in the person's private chat with the
+-- bot, waiting to go on a public discussion as theirs (Post it / Keep it
+-- private): `details` is exactly what would be posted, on request
+-- `source_issue_number` of `app_id`, or on proposal `session_id` when it
+-- asks for that change to be revised; `title` is why (dm_answer,
+-- dm_comment, plan_change, revise). Nothing in the chat goes public without
+-- that tap.
 ALTER TABLE homeroom_bot_dm_actions
   ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE;
 ALTER TABLE homeroom_bot_dm_actions ADD COLUMN IF NOT EXISTS source_issue_number INTEGER;
+-- #6019: the bot's own message a `post_reply` answers (its question, or the
+-- ask a reply was quoting), so Post it settles that one.
+ALTER TABLE homeroom_bot_dm_actions ADD COLUMN IF NOT EXISTS target_message_id INTEGER;
 DO $$
 BEGIN
   ALTER TABLE homeroom_bot_dm_actions DROP CONSTRAINT IF EXISTS homeroom_bot_dm_actions_kind_check;
   ALTER TABLE homeroom_bot_dm_actions ADD CONSTRAINT homeroom_bot_dm_actions_kind_check
-    CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request', 'close_request'));
+    CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request', 'close_request', 'post_reply'));
 END $$;
 
 -- The bot's own knobs, admin-tunable from its console section. `mode` is
@@ -14356,7 +14371,7 @@ DROP TRIGGER IF EXISTS issues_wf_governance_owned ON issues;
 CREATE TRIGGER issues_wf_governance_owned
   BEFORE UPDATE ON issues
   FOR EACH ROW
-  WHEN (OLD.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign', 'featured_illustration'))
+  WHEN (OLD.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign', 'featured_illustration', 'thread_move'))
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=governance-proposal/issue:', 'status',
     'payload.appliedAt', 'payload.appliedBy', 'payload.withdrawnAt', 'payload.supersededAt');
 
@@ -16268,3 +16283,376 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS waits_for_session_id INTEGER
   REFERENCES chat_sessions(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS chat_sessions_waits_for_idx
   ON chat_sessions (waits_for_session_id) WHERE waits_for_session_id IS NOT NULL;
+
+-- ── Threads (stage 1 of #6019) ─────────────────────────────────────────
+-- Every discussion about a piece of work becomes one thread (request #6019,
+-- its plan's Technical tab). This first stage only makes threads exist and
+-- keeps them current: nothing reads them yet and no screen changes.
+--
+-- A thread is one piece of work in a project (`kind` 'work'), or a decision
+-- such as its visibility, admins or approval rule ('decision'). What hangs
+-- off it today keeps its own row and gains a `thread_id`:
+--   requests.thread_id       a request joins the thread of its number;
+--   issues.thread_id         a request's twin joins its number's thread, a
+--                            proposal to close joins its target's, and any
+--                            other governance row is a decision of its own;
+--   chat_sessions.thread_id  a change joins its first linked request's
+--                            thread, else the request it was made from,
+--                            else its own by PR number (a manifest branch
+--                            makes that a decision);
+--   chat_messages.thread_id  a message joins the thread of its anchor. The
+--                            anchor (`thread_type`/`thread_ref`) stays: it
+--                            is what folds a change's old replies under its
+--                            row, and every reader still uses it.
+--
+-- `number` is the thread's lead #N: requests and proposals share one number
+-- sequence per app (services/app-numbers.js, and GitHub's before that), so a
+-- number names exactly one thread. A decision filed as a governance row has
+-- none. `merged_into` is for the merge move, which comes later.
+--
+-- The triggers below keep every new row attached, so no writer changes. They
+-- never fail a write: if a thread cannot be worked out the row is stored
+-- with `thread_id` NULL, and services/threads.js's backfill, which attaches
+-- every row that was there before, takes it up on the next boot.
+--
+-- Public, like requests and chat_messages: a thread holds no more than they
+-- do. chat_sessions is private and points at it, which the rule allows (a
+-- public table never points at a private one).
+CREATE TABLE IF NOT EXISTS threads (
+  id          BIGSERIAL PRIMARY KEY,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  number      INTEGER CHECK (number IS NULL OR number > 0),
+  kind        VARCHAR(16) NOT NULL DEFAULT 'work' CHECK (kind IN ('work', 'decision')),
+  title       TEXT,
+  state       VARCHAR(8) NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'closed')),
+  merged_into BIGINT REFERENCES threads(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at   TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS threads_app_number_idx
+  ON threads (app_id, number) WHERE number IS NOT NULL;
+
+ALTER TABLE requests ADD COLUMN IF NOT EXISTS thread_id BIGINT REFERENCES threads(id) ON DELETE SET NULL;
+ALTER TABLE issues ADD COLUMN IF NOT EXISTS thread_id BIGINT REFERENCES threads(id) ON DELETE SET NULL;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS thread_id BIGINT REFERENCES threads(id) ON DELETE SET NULL;
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS thread_id BIGINT REFERENCES threads(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS requests_thread_idx ON requests (thread_id) WHERE thread_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS issues_thread_idx ON issues (thread_id) WHERE thread_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS chat_sessions_thread_idx ON chat_sessions (thread_id) WHERE thread_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS chat_messages_thread_id_idx ON chat_messages (thread_id, id) WHERE thread_id IS NOT NULL;
+
+-- A change on one of the manifest's own branches (services/rename-pr.js
+-- `branchPrefix`, and services/topics-pr.js) decides something about the
+-- project rather than building a piece of it.
+CREATE OR REPLACE FUNCTION thread_kind_for_branch(p_branch TEXT) RETURNS TEXT
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE WHEN split_part(COALESCE(p_branch, ''), '/', 1)
+              IN ('rename', 'visibility', 'governance', 'admins', 'secret-declare', 'topics')
+              THEN 'decision' ELSE 'work' END
+$$;
+
+-- The thread of #N on an app, found or made. Two writers making it at once
+-- meet at the unique index; the loser reads the winner's row. A thread a
+-- merge closed (stage 6, `merged_into`) answers with the one it went into,
+-- so whatever arrives for its number later joins its work there.
+CREATE OR REPLACE FUNCTION thread_for_number(p_app_id INTEGER, p_number INTEGER,
+                                             p_kind TEXT DEFAULT 'work', p_title TEXT DEFAULT NULL)
+RETURNS BIGINT LANGUAGE plpgsql AS $$
+DECLARE
+  tid BIGINT;
+  next_tid BIGINT;
+  hops INTEGER := 0;
+BEGIN
+  IF p_app_id IS NULL OR p_number IS NULL OR p_number <= 0 THEN
+    RETURN NULL;
+  END IF;
+  SELECT id INTO tid FROM threads WHERE app_id = p_app_id AND number = p_number;
+  IF tid IS NULL THEN
+    INSERT INTO threads (app_id, number, kind, title)
+    VALUES (p_app_id, p_number, CASE WHEN p_kind = 'decision' THEN 'decision' ELSE 'work' END, p_title)
+    ON CONFLICT (app_id, number) WHERE number IS NOT NULL DO NOTHING
+    RETURNING id INTO tid;
+    IF tid IS NULL THEN
+      SELECT id INTO tid FROM threads WHERE app_id = p_app_id AND number = p_number;
+    END IF;
+  END IF;
+  LOOP
+    SELECT merged_into INTO next_tid FROM threads WHERE id = tid;
+    EXIT WHEN next_tid IS NULL OR hops >= 8;
+    tid := next_tid;
+    hops := hops + 1;
+  END LOOP;
+  RETURN tid;
+END;
+$$;
+
+-- A change's thread: its first linked request's, else the request it was
+-- made from, else its own by PR number. A draft with none of these has no
+-- thread yet; it gets one when it is linked or opens its pull request.
+CREATE OR REPLACE FUNCTION session_thread_id(p_app_id INTEGER, p_linked INTEGER[], p_from INTEGER,
+                                             p_pr INTEGER, p_branch TEXT, p_title TEXT)
+RETURNS BIGINT LANGUAGE plpgsql AS $$
+DECLARE
+  kind TEXT;
+BEGIN
+  IF p_linked IS NOT NULL AND cardinality(p_linked) > 0 AND p_linked[array_lower(p_linked, 1)] > 0 THEN
+    RETURN thread_for_number(p_app_id, p_linked[array_lower(p_linked, 1)]);
+  END IF;
+  IF p_from IS NOT NULL AND p_from > 0 THEN
+    RETURN thread_for_number(p_app_id, p_from);
+  END IF;
+  IF p_pr IS NOT NULL AND p_pr > 0 THEN
+    kind := thread_kind_for_branch(p_branch);
+    RETURN thread_for_number(p_app_id, p_pr, kind, CASE WHEN kind = 'decision' THEN p_title END);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+-- A governance row's thread (src/workflow/rules/governance-kinds.ts): a
+-- request's twin and a proposal to close join a request's thread; any other
+-- kind is a decision thread of its own, named by what it decides.
+CREATE OR REPLACE FUNCTION issue_thread_id(p_app_id INTEGER, p_kind TEXT, p_number INTEGER,
+                                           p_payload JSONB, p_title TEXT)
+RETURNS BIGINT LANGUAGE plpgsql AS $$
+DECLARE
+  target TEXT;
+  tid BIGINT;
+BEGIN
+  IF p_app_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+  IF COALESCE(p_kind, 'general') = 'general' THEN
+    RETURN thread_for_number(p_app_id, p_number);
+  END IF;
+  IF p_kind = 'close_issue' THEN
+    target := p_payload ->> 'issueNumber';
+    RETURN thread_for_number(p_app_id, CASE WHEN target ~ '^[0-9]{1,9}$' THEN target::INTEGER END);
+  END IF;
+  INSERT INTO threads (app_id, kind, title) VALUES (p_app_id, 'decision', p_title) RETURNING id INTO tid;
+  RETURN tid;
+END;
+$$;
+
+-- A message's thread: its anchor's. Channel messages and reply threads
+-- ('message', 'category', no type) are not about one piece of work and keep
+-- none.
+CREATE OR REPLACE FUNCTION message_thread_id(p_app_id INTEGER, p_type TEXT, p_ref INTEGER)
+RETURNS BIGINT LANGUAGE plpgsql AS $$
+DECLARE
+  tid BIGINT;
+BEGIN
+  IF p_app_id IS NULL OR p_ref IS NULL THEN
+    RETURN NULL;
+  END IF;
+  IF p_type = 'issue' THEN
+    RETURN thread_for_number(p_app_id, p_ref);
+  ELSIF p_type = 'session' THEN
+    SELECT thread_id INTO tid FROM chat_sessions WHERE id = p_ref AND app_id = p_app_id;
+  ELSIF p_type = 'governance' THEN
+    SELECT thread_id INTO tid FROM issues WHERE id = p_ref AND app_id = p_app_id;
+  END IF;
+  RETURN tid;
+END;
+$$;
+
+-- The four attach triggers. Each one works out the row's thread inside its
+-- own exception block: whatever goes wrong there, the write it rides on is
+-- stored, unattached, and the backfill attaches it later.
+CREATE OR REPLACE FUNCTION threads_attach_request() RETURNS TRIGGER
+LANGUAGE plpgsql AS $$
+BEGIN
+  BEGIN
+    NEW.thread_id := thread_for_number(NEW.app_id, NEW.number);
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'threads: request % of app % left unattached: %', NEW.number, NEW.app_id, SQLERRM;
+    NEW.thread_id := NULL;
+  END;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION threads_attach_issue() RETURNS TRIGGER
+LANGUAGE plpgsql AS $$
+BEGIN
+  BEGIN
+    NEW.thread_id := issue_thread_id(NEW.app_id, NEW.kind, NEW.github_issue_number, NEW.payload, NEW.title);
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'threads: governance row % left unattached: %', NEW.id, SQLERRM;
+    NEW.thread_id := NULL;
+  END;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION threads_attach_session() RETURNS TRIGGER
+LANGUAGE plpgsql AS $$
+BEGIN
+  BEGIN
+    NEW.thread_id := session_thread_id(NEW.app_id, NEW.linked_issues, NEW.created_from_issue_number,
+                                       NEW.pr_number, NEW.branch_name, NEW.pr_title);
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'threads: change % left unattached: %', NEW.id, SQLERRM;
+    NEW.thread_id := NULL;
+  END;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION threads_attach_message() RETURNS TRIGGER
+LANGUAGE plpgsql AS $$
+BEGIN
+  BEGIN
+    NEW.thread_id := message_thread_id(NEW.app_id, NEW.thread_type, NEW.thread_ref);
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'threads: message on % % left unattached: %', NEW.thread_type, NEW.thread_ref, SQLERRM;
+    NEW.thread_id := NULL;
+  END;
+  RETURN NEW;
+END;
+$$;
+
+-- A change that gets its thread after it was made (a draft that is linked,
+-- or opens its pull request) takes the replies it already had with it.
+CREATE OR REPLACE FUNCTION threads_carry_session_messages() RETURNS TRIGGER
+LANGUAGE plpgsql AS $$
+BEGIN
+  BEGIN
+    UPDATE chat_messages SET thread_id = NEW.thread_id
+     WHERE app_id = NEW.app_id AND thread_type = 'session' AND thread_ref = NEW.id
+       AND thread_id IS DISTINCT FROM NEW.thread_id;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'threads: replies of change % not carried: %', NEW.id, SQLERRM;
+  END;
+  RETURN NULL;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'requests_attach_thread'
+                  AND tgrelid = 'requests'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER requests_attach_thread
+      BEFORE INSERT ON requests
+      FOR EACH ROW WHEN (NEW.thread_id IS NULL)
+      EXECUTE FUNCTION threads_attach_request();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'issues_attach_thread'
+                  AND tgrelid = 'issues'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER issues_attach_thread
+      BEFORE INSERT ON issues
+      FOR EACH ROW WHEN (NEW.thread_id IS NULL)
+      EXECUTE FUNCTION threads_attach_issue();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'chat_sessions_attach_thread'
+                  AND tgrelid = 'chat_sessions'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER chat_sessions_attach_thread
+      BEFORE INSERT ON chat_sessions
+      FOR EACH ROW WHEN (NEW.thread_id IS NULL)
+      EXECUTE FUNCTION threads_attach_session();
+  END IF;
+  -- A change without a thread yet gets one the moment what it needs arrives.
+  -- Once it has a thread it keeps it: moving a change is the later stage's.
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'chat_sessions_attach_thread_later'
+                  AND tgrelid = 'chat_sessions'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER chat_sessions_attach_thread_later
+      BEFORE UPDATE OF linked_issues, created_from_issue_number, pr_number ON chat_sessions
+      FOR EACH ROW WHEN (NEW.thread_id IS NULL)
+      EXECUTE FUNCTION threads_attach_session();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'chat_sessions_carry_thread_messages'
+                  AND tgrelid = 'chat_sessions'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER chat_sessions_carry_thread_messages
+      AFTER UPDATE ON chat_sessions
+      FOR EACH ROW WHEN (NEW.thread_id IS NOT NULL AND OLD.thread_id IS DISTINCT FROM NEW.thread_id)
+      EXECUTE FUNCTION threads_carry_session_messages();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'chat_messages_attach_thread'
+                  AND tgrelid = 'chat_messages'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER chat_messages_attach_thread
+      BEFORE INSERT ON chat_messages
+      FOR EACH ROW WHEN (NEW.thread_id IS NULL AND NEW.thread_type IN ('issue', 'session', 'governance'))
+      EXECUTE FUNCTION threads_attach_message();
+  END IF;
+END $$;
+
+-- ── Thread followers (stage 2 of #6019) ────────────────────────────────
+-- Who hears about a new post in a thread is worked out from the thread
+-- itself (services/threads.js FOLLOWERS_SQL): whoever asked for one of its
+-- requests, built one of its changes, voted on anything in it, or posted in
+-- it before. Nothing is copied here to keep in step, so an item that moves
+-- to another thread takes its people with it.
+--
+-- This table holds only what a person chose for one thread: Notify me
+-- (`muted_at` NULL), which follows a thread they have no part in yet, or
+-- Mute (`muted_at` set), which stops every post in it ringing them until
+-- they choose Notify me or post there again. Without a row, the derived
+-- rule applies.
+CREATE TABLE IF NOT EXISTS thread_followers (
+  thread_id  BIGINT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  muted_at   TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (thread_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS thread_followers_user_idx ON thread_followers (user_id);
+COMMENT ON TABLE thread_followers IS 'staging:private';
+
+-- ── Private threads (stage 5 of #6019) ─────────────────────────────────
+-- A thread a person starts in their private chat with Homeroom bot (the AI
+-- tab, whose main stream is Main): a draft of a request, a reply for a
+-- public thread, an idea with no project yet, or a question. It is a
+-- `thread_root_id` thread of that chat like any other; this row is where
+-- it went. File it files its words as a request on a project they pick
+-- (`state` 'filed', `result_ref` the request's number, `target_thread_id`
+-- its thread); Post it posts them in an existing thread as theirs
+-- ('posted', `result_ref` the number posted on). Nothing in it is public
+-- until one of the two (services/private-threads.js).
+CREATE TABLE IF NOT EXISTS private_threads (
+  id               BIGSERIAL PRIMARY KEY,
+  user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id  INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  root_message_id  INTEGER NOT NULL UNIQUE REFERENCES conversation_messages(id) ON DELETE CASCADE,
+  app_id           INTEGER REFERENCES apps(id) ON DELETE SET NULL,
+  target_thread_id BIGINT REFERENCES threads(id) ON DELETE SET NULL,
+  kind             VARCHAR(16) NOT NULL DEFAULT 'idea'
+                   CHECK (kind IN ('draft_request', 'draft_reply', 'idea', 'ask')),
+  state            VARCHAR(8) NOT NULL DEFAULT 'open'
+                   CHECK (state IN ('open', 'filed', 'posted', 'dropped')),
+  result_ref       INTEGER,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS private_threads_user_idx ON private_threads (user_id, updated_at DESC);
+COMMENT ON TABLE private_threads IS 'staging:private';
+
+-- ── Thread moves (stage 6 of #6019) ────────────────────────────────────
+-- Merging two threads about the same piece of work, or splitting an item
+-- out of one, proposed by any member (services/thread-moves.js). It
+-- happens at once when every requester of what it moves agreed (often just
+-- the person proposing), or after 24 hours if nobody objected (`deadline`;
+-- the `thread-moves` clock job applies it). Any objection puts it to the
+-- project's vote instead: a governance row of kind `thread_move`
+-- (`governance_issue_id`), which the governance machine applies like any
+-- other decision. `input` is what it moves: a merge's `into` thread, a
+-- split's `items`. Public, like the threads it moves.
+CREATE TABLE IF NOT EXISTS thread_moves (
+  id                  BIGSERIAL PRIMARY KEY,
+  app_id              INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  thread_id           BIGINT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  kind                VARCHAR(8) NOT NULL CHECK (kind IN ('merge', 'split')),
+  input               JSONB NOT NULL DEFAULT '{}'::jsonb,
+  proposed_by         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  state               VARCHAR(8) NOT NULL DEFAULT 'pending'
+                      CHECK (state IN ('pending', 'applied', 'voting', 'refused')),
+  deadline            TIMESTAMPTZ NOT NULL,
+  agreed_by           INTEGER[] NOT NULL DEFAULT '{}',
+  objected_by         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  governance_issue_id INTEGER REFERENCES issues(id) ON DELETE SET NULL,
+  result_thread_id    BIGINT REFERENCES threads(id) ON DELETE SET NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  decided_at          TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS thread_moves_due_idx ON thread_moves (deadline) WHERE state = 'pending';
+CREATE UNIQUE INDEX IF NOT EXISTS thread_moves_one_open_idx ON thread_moves (thread_id) WHERE state IN ('pending', 'voting');

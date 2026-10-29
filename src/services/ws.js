@@ -11,6 +11,7 @@ const communities = require('./communities');
 const attachmentsSvc = require('./attachments');
 const appChat = require('./app-chat');
 const groupChannelNotify = require('./group-channel-notify');
+const threads = require('./threads');
 const wsBus = require('./ws-bus');
 const { createDelivery } = require('./ws-delivery');
 
@@ -1104,6 +1105,8 @@ function pushPlatformVersion({ sha, reason = 'rollout' } = {}) {
 // told rather than silently dropped. A reply thread under a message of a
 // retired topic is closed with it.
 const THREAD_TYPES = Object.freeze(['issue', 'session', 'governance', appChat.MESSAGE_THREAD, appChat.CATEGORY_THREAD]);
+// The three about a piece of work, which belong to a thread (#6019).
+const TOPIC_THREAD_TYPES = new Set(['issue', 'session', 'governance']);
 
 const TOPIC_CLOSED_MESSAGE = 'This topic is archived. Its history stays here to read.';
 
@@ -1729,24 +1732,25 @@ async function handleMessage(pool, client, msg) {
         }
       }
 
-      // #4535: a message in a request's discussion thread pings the
-      // request's filer and the people who posted there before
-      // ('issue_thread_reply'), the same fan-out as a reply thread above
-      // minus the sender and anybody this message already reached with a
-      // mention or a quote — a mention wins. Proposal and governance
-      // threads are left as they are.
-      if (thread && thread.type === 'issue') {
+      // #4535, #6019: a message in a request's, a change's or a decision's
+      // discussion pings everyone who follows its thread
+      // ('issue_thread_reply' / 'change_thread_reply'): its requesters,
+      // builders, voters and earlier posters, minus the sender and anybody
+      // this message already reached with a mention or a quote — a mention
+      // wins. Posting there first follows the thread again for a sender who
+      // had muted it.
+      if (thread && TOPIC_THREAD_TYPES.has(thread.type)) {
         try {
-          const issueRows = await notifications.createIssueThreadNotifications(pool, {
+          await threads.unmuteOnPost(pool, { messageId: rows[0].id, userId: client.user.id });
+          const threadRows = await notifications.createThreadNotifications(pool, {
             appId: client.appId,
             messageId: rows[0].id,
-            issueNumber: thread.ref,
             senderId: client.user.id,
             excludeUserIds: [...directlyNotified],
           });
-          await Promise.all(issueRows.map((row) => notifications.hydrateAndPush(pool, row)));
+          await Promise.all(threadRows.map((row) => notifications.hydrateAndPush(pool, row)));
         } catch (err) {
-          log.warn('ws', 'issue thread notify failed', { err: err.message });
+          log.warn('ws', 'topic thread notify failed', { type: thread.type, err: err.message });
         }
       }
 

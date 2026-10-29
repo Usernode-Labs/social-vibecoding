@@ -80,6 +80,44 @@ test('an element shot is found by its detail, not by the plain background around
   assert.equal(diff.locate(page, stranger), null);
 });
 
+test('solid-color and sparsely detailed focus crops locate unique elements on a contrasting page', () => {
+  for (const marks of [[], [[60, 55, 2, 2, [30, 30, 40]]]]) {
+    const page = screen(200, 160, [[30, 50, 80, 20, [30, 80, 220]], ...marks], [255, 255, 255]);
+    assert.deepEqual(diff.locate(page, crop(page, 30, 50, 80, 20)), [30, 50, 80, 20]);
+  }
+});
+
+test('solid-color focus crops keep the changed region associated with its declaration', async () => {
+  const before = screen(200, 160, [[30, 50, 80, 20, [220, 40, 40]]], [255, 255, 255]);
+  const after = screen(200, 160, [[30, 50, 80, 20, [30, 80, 220]]], [255, 255, 255]);
+  const stories = [{ id: 'button-color', viewports: [{ name: 'desktop', width: 200 }] }];
+  const files = [
+    file('button-color', 'desktop', 'base', 'context', before),
+    file('button-color', 'desktop', 'head', 'context', after),
+    file('button-color', 'desktop', 'base', 'focus', crop(before, 30, 50, 80, 20)),
+    file('button-color', 'desktop', 'head', 'focus', crop(after, 30, 50, 80, 20)),
+  ];
+  for (const comparer of [diff, require('../src/services/shots-diff-worker')]) {
+    const [shown] = await comparer.screensFor(stories, files);
+    assert.equal(shown.regions.length, 1);
+    assert.equal(shown.regions[0].story, 'button-color');
+  }
+});
+
+test('blank and repetitive crops are ambiguous instead of scoring every placement', () => {
+  const blank = screen(1280, 800);
+  assert.deepEqual(diff.locateAll(blank, crop(blank, 0, 0, 188, 90)), []);
+  const stripes = screen(600, 400, Array.from({ length: 60 }, (_, i) => [i * 10, 0, 5, 400, [30, 30, 40]]));
+  assert.deepEqual(diff.locateAll(stripes, crop(stripes, 0, 0, 188, 90)), []);
+});
+
+test('a few repeated elements are still located so the changed one can be selected', () => {
+  const page = screen(200, 180, [...glyphs(40, 30, 10), ...glyphs(40, 130, 10)]);
+  const matches = diff.locateAll(page, crop(page, 30, 20, 100, 30));
+  assert.ok(matches.some(([x, y]) => x === 30 && Math.abs(y - 20) <= 2));
+  assert.ok(matches.some(([x, y]) => x === 30 && Math.abs(y - 120) <= 2));
+});
+
 test('changes on one screen share it, each area tied to the change whose element shot it holds', async () => {
   const base = [...glyphs(10, 10, 20), [20, 40, 80, 20, [37, 99, 235]], [120, 40, 80, 20, [37, 99, 235]], ...glyphs(20, 120, 10)];
   const before = screen(240, 200, base);

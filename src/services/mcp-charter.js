@@ -139,6 +139,14 @@ const CHARTER_SECTIONS = Object.freeze([
     text: 'Start from list_apps to see what the user can build on, and list_requests before filing a new request so you do not duplicate one that already exists. Pass `query` to search the requests by their text, and keep paging with `nextCursor` until it comes back null — a check that stopped at the first page has not ruled a duplicate out. list_requests scans a board and clips the bodies it prints, so when the user asks about a particular request, call get_request for it: that returns its description in full, and any screenshots the reporter attached on Homeroom as images you can look at.',
   },
   {
+    // #6026. External only (no `audiences`): create_app is an external
+    // client's tool. Charter-only: its own description carries what it costs
+    // and what it starts, where a caller about to make a project reads it.
+    id: 'making-a-project',
+    title: 'Making a new project',
+    text: 'When the person wants something new rather than a change to an app they already have, create_app makes the project for them: the same project the Create screen makes, with them as its only member, and it spends one of their app slots, so agree the name with them first. Leave `brief` out when you are going to build the first version yourself: once get_app reports the project running, file its first request with create_request and build it through prepare_work and submit_work like any other change, so the first version goes to the project\'s vote too. With a brief, Homeroom bot builds the first version instead. create_app invites nobody and touches no other project: inviting people, importing a GitHub repository and choosing who approves changes stay on Homeroom itself, so send the person there for those.',
+  },
+  {
     id: 'conventions-pointer',
     audiences: ['external', 'agent_mayor', 'worker_read'],
     title: 'The platform conventions',

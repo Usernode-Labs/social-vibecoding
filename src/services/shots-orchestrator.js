@@ -14,7 +14,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const github = require('./github');
 const log = require('./logger');
-const shotsDiff = require('./shots-diff');
+const shotsDiff = require('./shots-diff-worker');
 const shotsFiles = require('./shots-files');
 const shotsDensity = require('./shots-density');
 const logRedaction = require('./log-redaction');
@@ -1418,7 +1418,7 @@ async function dispatchAgent(config, pool, {
  * so (shots.publish). Resolves the verdict to store. A screen that cannot be
  * compared is shown without outlines; it never holds the run back.
  */
-async function compareScreens(pool, { runId, verdict }, injected = {}) {
+async function compareScreens(pool, { runId, verdict, signal }, injected = {}) {
   const diff = injected.shotsDiff || shotsDiff;
   const control = await shotsControl.read(pool, runId);
   if (!control || verdict.afterOnly) return verdict;
@@ -1436,15 +1436,16 @@ async function compareScreens(pool, { runId, verdict }, injected = {}) {
   }
   try {
     const files = await shotsControl.filesFor(pool, runId, slots);
-    const screens = await diff.screensFor(ready, files);
+    const screens = await diff.screensFor(ready, files, { signal });
     let stories = verdict.stories;
     if (typeof diff.unchangedStories === 'function') {
       stories = shotsFiles.markUnchanged(stories, diff.unchangedStories(screens));
     }
     return { ...verdict, screens, stories };
   } catch (error) {
+    if (signal?.aborted) throw error;
     log.warn('shots', 'Could not compare the before and after screens', {
-      runId, error: String(error?.message || error).slice(0, 300),
+      runId, code: error?.code, error: String(error?.message || error).slice(0, 300),
     });
     return verdict;
   }

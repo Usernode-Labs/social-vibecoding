@@ -899,6 +899,9 @@ async function reviseFromMessage(pool, config, { app, user, messageId, words, ti
   if (!bot) throw new Error('no_bot_account');
   const ctx = {
     user, bot, config, settings: here.settings, userText: words, cards: [],
+    // Said in the project's chat, in public: sent to the change at once,
+    // never drafted the way a word in the private DM is (#6019).
+    inPublic: true,
     // The mayor names the DM module dmSvc.
     deps: { ...deps, ...(deps.dm ? { dmSvc: deps.dm } : {}) },
   };

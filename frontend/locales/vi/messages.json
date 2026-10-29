@@ -2954,5 +2954,9 @@
   "bot.last.release.minutes_other": {
     "text": "Gần nhất: {{job}} sẽ hoạt động sau khoảng {{count}} phút",
     "source": "e2a9ff51908d8aebb08eefb4d06845fea8d7223a8671e98737792c1108a5b691"
+  },
+  "bot.draft.reply": {
+    "text": "Câu trả lời của bạn ở lại trong cuộc trò chuyện này cho đến khi bạn nhấn Post it.",
+    "source": "9eed089e722d2bfa58d921dd7bed3a36cdd4f512c6288f6a697b5edeb8b225cb"
   }
 }

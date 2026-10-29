@@ -175,10 +175,11 @@ test('the governance kinds, the by-id read and the share resolver carry the kind
   assert.ok(require('../src/services/governance-kinds').GOVERNANCE_KINDS.includes('featured_illustration'),
     'the governance machine decides it');
   const issues = read('src/routes/issues.js');
-  assert.match(issues, /AND i\.kind IN \('secret_change', 'rename', 'close_issue', 'maintenance_campaign',\s*'featured_illustration'\)\s*LIMIT 1/,
+  // #6019 added 'thread_move' after it.
+  assert.match(issues, /AND i\.kind IN \('secret_change', 'rename', 'close_issue', 'maintenance_campaign',\s*'featured_illustration', 'thread_move'\)\s*LIMIT 1/,
     'GET /api/apps/:slug/governance/:id resolves the kind');
   const shared = read('src/services/shared-objects.js');
-  assert.equal((shared.match(/'maintenance_campaign',\s*'featured_illustration'\)/g) || []).length, 2);
+  assert.equal((shared.match(/'maintenance_campaign',\s*'featured_illustration', 'thread_move'\)/g) || []).length, 2);
   // The generic create route does not accept it: the bytes travel with the
   // save, through the illustration endpoint.
   assert.match(issues, /const VALID_KINDS = \['general', 'secret_change', 'close_issue', 'maintenance_campaign'\];/);
@@ -282,6 +283,6 @@ test('the card offers admins the force-apply row, and the kind is in the board f
     || (viewer._cardMenuRegistry && viewer._cardMenuRegistry[mv.rail.menuKey]) || [];
   assert.ok(!vmenu.map((x) => x.label).includes('Admin merge'), 'a plain member gets no admin row');
   assert.equal(viewer._govApplyLabel('featured_illustration'), 'Updating illustration…');
-  assert.match(APP_VIEW_SRC, /\|\| i\.kind === 'maintenance_campaign' \|\| i\.kind === 'featured_illustration'\);/);
+  assert.match(APP_VIEW_SRC, /\|\| i\.kind === 'maintenance_campaign' \|\| i\.kind === 'featured_illustration' \|\| i\.kind === 'thread_move'\);/);
   assert.match(APP_VIEW_SRC, /data\?\.campaignStarted \|\| data\?\.illustrationChanged \|\| null;/);
 });

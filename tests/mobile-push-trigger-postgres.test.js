@@ -270,8 +270,11 @@ pgTest('the closed kind policy and account preferences gate enqueue at insert ti
   // filed or posted in, direct_interactions beside thread_reply). 47 → 48
   // with #4787's voted_change_merged (a change the person voted on going
   // live, proposal_alerts). 48 → 49 with #4396's project_opened (a project
-  // the person joined while it was made going live, proposal_alerts).
-  assert.equal(policy.length, 49, 'the seed carries the reviewed closed set');
+  // the person joined while it was made going live, proposal_alerts). 49 →
+  // 50 with #6019's change_thread_reply (a message in a change's or a
+  // decision's thread you follow, direct_interactions beside
+  // issue_thread_reply).
+  assert.equal(policy.length, 50, 'the seed carries the reviewed closed set');
   for (const { kind, default_enabled: enabled } of policy) {
     const row = await notify(client, { userId: alice, kind });
     assert.equal((await deliveriesFor(client, row.id)).length, enabled ? 1 : 0,

@@ -311,6 +311,20 @@ const ITEMS_SQL = `
    LIMIT $5
 `;
 
+// GET /api/workshop/bot-questions (#6019): the bot's open questions to the
+// viewer, on projects that are not suspended.
+const BOT_QUESTIONS_MAX = 20;
+const BOT_QUESTIONS_SQL = `
+  SELECT q.message_id, q.issue_number, q.created_at, a.slug, a.name,
+         m.metadata->'homeroomBot'->>'question' AS question
+    FROM homeroom_bot_dm_messages q
+    JOIN apps a ON a.id = q.app_id AND a.moderation_suspended_at IS NULL
+    JOIN conversation_messages m ON m.id = q.message_id AND m.deleted_at IS NULL
+   WHERE q.user_id = $1 AND q.question_status = 'open'
+   ORDER BY q.created_at DESC
+   LIMIT $2
+`;
+
 // GET /api/workshop/needs-feed (#3270)
 //      → { items: FeedItem[] }
 //   FeedItem = { kind: 'proposal'|'governance', id, title, summary, author,
@@ -983,6 +997,31 @@ function workshopOverviewRoutes(config) {
     }
   });
 
+  // #6019: the questions Homeroom bot asked the viewer about their requests
+  // and that nobody answered yet, newest first. The bot asks in the
+  // request's public discussion, so a row opens the request, where it is
+  // answered; Needs you lists them above the votes. Its own read, so the
+  // vote feed's cards and counts are unchanged.
+  router.get('/api/workshop/bot-questions', async (req, res) => {
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+      const { rows } = await pool.query(BOT_QUESTIONS_SQL, [req.user.id, BOT_QUESTIONS_MAX]);
+      return res.json({
+        questions: rows.map((r) => ({
+          messageId: Number(r.message_id),
+          appSlug: r.slug,
+          appName: r.name || r.slug,
+          issueNumber: Number(r.issue_number),
+          question: String(r.question || '').trim().slice(0, 280) || null,
+          at: r.created_at,
+        })),
+      });
+    } catch (err) {
+      log.error('workshop-overview', 'Failed to read the bot\'s questions', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.get('/api/workshop/needs-feed', async (req, res) => {
     try {
       if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
@@ -1010,7 +1049,7 @@ function workshopOverviewRoutes(config) {
 module.exports = {
   workshopOverviewRoutes, demoNeedsVoteRoutes, withDemoCounts, DEMO_COUNTS, COUNTS_SQL,
   withDemoItems, DEMO_ITEMS, ITEMS_SQL, ITEMS_PER_APP, ITEMS_TOTAL, groupItems,
-  NEEDS_FEED_SQL, NEEDS_FEED_MAX, shapeNeedsFeed, withVotesRequired, withViewerDecides, decidingFirst,
+  NEEDS_FEED_SQL, NEEDS_FEED_MAX, BOT_QUESTIONS_SQL, BOT_QUESTIONS_MAX, shapeNeedsFeed, withVotesRequired, withViewerDecides, decidingFirst,
   withPictures, withCodeMissing, pictureFields, decisionFacts, DEMO_NEEDS_FEED, withDemoNeedsFeed,
   isDemoNeedsProposal,
   OWED_BY_COMMUNITY_SQL, owedByCommunity,

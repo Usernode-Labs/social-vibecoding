@@ -298,9 +298,12 @@ const Browse = {
     // have to agree or the later one silently wins — which is exactly how a
     // first attempt at #2639 changed only app.js and did nothing at all.
     // App._BACK_SLOT is the other writer; 'browse-screen' is a root there.
+    //
+    // #6019: DISCOVER IS A PAGE OF HOME'S NOW, not a tab, so the list level
+    // and a detail opened from a Home card have an arrow back to Home; a
+    // detail opened from the list goes up to the list.
     const upToList = onDetail && Browse._detailOrigin !== 'home';
-    const backMode = upToList ? 'arrow' : 'none';
-    App.setBackIcon(backMode, upToList ? '#apps' : undefined);
+    App.setBackIcon('arrow', upToList ? '#apps' : '/');
     if (onDetail) {
       const app = Browse.appBySlug(Browse._slug);
       App.setHeaderTitle(app?.name || Browse._slug);

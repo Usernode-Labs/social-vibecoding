@@ -226,8 +226,10 @@ is no replay plan to write and nothing to verify locally.
   owns are **projects**. Use "project" in user-facing copy where the app is
   the thing being built; keep "app" where it is the thing being used (the
   App tab, Discover).
-- **Communities is the fourth tab, beside you; Messages is in the middle.**
-  The tab is a community: the one you last had open (its tile in a square
+- **The bar is Home · Communities · AI · Messages · You** (#6019). AI is
+  the Homeroom bot's chat, which is not a row of Messages; Discover is a
+  page Home's Discover section opens, with Back to Home, not a tab.
+  The Communities tab is a community: the one you last had open (its tile in a square
   ring, its short name, the votes it waits on you for) or All communities,
   whose page lists every community you are in, as one list under a search
   and All, Public, Private and Just you chips, at `#communities` (`#workshop` still routes there;
