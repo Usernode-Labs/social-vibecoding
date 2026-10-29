@@ -58,6 +58,8 @@ import { Input } from '@/components/ui/input';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
+import { FILTER_SHORTCUT_KEYS, installFilterShortcut } from './filter-shortcut';
+import { forgetSearches, loadRecent, recentSearchesStore, rememberSearch, visibleRecent } from './recent-searches.js';
 import { settingsNavStore } from './settings-nav-store.js';
 
 interface FilterPart {
@@ -268,8 +270,13 @@ const hitTarget = (hit: FilterHit) => (hit.parts[0] ? hit.parts[0].key : hit.ite
  * not a view of its own: once the page is open, the menu goes back to the
  * grouped list with that page marked current, so the viewer can see where
  * they landed instead of a results list that marks nothing.
+ *
+ * What was typed is remembered as a recent search first (#5996): choosing a
+ * result, by a click or Enter, is the moment a search was worth something.
+ * Sign out is not a search result in that sense and is not remembered.
  */
-function choose(hit: FilterHit, setQuery: (q: string) => void) {
+function choose(hit: FilterHit, setQuery: (q: string) => void, query: string) {
+  rememberSearch(query);
   setQuery('');
   navClick(hitTarget(hit));
 }
@@ -278,7 +285,9 @@ function choose(hit: FilterHit, setQuery: (q: string) => void) {
  * The filter field, identical on both hosts apart from its id (both hosts are
  * in the document at phone width, so the ids must differ). Enter opens the
  * first hit; Escape clears. A `search` input, so the platform's own clear
- * control and the "search" keyboard return key come for free.
+ * control and the "search" keyboard return key come for free. Ctrl+K (⌘K) or
+ * / puts the cursor here while Settings is open (./filter-shortcut.ts, #5996);
+ * nothing on screen says so, the box tells screen readers.
  */
 function FilterField({ id, query, setQuery, hits, signOutHit }: {
   id: string;
@@ -291,7 +300,7 @@ function FilterField({ id, query, setQuery, hits, signOutHit }: {
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && hits[0]) {
       e.preventDefault();
-      choose(hits[0], setQuery);
+      choose(hits[0], setQuery, query);
     } else if (e.key === 'Enter' && signOutHit) {
       // Sign out is the only hit: Enter presses it, as it opens a page.
       e.preventDefault();
@@ -310,6 +319,7 @@ function FilterField({ id, query, setQuery, hits, signOutHit }: {
       placeholder={t('settings:nav.filter.field')}
       autoComplete="off"
       spellCheck={false}
+      aria-keyshortcuts={FILTER_SHORTCUT_KEYS}
       value={query}
       onChange={(e) => setQuery(e.currentTarget.value)}
       onKeyDown={onKeyDown}
@@ -318,6 +328,8 @@ function FilterField({ id, query, setQuery, hits, signOutHit }: {
 }
 
 const TRY_BUTTON = 'font-medium text-violet-600 dark:text-violet-400 hover:underline';
+// Recent searches' Clear (#5996): the suggestions' blue text button, small.
+const RECENT_CLEAR = 'shrink-0 text-xs font-medium text-violet-600 dark:text-violet-400 hover:underline';
 
 /**
  * What both hosts show when nothing matches: the line saying so, and under
@@ -347,6 +359,84 @@ function NoMatch({ query, setQuery, groups, className }: {
           />
         </p>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * The device's recent searches (#5996), read into ./recent-searches.js's
+ * store from an effect on every visit (never during render: the store starts
+ * empty, so the prerender is the empty hosts it always was).
+ */
+function useRecentSearches(visit: number): string[] {
+  useEffect(() => { loadRecent(); }, [visit]);
+  return visibleRecent(useStoreState(recentSearchesStore)) as string[];
+}
+
+/**
+ * While the box is empty, the last few searches (#5996), newest first, under
+ * "Recent searches" with a Clear button. Choosing one types it into the box
+ * again and shows its results; it does not jump to a page, because the
+ * settings may have changed since. A row shows exactly what was typed, as
+ * text (React escapes it), never translated.
+ */
+export function RecentSearches({ items, setQuery, variant }: {
+  items: string[];
+  setQuery: (q: string) => void;
+  variant: 'desktop' | 'mobile';
+}) {
+  const t = useMessages('settings');
+  if (!items.length) return null;
+  const desktop = variant === 'desktop';
+  // The chosen row unmounts as the results replace the block, so the cursor
+  // goes to the box first: a keyboard user stays where the search is.
+  const replay = (q: string) => {
+    (document.getElementById(desktop ? 'settings-filter-desktop' : 'settings-filter-mobile') as HTMLInputElement | null)?.focus();
+    setQuery(q);
+  };
+  return (
+    <div data-settings-recent="" className={desktop ? 'mb-1' : 'mb-5'}>
+      <div className={desktop ? 'flex items-baseline justify-between gap-2 pr-3' : 'flex items-baseline justify-between gap-2 pr-4'}>
+        <SectionHeader className={desktop ? NAV_HEADING : 'px-4 pb-1.5'}>{t('settings:nav.filter.recent.heading')}</SectionHeader>
+        <button
+          type="button"
+          data-settings-recent-clear=""
+          className={RECENT_CLEAR}
+          aria-label={t('settings:nav.filter.recent.clearAria')}
+          onClick={forgetSearches}
+        >
+          {t('settings:nav.filter.recent.clear')}
+        </button>
+      </div>
+      {desktop ? items.map((q) => (
+        <button
+          key={q}
+          type="button"
+          data-settings-recent-item=""
+          className={HIT_ROW}
+          aria-label={t('settings:nav.filter.recent.again', { query: q })}
+          onClick={() => replay(q)}
+        >
+          {q}
+        </button>
+      )) : (
+        <GroupedList className="mx-0">
+          {items.map((q) => (
+            <ListRow
+              key={q}
+              as="button"
+              inset="text"
+              data-settings-recent-item=""
+              className={MENU_ROW}
+              titleClassName="font-normal"
+              title={q}
+              chevron={false}
+              aria-label={t('settings:nav.filter.recent.again', { query: q })}
+              onClick={() => replay(q)}
+            />
+          ))}
+        </GroupedList>
+      )}
     </div>
   );
 }
@@ -415,6 +505,9 @@ export function SettingsNavDesktop() {
   const t = useMessages('settings');
   const { desktop, visit } = useStoreState(settingsNavStore) as NavState;
   const [query, setQuery] = useFilterQuery(visit);
+  const recent = useRecentSearches(visit);
+  // One listener for the screen: this host is always mounted, on every width.
+  useEffect(() => installFilterShortcut({ doc: document }), []);
   const groups = desktop || [];
   const hits = filterPages(groups, query);
   const signOutHit = matchesSignOut(query);
@@ -437,7 +530,7 @@ export function SettingsNavDesktop() {
               type="button"
               data-settings-nav={hit.item.key}
               className={HIT_ROW}
-              onClick={() => choose(hit, setQuery)}
+              onClick={() => choose(hit, setQuery, query)}
             >
               <span className="block"><Highlighted text={hit.item.label} query={query} /></span>
               {hit.parts.length ? (
@@ -454,12 +547,17 @@ export function SettingsNavDesktop() {
             <NoMatch query={query} setQuery={setQuery} groups={groups} className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400" />
           )}
         </div>
-      ) : groups.map((group) => (
-        <div key={group.name} className={group.first ? '' : GROUP_SPACED}>
-          <SectionHeader className={NAV_HEADING}>{group.name}</SectionHeader>
-          {group.items.map((item) => <NavRow key={item.key} item={item} />)}
-        </div>
-      ))}
+      ) : (
+        <>
+          {desktop ? <RecentSearches items={recent} setQuery={setQuery} variant="desktop" /> : null}
+          {groups.map((group) => (
+            <div key={group.name} className={group.first ? '' : GROUP_SPACED}>
+              <SectionHeader className={NAV_HEADING}>{group.name}</SectionHeader>
+              {group.items.map((item) => <NavRow key={item.key} item={item} />)}
+            </div>
+          ))}
+        </>
+      )}
     </nav>
   );
 }
@@ -473,6 +571,7 @@ export function SettingsMobileMenu() {
   const t = useMessages('settings');
   const { mobile, visit } = useStoreState(settingsNavStore) as NavState;
   const [query, setQuery] = useFilterQuery(visit);
+  const recent = useRecentSearches(visit);
   const groups = mobile || [];
   const hits = filterPages(groups, query);
   const signOutHit = matchesSignOut(query);
@@ -498,7 +597,7 @@ export function SettingsMobileMenu() {
                   titleClassName="font-normal"
                   title={<Highlighted text={hit.item.label} query={query} />}
                   subtitle={hit.parts.length ? <PartLabels parts={hit.parts} query={query} /> : undefined}
-                  onClick={() => choose(hit, setQuery)}
+                  onClick={() => choose(hit, setQuery, query)}
                 />
               ))}
               {signOutHit ? (
@@ -518,35 +617,40 @@ export function SettingsMobileMenu() {
             <NoMatch query={query} setQuery={setQuery} groups={groups} className="px-4 text-[15px] text-zinc-500 dark:text-zinc-400" />
           )}
         </div>
-      ) : groups.map((group) => (
-        <div key={group.name} className="mb-5">
-          <SectionHeader className="px-4 pb-1.5">{group.name}</SectionHeader>
-          <GroupedList className="mx-0">
-            {group.items.map((item) => (
-              <ListRow
-                key={item.key}
-                as="button"
-                inset="text"
-                data-settings-nav={item.key}
-                className={MENU_ROW}
-                // ListRow bolds its title for the rows it was built for, where
-                // the title is a subject with a subtitle under it. These are
-                // short menu entries, most with no second line, so bold made
-                // the whole menu read as a stack of headings.
-                titleClassName="font-normal"
-                title={item.label}
-                // #5995: the few rows whose name does not say what is behind
-                // it carry one muted line (Settings.SUBTITLES); the rest none.
-                subtitle={item.subtitle || undefined}
-                // #5995: how much is set up ("2 linked"), or a "Beta" label,
-                // before the chevron. Nothing when there is nothing to say.
-                trailing={item.tag || item.status ? <RowTrailing extras={item} statusClassName={MENU_STATUS} /> : undefined}
-                onClick={() => navClick(item.key)}
-              />
-            ))}
-          </GroupedList>
-        </div>
-      ))}
+      ) : (
+        <>
+          {mobile ? <RecentSearches items={recent} setQuery={setQuery} variant="mobile" /> : null}
+          {groups.map((group) => (
+            <div key={group.name} className="mb-5">
+              <SectionHeader className="px-4 pb-1.5">{group.name}</SectionHeader>
+              <GroupedList className="mx-0">
+                {group.items.map((item) => (
+                  <ListRow
+                    key={item.key}
+                    as="button"
+                    inset="text"
+                    data-settings-nav={item.key}
+                    className={MENU_ROW}
+                    // ListRow bolds its title for the rows it was built for, where
+                    // the title is a subject with a subtitle under it. These are
+                    // short menu entries, most with no second line, so bold made
+                    // the whole menu read as a stack of headings.
+                    titleClassName="font-normal"
+                    title={item.label}
+                    // #5995: the few rows whose name does not say what is behind
+                    // it carry one muted line (Settings.SUBTITLES); the rest none.
+                    subtitle={item.subtitle || undefined}
+                    // #5995: how much is set up ("2 linked"), or a "Beta" label,
+                    // before the chevron. Nothing when there is nothing to say.
+                    trailing={item.tag || item.status ? <RowTrailing extras={item} statusClassName={MENU_STATUS} /> : undefined}
+                    onClick={() => navClick(item.key)}
+                  />
+                ))}
+              </GroupedList>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }
