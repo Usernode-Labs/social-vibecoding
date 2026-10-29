@@ -12,7 +12,14 @@
  * PUSHES the next change in from the side; it goes only to a change you have
  * not voted on or skipped, and carries how many are left after this one (the
  * same number the Communities tab's badge shows). Before you answer, Skip
- * holds Next's place: it turns the page at once and records nothing. With
+ * holds Next's place: it turns the page at once and records nothing.
+ * Previous, on the line over the vote from the second change on, pulls
+ * back the change you came from, the way it went (#3517): its vote, its
+ * reason and its Undo as you left them. Next then goes forward again to
+ * where you were before it looks for a change still waiting, and the end
+ * has the same way back to the last change. It is a button and not a
+ * swipe, because the open screen's slider and the strip take sideways
+ * drags. With
  * none left the button says Done, and Done takes the page down onto the end.
  * When everything had your vote, the end says so. When you skipped some, it
  * is not done: the skipped changes wait as a small stack, with one way to
@@ -518,7 +525,14 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   // controller's feed, and the run must not move under you.
   const [list, setList] = useState<ReviewItem[] | null>(null);
   const [index, setIndex] = useState(0);
-  const [from, setFrom] = useState<{ index: number; view: View } | null>(null);
+  const [from, setFrom] = useState<{ index: number; view: View; dir: 1 | -1 } | null>(null);
+  // The changes you moved on from, by Next or Skip, last one last:
+  // Previous goes back along it, and leaves the one it left in `ahead`,
+  // where Next goes first.
+  const [trail, setTrail] = useState<number[]>([]);
+  const [ahead, setAhead] = useState<number[]>([]);
+  // Each No's reason, by change, for the whole run (./vote-sheet.tsx).
+  const said = useRef<Record<string, string>>({});
   const [done, setDone] = useState(false);
   const [shown, setShown] = useState(true);
   const [votes, setVotes] = useState<Record<string, Vote>>({});
@@ -548,6 +562,8 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const item = run[index] && run[index].kind !== 'governance' ? run[index] : null;
   const leaving = from ? run[from.index] : null;
   const next = item ? nextIndex(run, index, passed) : -1;
+  // Where Next goes: back to where you were after a Previous, else on.
+  const forward = ahead.length ? ahead[ahead.length - 1] : next;
   const open = !!item && !done && shown;
 
   // The page's size once it is up; again if the window changes.
@@ -580,21 +596,36 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   }, [open]);
 
   /* ── Push: this change → the next ── */
-  const goTo = (n: number) => {
+  const goTo = (n: number, dir: 1 | -1 = 1) => {
     if (busy.current || !item) return;
     if (n < 0) { finishAll(); return; }
     busy.current = true;
+    if (dir > 0) setTrail((cur) => [...cur, index]);
     setSheet(votes[run[n].key] ? 'voted' : 'ask');
-    setFrom({ index, view: views.current[item.key] || SHEET_VIEW });
+    setFrom({ index, view: views.current[item.key] || SHEET_VIEW, dir });
     setIndex(n);
   };
-  const goNext = () => goTo(next);
+  // Forward: to where you were before a Previous, else the next waiting.
+  const onward = (n: number) => {
+    if (ahead.length) { setAhead((cur) => cur.slice(0, -1)); goTo(ahead[ahead.length - 1]); return; }
+    goTo(n);
+  };
+  const goNext = () => onward(next);
+  // Back along the trail: the change you came from returns from the side
+  // it left by.
+  const goPrev = () => {
+    if (busy.current || !item || !trail.length) return;
+    const back = trail[trail.length - 1];
+    setTrail((cur) => cur.slice(0, -1));
+    setAhead((cur) => [...cur, index]);
+    goTo(back, -1);
+  };
   const skip = () => {
-    if (!item) return;
+    if (busy.current || !item) return;
     const now = { ...passed, [item.key]: true };
     setSkipped((cur) => ({ ...cur, [item.key]: true }));
     setSheet('ask');
-    goTo(nextIndex(run, index, now));
+    onward(nextIndex(run, index, now));
   };
 
   useLayoutEffect(() => {
@@ -606,6 +637,15 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     const arriving = stage.querySelector<HTMLElement>('[data-rf-arriving]');
     const gone = stage.querySelector<HTMLElement>('[data-rf-leaving]');
     const opts = { duration: PUSH_MS, easing: EASE };
+    if (from.dir < 0) {
+      // Previous: the page on top slides off to the right and uncovers the
+      // change under it, which comes back from where Next left it.
+      if (gone) gone.style.zIndex = '2';
+      const sliding = gone?.animate([{ transform: 'none', boxShadow: '-12px 0 32px rgba(0,0,0,.4)' }, { transform: `translateX(${w}px)`, boxShadow: '-12px 0 32px rgba(0,0,0,0)' }], { ...opts, fill: 'forwards' });
+      arriving?.animate([{ transform: `translateX(${-0.3 * w}px)`, filter: 'brightness(0.55)' }, { transform: 'none', filter: 'none' }], opts);
+      whenDone(sliding, settle, PUSH_MS);
+      return;
+    }
     const sliding = arriving?.animate([{ transform: `translateX(${w}px)`, boxShadow: '-12px 0 32px rgba(0,0,0,.4)' }, { transform: 'none', boxShadow: '-12px 0 32px rgba(0,0,0,0)' }], opts);
     gone?.animate([{ transform: 'none', filter: 'none' }, { transform: `translateX(${-0.3 * w}px)`, filter: 'brightness(0.55)' }], { ...opts, fill: 'forwards' });
     whenDone(sliding, settle, PUSH_MS);
@@ -661,7 +701,11 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     setSkipped({});
     setIndex(first);
     setDone(false);
+    setTrail([]);
+    setAhead([]);
   };
+  // From the end: back onto the last change, which Done left you on.
+  const backFromEnd = () => { setSheet(item && votes[item.key] ? 'voted' : 'ask'); setDone(false); };
   // A help sheet over the page, from the card: the card folds first.
   const help = (to: SheetState) => { setDesc(false); setSheet(to); };
 
@@ -702,7 +746,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   const itemKey = item ? item.key : '';
   useEffect(() => { setDesc(false); }, [itemKey]);
 
-  const nextItem = next >= 0 ? run[next] : null;
+  const nextItem = forward >= 0 ? run[forward] : null;
   const pw = size ? size.w : Math.min(COLUMN, typeof window !== 'undefined' ? window.innerWidth : 390);
   const ph = size ? size.h : (typeof window !== 'undefined' ? window.innerHeight - 64 : 700);
   // The next change's stills are read ahead, so it lands at once.
@@ -744,6 +788,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
                 <span key={it.key} className="rf-end-tile" data-n={all.length > 1 ? i - (all.length - 1) / 2 : 0} style={{ background: it.ground }}><i /></span>
               ))}
             </span>
+            {done && item ? <button type="button" className="rf-end-prev" onClick={backFromEnd} data-rf-end-prev=""><ChevronLeftIcon aria-hidden="true" width={20} height={20} strokeWidth="2.2" /><span>{t('communities:review.end.previous')}</span></button> : null}
             <p className="rf-end-title">{t('communities:review.end.throughAll')}</p>
             <p className="rf-end-line rf-end-line-tight">{t('communities:review.end.waiting', { count: waiting.length })}</p>
             <button type="button" className="rf-end-btn rf-end-btn-go" onClick={again} data-rf-again="">{t('communities:review.end.again', { count: waiting.length })}</button>
@@ -754,6 +799,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
             <span className="rf-end-mark" aria-hidden="true">
 <CheckIcon width={24} height={24} strokeWidth="2.2" />
             </span>
+            {done && item ? <button type="button" className="rf-end-prev" onClick={backFromEnd} data-rf-end-prev=""><ChevronLeftIcon aria-hidden="true" width={20} height={20} strokeWidth="2.2" /><span>{t('communities:review.end.previous')}</span></button> : null}
             <p className="rf-end-line">{t('communities:review.end.line')}</p>
             <button type="button" className="rf-end-btn" onClick={onDone}>{doneLabel || t('communities:reel.done')}</button>
           </div>
@@ -835,10 +881,12 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
           onVote={vote}
           onUndo={undo}
           onNext={goNext}
-          hasNext={next >= 0}
+          hasNext={forward >= 0}
           maxHeight={Math.max(240, (typeof window !== 'undefined' ? window.innerHeight : 800) * 0.82)}
           left={after}
           onSkip={skip}
+          onPrev={trail.length ? goPrev : undefined}
+          said={said.current}
         />
       </div>
     </div>,

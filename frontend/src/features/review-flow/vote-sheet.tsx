@@ -61,7 +61,7 @@ const Icon = {
 
 type AskMsg = { who: 'you' | 'ai'; text: string; pending?: boolean };
 
-export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext, hasNext, maxHeight, left = 0, onSkip }: {
+export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext, hasNext, maxHeight, left = 0, onSkip, onPrev, said }: {
   item: ReviewItem;
   vote: Vote | null;
   state: SheetState;
@@ -77,6 +77,13 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   left?: number;
   /** Turn the page: on to the next change, or the end, with nothing recorded. */
   onSkip: () => void;
+  /** Back to the change before this one in the run; none on the first. */
+  onPrev?: () => void;
+  /**
+   * Each change's reason, by key, kept by the run (it outlives this sheet,
+   * which the end unmounts): Previous brings a No back with its reason.
+   */
+  said: Record<string, string>;
 }) {
   const t = useMessages('communities');
   const ref = useRef<HTMLElement>(null);
@@ -85,13 +92,18 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   // The answer a No picks from the reason list; the No is only sent with one.
   const [choice, setChoice] = useState<NoChoice | null>(null);
   // The reason sent with this change's No, shown where it was written.
-  const [shared, setShared] = useState<string | null>(null);
+  const [shared, setSharedNow] = useState<string | null>(() => said[item.key] || null);
+  const setShared = (text: string | null) => {
+    if (text) said[item.key] = text;
+    else delete said[item.key];
+    setSharedNow(text);
+  };
   const [busy, setBusy] = useState(false);
   const [asks, setAsks] = useState<AskMsg[]>([]);
   const [question, setQuestion] = useState('');
 
   // A new change starts with an empty line, no answer and no questions.
-  useEffect(() => { setLine(''); setChoice(null); setShared(null); setAsks([]); setQuestion(''); }, [item.key]);
+  useEffect(() => { setLine(''); setChoice(null); setSharedNow(said[item.key] || null); setAsks([]); setQuestion(''); }, [item.key]);
 
   const whyChoices: { key: NoChoice; text: string }[] = [
     { key: 'notWorking', text: t('communities:review.why.notWorking') },
@@ -337,7 +349,12 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
       );
     }
     body = (
-      <div className="rf-vote">
+      <div className="rf-vote" data-rf-has-prev={onPrev ? '' : undefined}>
+        {onPrev ? (
+          <button type="button" className="rf-prev" data-rf-prev="" aria-label={t('communities:review.vote.previousLabel')} disabled={busy} onClick={onPrev}>
+            {Icon.back}<span aria-hidden="true">{t('communities:review.vote.previous')}</span>
+          </button>
+        ) : null}
         <div className={why ? 'rf-why' : 'rf-why rf-why-off'}>{why}</div>
         <div className="rf-vrow">
           {pair()}

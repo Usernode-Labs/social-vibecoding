@@ -407,7 +407,7 @@ function sheetHtml(props) {
   const [item] = model.toReviewItems([feedItem()], () => ({ screens: [SCREEN] }));
   return renderToHtml(createElement(sheet.VoteSheet, {
     item, vote: null, state: 'ask', setState() {}, onVote: async () => true, onUndo: async () => true,
-    onNext() {}, onSkip() {}, hasNext: true, maxHeight: 600, ...props,
+    onNext() {}, onSkip() {}, hasNext: true, maxHeight: 600, said: {}, ...props,
   }));
 }
 
@@ -417,7 +417,7 @@ test('Next passes the votes and the skips, and Done on the last one shows the ru
   assert.match(src, /if \(n < 0\) \{ finishAll\(\); return; \}/);
   assert.match(src, /const finishAll = \(\) => \{ stop\(\); setDone\(true\); \};/);
   // Skip moves on without a vote; nothing is recorded.
-  assert.match(src, /goTo\(nextIndex\(run, index, now\)\);/);
+  assert.match(src, /onward\(nextIndex\(run, index, now\)\);/);
   assert.match(src, /if \(done \|\| \(list && !item && Object\.keys\(votes\)\.length\)\) \{[\s\S]*?rf-end rf-end-alone/);
   assert.match(read('public/css/app.css'), /\.rf-end-alone \{ min-height: 56vh; justify-content: center;/);
 });
@@ -452,6 +452,50 @@ test('at rest the vote is part of the page: Yes | No and Skip, no sheet', () => 
   const css = read('public/css/app.css');
   assert.match(css, /\.rf-morph \{ position: relative; flex: none; width: 128px;/, 'Skip holds Next\'s place, at Next\'s width');
   assert.match(html, /class="rf-why rf-why-off"/, 'the room for a reason is kept, empty');
+});
+
+test('Previous goes back along the run, the way it came, from the second change on (#3517)', () => {
+  // None on the first change: the row is Yes | No and Skip, as it was.
+  assert.doesNotMatch(sheetHtml({}), /data-rf-prev/);
+  const html = sheetHtml({ onPrev() {} });
+  // On the line over the row, not in it: Yes | No keeps its width.
+  assert.match(html, /<div class="rf-vote" data-rf-has-prev="">\s*<button type="button" class="rf-prev" data-rf-prev=""/);
+  assert.match(html, /data-rf-prev=""[\s\S]*class="rf-why[\s\S]*class="rf-vrow"><div class="rf-pair"/);
+  assert.ok(html.includes(`aria-label="${message('communities:review.vote.previousLabel')}"`));
+  assert.ok(html.includes(`>${message('communities:review.vote.previous')}</span>`));
+  assert.match(sheetHtml({ onPrev() {}, vote: 'yes', state: 'voted' }), /data-rf-prev=""/, 'and after a vote');
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  // Next and Skip lay the trail; Previous walks it back and lays nothing.
+  assert.match(src, /if \(dir > 0\) setTrail\(\(cur\) => \[\.\.\.cur, index\]\);/);
+  assert.match(src, /const back = trail\[trail\.length - 1\];\s*setTrail\(\(cur\) => cur\.slice\(0, -1\)\);\s*setAhead\(\(cur\) => \[\.\.\.cur, index\]\);\s*goTo\(back, -1\);/);
+  assert.match(src, /onPrev=\{trail\.length \? goPrev : undefined\}/);
+  // Next (and Skip) go forward to where you were before they look on.
+  assert.match(src, /const onward = \(n: number\) => \{\s*if \(ahead\.length\) \{ setAhead\(\(cur\) => cur\.slice\(0, -1\)\); goTo\(ahead\[ahead\.length - 1\]\); return; \}\s*goTo\(n\);/);
+  assert.match(src, /const goNext = \(\) => onward\(next\);/);
+  assert.match(src, /hasNext=\{forward >= 0\}/);
+  // It comes back from the side Next pushed it to.
+  assert.match(src, /if \(from\.dir < 0\) \{[\s\S]*?translateX\(\$\{-0\.3 \* w\}px\)[\s\S]*?return;\s*\}/);
+  // Looking again starts a new run, with nothing behind or ahead.
+  assert.match(src, /setSkipped\(\{\}\);\s*setIndex\(first\);\s*setDone\(false\);\s*setTrail\(\[\]\);\s*setAhead\(\[\]\);/);
+  // The end, after Done, goes back onto the last change.
+  assert.equal((src.match(/\{done && item \? <button type="button" className="rf-end-prev" onClick=\{backFromEnd\} data-rf-end-prev="">/g) || []).length, 2, 'both ends');
+  assert.match(src, /const backFromEnd = \(\) => \{ setSheet\(item && votes\[item\.key\] \? 'voted' : 'ask'\); setDone\(false\); \};/);
+  // Back still leaves the run: Previous is its own control.
+  assert.match(src, /className="rf-back" onClick=\{onDone\}/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.rf-vote\[data-rf-has-prev\] \.rf-why \{ padding: 0 104px; \}/, 'a reason keeps clear of it');
+  assert.match(css, /\.rf-prev \{ position: absolute; top: 0;/);
+});
+
+test('a No comes back with the reason it was sent with', () => {
+  const vs = read('frontend/src/features/review-flow/vote-sheet.tsx');
+  assert.match(vs, /if \(text\) said\[item\.key\] = text;\s*else delete said\[item\.key\];/);
+  assert.match(vs, /setSharedNow\(said\[item\.key\] \|\| null\)/, 'read back when the change comes round again');
+  // The run keeps them, so the end (which unmounts the sheet) loses none.
+  assert.match(read('frontend/src/features/review-flow/review-flow.tsx'), /said=\{said\.current\}/);
+  assert.match(sheetHtml({ vote: 'no', state: 'voted', said: { [model.toReviewItems([feedItem()], () => ({ screens: [SCREEN] }))[0].key]: 'It does not work' } }), /data-rf-why-said="">&ldquo;It does not work&rdquo;|data-rf-why-said="">“It does not work”/);
+  // No Previous while a vote or an Undo is on its way.
+  assert.match(vs, /data-rf-prev="" aria-label=\{t\('communities:review\.vote\.previousLabel'\)\} disabled=\{busy\}/);
 });
 
 test('help is in the bar\'s card: Ask privately, Discussion and Try it, each opened over the page', () => {

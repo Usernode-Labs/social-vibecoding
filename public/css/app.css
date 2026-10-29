@@ -25163,6 +25163,10 @@ html.in-side-panel body {
 .rf-end-title { margin: 0; font-size: 20px; font-weight: 650; line-height: 26px; color: var(--rf-ink); }
 .rf-end-line-tight { margin: 8px 0 24px; }
 .rf-end-btn-go { background: var(--accent); color: #fff; }
+/* The end's way back to the last change (#3517), in its top corner. */
+.rf-end-alone:has(> .rf-end-prev) { position: relative; }
+.rf-end-prev { position: absolute; top: 8px; left: 0; height: 44px; padding: 0 8px 0 2px; border: 0; background: none; color: var(--rf-muted); display: flex; align-items: center; gap: 2px; font: inherit; font-size: 15px; font-weight: 500; cursor: pointer; }
+.rf-end-prev:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
 .rf-end-back { height: 44px; margin-top: 6px; padding: 0 12px; border: 0; background: none; color: var(--rf-muted); font: inherit; font-size: 15px; font-weight: 500; cursor: pointer; }
 
 /* The change page. A change is a detail view: on a phone the page covers the
@@ -25322,6 +25326,16 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 /* The row never moves: the room above it is kept for a No's reason, the
    pair shows your choice in place, and the round ⋯ grows into Next change. */
 .rf-vote { flex: none; display: flex; flex-direction: column; }
+/* Previous (#3517): from the second change on, quiet and at the start of
+   the line over the row, so Yes | No keeps its width and it reads as the
+   run's way back, not a fourth answer. A reason said there keeps clear of
+   it. */
+.rf-vote[data-rf-has-prev] { position: relative; }
+.rf-vote[data-rf-has-prev] .rf-why { padding: 0 104px; }
+.rf-prev { position: absolute; top: 0; left: -8px; z-index: 1; height: 44px; padding: 0 8px 0 2px; border: 0; background: none; color: var(--rf-muted); display: flex; align-items: center; gap: 2px; font: inherit; font-size: 15px; font-weight: 500; cursor: pointer; }
+.rf-prev:active { scale: .97; }
+.rf-prev:disabled { opacity: .6; }
+.rf-prev:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
 .rf-why { flex: none; height: 44px; margin-bottom: 8px; display: flex; align-items: center; justify-content: center; transition: opacity .25s, transform .3s cubic-bezier(0.22,1,0.36,1); }
 .rf-why-off { opacity: 0; transform: translateY(6px); pointer-events: none; }
 .rf-why-add { min-height: 44px; padding: 0 6px; border: 0; background: none; color: var(--rf-muted); font-size: 15px; font-weight: 500; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }

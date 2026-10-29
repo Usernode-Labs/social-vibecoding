@@ -503,6 +503,18 @@
     "text": "Skip",
     "description": "Button beside the Yes | No pair at the foot of a change's page in the new Needs you run (an experiment). It moves on to the next change at once without a vote; nothing is recorded and the change keeps waiting in Needs you. After a vote the same place shows Next. One word."
   },
+  "review.vote.previous": {
+    "text": "Previous",
+    "description": "Quiet button on the line over the Yes | No row in the new Needs you run (an experiment), shown from the second change on, after a back arrow. It goes back to the change the person was on before this one. One word."
+  },
+  "review.end.previous": {
+    "text": "Previous change",
+    "description": "Quiet button, after a back arrow, at the top corner of the end of the new Needs you run (an experiment), after the person pressed Done on the last change. It goes back to that last change."
+  },
+  "review.vote.previousLabel": {
+    "text": "Previous change",
+    "description": "Screen-reader name of the round back-arrow button at the start of the Yes | No row in the new Needs you run (an experiment), shown from the second change on. It goes back to the change the person was on before this one, with their vote on it as they left it."
+  },
   "review.vote.skipLabel": {
     "text": "Skip this change for now",
     "description": "Screen-reader name of the Skip button beside the Yes | No pair in the new Needs you run (an experiment). It moves on without a vote; the change keeps waiting in Needs you."
