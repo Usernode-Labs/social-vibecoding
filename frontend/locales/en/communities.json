@@ -770,5 +770,17 @@
   "review.end.backToProject": {
     "text": "Back to the Workshop",
     "description": "Button at the end of a project's Needs you in the new review flow (an experiment), once every waiting change has been shown: opens the project's Workshop."
+  },
+  "needs.botAsked.label": {
+    "text": "Homeroom bot asked you",
+    "description": "Small-caps heading at the top of Needs you, over the questions Homeroom bot asked the person about their requests that nobody has answered yet. Each row opens the request, where the question is answered in public."
+  },
+  "needs.botAsked.where": {
+    "text": "{{project}} · Request #{{number}}",
+    "description": "Grey line under one of Homeroom bot's questions in Needs you: the project and the request it asked about. {{project}} is the project's name, {{number}} the request's number."
+  },
+  "needs.botAsked.untitled": {
+    "text": "A question about your request",
+    "description": "Title of one of Homeroom bot's questions in Needs you when the question's words cannot be read."
   }
 }
