@@ -112,6 +112,29 @@ function go(href: string | null): void {
   if (href && typeof window !== 'undefined') window.location.hash = href.replace(/^#/, '');
 }
 
+/** The side panel's controller (features/side-panel/), when the shell has one. */
+function sidePanel(): { take?: (route: string) => boolean; close?: () => void } | null {
+  return typeof window === 'undefined' ? null : (window as any).UsernodeReact?.sidePanel || null;
+}
+
+/**
+ * A request, a change or a decision, opened from the list. Beside it on a
+ * wide window, in the side panel, which takes Main's place (the list stays
+ * where it is); anywhere else, and whenever the panel does not take it, its
+ * page.
+ */
+function openPublic(href: string | null, docked: boolean): void {
+  if (!href) return;
+  if (docked) {
+    try {
+      if (sidePanel()?.take?.(href.replace(/^#/, ''))) return;
+    } catch {
+      /* the page instead */
+    }
+  }
+  go(href);
+}
+
 export function AiScreen(): ReactNode {
   const t = useMessages('messages');
   const say = (p: Phrase) => t(p.id, p.values);
@@ -153,11 +176,15 @@ export function AiScreen(): ReactNode {
 
   const openRow = (row: WorkRow) => {
     if (row.rootId) {
-      if (docked) setAt({ threadRootId: row.rootId, focusMessageId: null });
-      else go(`#ai/thread/${row.rootId}`);
+      if (docked) {
+        // A private thread is Main's: the panel, if a page is up in it, gives
+        // Main its place back.
+        sidePanel()?.close?.();
+        setAt({ threadRootId: row.rootId, focusMessageId: null });
+      } else go(`#ai/thread/${row.rootId}`);
       return;
     }
-    go(row.href);
+    openPublic(row.href, docked);
   };
 
   return (
@@ -232,7 +259,7 @@ export function AiScreen(): ReactNode {
                   key={row.threadId}
                   as="button"
                   chevron={false}
-                  onClick={() => go(row.href)}
+                  onClick={() => openPublic(row.href, docked)}
                   data-ai-next={row.what}
                   leading={<WhoTile app={row.app} who="all" />}
                   title={row.title || ''}
@@ -275,7 +302,7 @@ export function AiScreen(): ReactNode {
                     key={row.threadId}
                     as="button"
                     chevron={false}
-                    onClick={() => go(row.href)}
+                    onClick={() => openPublic(row.href, docked)}
                     leading={<WhoTile app={row.app} who="all" />}
                     title={row.title || ''}
                     subtitle={t('messages:ai.live.row', { project: row.app?.name || '', number: row.number || '' })}
@@ -298,7 +325,16 @@ export function AiScreen(): ReactNode {
       </div>
 
       {docked ? (
-        <aside className="ai-main-pane" aria-label={t('messages:store.header.main')} data-ai-main="">
+        <aside className="ai-main-pane" aria-labelledby="ai-main-title" data-ai-main="">
+          <header className="ai-main-head" data-ai-main-head="">
+            <img src={BOT_AVATAR} alt="" className="w-8 h-8 rounded-[10px] object-cover shrink-0" />
+            <span className="min-w-0 flex flex-col">
+              <span id="ai-main-title" className="truncate text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">
+                {t('messages:store.header.main')}
+              </span>
+              <span className="truncate text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{t('messages:ai.main.sub')}</span>
+            </span>
+          </header>
           <EmbeddedConversation conversationId={botId!} active={visible} at={at} />
         </aside>
       ) : null}

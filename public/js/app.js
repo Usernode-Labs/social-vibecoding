@@ -6455,8 +6455,10 @@ const App = {
     // the app goes, by any route: the header's close, a tab, the peeked rail,
     // Back, Expand — and chromeless, which has no layout to stand beside.
     // Switching straight to another app keeps `inApp` true, and the panel.
+    // The AI tab's page has it too, in the place of the chat docked beside
+    // its list (features/ai/).
     if (!App.embeddedPanel) {
-      window.UsernodeReact?.sidePanel?.appPresence?.(inApp && !App.chromeless);
+      window.UsernodeReact?.sidePanel?.appPresence?.((inApp || screen === 'ai-screen') && !App.chromeless);
     }
     // …AND THE PARKED APP, from the same answer (#2762). The running app
     // going off screen is what parks it, and this is the one place that says
