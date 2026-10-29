@@ -147,10 +147,13 @@ export function createRuntime(opts: RuntimeOptions) {
        AND ((status = 'queued' AND due_at < now() - make_interval(secs => $2::float8 / 1000))
          OR (status = 'running' AND lease_until < now() - make_interval(secs => $2::float8 / 1000)))) AS waited`,
     [[...newestKinds], NEWEST_WAIT_MS])).rows[0]?.waited === true;
+  // Without such kinds (or a `newest`) nothing is awaited: a claim pass
+  // starts its query in the same turn as before, which callers that start
+  // passes side by side rely on for which of them claims.
+  const asksNewest = newestKinds.size > 0 && !!opts.newest;
   async function runsNewest(): Promise<boolean> {
-    if (!newestKinds.size || !opts.newest) return true;
     if (Date.now() - newestAnswer.at < NEWEST_MS) return newestAnswer.newest;
-    const newest = await opts.newest().then((is) => is || leftWaiting()).catch(() => newestAnswer.newest);
+    const newest = await opts.newest!().then((is) => is || leftWaiting()).catch(() => newestAnswer.newest);
     newestAnswer = { at: Date.now(), newest };
     return newest;
   }
@@ -178,7 +181,7 @@ export function createRuntime(opts: RuntimeOptions) {
   // Claim and start what this process has room for; returns the started runs.
   async function startServices(): Promise<Promise<void>[]> {
     const started: Promise<void>[] = [];
-    for (const kind of await dueKinds(service, kindsWithRoom(await runsNewest()))) {
+    for (const kind of await dueKinds(service, kindsWithRoom(asksNewest ? await runsNewest() : true))) {
       const handler = handlers.get(kind)!;
       const set = running.get(kind) || new Set();
       running.set(kind, set);
@@ -299,7 +302,7 @@ export function createRuntime(opts: RuntimeOptions) {
       (payload, until) => Number(payload) < until);
       if (handlers.size) {
         loop('services', async () => (await startServices()).length > 0, 'wf_work', async () => {
-          const due = await nextDueMs(service, kindsWithRoom(await runsNewest()));
+          const due = await nextDueMs(service, kindsWithRoom(asksNewest ? await runsNewest() : true));
           const free = nextFreeMs();
           return due === null ? free : free === null ? due : Math.min(due, free);
         }, wakesForWork);
