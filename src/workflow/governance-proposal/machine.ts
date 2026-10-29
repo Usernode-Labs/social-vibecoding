@@ -10,6 +10,7 @@ import type {
   WorkResultPayload, WriteContext,
 } from '../kernel/index.ts';
 import { applyProposal } from '../rules/illustrations.ts';
+import { applyMove } from '../rules/thread-moves.ts';
 import { decrypt, encrypt } from '../rules/secrets.ts';
 import { deleteValue, setValue } from '../rules/platform-vars.ts';
 import { appUpdate, boardMoved, chatLine, issueUpdate as issuePush } from '../pushes.ts';
@@ -115,6 +116,7 @@ function voteSubject(issue: Issue): string {
     case 'maintenance_campaign': return `maintenance campaign "${p.title || issue.title}"`;
     case 'featured_illustration':
       return p.remove ? 'the proposal to remove the featured illustration' : 'the proposed featured illustration';
+    case 'thread_move': return `the move "${issue.title}"`;
     default: return `issue: "${issue.title}"`;
   }
 }
@@ -129,6 +131,8 @@ const REFUSALS = new Map([
   ['unwritable', 'that variable is now set by the deploy from a GitHub secret and cannot be written here.'],
   ['undecryptable', 'its value can no longer be read.'],
   ['invalid_value', 'its value is not a valid value for that variable.'],
+  ['missing_move', 'it names no move.'],
+  ['move_decided', 'that move was decided some other way.'],
 ]);
 
 function appliedLine(issue: Issue, how: string, campaignTitle: string): string {
@@ -138,6 +142,7 @@ function appliedLine(issue: Issue, how: string, campaignTitle: string): string {
     case 'featured_illustration':
       return p.proposed ? `Featured illustration changed ${how}` : `Featured illustration removed ${how}`;
     case 'close_issue': return `Issue #${p.issueNumber} closed ${how}`;
+    case 'thread_move': return `${issue.title}: done ${how}`;
     case 'maintenance_campaign':
       return `Maintenance campaign "${campaignTitle}" approved ${how}. `
         + 'The platform is now opening one PR per app. Progress is on the campaign dashboard.';
@@ -642,6 +647,10 @@ async function applyKind(tx: Tx, w: any, dataKey: string, ctx?: WriteContext) {
     }
     case 'secret_change':
       await applySecret(tx, w, p, w.authorId, dataKey);
+      return;
+    case 'thread_move':
+      // #6019: the threads' rows move (rules/thread-moves.ts), once.
+      await applyMove(tx, Number(p.moveId));
       return;
     default:
       throw new Error(`governance-proposal: no apply for kind ${w.kind}`);

@@ -5,6 +5,8 @@ const appAccess = require('../services/app-access');
 const repoRef = require('../services/repo-ref');
 const log = require('../services/logger');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const communities = require('../services/communities');
+const threadMoves = require('../services/thread-moves');
 
 // Threads (#6019): one thread per piece of work, holding its requests,
 // changes, governance rows and their discussions (services/threads.js).
@@ -21,13 +23,13 @@ function threadsRoutes() {
   async function visibleApp(where, value, user) {
     const { rows: apps } = where === 'slug'
       ? await pool.query(
-        `SELECT id, slug, created_by, self_hosted, collab_visibility, view_visibility,
+        `SELECT id, slug, name, created_by, self_hosted, collab_visibility, view_visibility,
                 moderation_suspended_at, repo_url
            FROM apps WHERE slug = $1`,
         [value]
       )
       : await pool.query(
-        `SELECT id, slug, created_by, self_hosted, collab_visibility, view_visibility,
+        `SELECT id, slug, name, created_by, self_hosted, collab_visibility, view_visibility,
                 moderation_suspended_at, repo_url
            FROM apps WHERE id = $1`,
         [value]
@@ -63,9 +65,11 @@ function threadsRoutes() {
       if (!found) return res.status(404).json({ error: 'App not found' });
       const thread = await threads.threadForNumber(pool, { appId: found.app.id, number: Number(req.params.number) });
       if (!thread) return res.status(404).json({ error: 'Thread not found' });
-      return res.json(await threads.threadPage(pool, {
+      const page = await threads.threadPage(pool, {
         thread, viewerId: req.user ? req.user.id : null, owner: found.owner, repo: found.repo,
-      }));
+      });
+      // Stage 6: a merge or split waiting on this thread.
+      return res.json({ ...page, moves: await threadMoves.openMoves(pool, { threadId: thread.id }) });
     } catch (err) {
       log.error('threads', 'thread read failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
@@ -89,6 +93,58 @@ function threadsRoutes() {
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
+
+  // ── Moves (stage 6) ─────────────────────────────────────────────────
+  //
+  // Merge a thread into another, or split items out of it, for a member
+  // (services/thread-moves.js decides who agrees, the 24 hours and the
+  // vote). Agree is a requester's; Object anybody's, and puts it to a vote.
+  //
+  //   POST /api/apps/:slug/threads/:number/moves   { kind: 'merge', into } | { kind: 'split', items }
+  //   POST /api/apps/:slug/thread-moves/:id/agree
+  //   POST /api/apps/:slug/thread-moves/:id/object { reason? }
+  const member = communities.requireAppMembership(pool);
+  const answerMove = (res, out) => {
+    if (out.ok) return res.json(out);
+    const { ok: _ok, status, ...rest } = out;
+    return res.status(status || 400).json(rest);
+  };
+  router.post('/api/apps/:slug/threads/:number/moves', sameOriginBrowserOnly, member, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+      if (!/^[1-9][0-9]{0,8}$/.test(req.params.number)) return res.status(404).json({ error: 'Thread not found' });
+      const found = await visibleApp('slug', req.params.slug, req.user);
+      if (!found) return res.status(404).json({ error: 'App not found' });
+      const thread = await threads.threadForNumber(pool, { appId: found.app.id, number: Number(req.params.number) });
+      const body = req.body || {};
+      return answerMove(res, await threadMoves.propose(pool, {
+        app: found.app, user: req.user, thread, kind: body.kind,
+        into: Number(body.into) || null, items: Array.isArray(body.items) ? body.items : null,
+      }));
+    } catch (err) {
+      log.error('threads', 'move proposal failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+  const decideMove = (verb, act) => async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+      if (!/^[1-9][0-9]{0,15}$/.test(req.params.id)) return res.status(404).json({ error: 'No such move' });
+      const found = await visibleApp('slug', req.params.slug, req.user);
+      if (!found) return res.status(404).json({ error: 'App not found' });
+      return answerMove(res, await act(pool, {
+        app: found.app, user: req.user, moveId: req.params.id,
+        reason: typeof req.body?.reason === 'string' ? req.body.reason : null,
+      }));
+    } catch (err) {
+      log.error('threads', `move ${verb} failed`, { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  };
+  router.post('/api/apps/:slug/thread-moves/:id/agree', sameOriginBrowserOnly, member, decideMove('agree', threadMoves.agree));
+  router.post('/api/apps/:slug/thread-moves/:id/object', sameOriginBrowserOnly, member, decideMove('object', threadMoves.object));
 
   // `notify`: true is Notify me, false is Mute, null goes back to the rule
   // (followers are whoever asked, built, voted or posted). Answers the

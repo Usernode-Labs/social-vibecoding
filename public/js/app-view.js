@@ -10505,7 +10505,7 @@ const AppView = {
       if (!keep(issuesData)) {
         AppView._govProposals = (issuesData.issues || [])
           .filter((i) => i.kind === 'secret_change' || i.kind === 'rename' || i.kind === 'close_issue'
-            || i.kind === 'maintenance_campaign' || i.kind === 'featured_illustration');
+            || i.kind === 'maintenance_campaign' || i.kind === 'featured_illustration' || i.kind === 'thread_move');
       }
       if (!keep(promotedData)) AppView._proposalsCtx = {
         majority,

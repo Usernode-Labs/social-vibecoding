@@ -91,7 +91,7 @@ test('its first render is nothing; the thread is read in an effect', () => {
   const html = renderComponent(ITEMS, 'ThreadItems', { slug: 'p', number: 7, here: { type: 'request', id: 7 } });
   assert.equal(html, '');
   const src = read(ITEMS);
-  assert.match(src, /useEffect\(\(\) => \{\s+setData\(null\);/);
+  assert.match(src, /useEffect\(\(\) => \{\s+if \(!revision\) setData\(null\);/, 'cleared on a new page, kept while a move re-reads it');
   assert.match(src, /`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/threads\/\$\{number\}`/);
   assert.match(src, /`\/api\/threads\/\$\{threadId\}`/, 'a decision is read by its thread');
   assert.match(src, /fetch\(`\/api\/threads\/\$\{data\.thread\.id\}\/follow`, \{\s+method: 'PUT'/);
@@ -127,4 +127,43 @@ test('the vote sheet\'s Discussion opens the thread the change talks in', () => 
   assert.match(sheet, /<ThreadTalk item=\{item\} \/>/);
   assert.doesNotMatch(sheet, /<FeedThread slug=\{item\.app\.slug\} type="session" refId=\{item\.id\} canPost \/>/);
   assert.match(sheet, /setAnchor\(lead > 0 \? \{ type: 'issue', ref: lead \} : own\);/);
+});
+
+// ── Stage 6: moves and ballots on the page ─────────────────────────────
+
+test('competing changes are one ballot; a pick is votes, cast only where they change', () => {
+  const { ballotOf, ballotVotes, moveLines, splittable } = loadTsx(MODEL);
+  const plain = (v) => JSON.parse(JSON.stringify(v));
+  const a = { type: 'change', id: 51, number: 8, title: 'Toggle', status: 'promoted', state: 'review', replies: 0, epoch: 2, myVote: null };
+  const b = { type: 'change', id: 52, number: 9, title: 'Schedule', status: 'promoted', state: 'review', replies: 0, epoch: 0, myVote: 'yes' };
+  assert.equal(ballotOf(payload([request, a])), null, 'one change is no ballot');
+  const ballot = ballotOf(payload([request, a, b]));
+  assert.deepEqual(ballot.options.map((o) => o.id), [51, 52]);
+  assert.equal(ballot.pick, 52, 'her Yes on one is her pick');
+  assert.deepEqual(plain(ballotVotes(ballot, 51)), [
+    { sessionId: 51, vote: 'yes', epoch: 2 }, { sessionId: 52, vote: null, epoch: 0 },
+  ], 'Yes on the pick, the other Yes taken back rather than turned into a No');
+  assert.deepEqual(plain(ballotVotes(ballot, 52)), [], 'nothing to cast for the pick already made');
+  assert.deepEqual(plain(ballotVotes(ballot, 'neither')), [
+    { sessionId: 51, vote: 'no', epoch: 2 }, { sessionId: 52, vote: 'no', epoch: 0 },
+  ]);
+  assert.equal(ballotOf(payload([request, { ...a, myVote: 'no' }, { ...b, myVote: 'no' }])).pick, 'neither');
+  assert.equal(message('project:topic.thread.ballot.neither'), 'Neither');
+  // A waiting move says what it does and when.
+  const lines = moveLines({ id: 1, kind: 'merge', state: 'pending', input: { intoNumber: 12 }, deadline: new Date(Date.now() + 23.2 * 3600000).toISOString(), agreed: [], governanceId: null });
+  assert.equal(`${words(lines.what)}. ${words(lines.when)}`, 'Proposed: merge into #12. Happens in 24 hours unless someone objects');
+  assert.equal(words(moveLines({ id: 2, kind: 'split', state: 'voting', input: { items: [{ type: 'request', number: 9 }] }, deadline: '', agreed: [], governanceId: 4 }).when),
+    'Up for a vote, as someone objected');
+  // A split may take anything but the lead.
+  assert.deepEqual(splittable(payload([request, a])).map((i) => i.id), [51]);
+});
+
+test('the merge closes the rivals of the change that went live, and never waits on it', () => {
+  const watcher = read('src/services/issue-close-watcher.js');
+  assert.match(watcher, /if \(look === 1 && pool && appId && prNumber\) await require\('\.\/threads'\)\.closeRivals\(pool, \{ appId, prNumber \}\);/);
+  const threads = read('src/services/threads.js');
+  const fn = threads.slice(threads.indexOf('async function closeRivals('), threads.indexOf('module.exports = {'));
+  assert.match(fn, /status = 'promoted'/, 'only changes still up for a vote');
+  assert.match(fn, /reason: 'superseded'/);
+  assert.match(fn, /\} catch \(err\) \{\s+log\.warn\('threads', 'Could not look for a merged change\\'s rivals'/, 'never throws');
 });

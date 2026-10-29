@@ -715,7 +715,7 @@ function Transcript({ t: section }: { t: TranscriptSection }): ReactNode {
 }
 
 // The governance rows a decision's page shows (routes/issues.js governance/:id).
-const GOVERNANCE_KINDS = new Set(['secret_change', 'rename', 'close_issue', 'maintenance_campaign', 'featured_illustration']);
+const GOVERNANCE_KINDS = new Set(['secret_change', 'rename', 'close_issue', 'maintenance_campaign', 'featured_illustration', 'thread_move']);
 
 export function TopicHead(): ReactNode {
   const { card, body, item } = useStoreState(topicHeadStore);

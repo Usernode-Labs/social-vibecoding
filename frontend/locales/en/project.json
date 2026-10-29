@@ -2695,6 +2695,58 @@
     "text": "Muted: replies here do not notify you, until you reply yourself. Press to unmute.",
     "description": "Hover text of the button on a request's or a change's page while the thread is muted."
   },
+  "topic.thread.move.merge": {
+    "text": "Proposed: merge into #{{number}}",
+    "description": "Line under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page: someone proposed merging this thread into another one. {{number}} is the other thread's number."
+  },
+  "topic.thread.move.split": {
+    "text": "Proposed: split {{what}} out",
+    "description": "Line under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page: someone proposed moving items out of this thread into a thread of their own. {{what}} lists them, for example \"#9\"."
+  },
+  "topic.thread.move.pending_one": {
+    "text": "Happens in {{count}} hour unless someone objects",
+    "description": "Second half of the line under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page about a proposed merge or split: when it happens on its own. {{count}} is the hours left."
+  },
+  "topic.thread.move.pending_other": {
+    "text": "Happens in {{count}} hours unless someone objects",
+    "description": "Second half of the line under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page about a proposed merge or split: when it happens on its own. {{count}} is the hours left."
+  },
+  "topic.thread.move.voting": {
+    "text": "Up for a vote, as someone objected",
+    "description": "Second half of the line under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page about a proposed merge or split once someone objected: the project's people vote on it."
+  },
+  "topic.thread.move.agree": {
+    "text": "Agree",
+    "description": "Button beside a proposed merge or split of a thread: the person, who asked for something in it, agrees. Once everyone who asked agrees, it happens."
+  },
+  "topic.thread.move.object": {
+    "text": "Object",
+    "description": "Button beside a proposed merge or split of a thread: the person objects, which puts it to the project's vote."
+  },
+  "topic.thread.move.mergeInto": {
+    "text": "Merge into another thread",
+    "description": "Button under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page: propose merging this thread into another one about the same work."
+  },
+  "topic.thread.move.splitOut": {
+    "text": "Split one out",
+    "description": "Button under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page: propose moving one item out of this thread into a thread of its own."
+  },
+  "topic.thread.move.number": {
+    "text": "Its number",
+    "description": "Box in the form for merging a thread: the number of the request or change whose thread this one goes into."
+  },
+  "topic.thread.move.choose": {
+    "text": "Choose what to split out",
+    "description": "First, empty choice of the picker in the form for splitting an item out of a thread."
+  },
+  "topic.thread.move.propose": {
+    "text": "Propose",
+    "description": "Send button of the form for merging or splitting a thread."
+  },
+  "topic.thread.move.failed": {
+    "text": "That didn't work. Try again.",
+    "description": "Error under the merge / split controls of a thread when the request failed."
+  },
   "topic.change.stream.noReplies": {
     "text": "No replies yet",
     "description": "Line under a change, on its page, when nobody has replied to it."
@@ -5346,5 +5398,21 @@
   "menu.whoDecides.sub": {
     "text": "Private or public, and how changes are approved",
     "description": "Second line of the 'Who can see & change it' row."
+  },
+  "topic.thread.ballot.label": {
+    "text": "Pick one",
+    "description": "Small-caps heading over a ballot on a request's or a change's page: two or more changes for the same piece of work are up for a vote, and the person picks one of them, or Neither."
+  },
+  "topic.thread.ballot.about": {
+    "text": "These changes are for the same thing. The first one approved goes live, and the others close.",
+    "description": "Line under the Pick one heading of the ballot between competing changes: how it is decided."
+  },
+  "topic.thread.ballot.option": {
+    "text": "Change #{{number}}: {{title}}",
+    "description": "One choice of the ballot between competing changes. {{number}} is the change's number, {{title}} its title."
+  },
+  "topic.thread.ballot.neither": {
+    "text": "Neither",
+    "description": "The last choice of the ballot between competing changes: the person wants none of them to go live (it votes No on each)."
   }
 }

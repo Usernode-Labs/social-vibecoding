@@ -33,6 +33,9 @@ export interface ThreadItem {
   at?: string | null;
   replies: number;
   folded?: FoldedReply[];
+  /** Stage 6, a change: the approval epoch a vote is cast under, and the viewer's vote on it. */
+  epoch?: number | null;
+  myVote?: 'yes' | 'no' | null;
 }
 
 export interface ThreadFollow {
@@ -52,6 +55,18 @@ export interface ThreadPayload {
   items: ThreadItem[];
   /** Null signed out: there is no one to notify. */
   follow: ThreadFollow | null;
+  /** Stage 6: a merge or split waiting on this thread (services/thread-moves.js). */
+  moves?: ThreadMove[];
+}
+
+export interface ThreadMove {
+  id: number;
+  kind: 'merge' | 'split';
+  state: 'pending' | 'voting' | 'applied' | 'refused';
+  input: { into?: number; intoNumber?: number | null; items?: Array<{ type: ThreadItemType; number?: number; id?: number }> };
+  deadline: string;
+  agreed: number[];
+  governanceId: number | null;
 }
 
 /** The page the list is drawn on: a request by its number, the rest by id. */
@@ -157,4 +172,65 @@ export function followButton(follow: ThreadFollow | null): FollowButtonView | nu
     return { label: 'project:topic.thread.follow.mute', hint: 'project:topic.thread.follow.muteHint', pressed: false, next: false };
   }
   return { label: 'project:topic.thread.follow.notifyMe', hint: 'project:topic.thread.follow.notifyMeHint', pressed: false, next: true };
+}
+
+/**
+ * Stage 6: what a waiting move says, in two phrases: what it would do, and
+ * when it happens or why it waits. `now` is a clock in ms.
+ */
+export function moveLines(move: ThreadMove, now: number = Date.now()): { what: Phrase; when: Phrase } {
+  const items = move.input.items || [];
+  const what: Phrase = move.kind === 'merge'
+    ? { id: 'project:topic.thread.move.merge', values: { number: move.input.intoNumber ?? '?' } }
+    : {
+      id: 'project:topic.thread.move.split',
+      values: { what: items.map((i) => (i.type === 'request' ? `#${i.number}` : i.type)).join(', ') },
+    };
+  if (move.state === 'voting') return { what, when: { id: 'project:topic.thread.move.voting' } };
+  const hours = Math.max(1, Math.ceil((Date.parse(move.deadline) - now) / 3600000));
+  return { what, when: { id: 'project:topic.thread.move.pending', values: { count: Number.isFinite(hours) ? hours : 24 } } };
+}
+
+/** Stage 6: the items a split may take, every one but the thread's lead. Pure. */
+export function splittable(payload: ThreadPayload | null): ThreadItem[] {
+  if (!payload) return [];
+  const lead = payload.thread.number;
+  return payload.items.filter((i) => !(lead != null && i.number === lead && (i.type === 'request' || i.type === 'change')));
+}
+
+/**
+ * Stage 6: competing changes. Two or more changes in one thread up for a
+ * vote read as one ballot: pick one, or Neither. Underneath each keeps its
+ * own vote, pinned to its own revision (a push clears only that change's),
+ * and the first to pass goes live and closes the rest. The viewer's pick is
+ * read off those votes: Yes on one is that one, No on every one is
+ * Neither. Null when there is no ballot. Pure.
+ */
+export interface Ballot {
+  options: ThreadItem[];
+  pick: number | 'neither' | null;
+}
+
+export function ballotOf(payload: ThreadPayload | null): Ballot | null {
+  if (!payload) return null;
+  const options = payload.items.filter((i) => i.type === 'change' && i.state === 'review');
+  if (options.length < 2) return null;
+  const yes = options.filter((o) => o.myVote === 'yes');
+  const pick = yes.length === 1 ? yes[0].id
+    : options.every((o) => o.myVote === 'no') ? 'neither' : null;
+  return { options, pick };
+}
+
+/**
+ * The votes a pick casts: Yes on the picked change and its Yes taken back
+ * from every other (a No would count against it), or No on every one for
+ * Neither. Only what changes is cast. Pure.
+ */
+export function ballotVotes(ballot: Ballot, pick: number | 'neither'): Array<{ sessionId: number; vote: 'yes' | 'no' | null; epoch: number | null }> {
+  const out: Array<{ sessionId: number; vote: 'yes' | 'no' | null; epoch: number | null }> = [];
+  for (const o of ballot.options) {
+    const want = pick === 'neither' ? 'no' : o.id === pick ? 'yes' : (o.myVote === 'yes' ? null : o.myVote ?? null);
+    if (want !== (o.myVote ?? null)) out.push({ sessionId: o.id, vote: want, epoch: o.epoch ?? null });
+  }
+  return out;
 }

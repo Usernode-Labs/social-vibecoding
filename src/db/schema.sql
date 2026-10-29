@@ -14363,7 +14363,7 @@ DROP TRIGGER IF EXISTS issues_wf_governance_owned ON issues;
 CREATE TRIGGER issues_wf_governance_owned
   BEFORE UPDATE ON issues
   FOR EACH ROW
-  WHEN (OLD.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign', 'featured_illustration'))
+  WHEN (OLD.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign', 'featured_illustration', 'thread_move'))
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=governance-proposal/issue:', 'status',
     'payload.appliedAt', 'payload.appliedBy', 'payload.withdrawnAt', 'payload.supersededAt');
 
@@ -16261,12 +16261,16 @@ LANGUAGE sql IMMUTABLE AS $$
 $$;
 
 -- The thread of #N on an app, found or made. Two writers making it at once
--- meet at the unique index; the loser reads the winner's row.
+-- meet at the unique index; the loser reads the winner's row. A thread a
+-- merge closed (stage 6, `merged_into`) answers with the one it went into,
+-- so whatever arrives for its number later joins its work there.
 CREATE OR REPLACE FUNCTION thread_for_number(p_app_id INTEGER, p_number INTEGER,
                                              p_kind TEXT DEFAULT 'work', p_title TEXT DEFAULT NULL)
 RETURNS BIGINT LANGUAGE plpgsql AS $$
 DECLARE
   tid BIGINT;
+  next_tid BIGINT;
+  hops INTEGER := 0;
 BEGIN
   IF p_app_id IS NULL OR p_number IS NULL OR p_number <= 0 THEN
     RETURN NULL;
@@ -16281,6 +16285,12 @@ BEGIN
       SELECT id INTO tid FROM threads WHERE app_id = p_app_id AND number = p_number;
     END IF;
   END IF;
+  LOOP
+    SELECT merged_into INTO next_tid FROM threads WHERE id = tid;
+    EXIT WHEN next_tid IS NULL OR hops >= 8;
+    tid := next_tid;
+    hops := hops + 1;
+  END LOOP;
   RETURN tid;
 END;
 $$;
@@ -16526,3 +16536,32 @@ CREATE TABLE IF NOT EXISTS private_threads (
 CREATE INDEX IF NOT EXISTS private_threads_user_idx ON private_threads (user_id, updated_at DESC);
 COMMENT ON TABLE private_threads IS 'staging:private';
 
+-- ── Thread moves (stage 6 of #6019) ────────────────────────────────────
+-- Merging two threads about the same piece of work, or splitting an item
+-- out of one, proposed by any member (services/thread-moves.js). It
+-- happens at once when every requester of what it moves agreed (often just
+-- the person proposing), or after 24 hours if nobody objected (`deadline`;
+-- the `thread-moves` clock job applies it). Any objection puts it to the
+-- project's vote instead: a governance row of kind `thread_move`
+-- (`governance_issue_id`), which the governance machine applies like any
+-- other decision. `input` is what it moves: a merge's `into` thread, a
+-- split's `items`. Public, like the threads it moves.
+CREATE TABLE IF NOT EXISTS thread_moves (
+  id                  BIGSERIAL PRIMARY KEY,
+  app_id              INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  thread_id           BIGINT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  kind                VARCHAR(8) NOT NULL CHECK (kind IN ('merge', 'split')),
+  input               JSONB NOT NULL DEFAULT '{}'::jsonb,
+  proposed_by         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  state               VARCHAR(8) NOT NULL DEFAULT 'pending'
+                      CHECK (state IN ('pending', 'applied', 'voting', 'refused')),
+  deadline            TIMESTAMPTZ NOT NULL,
+  agreed_by           INTEGER[] NOT NULL DEFAULT '{}',
+  objected_by         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  governance_issue_id INTEGER REFERENCES issues(id) ON DELETE SET NULL,
+  result_thread_id    BIGINT REFERENCES threads(id) ON DELETE SET NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  decided_at          TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS thread_moves_due_idx ON thread_moves (deadline) WHERE state = 'pending';
+CREATE UNIQUE INDEX IF NOT EXISTS thread_moves_one_open_idx ON thread_moves (thread_id) WHERE state IN ('pending', 'voting');

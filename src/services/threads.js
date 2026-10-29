@@ -361,7 +361,8 @@ SELECT 'request' AS type, r.id::bigint AS id, r.number, r.title, r.state AS stat
        NULL::int AS user_id, NULL::timestamptz AS shared_at, r.created_at,
        (SELECT COUNT(*) FROM chat_messages m
          WHERE m.thread_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = r.number
-           AND m.msg_type = 'message' AND m.deleted_at IS NULL)::int AS replies
+           AND m.msg_type = 'message' AND m.deleted_at IS NULL)::int AS replies,
+       NULL::int AS epoch, NULL::text AS my_vote
   FROM requests r WHERE r.thread_id = $1
 UNION ALL
 SELECT 'change', cs.id::bigint, cs.pr_number,
@@ -369,7 +370,11 @@ SELECT 'change', cs.id::bigint, cs.pr_number,
        cs.status, cs.user_id, cs.shared_at, cs.created_at,
        (SELECT COUNT(*) FROM chat_messages m
          WHERE m.thread_id = $1 AND m.thread_type = 'session' AND m.thread_ref = cs.id
-           AND m.msg_type = 'message' AND m.deleted_at IS NULL)::int
+           AND m.msg_type = 'message' AND m.deleted_at IS NULL)::int,
+       cs.approval_epoch,
+       (SELECT v.vote::text FROM pr_votes v
+         WHERE v.session_id = cs.id AND v.user_id = $3
+           AND v.approval_epoch IS NOT DISTINCT FROM cs.approval_epoch)
   FROM chat_sessions cs
  WHERE cs.thread_id = $1 AND cs.is_headless = FALSE
    AND (cs.status IN ('active', 'promoted', 'merging', 'merged')
@@ -379,7 +384,8 @@ SELECT CASE WHEN i.kind = 'close_issue' THEN 'close' ELSE 'decision' END, i.id::
        i.title, i.status, i.created_by, NULL::timestamptz, i.created_at,
        (SELECT COUNT(*) FROM chat_messages m
          WHERE m.thread_id = $1 AND m.thread_type = 'governance' AND m.thread_ref = i.id
-           AND m.msg_type = 'message' AND m.deleted_at IS NULL)::int
+           AND m.msg_type = 'message' AND m.deleted_at IS NULL)::int,
+       NULL::int, NULL::text
   FROM issues i WHERE i.thread_id = $1 AND i.kind <> 'general'
  ORDER BY created_at, type, id`;
 
@@ -406,7 +412,7 @@ SELECT f.thread_type, f.thread_ref, f.id, f.content, f.created_at, u.username, u
  * governance row, and the viewer's Notify me / Mute standing.
  */
 async function threadPage(db, { thread, viewerId = null, owner = null, repo = null }) {
-  const { rows } = await db.query(ITEMS_SQL, [thread.id, IN_PROGRESS_PAUSED_WINDOW_DAYS]);
+  const { rows } = await db.query(ITEMS_SQL, [thread.id, IN_PROGRESS_PAUSED_WINDOW_DAYS, viewerId || 0]);
   const { rows: folded } = await db.query(FOLDED_SQL, [thread.id, viewerId || 0, FOLDED_REPLIES]);
   const foldOf = new Map();
   for (const f of folded) {
@@ -435,6 +441,9 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
     if (row.type === 'change') {
       item.state = issueRefs.stateOf(row.status);
       item.folded = foldOf.get(`change:${row.id}`) || [];
+      // Stage 6: what the ballot casts with, and the viewer's own vote.
+      item.epoch = row.epoch == null ? null : Number(row.epoch);
+      item.myVote = row.my_vote === 'yes' || row.my_vote === 'no' ? row.my_vote : null;
     } else if (row.type === 'close' || row.type === 'decision') {
       item.folded = foldOf.get(`governance:${row.id}`) || [];
     }
@@ -462,7 +471,54 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
   };
 }
 
+// ── Ballots (stage 6) ────────────────────────────────────────────────
+//
+// Two or more changes in one thread up for a vote are one ballot on its page
+// (features/dev-board/topic/thread-ballot.tsx); underneath each keeps its
+// own vote, pinned to its own revision. The first to pass goes live, and the
+// merge closes the others ('superseded', reversible like any close,
+// session-lifecycle.js archiveSession), each saying why in its discussion.
+// Called from the merge's own pass over its requests
+// (issue-close-watcher.js closeAfterMerge). Never throws: a rival left open
+// is still a proposal anyone can withdraw, and the merge must not wait on it.
+async function closeRivals(db, { appId, prNumber, deps = {} }) {
+  try {
+    const { rows: [won] } = await db.query(
+      `SELECT id, thread_id FROM chat_sessions
+        WHERE app_id = $1 AND pr_number = $2 AND status = 'merged' AND thread_id IS NOT NULL
+        ORDER BY id DESC LIMIT 1`,
+      [appId, prNumber]
+    );
+    if (!won) return [];
+    const { rows: rivals } = await db.query(
+      `SELECT id, status FROM chat_sessions
+        WHERE thread_id = $1 AND id <> $2 AND status = 'promoted' AND is_headless = FALSE`,
+      [won.thread_id, won.id]
+    );
+    const lifecycle = deps.lifecycle || require('./session-lifecycle');
+    const ws = deps.ws || require('./ws');
+    const closed = [];
+    for (const rival of rivals) {
+      try {
+        const out = await lifecycle.archiveSession({ pool: db, sessionId: Number(rival.id), reason: 'superseded', from: rival.status });
+        if (!out.archived) continue;
+        closed.push(Number(rival.id));
+        await ws.sendSystemMessage(db, appId, `Change #${prNumber} went live first, so this one closes.`,
+          'system', null, { type: 'session', ref: Number(rival.id) }).catch(() => {});
+      } catch (err) {
+        log.warn('threads', 'A rival change could not be closed', { sessionId: Number(rival.id), err: err.message });
+      }
+    }
+    if (closed.length) log.info('threads', 'Closed the rivals of a change that went live', { appId, prNumber, closed });
+    return closed;
+  } catch (err) {
+    log.warn('threads', 'Could not look for a merged change\'s rivals', { appId, prNumber, err: err.message });
+    return [];
+  }
+}
+
 module.exports = {
+  closeRivals,
   threadForNumber,
   threadById,
   threadPage,

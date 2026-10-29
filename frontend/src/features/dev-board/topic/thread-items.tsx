@@ -34,6 +34,8 @@ import {
   type ThreadHere,
   type ThreadPayload,
 } from './thread-model';
+import { ThreadMoves } from './thread-moves';
+import { ThreadBallot } from './thread-ballot';
 
 function openTopic(open: { kind: string; id: number }): void {
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -57,8 +59,10 @@ export function ThreadItems({ slug, number = null, threadId = null, here }: {
   const t = useMessages('project');
   const [data, setData] = useState<ThreadPayload | null>(null);
   const [busy, setBusy] = useState(false);
+  // Read again after a move changed the thread (./thread-moves.tsx).
+  const [revision, setRevision] = useState(0);
   useEffect(() => {
-    setData(null);
+    if (!revision) setData(null);
     const path = number && slug ? `/api/apps/${encodeURIComponent(slug)}/threads/${number}`
       : threadId ? `/api/threads/${threadId}` : null;
     if (!path) return undefined;
@@ -68,7 +72,7 @@ export function ThreadItems({ slug, number = null, threadId = null, here }: {
       .then((json) => { if (live) setData(json && Array.isArray(json.items) ? json : null); })
       .catch(() => { if (live) setData(null); });
     return () => { live = false; };
-  }, [slug, number, threadId]);
+  }, [slug, number, threadId, revision]);
   const rows = useMemo(() => threadRows(data, here), [data, here.type, here.id]);
   const button = followButton(data ? data.follow : null);
   if (!data || (!rows.length && !button)) return null;
@@ -149,6 +153,10 @@ export function ThreadItems({ slug, number = null, threadId = null, here }: {
           ))}
         </GroupedList>
       ) : null}
+      {/* Stage 6: competing changes, as one ballot. */}
+      {data.follow ? <ThreadBallot data={data} onChanged={() => setRevision((n) => n + 1)} /> : null}
+      {/* Stage 6: merging and splitting, for a signed-in viewer. */}
+      {slug && data.follow ? <ThreadMoves slug={slug} data={data} onChanged={() => setRevision((n) => n + 1)} /> : null}
     </section>
   );
 }
