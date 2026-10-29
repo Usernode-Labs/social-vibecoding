@@ -1,5 +1,17 @@
 [
   {
+    "package": "decode-uri-component",
+    "versions": [
+      "0.2.2"
+    ],
+    "ids": [
+      "GHSA-qr28-fpjm-wq7f",
+      "CVE-2026-118664"
+    ],
+    "expires": "2026-11-28",
+    "reason": "Reached only through minio 8.0.7 (latest release) -> query-string 7.1.3. The quadratic decode is in query-string's parse path (decode -> decodeComponent); minio 8.0.7 calls only query-string.stringify (internal/client.js, helpers.js) and no platform code uses either package. The only fixed release, 0.5.1, is ESM-only, so it cannot replace query-string 7's CommonJS require. See docs/security/october-2026-update.md."
+  },
+  {
     "package": "zod",
     "versions": [
       "3.25.76"
@@ -23,8 +35,8 @@
     "components": [
       "standalone"
     ],
-    "expires": "2026-10-30",
-    "reason": "Latest upstream Buildx 0.38.1 still embeds this module. govulncheck 1.9.0 found a module-only match and no affected extraction symbols in the official linux/arm64 binary. Retain as an explicit remaining finding pending vendor update and amd64 review. Kubernetes platform has no Docker CLI. See docs/security/october-2026-update.md."
+    "expires": "2026-11-13",
+    "reason": "Latest upstream Buildx 0.38.1 still embeds this module (re-checked 2026-10-29: still the latest release). govulncheck 1.9.0 found a module-only match and no affected extraction symbols in the official linux/arm64 binary. Retain as an explicit remaining finding pending vendor update and amd64 review. Kubernetes platform has no Docker CLI. See docs/security/october-2026-update.md."
   },
   {
     "package": "golang.org/x/net",
@@ -38,7 +50,7 @@
     "components": [
       "standalone"
     ],
-    "expires": "2026-10-30",
-    "reason": "Latest upstream Buildx 0.38.1 embeds affected HTTP/2 code; symbols are linked and reachability is not dismissed. No newer upstream release exists on 2026-10-23. This is a temporary review exception for the standalone Docker image only; the Kubernetes image has no Docker CLI. See docs/security/october-2026-update.md."
+    "expires": "2026-11-13",
+    "reason": "Latest upstream Buildx 0.38.1 embeds affected HTTP/2 code; symbols are linked and reachability is not dismissed. No newer upstream release exists on 2026-10-23 or on 2026-10-29. This is a temporary review exception for the standalone Docker image only; the Kubernetes image has no Docker CLI. See docs/security/october-2026-update.md."
   }
 ]
