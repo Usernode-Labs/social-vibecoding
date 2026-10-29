@@ -48,6 +48,7 @@
 import './screenshot-select';
 
 import { t } from '../../lib/i18n/runtime';
+import { isRepoAddress } from '../../lib/repo-link.js';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import { publishVisibility } from '../../lib/visibility-store';
 
@@ -2511,13 +2512,12 @@ export function init() {
       // "This app" is only selectable when an app with a real repo is
       // open. Otherwise the button stays visible but grayed-out/disabled
       // so users can still see both choices, and we default to platform.
-      // #5940: any http(s) repository address with an owner and a name
-      // counts, not only github.com: app repositories live on Homeroom's
-      // own git host now (src/services/repo-ref.js), and the server, which
-      // parses the address properly, is the real gate.
+      // #5940: a repository address on any host counts, not only
+      // github.com: app repositories live on Homeroom's own git host now.
+      // One rule, shared with comment mode and tested against the server's
+      // src/services/repo-ref.js (../../lib/repo-link.js, #6016).
       const appData = (typeof AppView !== 'undefined' && AppView.appData) || null;
-      const repoUrl = appData?.repo_url || '';
-      const hasRepo = /^https?:\/\/[^/\s]+\/[^/\s]+\/[^/\s]+/.test(repoUrl);
+      const hasRepo = isRepoAddress(appData?.repo_url);
       // An app is "open" whenever its view is mounted — on the running
       // App tab OR the Dev screen. Both `currentApp` and `appData` are
       // cleared together by AppView.close() (on navigateHome /
