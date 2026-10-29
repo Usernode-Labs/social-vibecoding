@@ -16323,6 +16323,8 @@ CREATE INDEX IF NOT EXISTS requests_thread_idx ON requests (thread_id) WHERE thr
 CREATE INDEX IF NOT EXISTS issues_thread_idx ON issues (thread_id) WHERE thread_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS chat_sessions_thread_idx ON chat_sessions (thread_id) WHERE thread_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS chat_messages_thread_id_idx ON chat_messages (thread_id, id) WHERE thread_id IS NOT NULL;
+-- The threads a person wrote in (the AI tab's Your work, services/ai-work.js).
+CREATE INDEX IF NOT EXISTS chat_messages_user_thread_idx ON chat_messages (user_id, thread_id) WHERE thread_id IS NOT NULL;
 
 -- A change on one of the manifest's own branches (services/rename-pr.js
 -- `branchPrefix`, and services/topics-pr.js) decides something about the
