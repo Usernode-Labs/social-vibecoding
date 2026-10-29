@@ -91,6 +91,9 @@ function makeHarness({ previewTitle = 'Partial Title' } = {}) {
   const sandbox = {
     // The binding the controller's i18n import gives it (the import line is stripped above).
     t: englishPlatformI18n().t,
+    // #6016: the controller's namesRepo import (lib/repo-link.js), stripped
+    // above like its other imports: the shipped predicate runs here.
+    namesRepo: require('./lib/repo-link').repoLink.namesRepo,
     console: { ...console, warn: () => {}, debug: () => {} },
     URLSearchParams,
     location: { search: '', hash: '', pathname: '/' },

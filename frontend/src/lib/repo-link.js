@@ -81,6 +81,22 @@ export function isGithubUrl(url) {
   return linkKind(url) === 'github';
 }
 
+// An address that names a repository: a web address with an owner and a name
+// after its host, or the short SSH form git reads (`git@host:owner/name.git`).
+// The host is not asked about here — app repositories live on Homeroom's own
+// git host, on GitHub and on other git servers alike (#5940) — only that the
+// address has an owner and a name. src/services/repo-ref.js is the server's
+// own parser and the real gate; this is the browser's copy of the same
+// question, used by Suggest an improvement and comment mode.
+const REPO_WEB = /^https?:\/\/[^/\s]+\/[^/\s]+\/[^/\s]+/i;
+const REPO_SSH = /^[^\s/@]+@[^/\s:]+:[^/\s]+\/[^/\s]+(?:\.git)?$/;
+
+/** @param {unknown} url */
+export function namesRepo(url) {
+  const s = text(url);
+  return !!s && (REPO_WEB.test(s) || REPO_SSH.test(s));
+}
+
 /**
  * An anchor's attributes for `url`: a Homeroom page opens in place, at its
  * route; anything else in a new tab, with no handle on this window. Null when
@@ -108,7 +124,7 @@ export function requestRoute(slug, number) {
   return s && Number.isInteger(n) && n > 0 ? `#app/${encodeURIComponent(s)}/dev/issues/${n}` : '';
 }
 
-const RepoLink = { linkKind, homeroomRoute, isGithubUrl, linkAttrs, requestRoute };
+const RepoLink = { linkKind, homeroomRoute, isGithubUrl, linkAttrs, requestRoute, namesRepo };
 
 if (typeof window !== 'undefined') {
   /** @type {any} */ (window).RepoLink = RepoLink;
