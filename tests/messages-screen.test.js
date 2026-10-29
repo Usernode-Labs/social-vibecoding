@@ -51,7 +51,7 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
   // (tests/proposal-tests-manifest.test.js), and the render tests pin them.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
     === '#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages'
-      + ' + #platform-rail-conversations + #platform-tab-ai[href="#ai"] + #platform-rail-pinned'
+      + ' + #platform-rail-conversations + #platform-tab-ai[href="#homeroom-bot"] + #platform-rail-pinned'
       + ' + #platform-rail-communities + #platform-tab-workshop + #platform-tab-me'),
   'a declared check pins the bar order');
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);

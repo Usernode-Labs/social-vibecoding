@@ -12,7 +12,8 @@
 //   2. Each row's words and its one pill, and where it goes.
 //   3. The screen's first render is the prerender: hidden, the bot's name,
 //      no rows; the lists load in effects, Main is docked only after mount.
-//   4. The routes: #ai is the page, #ai/main and #ai/thread/<id> are Main.
+//   4. The routes: #homeroom-bot is the page, #homeroom-bot/main and
+//      #homeroom-bot/thread/<id> are Main; #ai, the old address, lands there.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -138,17 +139,34 @@ test('the first render is the prerender: hidden, the bot\'s name, no rows; lists
   assert.match(src, /\{docked \? \(\s*<aside className="ai-main-pane"/);
   assert.match(src, /<EmbeddedConversation conversationId=\{botId!\} active=\{visible\} at=\{at\} \/>/);
   // Ask Homeroom bot opens Main; a private thread opens in it.
-  assert.match(src, /<a href="#ai\/main" className="messages-composer-card ai-askbar-card"/);
-  assert.match(src, /else go\(`#ai\/thread\/\$\{row\.rootId\}`\);/);
+  assert.match(src, /<a href="#homeroom-bot\/main" className="messages-composer-card ai-askbar-card"/);
+  assert.match(src, /else go\(`#homeroom-bot\/thread\/\$\{row\.rootId\}`\);/);
 });
 
-test('#ai is the page; #ai/main and #ai/thread/<id> are Main, on the Messages screen', () => {
+test('a page drawn before sign-in is confirmed asks again once it is, and its Ask bar starts at the rail', () => {
+  const src = read('frontend/src/features/ai/index.tsx');
+  // app.js announces the signed-in viewer with sv:session, on a saved-session
+  // boot and again once the server confirms it; both reads and the docked
+  // chat go again then, instead of staying empty until a reload.
+  assert.match(src, /const again = \(\) => setSession\(\(n\) => n \+ 1\);\s+document\.addEventListener\('sv:session', again\);\s+return \(\) => document\.removeEventListener\('sv:session', again\);/);
+  assert.match(src, /return \(\) => \{ live = false; \};\s+\}, \[visible, session\]\);/);
+  assert.match(src, /\}, \[visible, wide, botId, session\]\);/);
+  assert.match(read('public/js/app.js'), /document\.dispatchEvent\(new CustomEvent\('sv:session', \{\s+detail: \{ user: App\.user, verifiedSession: true \},/,
+    'the confirmation it waits for');
+  // A wide window whose Main is not docked (yet, or at all) keeps the bar
+  // on the page, clear of the sidebar.
+  assert.match(read('public/css/app.css'), /#ai-screen \.ai-askbar \{\s+position: fixed;\s+(\/\*[^*]*\*+([^/*][^*]*\*+)*\/\s+)?left: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter, 0px\)\);\s+right: var\(--platform-gutter, 0px\);/);
+});
+
+test('#homeroom-bot is the page; /main and /thread/<id> are Main, on the Messages screen; #ai lands there', () => {
   const app = read('public/js/app.js');
   assert.match(app, /if \(parts\[1\] !== 'main' && parts\[1\] !== 'thread'\) \{\s+App\.navigateToAi\(\);\s+return;\s+\}/);
-  assert.match(app, /case 'ai': return \['main', 'thread'\]\.includes\(frag\.split\('\/'\)\[1\]\)\s+\? 'messages-screen'[^\n]*\n\s+: 'ai-screen';/);
+  assert.match(app, /case 'homeroom-bot':\s+case 'ai': return \['main', 'thread'\]\.includes\(frag\.split\('\/'\)\[1\]\)\s+\? 'messages-screen'[^\n]*\n\s+: 'ai-screen';/);
+  // The old address is an alias: rewritten in place, then routed as the new one.
+  assert.match(app, /if \(parts\[0\] === 'ai'\) \{[\s\S]*?history\.replaceState\(null, '', '#homeroom-bot' \+ \(parts\.length > 1 \? '\/' \+ parts\.slice\(1\)\.join\('\/'\) : ''\)\);[\s\S]*?parts\[0\] = 'homeroom-bot';\s+\}\s+if \(parts\[0\] === 'homeroom-bot'\) \{/);
   const store = read('frontend/src/features/messages/store.ts');
   // Main's arrow goes back to the page, and the inbox's drawer is not its.
-  assert.match(store, /if \(botOnShow\(\) && !\(isMobile\(\) && state\.route\.threadRootId\)\) \{\s+app\.setBackIcon\?\.\('arrow', '#ai'\);/);
+  assert.match(store, /if \(botOnShow\(\) && !\(isMobile\(\) && state\.route\.threadRootId\)\) \{\s+app\.setBackIcon\?\.\('arrow', '#homeroom-bot'\);/);
   assert.match(read('frontend/src/features/nav-drawer/messages-drawer.ts'), /if \(at\.conversationId && at\.bot\) return false;/);
 });
 
@@ -159,7 +177,7 @@ test('the screen renders as the prerender does: hidden, the bot\'s name, Your wo
   assert.match(html, /^(<link rel="preload" as="image" href="\/brand\/homeroom-mark\.png"\/>)?<main id="ai-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" data-page-bounce=""/);
   assert.match(html, /<h1 class="[^"]*">Homeroom bot<\/h1>/);
   assert.match(html, /Your work/);
-  assert.match(html, /<a href="#ai\/main" class="messages-composer-card ai-askbar-card" aria-label="Ask Homeroom bot">/);
+  assert.match(html, /<a href="#homeroom-bot\/main" class="messages-composer-card ai-askbar-card" aria-label="Ask Homeroom bot">/);
   assert.ok(!html.includes('data-ai-row'), 'no rows before the effects read them');
   assert.ok(!html.includes('data-ai-main'), 'and Main is not docked before mount');
 });

@@ -1207,7 +1207,7 @@ export function syncChrome(): void {
   // page (features/ai/): its arrow goes back there, at every width, and the
   // bar names it. A thread of it is a level under Main, as any reply thread is.
   if (botOnShow() && !(isMobile() && state.route.threadRootId)) {
-    app.setBackIcon?.('arrow', '#ai');
+    app.setBackIcon?.('arrow', '#homeroom-bot');
     app.setHeaderTitle?.(t('messages:store.header.main'));
     return;
   }
@@ -2561,7 +2561,7 @@ export const messagesController = {
   openBot: (reference?: StagedObject | null) => { void openBot(reference); },
   // 16 Oct 2026: a request's page's See progress, at the request's own thread.
   openBotRequest: (slug: string, number: number) => { void openBotRequest(slug, number); },
-  // #6019: `#ai/thread/<id>`, one of the bot chat's threads (app.js).
+  // #6019: `#homeroom-bot/thread/<id>`, one of the bot chat's threads (app.js).
   openBotThread: (rootId: number) => { void openBot().then(() => openThreadAt(rootId, null)); },
   // B6: the App tab's Change something, under a first version's plan.
   quoteBotMessage: (conversationId?: number | null, messageId?: number | null) => { void quoteBotMessage(conversationId, messageId); },
