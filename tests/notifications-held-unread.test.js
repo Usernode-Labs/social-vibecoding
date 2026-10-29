@@ -177,10 +177,11 @@ test('the row ends in its bookmark alone, 16px in, and its unread dot sits in th
   // No chevron left in a notification row (the Messages footer keeps its own).
   const rowBody = SHEET_SRC.slice(SHEET_SRC.indexOf('function ScreenRow('), SHEET_SRC.indexOf('export function NotificationsSheetView('));
   assert.doesNotMatch(rowBody, /ChevronRightIcon/);
-  // The bookmark: on a card (#5580) it takes the time's place at the top
-  // right while the pointer is over it; a row of a flat list (All, a search)
-  // keeps it 16px from the edge, the close disc's line.
-  assert.match(html, /data-notification-save="10" aria-pressed="false" aria-label="[^"]+" class="absolute right-2 top-1\.5 flex h-8 w-8 [^"]*group-hover\/notif:opacity-100 /);
+  // The bookmark: on a card (#5580) it shows at the top right while the
+  // pointer is over it, the time stepping aside for it (#5929), with its
+  // name as its tooltip; a row of a flat list (All, a search) keeps it 16px
+  // from the edge, the close disc's line.
+  assert.match(html, /data-notification-save="10" aria-pressed="false" aria-label="([^"]+)" title="\1" class="absolute right-2 top-1\.5 flex h-8 w-8 [^"]*group-hover\/notif:opacity-100 /);
   assert.match(rowBody, /: 'absolute right-4 top-1\/2 -translate-y-1\/2 flex h-9 w-9 items-center justify-center '/);
   assert.match(SHEET_SRC, /id="notifications-sheet-close"[\s\S]{0,40}className=\{'flex h-9 w-9 /,
     'the close disc is the same 36px, in the title row\'s 16px padding');

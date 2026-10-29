@@ -194,6 +194,25 @@ test('a story card opens its history on the first tap or click, on a phone and a
   assert.doesNotMatch(single, /<button data-notif-id="1"[^>]*aria-expanded/);
 });
 
+test('#5929: a hovered card keeps its time, and its × and bookmark say what they do', () => {
+  const html = renderSheet({ list: [view(1), view(2, { appId: 6, appName: 'Polls', appLine: 'Polls' })] });
+  // The time steps aside for the bookmark on hover; it never goes, so no
+  // card is the one without a time.
+  assert.match(html, /<time title="Tuesday" class="shrink-0 group-hover\/notif:mr-7 group-has-\[:focus-visible\]\/notif:mr-7">1m ago<\/time>/);
+  assert.doesNotMatch(html, /group-hover\/notif:invisible/);
+  // The bookmark's tooltip is its accessible name.
+  assert.match(html, /data-notification-save="1" aria-pressed="false" aria-label="Save notification" title="Save notification"/);
+  assert.equal(message('notifications:row.clearTip'), 'Mark as read');
+  // The × sits inside the card's corner and says it marks read.
+  assert.match(html, /data-notification-clear="1" aria-label="Clear notification" title="Mark as read" class="absolute left-1\.5 top-1\.5 /);
+  // A card standing for several says how many it marks read.
+  const story = { storyKey: 'r:5:5580', storyRef: { number: 5580, title: 'Plant shelf' } };
+  const folded = renderSheet({ list: [view(1, story), view(2, story)] });
+  assert.match(folded, /data-notification-clear="1" aria-label="Clear 2 notifications" title="Mark 2 notifications as read"/);
+  // A saved notification in a card's history: its bookmark is named too.
+  assert.match(STACKS_SRC, /aria-label=\{t\(line\.notification\.saved \? 'notifications:row\.unsave' : 'notifications:row\.save'\)\}\s+title=\{t\(line\.notification\.saved/);
+});
+
 test('a fold by kind is several things, not one story: no history', () => {
   const html = renderSheet({ list: [view(1, { storyKey: 's:5:1' }), view(2, { storyKey: 's:5:2' })] });
   assert.match(html, /<button data-notif-id="1" data-notif-group-size="2"/);
