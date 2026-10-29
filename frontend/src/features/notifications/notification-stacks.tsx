@@ -796,6 +796,7 @@ export function CardHistory({ view, open }: { view: StoryRowView; open: boolean 
               data-notif-history-save={line.notification.id}
               aria-pressed={line.notification.saved ? 'true' : 'false'}
               aria-label={t(line.notification.saved ? 'notifications:row.unsave' : 'notifications:row.save')}
+              title={t(line.notification.saved ? 'notifications:row.unsave' : 'notifications:row.save')}
               className={'absolute right-0 top-1 flex h-7 w-7 items-center justify-center rounded-full '
                 + 'transition-colors hover:bg-black/[.04] dark:hover:bg-white/[.06] '
                 + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'}
