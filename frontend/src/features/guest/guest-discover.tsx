@@ -248,7 +248,9 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
 /**
  * A card. Its name is its one link, stretched over the whole card, so the
  * picture, the sentence and the gaps between them all open the project's
- * page, and nothing is a link inside a link.
+ * page, and nothing is a link inside a link. The name's own box is 44px
+ * tall (`py-3`) with `-my-3` taking the padding back out of the card, so a
+ * finger has a real target while the card looks exactly as it did.
  */
 function Card({ app, eager, featured = false }: { app: GuestApp; eager: boolean; featured?: boolean }) {
   const t = useMessages('auth');
@@ -267,7 +269,7 @@ function Card({ app, eager, featured = false }: { app: GuestApp; eager: boolean;
           slug={app.slug}
           data-guest-card-link=""
           aria-label={people >= MIN_PEOPLE ? t('auth:guest.card.peopleLabel', { name: app.name, count: people }) : undefined}
-          className="block truncate text-[15px] font-[650] leading-5 text-zinc-900 outline-none after:absolute after:inset-0 after:z-[1] after:rounded-[20px] after:content-[''] dark:text-zinc-100"
+          className="block truncate text-[15px] font-[650] leading-5 text-zinc-900 outline-none -my-3 py-3 after:absolute after:inset-0 after:z-[1] after:rounded-[20px] after:content-[''] dark:text-zinc-100"
         >
           {app.name}
         </ProjectLink>

@@ -239,11 +239,15 @@ test('CEILING: the landing bar is the wordmark at 28px, with no anchor and one q
   // sit over the trailing box, so its title keeps the bar's true centre.
   const signIn = bar.match(/<button[^>]*data-landing-sign-in=""[^>]*>/);
   assert.ok(signIn, 'the bar carries the Sign in button');
-  assert.match(signIn[0], /\bh-7\b/, 'exactly the 28px content row');
+  // `min-h-11` with `-my-2` gives the control a 44px touch target while the
+  // margins take the extra 16px back out of the bar, which stays 28px.
+  assert.match(signIn[0], /\bmin-h-11\b/, 'a 44px box for the finger');
+  assert.match(signIn[0], /(?:^|\s)-my-2(?:\s|$)/, 'whose extra height the bar does not take');
   assert.doesNotMatch(signIn[0], /\b(?:sm:)?py-\d/, 'no vertical padding of its own');
   const signUp = bar.match(/<button[^>]*data-landing-sign-up=""[^>]*>/);
   assert.ok(signUp, 'and the Sign up button');
-  assert.match(signUp[0], /\bh-7\b/, 'exactly the 28px content row');
+  assert.match(signUp[0], /\bmin-h-11\b/, 'the same 44px box');
+  assert.match(signUp[0], /(?:^|\s)-my-2(?:\s|$)/, 'the same negative margin');
   assert.doesNotMatch(signUp[0], /\b(?:sm:)?py-\d/, 'no vertical padding of its own');
   assert.match(bar, /<header[^>]*data-guest-top=""/, 'the prerender is Discover\'s own bar');
 
