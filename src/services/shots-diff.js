@@ -227,12 +227,22 @@ function locateAll(screen, crop, limit = 8) {
       if (q(crop.d, i) !== bg) detail.push([x, y, i]);
     }
   }
-  // Plain backgrounds identify no particular element, however many places
-  // match them. Keep the pixel-difference regions without guessing a crop.
-  if (detail.length < 12) return [];
   const pts = [];
-  const step = Math.max(1, Math.floor(detail.length / 64));
-  for (let k = 0; k < detail.length && pts.length < 64; k += step) pts.push(detail[k]);
+  if (detail.length >= 12) {
+    const step = Math.max(1, Math.floor(detail.length / 64));
+    for (let k = 0; k < detail.length && pts.length < 64; k += step) pts.push(detail[k]);
+  } else {
+    // A solid colour can still identify a button on a contrasting page.
+    // Sample the crop's extent; the same check and placement budgets below
+    // stop searches whose colour matches too much of the screen.
+    for (let gy = 0; gy < 6; gy += 1) {
+      for (let gx = 0; gx < 8; gx += 1) {
+        const x = Math.round(1 + (gx / 7) * (crop.w - 3));
+        const y = Math.round(1 + (gy / 5) * (crop.h - 3));
+        pts.push([x, y, (y * crop.w + x) * 4]);
+      }
+    }
+  }
   const allowed = Math.max(2, Math.floor(pts.length / 10));
   let remaining = MAX_LOCATE_CHECKS;
   const gridSize = Math.ceil(crop.w / 3) * Math.ceil(crop.h / 3);
