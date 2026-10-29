@@ -719,7 +719,7 @@ test('the back-slot table and the tab map agree about what is a root', () => {
 
   // The tab bar's own hrefs, so the arrow lands where the tab does rather than
   // at an address this test made up.
-  const HREF = { home: '/', messages: '#messages', workshop: '#workshop', me: '#profile', ai: '#ai' };
+  const HREF = { home: '/', messages: '#messages', workshop: '#workshop', me: '#profile', ai: '#homeroom-bot' };
   // The root of each tab: the screen its tab navigates to. #6019: AI is its
   // own page (features/ai/), and Main, the bot's chat, a level under it on
   // the Messages screen; Discover is a page of Home's.

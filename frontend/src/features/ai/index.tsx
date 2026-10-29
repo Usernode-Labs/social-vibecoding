@@ -17,9 +17,10 @@
  *   ( Ask Homeroom bot )                 ← a phone: opens Main
  *
  * Main, the private conversation with the bot, is the Messages screen's
- * chat with it (`#ai/main`, ../messages). On a phone the Ask bar opens it and
- * a private thread opens as `#ai/thread/<id>`; on a desktop it is docked
- * beside this list (EmbeddedConversation), and a private thread opens in it.
+ * chat with it (`#homeroom-bot/main`, ../messages). On a phone the Ask bar
+ * opens it and a private thread opens as `#homeroom-bot/thread/<id>`; on a
+ * desktop it is docked beside this list (EmbeddedConversation), and a
+ * private thread opens in it.
  *
  * THE FIRST RENDER IS THE PRERENDER: the screen hidden, the bot's name and
  * no rows. The lists load in effects once the screen is shown to somebody
@@ -151,6 +152,17 @@ export function AiScreen(): ReactNode {
   const [liveOpen, setLiveOpen] = useState(false);
   const [botId, setBotId] = useState<number | null>(null);
   const [at, setAt] = useState<{ threadRootId: number | null; focusMessageId: number | null } | null>(null);
+  // A boot from the saved session draws this page before the server has
+  // confirmed who you are, and a read made in that window can come back
+  // with nothing; so could the chat docked beside it. `sv:session` (app.js)
+  // is the shell saying who is signed in, so both are asked again then,
+  // rather than staying empty until a reload (29 Oct 2026).
+  const [session, setSession] = useState(0);
+  useEffect(() => {
+    const again = () => setSession((n) => n + 1);
+    document.addEventListener('sv:session', again);
+    return () => document.removeEventListener('sv:session', again);
+  }, []);
 
   // Read on every showing: what is yours changes while you are elsewhere.
   useEffect(() => {
@@ -161,13 +173,13 @@ export function AiScreen(): ReactNode {
     void readJson<{ items?: NeedItem[] }>(`/api/workshop/needs-feed?in=threads${qs ? '&demo=1' : ''}`)
       .then((data) => { if (live) setNeeds(Array.isArray(data?.items) ? data!.items : []); });
     return () => { live = false; };
-  }, [visible]);
+  }, [visible, session]);
 
   // Main beside the list, on a desktop: the chat with the bot, opened once.
   useEffect(() => {
     if (!visible || !wide || botId || typeof window === 'undefined' || !(window as any).App?.user) return;
     void openBotConversation().then((id) => { if (id) setBotId(id); }).catch(() => {});
-  }, [visible, wide, botId]);
+  }, [visible, wide, botId, session]);
 
   const rows = useMemo(() => yourWork(needs, work), [needs, work]);
   const folded = useMemo(() => foldWork(rows), [rows]);
@@ -183,7 +195,7 @@ export function AiScreen(): ReactNode {
         // Main its place back.
         sidePanel()?.close?.();
         setAt({ threadRootId: row.rootId, focusMessageId: null });
-      } else go(`#ai/thread/${row.rootId}`);
+      } else go(`#homeroom-bot/thread/${row.rootId}`);
       return;
     }
     openPublic(row.href, docked);
@@ -320,7 +332,7 @@ export function AiScreen(): ReactNode {
       {/* Ask Homeroom bot: Main. On a phone a bar over the tab bar; on a
           desktop Main is docked beside the list and this is not drawn. */}
       <div className="ai-askbar messages-composer" data-ai-askbar="">
-        <a href="#ai/main" className="messages-composer-card ai-askbar-card" aria-label={t('messages:ai.ask.label')}>
+        <a href="#homeroom-bot/main" className="messages-composer-card ai-askbar-card" aria-label={t('messages:ai.ask.label')}>
           <span className="ai-askbar-text">{t('messages:ai.ask.label')}</span>
           <span className="messages-composer-action" aria-hidden="true"><MicrophoneIcon className="h-5 w-5" /></span>
         </a>
