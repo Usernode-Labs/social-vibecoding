@@ -23676,6 +23676,13 @@ section + .workshop-search {
     color: var(--lit-ink);
     font-weight: 600;
   }
+  /* The row being dragged onto My apps (#6025): the kit's clone, on a solid
+     surface so it reads over the grid. Without it the clone takes the row's
+     hover tint, or the rail's group background, which can be clear. */
+  .platform-rail-community.un-reorder-ghost {
+    background: var(--bg-primary);
+    border-radius: 10px;
+  }
   .platform-rail-tile {
     flex: none;
     width: 22px;

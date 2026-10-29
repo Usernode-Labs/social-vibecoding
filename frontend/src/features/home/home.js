@@ -1504,6 +1504,14 @@ const Home = {
   // parking a handle on Home: there are TWO rails (Featured and Popular) and
   // a single slot would silently drop one of them.
 
+  // A SECOND SOURCE (#6025): the sidebar's community rows drag the same way.
+  // RailCommunities attaches this recognizer to #platform-rail-communities
+  // while Home is on show, with `itemSelector` naming its rows; everything
+  // below — the geometry, the plan, the preview, the add on settle — is the
+  // Discover path unchanged. A row carries `data-rail-community` rather than
+  // `data-slug`, so _dragSlug reads both; the slug means the same app either
+  // way, and a community row is carried as the same incoming app.
+
   // The app a cross-surface drag is carrying, or null when the card being
   // dragged already has a tile on the canvas.
   _incoming: null,
@@ -1513,7 +1521,7 @@ const Home = {
   // gesture over and the grid free to repaint.
   _pendingAdd: null,
 
-  _attachDiscoverPlacement(railEl) {
+  _attachDiscoverPlacement(railEl, opts = {}) {
     if (!railEl || !window.unNative?.attachGridPlacement) return null;
     const cols = Home.currentCols();
     const gridEl = () => (typeof document !== 'undefined'
@@ -1521,11 +1529,13 @@ const Home = {
     const handle = window.unNative.attachGridPlacement(railEl, {
       // Demo tiles stay drag-inert (#746) — they have no DB row to favourite
       // and no cell to persist. A card with no slug is the empty-lane note.
-      itemSelector: '.app-card[data-slug]:not([data-demo])',
+      // A SECOND SOURCE (#6025) names its own selector: the sidebar's
+      // community rows, which are not Discover cards.
+      itemSelector: opts.itemSelector || '.app-card[data-slug]:not([data-demo])',
       cellFromPoint: (x, y, info) => Home._targetCellFor(x, y, info, cols),
       canPlace: (el, cell) => !!Home._planFor(el, cell, cols),
       onLift: (el) => {
-        const slug = (el && el.dataset && el.dataset.slug) || '';
+        const slug = Home._dragSlug(el);
         const onCanvas = (Home._layoutCache || [])
           .some((it) => it.type === 'app' && it.slug === slug);
         Home._incoming = onCanvas
@@ -4908,10 +4918,17 @@ const Home = {
   // after an add, and dragging it then moves the tile it already has rather
   // than adding a second one. `_incoming` is only ever the fallback, and only
   // ever set for a card with no tile on the canvas.
+  // A dragged element names its app: a Discover card carries `data-slug`, a
+  // sidebar community row carries `data-rail-community`, and both are the
+  // same app slug (#6025).
+  _dragSlug(el) {
+    return (el && el.dataset && (el.dataset.slug || el.dataset.railCommunity)) || '';
+  },
+
   _itemFor(el) {
     if (!el) return null;
     const layout = Home._layoutCache || [];
-    const slug = el.dataset?.slug;
+    const slug = Home._dragSlug(el);
     return layout.find((it) => it.type === 'app' && it.slug === slug)
       || (Home._incoming && Home._incoming.slug === slug ? Home._incoming : null);
   },
