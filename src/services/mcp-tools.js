@@ -2366,14 +2366,19 @@ function registerTools(server, ctx) {
     overriddenBy: z.number().nullable(),
     overriddenAt: z.string().nullable(),
     overrideReason: z.string().nullable(),
+    // A close-up (services/shots-view.js cleanCloseup) is an after still of
+    // one region, in its own shape: `rect` and `part` instead of `focusRect`,
+    // and no `stageLabels`. A viewer in the New Needs you experiment gets them
+    // beside the stills, so an enum or a required field that leaves them out
+    // fails the whole get_proposal answer.
     artifacts: z.array(z.object({
       id: z.string(), storyId: z.string(), viewport: z.string(),
       side: z.enum(['base', 'head', 'paired']),
-      variant: z.enum(['focus', 'context', 'animation']),
+      variant: z.enum(['focus', 'context', 'animation', 'closeup']),
       media: z.enum(['png', 'webm', 'gif']),
       contentType: z.string(), width: z.number().nullable(), height: z.number().nullable(),
       bytes: z.number().nullable(), focusRect: z.unknown().nullable(),
-      stageLabels: z.array(z.string()).nullable(), url: z.string(),
+      stageLabels: z.array(z.string()).nullable().optional(), url: z.string(),
     })),
     updatedAt: z.string().nullable(),
   }).nullable();

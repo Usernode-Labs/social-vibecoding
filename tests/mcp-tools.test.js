@@ -4751,6 +4751,62 @@ test('get_proposal carries before/after shot results through its own output sche
   } finally { c.restore(); }
 });
 
+// Proposal 11752 (PR 6011): a viewer in the New Needs you experiment is
+// served close-ups beside the stills, each `variant: 'closeup'` with no
+// `stageLabels`, and the SDK refused the whole get_proposal answer
+// ("Invalid enum value ... received 'closeup' at shots.artifacts[12].variant",
+// "Required at shots.artifacts[12].stageLabels"). The view here is the real
+// serializer's, so a field it adds to a close-up is checked too.
+test('get_proposal admits close-ups through its own output schema', async () => {
+  const shotsView = require('../src/services/shots-view');
+  const HEAD = 'b'.repeat(40);
+  const id = (n) => n.toString(16).padStart(32, '0');
+  const still = (n, side) => ({
+    id: id(n), storyId: 'dialog', viewport: 'desktop', side, variant: 'context', media: 'png',
+    contentType: 'image/png', width: 1280, height: 800, bytes: 9, stageLabels: ['Open dialog'],
+  });
+  const run = {
+    state: 'verified', required: true,
+    claims: [{
+      id: 'dialog', claim: 'The dialog shows suggestions.', persona: 'member',
+      viewports: ['desktop'], steps: ['Open dialog'], baseState: 'present', animation: 'none',
+    }],
+    baseSha: 'a'.repeat(40), headSha: HEAD, failureCode: null, failureReason: null,
+    repairAvailable: false, planHash: 'e'.repeat(64),
+    shotResults: [{ id: 'dialog', status: 'ready', reason: null }],
+    artifactSummary: [
+      { id: id(1001), storyId: 'dialog', viewport: 'desktop', side: 'head', variant: 'closeup', media: 'png',
+        contentType: 'image/png', width: 594, height: 360, bytes: 7, part: 1,
+        focusRect: { x: 40, y: 30, w: 66, h: 40 }, scale: 9 },
+      still(1, 'base'), still(2, 'head'),
+    ],
+  };
+  const session = {
+    id: 11752, source: 'native', reviewed_head_sha: HEAD, shots_state: 'verified',
+    shots_detail: { impact: 'ui', rationale: 'The dialog changed.', headSha: HEAD },
+  };
+  const evidence = shotsView.serialize(run, session, 'recipe-box', HEAD, { dense: true });
+  const closeups = evidence.artifacts.filter((a) => a.variant === 'closeup');
+  assert.equal(closeups.length, 1, 'the dense view carries the close-up');
+  assert.equal(Object.hasOwn(closeups[0], 'stageLabels'), false, 'in its own shape, with no stage labels');
+
+  const c = connector(() => ({ session: { id: 11752, app_slug: 'recipe-box', shots: evidence } }));
+  try {
+    const result = await c.handlers.get('get_proposal')({ proposalId: 11752 });
+    assert.ok(!result.isError);
+    const parsed = validateOutput(c.specs.get('get_proposal'), result);
+    assert.ok(parsed.success, parsed.success ? '' : parsed.error.message);
+    assert.deepEqual(result.structuredContent.shots.artifacts.map((a) => `${a.side}/${a.variant}`),
+      ['base/context', 'head/context', 'head/closeup'], 'the close-up arrives beside the stills, not in their place');
+    assert.deepEqual(result.structuredContent.shots.artifacts[2].rect, { x: 40, y: 30, w: 66, h: 40 });
+
+    // The enum is still closed: a variant nothing serves is refused.
+    const artifact = z.object(c.specs.get('get_proposal').outputSchema).shape.shots.unwrap()
+      .shape.artifacts.element;
+    assert.equal(artifact.safeParse({ ...closeups[0], variant: 'thumbnail' }).success, false);
+  } finally { c.restore(); }
+});
+
 test('get_proposal carries the problems the shots agent noticed beside the shot results', async () => {
   const evidence = {
     state: 'verified', required: true, impact: 'ui', rationale: 'A sort control.',
