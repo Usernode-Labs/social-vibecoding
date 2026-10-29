@@ -3408,9 +3408,9 @@
       "expectText": "Integrations & automation"
     },
     {
-      "name": "Settings opens with a filter box over an uncollapsed menu, Account current",
+      "name": "Settings opens with a filter box and every group open, Account current",
       "path": "/#settings",
-      "expectSelector": "#settings-nav-desktop:has(input#settings-filter-desktop[type=\"search\"]):not(:has([aria-expanded])) [data-settings-nav=\"account\"][aria-current=\"page\"]"
+      "expectSelector": "#settings-nav-desktop:has(input#settings-filter-desktop[type=\"search\"]):not(:has([aria-expanded=\"false\"])):has([data-settings-group-fold][aria-expanded=\"true\"]) [data-settings-nav=\"account\"][aria-current=\"page\"] svg"
     },
     {
       "name": "An old part address opens the page that holds it: #settings/cli marks Connectors & CLI current",
