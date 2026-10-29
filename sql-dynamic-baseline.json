@@ -936,13 +936,6 @@
     {
       "source": "src/routes/workshop-overview.js",
       "kind": "runtime-built-identifier",
-      "fingerprint": "76b99148103cf1d2387f",
-      "count": 1,
-      "preview": "NEEDS_FEED_SQL"
-    },
-    {
-      "source": "src/routes/workshop-overview.js",
-      "kind": "runtime-built-identifier",
       "fingerprint": "930ea21d49f9b0b9c5cb",
       "count": 1,
       "preview": "COUNTS_SQL"
@@ -953,6 +946,13 @@
       "fingerprint": "d664a2029343883317f2",
       "count": 1,
       "preview": "ITEMS_SQL"
+    },
+    {
+      "source": "src/routes/workshop-overview.js",
+      "kind": "runtime-expression",
+      "fingerprint": "66e0ecdfdfb67c8fc4d2",
+      "count": 1,
+      "preview": "req.query.in === 'threads' ? NEEDS_FEED_IN_THREADS_SQL : NEEDS_FEED_SQL"
     },
     {
       "source": "src/services/account-deletion.js",
@@ -1009,6 +1009,13 @@
       "fingerprint": "f3a6d402b0a112ee09c3",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1 AND ${replacingPreparedRetry ? `active_turn IS NOT NULL AND active_turn->>'backend' = 'codex_ope"
+    },
+    {
+      "source": "src/services/ai-work.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "8222ba675aea28082113",
+      "count": 1,
+      "preview": "THREADS_SQL"
     },
     {
       "source": "src/services/app-access.js",

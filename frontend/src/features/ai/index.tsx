@@ -2,14 +2,16 @@
  * #ai-screen — the AI tab's main view (#6019 follow-up; plan v3, "the
  * Homeroom bot tab: what needs you comes first, then your private threads,
  * with a lock on the tile, then Up next: what's moving without you, soonest
- * first. Ask Homeroom bot opens Main").
+ * first. Ask Homeroom bot opens Main"). Up next is In progress since 29 Oct
+ * 2026, and Needs you here is only the threads you are in; All votes opens
+ * every decision you owe, on Communities.
  *
- *   Homeroom bot                      Needs you: 2 · Up next: 3
- *   YOUR WORK · 2 NEED YOU                               Answer all ›
+ *   Homeroom bot                  Needs you: 2 · In progress: 3
+ *   YOUR WORK · 2 NEED YOU                                All votes ›
  *   [tile] Dark mode          Garden club · #403              [Vote]
  *   [lock] A calendar idea    Only you · Not in a community yet
  *   [tile] Print view         Garden club · #388 · Not picked up yet
- *   UP NEXT                                            Soonest first
+ *   IN PROGRESS                                        Soonest first
  *   [tile] Weekly digest      Garden club · #401 · Going live
  *   ▸ LIVE THIS WEEK · 1
  *   ( Ask Homeroom bot )                 ← a phone: opens Main
@@ -156,7 +158,7 @@ export function AiScreen(): ReactNode {
     let live = true;
     const qs = demoQuery();
     void readJson<AiWork>(`/api/ai/work${qs}`).then((data) => { if (live && data) setWork(data); });
-    void readJson<{ items?: NeedItem[] }>(`/api/workshop/needs-feed${qs}`)
+    void readJson<{ items?: NeedItem[] }>(`/api/workshop/needs-feed?in=threads${qs ? '&demo=1' : ''}`)
       .then((data) => { if (live) setNeeds(Array.isArray(data?.items) ? data!.items : []); });
     return () => { live = false; };
   }, [visible]);
@@ -209,7 +211,7 @@ export function AiScreen(): ReactNode {
           </span>
         </section>
 
-        <SecHead end={owed ? (
+        <SecHead end={needs ? (
           <a href="/?ws=needs#communities" className="mb-1 inline-flex items-center gap-0.5 text-[13px] font-semibold text-violet-700 dark:text-violet-300" data-ai-answer-all="">
             {t('messages:ai.work.answerAll')}<ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
           </a>
