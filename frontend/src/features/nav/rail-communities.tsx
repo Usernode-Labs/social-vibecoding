@@ -78,6 +78,23 @@
  * sidebar shows. On the phone's bar app.css does not draw it: the bar's five
  * cells are as they were.
  *
+ * ── Dragging a row onto My apps (#6025) ──────────────────────────────
+ *
+ * While Home is the screen on show, a community row can be pressed and
+ * dragged onto My apps, which adds that app in the cell it was dropped in:
+ * the same gesture a Discover card makes. It is the same recognizer, attached
+ * to this section by the effect in RailCommunities with the row selector
+ * below; Home carries the row as the same incoming app a Discover card is
+ * (`data-rail-community` is the slug). A committed drop adds the app exactly
+ * as Add does, so it also joins you. Pinned rows are a different element
+ * (#platform-rail-pinned), so their drag-out-to-unpin is untouched, and the
+ * phone's drawer is not this file.
+ *
+ * The click a completed drag leaves behind is swallowed by the kit's
+ * capture-phase listener on #platform-rail-communities: React's delegated
+ * onClick listens at the island root, above that element, so a drag never
+ * opens the community. A press with no movement is left alone and still does.
+ *
  * ── The initial render is the prerender ──────────────────────────────
  *
  * The heading and the search ship in the document; the rows do not. The
@@ -117,6 +134,12 @@ export const RAIL_COMMUNITIES = 5;
 
 /** How many of a community's topics its nested places draw before "Show N more". */
 export const RAIL_TOPICS = 2;
+
+/**
+ * The rows the sidebar drags onto My apps (#6025): the communities under
+ * their heading, not their App line or the places nested beneath them.
+ */
+export const RAIL_DRAG_ITEMS = '.platform-rail-community[data-rail-community]';
 
 /**
  * The rows the section draws: the five, then, while you are in it (on its
@@ -367,6 +390,9 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
         className="platform-rail-community"
         href={href}
         data-rail-community={slug}
+        // The browser's own link drag would take the pointer and cancel the
+        // placement gesture (#6025).
+        draggable={false}
         {...(open ? { 'data-rail-open': '' } : {})}
         {...(pin ? { 'data-rail-pinned': '' } : {})}
         title={name}
@@ -476,12 +502,27 @@ export function RailCommunities({ shown }: { shown: string[] }) {
   const here = useRailHere();
   const { apps: pins } = useStoreState(pinnedAppsStore);
   const pinned = pins.map((app: { slug: string }) => app.slug);
+  // #6025: the rows drag onto My apps only while Home is the screen on show.
+  // Anywhere else there is no grid to drop on, so nothing is attached, and
+  // the detach the effect returns takes the gesture away when Home goes or
+  // the window falls below the sidebar's 768px.
+  const railRef = useRef<HTMLDivElement | null>(null);
+  const onHome = here.sidebarRows && here.screen === 'home-screen';
+  useEffect(() => {
+    const el = railRef.current;
+    if (!el || !onHome) return undefined;
+    const Home = (window as unknown as {
+      Home?: { _attachDiscoverPlacement?: (el: Element, opts?: { itemSelector: string }) => (() => void) | null };
+    }).Home;
+    return Home?._attachDiscoverPlacement?.(el, { itemSelector: RAIL_DRAG_ITEMS }) || undefined;
+  }, [onHome]);
   // The five, then a visit and a running app that are not among them (#21);
   // a pinned one is in its own section.
   const rows = (here.sidebarRows ? railRows(shown, here.onPage || here.onApp, here.live) : shown)
     .filter((slug) => !pinned.includes(slug));
   return (
     <div
+      ref={railRef}
       id="platform-rail-communities"
       className="platform-rail-communities"
       role="group"
