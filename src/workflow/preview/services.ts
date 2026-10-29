@@ -133,6 +133,14 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
       maxAttempts: PREPARE_ATTEMPTS,
       leaseMs: PREPARE_LEASE_MS,
       concurrency: CONCURRENCY,
+      // Built by the newest build only. A preview carries the build that
+      // made it: a platform preview its data policy, which a newer build
+      // retires in every one an older build made, and any preview its
+      // environment, which the preview-env clock judges by the newest
+      // build's. On 28 Oct 2026 the old conductors started the platform
+      // previews of two changes after a new release's conductor had
+      // started, and each was retired within a minute.
+      newestOnly: true,
       async run(ctx): Promise<Json> {
         const { input } = ctx;
         const [row, a] = await Promise.all([session(input.sessionId), app(input.appId)]);

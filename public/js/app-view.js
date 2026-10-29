@@ -7180,6 +7180,30 @@ const AppView = {
       // Its code did not come across from GitHub (_codeMissing): the page
       // says so in a notice above Votes and Testing (change-head.tsx).
       codeMissing: kind !== 'gov' && AppView._codeMissing(item),
+      // Stacked on another change's branch, or based on a branch no open
+      // change has (_stackedOn): said in a notice above Votes and Testing,
+      // with a door to the change it waits for.
+      ...AppView._stackedView(kind, item),
+    };
+  },
+
+  // The change page's half of _stackedOn: `waitsFor`, the change it waits
+  // for (its number, title and page), or `baseNotMain`, the branch its pull
+  // request targets. Nothing for a change that is merged or closed.
+  _stackedView(kind, item) {
+    if (kind === 'gov' || !item || ['merged', 'merging', 'closed', 'archived'].includes(item.status)) return {};
+    const stack = AppView._stackedOn(item);
+    if (!stack) return {};
+    if (!stack.waitsFor) return { baseNotMain: { branch: stack.base } };
+    const w = stack.waitsFor;
+    const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+    return {
+      waitsFor: {
+        sessionId: w.id,
+        number: w.number,
+        title: w.title,
+        href: w.number ? `#app/${slug}/dev/changes/${w.number}` : `#app/${slug}/dev/proposals/${w.id}`,
+      },
     };
   },
 
@@ -7894,7 +7918,7 @@ const AppView = {
           heading: underwayImported
             ? PlatformI18n.t('changes:card.reasons.attention')
             : (list.some((r) => !r.soft) ? PlatformI18n.t('changes:card.reasons.cantMerge') : PlatformI18n.t('changes:card.reasons.worthKnowing')),
-          items: list.map((r) => ({ key: r.key, label: r.label, detail: r.detail, soft: !!r.soft })),
+          items: list.map((r) => ({ key: r.key, label: r.label, detail: r.detail, soft: !!(r.soft || r.waiting) })),
         };
       }
     }
@@ -17772,7 +17796,7 @@ const AppView = {
       const label = r.name || r.label || '';
       const n = Number.isFinite(r.count) ? r.count : NaN;
       rows.push({
-        key: r.key, tone: r.soft ? 'warn' : 'bad',
+        key: r.key, tone: r.soft || r.waiting ? 'warn' : 'bad',
         label: label || r.key,
         sub: r.key === 'behind' && Number.isFinite(n)
           ? PlatformI18n.t('changes:ledger.behind.commits', { count: n })
@@ -23506,6 +23530,25 @@ const AppView = {
     return p.code_missing === true && ['active', 'paused', 'promoted', 'merging'].includes(p.status);
   },
 
+  // An import whose pull request is not based on main, its repository's
+  // default branch (src/workflow/rules/pr-base.ts): the branch it targets
+  // and, when that is an open change's branch, that change ({ id, number,
+  // title }). Null for one based on main: the row then has no base. A
+  // parent that is no longer open (merged and the move onto main not done,
+  // or closed) is waited for by nobody: its base is just not main.
+  _stackedOn(p) {
+    if (!p || p.source !== 'imported') return null;
+    const base = p.imported_pr_base_ref;
+    if (!base) return null;
+    const w = p.waits_for && typeof p.waits_for === 'object' ? p.waits_for : null;
+    const open = !w || !w.status || ['active', 'paused', 'promoted', 'merging'].includes(w.status);
+    const id = open ? (parseInt((w && w.id) || p.waits_for_session_id, 10) || 0) : 0;
+    return {
+      base: String(base),
+      waitsFor: id ? { id, number: parseInt(w && w.prNumber, 10) || null, title: (w && w.title) || null } : null,
+    };
+  },
+
   blockReasons(pr) {
     const p = pr || {};
     const out = [];
@@ -23518,6 +23561,29 @@ const AppView = {
         label: PlatformI18n.t('changes:badge.reason.codeMissing.label'),
         detail: PlatformI18n.t('changes:badge.reason.codeMissing.detail'),
       }];
+    }
+    // Where its pull request merges (src/workflow/rules/pr-base.ts): an
+    // import stacked on another open change's branch waits for that change.
+    // It stops the merge, so the card says "can't merge yet", but nobody
+    // need act on this change, so it is drawn amber (`waiting`, as deferred
+    // checks are). One based on a branch no open change has cannot go live
+    // until somebody changes its base to main (red). First, because nothing
+    // else on it merges before that does.
+    const stack = AppView._stackedOn(p);
+    if (stack && stack.waitsFor) {
+      const n = stack.waitsFor.number;
+      out.push({
+        key: 'waits_for_change',
+        label: n ? PlatformI18n.t('changes:badge.reason.waitsFor.label', { number: n }) : PlatformI18n.t('changes:badge.reason.waitsFor.labelUnnumbered'),
+        detail: n ? PlatformI18n.t('changes:badge.reason.waitsFor.detail', { number: n }) : PlatformI18n.t('changes:badge.reason.waitsFor.detailUnnumbered'),
+        waiting: true,
+      });
+    } else if (stack) {
+      out.push({
+        key: 'base_not_main',
+        label: PlatformI18n.t('changes:badge.reason.baseNotMain.label'),
+        detail: PlatformI18n.t('changes:badge.reason.baseNotMain.detail', { branch: stack.base }),
+      });
     }
     const fresh = AppView._freshnessOf(p);
     // Merge-pipeline conflicts: a real attempt failed and a human is needed.
@@ -23909,9 +23975,10 @@ const AppView = {
           t: 'chip', key: `tag-${r.key}`,
           // Three tones, three meanings: `running` is in flight and nobody
           // need act (the only one that spins), `soft` is worth knowing and
-          // does not block, everything else stops the merge.
+          // does not block, everything else stops the merge. `waiting` stops
+          // it too, but nobody need act on this change, so it is amber.
           cls: r.running ? AppView.STATUS_TAG_CLS.running
-            : r.soft ? AppView.STATUS_TAG_CLS.soft
+            : r.soft || r.waiting ? AppView.STATUS_TAG_CLS.soft
               : AppView.STATUS_TAG_CLS.blocking,
           label: r.label, title: r.detail || undefined, meta: true,
           spinner: !!r.running,

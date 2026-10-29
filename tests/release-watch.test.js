@@ -537,5 +537,8 @@ test('carriedBy orders the two merges; the same commit needs no read', async () 
   assert.match(q.sql, /LOWER\(recorded\.merge_commit_sha\) = LOWER\(\$2\)/);
   assert.match(q.sql, /LOWER\(serving\.merge_commit_sha\) = LOWER\(\$3\)/);
   assert.match(q.sql, /\(COALESCE\(recorded\.merged_at, recorded\.created_at\), recorded\.id\)\s+<= \(COALESCE\(serving\.merged_at, serving\.created_at\), serving\.id\)/);
+  // A merge carried to main inside a later one shares that one's commit:
+  // the order is the commit's newest merge, never the carried one's.
+  assert.match(q.sql, /NOT EXISTS \(\s*SELECT 1 FROM chat_sessions newer[\s\S]*LOWER\(newer\.merge_commit_sha\) = LOWER\(\$2\)[\s\S]*> \(COALESCE\(recorded\.merged_at, recorded\.created_at\), recorded\.id\)\)/);
   assert.equal(await releaseWatch.carriedBy(stallPool(null, false), 10, MERGED, RUNNING), false);
 });

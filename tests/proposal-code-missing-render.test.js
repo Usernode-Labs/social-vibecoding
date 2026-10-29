@@ -178,7 +178,9 @@ test('the change\'s page: the notice above Votes and Testing, in the project pag
   const frame = read('frontend', 'src', 'features', 'dev-board', 'board-frame.tsx');
   assert.match(frame, /<Alert variant="notice" density="compact" data-code-pause="github">/);
   const src = read(head);
-  assert.match(src, /\{v\.codeMissing \? <CodeMissingNotice \/> : null\}\s*<div ref=\{pair\} className="dev-change-pair">/,
+  // The stacked-change notice (tests/proposal-stacked-render.test.js) sits
+  // between the two.
+  assert.match(src, /\{v\.codeMissing \? <CodeMissingNotice \/> : null\}\s*\{v\.waitsFor \|\| v\.baseNotMain \? <StackNotice v=\{v\} \/> : null\}\s*<div ref=\{pair\} className="dev-change-pair">/,
     'above the Votes and Testing cards, which stay as they are');
 });
 
