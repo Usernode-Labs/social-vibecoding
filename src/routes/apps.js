@@ -1257,6 +1257,20 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       return res.status(400).json({ error: 'App name is required' });
     }
 
+    // #6026: a connector token (services/cli-api-policy.js lets it knock on
+    // this door for the connector's create_app) makes a project for the
+    // person who connected it and nothing more: a name, who it is for, its
+    // one line and what it should do. Invites, an import, an approval rule
+    // and a starter are refused here, not merely left out of the tool, so a
+    // raw call with the same token reaches the same narrow door. One that
+    // names no audience is the Create screen's private community, never the
+    // older-client default of two public fields below.
+    if (req.connectorClientId) {
+      const refused = createOptions.connectorCreateRefusal(req.body);
+      if (refused) return res.status(400).json({ error: 'invalid_request', message: refused });
+      req.body = createOptions.connectorCreateBody(req.body);
+    }
+
     // Who it is for, who is invited and who approves (communities, stage
     // 3; services/create-options.js). A body with none of them is an older
     // client and keeps today's visibility fields and defaults.
