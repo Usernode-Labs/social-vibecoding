@@ -6454,10 +6454,13 @@ const App = {
     // listed under Messages → Agents beside the agent chats, and New change
     // lands on one — so its screen lights Messages, not the Workshop it used
     // to be reached through.
+    //
+    // …AND A THREAD OPENED FROM THE HOMEROOM BOT TAB'S PAGE (_isBotTopic),
+    // which is that tab's.
     window.UsernodeReact?.nav?.setScreen?.(
       screen,
       screen === 'app-view' && !inApp
-        ? (App._isMessagesThread() ? 'messages' : 'workshop')
+        ? (App._isMessagesThread() ? 'messages' : App._isBotTopic() ? 'ai' : 'workshop')
         : null,
     );
     // …AND THE SIDE PANEL BESIDE THE APP (desktop, features/side-panel/),
@@ -6624,6 +6627,16 @@ const App = {
   // two answers to the same question and have to agree.
   _isMessagesThread() {
     return App.currentTab === 'dev' && App.currentSubTab === 'sessions';
+  },
+
+  // A request, a change or a decision opened from the Homeroom bot tab's
+  // page (29 Oct 2026, features/ai/): still that tab's, so it lights it, and
+  // its back chip goes back there (Improve.enterTopicFrom). Opened any other
+  // way, the same page is the project's and lights Communities.
+  _isBotTopic() {
+    if (!(App.currentTab === 'dev' && App.currentSubTab === 'topic')) return false;
+    const origin = window.Improve?.topicOrigin?.();
+    return typeof origin === 'string' && /^#homeroom-bot(\/|$)/.test(origin);
   },
 
   // The project's CHANNEL at `/app/<slug>/dev/chat`: a level inside the

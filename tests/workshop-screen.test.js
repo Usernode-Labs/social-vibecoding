@@ -1102,7 +1102,8 @@ test('the app\'s own Workshop keeps the rail, and lights the tab it came through
   // The Workshop tab is lit, so the rail knows where you are — except on the
   // app's DISCUSSION, which is a row in the Messages inbox and lights that
   // instead (#2718 review).
-  assert.match(body, /\? \(App\._isMessagesThread\(\) \? 'messages' : 'workshop'\)/,
+  // (A thread opened from the Homeroom bot tab's page lights that tab: App._isBotTopic.)
+  assert.match(body, /\? \(App\._isMessagesThread\(\) \? 'messages' : App\._isBotTopic\(\) \? 'ai' : 'workshop'\)/,
     'and the Workshop tab is lit, so the rail knows where you are');
 
   // A TAB HOP inside the app crosses that line without a screen reveal, so

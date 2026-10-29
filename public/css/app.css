@@ -18013,8 +18013,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    the window here as well: that width is the one chosen beside an app, kept
    per device and put on <html> at boot, so a width picked on a wide monitor
    would otherwise run Main under the rail and over the list on a narrower
-   window. The list keeps the 480px an app keeps beside the panel. */
-#ai-screen {
+   window. The list keeps the 480px an app keeps beside the panel. Set on
+   <body> while the page is up, so the panel (a sibling of the page, not in
+   it) takes the same width in Main's place. */
+body:has(#ai-screen:not(.hidden)) {
   --ai-main-w: max(320px, min(var(--side-panel-w, 400px), calc(100vw - var(--platform-rail-w, 0px) - 480px)));
 }
 #ai-screen[data-ai-docked] { padding-right: var(--ai-main-w); }
@@ -18045,13 +18047,29 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 #ai-screen .ai-main-pane > .messages-layout { flex: 1 1 auto; height: auto; min-height: 0; }
 /* A request or a change opened from the list: the side panel in Main's
-   place, at the width it already had, and Main back when the panel closes. */
+   place, and Main back when the panel closes. It is drawn as this page's
+   own column, not as a panel of its own (29 Oct 2026): Main's width, edge
+   and header, with ‹ Main and the project the page is in over it, and none
+   of the panel's own controls (side-panel.tsx). */
 html[data-side-panel] #ai-screen .ai-main-pane { display: none; }
-html[data-side-panel] #ai-screen[data-ai-docked] { padding-right: var(--side-panel-w); }
+@media (min-width: 1024px) {
+  html[data-side-panel] #ai-screen { padding-right: var(--ai-main-w); }
+}
 body:has(#ai-screen:not(.hidden)) .side-panel {
+  width: var(--ai-main-w);
   border-top-right-radius: 0;
   border-top-left-radius: 1.75rem;
 }
+.side-panel-head > :is(.side-panel-main, .side-panel-place) { display: none; }
+body:has(#ai-screen:not(.hidden)) .side-panel :is(#side-panel-back, #side-panel-title, #side-panel-expand, #side-panel-close, .side-panel-divider) {
+  display: none;
+}
+body:has(#ai-screen:not(.hidden)) .side-panel :is(.side-panel-main, .side-panel-place) { display: inline-flex; }
+/* And the page in it leaves out its own way back, "‹ Workshop": the column's
+   ‹ Main is the way back, and its project is beside it. The class is on the
+   panel document's <html> while it stands beside this page (side-panel
+   controller BESIDE_AI_CLASS). */
+html.in-side-panel.side-panel-beside-ai :is(.dev-topic-backs, .dev-topic-back) { display: none; }
 /* Where the window has the room, the feed takes a project's stage width
    (720px) out of the screen's 672px column, as far as that column's own
    margins go. */
@@ -24737,6 +24755,34 @@ html.side-panel-resizing * {
 .side-panel-head > #side-panel-back:not(.hidden) {
   display: inline-flex;
 }
+/* Beside the AI tab's page (its section above has the why): Main's header
+   row, its padding, its hairline and its height, so the page below starts
+   where Main's chat does. */
+body:has(#ai-screen:not(.hidden)) .side-panel-head {
+  height: auto;
+  min-height: 63px;
+  gap: 10px;
+  padding: 12px 18px 10px;
+}
+/* The topic's back chip, centred in the row rather than at its top. */
+.side-panel-head > .side-panel-main { margin: 0; align-self: center; }
+/* The project, as a row's title reads (15px, 650), and a door to it. */
+.side-panel-place {
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-left: auto;
+  padding: 3px 6px 3px 3px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 20px;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.side-panel-place > svg { color: var(--text-faint); }
+.side-panel-place:hover { background: var(--state-neutral-bg); }
+.side-panel-place:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .side-panel-body {
   position: relative;

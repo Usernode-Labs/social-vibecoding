@@ -123,9 +123,9 @@ test('on a ballot an agent\'s submission is not its author\'s pick until they ma
 
 test('the AI tab leaves your own agent-made change to Needs you until you vote on it', () => {
   const row = { change_status: 'promoted', change_user: SAM, state: 'open', promoted_at: OPENED, voted: false };
-  assert.deepEqual(aiWork.standing(row, SAM), { group: 'next', what: 'vote', at: OPENED, myVote: null }, 'made on Homeroom: yours, up for a vote');
+  assert.deepEqual(aiWork.standing(row, SAM), { group: 'waiting', what: 'vote', at: OPENED, myVote: null }, 'made on Homeroom: yours, up for a vote (Up next)');
   assert.equal(aiWork.standing({ ...row, by_agent: true }, SAM), null, 'made by an agent: a vote you owe');
   assert.deepEqual(aiWork.standing({ ...row, by_agent: true, voted: true, my_vote: 'yes' }, SAM),
-    { group: 'next', what: 'vote', at: OPENED, myVote: 'yes' });
+    { group: 'waiting', what: 'vote', at: OPENED, myVote: 'yes' });
   assert.equal(aiWork.standing(row, KIM), null, 'someone else\'s, unvoted, is owed as before');
 });
