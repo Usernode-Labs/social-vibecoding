@@ -421,6 +421,97 @@ function PreviewProjectsCard({ canWrite }: { canWrite: boolean }) {
   );
 }
 
+// Versions (services/versions-setting.js, docs/plans/versions.md): whether
+// an original's merged changes are given to the versions made from it, as
+// changes their groups vote on, and whether a ready-made is made as a
+// version of its platform original. On by default, so the card offers the
+// opposite of what is in force, and "Use default" clears a stored choice.
+// When the deploy decides (the operator's VERSIONS_ENABLED=false) the card
+// says so instead of offering a button the server would refuse. Lineage is
+// recorded either way; turned off, no update is planned or opened, the hubs
+// show no update cards, and ready-mades are made from the starters.
+function VersionsCard({ canWrite }: { canWrite: boolean }) {
+  const console_ = () => (window as any).AdminConsole;
+  const [data, setData] = useState<any>(null);
+  const [status, setStatus] = useState<Status | null>(null);
+  const [saving, setSaving] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  useEffect(() => {
+    (async () => {
+      const { data: next } = await console_().fetchJson('/api/admin/versions');
+      if (alive.current && next && typeof next === 'object') setData(next);
+    })();
+  }, []);
+
+  const put = async (enabled: boolean | null) => {
+    setStatus(null);
+    setSaving(true);
+    try {
+      const res = await fetch('/api/admin/versions', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      const next = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(next.error || `Save failed (${res.status})`);
+      if (!alive.current) return;
+      setData(next);
+      setStatus({ text: 'Saved. It applies within ten seconds.', tone: 'ok' });
+    } catch (err: any) {
+      if (alive.current) setStatus({ text: err.message, tone: 'err' });
+    } finally {
+      if (alive.current) setSaving(false);
+    }
+  };
+
+  const blocked = data && data.source === 'off';
+  const state = !data ? 'Loading…' : data.enabled ? 'On' : 'Off';
+  let source = '';
+  if (data && data.source === 'off') {
+    source = 'The deploy has switched it off (VERSIONS_ENABLED is false), so there is nothing to set here.';
+  } else if (data && data.source === 'admin') {
+    const setting = data.setting || {};
+    const who = setting.updatedBy ? ` by @${setting.updatedBy}` : '';
+    const when = setting.updatedAt ? ` on ${String(setting.updatedAt).slice(0, 10)}` : '';
+    source = `Turned ${data.enabled ? 'on' : 'off'} here${who}${when}. Without it, it is on.`;
+  } else if (data) {
+    source = 'On by default.';
+  }
+
+  return (
+    <div id="admin-versions" className={`${AdminUI.card} p-4 mt-4`}>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className={AdminUI.cardTitle}>Versions</h2>
+        <span id="admin-versions-state" className="text-xs text-zinc-500 dark:text-zinc-400">{state}</span>
+      </div>
+      <p className={`${AdminUI.muted} mb-3`}>
+        Gives each project&apos;s merged changes to the versions made from it that get its updates, as
+        a change their own group tries and votes on, and makes each ready-made app as a version of
+        its platform original. Turned off, no update is planned or opened, hubs show no update cards,
+        and ready-mades are made from the starters as before. Which project each version came from is
+        recorded either way. A change applies to every server within ten seconds, with no deploy.
+      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p id="admin-versions-source" className="text-xs text-zinc-500 dark:text-zinc-400">{source}</p>
+        {canWrite && data && !blocked ? (
+          <div className="flex items-center gap-2">
+            {data.source === 'admin' ? (
+              <button id="admin-versions-reset-btn" type="button" className={AdminUI.btn.outline}
+                disabled={saving} onClick={() => put(null)}>Use default</button>
+            ) : null}
+            <button id="admin-versions-toggle-btn" type="button"
+              className={data.enabled ? AdminUI.btn.outline : AdminUI.btn.primary}
+              disabled={saving} onClick={() => put(!data.enabled)}>{data.enabled ? 'Turn off' : 'Turn on'}</button>
+          </div>
+        ) : null}
+      </div>
+      <StatusLine id="admin-versions-status" status={status} okClass="text-green-800 dark:text-green-400" />
+    </div>
+  );
+}
+
 // GitHub's hourly REST budget per credential (services/github-budget.js),
 // read-only: what GitHub reported on the last response with each one. Its
 // own card under the app limit because it is the other server-wide ceiling
@@ -839,6 +930,8 @@ function LimitsSection() {
 
       <PreviewProjectsCard canWrite={canWrite} />
 
+      <VersionsCard canWrite={canWrite} />
+
       <div className={`${AdminUI.card} p-4 mt-4`}>
         <div className="flex items-center justify-between mb-3">
           <h2 className={AdminUI.cardTitle}>LLM Spend Limits</h2>
@@ -961,7 +1054,8 @@ if (typeof window !== 'undefined') (window as any).AdminLimits = AdminLimits;
 
 // AppLimitCard is exported for tests/app-limit.test.js, which renders it,
 // SessionLimitCard for tests/session-limit.test.js, PreviewProjectsCard for
-// tests/preview-projects-setting.test.js, GithubBudgetCard for
+// tests/preview-projects-setting.test.js, VersionsCard for
+// tests/versions-ui.test.js, GithubBudgetCard for
 // tests/github-budget.test.js, and GithubBudgetFigures for
 // tests/github-spend.test.js, which renders it from a payload.
-export { AdminLimits, AppLimitCard, SessionLimitCard, PreviewProjectsCard, GithubBudgetCard, GithubBudgetFigures };
+export { AdminLimits, AppLimitCard, SessionLimitCard, PreviewProjectsCard, VersionsCard, GithubBudgetCard, GithubBudgetFigures };

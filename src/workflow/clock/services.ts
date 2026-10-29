@@ -470,6 +470,43 @@ export const JOBS: readonly Job[] = Object.freeze([
     },
   },
   {
+    // Updates down from originals to the versions that follow them
+    // (services/upstream-offers.js): a run marks the versions whose original
+    // moved on (a database write) and hands back, one target per version,
+    // what needs git: settling updates whose proposal merged or closed,
+    // refreshing open ones whose original moved again, and opening up to ten
+    // for versions somebody used lately. Nothing while versions are off.
+    name: 'upstream-offers', everyMs: MIN, newestOnly: true,
+    run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/upstream-offers').sweep(config, pool),
+    item: {
+      concurrency: 2,
+      maxAttempts: 3,
+      leaseMs: 5 * MIN,
+      run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/upstream-offers').work(config, pool, ctx.input.input),
+    },
+  },
+  {
+    // Copies made before versions existed become versions of their
+    // originals (services/versions-backfill.js): remixes, and ready-made
+    // projects once their starter's original exists. A page of each a run,
+    // carried on from where the last run stopped; never following on its
+    // own. Which ready-mades have an original is this build's catalog.
+    name: 'versions-backfill', everyMs: 10 * MIN, newestOnly: true,
+    run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/versions-backfill').run(config, pool, {
+      previous: (ctx.input.previous ?? null) as any,
+    }),
+  },
+  {
+    // The ready-made originals (services/originals.js): one project per
+    // starter directory with ready-made entries, made through the normal
+    // create path when it is missing, and the platform's approvers kept in
+    // each one's community. Its starters are this build's. Only where the
+    // git host is configured and versions are on (it says why it did
+    // nothing otherwise); a preview arms no clock.
+    name: 'originals', everyMs: 10 * MIN, newestOnly: true,
+    run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/originals').ensure(config, pool),
+  },
+  {
     // The app-host gate follows APP_GATE, in both directions: on brings it up
     // and routes every app through it, off routes them all straight back
     // (services/kubernetes.js reconcileAppGateIngresses). The newest build's

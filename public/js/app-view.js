@@ -5973,6 +5973,8 @@ const AppView = {
         canEdit: AppView._canEditIssueAuthor(issue),
       },
       status: AppView._requestStatusView(issue),
+      // #5987: the app the "Open in Claude Code" link names.
+      slug: (AppView.appData && AppView.appData.slug) || App.currentApp || '',
       // 16 Oct 2026: where Homeroom bot's work on it is, as every surface
       // draws it (routes/issues.js track): the page's track card.
       track: issue.track || null,
@@ -6125,6 +6127,12 @@ const AppView = {
       // The sentence is Homeroom bot's state, plan included: no "Plan v1 is
       // ready for comments." after it (request-head.tsx).
       botSays: !merged && (!!(waitingOnBot && waitingOnBot.kind === 'question') || !!upForVote || !!(st && st.key === 'bot')),
+      // #5987: offer "Build it with your own Claude Code" under the card only
+      // where starting work on it is still open to this viewer: an open
+      // request with no change built for it, nobody's bot on it, and no
+      // session of the viewer's own already working on it.
+      ownAgent: !closed && !merged && !ref && !AppView.readOnly && !bot && !waitingOnBot
+        && !issue.myPrSessionId && !(st && st.key === 'in_review'),
     };
   },
 
@@ -7224,6 +7232,10 @@ const AppView = {
       // Its code did not come across from GitHub (_codeMissing): the page
       // says so in a notice above Votes and Testing (change-head.tsx).
       codeMissing: kind !== 'gov' && AppView._codeMissing(item),
+      // Versions (docs/plans/versions.md): an update from the original this
+      // version was made from, as the proposal read gives it; change-head.tsx
+      // draws its From card and Skip this update. Null on any other change.
+      upstream: (item && item.upstream && typeof item.upstream === 'object') ? item.upstream : null,
       // Stacked on another change's branch, or based on a branch no open
       // change has (_stackedOn): said in a notice above Votes and Testing,
       // with a door to the change it waits for.

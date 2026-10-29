@@ -5,8 +5,8 @@
 //
 // What the challenge counts (its unit, and whether amounts have decimals)
 // is in the page: <main id="app" data-unit-plural data-unit-one
-// data-decimals>, filled in when the project was made. This script holds
-// none of it, so it is the same for every challenge.
+// data-decimals>, filled in from words.json as server.js serves the page.
+// This script holds none of it, so it is the same for every challenge.
 //
 // Rendering builds elements and sets textContent, never innerHTML with
 // people's words in it, so a note that says "<b>hi</b>" shows exactly that.

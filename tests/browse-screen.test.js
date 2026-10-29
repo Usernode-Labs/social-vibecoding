@@ -1166,6 +1166,21 @@ test('rowView: an app-store row — icon, name, meta, Join state', () => {
   assert.doesNotMatch(BROWSE_SRC, /card-add-btn/, 'the corner badge is a real button now');
 });
 
+test('#5928: rowView carries the app\'s own one-line description, or nothing', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [
+    app({ slug: 'said', name: 'Said', manifest_snapshot: { description: '  Count   sheep\nbefore bed.  ' } }),
+    app({ slug: 'blank', name: 'Blank', manifest_snapshot: { description: '   ' } }),
+    app({ slug: 'none', name: 'None', manifest_snapshot: null }),
+    app({ slug: 'long', name: 'Long', manifest_snapshot: { description: 'x'.repeat(400) } }),
+  ];
+  Browse.render();
+  assert.equal(rowFor(state, 'said').about, 'Count sheep before bed.', 'whitespace folded');
+  assert.equal(rowFor(state, 'blank').about, null, 'no filler for a blank description');
+  assert.equal(rowFor(state, 'none').about, null);
+  assert.equal(rowFor(state, 'long').about.length, 160, 'capped as Home\'s cards cap it');
+});
+
 test('browse rows: the layout switch is pure CSS on the container', () => {
   // Narrow: a hairline-divided vertical list. md+: a 2/3-column grid whose
   // rows pick up a box treatment from .browse-row in app.css. No
@@ -1479,6 +1494,20 @@ test('the detail page keeps its action closures off the store, reachable by inde
   assert.equal(ran[1][1], btn, 'the clicked element reaches the item');
   Browse._runDetailAction(99, btn);
   assert.equal(ran.length, 2, 'a stale index is inert, never a crash');
+});
+
+// ── Versions on the app's page (docs/plans/versions.md) ──────────────────
+
+test('versionsLineFor: an original says how many versions it has and how many get its updates; a zero says nothing', () => {
+  const { Browse } = makeBrowse();
+  assert.equal(Browse.versionsLineFor(app({ versions: { count: 214, following: 160 } })), '214 versions · 160 get its updates');
+  assert.equal(Browse.versionsLineFor(app({ versions: { count: 214, following: 1 } })), '214 versions · 1 gets its updates');
+  assert.equal(Browse.versionsLineFor(app({ versions: { count: 1, following: 1 } })), '1 version · it gets its updates');
+  assert.equal(Browse.versionsLineFor(app({ versions: { count: 5, following: 0 } })), '5 versions');
+  assert.equal(Browse.versionsLineFor(app({ versions: { count: 0, following: 0 } })), null, 'no line before the first version');
+  assert.equal(Browse.versionsLineFor(app({ versions: null })), null, 'not an original');
+  assert.equal(Browse.versionsLineFor(app({})), null, 'a server that predates versions');
+  assert.equal(Browse.versionsLineFor(null), null);
 });
 
 // ── Share on the app's page (the prototype's About sheet: More, then Share) ──

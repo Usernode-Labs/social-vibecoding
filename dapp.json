@@ -1433,7 +1433,7 @@
     {
       "name": "The app detail page opens from a browse row (?shot=browse-detail)",
       "path": "/?shot=browse-detail#apps",
-      "expectText": "Make your own copy",
+      "expectText": "Your own version to change",
       "expectSelector": "#browse-detail #browse-detail-open"
     },
     {
@@ -1483,10 +1483,10 @@
       "expectText": "See all"
     },
     {
-      "name": "Directory leads with Recommended for you and keeps demos under Show more (#1523, #5267)",
+      "name": "Directory leads with Featured and keeps demos under Show more (#1523, #5267, #5928)",
       "path": "/?demo=1&curation=1&sort=recommended#apps",
       "expectSelector": "#browse-list:has(h2 ~ [data-slug=\"directory-sample-working\"][data-directory-state=\"working\"]):not(:has(.browse-row[data-slug=\"directory-sample-demo\"])) button[aria-controls=\"browse-more-apps\"][aria-expanded=\"false\"]",
-      "expectText": "Recommended for you"
+      "expectText": "Featured"
     },
     {
       "name": "Show more is on every sort, not just Recommended (#1912)",
@@ -3638,9 +3638,9 @@
       "expectSelector": ".fork-tag"
     },
     {
-      "name": "The app's own page shows the Remixed-from label",
+      "name": "The app's own page shows the Made-from label",
       "path": "/#apps/staging-demo-fork",
-      "expectText": "Remixed from"
+      "expectText": "Made from"
     },
     {
       "name": "Fork lineage renders under the version it qualifies",

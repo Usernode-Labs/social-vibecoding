@@ -100,6 +100,16 @@ const MAX_TITLE_CHARS = 200;
 // never the name.
 const CONFLICT_FORK_SUFFIX = '-usernode';
 
+// Where a work order was started from, when the agent says (#5987). The
+// "Open in Claude Code" link's prompt asks prepare_work to pass
+// 'claude_code_link' (frontend/src/lib/claude-code-link.ts), so a task it
+// started is counted against the baseline #4856 measured. Anything else an
+// agent passes is dropped rather than stored: this is a count, not a field.
+const STARTED_FROM = Object.freeze(['claude_code_link']);
+function normalizeStartedFrom(value) {
+  return typeof value === 'string' && STARTED_FROM.includes(value) ? value : null;
+}
+
 // A base commit is a full 40-character hex object id, always. The work
 // order's `git checkout -b <branch> <sha>` line is the single most
 // copy-sensitive thing the connector emits — a host model that retypes it
@@ -2353,8 +2363,8 @@ async function prepareWork(deps, params) {
       `INSERT INTO external_agent_tasks
          (user_id, app_id, issue_number, fork_owner, fork_repo, branch_name,
           base_sha, brief, client_id, request_key, target_session_id,
-          origin_session_id, linked_issues)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          origin_session_id, linked_issues, started_from)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        ON CONFLICT DO NOTHING
        RETURNING *`,
       [
@@ -2373,6 +2383,9 @@ async function prepareWork(deps, params) {
         // Every request it implements, the first included, so the submission
         // links and closes all of them rather than only issue_number's.
         issues,
+        // #5987: set when it is minted only, so a reused job keeps the way
+        // it was first started.
+        normalizeStartedFrom(params.startedFrom),
       ]
     );
     return rows[0] || null;
@@ -4790,6 +4803,8 @@ module.exports = {
   DEFAULT_BASE_BRANCH,
   MAX_BRIEF_CHARS,
   CONFLICT_FORK_SUFFIX,
+  STARTED_FROM,
+  normalizeStartedFrom,
   MAX_GUIDANCE_CHARS,
   BASE_SHA_RE,
   SUBMIT_VIA,

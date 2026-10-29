@@ -1,19 +1,29 @@
 /**
- * "Suggest this back to <Original>": the confirmation a remix's owner sees
- * before their copy's changes go to the app it was copied from, as a
- * proposal there (src/services/suggest-back.js says what is sent).
+ * "Suggest to <Original>": what a version's owner sees before some of their
+ * version's own changes go to the app it was made from, its original, as a
+ * suggestion there (docs/plans/versions.md; src/services/suggest-back.js
+ * says what is sent). The code and the route keep "suggest-back"; nobody
+ * reads those.
  *
  * Opened from the project's ⋯ (./actions-row.tsx DevPlusMenu, its
- * "Suggest this back" row), and drawn the way that menu's other pop-up,
+ * "Suggest to" row), and drawn the way that menu's other pop-up,
  * the Featured illustration editor, is: portalled to <body> and handed to
  * the kit as a modal (lib/kit-surface.ts adoptKitSurface). It is not one of
  * the static dialogs (features/dialogs/): it exists only while it is open.
  *
  * It reads GET /api/apps/:slug/suggest-back once it is open, never in a
- * render: the commit subjects since the remix (or how many files changed),
- * and whether Send can go ahead. The refusals it can meet are the server's
- * own sentences. A non-member of the original is asked to Join by the fetch
- * wrapper when Send is pressed (lib/join-required.ts), which then sends again.
+ * render: the version's own changes (`changes: [{sha, title}]`, newest
+ * last), each a tick box, all ticked, so the owner picks which to send
+ * ("Send 2 changes", POST `picks: [sha]`); from a server that predates the
+ * pick list, the commit subjects (or how many files changed) as a plain
+ * list, all sent. And whether Send can go ahead. The refusals it can meet
+ * are the server's own sentences. A non-member of the original is asked to
+ * Join by the fetch wrapper when Send is pressed (lib/join-required.ts),
+ * which then sends again.
+ *
+ * It promises nothing about how the changes are worded there: the version's
+ * name and words stay its own (its words.json and its dapp.json's own lines
+ * never travel), which is what the note under the list says.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -35,15 +45,36 @@ export interface SuggestBackPreview {
   commitCount: number;
   fileCount: number;
   open: { sessionId: number; href: string } | null;
+  /** The version's own changes, newest last, to pick from (docs/plans/versions.md). Absent from an older server. */
+  changes?: Array<{ sha: string; title: string }>;
 }
 
 /**
- * Who the ⋯ offers "Suggest this back" to: the copy's owner, on a copy whose
- * original still exists. `app` is the open app's payload (AppView.appData,
- * whose `forked_from` GET /api/apps/:slug resolves to { slug, name,
- * linkable }); `viewerId` the signed-in user's id. Copies made before the
- * lineage commits were recorded still get the row: the dialog then says
- * plainly why it cannot send. Pure.
+ * The original a version was made from, as the open app's payload links it:
+ * `upstream_link` (GET /api/apps/:slug, `{ slug, name, following, linkable }`,
+ * docs/plans/versions.md), or, from a server that predates versions, the
+ * resolved `forked_from` (`{ slug, name, linkable }`, which says nothing of
+ * updates). Null for an app that is not a version, and for one whose
+ * original is gone. Pure.
+ */
+export function versionOfApp(app: any): { slug: string; name: string; following: boolean } | null {
+  if (!app || app.self_hosted) return null;
+  const link = app.upstream_link && typeof app.upstream_link === 'object' ? app.upstream_link : null;
+  const ref = link || (app.forked_from && typeof app.forked_from === 'object' ? app.forked_from : null);
+  if (!ref || !ref.linkable || typeof ref.slug !== 'string' || !ref.slug) return null;
+  return {
+    slug: ref.slug,
+    name: typeof ref.name === 'string' && ref.name ? ref.name : ref.slug,
+    following: !!(link && link.following),
+  };
+}
+
+/**
+ * Who the ⋯ offers "Suggest to <original>" to: the version's owner, on a
+ * version whose original still exists (versionOfApp). `app` is the open
+ * app's payload (AppView.appData); `viewerId` the signed-in user's id.
+ * Versions made before the lineage commits were recorded still get the row:
+ * the dialog then says plainly why it cannot send. Pure.
  */
 export function suggestBackTarget(
   app: any,
@@ -51,9 +82,14 @@ export function suggestBackTarget(
 ): { slug: string; name: string } | null {
   if (!app || app.self_hosted || viewerId == null) return null;
   if (app.created_by == null || app.created_by !== viewerId) return null;
-  const ref = app.forked_from;
-  if (!ref || typeof ref !== 'object' || !ref.linkable || typeof ref.slug !== 'string' || !ref.slug) return null;
-  return { slug: ref.slug, name: typeof ref.name === 'string' && ref.name ? ref.name : ref.slug };
+  const version = versionOfApp(app);
+  return version ? { slug: version.slug, name: version.name } : null;
+}
+
+/** The version's own changes to pick from, in the order the server gives them (newest last). Pure. */
+export function pickableChanges(view: Pick<SuggestBackPreview, 'changes'> | null): Array<{ sha: string; title: string }> {
+  if (!view || !Array.isArray(view.changes)) return [];
+  return view.changes.filter((c) => c && typeof c.sha === 'string' && c.sha && typeof c.title === 'string');
 }
 
 /**
@@ -73,6 +109,7 @@ export function changeLines(view: Pick<SuggestBackPreview, 'commits' | 'commitCo
 }
 
 const LINK = 'text-violet-700 dark:text-violet-400 underline';
+const PICK_ROW = 'suggest-pick-row';
 
 export function SuggestBackDialog({ slug, copyName, original, onClose }: {
   slug: string;
@@ -91,6 +128,8 @@ export function SuggestBackDialog({ slug, copyName, original, onClose }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState<{ href: string } | null>(null);
+  // The shas left unticked; every change starts ticked.
+  const [unpicked, setUnpicked] = useState<ReadonlySet<string>>(() => new Set());
   const endpoint = `/api/apps/${encodeURIComponent(slug)}/suggest-back`;
   const name = view?.original?.name || original.name;
 
@@ -126,7 +165,10 @@ export function SuggestBackDialog({ slug, copyName, original, onClose }: {
     setBusy(true);
     setError('');
     try {
-      const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      // With a pick list, exactly the ticked changes; without one (an older
+      // server), no `picks`, which sends them all.
+      const body = picks ? { picks: picks.filter((c) => !unpicked.has(c.sha)).map((c) => c.sha) } : {};
+      const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.error || t('project:suggestBack.error.notSent'));
@@ -142,6 +184,9 @@ export function SuggestBackDialog({ slug, copyName, original, onClose }: {
   }
 
   const lines = changeLines(view);
+  const listed = pickableChanges(view);
+  const picks = listed.length ? listed : null;
+  const picked = picks ? picks.filter((c) => !unpicked.has(c.sha)).length : 0;
   const reason = view && !view.ready ? view.reason : null;
   // join_required is not a reason to hold Send back: pressing it is how the
   // Join question gets asked (lib/join-required.ts).
@@ -166,9 +211,34 @@ export function SuggestBackDialog({ slug, copyName, original, onClose }: {
             <p className="text-sm text-zinc-600 dark:text-zinc-300 mb-3">
               {t('project:suggestBack.intro', { project: name })}
             </p>
-            <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 p-3 text-sm text-zinc-700 dark:text-zinc-200">
+            <div className={`rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 text-sm text-zinc-700 dark:text-zinc-200 ${picks && !loading ? 'suggest-pick' : 'p-3'}`}>
               {loading ? (
                 <p role="status" className="text-zinc-500 dark:text-zinc-400">{t('project:suggestBack.loading')}</p>
+              ) : picks ? (
+                // One tick box a change, all ticked: the whole row is the box's label.
+                <ul data-suggest-changes="" data-suggest-picks="" aria-label={t('project:suggestBack.pick.name')}>
+                  {picks.map((c) => (
+                    <li key={c.sha}>
+                      <label className={PICK_ROW} data-suggest-pick={c.sha}>
+                        <input
+                          type="checkbox"
+                          className="suggest-pick-box"
+                          checked={!unpicked.has(c.sha)}
+                          disabled={busy}
+                          onChange={(event) => {
+                            const on = event.target.checked;
+                            setUnpicked((was) => {
+                              const next = new Set(was);
+                              if (on) next.delete(c.sha); else next.add(c.sha);
+                              return next;
+                            });
+                          }}
+                        />
+                        <span className="suggest-pick-title">{c.title || c.sha.slice(0, 7)}</span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
               ) : lines.length ? (
                 <ul data-suggest-changes className="list-disc pl-5 space-y-1">
                   {lines.map((line, i) => <li key={`${i}:${line}`} className="break-words">{line}</li>)}
@@ -179,6 +249,9 @@ export function SuggestBackDialog({ slug, copyName, original, onClose }: {
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3">
               {t('project:suggestBack.notSent', { copy: copyName })}
+            </p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1.5">
+              {t('project:suggestBack.after', { project: name })}
             </p>
             {blocked && reason ? (
               <p role="alert" data-suggest-reason={reason.code} className="text-sm text-zinc-800 dark:text-zinc-200 mt-3">
@@ -206,10 +279,12 @@ export function SuggestBackDialog({ slug, copyName, original, onClose }: {
                 type="button"
                 data-suggest-send
                 className="min-h-[44px] flex-1"
-                disabled={loading || busy || blocked}
+                disabled={loading || busy || blocked || (!!picks && !picked)}
                 onClick={() => { void send(); }}
               >
-                {busy ? t('project:suggestBack.sending') : t('project:suggestBack.send', { project: name })}
+                {busy ? t('project:suggestBack.sending')
+                  : picks ? t('project:suggestBack.sendCount', { count: picked })
+                    : t('project:suggestBack.send', { project: name })}
               </Button>
             </>
           )}

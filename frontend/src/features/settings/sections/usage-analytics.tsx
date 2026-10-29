@@ -20,10 +20,11 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { SectionHeading } from '@/components/ui/field';
-import { Switch } from '@/components/ui/switch';
 
 import { useMessages } from '../../../lib/i18n/react';
 import { useWindowEvent } from '../../../lib/legacy-dom';
+
+import { HELP, PrivacySwitch } from './privacy-text';
 
 type Answer = { enabled?: unknown; uiTelemetryEligible?: unknown };
 
@@ -91,24 +92,20 @@ export function UsageAnalyticsSection() {
 
   return (
     <div id="settings-usage-analytics-section" className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
-      <SectionHeading title={t('settings:privacy.usageAnalytics.title')}>
+      <SectionHeading title={t('settings:privacy.usageAnalytics.title')} blurbClassName="dark:text-zinc-400">
         {t('settings:privacy.usageAnalytics.intro')}
       </SectionHeading>
-      <label className="flex items-center gap-2 cursor-pointer select-none">
-        <Switch
-          id="settings-usage-analytics"
-          checked={on}
-          disabled={!loaded || saving}
-          aria-describedby="settings-usage-analytics-description"
-          onChange={(e) => void change(e.currentTarget.checked)}
-        />
-        <span className="text-sm text-zinc-800 dark:text-zinc-200">
-          {t('settings:privacy.usageAnalytics.label')}
-        </span>
-      </label>
+      <PrivacySwitch
+        id="settings-usage-analytics"
+        label={t('settings:privacy.usageAnalytics.label')}
+        checked={on}
+        disabled={!loaded || saving}
+        describedBy="settings-usage-analytics-description"
+        onChange={(e) => void change(e.currentTarget.checked)}
+      />
       {/* #5926: what is true now, then what it records and what it never
           records, each on its own line. */}
-      <div id="settings-usage-analytics-description" className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed space-y-1">
+      <div id="settings-usage-analytics-description" className={`${HELP} mt-2 space-y-1`}>
         <p>{t(on ? 'settings:privacy.usageAnalytics.stateOn' : 'settings:privacy.usageAnalytics.stateOff')}</p>
         <p>{t('settings:privacy.usageAnalytics.records')}</p>
         <p>{t('settings:privacy.usageAnalytics.neverRecords')}</p>

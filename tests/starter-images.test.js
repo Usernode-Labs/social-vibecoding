@@ -128,6 +128,52 @@ test('a starter page keeps {{APP_NAME}}, and server.js fills it in, escaped', ()
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// Words in config (docs/plans/versions.md): what a ready-made app's entry
+// fills is committed as words.json, and server.js fills the page from it as
+// it serves it, escaped as the name is; template.js fillPage is the same
+// fill for a caller that serves the page itself. So the four tier lists'
+// images differ by words.json alone.
+test('server.js fills the page\'s words from words.json at run time, escaped, as fillPage does', () => {
+  const { fillPage } = require('../src/services/template');
+  const files = getTemplateFiles('Ignored Name', 'ignored-name-123456', null, null, { template: 'signup-rsvp' });
+  const page = files.find((f) => f.path === 'public/index.html').content;
+  assert.match(page, /data-mode="\{\{SHEET_MODE\}\}"/, 'nothing of the entry is written into the page');
+  const server = files.find((f) => f.path === 'server.js').content;
+  const block = server.slice(server.indexOf("const fs = require('fs');"), server.indexOf("app.use(express.static"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'starter-words-'));
+  fs.mkdirSync(path.join(dir, 'public'));
+  fs.writeFileSync(path.join(dir, 'public', 'index.html'), page);
+  const served = () => {
+    const routes = {};
+    vm.runInNewContext(block, {
+      require, path, __dirname: dir,
+      process: { env: { USERNODE_APP_NAME: 'Jo\'s <b>night</b>' } },
+      app: { get: (paths, handler) => { for (const p of paths) routes[p] = handler; } },
+    });
+    let sent = null;
+    routes['/']({}, { type() { return this; }, send(body) { sent = body; return this; } });
+    return sent;
+  };
+  // No words.json: the words' placeholders stay, the name is filled.
+  assert.match(served(), /data-mode="\{\{SHEET_MODE\}\}"/);
+  const words = { ...appTemplates.get('signup-rsvp').fill, EVENT_EXAMPLE: 'e.g. <Jo\'s> & "co"' };
+  fs.writeFileSync(path.join(dir, 'words.json'), JSON.stringify(words));
+  const html = served();
+  assert.match(html, /data-mode="rsvp"/);
+  assert.match(html, /placeholder="e\.g\. &lt;Jo&#39;s&gt; &amp; &quot;co&quot;"/);
+  assert.match(html, /<title>Jo&#39;s &lt;b&gt;night&lt;\/b&gt;<\/title>/);
+  assert.doesNotMatch(html, /\{\{[A-Z_]+\}\}/);
+  // fillPage serves the same page.
+  const withWords = files.map((f) => (f.path === 'words.json' ? { ...f, content: JSON.stringify(words) } : f));
+  assert.equal(fillPage(withWords, { appName: 'Jo\'s <b>night</b>' }).find((f) => f.path === 'public/index.html').content, html);
+  fs.rmSync(dir, { recursive: true, force: true });
+  // The image of each tier list is the same code: only words.json, and the
+  // name a plain local `node server.js` falls back to, differ.
+  const [a, b] = ['tier-list-cities', 'tier-list-hikes'].map((id) => starterImages.imageFiles(getTemplateFiles('X', 'x', null, null, { template: id })));
+  const differ = a.filter((f) => b.find((g) => g.path === f.path)?.content !== f.content).map((f) => f.path);
+  assert.deepEqual(differ.sort(), ['server.js', 'words.json']);
+});
+
 test('every generated app links to its platform page by USERNODE_APP_SLUG, not a written-in slug', () => {
   const empty = getTemplateFiles('Plain', 'plain-abcdef', null, null, {}).find((f) => f.path === 'server.js').content;
   assert.doesNotMatch(empty, /plain-abcdef/);
