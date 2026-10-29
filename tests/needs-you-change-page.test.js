@@ -490,7 +490,7 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   // A failure says so in the same card, with the door to what failed.
   const failed = testing({ check_state: 'failing', test_results: [{ name: 'Home loads', status: 'fail' }] });
   assert.deepEqual([failed.figure, failed.tone, failed.details], ['Found a problem', 'bad', true]);
-  assert.deepEqual(failed.note, ['One of the app’s checks failed.']);
+  assert.deepEqual(failed.note, ['One of this change’s checks failed on its preview.']);
   assert.equal(failed.authorNote, 'Its author needs to fix this before it can go live.');
   assert.equal(testing({ check_state: 'skipped' }).figure, 'Not tested');
   assert.equal(testing({ check_state: 'error' }).figure, 'Couldn’t finish');
@@ -524,10 +524,12 @@ test('a failed run says what went wrong in plain words, and offers its author Fi
   const own = context({ id: 7, username: 'maya' });
   const card = plain(own._changeTestingView(FAILED));
   assert.deepEqual([card.figure, card.tone], ['Found a problem', 'bad']);
-  assert.deepEqual(card.note, ['One of the app’s tests failed.']);
+  assert.deepEqual(card.note, ['One of this change’s tests failed.']);
+  // The unit suite opened no page: the card words the failure, but links nothing.
   assert.deepEqual(card.explain, {
     id: 4090, at: '2026-09-18T12:00:00Z',
     fallback: 'The test “every message the server can send has a Spanish wording” failed with: Spanish for: Pick a date, or choose I don\'t remember.',
+    page: null,
   });
   // What the dev chat's own Fix it card sends: the blocking failures, each
   // with what it reported, and the conversation it goes to.
@@ -544,7 +546,7 @@ test('a failed run says what went wrong in plain words, and offers its author Fi
   // Preview stays in the corner; the re-run moves beside Fix it, under the sentence.
   assert.match(testing, /<div class="dev-change-gate-act"><button type="button" class="gc-vote-btn gc-vote-btn-preview"/);
   assert.doesNotMatch(testing.slice(0, testing.indexOf('dev-change-gate-why')), /castRecheck/);
-  assert.match(testing, /<p class="dev-change-gate-why" data-change-gate-why="own-words">One of the app’s tests failed\. The test “every message the server can send has a Spanish wording” failed with: Spanish for: Pick a date, or choose I don't remember\.<\/p>/);
+  assert.match(testing, /<p class="dev-change-gate-why" data-change-gate-why="own-words">One of this change’s tests failed\. The test “every message the server can send has a Spanish wording” failed with: Spanish for: Pick a date, or choose I don't remember\.<\/p>/);
   assert.match(testing, /<div class="dev-change-gate-fix"><button type="button" class="gc-vote-btn gc-vote-btn-accent" data-change-fix-checks="4090">Fix it<\/button><button class="gc-vote-btn" title="[^"]*" data-act="castRecheck">Re-run checks<\/button><\/div>/);
   assert.match(testing, /<p class="dev-change-gate-note">Fix it asks the agent that built this change to fix what failed, using your credits\. You can stay on this page: the checks run again by themselves when it’s done\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
 
@@ -570,7 +572,7 @@ test('a failed run, read by anybody else: the same words, who has to fix it, and
   assert.deepEqual(card.actions, []);
   assert.equal(card.authorNote, 'Its author needs to fix this before it can go live.');
   const testing = unescape(render(av, FAILED).page);
-  assert.match(testing, /data-change-gate-why="own-words">One of the app’s tests failed\. The test “every message/);
+  assert.match(testing, /data-change-gate-why="own-words">One of this change’s tests failed\. The test “every message/);
   assert.match(testing, /<p class="dev-change-gate-note">Its author needs to fix this before it can go live\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
   assert.ok(!testing.includes('data-change-fix-checks') && !testing.includes('dev-change-gate-fix'));
   // Its author, on a change with no conversation to ask: the re-run, as before.
@@ -585,17 +587,49 @@ test('a failed run, read by anybody else: the same words, who has to fix it, and
 test('a declared check that failed is named with what it reported; several are counted', () => {
   const av = context();
   const one = plain(av._changeTestingView({ ...PR, check_state: 'failing', test_results: [{ name: 'Home loads', path: '/', status: 'fail', failureReason: 'Expected #home to exist' }] }));
-  assert.deepEqual(one.note, ['One of the app’s checks failed.']);
+  assert.deepEqual(one.note, ['One of this change’s checks failed on its preview.']);
   assert.equal(one.explain.fallback, '“Home loads” reported: Expected #home to exist');
   const quiet = plain(av._changeTestingView({ ...PR, check_state: 'failing', test_results: [{ name: 'Home loads', status: 'fail' }] }));
   assert.equal(quiet.explain.fallback, 'The check that failed is “Home loads”.');
   const two = plain(av._changeTestingView({ ...PR, check_state: 'failing', test_results: [
     { name: 'Home loads', status: 'fail' }, { name: 'Vote opens', status: 'fail' }, { name: 'Advisory', status: 'fail', advisory: true },
   ] }));
-  assert.deepEqual(two.note, ['2 of the app’s checks failed.'], 'blocking failures are counted');
+  assert.deepEqual(two.note, ['2 of this change’s checks failed on its preview.'], 'blocking failures are counted');
   // The suite failed on three tests: counted from its tally.
   const three = plain(av._changeTestingView({ ...FAILED, test_results: [{ ...UNIT_ROW, failureReason: 'tests/a.test.js (3): x | # tests 40 | # pass 37 | # fail 3' }] }));
-  assert.deepEqual(three.note, ['3 of the app’s tests failed.']);
+  assert.deepEqual(three.note, ['3 of this change’s tests failed.']);
+});
+
+test('a failed page check opens the page it checked on the change’s preview', () => {
+  const av = context();
+  const path = '/?demo=1#app/x';
+  const item = {
+    ...PR, check_state: 'failing',
+    test_results: [
+      { name: 'Home loads', path: '/', status: 'pass' },
+      {
+        name: 'A merge stuck behind a red release says what blocked it', path, status: 'fail',
+        failureReason: 'Expected text "is blocked at “Audit all three lockfiles”" was not found on the page; the page text was: "Release blocked"',
+      },
+    ],
+  };
+  const card = plain(av._changeTestingView(item));
+  assert.deepEqual(card.note, ['One of this change’s checks failed on its preview.']);
+  assert.deepEqual(card.explain.page, { path, stagingUrl: 'https://preview.example' });
+  const page = unescape(render(av, item).page);
+  const testing = page.slice(page.indexOf('data-change-gate="testing"'));
+  assert.match(testing, /data-change-gate-why="own-words">One of this change’s checks failed on its preview\./);
+  assert.match(testing, /<button type="button" class="dev-change-gate-link" data-change-gate-page="">Open the page it checked<\/button><\/p>/);
+
+  // Nothing to reopen: the unit suite opened no page, and a change whose
+  // preview is gone links nothing either.
+  assert.equal(plain(av._changeTestingView(FAILED)).explain.page, null);
+  assert.equal(plain(av._changeTestingView({ ...item, staging_url: null })).explain.page, null);
+  assert.ok(!render(av, { ...item, staging_url: null }).page.includes('data-change-gate-page'));
+
+  // The link opens the preview the way the Preview button does.
+  const tsx = read('frontend/src/features/dev-board/topic/change-head.tsx');
+  assert.match(tsx, /ensureStaging\?\.\(id, page\.stagingUrl, \{ path: page\.path \}, \{\}\)/);
 });
 
 test('a failing test’s line and message are read off its excerpt', () => {

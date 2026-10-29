@@ -179,9 +179,15 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false }:
     authorNote: null,
     details: false,
   } : g;
-  // What went wrong, over the line: the lead ("One of the app's tests
-  // failed.") and the sentence, as one paragraph in the card's own ink.
+  // What went wrong, over the line: the lead ("One of this change's checks
+  // failed on its preview.") and the sentence, as one paragraph in the
+  // card's own ink. The page the failing check opened rides at its end,
+  // when the change's preview can reopen it.
   const why = shown.explain ? sentences([...shown.note, explanation || shown.explain.fallback]) : '';
+  const page = shown.explain?.page || null;
+  const openPage = () => {
+    if (page) (window as any).AppView?.ensureStaging?.(id, page.stagingUrl, { path: page.path }, {});
+  };
   // The note's sentences arrive worded (AppView._changeThreadView); the door
   // into Details rides at the paragraph's end, in one message with them.
   const lines = shown.explain
@@ -220,7 +226,19 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false }:
         </div>
       </div>
       {action ? <div className="dev-change-gate-act">{action}</div> : null}
-      {why ? <p className="dev-change-gate-why" data-change-gate-why={explanation ? 'explained' : 'own-words'}>{why}</p> : null}
+      {why ? (
+        <p className="dev-change-gate-why" data-change-gate-why={explanation ? 'explained' : 'own-words'}>
+          {why}
+          {page ? (
+            <>
+              {' '}
+              <button type="button" className="dev-change-gate-link" data-change-gate-page="" onClick={openPage}>
+                {t('project:topic.change.gate.openPage')}
+              </button>
+            </>
+          ) : null}
+        </p>
+      ) : null}
       {shown.fix ? <FixRow fix={shown.fix} rerun={rerun} /> : null}
       {shown.noteDetail ? (
         <details className="dev-change-gate-note" data-change-gate-explanation="">

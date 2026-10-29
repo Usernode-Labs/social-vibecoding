@@ -7491,13 +7491,19 @@ const AppView = {
     return PlatformI18n.t('changes:page.testing.lead.checks', { count: rows.length });
   },
 
+  // The failure row the Testing card's own words describe: the first
+  // blocking one, else the first of any.
+  _failureRow(v) {
+    const all = v ? v.failures : [];
+    return all.find((row) => !row.advisory) || all[0] || null;
+  },
+
   // The failure's own words, which the Testing card shows until the
   // plain-words sentence is read (and when there is none): the first failing
   // test and the message it failed with, or the first failing check and
   // what it reported.
   _failureInWords(v) {
-    const all = v ? v.failures : [];
-    const r = all.find((row) => !row.advisory) || all[0];
+    const r = AppView._failureRow(v);
     if (!r) return null;
     if (r.unit) {
       const d = r.details && r.details[0];
@@ -7515,10 +7521,20 @@ const AppView = {
 
   // The failed run the plain-words sentence is read for
   // (frontend/src/features/dev-board/topic/failed-checks.ts), with the
-  // failure's own words to show until then.
+  // failure's own words to show until then, and the page that failure
+  // opened on the change's preview when one can be reopened.
   _checksExplainView(item, v) {
     if (!item || item.id == null || item.check_state !== 'failing' || !item.checks_checked_at) return null;
-    return { id: Number(item.id), at: String(item.checks_checked_at), fallback: AppView._failureInWords(v) };
+    const r = AppView._failureRow(v);
+    const path = r && !r.unit && typeof r.path === 'string'
+      && r.path.startsWith('/') && !r.path.startsWith('//') ? r.path : null;
+    const stagingUrl = item.staging_url ? String(item.staging_url) : null;
+    return {
+      id: Number(item.id),
+      at: String(item.checks_checked_at),
+      fallback: AppView._failureInWords(v),
+      page: path && stagingUrl ? { path, stagingUrl } : null,
+    };
   },
 
   // Fix it from the change's page (failed-checks.ts askFix): what the dev
