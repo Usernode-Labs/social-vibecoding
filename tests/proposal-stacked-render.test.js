@@ -156,6 +156,6 @@ test('the change\'s page: the notice above Votes and Testing, with a door to the
   const red = renderComponent(head, 'StackNotice', { v: lone });
   assert.match(red, /data-change-base-not-main=""/);
   assert.match(red, /Its pull request targets someone\/else, not main/);
-  assert.match(read(head), /\{v\.codeMissing \? <CodeMissingNotice \/> : null\}\s*\{v\.waitsFor \|\| v\.baseNotMain \? <StackNotice v=\{v\} \/> : null\}\s*<div ref=\{pair\} className="dev-change-pair">/,
+  assert.match(read(head), /\{v\.codeMissing \? <CodeMissingNotice \/> : null\}\s*\{v\.waitsFor \|\| v\.baseNotMain \? <StackNotice v=\{v\} \/> : null\}\s*<ChangeGates ref=\{pair\} id=\{id\} card=\{card\} v=\{v\} \/>/,
     'above the Votes and Testing cards, which stay as they are');
 });
