@@ -74,8 +74,11 @@ test('the sorts: most active, newest, most built, ties in the directory\'s order
 test('search reads the name and the description; a kind narrows to its apps', () => {
   const { filterApps } = loadTsx(DATA);
   assert.deepEqual(filterApps(APPS, 'shared todo', null).map((a) => a.slug), ['todo-list']);
-  // Case and spaces aside, a word in the name or the description finds it.
-  assert.deepEqual(filterApps(APPS, '  FRESH ', null).map((a) => a.slug), ['game-corner', 'fresh-one']);
+  // Case and spaces aside, a word in the name or the description finds it,
+  // and the project NAMED what was typed leads (#5891).
+  assert.deepEqual(filterApps(APPS, '  FRESH ', null).map((a) => a.slug), ['fresh-one', 'game-corner']);
+  assert.deepEqual(filterApps(APPS, 'fres', null).map((a) => a.slug), ['game-corner', 'fresh-one'],
+    'no exact name: the directory order');
   assert.deepEqual(filterApps(APPS, '', 'games').map((a) => a.slug), ['game-corner']);
   assert.deepEqual(filterApps(APPS, 'todo', 'games'), []);
 });

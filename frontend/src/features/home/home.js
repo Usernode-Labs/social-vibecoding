@@ -26,6 +26,7 @@
 import { t as message, htmlText } from '../../lib/i18n/runtime';
 import { AppCard } from '../apps/app-card.js';
 import { linkKind } from '../../lib/repo-link.js';
+import { rankSearch, searchKey } from '../../lib/search-rank.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
@@ -441,11 +442,11 @@ const Home = {
     return list;
   },
 
-  // The one form both matchers compare in: NFC, so a typed "Café" (é as one
-  // code point) meets a stored one written as e + combining accent, then
-  // trimmed and lower-cased. No locale-specific folding.
+  // The one form both matchers compare in: trimmed, lower-cased, Latin
+  // accents set aside, so "cafe" finds "Café" however its accent was
+  // written (lib/search-rank.js, the rule every app search shares, #5891).
   searchKey(value) {
-    return String(value || '').normalize('NFC').trim().toLowerCase();
+    return searchKey(value);
   },
 
   // Case-insensitive substring match on name and slug. An empty /
@@ -457,25 +458,23 @@ const Home = {
       || Home.searchKey(app?.slug).includes(q);
   },
 
-  // True when the query IS the app's name or slug (trimmed, any case), not
-  // merely inside it. An empty query is nobody's exact match.
+  // True when the query IS the app's name or slug (trimmed, any case, any
+  // accents), not merely inside it. An empty query is nobody's exact match.
   isExactMatch(app, query) {
     const q = Home.searchKey(query);
     if (!q) return false;
     return Home.searchKey(app?.name) === q || Home.searchKey(app?.slug) === q;
   },
 
-  // The matches, in input order, except that an exact match leads (#4793):
-  // typing an app's full name should find it first, not below three apps
-  // that merely contain it. The split is stable, so several exact matches
-  // keep their order among themselves and the rest keep theirs. Discover's
-  // search (Browse.visibleApps) runs through here too, so both fields rank
-  // the same way.
+  // The matches, in input order, except that an exact match leads (#4793,
+  // #5891): typing an app's full name should find it first, not below three
+  // apps that merely contain it. The split is stable, so several exact
+  // matches keep their order among themselves and the rest keep theirs.
+  // Discover's search (Browse.visibleApps) runs through here too, and the
+  // rule itself is lib/search-rank.js, which the communities and guest
+  // searches share, so every app search ranks the same way.
   filterApps(apps, query) {
-    const matches = (apps || []).filter((a) => Home.matchesQuery(a, query));
-    const exact = matches.filter((a) => Home.isExactMatch(a, query));
-    if (!exact.length) return matches;
-    return exact.concat(matches.filter((a) => !Home.isExactMatch(a, query)));
+    return rankSearch(apps, query, (a) => [a?.name, a?.slug]);
   },
 
   // How many admin-featured tiles the "Featured apps" row shows.

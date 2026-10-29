@@ -214,6 +214,22 @@ test('filterApps: an exact name or slug match leads; the rest keep input order (
   assert.deepEqual(slugs('   '), apps.map((a) => a.slug), 'blank query: everything, unchanged');
 });
 
+test('filterApps: accents are set aside for the match and the exact lead (#5891)', () => {
+  const Home = makeHome();
+  const apps = [
+    app({ name: 'Café Chat', slug: 'chat-1' }),
+    app({ name: 'Cafe\u0301', slug: 'cafe-2' }),
+    app({ name: 'Board', slug: 'board-3' }),
+  ];
+  const slugs = (q) => Home.filterApps(apps, q).map((a) => a.slug);
+  assert.deepEqual(slugs('cafe'), ['cafe-2', 'chat-1'], 'typed without the accent, the exact name leads');
+  assert.deepEqual(slugs('CAFÉ'), ['cafe-2', 'chat-1'], 'a composed accent meets a decomposed one');
+  assert.equal(Home.isExactMatch(apps[1], 'café'), true);
+  // Typed with its accent, "Café" leads an unaccented "Cafe" listed above it.
+  const both = [app({ name: 'Cafe', slug: 'plain-4' }), app({ name: 'Café', slug: 'accent-5' })];
+  assert.deepEqual(Home.filterApps(both, 'Café').map((a) => a.slug), ['accent-5', 'plain-4']);
+});
+
 test('isExactMatch: whole name or slug, trimmed, any case; never on an empty query', () => {
   const Home = makeHome();
   const a = app({ name: 'Chess Arena', slug: 'chess-arena-3f2a' });
