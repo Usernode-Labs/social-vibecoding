@@ -50,6 +50,7 @@ const discoveryCuration = require('../services/discovery-curation');
 const appStorageCap = require('../services/app-storage-cap');
 const appLimit = require('../services/app-limit');
 const previewProjectsSetting = require('../services/preview-projects-setting');
+const versionsSetting = require('../services/versions-setting');
 const sessionLimit = require('../services/session-limit');
 const platformLimits = require('../services/platform-limit-alerts');
 const githubBudget = require('../services/github-budget');
@@ -1447,6 +1448,46 @@ function adminRoutes(config) {
       res.json(await previewProjectsSetting.adminPayload(pool, config));
     } catch (err) {
       log.error('admin', 'Update preview projects setting failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Versions ────────────────────────────────────────────────
+  //
+  // Whether originals offer their merged changes down to the versions that
+  // follow them, and ready-mades are made as versions of their original
+  // (services/versions-setting.js, docs/plans/versions.md). On by default; a
+  // full admin turns it off or on here without a deploy. Read open to
+  // view-only admins; the write is requireAdminWrite. `enabled` is true,
+  // false, or null to go back to the default. The operator's
+  // VERSIONS_ENABLED=false decides it whatever is stored (409).
+  router.get('/api/admin/versions', async (_req, res) => {
+    try {
+      res.json(await versionsSetting.adminPayload(pool, config));
+    } catch (err) {
+      log.error('admin', 'Read versions setting failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/versions', requireAdminWrite, async (req, res) => {
+    const body = req.body || {};
+    if (!Object.prototype.hasOwnProperty.call(body, 'enabled')) {
+      return res.status(400).json({ error: 'Provide enabled: true, false, or null for the default.' });
+    }
+    const invalid = versionsSetting.validate(body.enabled);
+    if (invalid) return res.status(400).json({ error: invalid });
+    if (versionsSetting.deployBlock(config)) {
+      return res.status(409).json({
+        error: 'The deploy has switched versions off (VERSIONS_ENABLED is false), so there is nothing to set.',
+      });
+    }
+    try {
+      await versionsSetting.set(pool, { value: body.enabled, actorId: req.user.id });
+      log.info('admin', 'Versions setting updated', { by: req.user.username, enabled: body.enabled });
+      res.json(await versionsSetting.adminPayload(pool, config));
+    } catch (err) {
+      log.error('admin', 'Update versions setting failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

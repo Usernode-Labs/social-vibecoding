@@ -718,6 +718,32 @@ export interface ChangeThreadView {
    * an open change's: that branch, and the notice says what a person does.
    */
   baseNotMain?: { branch: string };
+  /**
+   * VERSIONS (docs/plans/versions.md): on an update, the change a version
+   * was given by the project it was made from, what it brings from there and
+   * what it does here (the proposal read's `upstream`, passed through by
+   * AppView._changeThreadView). change-head.tsx draws its From <original>
+   * card and Skip this update from it. Null or absent on every other change.
+   */
+  upstream?: ChangeUpstreamView | null;
+}
+
+/** An update's `upstream`, as the proposal read gives it; any field may be missing. */
+export interface ChangeUpstreamView {
+  from?: { slug: string; name?: string | null; emoji?: string | null } | null;
+  brings?: Array<{ title: string }> | null;
+  facts?: {
+    tablesAdded?: string[];
+    destructive?: string[];
+    hostsAdded?: string[];
+    secretsAdded?: string[];
+    ai?: boolean;
+    storage?: boolean;
+  } | null;
+  keeps?: { count: number; titles?: string[] } | null;
+  /** The update's state: `open` while it is up, `needs_fit` when it clashes. */
+  state?: string | null;
+  conflicts?: string[] | null;
 }
 
 export interface TopicBody {

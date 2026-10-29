@@ -62,7 +62,7 @@ stub(ids.appManifest, {
   read: () => ({ secrets: [] }),
   reconcileAppName: async () => {}, reconcileAppVisibility: async () => {}, reconcileAppGovernance: async () => {},
   reconcileAppAdmins: async () => {}, reconcileAppTopics: async () => null, reconcileAppScreenshot: async () => {},
-  reconcileAppIcon: async () => {}, MAX_APP_NAME_LENGTH: 64,
+  reconcileAppFollow: async () => false, reconcileAppIcon: async () => {}, MAX_APP_NAME_LENGTH: 64,
 });
 stub(ids.notifications, {
   createAppHealthNotification: async (pool, args) => { fx.notified.push(args); return []; },

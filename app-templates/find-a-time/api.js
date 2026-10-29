@@ -33,10 +33,22 @@
 // It came from Homeroom's ready-made find-a-time app. Change it freely.
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+// The words this project was made with (words.json beside this file, which
+// Homeroom writes when the project is made; the page's {{...}} come from the
+// same file). Every project made from this starter runs this same code, and
+// only its words.json differs. A missing or unreadable file reads as none.
+const WORDS = (() => {
+  try {
+    const parsed = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, 'words.json'), 'utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+})();
 // How this app finds a time, set when the project was made: 'dates' (a
 // plan's suggested days and times) or 'weekly' (the hours of every week).
 // Only that mode's tables and routes are made.
-const MODE = '{{TIME_MODE}}' === 'weekly' ? 'weekly' : 'dates';
+const MODE = WORDS.TIME_MODE === 'weekly' ? 'weekly' : 'dates';
 const PLATFORM_API_BASE = process.env.USERNODE_PLATFORM_API_V1_URL || process.env.USERNODE_PLATFORM_API_URL;
 
 const NAME_MAX = 80;

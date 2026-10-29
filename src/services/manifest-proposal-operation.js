@@ -18,6 +18,7 @@ const communities = require('./communities');
 const renamePr = require('./rename-pr');
 const topicsPr = require('./topics-pr');
 const whoDecidesPr = require('./who-decides-pr');
+const followPr = require('./follow-pr');
 const pendingSecrets = require('./pending-secrets');
 const platformEnv = require('./platform-env');
 const appSecrets = require('./app-secrets');
@@ -74,6 +75,16 @@ const FLAVORS = new Map([
   ['topics', {
     access: 'collab', selfHosted: true, member: true,
     build: (d, app, a, actor, steps) => topicsPr.createTopicsPR(d.config, d.pool, app, a, actor, { steps }),
+  }],
+  // Whether a version gets its original's updates (services/follow-pr.js):
+  // anyone who builds here and has joined may put it to the vote, as with
+  // any other change; the platform's own app is nobody's version.
+  ['follow', {
+    access: 'collab', selfHosted: false, member: true,
+    existing: (pool, app) => followPr.findFollowPr(pool, app.id),
+    existingError: () => 'A change to whether this project gets its original\'s updates is already waiting for a vote',
+    build: (d, app, a, actor, steps) => followPr.createFollowPR(d.config, d.pool, app,
+      { follow: !!a.follow, originalName: a.originalName || null }, actor, { steps }),
   }],
 ]);
 

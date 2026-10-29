@@ -16771,6 +16771,54 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    preflight rule, so restate it at this specificity. */
 .dev-change-chips .dev-change-thanks[hidden] { display: none; }
 
+/* VERSIONS (docs/plans/versions.md): an update's From <original> card,
+   under its summary (change-head.tsx UpstreamCard). A gate card's surface
+   and radius; the original's tile and name as a row (15 over 13); what it
+   brings, each with the check a finished gate wears; then "In <version>"
+   over what it does here, quieter, each on a dot. A line about data it
+   would change is in the attention ink, the one thing here that asks. */
+.dev-change-upstream { margin-top: 12px; padding: 12px 14px; border-radius: 16px; background: var(--messages-surface); }
+.dev-change-upstream-head { display: flex; align-items: center; gap: 10px; }
+.dev-change-upstream-tile {
+  width: 32px; height: 32px; border-radius: 9px; flex: none; overflow: hidden;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 700;
+}
+.dev-change-upstream-tile > img { width: 100%; height: 100%; object-fit: cover; }
+.dev-change-upstream-name { display: block; font-size: 15px; font-weight: 650; line-height: 20px; color: var(--text-primary); overflow-wrap: anywhere; }
+.dev-change-upstream-sub { display: block; font-size: 13px; line-height: 18px; color: var(--text-muted); }
+.dev-change-upstream-list { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.dev-change-upstream-list li { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; line-height: 19px; color: var(--text-primary); overflow-wrap: anywhere; }
+.dev-change-upstream-glyph { width: 15px; height: 15px; flex: none; margin-top: 2px; color: var(--state-ok); stroke-width: 2.5; }
+.dev-change-upstream-label {
+  margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--app-sheet-line);
+  font-size: 13px; font-weight: 650; color: var(--text-secondary); overflow-wrap: anywhere;
+}
+.dev-change-upstream-here { margin-top: 6px; }
+.dev-change-upstream-here li { font-size: 13px; line-height: 18px; color: var(--text-muted); }
+.dev-change-upstream-dot { width: 5px; height: 5px; margin: 7px 5px 0; border-radius: 999px; flex: none; background: currentColor; opacity: .55; }
+.dev-change-upstream-warn, .dev-change-upstream-here li.dev-change-upstream-warn { color: var(--state-attention); }
+/* Not for your version?: under Votes and Testing, quieter than either, a
+   hairline rather than a fill, its one button a neutral pill. */
+.dev-change-upstream-skip {
+  margin-top: 8px; padding: 10px 12px 10px 14px; border-radius: 16px;
+  border: 1px solid var(--app-sheet-line); display: flex; align-items: center; gap: 12px;
+}
+.dev-change-upstream-skip-title { display: block; font-size: 14px; font-weight: 600; line-height: 19px; color: var(--text-primary); }
+.dev-change-upstream-skip-sub { display: block; margin-top: 1px; font-size: 12px; line-height: 16px; color: var(--text-muted); overflow-wrap: anywhere; }
+.dev-change-upstream-skip-actions { flex: none; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.dev-change-upstream-skip-btn {
+  appearance: none; border: 0; cursor: pointer; padding: 7px 12px; border-radius: 999px;
+  font: inherit; font-size: 13px; font-weight: 600;
+  background: color-mix(in srgb, var(--text-muted) 14%, transparent); color: var(--text-primary);
+}
+.dev-change-upstream-skip-btn:disabled { opacity: .5; cursor: default; }
+/* Ask Homeroom bot to fit it is the action there: the accent's pill. */
+.dev-change-upstream-fit-btn { background: var(--accent); color: #fff; }
+@media (max-width: 420px) {
+  .dev-change-upstream-skip { flex-wrap: wrap; }
+  .dev-change-upstream-skip-actions { width: 100%; justify-content: flex-start; }
+}
+
 /* Before and after: the viewer specs use, its switch beside the title. */
 .dev-change-card-name { flex: 1 1 auto; min-width: 0; font-size: 15px; font-weight: 600; color: var(--text-primary); }
 .dev-change-shots { margin-top: 8px; border-radius: 16px; overflow: hidden; background: var(--messages-surface); }
@@ -18136,6 +18184,11 @@ button.dev-ws-recent-card {
    came in and how long it has left (inviteSentLine), at the rows' 13. */
 .dev-ws-share-sent { margin: 0; font-size: 13px; line-height: 18px; color: var(--text-muted); }
 .dev-ws-share-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* A version's Update card (hub-cards.tsx UpdateCard, docs/plans/versions.md)
+   is drawn as Share it is, `.dev-ws-share` and all: a title, a line, a row
+   of pills. Its line can be a change's whole title, so it wraps rather than
+   running off the card. */
+.dev-ws-update .dev-ws-strip-text { overflow-wrap: anywhere; }
 /* The ✕ that closes Share it, or "What do you want to change?", for good
    (community-card.tsx HubCardClose): at the far end of the card's head,
    muted, a circle that shows only when pressed or hovered. */
@@ -18819,6 +18872,15 @@ a.dev-ws-hero-pending {
   color: var(--text-primary); overflow-wrap: anywhere;
 }
 .dev-ws-hero-id-sub { font-size: 13px; line-height: 18px; color: var(--text-muted); }
+/* VERSIONS (docs/plans/versions.md): "Made from Tier list · Gets its
+   updates" on a version, "214 versions · 160 get its updates" on an
+   original (community-card.tsx HeroLineage). Under who it is for, in the
+   same size and muted ink: a note about the project, not a status. The
+   original's name is the one link, in the secondary ink, underlined on
+   hover. */
+.dev-ws-hero-lineage { display: block; font-size: 13px; line-height: 18px; color: var(--text-muted); }
+.dev-ws-hero-lineage-link { color: var(--text-secondary); font-weight: 600; text-decoration: none; }
+.dev-ws-hero-lineage-link:hover { text-decoration: underline; }
 @media (min-width: 768px) {
   .dev-ws-hero-summary {
     display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-auto-flow: row dense;
@@ -18831,6 +18893,7 @@ a.dev-ws-hero-pending {
   .dev-ws-hero-tile { width: 60px; height: 60px; border-radius: 18px; font-size: 30px; }
   .dev-ws-hero-name { font-size: 28px; }
   .dev-ws-hero-id-sub { font-size: 14px; line-height: 20px; }
+  .dev-ws-hero-lineage { font-size: 14px; line-height: 20px; }
 }
 
 /* ── The project's colour: its header and its tabs ─────────────────────
@@ -25458,6 +25521,29 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-tplate { position: absolute; overflow: hidden; display: block; }
 .rf-tplate img { position: absolute; display: block; max-width: none; }
 .rf-tplate-pair img { position: static; width: 100%; height: 100%; object-fit: cover; object-position: center; }
+
+/* ── Versions: switches and picks in the version dialogs ────────────────
+   docs/plans/versions.md. "Get Tier list's updates" in the Make your own
+   dialog (fork-app.tsx) and the Updates sheet's two switches
+   (features/versions/updates-sheet.tsx): a row of words with the switch at
+   its end, as the board filters dialog draws one, inside the hairline of
+   the dialog's info box so it reads as one more thing about the version.
+   The whole row is the switch's label. */
+.fork-follow {
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+  border-radius: 8px; border: 1px solid var(--app-sheet-line); cursor: pointer;
+}
+.fork-follow-title { display: block; font-size: 14px; font-weight: 600; line-height: 19px; color: var(--text-primary); overflow-wrap: anywhere; }
+.fork-follow-sub { display: block; margin-top: 2px; font-size: 12px; line-height: 16px; color: var(--text-muted); }
+/* Suggest to <original>'s list of the version's own changes
+   (dev-board/suggest-back-dialog.tsx): one tick box a change, the row its
+   label, a hairline between rows, the box in the accent. */
+.suggest-pick { padding: 4px 0; }
+.suggest-pick ul { margin: 0; padding: 0; list-style: none; }
+.suggest-pick li + li .suggest-pick-row { border-top: 1px solid var(--app-sheet-line); }
+.suggest-pick-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 12px; cursor: pointer; }
+.suggest-pick-box { width: 18px; height: 18px; margin-top: 1px; flex: none; accent-color: var(--accent); }
+.suggest-pick-title { min-width: 0; font-size: 14px; font-weight: 600; line-height: 19px; color: var(--text-primary); overflow-wrap: anywhere; }
 
 /* ── THE NEW LOOK, AN EXPERIMENT (Settings › Experimental, off by default) ──
    Every rule here is scoped to html[data-skin="brand"], which the head's

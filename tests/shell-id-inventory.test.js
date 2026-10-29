@@ -393,6 +393,8 @@ const ADDED_IDS = {
   // NOT here: it renders only while a query is active and nothing matches,
   // so it is not in the prerendered document — the same treatment the maps
   // give ids behind an open dialog.
+  // ── Versions: Make your own gets its original's updates ──────────────────
+  'fork-follow': 'Versions (docs/plans/versions.md): the "Get <original>\'s updates" switch in the Make your own dialog (#fork-modal, features/dialogs/fork-app.tsx), on by default and on again at every open; its state goes in POST /api/apps/:slug/fork as `follow`.',
   // ── #5048: private requests ──────────────────────────────────────────────
   'feedback-private-row': '#5048: the Suggest an improvement dialog\'s "Private request" box, which files the request in Homeroom only (POST /api/private-requests) where only platform admins can see it, never as a GitHub issue. Ships hidden; feedback-controller.js shows it to full admins on each open.',
   'feedback-private-checkbox': '#5048: the box itself, unticked on every open.',

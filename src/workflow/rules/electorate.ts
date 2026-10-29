@@ -166,16 +166,34 @@ export async function activeUserIds(db: Queryable, appId: number, meta: AppMeta)
 // The approver electorate for an 'invited'-policy app: member rows in
 // app_approvers, or (when the roster is empty) every full admin, so an app
 // can never make its own merge gate unreachable. Returns { ids, adminFallback }.
+//
+// An app whose `approvers_from_app_id` is set has that app's roster instead
+// (docs/plans/versions.md: the ready-made originals use the platform's), so
+// a change to the platform's approvers is a change to theirs. One level
+// only: the roster named is read as it is, never followed further.
 export async function getApproverSet(db: Queryable, appId: number): Promise<{ ids: number[]; adminFallback: boolean }> {
+  const rosterId = await rosterAppId(db, appId);
   const { rows } = await db.query(
     `SELECT user_id FROM app_approvers WHERE app_id = $1 AND status = 'member'`,
-    [appId],
+    [rosterId],
   );
   if (rows.length) return { ids: rows.map((r) => r.user_id), adminFallback: false };
   const { rows: admins } = await db.query(
     `SELECT id FROM users WHERE is_admin = TRUE AND admin_readonly = FALSE`,
   );
   return { ids: admins.map((r) => r.id), adminFallback: true };
+}
+
+// Whose approver roster an app uses: the app named by its
+// approvers_from_app_id, else its own. A row that says nothing usable is the
+// app's own roster.
+export async function rosterAppId(db: Queryable, appId: number): Promise<number> {
+  const { rows } = await db.query(
+    'SELECT approvers_from_app_id FROM apps WHERE id = $1',
+    [appId],
+  );
+  const linked = Number(rows[0]?.approvers_from_app_id);
+  return Number.isInteger(linked) && linked > 0 ? linked : appId;
 }
 
 export interface Electorate { active: number; approverIds: number[] | null; adminFallback: boolean }

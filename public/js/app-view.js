@@ -7188,6 +7188,10 @@ const AppView = {
       // Its code did not come across from GitHub (_codeMissing): the page
       // says so in a notice above Votes and Testing (change-head.tsx).
       codeMissing: kind !== 'gov' && AppView._codeMissing(item),
+      // Versions (docs/plans/versions.md): an update from the original this
+      // version was made from, as the proposal read gives it; change-head.tsx
+      // draws its From card and Skip this update. Null on any other change.
+      upstream: (item && item.upstream && typeof item.upstream === 'object') ? item.upstream : null,
       // Stacked on another change's branch, or based on a branch no open
       // change has (_stackedOn): said in a notice above Votes and Testing,
       // with a door to the change it waits for.
