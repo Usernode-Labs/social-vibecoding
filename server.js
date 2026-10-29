@@ -739,6 +739,10 @@ app.use(require('./src/routes/test-accounts').testAccountRoutes(config));
 // rules) through a full admin's connector session: each door hands on to the
 // console's own /api/v4/admin route (routes/challenge-admin.js).
 app.use(require('./src/routes/challenge-admin').challengeAdminRoutes(config));
+// Featured apps (the landing's Featured and Home's "Find more apps") and the
+// directory review they need, through a full admin's connector session: each
+// door hands on to the console's own /api/admin route (routes/featured-admin.js).
+app.use(require('./src/routes/featured-admin').featuredAdminRoutes(config));
 app.use(adminSupportRoutes(config));
 app.use(adminUserMergeRoutes(config));
 app.use(dashboardRoutes(config));

@@ -842,6 +842,57 @@ test('the challenge doors are allowed, full-admin gated first, and each opens on
   }
 });
 
+// Featured apps (routes/featured-admin.js). Three doors outside /api/admin
+// (which a connector can never reach), allowed because every one refuses
+// anybody who is not a full platform admin before anything else runs, the
+// read included; both writes are then limited per person and refused to a
+// browser on another origin. Each hands the request to the console's own
+// handler (routes/admin-featured-apps.js) at the same path under /api/admin.
+test('the featured-apps doors are allowed, full-admin gated first, and each opens onto the console route at the same path', () => {
+  for (const [method, target] of [
+    ['GET', '/api/featured-admin/featured-apps'],
+    ['PUT', '/api/featured-admin/featured-apps'],
+    ['PUT', '/api/featured-admin/apps/patch-741877/directory-review'],
+  ]) {
+    assert.equal(policy.isConnectorApiRequest(method, target), true, `${method} ${target}`);
+  }
+  for (const [method, target] of [
+    ['DELETE', '/api/featured-admin/featured-apps'],
+    ['POST', '/api/featured-admin/featured-apps'],
+    ['GET', '/api/featured-admin/apps/patch-741877/directory-review'],
+    // The console's own routes stay out of reach.
+    ['GET', '/api/admin/featured-apps'],
+    ['PUT', '/api/admin/featured-apps'],
+    ['PUT', '/api/admin/apps/patch-741877/directory-review'],
+  ]) {
+    assert.equal(policy.isConnectorApiRequest(method, target), false, `${method} ${target} is refused`);
+  }
+
+  const src = fs.readFileSync(path.join(__dirname, '../src/routes/featured-admin.js'), 'utf8');
+  const routes = [...src.matchAll(/router\.(get|post|put|patch|delete)\('(\/api\/featured-admin[^']*)', ([^)]*?)toConsole\)/g)];
+  assert.equal(routes.length, 3);
+  assert.equal((src.match(/router\.(get|post|put|patch|delete|use|all)\(/g) || []).length, 3, 'nothing else in the file is a route');
+  const shape = (p) => p.split('/').map((seg) => (seg.startsWith(':') ? ':x' : seg)).join('/');
+  const doorShapes = new Set(routes.map(([, m, route]) => `${m.toUpperCase()} ${shape(route)}`));
+  for (const r of policy.CONNECTOR_ALLOWED_ROUTES.filter((x) => x.pattern.startsWith('/api/featured-admin/'))) {
+    assert.ok(doorShapes.has(`${r.method} ${shape(r.pattern)}`), `${r.method} ${r.pattern} is a door`);
+  }
+  const consoleSrc = fs.readFileSync(path.join(__dirname, '../src/routes/admin-featured-apps.js'), 'utf8');
+  const consoleRoutes = new Set([...consoleSrc.matchAll(/router\.(get|post|put|patch|delete)\('(\/api\/admin\/[^']+)'/g)]
+    .map(([, m, route]) => `${m.toUpperCase()} ${shape(route)}`));
+  for (const [, method, route, chain] of routes) {
+    const name = `${method.toUpperCase()} ${route}`;
+    const onto = `${method.toUpperCase()} ${shape(route.replace('/api/featured-admin/', '/api/admin/'))}`;
+    assert.ok(consoleRoutes.has(onto), `${name} opens onto the console's ${onto}`);
+    if (method === 'get') {
+      assert.equal(chain, 'requireAdminWrite, ', `${name} is full-admin gated`);
+    } else {
+      assert.equal(chain, 'requireAdminWrite, featuredAdminLimiter, sameOriginBrowserOnly, ',
+        `${name} is full-admin gated, then limited, then guarded`);
+    }
+  }
+});
+
 // #6026 — create_app. Making a project decides something for the caller
 // alone, so the route earns its entry by narrowing a connector token to a
 // project for the person who connected it and nothing more.
