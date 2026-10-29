@@ -134,9 +134,14 @@ test('the vote sheet\'s Discussion opens the thread the change talks in', () => 
 test('competing changes are one ballot; a pick is votes, cast only where they change', () => {
   const { ballotOf, ballotVotes, moveLines, splittable } = loadTsx(MODEL);
   const plain = (v) => JSON.parse(JSON.stringify(v));
-  const a = { type: 'change', id: 51, number: 8, title: 'Toggle', status: 'promoted', state: 'review', replies: 0, epoch: 2, myVote: null };
-  const b = { type: 'change', id: 52, number: 9, title: 'Schedule', status: 'promoted', state: 'review', replies: 0, epoch: 0, myVote: 'yes' };
+  const a = { type: 'change', id: 51, number: 8, title: 'Toggle', status: 'promoted', state: 'review', replies: 0, epoch: 2, myVote: null, closes: [7] };
+  const b = { type: 'change', id: 52, number: 9, title: 'Schedule', status: 'promoted', state: 'review', replies: 0, epoch: 0, myVote: 'yes', closes: [7] };
   assert.equal(ballotOf(payload([request, a])), null, 'one change is no ballot');
+  // Parts of one request are not rivals: neither closes it (or each closes
+  // a different request), so both go live and no pick takes a Yes back.
+  assert.equal(ballotOf(payload([request, { ...a, closes: [] }, { ...b, closes: [] }])), null, 'two parts, no ballot');
+  assert.equal(ballotOf(payload([request, { ...a, closes: [7] }, { ...b, closes: [11] }])), null, 'different requests, no ballot');
+  assert.equal(ballotOf(payload([request, a, { ...b, closes: [] }])), null, 'a part beside a change that closes it, no ballot');
   const ballot = ballotOf(payload([request, a, b]));
   assert.deepEqual(ballot.options.map((o) => o.id), [51, 52]);
   assert.equal(ballot.pick, 52, 'her Yes on one is her pick');
@@ -164,6 +169,8 @@ test('the merge closes the rivals of the change that went live, and never waits 
   const threads = read('src/services/threads.js');
   const fn = threads.slice(threads.indexOf('async function closeRivals('), threads.indexOf('module.exports = {'));
   assert.match(fn, /status = 'promoted'/, 'only changes still up for a vote');
+  assert.match(fn, /COALESCE\(linked_issues, '\{\}'\) && \$3::int\[\]/, 'and only those that close a request it closes');
+  assert.match(fn, /if \(!won \|\| !won\.closes\.length\) return \[\];/, 'a change that closes nothing has no rivals');
   assert.match(fn, /reason: 'superseded'/);
   assert.match(fn, /\} catch \(err\) \{\s+log\.warn\('threads', 'Could not look for a merged change\\'s rivals'/, 'never throws');
 });

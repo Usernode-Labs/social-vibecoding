@@ -362,7 +362,7 @@ SELECT 'request' AS type, r.id::bigint AS id, r.number, r.title, r.state AS stat
        (SELECT COUNT(*) FROM chat_messages m
          WHERE m.thread_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = r.number
            AND m.msg_type = 'message' AND m.deleted_at IS NULL)::int AS replies,
-       NULL::int AS epoch, NULL::text AS my_vote
+       NULL::int AS epoch, NULL::text AS my_vote, NULL::int[] AS closes
   FROM requests r WHERE r.thread_id = $1
 UNION ALL
 SELECT 'change', cs.id::bigint, cs.pr_number,
@@ -374,7 +374,8 @@ SELECT 'change', cs.id::bigint, cs.pr_number,
        cs.approval_epoch,
        (SELECT v.vote::text FROM pr_votes v
          WHERE v.session_id = cs.id AND v.user_id = $3
-           AND v.approval_epoch IS NOT DISTINCT FROM cs.approval_epoch)
+           AND v.approval_epoch IS NOT DISTINCT FROM cs.approval_epoch),
+       COALESCE(cs.linked_issues, '{}')
   FROM chat_sessions cs
  WHERE cs.thread_id = $1 AND cs.is_headless = FALSE
    AND (cs.status IN ('active', 'promoted', 'merging', 'merged')
@@ -385,7 +386,7 @@ SELECT CASE WHEN i.kind = 'close_issue' THEN 'close' ELSE 'decision' END, i.id::
        (SELECT COUNT(*) FROM chat_messages m
          WHERE m.thread_id = $1 AND m.thread_type = 'governance' AND m.thread_ref = i.id
            AND m.msg_type = 'message' AND m.deleted_at IS NULL)::int,
-       NULL::int, NULL::text
+       NULL::int, NULL::text, NULL::int[]
   FROM issues i WHERE i.thread_id = $1 AND i.kind <> 'general'
  ORDER BY created_at, type, id`;
 
@@ -444,6 +445,8 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
       // Stage 6: what the ballot casts with, and the viewer's own vote.
       item.epoch = row.epoch == null ? null : Number(row.epoch);
       item.myVote = row.my_vote === 'yes' || row.my_vote === 'no' ? row.my_vote : null;
+      // The requests it closes when it merges: changes compete only for those.
+      item.closes = (row.closes || []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
     } else if (row.type === 'close' || row.type === 'decision') {
       item.folded = foldOf.get(`governance:${row.id}`) || [];
     }
@@ -473,27 +476,33 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
 
 // ── Ballots (stage 6) ────────────────────────────────────────────────
 //
-// Two or more changes in one thread up for a vote are one ballot on its page
-// (features/dev-board/topic/thread-ballot.tsx); underneath each keeps its
-// own vote, pinned to its own revision. The first to pass goes live, and the
-// merge closes the others ('superseded', reversible like any close,
-// session-lifecycle.js archiveSession), each saying why in its discussion.
+// Two or more changes up for a vote that would close the same request are
+// one ballot on its page (features/dev-board/topic/thread-ballot.tsx);
+// underneath each keeps its own vote, pinned to its own revision. The first
+// to pass goes live, and the merge closes the others ('superseded',
+// reversible like any close, session-lifecycle.js archiveSession), each
+// saying why in its discussion. Being in one thread is not competing: two
+// parts of one request (each made from it, neither closing it, or each
+// closing a different request) both go live, so a change is a rival only
+// when its linked requests (`linked_issues`, what it closes) overlap the
+// merged change's. A change that closes nothing has no rivals.
 // Called from the merge's own pass over its requests
 // (issue-close-watcher.js closeAfterMerge). Never throws: a rival left open
 // is still a proposal anyone can withdraw, and the merge must not wait on it.
 async function closeRivals(db, { appId, prNumber, deps = {} }) {
   try {
     const { rows: [won] } = await db.query(
-      `SELECT id, thread_id FROM chat_sessions
+      `SELECT id, thread_id, COALESCE(linked_issues, '{}') AS closes FROM chat_sessions
         WHERE app_id = $1 AND pr_number = $2 AND status = 'merged' AND thread_id IS NOT NULL
         ORDER BY id DESC LIMIT 1`,
       [appId, prNumber]
     );
-    if (!won) return [];
+    if (!won || !won.closes.length) return [];
     const { rows: rivals } = await db.query(
       `SELECT id, status FROM chat_sessions
-        WHERE thread_id = $1 AND id <> $2 AND status = 'promoted' AND is_headless = FALSE`,
-      [won.thread_id, won.id]
+        WHERE thread_id = $1 AND id <> $2 AND status = 'promoted' AND is_headless = FALSE
+          AND COALESCE(linked_issues, '{}') && $3::int[]`,
+      [won.thread_id, won.id, won.closes]
     );
     const lifecycle = deps.lifecycle || require('./session-lifecycle');
     const ws = deps.ws || require('./ws');
