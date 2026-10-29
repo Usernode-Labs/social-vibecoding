@@ -3239,3 +3239,86 @@ test('a resumed update leaves a superseding revision and its checks alone', asyn
   assert.equal(log.push.length, 1);
   assert.equal(log.reconcile, undefined);
 });
+
+
+test('a resumed fork update keeps the source commit it decided before the push', async () => {
+  for (const firstLanding of [false, true]) {
+    const store = {};
+    const log = {};
+    let source = FORK_HEAD;
+    let remote = firstLanding ? null : NATIVE_HEAD;
+    let writes = 0;
+    const push = async (args) => {
+      if (args.expectedSourceSha && args.expectedSourceSha !== source) return { ok: false, code: 'branch_moved', message: 'Source changed.' };
+      writes++; remote = source;
+      return { ok: true, headSha: source, branch: args.targetBranch };
+    };
+    const session = nativeSession(firstLanding ? { branch_name: 'usernode/from-evan-abcd', status: 'active' } : {});
+    const d = deps({ session, gh: { getBranchSha: async () => {
+      if (!remote) throw Object.assign(new Error('Not found'), { status: 404 });
+      return remote;
+    } }, head: {
+      verifyForkBranch: async () => ({ ok: true, headSha: source }),
+      pushForkBranchToAppBranch: push, mirrorForkBranch: push,
+    } }, log);
+    const params = { user: USER, session, branch: 'fix/current' };
+    await assert.rejects(svc.updateProposalFromForkBranch({ ...d, steps: keptSteps(store, { stopAt: 'push' }) }, params),
+      (err) => err.stopped === true);
+    assert.equal(store.saved.decided.verifiedHeadSha, FORK_HEAD);
+    source = OTHER_HEAD;
+    const result = await svc.updateProposalFromForkBranch({ ...d, steps: keptSteps(store) }, params);
+    assert.equal(result.code, 'branch_moved');
+    assert.equal(writes, 0);
+    assert.equal(remote, firstLanding ? null : NATIVE_HEAD);
+    assert.equal(log.reconcile, undefined);
+  }
+});
+
+
+test('a resumed fork update adopts its landed commit when its push checkpoint was lost', async () => {
+  for (const firstLanding of [false, true]) {
+    const store = {};
+    const log = {};
+    let source = FORK_HEAD;
+    let remote = firstLanding ? null : NATIVE_HEAD;
+    let writes = 0;
+    const push = async (args) => {
+      if (args.expectedSourceSha && args.expectedSourceSha !== source) return { ok: false, code: 'branch_moved', message: 'Source changed.' };
+      writes++; remote = source;
+      return { ok: true, headSha: source, branch: args.targetBranch };
+    };
+    const session = nativeSession(firstLanding ? { branch_name: 'usernode/from-evan-abcd', status: 'active' } : {});
+    const backing = fakePool([
+      ['FROM chat_sessions cs JOIN apps a', [session]],
+      ['UPDATE chat_sessions', [{ id: session.id }]],
+      ['FROM pr_votes', [{ n: 4 }]],
+    ]);
+    const pool = { async query(...args) {
+      const out = await backing.query(...args);
+      return { ...out, rowCount: out.rows.length };
+    } };
+    const d = { ...deps({ session, pool, gh: { getBranchSha: async () => {
+      if (!remote) throw Object.assign(new Error('Not found'), { status: 404 });
+      return remote;
+    } }, head: {
+      verifyForkBranch: async () => ({ ok: true, headSha: source }),
+      pushForkBranchToAppBranch: push, mirrorForkBranch: push,
+    } }, log), ...sessionParts(log) };
+    const params = { user: USER, session, branch: 'fix/current' };
+    const first = kernelSteps.steps({ checkpoint: async (value) => {
+      if (value.push) throw new kernelSteps.StepsStopped('checkpoint connection lost');
+      store.saved = value;
+    } });
+    await assert.rejects(svc.updateProposalFromForkBranch({ ...d, steps: first }, params), kernelSteps.isStopped);
+    assert.equal(writes, 1);
+    assert.equal(store.saved.push, undefined);
+    assert.equal(remote, FORK_HEAD);
+    source = OTHER_HEAD;
+    const result = await svc.updateProposalFromForkBranch({ ...d, steps: keptSteps(store) }, params);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.headSha, FORK_HEAD, 'the landed revision is completed');
+    assert.equal(writes, 1, 'the newer fork revision is never pushed');
+    assert.equal(store.saved.push.ok, true);
+    assert.equal(firstLanding ? log.started.length : log.reconcile.length, 1, 'its tail runs once');
+  }
+});

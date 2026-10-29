@@ -3590,6 +3590,7 @@ async function openSubmission(deps, {
   user, task, link, mode, branch, forkRepo, patch, uploaded, title, body,
 }, steps = require('./durable-steps').none()) {
   const { gh } = deps;
+  const flows = require('./git-host-flows');
   const slug = task.app_slug;
   const parsed = repoRef.isHosted(task.repo_url) ? repoRef.ownerRepo(task.repo_url) : gh.parseGithubUrl(task.repo_url);
   if (!parsed) {
@@ -3604,8 +3605,7 @@ async function openSubmission(deps, {
   // The pull request from a head this request wrote, or the one an earlier
   // try of it already opened from that branch.
   const openFrom = (headBranch) => steps.once('pr', async () => {
-    const open = steps.active ? await gh.findOpenPrByBranch(owner, repo, headBranch).catch(() => null) : null;
-    return prOf(open || await gh.createPR(owner, repo, { branch: headBranch, title: prTitle, body: prBody }));
+    return prOf(await flows.openPr(gh, owner, repo, { branch: headBranch, title: prTitle, body: prBody }));
   });
   const removeHead = (headBranch) => steps.once('discarded', async () => {
     await externalAgentHead.removeBranch({ owner, repo, branch: headBranch });
@@ -3632,7 +3632,7 @@ async function openSubmission(deps, {
       const pr = await openFrom(applied.branch);
       return { ok: true, pr, via: 'patch', platformBranch: applied.branch };
     } catch (err) {
-      if (stopped(err)) throw err;
+      if (stopped(err) || !flows.permanentPrRefusal(err)) throw err;
       await removeHead(applied.branch);
       const desc = gh.describeGithubError ? gh.describeGithubError(err) : null;
       log.error('external-agent-tasks', 'PR creation failed for an applied patch', {
@@ -3704,7 +3704,7 @@ async function openSubmission(deps, {
       const pr = await openFrom(mirrored.branch);
       return { ok: true, pr, via: 'mirror', platformBranch: mirrored.branch };
     } catch (err) {
-      if (stopped(err)) throw err;
+      if (stopped(err) || !flows.permanentPrRefusal(err)) throw err;
       await removeHead(mirrored.branch);
       const desc = gh.describeGithubError ? gh.describeGithubError(err) : null;
       log.error('external-agent-tasks', 'same-repo PR failed for a mirrored head', {

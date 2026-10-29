@@ -695,6 +695,35 @@ test('skip: an update going in right now cannot be skipped', async () => {
   assert.equal(s.offers.get(12).state, 'open');
 });
 
+test('a resumed skip keeps the close decision it received', async () => {
+  const kernelSteps = require('../src/workflow/kernel/steps.ts');
+  const fx = fixture();
+  const { s, deps } = seed(fx);
+  const opened = await offers.openUpdate({ config: {}, pool: s.pool, versionId: 12, deps });
+  const before = ref(fx.ver, lineage.UPSTREAM_REF);
+  const previousLineage = { ...s.apps.get(12).upstream };
+  let closes = 0;
+  deps.close = async () => { closes += 1; return { status: 'rejected', reason: 'merging' }; };
+  const stop = new AbortController();
+  let saved;
+  const steps = kernelSteps.steps({ signal: stop.signal, checkpoint: async (value) => {
+    saved = value;
+    if (value.close) stop.abort();
+  } });
+  await assert.rejects(offers.skipUpdate({ config: {}, pool: s.pool, versionId: 12, user: MEMBER, deps, steps }),
+    kernelSteps.isStopped);
+  assert.deepEqual(saved.close, { status: 'rejected', reason: 'merging' });
+  s.sessions.get(opened.sessionId).status = 'merging';
+  const resumed = kernelSteps.steps({ resumeFrom: saved, attempt: 2, checkpoint: async (value) => { saved = value; } });
+  const out = await offers.skipUpdate({ config: {}, pool: s.pool, versionId: 12, user: MEMBER, deps, steps: resumed });
+  assert.equal(out.body.code, 'merging');
+  assert.equal(closes, 1, 'the saved decision is read without closing again');
+  assert.equal(ref(fx.ver, lineage.UPSTREAM_REF), before, 'no upstream ref is advanced');
+  assert.deepEqual(s.apps.get(12).upstream, previousLineage, 'no lineage is advanced');
+  assert.equal(s.offers.get(12).state, 'open');
+  assert.equal(resumed.has('advance'), false);
+});
+
 test('refresh: an open update whose original moved again is planned again and its branch moved', async () => {
   const fx = fixture();
   const { s, deps, calls } = seed(fx);

@@ -184,3 +184,65 @@ test('a .gitconfig a patch adds is a file in the tree, never git\'s own configur
   // Committed as what it is: the person's own file.
   assert.equal(realGit(repo.bare, 'show', `${out.headSha}:.gitconfig`), config);
 });
+
+test('fork transports publish only the verified source commit', { timeout: 60000 }, async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fork-source-pin-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const host = await startFakeGitHost(t);
+  const app = seedRepo(host, root, 'pinned-source');
+  // The mirror's depth-one fetch requires the host to accept a shallow head.
+  realGit(app.bare, 'config', 'receive.shallowUpdate', 'true');
+  const target = 'dev/pinned-source';
+  realGit(app.work, 'push', '-q', app.bare, `${app.base}:refs/heads/${target}`);
+  const fork = path.join(root, 'fork-work');
+  const bare = path.join(root, 'fork.git');
+  realGit(root, 'clone', '-q', app.work, fork);
+  realGit(fork, 'checkout', '-q', '-b', 'my-fix');
+  fs.writeFileSync(path.join(fork, 'notes.txt'), 'first\n');
+  realGit(fork, 'add', '-A'); realGit(fork, 'commit', '-qm', 'First revision');
+  const first = realGit(fork, 'rev-parse', 'HEAD').trim();
+  fs.writeFileSync(path.join(fork, 'notes.txt'), 'second\n');
+  realGit(fork, 'add', '-A'); realGit(fork, 'commit', '-qm', 'Second revision');
+  const second = realGit(fork, 'rev-parse', 'HEAD').trim();
+  realGit(root, 'clone', '--bare', '-q', fork, bare);
+
+  // The public API can still report the earlier head when git fetch sees
+  // the later one. Only the user's fork URL is redirected to this fixture.
+  const bin = path.join(root, 'bin'); const trace = path.join(root, 'git.jsonl');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'git'), `#!/usr/bin/env node
+const fs = require('node:fs');
+const { spawnSync } = require('node:child_process');
+const args = process.argv.slice(2).map(a => a === 'https://github.com/forkuser/source.git' ? ${JSON.stringify('file://' + bare)} : a);
+fs.appendFileSync(${JSON.stringify(trace)}, JSON.stringify(args) + '\\n');
+const child = spawnSync(${JSON.stringify(REAL_GIT)}, args, { stdio: 'inherit', env: process.env });
+process.exit(child.status === null ? 1 : child.status);
+`, { mode: 0o755 });
+  const priorPath = process.env.PATH; process.env.PATH = `${bin}:${priorPath}`;
+  t.after(() => { process.env.PATH = priorPath; });
+  const head = require('../src/services/external-agent-head');
+  const reads = (sha) => async (_method, url) => url.includes('/branches/')
+    ? { ok: true, status: 200, body: { commit: { sha } } }
+    : { ok: true, status: 200, body: { owner: { login: 'forkuser' } } };
+  const common = { owner: ORG, repo: 'pinned-source', forkOwner: 'forkuser', forkRepo: 'source',
+    branch: 'my-fix', expectedLogin: 'forkuser', sessionId: 1 };
+  for (const mode of ['mirror', 'update']) {
+    const branch = mode === 'mirror' ? 'usernode/from-forkuser-t1-abcd' : target;
+    const run = (sha, expected = sha) => mode === 'mirror'
+      ? head.mirrorForkBranch({ ...common, gh: {}, githubPublic: reads(sha), targetBranch: branch, expectedSourceSha: expected })
+      : head.pushForkBranchToAppBranch({ ...common, githubPublic: reads(sha), targetBranch: branch,
+        expectedRemoteSha: app.base, expectedSourceSha: expected });
+    const countPushes = () => fs.existsSync(trace)
+      ? fs.readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(args => args.includes('push')).length : 0;
+    const before = countPushes();
+    assert.equal((await run(second, first)).code, 'branch_moved', 'a changed API head is refused');
+    assert.equal((await run(first)).code, 'branch_moved', 'a different fetched commit is refused');
+    assert.equal(countPushes(), before, 'no host push precedes source validation');
+    assert.equal(host.branchSha('pinned-source', branch), mode === 'mirror' ? null : app.base);
+    const made = await run(second);
+    assert.equal(made.ok, true, JSON.stringify(made));
+    assert.equal(made.headSha, second);
+    assert.equal(host.branchSha('pinned-source', branch), second);
+    assert.equal(countPushes(), before + 1);
+  }
+});

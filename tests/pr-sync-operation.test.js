@@ -214,6 +214,38 @@ test('a rename goes to GitHub from the stored title, and a failure there still a
   assert.equal(state.row.pr_title, 'Another name');
 });
 
+test('a rename on web waits for its typed conductor operation before writing the host', async (t) => {
+  const { host } = setup(t);
+  const role = process.env.PROCESS_ROLE;
+  process.env.PROCESS_ROLE = 'web';
+  t.after(() => { if (role === undefined) delete process.env.PROCESS_ROLE; else process.env.PROCESS_ROLE = role; });
+  let report; const requested = new Promise(resolve => { report = resolve; });
+  let finish; const outcome = new Promise(resolve => { finish = resolve; });
+  const prior = operations._setTransportForTests(async (request) => { report(request); return outcome; });
+  t.after(() => { finish({ status: 'refused', reason: 'operation_unavailable' }); operations._setTransportForTests(prior); });
+  const write = github.updatePR; const roles = [];
+  t.mock.method(github, 'updatePR', async (...args) => { roles.push(process.env.PROCESS_ROLE); return write(...args); });
+  const s = await server(t, OWNER);
+  const response = patch(s, 'title', { title: 'A queued rename' });
+  const first = await Promise.race([
+    requested.then(request => ({ request })),
+    response.then(result => ({ result })),
+  ]);
+  assert.ok(first.request, 'the route asks for an operation before answering');
+  assert.deepEqual({ op: first.request.op, appId: first.request.appId, userId: first.request.userId, input: first.request.input },
+    { op: 'pr.sync', appId: 3, userId: 7, input: { sessionId: 412, write: 'title' } });
+  assert.equal(state.row.pr_title, 'A queued rename', 'the route saves the title first');
+  assert.deepEqual(host.calls, [], 'web makes no host write while the operation is queued');
+  process.env.PROCESS_ROLE = 'conductor';
+  finish(await prior(first.request));
+  const out = await response;
+  assert.equal(out.status, 200);
+  assert.equal(out.body.githubUpdated, true);
+  assert.equal(host.calls.length, 1);
+  assert.deepEqual(host.calls[0][3], { title: 'A queued rename' });
+  assert.deepEqual(roles, ['conductor']);
+});
+
 test('the conductor reads each write\'s authority again', async (t) => {
   setup(t);
   const ask = (write, over = {}, input = {}) => ({ op: 'pr.sync', requestId: 'r', appId: 3, userId: 7, input: { sessionId: 412, write, ...input }, ...over });

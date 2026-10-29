@@ -197,4 +197,62 @@ test('a platform operation\'s large input', { timeout: 180000 }, async (t) => {
     assert.deepEqual(await kept(fresh), { op: OP, payload: { patch: 'new' } });
     assert.equal(await operations.pruneInputs(pool), 0);
   });
+
+  await t.test('an admission still being decided keeps the submission request for recovery', async (t) => {
+    await platform.stopWorkflow();
+    await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 0 }, { loops: false });
+    const userId = await person();
+    const broker = require('../src/services/work-submission-request');
+    let receipt = null;
+    const taskDb = { async query(sql, params) {
+      if (/COALESCE\(submit_operation/.test(sql)) {
+        receipt ||= JSON.parse(params[3]);
+        return { rows: [{ submit_operation: receipt }] };
+      }
+      if (/submit_operation = NULL/.test(sql)) { receipt = null; return { rows: [] }; }
+      throw new Error('Unexpected task query');
+    } };
+    const ids = [];
+    const realRequest = operations.request;
+    t.mock.method(operations, 'request', (p, opts) => {
+      ids.push(p.requestId);
+      return realRequest(p, { ...opts, admitMs: 500, waitMs: 1000 });
+    });
+    const p = { op: OP, appId: null, userId, input: { taskId: 31 }, payload: { patch: 'kept until decided' } };
+    const answer = broker.request(taskDb, p);
+    const event = await until('the submission event', async () => receipt && (await pool.query(
+      "SELECT id FROM wf_events WHERE machine = 'platform-operation' AND request_key = $1", [receipt.requestId])).rows[0]);
+    const locker = await pool.connect();
+    try {
+      await locker.query('BEGIN');
+      await locker.query('SELECT id FROM wf_events WHERE id = $1 FOR UPDATE', [event.id]);
+      // Hold the row through the refusal's bounded lock wait, as a slot
+      // still deciding it can: nobody can promise that it will not run.
+      const out = await answer;
+      assert.equal(out.pending, true, JSON.stringify(out));
+      assert.equal(receipt.requestId, ids[0], 'the task keeps its recovery handle');
+      assert.equal((await pool.query('SELECT status FROM wf_events WHERE id = $1', [event.id])).rows[0].status, 'pending');
+      assert.deepEqual(await kept(ids[0]), { op: OP, payload: p.payload }, 'its input stays available');
+    } finally {
+      await locker.query('ROLLBACK'); locker.release();
+    }
+    const { createRuntime } = require('../src/workflow/kernel/index.ts');
+    const { platformOperation } = require('../src/workflow/platform-operation/machine.ts');
+    const { platformOperationServices } = require('../src/workflow/platform-operation/services.ts');
+    const conductor = createRuntime({ pool, machines: [platformOperation()], services: platformOperationServices({ pool, config: {} }), slots: 1 });
+    try {
+      await conductor.drain(); await conductor.runServices(); await conductor.drain();
+      const retry = broker.request(taskDb, p);
+      await until('the replay request', async () => (await pool.query(
+        "SELECT count(*)::int AS n FROM wf_events WHERE machine = 'platform-operation' AND request_key = $1 AND type = 'Requested'",
+        [ids[0]])).rows[0].n === 2);
+      await conductor.drain();
+      const again = await retry;
+      assert.equal(again.ok, true, JSON.stringify(again));
+      assert.equal(ids[1], ids[0], 'a second HTTP attempt uses the same operation');
+      assert.equal(runsOf(ids[0]).length, 1, 'the late decision runs once');
+      assert.equal(await kept(ids[0]), null);
+    } finally { await conductor.stop(); }
+  });
+
 });

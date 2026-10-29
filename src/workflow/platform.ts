@@ -1284,6 +1284,9 @@ export async function runOperation(p: Omit<OperationRequest, 'requestId'> & { re
   const out = await rt.appendAndWait(PLATFORM_OPERATION, key, { type: 'Requested', payload: request },
     { appId: request.appId, actor: `user:${request.userId}`, source: { kind: 'route', name: OPERATION_WORK }, requestKey: requestId, waitMs: admitMs });
   const settled = out.status === 'pending' ? (await rt.refuseIfPending(out.eventId, 'operation_unavailable')) ?? out : out;
+  // A slot may still hold the event when the refusal's lock wait expires.
+  // It can yet run: retain the caller's recovery handle and large input.
+  if (settled.status === 'pending') return { status: 'pending', requestId };
   if (settled.status !== 'accepted' && settled.status !== 'replayed') {
     if (payload !== null && settled.status === 'rejected') await forgetInput(request);
     return { status: 'refused', requestId, reason: settled.reason ?? settled.status };

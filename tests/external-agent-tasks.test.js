@@ -107,6 +107,7 @@ const BASE_SHA = `ba5e${'0'.repeat(34)}fe`;
 function baseGh(overrides = {}) {
   return {
     isEnabled: () => true,
+    findOpenPrByBranch: async () => null,
     parseGithubUrl: (url) => {
       const m = /github\.com\/([^/]+)\/([^/.]+)/.exec(String(url || ''));
       return m ? { owner: m[1], repo: m[2] } : null;

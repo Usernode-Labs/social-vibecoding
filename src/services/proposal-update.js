@@ -1792,15 +1792,28 @@ async function advanceAppRepoBranch(ctx) {
     if (!pushed.ok) return pushed;
     verified = { ok: true, headSha: String(pushed.headSha || '').trim().toLowerCase() };
   } else {
-    pushed = await steps.once('push', async () => outcomeOf(firstLanding
-      ? await head.mirrorForkBranch({
-        gh, githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
-        targetBranch,
-      })
-      : await head.pushForkBranchToAppBranch({
-        githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
-        targetBranch, expectedRemoteSha: liveHead, sessionId,
-      })));
+    pushed = await steps.once('push', async () => {
+      // A push can land before its checkpoint does. Its decided commit on
+      // this target is the completed push, even if the source fork moved
+      // meanwhile; finish that revision's metadata and checks.
+      if (steps.resumed && decided.verifiedHeadSha) {
+        let current = null;
+        try { current = await gh.getBranchSha(owner, repo, targetBranch); }
+        catch (err) { if (err.status !== 404) throw err; }
+        if (String(current).toLowerCase() === decided.verifiedHeadSha) {
+          return { ok: true, headSha: decided.verifiedHeadSha, branch: targetBranch };
+        }
+      }
+      return outcomeOf(firstLanding
+        ? await head.mirrorForkBranch({
+          gh, githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
+          targetBranch, expectedSourceSha: decided.verifiedHeadSha,
+        })
+        : await head.pushForkBranchToAppBranch({
+          githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
+          targetBranch, expectedRemoteSha: liveHead, sessionId, expectedSourceSha: decided.verifiedHeadSha,
+        }));
+    });
     if (!pushed.ok) return renameHeadFailure(pushed, branch);
   }
 

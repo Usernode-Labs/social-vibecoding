@@ -505,15 +505,21 @@ test('a mirror will not write a branch name that is not one of ours', async () =
   assert.equal(refused.code, 'invalid_request');
 });
 
-test('a failed hand-off deletes the card it had just created', () => {
-  const op = shareOperation();
-  const failAt = op.indexOf('if (!result.ok)');
-  assert.ok(failAt !== -1, 'the failure branch exists');
-  assert.match(op.slice(failAt), /await dropSession\(pool, sessionId, user\.id\);/);
-  assert.match(OPS_SRC, /async function dropSession[\s\S]*?DELETE FROM chat_sessions WHERE id = \$1 AND user_id = \$2/,
-    'a half-made card with no commits behind it is worse than the refusal');
-  // And so does a request a conductor refused part way, before its commits landed.
-  assert.match(op, /async abandon\(\{ pool \}, request, steps\) \{[\s\S]*?steps\.scope\('update'\)\.get\('push'\)\?\.ok[\s\S]*?dropSession/);
+test('a failed hand-off deletes the card it had just created', async () => {
+  const forkOperations = require('../src/services/fork-operations');
+  const { steps: makeSteps } = require('../src/workflow/kernel/steps.ts');
+  const deleted = [];
+  const pool = { async query(sql, params) {
+    if (/DELETE FROM platform_operation_inputs/.test(sql)) return { rows: [] };
+    assert.match(sql, /DELETE FROM chat_sessions WHERE id = \$1 AND user_id = \$2/);
+    deleted.push(params);
+    return { rows: [] };
+  } };
+  // No decision or push exists: this is an empty session, rather than code
+  // whose push may have landed before its checkpoint was saved.
+  await forkOperations.abandon({ pool }, { op: 'work.share', appId: 9, userId: 7 },
+    makeSteps({ resumeFrom: { session: 77 }, checkpoint: async () => {} }));
+  assert.deepEqual(deleted, [[77, 7]]);
 });
 
 test('the route is on the connector allowlist', () => {

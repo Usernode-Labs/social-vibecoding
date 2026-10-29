@@ -1202,7 +1202,7 @@ async function skipUpdate({ config, pool, versionId, user, deps: given, steps = 
       await moveTo(sha(row.theirs_sha), 'merged');
       return { ok: true, state: 'merged' };
     }
-    if (OPEN_STATUSES.includes(row.session_status) && !steps.has('close')) {
+    if (OPEN_STATUSES.includes(row.session_status) || steps.has('close')) {
       const closed = await steps.once('close', () => deps.close({
         sessionId: row.session_id, appId: version.id, reason: 'update-skipped', from: row.session_status,
         userId: null, username: (user && user.username) || null, source: { kind: 'route', name: 'upstream-skip' },

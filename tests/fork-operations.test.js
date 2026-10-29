@@ -291,6 +291,37 @@ test('a share refused part way gives its session back, unless its commits landed
   assert.deepEqual(deleted, [[77, 7]]);
 });
 
+test('a refused share checks its branch before releasing a session with an unsaved push', async (t) => {
+  const { steps: makeSteps } = require('../src/workflow/kernel/steps.ts');
+  const realOperations = require('../src/services/platform-operations');
+  const request = { op: 'work.share', appId: APP.id, userId: 7,
+    requestId: '00000000-0000-4000-8000-000000000009', input: {} };
+  const branch = 'usernode/from-u7-s1234abcd';
+  let reads = 0;
+  let answer;
+  t.mock.method(github, 'getBranchSha', async (owner, repo, ref) => {
+    reads += 1;
+    assert.deepEqual([owner, repo, ref], ['acme', 'demo', branch]);
+    if (answer instanceof Error) throw answer;
+    return answer;
+  });
+  // The requester query returns no account: the run must be refused before
+  // its tail. Only a confirmed absent branch allows the session to go.
+  for (const outcome of [NEW_HEAD, HEAD, Object.assign(new Error('Host unavailable'), { status: 503 }),
+    Object.assign(new Error('Absent'), { status: 404 })]) {
+    answer = outcome;
+    state.sql = [];
+    const steps = makeSteps({ resumeFrom: { session: 77, 'branch-name': branch,
+      'update/decided': { verifiedHeadSha: NEW_HEAD } }, checkpoint: async () => {} });
+    const out = await realOperations.run({ pool, config: {} }, request, steps);
+    assert.equal(out.ok, false);
+    assert.equal(out.code, 'not_authorized');
+    assert.equal(state.sql.some(q => /DELETE FROM chat_sessions/.test(q.text)), outcome.status === 404);
+  }
+  assert.equal(reads, 4);
+  assert.equal(state.updates.length, 0, 'no update runs after authority is lost');
+});
+
 test('the cap does not count a share\'s own session against it', async () => {
   const steps = require('../src/workflow/kernel/steps.ts').steps({ resumeFrom: { session: 77 }, checkpoint: async () => {} });
   state.cap = { code: 'at_capacity', message: 'Full.' };
@@ -377,11 +408,13 @@ test('the web side words a conductor\'s refusal as its own, and a GitHub request
   }
 });
 
-test('a submission retried after a stop writes its head once and adopts the pull request it opened', async () => {
+test('a submission retried after a stop writes its head once and adopts the pull request it opened', async (t) => {
   const svc = require('../src/services/external-agent-tasks');
   const patchSvc = require('../src/services/external-agent-patch');
   const kernelSteps = require('../src/workflow/kernel/steps.ts');
   const realApply = patchSvc.applyPatch;
+  let removals = 0;
+  t.mock.method(require('../src/services/external-agent-head'), 'removeBranch', async () => { removals++; return true; });
   const applied = [];
   patchSvc.applyPatch = async (args) => {
     applied.push(args);
@@ -418,6 +451,12 @@ test('a submission retried after a stop writes its head once and adopts the pull
     await assert.rejects(svc.openSubmission({ gh }, args, make(true)), (err) => err.stopped === true);
     assert.equal(applied.length, 1);
     assert.equal(host.size, 1, 'the first try opened the pull request');
+    const find = gh.findOpenPrByBranch;
+    gh.findOpenPrByBranch = async () => { throw Object.assign(new Error('lookup unavailable'), { status: 503 }); };
+    await assert.rejects(svc.openSubmission({ gh }, args, make(false)), /lookup unavailable/);
+    assert.equal(removals, 0, 'an unreadable create outcome retains its head');
+    assert.equal(host.size, 1);
+    gh.findOpenPrByBranch = find;
     const again = await svc.openSubmission({ gh }, args, make(false));
     assert.equal(again.ok, true);
     assert.equal(applied.length, 1, 'the patch is not applied again');

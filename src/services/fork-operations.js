@@ -167,6 +167,29 @@ async function sharedSession(pool, request, steps) {
   return found?.id || null;
 }
 
+// A push may have landed before its checkpoint was saved. Before giving
+// back a share's session, preserve any code already on its unique branch;
+// an unreadable host leaves the outcome unknown and preserves it too.
+async function shareMayHaveCode(pool, request, steps) {
+  const update = steps.scope('update');
+  if (update.get('push')?.ok) return true;
+  if (!update.get('decided')?.verifiedHeadSha) return false;
+  const branch = steps.get('branch-name');
+  const app = await loadApp(pool, request.appId);
+  const parsed = repoRef.ownerRepo(app?.repo_url);
+  if (!branch || !parsed) return true;
+  try {
+    await require('./github').getBranchSha(parsed.owner, parsed.repo, branch);
+    return true;
+  } catch (err) {
+    if (err.status === 404) return false;
+    log.warn('fork-operations', 'Could not confirm a shared branch for cleanup', {
+      appId: request.appId, status: err.status || null, code: err.code || null,
+    });
+    return true;
+  }
+}
+
 const share = {
   async authorize({ config, pool }, request, user, { steps }) {
     const app = await loadApp(pool, request.appId);
@@ -191,7 +214,7 @@ const share = {
   // has: a card with no commits behind it is worse than the refusal.
   async abandon({ pool }, request, steps) {
     const sessionId = await sharedSession(pool, request, steps);
-    if (!sessionId || steps.scope('update').get('push')?.ok) return;
+    if (!sessionId || await shareMayHaveCode(pool, request, steps)) return;
     await dropSession(pool, sessionId, request.userId);
   },
 
@@ -244,7 +267,7 @@ const share = {
     );
     // ── Failure leaves no litter: a refused landing wrote nothing.
     if (!result.ok) {
-      if (!steps.scope('update').get('push')?.ok) await dropSession(pool, sessionId, user.id);
+      if (!(await shareMayHaveCode(pool, request, steps))) await dropSession(pool, sessionId, user.id);
       return result;
     }
     // Same announcement the owner's Share button makes, so an open Dev board

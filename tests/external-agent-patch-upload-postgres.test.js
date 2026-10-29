@@ -247,6 +247,7 @@ test('work-order patch uploads against a real PostgreSQL', async (t) => {
         gh: {
           isEnabled: () => true,
           parseGithubUrl: () => ({ owner: 'usernode-bot', repo: 'recipe-box' }),
+          findOpenPrByBranch: async () => null,
           createPR: async () => ({ number: 88, html_url: 'https://github.com/usernode-bot/recipe-box/pull/88', head: { sha: 'f'.repeat(40) } }),
           compareCommitAncestry: async () => ({ status: 'ahead' }),
         },
