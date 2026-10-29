@@ -353,7 +353,7 @@ test('a group folds only when the person folds it', () => {
   const grouped = sliceMethod(settingsJs, '_groupedSections');
   assert.match(grouped, /folded: false, items: pinned/, 'Pinned never folds');
   assert.match(grouped, /folded: prefs\.folded\.includes\(key\)/, 'a group folds only when its key was folded');
-  assert.match(navTsx, /aria-expanded=\{!group\.folded\}/, 'the fold arrow says whether its group is open');
+  assert.match(navTsx, /'aria-expanded': !group\.folded/, 'the fold control says whether its group is open');
   assert.match(navTsx, /group\.folded \? group\.items\.filter\(\(item\) => item\.active\) : group\.items/,
     'a folded sidebar group keeps the page you are on');
   assert.ok(!manifest.tests.some((t) => /data-settings-group-toggle|settings-nav-group-advanced/.test(t.expectSelector || '')),

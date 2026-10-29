@@ -1394,13 +1394,20 @@
         const name = p.group || 'settings:nav.group.other';
         let g = groups.find((x) => x.name === name);
         if (!g) {
-          const key = name.slice(name.lastIndexOf('.') + 1);
+          const key = Settings._groupKey(p);
           g = { name, key, folded: prefs.folded.includes(key), items: [] };
           groups.push(g);
         }
         g.items.push(p);
       }
       return groups;
+    },
+
+    // A page's own group's key: its catalog id's last segment ('aiModels').
+    // A pinned row carries it as `home`, the group an unpin sends it back to.
+    _groupKey(p) {
+      const name = p.group || 'settings:nav.group.other';
+      return name.slice(name.lastIndexOf('.') + 1);
     },
 
     // #5997: read the pins and folds this device remembers. Storage that is
@@ -1558,6 +1565,7 @@
         // #5997: the glyph's name, and whether the viewer pinned the page.
         icon: Settings.ICONS[p.key] || '',
         pinned: Settings._navPrefs.pinned.includes(p.key),
+        home: Settings._groupKey(p),
         ...Settings._navExtras(p.key),
         ...Settings._filterTerms(p),
       });
@@ -1588,6 +1596,7 @@
           subtitle: Settings.SUBTITLES[p.key] ? tr(Settings.SUBTITLES[p.key]) : '',
           icon: Settings.ICONS[p.key] || '',
           pinned: Settings._navPrefs.pinned.includes(p.key),
+          home: Settings._groupKey(p),
           ...Settings._navExtras(p.key),
           ...Settings._filterTerms(p),
         })),

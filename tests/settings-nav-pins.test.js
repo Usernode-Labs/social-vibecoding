@@ -106,8 +106,11 @@ test('saved pins come first, in their order, and leave their groups; an emptied 
   assert.equal(desktop[0].name, 'Pinned');
   assert.equal(desktop[0].first, true);
   assert.deepEqual(plain(desktop[0].items.map((i) => [i.key, i.pinned, i.icon])), [['ai', true, 'sparkles'], ['language', true, 'globe']]);
+  assert.deepEqual(plain(desktop[0].items.map((i) => i.home)), ['aiModels', 'preferences'],
+    'each pinned row names the group an unpin sends it back to');
   const menu = Settings._menuView();
   assert.equal(menu[0].key, 'pinned');
+  assert.equal(menu[0].items[1].home, 'preferences');
   assert.equal(menu[0].items[1].pinned, true);
 });
 
@@ -302,7 +305,69 @@ test('the phone menu draws the glyph as the row\'s leading, the controls beside 
   const expanded = expand(tree);
   const pins = all(expanded, (n) => n.props && n.props['data-settings-control'] === 'pin');
   assert.equal(pins.length, 4, 'every row has its pin, always shown');
-  assert.match(pins[0].props.className, /h-11 w-9/, 'a phone-sized target');
-  assert.equal(all(expanded, (n) => n.props && n.props['data-settings-group-fold'] === 'advanced').length, 1,
-    'the folded group keeps its heading and arrow');
+  // Every phone control is at least 44 by 44 (the shell's tap target).
+  const controls = all(expanded, (n) => n.type === 'button' && n.props
+    && (n.props['data-settings-control'] !== undefined || n.props['data-settings-group-fold'] !== undefined));
+  assert.equal(controls.length, 4 + 2 * 2 + 2, 'four pins, two pinned rows\' arrows, two fold headings');
+  for (const c of controls) {
+    const { w, h } = tapSize(c.props.className);
+    assert.ok(h >= 44, `${c.props['aria-label']} is at least 44px tall (${h})`);
+    assert.ok(w >= 44, `${c.props['aria-label']} is at least 44px wide (${w})`);
+  }
+  // On a phone the whole heading is the fold button: the group's name is in it.
+  const folds = all(expanded, (n) => n.props && n.props['data-settings-group-fold'] !== undefined);
+  assert.deepEqual(folds.map((f) => [f.props['data-settings-group-fold'], f.props['aria-expanded']]),
+    [['account', true], ['advanced', false]], 'the folded group keeps its heading');
+  const text = (n) => (typeof n === 'string' ? n : Array.isArray(n) ? n.map(text).join('')
+    : n && n.props ? text(n.props.children) : '');
+  assert.equal(text(folds[1]), 'Advanced');
+});
+
+/**
+ * The size a class string gives an element, in px: `h-N`/`w-N` (N × 4),
+ * `min-h-[Npx]`, and `w-full` (wider than any tap target).
+ */
+function tapSize(className) {
+  const size = (axis) => {
+    if (axis === 'w' && /(^|\s)w-full(\s|$)/.test(className)) return Infinity;
+    let best = 0;
+    for (const m of className.matchAll(new RegExp(`(?:^|\\s)(?:min-)?${axis}-(\\d+(?:\\.\\d+)?|\\[(\\d+)px\\])(?=\\s|$)`, 'g'))) {
+      best = Math.max(best, m[2] ? Number(m[2]) : Number(m[1]) * 4);
+    }
+    return best;
+  };
+  return { w: size('w'), h: size('h') };
+}
+
+test('after an unpin into a folded group, the keyboard lands on that group\'s fold arrow', () => {
+  const nav = loadTsx(NAV, {
+    stubs: {
+      './settings-nav-store.js': { settingsNavStore: { get: () => ({}), subscribe: () => () => {} } },
+      '../../lib/i18n/react': { useMessages: () => englishPlatformI18n().t },
+    },
+  });
+  const focused = [];
+  const el = (name) => ({ name, focus() { focused.push(name); } });
+  // The host as it is after the unpin: Language's row is not drawn (its group
+  // is folded), and the fold arrows are.
+  const present = {
+    '[data-settings-group-fold="preferences"]': el('fold:preferences'),
+    '[data-settings-group-fold]': el('fold:first'),
+  };
+  const host = { querySelector: (sel) => present[sel] || null };
+  const saved = { document: global.document, raf: global.requestAnimationFrame };
+  global.document = { getElementById: (id) => (id === 'settings-nav-desktop' ? host : null) };
+  global.requestAnimationFrame = (fn) => fn();
+  try {
+    nav.refocus('settings-nav-desktop', 'language', 'pin', 'preferences');
+    assert.deepEqual(focused, ['fold:preferences']);
+    // A row still drawn keeps the focus on its own control.
+    const pin = el('pin:language');
+    present['[data-settings-row="language"]'] = { querySelector: (sel) => (sel === '[data-settings-control="pin"]' ? pin : null) };
+    nav.refocus('settings-nav-desktop', 'language', 'up', 'preferences');
+    assert.deepEqual(focused, ['fold:preferences', 'pin:language'], 'a greyed-out arrow falls back to the row\'s pin');
+  } finally {
+    global.document = saved.document;
+    global.requestAnimationFrame = saved.raf;
+  }
 });

@@ -100,6 +100,8 @@ interface RowExtras {
 interface RowLook {
   icon?: string;
   pinned?: boolean;
+  /** The key of the page's own group, where an unpin sends it back. */
+  home?: string;
 }
 
 interface NavItem extends Filterable, RowExtras, RowLook {
@@ -575,20 +577,29 @@ function NavRow({ item }: { item: NavItem }) {
  * or remade the very button that was pressed. Put the keyboard back on the
  * same control of the same row, or on its pin when that control is now
  * greyed out, so a keyboard user can press "Move up" again and again.
+ *
+ * A row unpinned into a FOLDED group is not drawn at all, so the keyboard
+ * goes to that group's fold arrow, the closest thing to where the row went
+ * (one press opens the group on it). Focus never falls to the page.
  */
-function refocus(hostId: string, key: string, control: string) {
+export function refocus(hostId: string, key: string, control: string, home?: string) {
   requestAnimationFrame(() => {
-    const row = document.querySelector(`#${hostId} [data-settings-row="${key}"]`);
-    if (!row) return;
-    const el = row.querySelector<HTMLButtonElement>(`[data-settings-control="${control}"]:not(:disabled)`)
-      || row.querySelector<HTMLButtonElement>('[data-settings-control="pin"]');
+    const host = document.getElementById(hostId);
+    if (!host) return;
+    const row = host.querySelector(`[data-settings-row="${key}"]`);
+    const el = (row && (
+      row.querySelector<HTMLElement>(`[data-settings-control="${control}"]:not(:disabled)`)
+      || row.querySelector<HTMLElement>('[data-settings-control="pin"]')
+    )) || (home ? host.querySelector<HTMLElement>(`[data-settings-group-fold="${home}"]`) : null)
+      || host.querySelector<HTMLElement>('[data-settings-group-fold]');
     el?.focus();
   });
 }
 
 const CONTROL = 'flex shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-200/70 hover:text-zinc-900 disabled:pointer-events-none disabled:opacity-35 dark:text-zinc-400 dark:hover:bg-zinc-700/60 dark:hover:text-zinc-100';
 const CONTROL_DESKTOP = 'h-6 w-6';
-const CONTROL_PHONE = 'h-11 w-9';
+// 44 by 44 on a phone: the shell's minimum tap target.
+const CONTROL_PHONE = 'h-11 w-11';
 const CONTROL_GLYPH_DESKTOP = 'h-3.5 w-3.5';
 const CONTROL_GLYPH_PHONE = 'h-5 w-5';
 
@@ -611,11 +622,11 @@ function RowControls({ item, place, count, hostId, phone }: {
   const page = item.label;
   const move = (step: number, control: string) => {
     settingsApi()?._movePinned(item.key, step);
-    refocus(hostId, item.key, control);
+    refocus(hostId, item.key, control, item.home);
   };
   const pin = () => {
     settingsApi()?._setPinned(item.key, !item.pinned);
-    refocus(hostId, item.key, 'pin');
+    refocus(hostId, item.key, 'pin', item.home);
   };
   const pinLabel = item.pinned ? t('settings:nav.pin.remove', { page }) : t('settings:nav.pin.add', { page });
   const PinGlyph = item.pinned ? BookmarkSolidIcon : BookmarkIcon;
@@ -663,47 +674,55 @@ function RowControls({ item, place, count, hostId, phone }: {
 }
 
 /**
- * #5997: the arrow beside a group's heading that folds the group down to the
- * heading, and opens it again. The same down chevron Messages' foldable
- * headings use, turned sideways while folded.
+ * #5997: folding a group down to its heading, and opening it again. The same
+ * down chevron Messages' foldable headings use, turned sideways while folded.
+ *
+ * On the sidebar it is a small arrow beside the heading. On a phone the whole
+ * heading is the button (as Messages' Agents heading is), at least 44px tall
+ * and the full width, so the target is never a 36px arrow.
  */
-function FoldButton({ group, phone }: { group: { name: string; key?: string; folded?: boolean }; phone: boolean }) {
-  const t = useMessages('settings');
-  const label = group.folded
-    ? t('settings:nav.fold.show', { group: group.name })
-    : t('settings:nav.fold.hide', { group: group.name });
-  return (
-    <button
-      type="button"
-      data-settings-group-fold={group.key}
-      aria-expanded={!group.folded}
-      aria-label={label}
-      title={label}
-      className={cn(CONTROL, phone ? 'mr-2 h-9 w-9' : 'mb-0.5 mr-1 h-6 w-6')}
-      onClick={() => settingsApi()?._setGroupFolded(group.key as string, !group.folded)}
-    >
-      <ChevronDownIcon
-        className={cn(phone ? 'h-5 w-5' : 'h-3.5 w-3.5', 'transition-transform', group.folded && '-rotate-90')}
-        aria-hidden="true"
-      />
-    </button>
-  );
-}
-
-/** A group's heading, with its fold arrow when the group can fold. */
 function GroupHeading({ group, className, phone }: {
   group: { name: string; key?: string; folded?: boolean };
   className: string;
   phone: boolean;
 }) {
+  const t = useMessages('settings');
   if (!group.key || group.key === 'pinned') return <SectionHeader className={className}>{group.name}</SectionHeader>;
+  const label = group.folded
+    ? t('settings:nav.fold.show', { group: group.name })
+    : t('settings:nav.fold.hide', { group: group.name });
+  const fold = {
+    type: 'button' as const,
+    'data-settings-group-fold': group.key,
+    'aria-expanded': !group.folded,
+    'aria-label': label,
+    title: label,
+    onClick: () => settingsApi()?._setGroupFolded(group.key as string, !group.folded),
+  };
+  const chevron = (size: string) => (
+    <ChevronDownIcon className={cn(size, 'shrink-0 transition-transform', group.folded && '-rotate-90')} aria-hidden="true" />
+  );
+  if (phone) {
+    return (
+      <SectionHeader className={cn(className, 'pb-0 pt-2')}>
+        <button {...fold} className={PHONE_FOLD}>
+          <span className="min-w-0 flex-1 truncate">{group.name}</span>
+          {chevron('h-5 w-5')}
+        </button>
+      </SectionHeader>
+    );
+  }
   return (
     <div className="flex items-end">
       <SectionHeader className={cn('min-w-0 flex-1', className)}>{group.name}</SectionHeader>
-      <FoldButton group={group} phone={phone} />
+      <button {...fold} className={cn(CONTROL, 'mb-0.5 mr-1 h-6 w-6')}>{chevron('h-3.5 w-3.5')}</button>
     </div>
   );
 }
+
+// The phone heading's button: it keeps the heading's small caps (a button
+// does not inherit text-transform) and puts the words on the heading's line.
+const PHONE_FOLD = 'flex min-h-[44px] w-full items-end gap-2 pb-1.5 text-left uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400';
 
 // The sidebar's pin strip: over the row's trailing edge, on the plane colour
 // so a long name runs under it, shown while the row is pointed at or holds
