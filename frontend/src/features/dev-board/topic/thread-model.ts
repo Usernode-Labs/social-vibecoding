@@ -45,7 +45,7 @@ export interface ThreadItem {
   /** A close vote: the proposer's reason, and the request it was filed on. */
   reason?: string | null;
   target?: number | null;
-  /** A change: the requests it closes when it merges (its linked_issues). */
+  /** A change: the requests it closes when it merges, which it competes for (its linked_issues). */
   closes?: number[];
 }
 

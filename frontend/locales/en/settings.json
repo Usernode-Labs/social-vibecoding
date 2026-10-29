@@ -2219,6 +2219,34 @@
     "text": "Other",
     "description": "Heading over rows in the Settings menu that belong to no named group. A fallback that is not normally seen."
   },
+  "nav.group.pinned": {
+    "text": "Pinned",
+    "description": "Heading over the group at the top of the Settings menu that holds the pages the person pinned there, in the order they chose."
+  },
+  "nav.pin.add": {
+    "text": "Pin {{page}} to the top",
+    "description": "Tooltip and accessible name of the small bookmark button at the end of a Settings menu row. Pressing it moves that page into the Pinned group at the top of the menu. {{page}} is the page's name, for example Language."
+  },
+  "nav.pin.remove": {
+    "text": "Unpin {{page}}",
+    "description": "Tooltip and accessible name of the filled bookmark button on a pinned row of the Settings menu. Pressing it sends the page back to its usual group. {{page}} is the page's name."
+  },
+  "nav.pin.up": {
+    "text": "Move {{page}} up",
+    "description": "Tooltip and accessible name of the up arrow on a pinned row of the Settings menu. Pressing it moves the page one place up among the pinned pages. {{page}} is the page's name."
+  },
+  "nav.pin.down": {
+    "text": "Move {{page}} down",
+    "description": "Tooltip and accessible name of the down arrow on a pinned row of the Settings menu. Pressing it moves the page one place down among the pinned pages. {{page}} is the page's name."
+  },
+  "nav.fold.hide": {
+    "text": "Hide {{group}}",
+    "description": "Tooltip and accessible name of the arrow beside a group's heading in the Settings menu while the group is open. Pressing it folds the group down to its heading. {{group}} is the group's heading, for example Advanced."
+  },
+  "nav.fold.show": {
+    "text": "Show {{group}}",
+    "description": "Tooltip and accessible name of the arrow beside a folded group's heading in the Settings menu. Pressing it opens the group again. {{group}} is the group's heading."
+  },
   "nav.keywords.profile": {
     "text": "name display photo avatar picture bio public page",
     "description": "Not shown on screen. Extra search words for \"Profile\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."

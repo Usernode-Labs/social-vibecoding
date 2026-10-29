@@ -142,3 +142,63 @@ test('the new repository\'s dapp.json and CLAUDE.md carry the line, and only whe
   assert.match(route, /UPDATE apps SET manifest_snapshot = \$1 WHERE id = \$2 RETURNING \*`,\s*\[JSON\.stringify\(\{ description, secrets: \[\] \}\), appRow\.id\]/,
     'the route seeds the line where app-creator (and a Retry) reads it');
 });
+
+// #6026: what a connector token (the connector's create_app) may send. A
+// project for the person who connected it and nothing more; the rest is
+// refused by name, never dropped.
+test('a connector makes a project from a name, an audience, a line and a brief, and nothing else', () => {
+  assert.deepEqual([...options.CONNECTOR_CREATE_FIELDS], ['name', 'audience', 'description', 'brief']);
+  assert.equal(options.connectorCreateRefusal({ name: 'The Best Color' }), null);
+  assert.equal(options.connectorCreateRefusal({
+    name: 'The Best Color', audience: 'solo', description: 'Find your favorite color', brief: 'Pick between two colors until it knows.',
+  }), null);
+  // Absent and null are the same as not sent.
+  assert.equal(options.connectorCreateRefusal({ name: 'x', invitees: undefined, repoUrl: null }), null);
+  assert.equal(options.connectorCreateRefusal(null), null);
+
+  for (const extra of [
+    { invitees: ['ada'] }, { inviteEmails: ['a@example.com'] }, { repoUrl: 'https://github.com/a/b' },
+    { governance: { approvers: 'anyone' } }, { template: 'notes' }, { from: 'create' },
+    { collabVisibility: 'public' }, { viewVisibility: 'public' }, { timeZone: 'UTC' },
+  ]) {
+    const refused = options.connectorCreateRefusal({ name: 'x', ...extra });
+    const field = Object.keys(extra)[0];
+    assert.ok(refused, `${field} is refused from a connector`);
+    assert.match(refused, new RegExp(`Set ${field}`), 'the refusal names the field');
+    assert.match(refused, /on Homeroom itself/);
+  }
+  // An empty list is still a field the caller chose to send.
+  assert.ok(options.connectorCreateRefusal({ name: 'x', invitees: [] }));
+  // Many fields: five named, the rest summarized, and each name bounded.
+  const many = Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`f${i}${'z'.repeat(60)}`, 1]));
+  const said = options.connectorCreateRefusal({ name: 'x', ...many });
+  assert.match(said, /and the rest/);
+  assert.ok(said.length < 600);
+});
+
+test('a connector that names no audience makes a private community, never the older public default', () => {
+  const parsed = (body) => options.parseCreateOptions(options.connectorCreateBody(body));
+  assert.equal(parsed({ name: 'x' }).audience, 'invited');
+  assert.deepEqual([parsed({ name: 'x' }).collabVisibility, parsed({ name: 'x' }).viewVisibility], ['private', 'private']);
+  assert.equal(parsed({ name: 'x', audience: 'open' }).audience, 'open', 'one it names is kept');
+  assert.equal(parsed({ name: 'x', audience: 'solo' }).audience, 'solo');
+  // The browser's own body is untouched by it: an older client still gets today's fields.
+  assert.equal(options.parseCreateOptions({ name: 'x' }).audience, null);
+});
+
+test('the route holds a connector token to those fields before it reads anything else', () => {
+  const route = fs.readFileSync(path.join(__dirname, '../src/routes/apps.js'), 'utf8');
+  const start = route.indexOf("router.post('/api/apps',");
+  assert.ok(start > 0, 'the create route is where it was');
+  const handler = route.slice(start, route.indexOf('router.', start + 30));
+  const guard = handler.indexOf('createOptions.connectorCreateRefusal(req.body)');
+  assert.ok(guard > 0, 'a connector token is held to its fields');
+  assert.match(handler, /if \(req\.connectorClientId\) \{\s*const refused = createOptions\.connectorCreateRefusal\(req\.body\);\s*if \(refused\) return res\.status\(400\)/);
+  for (const later of ['parseCreateOptions(', 'github.parseGithubUrl(repoUrl)', 'INSERT INTO apps', 'sendInvite(']) {
+    const at = handler.indexOf(later);
+    assert.ok(at > guard, `the refusal comes before ${later}`);
+  }
+  const defaulted = handler.indexOf('req.body = createOptions.connectorCreateBody(req.body);');
+  assert.ok(defaulted > guard && defaulted < handler.indexOf('parseCreateOptions('),
+    'and a connector without an audience is read as a private community');
+});

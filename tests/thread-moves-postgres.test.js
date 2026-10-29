@@ -272,6 +272,35 @@ test('thread moves against the full schema', { timeout: 120000 }, async (t) => {
     assert.equal((await parts()).length, 2, 'once');
   });
 
+  // On prod, #5995 going live closed #5997 as superseded: both were made
+  // from request #5927, but #5997 is a part of it and closes nothing. Parts
+  // of one request are not rivals; only changes that would close the same
+  // request are.
+  await t.test('parts of one request are not rivals: only a change closing the same request closes', async () => {
+    const t9 = await request(9, ada, 'Polish');
+    const make = async (pr, closes) => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues, created_from_issue_number, pr_number)
+       VALUES ($1, $2, 'promoted', $3, 9, $4) RETURNING id`,
+      [app.id, bob.id, closes, pr],
+    )).rows[0].id;
+    const partA = await make(30, '{}');
+    const partB = await make(31, '{}');
+    const closer = await make(32, '{9}');
+    const rival = await make(33, '{9}');
+    const page = await threads.threadPage(pool, { thread: await thread(t9), viewerId: ada.id });
+    const closes = Object.fromEntries(page.items.filter((i) => i.type === 'change').map((i) => [i.id, i.closes]));
+    assert.deepEqual(closes, { [partA]: [], [partB]: [], [closer]: [9], [rival]: [9] }, 'each change says what it closes');
+    const archived = [];
+    const lifecycle = { async archiveSession(args) { archived.push(args); return { archived: true }; } };
+    // A part goes live: it closes nothing, so nothing is its rival.
+    await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [partA]);
+    assert.deepEqual(await threads.closeRivals(pool, { appId: app.id, prNumber: 30, deps: { lifecycle } }), []);
+    // A change closing #9 goes live: only the other change closing #9 closes.
+    await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [closer]);
+    assert.deepEqual(await threads.closeRivals(pool, { appId: app.id, prNumber: 32, deps: { lifecycle } }), [rival]);
+    assert.deepEqual(archived.map((x) => x.sessionId), [rival], 'the other part stays up for its vote');
+  });
+
   await t.test('the route is for members: someone who has not joined is asked to', async () => {
     const httpApp = express();
     httpApp.use(express.json());

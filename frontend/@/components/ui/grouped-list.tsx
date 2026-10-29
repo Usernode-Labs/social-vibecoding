@@ -101,7 +101,7 @@ export function GroupedList({ className, tone, ...props }: React.HTMLAttributes<
   );
 }
 
-const rowSeparator = cva('', {
+export const rowSeparator = cva('', {
   variants: {
     inset: {
       // The three inset depths the deck uses, as complete literals.

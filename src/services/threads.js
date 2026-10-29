@@ -546,17 +546,17 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
 async function closeRivals(db, { appId, prNumber, deps = {} }) {
   try {
     const { rows: [won] } = await db.query(
-      `SELECT id, thread_id, linked_issues FROM chat_sessions
+      `SELECT id, thread_id, COALESCE(linked_issues, '{}'::int[]) AS closes FROM chat_sessions
         WHERE app_id = $1 AND pr_number = $2 AND status = 'merged' AND thread_id IS NOT NULL
         ORDER BY id DESC LIMIT 1`,
       [appId, prNumber]
     );
-    if (!won) return [];
+    if (!won || !won.closes.length) return [];
     const { rows: rivals } = await db.query(
       `SELECT id, status FROM chat_sessions
         WHERE thread_id = $1 AND id <> $2 AND status = 'promoted' AND is_headless = FALSE
           AND COALESCE(linked_issues, '{}'::int[]) && COALESCE($3::int[], '{}'::int[])`,
-      [won.thread_id, won.id, won.linked_issues || []]
+      [won.thread_id, won.id, won.closes]
     );
     const lifecycle = deps.lifecycle || require('./session-lifecycle');
     const ws = deps.ws || require('./ws');
