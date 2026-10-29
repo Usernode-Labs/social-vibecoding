@@ -2359,6 +2359,14 @@
     "text": "Back to Workshop",
     "description": "Accessible name of the back chip on a proposal's or request's page. Workshop is the project's build tab, where its proposals and requests are listed."
   },
+  "topic.back.bot": {
+    "text": "Homeroom bot",
+    "description": "Text of the back chip at the top of a proposal's or request's page when it was opened from the Homeroom bot tab's page: the name of that tab, which the chip returns to. Homeroom bot is the platform's builder bot (a name). Shown after a left-pointing chevron."
+  },
+  "topic.back.toBot": {
+    "text": "Back to Homeroom bot",
+    "description": "Accessible name of the back chip on a proposal's or request's page that was opened from the Homeroom bot tab's page, which it returns to. Homeroom bot is the platform's builder bot (a name), and the tab is named for it."
+  },
   "topic.editor.title": {
     "text": "Edit description",
     "description": "Heading of the dialog where the author of a change rewrites the description people read before voting on it."

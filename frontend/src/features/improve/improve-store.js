@@ -101,12 +101,16 @@ export function topicBackHref({ slug, tab, subTab, boardView, topicOrigin = null
  * is the page the project's Workshop route reopens on (`workshopTab`, the
  * tab AppView._workshopTab remembers), so the chip says so.
  *
+ * 29 Oct 2026: and one opened from the Homeroom bot tab's page goes back to
+ * that page, named for the bot (`#homeroom-bot`, features/ai/).
+ *
  * @param {string|null} href
  * @param {string|null} [workshopTab]
- * @returns {string} "Messages", "Workshop" or "All items", in the language on screen
+ * @returns {string} "Messages", "Homeroom bot", "Workshop" or "All items", in the language on screen
  */
 export function topicBackLabel(href, workshopTab = null) {
   if (backsToMessages(href)) return t('agent:topicBack.messages');
+  if (backsToBot(href)) return t('agent:topicBack.bot');
   return workshopTab === 'all' && typeof href === 'string' && /\/workshop$/.test(href)
     ? t('agent:topicBack.allItems')
     : t('agent:topicBack.workshop');
@@ -115,6 +119,11 @@ export function topicBackLabel(href, workshopTab = null) {
 /** Whether `href` goes back to a Messages conversation rather than a board. */
 function backsToMessages(href) {
   return typeof href === 'string' && href.startsWith('#messages');
+}
+
+/** Whether `href` goes back to the Homeroom bot tab's page rather than a board. */
+export function backsToBot(href) {
+  return typeof href === 'string' && /^#homeroom-bot(\/|$)/.test(href);
 }
 
 /**
@@ -131,12 +140,16 @@ function backsToMessages(href) {
  * The header and the native back-swipe keep reading `topicBackHref`: back
  * from the card is still the conversation.
  *
+ * A topic opened from the Homeroom bot tab's page carries the same pair,
+ * "‹ Homeroom bot" and "‹ Workshop": the way back to the page, and the way
+ * into the project the thread is in (29 Oct 2026).
+ *
  * @param {{ slug: string|null, tab: string|null, subTab: string|null, boardView: string, topicOrigin?: string|null }} route
  * @returns {string|null}
  */
 export function topicWorkshopHref(route) {
   const back = topicBackHref(route);
-  if (!back || !backsToMessages(back)) return null;
+  if (!back || !(backsToMessages(back) || backsToBot(back))) return null;
   return boardHref(route.slug, route.boardView);
 }
 

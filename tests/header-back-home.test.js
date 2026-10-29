@@ -534,6 +534,20 @@ test('a card opened from Messages also offers its Workshop (#3691)', () => {
   assert.equal(workshop(), null, 'nor on the running app');
 });
 
+test('a thread opened from the Homeroom bot tab\'s page goes back there, with its Workshop beside it (29 Oct 2026)', () => {
+  const { Improve, store, topicBackHref, topicBackLabel, topicWorkshopHref } = loadImprove({ slug: 'demo-app' });
+  Improve.setTab('dev', 'forum');
+  Improve.enterTopicFrom('#homeroom-bot');
+  Improve.setTab('dev', 'topic');
+  assert.equal(topicBackHref(store.state), '#homeroom-bot', 'back is the bot\'s page');
+  assert.equal(Improve.topicOrigin(), '#homeroom-bot', 'and the router can read it (App._isBotTopic)');
+  assert.equal(topicBackLabel('#homeroom-bot'), 'Homeroom bot');
+  assert.equal(topicWorkshopHref(store.state), '#app/demo-app/workshop', 'and the project is offered beside it');
+  Improve.setTab('dev', 'forum');
+  assert.equal(Improve.topicOrigin(), null, 'gone with the topic');
+  assert.equal(topicBackLabel('#homeroom-botanics'), 'Workshop', 'only the bot\'s own address');
+});
+
 test('the topic page draws both chips, Messages first, styled alike (#3691)', () => {
   const { loadTsx } = require('./lib/render-tsx');
   const { renderToStaticMarkup } = require(require.resolve('react-dom/server',
@@ -555,6 +569,12 @@ test('the topic page draws both chips, Messages first, styled alike (#3691)', ()
   assert.ok(fromMessages.includes(`</a>${chip('#app/demo-app/workshop', 'Workshop')}`),
     "and the Workshop follows it in the same pill, the chip a Workshop-opened card wears");
   assert.equal(fromMessages.match(/class="dev-topic-back /g).length, 2);
+
+  // 29 Oct 2026: from the Homeroom bot tab's page, the same pair, named for it.
+  const fromBot = draw({ topicOrigin: '#homeroom-bot' });
+  assert.ok(fromBot.startsWith(`<div class="dev-topic-backs">${chip('#homeroom-bot', 'Homeroom bot')}`),
+    'the way back to the bot\'s page first');
+  assert.ok(fromBot.includes(`</a>${chip('#app/demo-app/workshop', 'Workshop')}`), 'then the project');
 
   const fromWorkshop = draw({});
   assert.ok(fromWorkshop.startsWith(chip('#app/demo-app/workshop', 'Workshop')),

@@ -91,7 +91,23 @@ export interface PanelHint {
     slug?: string; issueNumber?: number; proposalId?: number; entry?: string; issueTitle?: string;
     message?: string; handoff?: 'claude-code' | 'codex';
   } | null;
+  /**
+   * The project of the page being opened, as the door names it (the AI
+   * tab's list: its row's tile and name). Beside that page the header row
+   * draws it as the way to the project (./side-panel.tsx). The top
+   * document's alone: the panel's document is not told.
+   */
+  place?: { slug: string; name: string; icon_url?: string | null; icon_emoji?: string | null } | null;
 }
+
+/**
+ * The class on the panel DOCUMENT's <html> while the panel stands beside
+ * the AI tab's page rather than an app. That page draws the panel as its
+ * own column, with ‹ Main and the project over it (./side-panel.tsx), so
+ * the page in it leaves out its own way back (app.css: the topic's
+ * "‹ Workshop" chip), which would be a second one to somewhere else.
+ */
+export const BESIDE_AI_CLASS = 'side-panel-beside-ai';
 
 interface AppLike {
   user?: unknown;
@@ -158,10 +174,30 @@ function publish(route: string, extra?: Record<string, unknown>): void {
   sidePanelStore.set({
     route,
     title: titleFor(route, reported),
+    reported,
     canBack: stack.length > 0 || !!parentRoute(route),
     ...extra,
   });
   writeAddress(sidePanelStore.get().open ? route : null);
+}
+
+/** Is the panel beside the AI tab's page, rather than beside an app? */
+export function isBesideAi(): boolean {
+  const A = app();
+  return !!A && typeof A._isScreenVisible === 'function' && A._isScreenVisible('ai-screen');
+}
+
+/**
+ * Tell the panel's document which it is beside (BESIDE_AI_CLASS). Run as a
+ * page is opened, when the document has routed its first page (before the
+ * frame is shown) and whenever the screen beside it changes.
+ */
+function markBeside(): void {
+  try {
+    sidePanelRefs.frame?.contentDocument?.documentElement?.classList.toggle(BESIDE_AI_CLASS, isBesideAi());
+  } catch {
+    /* a frame that is going away: the next one is marked when it reports */
+  }
 }
 
 // ── The panel in the top window's address ───────────────────────────────
@@ -314,8 +350,11 @@ export function take(route: string, hint?: PanelHint | null): boolean {
 }
 
 /** Put `route` in the panel, starting its document if there is none yet. */
-export function open(route: string, hint?: PanelHint | null): void {
+export function open(route: string, given?: PanelHint | null): void {
   const s = sidePanelStore.get();
+  // The project is this document's to draw; the rest is the page's.
+  const { place = null, ...rest } = given || {};
+  const hint: PanelHint | null = given ? rest : null;
   if (!s.frameSrc) {
     stack = [];
     reported = '';
@@ -324,14 +363,14 @@ export function open(route: string, hint?: PanelHint | null): void {
     desiredHint = null;
     // The first page is the frame's own address, so a hint has to reach the
     // document before its router runs: ./embedded.ts asks for it at boot.
-    bootHint = hint || null;
+    bootHint = hint;
     sidePanelStore.set({
       open: true,
       frameSrc: frameUrl(route, window.location.search),
       frameKey: s.frameKey + 1,
       loading: true,
     });
-    publish(route);
+    publish(route, { place });
     return;
   }
   // A panel the viewer had closed starts a fresh history; an open one keeps
@@ -340,12 +379,13 @@ export function open(route: string, hint?: PanelHint | null): void {
   else if (s.route && !samePage(s.route, route)) remember(s.route);
   if (!samePage(s.route, route)) reported = '';
   desired = route;
-  desiredHint = hint || null;
+  desiredHint = hint;
   sidePanelStore.set({ open: true });
-  publish(route);
+  publish(route, { place });
+  markBeside();
   if (ready) {
     desiredHint = null;
-    go(route, hint || null);
+    go(route, hint);
   }
 }
 
@@ -469,7 +509,12 @@ function carryAgentPane(): void {
  */
 export function appPresence(inApp: boolean): void {
   if (!inApp) drop();
-  else restoreFromAddress();
+  else {
+    restoreFromAddress();
+    // The app and the AI tab's page both keep the panel: from one to the
+    // other, its page puts its own way back away or out again.
+    markBeside();
+  }
 }
 
 /** Is the panel on screen (the viewer has it open)? */
@@ -486,6 +531,9 @@ function embeddedReady(route: string, title: string): void {
   if (!s.frameSrc) return;
   ready = true;
   reported = title || '';
+  // Before the frame is shown, so its page never draws a way back it is
+  // about to put away.
+  markBeside();
   sidePanelStore.set({ loading: false });
   if (desired && !samePage(desired, route)) {
     const hint = desiredHint;

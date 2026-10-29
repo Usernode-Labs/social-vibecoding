@@ -2,14 +2,20 @@
  * The AI tab's main view (#6019 follow-up), its pure part: what each list
  * holds and what each row says. ./index.tsx draws it.
  *
- *   Your work   what needs you first (the Needs you feed for the threads
- *               you are in, GET /api/workshop/needs-feed?in=threads), each
- *               with one pill for what you owe; then your private threads,
- *               with a lock on the tile; then yours waiting on someone,
- *               saying where each stands.
- *   In progress yours moving without you, soonest first, each saying what
- *               it waits on (GET /api/ai/work).
+ *   Needs you   what waits on you: the Needs you feed for the threads you
+ *               are in (GET /api/workshop/needs-feed?in=threads), each with
+ *               one pill for what you owe; then Homeroom bot's plans waiting
+ *               for your Build it; then your private threads, with a lock on
+ *               the tile.
+ *   In progress yours being worked on, soonest first: the bot reading it, a
+ *               change being made or fixed, merging, going live.
+ *   Up next     yours waiting on someone else: other people's votes, a free
+ *               builder, or somebody to pick it up. Each says which.
  *   Live        yours that went live this week, folded.
+ *
+ * The last four are GET /api/ai/work's, and where Homeroom bot works on a
+ * request for you, its list is the bot's own word on it (services/ai-work.js
+ * botStages), so this page and the bot's answer in Main agree (29 Oct 2026).
  *
  * A row's words are phrases (an id and its values), translated where they
  * are drawn, so this module needs no i18n runtime and its tests read it bare.
@@ -38,18 +44,27 @@ export interface AiThread {
   app: AiApp | null;
   change: { id: number; number: number | null } | null;
   href: string;
-  group: 'next' | 'waiting' | 'live';
-  what: 'going_live' | 'merging' | 'vote' | 'building' | 'not_picked_up' | 'live';
+  group: 'needs' | 'next' | 'waiting' | 'live';
+  what:
+    | 'plan'
+    | 'going_live' | 'merging' | 'fixing' | 'revising' | 'building' | 'reading'
+    | 'vote' | 'fix_queued' | 'followup_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'on_hold'
+    | 'not_picked_up'
+    | 'live';
   at: string | null;
   quietDays?: number;
   /** Up for a vote: how you voted, if you have. */
   myVote?: 'yes' | 'no' | null;
   /** Being made: by Homeroom bot, by you, or by someone else. */
   by?: 'bot' | 'you' | 'someone';
+  /** Held back: until a change up for a vote is decided, or by the day's limit. */
+  heldBy?: 'approvals' | 'daily';
 }
 
 export interface AiWork {
   private: AiPrivate[];
+  /** The bot's plans waiting for your Build it (absent from an older server). */
+  needs?: AiThread[];
   next: AiThread[];
   waiting: AiThread[];
   live: AiThread[];
@@ -94,17 +109,17 @@ export interface WorkRow {
   rootId: number | null;
 }
 
-/** How many rows of Your work, and of In progress, show before Show more. */
+/** How many rows of Needs you, and of In progress and Up next, show before Show more. */
 export const WORK_FIRST = 8;
 export const NEXT_FIRST = 4;
 /**
- * How many of what needs you show before Show more. The heading counts the
- * rest and Answer all opens them, so a long queue of votes never buries your
- * private threads under it.
+ * How many of the feed's cards show before Show more. The heading counts the
+ * rest, so a long queue of votes never buries your plans and private threads
+ * under it.
  */
 export const NEEDS_FIRST = 3;
 
-/** Pure: Your work before Show more: the first NEEDS_FIRST of what needs you, then the rest in order, WORK_FIRST rows in all. */
+/** Pure: Needs you before Show more: the first NEEDS_FIRST of the feed's cards, then the rest in order, WORK_FIRST rows in all. */
 export function foldWork(rows: WorkRow[]): WorkRow[] {
   let needs = 0;
   return rows.filter((row) => !row.key.startsWith('need:') || ++needs <= NEEDS_FIRST).slice(0, WORK_FIRST);
@@ -140,24 +155,57 @@ function where(app: AiApp | null, number: number | null | undefined): Record<str
   return { project: app?.name || app?.slug || '', number: number || '' };
 }
 
-/** Pure: Your work, in order: what needs you, your private threads, then yours waiting on someone. */
-export function yourWork(needs: NeedItem[] | null, work: AiWork | null): WorkRow[] {
-  const rows: WorkRow[] = [];
+/** Pure: a row's project and number, or its project alone when it has none (a decision). */
+function whereLine(app: AiApp | null, number: number | null | undefined): Phrase {
+  return number
+    ? { id: 'messages:ai.row.where', values: where(app, number) }
+    : { id: 'messages:ai.row.project', values: where(app, null) };
+}
+
+/** Pure: what the feed's cards are about, as `slug#number`, so a thread already owed there is not listed twice. */
+export function owedKeys(needs: NeedItem[] | null): Set<string> {
   const owed = new Set<string>();
   for (const item of needs || []) {
-    const app = item.app || null;
     const number = needNumber(item);
-    if (app && number) owed.add(`${app.slug}#${number}`);
+    if (item.app && number) owed.add(`${item.app.slug}#${number}`);
+  }
+  return owed;
+}
+
+/** Pure: whether a thread is one the feed already lists, by its request's number or its change's. */
+function isOwed(owed: Set<string>, t: AiThread): boolean {
+  if (!t.app) return false;
+  return (!!t.number && owed.has(`${t.app.slug}#${t.number}`))
+    || (!!t.change?.number && owed.has(`${t.app.slug}#${t.change.number}`));
+}
+
+/** Pure: Needs you, in order: the feed's cards, the bot's plans waiting for Build it, then your private threads. */
+export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow[] {
+  const rows: WorkRow[] = [];
+  const owed = owedKeys(needs);
+  for (const item of needs || []) {
+    const app = item.app || null;
     rows.push({
       key: `need:${item.kind}:${item.id}`,
       title: (item.kind === 'ballot' && item.ballot?.title) || item.title || '',
       app,
       who: 'all',
-      sub: number
-        ? { id: 'messages:ai.row.where', values: where(app, number) }
-        : { id: 'messages:ai.row.project', values: where(app, null) },
+      sub: whereLine(app, needNumber(item)),
       pill: { id: PILLS[item.kind] || 'messages:ai.pill.needsYou' },
       href: needHref(item),
+      rootId: null,
+    });
+  }
+  for (const t of work?.needs || []) {
+    if (isOwed(owed, t)) continue;
+    rows.push({
+      key: `plan:${t.threadId}`,
+      title: t.title || '',
+      app: t.app,
+      who: 'all',
+      sub: whereLine(t.app, t.number),
+      pill: { id: PILLS[t.what] || 'messages:ai.pill.needsYou' },
+      href: t.href,
       rootId: null,
     });
   }
@@ -175,44 +223,72 @@ export function yourWork(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       rootId: p.rootId,
     });
   }
-  for (const t of work?.waiting || []) {
-    // A thread whose vote you owe is already the Needs you row above.
-    if (t.app && t.number && owed.has(`${t.app.slug}#${t.number}`)) continue;
-    rows.push({
-      key: `waiting:${t.threadId}`,
-      title: t.title || '',
-      app: t.app,
-      who: 'all',
-      sub: t.quietDays
-        ? { id: 'messages:ai.row.quiet', values: { ...where(t.app, t.number), count: t.quietDays } }
-        : { id: 'messages:ai.row.notPickedUp', values: where(t.app, t.number) },
-      pill: null,
-      href: t.href,
-      rootId: null,
-    });
-  }
   return rows;
 }
 
-const NEXT_WORDS: Record<string, string> = {
+/** Pure: how many rows of Needs you ask something of you (a pill): the heading's and the hero's count. */
+export function owedCount(rows: WorkRow[]): number {
+  return rows.filter((row) => row.pill).length;
+}
+
+/** Pure: In progress, less any thread the feed already lists. */
+export function inProgress(needs: NeedItem[] | null, work: AiWork | null): AiThread[] {
+  const owed = owedKeys(needs);
+  return (work?.next || []).filter((t) => !isOwed(owed, t));
+}
+
+/** Pure: Up next, less any thread the feed already lists. */
+export function upNext(needs: NeedItem[] | null, work: AiWork | null): AiThread[] {
+  const owed = owedKeys(needs);
+  return (work?.waiting || []).filter((t) => !isOwed(owed, t));
+}
+
+/** The words of an In progress or Up next row's second line, by what it waits on. */
+const THREAD_WORDS: Record<string, string> = {
   going_live: 'messages:ai.next.goingLive',
   merging: 'messages:ai.next.merging',
-  vote: 'messages:ai.next.vote',
+  fixing: 'messages:ai.next.fixing',
+  revising: 'messages:ai.next.revising',
   building: 'messages:ai.next.building',
+  reading: 'messages:ai.next.reading',
+  vote: 'messages:ai.up.vote',
+  fix_queued: 'messages:ai.up.fixQueued',
+  followup_queued: 'messages:ai.up.followUpQueued',
+  build_queued: 'messages:ai.up.buildQueued',
+  held: 'messages:ai.up.held',
+  stalled: 'messages:ai.up.stalled',
+  queued: 'messages:ai.up.queued',
+  on_hold: 'messages:ai.up.onHold',
+  not_picked_up: 'messages:ai.up.notPickedUp',
 };
 
-/** Pure: one In progress row's second line: its project, and what it waits on. */
+/** Pure: one In progress or Up next row's second line: its project, and what it waits on. */
 export function nextWords(t: AiThread): Phrase {
   const values = where(t.app, t.number);
-  if (t.what === 'vote' && t.myVote === 'yes') return { id: 'messages:ai.next.voteYes', values };
-  if (t.what === 'vote' && t.myVote === 'no') return { id: 'messages:ai.next.voteNo', values };
+  if (t.what === 'not_picked_up') {
+    if (!t.number) return { id: 'messages:ai.up.notPickedUpBare', values: { project: values.project } };
+    if (t.quietDays) return { id: 'messages:ai.up.quiet', values: { ...values, count: t.quietDays } };
+  }
+  if (t.what === 'vote' && t.myVote === 'yes') return { id: 'messages:ai.up.voteYes', values };
+  if (t.what === 'vote' && t.myVote === 'no') return { id: 'messages:ai.up.voteNo', values };
+  if (t.what === 'held' && t.heldBy === 'daily') return { id: 'messages:ai.up.heldDaily', values };
   if (t.what === 'building' && t.by === 'bot') return { id: 'messages:ai.next.botBuilding', values };
   if (t.what === 'building' && t.by === 'you') return { id: 'messages:ai.next.youBuilding', values };
-  return { id: NEXT_WORDS[t.what] || 'messages:ai.next.vote', values };
+  return { id: THREAD_WORDS[t.what] || 'messages:ai.row.where', values };
 }
 
 /** Pure: the hero's line under the bot's name: what needs you, what is in progress. */
 export function heroWords(needs: number, next: number): Phrase {
   if (needs > 0) return { id: 'messages:ai.hero.both', values: { needs, next } };
   return { id: 'messages:ai.hero.next', values: { next } };
+}
+
+/**
+ * Pure: whether `href` opens a topic page (a request, a change, a decision),
+ * whose back chip can name this page as where it was opened from
+ * (Improve.enterTopicFrom). A Workshop address is not one: the origin would
+ * wait there for the next topic opened from anywhere.
+ */
+export function isTopicHref(href: string | null | undefined): boolean {
+  return /^#?app\/[^/]+\/dev\/(issues|changes|proposals|governance|shared)\/\d+$/.test(String(href || ''));
 }

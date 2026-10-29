@@ -28,6 +28,17 @@
  * and glyphs, in the header's disc style (the app header's ✕ is the same
  * disc), so the row reads as the platform's rather than as the page's.
  *
+ * ── Beside the AI tab's page: that page's own column (29 Oct 2026) ─────
+ *
+ * There the panel is in Main's place, the chat docked beside the list, and
+ * is drawn as that column rather than as a panel of its own (Evan: "not in
+ * a new side panel that can be maximized and has its own Workshop back
+ * button"): ‹ Main, which gives Main its place back, and the project the
+ * page is in, which opens it; no title, Expand, Close, Back or divider, and
+ * the page in it leaves out its own "‹ Workshop" (controller BESIDE_AI_CLASS).
+ * Both rows are always rendered and app.css shows the one that applies
+ * (`body:has(#ai-screen:not(.hidden))`), so the prerender is one markup.
+ *
  * ── The divider (#2886) ────────────────────────────────────────────────
  *
  * The panel's left edge is a handle: drag it (or focus it and use the arrow
@@ -49,12 +60,14 @@ import {
 } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ChevronLeftIcon, ExpandIcon, XIcon } from '@/components/ui/icons';
+import { ChevronLeftIcon, ChevronRightIcon, ExpandIcon, XIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { SidePanel as controller } from './controller';
+import { panelPage } from './routes';
 import {
   KEY_STEP,
   applyWidth,
@@ -159,6 +172,19 @@ export function SidePanel(): ReactNode {
         >
           <XIcon className="w-4 h-4" aria-hidden="true" />
         </Button>
+        {/* Beside the AI tab's page only (app.css): ‹ Main, which gives
+            Main its place back, and the project the page is in. The chip is
+            the topic's own back chip, so the two read as one control. */}
+        <button
+          type="button"
+          className="side-panel-main dev-topic-back un-touch-target"
+          aria-label={t('agent:sidePanel.mainLabel')}
+          onClick={() => controller.close()}
+        >
+          <ChevronLeftIcon className="dev-topic-back-icon" aria-hidden="true" />
+          <span>{t('agent:sidePanel.main')}</span>
+        </button>
+        <PanelPlace route={s.route} place={s.place} reported={s.reported} />
       </div>
       <div id="side-panel-body" className="side-panel-body">
         {/* data-un-keyboard-relay: a tap in the panel that closes the
@@ -185,6 +211,44 @@ export function SidePanel(): ReactNode {
         </div>
       </div>
     </aside>
+  );
+}
+
+type Place = { slug: string; name: string; icon_url?: string | null; icon_emoji?: string | null };
+
+/**
+ * The project the panel's page is in, as a link to its page (its Hub), for
+ * the header row beside the AI tab's page. Its tile and name are the ones
+ * the door that opened the page named, while the page is still in that
+ * project; after a link inside the panel to another one, the name its page
+ * reported. Nothing on a page that is in no project.
+ */
+function PanelPlace({ route, place, reported }: {
+  route: string | null; place: Place | null; reported: string;
+}): ReactNode {
+  const t = useMessages('agent');
+  const slug = route ? panelPage(route)?.slug || null : null;
+  if (!slug) return null;
+  const same = !!place && place.slug === slug;
+  const name = (same ? place!.name : '') || String(reported || '').trim() || slug;
+  return (
+    <a
+      className="side-panel-place"
+      href={`#app/${encodeURIComponent(slug)}/workshop`}
+      aria-label={t('agent:sidePanel.openProject', { project: name })}
+      onClick={() => {
+        // A door to the project: its Hub, not the tab its page was last on.
+        try { (window as any).AppView?._landOnHub?.(slug); } catch { /* the page as it opens */ }
+      }}
+    >
+      {same ? (
+        <span className="app-icon-tile w-7 h-7 shrink-0 rounded-lg overflow-hidden flex items-center justify-center font-bold text-sm" data-icon={appIconKind(place as any)} aria-hidden="true">
+          <AppIconContent app={place as any} />
+        </span>
+      ) : null}
+      <span className="min-w-0 truncate">{name}</span>
+      <ChevronRightIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
+    </a>
   );
 }
 

@@ -1607,6 +1607,10 @@
     "text": "Workshop",
     "description": "Text of the back chip at the top of a request's or proposal's page: it returns to the project's Workshop, the board of its changes and requests. The name of that tab, a noun."
   },
+  "topicBack.bot": {
+    "text": "Homeroom bot",
+    "description": "Text of the back chip at the top of a request's or proposal's page when it was opened from the Homeroom bot tab's page: it returns to that page. Homeroom bot is the platform's builder bot (a name), and the tab is named for it."
+  },
   "appContext.about.members_one": {
     "text": "{{formatted}} member",
     "description": "Pill beside the builders' avatars in the About pane of the app menu (the sheet opened from the app's name in the header): how many people are in the app's community. {{formatted}} is that number written with digit grouping, for example 1,284; {{count}} is the same number and only selects the plural form."
@@ -2098,6 +2102,18 @@
   "sidePanel.frameTitle": {
     "text": "Side panel",
     "description": "Accessible title of the embedded page inside the side panel, the pane docked beside an app on a wide screen."
+  },
+  "sidePanel.main": {
+    "text": "Main",
+    "description": "Text of the back chip over a request's or proposal's page shown beside the Homeroom bot tab's list on a wide screen, in the place of Main, the person's private chat with Homeroom bot: it shows Main there again. \"Main\" is that chat's name; keep it the same as its title. Shown after a left-pointing chevron."
+  },
+  "sidePanel.mainLabel": {
+    "text": "Back to Main",
+    "description": "Accessible name of the Main back chip over a request's or proposal's page beside the Homeroom bot tab's list: it shows Main, the person's private chat with Homeroom bot, in its place again."
+  },
+  "sidePanel.openProject": {
+    "text": "Open {{project}}",
+    "description": "Accessible name of the link over a request's or proposal's page beside the Homeroom bot tab's list, showing the project the page belongs to: opens that project's page. {{project}} is the project's name. \"Open\" is a verb."
   },
   "sidePanel.resize": {
     "text": "Resize panel",

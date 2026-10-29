@@ -125,12 +125,15 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
 
   const work = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } });
   const titles = (list) => list.map((r) => `${r.title}:${r.what}`);
-  assert.deepEqual(titles(work.next), ['Digest:going_live', 'Filters:vote', 'Calendar:building'], 'hers only, soonest first');
-  assert.equal(work.next.find((r) => r.title === 'Filters').myVote, 'yes');
+  assert.deepEqual(titles(work.next), ['Digest:going_live', 'Calendar:building'], 'hers only, being worked on, soonest first');
   assert.equal(work.next.find((r) => r.title === 'Calendar').by, 'bot', 'Homeroom bot is building it');
-  assert.deepEqual(titles(work.waiting).sort(), ['Print view:not_picked_up', 'Tags:not_picked_up'].sort());
+  // Up next: hers waiting on other people's votes first, then the requests nobody has picked up.
+  assert.equal(titles(work.waiting)[0], 'Filters:vote');
+  assert.equal(work.waiting[0].myVote, 'yes');
+  assert.deepEqual(titles(work.waiting).slice(1).sort(), ['Print view:not_picked_up', 'Tags:not_picked_up'].sort());
+  assert.deepEqual(work.needs, [], 'no plan of the bot\'s waits for her');
   assert.deepEqual(titles(work.live), ['Badges:live']);
-  const all = [...work.next, ...work.waiting, ...work.live];
+  const all = [...work.needs, ...work.next, ...work.waiting, ...work.live];
   assert.ok(!all.some((r) => r.title === 'Dark mode'), 'a vote she owes is Needs you\'s');
   assert.ok(!all.some((r) => r.title === 'Search'), 'one she only voted on');
   assert.ok(!all.some((r) => r.title === 'Export'), 'one she only wrote in, being built');
@@ -178,7 +181,7 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const res = await fetch(`${base}/api/ai/work`, { headers: { 'x-test-user': String(ada.id) } });
   assert.equal(res.status, 200);
   const body = await res.json();
-  assert.ok(Array.isArray(body.private) && Array.isArray(body.next) && Array.isArray(body.waiting) && Array.isArray(body.live));
+  assert.ok(Array.isArray(body.private) && Array.isArray(body.needs) && Array.isArray(body.next) && Array.isArray(body.waiting) && Array.isArray(body.live));
 });
 
 test('the demo rows are obviously fake, and staging-only', () => {
@@ -186,7 +189,7 @@ test('the demo rows are obviously fake, and staging-only', () => {
   assert.match(src, /if \(IS_STAGING && req\.query\.demo === '1'\) return res\.json\(demoWork\(\)\);/);
   const { demoWork } = require('../src/routes/ai-work');
   const demo = demoWork();
-  for (const row of [...demo.private, ...demo.next, ...demo.waiting, ...demo.live]) {
+  for (const row of [...demo.private, ...demo.needs, ...demo.next, ...demo.waiting, ...demo.live]) {
     assert.match(row.title, /^Staging demo/, row.title);
   }
 });

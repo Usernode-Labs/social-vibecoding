@@ -500,7 +500,19 @@ const Improve = {
   /** The origin the NEXT topic entry should record. See `_topicOriginFor`. */
   _nextTopicOrigin: null,
 
-  /** Called by a shared card in Messages just before its anchor navigates. */
+  /**
+   * The captured topic origin, for the router (App._isBotTopic: a topic
+   * opened from the Homeroom bot tab's page lights that tab). Read through
+   * `window.Improve` for the reason `sessionOrigin` is.
+   */
+  topicOrigin() {
+    return improveStore.get().topicOrigin;
+  },
+
+  /**
+   * Called by a shared card in Messages, and by a row of the Homeroom bot
+   * tab's page (features/ai/), just before it navigates.
+   */
   enterTopicFrom(href) {
     Improve._nextTopicOrigin = typeof href === 'string' && href.startsWith('#') ? href : null;
   },

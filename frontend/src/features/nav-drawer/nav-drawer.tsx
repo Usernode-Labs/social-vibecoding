@@ -102,7 +102,8 @@ function usePhone(): boolean {
  * request from the Workshop swapped the header to the community switcher,
  * and a swipe back did nothing. One opened from a Messages conversation
  * (`topicOrigin` there) belongs to that conversation and keeps the drawer
- * off, as does any item under the Kanban board.
+ * off, as does any item under the Kanban board, and one opened from the
+ * Homeroom bot tab's page, which goes back there (29 Oct 2026).
  */
 export function drawerApplies(at: {
   phone: boolean; screen: string | null; slug: string | null; tab: string | null; subTab: string | null;
@@ -112,7 +113,8 @@ export function drawerApplies(at: {
   if (at.pending) return true;
   if (!at.slug || at.tab !== 'dev' || at.viewMode !== 'workshop') return false;
   if (at.subTab === 'forum') return true;
-  return at.subTab === 'topic' && !String(at.topicOrigin || '').startsWith('#messages');
+  const origin = String(at.topicOrigin || '');
+  return at.subTab === 'topic' && !origin.startsWith('#messages') && !/^#homeroom-bot(\/|$)/.test(origin);
 }
 
 export function NavDrawer(): ReactNode {
