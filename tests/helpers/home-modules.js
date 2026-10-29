@@ -75,11 +75,18 @@ const REPO_LINK_SRC = fs.readFileSync(REPO_LINK_PATH, 'utf8')
   .replace(/^export default .*;$/m, '')
   .replace(/^export\s+/gm, '');
 
+// And the search rule every app search shares (frontend/src/lib/search-rank.js,
+// #5891), with no import of its own: its text, `export` stripped, stands in
+// for the import line, so Home.filterApps ranks by the shipped rule.
+const SEARCH_RANK_PATH = path.join(FEATURE_DIR, '..', '..', 'lib', 'search-rank.js');
+const SEARCH_RANK_SRC = fs.readFileSync(SEARCH_RANK_PATH, 'utf8').replace(/^export\s+/gm, '');
+
 // Classic-script form: the `import` lines removed. See the note above.
 const HOME_SRC = HOME_RAW
   .replace(I18N_IMPORT, () => I18N_BINDINGS)
   .replace(/^import .* from '\.\.\/first-session\/build-line-words\.js';$/m, () => BUILD_LINE_WORDS_SRC)
   .replace(/^import .* from '\.\.\/\.\.\/lib\/repo-link\.js';$/m, () => REPO_LINK_SRC)
+  .replace(/^import .* from '\.\.\/\.\.\/lib\/search-rank\.js';$/m, () => SEARCH_RANK_SRC)
   .replace(/^import .*;$/gm, '');
 const PANELS_SRC = PANELS_RAW
   .replace(I18N_IMPORT, () => I18N_BINDINGS)
