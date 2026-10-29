@@ -5080,6 +5080,10 @@ const AppView = {
       const id = await AppView._sessionIdForChange(ref.pr);
       if (AppView._devTopic !== pending || !document.getElementById('dev-topic-thread')) return;
       if (!id) {
+        // #6019: numbers are one sequence per app, so a change address
+        // with a request's number is that request's thread.
+        if (await AppView._openByThread('proposal', ref.pr, () => AppView._devTopic === pending)) return;
+        if (AppView._devTopic !== pending) return;
         if (App._abandonWorkshopResume?.()) return;
         App.switchTab('dev');
         return;
@@ -5331,6 +5335,37 @@ const AppView = {
     await settled;
   },
 
+  // #6019: a request's address and a change's share one number sequence
+  // (services/app-numbers.js), so a number the page asked for as the other
+  // kind still names one thing. Ask its thread (routes/threads.js) what the
+  // number is and open that instead: `asked` is the kind the address said
+  // ('issue' or 'proposal'). Resolves whether it moved; `still()` says
+  // whether the page that asked is still the one on screen.
+  async _openByThread(asked, number, still) {
+    const slug = App.currentApp || AppView.appData?.slug;
+    const n = Number(number);
+    if (!slug || !Number.isInteger(n) || n <= 0) return false;
+    let data = null;
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/threads/${n}${AppView._demoQS()}`);
+      if (res.ok) data = await res.json();
+    } catch {
+      data = null;
+    }
+    if (!data || !Array.isArray(data.items) || (still && !still())) return false;
+    const change = data.items.find((i) => i.type === 'change' && Number(i.number) === n);
+    const request = data.items.find((i) => i.type === 'request' && Number(i.number) === n);
+    if (asked === 'issue' && change) {
+      await AppView.openTopic('proposal', Number(change.id));
+      return true;
+    }
+    if (asked === 'proposal' && request) {
+      await AppView.openTopic('issue', n);
+      return true;
+    }
+    return false;
+  },
+
   // #4367: the session a change's pull request number names on this app, or
   // null — from the server, which applies the proposal page's own visibility.
   async _sessionIdForChange(pr) {
@@ -5382,7 +5417,16 @@ const AppView = {
   // each fetcher is best-effort and swallows its own errors.
   async _fetchTopicItem(ref) {
     if (ref.kind === 'gov') return AppView._fetchGovProposalById(ref.id);
-    if (ref.kind === 'issue') return AppView._fetchIssueByNumber(ref.id);
+    if (ref.kind === 'issue') {
+      const row = await AppView._fetchIssueByNumber(ref.id);
+      if (row) return row;
+      // #6019: a request address with a change's number is that change.
+      // Asked before the page settles as missing, so a number that is
+      // neither still falls back to the board at the moment it always did.
+      const here = AppView._devTopic;
+      await AppView._openByThread('issue', ref.id, () => AppView._devTopic === here);
+      return null;
+    }
     return AppView._fetchProposalById(ref.id);
   },
 
@@ -10473,7 +10517,7 @@ const AppView = {
       if (!keep(issuesData)) {
         AppView._govProposals = (issuesData.issues || [])
           .filter((i) => i.kind === 'secret_change' || i.kind === 'rename' || i.kind === 'close_issue'
-            || i.kind === 'maintenance_campaign' || i.kind === 'featured_illustration');
+            || i.kind === 'maintenance_campaign' || i.kind === 'featured_illustration' || i.kind === 'thread_move');
       }
       if (!keep(promotedData)) AppView._proposalsCtx = {
         majority,

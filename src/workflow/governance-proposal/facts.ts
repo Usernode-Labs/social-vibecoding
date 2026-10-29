@@ -183,6 +183,12 @@ async function readRefusal(tx: Tx, issue: Issue, dataKey: string): Promise<strin
       return typeof p.instructions === 'string' && p.instructions.trim() ? null : 'missing_instructions';
     case 'featured_illustration':
       return missingProposalImage(tx, issue.appId, p, issue.id);
+    case 'thread_move': {
+      // #6019: the move it votes on, still waiting for this vote.
+      if (!(Number(p.moveId) > 0)) return 'missing_move';
+      const { rows: [move] } = await tx.query('SELECT state FROM thread_moves WHERE id = $1', [Number(p.moveId)]);
+      return move && move.state === 'voting' ? null : 'move_decided';
+    }
     case 'secret_change': {
       const key = String(p.key || '').trim();
       if (!key) return 'missing_key';

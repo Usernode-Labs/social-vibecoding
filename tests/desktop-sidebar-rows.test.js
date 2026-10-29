@@ -52,10 +52,11 @@ test('which five: this device\'s order, then the most recently active of yours',
   assert.equal(noteOpened(['a', 'b'], null, list), null);
 });
 
-test('the markup: the section sits between Messages and the Communities tab, its heading and search prerendered', () => {
+test('the markup: the section sits between Home and the Communities tab, its heading and search prerendered', () => {
   const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
   const at = (id) => html.indexOf(`id="${id}"`);
-  assert.ok(at('platform-tab-messages') < at('platform-rail-pinned'), 'the pinned ones first');
+  // #6019: Communities is the second tab now, so its rows follow Home.
+  assert.ok(at('platform-tab-home') < at('platform-rail-pinned'), 'the pinned ones first');
   assert.ok(at('platform-rail-pinned') < at('platform-rail-communities'));
   assert.ok(at('platform-rail-communities') < at('platform-tab-workshop'));
   assert.match(html, /<div id="platform-rail-communities" class="platform-rail-communities" role="group" aria-labelledby="platform-rail-communities-label">/);

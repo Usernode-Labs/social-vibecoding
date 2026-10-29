@@ -59,18 +59,20 @@ const community = (over = {}) => ({
   ...over,
 });
 
-test('the bar reads Home, Discover, Messages, Communities, you — Messages in the middle', () => {
+test('the bar reads Home, Communities, AI, Messages, you (#6019)', () => {
   // A tab's label is a message id; the word is what the English catalog holds for it.
   const order = [...TABS.matchAll(/\{ key: '([a-z]+)' as const, label: '(core:tabs\.[A-Za-z]+)'/g)].map((m) => [m[1], message(m[2])]);
-  assert.deepEqual(order.map((o) => o[0]), ['discover', 'messages', 'workshop', 'me'],
-    'after Home, whose entry is written across lines');
+  assert.deepEqual(order.map((o) => o[0]), ['workshop', 'ai', 'messages', 'me'],
+    'after Home, whose entry is written across lines; Discover is a page of Home\'s');
+  assert.deepEqual(order.find((o) => o[0] === 'ai'), ['ai', 'AI'], 'the Homeroom bot\'s chat');
   assert.deepEqual(order.find((o) => o[0] === 'workshop'), ['workshop', 'Communities'],
     'the key stays `workshop`; the word is Communities');
   assert.match(TABS, /key: 'workshop' as const, label: 'core:tabs\.communities', href: '#communities', Icon: UserGroupIcon/);
   // The channels' count rides the Communities tab, the conversations' the
   // Messages tab, and the Messages store writes both.
   assert.match(TABS, /key === 'workshop' \? \(\s*<TabBadge count=\{communities\} id="platform-tabs-badge-communities"/);
-  assert.match(STORE, /messages: state\.conversations\s*\.filter\(\(item\) => item\.kind !== 'channel' && item\.unreadCount > 0\)\.length,/);
+  assert.match(STORE, /messages: state\.conversations\s*\.filter\(\(item\) => item\.kind !== 'channel' && !item\.homeroomBot && item\.unreadCount > 0\)\.length,/,
+    'the bot\'s chat counts on AI, not Messages');
   assert.match(STORE, /communities: state\.conversations\.filter\(\(item\) => item\.kind === 'channel' && item\.unreadCount > 0\)\.length\s*\+ state\.discussions\.filter\(\(item\) => item\.section !== 'more' && \(item\.unreadCount \|\| 0\) > 0\)\.length,/);
 });
 
@@ -328,11 +330,11 @@ test('an open channel lights Communities and hangs off its hub; Messages lists p
   const screen = read('frontend/src/features/messages/index.tsx');
   assert.match(screen, /const channelOpen = !!snap\.route\.appSlug\s*\|\| \(!!snap\.route\.conversationId && snap\.active\?\.id === snap\.route\.conversationId && snap\.active\?\.kind === 'channel'\);/);
   const inbox = read('frontend/src/features/messages/inbox.ts');
-  assert.match(inbox, /if \(item\.kind === 'channel'\) continue;/);
+  assert.match(inbox, /if \(item\.kind === 'channel' \|\| item\.homeroomBot\) continue;/,
+    'channels are on their hubs, and the bot\'s chat is the AI tab (#6019)');
   assert.match(inbox, /agents\.sort\(byClock\);\n\s+people\.sort\(byClock\);/);
-  // B5: the Homeroom bot's DM first, then Agents and People, each in the
-  // order things happened (16 Oct 2026: three sections).
-  assert.match(inbox, /return \[\.\.\.bot, \.\.\.agents, \.\.\.people\];/);
+  // Agents and People, each in the order things happened.
+  assert.match(inbox, /return \[\.\.\.agents, \.\.\.people\];/);
 });
 
 test('#general needs the Homeroom community to post in; Homeroom\'s old channel takes no post', () => {

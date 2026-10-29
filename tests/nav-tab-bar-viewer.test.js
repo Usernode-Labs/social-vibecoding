@@ -76,7 +76,7 @@ test('once somebody is signed in, the tab still says You, and its name says whos
 
 test('only the fifth tab changes', () => {
   const html = render('evan');
-  for (const [key, label] of [['home', 'Home'], ['discover', 'Discover'],
+  for (const [key, label] of [['home', 'Home'], ['ai', 'AI'],
     ['messages', 'Messages'], ['workshop', 'Communities']]) {
     const at = html.indexOf(`id="platform-tab-${key}"`);
     const tab = html.slice(html.lastIndexOf('<a', at), html.indexOf('</a>', at));

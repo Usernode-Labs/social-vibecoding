@@ -227,12 +227,14 @@ test('#3707: everything the DM model sends answers one of her messages, and quot
   assert.match(src, /settleOffer\(pool, config, \{\s*bot, user, settings, action, yes, deps, replyToId: message\.id,/);
 });
 
-test('#3740: a change to one of its own proposals is a tool, used only on a clear ask', () => {
+test('#3740, #6019: a change to one of its own proposals is a tool, used only on a clear ask, and drafted for Post it', () => {
   const revise = mayor.TOOLS.find((t) => t.function.name === 'revise_proposal').function;
   assert.deepEqual(revise.parameters.required, ['change']);
   assert.deepEqual(Object.keys(revise.parameters.properties).sort(), ['change', 'number', 'project', 'proposal']);
   assert.match(revise.description, /YOUR OWN proposals that is up for a vote/);
-  assert.match(revise.description, /the way a reply in its discussion does/);
+  assert.match(revise.description, /the way you do a reply in its discussion/);
+  assert.match(revise.description, /under your reply with Post it and Keep it private/);
+  assert.match(revise.description, /Nothing is posted or changed before that: this chat is private\./);
   assert.match(revise.description, /Call it only when they clearly asked for the change, or said yes when you offered it; when what they want, or which proposal, is unclear, ask instead\./);
   assert.match(revise.description, /The result says what was sent and queued, or why nothing was\./);
   assert.match(revise.parameters.properties.change.description, /When their message only says yes to a change you offered, the change you offered\./);
@@ -242,7 +244,9 @@ test('#3734, #3740: the prompt never lets the bot promise what no tool started, 
   const prompt = mayor.systemPrompt({ username: 'ada', perPerson: 2 });
   // One story: the prompt says "change", never "proposal" (its tools keep their names).
   assert.match(prompt, /- Change one of your own changes that is up for a vote when they clearly ask you to \(revise_proposal\)/);
-  assert.match(prompt, /When it is not clear what they want changed, or which change, ask them, or\n  offer it \("Want me to update the change to \.\.\.\?"\), and call revise_proposal once they say yes\./);
+  assert.match(prompt, /When it is not clear what they want changed, or which change, ask them, or offer it\n  \("Want me to update the change to \.\.\.\?"\), and call revise_proposal once they say yes\./);
+  // #6019: the chat is private, and the prompt says so.
+  assert.match(prompt, /- This chat is private\. Nothing in it goes on a public discussion unless they tap Post it under a draft:/);
   // #11 (WP3): and never a promise to come back to it later, nor "the team
   // has been told" or "it was withdrawn" with nothing behind it.
   assert.match(prompt, /- Never say you will do something \(revise, change, build, post, file, withdraw, report, look at it again\)\n  unless a tool you called in this turn started it and its result says so, or progress or my_work shows it\n  under way\./);
@@ -475,6 +479,8 @@ test('#11 (WP3): withdrawing a proposal and telling the team are tools, describe
     file_request: ['File it', 'Not now'], withdraw_proposal: ['Withdraw it', 'Keep it'],
     move_request: ['Move it to Homeroom', 'Keep it here'],
     close_request: ['Propose to close', 'Keep it open'],
+    // #6019: words from this private chat, waiting to go public as theirs.
+    post_reply: ['Post it', 'Keep it private'],
   });
   assert.equal(mayor.REPORT_SOURCE, 'homeroom_bot');
 });
@@ -518,7 +524,7 @@ test('#11 (WP3): what a withdrawal leaves on its request, and what a report carr
 
 test('#3768, #3771: the DM can comment on a request and start one, and says what it can do', () => {
   const prompt = mayor.systemPrompt({ username: 'ada' });
-  assert.match(prompt, /\(comment_on_request\): posted on its\n {2}public discussion under their name/);
+  assert.match(prompt, /\(comment_on_request\): drafted for its\n {2}public discussion under their name; once they tap Post it/);
   assert.match(prompt, /\(start_request\): it goes to the front of your queue/);
   assert.match(prompt, /never say you cannot do one of those things/);
   assert.match(prompt, /Mention it only when they ask about it, or when my_work marks it low/);

@@ -623,6 +623,18 @@
     "text": "Only you see this. Answers come from the change itself.",
     "description": "Line at the top of Ask privately in the vote sheet."
   },
+  "review.ask.inAi": {
+    "text": "Ask in AI",
+    "description": "Button in the Ask privately sheet of a change waiting for the person's vote: opens their private chat with Homeroom bot (the AI tab) with this change attached, to ask about it there. \"AI\" is the tab's name."
+  },
+  "review.ask.inAiNote": {
+    "text": "Ask Homeroom bot about this change in AI, your private chat with it. The change comes with you, and only you see it.",
+    "description": "Line at the top of the Ask privately sheet of a change waiting for the person's vote, above the Ask in AI button: questions about the change are asked in the person's private chat with Homeroom bot (the AI tab) now. \"AI\" is the tab's name."
+  },
+  "review.ask.earlier": {
+    "text": "What you asked here before",
+    "description": "Small heading in the Ask privately sheet of a change, over the questions the person asked about it here before questions moved to the AI chat, and their answers. They can still be read."
+  },
   "review.ask.who": {
     "text": "Homeroom",
     "description": "Name over an answer in Ask privately in the vote sheet."
@@ -758,5 +770,17 @@
   "review.end.backToProject": {
     "text": "Back to the Workshop",
     "description": "Button at the end of a project's Needs you in the new review flow (an experiment), once every waiting change has been shown: opens the project's Workshop."
+  },
+  "needs.botAsked.label": {
+    "text": "Homeroom bot asked you",
+    "description": "Small-caps heading at the top of Needs you, over the questions Homeroom bot asked the person about their requests that nobody has answered yet. Each row opens the request, where the question is answered in public."
+  },
+  "needs.botAsked.where": {
+    "text": "{{project}} · Request #{{number}}",
+    "description": "Grey line under one of Homeroom bot's questions in Needs you: the project and the request it asked about. {{project}} is the project's name, {{number}} the request's number."
+  },
+  "needs.botAsked.untitled": {
+    "text": "A question about your request",
+    "description": "Title of one of Homeroom bot's questions in Needs you when the question's words cannot be read."
   }
 }

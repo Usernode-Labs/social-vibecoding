@@ -96,17 +96,16 @@ test('the sections are Agents and Direct messages, and there are no filter chips
   assert.deepEqual(people.map((e) => e.key), ['person:1'], 'a channel is no one\'s person row');
 });
 
-test('#18 (WP3): the Homeroom bot\'s DM is pinned first in Agents, and is still drawn as a DM', () => {
+test('#6019: the Homeroom bot\'s DM is the AI tab, not a row of Messages', () => {
   const conversations = [
     { id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') },
     { id: 2, kind: 'direct', homeroomBot: true, lastActivityAt: at('2026-01-01T00:00:00Z') },
   ];
   const sessions = [{ key: 's7', lastActivityAt: at('2026-01-03T00:00:00Z') }];
   const merged = inbox.buildInbox({ conversations, sessions });
-  assert.deepEqual(merged.map((e) => e.key), ['person:2', 'session:s7', 'person:1'], 'first, whatever was said last');
-  assert.deepEqual(merged.map((e) => e.section), ['agents', 'agents', 'people']);
-  assert.deepEqual(merged.map((e) => !!e.pinned), [true, false, false], 'the bot\'s row alone is pinned');
-  assert.equal(merged[0].kind, 'person', 'drawn by the conversation row, as before');
+  assert.deepEqual(merged.map((e) => e.key), ['session:s7', 'person:1'], 'its row left the list');
+  assert.deepEqual(merged.map((e) => e.section), ['agents', 'people']);
+  assert.deepEqual(merged.map((e) => !!e.pinned), [false, false], 'nothing is pinned now');
   assert.match(SCREEN, /conversations: snap\.conversations,/, 'the screen hands the merge the summaries that carry the mark');
 });
 

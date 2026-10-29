@@ -51,6 +51,9 @@ export const GOVERNANCE_KINDS: readonly string[] = Object.freeze([
   'close_issue',
   'maintenance_campaign',
   'featured_illustration',
+  // #6019: a merge or split of threads somebody objected to, so it went to
+  // the vote (services/thread-moves.js; applied by rules/thread-moves.ts).
+  'thread_move',
 ]);
 
 // Same guard as services/pr-vote-revision.js: these fragments are pasted into

@@ -172,7 +172,7 @@ test('"Reply here (or on the GitHub issue)" is true: a reply there is read by th
     'a request with the bot\'s change up for a vote is followed up, not triaged again');
 });
 
-test('"Ask for changes" is true: it posts on the change and puts its follow-up first', () => {
+test('"Ask for changes" is true: it drafts for the change, Post it posts there and puts its follow-up first', () => {
   // On a change the bot built, the change page leads with it ...
   const view = read('public/js/app-view.js');
   assert.match(view, /label: PlatformI18n\.t\('changes:page\.menu\.askForChanges'\), icon: 'generate',/);
@@ -183,7 +183,13 @@ test('"Ask for changes" is true: it posts on the change and puts its follow-up f
   assert.match(dmSrc, /const revised = await mayor\.reviseAttached\(pool, config, \{ bot, user, settings, conversationId, message, deps: turnDeps \}\);/);
   const mayor = read('src/services/homeroom-bot-mayor.js');
   const revise = mayor.slice(mayor.indexOf('async function reviseProposal('), mayor.indexOf('async function attachedPendingChange('));
-  assert.match(revise, /await dm\.postOnProposal\(pool, \{/);
+  // #6019: from the private chat it is a draft; said in a project's chat,
+  // in public, it is sent to the change at once.
+  assert.match(revise, /if \(ctx\.inPublic\) \{\s+const posted = await dm\.postOnProposal\(pool, \{/);
+  assert.match(revise, /ctx\.offer = \{\s+kind: 'post_reply', app, issueNumber, sessionId: Number\(session\.id\), title: 'revise'/);
+  const tap = mayor.slice(mayor.indexOf('async function decidePost('), mayor.indexOf('async function offerPost('));
+  assert.match(tap, /posted = await dm\.postOnProposal\(pool, \{/);
+  assert.match(read('src/services/homeroom-bot-chat.js'), /inPublic: true,/);
   const post = dmSrc.slice(dmSrc.indexOf('async function postOnProposal('), dmSrc.indexOf('async function answerOnRequest('));
   assert.match(post, /thread: \{ type: 'session', ref: Number\(sessionId\) \}/);
   assert.match(post, /enqueueFront\(pool, \{/);

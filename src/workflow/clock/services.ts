@@ -269,6 +269,13 @@ export const JOBS: readonly Job[] = Object.freeze([
     },
   },
   {
+    // #6019: thread moves (a merge or a split) whose 24 hours passed with
+    // nobody objecting happen, and one whose vote ended without applying it
+    // is refused (services/thread-moves.js sweep).
+    name: 'thread-moves', everyMs: MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/thread-moves').sweep(pool),
+  },
+  {
     // Account deletions' provider and worker cleanups (each task its own
     // SKIP LOCKED row lease, its finish fenced on its attempt).
     name: 'account-deletion', everyMs: MIN,

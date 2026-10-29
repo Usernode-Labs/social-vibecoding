@@ -65,9 +65,11 @@ function harness({ wide = true, railHidden = false } = {}) {
 
 // ── #2797: a rail press swaps in place ───────────────────────────────────
 
-test('a push into any of the rail\'s five places is a cut on the desktop layout', () => {
+test('a push into any of the rail\'s places is a cut on the desktop layout', () => {
   const { App, element } = harness();
-  for (const id of ['home-screen', 'browse-screen', 'messages-screen', 'workshop-screen', 'profile-screen']) {
+  // #6019: AI is the Messages screen's bot chat, and Discover a page of
+  // Home's that pushes in like any other page.
+  for (const id of ['home-screen', 'messages-screen', 'workshop-screen', 'profile-screen']) {
     const screen = element(id);
     assert.equal(App._entryTransition('push', screen), 'none', `${id} is a tab switch`);
     assert.equal(screen.getAttribute('data-entered'), 'none',

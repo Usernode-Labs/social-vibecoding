@@ -5396,6 +5396,21 @@ const App = {
         );
         return;
       }
+      if (parts[0] === 'ai') {
+        // #6019: the AI tab, the Homeroom bot's chat. It is a conversation
+        // of the Messages screen, so the screen comes up on its list and the
+        // store opens the chat, which then names itself in the address
+        // (`#messages/<id>`), and the AI tab is lit while it is on screen
+        // (features/nav/tab-bar.tsx). `#ai/thread/<id>` opens one of its
+        // threads.
+        App.setChromeless(false);
+        App.navigateToMessages(null);
+        const root = parts[1] === 'thread' ? App._numericSegment(parts[2]) : null;
+        const messages = window.UsernodeReact?.messages;
+        if (root != null && root <= 2147483647 && messages?.openBotThread) messages.openBotThread(root);
+        else messages?.openBot?.();
+        return;
+      }
       // On a phone an agent session opens in Messages, as the second level
       // of its drawer, and its screen's address comes with it
       // (_agentToInbox): an agent session or a new one, a ?flow= kept for
@@ -5862,8 +5877,9 @@ const App = {
   // for the app's record before revealing the view anyway (navigateToApp).
   _TAB_REVEAL_WAIT_MS: 250,
 
-  // The rail's own places: the roots its five tabs navigate to.
-  _RAIL_ROOTS: ['home-screen', 'browse-screen', 'messages-screen',
+  // The rail's own places: the roots its tabs navigate to. #6019: AI is the
+  // Messages screen's bot chat, and Discover is a page of Home's, not a root.
+  _RAIL_ROOTS: ['home-screen', 'messages-screen',
     'workshop-screen', 'profile-screen'],
 
   // Whether entering `screenEl` with `preferred` is a switch between places
@@ -8765,7 +8781,9 @@ const App = {
   // a tab it is not the root of is listed here with that tab's address.
   _BACK_SLOT: {
     'home-screen': ['none'],
-    'browse-screen': ['none'],
+    // #6019: Discover is a page of Home's (its Discover block opens it), so
+    // its list level has an arrow back to Home. browse.js publishes the same.
+    'browse-screen': ['arrow', '/'],
     'messages-screen': ['none'],
     'workshop-screen': ['none'],
     'profile-screen': ['none'],
@@ -9524,6 +9542,7 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
     case 'settings': return 'settings-screen';
     case 'admin': return 'admin-screen';
     case 'messages': return 'messages-screen';
+    case 'ai': return 'messages-screen';     // #6019: the bot's chat, in the inbox's screen
     case 'chat': return 'messages-screen';   // Global Chat's, removed: the inbox
     case 'agent': return 'agent-session-screen';
     case 'leaderboard': return 'leaderboard-screen';

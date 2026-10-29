@@ -38,6 +38,7 @@ import {
 } from './bot-shared';
 import { POLL_MS } from './bot-activity-store';
 import { BotWorkSync, loadBotWork, newestBotMessageId, useBotWork, WORK_CHANGED_EVENT } from './bot-work';
+import { PrivateThreadBar } from './private-thread-bar';
 import { BotStrip, RequestTag, stripGroups, summaryParts } from './bot-strip';
 import { useTrackOf } from './bot-track';
 import { BotNewsLine, foldBotNews, isBotNews, newsStatusOf, SettledRun, type SettledRunItem } from './bot-news-line';
@@ -2697,6 +2698,11 @@ function ReplyThreadPanel() {
           <XIcon aria-hidden="true" />
         </button>
       </header>
+      {/* #6019: a thread the viewer started in their chat with the bot is
+          private until they File it or Post it. */}
+      {botChat && active?.homeroomBot && root && !root.sender.bot && rootId
+        && Number(typeof window !== 'undefined' ? (window as any).App?.user?.id : 0) === root.sender.id
+        ? <PrivateThreadBar rootId={rootId} text={root.content || ''} /> : null}
       <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll" aria-live="polite">
         {/* The root's Reply quotes it into THIS thread's composer (#2387): its
             own threadRootId is null, being the main stream's message. */}

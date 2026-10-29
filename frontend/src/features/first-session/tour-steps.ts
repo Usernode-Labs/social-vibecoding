@@ -206,7 +206,8 @@ export function homeWalkSteps({ slug, name, example = null }: HomeWalkProject): 
       // The tab bar's own tabs, the same elements on a phone's bar and on
       // the rail from 768px up (features/nav/tab-bar.tsx).
       screen: 'home',
-      target: '#platform-tab-messages',
+      // #6019: the Homeroom bot's chat is the AI tab.
+      target: '#platform-tab-ai',
       ringed: true,
       title: translate('onboarding:firstSession.walk.bot.title'),
       text: example
@@ -245,7 +246,8 @@ export function lookAroundSteps(): TourStep[] {
     },
     {
       screen: 'home',
-      target: '#platform-tab-discover',
+      // #6019: Discover is Home's section, not a tab.
+      target: '#home-discover-section',
       ringed: true,
       title: translate('onboarding:firstSession.tour.look.discover.title'),
       text: translate('onboarding:firstSession.tour.look.discover.text'),
@@ -259,7 +261,8 @@ export function lookAroundSteps(): TourStep[] {
     },
     {
       screen: 'home',
-      target: '#platform-tab-messages',
+      // #6019: the Homeroom bot's chat is the AI tab.
+      target: '#platform-tab-ai',
       ringed: true,
       title: translate('onboarding:firstSession.tour.look.bot.title'),
       text: translate('onboarding:firstSession.tour.look.bot.text'),

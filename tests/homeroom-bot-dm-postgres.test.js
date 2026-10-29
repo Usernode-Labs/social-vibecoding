@@ -320,6 +320,48 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.equal(thanks.reply.id, answer.message.id, 'quoting the answer it took');
   });
 
+  // #6019: this chat is private. An answer she TYPES is drafted under the
+  // bot's reply, and goes on the request only when she taps Post it; a
+  // suggested answer tapped (above) is posted at once, the tap being her
+  // choice to.
+  await t.test('#6019: a typed answer waits under the reply for Post it, and Post it posts it, once', async () => {
+    const sent = await dm.relayIssuePost({
+      pool, app, issueNumber: 7, kind: 'question', postId: 60191, bot,
+      dm: { question: 'Which date, created or edited?', answers: ['Created', 'Edited'] },
+    });
+    const typed = await conversations.sendMessage(pool, ada, sent.conversationId, {
+      content: 'whichever was changed last', reply_to_id: sent.messageId,
+    });
+    threadPosts.length = 0;
+    const draft = await dm.noteUserMessage(pool, {}, { user: ada, conversationId: sent.conversationId, message: typed.message });
+    assert.equal(threadPosts.length, 0, 'nothing is public before the tap');
+    const card = await conversations.getMessage(pool, ada, sent.conversationId, draft.messageId);
+    assert.deepEqual(card.metadata.homeroomBot.answers, ['Post it', 'Keep it private']);
+    assert.equal(card.metadata.homeroomBot.status, 'open');
+    assert.match(card.content, /^This chat is private\. Want me to post this on request #7's public discussion, as you\?\n\n\*\*Seed swap\*\* · request #7:\n\n> whichever was changed last$/);
+    assert.equal((await conversations.getMessage(pool, ada, sent.conversationId, sent.messageId)).metadata.homeroomBot.status, 'open',
+      'the question is still open: nothing answered it yet');
+    const mayor = require('../src/services/homeroom-bot-mayor');
+    const settings = await require('../src/services/homeroom-bot').readSettings(pool);
+    // Post it posts as she would in the request's discussion: as a member.
+    await pool.query(
+      'INSERT INTO community_members (community_id, user_id) SELECT community_id, $2 FROM apps WHERE id = $1 ON CONFLICT DO NOTHING',
+      [app.id, ada.id],
+    );
+    const tap = async () => mayor.decideOffer(pool, {}, {
+      bot, user: ada, settings, deps: {},
+      message: (await conversations.sendMessage(pool, ada, sent.conversationId, { content: 'Post it', reply_to_id: draft.messageId })).message,
+    });
+    await tap();
+    assert.equal(threadPosts.length, 1, 'posted on the request');
+    assert.equal(threadPosts[0].userId, ada.id, 'as her own message');
+    assert.match(threadPosts[0].msg.content, /^whichever was changed last\n\n\(Answered in a chat with Homeroom bot\.\)$/);
+    assert.equal((await conversations.getMessage(pool, ada, sent.conversationId, sent.messageId)).metadata.homeroomBot.status, 'answered',
+      'and it answers the question it was written under');
+    await tap();
+    assert.equal(threadPosts.length, 1, 'decided once');
+  });
+
   await t.test('the verdicts export says whether a run\'s question reached the DM, and whether it was answered there', async () => {
     await pool.query(
       `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 8, $2, 'Dark mode')`,

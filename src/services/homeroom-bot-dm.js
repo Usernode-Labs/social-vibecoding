@@ -4036,8 +4036,29 @@ async function handVoteLine(pool, { user, target, line, deps = {} }) {
   }
 }
 
-/** The deterministic path: words posted on the request, and the bot says where. */
-async function answerOnRequest(pool, { bot, user, target, message, deps = {} }) {
+/**
+ * Whether `text` is one of the answers the bot suggested under its question
+ * (the chips a person taps, which send that answer as their message).
+ */
+async function isSuggestedAnswer(pool, questionMessageId, text) {
+  if (!questionMessageId || !text) return false;
+  const { rows: [row] = [] } = await pool.query(
+    `SELECT metadata->'homeroomBot'->'answers' AS answers FROM conversation_messages WHERE id = $1`,
+    [Number(questionMessageId)],
+  ).catch(() => ({ rows: [] }));
+  const said = String(text).trim().toLowerCase();
+  return Array.isArray(row?.answers) && row.answers.some((a) => typeof a === 'string' && a.trim().toLowerCase() === said);
+}
+
+/**
+ * The deterministic path: words written in reply to the bot's question or
+ * ask about a request. #6019: this chat is private. A suggested answer the
+ * person tapped under the question is posted on the request's discussion as
+ * theirs at once, the tap being the choice to; anything they typed is
+ * drafted under the bot's reply with Post it (homeroom-bot-mayor.js
+ * offerPost), and goes public only when they tap that.
+ */
+async function answerOnRequest(pool, { bot, user, target, message, conversationId = null, deps = {} }) {
   const text = String(message.content || '').trim();
   const { rows: apps } = await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [target.app_id]);
   if (!apps[0]) return null;
@@ -4047,6 +4068,14 @@ async function answerOnRequest(pool, { bot, user, target, message, deps = {} }) 
       bot, userId: user.id, replyToId: message.id, idempotencyKey: `hrbot-ack-${message.id}`,
       content: `I can only pass words on to ${line} for now. Write your answer as a message.`,
       moment: 'reply',
+    });
+  }
+  const tapped = target.question_status === 'open' && await isSuggestedAnswer(pool, target.message_id, text);
+  if (!tapped) {
+    const mayor = deps.mayor || require('./homeroom-bot-mayor');
+    return mayor.offerPost(pool, {
+      bot, user, conversationId: conversationId || target.conversation_id || null, message, target, text,
+      reason: 'dm_answer', deps,
     });
   }
   const posted = await postOnRequest(pool, { user, target, text, deps: { ...deps, answerMessageId: message.id } });
@@ -4059,9 +4088,7 @@ async function answerOnRequest(pool, { bot, user, target, message, deps = {} }) 
   }
   return sendDm(pool, {
     bot, userId: user.id, replyToId: message.id, idempotencyKey: `hrbot-ack-${message.id}`,
-    content: posted.question
-      ? `Thanks. I posted your answer on ${line}'s public discussion and I'm looking at it again now.`
-      : `I posted that on ${line}'s public discussion. I'll look at it again now.`,
+    content: `Thanks. I posted your answer on ${line}'s public discussion and I'm looking at it again now.`,
     metadata: {
       kind: 'ack', appSlug: posted.app.slug, appName: posted.app.name || posted.app.slug,
       issueNumber: Number(target.issue_number),
@@ -4225,7 +4252,7 @@ async function answerUserMessage(pool, config, { bot, user, settings, conversati
   const thread = await threadRequest(pool, { userId: user.id, conversationId, message });
   if (thread && !quoted) {
     const open = await newestOpenQuestion(pool, user.id, { appId: thread.appId, issueNumber: thread.issueNumber });
-    if (open) return answerOnRequest(pool, { bot, user, target: open, message, deps });
+    if (open) return answerOnRequest(pool, { bot, user, target: open, message, conversationId, deps });
     const plan = await waitingPlan(pool, { userId: user.id, appId: thread.appId, issueNumber: thread.issueNumber });
     if (plan) {
       const target = await quotedTarget(pool, user.id, plan.messageId);
@@ -4246,7 +4273,7 @@ async function answerUserMessage(pool, config, { bot, user, settings, conversati
       const finished = await finishOnTryAgain(pool, config, { bot, user, target, message, deps });
       if (finished) return finished;
     }
-    if (target && MIRRORED_KINDS.has(target.kind)) return answerOnRequest(pool, { bot, user, target, message, deps });
+    if (target && MIRRORED_KINDS.has(target.kind)) return answerOnRequest(pool, { bot, user, target, message, conversationId, deps });
     // B6: a reply to a plan (Change something) plans it again with their words.
     if (target && target.kind === PLAN_KIND) return changePlan(pool, { bot, user, target, message, deps });
   }
@@ -4282,7 +4309,7 @@ async function answerUserMessage(pool, config, { bot, user, settings, conversati
       moment: 'reply',
     });
   }
-  return answerOnRequest(pool, { bot, user, target, message, deps });
+  return answerOnRequest(pool, { bot, user, target, message, conversationId, deps });
 }
 
 // ── A request filed elsewhere ────────────────────────────────────────────
