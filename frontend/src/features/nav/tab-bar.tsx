@@ -68,6 +68,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ChatIcon,
   CogIcon,
+  CompassIcon,
   HomeIcon,
   SparklesIcon,
   Squares2X2Icon,
@@ -99,19 +100,31 @@ import { clearPeekTimer, clearPeekTimerByMouse, enterPeekByMouse, leavePeekByMou
 import { schedulePress, type PendingPress } from './tab-press';
 
 /**
- * The five tabs, in order.
+ * The tabs, in the DESKTOP RAIL's order: the markup is that order.
  *
- * WHY THESE FIVE, and why in this order (#6019, decided 29 Oct 2026): Home
- * is the launcher, Communities is the ones you are in, AI is your chat with
- * the Homeroom bot, Messages is the people and agents you talk to, and Me is
+ * WHY THESE, and why in this order (#6019, decided 29 Oct 2026): Home is the
+ * launcher, Communities is the ones you are in, AI is your chat with the
+ * Homeroom bot, Messages is the people and agents you talk to, and Me is
  * your own account. Challenges, Settings, Wallet, Validator and Admin are
- * all reached from Me, which is why five is enough — a sixth tab would be a
- * section nobody visits daily.
+ * all reached from Me, which is why five is enough on a phone — a sixth tab
+ * there would be a section nobody visits daily.
  *
- * DISCOVER IS A PAGE OF HOME'S NOW, not a tab: Home's Discover block opens
- * it, Back returns to Home, and Home stays lit on it (nav-store.js). Its
- * place went to AI, the one conversation everybody has, which used to be
- * the first row of Messages. Communities' key is still
+ * TWO ORDERS, ONE MARKUP (Evan, 29 Oct 2026). The desktop rail reads Home,
+ * Discover, Messages, AI, Communities, then you at its foot; the phone's bar
+ * reads Home · Communities · AI · Messages · You. The markup is the RAIL's
+ * order, so a keyboard's focus order on a desktop is the order on screen,
+ * and app.css lays the phone's five cells out with `order` ("TWO ORDERS,
+ * ONE MARKUP" there). The rail's nested groups keep their places in it:
+ * your conversations under Messages, your communities just above
+ * Communities.
+ *
+ * DISCOVER IS A TAB ON THE RAIL AND A PAGE OF HOME'S ON A PHONE. The rail
+ * has room for it, so it sits under Home there and is lit on its own screen.
+ * The phone's bar has five cells and the fifth went to AI, the one
+ * conversation everybody has (it used to be the first row of Messages):
+ * there app.css hides the Discover tab, Home's Discover block opens the
+ * page, Back returns to Home and Home stays lit on it (nav-store.js
+ * tabForScreen, App._backSlotFor). Communities' key is still
  * `workshop`: the key names the screen (`#workshop-screen`) and the
  * declared checks select on `#platform-tab-workshop`, while the words a
  * person sees are Communities and `#communities` (AGENTS.md, "Communities
@@ -138,12 +151,14 @@ const TABS = [
     href: '/',
     Icon: HomeIcon,
   },
-  { key: 'workshop' as const, label: 'core:tabs.communities', href: '#communities', Icon: UserGroupIcon },
+  // The rail's alone: app.css hides it on the phone's bar (see above).
+  { key: 'discover' as const, label: 'core:tabs.discover', href: '#apps', Icon: CompassIcon },
+  { key: 'messages' as const, label: 'core:tabs.messages', href: '#messages', Icon: ChatIcon },
   // #6019: the Homeroom bot's chat, which left the Messages list for a tab
   // of its own. `#ai` opens it (app.js), and the tab is lit while it is the
   // conversation on screen (the nav store's `bot`).
   { key: 'ai' as const, label: 'core:tabs.ai', href: '#ai', Icon: SparklesIcon },
-  { key: 'messages' as const, label: 'core:tabs.messages', href: '#messages', Icon: ChatIcon },
+  { key: 'workshop' as const, label: 'core:tabs.communities', href: '#communities', Icon: UserGroupIcon },
   // "You", signed in or not (N7 of the 19 Oct polish board); the accessible
   // name adds whose account it is — see tabLabel below.
   { key: 'me' as const, label: 'core:tabs.me', href: '#profile', Icon: UserIcon },

@@ -104,6 +104,7 @@ function threadsRoutes() {
   // vote). Agree is a requester's; Object anybody's, and puts it to a vote.
   //
   //   POST /api/apps/:slug/threads/:number/moves   { kind: 'merge', into } | { kind: 'split', items }
+  //                                                | { kind: 'breakup', request, parts: [{ title, doneWhen? }] }
   //   POST /api/apps/:slug/thread-moves/:id/agree
   //   POST /api/apps/:slug/thread-moves/:id/object { reason? }
   const member = communities.requireAppMembership(pool);
@@ -124,6 +125,7 @@ function threadsRoutes() {
       return answerMove(res, await threadMoves.propose(pool, {
         app: found.app, user: req.user, thread, kind: body.kind,
         into: Number(body.into) || null, items: Array.isArray(body.items) ? body.items : null,
+        request: Number(body.request) || null, parts: Array.isArray(body.parts) ? body.parts : null,
       }));
     } catch (err) {
       log.error('threads', 'move proposal failed', { message: err.message });

@@ -749,6 +749,8 @@ app.use(require('./src/routes/private-requests').privateRequestRoutes(config));
 app.use(notificationsRoutes(config));
 // #6019: a thread's Notify me and Mute, and (stage 3) the thread page's read.
 app.use(require('./src/routes/threads').threadsRoutes(config));
+// #6019 follow-up: the AI tab's main view (Your work, Up next, Live this week).
+app.use(require('./src/routes/ai-work').aiWorkRoutes(config));
 app.use(collaboratorRoutes(config));
 // Session-authenticated user directory for the shell's iframe bridge
 // relay (#1195) — must be AFTER authMiddleware; req.user is required.

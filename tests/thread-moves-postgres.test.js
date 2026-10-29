@@ -220,6 +220,87 @@ test('thread moves against the full schema', { timeout: 120000 }, async (t) => {
     assert.deepEqual(await threads.closeRivals(pool, { appId: app.id, prNumber: 999, deps: { lifecycle } }), [], 'no merged change, nothing to close');
   });
 
+  // #6019 follow-up: a big request broken into smaller requests in its own
+  // thread, decided as a merge is; it closes with the last of them.
+  await t.test('a break-up files the parts in the same thread, and the request closes with the last', async () => {
+    const requests = require('../src/services/requests');
+    requests.setPool(pool);
+    await pool.query(`UPDATE apps SET repo_url = 'https://github.com/tm-owner/tm-garden' WHERE id = $1`, [app.id]);
+    requests.invalidateApps?.();
+    const t20 = await request(20, ada, 'Garden planner');
+    const bad = await moves.propose(pool, { app, user: ada, thread: await thread(t20), kind: 'breakup', request: 20, parts: [{ title: 'Only one' }], deps });
+    assert.deepEqual([bad.ok, bad.status], [false, 422], 'at least two parts');
+    const out = await moves.propose(pool, {
+      app, user: ada, thread: await thread(t20), kind: 'breakup', request: 20, deps,
+      parts: [{ title: 'Plot map', doneWhen: 'I can draw my beds' }, { title: 'Sowing calendar' }],
+    });
+    assert.equal(out.ok, true, out.error);
+    assert.equal(out.move.state, 'applied', 'its only requester proposed it, so it happens at once');
+    const { rows: parts } = await pool.query(
+      'SELECT number, title, body, thread_id, part_of, created_by FROM requests WHERE app_id = $1 AND part_of = 20 ORDER BY number', [app.id]);
+    assert.deepEqual(parts.map((p) => [p.title, Number(p.thread_id), p.part_of, p.created_by]),
+      [['Plot map', t20, 20, ada.id], ['Sowing calendar', t20, 20, ada.id]], 'in the same thread, as hers');
+    assert.match(parts[0].body, /^Done when: I can draw my beds\n\nPart of #20\.$/);
+    const { rows: [line] } = await pool.query(
+      `SELECT content FROM chat_messages WHERE app_id = $1 AND msg_type = 'system' AND content LIKE 'Broken up into%' ORDER BY id DESC LIMIT 1`, [app.id]);
+    assert.equal(line.content, `Broken up into #${parts[0].number}, #${parts[1].number}, as everyone who asked agreed. #20 closes with the last of them.`);
+    const state = async (n) => (await pool.query('SELECT state FROM requests WHERE app_id = $1 AND number = $2', [app.id, n])).rows[0].state;
+    await requests.close('tm-owner', 'tm-garden', parts[0].number);
+    assert.equal(await state(20), 'open', 'one part left');
+    await requests.close('tm-owner', 'tm-garden', parts[1].number);
+    assert.equal(await state(20), 'closed', 'closed with the last of its parts');
+    const again = await moves.propose(pool, { app, user: ada, thread: await thread(t20), kind: 'breakup', request: parts[0].number, parts: [{ title: 'a' }, { title: 'b' }], deps });
+    assert.equal(again.ok, false, 'a closed thread, or a part, breaks up no further');
+  });
+
+  await t.test('a break-up the vote applies has its parts filed by the next sweep, once', async () => {
+    const t30 = await request(30, ada, 'Recipe box');
+    const out = await moves.propose(pool, {
+      app, user: bob, thread: await thread(t30), kind: 'breakup', request: 30, deps,
+      parts: [{ title: 'Save a recipe' }, { title: 'Share a recipe' }],
+    });
+    assert.equal(out.move.state, 'pending', 'Ada asked for it; Bob proposed it, so it waits for her');
+    // The project voted for it: the governance machine applies it, in its
+    // own transaction, as rules.applyMove (a rule calls no service).
+    assert.equal(await rules.applyMove(pool, out.move.id), t30);
+    const parts = async () => (await pool.query(
+      'SELECT title FROM requests WHERE app_id = $1 AND part_of = 30 ORDER BY number', [app.id])).rows.map((r) => r.title);
+    assert.deepEqual(await parts(), [], 'nothing filed in the vote\'s transaction');
+    await moves.sweep(pool, { deps });
+    assert.deepEqual(await parts(), ['Save a recipe', 'Share a recipe']);
+    await moves.sweep(pool, { deps });
+    assert.equal((await parts()).length, 2, 'once');
+  });
+
+  // On prod, #5995 going live closed #5997 as superseded: both were made
+  // from request #5927, but #5997 is a part of it and closes nothing. Parts
+  // of one request are not rivals; only changes that would close the same
+  // request are.
+  await t.test('parts of one request are not rivals: only a change closing the same request closes', async () => {
+    const t9 = await request(9, ada, 'Polish');
+    const make = async (pr, closes) => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues, created_from_issue_number, pr_number)
+       VALUES ($1, $2, 'promoted', $3, 9, $4) RETURNING id`,
+      [app.id, bob.id, closes, pr],
+    )).rows[0].id;
+    const partA = await make(40, '{}');
+    const partB = await make(41, '{}');
+    const closer = await make(42, '{9}');
+    const rival = await make(43, '{9}');
+    const page = await threads.threadPage(pool, { thread: await thread(t9), viewerId: ada.id });
+    const closes = Object.fromEntries(page.items.filter((i) => i.type === 'change').map((i) => [i.id, i.closes]));
+    assert.deepEqual(closes, { [partA]: [], [partB]: [], [closer]: [9], [rival]: [9] }, 'each change says what it closes');
+    const archived = [];
+    const lifecycle = { async archiveSession(args) { archived.push(args); return { archived: true }; } };
+    // A part goes live: it closes nothing, so nothing is its rival.
+    await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [partA]);
+    assert.deepEqual(await threads.closeRivals(pool, { appId: app.id, prNumber: 40, deps: { lifecycle } }), []);
+    // A change closing #9 goes live: only the other change closing #9 closes.
+    await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [closer]);
+    assert.deepEqual(await threads.closeRivals(pool, { appId: app.id, prNumber: 42, deps: { lifecycle } }), [rival]);
+    assert.deepEqual(archived.map((x) => x.sessionId), [rival], 'the other part stays up for its vote');
+  });
+
   await t.test('the route is for members: someone who has not joined is asked to', async () => {
     const httpApp = express();
     httpApp.use(express.json());

@@ -259,6 +259,34 @@
     "text": "Should this go ahead?",
     "description": "Question over a group decision in the Needs you feed: asks whether the decision (for example a rename of the project) should be carried out."
   },
+  "reel.fallbackTitle.question": {
+    "text": "Homeroom bot asked you",
+    "description": "Stands in for the words of a question Homeroom bot asked the person about their request, in the Needs you feed, when the question has none."
+  },
+  "reel.ask.ballot": {
+    "text": "Which one should go live?",
+    "description": "Question on an item of the Needs you feed that holds competing changes for one request (and maybe a proposal to close it): the person picks one on the request's page."
+  },
+  "reel.ask.question": {
+    "text": "Homeroom bot asked you about your request",
+    "description": "Question on an item of the Needs you feed that is a question Homeroom bot asked the person about their request: they answer it on the request's page."
+  },
+  "reel.ballot.choice": {
+    "text": "{{letter}}: {{title}}",
+    "description": "One choice of competing changes, in the list on an item of the Needs you feed. {{letter}} is the change's letter (A, B, C) as the request's page letters it, {{title}} its title."
+  },
+  "reel.ballot.close": {
+    "text": "or close it",
+    "description": "Last choice in the list of competing changes on an item of the Needs you feed, when a proposal to close the request competes with them."
+  },
+  "reel.ballot.choices": {
+    "text": "Pick one: {{choices}}",
+    "description": "Line on an item of the Needs you feed that holds competing changes: its choices, joined as a list. {{choices}} is that list."
+  },
+  "reel.ballot.fallbackTitle": {
+    "text": "Request #{{number}}",
+    "description": "Title of an item of the Needs you feed that holds competing changes, when the request they are for has no title. {{number}} is the request's number."
+  },
   "reel.yes": {
     "text": "Yes",
     "description": "Vote button on a proposal in the Needs you feed of the Communities screen: votes for the change going in."
@@ -770,17 +798,5 @@
   "review.end.backToProject": {
     "text": "Back to the Workshop",
     "description": "Button at the end of a project's Needs you in the new review flow (an experiment), once every waiting change has been shown: opens the project's Workshop."
-  },
-  "needs.botAsked.label": {
-    "text": "Homeroom bot asked you",
-    "description": "Small-caps heading at the top of Needs you, over the questions Homeroom bot asked the person about their requests that nobody has answered yet. Each row opens the request, where the question is answered in public."
-  },
-  "needs.botAsked.where": {
-    "text": "{{project}} · Request #{{number}}",
-    "description": "Grey line under one of Homeroom bot's questions in Needs you: the project and the request it asked about. {{project}} is the project's name, {{number}} the request's number."
-  },
-  "needs.botAsked.untitled": {
-    "text": "A question about your request",
-    "description": "Title of one of Homeroom bot's questions in Needs you when the question's words cannot be read."
   }
 }

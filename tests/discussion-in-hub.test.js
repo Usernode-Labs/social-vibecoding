@@ -508,7 +508,7 @@ test('the tab takes the target and opens a project\'s own reply thread in place'
   assert.match(PD, /<div ref=\{host\} className="dev-ws-discussion-host" \/>/);
   assert.match(PD, /className=\{`dev-ws-discussion dev-ws-general-channel\$\{thread \? ' dev-ws-discussion-threaded' : ''\}`\}/);
   assert.match(CSS, /\.dev-ws-discussion-threaded > \.messages-reply-pane \{ margin: 0; \}/);
-  assert.match(CSS, /\.messages-layout,\s*\.dev-ws-discussion \{/, 'the pane\'s surface tokens reach the tab');
+  assert.match(CSS, /\.messages-layout,\s*\.dev-ws-discussion,\s*#ai-screen \.ai-askbar \{/, 'the pane\'s surface tokens reach the tab (and the AI tab\'s Ask bar)');
 });
 
 test('the group chat opens a reply thread in the page it is on, not in Messages', () => {

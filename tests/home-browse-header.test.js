@@ -166,8 +166,10 @@ for (const improveAvailable of [true, false]) {
     //
     // #2639 made the back slot a second difference and masked it out, and
     // #2718's review took it away (Discover was a tab, a root like Home).
-    // #6019 brings it back: Discover is a page of Home's now, so its slot is
-    // an arrow back to Home and Home's is empty. Everything else is equal.
+    // ON THE DESKTOP RAIL IT STILL IS (29 Oct 2026), and this harness is a
+    // desktop, so both slots are hidden. On a phone #6019 made Discover a
+    // page of Home's with an arrow back to Home: the phone test below. The
+    // mask stays, so this comparison is the same at both widths.
     assert.equal(maskChip(maskBackSlot(browse)), maskChip(maskBackSlot(home)),
       'apart from the back slot, only what the title says changes');
     // THE GROUP'S CLASS IS A CONSTANT (#2718 review). It holds the desktop
@@ -181,8 +183,7 @@ for (const improveAvailable of [true, false]) {
     // still `hidden`, which is the fact these two screens are compared on.
     const EMPTY_SLOT = /<div class="h-7 shrink-0 flex items-center gap-1\.5 min-w-0 platform-header-left">[\s\S]{0,1200}id="back-btn"[^>]*un-touch-target hidden"/;
     assert.match(home, EMPTY_SLOT, 'Home is a root: its slot is hidden');
-    assert.doesNotMatch(browse, EMPTY_SLOT, 'Discover is not');
-    assert.match(browse, /id="back-btn"[^>]*aria-label="Back"[^>]*href="\/"/, 'its arrow goes back to Home');
+    assert.match(browse, EMPTY_SLOT, 'and so is Discover, a tab on the rail');
     assert.match(label(home), /<svg[^>]*\bfill="currentColor"/,
       'Home names the platform with the logotype');
     assert.doesNotMatch(label(home), /Homeroom/,
@@ -196,11 +197,11 @@ for (const improveAvailable of [true, false]) {
     // how a first attempt at #2639 shipped as a no-op, which is why this is
     // asserted on every write rather than on the final state.
     //
-    // They agree on the arrow to Home since #6019: Discover is a page of
-    // Home's, not a tab.
-    assert.ok(h.writes.some((entry) => entry.mode === 'arrow'));
-    assert.ok(h.writes.every((entry) => !entry.mode || entry.mode === 'arrow'),
-      'no intermediate publish puts another glyph in its corner');
+    // On the rail they agree on 'none': Discover is a tab there, so its list
+    // level is a root and shows no glyph at all.
+    assert.ok(h.writes.some((entry) => entry.mode === 'none'));
+    assert.ok(h.writes.every((entry) => !entry.mode || entry.mode === 'none'),
+      'no intermediate publish puts a glyph in a root\'s corner');
 
     h.writes.length = 0;
     h.App.navigateHome();
@@ -212,6 +213,32 @@ for (const improveAvailable of [true, false]) {
       'and going back to the root hides the slot again');
   });
 }
+
+test('on a phone Discover is a page of Home\'s: its list has an arrow back to Home (#6019)', () => {
+  const h = harness({ phone: true });
+  h.App._showOnlyScreen('home-screen');
+  h.App.setHeaderTitle('Homeroom');
+  const home = h.header();
+  h.writes.length = 0;
+  h.App.navigateToBrowse();
+  h.flush();
+  const browse = h.header();
+  // Both writers, the reveal and Browse's own sync, say the arrow to Home.
+  assert.ok(h.writes.some((entry) => entry.mode === 'arrow'));
+  assert.ok(h.writes.every((entry) => !entry.mode || entry.mode === 'arrow'),
+    'no intermediate publish puts another glyph in its corner');
+  assert.equal(ui.backButtonStore.get().href, '/');
+  assert.match(browse, /id="back-btn"[^>]*aria-label="Back"[^>]*href="\/"/, 'its arrow goes back to Home');
+  assert.equal(maskChip(maskBackSlot(browse)), maskChip(maskBackSlot(home)),
+    'apart from the back slot, only what the title says changes');
+  // A detail opened from a Home card has no list behind it: back to Home too.
+  const card = harness({ phone: true });
+  card.Browse.noteDetailOrigin('home');
+  card.App.navigateToBrowse('notes');
+  card.flush();
+  assert.equal(ui.backButtonStore.get().mode, 'arrow');
+  assert.equal(ui.backButtonStore.get().href, '/');
+});
 
 // Nothing asserted what the label IS until now — only that the slot existed.
 // It is a drawing on the platform's own screens and a word everywhere else,
@@ -284,13 +311,13 @@ test('the header writes a name in words for an app, and whenever there is a subt
   assert.match(subtitled, />Workshop</, 'beside the subtitle it shares the line with');
 });
 
-test('a cold Browse entry draws the arrow to Home, and a repeated route changes nothing', () => {
+test('a cold Browse entry draws no glyph on the rail, and a repeated route changes nothing', () => {
   const h = harness();
   h.App.navigateToBrowse();
   assert.deepEqual(h.writes, []);
   h.flush();
-  assert.ok(h.writes.every((entry) => !entry.mode || entry.mode === 'arrow'),
-    'a cold entry lands on the arrow back to Home (#6019), with no house in between');
+  assert.ok(h.writes.every((entry) => !entry.mode || entry.mode === 'none'),
+    'a cold entry lands on the empty root slot, with no house in between');
   const header = h.header();
   h.writes.length = 0;
   h.App.navigateToBrowse();
@@ -316,18 +343,21 @@ test('Browse details retain the arrow to the list, and returning restores the ho
   assert.equal(h.header(), listHeader);
 });
 
-test('a detail opened directly from a Home card goes back to Home, not up to a list', () => {
-  // A detail reached without a list behind it has no list level to go up
-  // to, so its arrow goes where it came from: Home (#6019, where Discover
-  // lives now).
+test('a detail opened directly from a Home card has no list to go up to', () => {
+  // On the rail the slot is empty, as on the list itself: the rail beside it
+  // is the way out, and an arrow would promise a list level this detail
+  // never came through. On a phone it goes back to Home (the phone test
+  // above).
   const h = harness();
   h.Browse.noteDetailOrigin('home');
   h.App.navigateToBrowse('notes');
   h.flush();
-  assert.equal(ui.backButtonStore.get().mode, 'arrow');
-  assert.equal(ui.backButtonStore.get().href, '/');
+  assert.equal(ui.backButtonStore.get().mode, 'none');
+  // The anchor keeps its default aria-label while hidden — 'none' hides the
+  // slot rather than renaming it — so the observable is the class on the
+  // anchor.
   assert.match(h.header(), /<div class="h-7 shrink-0 flex items-center gap-1\.5 min-w-0 platform-header-left">/);
-  assert.match(h.header(), /id="back-btn"[^>]*aria-label="Back"[^>]*href="\/"/);
+  assert.match(h.header(), /id="back-btn"[^>]*un-touch-target hidden"/);
 });
 
 test('a tab root shows nothing; a sub-page shows an arrow to its tab', () => {
@@ -336,19 +366,25 @@ test('a tab root shows nothing; a sub-page shows an arrow to its tab', () => {
   // those roots have a genuine level above and say so with a chevron that
   // lands on it.
   const h = harness();
-  for (const screen of ['profile-screen', 'messages-screen', 'workshop-screen']) {
+  // A desktop: Discover is one of the rail's tabs (29 Oct 2026).
+  for (const screen of ['profile-screen', 'messages-screen', 'workshop-screen', 'browse-screen']) {
     h.App._showOnlyScreen('home-screen');
     h.App._showOnlyScreen(screen);
     assert.equal(ui.backButtonStore.get().mode, 'none', `${screen} is a root`);
   }
-  // #6019: Discover is a page of Home's.
   for (const [screen, href] of [['settings-screen', '#profile'], ['admin-screen', '#profile'],
-    ['leaderboard-screen', '#profile'], ['agent-session-screen', '#messages'], ['browse-screen', '/']]) {
+    ['leaderboard-screen', '#profile'], ['agent-session-screen', '#messages']]) {
     h.App._showOnlyScreen('home-screen');
     h.App._showOnlyScreen(screen);
     assert.equal(ui.backButtonStore.get().mode, 'arrow', `${screen} has a level above`);
     assert.equal(ui.backButtonStore.get().href, href, `${screen} goes up to its tab`);
   }
+  // #6019: on a phone Discover is a page of Home's, a level under it.
+  const onPhone = harness({ phone: true });
+  onPhone.App._showOnlyScreen('home-screen');
+  onPhone.App._showOnlyScreen('browse-screen');
+  assert.equal(ui.backButtonStore.get().mode, 'arrow', 'Discover has Home above it on a phone');
+  assert.equal(ui.backButtonStore.get().href, '/');
   // …and on a phone the app view gets the ✕ instead (#2718), which is the
   // same guarantee in a different glyph: leaving somebody else's program is
   // not going up a level, so the slot says "step out" rather than "go up".
@@ -374,8 +410,10 @@ test('Home is reachable from the bar, on every platform screen, and Discover fro
   assert.match(bar, /key: 'home' as const[\s\S]{0,400}href: '\/'/);
   // A press on the tab says so, and swaps like any other tab's (#2881).
   assert.match(bar, /\.App\?\.navigateHome\?\.\(\{ viaTab: true \}\)/);
-  // #6019: Discover left the bar; Home's Discover section opens it.
-  assert.doesNotMatch(bar, /key: 'discover'/);
+  // #6019: Discover is the rail's tab (29 Oct 2026) and, on a phone, where
+  // app.css hides that tab, Home's Discover section opens it.
+  assert.match(bar, /key: 'discover' as const, label: 'core:tabs\.discover', href: '#apps'/);
+  assert.match(read('public/css/app.css'), /@media \(max-width: 767\.98px\) \{\n  #platform-tab-discover \{ display: none; \}/);
   assert.match(read('frontend/src/features/home/panels/sections.tsx'), /id="home-discover-section"[\s\S]{0,800}action=\{<BrowseLink \/>\}/);
   assert.equal(message('core:tabs.discover'), 'Discover');
   // …and the menu they left carries no platform destination at all.

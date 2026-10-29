@@ -41,11 +41,28 @@ import { callAppView } from '../dev-board/card/fold';
 import { NeedsFeed } from '../dev-board/workshop/workshop';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { useMessages } from '../../lib/i18n/react';
-import { t as translate } from '../../lib/i18n/runtime';
+import { listText, t as translate } from '../../lib/i18n/runtime';
 import { agoStamp } from '../../lib/timestamp';
 
+/**
+ * #6019: a ballot's choices (the server's ballotOf): the changes up for a
+ * vote that would close the same request, and an open vote to close it.
+ */
+export type NeedsBallot = {
+  number: number | null;
+  title: string | null;
+  options: Array<{ id: number; number: number | null; title: string; author: string | null; epoch: number | null }>;
+  close: { id: number; title: string; reason: string | null; author: string | null } | null;
+};
+
 export type NeedsFeedItem = {
-  kind: 'proposal' | 'governance';
+  /**
+   * #6019: `ballot` is changes that compete, one card for them all (its
+   * choices in `ballot`); `question` is one Homeroom bot asked the viewer
+   * about their request. Both are decided on the request's page.
+   */
+  kind: 'proposal' | 'governance' | 'ballot' | 'question';
+  ballot?: NeedsBallot;
   id: number;
   title: string;
   summary: string | null;
@@ -97,7 +114,7 @@ export type NeedsFeedItem = {
  * Null when AppView is not loaded or there is nothing to show.
  */
 function feedVisuals(item: NeedsFeedItem): FeedRow['visuals'] {
-  if (item.kind === 'governance' || (!item.shots && !item.visuals)) return null;
+  if (item.kind !== 'proposal' || (!item.shots && !item.visuals)) return null;
   const out = callAppView('_workshopVisuals', item.visuals || null, item.shots || null);
   return out && typeof out === 'object' ? (out as FeedRow['visuals']) : null;
 }
@@ -132,11 +149,79 @@ export function plainSummary(md: string | null | undefined): string {
  * `html` renders a summary for the caption's "more" (DevChat's renderer,
  * through AppView, where it is loaded).
  */
+/**
+ * #6019: a ballot, or the bot's question, as the feed draws it: like a group
+ * decision, with no Yes and No of its own, so its vote sheet opens the page
+ * it is decided on, the request's (its `data-issue-row`), where the ballot's
+ * choices are and the question was asked. A ballot's caption lists its
+ * choices in the order the page letters them.
+ */
+function requestRow(item: NeedsFeedItem): FeedRow {
+  const ballot = item.kind === 'ballot' ? item.ballot || null : null;
+  const number = ballot ? ballot.number : item.number;
+  const letter = (i: number) => String.fromCharCode(65 + i);
+  const choices = ballot ? listText([
+    ...ballot.options.map((o, i) => translate('communities:reel.ballot.choice', { letter: letter(i), title: o.title || translate('communities:reel.fallbackTitle.change') })),
+    ballot.close ? translate('communities:reel.ballot.close') : null,
+  ]) : '';
+  const attrs: Record<string, string> = {
+    ...(number ? { 'data-issue-row': String(number) } : {}),
+    ...(ballot ? { 'data-ballot': String(item.id) } : { 'data-bot-question': String(item.id) }),
+  };
+  const key = `${item.kind}:${item.id}`;
+  return {
+    t: 'card',
+    key: `needs:${key}`,
+    card: {
+      key,
+      cls: '',
+      attrs,
+      icon: null,
+      title: {
+        text: ballot
+          ? (ballot.title || translate('communities:reel.ballot.fallbackTitle', { number: number ?? '' }))
+          : (item.title || translate('communities:reel.fallbackTitle.question')),
+        title: '',
+      },
+      meta: [],
+      pill: null,
+      linked: [],
+      badges: [],
+      chatCount: null,
+      actions: [],
+      actionPreview: null,
+      rail: { menuKey: '', chevron: false, preview: null },
+      extra: [],
+      dense: false,
+      uncapped: false,
+    },
+    kind: 'vote',
+    ask: ballot ? translate('communities:reel.ask.ballot') : translate('communities:reel.ask.question'),
+    yes: null,
+    no: null,
+    who: ballot ? null : (item.author || null),
+    ago: item.at ? agoStamp(item.at).text : '',
+    number,
+    summary: ballot ? translate('communities:reel.ballot.choices', { choices }) : null,
+    descriptionHtml: '',
+    visuals: null,
+    // A ballot is addressed to its oldest change: the row its count keys on
+    // (`proposal:<id>`, the seen record's key, needs-seen.ts needsRowKey). A
+    // question is no vote, so it has no address: never recorded as seen, it
+    // counts until it is answered.
+    askAbout: ballot ? { kind: 'proposal', ref: item.id } : null,
+    thread: number ? { type: 'issue', ref: number } : null,
+    app: item.app,
+    tally: { yes: 0, no: 0 },
+  } as FeedRow;
+}
+
 export function reelRows(
   items: NeedsFeedItem[],
   html: (md: string) => string = () => '',
 ): FeedRow[] {
   return items.map((item) => {
+    if (item.kind === 'ballot' || item.kind === 'question') return requestRow(item);
     const change = item.kind !== 'governance';
     const key = `${change ? 'proposal' : 'governance'}:${item.id}`;
     const rev = item.epoch == null ? [] : [item.epoch];

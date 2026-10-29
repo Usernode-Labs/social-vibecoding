@@ -230,7 +230,10 @@ async function closeProposalTargets(pool, appId, numbers) {
 async function closeAfterMerge({ owner, repo, prNumber, linkedIssues, appId, pool, look = 1 }) {
   const empty = { closed: [], skipped: [], stillOpen: [], waiting: false, targets: [] };
   // #6019: the first of competing changes to go live closes the others in
-  // its thread (threads.js closeRivals, which never throws).
+  // its thread (threads.js closeRivals, which never throws). A vote to close
+  // that competed with it was filed on a request it closes, so it is
+  // superseded below, as any close proposal is, once that request is seen
+  // closed.
   if (look === 1 && pool && appId && prNumber) await require('./threads').closeRivals(pool, { appId, prNumber });
   if (!github.isEnabled() || !owner || !repo || !prNumber) return empty;
   const pr = await fetchPr(owner, repo, prNumber);

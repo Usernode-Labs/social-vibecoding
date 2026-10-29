@@ -15,6 +15,12 @@
 //          request's own thread when it had one (the one a merge closed,
 //          reopened), else a new one led by it, or by the first change. A
 //          request takes the changes built for it along.
+//   breakup: decided here, and nothing moves: its parts are filed as
+//          requests in this same thread once it is applied, by the moves'
+//          own service (services/thread-moves.js fileBreakup: at once on
+//          the decision that applied it, else on the next sweep), which
+//          numbers them from the app's one sequence. A rule calls no code
+//          outside the workflow.
 
 interface Db { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount?: number | null }> }
 
@@ -120,13 +126,19 @@ export async function applySplit(db: Db, move: { app_id: number | string; thread
  * voted on. Resolves the thread it left the work in, or null when it was
  * decided already.
  */
+export async function applyBreakup(move: { thread_id: number | string }): Promise<number> {
+  return Number(move.thread_id);
+}
+
 export async function applyMove(db: Db, moveId: number | string): Promise<number | null> {
   const { rows: [move] } = await db.query(
-    `SELECT id, app_id, thread_id, kind, input, state FROM thread_moves WHERE id = $1 FOR UPDATE`,
+    `SELECT id, app_id, thread_id, kind, input, state, proposed_by FROM thread_moves WHERE id = $1 FOR UPDATE`,
     [Number(moveId)]
   );
   if (!move || (move.state !== 'pending' && move.state !== 'voting')) return null;
-  const result = move.kind === 'merge' ? await applyMerge(db, move) : await applySplit(db, move);
+  const result = move.kind === 'merge' ? await applyMerge(db, move)
+    : move.kind === 'breakup' ? await applyBreakup(move)
+      : await applySplit(db, move);
   await db.query(
     `UPDATE thread_moves SET state = 'applied', decided_at = NOW(), result_thread_id = $2 WHERE id = $1`,
     [move.id, result]

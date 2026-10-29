@@ -515,9 +515,10 @@ test('the guest back arrow closes the viewer directly (#1028)', () => {
   const back = tsx.slice(tsx.indexOf('id="landing-back-btn"'));
   assert.match(back.slice(0, 500), /onClick=\{onBack\}/);
   // An open app first: Back closes it, the same call the button always made.
-  // Only with no app open does it go from a project's page to Discover, or,
-  // inside the Homeroom app, from Discover back to the story.
-  assert.match(tsx, /const onBack = useCallback\(\(\) => \{\s*if \(st\.openSlug\) \{ live\.current\.closeLandingApp\(\); return; \}\s*(?:\/\/[^\n]*\n\s*)*location\.hash = appDiscover && !guestProject \? '#landing' : '#apps';\s*\}, \[st, appDiscover, guestProject\]\);/);
+  // Only with no app open does it go from a project's page to Discover (its
+  // band shrinking into its card, features/guest/card-morph.ts), or, inside
+  // the Homeroom app, from Discover back to the story.
+  assert.match(tsx, /const onBack = useCallback\(\(\) => \{\s*if \(st\.openSlug\) \{ live\.current\.closeLandingApp\(\); return; \}\s*(?:\/\/[^\n]*\n\s*)*const to = appDiscover && !guestProject \? '#landing' : '#apps';\s*(?:\/\/[^\n]*\n\s*)*if \(guestProject && to === '#apps'\) \{\s*const slug = guestProject\.slug;\s*morph\(projectHero\(slug\), \(\) => \{ location\.hash = to; \}, \(\) => cardCover\(slug\)\);\s*return;\s*\}\s*location\.hash = to;\s*\}, \[st, appDiscover, guestProject\]\);/);
   // The marker entry is unwound AFTER the close, behind a re-entrancy flag.
   assert.match(tsx, /unwindingViewerEntry/);
   // The popstate listener ignores a pop that lands ON the marker entry.
@@ -682,7 +683,7 @@ test('the landing\'s directory is the guest Discover, with no locked tiles', () 
   // the project page's "Try it" or "Sign in to use it", not a tile's.
   const discover = read('frontend/src/features/guest/guest-discover.tsx');
   assert.doesNotMatch(discover, /LockIcon|Account required|grayscale/);
-  assert.match(discover, /<ProjectLink slug=\{app\.slug\}/);
+  assert.match(discover, /<ProjectLink\s+slug=\{app\.slug\}/);
   assert.match(discover, /return <a href=\{projectPath\(slug\)\} onClick=\{onClick\}/);
   assert.doesNotMatch(tsx, /TileSkeleton/);
 });

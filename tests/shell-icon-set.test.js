@@ -363,11 +363,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // the landing prerenders, so "Vote on what changes" and "Ask for what you
     // want" draw them in the cold document.
     // SparklesIcon LEFT this list again with #6019: the AI tab draws it on
-    // the bar, which the shell prerenders. CompassIcon (two paths) came onto
-    // it in its place: it was the Discover tab's, and Discover left the bar
-    // for a page of Home's, so nothing in the cold document draws it now.
-    'M12 3.5a8.5 8.5 0 110 17 8.5 8.5 0 010-17z',
-    'M15.5 8.5l-2 5-5 2 2-5z',
+    // the bar, which the shell prerenders. CompassIcon is off it too: the
+    // desktop rail keeps the Discover tab (29 Oct 2026), and the markup is
+    // the same at every width (app.css hides it on a phone).
     // THE MESSAGE ACTIONS (#2387): the hover bar's smile and reply arrow, the
     // ⋯ menu's thread, copy, link, envelope, flag and struck circle, and the
     // emoji picker's heart and cup tabs. Every one draws only once a row is
@@ -457,8 +455,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     //
     // Its composer was in the static document and drew MicrophoneIcon and
     // ArrowUpIcon there. The other composers draw both only once a
-    // conversation or a dev chat is open.
-    'M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z',
+    // conversation or a dev chat is open. (#6019 follow-up: the AI tab's
+    // Ask Homeroom bot bar draws MicrophoneIcon in the static document
+    // again, so only ArrowUpIcon is behind state.)
     'M12 19V5M5 12l7-7 7 7',
   ];
   assert.deepEqual(absent.sort(), expected.sort());

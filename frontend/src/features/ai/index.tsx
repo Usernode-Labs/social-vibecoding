@@ -1,0 +1,307 @@
+/**
+ * #ai-screen — the AI tab's main view (#6019 follow-up; plan v3, "the
+ * Homeroom bot tab: what needs you comes first, then your private threads,
+ * with a lock on the tile, then Up next: what's moving without you, soonest
+ * first. Ask Homeroom bot opens Main").
+ *
+ *   Homeroom bot                      Needs you: 2 · Up next: 3
+ *   YOUR WORK · 2 NEED YOU                               Answer all ›
+ *   [tile] Dark mode          Garden club · #403              [Vote]
+ *   [lock] A calendar idea    Only you · Not in a community yet
+ *   [tile] Print view         Garden club · #388 · Not picked up yet
+ *   UP NEXT                                            Soonest first
+ *   [tile] Weekly digest      Garden club · #401 · Going live
+ *   ▸ LIVE THIS WEEK · 1
+ *   ( Ask Homeroom bot )                 ← a phone: opens Main
+ *
+ * Main, the private conversation with the bot, is the Messages screen's
+ * chat with it (`#ai/main`, ../messages). On a phone the Ask bar opens it and
+ * a private thread opens as `#ai/thread/<id>`; on a desktop it is docked
+ * beside this list (EmbeddedConversation), and a private thread opens in it.
+ *
+ * THE FIRST RENDER IS THE PRERENDER: the screen hidden, the bot's name and
+ * no rows. The lists load in effects once the screen is shown to somebody
+ * signed in, and the docked pane exists only after mount on a wide window.
+ */
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+
+import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { ChevronDownIcon, ChevronRightIcon, LockIcon, MicrophoneIcon, UserGroupIcon } from '@/components/ui/icons';
+
+import { useMessages } from '../../lib/i18n/react';
+import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { EmbeddedConversation } from '../messages';
+import { openBotConversation } from '../messages/api';
+import { BOT_AVATAR } from '../messages/format';
+import {
+  NEXT_FIRST, foldWork, heroWords, nextWords, yourWork,
+  type AiApp, type AiThread, type AiWork, type NeedItem, type Phrase, type Who, type WorkRow,
+} from './model';
+
+const WIDE = '(min-width: 1024px)';
+
+function demoQuery(): string {
+  if (typeof window === 'undefined') return '';
+  return new URLSearchParams(window.location.search).get('demo') === '1' ? '?demo=1' : '';
+}
+
+async function readJson<T>(path: string): Promise<T | null> {
+  try {
+    const res = await fetch(path, { credentials: 'same-origin' });
+    return res.ok ? ((await res.json()) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function useWide(): boolean {
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return undefined;
+    const query = window.matchMedia(WIDE);
+    const sync = () => setWide(query.matches);
+    sync();
+    query.addEventListener?.('change', sync);
+    return () => query.removeEventListener?.('change', sync);
+  }, []);
+  return wide;
+}
+
+/** A project's tile, badged with who is in the thread: people for everyone in it, a lock for only you. */
+// Complete literals: Tailwind's extractor reads source text.
+const BADGE_ALL = 'absolute -right-1 -bottom-1 flex h-5 w-5 items-center justify-center rounded-full '
+  + 'bg-[color:var(--dc-sheet-solid)] text-zinc-500 shadow-[0_0_0_1.5px_var(--app-sheet-line)] '
+  + 'dark:text-zinc-400 [&>svg]:h-3 [&>svg]:w-3';
+const BADGE_ONLY_YOU = 'absolute -right-1 -bottom-1 flex h-5 w-5 items-center justify-center rounded-full '
+  + 'bg-zinc-900 text-white shadow-[0_0_0_2px_var(--dc-sheet-solid)] dark:bg-zinc-100 dark:text-zinc-900 '
+  + '[&>svg]:h-3 [&>svg]:w-3';
+const PILL = 'inline-flex shrink-0 items-center rounded-full bg-violet-50 px-2.5 py-0.5 text-[13px] font-semibold '
+  + 'text-violet-700 dark:bg-violet-500/15 dark:text-violet-300';
+
+function WhoTile({ app, who }: { app: AiApp | null; who: Who }): ReactNode {
+  const Badge = who === 'all' ? UserGroupIcon : LockIcon;
+  return (
+    <span className="relative inline-flex shrink-0" data-who={who} aria-hidden="true">
+      {app ? (
+        <span className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg" data-icon={appIconKind(app as any)}>
+          <AppIconContent app={app as any} />
+        </span>
+      ) : (
+        <span className="w-11 h-11 shrink-0 rounded-xl flex items-center justify-center bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-200">
+          <LockIcon className="w-5 h-5" />
+        </span>
+      )}
+      <span className={who === 'all' ? BADGE_ALL : BADGE_ONLY_YOU}><Badge /></span>
+    </span>
+  );
+}
+
+function SecHead({ children, end }: { children: ReactNode; end?: ReactNode }): ReactNode {
+  return (
+    <div className="flex items-end justify-between gap-2 pr-4">
+      <SectionHeader className="min-w-0 truncate">{children}</SectionHeader>
+      {end}
+    </div>
+  );
+}
+
+function go(href: string | null): void {
+  if (href && typeof window !== 'undefined') window.location.hash = href.replace(/^#/, '');
+}
+
+export function AiScreen(): ReactNode {
+  const t = useMessages('messages');
+  const say = (p: Phrase) => t(p.id, p.values);
+  const screenRef = useRef<HTMLElement | null>(null);
+  useVisibilityHiddenClass(screenRef, 'ai-screen', false);
+  const visible = useVisibility('ai-screen', false);
+  const wide = useWide();
+  const [work, setWork] = useState<AiWork | null>(null);
+  const [needs, setNeeds] = useState<NeedItem[] | null>(null);
+  const [allWork, setAllWork] = useState(false);
+  const [allNext, setAllNext] = useState(false);
+  const [liveOpen, setLiveOpen] = useState(false);
+  const [botId, setBotId] = useState<number | null>(null);
+  const [at, setAt] = useState<{ threadRootId: number | null; focusMessageId: number | null } | null>(null);
+
+  // Read on every showing: what is yours changes while you are elsewhere.
+  useEffect(() => {
+    if (!visible || typeof window === 'undefined' || !(window as any).App?.user) return undefined;
+    let live = true;
+    const qs = demoQuery();
+    void readJson<AiWork>(`/api/ai/work${qs}`).then((data) => { if (live && data) setWork(data); });
+    void readJson<{ items?: NeedItem[] }>(`/api/workshop/needs-feed${qs}`)
+      .then((data) => { if (live) setNeeds(Array.isArray(data?.items) ? data!.items : []); });
+    return () => { live = false; };
+  }, [visible]);
+
+  // Main beside the list, on a desktop: the chat with the bot, opened once.
+  useEffect(() => {
+    if (!visible || !wide || botId || typeof window === 'undefined' || !(window as any).App?.user) return;
+    void openBotConversation().then((id) => { if (id) setBotId(id); }).catch(() => {});
+  }, [visible, wide, botId]);
+
+  const rows = useMemo(() => yourWork(needs, work), [needs, work]);
+  const folded = useMemo(() => foldWork(rows), [rows]);
+  const next: AiThread[] = work?.next || [];
+  const live: AiThread[] = work?.live || [];
+  const owed = needs ? needs.length : 0;
+  const docked = wide && !!botId;
+
+  const openRow = (row: WorkRow) => {
+    if (row.rootId) {
+      if (docked) setAt({ threadRootId: row.rootId, focusMessageId: null });
+      else go(`#ai/thread/${row.rootId}`);
+      return;
+    }
+    go(row.href);
+  };
+
+  return (
+    <main
+      ref={screenRef}
+      id="ai-screen"
+      className="hidden flex-1 overflow-y-auto platform-safe-scroll"
+      data-page-bounce=""
+      data-ai-docked={docked ? '' : undefined}
+      style={{ position: 'relative' }}
+    >
+      <div className="ai-screen-body max-w-2xl mx-auto pb-8">
+        <section className="flex items-center gap-3 px-4 pt-5 pb-1" data-ai-hero="">
+          <img src={BOT_AVATAR} alt="" className="w-12 h-12 rounded-2xl object-cover shrink-0" />
+          <span className="min-w-0 flex flex-col">
+            <h1 className="text-[1.375rem] font-bold leading-tight">{t('messages:ai.hero.name')}</h1>
+            {work ? (
+              <span className="text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-hero-sub="">
+                {say(heroWords(owed, next.length))}
+              </span>
+            ) : null}
+          </span>
+        </section>
+
+        <SecHead end={owed ? (
+          <a href="/?ws=needs#communities" className="mb-1 inline-flex items-center gap-0.5 text-[13px] font-semibold text-violet-700 dark:text-violet-300" data-ai-answer-all="">
+            {t('messages:ai.work.answerAll')}<ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
+          </a>
+        ) : null}>
+          {t('messages:ai.work.title')}
+          {owed ? <span className="text-[color:var(--lit-ink)]">{` · ${t('messages:ai.work.needCount', { count: owed })}`}</span> : null}
+        </SecHead>
+        <GroupedList tone="plane" data-ai-list="work">
+          {work && needs && !rows.length ? (
+            <p className="px-4 py-3 text-[0.9375rem] text-zinc-500 dark:text-zinc-400" data-ai-empty="">{t('messages:ai.work.empty')}</p>
+          ) : null}
+          {(allWork ? rows : folded).map((row) => (
+            <ListRow
+              key={row.key}
+              as="button"
+              chevron={false}
+              onClick={() => openRow(row)}
+              data-ai-row={row.key.split(':')[0]}
+              data-who={row.who}
+              leading={<WhoTile app={row.app} who={row.who} />}
+              title={row.title}
+              titleClassName="whitespace-normal line-clamp-2"
+              subtitle={say(row.sub)}
+              trailing={row.pill ? <span className={PILL}>{say(row.pill)}</span> : undefined}
+            />
+          ))}
+          {rows.length > folded.length ? (
+            <ListRow
+              as="button"
+              chevron={false}
+              onClick={() => setAllWork(!allWork)}
+              aria-expanded={allWork}
+              title={<span className="text-violet-700 dark:text-violet-300">{allWork ? t('messages:ai.work.showLess') : t('messages:ai.work.showMore', { count: rows.length - folded.length })}</span>}
+              titleClassName="font-semibold"
+            />
+          ) : null}
+        </GroupedList>
+
+        {next.length ? (
+          <>
+            <SecHead end={<span className="mb-1 text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:ai.next.soonest')}</span>}>
+              {t('messages:ai.next.title')}
+            </SecHead>
+            <GroupedList tone="plane" data-ai-list="next">
+              {(allNext ? next : next.slice(0, NEXT_FIRST)).map((row) => (
+                <ListRow
+                  key={row.threadId}
+                  as="button"
+                  chevron={false}
+                  onClick={() => go(row.href)}
+                  data-ai-next={row.what}
+                  leading={<WhoTile app={row.app} who="all" />}
+                  title={row.title || ''}
+                  titleClassName="whitespace-normal line-clamp-2"
+                  subtitle={say(nextWords(row))}
+                />
+              ))}
+              {next.length > NEXT_FIRST ? (
+                <ListRow
+                  as="button"
+                  chevron={false}
+                  onClick={() => setAllNext(!allNext)}
+                  aria-expanded={allNext}
+                  title={<span className="text-violet-700 dark:text-violet-300">{allNext ? t('messages:ai.work.showLess') : t('messages:ai.work.showMore', { count: next.length - NEXT_FIRST })}</span>}
+                  titleClassName="font-semibold"
+                />
+              ) : null}
+            </GroupedList>
+          </>
+        ) : null}
+
+        {live.length ? (
+          <>
+            <button
+              type="button"
+              className="flex w-full items-center gap-1 px-4 pb-2 pt-6 text-left"
+              aria-expanded={liveOpen}
+              data-ai-live-toggle=""
+              onClick={() => setLiveOpen(!liveOpen)}
+            >
+              <ChevronDownIcon className={`h-4 w-4 text-zinc-500 dark:text-zinc-400 transition-transform${liveOpen ? '' : ' -rotate-90'}`} aria-hidden="true" />
+              <span className="text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">
+                {t('messages:ai.live.title', { count: live.length })}
+              </span>
+            </button>
+            {liveOpen ? (
+              <GroupedList tone="plane" data-ai-list="live">
+                {live.map((row) => (
+                  <ListRow
+                    key={row.threadId}
+                    as="button"
+                    chevron={false}
+                    onClick={() => go(row.href)}
+                    leading={<WhoTile app={row.app} who="all" />}
+                    title={row.title || ''}
+                    subtitle={t('messages:ai.live.row', { project: row.app?.name || '', number: row.number || '' })}
+                  />
+                ))}
+              </GroupedList>
+            ) : null}
+          </>
+        ) : null}
+        <div className="ai-askbar-gap" aria-hidden="true" />
+      </div>
+
+      {/* Ask Homeroom bot: Main. On a phone a bar over the tab bar; on a
+          desktop Main is docked beside the list and this is not drawn. */}
+      <div className="ai-askbar messages-composer" data-ai-askbar="">
+        <a href="#ai/main" className="messages-composer-card ai-askbar-card" aria-label={t('messages:ai.ask.label')}>
+          <span className="ai-askbar-text">{t('messages:ai.ask.label')}</span>
+          <span className="messages-composer-action" aria-hidden="true"><MicrophoneIcon className="h-5 w-5" /></span>
+        </a>
+      </div>
+
+      {docked ? (
+        <aside className="ai-main-pane" aria-label={t('messages:store.header.main')} data-ai-main="">
+          <EmbeddedConversation conversationId={botId!} active={visible} at={at} />
+        </aside>
+      ) : null}
+    </main>
+  );
+}

@@ -642,7 +642,10 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     await pool.query('DELETE FROM chat_messages WHERE app_id = $1', [app.id]);
   });
 
-  await t.test('Change something posts their words on the request, ends the wait, and the next look plans with them again', async () => {
+  // #6019: the chat with the bot is private, so Change something drafts
+  // their words with Post it, and only the tap puts them on the request.
+  await t.test('Change something drafts their words; Post it puts them on the request, ends the wait, and the next look plans with them again', async () => {
+    const mayor = require('../src/services/homeroom-bot-mayor');
     const run = await waitingRun();
     await dm.sendPlanCard(pool, { app, issueNumber: 12, runId: run, plan: SHOWN, bot: homeroomBot });
     const card = await planMessage(run);
@@ -654,8 +657,24 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
       message: { id: sent.messageId, content: 'Make it monthly, not weekly', reply: { id: card.id } },
       deps: { bot: homeroomBot, ws },
     });
-    const said = (await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [out.messageId])).rows[0];
-    assert.equal(said.content, "Thanks. I posted that on Chores request #12's public discussion, and I'll plan it again with it and send the new plan here.");
+    const offer = (await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [out.messageId])).rows[0];
+    const actionId = offer.metadata.homeroomBot.actionId;
+    assert.ok(actionId, 'a draft, with Post it');
+    const { rows: early } = await pool.query(
+      `SELECT 1 FROM chat_messages WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 12`, [app.id],
+    );
+    assert.equal(early.length, 0, 'nothing on the request before the tap');
+    assert.ok((await runRow(run)).awaiting_go_at, 'and the plan still waits');
+
+    const tapped = await mayor.decideOfferTap(pool, {}, {
+      deps: { replies: tapsNow(pool, {}, { bot: homeroomBot, ws }) }, user: maya, actionId, choice: 'yes',
+    });
+    assert.equal(tapped.ok, true);
+    const { rows: [said] } = await pool.query(
+      'SELECT content FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 ORDER BY id DESC LIMIT 1',
+      [card.conversation_id, homeroomBot.id],
+    );
+    assert.equal(said.content, "Posted on Chores request #12's public discussion, as you. I'll plan it again with it and send the new plan here.");
     const { rows: posted } = await pool.query(
       `SELECT user_id, content FROM chat_messages WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 12`, [app.id],
     );

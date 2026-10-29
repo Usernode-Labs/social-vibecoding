@@ -95,7 +95,7 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
   const rt = createRuntime({
     pool, machines: [machine], pollMs: 50, publish: async (q, list) => { pushed.push(...list); },
     services: { 'github.closeIssue': fake('github.closeIssue'), 'governance.checkTarget': fake('governance.checkTarget'),
-      'bot.requestsClosed': fake('bot.requestsClosed') },
+      'bot.requestsClosed': fake('bot.requestsClosed'), 'threads.closeChanges': fake('threads.closeChanges') },
   });
   runtimes.push(rt);
 
@@ -243,6 +243,34 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
       `SELECT work_key, input FROM wf_work WHERE machine = $1 AND key = $2 AND kind = 'bot.requestsClosed'`, [MACHINE, issueKey(c.id)]);
     assert.deepEqual([w.work_key, w.input], ['bot', { appId: a.id, closed: [77] }]);
     assert.ok(work.calls.some((x) => x.kind === 'bot.requestsClosed' && x.input.closed[0] === 77), 'and it ran');
+  });
+
+  await t.test('#6019: a close vote closes every request still open in its thread, and the changes that would close them', async () => {
+    const a = await app();
+    await pool.query(`INSERT INTO requests (app_id, number, title) VALUES ($1, 77, 'Done'), ($1, 78, 'Also done')`, [a.id]);
+    // Two requests in one thread, as a merge leaves them (thread_moves).
+    await pool.query(
+      `UPDATE requests SET thread_id = (SELECT thread_id FROM requests WHERE app_id = $1 AND number = 77)
+        WHERE app_id = $1 AND number = 78`, [a.id]);
+    await pool.query(
+      `INSERT INTO issues (app_id, kind, title, github_issue_number, status) VALUES ($1, 'general', 'Also done', 78, 'open')`, [a.id]);
+    const c = await issue(a, await user(), 'close_issue', { issueNumber: 77, issueTitle: 'Done' });
+    await file(c);
+    await vote(c, await user(), 'up');
+    await settle();
+    assert.equal((await inst(c)).state, 'applied');
+    const { rows: [w] } = await pool.query(
+      `SELECT input FROM wf_work WHERE machine = $1 AND key = $2 AND kind = 'bot.requestsClosed'`, [MACHINE, issueKey(c.id)]);
+    assert.deepEqual(w.input.closed, [77, 78], 'both requests in the thread close');
+    const { rows: [changes] } = await pool.query(
+      `SELECT input FROM wf_work WHERE machine = $1 AND key = $2 AND kind = 'threads.closeChanges'`, [MACHINE, issueKey(c.id)]);
+    assert.deepEqual(changes.input.closed, [77, 78], 'and the changes that would close one of them');
+    const { rows: [twin] } = await pool.query(
+      `SELECT status FROM issues WHERE app_id = $1 AND kind = 'general' AND github_issue_number = 78`, [a.id]);
+    assert.equal(twin.status, 'closed', 'its platform row with it');
+    const { rows: lines } = await pool.query(
+      `SELECT thread_ref FROM chat_messages WHERE app_id = $1 AND thread_type = 'issue' ORDER BY thread_ref`, [a.id]);
+    assert.deepEqual(lines.map((l) => Number(l.thread_ref)), [77, 78], 'each request says so in its own discussion');
   });
 
   await t.test('a featured illustration is published, kept or removed with the transition', async () => {

@@ -279,7 +279,10 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   assert.match(make, /const reply = await postCreateApp\(\{/);
   assert.doesNotMatch(make, /fetch\('\/api\/apps'/);
   // A description for Homeroom bot to build from, or a ready-made app to make (below).
-  assert.match(make, /audience: 'invited',\s+\.\.\.\(ready \? \{ template: ready\.template \} : \{ brief: text\.trim\(\), \.\.\.\(starter \? \{ template: starter\.template \} : \{\}\) \}\),/,
+  // #6019 follow-up: a private thread's New project says who it is for;
+  // Create and the first session make a private project otherwise.
+  assert.match(make, /audience = 'invited',\n\}: \{/);
+  assert.match(make, /audience,\s+\.\.\.\(ready \? \{ template: ready\.template \} : \{ brief: text\.trim\(\), \.\.\.\(starter \? \{ template: starter\.template \} : \{\}\) \}\),/,
     'a ready-made app has nothing to build; a game preset sends its starter beside the brief');
   // `from` is the door: 'first-session', or 'create' from the Create button.
   assert.match(make, /from: entry,/);
@@ -883,7 +886,10 @@ test('the make screen takes the idea from the signed-in user, or from a ?shot= s
   assert.match(src, /idea=\{shot \? shot\.idea : legacy\(\)\.App\?\.user\?\.waitlistIdea \?\? null\}/);
   const create = src.slice(src.indexOf("if (mode.kind === 'make' && mode.entry === 'create')"), src.indexOf("if (mode.kind === 'make') {"));
   assert.match(create, /who=\{viewerName\(\)\}/);
-  assert.doesNotMatch(create, /idea=/);
+  // #6019 follow-up: Create takes an idea only when a private thread hands
+  // it one (New project), never the waitlist's.
+  assert.match(create, /idea=\{mode\.idea \?\? null\}/);
+  assert.doesNotMatch(create, /waitlistIdea/);
   const island = loadTsx(`${DIR}/index.tsx`);
   assert.deepEqual(Object.keys(island.MAKE_SHOTS), ['make', 'make-waitlist']);
   assert.equal(island.makeShot('?shot=make').idea, null);

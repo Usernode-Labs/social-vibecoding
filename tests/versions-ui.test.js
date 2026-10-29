@@ -256,7 +256,7 @@ test('an update\'s page says what it brings, then what it does in this version, 
 test('the From card sits under the summary and Skip under Votes and Testing, and app-view passes upstream through', () => {
   const src = read(HEAD);
   assert.match(src, /\{body\.summaryMore \? <SummaryMore m=\{body\.summaryMore\} \/> : null\}\s*\{v\.upstream \? <UpstreamCard u=\{v\.upstream\} \/> : null\}/);
-  assert.match(src, /<\/div>\s*\{v\.upstream \? <UpstreamDecline u=\{v\.upstream\} id=\{id\} \/> : null\}\s*\{v\.shots \?/);
+  assert.match(src, /<ChangeGates ref=\{pair\} id=\{id\} card=\{card\} v=\{v\} \/>\s*\{v\.upstream \? <UpstreamDecline u=\{v\.upstream\} id=\{id\} \/> : null\}\s*\{v\.shots \?/);
   assert.match(src, /state !== 'open' && state !== 'needs_fit'/, 'Skip only while it is still up, as the route allows');
   assert.match(src, /upstreamAction\(slug, 'skip', \{\}, 'project:topic\.change\.upstream\.skip\.failed'\)/);
   assert.match(src, /ui\.confirm\(\{/, 'it asks before it skips');

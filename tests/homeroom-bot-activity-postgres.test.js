@@ -179,11 +179,15 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
       // One story (contract 2.1): every message about a request names it.
       requestTitle: 'Sort by date',
     });
-    // Its thread starts with where it came from and that it is being read.
+    // Right after it, in Main (#6019: one conversation, no thread per
+    // request), where it came from and that it is being read, quietly.
     const { rows: lines } = await pool.query(
-      'SELECT content FROM conversation_messages WHERE thread_root_id = $1 ORDER BY id', [first.messageId],
+      `SELECT content, thread_root_id, metadata FROM conversation_messages
+        WHERE conversation_id = $1 AND sender_id = $2 AND id > $3 ORDER BY id`,
+      [first.conversationId, bot.id, first.messageId],
     );
     assert.deepEqual(lines.map((l) => l.content), ['Filed from our chat.', 'Reading it.']);
+    assert.ok(lines.every((l) => l.thread_root_id === null && l.metadata.homeroomBot.quiet === true));
     assert.match(message.content, /^\*\*Seed swap\*\* · request #3: Sort by date\n\nI'm working on this now\./);
     assert.equal(message.reply, null);
     assert.ok(events.slice(from).some((e) => e.payload.type === 'conversation_message_created'
@@ -281,12 +285,12 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
     const { rows: [{ n: messagesAfter }] } = await pool.query(
       'SELECT COUNT(*)::int AS n FROM conversation_messages WHERE sender_id = $1', [bot.id],
     );
-    // One story: no second card; its thread says, quietly, that it is read again.
+    // One story: no second card; Main says, quietly, that it is read again.
     assert.equal(messagesAfter, messagesBefore + 1, 'no second card, one quiet line');
     const { rows: [line] } = await pool.query(
       'SELECT content, thread_root_id, metadata FROM conversation_messages WHERE sender_id = $1 ORDER BY id DESC LIMIT 1', [bot.id],
     );
-    assert.equal(line.thread_root_id, asking.messageId, 'in the request\'s thread');
+    assert.equal(line.thread_root_id, null, 'in Main, beside the request\'s card');
     assert.equal(line.content, 'Reading it again.');
     assert.equal(line.metadata.homeroomBot.kind, 'step');
     assert.equal(line.metadata.homeroomBot.moment, undefined, 'a quiet line rings nothing');

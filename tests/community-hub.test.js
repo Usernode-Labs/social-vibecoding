@@ -59,11 +59,17 @@ const community = (over = {}) => ({
   ...over,
 });
 
-test('the bar reads Home, Communities, AI, Messages, you (#6019)', () => {
+test('the rail reads Home, Discover, Messages, AI, Communities, you; the phone\'s bar Home, Communities, AI, Messages, you (#6019)', () => {
   // A tab's label is a message id; the word is what the English catalog holds for it.
   const order = [...TABS.matchAll(/\{ key: '([a-z]+)' as const, label: '(core:tabs\.[A-Za-z]+)'/g)].map((m) => [m[1], message(m[2])]);
-  assert.deepEqual(order.map((o) => o[0]), ['workshop', 'ai', 'messages', 'me'],
-    'after Home, whose entry is written across lines; Discover is a page of Home\'s');
+  // The markup is the desktop rail's order (Evan, 29 Oct 2026).
+  assert.deepEqual(order.map((o) => o[0]), ['discover', 'messages', 'ai', 'workshop', 'me'],
+    'after Home, whose entry is written across lines');
+  // app.css lays the phone's five out with `order`, and hides Discover there.
+  const css = read('public/css/app.css');
+  const phone = css.slice(css.indexOf('/* TWO ORDERS, ONE MARKUP'));
+  assert.match(phone, /#platform-tab-discover \{ display: none; \}\s*#platform-tab-home \{ order: -4; \}\s*#platform-tab-workshop \{ order: -3; \}\s*#platform-tab-ai \{ order: -2; \}\s*#platform-tab-messages \{ order: -1; \}/);
+  assert.deepEqual(order.find((o) => o[0] === 'discover'), ['discover', 'Discover']);
   assert.deepEqual(order.find((o) => o[0] === 'ai'), ['ai', 'AI'], 'the Homeroom bot\'s chat');
   assert.deepEqual(order.find((o) => o[0] === 'workshop'), ['workshop', 'Communities'],
     'the key stays `workshop`; the word is Communities');
