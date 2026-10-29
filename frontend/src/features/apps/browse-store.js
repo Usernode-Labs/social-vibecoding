@@ -63,8 +63,8 @@ export const browseStore = createStore({
    */
   view: 'foryou',
   /**
-   * The Show only switches that are on: keys of Browse.SHOW_ONLY, plus
-   * 'unreviewed' for an admin. Empty is the PRERENDER value.
+   * The Show only switches that are on: keys of Browse.SHOW_ONLY. Empty is
+   * the PRERENDER value.
    */
   only: [],
   /**
@@ -81,13 +81,6 @@ export const browseStore = createStore({
    * 'all' is the PRERENDER value, for the same reason as `sort`.
    */
   filter: 'all',
-  /**
-   * Whether the admin-only "Not yet reviewed" switch (Browse.ADMIN_SHOW_ONLY)
-   * is drawn (#5267). False is the PRERENDER value: who is viewing is known
-   * only after boot, so the switch appears on screen entry, never in the
-   * first render.
-   */
-  adminFilters: false,
   /**
    * The type chips (#3962) the page row shows, from
    * Browse.presentCategories: the types at least one app has, 'other' aside

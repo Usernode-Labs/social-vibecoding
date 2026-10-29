@@ -191,7 +191,7 @@ function makeBrowse(opts = {}) {
   const state = {
     level: 'list', rows: null, empty: null, error: false, detail: null,
     sort: 'recommended', view: 'foryou', only: [], activeCount: 0, filter: 'all',
-    categories: [], category: 'all', adminFilters: false,
+    categories: [], category: 'all',
   };
   sandbox.Browse._store = {
     get: () => state,
@@ -231,25 +231,27 @@ const app = (over) => ({
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-test('#1523: quality outranks featuring/popularity, while explicit sorts and search retain all apps', () => {
+test('#1523: an app that cannot run goes after the rest, a flagged one is in no list, and explicit sorts and search keep the others', () => {
   const { Browse, state } = makeBrowse();
   Browse._open = true;
   Browse._apps = [
-    app({ slug: 'demo', name: 'Demo app', active_users: 999, featured: true,
-      directory: { tier: 'more', state: 'demo' } }),
-    app({ slug: 'unreviewed', active_users: 10, directory: { tier: 'unreviewed' } }),
-    app({ slug: 'working', icon_emoji: '🎮', active_users: 1, directory: { tier: 'ready', state: 'working' } }),
+    app({ slug: 'demo', name: 'Demo app', active_users: 999, featured: true, status: 'error',
+      directory: { tier: 'more', state: 'unavailable' } }),
+    app({ slug: 'unreviewed', active_users: 10, directory: { tier: 'listed', state: 'listed' } }),
+    app({ slug: 'working', icon_emoji: '🎮', active_users: 1, directory: { tier: 'listed', state: 'listed' } }),
+    app({ slug: 'flagged', name: 'Demo flagged', active_users: 5000, featured: true,
+      directory: { tier: 'hidden', state: 'flagged', flagged: true } }),
   ];
   Browse.render();
-  assert.deepEqual(slugs(state), ['working', 'unreviewed', 'demo']);
+  assert.deepEqual(slugs(state), ['unreviewed', 'working', 'demo']);
   assert.equal(state.curated, true);
   assert.equal(state.moreExpanded, false);
   Browse.toggleMore();
   assert.equal(state.moreExpanded, true);
   Browse.toggleMore();
   Browse.setQuery('Demo app', { immediate: true });
-  assert.equal(state.curated, false, 'matching demos are visible without expanding');
-  assert.deepEqual(slugs(state), ['demo']);
+  assert.equal(state.curated, false, 'matching apps are visible without expanding');
+  assert.deepEqual(slugs(state), ['demo'], 'a search never finds a flagged app');
   assert.equal(rowFor(state, 'demo').openable, true, 'real demo apps are still usable');
   assert.equal(rowFor(state, 'demo').demo, false, 'not a staging-only inert fixture');
   Browse.setQuery('', { immediate: true });
@@ -615,27 +617,24 @@ test("the sheet's Show only switches are a faithful copy of Browse.SHOW_ONLY", (
   assert.deepEqual(Array.from(Browse.SHOW_ONLY, (o) => o.key), ['featured', 'new', 'notjoined']);
   assert.deepEqual(Array.from(Browse.SHOW_ONLY, (o) => message(o.label)),
     ['Featured', 'New', 'Hide apps I’ve joined']);
-  assert.deepEqual(Array.from(Browse.ADMIN_SHOW_ONLY, (o) => message(o.label)), ['Not yet reviewed']);
   const src = read('frontend/src/features/apps/browse-filter-sheet.tsx');
-  for (const [name, controller] of [['SHOW_ONLY', Browse.SHOW_ONLY], ['ADMIN_SHOW_ONLY', Browse.ADMIN_SHOW_ONLY]]) {
-    const block = src.match(new RegExp(`const ${name}[\\s\\S]*?\\n\\];`));
-    assert.ok(block, `${name} is declared in browse-filter-sheet.tsx`);
-    const copied = [...block[0].matchAll(/\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)'\s*\}/g)]
-      .map((m) => ({ key: m[1], label: m[2] }));
-    assert.deepEqual(copied, Array.from(controller, (o) => ({ key: o.key, label: o.label })));
-  }
-  // The admin switch is drawn only when the store says so, which the
-  // prerender never does.
-  assert.match(src, /admin=\{!!state\.adminFilters\}/);
-  assert.match(read('frontend/src/features/apps/browse-store.js'), /adminFilters: false,/);
+  const block = src.match(/const SHOW_ONLY[\s\S]*?\n\];/);
+  assert.ok(block, 'SHOW_ONLY is declared in browse-filter-sheet.tsx');
+  const copied = [...block[0].matchAll(/\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)'\s*\}/g)]
+    .map((m) => ({ key: m[1], label: m[2] }));
+  assert.deepEqual(copied, Array.from(Browse.SHOW_ONLY, (o) => ({ key: o.key, label: o.label })));
+  // No switch of an admin's own any more: the review it filtered on is gone.
+  assert.equal(Browse.ADMIN_SHOW_ONLY, undefined);
+  assert.doesNotMatch(src, /ADMIN_SHOW_ONLY|adminFilters|unreviewed/);
+  assert.doesNotMatch(read('frontend/src/features/apps/browse-store.js'), /adminFilters/);
 });
 
 test('resolveFilter: anything unrecognised is All, never an empty screen', () => {
   const { Browse } = makeBrowse();
   for (const key of ['all', 'featured', 'notjoined', 'yours', 'new']) assert.equal(Browse.resolveFilter(key), key);
-  // The admin chip is nobody else's: a ?filter=unreviewed link lands on All.
-  assert.equal(Browse.resolveFilter('unreviewed'), 'all', 'not for a member');
-  assert.equal(makeBrowse({ user: { id: 1, isAdmin: true } }).Browse.resolveFilter('unreviewed'), 'unreviewed');
+  // The old admin chip's link lands on All, for an admin too.
+  assert.equal(Browse.resolveFilter('unreviewed'), 'all');
+  assert.equal(makeBrowse({ user: { id: 1, isAdmin: true } }).Browse.resolveFilter('unreviewed'), 'all');
   assert.equal(Browse.resolveFilter(' Featured '), 'featured');
   for (const bad of ['mine', '', null, undefined, 42, 'drop-tables']) {
     assert.equal(Browse.resolveFilter(bad), 'all', String(bad));
@@ -769,12 +768,12 @@ test('narrowApps: the Joined view, each switch, and their composition', () => {
   assert.equal(apps.length, 5, 'pure: the input is untouched');
 });
 
-test('showOnlyKeys drops unknown keys, keeps the fixed order, and gates unreviewed', () => {
+test('showOnlyKeys drops unknown keys and keeps the fixed order', () => {
   const { Browse } = makeBrowse();
   assert.deepEqual(Array.from(Browse.showOnlyKeys(['new', 'featured', 'bogus', 'new'])), ['featured', 'new']);
-  assert.deepEqual(Array.from(Browse.showOnlyKeys(['unreviewed'])), [], 'not for a member');
+  assert.deepEqual(Array.from(Browse.showOnlyKeys(['unreviewed'])), []);
   const admin = makeBrowse({ user: { id: 2, isAdmin: true } }).Browse;
-  assert.deepEqual(Array.from(admin.showOnlyKeys(['unreviewed', 'featured'])), ['featured', 'unreviewed']);
+  assert.deepEqual(Array.from(admin.showOnlyKeys(['unreviewed', 'featured'])), ['featured'], 'for an admin too');
   assert.deepEqual(Array.from(Browse.showOnlyKeys(null)), []);
 });
 
@@ -1034,7 +1033,7 @@ test('?filter= maps onto the switch and the sheet: yours is Joined, the rest are
     ['?filter=new', { view: 'foryou', only: ['new'] }],
     ['?filter=notjoined', { view: 'foryou', only: ['notjoined'] }],
     ['?filter=all', { view: 'foryou', only: [] }],
-    // A member cannot reach the admin switch, so the link lands on defaults.
+    // The old admin switch is gone, so its link lands on defaults.
     ['?filter=unreviewed', { view: 'foryou', only: [] }],
   ];
   for (const [search, want] of cases) {
@@ -1047,8 +1046,8 @@ test('?filter= maps onto the switch and the sheet: yours is Joined, the rest are
   const admin = makeBrowse({ search: '?filter=unreviewed', user: { id: 2, isAdmin: true } });
   admin.Browse._load = () => {};
   admin.Browse.open(null);
-  assert.deepEqual(Array.from(admin.state.only), ['unreviewed'], 'an admin can land on it');
-  assert.equal(admin.state.activeCount, 1, 'and the button counts it');
+  assert.deepEqual(Array.from(admin.state.only), [], 'for an admin too');
+  assert.equal(admin.state.activeCount, 0);
 });
 
 test('the controls prerender from the store\'s initial values', () => {
@@ -2279,42 +2278,28 @@ test('#5267: Open opens the app itself, and only an app that can run', () => {
   assert.deepEqual(opened, ['up']);
 });
 
-test('#5267: "Not yet reviewed" is an admin\'s chip, not a heading in everybody\'s list', () => {
+test('a flagged app is out of For you and Browse for everyone, and stays in Joined for its members', () => {
+  const flagged = { tier: 'hidden', state: 'flagged', label: 'Hidden from Discover', flagged: true };
   const apps = () => [
-    app({ slug: 'ok', icon_emoji: '🎮', directory: { tier: 'ready', state: 'working' } }),
-    app({ slug: 'new', directory: { tier: 'unreviewed', state: 'unreviewed' } }),
-    app({ slug: 'demo', directory: { tier: 'more', state: 'demo' } }),
+    app({ slug: 'ok', icon_emoji: '🎮', directory: { tier: 'listed', state: 'listed' } }),
+    app({ slug: 'hidden', icon_emoji: '🚩', active_users: 9999, directory: flagged }),
+    app({ slug: 'hidden-mine', icon_emoji: '🚩', is_member: true, directory: flagged }),
   ];
-  const member = makeBrowse();
-  member.Browse._apps = apps();
-  member.Browse._load = () => {};
-  member.Browse.open(null);
-  assert.equal(member.state.adminFilters, false, 'a member gets no admin switch');
-  // Unreviewed apps are NOT hidden from anyone: they still follow the
-  // reviewed ones in the default list, as they always have.
-  assert.deepEqual(slugs(member.state), ['ok', 'new', 'demo']);
-  member.Browse.applyFilters({ only: ['unreviewed'] });
-  assert.equal(member.state.filter, 'all', 'and cannot reach the switch by hand');
-
-  const admin = makeBrowse({ user: { id: 2, isAdmin: true } });
-  admin.Browse._apps = apps();
-  admin.Browse._load = () => {};
-  admin.Browse.open(null);
-  assert.equal(admin.state.adminFilters, true);
-  admin.Browse.applyFilters({ only: ['unreviewed'] });
-  assert.equal(admin.state.filter, 'unreviewed');
-  assert.deepEqual(slugs(admin.state), ['new']);
-  admin.Browse._apps = [apps()[0]];
-  admin.Browse.render();
-  assert.equal(admin.state.empty, 'Every app has been reviewed.');
-  // A switch remembered from an admin session is dropped once the viewer is
-  // no longer an admin ("View as non-admin"), as the old chip was.
-  const stale = makeBrowse();
-  stale.Browse._apps = apps();
-  stale.Browse._only = ['unreviewed'];
-  stale.Browse.render();
-  assert.deepEqual(Array.from(stale.state.only), []);
-  assert.equal(stale.state.filter, 'all');
+  for (const user of [undefined, { id: 2, isAdmin: true }]) {
+    const { Browse, state } = makeBrowse({ user });
+    Browse._apps = apps();
+    Browse._load = () => {};
+    Browse.open(null);
+    assert.deepEqual(slugs(state), ['ok'], 'For you');
+    Browse.setView('browse');
+    assert.deepEqual(slugs(state), ['ok'], 'Browse');
+    Browse.setView('joined');
+    assert.deepEqual(slugs(state), ['hidden-mine'], 'Joined is what you are in');
+    assert.equal(rowFor(state, 'hidden-mine').directoryTier, 'more');
+    assert.equal(state.adminFilters, undefined, 'no admin switch for anyone');
+  }
+  const { Browse } = makeBrowse();
+  assert.deepEqual(Array.from(Browse.listedApps(apps()), (a) => a.slug), ['ok']);
 });
 
 test('#5267: an empty Hide apps I’ve joined says so', () => {

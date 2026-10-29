@@ -1487,20 +1487,20 @@
       "expectText": "See all"
     },
     {
-      "name": "Directory leads with Featured and keeps demos under Show more (#1523, #5267, #5928)",
+      "name": "Directory leads with Featured and leaves a flagged app out (#1523, #5267, #5928)",
       "path": "/?demo=1&curation=1&sort=recommended#apps",
-      "expectSelector": "#browse-list:has(h2 ~ [data-slug=\"directory-sample-working\"][data-directory-state=\"working\"]):not(:has(.browse-row[data-slug=\"directory-sample-demo\"])) button[aria-controls=\"browse-more-apps\"][aria-expanded=\"false\"]",
+      "expectSelector": "#browse-list:has(h2 ~ [data-slug=\"directory-sample-listed\"][data-directory-state=\"listed\"]):not(:has(.browse-row[data-slug=\"directory-sample-flagged\"])) button[aria-controls=\"browse-more-apps\"][aria-expanded=\"false\"]",
       "expectText": "Featured"
     },
     {
       "name": "Show more is on every sort, not just Recommended (#1912)",
       "path": "/?demo=1&curation=1&sort=users#apps",
-      "expectSelector": "#browse-list[data-sort=\"users\"]:not(:has(h2)):not(:has(.browse-row[data-slug=\"directory-sample-demo\"])):not(:has(.browse-row[data-slug=\"directory-sample-broken\"])) button[aria-controls=\"browse-more-apps\"][aria-expanded=\"false\"]"
+      "expectSelector": "#browse-list[data-sort=\"users\"]:not(:has(h2)):not(:has(.browse-row[data-slug=\"directory-sample-flagged\"])) button[aria-controls=\"browse-more-apps\"][aria-expanded=\"false\"]"
     },
     {
-      "name": "Show more keeps demo and broken apps reachable (#1523); an updated app has no re-review tag (#3911)",
+      "name": "Show more holds an app with no icon, and a flagged app is in neither list (#1523)",
       "path": "/?demo=1&curation=1&sort=recommended&shot=browse-more#apps",
-      "expectSelector": "#browse-list:has(h2~.browse-row[data-slug=\"directory-sample-updated\"][data-directory-state=\"outdated\"] .browse-row-meta>:first-child:not(.text-xs)) #browse-more-apps:has([data-directory-state=\"demo\"]) [data-directory-state=\"broken\"]",
+      "expectSelector": "#browse-list:not(:has([data-slug=\"directory-sample-flagged\"])) #browse-more-apps [data-slug=\"directory-sample-no-icon\"][data-directory-state=\"missing_icon\"]",
       "expectText": "Show less"
     },
     {

@@ -491,23 +491,6 @@ const Browse = {
     { key: 'notjoined', label: 'discover:filters.hideJoined' },
   ],
 
-  // The switches only an admin gets, after the rest (#5267). "Not yet
-  // reviewed" is moderation state: it used to be a heading in everybody's
-  // default list, and it is now a filter for the people who review. The apps
-  // under it are NOT hidden from anyone: they still sit in the default list,
-  // after the reviewed ones, as they always have (directoryTier).
-  // browse-filter-sheet.tsx keeps a copy, for the reason it keeps one of
-  // SHOW_ONLY.
-  ADMIN_SHOW_ONLY: [
-    { key: 'unreviewed', label: 'discover:filter.unreviewed' },
-  ],
-
-  // An admin, as the shell sees one: `App.user.isAdmin`, which "View as
-  // non-admin" masks, so that view loses the switch too.
-  isAdminViewer() {
-    try { return !!(typeof App !== 'undefined' && App.user && App.user.isAdmin); } catch (err) { return false; }
-  },
-
   // "New" is the apps CREATED in the last NEW_WINDOW_DAYS days (by
   // `created_at`). A directory where nothing is that young would give the
   // chip an empty list, which reads as a broken filter rather than a quiet
@@ -521,7 +504,7 @@ const Browse = {
   // you. No storage, unlike Sort — a filter left on by a visit last week is a
   // directory that silently hides most of itself.
   _view: 'foryou',
-  // The Show only switches that are on, in SHOW_ONLY/ADMIN_SHOW_ONLY order.
+  // The Show only switches that are on, in SHOW_ONLY order.
   _only: [],
   // ?filter= seeds the FIRST entry of a page load and is then spent, so a
   // link someone was handed (and every declared check) lands on its filter
@@ -531,11 +514,9 @@ const Browse = {
   // The keys a ?filter= link may name. The old chips' labels left with the
   // chips; the switch and the sheet carry their own copies of the words.
   FILTERS: ['all', 'featured', 'notjoined', 'yours', 'new'],
-  ADMIN_FILTERS: ['unreviewed'],
 
   // Anything unrecognised lands on the defaults rather than emptying the
-  // screen, and so does an admin key asked for by anyone else.
-  // Pure but for the admin read; unit-tested.
+  // screen. Pure — unit-tested.
   resolveView(raw) {
     const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
     return Browse.VIEWS.some((v) => v.key === key) ? key : 'foryou';
@@ -544,20 +525,14 @@ const Browse = {
   resolveFilter(raw) {
     const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
     if (Browse.FILTERS.includes(key)) return key;
-    if (Browse.ADMIN_FILTERS.includes(key) && Browse.isAdminViewer()) return key;
     return 'all';
   },
 
-  // The switches the sheet is allowed to hold, in their fixed order, from the
-  // two arrays above. Unknown keys are dropped and `unreviewed` survives only
-  // for an admin. Pure — unit-tested.
+  // The switches the sheet is allowed to hold, in their fixed order, from
+  // SHOW_ONLY. Unknown keys are dropped. Pure — unit-tested.
   showOnlyKeys(raw) {
     const list = Array.isArray(raw) ? raw : [];
-    const all = Browse.SHOW_ONLY.map((o) => o.key)
-      .concat(Browse.ADMIN_SHOW_ONLY.map((o) => o.key));
-    const allowed = Browse.SHOW_ONLY.map((o) => o.key)
-      .concat(Browse.isAdminViewer() ? Browse.ADMIN_SHOW_ONLY.map((o) => o.key) : []);
-    return all.filter((key) => allowed.includes(key) && list.includes(key));
+    return Browse.SHOW_ONLY.map((o) => o.key).filter((key) => list.includes(key));
   },
 
   // The single key the empty line and #browse-list[data-filter] read: the
@@ -587,7 +562,6 @@ const Browse = {
         only: Browse._only,
         filter: Browse.derivedFilter(),
         activeCount: Browse.activeFilterCount(),
-        adminFilters: Browse.isAdminViewer(),
       });
     }
   },
@@ -636,6 +610,7 @@ const Browse = {
     const only = Array.isArray(model && model.only) ? model.only : [];
     let list = (apps || []).filter(Boolean);
     if (view === 'joined') list = list.filter((a) => Home.isJoined(a));
+    else list = Browse.listedApps(list);
     for (const key of only) list = Browse.filterApps(list, key, now);
     return list;
   },
@@ -767,8 +742,6 @@ const Browse = {
   //              row during this visit (_keptJoins), which stay until the
   //              list is rebuilt.
   //   new      — newApps above.
-  //   unreviewed: admins only, directoryTier 'unreviewed', exactly the
-  //              apps the "Not yet reviewed" heading used to hold.
   // Pure — unit-tested.
   filterApps(apps, key, now) {
     const filter = Browse.resolveFilter(key == null ? Browse.derivedFilter() : key);
@@ -777,7 +750,6 @@ const Browse = {
     if (filter === 'notjoined') return list.filter((a) => !Home.isJoined(a) || Browse._keptJoins.has(a.slug));
     if (filter === 'yours') return list.filter((a) => Home.isJoined(a));
     if (filter === 'new') return Browse.newApps(list, now);
-    if (filter === 'unreviewed') return list.filter((a) => Browse.directoryTier(a) === 'unreviewed');
     return list;
   },
 
@@ -801,25 +773,31 @@ const Browse = {
       if (filter === 'featured') return PlatformI18n.t('discover:empty.search.featured', { query: q });
       if (filter === 'notjoined') return PlatformI18n.t('discover:empty.search.notJoined', { query: q });
       if (filter === 'yours') return PlatformI18n.t('discover:empty.search.joined', { query: q });
-      if (filter === 'unreviewed') return PlatformI18n.t('discover:empty.search.unreviewed', { query: q });
       if (filter === 'new') return PlatformI18n.t('discover:empty.search.new', { query: q });
       return PlatformI18n.t('discover:empty.search.all', { query: q });
     }
     if (filter === 'featured') return PlatformI18n.t('discover:empty.featured');
     if (filter === 'notjoined') return PlatformI18n.t('discover:empty.notJoined');
     if (filter === 'yours') return PlatformI18n.t('discover:empty.joined');
-    if (filter === 'unreviewed') return PlatformI18n.t('discover:empty.unreviewed');
     return PlatformI18n.t('discover:empty.all');
   },
 
-  // Unreviewed is not the same as broken. Apps with icons that have not yet
-  // been reviewed remain visible after the reviewed ones (#5267: in the same
-  // list, under no heading of their own); explicit demos,
-  // failures, and apps still needing setup/icon work go under Show more.
+  // The API's `directory.tier` (src/services/discovery-curation.js): an app
+  // that runs and has an icon is listed, and one that cannot run yet or has
+  // no icon to draw goes under Show more. A flagged app is left out of
+  // Discover by listedApps; the Joined view, which keeps one, puts it under
+  // Show more too.
   directoryTier(app) {
-    if (Home.isDiscoveryReady(app)) return 'ready';
-    if (app?.directory?.tier === 'more' || app?.status === 'error') return 'more';
-    return 'unreviewed';
+    if (app?.directory?.tier === 'more' || Home.isFlagged(app) || app?.status === 'error') return 'more';
+    return 'ready';
+  },
+
+  // The apps Discover may list at all: every app but the ones an admin
+  // flagged. The Joined view is the exception, since it is the list of what
+  // you are in rather than a place to find something: a flagged community
+  // you are in stays there. Pure — unit-tested.
+  listedApps(apps) {
+    return (apps || []).filter((a) => a && !Home.isFlagged(a));
   },
 
   // Where an app sits in the admin's featured order: its featured_order, an
@@ -835,8 +813,8 @@ const Browse = {
   // (the same `featured` flag the Featured chip and Home's featured lane
   // read), less the apps you are already in, in the featured order. An app
   // you join from it stays for the visit (_keptJoins). The `more` tier
-  // (demos, apps needing fixes) never leads the page, featured or not.
-  // Pure; unit-tested.
+  // (apps that cannot run yet, or have no icon) never leads the page,
+  // featured or not. Pure; unit-tested.
   recommendedApps(apps) {
     return (apps || [])
       .filter((a) => a && a.featured
@@ -895,10 +873,10 @@ const Browse = {
     };
 
     const cmp = {
-      // Reviewed apps first. Within each quality tier, preserve the admin's
-      // featured order and then rank by users. Popularity is not verification.
+      // Listed apps before the ones under Show more. Within each tier,
+      // preserve the admin's featured order and then rank by users.
       recommended: (x, y) => {
-        const tiers = { ready: 0, unreviewed: 1, more: 2 };
+        const tiers = { ready: 0, more: 1 };
         const tier = tiers[Browse.directoryTier(x)] - tiers[Browse.directoryTier(y)];
         if (tier) return tier;
         const fx = featuredRank(x);
@@ -1097,12 +1075,6 @@ const Browse = {
 
   _renderList() {
     if (!Browse._store) return;
-    // "View as non-admin" masks isAdmin, so a switch remembered from before
-    // cannot survive it — the same rule that used to drop the old admin chip.
-    const isAdmin = Browse.isAdminViewer();
-    if (!isAdmin && Browse._only.includes('unreviewed')) {
-      Browse._only = Browse._only.filter((k) => k !== 'unreviewed');
-    }
     const apps = Browse.visibleApps();
     const query = (Browse._query || '').trim();
     // The DEFAULT list (#5267): the For you view, the Recommended order, no
@@ -1147,7 +1119,6 @@ const Browse = {
       curated: !query,
       grouped,
       moreExpanded: Browse._moreExpanded,
-      adminFilters: Browse.isAdminViewer(),
       error: false,
       // The site row IS a result, so the "No apps match" line never shows
       // right under it.

@@ -852,18 +852,20 @@ test('the featured-apps doors are allowed, full-admin gated first, and each open
   for (const [method, target] of [
     ['GET', '/api/featured-admin/featured-apps'],
     ['PUT', '/api/featured-admin/featured-apps'],
-    ['PUT', '/api/featured-admin/apps/patch-741877/directory-review'],
+    ['PUT', '/api/featured-admin/apps/patch-741877/discover-flag'],
   ]) {
     assert.equal(policy.isConnectorApiRequest(method, target), true, `${method} ${target}`);
   }
   for (const [method, target] of [
     ['DELETE', '/api/featured-admin/featured-apps'],
     ['POST', '/api/featured-admin/featured-apps'],
-    ['GET', '/api/featured-admin/apps/patch-741877/directory-review'],
+    ['GET', '/api/featured-admin/apps/patch-741877/discover-flag'],
+    // The retired review route is not a door any more.
+    ['PUT', '/api/featured-admin/apps/patch-741877/directory-review'],
     // The console's own routes stay out of reach.
     ['GET', '/api/admin/featured-apps'],
     ['PUT', '/api/admin/featured-apps'],
-    ['PUT', '/api/admin/apps/patch-741877/directory-review'],
+    ['PUT', '/api/admin/apps/patch-741877/discover-flag'],
   ]) {
     assert.equal(policy.isConnectorApiRequest(method, target), false, `${method} ${target} is refused`);
   }

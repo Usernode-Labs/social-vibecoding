@@ -10,92 +10,92 @@ const { BrowseRows } = loadTsx('frontend/src/features/apps/browse-list.tsx');
 
 const app = (over = {}) => ({
   status: 'running', main_sha: 'a'.repeat(40), icon_emoji: '🎮',
-  last_deploy_at: '2026-09-01T12:00:00Z', directory_review_status: 'working',
-  directory_reviewed_at: '2026-09-01T13:00:00Z', directory_reviewed_sha: 'a'.repeat(40), ...over,
+  last_deploy_at: '2026-09-01T12:00:00Z', directory_review_status: 'unreviewed', ...over,
 });
 
-test('only a reviewed current deployment with an intentional icon is ready', () => {
-  assert.equal(curation.describe(app()).tier, 'ready');
-  assert.equal(curation.describe(app({ icon_emoji: null, icon_image_id: 'image-id' })).tier, 'ready');
-  assert.equal(curation.describe(app({ icon_emoji: null, icon_url: '/app-icons/image-id' })).tier, 'ready');
+test('an app that runs and has an icon is listed, with no review', () => {
+  assert.deepEqual(curation.describe(app()), { state: 'listed', tier: 'listed', label: null, flagged: false, flaggedAt: null });
+  assert.equal(curation.describe(app({ icon_emoji: null, icon_image_id: 'image-id' })).tier, 'listed');
+  assert.equal(curation.describe(app({ icon_emoji: null, icon_url: '/app-icons/image-id' })).tier, 'listed');
+  // Whatever a review used to say, and however long ago it deployed: no
+  // version pinning, nothing that lapses on a deploy.
+  for (const over of [{ directory_review_status: 'working' }, { directory_review_status: null },
+    { main_sha: 'b'.repeat(40) }, { main_sha: null }, { last_deploy_at: '2030-01-01T00:00:00Z' }, { demo: true }]) {
+    assert.equal(curation.describe(app(over)).tier, 'listed', JSON.stringify(over));
+  }
   for (const icon of [null, '', '  ']) {
     const result = curation.describe(app({ icon_emoji: icon }));
-    assert.equal(result.tier, 'more'); assert.equal(result.state, 'missing_icon');
+    assert.equal(result.tier, 'more'); assert.equal(result.state, 'missing_icon'); assert.equal(result.label, 'Needs an icon');
   }
   for (const status of ['creating', 'error', 'awaiting_secrets']) {
-    assert.equal(curation.describe(app({ status })).tier, 'more');
+    const result = curation.describe(app({ status }));
+    assert.equal(result.tier, 'more'); assert.equal(result.label, 'Not running');
   }
-  assert.notEqual(curation.describe(app({ self_hosted: true })).tier, 'ready');
 });
 
-test('deployment health, popularity, featuring and staging demo flags are not editorial reviews', () => {
-  for (const directory_review_status of [null, 'unreviewed', 'unknown']) {
-    const result = curation.describe(app({ directory_review_status, featured: true, active_users: 9999 }));
-    assert.equal(result.tier, 'unreviewed'); assert.equal(result.label, 'Not yet reviewed');
-  }
-  assert.equal(curation.describe(app({ demo: true })).tier, 'ready', 'inert staging fixtures can simulate a working review');
+test('an admin\'s flag hides an app from Discover, whatever its numbers, and is the only editorial state', () => {
   for (const directory_review_status of ['demo', 'broken']) {
-    const result = curation.describe(app({ directory_review_status, active_users: 9999, featured: true }));
-    assert.equal(result.tier, 'more'); assert.equal(result.state, directory_review_status);
+    const result = curation.describe(app({ directory_review_status, active_users: 9999, featured: true,
+      directory_reviewed_at: '2026-10-29T12:00:00Z' }));
+    assert.deepEqual(result, { state: 'flagged', tier: 'hidden', label: 'Hidden from Discover', flagged: true,
+      flaggedAt: '2026-10-29T12:00:00.000Z' });
   }
+  // A flag wins over not running and no icon: it is left out, not under Show more.
+  assert.equal(curation.describe(app({ directory_review_status: 'broken', status: 'error', icon_emoji: null })).tier, 'hidden');
+  assert.equal(curation.isFlagged(app({ directory_review_status: curation.FLAGGED })), true);
+  assert.equal(curation.isFlagged(app({ directory_review_status: curation.UNFLAGGED })), false);
+  assert.deepEqual(curation.FLAGGED_STATES, ['demo', 'broken']);
 });
 
-test('changing code or redeploying the same code retires the working claim', () => {
-  for (const override of [
-    { main_sha: 'b'.repeat(40) }, { main_sha: null }, { directory_reviewed_sha: null },
-    { last_deploy_at: '2026-09-01T14:00:00Z' }, { last_deploy_at: 'invalid' },
-    { directory_reviewed_at: null }, { directory_reviewed_at: 'invalid' },
-  ]) {
-    const result = curation.describe(app(override));
-    assert.equal(result.tier, 'unreviewed', JSON.stringify(override));
-    assert.equal(result.label, 'Needs re-review');
-  }
-  assert.equal(curation.describe(app({ last_deploy_at: new Date('2026-09-01T13:00:00Z') })).tier, 'ready');
-  assert.equal(curation.describe(app({ last_deploy_at: null })).tier, 'ready');
+test('featuring needs an icon and no flag, and says which is missing', () => {
+  assert.equal(curation.featureRefusal(app()), null);
+  assert.equal(curation.featureRefusal(app({ status: 'error' })), null, 'a stopped app is left out where it would show, not refused');
+  assert.match(curation.featureRefusal(app({ icon_emoji: null })), /has no icon/);
+  assert.match(curation.featureRefusal(app({ directory_review_status: 'broken' })), /is flagged[\s\S]*Clear the flag/);
 });
 
 const row = (slug, override = {}) => {
   const a = { slug, name: slug, ...app(override) };
   a.directory = curation.describe(a);
   return { app: a, slug, name: slug, meta: '1 user', status: 'Running', statusDot: 'bg-green-500',
-    demo: false, openable: true, added: false, addTitle: 'Add to Your apps', directoryTier: a.directory.tier };
+    demo: false, openable: true, added: false, addTitle: 'Add to Your apps',
+    directoryTier: a.directory.tier === 'listed' ? 'ready' : 'more' };
 };
-const rows = [row('ready'), row('unreviewed', { directory_review_status: 'unreviewed' }),
-  row('demo-only', { directory_review_status: 'demo' }), row('broken', { directory_review_status: 'broken' }),
+const rows = [row('ready'), row('second'),
+  row('stopped', { status: 'error' }), row('creating', { status: 'creating' }),
   row('iconless', { icon_emoji: null })];
 const render = (props = {}) => renderToHtml(createElement(BrowseRows, { rows, curated: true, ...props }));
 
-test('directory renders reviewed apps first, leaves unreviewed visible, and discloses the rest accessibly', () => {
+test('directory lists the apps that run, and discloses the rest accessibly', () => {
   const html = render();
-  assert.ok(html.indexOf('data-slug="ready"') < html.indexOf('data-slug="unreviewed"'));
-  // #5267: one heading over them, naming no review state.
+  assert.ok(html.indexOf('data-slug="ready"') < html.indexOf('data-slug="second"'));
+  // #5267: one heading over them.
   assert.match(html, /<h2[^>]*>All apps</);
-  assert.doesNotMatch(html, /Reviewed working|Not yet reviewed/);
   assert.match(html, /Show more \(3\)/);
   assert.match(html, /aria-expanded="false" aria-controls="browse-more-apps"/);
   assert.match(html, /id="browse-more-apps" class="hidden"/);
-  for (const slug of ['demo-only', 'broken', 'iconless']) assert.ok(!html.includes(`data-slug="${slug}"`));
+  for (const slug of ['stopped', 'creating', 'iconless']) assert.ok(!html.includes(`data-slug="${slug}"`));
   const expanded = render({ moreExpanded: true });
   assert.match(expanded, /aria-expanded="true"/);
   assert.match(expanded, /Show less/);
-  for (const slug of ['demo-only', 'broken', 'iconless']) assert.ok(expanded.includes(`data-slug="${slug}"`));
-  assert.match(expanded, /Needs fixes/);
+  for (const slug of ['stopped', 'creating', 'iconless']) assert.ok(expanded.includes(`data-slug="${slug}"`));
+  assert.match(expanded, /Not running/);
   assert.match(expanded, /Needs an icon/);
-  assert.doesNotMatch(expanded, /data-demo="true"/, 'real demo apps retain their navigation and Add actions');
+  assert.doesNotMatch(expanded, /data-demo="true"/, 'real apps retain their navigation and Add actions');
 });
 
 test('#1912: a metric sort is one list in its own order, and still discloses the rest', () => {
-  // Supplied in "sort order" with an unreviewed app FIRST: ungrouped keeps it
-  // there instead of lifting the reviewed one above it under a heading.
+  // Supplied in "sort order" with the second app FIRST: ungrouped keeps it
+  // there.
   const ordered = [rows[1], rows[0], rows[2], rows[3], rows[4]];
   const html = render({ rows: ordered, grouped: false });
-  assert.ok(html.indexOf('data-slug="unreviewed"') < html.indexOf('data-slug="ready"'), 'the sort order holds');
+  assert.ok(html.indexOf('data-slug="second"') < html.indexOf('data-slug="ready"'), 'the sort order holds');
   assert.doesNotMatch(html, /<h2/, 'no headings');
   assert.match(render(), /<h2[^>]*>All apps</, 'while the default list keeps its heading');
   assert.match(html, /Show more \(3\)/, 'the same disclosure as Recommended');
-  for (const slug of ['demo-only', 'broken', 'iconless']) assert.ok(!html.includes(`data-slug="${slug}"`));
+  for (const slug of ['stopped', 'creating', 'iconless']) assert.ok(!html.includes(`data-slug="${slug}"`));
   const expanded = render({ rows: ordered, grouped: false, moreExpanded: true });
-  for (const slug of ['demo-only', 'broken', 'iconless']) assert.ok(expanded.includes(`data-slug="${slug}"`));
+  for (const slug of ['stopped', 'creating', 'iconless']) assert.ok(expanded.includes(`data-slug="${slug}"`));
 });
 
 test('search renders all supplied results without disclosure', () => {
@@ -104,44 +104,35 @@ test('search renders all supplied results without disclosure', () => {
   assert.doesNotMatch(html, /Show more|browse-more-apps/);
   assert.equal(render({ rows: null }), '', 'no data-dependent markup before hydration');
   assert.equal(render({ rows: [] }), '', 'no dead disclosure on an empty directory');
-  assert.match(render({ rows: [rows[2]] }), /Show more \(1\)/, 'even an all-demo directory remains reachable');
+  assert.match(render({ rows: [rows[2]] }), /Show more \(1\)/, 'even a directory of stopped apps remains reachable');
 });
 
-test('staging preview fixtures exercise real curation logic without certifying real apps', () => {
+test('staging preview fixtures exercise the flag without touching real apps', () => {
   const { catalogFixtures: fixture } = require('../src/services/staging-apps');
-  assert.ok(fixture().filter((a) => a.featured).every((a) => a.directory.tier === 'ready'));
+  assert.ok(fixture().filter((a) => a.featured).every((a) => a.directory.tier === 'listed'));
   const samples = fixture(true).filter((a) => a.slug.startsWith('directory-sample-'));
-  assert.deepEqual(samples.map((a) => a.directory.tier), ['ready', 'unreviewed', 'more', 'more', 'more', 'unreviewed']);
-  const updated = samples.find((a) => a.slug === 'directory-sample-updated');
-  assert.equal(updated.directory.state, 'outdated', 'Preview has an app reviewed at an older commit (#3911)');
-  assert.equal(updated.directory.label, 'Needs re-review', 'which the API still names in the admin vocabulary');
-  // The stored row has to be outdated too: Preview serves the seeded row, not
-  // this in-memory copy, so the seed reviews it at a different commit.
+  assert.deepEqual(samples.map((a) => [a.slug, a.directory.state]), [
+    ['directory-sample-listed', 'listed'], ['directory-sample-flagged', 'flagged'], ['directory-sample-no-icon', 'missing_icon']]);
+  // Preview serves the seeded row, not this in-memory copy, so the seed
+  // stores the flag too.
   const seed = fs.readFileSync(path.join(__dirname, '../src/services/staging-apps.js'), 'utf8');
-  assert.match(seed, /directory_reviewed_sha === fixture\.main_sha \? sampleSha : priorSha/);
+  assert.match(seed, /main_sha, directory_review_status, directory_reviewed_at\)/);
+  assert.doesNotMatch(seed, /directory_reviewed_sha/);
   assert.match(fs.readFileSync(path.join(__dirname, '../src/routes/apps.js'), 'utf8'), /req.query.demo === '1'/);
 });
 
-test('#3911, #5267: Discover names no review state, on any row, in any order', () => {
+test('a row names why it is under Show more, and a listed row says nothing', () => {
   const { rowDirectoryLabel } = loadTsx('frontend/src/features/apps/browse-list.tsx');
-  const outdated = row('updated', { main_sha: 'b'.repeat(40) });
-  assert.equal(outdated.app.directory.label, 'Needs re-review', 'the API label is unchanged');
-  // Reviewed working, Not yet reviewed and Needs re-review are moderation
-  // words: the admin's chip and Admin › Featured apps carry them.
-  assert.equal(rowDirectoryLabel(outdated.app.directory), null);
-  assert.equal(rowDirectoryLabel(rows[0].app.directory), null, 'working');
-  assert.equal(rowDirectoryLabel(rows[1].app.directory), null, 'unreviewed');
-  // A label about what a person can do with the app stays.
-  for (const r of rows.slice(2)) assert.equal(rowDirectoryLabel(r.app.directory), r.app.directory.label, `${r.slug} keeps its label`);
+  assert.equal(rowDirectoryLabel(rows[0].app.directory), null);
+  assert.equal(rowDirectoryLabel(rows[2].app.directory), 'Not running');
+  assert.equal(rowDirectoryLabel(rows[4].app.directory), 'Needs an icon');
+  // Only the Joined view lists a flagged app, and its row says why it is
+  // nowhere else in Discover.
+  assert.equal(rowDirectoryLabel(curation.describe(app({ directory_review_status: 'broken' }))), 'Hidden from Discover');
   assert.equal(rowDirectoryLabel(null), null);
-
-  const withOutdated = [rows[0], rows[1], outdated, rows[2], rows[3], rows[4]];
-  for (const html of [render({ rows: withOutdated }), render({ rows: withOutdated, grouped: false }),
-    render({ rows: withOutdated, curated: false })]) {
-    assert.doesNotMatch(html, /re-review|Not yet reviewed|Reviewed working/i);
-    assert.ok(html.indexOf('data-slug="unreviewed"') < html.indexOf('data-slug="updated"'), 'listing and order unchanged');
+  for (const html of [render(), render({ grouped: false }), render({ curated: false })]) {
+    assert.doesNotMatch(html, /review/i);
   }
-  assert.match(render({ rows: withOutdated, curated: false }), /Needs fixes/);
 });
 
 test('#5267, #5928: Featured leads the default list, and the rest is More apps', () => {
@@ -201,69 +192,35 @@ test('#5928: a row says what the app is, in its own words, when it has them', ()
   assert.ok(about > at && about < html.indexOf('data-slug="ready"'), 'the line is on its own row');
   assert.match(html, /class="browse-row-about[^"]*"[^>]*>Count sheep before bed\.<\/span>/);
   assert.equal((html.match(/browse-row-about/g) || []).length, 1, 'no filler line on a row without one');
-  // Not the small review label's size: dapp.json's directory check reads the
-  // meta line's first child as :not(.text-xs).
+  // Not the small label's size.
   assert.doesNotMatch(html, /class="browse-row-about[^"]*text-xs/);
 });
 
-test('#3911: the admin console keeps "Needs re-review"', () => {
-  const { DirectoryReview } = loadTsx('frontend/src/features/admin/admin-featured-apps.tsx');
-  const outdated = { slug: 'updated', name: 'Updated', ...app({ main_sha: 'b'.repeat(40) }) };
-  outdated.directory = curation.describe(outdated);
-  const html = renderToHtml(createElement(DirectoryReview, { apps: [outdated], onSaved: () => {} }));
-  assert.match(html, /Updated: Needs re-review/);
-});
-
-test('admin review explains the manual verification and exposes existing review states', () => {
-  const { DirectoryReview } = loadTsx('frontend/src/features/admin/admin-featured-apps.tsx');
-  const html = renderToHtml(createElement(DirectoryReview, { apps: [
-    { slug: 'sample', name: 'Sample', directory: { label: 'Needs fixes', tier: 'more' } },
-  ], onSaved: () => {} }));
-  assert.match(html, /Directory review/);
-  assert.match(html, /Running alone is not verification/);
-  assert.match(html, /Sample: Needs fixes/);
+test('the admin console lists flagged apps and flags one only after asking; a view-only admin reads the list', () => {
+  const { DiscoverFlags, canFeature } = loadTsx('frontend/src/features/admin/admin-featured-apps.tsx');
+  const flagged = { slug: 'hidden-one', name: 'Hidden one', icon_emoji: '🚩', directory: curation.describe(app({ directory_review_status: 'broken' })) };
+  const listed = { slug: 'listed-one', name: 'Listed one', icon_emoji: '🧩', directory: curation.describe(app()) };
+  const html = renderToHtml(createElement(DiscoverFlags, { apps: [flagged, listed], canWrite: true, onChanged: () => {} }));
+  assert.match(html, /Flagged apps/);
+  assert.match(html, /left out of Discover and Featured everywhere/);
+  assert.match(html, /data-flagged-row="hidden-one"/);
+  assert.doesNotMatch(html, /data-flagged-row="listed-one"/);
+  assert.match(html, /data-unflag="hidden-one"[^>]*>Clear flag</);
+  assert.match(html, /<option value="listed-one">Listed one<\/option>/, 'the picker offers only unflagged apps');
+  assert.doesNotMatch(html, /<option value="hidden-one">/);
   assert.match(html, /role="status"/);
-  assert.doesNotMatch(html, /Save review/, 'no review can be saved before an app is selected');
-});
+  assert.doesNotMatch(html, /review/i);
 
-test('directory review says what to do and what each outcome does', () => {
-  const { DirectoryReview, OUTCOMES } = loadTsx('frontend/src/features/admin/admin-featured-apps.tsx');
-  const html = renderToHtml(createElement(DirectoryReview, { apps: [], onSaved: () => {} }));
-  assert.match(html, /How to review an app/);
-  assert.match(html, /<ol[^>]*>[\s\S]*Choose the app below[\s\S]*Open app to test[\s\S]*Pick the outcome[\s\S]*<\/ol>/,
-    'the three steps, in order');
-  assert.match(html, /What each outcome does/);
+  const readOnly = renderToHtml(createElement(DiscoverFlags, { apps: [flagged], canWrite: false, onChanged: () => {} }));
+  assert.match(readOnly, /data-flagged-row="hidden-one"/);
+  assert.doesNotMatch(readOnly, /Clear flag|admin-flag-picker/, 'a view-only admin reads the list');
+  assert.match(renderToHtml(createElement(DiscoverFlags, { apps: [listed], canWrite: true, onChanged: () => {} })), /No app is flagged/);
 
-  // Every outcome the route accepts is explained, and only those.
-  assert.deepEqual(OUTCOMES.map((o) => o.value).sort(), [...curation.REVIEW_STATES].sort());
-  for (const o of OUTCOMES) {
-    assert.ok(html.includes(o.label), `${o.label} is described`);
-    assert.ok(o.when && o.effect, `${o.label} says when to pick it and what it does`);
-  }
-  // The effects agree with where describe() actually puts the app.
-  const byValue = Object.fromEntries(OUTCOMES.map((o) => [o.value, o.effect]));
-  const base = { status: 'running', icon_emoji: '🧪', main_sha: 'abc', last_deploy_at: '2026-01-01T00:00:00Z',
-    directory_reviewed_at: '2026-01-02T00:00:00Z', directory_reviewed_sha: 'abc' };
-  assert.equal(curation.describe({ ...base, directory_review_status: 'working' }).tier, 'ready');
-  assert.match(byValue.working, /Reviewed working apps[\s\S]*Featured[\s\S]*new version is deployed/);
-  for (const v of ['demo', 'broken']) {
-    assert.equal(curation.describe({ ...base, directory_review_status: v }).tier, 'more');
-    assert.match(byValue[v], /Show more[\s\S]*Cannot be featured/);
-  }
-  assert.equal(curation.describe({ ...base, directory_review_status: 'unreviewed' }).tier, 'unreviewed');
-  assert.match(byValue.unreviewed, /Not yet reviewed[\s\S]*Cannot be featured/);
-});
+  const src = fs.readFileSync(path.join(__dirname, '../frontend/src/features/admin/admin-featured-apps.tsx'), 'utf8');
+  assert.match(src, /_confirm\(\{[\s\S]*?danger: true/, 'flagging asks first');
+  assert.match(src, /\/api\/admin\/apps\/\$\{encodeURIComponent\(app\.slug\)\}\/discover-flag/);
 
-test('directory review lists what "Reviewed working" still needs, with the fix', () => {
-  const { requirementsFor } = loadTsx('frontend/src/features/admin/admin-featured-apps.tsx');
-  const ready = requirementsFor({ slug: 'a', status: 'running', main_sha: 'abc', icon_emoji: '🧪' });
-  assert.deepEqual(ready.map((r) => r.ok), [true, true, true]);
-
-  const blocked = requirementsFor({ slug: 'b', status: 'error', main_sha: null });
-  assert.deepEqual(blocked.map((r) => r.ok), [false, false, false]);
-  assert.match(blocked[0].fix, /“error”[\s\S]*redeploy/);
-  assert.match(blocked[1].fix, /Deploy it once/);
-  assert.match(blocked[2].fix, /icon in the app’s dapp\.json/);
-  assert.equal(requirementsFor({ slug: 'c', status: 'running', main_sha: 'x', icon_url: '/app-icons/1' })[2].ok, true,
-    'an image icon counts as well as an emoji');
+  assert.equal(canFeature(listed), true);
+  assert.equal(canFeature(flagged), false);
+  assert.equal(canFeature({ slug: 'x', directory: curation.describe(app({ icon_emoji: null })) }), false);
 });

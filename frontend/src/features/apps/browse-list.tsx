@@ -34,7 +34,7 @@ import { AppIconContent, AppIconLink, AppPills, appIconKind, hasAppPills } from 
 
 type RowView = {
   app: Record<string, any>;
-  directoryTier?: 'ready' | 'unreviewed' | 'more';
+  directoryTier?: 'ready' | 'more';
   slug: string;
   name: string;
   /** The app's one-line description, from its dapp.json (#5928), or null. */
@@ -89,23 +89,13 @@ const LEAVE = `browse-leave-btn shrink-0 inline-flex items-center rounded-full p
 
 /**
  * The label a Discover row shows under its name, from the API's
- * `directory` (src/services/discovery-curation.js), or null.
- *
- * REVIEW STATE IS NOT SHOWN (#5267). "Reviewed working", "Not yet reviewed"
- * and "Needs re-review" (states `working`, `unreviewed` and `outdated`) are
- * the admin console's moderation vocabulary: the directory used to group by
- * them under headings and, where no heading said it, label each row. People
- * browsing see the apps in the same order without the words; an admin finds
- * the unreviewed ones under the "Not yet reviewed" chip, and Admin › Featured
- * apps keeps every distinction. A label that says what a person can DO
- * about an app stays: Demo, Needs fixes, Not running, Needs an icon, which
- * are the rows under Show more.
+ * `directory` (src/services/discovery-curation.js), or null. A listed app has
+ * none; a row under Show more says why it is there (Not running, Needs an
+ * icon), and a flagged community you are in, which only the Joined view
+ * lists, says it is hidden from Discover.
  */
-const REVIEW_STATES = new Set(['working', 'unreviewed', 'outdated']);
-export function rowDirectoryLabel(directory?: { state?: string; label?: string } | null): string | null {
-  if (!directory?.label) return null;
-  if (directory.state && REVIEW_STATES.has(directory.state)) return null;
-  return directory.label;
+export function rowDirectoryLabel(directory?: { label?: string | null } | null): string | null {
+  return directory?.label || null;
 }
 
 /** How many rows down the list load their icons without waiting: a phone's
@@ -264,8 +254,7 @@ function Row({ view, eager = false }: {
           {/* What the app is, in its own words (#5928), above the facts: the
               name alone ("Sheep countrr", "block-game") rarely says it.
               One line, ellipsised; the whole sentence is its own
-              tooltip. Not `text-xs`: dapp.json's directory check reads a
-              meta line whose first child is not the small review label. */}
+              tooltip. Not `text-xs`, which is the small label under it. */}
           {view.about ? (
             <span className="browse-row-about block truncate text-zinc-700 dark:text-zinc-300" title={view.about}>{view.about}</span>
           ) : null}
@@ -361,9 +350,8 @@ export function BrowseRows({ rows, site = null, curated = false, grouped = true,
   const shown = rows.filter((view) => view.directoryTier !== 'more');
   // The default list's two sections (#5267): "Recommended for you" (the
   // featured apps you are not in, Browse.recommendedApps) and then the rest,
-  // reviewed apps first as the Recommended order puts them, under one
-  // heading. The rest is "More apps" under a Recommended section and "All
-  // apps" where there is none. No heading names a review state any more.
+  // in the Recommended order, under one heading. The rest is "More apps"
+  // under a Recommended section and "All apps" where there is none.
   const picked = shown.filter((view) => view.recommended);
   const rest = shown.filter((view) => !view.recommended);
   const more = rows.filter((view) => view.directoryTier === 'more');

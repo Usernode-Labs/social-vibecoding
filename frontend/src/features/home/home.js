@@ -480,22 +480,18 @@ const Home = {
   // How many admin-featured tiles the "Featured apps" row shows.
   FEATURED_LIMIT: 6,
 
-  // Can this app be offered on the Discover rail at all: it runs, it is not
-  // the platform itself, and it has an icon to draw. No editorial state here.
+  // Can this app be offered in Discover at all: it runs, it is not the
+  // platform itself, it has an icon to draw, and no admin has flagged it.
+  // The flag (`directory.flagged`, src/services/discovery-curation.js) is the
+  // one editorial state an app has, and it takes the app out of every
+  // Discover list and Featured.
   isDiscoverable(app) {
     return !!app && app.status === 'running' && !app.self_hosted
-      && !!(app.icon_url || app.icon_emoji);
+      && !!(app.icon_url || app.icon_emoji) && !Home.isFlagged(app);
   },
 
-  // Discoverable AND reviewed. The API derives `directory.tier` from an
-  // explicit admin review of the current deployment, not from active-user
-  // counts or the staging-only `demo` fixture flag. That review is pinned to
-  // the deployment it was made on and expires on every merge
-  // (src/services/discovery-curation.js), which is why the Browse grouping
-  // reads it, the popular lane only ranks by it, and the featured lane does
-  // not read it at all.
-  isDiscoveryReady(app) {
-    return Home.isDiscoverable(app) && app.directory?.tier === 'ready';
+  isFlagged(app) {
+    return !!(app && app.directory && app.directory.flagged);
   },
 
   // The featured row's contents for this viewer: admin-curated apps
@@ -505,13 +501,9 @@ const Home = {
   // (ascending, NULLs last) and capped at FEATURED_LIMIT.
   // Pure — unit-tested in tests/home-find-more.test.js.
   //
-  // Featuring IS the editorial decision, so the review state does not gate
-  // this lane (#2565). It used to: a "Reviewed working" review expires on
-  // every merge, so a featured app dropped out of Discover each time it
-  // shipped a change, and a fresh platform showed nothing at all. ADDING an
-  // app to Featured still requires a current review (PUT
-  // /api/admin/featured-apps); staying there does not. An admin who later
-  // marks a featured app broken unfeatures it as well.
+  // Featuring IS the editorial decision. A flagged app is never featured
+  // (flagging one takes it off the list, and the PUT refuses it), and
+  // isDiscoverable leaves one out here as well.
   //
   // ?shot=discover-empty forces the empty answer regardless (#949), for the
   // same reason ?shot=create-disabled exists above: "nothing left to
@@ -560,14 +552,8 @@ const Home = {
   // parseInt because a count arrives as a STRING when it comes straight off
   // a Postgres bigint.
   //
-  // Only public communities (`audience === 'open'`) qualify, running and
-  // with an icon, REVIEWED WORKING ONES FIRST. A review is not required
-  // (polish N3): it is pinned to one deployment and expires on every merge
-  // (#2565 is the same finding for the curated half), so on production on
-  // 19 Oct 2026 no app had a current one and this lane was always empty,
-  // while Discover listed 67 communities to join. One an admin reviewed as
-  // a demo or broken (`directory.tier === 'more'`) is still never offered.
-  // Also exclude:
+  // Only public communities (`audience === 'open'`) qualify, running, with
+  // an icon and not flagged (isDiscoverable). Also exclude:
   //   * `featured` — the curated half of the same lane already offers those.
   //     The renderer dedupes by slug anyway, since one lane is where a
   //     double-listing would show as the same card twice.
@@ -581,12 +567,11 @@ const Home = {
     if (Home._shotDiscoverEmpty()) return [];
     const users = (a) => (parseInt(a && a.active_users, 10) || 0);
     const members = (a) => (parseInt(a && a.member_count, 10) || 0);
-    const reviewed = (a) => (Home.isDiscoveryReady(a) ? 1 : 0);
     return (apps || [])
       .filter((a) => a && !a.featured && a.audience === 'open'
-        && Home.isDiscoverable(a) && a.directory?.tier !== 'more'
+        && Home.isDiscoverable(a)
         && ((!Home.isJoined(a) && !Home.isYours(a)) || Home._discoverKeep.has(a.slug)))
-      .sort((x, y) => (reviewed(y) - reviewed(x)) || (members(y) - members(x)) || (users(y) - users(x)))
+      .sort((x, y) => (members(y) - members(x)) || (users(y) - users(x)))
       .slice(0, Home.POPULAR_LIMIT);
   },
 

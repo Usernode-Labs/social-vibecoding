@@ -151,10 +151,6 @@
     "text": "Hide apps I\u2019ve joined",
     "description": "Switch in Discover's Filters sheet: shows only the apps whose community the viewer has not joined yet, the ones they could still join."
   },
-  "filters.adminTag": {
-    "text": "Admin",
-    "description": "Small tag beside a switch in Discover's Filters sheet that only platform admins get, saying it is an admin-only filter."
-  },
   "filters.show_one": {
     "text": "Show {{count}} app",
     "description": "Primary button at the foot of Discover's Filters sheet: applies the choices and closes the sheet. {{count}} is how many apps match, and is 1."
@@ -178,10 +174,6 @@
   "filter.new": {
     "text": "New",
     "description": "Switch in Discover's Filters sheet: show only recently created apps."
-  },
-  "filter.unreviewed": {
-    "text": "Not yet reviewed",
-    "description": "Switch in Discover's Filters sheet shown only to platform admins: shows only the apps no admin has reviewed in their current version yet."
   },
   "category.groupLabel": {
     "text": "Filter by type",
@@ -213,7 +205,7 @@
   },
   "sort.recommended": {
     "text": "Recommended",
-    "description": "Order in Discover's Filters sheet: Homeroom's own order, reviewed working apps first."
+    "description": "Order in Discover's Filters sheet: Homeroom's own order, the featured apps first, then the ones most people use."
   },
   "sort.users": {
     "text": "Most users",
@@ -255,10 +247,6 @@
     "text": "No new apps match “{{query}}”.",
     "description": "Shown in place of Discover's list when the New filter is on and the search finds nothing. {{query}} is what the person typed."
   },
-  "empty.search.unreviewed": {
-    "text": "No unreviewed apps match “{{query}}”.",
-    "description": "Shown to an admin in place of Discover's list when the Not yet reviewed filter is on and the search finds nothing. {{query}} is what the admin typed."
-  },
   "empty.search.all": {
     "text": "No apps match “{{query}}”.",
     "description": "Shown in place of Discover's list when the search finds nothing and no filter narrows it. {{query}} is what the person typed."
@@ -282,10 +270,6 @@
   "empty.search.filters": {
     "text": "No apps match “{{query}}” with these filters.",
     "description": "Shown in place of Discover's list when several filters are on together and the search finds nothing. {{query}} is what the person typed; keep the quotation marks around it in your language's style."
-  },
-  "empty.unreviewed": {
-    "text": "Every app has been reviewed.",
-    "description": "Shown to an admin in place of Discover's list when the Not yet reviewed filter is on and no app is waiting for a review."
   },
   "empty.all": {
     "text": "No apps to show yet.",

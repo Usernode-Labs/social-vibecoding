@@ -2,10 +2,10 @@
 
 // Featured apps, for a full platform admin's connector session: the featured
 // tools in services/mcp-tools.js (list_featured_apps, set_featured_apps,
-// review_app_for_directory). They manage what Admin > Featured apps manages:
-// the ordered list the signed-out landing's Featured and every user's "Find
-// more apps" row read, and the directory review an app needs before it can
-// be on it.
+// set_discover_flag). They manage what Admin > Featured apps manages: the
+// ordered list the signed-out landing's Featured and every user's "Find more
+// apps" row read, and the flag that takes an app out of Discover and
+// Featured.
 //
 // They live at their own prefix because a connector token can never reach
 // /api/admin, where the console's routes are (services/cli-api-policy.js),
@@ -52,14 +52,13 @@ function featuredAdminRoutes(config) {
     });
   };
 
-  // Read: the list in its order, and every app that could be added, each
-  // with its directory review.
+  // Read: the list in its order, and every other app, each with where it
+  // stands in Discover and whether it is flagged.
   router.get('/api/featured-admin/featured-apps', requireAdminWrite, toConsole);
 
-  // Writes: the whole list in its new order, and one app's review of the
-  // version it is running.
+  // Writes: the whole list in its new order, and one app's flag.
   router.put('/api/featured-admin/featured-apps', requireAdminWrite, featuredAdminLimiter, sameOriginBrowserOnly, toConsole);
-  router.put('/api/featured-admin/apps/:slug/directory-review', requireAdminWrite, featuredAdminLimiter, sameOriginBrowserOnly, toConsole);
+  router.put('/api/featured-admin/apps/:slug/discover-flag', requireAdminWrite, featuredAdminLimiter, sameOriginBrowserOnly, toConsole);
 
   return router;
 }

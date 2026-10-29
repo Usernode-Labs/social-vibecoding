@@ -1,9 +1,23 @@
 'use strict';
 
-// Editorial review is not deployment health: a running container can still
-// serve a demo or a broken main flow. Only an admin's review of the currently
-// deployed version can qualify an app for the curated discovery lanes.
-const REVIEW_STATES = new Set(['unreviewed', 'working', 'demo', 'broken']);
+// Where an app stands in Discover. No admin review: an app that runs and has
+// an icon is listed, and one that cannot run or has no icon to draw goes under
+// Show more. The one editorial state is an admin's flag, which takes an app
+// out of Discover and Featured (the signed-in Discover, Home's Discover rail
+// and the signed-out landing) until an admin clears it. A flag hides nothing
+// else: the app still opens from a link, its members still have it, and its
+// own pages still answer.
+//
+// The flag lives in the columns #1523's directory review used
+// (apps.directory_review_status, directory_reviewed_at), so retiring the
+// review changed no schema: 'demo' or 'broken' is flagged, anything else is
+// not, and directory_reviewed_at is when it was flagged. The flag route
+// (routes/admin-featured-apps.js) writes FLAGGED and clears to UNFLAGGED, so
+// those are the only two values new writes leave. directory_reviewed_sha is
+// no longer read or written.
+const FLAGGED_STATES = ['demo', 'broken'];
+const FLAGGED = 'broken';
+const UNFLAGGED = 'unreviewed';
 
 function timestamp(value) {
   if (!value) return null;
@@ -16,29 +30,31 @@ function hasIcon(app) {
     .some((value) => typeof value === 'string' && value.trim()));
 }
 
-function describe(app) {
-  const review = REVIEW_STATES.has(app?.directory_review_status)
-    ? app.directory_review_status : 'unreviewed';
-  const reviewedAt = timestamp(app?.directory_reviewed_at);
-  const deployedAt = timestamp(app?.last_deploy_at);
-  let state = review;
-  let tier = 'more';
-  let label;
-  if (review === 'demo') label = 'Demo';
-  else if (review === 'broken') label = 'Needs fixes';
-  else if (app?.status !== 'running') { state = 'unavailable'; label = 'Not running'; }
-  else if (!hasIcon(app)) { state = 'missing_icon'; label = 'Needs an icon'; }
-  else if (review === 'working' && reviewedAt !== null && app.main_sha
-    && app.main_sha === app.directory_reviewed_sha
-    && (app.last_deploy_at == null || (deployedAt !== null && deployedAt <= reviewedAt))) {
-    tier = app.self_hosted ? 'unreviewed' : 'ready';
-    label = 'Reviewed working';
-  } else {
-    state = review === 'working' ? 'outdated' : 'unreviewed';
-    tier = 'unreviewed';
-    label = state === 'outdated' ? 'Needs re-review' : 'Not yet reviewed';
-  }
-  return { state, tier, label, reviewedAt: reviewedAt === null ? null : new Date(reviewedAt).toISOString() };
+function isFlagged(app) {
+  return FLAGGED_STATES.includes(app?.directory_review_status);
 }
 
-module.exports = { REVIEW_STATES, timestamp, hasIcon, describe };
+// `tier` is where Discover puts the app: 'listed', 'more' (under Show more)
+// or 'hidden' (flagged: left out). `label` is the word a row shows for it,
+// null for a listed app.
+function describe(app) {
+  const flagged = isFlagged(app);
+  const flaggedAt = flagged ? timestamp(app.directory_reviewed_at) : null;
+  let state = 'listed';
+  let tier = 'listed';
+  let label = null;
+  if (flagged) { state = 'flagged'; tier = 'hidden'; label = 'Hidden from Discover'; }
+  else if (app?.status !== 'running') { state = 'unavailable'; tier = 'more'; label = 'Not running'; }
+  else if (!hasIcon(app)) { state = 'missing_icon'; tier = 'more'; label = 'Needs an icon'; }
+  return { state, tier, label, flagged, flaggedAt: flaggedAt === null ? null : new Date(flaggedAt).toISOString() };
+}
+
+// What featuring an app needs: an icon for its card, and no flag. Null when
+// it can be featured, else the reason, in a sentence an admin can act on.
+function featureRefusal(app) {
+  if (isFlagged(app)) return 'is flagged, so it is hidden from Discover. Clear the flag before featuring it.';
+  if (!hasIcon(app)) return 'has no icon. Add an emoji or image icon in its dapp.json before featuring it.';
+  return null;
+}
+
+module.exports = { FLAGGED_STATES, FLAGGED, UNFLAGGED, timestamp, hasIcon, isFlagged, describe, featureRefusal };
