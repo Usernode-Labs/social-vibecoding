@@ -130,9 +130,12 @@ test('authority is read again on every attempt, so one revoked after a write sto
 test('an Undo retried after its push and a lost PR reply pushes nothing and opens no second PR', async (t) => {
   const github = require('../src/services/github');
   const docker = require('../src/services/docker');
-  const branches = new Set(); const prs = new Map(); const git = [];
+  const branches = new Set(); const prs = new Map(); const git = []; const children = [];
   let failPr = true;
-  t.mock.method(github, 'getInstallationToken', async () => 'token');
+  t.mock.method(github, 'getInstallationToken', async () => 'ghs_revert_installation_token');
+  const planted = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = 'postgres://planted:planted-db-secret@db.invalid/app';
+  t.after(() => { if (planted === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = planted; });
   t.mock.method(github, 'getBranchSha', async (_o, _r, b) => (branches.has(b) ? 'f'.repeat(40) : null));
   t.mock.method(github, 'findOpenPrByBranch', async (_o, _r, b) => prs.get(b) || null);
   t.mock.method(github, 'createPR', async (_o, _r, { branch }) => {
@@ -140,7 +143,8 @@ test('an Undo retried after its push and a lost PR reply pushes nothing and open
     if (failPr) { failPr = false; throw new Error('socket hang up'); }
     return prs.get(branch);
   });
-  t.mock.method(docker, 'execFileAsync', async (_cmd, args) => {
+  t.mock.method(docker, 'execFileAsync', async (_cmd, args, opts) => {
+    children.push({ args, env: opts.env });
     git.push(args.find((a) => ['clone', 'revert', 'push', 'checkout'].includes(a)) || args[0]);
     if (args.includes('push')) branches.add(args.at(-1));
     return { stdout: '' };
@@ -155,6 +159,16 @@ test('an Undo retried after its push and a lost PR reply pushes nothing and open
   assert.equal(git.filter((g) => g === 'push').length, pushes, 'no second push');
   assert.equal(github.createPR.mock.callCount(), 1, 'no second PR');
   assert.equal(out.prNumber, 41); assert.match(out.branch, /^revert\/dev\/x-1-\d+$/);
+  // The installation token is never an argument or in the clone's URL, and
+  // only the clone and the push hold it, through git's credential helper;
+  // no git child holds the process's own secrets.
+  for (const { args, env } of children) {
+    const sub = args.find((a) => ['clone', 'revert', 'push', 'checkout', 'config'].includes(a));
+    assert.ok(!args.join(' ').includes('ghs_revert_installation_token'), `git ${sub}'s argv holds the token`);
+    assert.ok(env && !JSON.stringify(env).includes('planted-db-secret'), `git ${sub} is handed the process's environment`);
+    assert.equal(env.USERNODE_GIT_PASSWORD === 'ghs_revert_installation_token', ['clone', 'push'].includes(sub), `git ${sub}`);
+  }
+  assert.ok(children.some((c) => c.args.includes('https://github.com/acme/demo.git')), 'cloned from the bare address');
 });
 
 test('branches are made only under dev/, and a proposal start only on its requester\'s own name', () => {

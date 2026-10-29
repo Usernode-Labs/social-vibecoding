@@ -1,3 +1,6 @@
+const fsp = require('fs/promises');
+const os = require('os');
+const path = require('path');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const { connectionExhaustionMessage } = require('../db/connection-census');
@@ -7,6 +10,7 @@ const log = require('../services/logger');
 const github = require('../services/github');
 const githubMock = require('../services/github-mock');
 const docker = require('../services/docker');
+const gitChild = require('../services/git-child');
 const durableSteps = require('../services/durable-steps');
 const { sendSystemMessage, pushNotificationToUser } = require('../services/ws');
 const { getActiveUserStats, isUserActive } = require('../services/active-users');
@@ -6763,39 +6767,49 @@ async function pushHostedRevert({ mergeSha, repoOwner, repoName, revertBranch, p
 
 // On GitHub (the platform's own repository): as the GitHub App, with an
 // installation token made for this revert (services/github.js "Who
-// Homeroom is on GitHub"); refused for any other owner.
+// Homeroom is on GitHub"); refused for any other owner. The token is never
+// in argv, the clone's URL or its config: only the clone and the push are
+// handed it, through git's credential helper, and no git child here holds
+// any other secret of this process (services/git-child.js).
 async function pushGithubRevert({ session, mergeSha, repoOwner, repoName, revertBranch }) {
   const token = await github.getInstallationToken(repoOwner);
+  const credential = { username: 'x-access-token', token };
 
-  const cloneUrl = `https://x-access-token:${token}@github.com/${repoOwner}/${repoName}.git`;
-  const tmpDir = `/tmp/usernode-revert-${session.id}-${Date.now()}`;
+  const cloneUrl = `https://github.com/${repoOwner}/${repoName}.git`;
+  // git's HOME beside the clone, never inside it.
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), `usernode-revert-${session.id}-`));
+  const tmpDir = path.join(root, 'repo');
+  const git = (args, { auth = false, ...opts } = {}) => {
+    const child = gitChild.invocation(args, { home: root, credential: auth ? credential : null });
+    return docker.execFileAsync('git', child.args, { ...opts, env: child.env });
+  };
 
   try {
     // Full clone — we need history reaching back to the merge SHA, so
     // the deployProduction shallow-clone pattern doesn't apply here.
-    await docker.execFileAsync('git', ['clone', cloneUrl, tmpDir], { timeout: 180000 });
+    await git(['clone', cloneUrl, tmpDir], { auth: true, timeout: 180000 });
 
     // Committer identity for the revert commit: Homeroom's one identity
     // (services/commit-identity.js), as on the git host.
     const author = require('../services/commit-identity').homeroomAuthor();
-    await docker.execFileAsync('git', ['-C', tmpDir, 'config', 'user.name', author.name]);
-    await docker.execFileAsync('git', ['-C', tmpDir, 'config', 'user.email', author.email]);
+    await git(['-C', tmpDir, 'config', 'user.name', author.name]);
+    await git(['-C', tmpDir, 'config', 'user.email', author.email]);
 
     // Branch off the current main. main has already been updated by
     // the original merge + any subsequent merges by the time we get
     // here, so this is the "current" main.
-    await docker.execFileAsync('git', ['-C', tmpDir, 'checkout', '-b', revertBranch], { timeout: 10000 });
+    await git(['-C', tmpDir, 'checkout', '-b', revertBranch], { timeout: 10000 });
 
     // `git revert --no-edit <sha>` — squash merges produce single-parent
     // commits, so no `-m 1` needed. If the revert conflicts (later
     // commits depend on this one), git exits non-zero and the docker
     // helper rejects.
     try {
-      await docker.execFileAsync('git', ['-C', tmpDir, 'revert', '--no-edit', mergeSha], { timeout: 30000 });
+      await git(['-C', tmpDir, 'revert', '--no-edit', mergeSha], { timeout: 30000 });
     } catch (revertErr) {
       // Clean up the conflicted state inside the tmp dir for hygiene
       // (best-effort), then surface a tight error.
-      await docker.execFileAsync('git', ['-C', tmpDir, 'revert', '--abort']).catch(() => {});
+      await git(['-C', tmpDir, 'revert', '--abort']).catch(() => {});
       const m = String(revertErr.message || '').toLowerCase();
       if (m.includes('conflict')) {
         throw new Error('Revert produced merge conflicts');
@@ -6803,9 +6817,9 @@ async function pushGithubRevert({ session, mergeSha, repoOwner, repoName, revert
       throw new Error(`git revert failed: ${revertErr.message.slice(0, 200)}`);
     }
 
-    await docker.execFileAsync('git', ['-C', tmpDir, 'push', '-u', 'origin', revertBranch], { timeout: 60000 });
+    await git(['-C', tmpDir, 'push', '-u', 'origin', revertBranch], { auth: true, timeout: 60000 });
   } finally {
-    await docker.execFileAsync('rm', ['-rf', tmpDir]).catch(() => {});
+    await fsp.rm(root, { recursive: true, force: true }).catch(() => {});
   }
 }
 

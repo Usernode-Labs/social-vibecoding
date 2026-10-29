@@ -39,8 +39,11 @@
 //
 // Nothing here takes a user credential. The fetch from the user's fork is
 // unauthenticated (app forks are public); the only secret in the file is the
-// platform's own write credential, and it appears only inside a remote URL
-// passed to git as an argv element, never logged.
+// platform's own write credential. It is never in argv, a remote URL, git
+// config or a log: git asks a credential helper for it, in the environment of
+// the one invocation that talks to the app's repository
+// (services/git-child.js), and no other git child here holds it or any other
+// secret of this process.
 
 const crypto = require('crypto');
 const fs = require('fs/promises');
@@ -52,6 +55,7 @@ const { promisify } = require('util');
 const log = require('./logger');
 const githubService = require('./github');
 const commitIdentity = require('./commit-identity');
+const gitChild = require('./git-child');
 
 const execFileAsync = promisify(execFile);
 
@@ -127,33 +131,33 @@ function validRef(value) {
 
 // ── The write credential ───────────────────────────────────────────────
 //
-// The one services/github.js getOctokit uses. Returns { token, source } so
-// the caller can log WHICH credential ran without ever touching the value;
-// `source` is 'git_host' or 'installation', the vocabulary
+// The one services/github.js getOctokit uses. Returns { token, username,
+// source }: `token` and `username` are what git's credential helper answers
+// (services/git-child.js), handed to a scratch git invocation as
+// `{ credential }`; `source` lets the caller log WHICH credential ran without
+// ever touching the value, 'git_host' or 'installation', the vocabulary
 // listActionsSecrets reports.
 async function resolveWriteCredential(owner) {
   // An app repository on Homeroom's git host: its service account
   // (services/git-host.js), the only credential that writes there.
   if (require('./repo-ref').hostOfOwner(owner) === 'git_host') {
-    const { token } = require('./git-host').settings();
+    const { token, user } = require('./git-host').settings();
     if (!token) throw new Error('no git host write credential is configured');
-    return { token, source: 'git_host' };
+    return { token, username: user, source: 'git_host' };
   }
   const token = await githubService.getInstallationToken(owner);
   if (!token) throw new Error('no GitHub write credential is configured');
-  return { token, source: 'installation' };
+  // GitHub takes any username with an installation token.
+  return { token, username: 'x-access-token', source: 'installation' };
 }
 
-function authenticatedRemote(token, owner, repo) {
+// The app repository's address, with no credential in it: an invocation
+// handed `{ credential }` answers the host's prompt through the helper.
+function appRemote(owner, repo) {
   if (require('./repo-ref').hostOfOwner(owner) === 'git_host') {
-    // The git host's address, as its service account.
-    const gitHost = require('./git-host');
-    const url = new URL(gitHost.cloneUrl({ owner, name: repo }));
-    url.username = encodeURIComponent(gitHost.settings().user);
-    url.password = encodeURIComponent(token);
-    return url.toString();
+    return require('./git-host').cloneUrl({ owner, name: repo });
   }
-  return `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+  return `https://github.com/${owner}/${repo}.git`;
 }
 
 // Where the mirror READS from: the user's fork, over plain public HTTPS with
@@ -168,24 +172,32 @@ function sourceCloneUrl(forkOwner, forkRepo) {
 // ── The scratch directory ──────────────────────────────────────────────
 //
 // Every git operation in this file runs in a throwaway directory that is
-// removed in a `finally`, on the success path and on every failure path.
-// The token lives only in a remote URL passed as an argv element inside it;
-// nothing is ever written to a git config that outlives the call.
+// removed in a `finally`, on the success path and on every failure path:
+// `dir` is the work tree, and git's HOME a sibling of it, so nothing a patch
+// writes into the tree is ever read as git's own configuration.
+//
+// `git(args, { credential, env, ...execFileOptions })` runs one git process
+// in it, with only what git needs of this process's environment
+// (services/git-child.js). Pass `credential` (resolveWriteCredential) only to
+// an invocation that fetches from or pushes to the app's repository: it is
+// the only one that holds it, through the credential helper, and never in
+// argv. Everything that reads a submitted patch (apply, am, commit) runs
+// with none.
 async function withScratchRepo(label, fn) {
-  const dir = path.join(os.tmpdir(), `usernode-head-${label}-${nonce()}`);
-  await fs.mkdir(dir, { recursive: true });
-  const git = (args, opts = {}) => execFileAsync('git', ['-C', dir, ...args], {
-    timeout: GIT_TIMEOUT_MS,
-    maxBuffer: 16 * 1024 * 1024,
-    ...opts,
-    env: {
-      ...process.env,
-      GIT_TERMINAL_PROMPT: '0',
-      GIT_ASKPASS: '/bin/true',
-      GIT_CONFIG_NOSYSTEM: '1',
-      HOME: dir,
-    },
-  });
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), `usernode-head-${label}-`));
+  const dir = path.join(root, 'repo');
+  const home = path.join(root, 'home');
+  await fs.mkdir(dir);
+  await fs.mkdir(home);
+  const git = (args, { credential = null, env = {}, ...opts } = {}) => {
+    const child = gitChild.invocation(['-C', dir, ...args], { home, credential, env });
+    return execFileAsync('git', child.args, {
+      timeout: GIT_TIMEOUT_MS,
+      maxBuffer: 16 * 1024 * 1024,
+      ...opts,
+      env: child.env,
+    });
+  };
   try {
     await git(['init', '--quiet']);
     // Homeroom's one identity (services/commit-identity.js): the committer
@@ -196,7 +208,7 @@ async function withScratchRepo(label, fn) {
     await git(['config', 'user.email', author.email]);
     return await fn({ dir, git });
   } finally {
-    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(root, { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -372,8 +384,8 @@ async function mirrorForkBranch({
       // not do.
       await git(['fetch', '--depth', '1', '--no-tags',
         sourceCloneUrl(forkOwner, forkRepo), branch]);
-      await git(['push', authenticatedRemote(credential.token, owner, repo),
-        `FETCH_HEAD:refs/heads/${mirrorBranch}`]);
+      await git(['push', appRemote(owner, repo),
+        `FETCH_HEAD:refs/heads/${mirrorBranch}`], { credential });
     });
   } catch (err) {
     log.error('external-agent-head', 'mirror push failed', {
@@ -396,7 +408,7 @@ async function mirrorForkBranch({
     branch: mirrorBranch,
     headSha: verified.headSha,
     credential: credential.source,
-    cleanup: () => deleteBranch({ owner, repo, branch: mirrorBranch, token: credential.token }),
+    cleanup: () => deleteBranch({ owner, repo, branch: mirrorBranch, credential }),
   };
 }
 
@@ -481,14 +493,14 @@ async function pushForkBranchToAppBranch({
         await git(['fetch', '--no-tags', forkUrl, branch]);
       }
       await git(['push', `--force-with-lease=${lease}`,
-        authenticatedRemote(credential.token, owner, repo),
-        `FETCH_HEAD:refs/heads/${targetBranch}`]);
+        appRemote(owner, repo),
+        `FETCH_HEAD:refs/heads/${targetBranch}`], { credential });
     });
   } catch (err) {
     // Redacted twice on purpose, once for the classification below and once at
-    // the log call itself: git puts the whole remote URL — token included — in
-    // its error text, and a redaction that is applied at the log line is one a
-    // reader (and tests/external-agent-tasks.js's scrape) can see is there.
+    // the log call itself. The remote URL carries no token any more, but a
+    // redaction applied at the log line is one a reader (and
+    // tests/external-agent-tasks.js's scrape) can see is there.
     const raw = err && (err.stderr || err.message);
     const text = redactToken(raw, credential.token);
     // "stale info" is git's own words for a lease that no longer holds.
@@ -535,23 +547,24 @@ async function pushForkBranchToAppBranch({
 
 // Best-effort removal of a branch this module wrote. Never throws: it runs
 // on a path that is already failing, and a leftover branch is a smaller
-// problem than a masked error.
-async function deleteBranch({ owner, repo, branch, token }) {
+// problem than a masked error. `credential` is resolveWriteCredential's.
+async function deleteBranch({ owner, repo, branch, credential }) {
   try {
     await withScratchRepo('cleanup', async ({ git }) => {
-      await git(['push', authenticatedRemote(token, owner, repo), '--delete', branch]);
+      await git(['push', appRemote(owner, repo), '--delete', branch], { credential });
     });
     log.info('external-agent-head', 'removed branch after a failed submission', { owner, repo, branch });
   } catch (err) {
     log.warn('external-agent-head', 'could not remove branch after a failed submission', {
-      owner, repo, branch, err: redactToken(err && err.message, token),
+      owner, repo, branch, err: redactToken(err && err.message, credential && credential.token),
     });
   }
 }
 
-// git puts the whole remote URL in its error text, and the URL carries the
-// write credential. Nothing from a git failure reaches a log without going
-// through this first.
+// git's error text names the remote, and before the credential helper the
+// remote URL carried the write credential. Nothing from a git failure
+// reaches a log without going through this first, so a token git ever
+// echoes is still never written.
 function redactToken(message, token) {
   const text = String(message || '');
   if (!token) return text.slice(0, 500);
@@ -570,7 +583,7 @@ module.exports = {
   validSegment,
   validRef,
   resolveWriteCredential,
-  authenticatedRemote,
+  appRemote,
   sourceCloneUrl,
   withScratchRepo,
   verifyForkBranch,

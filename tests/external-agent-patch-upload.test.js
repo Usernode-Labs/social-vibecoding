@@ -786,7 +786,7 @@ function gitIn(dir, args) {
 test('an uploaded patch is applied byte for byte, a non-UTF-8 file included', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-patch-upload-'));
   const head = require('../src/services/external-agent-head');
-  const realRemote = head.authenticatedRemote;
+  const realRemote = head.appRemote;
   // The write credential: the GitHub App's installation token (services/github.js).
   const githubSvc = require('../src/services/github');
   const realInstallationToken = githubSvc.getInstallationToken;
@@ -809,7 +809,7 @@ test('an uploaded patch is applied byte for byte, a non-UTF-8 file included', as
     const patch = gitIn(work, ['format-patch', '--stdout', `${base}..HEAD`]);
     assert.ok(Buffer.isBuffer(patch) && patch.includes(latin1.subarray(3, 4)));
 
-    head.authenticatedRemote = () => `file://${bare}`;
+    head.appRemote = () => `file://${bare}`;
     githubSvc.getInstallationToken = async () => 'local-test-token';
     const result = await patchSvc.applyPatch({
       owner: 'usernode-bot', repo: 'recipe-box', patch, baseSha: base, userId: 3, taskId: 31,
@@ -819,7 +819,7 @@ test('an uploaded patch is applied byte for byte, a non-UTF-8 file included', as
     const blob = gitIn(bare, ['show', `${result.headSha}:menu.txt`]);
     assert.ok(blob.equals(latin1), 'the file is exactly what the agent committed');
   } finally {
-    head.authenticatedRemote = realRemote;
+    head.appRemote = realRemote;
     githubSvc.getInstallationToken = realInstallationToken;
     fs.rmSync(root, { recursive: true, force: true });
   }

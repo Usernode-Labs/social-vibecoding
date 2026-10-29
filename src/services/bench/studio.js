@@ -936,7 +936,7 @@ async function copyUserBranch({ owner, repo, forkOwner, forkRepo, branch, baseSh
         e.code = 'no_commits';
         throw e;
       }
-      await git(['push', head.authenticatedRemote(credential.token, owner, repo), `${headSha}:refs/heads/${targetBranch}`]);
+      await git(['push', head.appRemote(owner, repo), `${headSha}:refs/heads/${targetBranch}`], { credential });
       out = { headSha, commits: Number(count) };
     });
   } catch (err) {
