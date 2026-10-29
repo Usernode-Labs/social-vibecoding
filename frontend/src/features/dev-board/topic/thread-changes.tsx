@@ -116,10 +116,12 @@ function useChangeViews(items: ThreadItem[]): Array<ChangeView | null> {
  * vote (governance-rules.ts: proposing counts as a yes on the counted
  * rules), read off its proposal row: Two yeses and Open floor count every
  * person's change; You or the group counts the creator's. Anything else
- * (Group vote, a project's own rules) is not assumed: the viewer taps.
+ * (Group vote, a project's own rules) is not assumed: the viewer taps. Nor
+ * is a change a coding agent submitted for them (`external_agent`): its
+ * author taps Yes on it like anyone else.
  */
 export function authorCounts(item: ThreadItem, row: any): boolean {
-  if (!item.mine || item.byBot || item.myVote || !row || row.approval_mode !== 'rules') return false;
+  if (!item.mine || item.byBot || item.myVote || !row || row.external_agent || row.approval_mode !== 'rules') return false;
   if (row.approval_preset === 'two_yeses' || row.approval_preset === 'open_floor') return true;
   return row.approval_preset === 'you_or_the_group' && !!row.creator_yes;
 }

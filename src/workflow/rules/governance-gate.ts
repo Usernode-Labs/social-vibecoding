@@ -644,6 +644,10 @@ export interface GateOpts {
   // bot). On a rules project proposing is a person's yes; the bot's is none
   // (governance-rules.ts, "Only a PERSON's proposing is a yes").
   authorIsBot?: boolean;
+  // A coding agent submitted the change for its author (chat_sessions.
+  // external_agent): proposing is not their yes until they tap it
+  // (governance-rules.ts, "Only proposing ON HOMEROOM is a yes").
+  madeByAgent?: boolean;
   rulesFacts?: RulesFacts | null;
   // The change is its project's first version (services/first-version-
   // rule.js): applyFirstVersion below.
@@ -806,6 +810,7 @@ export function computeRulesGate(
   const authorId = opts.authorId != null && Number.isFinite(int(opts.authorId))
     ? int(opts.authorId) : null;
   const authorIsBot = !!opts.authorIsBot;
+  const madeByAgent = !!opts.madeByAgent;
   // The member floor on the majority rules of a flagged proposal: a yes from
   // someone other than its author, once the community has more than one member.
   let floor: Floor | null = null;
@@ -822,6 +827,7 @@ export function computeRulesGate(
     counts: { yes: Math.max(int(yesCount) || 0, 0), no: Math.max(int(noCount) || 0, 0) },
     authorId,
     authorIsBot,
+    madeByAgent,
     openedAt,
     now,
     noTimers: explicitApproval,
@@ -833,7 +839,7 @@ export function computeRulesGate(
   const { gate, owner, shown, results, passedBy } = evaluated;
   const creatorYes = !!(facts.creatorId && voters
     && (voters.yes.has(facts.creatorId)
-      || (authorId === facts.creatorId && !authorIsBot && !voters.no.has(facts.creatorId))));
+      || (authorId === facts.creatorId && !authorIsBot && !madeByAgent && !voters.no.has(facts.creatorId))));
   return {
     ...gate,
     policy: 'anyone',

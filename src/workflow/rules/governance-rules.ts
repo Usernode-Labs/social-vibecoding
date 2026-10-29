@@ -74,6 +74,13 @@
  * project's first version, and that is the gate's rule, not this one
  * (governance-gate.ts applyFirstVersion).
  *
+ * Only proposing ON HOMEROOM is a yes. A change a coding agent submitted for
+ * its author (through the connector, or a local agent's hand-off:
+ * chat_sessions.external_agent; `madeByAgent`) was put up for a vote by the
+ * agent, not by the person tapping anything here. Its author's yes counts
+ * like anyone's, once they tap Yes on it (29 Oct 2026: "they should just have
+ * to manually do it, not have it auto-done by the connector").
+ *
  * ── Changes to who decides ─────────────────────────────────────────────
  *
  * A change to who can see the project, its admins, its groups or this rule
@@ -423,6 +430,9 @@ export interface EvalContext {
   // The author is an account the platform runs (Homeroom bot): proposing is
   // not a person's yes, so it counts for nothing (see the header).
   authorIsBot?: boolean;
+  // A coding agent submitted the change (see the header): the author's yes
+  // counts once they tap it, not for proposing.
+  madeByAgent?: boolean;
   openedAt: unknown;
   now: unknown;
   noTimers: boolean;
@@ -449,10 +459,11 @@ export function evaluateRule(rule: Rule, ctx: EvalContext): RuleResult {
   const tally = groupTally(rule.group, ctx);
   let yes = tally.yes;
   // Proposing counts as a yes on the counted rules (see the header), unless
-  // the author voted No, or already said yes, or is not a person.
+  // the author voted No, or already said yes, or is not a person, or a
+  // coding agent put it up for them.
   const counted = rule.kind !== 'majority';
   let authorYes = false;
-  if (counted && ctx.voters && !ctx.authorIsBot && authorIn(rule.group, tally, ctx.authorId)
+  if (counted && ctx.voters && !ctx.authorIsBot && !ctx.madeByAgent && authorIn(rule.group, tally, ctx.authorId)
     && !ctx.voters.yes.has(ctx.authorId!) && !ctx.voters.no.has(ctx.authorId!)) {
     yes += 1;
     authorYes = true;
