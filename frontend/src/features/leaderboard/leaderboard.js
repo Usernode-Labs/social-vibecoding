@@ -822,6 +822,7 @@ const Leaderboard = {
     close_issue: 'leaderboard:kudos.history.kind.closeIssue',
     maintenance_campaign: 'leaderboard:kudos.history.kind.maintenance',
     featured_illustration: 'leaderboard:kudos.history.kind.featuredIllustration',
+    thread_move: 'leaderboard:kudos.history.kind.threadMove',
   }),
 
   _kindLabel(kind) {

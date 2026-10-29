@@ -229,6 +229,9 @@ test('Notify me and Mute: a same-origin write, for a thread the viewer may see',
   const route = read('src/routes/threads.js');
   assert.match(route, /router\.put\('\/api\/threads\/:id\/follow', sameOriginBrowserOnly,/);
   assert.match(route, /checkAppAccess\(pool, app, user, 'view'\)/, 'seeing the project is enough');
-  assert.doesNotMatch(route, /requireAppMembership/, 'following is not taking part');
+  // Following is not taking part: the follow route has no membership gate
+  // (the moves below it, stage 6, do).
+  const follow = route.slice(route.indexOf("router.put('/api/threads/:id/follow'"));
+  assert.doesNotMatch(follow.slice(0, follow.indexOf('\n  });')), /member/, 'following is not taking part');
   assert.match(read('server.js'), /require\('\.\/src\/routes\/threads'\)\.threadsRoutes\(config\)/);
 });
