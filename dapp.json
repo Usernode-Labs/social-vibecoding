@@ -1483,10 +1483,10 @@
       "expectText": "See all"
     },
     {
-      "name": "Directory leads with Recommended for you and keeps demos under Show more (#1523, #5267)",
+      "name": "Directory leads with Featured and keeps demos under Show more (#1523, #5267, #5928)",
       "path": "/?demo=1&curation=1&sort=recommended#apps",
       "expectSelector": "#browse-list:has(h2 ~ [data-slug=\"directory-sample-working\"][data-directory-state=\"working\"]):not(:has(.browse-row[data-slug=\"directory-sample-demo\"])) button[aria-controls=\"browse-more-apps\"][aria-expanded=\"false\"]",
-      "expectText": "Recommended for you"
+      "expectText": "Featured"
     },
     {
       "name": "Show more is on every sort, not just Recommended (#1912)",

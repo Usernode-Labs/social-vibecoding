@@ -82,7 +82,7 @@ test('the browse directory’s tier labels ARE grouped-list’s SectionHeader', 
     rows: [picked, row('ready-app', 'ready'), row('new-app', 'unreviewed')],
     curated: true,
   }));
-  for (const label of ['Recommended for you', 'More apps']) {
+  for (const label of ['Featured', 'More apps']) {
     assert.ok(
       html2.includes(headerHtml({ className: 'md:col-span-full' }, label)),
       `“${label}” no longer renders through SectionHeader: it is hand-written again`,

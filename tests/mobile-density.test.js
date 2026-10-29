@@ -41,7 +41,7 @@ test('Discover keeps the full app name, metadata and explicit add/remove action 
   // QA 2026-09-24 Q10: one short word on screen ("+ Join", communities), and
   // what is being joined in the accessible name.
   assert.match(html, /data-added="false" data-action="join" aria-label="Join A very long community application name"[^>]*>.*Join<\/button>/);
-  assert.equal((html.match(/class="browse-add-btn/g) || []).length, 1, 'no duplicated responsive buttons');
+  assert.equal((html.match(/<button[^>]*class="[^"]*\bbrowse-add-btn\b/g) || []).length, 1, 'no duplicated responsive buttons');
   // #5267: a joined row offers Open, one short word, not "✓ Joined".
   assert.match(render(true), /data-added="true" data-action="open" aria-label="Open A very long community application name"[^>]*>Open<\/button>/);
   assert.doesNotMatch(render(true), />Joined</);

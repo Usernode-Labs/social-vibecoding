@@ -144,10 +144,12 @@ test('#3911, #5267: Discover names no review state, on any row, in any order', (
   assert.match(render({ rows: withOutdated, curated: false }), /Needs fixes/);
 });
 
-test('#5267: Recommended for you leads the default list, and the rest is More apps', () => {
+test('#5267, #5928: Featured leads the default list, and the rest is More apps', () => {
   const picked = { ...row('picked'), recommended: true };
   const html = render({ rows: [picked, rows[0], rows[1]] });
-  const rec = html.indexOf('>Recommended for you</h2>');
+  // Staff picks, not a personal recommendation (#5928): the heading says so.
+  assert.doesNotMatch(html, /Recommended for you/);
+  const rec = html.indexOf('>Featured</h2>');
   const more = html.indexOf('>More apps</h2>');
   assert.ok(rec >= 0 && rec < html.indexOf('data-slug="picked"'));
   assert.ok(html.indexOf('data-slug="picked"') < more && more < html.indexOf('data-slug="ready"'));
@@ -160,6 +162,48 @@ test('#5267: Recommended for you leads the default list, and the rest is More ap
   assert.doesNotMatch(both, />Joined</);
   // One that cannot run has nothing to open: the row itself opens its page.
   assert.doesNotMatch(render({ rows: [{ ...joined, canOpen: false }], curated: false }), /browse-add-btn/);
+});
+
+test('#5928: Join is the accent pill, Open the quieter neutral one, both through Button', () => {
+  const { buttonVariants } = loadTsx('frontend/@/components/ui/button.tsx');
+  const joined = { ...row('joined'), added: true, canOpen: true, canLeave: true };
+  const html = render({ rows: [joined, rows[0]], curated: false });
+  const classOf = (action) => {
+    const tag = (html.match(new RegExp(`<button[^>]*data-action="${action}"[^>]*>`)) || [])[0];
+    assert.ok(tag, `a ${action} button`);
+    return tag.match(/class="([^"]*)"/)[1].split(/\s+/);
+  };
+  const has = (classes, run) => run.split(/\s+/).every((c) => classes.includes(c));
+  const join = classOf('join');
+  const open = classOf('open');
+  // The primitive's own variants, not a hand-copied fill.
+  assert.ok(has(join, buttonVariants({ variant: 'pillAccent', size: 'none', ink: 'solid' })), 'Join is Button pillAccent');
+  assert.ok(has(open, buttonVariants({ variant: 'pillNeutral', size: 'none', ink: 'neutral' })), 'Open is Button pillNeutral');
+  assert.ok(!open.some((c) => c.includes('violet')), 'Open carries no accent');
+  for (const classes of [join, open]) assert.ok(classes.includes('browse-add-btn'), 'the click guard and checks hook stays');
+  // 44px to tap at every width below the shell's md (768px): on the element
+  // itself, released only from md up. Leave beside Open too.
+  for (const [name, classes] of [['join', join], ['open', open], ['leave', classOf('leave')]]) {
+    assert.ok(classes.includes('min-h-[44px]'), `${name} is 44px tall below md`);
+    assert.ok(classes.includes('md:min-h-0'), `${name} returns to its compact size from md`);
+    assert.ok(!classes.some((c) => /^(sm):min-h/.test(c)), `${name} is not released at 640px`);
+  }
+  // md is Tailwind's default 768px: the config sets no screens of its own.
+  const config = require('../tailwind.config.js');
+  assert.equal(config.theme?.screens ?? config.theme?.extend?.screens, undefined);
+});
+
+test('#5928: a row says what the app is, in its own words, when it has them', () => {
+  const described = { ...row('described'), about: 'Count sheep before bed.' };
+  const html = render({ rows: [described, rows[0]], curated: false });
+  const at = html.indexOf('data-slug="described"');
+  const about = html.indexOf('class="browse-row-about', at);
+  assert.ok(about > at && about < html.indexOf('data-slug="ready"'), 'the line is on its own row');
+  assert.match(html, /class="browse-row-about[^"]*"[^>]*>Count sheep before bed\.<\/span>/);
+  assert.equal((html.match(/browse-row-about/g) || []).length, 1, 'no filler line on a row without one');
+  // Not the small review label's size: dapp.json's directory check reads the
+  // meta line's first child as :not(.text-xs).
+  assert.doesNotMatch(html, /class="browse-row-about[^"]*text-xs/);
 });
 
 test('#3911: the admin console keeps "Needs re-review"', () => {
