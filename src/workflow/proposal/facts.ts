@@ -28,6 +28,8 @@ import type { GovernedGate } from '../rules/governance-gate.ts';
 import { appMetaFromRow, governanceFromRow } from '../rules/governance-gate.ts';
 import { electorate, getApproverSet } from '../rules/electorate.ts';
 import { parseRepoAddress } from '../rules/github-url.ts';
+import { onMain, readBaseOwner, readWaiting } from '../rules/pr-base.ts';
+import type { BaseOwner } from '../rules/pr-base.ts';
 import { NOT_MOVING_KINDS, botLookingSql, buildHoldSql, movingTurnSql, operationsLiveSql, shotsRunningSql, syncWorkingSql } from '../session-work.ts';
 
 export interface Row {
@@ -108,6 +110,12 @@ export interface Row {
   integrationMain: string | null;
   integrationResolvedEpoch: number | null;
   forkHead: boolean;
+  // An import's base on GitHub as last read, and the open change whose branch
+  // it is (rules/pr-base.ts): a base that is not main is never merged. That
+  // change's status: it is waited for only while it is open.
+  baseRef: string | null;
+  waitsFor: number | null;
+  waitsForStatus: string | null;
 }
 
 export interface Caps {
@@ -133,10 +141,18 @@ export interface Facts {
   // Resume, Reopen: teardown work (a worker destroy, a CC purge) under way
   // or done and not reported yet.
   tearingDown: boolean;
+  // Promote of an import whose pull request's base is not main: the open
+  // change whose branch that base is (it waits for it), or the one it waited
+  // for, merged since (it is being moved onto main), else none.
+  baseOwner: BaseOwner | null;
+  // Merged, PrLooked: the open changes stacked on this one's branch, told
+  // once it is on main (rules/pr-base.ts readWaiting).
+  waiting: number[];
 }
 
 export const NO_FACTS: Facts = {
   row: null, caps: null, gate: null, interestAt: null, mergesPaused: false, electorate: null, tearingDown: false, claim: null,
+  baseOwner: null, waiting: [],
 };
 
 // The platform-wide slot count's lock: every move into a slot takes it, for
@@ -163,6 +179,8 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
             cs.requires_explicit_approval, cs.explicit_approval_reason, cs.merge_attempt_at,
             cs.check_state, cs.checks_commit_sha, cs.boot_failure_sync_head, cs.fixed_check_sync_head, cs.fixed_check_sync_keys,
             cs.integration_head_sha, cs.integration_main_sha, cs.integration_resolved_epoch, cs.imported_pr_head_repo,
+            cs.imported_pr_base_ref, cs.waits_for_session_id,
+            (SELECT w.status FROM chat_sessions w WHERE w.id = cs.waits_for_session_id) AS waits_for_status,
             (cs.shots_state IS NOT NULL OR cs.shots_detail IS NOT NULL
               OR EXISTS (SELECT 1 FROM wf_instances sh WHERE sh.machine = 'shots' AND sh.key = 'session:' || cs.id)) AS shots,
             cs.active_turn IS NOT NULL AS active_turn,
@@ -212,6 +230,9 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
     integrationHead: sha(r.integration_head_sha), integrationMain: sha(r.integration_main_sha),
     integrationResolvedEpoch: r.integration_resolved_epoch == null ? null : Number(r.integration_resolved_epoch),
     forkHead: imported && forkOf(r),
+    baseRef: r.imported_pr_base_ref ?? null,
+    waitsFor: r.waits_for_session_id ?? null,
+    waitsForStatus: r.waits_for_status ?? null,
   };
 }
 
@@ -314,6 +335,11 @@ export async function readFacts(tx: Tx, sessionId: number, event: Event<any>, o:
   if (!row) return NO_FACTS;
   const out: Facts = { ...NO_FACTS, row };
   if (event.type === 'Promote') out.caps = await readCaps(tx, row, false);
+  if (event.type === 'Promote' && row.imported && p.pr && !onMain(p.pr.base)) {
+    const owners = await readBaseOwner(tx, { appId: row.appId, sessionId: row.id, base: p.pr.base, waited: row.waitsFor });
+    out.baseOwner = owners.open || owners.merged;
+  }
+  if (event.type === 'Merged' || (event.type === 'PrLooked' && p.merged)) out.waiting = await readWaiting(tx, row.id);
   if (event.type === 'Resume' && p.caps) out.caps = await readCaps(tx, row, true);
   const gated = event.type === 'ReviewCheck';
   if (gated && row.status === 'promoted') {

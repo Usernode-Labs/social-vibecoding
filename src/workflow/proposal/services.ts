@@ -5,6 +5,7 @@
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { parseRepoAddress } from '../rules/github-url.ts';
+import { defaultBranchOf, otherBase } from '../rules/pr-base.ts';
 import { permanent } from '../work-errors.ts';
 import { MACHINE, WORK, sessionKey } from './machine.ts';
 import { turnOwner } from '../rules/turn-stop.ts';
@@ -218,6 +219,38 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
       },
     },
 
+    // A stacked import whose parent is on main, moved onto main
+    // (rules/pr-base.ts): its pull request's base is retargeted to its
+    // repository's default branch, as GitHub names it. One already based
+    // there has nothing to move; one merged or closed meanwhile keeps its
+    // base; one based on a branch other than the one it was told about
+    // (`from`: its author moved it) is left where it is.
+    [WORK.retarget]: {
+      maxAttempts: 6,
+      backoffMs: (n) => Math.min(30 * 60 * 1000, 30 * 1000 * 2 ** (n - 1)),
+      async run({ input }): Promise<Json> {
+        const row = await session(Number(input.sessionId));
+        const mock = row?.source === 'imported' && legacy('config').usesMockGithubForImports();
+        const gh = mock ? legacy('services/github-mock') : github();
+        if (!mock && !gh.isEnabled()) throw new Error('GitHub is not configured');
+        let pr: any;
+        try {
+          pr = await gh.getPR(input.owner, input.repo, input.number);
+        } catch (err) {
+          if (gone(err)) return { skipped: 'not_open' };
+          throw err;
+        }
+        // Merged or closed meanwhile: its look settles the proposal.
+        if (pr?.merged || pr?.state === 'closed') return { skipped: 'not_open' };
+        const target = defaultBranchOf(pr);
+        const now = otherBase(pr);
+        if (now == null) return { base: target, already: true };
+        if (input.from && now !== input.from) return { skipped: 'base_moved', base: now };
+        await gh.retargetPR(input.owner, input.repo, input.number, target);
+        return { base: target };
+      },
+    },
+
     // Its worker goes (a pause, an unpromote, a close). One already gone is
     // gone. Fenced and finished (worker.removeWorker): the resources are read
     // by identity, then removed only while this claim is still ours (a
@@ -320,7 +353,12 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
         if (!mock && !gh.isEnabled()) throw new Error('GitHub is not configured');
         try {
           const pr = await gh.getPR(repo.owner, repo.repo, row.pr_number);
-          if (pr?.merged) return { merged: true, sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null };
+          // Where it merged: a merge into another branch is never recorded as
+          // merged (rules/pr-base.ts).
+          if (pr?.merged) {
+            return { merged: true, sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null,
+              base: row.source === 'imported' ? otherBase(pr) : null };
+          }
           return { merged: false, state: pr?.state || null };
         } catch (err) {
           if (gone(err)) return { merged: false, gone: true };
