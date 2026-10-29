@@ -274,3 +274,29 @@ test('the security barrier precedes serving, and its clock does not wait for rel
   assert.ok(loops.indexOf('clockKey(job.name)') < loops.indexOf('runtime.start('));
   assert.match(loops, /firstDueAt: new Date\(\)\.toISOString\(\)/);
 });
+
+// 28 Oct 2026: a new web Pod waited 98 s here, most of its rollout, for the
+// clock's next minute tick after an older conductor skipped one. A new
+// conductor now pulls the clock in until this build's proof is recorded,
+// through Arm alone, so an older conductor handling the events does the same.
+test('a new conductor pulls the security clock in until its proof is there, and web reports its wait', async () => {
+  const platform = fs.readFileSync(require.resolve('../src/workflow/platform.ts'), 'utf8');
+  const loops = platform.slice(platform.indexOf('export async function startWorkflowLoops()'), platform.indexOf('const ADOPTIONS'));
+  assert.ok(loops.indexOf('pullInSecurityClock(job, release)') > loops.indexOf('requestKey: `arm:${release}`'), 'after the boot Arm');
+  assert.ok(loops.indexOf('pullInSecurityClock(job, release)') < loops.indexOf("type: 'Booted'"), 'not after release adoption');
+  assert.match(loops, /void pullInSecurityClock\(job, release\)\.catch\(/, 'never blocks or fails boot');
+  const pull = platform.slice(platform.indexOf('async function pullInSecurityClock('));
+  assert.match(pull, /await startup\.proven\(appConfig, kernelPool\)/);
+  // Two Arms, the interval's own rule: due at once, then the job's interval back.
+  assert.match(pull, /await arm\(PULL_IN_INTERVAL_MS, `pull-in:\$\{release\}:\$\{me\}:\$\{n\}`\)/);
+  assert.match(pull, /await arm\(job\.everyMs, `pull-back:\$\{release\}:\$\{me\}:\$\{n\}`\)/);
+  assert.ok(pull.indexOf('pull-in:') < pull.indexOf('pull-back:'));
+  assert.match(platform, /const PULL_IN_FOR_MS = 180_000;/);
+  assert.equal(startup.WAIT_MS, 180_000, 'bounded by web\'s own wait');
+  // Nothing proven when the proof cannot even be read or scoped.
+  assert.equal(await startup.proven(config, { query: async () => { throw new Error('database unavailable'); } }), false);
+  assert.equal(await startup.proven({}, { query: async () => ({ rows: [{ result: {} }] }) }), false, 'no receipt key: no scope');
+  const server = fs.readFileSync(require.resolve('../server.js'), 'utf8');
+  assert.match(server, /const previewBarrierMs = Date\.now\(\) - barrierStartedAt;/);
+  assert.match(server, /servicesMs: Date\.now\(\) - servicesStartedAt,\s+previewBarrierMs,/);
+});
