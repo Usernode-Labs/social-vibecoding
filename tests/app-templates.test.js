@@ -27,8 +27,10 @@
 //      id no longer on the list as the default.
 //   4. EVERY READY-MADE APP is a whole repository on the platform's
 //      conventions and the new app's design kit: its files, the entry's
-//      fill escaped where it lands, the bridge, the theme, no CDN, its own
-//      declared checks resolving against its own screen.
+//      fill in words.json and escaped where the page shows it (filled at
+//      run time, docs/plans/versions.md "Words in config"), the bridge, the
+//      theme, no CDN, its own declared checks resolving against its own
+//      screen.
 //   5. EVERY GAME STARTER is a whole repository too, built on the shared
 //      game room (app-templates/_game-room) with its own rules and screen,
 //      `ws` added to its package.json and lockfile only, and server.js
@@ -42,7 +44,7 @@ const vm = require('node:vm');
 
 const appTemplates = require('../src/services/app-templates');
 const { parseCreateOptions } = require('../src/services/create-options');
-const { getTemplateFiles, fillAppName } = require('../src/services/template');
+const { getTemplateFiles, fillAppName, fillPage } = require('../src/services/template');
 const appManifest = require('../src/services/app-manifest');
 
 const ROOT = path.join(__dirname, '..');
@@ -66,7 +68,13 @@ const file = (files, p) => {
   return found.content;
 };
 
-const generate = (id, name = 'Demo App') => getTemplateFiles(name, 'demo-app-abc123', 'postgres://x', null, { template: id });
+// A new project's files, with its page as its server.js serves it: the
+// entry's words filled in from words.json, the name left for the platform's
+// USERNODE_APP_NAME (template.js fillPage, the same fill as starterPage;
+// tests/starter-images.test.js runs the generated server's own).
+const generate = (id, name = 'Demo App') => fillPage(getTemplateFiles(name, 'demo-app-abc123', 'postgres://x', null, { template: id }));
+// The same files exactly as the new repository commits them.
+const committed = (id, name = 'Demo App') => getTemplateFiles(name, 'demo-app-abc123', 'postgres://x', null, { template: id });
 
 test('the allow-list: Empty, the default, the twenty ready-made apps and the four game starters; a deleted starter is refused', () => {
   assert.deepEqual([...appTemplates.TEMPLATE_IDS], ['empty', ...READY, ...GAMES]);
@@ -247,18 +255,42 @@ test('a tier list ranks what its entry says, escaped where it lands, and its scr
   assert.match(html, /placeholder="e\.g\. the lake loop"/);
   assert.match(html, /<p class="text-heading">No hikes yet<\/p>/);
   assert.doesNotMatch(file(generate('tier-list-cities'), 'public/index.html'), /hike/);
-  // The fill is the entry's, never the maker's, but it is escaped all the same,
-  // like the name. The name is the one placeholder left: the page keeps
-  // {{APP_NAME}} for its server.js to fill in, escaped, at runtime
-  // (tests/starter-images.test.js), and fillAppName writes it in, escaped,
-  // for a page served as it is.
+  // Words in config (docs/plans/versions.md): what the entry fills is
+  // committed as words.json, exactly its `fill` and nothing else, and the
+  // code keeps its placeholders, so every project made from one starter
+  // directory commits the same code. Its server.js fills the page from
+  // words.json as it serves it, escaped like the name, and fillAppName writes
+  // both in, escaped, for a page served as it is.
+  const raw = committed('tier-list-hikes');
+  assert.deepEqual(JSON.parse(file(raw, 'words.json')), { ...appTemplates.get('tier-list-hikes').fill });
+  assert.match(file(raw, 'public/index.html'), /Our favorite \{\{ITEM_PLURAL\}\}, ranked together\./);
   const odd = getTemplateFiles('A <b>"Best"</b> & co', 'x', 'postgres://x', null, { template: 'tier-list-games' });
   assert.match(file(odd, 'public/index.html'), /<title>\{\{APP_NAME\}\}<\/title>/);
   const oddHtml = file(fillAppName(odd, 'A <b>"Best"</b> & co'), 'public/index.html');
   assert.match(oddHtml, /<title>A &lt;b&gt;&quot;Best&quot;&lt;\/b&gt; &amp; co<\/title>/);
   assert.doesNotMatch(oddHtml, /<b>"Best"/);
+  assert.match(oddHtml, /Our favorite games, ranked together\./, 'fillAppName fills the words too');
+  // A word with markup in it lands escaped, as the name does.
+  const strange = odd.map((f) => (f.path === 'words.json'
+    ? { ...f, content: JSON.stringify({ ...appTemplates.get('tier-list-games').fill, ITEM_PLURAL: '<i>"games"</i> & Jo\'s' }) }
+    : f));
+  assert.match(file(fillPage(strange), 'public/index.html'), /Our favorite &lt;i&gt;&quot;games&quot;&lt;\/i&gt; &amp; Jo&#39;s, ranked together\./);
   for (const id of READY) {
-    for (const f of generate(id)) assert.doesNotMatch(f.content, /\{\{(?!APP_NAME\}\})[A-Z_]+\}\}/, `${id}: ${f.path} has every placeholder but the name filled`);
+    const files = committed(id);
+    const fill = appTemplates.get(id).fill || null;
+    if (fill) assert.deepEqual(JSON.parse(file(files, 'words.json')), { ...fill }, `${id}: words.json is its fill`);
+    else assert.ok(!files.some((f) => f.path === 'words.json'), `${id}: nothing to fill, no words.json`);
+    // The entry's own placeholders are in the page only: no code file holds
+    // one, or any word filled into it.
+    const own = fill ? new RegExp(`\\{\\{(?:${Object.keys(fill).join('|')})\\}\\}`) : null;
+    for (const f of files) {
+      if (f.path === 'public/index.html' || /\.md$/.test(f.path) || !own) continue;
+      assert.doesNotMatch(f.content, own, `${id}: ${f.path} holds no placeholder of its words; only the page does`);
+    }
+    if (fill) assert.match(file(files, 'public/index.html'), own, `${id}: the page keeps its words' placeholders`);
+    // Its notes say where the words are, so a change keeps the placeholders.
+    if (fill) assert.match(file(files, 'CLAUDE.md'), /`words\.json`/, `${id}: CLAUDE.md names words.json`);
+    assert.doesNotMatch(file(generate(id), 'public/index.html'), /\{\{(?!APP_NAME\}\})[A-Z_]+\}\}/, `${id}: its page, served, has every placeholder but the name filled`);
   }
   const script = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'tier-list/public/app.js'), 'utf8');
   assert.doesNotMatch(script, /\{\{/, 'the script is the same for every tier list');
@@ -514,6 +546,61 @@ test('every ready-made app hears its own writes, and every screen that shares an
 // it's unclear how to close the keyboard." One find-a-time app, two modes:
 // the book club marks the hours of every week; game night and the trip
 // suggest dates. tests/app-templates-postgres.test.js runs both.
+// Words in config (docs/plans/versions.md): the three api.js files that
+// need one of their project's words read it from words.json beside them,
+// so every project made from one of these starters runs the same api.js.
+// Each is loaded from a new project's committed files, as server.js loads
+// it, and asked what its words decide; without words.json it falls back to
+// what the first of its entries says.
+function apiOf(id, { words = true } = {}) {
+  const os = require('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `words-${id}-`));
+  for (const f of committed(id)) {
+    if (f.path !== 'api.js' && !(words && f.path === 'words.json')) continue;
+    fs.writeFileSync(path.join(dir, f.path), f.content);
+  }
+  const api = require(path.join(dir, 'api.js'));
+  const routes = {};
+  const app = new Proxy({}, { get: (_t, verb) => (route, handler) => { routes[`${String(verb).toUpperCase()} ${route}`] = handler; } });
+  const inserts = [];
+  const pool = { query: async (sql, params) => { inserts.push({ sql, params }); return { rows: [{ id: 1 }] }; } };
+  api.routes(app, pool);
+  fs.rmSync(dir, { recursive: true, force: true });
+  const call = async (key, body) => {
+    let status = 200;
+    let sent = null;
+    const res = { status(n) { status = n; return this; }, json(b) { sent = b; return this; } };
+    await routes[key]({ body, query: {}, now: new Date('2026-10-15T12:00:00Z'), user: { id: 1, username: 'ada' } }, res);
+    return { status, body: sent };
+  };
+  return { routes, call, inserts };
+}
+
+test('the api.js files read their words from words.json, never from the code', async () => {
+  // Find a time: only its mode's routes.
+  assert.ok(apiOf('find-a-time-book-club').routes['GET /api/week'], 'weekly');
+  assert.ok(!apiOf('find-a-time-book-club').routes['GET /api/plans']);
+  assert.ok(apiOf('find-a-time-trip').routes['GET /api/plans'], 'dates');
+  assert.ok(apiOf('find-a-time-book-club', { words: false }).routes['GET /api/plans'], 'no words: dates');
+  // A sign-up sheet: a new event is its mode's kind.
+  const startsAt = '2026-10-20T18:00:00Z';
+  assert.equal((await apiOf('signup-rsvp').call('POST /api/events', { name: 'Game night', startsAt })).body.kind, 'rsvp');
+  assert.equal((await apiOf('signup-shifts').call('POST /api/events', { name: 'Cleanup', startsAt })).body.kind, 'slots');
+  assert.equal((await apiOf('signup-rsvp', { words: false }).call('POST /api/events', { name: 'Game night', startsAt })).body.kind, 'slots');
+  // A group challenge: what it counts, and whether amounts have decimals.
+  const steps = await apiOf('challenge-steps').call('POST /api/entries', { amount: '1.5' });
+  assert.deepEqual([steps.status, steps.body.error], [400, 'Whole steps only.']);
+  assert.equal((await apiOf('challenge-miles').call('POST /api/entries', { amount: '0' })).body.error, 'Log more than zero miles.');
+  assert.equal((await apiOf('challenge-books').call('POST /api/entries', { amount: '2.5' })).body.error, 'Whole books only.');
+  // The miles challenge takes decimals: its 3.1 gets past the amount.
+  assert.notEqual((await apiOf('challenge-miles').call('POST /api/entries', { amount: '3.1' })).status, 400);
+  assert.equal((await apiOf('challenge-books', { words: false }).call('POST /api/entries', { amount: '0' })).body.error, 'Log more than zero miles.', 'no words: the miles challenge');
+  // Nothing of the words is in the code itself.
+  for (const id of ['find-a-time-trip', 'signup-rsvp', 'challenge-books']) {
+    assert.match(file(committed(id), 'api.js'), /require\('path'\)\.join\(__dirname, 'words\.json'\)/, id);
+  }
+});
+
 test('find a time: the book club finds a weekly time, the others suggest dates, and the keyboard closes', () => {
   const modes = { 'find-a-time-book-club': 'weekly', 'find-a-time-game-night': 'dates', 'find-a-time-trip': 'dates' };
   for (const [id, mode] of Object.entries(modes)) {
@@ -521,7 +608,9 @@ test('find a time: the book club finds a weekly time, the others suggest dates, 
     const html = file(files, 'public/index.html');
     assert.equal(appTemplates.get(id).fill.TIME_MODE, mode, id);
     assert.match(html, new RegExp(`<main id="app" class="[^"]*" data-mode="${mode}">`), id);
-    assert.match(file(files, 'api.js'), new RegExp(`const MODE = '${mode}' === 'weekly' \\? 'weekly' : 'dates';`), id);
+    // The server reads its mode from the same words.json the page is filled from.
+    assert.equal(JSON.parse(file(files, 'words.json')).TIME_MODE, mode, id);
+    assert.match(file(files, 'api.js'), /const MODE = WORDS\.TIME_MODE === 'weekly' \? 'weekly' : 'dates';/, id);
     // Homeroom's native kit, by relative path: a tap outside a field closes
     // the keyboard, and the page stays put instead of dragging Homeroom along.
     assert.match(html, /<link rel="stylesheet" href="\/usernode-native\/v1\/native\.css">[\s\S]*<link rel="stylesheet" href="\/tailwind\.css">/, id);

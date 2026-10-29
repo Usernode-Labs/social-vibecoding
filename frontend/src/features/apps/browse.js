@@ -298,15 +298,37 @@ const Browse = {
     // have to agree or the later one silently wins — which is exactly how a
     // first attempt at #2639 changed only app.js and did nothing at all.
     // App._BACK_SLOT is the other writer; 'browse-screen' is a root there.
+    //
+    // #6019: ON A PHONE DISCOVER IS A PAGE OF HOME'S, not a tab, so the list
+    // level and a detail opened from a Home card have an arrow back to Home.
+    // ON THE DESKTOP RAIL IT IS A TAB (29 Oct 2026): those two show nothing,
+    // as #2718's review had it, because the rail beside them is the way out.
+    // A detail opened from the list goes up to the list on both.
     const upToList = onDetail && Browse._detailOrigin !== 'home';
-    const backMode = upToList ? 'arrow' : 'none';
-    App.setBackIcon(backMode, upToList ? '#apps' : undefined);
+    const root = !upToList && !!App._discoverIsTab?.();
+    App.setBackIcon(root ? 'none' : 'arrow', upToList ? '#apps' : (root ? undefined : '/'));
+    Browse._watchLayout();
     if (onDetail) {
       const app = Browse.appBySlug(Browse._slug);
       App.setHeaderTitle(app?.name || Browse._slug);
     } else {
       App.setHeaderTitle(PlatformI18n.t('discover:browse.headerTitle'));
     }
+  },
+
+  // A window resized across 768px with Discover open changes what its back
+  // slot is (a tab root on the rail, a page of Home's on a phone), so the
+  // chrome is synced again there. Installed once, on the first sync.
+  _layoutWatched: false,
+  _watchLayout() {
+    if (Browse._layoutWatched) return;
+    Browse._layoutWatched = true;
+    try {
+      window.matchMedia?.('(min-width: 768px)')?.addEventListener?.('change', () => {
+        const screen = document.getElementById('browse-screen');
+        if (screen && !screen.classList.contains('hidden')) Browse._syncChrome();
+      });
+    } catch (_) { /* no matchMedia: nothing to follow */ }
   },
 
   // ── Data ──────────────────────────────────────────────────────────
@@ -469,23 +491,6 @@ const Browse = {
     { key: 'notjoined', label: 'discover:filters.hideJoined' },
   ],
 
-  // The switches only an admin gets, after the rest (#5267). "Not yet
-  // reviewed" is moderation state: it used to be a heading in everybody's
-  // default list, and it is now a filter for the people who review. The apps
-  // under it are NOT hidden from anyone: they still sit in the default list,
-  // after the reviewed ones, as they always have (directoryTier).
-  // browse-filter-sheet.tsx keeps a copy, for the reason it keeps one of
-  // SHOW_ONLY.
-  ADMIN_SHOW_ONLY: [
-    { key: 'unreviewed', label: 'discover:filter.unreviewed' },
-  ],
-
-  // An admin, as the shell sees one: `App.user.isAdmin`, which "View as
-  // non-admin" masks, so that view loses the switch too.
-  isAdminViewer() {
-    try { return !!(typeof App !== 'undefined' && App.user && App.user.isAdmin); } catch (err) { return false; }
-  },
-
   // "New" is the apps CREATED in the last NEW_WINDOW_DAYS days (by
   // `created_at`). A directory where nothing is that young would give the
   // chip an empty list, which reads as a broken filter rather than a quiet
@@ -499,7 +504,7 @@ const Browse = {
   // you. No storage, unlike Sort — a filter left on by a visit last week is a
   // directory that silently hides most of itself.
   _view: 'foryou',
-  // The Show only switches that are on, in SHOW_ONLY/ADMIN_SHOW_ONLY order.
+  // The Show only switches that are on, in SHOW_ONLY order.
   _only: [],
   // ?filter= seeds the FIRST entry of a page load and is then spent, so a
   // link someone was handed (and every declared check) lands on its filter
@@ -509,11 +514,9 @@ const Browse = {
   // The keys a ?filter= link may name. The old chips' labels left with the
   // chips; the switch and the sheet carry their own copies of the words.
   FILTERS: ['all', 'featured', 'notjoined', 'yours', 'new'],
-  ADMIN_FILTERS: ['unreviewed'],
 
   // Anything unrecognised lands on the defaults rather than emptying the
-  // screen, and so does an admin key asked for by anyone else.
-  // Pure but for the admin read; unit-tested.
+  // screen. Pure — unit-tested.
   resolveView(raw) {
     const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
     return Browse.VIEWS.some((v) => v.key === key) ? key : 'foryou';
@@ -522,20 +525,14 @@ const Browse = {
   resolveFilter(raw) {
     const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
     if (Browse.FILTERS.includes(key)) return key;
-    if (Browse.ADMIN_FILTERS.includes(key) && Browse.isAdminViewer()) return key;
     return 'all';
   },
 
-  // The switches the sheet is allowed to hold, in their fixed order, from the
-  // two arrays above. Unknown keys are dropped and `unreviewed` survives only
-  // for an admin. Pure — unit-tested.
+  // The switches the sheet is allowed to hold, in their fixed order, from
+  // SHOW_ONLY. Unknown keys are dropped. Pure — unit-tested.
   showOnlyKeys(raw) {
     const list = Array.isArray(raw) ? raw : [];
-    const all = Browse.SHOW_ONLY.map((o) => o.key)
-      .concat(Browse.ADMIN_SHOW_ONLY.map((o) => o.key));
-    const allowed = Browse.SHOW_ONLY.map((o) => o.key)
-      .concat(Browse.isAdminViewer() ? Browse.ADMIN_SHOW_ONLY.map((o) => o.key) : []);
-    return all.filter((key) => allowed.includes(key) && list.includes(key));
+    return Browse.SHOW_ONLY.map((o) => o.key).filter((key) => list.includes(key));
   },
 
   // The single key the empty line and #browse-list[data-filter] read: the
@@ -565,7 +562,6 @@ const Browse = {
         only: Browse._only,
         filter: Browse.derivedFilter(),
         activeCount: Browse.activeFilterCount(),
-        adminFilters: Browse.isAdminViewer(),
       });
     }
   },
@@ -614,6 +610,7 @@ const Browse = {
     const only = Array.isArray(model && model.only) ? model.only : [];
     let list = (apps || []).filter(Boolean);
     if (view === 'joined') list = list.filter((a) => Home.isJoined(a));
+    else list = Browse.listedApps(list);
     for (const key of only) list = Browse.filterApps(list, key, now);
     return list;
   },
@@ -745,8 +742,6 @@ const Browse = {
   //              row during this visit (_keptJoins), which stay until the
   //              list is rebuilt.
   //   new      — newApps above.
-  //   unreviewed: admins only, directoryTier 'unreviewed', exactly the
-  //              apps the "Not yet reviewed" heading used to hold.
   // Pure — unit-tested.
   filterApps(apps, key, now) {
     const filter = Browse.resolveFilter(key == null ? Browse.derivedFilter() : key);
@@ -755,7 +750,6 @@ const Browse = {
     if (filter === 'notjoined') return list.filter((a) => !Home.isJoined(a) || Browse._keptJoins.has(a.slug));
     if (filter === 'yours') return list.filter((a) => Home.isJoined(a));
     if (filter === 'new') return Browse.newApps(list, now);
-    if (filter === 'unreviewed') return list.filter((a) => Browse.directoryTier(a) === 'unreviewed');
     return list;
   },
 
@@ -779,25 +773,31 @@ const Browse = {
       if (filter === 'featured') return PlatformI18n.t('discover:empty.search.featured', { query: q });
       if (filter === 'notjoined') return PlatformI18n.t('discover:empty.search.notJoined', { query: q });
       if (filter === 'yours') return PlatformI18n.t('discover:empty.search.joined', { query: q });
-      if (filter === 'unreviewed') return PlatformI18n.t('discover:empty.search.unreviewed', { query: q });
       if (filter === 'new') return PlatformI18n.t('discover:empty.search.new', { query: q });
       return PlatformI18n.t('discover:empty.search.all', { query: q });
     }
     if (filter === 'featured') return PlatformI18n.t('discover:empty.featured');
     if (filter === 'notjoined') return PlatformI18n.t('discover:empty.notJoined');
     if (filter === 'yours') return PlatformI18n.t('discover:empty.joined');
-    if (filter === 'unreviewed') return PlatformI18n.t('discover:empty.unreviewed');
     return PlatformI18n.t('discover:empty.all');
   },
 
-  // Unreviewed is not the same as broken. Apps with icons that have not yet
-  // been reviewed remain visible after the reviewed ones (#5267: in the same
-  // list, under no heading of their own); explicit demos,
-  // failures, and apps still needing setup/icon work go under Show more.
+  // The API's `directory.tier` (src/services/discovery-curation.js): an app
+  // that runs and has an icon is listed, and one that cannot run yet or has
+  // no icon to draw goes under Show more. A flagged app is left out of
+  // Discover by listedApps; the Joined view, which keeps one, puts it under
+  // Show more too.
   directoryTier(app) {
-    if (Home.isDiscoveryReady(app)) return 'ready';
-    if (app?.directory?.tier === 'more' || app?.status === 'error') return 'more';
-    return 'unreviewed';
+    if (app?.directory?.tier === 'more' || Home.isFlagged(app) || app?.status === 'error') return 'more';
+    return 'ready';
+  },
+
+  // The apps Discover may list at all: every app but the ones an admin
+  // flagged. The Joined view is the exception, since it is the list of what
+  // you are in rather than a place to find something: a flagged community
+  // you are in stays there. Pure — unit-tested.
+  listedApps(apps) {
+    return (apps || []).filter((a) => a && !Home.isFlagged(a));
   },
 
   // Where an app sits in the admin's featured order: its featured_order, an
@@ -813,8 +813,8 @@ const Browse = {
   // (the same `featured` flag the Featured chip and Home's featured lane
   // read), less the apps you are already in, in the featured order. An app
   // you join from it stays for the visit (_keptJoins). The `more` tier
-  // (demos, apps needing fixes) never leads the page, featured or not.
-  // Pure; unit-tested.
+  // (apps that cannot run yet, or have no icon) never leads the page,
+  // featured or not. Pure; unit-tested.
   recommendedApps(apps) {
     return (apps || [])
       .filter((a) => a && a.featured
@@ -873,10 +873,10 @@ const Browse = {
     };
 
     const cmp = {
-      // Reviewed apps first. Within each quality tier, preserve the admin's
-      // featured order and then rank by users. Popularity is not verification.
+      // Listed apps before the ones under Show more. Within each tier,
+      // preserve the admin's featured order and then rank by users.
       recommended: (x, y) => {
-        const tiers = { ready: 0, unreviewed: 1, more: 2 };
+        const tiers = { ready: 0, more: 1 };
         const tier = tiers[Browse.directoryTier(x)] - tiers[Browse.directoryTier(y)];
         if (tier) return tier;
         const fx = featuredRank(x);
@@ -962,10 +962,9 @@ const Browse = {
 
   // ── Row rendering ─────────────────────────────────────────────────
 
-  // The row's second line. There is no description column on `apps` (and
-  // dapp.json carries descriptions only per-secret), so this is derived
-  // META, not prose: who's using it, when it last shipped, and the status
-  // word when the app isn't actually running.
+  // The row's facts line, under the app's own sentence (aboutLine) when it
+  // has one. This is derived META, not prose: who's using it, when it last
+  // shipped, and the status word when the app isn't actually running.
   //
   // It ADAPTS to the current sort (#1383), so the number a row was ranked by
   // is the number the row shows — a list ordered by merged proposals whose
@@ -1011,6 +1010,19 @@ const Browse = {
     return bits.length ? joinFacts(bits) : '';
   },
 
+  // What the app is, in its own words (#5928): the manifest's one-line
+  // description, the sentence Home's cards (HomePanels.appBlurb), the About
+  // sheet and the guest directory already show. `manifest_snapshot` rides
+  // every GET /api/apps row. Absent on many apps, and then the row says
+  // nothing rather than a filler line. Pure — unit-tested.
+  aboutLine(app) {
+    const snap = app && app.manifest_snapshot;
+    const raw = snap && typeof snap === 'object' ? snap.description : null;
+    if (typeof raw !== 'string') return null;
+    const text = raw.replace(/\s+/g, ' ').trim();
+    return text ? text.slice(0, 160) : null;
+  },
+
   // One app-store row, as DATA: icon · name + meta + status pills · Add
   // button. ./browse-list.tsx renders it; the same descriptor is the desktop
   // box, because the layout switch is pure CSS (.browse-row in app.css).
@@ -1033,6 +1045,7 @@ const Browse = {
       directoryTier: Browse.directoryTier(app),
       slug: app.slug,
       name: app.name || app.slug,
+      about: Browse.aboutLine(app),
       meta: Browse.metaLine(app, Browse._sort),
       status: app.status || '',
       statusDot: app.status === 'running' ? 'running'
@@ -1062,12 +1075,6 @@ const Browse = {
 
   _renderList() {
     if (!Browse._store) return;
-    // "View as non-admin" masks isAdmin, so a switch remembered from before
-    // cannot survive it — the same rule that used to drop the old admin chip.
-    const isAdmin = Browse.isAdminViewer();
-    if (!isAdmin && Browse._only.includes('unreviewed')) {
-      Browse._only = Browse._only.filter((k) => k !== 'unreviewed');
-    }
     const apps = Browse.visibleApps();
     const query = (Browse._query || '').trim();
     // The DEFAULT list (#5267): the For you view, the Recommended order, no
@@ -1112,7 +1119,6 @@ const Browse = {
       curated: !query,
       grouped,
       moreExpanded: Browse._moreExpanded,
-      adminFilters: Browse.isAdminViewer(),
       error: false,
       // The site row IS a result, so the "No apps match" line never shows
       // right under it.
@@ -1241,6 +1247,26 @@ const Browse = {
     let items = [];
     try { items = Home.menuItemsFor(app) || []; } catch (err) { items = []; }
     return items.filter((i) => i && !Browse.DETAIL_EXCLUDED_KEYS.includes(i.key));
+  },
+
+  // ── Versions (docs/plans/versions.md) ───────────────────────────
+  //
+  // An original's line on its page: how many versions people have made of
+  // it, and how many of those get its updates, "214 versions · 160 get its
+  // updates", from the app payload's `versions: {count, following}` (the
+  // one-app read adds it; null on an app nobody has made a version of). A
+  // zero says nothing: no line before the first version, and no "0 get its
+  // updates". One message per shape, because the second number's verb agrees
+  // with it. Pure — unit-tested in tests/browse-screen.test.js.
+  versionsLineFor(app) {
+    const v = app && app.versions;
+    if (!v || typeof v !== 'object') return null;
+    const count = Math.max(0, Math.floor(Number(v.count) || 0));
+    const following = Math.min(count, Math.max(0, Math.floor(Number(v.following) || 0)));
+    if (!count) return null;
+    if (!following) return PlatformI18n.t('discover:detail.versions.count', { count });
+    if (count === 1) return PlatformI18n.t('discover:detail.versions.oneGetsUpdates');
+    return PlatformI18n.t('discover:detail.versions.manyGetUpdates', { count: following, versions: count });
   },
 
   // ── Share (the prototype's About sheet: More, then Share) ─────────
@@ -1479,7 +1505,8 @@ const Browse = {
           includePrContext: false,
         })
       : '';
-    // Fork lineage — "⑂ Remixed from <name>", under the version chip.
+    // Lineage — "Made from <name>", under the version chip: the app is a
+    // version of another (docs/plans/versions.md).
     //
     // This was the hamburger drawer's last footer row, painted by
     // AppView.renderForkBadge() into a slot by id and revealed through
@@ -1494,7 +1521,11 @@ const Browse = {
     // filled Browse._apps, this reads. A source that has been deleted comes
     // back as `linkable: false` with the literal name "<deleted>", and
     // renders as inert text — the same two states the badge had.
-    const forkRef = app.forked_from;
+    //
+    // A ready-made made from its platform original has no `forked_from`:
+    // its link is the one-app read's `upstream_link` (`{ slug, name,
+    // following, linkable }`), the same shape where it matters here.
+    const forkRef = app.forked_from || app.upstream_link;
     const forkedFrom = (forkRef && typeof forkRef === 'object')
       ? {
           name: forkRef.name || '<deleted>',
@@ -1535,6 +1566,7 @@ const Browse = {
         // chip that would then have two owners. '' draws no wrapper at all.
         versionPillHtml: pillHtml,
         forkedFrom,
+        versions: Browse.versionsLineFor(app),
         updatedRel,
         canOpen,
         openLabel: canOpen
@@ -1552,8 +1584,8 @@ const Browse = {
           index: i,
           label: a.label,
           title: a.title || null,
-          // The line under the label, for an item that has one (Remix's
-          // "Make your own copy"); absent for every other row.
+          // The line under the label, for an item that has one (Make your
+          // own's "Your own version to change"); absent for every other row.
           ...(a.sub ? { sub: a.sub } : {}),
           danger: !!a.danger,
           disabled: !!a.disabled,

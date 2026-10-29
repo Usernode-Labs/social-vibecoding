@@ -724,6 +724,37 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
 
   // ── The read cursor ──────────────────────────────────────────────────
 
+  await t.test('#6019: a request\'s stream reads its whole thread, not a change\'s replies', async () => {
+    const merged = await makeApp('ta-merged', { owner: alice, name: 'Merged' });
+    await member(merged, alice);
+    await pool.query(`INSERT INTO requests (app_id, number, title) VALUES ($1, 61, 'Lead'), ($1, 62, 'Merged in')`, [merged.id]);
+    // #62 was merged into #61's thread (rules/thread-moves.ts applyMerge):
+    // its request moves, and its thread points at the one it went into.
+    await pool.query(
+      `UPDATE threads SET merged_into = (SELECT thread_id FROM requests WHERE app_id = $1 AND number = 61), state = 'closed'
+        WHERE app_id = $1 AND number = 62`, [merged.id]);
+    await pool.query(
+      `UPDATE requests SET thread_id = (SELECT thread_id FROM requests WHERE app_id = $1 AND number = 61)
+        WHERE app_id = $1 AND number = 62`, [merged.id]);
+    const at = async (ref, content) => (await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref)
+       VALUES ($1, $2, $3, 'issue', $4) RETURNING id, thread_id`, [merged.id, alice.id, content, ref])).rows[0];
+    const onLead = await at(61, 'on the lead');
+    const onOther = await at(62, 'on the merged-in request');
+    assert.equal(Number(onOther.thread_id), Number(onLead.thread_id), 'attached to the one thread');
+    const { rows: [session] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues, pr_number) VALUES ($1, $2, 'promoted', '{61}', 63) RETURNING id`,
+      [merged.id, alice.id]);
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref) VALUES ($1, $2, 'on the change', 'session', $3)`,
+      [merged.id, alice.id, session.id]);
+    const page = (await call('GET', '/api/apps/ta-merged/messages?thread_type=issue&thread_ref=61', alice)).body;
+    assert.deepEqual(page.messages.map((m) => m.content), ['on the lead', 'on the merged-in request'],
+      'both requests\' replies; the change\'s stay folded under its row');
+    const alone = (await call('GET', '/api/apps/ta-merged/messages?thread_type=issue&thread_ref=63', alice)).body;
+    assert.deepEqual(alone.messages, [], 'a number with no request reads only its own anchor');
+  });
+
   await t.test('the read cursor: lazily zero, forward-only read, back-only unread', async () => {
     const reads = await makeApp('ta-reads', { owner: alice, name: 'Reads' });
     await member(reads, alice);

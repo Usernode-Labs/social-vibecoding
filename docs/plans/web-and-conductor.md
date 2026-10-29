@@ -232,11 +232,118 @@ and spec history, but no longer copies agent memory. The clone leaves
 `cc_session_id` unset and creates no worker or memory-copy Job; submission
 promotes it directly. The Docker and Kubernetes copy helpers are removed.
 
-These move web dependencies behind durable commands. Web Pods still need
-their current Kubernetes and database permissions for other callers, including
-repository operations and startup work. Moving
-those callers, then splitting service accounts, Secret inputs and actual
-database login privileges, remains SEC-09 work. The event's source metadata
+Code-host writes a person asks for over HTTP are **privileged operations**
+(`src/workflow/platform-operation/`, `services/platform-operations.js`): one
+machine for every typed operation, not one machine per write. The route keeps
+the validation, checks and refusals it always had, then appends the operation
+with the requester as its actor. Admission refuses a request that is not this
+instance's, from another producer, or for an erased account or a missing
+project. The conductor's work loads the requester as the auth middleware
+would and reads its current authority and target again on every attempt,
+before any write it still has to make; a check its own progress would trip
+tells its own proposal or claim, as its steps record them, from a competing
+one. A request refused part way, by its authority or its account, gives back
+what it holds (an Undo claim it never linked). Each write is kept as a step
+in the work item's checkpoint. A
+retry or another conductor after a restart carries on from the last finished
+step: a request's branch name is kept, its branch or PR found already made is
+used, and its session or announcement is never made twice. A refusal is an
+answer (`{ ok: false, status }`), never a retry. Other failures retry four
+times within about twenty seconds, except a branch the host refuses, which is
+answered at once with the host's reason (as these routes always answered), so
+the same request asked again makes the same branch. A route waits up to a minute; an event
+no conductor admits within five seconds is refused so it never runs later
+(503), and one still running past the wait answers 503 `operation_pending`,
+never a success, and finishes. Each operation is its own work kind, so a
+conductor claims only the operations its build knows, and the machine admits
+any well-formed `area.verb` name: during a rollout a conductor that knows an
+operation's name leaves one newer than it queued for a newer conductor. A
+build from before that rule refuses a name it does not know, so a release
+that adds operations can see them refused while such a conductor still runs:
+the caller answers 503 and gives back what it claimed. The operations are:
+
+- `manifest.propose`: every settings proposal that edits dapp.json (rename,
+  visibility, who decides, admins, governance, a secret declaration, topics),
+  rechecked for its flavor's access, the self-app rule, a verified owner when
+  it makes a project public, the repository the route saw and the open
+  proposal it would duplicate. A secret declaration's value travels with it,
+  encrypted with the data key as `pending_secret_declarations` keeps it, and
+  is applied (a full admin's) or held for the merge on the conductor once the
+  PR exists, so a proposal still opening when its route answers keeps it.
+- `branch.ensure`: a native proposal start's `dev/cli-u<id>-…` branch at its
+  exact base (a different existing ref is a 409 conflict), an issue's
+  headless run, a clone of that run (off the source run's branch as the
+  conductor reads it, else main), and a change's first-turn branch asked by a
+  web process. A conductor's own work keeps making the first-turn branch
+  itself, so no work item waits on another. Only `dev/` names are made.
+- `revert.open`: an Undo. The route records the request before it answers,
+  and answers at once, as before; the conductor makes the revert branch, PR,
+  promoted session and announcement, then refreshes the vote panel. A host
+  failure is tried again from the last finished step; a conflict, or the last
+  try, gives the claim back and says so in the thread. One Undo of a change
+  runs at a time: its instance is keyed by the change, so a second click
+  while one is under way is the same request, and a new one starts once it
+  has finished. So a claim a try began but could not record before its
+  process went is the retry's own, and adopted.
+- `domain.check` and `domain.teardown`: a custom domain's check (DNS, the
+  certificate probe and its Ingress) and the removal of its Ingress and
+  certificate Secret, asked by the domain routes for a person who must still
+  manage the project or be a full admin. The domain sweep and a teardown on a
+  conductor write the edge themselves. A domain whose edge could not be taken
+  down keeps its row and status (503, ask again), so a hostname is never
+  released, nor a disabled one left routed, while its Ingress remains.
+- `app.remove`: an app's whole teardown (previews, runtime, domain edge,
+  database and files, then its row), asked by DELETE /api/apps/:slug and a
+  test account's retirement after their gates and confirmations; the
+  conductor checks again that the requester may delete it. A preview still
+  retiring is answered as before (409, ask again in a minute).
+
+- `openrouter.provision`, `openrouter.sync`, `openrouter.disable` and
+  `openrouter.remove`: a company-funded OpenRouter key created, brought in
+  line with its account's weekly allowance, disabled or deleted, with the
+  management key. Web callers keep calling `openrouter-managed-keys.js`,
+  which asks a conductor from a web process and acts itself on a workflow
+  process; its one-key-per-account reservation, allowance and needs-review
+  rules decide what is made, and its refusals are answers, so a provider call
+  is never repeated. An account may ask for its own key and sync before it
+  has platform access (a key is made as the account is created); disabling,
+  deleting or syncing another account's key needs a full admin. A web read
+  asks for a sync only when the key is out of line with the allowance. A
+  provisioning retried after its key was issued and saved, but before its
+  result was recorded, answers with that key rather than the refusal its
+  reservation would give. Whether included keys are offered is the
+  non-secret `OPENROUTER_MANAGED_KEYS_ENABLED` where the key is absent (unset,
+  the key's presence answers), so a web process can run without the key.
+
+An account deletion's provider, worker and stored-file cleanups are the
+`account-deletion` clock's alone, every minute on a conductor; the routes that
+queue them no longer start a sweep of their own. With these, a web process
+makes no Kubernetes write in production: its runtime calls are reads
+(status, deployment state, logs, quotas, a preview's state).
+
+Projects made inside a platform preview (services/preview-projects.js) are
+operations too (`previewProject.create`, `.build`, `.deploy`, `.restart`,
+`.remove`, services/preview-project-operation.js). Their routes still take the
+preview's credential, check each request and claim the project's row; the
+database, the source push, the build, the run, a restart and a removal are
+the conductor's. A build's files and a deploy's env are kept beside the row
+(`preview_project_inputs`), written in the transaction that claims it and
+appends the request, since they weigh more than an operation's input; a
+conductor must then take the request within five seconds, or it is refused
+for good and the claim given back. The
+requester is the session's author (any account): the preview's credential is
+the authority, and the conductor reads again, before every step, that the
+session is still a platform preview holding a live one. A step it refuses
+ends as failed, so the preview stops waiting. So a web Pod can run as an
+account with reads only (the chart's `platform.web.serviceAccountName`).
+
+These move web dependencies behind durable commands. Web Pods need no
+Kubernetes write and no OpenRouter management key: they can run as an account
+with reads only, and the chart keeps the key in a Secret only the conductor
+imports. They still hold the code-host credentials (the remaining repository
+writes, and reads made with write-capable tokens) and the database's admin
+login. Moving those callers, then separate database logins, remains SEC-09
+work. The event's source metadata
 also remains a convention among trusted processes; it does not authenticate
 a compromised producer.
 

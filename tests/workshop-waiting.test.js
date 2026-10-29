@@ -97,9 +97,11 @@ test('the request list carries it, and the staging demo shows a plan and a quest
   assert.match(read('public/js/app-view.js'), /waitingOnYou: \(ghData && ghData\.waitingOnYou && typeof ghData\.waitingOnYou === 'object'\) \? ghData\.waitingOnYou : null,/);
 });
 
-test('the ?demo=1 mocks give the viewer a change up for a vote and one that needs a fix', () => {
+test('the ?demo=1 mocks give the viewer a change up for a vote, one that needs a fix, and one that needs their Yes', () => {
   const votes = read('src/routes/votes.js');
-  assert.match(votes, /const OWN_DEMO_PROPOSALS = new Set\(\[9000493, 9000494\]\);/);
+  assert.match(votes, /const OWN_DEMO_PROPOSALS = new Set\(\[9000493, 9000494, 9000495\]\);/);
+  // #6006: the third came from a coding agent, so it waits on its author.
+  assert.match(votes, /mk\(9000495, 900495,\n\s+'\[Mock\] Your change from Claude Code: waiting for your Yes',[^}]*\}\),\n\s+external_agent: 'claude-code',/);
   assert.match(votes, /OWN_DEMO_PROPOSALS\.has\(row\.id\)\s*\? \{ \.\.\.row, user_id: user\.id, username: user\.username \} : row/);
   assert.match(votes, /rows\.push\(\.\.\.ownDemoProposals\(stagingMockProposals\(req\.user\?\.username\), req\.user\)/);
 });

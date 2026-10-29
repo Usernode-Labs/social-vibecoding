@@ -1657,15 +1657,15 @@
   },
   "firstSession.walk.bot.title": {
     "text": "Homeroom bot",
-    "description": "Second card of the walk on Home, pointing at the Messages tab: Homeroom bot is the assistant that builds changes to apps. A name, keep it as it is."
+    "description": "Second card of the walk on Home, pointing at the AI tab: Homeroom bot is the assistant that builds changes to apps. A name, keep it as it is."
   },
   "firstSession.walk.bot.text": {
-    "text": "It's in Messages. Ask it to make any changes to {{app}}.",
-    "description": "Line on the walk's Homeroom bot card, for an app with no example change to offer (one Homeroom bot built, or a game): where to find the bot (the Messages tab) and what to ask it for (any change to the app). {{app}} is the project's name, as its tile on Home shows it."
+    "text": "It's in AI. Ask it to make any changes to {{app}}.",
+    "description": "Line on the walk's Homeroom bot card, for an app with no example change to offer (one Homeroom bot built, or a game): where to find the bot (the AI tab, the chat with Homeroom bot) and what to ask it for (any change to the app). {{app}} is the project's name, as its tile on Home shows it."
   },
   "firstSession.walk.bot.textExample": {
     "text": "Ask it for changes, like “{{example}}”.",
-    "description": "Line on the walk's Homeroom bot card, which points at the Messages tab where the bot is, for an app made from a ready-made starter: the bot makes changes to the app when asked. {{example}} is a short change somebody could ask for in that app, in English and lowercase, for example \"add a cheap eats tier\" for a restaurant tier list; keep it inside the quotation marks your language uses."
+    "description": "Line on the walk's Homeroom bot card, which points at the AI tab where the bot is, for an app made from a ready-made starter: the bot makes changes to the app when asked. {{example}} is a short change somebody could ask for in that app, in English and lowercase, for example \"add a cheap eats tier\" for a restaurant tier list; keep it inside the quotation marks your language uses."
   },
   "firstSession.walk.communities.title": {
     "text": "Communities",
@@ -1689,11 +1689,11 @@
   },
   "firstSession.tour.look.discover.title": {
     "text": "Find apps in Discover",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first, title: points at the Discover tab. Discover is the tab's name."
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first, title: points at the Discover section on Home, which opens the Discover page. Discover is the page's name."
   },
   "firstSession.tour.look.discover.text": {
     "text": "Open any app, or join its community.",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first: text about the Discover tab. \"Open\" and \"join\" are verbs."
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first: text about the Discover section on Home. \"Open\" and \"join\" are verbs."
   },
   "firstSession.tour.look.communities.title": {
     "text": "Communities you join show up here",
@@ -1704,8 +1704,8 @@
     "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first: text about the Communities tab. \"Each one\" is a community; its hub is its main page."
   },
   "firstSession.tour.look.bot.title": {
-    "text": "Homeroom bot is in Messages",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first, title of the last card: points at the Messages tab. Homeroom bot is the name of the assistant and Messages the name of the tab."
+    "text": "Homeroom bot is in AI",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first, title of the last card: points at the AI tab, the chat with Homeroom bot. \"AI\" is the tab's name. Homeroom bot is the name of the assistant and Messages the name of the tab."
   },
   "firstSession.tour.look.bot.text": {
     "text": "It makes apps with you. You can always find it here.",

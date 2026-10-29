@@ -1263,6 +1263,43 @@ test('a second finger during a live drag does not cancel it (#5870)', () => {
   assert.equal((h.win.handlers.pointerdown || []).length, 0, 'detach removes the window listeners');
 });
 
+test('a completed drag swallows the click it leaves; a plain press leaves it alone (#6025)', () => {
+  // A sidebar community row is a link, so a drag's release would otherwise
+  // fire a click and open the community the drag was carrying. The kit's
+  // capture-phase listener on the list element must swallow exactly that
+  // click, and only that one: a press with no movement still opens it.
+  const h = placementHarness();
+  const calls = [];
+  const clickEvent = () => ({
+    stopPropagation: () => calls.push('stop'),
+    preventDefault: () => calls.push('prevent'),
+  });
+  const down = {
+    pointerId: 7, pointerType: 'mouse', isPrimary: true, button: 0,
+    target: h.item, clientX: 50, clientY: 50,
+  };
+
+  // A press and a release with no movement: the row's own click.
+  h.listEl.fire('pointerdown', down);
+  h.listEl.fire('pointerup', { pointerId: 7, pointerType: 'mouse' });
+  h.listEl.fire('click', clickEvent());
+  assert.deepEqual(calls, [], 'a plain press is left alone');
+
+  // The same press, moved past the slop, lifts and is a drag.
+  h.listEl.fire('pointerdown', down);
+  h.listEl.fire('pointermove', { pointerId: 7, pointerType: 'mouse', clientX: 80, clientY: 50 });
+  assert.ok(h.ghostUp(), 'the movement lifted it');
+  h.listEl.fire('pointerup', { pointerId: 7, pointerType: 'mouse' });
+  assert.equal(h.ghostUp(), false, 'reduced motion settles at once');
+  h.listEl.fire('click', clickEvent());
+  assert.deepEqual(calls, ['stop', 'prevent'], 'the click a drag leaves never reaches the row');
+
+  // The suppression is one task long: a later click is the row's again.
+  h.timers.pop()();
+  h.listEl.fire('click', clickEvent());
+  assert.deepEqual(calls, ['stop', 'prevent'], 'and only the click the drag left');
+});
+
 // ── The release glide ──────────────────────────────────────────────────
 //
 // One release must read as ONE motion: from wherever the ghost is under the

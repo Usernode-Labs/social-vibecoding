@@ -410,11 +410,21 @@ async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initi
   return { sha, tree: { sha: tree }, parents: [{ sha: parent }], message };
 }
 
-/** A commit of `files` with no parent; no branch moves. Resolves its sha. */
+const FILE_MODES = new Set(['100644', '100755', '120000']);
+
+/**
+ * A commit of `files` with no parent; no branch moves. Resolves its sha. A
+ * file's `content` may be a Buffer (an image copied from another
+ * repository, services/originals.js), kept byte for byte, and its `mode`
+ * git's (100755, 120000 for a link); text and 100644 otherwise.
+ */
 async function createRootCommit(owner, repo, files, { message = 'Initial commit' } = {}) {
   const dir = await mirror(owner, repo);
   const writes = [];
-  for (const f of files) writes.push({ path: f.path, sha: await writeBlob(dir, String(f.content ?? '')), mode: '100644' });
+  for (const f of files) {
+    const bytes = Buffer.isBuffer(f.content) ? f.content : String(f.content ?? '');
+    writes.push({ path: f.path, sha: await writeBlob(dir, bytes), mode: FILE_MODES.has(f.mode) ? f.mode : '100644' });
+  }
   const tree = await buildTree(dir, null, { writes });
   return commitTree(dir, tree, [], message);
 }

@@ -1,3 +1,6 @@
+const fsp = require('fs/promises');
+const os = require('os');
+const path = require('path');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const { connectionExhaustionMessage } = require('../db/connection-census');
@@ -7,6 +10,8 @@ const log = require('../services/logger');
 const github = require('../services/github');
 const githubMock = require('../services/github-mock');
 const docker = require('../services/docker');
+const gitChild = require('../services/git-child');
+const durableSteps = require('../services/durable-steps');
 const { sendSystemMessage, pushNotificationToUser } = require('../services/ws');
 const { getActiveUserStats, isUserActive } = require('../services/active-users');
 const notifications = require('../services/notifications');
@@ -37,6 +42,7 @@ const challengeScorer = require('../services/topochain/challenge-scorer');
 const { botRequestedBySql } = require('../services/bot-requested-by');
 const { firstVersionSql, isFirstVersion } = require('../services/first-version-rule');
 const repoRef = require('../services/repo-ref');
+const prBase = require('../workflow/rules/pr-base.ts');
 const codeMissing = require('../services/code-missing');
 const {
   reviewedHeadForSession,
@@ -1298,6 +1304,16 @@ function stagingMockProposals(viewer) {
         },
       ],
     },
+    // #6006: a third change OWNED by the viewer, which a coding agent
+    // submitted for them, up for a vote with its checks passing. Proposing it
+    // that way was not their yes, so it waits on them (Waiting on you, "Needs
+    // your Yes") rather than moving on without them.
+    {
+      ...mk(9000495, 900495,
+        '[Mock] Your change from Claude Code: waiting for your Yes',
+        0.4, 0, 0, 0, { required: 3, windowEndsAt: null }),
+      external_agent: 'claude-code',
+    },
   ];
   // Spread the community-voted priority/assignee across a few rows (the mk
   // factory otherwise stamps every proposal high / staging-tester) so the
@@ -1356,11 +1372,12 @@ function stagingMockProposals(viewer) {
   });
 }
 
-// #4772: the two ?demo=1 mocks the viewer owns (`user`, { id, username },
-// when known), so the Workshop's sections of their work are reviewable: one
-// up for a vote, one that needs their fix. Without a user they stay mocks
-// nobody owns.
-const OWN_DEMO_PROPOSALS = new Set([9000493, 9000494]);
+// #4772: the ?demo=1 mocks the viewer owns (`user`, { id, username }, when
+// known), so the Workshop's sections of their work are reviewable: one up
+// for a vote, one that needs their fix, and (#6006) one a coding agent
+// submitted that waits for their Yes. Without a user they stay mocks nobody
+// owns.
+const OWN_DEMO_PROPOSALS = new Set([9000493, 9000494, 9000495]);
 function ownDemoProposals(rows, user) {
   if (!user || user.id == null || !user.username) return rows;
   return rows.map((row) => (OWN_DEMO_PROPOSALS.has(row.id)
@@ -2542,6 +2559,12 @@ function mergedRowSelect() {
            -- GitHub-maintained note (kept visible on merged rows too).
            cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,
            cs.reviewed_head_sha,
+           -- Where it merges, and the change it waits for (src/workflow/
+           -- rules/pr-base.ts): the change page reads its row from here, so
+           -- its "Waits for #N" follows a retarget without the board's list.
+           cs.imported_pr_base_ref, cs.waits_for_session_id,
+           (SELECT jsonb_build_object('id', w.id, 'prNumber', w.pr_number, 'title', w.pr_title, 'status', w.status)
+              FROM chat_sessions w WHERE w.id = cs.waits_for_session_id) AS waits_for,
            cs.shots_state, cs.shots_run_id,
            cs.shots_detail, cs.shots_updated_at,
            -- #967: which external coding agent wrote it, for the "built
@@ -2711,7 +2734,11 @@ function voteRoutes(config) {
         try {
           const live = await github.getPR(owner, repo.replace(/\.git$/, ''), session.pr_number);
           pr = { state: live?.state === 'closed' ? 'closed' : 'open', draft: !!live?.draft, merged: !!live?.merged,
-            head: /^[0-9a-f]{40}$/i.test(String(live?.head?.sha || '')) ? live.head.sha : null };
+            head: /^[0-9a-f]{40}$/i.test(String(live?.head?.sha || '')) ? live.head.sha : null,
+            // Where it would merge, when that is not its repository's
+            // default branch: an import based on a branch that is no open
+            // change's is refused (rules/pr-base.ts).
+            base: prBase.otherBase(live) };
         } catch (err) {
           log.warn('votes', 'Promote PR revision check failed', {
             sessionId: session.id, pr: session.pr_number, err: err.message,
@@ -2970,6 +2997,11 @@ function voteRoutes(config) {
       // once, here, because it is a fact about the pull request that never
       // changes while it is open; `branchHomeOf` reads it.
       const headRepoFullName = pr.head?.repo?.full_name || null;
+      // WHERE it merges (src/workflow/rules/pr-base.ts): main (the
+      // repository's default branch: null here), or the branch of another
+      // open change it is stacked on, which it then waits for. Any other base
+      // is refused when it is put up for a vote.
+      const baseRef = prBase.otherBase(pr);
 
       // Optional testing metadata (#945 follow-up). A connector submission
       // can carry the same two things a build turn's "==== TESTING ===="
@@ -3023,17 +3055,18 @@ function voteRoutes(config) {
       let promoteEvent = null;
       try {
         await importClient.query('BEGIN');
+        const waitsFor = (await prBase.readBaseOwner(importClient, { appId: app.id, sessionId: null, base: baseRef })).open;
         ({ rows: inserted } = await importClient.query(
           `INSERT INTO chat_sessions
            (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status,
             source, imported_pr_head_sha, handoff_base_sha,
-            imported_pr_author, imported_pr_head_repo,
+            imported_pr_author, imported_pr_head_repo, imported_pr_base_ref, waits_for_session_id,
             promoted_at, shared_at, created_at,
             testing_md, testing_path, testing_paths, linked_issues, pr_body,
             pr_summary_md, pr_summary_source, pr_summary_source_head_sha,
             pr_summary_source_body_hash, pr_summary_applied_version)
          VALUES ($1, $2, $3, $4, $5, $6, $7::text,
-            'imported', $8::text, $9, $10, $11,
+            'imported', $8::text, $9, $10, $11, $19, $20,
             NULL, NOW(),
             NOW(), $12, $13, $14::jsonb, $15, $16, $17,
             CASE WHEN $17::text IS NULL THEN NULL ELSE 'author' END,
@@ -3061,6 +3094,7 @@ function voteRoutes(config) {
             // without it renders exactly as it did before this field existed.
             importSummary,
             summaryFreshness.bodyHash(pr.body || null),
+            baseRef, waitsFor ? waitsFor.id : null,
           ]
         ));
         await topicAttrs.selfAssignProposal(
@@ -3089,7 +3123,7 @@ function voteRoutes(config) {
           promoteEvent = await require('../workflow/platform.ts').promoteInTransaction({
             sessionId: inserted[0].id, appId: app.id, userId: req.user.id, username: req.user.username, from: 'active',
             cap: effectiveSessionCaps(config, req.user).promotedSessions,
-            pr: { state: pr.state, draft: !!pr.draft, merged: !!pr.merged, head: headSha },
+            pr: { state: pr.state, draft: !!pr.draft, merged: !!pr.merged, head: headSha, base: baseRef },
             expectedHead: headSha, db: importClient, source: { kind: 'route', name: 'pr-import' },
           });
         }
@@ -4055,6 +4089,12 @@ function voteRoutes(config) {
            -- "the author must update this branch in their fork" about a
            -- branch in the app's own repository (#2100).
            cs.imported_pr_head_repo,
+           -- Where it merges, and the change it waits for when it is
+           -- stacked on that change's branch (src/workflow/rules/pr-base.ts):
+           -- the card's "Waits for #N" and the change page's notice.
+           cs.imported_pr_base_ref, cs.waits_for_session_id,
+           (SELECT jsonb_build_object('id', w.id, 'prNumber', w.pr_number, 'title', w.pr_title, 'status', w.status)
+              FROM chat_sessions w WHERE w.id = cs.waits_for_session_id) AS waits_for,
            -- #967: which external coding agent wrote it, when the proposal
            -- came in through the hosted MCP connector ('claude-code' |
            -- 'codex' | 'external'). NULL for everything else. Drives the
@@ -4973,6 +5013,10 @@ function voteRoutes(config) {
         proposal.code_missing = await codeMissing.forSession(pool, {
           ...proposal, app_id: gatedApp.id, repo_url: gatedApp.repo_url,
         });
+        // An update from this version's original (services/upstream-offers.js):
+        // what it brings, what it does here, and where it stands, for the
+        // change page's From <original> card. Null for any other change.
+        proposal.upstream = await require('../services/upstream-offers').changeView(pool, proposal.id);
       }
 
       // #3669: the proposal page's own read must carry the same per-row
@@ -5217,28 +5261,14 @@ function voteRoutes(config) {
       log.info('votes', 'Undo requested — opening revert PR', {
         sessionId: session.id, by: req.user.username,
       });
-      // Respond immediately; the revert (clone + git revert + push + PR)
-      // runs in the background and announces itself in group chat. The
-      // vote panel refreshes via the pushVoteUpdate broadcast below.
+      // The revert (clone + git revert + push + PR) is a conductor's
+      // platform operation (services/revert-operation.js), recorded before
+      // the answer so a restart still opens it; it announces itself in
+      // group chat and refreshes the vote panel (pushVoteUpdate) when done.
+      await require('../services/platform-operations').append(pool, {
+        op: 'revert.open', appId: session.app_id, userId: req.user.id, input: { sessionId: session.id },
+      });
       res.json({ ok: true, opening: true });
-
-      const { pushVoteUpdate } = require('../services/ws');
-      checkAndOpenRevert(config, pool, session, req.user)
-        .then((result) => {
-          if (result?.reverted) {
-            pushVoteUpdate({
-              sessionId: session.id,
-              appSlug: session.app_slug,
-              merged: false,
-              kind: 'undo',
-              revertSessionId: result.revertSessionId,
-              revertPrNumber: result.revertPrNumber,
-            });
-          }
-        })
-        .catch((err) => {
-          log.error('votes', 'Background revert failed', { sessionId: session.id, err: err.message });
-        });
     } catch (err) {
       log.error('votes', 'Undo failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -5399,6 +5429,17 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
       codeMissing: true,
       blockReason: codeMissing.CODE,
       error: codeMissing.MERGE_REFUSAL,
+    };
+  }
+  // Its pull request is based on another change's branch, or on a branch no
+  // open change has (src/workflow/rules/pr-base.ts): nothing about it is
+  // measured, forced or not, until it targets main. The queue keeps it out
+  // of its line; this is the gate saying so to an ask that came anyway.
+  if (session.source === 'imported' && !prBase.onMain(session.imported_pr_base_ref)) {
+    return {
+      merged: false,
+      blockReason: session.waits_for_session_id ? 'waits_for_parent' : 'base_not_main',
+      error: `Its pull request is based on ${String(session.imported_pr_base_ref).slice(0, 200)}, not main.`,
     };
   }
   // #955: a revision the PLATFORM advanced (its own sync/conflict-resolution
@@ -6280,7 +6321,12 @@ function refusalKind(err, pr) {
 //   unverified { message }        a 409 whose revision GitHub would not confirm
 //   reopened   {}                 closed on GitHub, reopened: it can be merged again
 //   closed     { message }        closed on GitHub, and could not be reopened
-//   refused    { kind, message }  conflict | draft | blocked | base_moved
+//   refused    { kind, message }  conflict | draft | blocked | base_moved | base_not_main
+// An import is only ever merged into main (src/workflow/rules/pr-base.ts):
+// its pull request's base is read before GitHub is asked, one based on any
+// other branch is refused, and every `merged` names the branch it went into
+// when that is not main. A native proposal's pull request is Homeroom's own,
+// opened against main (services/github.js createPR), and is merged as ever.
 // It never asks twice: once it has asked (its checkpoint), a retry reads the
 // pull request first, so a lost answer is observed rather than misread as a
 // refusal (merge trace bug 1). An error that is no answer from GitHub (the
@@ -6333,6 +6379,9 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
     return { outcome: 'refused', kind, message, githubMessage: said || null };
   };
   const unanswered = (err) => !err || !Number.isInteger(err.status) || err.status >= 500 || err.status === 429;
+  // The branch an import's merge went into, when that is not main (the
+  // machine records only a merge into main).
+  const baseOf = (ref) => (isImported && ref ? { base: ref } : {});
   // GitHub's hourly limit used up (a 403 or a 429 saying no requests are
   // left) or its secondary limit (Retry-After): it did not merge, and it is
   // not a refusal of this head. The proposal goes back to review with
@@ -6350,13 +6399,39 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
       if (err && (err.status === 404 || err.status === 410)) return { outcome: 'closed', message: `${label} is gone from GitHub.` };
       throw err;
     }
-    if (pr && pr.merged) return { outcome: 'merged', sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, observed: true };
+    if (pr && pr.merged) {
+      return { outcome: 'merged', sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, observed: true, ...baseOf(prBase.otherBase(pr)) };
+    }
+  }
+
+  // Where GitHub would merge an import. On 28 Oct 2026 #5957, based on
+  // #5956's branch, was merged there and recorded merged. Its row learns the
+  // base it read, so the card and the queue say it waits from now on.
+  let base = null;
+  if (isImported) {
+    try {
+      base = prBase.otherBase(await client.getPR(owner, repo, session.pr_number));
+    } catch (err) {
+      if (throttled(err)) return limited(err);
+      if (codeMissing.isError(err)) {
+        return { outcome: 'refused', kind: 'blocked', codeMissing: true, message: `${label} wasn't merged. ${codeMissing.REASON}` };
+      }
+      if (err && (err.status === 404 || err.status === 410)) return { outcome: 'closed', message: `${label} is gone from GitHub.` };
+      throw err;
+    }
+  }
+  if (!prBase.onMain(base)) {
+    await prBase.recordBase(pool, { sessionId: session.id, appId: session.app_id, base, waited: session.waits_for_session_id ?? null }).catch(() => {});
+    return {
+      outcome: 'refused', kind: 'base_not_main', base,
+      message: `${label} wasn't merged: its pull request is based on ${String(base).slice(0, 200)}, not main. It merges once it targets main.`,
+    };
   }
   await checkpoint({ asked: true });
 
   const merge = async () => {
     const data = await client.mergePR(owner, repo, session.pr_number, pinned);
-    return { outcome: 'merged', sha: (data && data.sha) || null };
+    return { outcome: 'merged', sha: (data && data.sha) || null, ...baseOf(base) };
   };
   try {
     return await merge();
@@ -6408,7 +6483,9 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
     }
     if (unanswered(err)) throw err;
     const pr = await readPr();
-    if (pr && pr.merged) return { outcome: 'merged', sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, observed: true };
+    if (pr && pr.merged) {
+      return { outcome: 'merged', sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, observed: true, ...baseOf(pr.base ? prBase.otherBase(pr) : base) };
+    }
     if (pr && pr.state === 'closed') {
       try {
         await client.reopenPR(owner, repo, session.pr_number);
@@ -6444,7 +6521,7 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
 //
 // `decider` is the user who requested the undo — becomes the revert
 // session's user_id so they own the resulting PR in dev-chat.
-async function checkAndOpenRevert(config, pool, session, decider) {
+async function checkAndOpenRevert(config, pool, session, decider, { steps = durableSteps.none() } = {}) {
   // #16: opening a revert is now a direct action (like proposing a
   // forward change) — there's no separate undo-vote gate to clear. We
   // still read activeCount/majority so the announcement can tell users
@@ -6459,13 +6536,27 @@ async function checkAndOpenRevert(config, pool, session, decider) {
   // sentinel "claimed" value; the real revert session id swaps in
   // below once we have it. The WHERE NULL guarantees only one caller
   // wins this transition.
-  const { rows: claim } = await pool.query(
-    `UPDATE chat_sessions SET revert_of_session_id = id
-     WHERE id = $1 AND revert_of_session_id IS NULL
-     RETURNING id`,
-    [session.id]
-  );
-  if (!claim.length) {
+  // Kept as a step: a retry of this very request is still the claim's
+  // holder, not a second request finding it taken. `claiming` is kept before
+  // the claim is made, so a retry whose earlier try made it but went before
+  // recording that adopts its own sentinel instead of reading it as
+  // another's: one Undo of a change runs at a time (a conductor's platform
+  // operation, single-flight per change), so the sentinel can be no other's.
+  if (steps.active && !steps.has('claim')) await steps.set('claiming', true);
+  const claimed = await steps.once('claim', async () => {
+    const { rows: claim } = await pool.query(
+      `UPDATE chat_sessions SET revert_of_session_id = id
+       WHERE id = $1 AND revert_of_session_id IS NULL
+       RETURNING id`,
+      [session.id]
+    );
+    if (claim.length) return true;
+    if (!steps.active || !steps.resumed || !steps.has('claiming')) return false;
+    const { rows: [own] } = await pool.query(
+      'SELECT 1 FROM chat_sessions WHERE id = $1 AND revert_of_session_id = id', [session.id]);
+    return !!own;
+  });
+  if (!claimed) {
     log.info('votes', 'Revert already claimed by another request, skipping', {
       sessionId: session.id,
     });
@@ -6574,8 +6665,15 @@ async function checkAndOpenRevert(config, pool, session, decider) {
       repoOwner,
       repoName,
       deciderUsername: decider.username,
+      steps,
     });
   } catch (err) {
+    // A host failure is tried again from the last finished step while tries
+    // are left (a conductor's platform operation, services/revert-operation.js):
+    // the claim stays, and the retry finds its own branch pushed or PR open.
+    // A conflict, or the last try, ends it here.
+    const conflict = /Revert produced merge conflicts|git revert failed/.test(String(err.message || ''));
+    if (steps.active && steps.triesLeft > 0 && !conflict) throw err;
     // Release the claim so a future vote can retry. Most common
     // failure here is `git revert` conflict — surface it clearly.
     await pool.query(
@@ -6596,19 +6694,27 @@ async function checkAndOpenRevert(config, pool, session, decider) {
 
   // Insert the revert session row. status=promoted means it lands
   // directly in the vote panel ready for a second checkpoint vote.
-  const { rows: revertRows } = await pool.query(
-    `INSERT INTO chat_sessions
-       (app_id, user_id, branch_name, pr_number, pr_url, pr_title,
-        status, revert_of_session_id)
-     VALUES ($1, $2, $3, $4, $5, $6, 'promoted', $7)
-     RETURNING id`,
-    [
-      session.app_id, decider.id, revertInfo.branch,
-      revertInfo.prNumber, revertInfo.prUrl, revertInfo.prTitle,
-      session.id,
-    ]
-  );
-  const revertSessionId = revertRows[0].id;
+  // One an earlier, unconfirmed try inserted for this PR is that try's.
+  const revertSessionId = await steps.once('revert-session', async () => {
+    const { rows: [found] } = await pool.query(
+      `SELECT id FROM chat_sessions WHERE revert_of_session_id = $1 AND pr_number = $2 AND branch_name = $3`,
+      [session.id, revertInfo.prNumber, revertInfo.branch]
+    );
+    if (found) return found.id;
+    const { rows: revertRows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_url, pr_title,
+          status, revert_of_session_id)
+       VALUES ($1, $2, $3, $4, $5, $6, 'promoted', $7)
+       RETURNING id`,
+      [
+        session.app_id, decider.id, revertInfo.branch,
+        revertInfo.prNumber, revertInfo.prUrl, revertInfo.prTitle,
+        session.id,
+      ]
+    );
+    return revertRows[0].id;
+  });
   // (Born in review: its insert enrolled it in the proposal machine,
   // schema.sql wf_enrol_proposal.)
   await topicAttrs.selfAssignProposal(
@@ -6629,10 +6735,10 @@ async function checkAndOpenRevert(config, pool, session, decider) {
   const label = session.pr_title
     ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
     : `PR #${session.pr_number || session.id}`;
-  await sendSystemMessage(pool, session.app_id,
+  await steps.once('announced', () => sendSystemMessage(pool, session.app_id,
     `${decider.username} proposed undoing ${label}. Opened revert PR #${revertInfo.prNumber}, which needs ${majority}/${activeCount} votes to land.`,
     'system', null, { type: 'session', ref: session.id }
-  );
+  ).then(() => true));
 
   return {
     reverted: true,
@@ -6664,60 +6770,57 @@ function revertText(session, mergeSha, deciderUsername) {
 // mirror and pushed to a new branch as the service account
 // (services/hosted-git.js revertOnto); its proposal is a native pull
 // request. No clone, no token in a URL.
-async function createHostedRevertPR({ session, mergeSha, repoOwner, repoName, deciderUsername }) {
-  const safeBase = (session.branch_name || `pr-${session.pr_number || session.id}`).replace(/[^a-zA-Z0-9._/-]/g, '-');
-  const revertBranch = `revert/${safeBase}-${Date.now()}`;
-  const { prTitle, prBody } = revertText(session, mergeSha, deciderUsername);
+async function pushHostedRevert({ mergeSha, repoOwner, repoName, revertBranch, prTitle }) {
   await require('../services/hosted-git').revertOnto(repoOwner, repoName, mergeSha, {
     branch: revertBranch, message: `${prTitle}\n\nThis reverts commit ${mergeSha}.`,
   });
-  const prData = await github.createPR(repoOwner, repoName, { branch: revertBranch, title: prTitle, body: prBody });
-  return { branch: revertBranch, prNumber: prData.number, prUrl: prData.html_url, prTitle };
 }
 
-async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderUsername }) {
-  if (require('../services/repo-ref').hostOfOwner(repoOwner) === 'git_host') {
-    return createHostedRevertPR({ session, mergeSha, repoOwner, repoName, deciderUsername });
-  }
-  // On GitHub (the platform's own repository): as the GitHub App, with an
-  // installation token made for this revert (services/github.js "Who
-  // Homeroom is on GitHub"); refused for any other owner.
+// On GitHub (the platform's own repository): as the GitHub App, with an
+// installation token made for this revert (services/github.js "Who
+// Homeroom is on GitHub"); refused for any other owner. The token is never
+// in argv, the clone's URL or its config: only the clone and the push are
+// handed it, through git's credential helper, and no git child here holds
+// any other secret of this process (services/git-child.js).
+async function pushGithubRevert({ session, mergeSha, repoOwner, repoName, revertBranch }) {
   const token = await github.getInstallationToken(repoOwner);
+  const credential = { username: 'x-access-token', token };
 
-  const cloneUrl = `https://x-access-token:${token}@github.com/${repoOwner}/${repoName}.git`;
-  const tmpDir = `/tmp/usernode-revert-${session.id}-${Date.now()}`;
-  // Branch naming pattern: revert/<original-branch>-<timestamp>. The
-  // timestamp suffix avoids collisions if a prior revert attempt left
-  // a stale branch on the remote.
-  const safeBase = (session.branch_name || `pr-${session.pr_number || session.id}`).replace(/[^a-zA-Z0-9._/-]/g, '-');
-  const revertBranch = `revert/${safeBase}-${Date.now()}`;
+  const cloneUrl = `https://github.com/${repoOwner}/${repoName}.git`;
+  // git's HOME beside the clone, never inside it.
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), `usernode-revert-${session.id}-`));
+  const tmpDir = path.join(root, 'repo');
+  const git = (args, { auth = false, ...opts } = {}) => {
+    const child = gitChild.invocation(args, { home: root, credential: auth ? credential : null });
+    return docker.execFileAsync('git', child.args, { ...opts, env: child.env });
+  };
 
   try {
     // Full clone — we need history reaching back to the merge SHA, so
     // the deployProduction shallow-clone pattern doesn't apply here.
-    await docker.execFileAsync('git', ['clone', cloneUrl, tmpDir], { timeout: 180000 });
+    await git(['clone', cloneUrl, tmpDir], { auth: true, timeout: 180000 });
 
     // Committer identity for the revert commit: Homeroom's one identity
     // (services/commit-identity.js), as on the git host.
     const author = require('../services/commit-identity').homeroomAuthor();
-    await docker.execFileAsync('git', ['-C', tmpDir, 'config', 'user.name', author.name]);
-    await docker.execFileAsync('git', ['-C', tmpDir, 'config', 'user.email', author.email]);
+    await git(['-C', tmpDir, 'config', 'user.name', author.name]);
+    await git(['-C', tmpDir, 'config', 'user.email', author.email]);
 
     // Branch off the current main. main has already been updated by
     // the original merge + any subsequent merges by the time we get
     // here, so this is the "current" main.
-    await docker.execFileAsync('git', ['-C', tmpDir, 'checkout', '-b', revertBranch], { timeout: 10000 });
+    await git(['-C', tmpDir, 'checkout', '-b', revertBranch], { timeout: 10000 });
 
     // `git revert --no-edit <sha>` — squash merges produce single-parent
     // commits, so no `-m 1` needed. If the revert conflicts (later
     // commits depend on this one), git exits non-zero and the docker
     // helper rejects.
     try {
-      await docker.execFileAsync('git', ['-C', tmpDir, 'revert', '--no-edit', mergeSha], { timeout: 30000 });
+      await git(['-C', tmpDir, 'revert', '--no-edit', mergeSha], { timeout: 30000 });
     } catch (revertErr) {
       // Clean up the conflicted state inside the tmp dir for hygiene
       // (best-effort), then surface a tight error.
-      await docker.execFileAsync('git', ['-C', tmpDir, 'revert', '--abort']).catch(() => {});
+      await git(['-C', tmpDir, 'revert', '--abort']).catch(() => {});
       const m = String(revertErr.message || '').toLowerCase();
       if (m.includes('conflict')) {
         throw new Error('Revert produced merge conflicts');
@@ -6725,33 +6828,37 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
       throw new Error(`git revert failed: ${revertErr.message.slice(0, 200)}`);
     }
 
-    await docker.execFileAsync('git', ['-C', tmpDir, 'push', '-u', 'origin', revertBranch], { timeout: 60000 });
-
-    const origLabel = session.pr_title
-      ? `${session.pr_title} (PR #${session.pr_number || session.id})`
-      : `PR #${session.pr_number || session.id}`;
-    const prTitle = `Revert: ${session.pr_title || `PR #${session.pr_number || session.id}`}`.slice(0, 200);
-    const prBody =
-      `Automated revert of ${origLabel}.\n\n` +
-      `Undo vote reached majority on the original PR; deciding vote cast by \`${deciderUsername}\`. ` +
-      `This PR still needs a regular merge vote to land. Vote in the app's group chat panel.\n\n` +
-      `Reverts commit ${mergeSha}.`;
-
-    const prData = await github.createPR(repoOwner, repoName, {
-      branch: revertBranch,
-      title: prTitle,
-      body: prBody,
-    });
-
-    return {
-      branch: revertBranch,
-      prNumber: prData.number,
-      prUrl: prData.html_url,
-      prTitle,
-    };
+    await git(['-C', tmpDir, 'push', '-u', 'origin', revertBranch], { auth: true, timeout: 60000 });
   } finally {
-    await docker.execFileAsync('rm', ['-rf', tmpDir]).catch(() => {});
+    await fsp.rm(root, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+// Branch off main, revert <sha>, push, open a PR, on either host.
+// Returns { branch, prNumber, prUrl, prTitle }. Throws on revert conflict
+// or network errors; the caller surfaces the failure to chat. Each write is
+// kept as a step (a conductor's platform operation, services/
+// revert-operation.js): a retry finds its own branch pushed or PR open.
+async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderUsername, steps = durableSteps.none() }) {
+  // Branch naming pattern: revert/<original-branch>-<timestamp>. The
+  // timestamp suffix avoids collisions if a prior revert attempt left
+  // a stale branch on the remote.
+  const safeBase = (session.branch_name || `pr-${session.pr_number || session.id}`).replace(/[^a-zA-Z0-9._/-]/g, '-');
+  const revertBranch = await steps.once('revert-branch', () => `revert/${safeBase}-${Date.now()}`);
+  const { prTitle, prBody } = revertText(session, mergeSha, deciderUsername);
+  const hosted = require('../services/repo-ref').hostOfOwner(repoOwner) === 'git_host';
+  await steps.once('revert-pushed', async () => {
+    if (steps.active && await github.getBranchSha(repoOwner, repoName, revertBranch).catch(() => null)) return true;
+    if (hosted) await pushHostedRevert({ mergeSha, repoOwner, repoName, revertBranch, prTitle });
+    else await pushGithubRevert({ session, mergeSha, repoOwner, repoName, revertBranch });
+    return true;
+  });
+  const prData = await steps.once('revert-pr', async () => {
+    const open = steps.active ? await github.findOpenPrByBranch(repoOwner, repoName, revertBranch).catch(() => null) : null;
+    const pr = open || await github.createPR(repoOwner, repoName, { branch: revertBranch, title: prTitle, body: prBody });
+    return { number: pr.number, html_url: pr.html_url };
+  });
+  return { branch: revertBranch, prNumber: prData.number, prUrl: prData.html_url, prTitle };
 }
 
 // evaluateMergeGate and attemptMerge are the proposal machine's merge work
@@ -6765,6 +6872,7 @@ module.exports = {
   attemptMerge,
   refusalKind,
   createRevertPR,
+  checkAndOpenRevert,
   // Focused revision-safety tests exercise the reconciliation without
   // driving the full HTTP router.
   reconcileNativeReviewedHead,

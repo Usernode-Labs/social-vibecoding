@@ -241,3 +241,70 @@ test('remove: an unrelated user gets 403', async () => {
   const res = await fetch(`${base}/api/apps/demo/approvers/7`, { method: 'DELETE' });
   assert.equal(res.status, 403);
 });
+
+// ── A project that uses another app's approvers ──────────────────────────
+//
+// docs/plans/versions.md: a ready-made original's approvers are the
+// platform's (apps.approvers_from_app_id). Its panel lists that roster, read
+// only; it takes no invites or removals of its own, and says so in words.
+// A change to a roster drops the cache of every project that uses it.
+
+function linkedHandler() {
+  const base = defaultHandler();
+  return async (sql, params) => {
+    if (/SELECT id, slug, name FROM apps WHERE id = \$1/.test(sql) && params[0] === 1) {
+      calls.push({ sql, params });
+      return { rows: [{ id: 1, slug: 'homeroom', name: 'Homeroom' }] };
+    }
+    if (/SELECT id FROM apps WHERE approvers_from_app_id = \$1/.test(sql)) {
+      calls.push({ sql, params });
+      return { rows: params[0] === 11 ? [{ id: 31 }, { id: 32 }] : [] };
+    }
+    return base(sql, params);
+  };
+}
+
+test('linked: the panel lists the roster it uses, members only, and nobody manages it here', async () => {
+  appRow.approvers_from_app_id = 1;
+  poolQueryHandler = linkedHandler();
+  const res = await fetch(`${base}/api/apps/demo/approvers`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.deepEqual(body.approversFrom, { slug: 'homeroom', name: 'Homeroom' });
+  assert.equal(body.canManage, false, 'not even its creator');
+  const list = calls.find((c) => /SELECT ap\.user_id/.test(c.sql));
+  assert.deepEqual(list.params, [1, true], 'the platform\'s roster, members only');
+});
+
+test('linked: an invite or a removal is refused in words', async () => {
+  appRow.approvers_from_app_id = 1;
+  poolQueryHandler = linkedHandler();
+  const res = await invite('newapprover');
+  assert.equal(res.status, 409);
+  const body = await res.json();
+  assert.equal(body.code, 'approvers_linked');
+  assert.equal(body.error, 'This project is approved by the people who approve Homeroom. Change who approves it there.');
+  assert.ok(!calls.some((c) => /INSERT INTO app_approvers/.test(c.sql)));
+  const gone = await fetch(`${base}/api/apps/demo/approvers/7`, { method: 'DELETE' });
+  assert.equal(gone.status, 409);
+  assert.ok(!calls.some((c) => /DELETE FROM app_approvers/.test(c.sql)));
+});
+
+test('an unlinked project keeps its own roster and says so', async () => {
+  const res = await fetch(`${base}/api/apps/demo/approvers`);
+  const body = await res.json();
+  assert.equal(body.approversFrom, null);
+  assert.deepEqual(calls.find((c) => /SELECT ap\.user_id/.test(c.sql)).params, [11, false]);
+});
+
+test('a roster change drops the cache of every project that uses it', async () => {
+  poolQueryHandler = linkedHandler();
+  currentUser = { id: 7, username: 'newapprover' };
+  const res = await fetch(`${base}/api/approver-invites/11/accept`, { method: 'POST' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(invalidated, [11, 31, 32]);
+  invalidated = [];
+  currentUser = { id: 1, username: 'creator', isAdmin: false, canAdminWrite: false };
+  assert.equal((await fetch(`${base}/api/apps/demo/approvers/7`, { method: 'DELETE' })).status, 200);
+  assert.deepEqual(invalidated, [11, 31, 32]);
+});

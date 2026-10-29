@@ -39,6 +39,8 @@ const unitSuiteRow = require('./unit-suite-row');
 const checkSignals = require('./check-signals');
 const { sniffImageType } = require('./attachments');
 const requestSpecs = require('./request-specs');
+const connectorUploads = require('./connector-uploads');
+const createOptions = require('./create-options');
 const repoRef = require('./repo-ref');
 const {
   READ_SCOPE,
@@ -103,6 +105,14 @@ const MAX_REQUEST_TITLE_CHARS = 256;    // GitHub's own issue-title limit.
 const { GITHUB_ISSUE_BODY_MAX: MAX_REQUEST_BODY_CHARS } = require('./issue-body-limit'); // GitHub's own issue-body limit.
 const MAX_ANSWER_CHARS = 8000;          // MAX_CHAT_LEN in services/ws.js.
 const MAX_CLOSE_REASON_CHARS = 2000;    // MAX_CLOSE_REASON_LENGTH in routes/issues.js.
+// create_app (#6026). The name: the route takes any non-empty name and caps
+// only the slug it derives, so this is the connector's own bound on a name a
+// person reads on every screen. The brief: MIN_BRIEF_CHARS and
+// MAX_BRIEF_CHARS in services/homeroom-bot-dm.js, which its normalizeBrief
+// applies (tests/mcp-create-app.test.js pins them).
+const CREATE_APP_NAME_MAX = 80;
+const CREATE_APP_BRIEF_MIN = 10;
+const CREATE_APP_BRIEF_MAX = 4000;
 // submit_work's `description`: what share-in-progress and update-from-fork
 // accept, in UTF-8 BYTES (routes/proposal-handoff.js boundedText), and where
 // the create path cuts the pull request body, in characters
@@ -150,7 +160,11 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 //                            only for an agent session's Mayor
 //   submit_work            — opens or advances a proposal, for the group to vote on
 //   create_request         — files on the app's board and as a GitHub issue
+//   create_app             — makes a new project for the caller, spending one
+//                            of their app slots (#6026)
 //   post_spec              — posts a spec on a request, for the group to review
+//   prepare_upload         — mints a one-time command that stores one file
+//                            (a plan, a video, a screenshot) for the two above
 //   post_message           — posts in the user's name on a discussion thread
 //                            the whole group reads
 //   prepare_work           — claims the request on the app's board; mints a
@@ -194,7 +208,16 @@ const ACTING_TOOLS = Object.freeze([
   'withdraw_change',
   'submit_work',
   'create_request',
+  // #6026: it starts a real app (repository, container, database) and spends
+  // one of the caller's app slots, so it is asked about like every write.
+  'create_app',
   'post_spec',
+  // It files nothing, but it hands out a credential and holds a row for a
+  // day, as prepare_work holds a work order.
+  'prepare_upload',
+  // A new card picture for a project: it opens a vote in the project's
+  // group rather than changing the card (routes/app-illustrations.js).
+  'propose_featured_illustration',
   'post_message',
   'propose_close_request',
   'prepare_work',
@@ -282,6 +305,12 @@ const ACTING_TOOLS = Object.freeze([
   // Writes a notification of every kind into a test account's bell, and
   // rings its phone.
   'send_test_notifications',
+  // Featured apps (routes/featured-admin.js): admin-only, and neither changes
+  // an app, but each changes what people see at once: the list the
+  // signed-out landing's Featured and Home's "Find more apps" read, or the
+  // flag that takes an app out of Discover and Featured.
+  'set_featured_apps',
+  'set_discover_flag',
 ]);
 
 // One conventions section, at most. The largest current section (the native
@@ -715,11 +744,16 @@ const SPEC_FORMAT_INTRO = [
 ].join('\n\n');
 
 /** get_spec_format's text for the app `slug`: the intro, the contract, the design brief. */
+// A connector client can upload screenshots (prepare_upload) and show them in
+// a plan's text. The Homeroom bot cannot, so this is the connector's, not
+// part of prompts.js's contract, which the bot's own prompts share.
+const SPEC_PICTURES_GUIDE = `PICTURES IN THE TEXT: the "no images by URL" rule has one exception, a plan's own pictures, such as the phone screens of a flow or a design's mockups. Send each with prepare_upload (kind "screenshot": a PNG or JPEG up to 4 MB); its upload answers with a \`path\`, and the plan's text shows it as <img src="PATH" alt="what it shows">. Posting the plan keeps those pictures with the request. Pictures that belong in a row, like the steps of a flow, go in <div class="spec-strip">, one <figure> per picture with a short <figcaption>; the row scrolls sideways. Any other image is dropped. A plan that follows a design document of its own may open the "user" section with that document's diagrams and pictures in place of a screens figure; keep the screens figure for a change to a screen that exists today.`;
+
 function specFormatGuide(slug) {
   const prompts = require('./prompts');
   const specHtml = require('./spec-html');
   const platformStyles = specHtml.specStylesFor({ slug, self_hosted: false }) === 'platform';
-  return [SPEC_FORMAT_INTRO, prompts.specHtmlContract(platformStyles), prompts.SPEC_DESIGN_BRIEF].join('\n\n');
+  return [SPEC_FORMAT_INTRO, prompts.specHtmlContract(platformStyles), SPEC_PICTURES_GUIDE, prompts.SPEC_DESIGN_BRIEF].join('\n\n');
 }
 
 // One spec version as the connector reports it. The title is the author's
@@ -2335,14 +2369,19 @@ function registerTools(server, ctx) {
     overriddenBy: z.number().nullable(),
     overriddenAt: z.string().nullable(),
     overrideReason: z.string().nullable(),
+    // A close-up (services/shots-view.js cleanCloseup) is an after still of
+    // one region, in its own shape: `rect` and `part` instead of `focusRect`,
+    // and no `stageLabels`. A viewer in the New Needs you experiment gets them
+    // beside the stills, so an enum or a required field that leaves them out
+    // fails the whole get_proposal answer.
     artifacts: z.array(z.object({
       id: z.string(), storyId: z.string(), viewport: z.string(),
       side: z.enum(['base', 'head', 'paired']),
-      variant: z.enum(['focus', 'context', 'animation']),
+      variant: z.enum(['focus', 'context', 'animation', 'closeup']),
       media: z.enum(['png', 'webm', 'gif']),
       contentType: z.string(), width: z.number().nullable(), height: z.number().nullable(),
       bytes: z.number().nullable(), focusRect: z.unknown().nullable(),
-      stageLabels: z.array(z.string()).nullable(), url: z.string(),
+      stageLabels: z.array(z.string()).nullable().optional(), url: z.string(),
     })),
     updatedAt: z.string().nullable(),
   }).nullable();
@@ -3176,11 +3215,12 @@ function registerTools(server, ctx) {
 
   server.registerTool('post_spec', {
     title: 'Post a plan on a request',
-    description: `Post a plan on an open request, for the group to review before anything is built: what will change and how. Read get_spec_format first. An HTML plan leads with before/after screens and opens in Homeroom's plan viewer from a card in the request's discussion, and its markdown copy is posted on the GitHub issue too. Posting again on the same request adds your next version, so answer review comments by revising and posting again. Everyone who can see the request can read it. It builds nothing, claims nothing and starts no vote, and you must be a member of the app. Limits: an HTML plan up to ${requestSpecs.MAX_SPEC_HTML_CHARS} characters, a markdown one up to ${requestSpecs.MAX_SPEC_MARKDOWN_CHARS}, and one call up to ${MCP_REQUEST_BODY_KB} KB. Over a limit it is refused with the numbers, never shortened.`,
+    description: `Post a plan on an open request, for the group to review before anything is built: what will change and how. Read get_spec_format first. An HTML plan leads with before/after screens and opens in Homeroom's plan viewer from a card in the request's discussion, and a comment on the request links to it. Posting again on the same request adds your next version, so answer review comments by revising and posting again. Everyone who can see the request can read it. It builds nothing, claims nothing and starts no vote, and you must be a member of the app. Limits: an HTML plan up to ${requestSpecs.MAX_SPEC_HTML_CHARS} characters, a markdown one up to ${requestSpecs.MAX_SPEC_MARKDOWN_CHARS}, and one call up to ${MCP_REQUEST_BODY_KB} KB. Over a limit it is refused with the numbers, never shortened. A plan saved in a file, above all one with drawn screens, need not be written out here: send it with prepare_upload (kind "plan") and pass \`specUploadId\` instead of \`spec\`.`,
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       requestNumber: z.number().int().positive().describe('The open request the plan is for, as returned by list_requests.'),
-      spec: z.string().describe('The whole plan: one <article data-spec> HTML document as get_spec_format describes, or markdown for a change nobody sees.'),
+      spec: z.string().optional().describe(`The whole plan: one <article data-spec> HTML document as get_spec_format describes, or markdown for a change nobody sees. Send this or specUploadId, not both.`),
+      specUploadId: z.number().int().positive().optional().describe('Instead of `spec`: the uploadId a prepare_upload command (kind "plan") answered with once it sent the plan\'s file. The same checks apply to it as to `spec`, and it is used up by the post.'),
     },
     outputSchema: {
       requestNumber: z.number(),
@@ -3194,7 +3234,7 @@ function registerTools(server, ctx) {
       webPath: z.string(),
     },
     annotations: writeAnnotations,
-  }, async ({ slug, requestNumber, spec }) => {
+  }, async ({ slug, requestNumber, spec, specUploadId }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
     if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
@@ -3202,14 +3242,28 @@ function registerTools(server, ctx) {
     if (!Number.isInteger(number) || number <= 0) {
       return toolError('invalid_request', 'requestNumber must be a request number, as returned by list_requests.');
     }
+    const fromUpload = specUploadId !== undefined && specUploadId !== null;
+    if (fromUpload && spec !== undefined && spec !== null) {
+      return toolError('invalid_request', 'Send the plan as spec or as specUploadId, not both.');
+    }
+    // A plan from an upload is read back here, on the caller's behalf, and
+    // then goes exactly the way an inline one does.
+    let planText = spec;
+    if (fromUpload) {
+      const taken = await connectorUploads.takeUpload(pool, {
+        userId: user.id, uploadId: specUploadId, kind: 'plan', field: 'specUploadId',
+      });
+      if (!taken.ok) return toolError(taken.code, taken.message);
+      planText = taken.text;
+    }
     // The route checks the same rules; checking here first keeps a refused
     // spec from crossing the wire twice.
-    const prepared = requestSpecs.prepareSpec(spec);
+    const prepared = requestSpecs.prepareSpec(planText);
     if (!prepared.ok) {
       const { code, message, limitChars, actualChars } = prepared;
       return toolError(code, message, limitChars ? { limitChars, actualChars } : {});
     }
-    const result = await callPlatform(baseUrl, accessToken, 'POST', `/api/apps/${slug}/issues/${number}/spec`, { spec });
+    const result = await callPlatform(baseUrl, accessToken, 'POST', `/api/apps/${slug}/issues/${number}/spec`, { spec: planText });
     // A 404 here is as often the request (closed, or never on this app) as
     // the app, and the route says which: its words, not the generic sentence.
     if (result.status === 404) {
@@ -3217,6 +3271,9 @@ function registerTools(server, ctx) {
         || 'That app or request was not found, or you do not have access to it.');
     }
     if (!result.ok) return platformError(result);
+    // Posted, so the upload is done with. A refused post keeps it, so the
+    // same id can be posted again once the refusal is dealt with.
+    if (fromUpload) await connectorUploads.consumeUploads(pool, { userId: user.id, uploadIds: [specUploadId] });
     const posted = result.body || {};
     return toolResult({
       requestNumber: number,
@@ -3492,10 +3549,13 @@ function registerTools(server, ctx) {
   // `images` is offered to an external client only. The Mayor's writes run
   // from a confirmation card that stores and shows the exact input, which is
   // no place for a megabyte of base64, and its route list has no upload.
+  // So are `videoUploadId` and `screenshotUploadIds`, the same files sent
+  // ahead with prepare_upload: an agent with a file on its machine never
+  // has to write it out into this call.
   const offersImages = kind === 'external';
   server.registerTool('create_request', {
     title: 'File a request on an app',
-    description: `File a feature request or bug report on a Homeroom app. It appears on the app's board and as a GitHub issue for the group to see and discuss. This does not change the app by itself — someone still has to build it and the group still has to vote it in. Check list_requests first to avoid duplicates. Write the whole report: the description is stored verbatim, up to ${MAX_REQUEST_BODY_CHARS} characters (GitHub's own issue-body limit), and titles up to ${MAX_REQUEST_TITLE_CHARS}. Nothing is ever shortened for you — a field over its limit is refused with the limit and your actual length, and nothing is filed, so you can split the report or shorten it and call again. \`descriptionChars\` in the result is the length that was stored; it equals what you sent.${offersImages ? ` To show the problem, attach up to ${MAX_REQUEST_IMAGES} PNG or JPEG screenshots in \`images\`, each as base64 with its SHA-256 so a damaged copy is caught; they are embedded below the description the way a person's screenshots are, and get_request shows them back. One call is at most ${MCP_REQUEST_BODY_KB} KB, so downscale a large screenshot first.` : ''}`,
+    description: `File a feature request or bug report on a Homeroom app. It appears on the app's board and as a GitHub issue for the group to see and discuss. This does not change the app by itself — someone still has to build it and the group still has to vote it in. Check list_requests first to avoid duplicates. Write the whole report: the description is stored verbatim, up to ${MAX_REQUEST_BODY_CHARS} characters (GitHub's own issue-body limit), and titles up to ${MAX_REQUEST_TITLE_CHARS}. Nothing is ever shortened for you — a field over its limit is refused with the limit and your actual length, and nothing is filed, so you can split the report or shorten it and call again. \`descriptionChars\` in the result is the length that was stored; it equals what you sent.${offersImages ? ` To show the problem, attach up to ${MAX_REQUEST_IMAGES} PNG or JPEG screenshots in \`images\`, each as base64 with its SHA-256 so a damaged copy is caught; they are embedded below the description the way a person's screenshots are, and get_request shows them back. One call is at most ${MCP_REQUEST_BODY_KB} KB, so downscale a large screenshot first. A screenshot saved in a file, or a video, goes up with prepare_upload instead, and you pass its uploadId here: \`screenshotUploadIds\`, and \`videoUploadId\` for one MP4, WebM or MOV clip of any length up to 50 MB, which the request page plays inline below the stills.` : ''}`,
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       title: z.string().describe(`A short one-line summary of what is being asked for. At most ${MAX_REQUEST_TITLE_CHARS} characters.`),
@@ -3506,6 +3566,8 @@ function registerTools(server, ctx) {
           sha256: z.string().describe('The hex SHA-256 of the same file\'s bytes (for example `sha256sum shot.png`), computed from the file, not from the base64. A mismatch means the copy was damaged, and nothing is filed.'),
           mimeType: z.enum(['image/png', 'image/jpeg']).optional().describe('Optional. When given, it must match the bytes.'),
         })).optional().describe(`Up to ${MAX_REQUEST_IMAGES} screenshots, in the order they should appear. PNG or JPEG, neither side over ${MAX_REQUEST_IMAGE_EDGE_PX} pixels. The whole call must fit in ${MCP_REQUEST_BODY_KB} KB of JSON and base64 is a third larger than the file, so in practice keep them to about ${Math.floor((MCP_REQUEST_BODY_KB * 0.7) / 50) * 50} KB of image in total: a JPEG of the relevant part of the screen, about 1000 pixels wide, usually does. Each image's line is added after the description and counts toward GitHub's limit with it. Anyone with an image's link can open it, even on a private app, so leave out anything private.`),
+        screenshotUploadIds: z.array(z.number().int().positive()).optional().describe(`Screenshots sent ahead with prepare_upload (kind "screenshot"): the uploadIds their commands answered with, in the order they should appear, after any in \`images\`. Together with \`images\`, at most ${MAX_REQUEST_IMAGES}.`),
+        videoUploadId: z.number().int().positive().optional().describe('One video sent ahead with prepare_upload (kind "video"): the uploadId its command answered with. Its link is added after the screenshots, and the request page plays it inline. Anyone with the link can open it, even on a private app.'),
       } : {}),
     },
     outputSchema: {
@@ -3515,9 +3577,11 @@ function registerTools(server, ctx) {
       webPath: z.string(),
       // Where each attached image is served, in order. Empty with none.
       images: z.array(z.string()),
+      // Where the attached video is served, or null with none.
+      video: z.string().nullable(),
     },
     annotations: writeAnnotations,
-  }, async ({ slug, title, description, images }) => {
+  }, async ({ slug, title, description, images, screenshotUploadIds, videoUploadId }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
     if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
@@ -3543,10 +3607,40 @@ function registerTools(server, ctx) {
     if (images != null && !offersImages) {
       return toolError('invalid_request', 'images cannot be attached from here.');
     }
+    if ((screenshotUploadIds != null || videoUploadId != null) && !offersImages) {
+      return toolError('invalid_request', 'Uploaded files cannot be attached from here.');
+    }
     const imageCheck = checkRequestImages(images);
     if (!imageCheck.ok) {
       return toolError(imageCheck.code, imageCheck.message,
         imageCheck.index === undefined ? {} : { index: imageCheck.index });
+    }
+    // Files sent ahead with prepare_upload, each read back for this caller
+    // and checked before anything is sent, so a wrong id files nothing.
+    const uploadedShots = Array.isArray(screenshotUploadIds) ? screenshotUploadIds : [];
+    if (screenshotUploadIds != null && !Array.isArray(screenshotUploadIds)) {
+      return toolError('invalid_request', 'screenshotUploadIds must be a list of uploadIds.');
+    }
+    if (imageCheck.images.length + uploadedShots.length > MAX_REQUEST_IMAGES) {
+      return toolError('invalid_images', `A request takes at most ${MAX_REQUEST_IMAGES} screenshots; `
+        + `${imageCheck.images.length + uploadedShots.length} were sent between images and screenshotUploadIds. `
+        + 'Nothing was uploaded or filed.');
+    }
+    const uploadedShotIds = [];
+    for (const uploadId of uploadedShots) {
+      const taken = await connectorUploads.takeUpload(pool, {
+        userId: user.id, uploadId, kind: 'screenshot', field: 'screenshotUploadIds',
+      });
+      if (!taken.ok) return toolError(taken.code, taken.message);
+      uploadedShotIds.push(taken.mediaId);
+    }
+    let videoId = null;
+    if (videoUploadId != null) {
+      const taken = await connectorUploads.takeUpload(pool, {
+        userId: user.id, uploadId: videoUploadId, kind: 'video', field: 'videoUploadId',
+      });
+      if (!taken.ok) return toolError(taken.code, taken.message);
+      videoId = taken.mediaId;
     }
     // One upload per image, in order, through the feedback dialog's route.
     // An upload that is never linked to a request is deleted by the
@@ -3561,13 +3655,19 @@ function registerTools(server, ctx) {
       }
       screenshotIds.push(id);
     }
+    screenshotIds.push(...uploadedShotIds);
     const result = await callPlatform(baseUrl, accessToken, 'POST', `/api/apps/${slug}/issues`, {
       title: titleCheck.value,
       description: bodyCheck.value || null,
       kind: 'general',
       ...(screenshotIds.length ? { screenshotIds } : {}),
+      ...(videoId ? { videoId } : {}),
     });
     if (!result.ok) return platformError(result);
+    // Filed, so the uploads are done with; their files stay, linked to the
+    // request. A refused filing keeps them, so the same ids can be sent again.
+    const usedUploads = [...uploadedShots, ...(videoUploadId != null ? [videoUploadId] : [])];
+    if (usedUploads.length) await connectorUploads.consumeUploads(pool, { userId: user.id, uploadIds: usedUploads });
     const issue = (result.body && result.body.issue) || {};
     const number = issue.github_issue_number || null;
     return toolResult({
@@ -3580,8 +3680,325 @@ function registerTools(server, ctx) {
         ? appWebPath(origin, slug, `dev/issues/${number}`)
         : appWebPath(origin, slug, 'dev'),
       images: screenshotIds.map((id) => `${origin}/issue-images/${id}`),
+      video: videoId ? `${origin}/issue-videos/${videoId}` : null,
     });
   });
+
+  // ── create_app ───────────────────────────────────────────────────────
+  //
+  // #6026: make a new project for the connected person, the one the Create
+  // screen's "What do you want to make?" makes, so an assistant that designed
+  // an app with them can start it without sending them to Homeroom first.
+  // External clients only, by omission: the Mayor and a change's worker see
+  // only the tools services/mcp-audiences.js names for them, and their route
+  // lists do not carry POST /api/apps.
+  //
+  // Four fields and no more (createOptions.CONNECTOR_CREATE_FIELDS). Invites,
+  // an import, an approval rule and a starter stay on Homeroom itself, and
+  // the route refuses them from a connector token, so this tool and a raw
+  // call with the same token reach the same narrow door. The person's app
+  // allowance, the server's app limit and the create rate limiter hold as
+  // they do in the browser; their refusals come back in the route's words.
+  server.registerTool('create_app', {
+    title: 'Make a new project',
+    description: `Make a new Homeroom project for the person this connector is signed in as: the same project the Create screen's "What do you want to make?" makes, with them as its only member. Use it when they want something new built, not a change to an app they already have (check list_apps first). It spends one of their app slots and starts a real app with its own repository, container and database, so confirm the name with them before calling. \`audience\` defaults to "invited": a private community nobody else is in yet; they invite people from its page. With a \`brief\`, Homeroom bot builds the first version from it, as it does on the Create screen. Without one the project starts from the empty starter for a coding agent to build: once get_app reports it running, file its first request with create_request, then prepare_work and submit_work as for any change. It invites nobody, tells nobody else and puts nothing to a vote.`,
+    inputSchema: {
+      name: z.string().describe(`What to call it, as the person would say it. At most ${CREATE_APP_NAME_MAX} characters.`),
+      description: z.string().optional().describe(`One line about what it is, shown on its page and in Discover. At most ${createOptions.DESCRIPTION_MAX} characters.`),
+      audience: z.enum(['invited', 'solo', 'open']).optional().describe('Who it is for. "invited" (the default): a private community they can invite people into. "solo": just them. "open": a public community anyone can see, join and build.'),
+      brief: z.string().optional().describe(`What it should do, in the person's words, ${CREATE_APP_BRIEF_MIN} to ${CREATE_APP_BRIEF_MAX} characters. Only when Homeroom bot should build the first version; leave it out when a coding agent will.`),
+    },
+    outputSchema: {
+      slug: z.string(),
+      name: z.string(),
+      status: z.string(),
+      audience: z.enum(['invited', 'solo', 'open']),
+      // Who builds the first version: Homeroom bot from the brief, or the
+      // caller's own coding agent.
+      firstVersion: z.enum(['homeroom_bot', 'yours']),
+      webPath: z.string(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ name, description, audience, brief }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    const cleanName = String(name || '').trim();
+    if (!cleanName) return toolError('invalid_request', 'name is required.');
+    // Checked, never fixed: a project made under a shortened name is not the
+    // one the person agreed to.
+    const nameCheck = checkWriteLength(cleanName, {
+      field: 'name', max: CREATE_APP_NAME_MAX, hint: 'Choose a shorter name with the person, then call create_app again.',
+    });
+    if (!nameCheck.ok) return writeLengthError(nameCheck);
+    const line = description == null ? '' : String(description).trim();
+    const lineCheck = checkWriteLength(line, {
+      field: 'description', max: createOptions.DESCRIPTION_MAX, hint: 'Say what it is in one shorter line, then call create_app again.',
+    });
+    if (!lineCheck.ok) return writeLengthError(lineCheck);
+    const wanted = audience == null ? 'invited' : audience;
+    if (!createOptions.AUDIENCES.has(wanted)) {
+      return toolError('invalid_request', 'audience must be "invited", "solo" or "open".');
+    }
+    const words = brief == null ? '' : String(brief).trim();
+    if (words && words.length < CREATE_APP_BRIEF_MIN) {
+      return toolError('invalid_request', `A brief needs at least ${CREATE_APP_BRIEF_MIN} characters; leave it out when a coding agent will build the first version.`);
+    }
+    const briefCheck = checkWriteLength(words, {
+      field: 'brief', max: CREATE_APP_BRIEF_MAX, hint: 'Shorten the brief, then call create_app again.',
+    });
+    if (!briefCheck.ok) return writeLengthError(briefCheck);
+    const result = await callPlatform(baseUrl, accessToken, 'POST', '/api/apps', {
+      name: nameCheck.value,
+      audience: wanted,
+      ...(lineCheck.value ? { description: lineCheck.value } : {}),
+      ...(briefCheck.value ? { brief: briefCheck.value } : {}),
+    });
+    if (!result.ok) {
+      // Out of app slots is the person's allowance, not this connection's
+      // permission: said as such, so they are not told to reconnect.
+      if (result.status === 403 && result.body && result.body.code === 'app_allowance_exhausted') {
+        return toolError('app_allowance_exhausted', platformWords(result.body).message
+          || 'All of this person\'s app slots are in use. They can ask for more from the app allowance panel on Homeroom.');
+      }
+      if (result.status === 409) {
+        const said = (platformWords(result.body).message || 'A project with that name already exists').replace(/[.!?]?\s*$/, '.');
+        return toolError('name_taken', `${said} Choose another name with the person.`);
+      }
+      return platformError(result);
+    }
+    const app = (result.body && result.body.app) || {};
+    const slug = typeof app.slug === 'string' ? app.slug : '';
+    if (!requireSlug(slug)) {
+      return toolError('platform_error', 'Homeroom made the project but did not say what it is called. Call list_apps to find it before making another.');
+    }
+    const byBot = !!(result.body && result.body.homeroomBot);
+    return toolResult({
+      slug,
+      name: untrusted(app.name || nameCheck.value, CREATE_APP_NAME_MAX),
+      status: typeof app.status === 'string' ? app.status : 'creating',
+      audience: wanted,
+      firstVersion: byBot ? 'homeroom_bot' : 'yours',
+      webPath: appWebPath(origin, slug),
+      nextStep: byBot
+        ? 'Homeroom bot is building the first version from the brief while the project is set up, as it does for a project made on the Create screen. The person follows it on the project\'s page (webPath) and in their messages from Homeroom bot; do not build a first version of your own as well.'
+        : 'Homeroom is setting the project up, which takes a minute or two. Call get_app with this slug until its status is running, then file its first request with create_request and build it with prepare_work and submit_work like any change. The person can open webPath to invite people.',
+    });
+  });
+
+  // ── prepare_upload ───────────────────────────────────────────────────
+  //
+  // The connector's half of services/connector-uploads.js: mint a one-time
+  // command that sends one file from the agent's own machine, so a plan, a
+  // video or a screenshot never has to be written out inside a tool call.
+  // The token is in `command` and nowhere else in the answer; post_spec and
+  // create_request then name the upload by its id. External clients only,
+  // like the fields that take it.
+  if (offersImages) {
+    server.registerTool('prepare_upload', {
+      title: 'Get a command to upload a file',
+      description: `Get a one-time command that sends ONE file to Homeroom straight from your machine, so a large plan, a video or a screenshot is never written out inside a tool call. kind "plan": an HTML or markdown plan for post_spec, which then takes \`specUploadId\` instead of \`spec\` (up to ${requestSpecs.MAX_SPEC_HTML_CHARS} characters, the plan viewer's own limit). kind "video": an MP4, WebM or MOV clip of any length up to ${connectorUploads.sizeLabel(connectorUploads.maxBytesFor('video'))}, for create_request's \`videoUploadId\`; the request page plays it inline. kind "screenshot": a PNG or JPEG up to ${connectorUploads.sizeLabel(connectorUploads.maxBytesFor('screenshot'))}, for create_request's \`screenshotUploadIds\`. Run \`command\` from a shell on the machine that holds the file. It answers "ok":true with the uploadId once the file is stored and checked; a refusal says why and stores nothing. Each command stores one file, of its kind, for you only, and works for ${connectorUploads.TOKEN_TTL_HOURS} hours: never print, commit or share its token. It needs a machine that can reach Homeroom; a hosted sandbox that cannot should send a plan as \`spec\` and screenshots as \`images\` instead.`,
+      inputSchema: {
+        kind: z.enum(connectorUploads.KINDS).describe('What the file is: "plan", "video" or "screenshot".'),
+        file: z.string().optional().describe('The path of the file on your machine, written into the command for you. Optional: without it the command says FILE where the path goes.'),
+      },
+      outputSchema: {
+        uploadId: z.number(),
+        kind: z.enum(connectorUploads.KINDS),
+        command: z.string(),
+        maxBytes: z.number(),
+        expiresAt: z.string(),
+        nextStep: z.string(),
+      },
+      annotations: writeAnnotations,
+    }, async ({ kind: uploadKind, file }) => {
+      const guard = scopeGuard(WRITE_SCOPE);
+      if (guard) return guard;
+      if (!connectorUploads.KINDS.includes(uploadKind)) {
+        return toolError('invalid_request', `kind must be one of ${connectorUploads.KINDS.join(', ')}.`);
+      }
+      let filePath = 'FILE';
+      if (file !== undefined && file !== null && file !== '') {
+        if (typeof file !== 'string' || file.length > 1024 || /[\u0000-\u001f\u007f]/.test(file)) {
+          return toolError('invalid_request', 'file must be a path on one line, at most 1024 characters.');
+        }
+        filePath = file;
+      }
+      const minted = await connectorUploads.mintUpload(pool, { userId: user.id, kind: uploadKind, origin });
+      if (!minted.ok) return toolError(minted.code, minted.message, { retryable: minted.code === 'platform_unavailable' });
+      // Single-quoted for any POSIX shell; a quote inside the path is closed,
+      // escaped and reopened.
+      const quoted = `'${filePath.replace(/'/g, `'\\''`)}'`;
+      const seconds = uploadKind === 'video' ? 600 : 120;
+      const command = `curl -sS --max-time ${seconds} -X PUT -H 'Authorization: Bearer ${minted.token}' `
+        + `--data-binary @${quoted} ${minted.url}`;
+      const field = uploadKind === 'plan' ? 'post_spec\'s specUploadId'
+        : (uploadKind === 'video' ? 'create_request\'s videoUploadId' : 'create_request\'s screenshotUploadIds');
+      return toolResult({
+        uploadId: minted.uploadId,
+        kind: uploadKind,
+        command,
+        maxBytes: minted.maxBytes,
+        expiresAt: minted.expiresAt.toISOString(),
+        nextStep: `Run the command${filePath === 'FILE' ? ', with FILE replaced by the file\'s path' : ''}. When it answers `
+          + `"ok":true, pass ${minted.uploadId} as ${field}. If it is refused, it says why and the command `
+          + 'stays usable; once a file is stored, the command is spent.',
+      });
+    });
+  }
+
+  // ── Featured illustrations ───────────────────────────────────────────
+  //
+  // The picture on a project's card in Discover, on Home's Discover rail and
+  // on the signed-out landing, as the project's Featured illustration editor
+  // sets it (frontend/src/features/apps/featured-illustration-editor.tsx).
+  // Two tools over the editor's own route, /api/apps/:slug/featured-
+  // illustration (routes/app-illustrations.js), which checks that the person
+  // may manage the app and, on a write, opens the group's vote rather than
+  // changing the card: the picture changes when the vote passes, as it does
+  // after the editor's Save.
+  //
+  // A tool call cannot carry an image, so the pictures go ahead with
+  // prepare_upload (kind "screenshot": a still image) and are named here by
+  // their uploadIds, as create_request's screenshotUploadIds are. The
+  // connector reads each one back for its owner, holds it to the editor's
+  // own limit (1 MB, a smaller cap than a screenshot's) and sends the pair
+  // to the route exactly as the editor's PUT does. External clients only,
+  // like prepare_upload.
+  if (offersImages) {
+    const ILLUSTRATION_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,99}$/;
+    // routes/app-illustrations.js validateImage: the most one picture may be.
+    const ILLUSTRATION_MAX_BYTES = 1024 * 1024;
+    const { TONES: ILLUSTRATION_TONES } = require('../routes/app-illustrations');
+    const illustrationPath = (slug) => `/api/apps/${slug}/featured-illustration`;
+    const absolute = (p) => (typeof p === 'string' && p.startsWith('/app-illustrations/') ? `${origin}${p}` : null);
+    const framingOut = (f) => (f && typeof f === 'object' ? {
+      url: absolute(f.url),
+      darkUrl: absolute(f.darkUrl),
+      zoom: typeof f.zoom === 'number' ? f.zoom : null,
+      x: typeof f.x === 'number' ? f.x : null,
+      y: typeof f.y === 'number' ? f.y : null,
+      tint: typeof f.tint === 'string' && ILLUSTRATION_TONES.includes(f.tint) ? f.tint : null,
+    } : null);
+    const proposalOut = (p) => (p && typeof p === 'object' && Number.isInteger(p.id) ? {
+      id: p.id,
+      url: typeof p.href === 'string' && p.href.startsWith('#') ? `${origin}/${p.href}` : null,
+    } : null);
+    // The route's refusals in its own words, with a code for each.
+    const illustrationRefusal = (result) => {
+      const b = result.body && typeof result.body === 'object' ? result.body : {};
+      const message = typeof b.error === 'string' && b.error.trim() ? clip(b.error.trim(), 500) : `Homeroom returned HTTP ${result.status}.`;
+      if (result.status === 403 && b.code !== 'join_required') return toolError('managers_only', `${message} Nothing was changed.`);
+      if (result.status === 409) {
+        return toolError('conflict', `${message} Nothing was changed.`, b.pending ? { pending: proposalOut(b.pending) } : {});
+      }
+      if (result.status === 400) return toolError('invalid_request', `${message} Nothing was changed.`);
+      return platformError(result);
+    };
+
+    server.registerTool('get_featured_illustration', {
+      title: 'Featured illustration: the card picture',
+      description: 'The picture on a project\'s card in Discover, Home\'s Discover rail and the signed-out landing, as its Featured illustration editor shows it: the light image, the dark one if it has one, how it is framed (zoom, x, y) and its card colour (tint), or null when the card draws the project\'s icon instead. `pending` is the change to it that is waiting for the group\'s vote, if one is. Only people who may manage the project can read it: its creator, its admins and full platform admins.',
+      inputSchema: {
+        slug: z.string().min(1).max(100),
+      },
+      outputSchema: { slug: z.string(), illustration: z.any(), pending: z.any(), nextStep: z.string() },
+      annotations: readAnnotations,
+    }, async ({ slug }) => {
+      const guard = scopeGuard(READ_SCOPE);
+      if (guard) return guard;
+      const s = String(slug || '').trim();
+      if (!ILLUSTRATION_SLUG_RE.test(s)) return toolError('invalid_request', 'slug is not an app slug.');
+      const r = await callPlatform(baseUrl, accessToken, 'GET', illustrationPath(s));
+      if (!r.ok) return illustrationRefusal(r);
+      const b = r.body || {};
+      const pending = proposalOut(b.pending);
+      return readResult('get_featured_illustration', {
+        slug: s,
+        illustration: framingOut(b.illustration),
+        pending,
+        nextStep: pending
+          ? 'A change to this picture is already up for the group\'s vote: another can be proposed once it settles.'
+          : 'To propose a new picture, send it with prepare_upload (kind "screenshot") and call propose_featured_illustration.',
+      });
+    });
+
+    server.registerTool('propose_featured_illustration', {
+      title: 'Featured illustration: propose a new card picture',
+      description: `Propose a new picture for a project's card in Discover, Home's Discover rail and the signed-out landing, as its Featured illustration editor's Save does. It does not change the card: it opens a vote in the project's group, and the picture changes when the vote passes; \`proposal\` links to it. Send each picture first with prepare_upload (kind "screenshot"), then pass the uploadIds here: \`lightUploadId\` for the light theme, and \`darkUploadId\` for the dark one, or null to drop the dark picture. Each must be a PNG or JPEG under 1 MB; a square about 1024 px, with its subject centred, fits every card (the landing crops it to 16:10 around the centre). Leave out a picture to keep the one the card has. \`zoom\` (0.5 to 3), \`x\` and \`y\` (-100 to 100) frame it, and keep the card's current framing when left out (1, 0, 0 for a card with none); \`tint\` is the card colour, one of ${ILLUSTRATION_TONES.join(', ')}. Only the project's creator, its admins and full platform admins may propose one, and only one change can wait for a vote at a time.`,
+      inputSchema: {
+        slug: z.string().min(1).max(100),
+        lightUploadId: z.number().int().positive().optional().describe('The uploadId prepare_upload (kind "screenshot") answered with for the light picture.'),
+        darkUploadId: z.number().int().positive().nullable().optional().describe('The uploadId for the dark picture, or null to drop the dark picture the card has.'),
+        zoom: z.number().min(0.5).max(3).optional(),
+        x: z.number().min(-100).max(100).optional(),
+        y: z.number().min(-100).max(100).optional(),
+        tint: z.enum(ILLUSTRATION_TONES).optional().describe('The card colour behind the picture.'),
+      },
+      outputSchema: { slug: z.string(), proposal: z.any(), nextStep: z.string() },
+      annotations: writeAnnotations,
+    }, async ({ slug, lightUploadId, darkUploadId, zoom, x, y, tint }) => {
+      const guard = scopeGuard(WRITE_SCOPE);
+      if (guard) return guard;
+      const s = String(slug || '').trim();
+      if (!ILLUSTRATION_SLUG_RE.test(s)) return toolError('invalid_request', 'slug is not an app slug. Nothing was changed.');
+      if (lightUploadId == null && darkUploadId === undefined && zoom === undefined && x === undefined && y === undefined && tint === undefined) {
+        return toolError('invalid_request', 'Pass a lightUploadId, a darkUploadId, or new framing or tint: there is nothing to propose. Nothing was changed.');
+      }
+      if (lightUploadId != null && darkUploadId != null && lightUploadId === darkUploadId) {
+        return toolError('invalid_request', 'lightUploadId and darkUploadId name the same upload: send each picture with its own prepare_upload command. Nothing was changed.');
+      }
+      // Each picture, read back for its owner and held to the editor's limit.
+      const picture = async (uploadId, field) => {
+        const taken = await connectorUploads.takeImage(pool, { userId: user.id, uploadId, field });
+        if (!taken.ok) return taken;
+        const { data } = taken;
+        if (data.length > ILLUSTRATION_MAX_BYTES) {
+          return {
+            ok: false, code: 'invalid_images',
+            message: `The ${field === 'darkUploadId' ? 'dark' : 'light'} picture is ${Math.round(data.length / 1024)} KB, and a card picture must be under 1 MB. Save it smaller, as a JPEG for example, and send it again.`,
+          };
+        }
+        return { ok: true, base64: data.toString('base64') };
+      };
+      const body = {};
+      if (lightUploadId != null) {
+        const light = await picture(lightUploadId, 'lightUploadId');
+        if (!light.ok) return toolError(light.code, `${light.message} Nothing was changed.`);
+        body.light = light.base64;
+      }
+      if (darkUploadId === null) body.dark = null;
+      else if (darkUploadId !== undefined) {
+        const dark = await picture(darkUploadId, 'darkUploadId');
+        if (!dark.ok) return toolError(dark.code, `${dark.message} Nothing was changed.`);
+        body.dark = dark.base64;
+      }
+      // Framing the call leaves out keeps the card's own, as the editor does.
+      let current = null;
+      if (zoom === undefined || x === undefined || y === undefined) {
+        const read = await callPlatform(baseUrl, accessToken, 'GET', illustrationPath(s));
+        if (!read.ok) return illustrationRefusal(read);
+        current = read.body && read.body.illustration && typeof read.body.illustration === 'object' ? read.body.illustration : null;
+      }
+      const kept = (value, key, fallback) => (value !== undefined ? value
+        : (current && typeof current[key] === 'number' ? current[key] : fallback));
+      body.zoom = kept(zoom, 'zoom', 1);
+      body.x = kept(x, 'x', 0);
+      body.y = kept(y, 'y', 0);
+      if (tint !== undefined) body.tint = tint;
+      const r = await callPlatform(baseUrl, accessToken, 'PUT', illustrationPath(s), Buffer.from(JSON.stringify(body), 'utf8'));
+      if (!r.ok) return illustrationRefusal(r);
+      // Proposed, so the uploads are done with. Their pictures now travel in
+      // the proposal; the unlinked copies are swept with every other one.
+      const used = [lightUploadId, darkUploadId].filter((id) => id != null);
+      if (used.length) await connectorUploads.consumeUploads(pool, { userId: user.id, uploadIds: used });
+      return toolResult({
+        slug: s,
+        proposal: proposalOut(r.body && r.body.proposal),
+        nextStep: 'Up for the project\'s vote: the card keeps its current picture until the vote passes. Share `proposal` with the group; get_featured_illustration shows it as pending meanwhile.',
+      });
+    });
+  }
 
   // ── claim_request / release_request ──────────────────────────────────
   //
@@ -5008,6 +5425,8 @@ function registerTools(server, ctx) {
         .describe('Your checkout\'s current commit — the output of `git rev-parse HEAD`. Pass it whenever this conversation has a checkout and the result reports `checkout`: whether what you are holding is the app\'s code at all, and how far it has drifted. Costs nothing when it is fine and catches a stale fork before you write against it rather than at submit_work.'),
       remoteUrl: z.string().optional()
         .describe('Your checkout\'s origin remote — the output of `git remote get-url origin`. Only meaningful alongside headSha, and it is what identifies a FORK: without it the check can say the commit is behind but not that origin is a different repository from the app\'s own.'),
+      startedFrom: z.string().max(64).optional()
+        .describe('Only when the prompt you were given names it: where this task was started from, e.g. `claude_code_link` for Homeroom\'s "Open in Claude Code" link. Recorded so those tasks can be counted; an unknown value is ignored.'),
     },
     outputSchema: {
       taskId: z.number(),
@@ -5097,7 +5516,7 @@ function registerTools(server, ctx) {
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
-  }, async ({ slug, requestNumber, requestNumbers, brief, restart, proposalId, headSha, remoteUrl }) => {
+  }, async ({ slug, requestNumber, requestNumbers, brief, restart, proposalId, headSha, remoteUrl, startedFrom }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
     if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
@@ -5208,6 +5627,9 @@ function registerTools(server, ctx) {
       // #4264: a one-time upload command in the work order, for a patch too
       // big to retype into submit_work. New work only; the service decides.
       patchUpload: true,
+      // #5987: the "Open in Claude Code" link's prompt names it; the service
+      // keeps only a value it knows.
+      startedFrom,
       specs: requestSpecsToBuild,
     });
     // #4266: at the work-order cap, name the two tools that let the caller see
@@ -6198,6 +6620,9 @@ function registerTools(server, ctx) {
       nextStep: 'It is now up for a vote'
         + `${proposalRef(result.proposalId, result.prNumber) ? ` as ${proposalRef(result.proposalId, result.prNumber)}` : ''}. `
         + 'Checks and the staging preview build automatically — use get_proposal to follow it. It merges when the group approves it.'
+        // 29 Oct 2026: a coding agent's submission is not its author's yes
+        // (governance-rules.ts, `madeByAgent`), so say where theirs is cast.
+        + ' Submitting it is not a vote: tell the user their own yes counts once they tap Yes on it on Homeroom.'
         + testingRouteNote(testing, false)
         + await unlinkedRequestsNote(result),
     });
@@ -9903,6 +10328,151 @@ function registerTools(server, ctx) {
     });
   }
 
+  // ── Featured apps (full platform admins only) ────────────────────────
+  //
+  // Three tools over routes/featured-admin.js, whose every door hands the
+  // call on to the console's own /api/admin route
+  // (routes/admin-featured-apps.js): the list in its order beside every
+  // other app (list_featured_apps), the whole list set in a new order
+  // (set_featured_apps), and an app's flag (set_discover_flag), which takes
+  // it out of Discover and Featured. They do what Admin > Featured apps does,
+  // so an admin can curate the signed-out landing's Featured and every
+  // user's "Find more apps" row from a conversation. The charter's
+  // "featured-apps" section is the procedure.
+  //
+  // Admin-only three times over, like the challenge tools: registered only
+  // for a full admin's connector, refused in every handler for anybody else
+  // before any call, and refused by every route (requireAdminWrite), which
+  // is the wall that counts. App names come back as untrusted data.
+  if (user && user.canAdminWrite) {
+    const featuredAdminOnly = () => (user && user.canAdminWrite
+      ? null
+      : toolError('admin_only', 'Featured apps are curated by full platform admins.'));
+    // routes/admin-featured-apps.js FEATURED_MAX: the route refuses more.
+    const FEATURED_MAX = 12;
+    const FEATURED_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+    const FEATURED_WORD_RE = /^[a-z_]{1,32}$/;
+    const featuredWord = (v) => (typeof v === 'string' && FEATURED_WORD_RE.test(v) ? v : null);
+    const featuredTime = (v) => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? v.slice(0, 40) : null);
+    // One app as the console's list draws it (services/discovery-curation.js
+    // describe() is where it stands in Discover): numbers, words and ids, and
+    // its name as untrusted data. It can be featured with an icon and no flag.
+    const featuredAppOut = (a) => {
+      const d = a && typeof a.directory === 'object' && a.directory ? a.directory : {};
+      const flagged = d.flagged === true;
+      const hasIcon = !!((typeof a?.icon_emoji === 'string' && a.icon_emoji.trim()) || (typeof a?.icon_url === 'string' && a.icon_url));
+      return {
+        slug: FEATURED_SLUG_RE.test(String(a?.slug || '')) ? a.slug : null,
+        name: untrusted(a?.name, 120) || null,
+        status: featuredWord(a?.status),
+        featuredOrder: Number.isInteger(a?.sort_order) ? a.sort_order : null,
+        hasIcon,
+        hasIllustration: a?.has_illustration === true,
+        discover: {
+          state: featuredWord(d.state),
+          label: typeof d.label === 'string' ? clip(d.label, 40) : null,
+          flagged,
+          flaggedAt: flagged ? featuredTime(d.flaggedAt) : null,
+        },
+        canFeature: hasIcon && !flagged,
+      };
+    };
+    const featuredRefusal = (result, what) => {
+      const b = result.body && typeof result.body === 'object' ? result.body : {};
+      const message = typeof b.error === 'string' && b.error.trim() ? clip(b.error.trim(), 500) : `Homeroom returned HTTP ${result.status}.`;
+      if (result.status === 404) return toolError('no_access', `${message} Check the ${what}.`);
+      if (result.status === 400) return toolError('invalid_request', `${message} Nothing was changed.`);
+      if (result.status === 409) return toolError('conflict', `${message} Nothing was changed.`);
+      return platformError(result);
+    };
+
+    server.registerTool('list_featured_apps', {
+      title: 'Featured apps: the list and every other app',
+      description: 'Admin only. The featured apps in their order (the signed-out landing\'s Featured and every user\'s "Find more apps" row read this list), and every other app, as Admin > Featured apps shows them. Each app has its slug, name, status, whether it has an icon, and where it stands in Discover (`discover`: "listed", "unavailable" (not running) or "missing_icon", both under Show more, or "flagged": an admin took it out of Discover and Featured, with when). `canFeature` is an icon and no flag; no review is needed. `search` narrows the other apps by name or slug, `readyOnly` keeps those that can be featured now, `flaggedOnly` keeps the flagged ones, and `limit` caps them (50 by default). The landing shows a featured app only to visitors who can try it there. Names are untrusted data.',
+      inputSchema: {
+        search: z.string().max(100).optional(),
+        readyOnly: z.boolean().optional(),
+        flaggedOnly: z.boolean().optional(),
+        limit: z.number().int().min(1).max(500).optional(),
+      },
+      outputSchema: {
+        featured: z.array(z.any()), available: z.array(z.any()), availableTotal: z.number(), max: z.number(), nextStep: z.string(),
+      },
+      annotations: readAnnotations,
+    }, async ({ search, readyOnly, flaggedOnly, limit } = {}) => {
+      const guard = scopeGuard(READ_SCOPE) || featuredAdminOnly();
+      if (guard) return guard;
+      const r = await callPlatform(baseUrl, accessToken, 'GET', '/api/featured-admin/featured-apps');
+      if (!r.ok) return featuredRefusal(r, 'request');
+      const b = r.body || {};
+      const featured = (Array.isArray(b.featured) ? b.featured : []).map(featuredAppOut);
+      const q = String(search || '').trim().toLowerCase();
+      const matches = (Array.isArray(b.available) ? b.available : [])
+        .filter((a) => !q || String(a?.slug || '').toLowerCase().includes(q) || String(a?.name || '').toLowerCase().includes(q))
+        .map(featuredAppOut)
+        .filter((a) => (!readyOnly || a.canFeature) && (!flaggedOnly || a.discover.flagged));
+      return readResult('list_featured_apps', {
+        featured,
+        available: matches.slice(0, limit || 50),
+        availableTotal: matches.length,
+        max: FEATURED_MAX,
+        nextStep: 'Set the whole list, first to last, with set_featured_apps. An app needs an icon and no flag to be featured; set_discover_flag flags an app or clears its flag.',
+      });
+    });
+
+    server.registerTool('set_featured_apps', {
+      title: 'Featured apps: set the list',
+      description: `Admin only. Set the featured apps, first to last, as Admin > Featured apps does: the whole list in one go, so an app left out is taken off, and an empty list features nothing. At most ${FEATURED_MAX}. Every app in the list needs an icon and no flag (list_featured_apps says which can: canFeature); no review is needed, and the platform app cannot be featured. Nothing changes if any slug is refused, and the refusal names it. It shows at once, with no vote, on the signed-out landing's Featured (to visitors who can try the app there) and every user's "Find more apps" row.`,
+      inputSchema: {
+        slugs: z.array(z.string().min(1).max(64)).max(FEATURED_MAX).describe('Every app to feature, by slug, first to last.'),
+      },
+      outputSchema: { featured: z.array(z.string()), nextStep: z.string() },
+      annotations: writeAnnotations,
+    }, async ({ slugs }) => {
+      const guard = scopeGuard(WRITE_SCOPE) || featuredAdminOnly();
+      if (guard) return guard;
+      const list = slugs.map((x) => x.trim());
+      if (new Set(list).size !== list.length) {
+        return toolError('invalid_request', 'slugs names an app twice. Nothing was changed.');
+      }
+      const r = await callPlatform(baseUrl, accessToken, 'PUT', '/api/featured-admin/featured-apps', { slugs: list });
+      if (!r.ok) return featuredRefusal(r, 'slugs with list_featured_apps');
+      return toolResult({
+        featured: list.filter((x) => FEATURED_SLUG_RE.test(x)),
+        nextStep: list.length
+          ? 'Saved. The landing and Home show this order at once. Read it back with list_featured_apps.'
+          : 'Saved. Nothing is featured now.',
+      });
+    });
+
+    server.registerTool('set_discover_flag', {
+      title: 'Featured apps: flag an app, or clear its flag',
+      description: 'Admin only. Flag an app, as Admin > Featured apps\' Flag does, or clear its flag. A flagged app is left out of Discover and Featured everywhere: Discover, Home\'s Discover rail and "Find more apps", and the signed-out landing. Flagging a featured app takes it off the featured list as well (`unfeatured` says so), and it cannot be featured again while flagged. Clearing the flag lists it again, but does not feature it again. A flag hides nothing else: the app still opens from a link and its members keep it. Flag an app only when the person asks you to.',
+      inputSchema: {
+        slug: z.string().min(1).max(64),
+        flagged: z.boolean().describe('true to flag the app, false to clear its flag.'),
+      },
+      outputSchema: { slug: z.string(), flagged: z.boolean(), unfeatured: z.boolean(), nextStep: z.string() },
+      annotations: writeAnnotations,
+    }, async ({ slug, flagged }) => {
+      const guard = scopeGuard(WRITE_SCOPE) || featuredAdminOnly();
+      if (guard) return guard;
+      const s = slug.trim();
+      if (!FEATURED_SLUG_RE.test(s)) return toolError('invalid_request', 'slug is not an app slug. Nothing was changed.');
+      const r = await callPlatform(baseUrl, accessToken, 'PUT', `/api/featured-admin/apps/${encodeURIComponent(s)}/discover-flag`, { flagged });
+      if (!r.ok) return featuredRefusal(r, 'slug with list_featured_apps');
+      const unfeatured = !!(r.body && r.body.unfeatured === true);
+      return toolResult({
+        slug: s,
+        flagged,
+        unfeatured,
+        nextStep: flagged
+          ? `Flagged. It is out of Discover${unfeatured ? ' and off the featured list' : ''} at once.`
+          : 'Flag cleared. It is back in Discover; add it to the featured apps with set_featured_apps if it should be there.',
+      });
+    });
+  }
+
   // ── Demo mode ──────────────────────────────────────────────────────────
   //
   // Six tools over routes/demo-mode.js. They exist so a RECORDING of the
@@ -10227,6 +10797,9 @@ module.exports = {
   MCP_REQUEST_BODY_KB,
   MAX_ANSWER_CHARS,
   MAX_CLOSE_REASON_CHARS,
+  CREATE_APP_NAME_MAX,
+  CREATE_APP_BRIEF_MIN,
+  CREATE_APP_BRIEF_MAX,
   MAX_CONVENTIONS_CHARS,
   PLATFORM_INTERNAL_URL,
   ACTING_TOOLS,

@@ -278,6 +278,22 @@ test('the status card says what Homeroom bot is really doing, or waiting for', (
   assert.equal(button({ what: 'queued' }).label, 'Homeroom bot is on it');
 });
 
+// #5987: "Build it with your own Claude Code" is offered only where starting
+// work on the request is still open to this viewer.
+test('the status card offers your own Claude Code only on a request still open to start', () => {
+  const av = appView();
+  assert.equal(av._requestStatusView(issue()).ownAgent, true);
+  assert.equal(av._topicViewFor('issue', (av._ghIssues = [issue()])[0]).body.request.slug, 'example');
+  assert.equal(av._requestStatusView(issue({ state: 'closed' })).ownAgent, false, 'closed');
+  assert.equal(av._requestStatusView(issue({ addressed_by: { sessionId: 9, state: 'merged', prNumber: 12, title: 'T' } })).ownAgent, false, 'voted in');
+  assert.equal(av._requestStatusView(issue({ addressed_by: { sessionId: 9, state: 'review', prNumber: 12, title: 'T' } })).ownAgent, false, 'waiting for approval');
+  assert.equal(av._requestStatusView(issue({ bot: { what: 'building', since: null } })).ownAgent, false, 'the bot is on it');
+  assert.equal(av._requestStatusView(issue({ botAwaits: { kind: 'question', messageId: 5 } })).ownAgent, false, 'the bot is waiting');
+  assert.equal(av._requestStatusView(issue({ myPrSessionId: 77 })).ownAgent, false, 'your own session');
+  av.appData = { slug: 'example', can_collaborate: false };
+  assert.equal(av._requestStatusView(issue()).ownAgent, false, 'read-only');
+});
+
 test('⋯ holds the work rows first, then the author\'s edits and the tags', () => {
   const av = appView();
   const row = issue({ myPrSessionId: 77 });
@@ -320,6 +336,120 @@ test('GitHub comments become stream rows; Homeroom bot\'s spec rides as githubSp
   assert.equal(out.rows[1].githubSpec.title, 'Topics');
   assert.equal(out.rows[1].bodyHtml, '');
   assert.equal(av._requestThreadRows(1), null, 'nothing until the comments are in hand');
+});
+
+// #6020 / #6021: on a native request Homeroom writes its comments as
+// `homeroom`, and a plan posted on the request used to be copied into one
+// whole, under a <details> fold. The page drew that as a person's comment:
+// raw markers, a link with the sentence's period inside it, and the whole
+// plan again under the plan's own line. Shaped as on request #6019.
+const URL6019 = 'https://app.onhomeroom.com/#app/usernode-2d5619/dev/issues/6019';
+const LEAD = { earlier: false, placeholder: null, language: 'request', request: { loaded: true, githubMore: null } };
+const oldMirror = (author, version) => `**${author}** posted a plan for this request (version ${version}). Its before/after screens are in the plan card on Homeroom: ${URL6019}.\n\n<details><summary>The plan</summary>\n\n# Discussions become threads\n\n### Now\n\n- **A public thread** lives in its community… [truncated]`;
+
+function threadRows(comments) {
+  const av = appView();
+  av._ghIssues = [issue({ number: 6019 })];
+  av._ghComments.set(av._ghCommentsKey('example', 6019), { truncated: false, comments });
+  return av._requestThreadRows(6019).rows;
+}
+
+test('#6020: Homeroom\'s plan comments leave a request\'s stream where their own line is; Read stays', () => {
+  const specs = require('../src/services/request-specs');
+  const gh = threadRows([
+    // The old shape, clipped by the comments route as it was on #6019.
+    { id: 11, author: 'homeroom', createdAt: '2026-10-28T22:06:19.737Z', body: oldMirror('evan', 1) },
+    // The new shape, exactly as a post writes it now.
+    { id: 12, author: 'homeroom', createdAt: '2026-10-28T22:31:07.201Z',
+      body: specs.specCommentText({ username: 'evan', version: 2, markdown: '# Discussions become threads\n\nBody', webPath: URL6019 }) },
+    { id: 13, author: 'priya', createdAt: '2026-10-28T22:40:00Z', body: '**evan** posted a plan for this request (version 9) is what I would say' },
+  ]);
+  assert.deepEqual({ ...gh[0].planMirror }, { author: 'evan', version: 1 });
+  assert.equal(gh[0].githubSpec.title, 'Discussions become threads', 'the old fold is read as a plan, not as words');
+  assert.equal(gh[0].bodyHtml, '');
+  assert.deepEqual({ ...gh[1].planMirror }, { author: 'evan', version: 2 });
+  assert.equal(gh[1].githubSpec, null, 'the new comment carries no plan');
+  assert.equal(gh[2].planMirror, null, 'a person\'s comment is never taken for one');
+
+  const messages = [
+    row({ id: 1, kind: 'spec_share', specShare: specShare(1), at: '2026-10-28T22:06:19.700Z' }),
+    { ...gh[0] },
+    row({ id: 2, kind: 'spec_share', specShare: specShare(2), at: '2026-10-28T22:31:07.198Z' }),
+    { ...gh[1] },
+    { ...gh[2], bodyHtml: '<p>I agree</p>' },
+  ];
+  const { requestStream } = loadTsx(MODEL);
+  const out = requestStream(messages);
+  assert.deepEqual(out.rows.map((m) => m.kind), ['spec_share', 'spec_share', 'github']);
+  assert.equal(out.specs.length, 1, 'one card, the posting\'s own');
+
+  const html = renderComponent(TRANSCRIPT, 'RequestRows', { view: { lead: LEAD, messages } });
+  assert.doesNotMatch(html, /&lt;details&gt;|&lt;summary&gt;/, 'no raw markers');
+  assert.doesNotMatch(html, /posted a plan for this request/, 'the comment is not drawn under its own line');
+  assert.equal((html.match(/data-request-event="spec"/g) || []).length, 2, 'each version keeps its line');
+  assert.match(html, /<b>evan<\/b> posted plan v2[\s\S]*?>Read</);
+  assert.match(html, /<span>1 reply<\/span>/, 'only the person counts as a reply');
+});
+
+test('#6020: one person\'s plan line never hides another\'s comment, nor another version\'s', () => {
+  const specs = require('../src/services/request-specs');
+  // Priya's line went out; evan's did not, so his comment carries his plan
+  // (specCommentText's announced: false) and is the only word of it.
+  const gh = threadRows([
+    { id: 21, author: 'homeroom', createdAt: '2026-10-28T22:00:01Z',
+      body: specs.specCommentText({ username: 'priya', version: 1, markdown: '# Priya plan\n\nP', webPath: URL6019 }) },
+    { id: 22, author: 'homeroom', createdAt: '2026-10-28T22:10:01Z',
+      body: specs.specCommentText({ username: 'evan', version: 3, markdown: '# Evan plan\n\nThe body', webPath: URL6019, announced: false }) },
+    { id: 23, author: 'homeroom', createdAt: '2026-10-28T22:20:01Z',
+      body: specs.specCommentText({ username: 'priya', version: 2, markdown: '# Priya plan\n\nP2', webPath: URL6019 }) },
+  ]);
+  const messages = [
+    row({ id: 1, kind: 'spec_share', specShare: specShare(1, { sharedBy: 'priya', sessionId: 1, title: 'Priya plan' }), at: '2026-10-28T22:00:00Z' }),
+    { ...gh[0] },
+    { ...gh[1] },
+    { ...gh[2], bodyHtml: '<p>priya v2 link</p>' },
+  ];
+  const { requestStream } = loadTsx(MODEL);
+  const out = requestStream(messages);
+  assert.deepEqual(out.rows.map((m) => m.key || m.kind), ['spec_share', '22', '23'],
+    'only priya\'s v1 comment, whose line is there, leaves');
+  const evan = out.specs.find((c) => c.title === 'Evan plan');
+  assert.ok(evan, 'evan\'s plan is a card of its own');
+  assert.equal(evan.by, 'evan', 'by the person who posted it, not by `homeroom`');
+  assert.equal(evan.read.kind, 'text');
+  assert.equal(evan.read.markdown, 'The body', 'readable from the comment itself');
+
+  const html = renderComponent(TRANSCRIPT, 'RequestRows', { view: { lead: LEAD, messages } });
+  assert.match(html, /<b>evan<\/b> posted plan v3[\s\S]*?>Read</, 'evan\'s plan line, with its Read');
+  assert.match(html, /priya v2 link/, 'a link-only comment with no line of its own stays');
+});
+
+test('#6020: Homeroom bot\'s own plan comment keeps its questions before the fold', () => {
+  // Homeroom bot writes its plan with the choices it is asking about before
+  // the fold (homeroom-bot-live.js planCommentText). On a native request it
+  // is `homeroom` too; it is not a posted plan's comment, so it stays whole.
+  const live = require('../src/services/homeroom-bot-live');
+  const body = live.planCommentText({
+    spec: '# Leaderboard\n\nThe body',
+    questions: [{ question: 'Who shows on the leaderboard?', answers: ['Everyone who played this week'] }],
+  });
+  const gh = threadRows([{ id: 31, author: 'homeroom', createdAt: '2026-10-28T22:00:01Z', body }]);
+  assert.equal(gh[0].planMirror, null);
+  assert.equal(gh[0].githubSpec, null);
+  assert.match(gh[0].bodyHtml, /Who shows on the leaderboard\?/);
+  assert.match(gh[0].bodyHtml, /Everyone who played this week/);
+  const { requestStream } = loadTsx(MODEL);
+  const out = requestStream([row({ id: 1, kind: 'spec_share', specShare: specShare(1) }), gh[0]]);
+  assert.equal(out.rows.length, 2, 'not taken for a person\'s plan comment');
+});
+
+test('#6020: with no posting in the thread, Homeroom\'s plan comment stays, as its one line and link', () => {
+  const specs = require('../src/services/request-specs');
+  const { requestStream } = loadTsx(MODEL);
+  const mirror = row({ kind: 'github', key: '12', username: 'homeroom', planMirror: { author: 'evan', version: 1 },
+    bodyHtml: '<p>link</p>', text: specs.specCommentText({ username: 'evan', version: 1, markdown: '# T', webPath: 'https://h.example/x' }) });
+  const out = requestStream([row({ id: 1 }), mirror]);
+  assert.equal(out.rows.length, 2, 'it is the only word of the plan, so it is kept');
 });
 
 function groupChat() {

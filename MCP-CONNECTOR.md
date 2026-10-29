@@ -157,6 +157,8 @@ issue, a build — and the platform merges none of it without a group vote:
 |---|---|
 | `submit_work` | Opens or advances a proposal, for the group to vote on |
 | `create_request` | Files on the app's board and as a GitHub issue |
+| `propose_featured_illustration` | Opens a vote in the project's group on a new card picture, as the project's Featured illustration editor does; the card changes only when the vote passes. Only people who may manage the project can call it |
+| `create_app` | Makes a new project for the caller alone, spending one of their app slots; invites nobody and touches no other project, and what is built in it goes to its own vote (#6026) |
 | `prepare_work` | Claims the request on the app's board; mints a work order |
 | `close_work_order` | Puts away one of the user's own unsubmitted work orders, freeing its slot; touches no branch, proposal or vote |
 | `start_platform_build` | Spends the user's daily Homeroom credits |
@@ -371,6 +373,30 @@ route at the same path under `/api/v4/admin`, so the console and a connector
 session validate and write alike. Only the listed doors open: deleting an
 event, the CSV export, users and the SQL console are not among them. The
 writes are acting tools; the reads are `get_`/`list_`.
+
+### Admin only: featured apps
+
+A full platform admin's connector also curates the featured apps, the one
+ordered list (at most 12) that the signed-out landing's Featured and every
+user's "Find more apps" row on Home read, as Admin › Featured apps does. Any
+app with an icon can be on it; there is no review. The one editorial state is
+an admin's flag, which takes an app out of Discover and Featured everywhere,
+so the flag is a tool too. The charter's `featured-apps` section is the
+procedure a session follows: it flags an app only when the person asks.
+
+| Tool | What it actually does |
+|---|---|
+| `list_featured_apps` | The list in order, and every other app (`search`, `readyOnly`, `flaggedOnly`, `limit`), each with where it stands in Discover and whether it is flagged (`canFeature` when it has an icon and no flag). Read-only |
+| `set_featured_apps` | Sets the whole list, first to last; an app left out is taken off. Every app in it needs an icon and no flag |
+| `set_discover_flag` | Flags an app (`flagged: true`), which takes it out of Discover and off the featured list at once, or clears the flag, which lists it again without featuring it |
+
+The routes sit at `/api/featured-admin` (`routes/featured-admin.js`), because
+a connector can never reach `/api/admin`. Each is gated `requireAdminWrite`
+first, the read included, and both writes then `featuredAdminLimiter` and
+`sameOriginBrowserOnly`. Each hands the request to the console's own handler
+(`routes/admin-featured-apps.js`) at the same path under `/api/admin`, so the
+console and a connector session validate and write alike. The writes are
+acting tools; the read is a `list_`.
 
 ---
 

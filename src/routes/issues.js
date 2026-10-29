@@ -12,7 +12,7 @@ const { encrypt } = require('../services/secrets');
 const { issueKindLimiter, governanceVoteLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const { weekStartUtc, countWeeklyBountiesUsed, WEEKLY_BOUNTY_LIMIT } = require('./kudos');
-const { parseScreenshotIds, buildScreenshotsEmbed } = require('./feedback');
+const { parseScreenshotIds, buildScreenshotsEmbed, parseVideoId, buildVideoEmbed } = require('./feedback');
 const { placeBounty } = require('../services/bounties');
 const { kudosParked, refuseParked } = require('../services/kudos-parked');
 const { claimIssueForUser } = require('../services/issue-claims');
@@ -1098,7 +1098,7 @@ function issueRoutes(config) {
          LEFT JOIN users u ON i.created_by = u.id
          WHERE i.app_id = $1 AND i.id = $2
            AND i.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign',
-                          'featured_illustration')
+                          'featured_illustration', 'thread_move')
          LIMIT 1`,
         [appId, id, userId]
       );
@@ -1311,6 +1311,16 @@ function issueRoutes(config) {
       const screenshotIds = parsedShots.ids;
       if (screenshotIds.length && kind !== 'general') {
         return res.status(400).json({ error: 'Screenshots can only be attached to an ordinary request' });
+      }
+      // A clip, the same way: one id of a video the caller already uploaded
+      // (the feedback dialog's POST /api/feedback/video, or the connector's
+      // upload), checked as /api/feedback checks it and embedded as its link,
+      // which the request page plays inline.
+      const parsedVideo = parseVideoId(req.body);
+      if (!parsedVideo.ok) return res.status(400).json({ error: parsedVideo.error });
+      const videoId = parsedVideo.id;
+      if (videoId && kind !== 'general') {
+        return res.status(400).json({ error: 'A video can only be attached to an ordinary request' });
       }
 
       // Kind-specific validation + auto-filled title/description.
@@ -1530,18 +1540,33 @@ function issueRoutes(config) {
           description = issueBodyWithScreenshots(
             description, screenshotIds, require('../services/caddy').USERNODE_DOMAIN
           );
-          // The embed lines are the platform's, appended after the caller
-          // measured its description, so this is where the body can first
-          // outgrow GitHub's limit. Refused with the numbers, never trimmed.
-          if (description.length > MAX_GITHUB_ISSUE_BODY_CHARS) {
-            return res.status(400).json({
-              error: 'description_too_long',
-              message: `The description and its ${screenshotIds.length} image line(s) come to `
-                + `${description.length} characters, over GitHub's ${MAX_GITHUB_ISSUE_BODY_CHARS}-character `
-                + `issue-body limit. Nothing was filed. Shorten the description by at least `
-                + `${description.length - MAX_GITHUB_ISSUE_BODY_CHARS} characters.`,
-            });
-          }
+        }
+        if (videoId) {
+          const { rows: ownedVideo } = await pool.query(
+            `SELECT id FROM issue_videos
+              WHERE id = $1::varchar AND user_id = $2 AND issue_number IS NULL`,
+            [videoId, req.user.id]
+          );
+          if (!ownedVideo.length) return res.status(400).json({ error: 'Unknown or already-used video' });
+          // After the stills, as the feedback route orders them.
+          const videoEmbed = buildVideoEmbed(videoId, require('../services/caddy').USERNODE_DOMAIN);
+          description = description ? `${description}${videoEmbed}` : videoEmbed.replace(/^\n+/, '');
+        }
+        // The embed lines are the platform's, appended after the caller
+        // measured its description, so this is where the body can first
+        // outgrow GitHub's limit. Refused with the numbers, never trimmed.
+        if ((screenshotIds.length || videoId) && description.length > MAX_GITHUB_ISSUE_BODY_CHARS) {
+          const lines = [
+            screenshotIds.length ? `${screenshotIds.length} image line(s)` : null,
+            videoId ? 'video line' : null,
+          ].filter(Boolean).join(' and ');
+          return res.status(400).json({
+            error: 'description_too_long',
+            message: `The description and its ${lines} come to `
+              + `${description.length} characters, over GitHub's ${MAX_GITHUB_ISSUE_BODY_CHARS}-character `
+              + `issue-body limit. Nothing was filed. Shorten the description by at least `
+              + `${description.length - MAX_GITHUB_ISSUE_BODY_CHARS} characters.`,
+          });
         }
       }
 
@@ -1596,6 +1621,18 @@ function issueRoutes(config) {
           );
         } catch (err) {
           log.warn('issues', 'Screenshot link failed', { screenshotIds, message: err.message });
+        }
+      }
+      if (videoId && githubIssueNumber && twinRepo) {
+        try {
+          await pool.query(
+            `UPDATE issue_videos
+                SET issue_owner = $2, issue_repo = $3, issue_number = $4
+              WHERE id = $1::varchar AND user_id = $5 AND issue_number IS NULL`,
+            [videoId, twinRepo.owner, twinRepo.repo, githubIssueNumber, req.user.id]
+          );
+        } catch (err) {
+          log.warn('issues', 'Video link failed', { videoId, message: err.message });
         }
       }
 

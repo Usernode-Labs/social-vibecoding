@@ -249,7 +249,7 @@ export function GuestProject({ app, primaryClass, onIntent, onOpenInside, onShar
         style={{ background: color }}
       >
         {app.illustration_url ? (
-          <GuestCover app={app} className="aspect-[16/10] min-w-0 flex-[1_1_420px] rounded-2xl" />
+          <GuestCover app={app} hero className="aspect-[16/10] min-w-0 flex-[1_1_420px] rounded-2xl" />
         ) : null}
         <div className="flex min-w-0 flex-[1_1_300px] flex-col gap-2.5 px-1 py-0.5">
           <div className="flex items-center gap-3">

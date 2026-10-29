@@ -51,9 +51,10 @@ test('all twelve screen transitions go through App._entryTransition', () => {
   // gave one back each when they stopped being screens — a sheet presents over
   // whatever is there, so there is no screen swap to animate and nothing for
   // the gate to type — and the Workshop screen (#workshop) takes one, because
-  // it is a root that replaces the screen you were on. #2543 gives Global
-  // Chat that same first-class screen contract, and "Your proposals"
-  // (#5310, #profile/proposals) makes twelve.
+  // it is a root that replaces the screen you were on. "Your proposals"
+  // (#5310, #profile/proposals) made twelve, and Global Chat's removal gave
+  // its one back: eleven. The AI tab's own page (#6019 follow-up, #ai) is a
+  // root that replaces the screen you were on: twelve.
   const calls = appJs.match(/PlatformUI\.transition\(/g) || [];
   assert.equal(calls.length, 12,
     `expected 12 PlatformUI.transition call sites in app.js, found ${calls.length} — `
@@ -79,7 +80,7 @@ test('each named screen entry passes its own screen element to the gate', () => 
   // sheet has no screen element for the gate to stamp `data-entered` on.
   for (const nav of ['navigateToLeaderboard', 'navigateToProfile',
     'navigateToBrowse', 'navigateToAdminConsole', 'navigateToSettings',
-    'navigateToGlobalChat', 'navigateToAgentSession']) {
+    'navigateToAgentSession']) {
     const at = appJs.indexOf(`  ${nav}(`);
     assert.ok(at !== -1, `${nav} went missing`);
     const body = appJs.slice(at, appJs.indexOf("getElementById('back-btn')", at));

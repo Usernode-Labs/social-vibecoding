@@ -209,7 +209,7 @@ for (const touch of [false, true]) {
         const sheet = h.sheets.at(-1);
         assert.deepEqual(Array.from(sheet.actions, (item) => item.label), [
           'Suggest an improvement', 'Build it now', 'Import Feature from a PR', 'Settings & rules',
-          'Members & approvals', 'App display name', 'Topics', 'App secrets', 'Remix',
+          'Members & approvals', 'App display name', 'Topics', 'App secrets', 'Make your own',
         ]);
         // #1930: every action row carries its own glyph, class-stripped.
         for (const item of sheet.actions.filter((a) => !a.heading)) {

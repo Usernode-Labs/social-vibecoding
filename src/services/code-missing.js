@@ -15,12 +15,13 @@
 //
 // ── Derived, never stored ──────────────────────────────────────────────
 //
-// There is no column. A proposal is code missing while it has an open
-// native pull request on an app on the git host whose head branch is not on
-// the git host. That is the same thing the pull request's own head lookup
-// says (services/native-pulls.js `get`: `head.sha` null while the mirror
-// answered for main, which it exposes as `code_missing`), and the same thing
-// the merge gate's reconcile finds (routes/votes.js
+// There is no column. A proposal is code missing while it is a change made
+// before its app moved and it has an open native pull request on an app on
+// the git host whose head branch is not on the git host. That is the same
+// thing the pull request's own head lookup says (services/native-pulls.js
+// `get`: `head.sha` null while the mirror answered for main, which it
+// exposes as `code_missing`), and the same thing the merge gate's reconcile
+// finds (routes/votes.js
 // reconcileNativeReviewedHead). Pushing the branch back under its name
 // clears it on the next look, with nothing to undo.
 //
@@ -50,7 +51,7 @@
 // made after the move is never gone (its branch is made at its first turn),
 // and a read that fails or is slow answers "unknown" (null), which lets
 // things go on as before. The label (`applies`, `missingIds`) covers the
-// same changes, from the cached list.
+// same changes, from the cached list, and only changes made before the move.
 
 const log = require('./logger');
 const repoRef = require('./repo-ref');
@@ -205,9 +206,10 @@ async function branchesOf(owner, repo, { waitMs = LIST_WAIT_MS } = {}) {
 /**
  * The ids of the sessions in `sessions` whose code is missing. Each needs
  * `id`, `app_id`, `pr_number`, `status` and `repo_url`, and a change
- * underway its `branch_name`. One query for their pull requests, one for
- * which of the changes underway with none open predate their app's move
- * (their own branch is read for them), one branch list per repository.
+ * underway its `branch_name`. One query for which of the candidates predate
+ * their app's move, one for the pull requests of those that have one, one
+ * branch list per repository. A change made after its app moved (or on an app
+ * that never moved) is never missing: its branch is made at its first turn.
  * Never throws: a list that cannot be told says nothing.
  */
 async function missingIds(pool, sessions, { waitMs = LIST_WAIT_MS } = {}) {
@@ -215,8 +217,12 @@ async function missingIds(pool, sessions, { waitMs = LIST_WAIT_MS } = {}) {
   const candidates = (Array.isArray(sessions) ? sessions : []).filter(applies);
   if (!pool || !candidates.length) return out;
   try {
+    const { rows: moved } = await pool.query(PRE_MOVE_IDS_SQL, [candidates.map((s) => Number(s.id))]);
+    const preMove = new Set((moved || []).map((r) => Number(r.id)));
+    if (!preMove.size) return out;
+    const preMoveRows = candidates.filter((s) => preMove.has(Number(s.id)));
     const pullKey = (s) => `${Number(s.app_id)}:${Number(s.pr_number)}`;
-    const withPull = candidates.filter((s) => Number(s.pr_number) > 0);
+    const withPull = preMoveRows.filter((s) => Number(s.pr_number) > 0);
     const headOf = new Map();
     if (withPull.length) {
       const { rows } = await pool.query(
@@ -229,20 +235,15 @@ async function missingIds(pool, sessions, { waitMs = LIST_WAIT_MS } = {}) {
       );
       for (const r of rows || []) headOf.set(`${r.app_id}:${r.number}`, r.head_branch);
     }
-    // A change underway with no open pull request: its own branch, when the
-    // change predates its app's move (one made after has its branch made at
-    // its first turn).
-    const own = candidates.filter((s) => !headOf.has(pullKey(s))
-      && UNDERWAY_STATUSES.has(s.status) && String(s.branch_name || '').trim());
-    const preMove = new Set();
-    if (own.length) {
-      const { rows } = await pool.query(PRE_MOVE_IDS_SQL, [own.map((s) => Number(s.id))]);
-      for (const r of rows || []) preMove.add(Number(r.id));
-    }
+    // A change underway with no open pull request: its own branch (one made
+    // after the move has its branch made at its first turn, so it is not here).
+    const own = new Set(preMoveRows.filter((s) => !headOf.has(pullKey(s))
+      && UNDERWAY_STATUSES.has(s.status) && String(s.branch_name || '').trim())
+      .map((s) => Number(s.id)));
     const byRepo = new Map();
-    for (const s of candidates) {
+    for (const s of preMoveRows) {
       const branch = headOf.get(pullKey(s))
-        || (preMove.has(Number(s.id)) ? String(s.branch_name).trim() : null);
+        || (own.has(Number(s.id)) ? String(s.branch_name).trim() : null);
       const parsed = branch ? repoRef.ownerRepo(s.repo_url) : null;
       if (!parsed) continue;
       const key = `${parsed.owner}/${parsed.repo}`.toLowerCase();

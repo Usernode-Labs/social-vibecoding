@@ -55,9 +55,18 @@
 // databases go, and sweep() is the backstop for a session that went some
 // other way. Deleting a project in the preview removes it here too.
 //
-// Building and deploying take minutes, so each runs in the process that
-// accepted it and the row says how it went; the preview polls. One whose
-// process went away is `failed` after STALE_MINUTES, and can be asked again.
+// WHERE EACH STEP RUNS: the routes run on the web Pods, which change nothing
+// in the cluster, on a database server's admin login or on the git host. So
+// the database, the build, the run, a restart and a removal are platform
+// operations (services/preview-project-operation.js) a conductor carries
+// out: the web side checks the request and claims the project's row, then
+// asks. Making the database, a restart and a removal are waited for, as the
+// preview waits for its answer; a build or a deploy takes minutes, so the
+// route answers at once and the row says how it went, and the preview polls.
+// Its files or env are kept beside the row for the conductor
+// (preview_project_inputs). A conductor that goes away mid-step leaves the
+// work to another, which runs it again; one that never finishes is `failed`
+// after STALE_MINUTES, and can be asked again.
 //
 // Not covered yet: the before & after shots copies (they get no credential),
 // and APP_GATE=on, whose host lookup does not know these projects (it is off
@@ -306,6 +315,207 @@ async function lookup(config, pool, { sessionId, slug }) {
   return { ok: true, row };
 }
 
+// The project of a session, by id: what an operation names.
+async function projectRow(pool, projectId, sessionId) {
+  const { rows } = await pool.query('SELECT * FROM preview_projects WHERE id = $1 AND session_id = $2', [projectId, sessionId]);
+  return rows[0] || null;
+}
+
+// Whether a session is still a platform preview holding a live credential:
+// the authority every operation reads again on the conductor.
+async function liveSession(config, pool, sessionId) {
+  const { rows } = await pool.query(
+    `SELECT 1
+       FROM preview_project_tokens k
+       JOIN chat_sessions s ON s.id = k.session_id
+       JOIN apps a ON a.id = s.app_id
+      WHERE k.session_id = $1 AND k.expires_at > NOW() AND a.slug = $2
+      LIMIT 1`,
+    [sessionId, config.selfAppSlug]
+  );
+  return rows.length > 0;
+}
+
+// ── Asking the conductor ───────────────────────────────────────────────
+
+const operations = () => require('./platform-operations');
+// How long the route waits for a conductor to take a request, then for its
+// answer: together under the preview's own timeout
+// (preview-projects-client.js REQUEST_TIMEOUT_MS, 30 s), so it hears "try
+// again" rather than giving up.
+const ADMIT_MS = 3 * 1000;
+const ANSWER_WAIT_MS = 20 * 1000;
+// A build or a deploy answers once a conductor took it: the time it may take.
+const TAKE_MS = 5 * 1000;
+
+// The operation's requester: the session's author (preview-project-operation.js).
+async function authorOf(pool, sessionId) {
+  const { rows } = await pool.query('SELECT user_id FROM chat_sessions WHERE id = $1', [sessionId]);
+  return rows[0]?.user_id ? Number(rows[0].user_id) : null;
+}
+
+const notNow = () => fail('temporarily_unavailable', 'Try again shortly.', 503);
+// A preview whose change no longer has an author (deleted, erased): nobody
+// production could act for, however often it asks.
+const noAuthor = () => fail('no_author', 'This preview\'s change no longer has an author, so production cannot act for it.', 409);
+
+// An operation's answer in the broker's own terms. A step's refusal (this
+// service's fail(), with its message) is passed on; the conductor's own
+// refusal of the requester is the credential's; anything else (still under
+// way, not taken, failed after its tries) is "try again", never the
+// conductor's error text, which unreviewed preview code would read.
+function answered(out) {
+  if (out.ok) {
+    const { requestId: _requestId, ...rest } = out;
+    return rest;
+  }
+  if (out.message) return fail(out.code, out.message, out.status);
+  if (out.code === 'not_authorized') return noAuthor();
+  // Taken, and still running when the wait ran out: it finishes on its own.
+  return out.pending ? { ...notNow(), underWay: true } : notNow();
+}
+
+async function ask(pool, op, sessionId, projectId) {
+  const userId = await authorOf(pool, sessionId);
+  if (!userId) return noAuthor();
+  return answered(await operations().request({ op, userId, input: { sessionId, projectId } },
+    { admitMs: ADMIT_MS, waitMs: ANSWER_WAIT_MS }));
+}
+
+// What a build or a deploy carries, kept beside the row for the request
+// it is for (preview_project_inputs): its SQL, as written.
+const INPUTS = new Map([
+  ['files', {
+    keep: (db, projectId, value, requestId) => db.query(
+      `INSERT INTO preview_project_inputs (project_id, files, files_request, updated_at)
+       VALUES ($1, $2::jsonb, $3, NOW())
+       ON CONFLICT (project_id) DO UPDATE
+         SET files = EXCLUDED.files, files_request = EXCLUDED.files_request, updated_at = NOW()`,
+      [projectId, JSON.stringify(value), requestId]),
+    read: (db, projectId, requestId) => db.query(
+      'SELECT files AS value FROM preview_project_inputs WHERE project_id = $1 AND files_request = $2', [projectId, requestId]),
+    clear: (db, projectId, requestId) => db.query(
+      `UPDATE preview_project_inputs SET files = NULL, files_request = NULL, updated_at = NOW()
+        WHERE project_id = $1 AND files_request = $2`, [projectId, requestId]),
+  }],
+  ['env', {
+    keep: (db, projectId, value, requestId) => db.query(
+      `INSERT INTO preview_project_inputs (project_id, env, env_request, updated_at)
+       VALUES ($1, $2::jsonb, $3, NOW())
+       ON CONFLICT (project_id) DO UPDATE
+         SET env = EXCLUDED.env, env_request = EXCLUDED.env_request, updated_at = NOW()`,
+      [projectId, JSON.stringify(value), requestId]),
+    read: (db, projectId, requestId) => db.query(
+      'SELECT env AS value FROM preview_project_inputs WHERE project_id = $1 AND env_request = $2', [projectId, requestId]),
+    clear: (db, projectId, requestId) => db.query(
+      `UPDATE preview_project_inputs SET env = NULL, env_request = NULL, updated_at = NOW()
+        WHERE project_id = $1 AND env_request = $2`, [projectId, requestId]),
+  }],
+]);
+
+// A build or a deploy: the row claimed (`claim`, an UPDATE … RETURNING *
+// with the state and error it had as `was` and `was_error`), what it carries
+// kept for the conductor and the request appended, in one transaction, so
+// none of it happens without the rest and a web Pod lost after the commit
+// leaves a request that still runs. Then a conductor must take it at once:
+// one refused (none running, or only an older one during a rollout) never
+// runs, and its claim is given back.
+async function claimAndAsk(pool, { op, sessionId, claim, input, value }) {
+  const userId = await authorOf(pool, sessionId);
+  if (!userId) return noAuthor();
+  const requestId = crypto.randomUUID();
+  const client = await pool.connect();
+  let row;
+  let ticket;
+  try {
+    await client.query('BEGIN');
+    const { rows } = await claim(client);
+    if (!rows[0]) {
+      await client.query('ROLLBACK');
+      return fail('busy', 'This project is busy with another step. Wait for it to finish.', 409);
+    }
+    row = rows[0];
+    await INPUTS.get(input).keep(client, row.id, value, requestId);
+    ticket = await operations().admit(client, { op, userId, requestId, input: { sessionId, projectId: Number(row.id) } });
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+  // Undecided (a conductor holds it this moment): it runs or is refused soon,
+  // and the row says which; only a refusal gives the claim back.
+  const taken = await ticket.settle({ admitMs: TAKE_MS }).catch(() => ({ status: 'unknown' }));
+  if (taken.status === 'refused') {
+    log.warn('preview-projects', 'No conductor took a step; its claim is given back', { id: row.id, op, reason: taken.reason });
+    await giveBack(pool, op, row, requestId);
+    return notNow();
+  }
+  return { ok: true, project: view(row) };
+}
+
+// A claim no request will act on: the row back to the state and error it
+// had (failed when that was a step of its own, which nothing would finish),
+// and what it kept dropped. Only while it is still this request's.
+const GIVE_BACK = new Map([
+  ['previewProject.build', { input: 'files', sql:
+    `UPDATE preview_projects p
+        SET state = CASE WHEN $3 IN ('creating', 'building', 'deploying') THEN 'failed' ELSE $3 END,
+            error = $4, op_started_at = NULL, updated_at = NOW()
+      WHERE p.id = $1 AND p.state = 'building'
+        AND EXISTS (SELECT 1 FROM preview_project_inputs i WHERE i.project_id = p.id AND i.files_request = $2)` }],
+  ['previewProject.deploy', { input: 'env', sql:
+    `UPDATE preview_projects p
+        SET state = CASE WHEN $3 IN ('creating', 'building', 'deploying') THEN 'failed' ELSE $3 END,
+            error = $4, op_started_at = NULL, updated_at = NOW()
+      WHERE p.id = $1 AND p.state = 'deploying'
+        AND EXISTS (SELECT 1 FROM preview_project_inputs i WHERE i.project_id = p.id AND i.env_request = $2)` }],
+]);
+async function giveBack(pool, op, row, requestId) {
+  const back = GIVE_BACK.get(op);
+  await pool.query(back.sql, [row.id, requestId, row.was, row.was_error ?? null]);
+  await clearInput(pool, back.input, row.id, requestId);
+}
+
+// What a request kept, if it is still the newest of its kind for the
+// project (a newer claim replaces it).
+async function requestedInput(pool, input, projectId, requestId) {
+  const { rows } = await INPUTS.get(input).read(pool, projectId, requestId);
+  return rows[0] ? rows[0].value : null;
+}
+const clearInput = (pool, input, projectId, requestId) => INPUTS.get(input).clear(pool, projectId, requestId);
+
+// An operation refused on the conductor (projects turned off, the
+// credential gone): the step it was for ends as failed, so the preview's
+// poll stops. Only this request's step: a newer claim is left alone.
+const STOPPED = 'Production stopped this step: projects in previews are off, or this preview\'s credential is no longer valid.';
+const ABANDON = new Map([
+  ['previewProject.create', (pool, { projectId }) => pool.query(
+    `UPDATE preview_projects SET state = 'failed', error = $2, op_started_at = NULL, updated_at = NOW()
+      WHERE id = $1 AND state = 'creating' AND db_password IS NULL`, [projectId, STOPPED])],
+  ['previewProject.build', async (pool, { projectId }, requestId) => {
+    await pool.query(
+      `UPDATE preview_projects p SET state = 'failed', error = $2, op_started_at = NULL, updated_at = NOW()
+        WHERE p.id = $1 AND p.state = 'building'
+          AND EXISTS (SELECT 1 FROM preview_project_inputs i WHERE i.project_id = p.id AND i.files_request = $3)`,
+      [projectId, STOPPED, requestId]);
+    await clearInput(pool, 'files', projectId, requestId);
+  }],
+  ['previewProject.deploy', async (pool, { projectId }, requestId) => {
+    await pool.query(
+      `UPDATE preview_projects p SET state = 'failed', error = $2, op_started_at = NULL, updated_at = NOW()
+        WHERE p.id = $1 AND p.state = 'deploying'
+          AND EXISTS (SELECT 1 FROM preview_project_inputs i WHERE i.project_id = p.id AND i.env_request = $3)`,
+      [projectId, STOPPED, requestId]);
+    await clearInput(pool, 'env', projectId, requestId);
+  }],
+]);
+async function abandonRequested(pool, request) {
+  const abandon = ABANDON.get(request.op);
+  if (abandon) await abandon(pool, request.input, request.requestId);
+}
+
 function setFailed(pool, id, err) {
   const message = String((err && (err.buildLog || err.message)) || err).slice(-MAX_ERROR_CHARS);
   return pool.query(
@@ -319,7 +529,8 @@ function setFailed(pool, id, err) {
 
 // The project's row and its empty database. Again for the same slug: the
 // project as it is, or, when an earlier try stopped before its database
-// was kept, that try taken over. Synchronous: a database takes a second.
+// was kept, that try taken over. Waited for: a database takes a second, made
+// on a conductor (makeDatabase).
 async function createProject(config, pool, { sessionId, slug, appId, name }) {
   const bad = checkSlug(config, slug, sessionId);
   if (bad) return bad;
@@ -342,7 +553,7 @@ async function createProject(config, pool, { sessionId, slug, appId, name }) {
     row = rows[0] || null;
     if (!row) {
       const existing = await rowFor(pool, sessionId, slug);
-      if (existing) return { ok: true, project: view(existing) };
+      if (existing) return existing.db_password ? { ok: true, project: view(existing) } : stillMaking();
       return fail('limit_reached', `A preview can make up to ${maxPerPreview()} projects. Delete one to make another.`, 409);
     }
   } else {
@@ -356,10 +567,41 @@ async function createProject(config, pool, { sessionId, slug, appId, name }) {
         RETURNING *`,
       [row.id, STALE_MINUTES]
     );
-    if (!rows[0]) return { ok: true, project: view(row) };
+    if (!rows[0]) return stillMaking();
     row = rows[0];
   }
 
+  let made;
+  try {
+    made = await ask(pool, 'previewProject.create', sessionId, Number(row.id));
+  } catch (err) {
+    await releaseCreate(pool, row.id).catch(() => {});
+    throw err;
+  }
+  // Not made and not under way (refused, not taken, failed): nothing will
+  // finish this claim, so the next request may take it over at once.
+  if (!made.ok && !made.underWay) await releaseCreate(pool, row.id);
+  const { underWay: _underWay, ...answer } = made;
+  return answer;
+}
+
+// Its database is being made by another request (or one still under way on
+// a conductor): the preview asks again, rather than going on without it.
+const stillMaking = () => fail('busy', 'This project is still being made. Try again in a moment.', 409);
+
+function releaseCreate(pool, id) {
+  return pool.query(
+    `UPDATE preview_projects SET state = 'failed', op_started_at = NULL, updated_at = NOW()
+      WHERE id = $1 AND state = 'creating' AND db_password IS NULL`, [id]);
+}
+
+// On a conductor (previewProject.create): the project's empty database, once.
+// Again after a lost answer or a restart: it is made again from nothing
+// (createPreviewProjectDatabase drops what an earlier try left).
+async function makeDatabase(config, pool, { projectId, sessionId }) {
+  const row = await projectRow(pool, projectId, sessionId);
+  if (!row) return fail('not_found', 'There is no such project in this preview.', 404);
+  if (row.db_password) return { ok: true, project: view(row) };
   try {
     const dbName = dbNameOf(row);
     const db = await require('./db-manager').createPreviewProjectDatabase(dbName);
@@ -370,10 +612,10 @@ async function createProject(config, pool, { sessionId, slug, appId, name }) {
         RETURNING *`,
       [row.id, dbName, db.server, db.password]
     );
-    log.info('preview-projects', 'Project made in a preview', { sessionId, slug, id: row.id });
+    log.info('preview-projects', 'Project made in a preview', { sessionId, slug: row.slug, id: row.id });
     return { ok: true, project: view(rows[0] || row) };
   } catch (err) {
-    log.warn('preview-projects', 'Making a project\'s database failed', { sessionId, slug, err: err.message });
+    log.warn('preview-projects', 'Making a project\'s database failed', { sessionId, slug: row.slug, err: err.message });
     await setFailed(pool, row.id, err);
     return fail('database_failed', 'The project\'s database could not be made. Try again.', 502);
   }
@@ -427,6 +669,9 @@ async function pushSource(row, files) {
     sourceRepo = SOURCE_REPO;
   }
   const branch = `project-${row.id}-b${row.builds}`;
+  // A build number is one claim's, so a branch already there is what an
+  // earlier attempt at this same build pushed before it was lost: replaced.
+  await dropBranch(branch);
   const sha = await gitHost.pushInitialFiles(SOURCE_REPO, files.map((f) => ({
     path: f.path, content: f.content.toString('base64'), encoding: 'base64', mode: f.mode,
   })), { branch, message: `Preview project ${row.slug} (session ${row.session_id}), build ${row.builds}` });
@@ -444,20 +689,34 @@ async function startBuild(config, pool, { sessionId, slug, files }) {
   if (!found.ok) return found;
   const checked = checkFiles(files);
   if (!checked.ok) return checked;
-  const { rows } = await pool.query(
-    `UPDATE preview_projects
-        SET state = 'building', op_started_at = NOW(), error = NULL, builds = builds + 1, updated_at = NOW()
-      WHERE id = $1 AND db_password IS NOT NULL
-        AND (state NOT IN ('creating', 'building', 'deploying')
-             OR op_started_at < NOW() - make_interval(mins => $2::int))
-      RETURNING *`,
-    [found.row.id, STALE_MINUTES]
-  );
-  if (!rows[0]) return fail('busy', 'This project is busy with another step. Wait for it to finish.', 409);
-  runBuild(config, pool, rows[0], checked.files).catch((err) => {
-    log.error('preview-projects', 'A build stopped unexpectedly', { id: rows[0].id, err: err.message });
+  return claimAndAsk(pool, {
+    op: 'previewProject.build', sessionId,
+    claim: (db) => db.query(
+      `UPDATE preview_projects p
+          SET state = 'building', op_started_at = NOW(), error = NULL, builds = p.builds + 1, updated_at = NOW()
+         FROM (SELECT id, state AS was, error AS was_error FROM preview_projects WHERE id = $1 FOR UPDATE) old
+        WHERE p.id = old.id AND p.db_password IS NOT NULL
+          AND (p.state NOT IN ('creating', 'building', 'deploying')
+               OR p.op_started_at < NOW() - make_interval(mins => $2::int))
+        RETURNING p.*, old.was, old.was_error`,
+      [found.row.id, STALE_MINUTES]),
+    input: 'files',
+    value: checked.files.map((f) => ({ path: f.path, content: f.content.toString('base64'), mode: f.mode })),
   });
-  return { ok: true, project: view(rows[0]) };
+}
+
+// On a conductor (previewProject.build): the build a request claimed, unless
+// a newer claim or a removal took its place. The files are checked again as
+// the route checked them: the conductor builds only what passes.
+async function runRequestedBuild(config, pool, { projectId, sessionId, requestId }) {
+  const kept = await requestedInput(pool, 'files', projectId, requestId);
+  const row = await projectRow(pool, projectId, sessionId);
+  const files = kept ? checkFiles(kept) : null;
+  const ready = !!(files && row && row.state === 'building' && !checkSlug(config, row.slug, row.session_id));
+  if (ready && files.ok) await runBuild(config, pool, row, files.files);
+  else if (ready) await setFailed(pool, row.id, new Error(files.message));
+  await clearInput(pool, 'files', projectId, requestId);
+  return { built: ready && files.ok };
 }
 
 async function runBuild(config, pool, row, files) {
@@ -529,20 +788,34 @@ async function startDeploy(config, pool, { sessionId, slug, imageRef, env }) {
   if (!imageRef || imageRef !== found.row.image_ref) {
     return fail('image_unknown', 'Only the image this project last built can be run. Build it first.', 409);
   }
-  const { rows } = await pool.query(
-    `UPDATE preview_projects
-        SET state = 'deploying', op_started_at = NOW(), error = NULL, updated_at = NOW()
-      WHERE id = $1 AND db_password IS NOT NULL AND image_ref = $2
-        AND (state IN ('built', 'running', 'failed')
-             OR (state IN ('building', 'deploying') AND op_started_at < NOW() - make_interval(mins => $3::int)))
-      RETURNING *`,
-    [found.row.id, imageRef, STALE_MINUTES]
-  );
-  if (!rows[0]) return fail('busy', 'This project is busy with another step. Wait for it to finish.', 409);
-  runDeploy(config, pool, rows[0], checked.env).catch((err) => {
-    log.error('preview-projects', 'A deploy stopped unexpectedly', { id: rows[0].id, err: err.message });
+  return claimAndAsk(pool, {
+    op: 'previewProject.deploy', sessionId,
+    claim: (db) => db.query(
+      `UPDATE preview_projects p
+          SET state = 'deploying', op_started_at = NOW(), error = NULL, updated_at = NOW()
+         FROM (SELECT id, state AS was, error AS was_error FROM preview_projects WHERE id = $1 FOR UPDATE) old
+        WHERE p.id = old.id AND p.db_password IS NOT NULL AND p.image_ref = $2
+          AND (p.state IN ('built', 'running', 'failed')
+               OR (p.state IN ('building', 'deploying') AND p.op_started_at < NOW() - make_interval(mins => $3::int)))
+        RETURNING p.*, old.was, old.was_error`,
+      [found.row.id, imageRef, STALE_MINUTES]),
+    input: 'env',
+    value: checked.env,
   });
-  return { ok: true, project: view(rows[0]) };
+}
+
+// On a conductor (previewProject.deploy): the run a request claimed, unless
+// a newer claim or a removal took its place. The env is checked again as the
+// route checked it, and the image must be the one this project last built.
+async function runRequestedDeploy(config, pool, { projectId, sessionId, requestId }) {
+  const kept = await requestedInput(pool, 'env', projectId, requestId);
+  const row = await projectRow(pool, projectId, sessionId);
+  const env = kept ? checkEnv(kept) : null;
+  const ready = !!(env && row && row.state === 'deploying' && row.image_ref && !checkSlug(config, row.slug, row.session_id));
+  if (ready && env.ok) await runDeploy(config, pool, row, env.env);
+  else if (ready) await setFailed(pool, row.id, new Error(env.message));
+  await clearInput(pool, 'env', projectId, requestId);
+  return { deployed: ready && env.ok };
 }
 
 async function runDeploy(config, pool, row, env) {
@@ -590,8 +863,16 @@ async function restart(config, pool, { sessionId, slug }) {
   const found = await lookup(config, pool, { sessionId, slug });
   if (!found.ok) return found;
   if (found.row.state !== 'running') return fail('not_running', 'This project is not running.', 409);
-  await require('./application-runtime').restart(config, runtimeRef(found.row));
-  return { ok: true, project: view(found.row) };
+  return ask(pool, 'previewProject.restart', sessionId, Number(found.row.id));
+}
+
+// On a conductor (previewProject.restart).
+async function restartHere(config, pool, { projectId, sessionId }) {
+  const row = await projectRow(pool, projectId, sessionId);
+  if (!row) return fail('not_found', 'There is no such project in this preview.', 404);
+  if (row.state !== 'running') return fail('not_running', 'This project is not running.', 409);
+  await require('./application-runtime').restart(config, runtimeRef(row));
+  return { ok: true, project: view(row) };
 }
 
 // The project, and with `runtime` how its runtime is doing.
@@ -639,7 +920,14 @@ async function removeRow(config, pool, row) {
 async function remove(config, pool, { sessionId, slug }) {
   const found = await lookup(config, pool, { sessionId, slug });
   if (!found.ok) return found.status === 404 ? { ok: true, removed: false } : found;
-  await removeRow(config, pool, found.row);
+  return ask(pool, 'previewProject.remove', sessionId, Number(found.row.id));
+}
+
+// On a conductor (previewProject.remove). A step that fails throws, so the
+// operation tries again from the row that is left.
+async function removeHere(config, pool, { projectId, sessionId }) {
+  const row = await projectRow(pool, projectId, sessionId);
+  if (row) await removeRow(config, pool, row);
   return { ok: true, removed: true };
 }
 
@@ -728,12 +1016,23 @@ module.exports = {
   dbNameOf,
   view,
   createProject,
+  // A test seam: preview-projects-source-repo.test.js runs a real build's
+  // source push and fetch through it.
+  runBuild,
   startBuild,
   startDeploy,
   restart,
   describe,
   logs,
   remove,
+  // The conductor's half (preview-project-operation.js).
+  liveSession,
+  abandonRequested,
+  makeDatabase,
+  runRequestedBuild,
+  runRequestedDeploy,
+  restartHere,
+  removeHere,
   retireForSession,
   sweep,
   maxPerPreview,

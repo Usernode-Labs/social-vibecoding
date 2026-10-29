@@ -278,18 +278,22 @@ function go(route: string, hint: PanelHint | null): void {
 /**
  * May a navigation to a panel page go to the panel right now?
  *
- * Only in the TOP document, only while an app is running on its App tab, only
- * at desktop width, and not in chromeless mode or the native app — the
- * Homeroom app's WebView owns its own back stack and bridge relay, and the
- * panel is a desktop arrangement. Everywhere else every one of these links
- * navigates exactly as it always has.
+ * Only in the TOP document, only while an app is running on its App tab or
+ * the AI tab's page is up (features/ai/: the panel takes the place of Main,
+ * the chat docked beside the list, so a request opened from the list keeps
+ * the list), only at desktop width, and not in chromeless mode or the native
+ * app — the Homeroom app's WebView owns its own back stack and bridge relay,
+ * and the panel is a desktop arrangement. Everywhere else every one of these
+ * links navigates exactly as it always has.
  */
 export function canTake(): boolean {
   if (typeof window === 'undefined' || isEmbeddedPanel()) return false;
   const A = app();
   if (!A || !A.user || A.chromeless) return false;
-  if (!A.currentApp || A.currentTab !== 'app') return false;
-  if (typeof A._isScreenVisible === 'function' && !A._isScreenVisible('app-view')) return false;
+  const seen = (id: string) => typeof A._isScreenVisible !== 'function' || A._isScreenVisible(id);
+  const besideApp = !!A.currentApp && A.currentTab === 'app' && seen('app-view');
+  const besideAi = typeof A._isScreenVisible === 'function' && A._isScreenVisible('ai-screen');
+  if (!besideApp && !besideAi) return false;
   try {
     if (document.documentElement.classList.contains('in-native-webview')) return false;
     return window.matchMedia(DESKTOP_QUERY).matches;

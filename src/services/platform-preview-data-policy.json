@@ -20,6 +20,7 @@
         "anon_shell_checked_at": "NULL",
         "approvals_required": "NULL",
         "approver_policy": "'anyone'::character varying",
+        "approvers_from_app_id": "NULL",
         "booted_shas": "'[]'::jsonb",
         "build_ref": "NULL",
         "collab_visibility": "'public'::character varying",
@@ -70,6 +71,7 @@
         "manifest_snapshot": "NULL",
         "moderation_suspended_at": "NULL",
         "name": "'Homeroom preview'",
+        "original_of": "NULL",
         "release_head_seen": "NULL",
         "release_run": "NULL",
         "release_stall": "NULL",
@@ -86,6 +88,7 @@
         "template": "NULL",
         "template_version": "NULL",
         "unit_suite_last_tests": "NULL",
+        "upstream": "NULL",
         "view_visibility": "'public'::character varying",
         "weekly_digest_at": "NULL"
       }

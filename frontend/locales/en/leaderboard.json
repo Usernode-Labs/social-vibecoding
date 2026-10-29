@@ -1055,6 +1055,10 @@
     "text": "Featured illustration",
     "description": "Small label on a vote row of the Kudos tab's \"My history\" list: the decision was about the picture shown for the project where it is featured."
   },
+  "kudos.history.kind.threadMove": {
+    "text": "Thread move",
+    "description": "Label in the person's history for a vote on moving work between threads: merging two threads about the same thing into one, or splitting an item out of one."
+  },
   "kudos.button.collaboratorsOnly": {
     "text": "Only collaborators can give kudos",
     "description": "Tooltip of a disabled kudos button on a change, for a viewer who is not a collaborator on the project."

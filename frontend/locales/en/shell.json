@@ -343,6 +343,10 @@
     "text": "Communities",
     "description": "Title shown in the header bar, and as the browser tab's title, on the Communities screen, which lists the communities the person is in."
   },
+  "title.ai": {
+    "text": "Homeroom bot",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the Homeroom bot page, where the person chats with Homeroom bot, Homeroom's AI assistant. The bot's name, the same as its navigation tab."
+  },
   "title.platformStatus": {
     "text": "Platform status",
     "description": "Title shown in the header bar, and as the browser tab's title, on the public page that shows whether Homeroom's services are working."
@@ -358,10 +362,6 @@
   "title.messages": {
     "text": "Messages",
     "description": "Title shown in the header bar, and as the browser tab's title, on the Messages screen, which lists the person's conversations with people and agents."
-  },
-  "title.chat": {
-    "text": "Chat",
-    "description": "Title shown in the header bar, and as the browser tab's title, on a chat conversation screen. A noun."
   },
   "title.agentSession": {
     "text": "Agent session",

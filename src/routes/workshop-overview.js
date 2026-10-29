@@ -82,6 +82,7 @@ const shotsView = require('../services/shots-view');
 const { botRequestedBySql } = require('../services/bot-requested-by');
 const { firstVersionSql } = require('../services/first-version-rule');
 const { governanceKindsSql } = require('../services/governance-kinds');
+const { threadsInSql } = require('../services/ai-work');
 const communities = require('../services/communities');
 const governance = require('../services/governance');
 const codeMissing = require('../services/code-missing');
@@ -152,15 +153,53 @@ const MY_GOVERNANCE_WHERE = `i.status = 'open'
 // 13 Oct 2026, D1: a project's first version is owed by nobody. It goes
 // live without a vote once it passes its checks (services/first-version-
 // rule.js), so it is no decision of anyone's to count or to list.
+// #6019: a BALLOT is changes up for a vote that would close the same request
+// (their linked_issues overlap: being in one thread is not enough, and a
+// change that closes nothing is never a rival, services/threads.js
+// closeRivals), and an open vote to close filed on a request one of them
+// closes. One vote between them on the request's page
+// (frontend/src/features/dev-board/topic/thread-changes.tsx), so ONE thing
+// owed, not one per change. It is owed by a member who has not voted on any
+// of it and proposed none of it (proposing is a pick), and it is carried by
+// its oldest change's row; the close vote in it is not owed on its own.
+// Every count and list below reads these same predicates, so they agree on
+// what a ballot is.
+const RIVAL_SQL = (a, b) => `${b}.thread_id = ${a}.thread_id AND ${b}.app_id = ${a}.app_id
+         AND ${b}.status = 'promoted' AND ${b}.is_headless = FALSE AND ${b}.id <> ${a}.id
+         AND ${b}.linked_issues && ${a}.linked_issues`;
+const CLOSE_TARGET_SQL = (i) => `(CASE WHEN (${i}.payload->>'issueNumber') ~ '^[0-9]{1,9}$'
+         THEN (${i}.payload->>'issueNumber')::int END)`;
+const RIVAL_CLOSE_SQL = (cs, i) => `${i}.thread_id = ${cs}.thread_id AND ${i}.app_id = ${cs}.app_id
+         AND ${i}.kind = 'close_issue' AND ${i}.status = 'open'
+         AND ${CLOSE_TARGET_SQL(i)} = ANY(${cs}.linked_issues)`;
+const BALLOT_THREAD_SQL = (cs) => `${cs}.thread_id IS NOT NULL AND cardinality(${cs}.linked_issues) > 0 AND (
+         EXISTS (SELECT 1 FROM chat_sessions rb WHERE ${RIVAL_SQL(cs, 'rb')})
+      OR EXISTS (SELECT 1 FROM issues cb WHERE ${RIVAL_CLOSE_SQL(cs, 'cb')}))`;
+
+// A change is owed by everyone but its author, and by its author too when a
+// coding agent submitted it for them (`external_agent`): proposing that way
+// is not their yes, and their tap is (governance-rules.ts). Nor is it their
+// pick on a ballot.
 const OWED_PROPOSALS_WHERE = `cs.status = 'promoted'
-       AND cs.user_id IS DISTINCT FROM $1
+       AND (cs.user_id IS DISTINCT FROM $1 OR cs.external_agent IS NOT NULL)
        AND NOT EXISTS (
          SELECT 1 FROM pr_votes pv
           WHERE pv.session_id = cs.id
             AND pv.user_id = $1
             AND ${currentVotePredicateSql('pv', 'cs')}
        )
-       AND NOT ${firstVersionSql('cs')}`;
+       AND NOT ${firstVersionSql('cs')}
+       AND NOT (${BALLOT_THREAD_SQL('cs')} AND (
+             EXISTS (SELECT 1 FROM chat_sessions rv
+                      WHERE ${RIVAL_SQL('cs', 'rv')}
+                        AND (rv.id < cs.id OR (rv.user_id = $1 AND rv.external_agent IS NULL)
+                             OR EXISTS (SELECT 1 FROM pr_votes pb
+                                         WHERE pb.session_id = rv.id AND pb.user_id = $1
+                                           AND ${currentVotePredicateSql('pb', 'rv')})))
+          OR EXISTS (SELECT 1 FROM issues cv
+                      WHERE ${RIVAL_CLOSE_SQL('cs', 'cv')}
+                        AND (cv.created_by = $1
+                             OR EXISTS (SELECT 1 FROM issue_votes ib WHERE ib.issue_id = cv.id AND ib.user_id = $1)))))`;
 
 const OWED_GOVERNANCE_WHERE = `i.status = 'open'
        AND ${governanceKindsSql('i')}
@@ -168,7 +207,20 @@ const OWED_GOVERNANCE_WHERE = `i.status = 'open'
        AND NOT EXISTS (
          SELECT 1 FROM issue_votes iv
           WHERE iv.issue_id = i.id AND iv.user_id = $1
-       )`;
+       )
+       AND NOT (i.kind = 'close_issue' AND i.thread_id IS NOT NULL AND EXISTS (
+         SELECT 1 FROM chat_sessions rc
+          WHERE rc.thread_id = i.thread_id AND rc.app_id = i.app_id
+            AND rc.status = 'promoted' AND rc.is_headless = FALSE
+            AND ${CLOSE_TARGET_SQL('i')} = ANY(rc.linked_issues)))`;
+
+// #6019: the questions Homeroom bot asked the viewer about their requests,
+// still open (homeroom_bot_dm_messages): something owed like a vote, in the
+// same counts and the same feed. A question is answered on its request's
+// page, where the bot asked it.
+const OWED_QUESTIONS_FROM = `homeroom_bot_dm_messages q
+      JOIN conversation_messages qm ON qm.id = q.message_id AND qm.deleted_at IS NULL`;
+const OWED_QUESTIONS_WHERE = `q.user_id = $1 AND q.question_status = 'open'`;
 
 // GET /api/apps's visibility filter, over `a` (apps) and `me` (the viewer's
 // membership row). `$2` is "may see self-hosted rows", `$3` "is an admin".
@@ -226,11 +278,18 @@ const COUNTS_SQL = `
       FROM issues i
      WHERE ${OWED_GOVERNANCE_WHERE}
      GROUP BY i.app_id
+  ),
+  owed_questions AS (
+    SELECT q.app_id, COUNT(*)::int AS n,
+           array_agg('question:' || q.message_id) AS keys
+      FROM ${OWED_QUESTIONS_FROM}
+     WHERE ${OWED_QUESTIONS_WHERE}
+     GROUP BY q.app_id
   )
   SELECT a.slug,
          (COALESCE(ms.n, 0) + COALESCE(mp.n, 0) + COALESCE(mg.n, 0)) AS working,
-         (COALESCE(op.n, 0) + COALESCE(og.n, 0)) AS needs,
-         (COALESCE(op.keys, '{}'::text[]) || COALESCE(og.keys, '{}'::text[])) AS owed
+         (COALESCE(op.n, 0) + COALESCE(og.n, 0) + COALESCE(oq.n, 0)) AS needs,
+         (COALESCE(op.keys, '{}'::text[]) || COALESCE(og.keys, '{}'::text[]) || COALESCE(oq.keys, '{}'::text[])) AS owed
     FROM apps a
     LEFT JOIN app_collaborators me
       ON me.app_id = a.id AND me.user_id = $1 AND me.status = 'member'
@@ -239,9 +298,10 @@ const COUNTS_SQL = `
     LEFT JOIN my_governance   mg ON mg.app_id = a.id
     LEFT JOIN owed_proposals  op ON op.app_id = a.id
     LEFT JOIN owed_governance og ON og.app_id = a.id
+    LEFT JOIN owed_questions  oq ON oq.app_id = a.id
    WHERE ${VISIBLE_APP_WHERE}
      AND (COALESCE(ms.n, 0) + COALESCE(mp.n, 0) + COALESCE(mg.n, 0)
-          + COALESCE(op.n, 0) + COALESCE(og.n, 0)) > 0
+          + COALESCE(op.n, 0) + COALESCE(og.n, 0) + COALESCE(oq.n, 0)) > 0
 `;
 
 // ── The rows behind the counts (#3051) ─────────────────────────────────
@@ -291,6 +351,11 @@ const ITEMS_SQL = `
     SELECT 'needs', 'governance', i.app_id, i.id, i.title::text, i.kind::text, i.created_at
       FROM issues i
      WHERE ${OWED_GOVERNANCE_WHERE}
+    UNION ALL
+    SELECT 'needs', 'question', q.app_id, q.message_id,
+           COALESCE(qm.metadata->'homeroomBot'->>'question', '')::text, 'open'::text, q.created_at
+      FROM ${OWED_QUESTIONS_FROM}
+     WHERE ${OWED_QUESTIONS_WHERE}
   ),
   ranked AS (
     SELECT it.*,
@@ -309,6 +374,20 @@ const ITEMS_SQL = `
      AND ${VISIBLE_APP_WHERE}
    ORDER BY r.rn, a.slug, r.section
    LIMIT $5
+`;
+
+// GET /api/workshop/bot-questions (#6019): the bot's open questions to the
+// viewer, on projects that are not suspended.
+const BOT_QUESTIONS_MAX = 20;
+const BOT_QUESTIONS_SQL = `
+  SELECT q.message_id, q.issue_number, q.created_at, a.slug, a.name,
+         m.metadata->'homeroomBot'->>'question' AS question
+    FROM homeroom_bot_dm_messages q
+    JOIN apps a ON a.id = q.app_id AND a.moderation_suspended_at IS NULL
+    JOIN conversation_messages m ON m.id = q.message_id AND m.deleted_at IS NULL
+   WHERE q.user_id = $1 AND q.question_status = 'open'
+   ORDER BY q.created_at DESC
+   LIMIT $2
 `;
 
 // GET /api/workshop/needs-feed (#3270)
@@ -353,10 +432,23 @@ const ITEMS_SQL = `
 // project's own NeedsFeed now, which renders them in full there), so they
 // are cut at NEEDS_FEED_SUMMARY_MAX rather than at a card's length. A
 // summary is a few paragraphs; the cap is for the one that is not.
+//
+// `?in=threads` is the Homeroom bot tab's Needs you (29 Oct 2026,
+// NEEDS_FEED_IN_THREADS_SQL): only the decisions in threads the viewer is in
+// (services/ai-work.js threadsInSql: they asked for it, built a change in
+// it, voted in it, wrote in it, or chose Notify me) and has not muted, and
+// the bot's questions to them, which are theirs wherever they are. Without
+// it, every decision owed, as Communities › Needs you lists them.
 const NEEDS_FEED_MAX = 60;
 const NEEDS_FEED_SUMMARY_MAX = 2000;
 
-const NEEDS_FEED_SQL = `
+const IN_THREADS_WHERE = `
+     AND (o.kind = 'question'
+          OR (o.thread_id IN (SELECT mine.thread_id FROM (${threadsInSql('$1')}) mine)
+              AND NOT EXISTS (SELECT 1 FROM thread_followers f
+                               WHERE f.thread_id = o.thread_id AND f.user_id = $1 AND f.muted_at IS NOT NULL)))`;
+
+const needsFeedSql = ({ inThreads = false } = {}) => `
   WITH owed AS (
     SELECT 'proposal'::text AS kind, cs.app_id, cs.id,
            COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, ''))::text AS title,
@@ -393,7 +485,10 @@ const NEEDS_FEED_SQL = `
            cs.requires_explicit_approval, cs.explicit_approval_reason::text,
            -- The change's live preview, for "Try it" across projects: the
            -- column /promoted hands a project's own card.
-           cs.staging_url::text AS staging_url
+           cs.staging_url::text AS staging_url,
+           -- #6019: its thread and the requests it closes, for a ballot's
+           -- choices below.
+           cs.thread_id, cs.linked_issues
       FROM chat_sessions cs
       LEFT JOIN users u ON u.id = cs.user_id
      WHERE ${OWED_PROPOSALS_WHERE}
@@ -406,10 +501,23 @@ const NEEDS_FEED_SQL = `
            NULL::jsonb, NULL::text, NULL::jsonb, NULL::text, NULL::jsonb,
            i.kind::text, i.payload,
            NULL::boolean AS requires_explicit_approval, NULL::text AS explicit_approval_reason,
-           NULL::text AS staging_url
+           NULL::text AS staging_url, i.thread_id, NULL::int[] AS linked_issues
       FROM issues i
       LEFT JOIN users u ON u.id = i.created_by
      WHERE ${OWED_GOVERNANCE_WHERE}
+    UNION ALL
+    -- #6019: the bot's open questions to the viewer, by their request.
+    SELECT 'question', q.app_id, q.message_id,
+           COALESCE(qm.metadata->'homeroomBot'->>'question', '')::text, NULL::text,
+           qu.username::text, q.issue_number, NULL::int, q.created_at,
+           NULL::int, NULL::int,
+           NULL::text, NULL::jsonb, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
+           NULL::jsonb, NULL::text, NULL::jsonb, NULL::text, NULL::jsonb,
+           NULL::text, NULL::jsonb,
+           NULL::boolean, NULL::text, NULL::text, NULL::bigint, NULL::int[]
+      FROM ${OWED_QUESTIONS_FROM}
+      LEFT JOIN users qu ON qu.id = qm.sender_id
+     WHERE ${OWED_QUESTIONS_WHERE}
   )
   SELECT a.id AS app_id, a.slug, a.name, a.icon_image_id, a.icon_emoji,
          o.kind, o.id, o.title, o.summary, o.author, o.number, o.epoch,
@@ -419,6 +527,33 @@ const NEEDS_FEED_SQL = `
          o.pr_diagram, o.pr_diagram_source, o.pr_touches, o.pr_touches_sha, o.visuals_agg,
          o.decision_kind, o.decision_payload,
          o.requires_explicit_approval, o.explicit_approval_reason, o.staging_url,
+         -- #6019: a ballot's choices, on the row of its oldest change (the
+         -- one OWED_PROPOSALS_WHERE keeps): it and every change up for a vote
+         -- that closes a request it closes, the open vote to close filed on
+         -- one of those, and the first such request, which it is for.
+         CASE WHEN o.kind = 'proposal' AND o.thread_id IS NOT NULL AND cardinality(o.linked_issues) > 0 THEN (
+           SELECT jsonb_agg(jsonb_build_object(
+                    'id', rb.id, 'number', rb.pr_number,
+                    'title', COALESCE(NULLIF(rb.pr_title, ''), NULLIF(rb.session_title, '')),
+                    'author', ru.username, 'epoch', rb.approval_epoch, 'staging_url', rb.staging_url)
+                  ORDER BY rb.id)
+             FROM chat_sessions rb LEFT JOIN users ru ON ru.id = rb.user_id
+            WHERE rb.thread_id = o.thread_id AND rb.app_id = o.app_id
+              AND rb.status = 'promoted' AND rb.is_headless = FALSE
+              AND (rb.id = o.id OR rb.linked_issues && o.linked_issues)) END AS ballot_options,
+         CASE WHEN o.kind = 'proposal' AND o.thread_id IS NOT NULL AND cardinality(o.linked_issues) > 0 THEN (
+           SELECT jsonb_build_object('id', cb.id, 'title', cb.title,
+                    'reason', NULLIF(cb.payload->>'reason', ''), 'author', cu.username)
+             FROM issues cb LEFT JOIN users cu ON cu.id = cb.created_by
+            WHERE cb.thread_id = o.thread_id AND cb.app_id = o.app_id
+              AND cb.kind = 'close_issue' AND cb.status = 'open'
+              AND ${CLOSE_TARGET_SQL('cb')} = ANY(o.linked_issues)
+            ORDER BY cb.id LIMIT 1) END AS ballot_close,
+         CASE WHEN o.kind = 'proposal' AND cardinality(o.linked_issues) > 0 THEN (
+           SELECT jsonb_build_object('number', r.number, 'title', r.title)
+             FROM requests r
+            WHERE r.app_id = o.app_id AND r.number = ANY(o.linked_issues)
+            ORDER BY r.number LIMIT 1) END AS ballot_for,
          -- #5365: whether this viewer's vote is counted at all (a test
          -- account's is not) — the identity/app-access half of the question;
          -- viewerDecides below covers the approver-and-rules half.
@@ -433,9 +568,12 @@ const NEEDS_FEED_SQL = `
    WHERE ${VISIBLE_APP_WHERE}
      AND EXISTS (SELECT 1 FROM community_members cm
                   WHERE cm.community_id = a.community_id AND cm.user_id = $1)
+     ${inThreads ? IN_THREADS_WHERE : ''}
    ORDER BY o.at DESC NULLS LAST, o.id DESC
    LIMIT $4
 `;
+const NEEDS_FEED_SQL = needsFeedSql();
+const NEEDS_FEED_IN_THREADS_SQL = needsFeedSql({ inThreads: true });
 
 // The same feed, counted per project and in the order the viewer joined
 // them (services/places.js reads it; so did the Getting started card's Vote
@@ -466,6 +604,11 @@ const OWED_BY_COMMUNITY_SQL = `
     SELECT i.app_id, TRUE AS pays
       FROM issues i
      WHERE ${OWED_GOVERNANCE_WHERE}
+    UNION ALL
+    -- A question answered is not a vote cast: it pays nothing.
+    SELECT q.app_id, FALSE AS pays
+      FROM ${OWED_QUESTIONS_FROM}
+     WHERE ${OWED_QUESTIONS_WHERE}
   )
   SELECT a.id, a.slug, a.name, COUNT(*)::int AS waiting,
          (CASE WHEN a.view_visibility = 'public'
@@ -627,6 +770,7 @@ function decisionFacts(kind, payload) {
  * touches" for the head it was read at, and a group decision's facts.
  */
 function pictureFields(row) {
+  if (row.kind === 'question') return {};
   if (row.kind === 'governance') {
     const decision = decisionFacts(row.decision_kind, row.decision_payload);
     if (decision && decision.kind === 'rename') decision.fromName = row.name || null;
@@ -709,15 +853,46 @@ async function withCodeMissing(pool, rows) {
  * preview the idle collector took down since.
  */
 function feedStagingUrl(row) {
-  if (row.kind === 'governance' || (row.status && row.status !== 'promoted')) return null;
+  if (row.kind !== 'proposal' || (row.status && row.status !== 'promoted')) return null;
   const url = typeof row.staging_url === 'string' ? row.staging_url.trim() : '';
   return url || null;
 }
 
 /** Shape NEEDS_FEED_SQL's rows for the client. Exported for tests. */
+/**
+ * #6019: a ballot's choices, from a change's row (NEEDS_FEED_SQL's
+ * ballot_options, ballot_close, ballot_for): null unless it is one, two or
+ * more changes up for a vote in its thread, or one and an open vote to
+ * close it. The card names the request it is for and lists the choices; the
+ * vote itself is cast on the request's page, where the ballot is.
+ */
+function ballotOf(row) {
+  const options = Array.isArray(row.ballot_options) ? row.ballot_options : [];
+  const close = row.ballot_close && typeof row.ballot_close === 'object' ? row.ballot_close : null;
+  if (options.length < (close ? 1 : 2)) return null;
+  const forRow = row.ballot_for && typeof row.ballot_for === 'object' ? row.ballot_for : {};
+  return {
+    number: forRow.number == null ? null : Number(forRow.number),
+    title: forRow.title || null,
+    options: options.map((o) => ({
+      id: Number(o.id),
+      number: o.number == null ? null : Number(o.number),
+      title: o.title || '',
+      author: o.author || null,
+      epoch: o.epoch == null ? null : Number(o.epoch),
+    })),
+    close: close ? { id: Number(close.id), title: close.title || '', reason: close.reason || null, author: close.author || null } : null,
+  };
+}
+
+const FEED_KINDS = new Set(['proposal', 'governance', 'question']);
+
 function shapeNeedsFeed(rows) {
-  return rows.map((row) => ({
-    kind: row.kind === 'governance' ? 'governance' : 'proposal',
+  return rows.map((row) => {
+    const ballot = row.kind === 'proposal' ? ballotOf(row) : null;
+    return {
+    kind: ballot ? 'ballot' : (FEED_KINDS.has(row.kind) ? row.kind : 'proposal'),
+    ...(ballot ? { ballot } : {}),
     id: Number(row.id),
     title: row.title || '',
     summary: (row.summary || '').trim() || null,
@@ -734,10 +909,10 @@ function shapeNeedsFeed(rows) {
     ...(row.advisory ? { advisory: true } : {}),
     // Its code did not come across from GitHub (withCodeMissing): the card
     // says so. Only when set, as the two flags above.
-    ...(row.kind !== 'governance' && row.code_missing === true ? { codeMissing: true } : {}),
+    ...(row.kind === 'proposal' && row.code_missing === true ? { codeMissing: true } : {}),
     // "Try it" from the feed: a change's live preview, as its project's own
     // card has it (feedStagingUrl). Proposals only.
-    ...(row.kind === 'governance' ? {} : { staging_url: feedStagingUrl(row) }),
+    ...(row.kind === 'proposal' ? { staging_url: feedStagingUrl(row) } : {}),
     // #4490: the card's picture, the same as a project's Needs you draws.
     ...pictureFields(row),
     app: {
@@ -746,7 +921,8 @@ function shapeNeedsFeed(rows) {
       icon_url: row.icon_image_id ? `/app-icons/${row.icon_image_id}` : null,
       icon_emoji: row.icon_emoji || null,
     },
-  }));
+    };
+  });
 }
 
 /**
@@ -983,11 +1159,36 @@ function workshopOverviewRoutes(config) {
     }
   });
 
+  // #6019: the questions Homeroom bot asked the viewer about their requests
+  // and that nobody answered yet, newest first. The bot asks in the
+  // request's public discussion, so a row opens the request, where it is
+  // answered; Needs you lists them above the votes. Its own read, so the
+  // vote feed's cards and counts are unchanged.
+  router.get('/api/workshop/bot-questions', async (req, res) => {
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+      const { rows } = await pool.query(BOT_QUESTIONS_SQL, [req.user.id, BOT_QUESTIONS_MAX]);
+      return res.json({
+        questions: rows.map((r) => ({
+          messageId: Number(r.message_id),
+          appSlug: r.slug,
+          appName: r.name || r.slug,
+          issueNumber: Number(r.issue_number),
+          question: String(r.question || '').trim().slice(0, 280) || null,
+          at: r.created_at,
+        })),
+      });
+    } catch (err) {
+      log.error('workshop-overview', 'Failed to read the bot\'s questions', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.get('/api/workshop/needs-feed', async (req, res) => {
     try {
       if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
       const showSelfHosted = !!req.user.isAdmin || !!config.selfAppPublicVoting;
-      const { rows } = await pool.query(NEEDS_FEED_SQL, [
+      const { rows } = await pool.query(req.query.in === 'threads' ? NEEDS_FEED_IN_THREADS_SQL : NEEDS_FEED_SQL, [
         req.user.id, showSelfHosted, !!req.user.isAdmin, NEEDS_FEED_MAX,
       ]);
       await withCodeMissing(pool, rows);
@@ -1010,7 +1211,7 @@ function workshopOverviewRoutes(config) {
 module.exports = {
   workshopOverviewRoutes, demoNeedsVoteRoutes, withDemoCounts, DEMO_COUNTS, COUNTS_SQL,
   withDemoItems, DEMO_ITEMS, ITEMS_SQL, ITEMS_PER_APP, ITEMS_TOTAL, groupItems,
-  NEEDS_FEED_SQL, NEEDS_FEED_MAX, shapeNeedsFeed, withVotesRequired, withViewerDecides, decidingFirst,
+  NEEDS_FEED_SQL, NEEDS_FEED_IN_THREADS_SQL, NEEDS_FEED_MAX, BOT_QUESTIONS_SQL, BOT_QUESTIONS_MAX, shapeNeedsFeed, withVotesRequired, withViewerDecides, decidingFirst,
   withPictures, withCodeMissing, pictureFields, decisionFacts, DEMO_NEEDS_FEED, withDemoNeedsFeed,
   isDemoNeedsProposal,
   OWED_BY_COMMUNITY_SQL, owedByCommunity,

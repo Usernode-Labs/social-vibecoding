@@ -245,7 +245,8 @@ test('the registry groups pages under six headings, Account first and Advanced l
   // #5994 split "AI & building" (the allowance, the connectors, the agent
   // instructions and a global chat under one heading) into AI models & usage
   // and Integrations & automation, and moved Experimental and Global Chat
-  // out of the AI rows to an Advanced group at the foot of the menu.
+  // out of the AI rows to an Advanced group at the foot of the menu. Global
+  // Chat has since been removed, and its part with it.
   assert.deepEqual(groupIds, ['settings:nav.group.account', 'settings:nav.group.aiModels',
     'settings:nav.group.integrations', 'settings:nav.group.preferences',
     'settings:nav.group.helpAbout', 'settings:nav.group.advanced']);
@@ -262,8 +263,8 @@ test('the registry groups pages under six headings, Account first and Advanced l
     Array(3).fill('settings:nav.group.aiModels'), 'the allowance, OpenRouter and the Anthropic key are AI models & usage');
   assert.deepEqual(['connectors', 'cli', 'agent-files'].map(byGroup),
     Array(3).fill('settings:nav.group.integrations'), 'connectors, CLI and agent files are Integrations & automation');
-  assert.deepEqual(['experimental', 'global-chat'].map(byGroup),
-    Array(2).fill('settings:nav.group.advanced'), 'Experimental and Global Chat are Advanced');
+  assert.deepEqual(['experimental'].map(byGroup),
+    ['settings:nav.group.advanced'], 'Experimental is Advanced');
   assert.equal(sections.at(-1).group, 'settings:nav.group.advanced', 'and Advanced closes the menu');
 
   // A page takes its group from its first part, and never straddles two.
@@ -278,7 +279,7 @@ test('the registry groups pages under six headings, Account first and Advanced l
   const byKey = Object.fromEntries(sections.map((s) => [s.key, s]));
   for (const key of [
     'theme', 'language', 'alerts', 'blocked-apps', 'tour', 'username', 'email',
-    'password', 'delete-account', 'wallet', 'global-chat', 'openrouter',
+    'password', 'delete-account', 'wallet', 'openrouter',
     'api-key', 'connectors', 'app-ai', 'app-permissions', 'agent-files', 'cli',
     'dev-console', 'experimental', 'usernode', 'admin-preview', 'about',
   ]) assert.ok(byKey[key], `${key} is still a registered part`);
@@ -337,16 +338,24 @@ test('the registry groups pages under six headings, Account first and Advanced l
   }
 });
 
-test('no group collapses: the menu hides nothing behind a disclosure', () => {
-  // #1554 shut seven rarely used panes inside a collapsed "Advanced" group.
-  // Folding parts into pages made the menu short without it, and two of
-  // those seven were privacy controls. The machinery is gone, not idle.
+test('a group folds only when the person folds it', () => {
+  // #1554 shut seven rarely used panes inside a collapsed "Advanced" group BY
+  // DEFAULT, two of them privacy controls. That machinery stays gone. #5997
+  // lets a viewer fold a group they rarely use: every group starts open, the
+  // fold is theirs, remembered on their device, and Pinned never folds.
   for (const gone of [
     /ADVANCED_GROUP/, /NAV_EXPANDED_KEY/, /_isCollapsibleGroup/, /_toggleGroup/,
     /_ensureActiveGroupExpanded/, /_revealedGroup/, /_groupDisclosure/,
   ]) assert.doesNotMatch(settingsCode, gone, `${gone} is gone from settings.js`);
-  assert.doesNotMatch(code(navTsx), /data-settings-group-toggle|aria-expanded/,
-    'the nav renders no disclosure');
+  assert.doesNotMatch(code(navTsx), /data-settings-group-toggle/, 'the old disclosure is not back');
+  assert.match(settingsJs, /FOLDED_KEY: 'usernode:settings-folded'/, 'folds are remembered on this device');
+  assert.match(settingsJs, /_navPrefs: \{ pinned: \[\], folded: \[\] \}/, 'nothing is folded until storage says so');
+  const grouped = sliceMethod(settingsJs, '_groupedSections');
+  assert.match(grouped, /folded: false, items: pinned/, 'Pinned never folds');
+  assert.match(grouped, /folded: prefs\.folded\.includes\(key\)/, 'a group folds only when its key was folded');
+  assert.match(navTsx, /'aria-expanded': !group\.folded/, 'the fold control says whether its group is open');
+  assert.match(navTsx, /group\.folded \? group\.items\.filter\(\(item\) => item\.active\) : group\.items/,
+    'a folded sidebar group keeps the page you are on');
   assert.ok(!manifest.tests.some((t) => /data-settings-group-toggle|settings-nav-group-advanced/.test(t.expectSelector || '')),
     'no declared check still asserts the collapsed group');
 });

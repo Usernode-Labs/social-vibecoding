@@ -923,6 +923,14 @@
     "text": "Respondió en una solicitud",
     "source": "ebec941df52308992648f6fc3e7f5e561374c14ac629b231e21fbd282a0c1ffc"
   },
+  "row.chat.changeReply": {
+    "text": "Respondió en el cambio #{{number}}",
+    "source": "5c40092b210e960481aa63189fe9ba2b07ee6c378f2530c9262c62f9a5e9d98a"
+  },
+  "row.chat.decisionReply": {
+    "text": "Respondió en una decisión",
+    "source": "f46d54fde007cc0cf3662843c21892008cdb74d95b13d5543793e6a64adce796"
+  },
   "sheet.tab.unreadCount_many": {
     "text": "No leídas ({{count}})",
     "source": "42a50898b7280f9c18fe5cd132caa1b5afe37e21f5718058195f648a44e3ecbf"

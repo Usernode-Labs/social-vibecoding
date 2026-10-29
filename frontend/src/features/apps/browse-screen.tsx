@@ -111,7 +111,6 @@ export function BrowseScreen() {
     curated: boolean;
     grouped: boolean;
     moreExpanded: boolean;
-    adminFilters?: boolean;
     categories?: Array<{ key: string; label: string }>;
     category?: string;
   };

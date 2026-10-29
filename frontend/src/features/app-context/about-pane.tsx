@@ -13,11 +13,11 @@
  *      apps, members, merged.
  *   3. WHO BUILDS IT. Contributors, each with what they have merged, each
  *      opening that person's page.
- *   4. MORE. Add to home screen, Remix (a fork, to the code; "Remix" to
- *      people), Code (on GitHub, or on Homeroom's git host), and the
- *      version as a plain row,
- *      "App version: a1b2c3d" (#4218). A remix also says what it was
- *      remixed from, under its description.
+ *   4. MORE. Add to home screen, Make your own (a fork, to the code; your
+ *      own version, to people: docs/plans/versions.md), Code (on GitHub,
+ *      or on Homeroom's git host), and the version as a plain row,
+ *      "App version: a1b2c3d" (#4218). A version also says what it was
+ *      made from, under its description.
  *
  * The line that said how it is built ("Notes’s community builds it
  * together. How changes work") and the Share row are gone from both panes:
@@ -82,8 +82,10 @@ import { useMemo, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
+  ArrowTopRightOnSquareIcon,
   CheckIcon,
   CodeIcon,
+  CopyIcon,
   Glyph,
   GitHubIcon,
 } from '@/components/ui/icons';
@@ -116,6 +118,22 @@ import {
   usePlatformAbout,
 } from './about-data';
 
+/**
+ * The mark on a link that leaves Homeroom (#5927), where a row inside the
+ * platform has its chevron: the glyph, and the words for a screen reader.
+ * Here for the Code row below, and exported for the menu pane's links out
+ * (./app-context-sheet.tsx: Privacy, and Add Homeroom when it opens the browser).
+ */
+export function ExternalMark({ className = 'w-4 h-4 text-zinc-400 dark:text-zinc-500' }: { className?: string }): ReactNode {
+  const t = useMessages('agent');
+  return (
+    <>
+      <ArrowTopRightOnSquareIcon data-external-mark="" className={'shrink-0 ' + className} aria-hidden="true" />
+      <span className="sr-only">{t('agent:appContext.opensOutside')}</span>
+    </>
+  );
+}
+
 const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm w-full text-left '
   + 'text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 '
   + 'transition-colors';
@@ -127,12 +145,13 @@ const SECTION = 'px-5 pt-4 pb-1 text-[0.7rem] font-semibold uppercase tracking-w
 const NOTE = 'px-5 py-2 text-sm text-zinc-500 dark:text-zinc-400';
 
 /**
- * The two glyphs the icon set has no name for, drawn on its grid through its
- * escape hatch: the design's fork, and its "add to home screen" plus-in-a-
- * phone. A table because that is what `Glyph` is for.
+ * The glyph the icon set has no name for, drawn on its grid through its
+ * escape hatch: the design's "add to home screen" plus-in-a-phone. A table
+ * because that is what `Glyph` is for. Make your own drew the design's fork
+ * here; it is the kit's two tiles now (CopyIcon, as the home tile's badge
+ * for a version), since the word on screen is "version", never "fork".
  */
 const GLYPHS = {
-  fork: 'M6 7a2 2 0 100-4 2 2 0 000 4zm12 0a2 2 0 100-4 2 2 0 000 4zm-6 14a2 2 0 100-4 2 2 0 000 4zM6 7v1a4 4 0 004 4h4a4 4 0 004-4V7m-6 5v5',
   homeScreen: 'M7 3h10a3 3 0 013 3v12a3 3 0 01-3 3H7a3 3 0 01-3-3V6a3 3 0 013-3zm5 5v8m-4-4h8',
 } as const;
 
@@ -162,7 +181,7 @@ function ActionRow({ id, icon, label, sub = null, onClick }: {
   id: string;
   icon: ReactNode;
   label: string;
-  /** A second, quieter line under the label (Remix's "Make your own copy"). */
+  /** A second, quieter line under the label (Make your own's "Your own version to change"). */
   sub?: string | null;
   onClick: () => void;
 }): ReactNode {
@@ -182,14 +201,17 @@ function ActionRow({ id, icon, label, sub = null, onClick }: {
 }
 
 /**
- * Where a remix came from: the resolved `forked_from` the app row carries
- * (attachForkLineage in src/routes/apps.js: `{ slug, name, linkable }`, or
- * null for an app that is not a copy and for one in demo mode). A deleted
+ * What a version was made from: the resolved `forked_from` the app row
+ * carries (attachForkLineage in src/routes/apps.js: `{ slug, name, linkable }`,
+ * or null for an app that is not a version and for one in demo mode), or,
+ * for a ready-made made from its original, the app payload's
+ * `upstream_link` (`{ slug, name, following, linkable }`,
+ * docs/plans/versions.md), which only the one-app read carries. A deleted
  * original resolves to "<deleted>" and is text, not a link. Pure; the line
  * it feeds is pinned by tests/app-about-pane.test.js.
  */
 function lineageOf(row: AppRow | null | undefined): { name: string; deleted: boolean; href: string | null } | null {
-  const ref = row ? row.forked_from : null;
+  const ref = row ? (row.forked_from || row.upstream_link) : null;
   if (!ref || typeof ref !== 'object') return null;
   const name = typeof ref.name === 'string' && ref.name ? ref.name : '<deleted>';
   const href = ref.linkable && typeof ref.slug === 'string' && ref.slug
@@ -406,7 +428,7 @@ export function AboutPane({ label }: { label: string; unnamed?: boolean }): Reac
               {tagline}
             </p>
           ) : null}
-          {/* A remix says what it was remixed from, under its description:
+          {/* A version says what it was made from, under its description:
               the line Discover's page draws under its version, in the same
               amber, opening the original the way a contributor row opens a
               person (the sheet closes first). */}
@@ -612,7 +634,7 @@ export function AboutPane({ label }: { label: string; unnamed?: boolean }): Reac
           {showFork && forkItem ? (
             <ActionRow
               id="app-about-fork"
-              icon={<Glyph d={GLYPHS.fork} />}
+              icon={<CopyIcon />}
               label={t('agent:appContext.about.remix')}
               sub={t('agent:appContext.about.remixSub')}
               onClick={() => afterDismiss(() => forkItem.run())}
@@ -633,6 +655,7 @@ export function AboutPane({ label }: { label: string; unnamed?: boolean }): Reac
               {repoKind === 'github' ? (
                 <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{t('agent:appContext.about.codePublic')}</span>
               ) : null}
+              <ExternalMark />
             </a>
           ) : null}
           {/* THE VERSION, last and plain (#4218): a fact for whoever needs

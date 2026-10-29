@@ -1060,7 +1060,7 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     // the tally the look read.
     const s = await session({ status: 'promoted', promotedAgo: 0 });
     const tally = { yes: 2, required: 3, active: 4 };
-    const merged = await send(s, 'PrLooked', { from: 'promoted', merged: true, closed: true, mergeSha: 'c'.repeat(40),
+    const merged = await send(s, 'PrLooked', { from: 'promoted', merged: true, closed: true, baseRead: true, mergeSha: 'c'.repeat(40),
       mergedAt: '2026-10-21T10:00:00Z', closedAt: '2026-10-21T10:00:00Z', tally });
     await settle();
     assert.equal((await outcome(merged)).result, 'accepted');
@@ -1088,20 +1088,27 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     await settle();
     assert.equal((await row(a)).status, 'archived');
     assert.equal((await instance(a)).data.reason, 'pr-closed');
+    // A merge read by an older release's look, which did not read where it
+    // went: left for the next look (src/workflow/rules/pr-base.ts).
+    const unread = await session({ status: 'promoted', promotedAgo: 0 });
+    const blind = await send(unread, 'PrLooked', { from: 'promoted', merged: true, closed: true });
+    await settle();
+    assert.equal((await outcome(blind)).reason, 'base_unread');
+    assert.equal((await row(unread)).status, 'promoted');
     // Merged before it went up for a vote: closed, as merged on GitHub.
     const b = await session({ status: 'active' });
-    await send(b, 'PrLooked', { from: 'active', merged: true, closed: true });
+    await send(b, 'PrLooked', { from: 'active', merged: true, closed: true, baseRead: true });
     await settle();
     assert.equal((await instance(b)).data.reason, 'pr-merged');
 
     // Being merged: its attempt's to settle. Still open, a stale reading,
     // or anyone but the system: nothing.
     const m = await session({ status: 'merging' });
-    const left = await send(m, 'PrLooked', { from: 'merging', merged: true, closed: true });
+    const left = await send(m, 'PrLooked', { from: 'merging', merged: true, closed: true, baseRead: true });
     const o = await session({ status: 'promoted', promotedAgo: 0 });
     const open = await send(o, 'PrLooked', { from: 'promoted', merged: false, closed: false });
-    const stale = await send(o, 'PrLooked', { from: 'active', merged: true, closed: true });
-    const byRoute = await send(o, 'PrLooked', { from: 'promoted', merged: true, closed: true }, route);
+    const stale = await send(o, 'PrLooked', { from: 'active', merged: true, closed: true, baseRead: true });
+    const byRoute = await send(o, 'PrLooked', { from: 'promoted', merged: true, closed: true, baseRead: true }, route);
     await settle();
     assert.deepEqual([(await outcome(left)).reason, (await outcome(open)).reason, (await outcome(stale)).reason, (await outcome(byRoute)).reason],
       ['merging', 'open', 'overtaken', 'internal_only']);

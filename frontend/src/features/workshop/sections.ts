@@ -15,6 +15,7 @@
  */
 
 import { t } from '../../lib/i18n/runtime';
+import { rankSearch } from '../../lib/search-rank.js';
 
 export type Audience = 'open' | 'invited' | 'solo';
 
@@ -141,21 +142,17 @@ export function orderRows<T extends SectionedRow>(apps: T[]): T[] {
 /**
  * The rows whose name (or short name, when a row has no name) holds the
  * query, in the list's own order, except that an exact name leads (#5472,
- * as Home.filterApps ranks Your apps): typing a community's full name should
+ * #5891, as Home.filterApps ranks Your apps): typing a community's full name should
  * find it first, not below rows that merely contain it. The split is stable,
  * so several exact matches keep their order among themselves and the rest
  * keep theirs. Pure, and shared by the Communities screen's search and the
  * phone drawer's, which reads it from here rather than from the screen
- * (the drawer imports the screen, so that way round would be a cycle).
+ * (the drawer imports the screen, so that way round would be a cycle), and
+ * the switcher's. The rule is lib/search-rank.js, every app search's: any
+ * case, Latin accents set aside.
  */
 export function matchRows<T extends { name?: string | null; slug: string }>(rows: readonly T[], query: string): T[] {
-  const q = query.trim().toLocaleLowerCase();
-  if (!q) return [...rows];
-  const label = (row: T) => String(row.name || row.slug).toLocaleLowerCase();
-  const matches = rows.filter((row) => label(row).includes(q));
-  const exact = (row: T) => label(row).trim() === q;
-  const leads = matches.filter(exact);
-  return leads.length ? [...leads, ...matches.filter((row) => !exact(row))] : matches;
+  return rankSearch(rows, query, (row: T) => [row.name || row.slug]) as T[];
 }
 
 /**

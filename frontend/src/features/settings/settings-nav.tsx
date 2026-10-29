@@ -51,13 +51,21 @@
  */
 
 import { useEffect, useState } from 'react';
-import type { KeyboardEvent, ReactNode } from 'react';
+import type { ComponentType, KeyboardEvent, ReactNode, SVGProps } from 'react';
 
-import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { GroupedList, ListRow, SectionHeader, rowSeparator } from '@/components/ui/grouped-list';
+import {
+  AppWindowIcon, BellIcon, BookmarkIcon, BookmarkSolidIcon, ChevronDownIcon, ChevronUpIcon, CodeIcon,
+  CompassIcon, DescriptionIcon, EyeIcon, GlobeIcon, InfoCircleIcon, LightBulbIcon, LinkIcon, LockIcon,
+  PhonePlusIcon, ShieldCheckIcon, SparklesIcon, SunIcon, TerminalIcon, UserIcon, WalletIcon,
+} from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
+import { cn } from '@/lib/utils';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
+import { FILTER_SHORTCUT_KEYS, installFilterShortcut } from './filter-shortcut';
+import { forgetSearches, loadRecent, recentSearchesStore, rememberSearch, visibleRecent } from './recent-searches.js';
 import { settingsNavStore } from './settings-nav-store.js';
 
 interface FilterPart {
@@ -74,24 +82,55 @@ interface Filterable {
   parts: FilterPart[];
 }
 
-interface NavItem extends Filterable {
+/**
+ * #5995: what a row says at its trailing edge, from ../settings.js's
+ * `_navExtras`. `status` is a count in words ("2 linked"), '' when there is
+ * nothing to count; `tag` is a small "Beta" label. Never both on one row.
+ */
+interface RowExtras {
+  status: string;
+  tag: string;
+}
+
+/**
+ * #5997: the glyph before a row's name (a name from ../settings.js's ICONS,
+ * looked up in NAV_ICONS) and whether the viewer pinned the page. Both are
+ * optional, so a descriptor without them renders the row as before.
+ */
+interface RowLook {
+  icon?: string;
+  pinned?: boolean;
+  /** The key of the page's own group, where an unpin sends it back. */
+  home?: string;
+}
+
+interface NavItem extends Filterable, RowExtras, RowLook {
   active: boolean;
   className: string;
 }
 
+/**
+ * `key` is the group's own key (the catalog id's last segment, or `pinned`
+ * for #5997's Pinned group) and `folded` whether the viewer folded it. A group
+ * without a key draws no fold arrow and its rows no pin controls.
+ */
 interface NavGroup {
   name: string;
+  key?: string;
+  folded?: boolean;
   first: boolean;
   items: NavItem[];
 }
 
 /** A phone menu row: a page, and the one line under it when its name needs one. */
-interface MenuItem extends Filterable {
+interface MenuItem extends Filterable, RowExtras, RowLook {
   subtitle: string;
 }
 
 interface MenuGroup {
   name: string;
+  key?: string;
+  folded?: boolean;
   items: MenuItem[];
 }
 
@@ -107,10 +146,50 @@ interface FilterHit {
   parts: FilterPart[];
 }
 
+interface SettingsApi {
+  _navClick(key: string): void;
+  _setPinned(key: string, on: boolean): void;
+  _movePinned(key: string, step: number): void;
+  _setGroupFolded(group: string, on: boolean): void;
+}
+
+const settingsApi = () => (window as { Settings?: SettingsApi }).Settings;
+
 /** `Settings._navClick` — the single handler both hosts route through. */
 const navClick = (key: string) => {
-  (window as { Settings?: { _navClick(key: string): void } }).Settings?._navClick(key);
+  settingsApi()?._navClick(key);
 };
+
+/**
+ * #5997: each page's glyph, by the name ../settings.js's ICONS gives it. The
+ * shell's own icon set only, so a row's glyph is one the rest of the shell
+ * draws too. An unknown name draws nothing.
+ */
+type Glyph = ComponentType<SVGProps<SVGSVGElement>>;
+
+export const NAV_ICONS: Record<string, Glyph> = {
+  user: UserIcon,
+  link: LinkIcon,
+  shield: ShieldCheckIcon,
+  phone: PhonePlusIcon,
+  wallet: WalletIcon,
+  sparkles: SparklesIcon,
+  terminal: TerminalIcon,
+  lines: DescriptionIcon,
+  sun: SunIcon,
+  eye: EyeIcon,
+  globe: GlobeIcon,
+  bell: BellIcon,
+  lock: LockIcon,
+  code: CodeIcon,
+  compass: CompassIcon,
+  window: AppWindowIcon,
+  info: InfoCircleIcon,
+  bulb: LightBulbIcon,
+};
+
+const glyphFor = (name: string | undefined): Glyph | null =>
+  (name && Object.prototype.hasOwnProperty.call(NAV_ICONS, name) ? NAV_ICONS[name] : null);
 
 /**
  * The pages whose label, part labels or keywords contain every word of the
@@ -258,8 +337,13 @@ const hitTarget = (hit: FilterHit) => (hit.parts[0] ? hit.parts[0].key : hit.ite
  * not a view of its own: once the page is open, the menu goes back to the
  * grouped list with that page marked current, so the viewer can see where
  * they landed instead of a results list that marks nothing.
+ *
+ * What was typed is remembered as a recent search first (#5996): choosing a
+ * result, by a click or Enter, is the moment a search was worth something.
+ * Sign out is not a search result in that sense and is not remembered.
  */
-function choose(hit: FilterHit, setQuery: (q: string) => void) {
+function choose(hit: FilterHit, setQuery: (q: string) => void, query: string) {
+  rememberSearch(query);
   setQuery('');
   navClick(hitTarget(hit));
 }
@@ -268,7 +352,9 @@ function choose(hit: FilterHit, setQuery: (q: string) => void) {
  * The filter field, identical on both hosts apart from its id (both hosts are
  * in the document at phone width, so the ids must differ). Enter opens the
  * first hit; Escape clears. A `search` input, so the platform's own clear
- * control and the "search" keyboard return key come for free.
+ * control and the "search" keyboard return key come for free. Ctrl+K (⌘K) or
+ * / puts the cursor here while Settings is open (./filter-shortcut.ts, #5996);
+ * nothing on screen says so, the box tells screen readers.
  */
 function FilterField({ id, query, setQuery, hits, signOutHit }: {
   id: string;
@@ -281,7 +367,7 @@ function FilterField({ id, query, setQuery, hits, signOutHit }: {
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && hits[0]) {
       e.preventDefault();
-      choose(hits[0], setQuery);
+      choose(hits[0], setQuery, query);
     } else if (e.key === 'Enter' && signOutHit) {
       // Sign out is the only hit: Enter presses it, as it opens a page.
       e.preventDefault();
@@ -300,6 +386,7 @@ function FilterField({ id, query, setQuery, hits, signOutHit }: {
       placeholder={t('settings:nav.filter.field')}
       autoComplete="off"
       spellCheck={false}
+      aria-keyshortcuts={FILTER_SHORTCUT_KEYS}
       value={query}
       onChange={(e) => setQuery(e.currentTarget.value)}
       onKeyDown={onKeyDown}
@@ -308,6 +395,8 @@ function FilterField({ id, query, setQuery, hits, signOutHit }: {
 }
 
 const TRY_BUTTON = 'font-medium text-violet-600 dark:text-violet-400 hover:underline';
+// Recent searches' Clear (#5996): the suggestions' blue text button, small.
+const RECENT_CLEAR = 'shrink-0 text-xs font-medium text-violet-600 dark:text-violet-400 hover:underline';
 
 /**
  * What both hosts show when nothing matches: the line saying so, and under
@@ -341,6 +430,84 @@ function NoMatch({ query, setQuery, groups, className }: {
   );
 }
 
+/**
+ * The device's recent searches (#5996), read into ./recent-searches.js's
+ * store from an effect on every visit (never during render: the store starts
+ * empty, so the prerender is the empty hosts it always was).
+ */
+function useRecentSearches(visit: number): string[] {
+  useEffect(() => { loadRecent(); }, [visit]);
+  return visibleRecent(useStoreState(recentSearchesStore)) as string[];
+}
+
+/**
+ * While the box is empty, the last few searches (#5996), newest first, under
+ * "Recent searches" with a Clear button. Choosing one types it into the box
+ * again and shows its results; it does not jump to a page, because the
+ * settings may have changed since. A row shows exactly what was typed, as
+ * text (React escapes it), never translated.
+ */
+export function RecentSearches({ items, setQuery, variant }: {
+  items: string[];
+  setQuery: (q: string) => void;
+  variant: 'desktop' | 'mobile';
+}) {
+  const t = useMessages('settings');
+  if (!items.length) return null;
+  const desktop = variant === 'desktop';
+  // The chosen row unmounts as the results replace the block, so the cursor
+  // goes to the box first: a keyboard user stays where the search is.
+  const replay = (q: string) => {
+    (document.getElementById(desktop ? 'settings-filter-desktop' : 'settings-filter-mobile') as HTMLInputElement | null)?.focus();
+    setQuery(q);
+  };
+  return (
+    <div data-settings-recent="" className={desktop ? 'mb-1' : 'mb-5'}>
+      <div className={desktop ? 'flex items-baseline justify-between gap-2 pr-3' : 'flex items-baseline justify-between gap-2 pr-4'}>
+        <SectionHeader className={desktop ? NAV_HEADING : 'px-4 pb-1.5'}>{t('settings:nav.filter.recent.heading')}</SectionHeader>
+        <button
+          type="button"
+          data-settings-recent-clear=""
+          className={RECENT_CLEAR}
+          aria-label={t('settings:nav.filter.recent.clearAria')}
+          onClick={forgetSearches}
+        >
+          {t('settings:nav.filter.recent.clear')}
+        </button>
+      </div>
+      {desktop ? items.map((q) => (
+        <button
+          key={q}
+          type="button"
+          data-settings-recent-item=""
+          className={HIT_ROW}
+          aria-label={t('settings:nav.filter.recent.again', { query: q })}
+          onClick={() => replay(q)}
+        >
+          {q}
+        </button>
+      )) : (
+        <GroupedList className="mx-0">
+          {items.map((q) => (
+            <ListRow
+              key={q}
+              as="button"
+              inset="text"
+              data-settings-recent-item=""
+              className={MENU_ROW}
+              titleClassName="font-normal"
+              title={q}
+              chevron={false}
+              aria-label={t('settings:nav.filter.recent.again', { query: q })}
+              onClick={() => replay(q)}
+            />
+          ))}
+        </GroupedList>
+      )}
+    </div>
+  );
+}
+
 /** Carried over verbatim from the retired _navItemsHtml / _mobileMenuHtml. */
 const GROUP_SPACED = 'mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800';
 // The widget language labels a group in SENTENCE CASE at reading size, not as
@@ -357,6 +524,18 @@ const HIT_PARTS = 'block text-xs font-normal text-zinc-500 dark:text-zinc-400';
 // The Sign out hit: a hit row in the button's own red, an action and not a page.
 const SIGN_OUT_HIT_ROW = 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors text-red-700 dark:text-red-400 hover:bg-red-500/10';
 const SIGN_OUT_TITLE = 'font-normal text-red-700 dark:text-red-400';
+// #5995: a row's count, in muted words; a settled state gets no colour.
+const NAV_STATUS = 'shrink-0 text-xs font-normal text-zinc-500 dark:text-zinc-400';
+const MENU_STATUS = 'shrink-0 text-[0.8125rem] text-zinc-500 dark:text-zinc-400';
+// The "Beta" label: a small grey pill, no accent (colour is for actions).
+const BETA_TAG = 'shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold leading-4 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300';
+
+/** A row's trailing words or tag, or nothing. */
+function RowTrailing({ extras, statusClassName }: { extras: RowExtras; statusClassName: string }) {
+  if (extras.tag) return <span data-settings-nav-tag="" className={BETA_TAG}>{extras.tag}</span>;
+  if (extras.status) return <span data-settings-nav-status="" className={statusClassName}>{extras.status}</span>;
+  return null;
+}
 
 /**
  * One sidebar row. Navigation, not a tab set (QA 2026-09-24 Q20): a tab
@@ -365,6 +544,9 @@ const SIGN_OUT_TITLE = 'font-normal text-red-700 dark:text-red-400';
  * <nav>, so the current one says so with aria-current.
  */
 function NavRow({ item }: { item: NavItem }) {
+  // #5997: the glyph takes the row's own colour (currentColor), so the
+  // current page's glyph is in the "where you are" ink with its name.
+  const Glyph = glyphFor(item.icon);
   return (
     <button
       type="button"
@@ -373,10 +555,179 @@ function NavRow({ item }: { item: NavItem }) {
       className={item.className}
       onClick={() => navClick(item.key)}
     >
-      {item.label}
+      {Glyph ? (
+        <>
+          <Glyph className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate">{item.label}</span>
+          <RowTrailing extras={item} statusClassName={NAV_STATUS} />
+        </>
+      ) : item.tag || item.status ? (
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="min-w-0 flex-1 truncate">{item.label}</span>
+          <RowTrailing extras={item} statusClassName={NAV_STATUS} />
+        </span>
+      ) : item.label}
     </button>
   );
 }
+
+/**
+ * #5997: after a pin, an unpin or a move the row is drawn somewhere else (a
+ * different group, or a different place in Pinned), and React may have moved
+ * or remade the very button that was pressed. Put the keyboard back on the
+ * same control of the same row, or on its pin when that control is now
+ * greyed out, so a keyboard user can press "Move up" again and again.
+ *
+ * A row unpinned into a FOLDED group is not drawn at all, so the keyboard
+ * goes to that group's fold arrow, the closest thing to where the row went
+ * (one press opens the group on it). Focus never falls to the page.
+ */
+export function refocus(hostId: string, key: string, control: string, home?: string) {
+  requestAnimationFrame(() => {
+    const host = document.getElementById(hostId);
+    if (!host) return;
+    const row = host.querySelector(`[data-settings-row="${key}"]`);
+    const el = (row && (
+      row.querySelector<HTMLElement>(`[data-settings-control="${control}"]:not(:disabled)`)
+      || row.querySelector<HTMLElement>('[data-settings-control="pin"]')
+    )) || (home ? host.querySelector<HTMLElement>(`[data-settings-group-fold="${home}"]`) : null)
+      || host.querySelector<HTMLElement>('[data-settings-group-fold]');
+    el?.focus();
+  });
+}
+
+const CONTROL = 'flex shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-200/70 hover:text-zinc-900 disabled:pointer-events-none disabled:opacity-35 dark:text-zinc-400 dark:hover:bg-zinc-700/60 dark:hover:text-zinc-100';
+const CONTROL_DESKTOP = 'h-6 w-6';
+// 44 by 44 on a phone: the shell's minimum tap target.
+const CONTROL_PHONE = 'h-11 w-11';
+const CONTROL_GLYPH_DESKTOP = 'h-3.5 w-3.5';
+const CONTROL_GLYPH_PHONE = 'h-5 w-5';
+
+/**
+ * #5997: a row's pin, and on a pinned row its up and down arrows. Siblings of
+ * the row's own button (a button may not hold another). `place` is the row's
+ * index among the pinned rows and `count` how many there are, so the top
+ * row's up arrow and the bottom row's down arrow are greyed out.
+ */
+function RowControls({ item, place, count, hostId, phone }: {
+  item: Filterable & RowLook;
+  place: number;
+  count: number;
+  hostId: string;
+  phone: boolean;
+}) {
+  const t = useMessages('settings');
+  const size = phone ? CONTROL_PHONE : CONTROL_DESKTOP;
+  const glyph = phone ? CONTROL_GLYPH_PHONE : CONTROL_GLYPH_DESKTOP;
+  const page = item.label;
+  const move = (step: number, control: string) => {
+    settingsApi()?._movePinned(item.key, step);
+    refocus(hostId, item.key, control, item.home);
+  };
+  const pin = () => {
+    settingsApi()?._setPinned(item.key, !item.pinned);
+    refocus(hostId, item.key, 'pin', item.home);
+  };
+  const pinLabel = item.pinned ? t('settings:nav.pin.remove', { page }) : t('settings:nav.pin.add', { page });
+  const PinGlyph = item.pinned ? BookmarkSolidIcon : BookmarkIcon;
+  return (
+    <>
+      {item.pinned ? (
+        <>
+          <button
+            type="button"
+            data-settings-control="up"
+            className={cn(CONTROL, size)}
+            aria-label={t('settings:nav.pin.up', { page })}
+            title={t('settings:nav.pin.up', { page })}
+            disabled={place <= 0}
+            onClick={() => move(-1, 'up')}
+          >
+            <ChevronUpIcon className={glyph} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            data-settings-control="down"
+            className={cn(CONTROL, size)}
+            aria-label={t('settings:nav.pin.down', { page })}
+            title={t('settings:nav.pin.down', { page })}
+            disabled={place >= count - 1}
+            onClick={() => move(1, 'down')}
+          >
+            <ChevronDownIcon className={glyph} aria-hidden="true" />
+          </button>
+        </>
+      ) : null}
+      <button
+        type="button"
+        data-settings-control="pin"
+        data-settings-pin={item.pinned ? 'on' : 'off'}
+        className={cn(CONTROL, size)}
+        aria-label={pinLabel}
+        title={pinLabel}
+        onClick={pin}
+      >
+        <PinGlyph className={glyph} aria-hidden="true" />
+      </button>
+    </>
+  );
+}
+
+/**
+ * #5997: folding a group down to its heading, and opening it again. The same
+ * down chevron Messages' foldable headings use, turned sideways while folded.
+ *
+ * On the sidebar it is a small arrow beside the heading. On a phone the whole
+ * heading is the button (as Messages' Agents heading is), at least 44px tall
+ * and the full width, so the target is never a 36px arrow.
+ */
+function GroupHeading({ group, className, phone }: {
+  group: { name: string; key?: string; folded?: boolean };
+  className: string;
+  phone: boolean;
+}) {
+  const t = useMessages('settings');
+  if (!group.key || group.key === 'pinned') return <SectionHeader className={className}>{group.name}</SectionHeader>;
+  const label = group.folded
+    ? t('settings:nav.fold.show', { group: group.name })
+    : t('settings:nav.fold.hide', { group: group.name });
+  const fold = {
+    type: 'button' as const,
+    'data-settings-group-fold': group.key,
+    'aria-expanded': !group.folded,
+    'aria-label': label,
+    title: label,
+    onClick: () => settingsApi()?._setGroupFolded(group.key as string, !group.folded),
+  };
+  const chevron = (size: string) => (
+    <ChevronDownIcon className={cn(size, 'shrink-0 transition-transform', group.folded && '-rotate-90')} aria-hidden="true" />
+  );
+  if (phone) {
+    return (
+      <SectionHeader className={cn(className, 'pb-0 pt-2')}>
+        <button {...fold} className={PHONE_FOLD}>
+          <span className="min-w-0 flex-1 truncate">{group.name}</span>
+          {chevron('h-5 w-5')}
+        </button>
+      </SectionHeader>
+    );
+  }
+  return (
+    <div className="flex items-end">
+      <SectionHeader className={cn('min-w-0 flex-1', className)}>{group.name}</SectionHeader>
+      <button {...fold} className={cn(CONTROL, 'mb-0.5 mr-1 h-6 w-6')}>{chevron('h-3.5 w-3.5')}</button>
+    </div>
+  );
+}
+
+// The phone heading's button: it keeps the heading's small caps (a button
+// does not inherit text-transform) and puts the words on the heading's line.
+const PHONE_FOLD = 'flex min-h-[44px] w-full items-end gap-2 pb-1.5 text-left uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400';
+
+// The sidebar's pin strip: over the row's trailing edge, on the plane colour
+// so a long name runs under it, shown while the row is pointed at or holds
+// the keyboard (always, on a screen with no pointer that hovers).
+const NAV_CONTROLS = 'absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-[color:var(--dc-sheet-solid)] opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100';
 
 /**
  * The desktop sidebar. `className` is NOT rendered on the <nav> — it is a
@@ -388,6 +739,9 @@ export function SettingsNavDesktop() {
   const t = useMessages('settings');
   const { desktop, visit } = useStoreState(settingsNavStore) as NavState;
   const [query, setQuery] = useFilterQuery(visit);
+  const recent = useRecentSearches(visit);
+  // One listener for the screen: this host is always mounted, on every width.
+  useEffect(() => installFilterShortcut({ doc: document }), []);
   const groups = desktop || [];
   const hits = filterPages(groups, query);
   const signOutHit = matchesSignOut(query);
@@ -410,7 +764,7 @@ export function SettingsNavDesktop() {
               type="button"
               data-settings-nav={hit.item.key}
               className={HIT_ROW}
-              onClick={() => choose(hit, setQuery)}
+              onClick={() => choose(hit, setQuery, query)}
             >
               <span className="block"><Highlighted text={hit.item.label} query={query} /></span>
               {hit.parts.length ? (
@@ -427,12 +781,28 @@ export function SettingsNavDesktop() {
             <NoMatch query={query} setQuery={setQuery} groups={groups} className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400" />
           )}
         </div>
-      ) : groups.map((group) => (
-        <div key={group.name} className={group.first ? '' : GROUP_SPACED}>
-          <SectionHeader className={NAV_HEADING}>{group.name}</SectionHeader>
-          {group.items.map((item) => <NavRow key={item.key} item={item} />)}
-        </div>
-      ))}
+      ) : (
+        <>
+          {desktop ? <RecentSearches items={recent} setQuery={setQuery} variant="desktop" /> : null}
+          {groups.map((group) => (
+            <div key={group.key || group.name} className={group.first ? '' : GROUP_SPACED}>
+              <GroupHeading group={group} className={NAV_HEADING} phone={false} />
+              {/* #5997: a folded group keeps the page you are on, so the sidebar
+                  never loses your place. */}
+              {(group.folded ? group.items.filter((item) => item.active) : group.items).map((item, place) => (
+                group.key ? (
+                  <div key={item.key} className="group relative" data-settings-row={item.key}>
+                    <NavRow item={item} />
+                    <span className={NAV_CONTROLS}>
+                      <RowControls item={item} place={place} count={group.items.length} hostId="settings-nav-desktop" phone={false} />
+                    </span>
+                  </div>
+                ) : <NavRow key={item.key} item={item} />
+              ))}
+            </div>
+          ))}
+        </>
+      )}
     </nav>
   );
 }
@@ -446,6 +816,7 @@ export function SettingsMobileMenu() {
   const t = useMessages('settings');
   const { mobile, visit } = useStoreState(settingsNavStore) as NavState;
   const [query, setQuery] = useFilterQuery(visit);
+  const recent = useRecentSearches(visit);
   const groups = mobile || [];
   const hits = filterPages(groups, query);
   const signOutHit = matchesSignOut(query);
@@ -471,7 +842,7 @@ export function SettingsMobileMenu() {
                   titleClassName="font-normal"
                   title={<Highlighted text={hit.item.label} query={query} />}
                   subtitle={hit.parts.length ? <PartLabels parts={hit.parts} query={query} /> : undefined}
-                  onClick={() => choose(hit, setQuery)}
+                  onClick={() => choose(hit, setQuery, query)}
                 />
               ))}
               {signOutHit ? (
@@ -491,32 +862,57 @@ export function SettingsMobileMenu() {
             <NoMatch query={query} setQuery={setQuery} groups={groups} className="px-4 text-[15px] text-zinc-500 dark:text-zinc-400" />
           )}
         </div>
-      ) : groups.map((group) => (
-        <div key={group.name} className="mb-5">
-          <SectionHeader className="px-4 pb-1.5">{group.name}</SectionHeader>
-          <GroupedList className="mx-0">
-            {group.items.map((item) => (
-              <ListRow
-                key={item.key}
-                as="button"
-                inset="text"
-                data-settings-nav={item.key}
-                className={MENU_ROW}
-                // ListRow bolds its title for the rows it was built for, where
-                // the title is a subject with a subtitle under it. These are
-                // short menu entries, most with no second line, so bold made
-                // the whole menu read as a stack of headings.
-                titleClassName="font-normal"
-                title={item.label}
-                // #5995: the few rows whose name does not say what is behind
-                // it carry one muted line (Settings.SUBTITLES); the rest none.
-                subtitle={item.subtitle || undefined}
-                onClick={() => navClick(item.key)}
-              />
-            ))}
-          </GroupedList>
-        </div>
-      ))}
+      ) : (
+        <>
+          {mobile ? <RecentSearches items={recent} setQuery={setQuery} variant="mobile" /> : null}
+          {groups.map((group) => (
+            <div key={group.key || group.name} className="mb-5">
+              <GroupHeading group={group} className="px-4 pb-1.5" phone />
+              {/* #5997: a folded group is its heading alone. */}
+              {group.folded ? null : (
+              <GroupedList className="mx-0">
+                {group.items.map((item, place) => {
+                  const Glyph = glyphFor(item.icon);
+                  const row = (
+                  <ListRow
+                    key={item.key}
+                    as="button"
+                    // In the pin wrapper below, the wrapper draws the hairline.
+                    inset={group.key ? 'none' : 'text'}
+                    data-settings-nav={item.key}
+                    className={group.key ? cn(MENU_ROW, 'min-w-0 flex-1') : MENU_ROW}
+                    // #5997: the page's glyph, in the row's muted grey.
+                    leading={Glyph ? <Glyph className="h-5 w-5 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" /> : undefined}
+                    // ListRow bolds its title for the rows it was built for, where
+                    // the title is a subject with a subtitle under it. These are
+                    // short menu entries, most with no second line, so bold made
+                    // the whole menu read as a stack of headings.
+                    titleClassName="font-normal"
+                    title={item.label}
+                    // #5995: the few rows whose name does not say what is behind
+                    // it carry one muted line (Settings.SUBTITLES); the rest none.
+                    subtitle={item.subtitle || undefined}
+                    // #5995: how much is set up ("2 linked"), or a "Beta" label,
+                    // before the chevron. Nothing when there is nothing to say.
+                    trailing={item.tag || item.status ? <RowTrailing extras={item} statusClassName={MENU_STATUS} /> : undefined}
+                    onClick={() => navClick(item.key)}
+                  />
+                  );
+                  // #5997: the pin (and a pinned row's arrows) beside the row,
+                  // always shown on a phone, where nothing hovers.
+                  return group.key ? (
+                    <div key={item.key} className={cn('relative flex items-center pr-1', rowSeparator({ inset: 'text' }))} data-settings-row={item.key}>
+                      {row}
+                      <RowControls item={item} place={place} count={group.items.length} hostId="settings-mobile-menu-host" phone />
+                    </div>
+                  ) : row;
+                })}
+              </GroupedList>
+              )}
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }

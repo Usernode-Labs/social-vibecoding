@@ -26,13 +26,13 @@ test('the walk on Home: three cards, each ringing one place, with Next, and Done
   const { homeWalkSteps, tileOf } = loadTsx(`${DIR}/tour-steps.ts`);
   const steps = homeWalkSteps({ slug: 'sunday-run-club', name: 'Sunday Run Club' });
   // Evan, 15 Oct 2026 ("1, 2, 3 on Home"): the project's tile, Homeroom bot
-  // in Messages, and Communities, one short title and one short sentence
+  // (in AI since #6019), and Communities, one short title and one short sentence
   // each, and each about the reader's own project ("a more contextual
   // tour", the same day). A project with no example change (one Homeroom
   // bot built, a game, an import) gets the bot card's words without one.
   assert.deepEqual(steps.map((s) => [s.screen, s.target, s.title, s.text]), [
     ['home', '#app-list .app-card[data-slug="sunday-run-club"]', 'Welcome to Homeroom', 'Sunday Run Club lives here, on Home.'],
-    ['home', '#platform-tab-messages', 'Homeroom bot', 'It\'s in Messages. Ask it to make any changes to Sunday Run Club.'],
+    ['home', '#platform-tab-ai', 'Homeroom bot', 'It\'s in AI. Ask it to make any changes to Sunday Run Club.'],
     ['home', '#platform-tab-workshop', 'Communities', 'Sunday Run Club\'s hub is here. Invite people and decide what changes.'],
   ]);
   assert.deepEqual(homeWalkSteps({ slug: 'sunday-run-club', name: 'Sunday Run Club', example: null }), steps, 'null is no example');
@@ -41,7 +41,7 @@ test('the walk on Home: three cards, each ringing one place, with Next, and Done
   const best = homeWalkSteps({ slug: 'best-eats', name: 'Best Eats', example: 'add a cheap eats tier' });
   assert.deepEqual(best.map((s) => [s.target, s.title, s.text]), [
     ['#app-list .app-card[data-slug="best-eats"]', 'Welcome to Homeroom', 'Best Eats lives here, on Home.'],
-    ['#platform-tab-messages', 'Homeroom bot', 'Ask it for changes, like “add a cheap eats tier”.'],
+    ['#platform-tab-ai', 'Homeroom bot', 'Ask it for changes, like “add a cheap eats tier”.'],
     ['#platform-tab-workshop', 'Communities', 'Best Eats\'s hub is here. Invite people and decide what changes.'],
   ]);
   const plain = homeWalkSteps({ slug: 'best-eats', name: 'Best Eats' });
@@ -140,8 +140,10 @@ const idsNamed = (steps) => [...new Set(steps
 
 test('every id the tour points at is one the shell ships', () => {
   const { homeWalkSteps, lookAroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
-  assert.deepEqual(idsNamed(homeWalkSteps({ slug: 'x' })), ['app-list', 'platform-tab-messages', 'platform-tab-workshop']);
-  assert.deepEqual(idsNamed(lookAroundSteps()), ['home-create-tile', 'platform-tab-discover', 'platform-tab-messages', 'platform-tab-workshop']);
+  assert.deepEqual(idsNamed(homeWalkSteps({ slug: 'x' })), ['app-list', 'platform-tab-ai', 'platform-tab-workshop']);
+  assert.deepEqual(idsNamed(lookAroundSteps()), ['home-create-tile', 'home-discover-section', 'platform-tab-ai', 'platform-tab-workshop']);
+  // #6019: Home's Discover section is React's, one element.
+  assert.equal((read('frontend/src/features/home/panels/sections.tsx').match(/id="home-discover-section"/g) || []).length, 1);
   // Home's New project tile is React's, one element, and dapp.json's checks
   // select it by this id.
   assert.match(read('frontend/src/features/home/create-tile.tsx'), /id="home-create-tile"/);
@@ -161,18 +163,18 @@ test('every id the tour points at is one the shell ships', () => {
   assert.ok(read('dapp.json').includes('#platform-tab-workshop'));
 });
 
-test('the Communities, Messages and Discover steps point at the bar\'s own tabs, the same elements on a phone and the rail', () => {
+test('the Communities and AI steps point at the bar\'s own tabs, the same elements on a phone and the rail; Discover at Home\'s section', () => {
   const { homeWalkSteps, lookAroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
-  assert.deepEqual(homeWalkSteps({ slug: 'x' }).slice(1).map((s) => s.target), ['#platform-tab-messages', '#platform-tab-workshop']);
-  assert.deepEqual(lookAroundSteps().slice(1).map((s) => s.target), ['#platform-tab-discover', '#platform-tab-workshop', '#platform-tab-messages']);
+  assert.deepEqual(homeWalkSteps({ slug: 'x' }).slice(1).map((s) => s.target), ['#platform-tab-ai', '#platform-tab-workshop']);
+  assert.deepEqual(lookAroundSteps().slice(1).map((s) => s.target), ['#home-discover-section', '#platform-tab-workshop', '#platform-tab-ai']);
   // One <a> per tab, its id drawn from its key, inside the one #platform-tabs
   // that app.css lays out as the phone's bottom bar or, from 768px, the rail.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /\{ key: 'workshop' as const, label: 'core:tabs\.communities', href: '#communities', Icon: UserGroupIcon \}/);
   assert.match(bar, /\{ key: 'messages' as const, label: 'core:tabs\.messages', href: '#messages', Icon: ChatIcon \}/);
-  assert.match(bar, /\{ key: 'discover' as const, label: 'core:tabs\.discover', href: '#apps', Icon: CompassIcon \}/);
-  assert.deepEqual(['communities', 'messages', 'discover'].map((tab) => message(`core:tabs.${tab}`)),
-    ['Communities', 'Messages', 'Discover']);
+  assert.match(bar, /\{ key: 'ai' as const, label: 'core:tabs\.ai', href: '#ai', Icon: HomeroomBotIcon \}/);
+  assert.deepEqual(['communities', 'messages', 'ai'].map((tab) => message(`core:tabs.${tab}`)),
+    ['Communities', 'Messages', 'Homeroom bot']);
   assert.match(bar, /id=\{`platform-tab-\$\{key\}`\}/);
   assert.equal((bar.match(/id="platform-tabs"/g) || []).length, 1);
 });
@@ -858,9 +860,9 @@ test('"Look around first" has its own four cards on Home, each pointing at one p
   const steps = lookAroundSteps();
   assert.deepEqual(steps.map((s) => [s.screen, s.target, s.title, s.text]), [
     ['home', '#home-create-tile', 'Make something any time', 'New project starts a community and its app.'],
-    ['home', '#platform-tab-discover', 'Find apps in Discover', 'Open any app, or join its community.'],
+    ['home', '#home-discover-section', 'Find apps in Discover', 'Open any app, or join its community.'],
     ['home', '#platform-tab-workshop', 'Communities you join show up here', 'Each one has its own hub and discussion.'],
-    ['home', '#platform-tab-messages', 'Homeroom bot is in Messages', 'It makes apps with you. You can always find it here.'],
+    ['home', '#platform-tab-ai', 'Homeroom bot is in AI', 'It makes apps with you. You can always find it here.'],
   ]);
   // Nobody is taken anywhere: no step is a tap, each rings its place, and
   // the last one ends it.

@@ -342,3 +342,78 @@ test('an imported pull request on a staging preview is merged by the mock client
     if (prev === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = prev;
   }
 });
+
+// "Merged" means "in main" (src/workflow/rules/pr-base.ts). On 28 Oct 2026
+// #5957, based on #5956's branch, was merged into that branch and recorded
+// merged. GitHub merges a pull request into its own base, so the base is
+// read before it is asked, and every merge names the base it went into.
+const recording = (c) => {
+  const sql = [];
+  const query = c.pool.query.bind(c.pool);
+  c.pool.query = async (text, params) => { sql.push({ text: String(text), params }); return query(text, params); };
+  return sql;
+};
+
+test('a pull request based on another change\'s branch is never asked to merge, and an import\'s row learns its base', async () => {
+  const c = load({ session: imported, github: { getPR: () => ({ state: 'open', merged: false, base: { ref: 'claude/sec09-parent' } }) } });
+  c.session = imported;
+  const sql = recording(c);
+  try {
+    const { out, checkpoints } = await attempt(c);
+    assert.equal(out.outcome, 'refused');
+    assert.equal(out.kind, 'base_not_main');
+    assert.equal(out.base, 'claude/sec09-parent');
+    assert.match(out.message, /based on claude\/sec09-parent, not main/);
+    assert.deepEqual(c.calls.merge, [], 'GitHub was never asked to merge it');
+    assert.deepEqual(checkpoints, [], 'nor recorded as asked');
+    const write = sql.find((q) => /UPDATE chat_sessions SET imported_pr_base_ref = \$2/.test(q.text));
+    assert.ok(write, 'the row records the base it read, so the card and the queue say it waits');
+    assert.equal(write.params[1], 'claude/sec09-parent');
+  } finally { c.restore(); }
+});
+
+test('a native pull request is Homeroom\'s own, opened against main: no base is read, and it merges as ever', async () => {
+  const c = load({ session: native, github: { getPR: () => ({ state: 'open', merged: false, base: { ref: 'main', repo: { default_branch: 'master' } } }), mergePR: () => ({ sha: 'squash' }) } });
+  c.session = native;
+  const sql = recording(c);
+  try {
+    const { out } = await attempt(c);
+    assert.deepEqual(out, { outcome: 'merged', sha: 'squash' }, 'even where the repository\'s default branch is called something else');
+    assert.equal(c.calls.get, 0, 'one GitHub call, the merge');
+    assert.ok(!sql.some((q) => /imported_pr_base_ref/.test(q.text)), 'only an import keeps a base');
+  } finally { c.restore(); }
+});
+
+test('a merge into main names no other base; a lost answer that merged elsewhere names that one', async () => {
+  const c = load({ session: imported, github: { getPR: () => ({ state: 'open', merged: false, base: { ref: 'main' } }), mergePR: () => ({ sha: 'squash' }) } });
+  c.session = imported;
+  try {
+    const { out } = await attempt(c);
+    assert.deepEqual(out, { outcome: 'merged', sha: 'squash' });
+  } finally { c.restore(); }
+  const lost = load({ session: imported, github: { getPR: () => ({ state: 'closed', merged: true, merge_commit_sha: 'm'.repeat(40), merged_at: '2026-10-28T17:31:27Z', base: { ref: 'claude/sec09-parent' } }) } });
+  lost.session = imported;
+  try {
+    const { out } = await attempt(lost, { resumeFrom: { asked: true } });
+    assert.equal(out.outcome, 'merged');
+    assert.equal(out.base, 'claude/sec09-parent', 'the proposal machine closes it as merged elsewhere, never as merged');
+    assert.deepEqual(lost.calls.merge, [], 'observed, never asked again');
+  } finally { lost.restore(); }
+});
+
+test('main is the repository\'s default branch, as GitHub names it: master merges there, a branch called main does not', async () => {
+  const repo = { full_name: 'acme/demo', default_branch: 'master' };
+  const onMaster = load({ session: imported, github: { getPR: () => ({ state: 'open', merged: false, base: { ref: 'master', repo } }), mergePR: () => ({ sha: 'squash' }) } });
+  onMaster.session = imported;
+  try {
+    const { out } = await attempt(onMaster);
+    assert.deepEqual(out, { outcome: 'merged', sha: 'squash' });
+  } finally { onMaster.restore(); }
+  const onMain = load({ session: imported, github: { getPR: () => ({ state: 'open', merged: false, base: { ref: 'main', repo } }) } });
+  onMain.session = imported;
+  try {
+    const { out } = await attempt(onMain);
+    assert.deepEqual([out.outcome, out.kind, out.base], ['refused', 'base_not_main', 'main']);
+    assert.deepEqual(onMain.calls.merge, []);
+  } finally { onMain.restore(); }
+});

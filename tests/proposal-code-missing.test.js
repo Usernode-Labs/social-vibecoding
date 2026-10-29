@@ -104,7 +104,9 @@ after(() => { mirror.ensureMirror = realEnsure; });
 const codeMissing = require('../src/services/code-missing');
 
 // A pool that answers the pull-request read the list helper makes, from
-// `pulls` ({ app_id, number, head_branch, state, merged }), and records the rest.
+// `pulls` ({ app_id, number, head_branch, state, merged }), and the pre-move
+// query from a fixture list of ids (by default `PRE_MOVE`), and records the
+// rest.
 function pullsPool(pulls, more = () => undefined) {
   const seen = [];
   return {
@@ -118,6 +120,11 @@ function pullsPool(pulls, more = () => undefined) {
             && apps.some((a, i) => a === p.app_id && numbers[i] === p.number)),
         };
       }
+      if (/FROM chat_sessions cs\s+JOIN git_host_moves m/.test(sql)) {
+        const given = more(String(sql), params);
+        const ids = given === undefined ? PRE_MOVE : given.map((r) => r.id);
+        return { rows: params[0].filter((id) => ids.includes(id)).map((id) => ({ id })) };
+      }
       const rows = more(String(sql), params);
       return { rows: rows || [] };
     },
@@ -128,8 +135,12 @@ const PULLS = [
   { app_id: 7, number: 11, head_branch: 'dev/gone', state: 'open', merged: false },
   { app_id: 7, number: 12, head_branch: 'dev/kept', state: 'open', merged: false },
   { app_id: 7, number: 14, head_branch: 'dev/gone', state: 'closed', merged: true },
+  { app_id: 7, number: 15, head_branch: 'settings/rules-approve-changes', state: 'open', merged: false },
   { app_id: 9, number: 13, head_branch: 'dev/gone', state: 'open', merged: false },
 ];
+// The rows in SESSIONS a move predates; a change made after it is never
+// missing, however absent its branch.
+const PRE_MOVE = [1, 2, 5];
 const SESSIONS = [
   { id: 1, app_id: 7, pr_number: 11, status: 'promoted', repo_url: HOSTED },
   { id: 2, app_id: 7, pr_number: 12, status: 'promoted', repo_url: HOSTED },
@@ -141,6 +152,8 @@ const SESSIONS = [
   { id: 5, app_id: 7, pr_number: 11, status: 'paused', repo_url: HOSTED },
   // No pull request at all: nothing to say.
   { id: 6, app_id: 7, pr_number: null, status: 'active', repo_url: HOSTED },
+  // A rule change made after the move: its branch was never on GitHub.
+  { id: 8, app_id: 7, pr_number: 15, status: 'promoted', repo_url: HOSTED },
 ];
 
 test('detection: an open pull request on the git host whose branch is not there, and nothing else', () => {
@@ -172,8 +185,11 @@ test('a list reads one branch list per repository, cached, and a branch pushed b
     assert.deepEqual([...missing].sort(), [1, 5], 'the open proposals whose branch did not come across');
     assert.equal(reads.count, 1, 'one read of the repository for the whole list');
     assert.equal(pool.seen.filter((q) => /native_pulls/.test(q.sql)).length, 1, 'and one query for their pull requests');
-    assert.deepEqual(pool.seen[0].params, [[7, 7, 7], [11, 12, 11]],
-      'only the rows that can be code missing are asked about: not a merged one, one on GitHub or one with no pull request');
+    assert.deepEqual(pool.seen[0].params, [[1, 2, 5, 8]],
+      'the first read says which candidates predate their app\'s move');
+    assert.deepEqual(pool.seen.find((q) => /native_pulls/.test(q.sql)).params, [[7, 7, 7], [11, 12, 11]],
+      'only the pre-move rows that can be code missing are asked about: not the merged one, '
+      + 'the one on GitHub, the one with no pull request or the rule change made after the move');
 
     // Read again a moment later: the answer this process already has.
     assert.deepEqual([...await codeMissing.missingIds(pool, SESSIONS)].sort(), [1, 5]);
@@ -181,6 +197,7 @@ test('a list reads one branch list per repository, cached, and a branch pushed b
     assert.equal(await codeMissing.forSession(pool, SESSIONS[0], { waitMs: 0 }), true, 'the vote\'s read: from what is known');
     assert.equal(await codeMissing.forSession(pool, SESSIONS[1]), false);
     assert.equal(await codeMissing.forSession(pool, SESSIONS[3]), false, 'on GitHub: not asked at all');
+    assert.equal(await codeMissing.forSession(pool, SESSIONS[6]), false, 'made after the move: never missing');
 
     // The branch is pushed back under its name. Once the answer is a minute
     // old the next read starts a new look and a read after it is clear.
@@ -257,15 +274,41 @@ test('a change underway is labelled by its own branch, and only when it predates
     assert.equal(codeMissing.applies(underway[5]), false);
     assert.equal(codeMissing.applies(underway[6]), false);
     assert.equal(codeMissing.applies({ ...underway[0], status: 'promoted' }), false, 'a proposal is read by its pull request');
-    const pool = underwayPool([21, 22, 23, 25]);
+    const pool = underwayPool([1, 2, 5, 21, 22, 23, 25]);
     const missing = await codeMissing.missingIds(pool, [...SESSIONS, ...underway]);
     assert.deepEqual([...missing].sort((a, b) => a - b), [1, 5, 21, 22, 25]);
     const asked = pool.seen.filter((q) => /JOIN git_host_moves/.test(q.sql));
     assert.equal(asked.length, 1, 'one query for the whole list');
-    assert.deepEqual(asked[0].params, [[21, 22, 23, 24, 25]], 'only the changes underway with no open pull request');
+    assert.deepEqual(asked[0].params, [[1, 2, 5, 8, 21, 22, 23, 24, 25]], 'every candidate is asked about');
     assert.equal(reads.count, 1, 'still one branch read for the repository');
     assert.equal(await codeMissing.forSession(pool, underway[0]), true);
     assert.equal(await codeMissing.forSession(pool, underway[3]), false, 'made after the move');
+  } finally {
+    codeMissing._resetForTests();
+    r.cleanup();
+  }
+});
+
+test('a change made after its project moved, such as a rule change, is never code missing', async () => {
+  const r = repo();
+  reads.dir = r.dir; reads.count = 0; reads.fail = false;
+  codeMissing._resetForTests();
+  try {
+    // Its pull request's head branch is not on the git host, but it was
+    // proposed after the move, so the branch was never on GitHub either.
+    const rules = { id: 8, app_id: 7, pr_number: 15, status: 'promoted', repo_url: HOSTED };
+    const pool = pullsPool(PULLS);
+    assert.deepEqual([...await codeMissing.missingIds(pool, [rules])], [],
+      'not flagged, however absent its branch reads');
+    assert.deepEqual(pool.seen.filter((q) => /native_pulls/.test(q.sql)), [],
+      'and its pull request is not even read');
+    assert.equal(reads.count, 0, 'nor is a branch list');
+    assert.equal(await codeMissing.forSession(pool, rules), false, 'nor is the change\'s own page told so');
+
+    // A project created on the git host has no move row: the same answer.
+    const created = { id: 31, app_id: 7, pr_number: 15, status: 'promoted', repo_url: HOSTED };
+    assert.deepEqual([...await codeMissing.missingIds(pool, [created])], []);
+    assert.equal(reads.count, 0, 'nothing is read on the git host');
   } finally {
     codeMissing._resetForTests();
     r.cleanup();
@@ -636,7 +679,7 @@ test('a copy of an auto run, a CLI hand-off upload and a local agent\'s upload r
   const clone = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/clone-headless'"));
   const refusedAt = clone.indexOf('if (await codeMissing.branchGone(pool, src) === true) {');
   assert.ok(refusedAt > 0, 'the copy reads the run\'s branch live');
-  for (const later of ['sessionLifecycle.freeUserSlot(', 'sessionLifecycle.claimGlobalSlot(', 'github.createBranch(']) {
+  for (const later of ['sessionLifecycle.freeUserSlot(', 'sessionLifecycle.claimGlobalSlot(', "op: 'branch.ensure'"]) {
     assert.ok(refusedAt < clone.indexOf(later), `before ${later}: no slot, no branch off main`);
   }
   assert.match(clone.slice(refusedAt, refusedAt + 200), /return res\.status\(409\)\.json\(\{ error: codeMissing\.BRANCH_GONE, code: codeMissing\.CODE \}\);/);

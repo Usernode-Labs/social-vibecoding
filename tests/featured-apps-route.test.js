@@ -64,6 +64,7 @@ stub(ids.rateLimits, {
   mailTestLimiter: (_req, _res, next) => next(),
   smsTestLimiter: (_req, _res, next) => next(),
   smsTestNumberLimiter: (_req, _res, next) => next(),
+  featuredAdminLimiter: (_req, _res, next) => next(),
 });
 stub(ids.status, { snapshot: async () => ({}) });
 
@@ -90,14 +91,16 @@ let appsBySlug = {};
 let featuredRows = [];
 let availableRows = [];
 let queries = [];
-let failReviewUpdate = false;
+let featuredIds = new Set();
+let failFlagUpdate = false;
 
 const fakeQuery = async (sql, params) => {
   const s = String(sql).replace(/\s+/g, ' ').trim();
   queries.push({ sql: s, params });
-  if (failReviewUpdate && /^UPDATE apps SET directory_review_status/.test(s)) throw new Error('database unavailable');
+  if (failFlagUpdate && /^UPDATE apps SET directory_review_status/.test(s)) throw new Error('database unavailable');
+  if (/^DELETE FROM featured_apps WHERE app_id = \$1/.test(s)) return { rows: [], rowCount: featuredIds.has(params[0]) ? 1 : 0 };
   if (/^BEGIN|^COMMIT|^ROLLBACK/.test(s)) return { rows: [] };
-  if (/SELECT id, self_hosted, .*FROM apps WHERE slug/.test(s)) {
+  if (/SELECT id, self_hosted\b.*FROM apps WHERE slug/.test(s)) {
     const row = appsBySlug[params[0]];
     return row ? { rows: [row] } : { rows: [] };
   }
@@ -112,15 +115,16 @@ poolMod.getPool = () => ({
 });
 
 const { adminRoutes } = require('../src/routes/admin');
+const { featuredAdminRoutes } = require('../src/routes/featured-admin');
 const express = require('express');
 
 let currentUser = null;
 
-function startServer() {
+function startServer(routes = adminRoutes) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => { req.user = currentUser; next(); });
-  app.use(adminRoutes({}));
+  app.use(routes({}));
   return new Promise((resolve) => {
     const server = app.listen(0, () => resolve(server));
   });
@@ -143,10 +147,10 @@ async function put(server, body, endpoint = '/api/admin/featured-apps') {
 
 function reset() {
   queries = [];
-  failReviewUpdate = false;
+  featuredIds = new Set();
+  failFlagUpdate = false;
   const ready = { status: 'running', icon_emoji: '🧩', main_sha: 'a'.repeat(40),
-    last_deploy_at: '2026-09-01T12:00:00.000Z', directory_review_status: 'working',
-    directory_reviewed_at: '2026-09-01T13:00:00.000Z', directory_reviewed_sha: 'a'.repeat(40) };
+    last_deploy_at: '2026-09-01T12:00:00.000Z', directory_review_status: 'unreviewed' };
   appsBySlug = {
     alpha: { ...ready, id: 11, self_hosted: false },
     beta: { ...ready, id: 12, self_hosted: false },
@@ -190,98 +194,101 @@ test('PUT rewrites the whole list in order, in one transaction', async () => {
   }
 });
 
-test('featuring rejects unreviewed, stale, demo, broken, unavailable and iconless apps without rewriting', async () => {
+test('featuring needs no review: any app with an icon and no flag, whatever it last deployed', async () => {
   currentUser = FULL_ADMIN;
   const server = await startServer();
   try {
-    for (const override of [
-      { directory_review_status: 'unreviewed' }, { directory_review_status: 'demo' },
-      { directory_review_status: 'broken' }, { status: 'error' }, { icon_emoji: null },
-      { main_sha: 'b'.repeat(40) }, { last_deploy_at: '2026-09-02T12:00:00.000Z' },
-    ]) {
+    for (const override of [{}, { directory_review_status: 'working' }, { main_sha: 'b'.repeat(40) },
+      { last_deploy_at: '2030-01-01T00:00:00.000Z' }, { status: 'error' }]) {
       reset(); Object.assign(appsBySlug.alpha, override);
       const res = await put(server, { slugs: ['alpha'] });
+      assert.equal(res.status, 200, JSON.stringify(override));
+    }
+  } finally { server.close(); }
+});
+
+test('featuring refuses a flagged or iconless app, naming it, without rewriting', async () => {
+  currentUser = FULL_ADMIN;
+  const server = await startServer();
+  try {
+    for (const [override, reason] of [
+      [{ directory_review_status: 'broken' }, /alpha is flagged[\s\S]*Clear the flag/],
+      [{ directory_review_status: 'demo' }, /alpha is flagged/],
+      [{ icon_emoji: null }, /alpha has no icon/],
+    ]) {
+      reset(); Object.assign(appsBySlug.alpha, override);
+      const res = await put(server, { slugs: ['gamma', 'alpha'] });
       assert.equal(res.status, 400, JSON.stringify(override));
-      assert.match(res.body.error, /Review alpha/);
+      assert.match(res.body.error, reason);
       assert.ok(queries.some((q) => q.sql === 'ROLLBACK'));
       assert.ok(!queries.some((q) => /DELETE|INSERT/.test(q.sql)));
     }
   } finally { server.close(); }
 });
 
-const review = (server, body, slug = 'alpha') => put(server, body, `/api/admin/apps/${slug}/directory-review`);
-const workingReview = () => ({ status: 'working', confirmWorking: true,
-  mainSha: appsBySlug.alpha.main_sha, lastDeployAt: appsBySlug.alpha.last_deploy_at });
+const flag = (server, body, slug = 'alpha') => put(server, body, `/api/admin/apps/${slug}/discover-flag`);
 
-test('directory reviews require a write admin and explicit working attestation', async () => {
+test('flagging needs a write admin and a true or false, before any SQL', async () => {
   reset(); const server = await startServer();
   try {
     for (const user of [null, { id: 3 }, VIEW_ONLY]) {
       currentUser = user;
-      assert.equal((await review(server, workingReview())).status, 403);
+      assert.equal((await flag(server, { flagged: true })).status, 403);
     }
     currentUser = FULL_ADMIN;
-    for (const body of [{}, { status: 'ready' }, { status: 'working' }, { status: 'working', confirmWorking: 'true' }]) {
-      assert.equal((await review(server, body)).status, 400);
+    for (const body of [{}, { flagged: 'true' }, { flagged: 1 }, { status: 'demo' }]) {
+      assert.equal((await flag(server, body)).status, 400, JSON.stringify(body));
     }
     assert.equal(queries.length, 0, 'no SQL before authorization and validation');
   } finally { server.close(); }
 });
 
-test('working review validates the exact deployment, icon and status under a row lock', async () => {
+test('flagging hides the app and takes it off the featured list in one transaction; clearing lists it again', async () => {
   currentUser = FULL_ADMIN;
   const server = await startServer();
   try {
-    for (const override of [{ icon_emoji: null }, { status: 'creating' }, { main_sha: null }]) {
-      reset(); Object.assign(appsBySlug.alpha, override);
-      assert.equal((await review(server, workingReview())).status, 400);
-      assert.ok(!queries.some((q) => /^UPDATE/.test(q.sql)));
-    }
-    reset();
-    for (const override of [{ mainSha: 'b'.repeat(40) }, { lastDeployAt: '2026-09-01T11:00:00Z' },
-      { lastDeployAt: 'invalid' }, { lastDeployAt: undefined }]) {
-      const res = await review(server, { ...workingReview(), ...override });
-      assert.equal(res.status, 409);
-      assert.match(res.body.error, /changed while you were reviewing/);
-    }
-    assert.ok(!queries.some((q) => /^UPDATE/.test(q.sql)));
-    assert.equal((await review(server, workingReview(), 'ghost')).status, 404);
-    assert.equal((await review(server, workingReview(), 'usernode-self')).status, 404);
-    const res = await review(server, workingReview());
+    reset(); featuredIds = new Set([11]);
+    const res = await flag(server, { flagged: true });
     assert.equal(res.status, 200);
-    assert.ok(queries.some((q) => /FROM apps WHERE slug = \$1 FOR UPDATE/.test(q.sql)));
+    assert.deepEqual(res.body, { ok: true, flagged: true, unfeatured: true });
+    assert.ok(queries.some((q) => /FROM apps WHERE slug = \$1 FOR UPDATE/.test(q.sql)), 'under a row lock');
     const update = queries.find((q) => /^UPDATE apps/.test(q.sql));
-    assert.deepEqual(update.params, [11, 'working']);
-    assert.match(update.sql, /ELSE NOW\(\)/);
-    assert.match(update.sql, /ELSE main_sha/);
+    assert.deepEqual(update.params, [11, 'broken', true]);
+    assert.match(update.sql, /directory_reviewed_sha = NULL/);
+    const delAt = queries.findIndex((q) => /^DELETE FROM featured_apps WHERE app_id = \$1/.test(q.sql));
+    assert.ok(delAt > 0 && queries[delAt].params[0] === 11);
     assert.equal(queries.at(-1).sql, 'COMMIT');
+
+    reset();
+    assert.deepEqual((await flag(server, { flagged: true })).body.unfeatured, false, 'an app not featured stays unfeatured');
+
+    // Clearing touches the flag alone: it does not feature the app again.
+    reset();
+    assert.deepEqual((await flag(server, { flagged: false })).body, { ok: true, flagged: false, unfeatured: false });
+    assert.deepEqual(queries.find((q) => /^UPDATE apps/.test(q.sql)).params, [11, 'unreviewed', false]);
+    assert.ok(!queries.some((q) => /featured_apps/.test(q.sql)));
+
+    // A stopped app with no icon can still be flagged.
+    reset(); Object.assign(appsBySlug.alpha, { status: 'error', icon_emoji: null, main_sha: null });
+    assert.equal((await flag(server, { flagged: true })).status, 200);
+
+    reset();
+    assert.equal((await flag(server, { flagged: true }, 'ghost')).status, 404);
+    assert.equal((await flag(server, { flagged: true }, 'usernode-self')).status, 404);
+    assert.ok(!queries.some((q) => /^UPDATE|^DELETE/.test(q.sql)));
   } finally { server.close(); }
 });
 
-test('demo/broken classification and clearing a review do not need a running deployment', async () => {
-  currentUser = FULL_ADMIN;
+test('a failed flag rolls back with a useful error and never reports success', async () => {
+  reset(); currentUser = FULL_ADMIN; failFlagUpdate = true;
   const server = await startServer();
   try {
-    for (const status of ['demo', 'broken', 'unreviewed']) {
-      reset(); Object.assign(appsBySlug.alpha, { status: 'error', icon_emoji: null, main_sha: null });
-      assert.equal((await review(server, { status })).status, 200);
-      const update = queries.find((q) => /^UPDATE apps/.test(q.sql));
-      assert.deepEqual(update.params, [11, status]);
-      assert.match(update.sql, /WHEN \$2::text = 'unreviewed' THEN NULL/);
-    }
-  } finally { server.close(); }
-});
-
-test('a failed review rolls back with a useful error and never reports success', async () => {
-  reset(); currentUser = FULL_ADMIN; failReviewUpdate = true;
-  const server = await startServer();
-  try {
-    const res = await review(server, workingReview());
+    const res = await flag(server, { flagged: true });
     assert.equal(res.status, 500);
-    assert.equal(res.body.error, 'Could not save the directory review.');
+    assert.equal(res.body.error, 'Could not save the flag.');
     assert.equal(queries.at(-1).sql, 'ROLLBACK');
     assert.ok(!queries.some((q) => q.sql === 'COMMIT'));
-  } finally { server.close(); failReviewUpdate = false; }
+  } finally { server.close(); failFlagUpdate = false; }
 });
 
 test('PUT with an empty array clears the list (the row hides for everyone)', async () => {
@@ -436,10 +443,11 @@ test('GET returns display-ordered featured rows plus what is available', async (
     // Server-built icon URL — the client never assembles ids into paths.
     assert.equal(body.featured[1].icon_url, '/app-icons/abc123');
     assert.equal(body.featured[0].icon_url, null);
-    assert.equal(body.featured[0].directory.tier, 'ready');
-    assert.equal(body.featured[0].directory_review_status, 'working');
-    assert.equal(body.featured[0].main_sha, appsBySlug.alpha.main_sha);
-    assert.equal(body.featured[0].last_deploy_at, appsBySlug.alpha.last_deploy_at);
+    assert.equal(body.featured[0].directory.tier, 'listed');
+    assert.equal(body.featured[0].directory.flagged, false);
+    for (const key of ['directory_review_status', 'main_sha', 'last_deploy_at']) {
+      assert.equal(key in body.featured[0], false, `${key} is no longer sent`);
+    }
     assert.equal(body.available[0].directory.state, 'missing_icon');
     assert.deepEqual(body.available.map((a) => a.slug), ['gamma']);
     // #2615: whether Discover has art for the card, as a boolean only.
@@ -452,17 +460,96 @@ test('GET returns display-ordered featured rows plus what is available', async (
   }
 });
 
+// ── The connector's doors (routes/featured-admin.js) ─────────────
+//
+// A full admin's connector session reaches the same handlers through
+// /api/featured-admin/*, since a connector token never reaches /api/admin.
+// The door adds its own gate (full admins only, the read included) and hands
+// the request on at the console's path.
+
+async function call(server, method, endpoint, body) {
+  const res = await fetch(`http://127.0.0.1:${server.address().port}${endpoint}`, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return { status: res.status, body: await res.json().catch(() => ({})) };
+}
+
+test('the connector\'s doors hand on to the console\'s own handlers for a full admin', async () => {
+  reset();
+  featuredRows = [{ slug: 'alpha', name: 'Alpha', status: 'running', icon_emoji: '🧩', sort_order: 0 }];
+  availableRows = [{ slug: 'beta', name: 'Beta', status: 'running', icon_emoji: '🧩' }];
+  currentUser = FULL_ADMIN;
+  const server = await startServer(featuredAdminRoutes);
+  try {
+    const read = await call(server, 'GET', '/api/featured-admin/featured-apps');
+    assert.equal(read.status, 200);
+    assert.deepEqual(read.body.featured.map((r) => r.slug), ['alpha']);
+    assert.deepEqual(read.body.available.map((r) => r.slug), ['beta']);
+    assert.equal(read.body.featured[0].directory.tier, 'listed', 'with where it stands, as the console shows it');
+
+    queries = [];
+    const set = await call(server, 'PUT', '/api/featured-admin/featured-apps', { slugs: ['gamma', 'alpha'] });
+    assert.equal(set.status, 200);
+    assert.deepEqual(set.body.slugs, ['gamma', 'alpha']);
+    assert.deepEqual(queries.filter((q) => /INSERT INTO featured_apps/.test(q.sql)).map((q) => q.params), [[13, 0, 1], [11, 1, 1]]);
+    // The console's own rules: a flagged app is refused, naming it.
+    appsBySlug.beta.directory_review_status = 'broken';
+    const refused = await call(server, 'PUT', '/api/featured-admin/featured-apps', { slugs: ['beta'] });
+    assert.equal(refused.status, 400);
+    assert.match(refused.body.error, /beta is flagged/);
+
+    queries = [];
+    const flagged = await call(server, 'PUT', '/api/featured-admin/apps/alpha/discover-flag', { flagged: true });
+    assert.equal(flagged.status, 200);
+    assert.ok(queries.some((q) => /^UPDATE apps SET directory_review_status/.test(q.sql) && q.params[1] === 'broken'));
+  } finally {
+    server.close();
+  }
+});
+
+test('the doors are closed to a view-only admin, the read included, and open nothing else', async () => {
+  reset();
+  currentUser = VIEW_ONLY;
+  let server = await startServer(featuredAdminRoutes);
+  try {
+    assert.equal((await call(server, 'GET', '/api/featured-admin/featured-apps')).status, 403);
+    assert.equal((await call(server, 'PUT', '/api/featured-admin/featured-apps', { slugs: [] })).status, 403);
+    assert.equal((await call(server, 'PUT', '/api/featured-admin/apps/alpha/discover-flag', { flagged: true })).status, 403);
+    assert.ok(!queries.some((q) => /featured_apps|directory_review/.test(q.sql)), 'no query ran');
+  } finally {
+    server.close();
+  }
+  currentUser = FULL_ADMIN;
+  server = await startServer(featuredAdminRoutes);
+  try {
+    // Only the three doors: the console's path itself is not served here.
+    assert.equal((await call(server, 'GET', '/api/featured-admin/apps/alpha/discover-flag')).status, 404);
+    assert.equal((await call(server, 'PUT', '/api/featured-admin/apps/alpha/directory-review', { status: 'demo' })).status, 404,
+      'the review route is gone');
+    assert.equal((await call(server, 'GET', '/api/admin/featured-apps')).status, 404);
+  } finally {
+    server.close();
+  }
+});
+
 // ── Source pins: the queries exclude the self-app on both sides ──
 
 test('both queries exclude the self-hosted row', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/admin.js'), 'utf8');
+  // The handlers live in their own module, mounted by admin.js behind its
+  // adminMiddleware and by the connector's doors (routes/featured-admin.js).
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/admin-featured-apps.js'), 'utf8');
   const block = src.slice(
     src.indexOf("router.get('/api/admin/featured-apps'"),
-    src.indexOf('// ── Anthropic credits')
+    src.indexOf('// Flag an app, or clear its flag.')
   );
-  assert.ok(block.length > 500, 'located the featured-apps block');
+  assert.ok(block.length > 500, 'located the featured-apps read');
   assert.equal((block.match(/NOT a\.self_hosted/g) || []).length, 2,
     'featured list and available list both filter it out');
+  const admin = fs.readFileSync(path.join(__dirname, '..', 'src/routes/admin.js'), 'utf8');
+  assert.ok(admin.indexOf("router.use('/api/admin', adminMiddleware);") < admin.indexOf('router.use(featuredAppsAdminRoutes(pool));'),
+    'admin.js mounts them behind its admin gate');
 });
 
 // ── Admin console section ────────────────────────────────────────

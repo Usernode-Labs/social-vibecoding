@@ -52,10 +52,11 @@ test('which five: this device\'s order, then the most recently active of yours',
   assert.equal(noteOpened(['a', 'b'], null, list), null);
 });
 
-test('the markup: the section sits between Messages and the Communities tab, its heading and search prerendered', () => {
+test('the markup: the section sits between Home and the Communities tab, its heading and search prerendered', () => {
   const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
   const at = (id) => html.indexOf(`id="${id}"`);
-  assert.ok(at('platform-tab-messages') < at('platform-rail-pinned'), 'the pinned ones first');
+  // #6019: Communities is the second tab now, so its rows follow Home.
+  assert.ok(at('platform-tab-home') < at('platform-rail-pinned'), 'the pinned ones first');
   assert.ok(at('platform-rail-pinned') < at('platform-rail-communities'));
   assert.ok(at('platform-rail-communities') < at('platform-tab-workshop'));
   assert.match(html, /<div id="platform-rail-communities" class="platform-rail-communities" role="group" aria-labelledby="platform-rail-communities-label">/);
@@ -162,4 +163,40 @@ test('the apps: none apart from their communities; Pinned, above them, only whil
   const css = read('public/css/app.css');
   assert.match(css, /\.platform-rail-pinned:not\(\.hidden\) \{\n    display: flex;/, 'drawn in the block once shown');
   assert.equal(message('core:rail.pinned'), 'Pinned');
+});
+
+test('#6025: the community rows drag onto My apps while Home is on show', () => {
+  const mod = loadTsx(RAIL);
+  assert.equal(mod.RAIL_DRAG_ITEMS, '.platform-rail-community[data-rail-community]',
+    'the rows, not their App line or the places under them');
+
+  // A rendered row carries the slug the recognizer reads, and its open tag is
+  // unchanged: the browser's own link drag, which would otherwise take the
+  // pointer, is refused on the node (a ref) rather than as an attribute.
+  const html = renderComponent(RAIL, 'RailCommunityRow', {
+    slug: 'block-game',
+    here: { sidebarRows: true, screen: 'home-screen', onPage: null, onApp: null, live: [] },
+  });
+  assert.match(html, /data-rail-community="block-game"/);
+  assert.doesNotMatch(html, /draggable/, 'no attribute on the row');
+
+  const src = read(RAIL);
+  assert.match(src, /const dragToHome = !pin && sidebarRows && screen === 'home-screen';/,
+    'a section row, and only while Home is on show');
+  assert.match(src, /ref=\{\(el\) => \{\n {10}if \(el\) el\.draggable = !dragToHome;/,
+    'the node refuses the link drag while the row can be dragged onto My apps');
+  assert.match(src, /const onHome = here\.sidebarRows && here\.screen === 'home-screen';/,
+    'only while the sidebar holds and Home is the screen on show');
+  assert.match(src, /ref=\{railRef\}/, 'the section the recognizer attaches to');
+  assert.match(src, /_attachDiscoverPlacement\?\.\(el, \{ itemSelector: RAIL_DRAG_ITEMS \}\)/);
+  assert.match(src, /return Home\?\._attachDiscoverPlacement\?\.\([^)]*\) \|\| undefined;/,
+    'leaving Home, or dropping below 768px, hands the detach back');
+  const section = src.slice(src.indexOf('export function RailCommunities'));
+  assert.match(section, /id="platform-rail-communities"/);
+  assert.doesNotMatch(section, /platform-rail-pinned[\s\S]*_attachDiscoverPlacement/,
+    'a pinned row keeps its own drag-out to unpin');
+
+  const css = read('public/css/app.css');
+  assert.match(css, /\.platform-rail-community\.un-reorder-ghost \{\n    background: var\(--bg-primary\);\n    border-radius: 10px;\n  \}/,
+    'the floating copy is solid, so it reads over the grid');
 });

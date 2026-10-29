@@ -24,6 +24,11 @@ const log = require('../logger');
 
 const KEY = 'sms_provider';
 const CACHE_MS = 10_000;
+// Whether Firebase sends a sign-in code that Brevo or Twilio could not
+// (services/firebase-phone-auth.js, FIREBASE BACKUP). On unless an admin
+// switched it off; it only matters while a gateway is selected and Firebase
+// is set up.
+const FALLBACK_KEY = 'sms_firebase_fallback';
 
 function isStaging(env) {
   return (env && env.USERNODE_ENV) === 'staging';
@@ -98,6 +103,7 @@ function providerByName(name) {
 
 let cache = null;        // { at, value } for the saved-or-default selection
 let lastSelection = null; // what selectedSync returns, before the first read
+let fallbackCache = null; // { at, value } for the Firebase backup switch
 
 // The deploy's choice, read from the environment the way mail/select.js
 // reads PLATFORM_MAIL_PROVIDER. An unknown value is loud and falls back.
@@ -165,6 +171,39 @@ async function setProvider(pool, name, userId = null) {
 function invalidate() {
   cache = null;
   lastSelection = null;
+  fallbackCache = null;
+}
+
+/**
+ * Whether the Firebase backup is switched on: true unless an admin saved
+ * 'off'. Cached like the selection, and never throws: an unreadable setting
+ * leaves the backup on, so a broken database cannot take it away.
+ */
+async function fallbackEnabled(pool, { now = Date.now() } = {}) {
+  if (fallbackCache && now - fallbackCache.at < CACHE_MS) return fallbackCache.value;
+  let value = true;
+  if (pool) {
+    try {
+      const { rows } = await pool.query('SELECT value FROM platform_settings WHERE key = $1', [FALLBACK_KEY]);
+      if (rows[0]?.value === 'off') value = false;
+    } catch (err) {
+      log.warn('sms', 'sms_firebase_fallback read failed', { err: err.message });
+    }
+  }
+  fallbackCache = { at: now, value };
+  return value;
+}
+
+async function setFallback(pool, enabled, userId = null) {
+  await pool.query(
+    `INSERT INTO platform_settings (key, value, updated_at, updated_by)
+     VALUES ($1, $2, NOW(), $3)
+     ON CONFLICT (key) DO UPDATE
+       SET value = EXCLUDED.value, updated_at = NOW(), updated_by = EXCLUDED.updated_by`,
+    [FALLBACK_KEY, enabled ? 'on' : 'off', userId]
+  );
+  fallbackCache = { at: Date.now(), value: !!enabled };
+  return fallbackCache.value;
 }
 
 /**
@@ -198,6 +237,7 @@ function optionReady(config, name, env = process.env) {
 
 module.exports = {
   KEY,
+  FALLBACK_KEY,
   CACHE_MS,
   PROVIDERS,
   GATEWAYS,
@@ -211,6 +251,8 @@ module.exports = {
   selectedSync,
   setProvider,
   invalidate,
+  fallbackEnabled,
+  setFallback,
   describe,
   optionReady,
 };

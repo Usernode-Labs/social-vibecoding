@@ -205,6 +205,11 @@ function communityInviteRoutes(config) {
       res.setHeader('Cache-Control', 'no-store');
       return res.json(stagingDemoInvite.demoInvitePreview());
     }
+    // The expired demo link: the dead page's preview, counted as no open.
+    if (stagingDemoInvite.isDemoExpiredInvite(req.params.token)) {
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json(stagingDemoInvite.demoExpiredInvitePreview());
+    }
     try {
       const preview = await invites.preview(pool, req.params.token);
       if (preview.live) countOpen(req, res, req.params.token);
@@ -303,6 +308,10 @@ function communityInviteRoutes(config) {
       res.setHeader('Cache-Control', 'no-store');
       return res.json(stagingDemoInvite.demoInviteDead());
     }
+    if (stagingDemoInvite.isDemoExpiredInvite(req.params.token)) {
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json(stagingDemoInvite.demoExpiredInviteDead());
+    }
     try {
       // `page` (the project's page, for somebody who may open it before
       // joining) follows the community read's own rule for the platform's
@@ -334,6 +343,9 @@ function communityInviteRoutes(config) {
     // Staging's demo link grants nothing (services/staging-demo-invite.js).
     if (stagingDemoInvite.isDemoInvite(req.params.token)) {
       return res.status(410).json({ error: 'This invite link is not active.', reason: 'unknown' });
+    }
+    if (stagingDemoInvite.isDemoExpiredInvite(req.params.token)) {
+      return res.status(410).json({ error: 'This invite link is not active.', reason: 'expired' });
     }
     try {
       // Signed in with the link in hand, for the admin Journey's invite
@@ -382,12 +394,17 @@ function communityInviteRoutes(config) {
     // Staging's demo link: its pretend preview, and no invite cookie, so a
     // sign-in from its page follows nothing.
     const demo = stagingDemoInvite.isDemoInvite(token);
+    // The expired demo link draws the same dead page; it is never live, so
+    // the cookie guard below leaves it out.
+    const demoExpired = stagingDemoInvite.isDemoExpiredInvite(token);
     try {
       const preview = demo
         ? stagingDemoInvite.demoInvitePreview()
-        : invites.isToken(token)
-          ? await invites.preview(pool, token)
-          : { live: false, reason: 'unknown' };
+        : demoExpired
+          ? stagingDemoInvite.demoExpiredInvitePreview()
+          : invites.isToken(token)
+            ? await invites.preview(pool, token)
+            : { live: false, reason: 'unknown' };
       if (preview.live && !demo) {
         invites.setInviteCookie(req, res, token);
         // The page's two reads (the preview and, signed in, the standing)
@@ -397,6 +414,7 @@ function communityInviteRoutes(config) {
       const html = await fs.promises.readFile(INDEX_PATH, 'utf8');
       res.setHeader('Cache-Control', 'no-store');
       applyShellDocumentHeaders(res, INDEX_PATH);
+      // A dead preview takes no token either: its tags carry no image.
       res.type('html').send(withPreviewTags(html, previewTags(preview, requestOrigin(req), demo ? null : token)));
     } catch (err) {
       log.error('invites', 'Serving an invite page failed', { err: err.message });

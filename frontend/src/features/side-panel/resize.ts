@@ -110,12 +110,21 @@ export function applyWidth(width: number | null, root: HTMLElement = document.do
   else root.style.setProperty('--side-panel-w', `${Math.round(width)}px`);
 }
 
-/** The live layout's probe. */
+/**
+ * The live layout's probe. Beside the AI tab's page (no app on screen, so
+ * #app-view has no box) what is left of the panel's neighbour is the rail,
+ * docked: a folded or peeking one takes no width.
+ */
 export function probeLayout(win: Window = window): LayoutProbe {
   let appLeft = 0;
   try {
     const app = win.document.getElementById('app-view');
-    if (app) appLeft = app.getBoundingClientRect().left;
+    const box = app ? app.getBoundingClientRect() : null;
+    if (box && box.width > 0) appLeft = box.left;
+    else {
+      const rail = win.document.getElementById('platform-tabs');
+      if (rail && !rail.classList.contains('platform-tabs-peek')) appLeft = Math.max(0, rail.getBoundingClientRect().right);
+    }
   } catch {
     appLeft = 0;
   }

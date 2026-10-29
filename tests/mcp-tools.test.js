@@ -2833,6 +2833,9 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // #4266. Puts away one of the user's own unsubmitted work orders, freeing
     // its slot; list_my_work_orders, below, is the list it is chosen from.
     'close_work_order',
+    // #6026. A new project for the connected person, the one the Create
+    // screen makes; tests/mcp-create-app.test.js.
+    'create_app',
     'create_bench_context_pack', 'create_request',
     // Test accounts for first-run testing (create_test_account,
     // create_test_phone_sign_in, send_test_release_email, list_test_accounts,
@@ -2869,7 +2872,12 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'get_checkout_status',
     'get_connector_guidance', 'get_demo_status',
     // #3556. One app discussion thread, read through the transcript route.
-    'get_discussion', 'get_homeroom_bot',
+    'get_discussion',
+    // A project's card picture and any change to it waiting for a vote
+    // (routes/app-illustrations.js). External clients only, like the
+    // uploads its counterpart takes.
+    'get_featured_illustration',
+    'get_homeroom_bot',
     // #4884. One discussion message whole, when the page cut the thread.
     'get_message',
     'get_platform_build', 'get_platform_conventions', 'get_proposal',
@@ -2892,6 +2900,7 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'list_apps', 'list_bench_context_packs', 'list_bench_grading_queue', 'list_bench_runs',
     'list_bench_suites', 'list_bench_trials', 'list_bot_configs',
     'list_challenge_events', 'list_challenge_templates',
+    'list_featured_apps',
     'list_my_proposals',
     // #4266. Exactly the work orders prepare_work's open-work-order cap counts.
     'list_my_work_orders',
@@ -2907,6 +2916,10 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // A person's spec on a request, for the group to review before anything
     // is built. It builds, claims and votes on nothing (request-specs.js).
     'post_spec',
+    // A one-time command that sends one file (a plan, a video, a screenshot)
+    // for post_spec or create_request, instead of writing it into the call
+    // (services/connector-uploads.js). External clients only.
+    'prepare_upload',
     'prepare_work',
     // #2779. The native change lifecycle. recheck_change is on every surface;
     // the other four are registered only for an agent session's Mayor — see
@@ -2916,6 +2929,10 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // close". It files the proposal; the vote decides, and the platform
     // closes the issue only when it passes.
     'propose_close_request',
+    // A new card picture for a project, sent ahead with prepare_upload: it
+    // opens the project's vote, as the Featured illustration editor's Save
+    // does, and the card changes only when that passes.
+    'propose_featured_illustration',
     'rate_homeroom_bot_run',
     'recheck_change',
     // #3654. Grading a finished benchmark run again: full platform admins only.
@@ -2936,6 +2953,12 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'send_test_notifications',
     'send_test_release_email',
     'set_bot_config_budget', 'set_bot_config_role',
+    // Featured apps (routes/featured-admin.js, which hands each call to the
+    // console's own /api/admin route): an app's flag, which takes it out of
+    // Discover and Featured, and the list's order. Registered only for a full
+    // platform admin.
+    'set_discover_flag',
+    'set_featured_apps',
     // The bot's settings, as the console's Save saves them: full admins only.
     'set_homeroom_bot_settings',
     'start_change',
@@ -3152,19 +3175,26 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
     'add_bench_task', 'add_challenge',
     'cancel_bench_run', 'cancel_bench_trial', 'cancel_shots_eval',
     'close_work_order',
+    // #6026: it starts a real app and spends one of the caller's app slots.
+    'create_app',
     'create_bench_context_pack', 'create_request', 'create_test_account', 'create_test_phone_sign_in',
     'delete_challenge_scoring_rule', 'delete_challenge_template',
     'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
     'deploy_bench_preview', 'edit_bench_task', 'edit_challenge', 'keep_bench_trial',
     'label_bench_task', 'launch_bench_run', 'launch_bench_studio', 'launch_shots_eval',
     'move_challenge',
-    'post_message', 'post_spec', 'prepare_work', 'promote_change', 'propose_close_request',
+    'post_message', 'post_spec', 'prepare_upload', 'prepare_work', 'promote_change', 'propose_close_request',
+    'propose_featured_illustration',
     'rate_homeroom_bot_run', 'recheck_change', 'regrade_bench_run', 'remove_challenge', 'reorder_challenges', 'rerun_bench_trial',
-    'retire_test_account', 'run_challenge_scoring',
+    'retire_test_account',
+    'run_challenge_scoring',
     // The Homeroom bot's configurations: full admins only.
     // Before & after shots evals: full admins only.
     // The programme's challenges: full admins only.
     'save_bot_config', 'save_challenge_event', 'save_challenge_scoring_rule', 'save_challenge_template', 'save_shots_config', 'send_test_notifications', 'send_test_release_email', 'set_bot_config_budget', 'set_bot_config_role',
+    // Featured apps: full admins only.
+    'set_discover_flag',
+    'set_featured_apps',
     'set_homeroom_bot_settings', 'start_change',
     'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_bot_config_pick',
     'submit_platform_build', 'submit_shots_eval_pick', 'submit_work', 'sync_change',
@@ -3300,7 +3330,7 @@ test('whoami hands the model the canonical name and the exact shipped rules', ()
 
 test('every write tool checks its scope before it does anything', () => {
   const writeTools = [
-    'create_request', 'prepare_work', 'submit_work',
+    'create_request', 'prepare_upload', 'propose_featured_illustration', 'prepare_work', 'submit_work',
     'start_platform_build', 'answer_questions', 'submit_platform_build',
     'demo_mode', 'demo_propose', 'demo_promote', 'demo_vote', 'demo_reset',
   ];
@@ -4728,6 +4758,62 @@ test('get_proposal carries before/after shot results through its own output sche
     assert.match(shape.shotResults.description, /unchanged \(its shots are published, but the before and after came out the same/);
     assert.match(c.specs.get('get_proposal').description, /before\/after shots of each declared change/);
     assert.match(c.specs.get('get_proposal').description, /`shotResults` says which changes it skipped/);
+  } finally { c.restore(); }
+});
+
+// Proposal 11752 (PR 6011): a viewer in the New Needs you experiment is
+// served close-ups beside the stills, each `variant: 'closeup'` with no
+// `stageLabels`, and the SDK refused the whole get_proposal answer
+// ("Invalid enum value ... received 'closeup' at shots.artifacts[12].variant",
+// "Required at shots.artifacts[12].stageLabels"). The view here is the real
+// serializer's, so a field it adds to a close-up is checked too.
+test('get_proposal admits close-ups through its own output schema', async () => {
+  const shotsView = require('../src/services/shots-view');
+  const HEAD = 'b'.repeat(40);
+  const id = (n) => n.toString(16).padStart(32, '0');
+  const still = (n, side) => ({
+    id: id(n), storyId: 'dialog', viewport: 'desktop', side, variant: 'context', media: 'png',
+    contentType: 'image/png', width: 1280, height: 800, bytes: 9, stageLabels: ['Open dialog'],
+  });
+  const run = {
+    state: 'verified', required: true,
+    claims: [{
+      id: 'dialog', claim: 'The dialog shows suggestions.', persona: 'member',
+      viewports: ['desktop'], steps: ['Open dialog'], baseState: 'present', animation: 'none',
+    }],
+    baseSha: 'a'.repeat(40), headSha: HEAD, failureCode: null, failureReason: null,
+    repairAvailable: false, planHash: 'e'.repeat(64),
+    shotResults: [{ id: 'dialog', status: 'ready', reason: null }],
+    artifactSummary: [
+      { id: id(1001), storyId: 'dialog', viewport: 'desktop', side: 'head', variant: 'closeup', media: 'png',
+        contentType: 'image/png', width: 594, height: 360, bytes: 7, part: 1,
+        focusRect: { x: 40, y: 30, w: 66, h: 40 }, scale: 9 },
+      still(1, 'base'), still(2, 'head'),
+    ],
+  };
+  const session = {
+    id: 11752, source: 'native', reviewed_head_sha: HEAD, shots_state: 'verified',
+    shots_detail: { impact: 'ui', rationale: 'The dialog changed.', headSha: HEAD },
+  };
+  const evidence = shotsView.serialize(run, session, 'recipe-box', HEAD, { dense: true });
+  const closeups = evidence.artifacts.filter((a) => a.variant === 'closeup');
+  assert.equal(closeups.length, 1, 'the dense view carries the close-up');
+  assert.equal(Object.hasOwn(closeups[0], 'stageLabels'), false, 'in its own shape, with no stage labels');
+
+  const c = connector(() => ({ session: { id: 11752, app_slug: 'recipe-box', shots: evidence } }));
+  try {
+    const result = await c.handlers.get('get_proposal')({ proposalId: 11752 });
+    assert.ok(!result.isError);
+    const parsed = validateOutput(c.specs.get('get_proposal'), result);
+    assert.ok(parsed.success, parsed.success ? '' : parsed.error.message);
+    assert.deepEqual(result.structuredContent.shots.artifacts.map((a) => `${a.side}/${a.variant}`),
+      ['base/context', 'head/context', 'head/closeup'], 'the close-up arrives beside the stills, not in their place');
+    assert.deepEqual(result.structuredContent.shots.artifacts[2].rect, { x: 40, y: 30, w: 66, h: 40 });
+
+    // The enum is still closed: a variant nothing serves is refused.
+    const artifact = z.object(c.specs.get('get_proposal').outputSchema).shape.shots.unwrap()
+      .shape.artifacts.element;
+    assert.equal(artifact.safeParse({ ...closeups[0], variant: 'thumbnail' }).success, false);
   } finally { c.restore(); }
 });
 

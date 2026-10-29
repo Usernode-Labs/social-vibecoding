@@ -170,6 +170,35 @@ test('each rule in words, and what it asks for today', () => {
   assert.equal(model.ruleToday({ group: 'creator', kind: 'atLeast', n: 1 }, ctx), 'evan’s yes alone is enough.');
 });
 
+test('a minimum on a majority or a share, in words, sent and read back as the server does', () => {
+  const model = loadTsx(MODEL);
+  assert.equal(model.MIN_MINIMUM, serverRules.MIN_MINIMUM);
+  const ctx = { groups: [], creator: 'evan', memberCount: 4, adminCount: 0 };
+  const majority = { group: 'members', kind: 'majority', n: null, min: 10 };
+  assert.equal(model.rulePhrase(majority, ctx), 'Most active people in All members say yes, over time, and at least 10 of them');
+  assert.equal(model.rulePhrase({ group: 'members', kind: 'percentOfEveryone', n: 50, min: 3 }, ctx),
+    '50% of everyone in All members says yes, and at least 3 of them');
+  // Today: never more than the group has.
+  assert.equal(model.ruleToday(majority, ctx), 'Group vote’s math, or a quiet wait if nobody objects, and never fewer than 4 yeses.');
+  assert.equal(model.ruleToday({ group: 'members', kind: 'percentOfEveryone', n: 50, min: 3 }, ctx), 'Needs 3 of 4 today, active or not.');
+  // An "at least" rule never carries one.
+  assert.equal(model.minOf({ group: 'members', kind: 'atLeast', n: 2, min: 5 }), null);
+  const value = { preset: null, groups: [], rules: [{ group: 'creator', kind: 'atLeast', n: 1 }, majority] };
+  const block = model.blockFor(value);
+  assert.deepEqual(block, serverRules.blockFor(value));
+  assert.deepEqual(block.rules[1], { group: 'members', majority: true, minimum: 10 });
+  assert.deepEqual(serverRules.parseRulesBlock(block).rules, value.rules);
+  assert.equal(model.matchPreset(value.rules), null, 'You or the group with a minimum is no longer the preset');
+  assert.equal(model.sameValue(value, model.presetValue('you_or_the_group')), false);
+  const back = model.currentValue({
+    policy: 'anyone', approvals_required: null, electorate: 4, required: 4, mode: 'rules', preset: null,
+    rules: [{ group: 'creator', kind: 'atLeast', n: 1, size: 1, need: 1 }, { ...majority, size: 4, need: 4 }], groups: [],
+  });
+  assert.deepEqual(back.rules, value.rules);
+  assert.equal(model.valueProblem({ preset: null, groups: [], rules: [{ group: 'members', kind: 'majority', n: null }, majority] }), null,
+    'the same rule with and without a minimum are two rules');
+});
+
 test('the sheet refuses what the server would, in words', () => {
   const model = loadTsx(MODEL);
   assert.match(model.valueProblem({ preset: null, groups: [], rules: [] }), /at least one rule/);

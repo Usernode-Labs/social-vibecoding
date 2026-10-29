@@ -94,3 +94,62 @@ test('a refusal is said in the screen\'s own words', () => {
     assert.doesNotMatch(text, /block/i, `${id} says nothing about blocking`);
   }
 });
+
+// #5926 items 1 and 2: helper text you can read on the dark card, and
+// switches whose state is said in words as well as colour.
+test('helper text is 13px in rem and lighter in the dark theme (#5926)', () => {
+  const { HELP } = loadTsx('frontend/src/features/settings/sections/privacy-text.tsx');
+  // rem, so Settings › Accessibility's text size scales it.
+  assert.match(HELP, /\btext-\[0\.8125rem\]/);
+  assert.doesNotMatch(HELP, /px\]/);
+  assert.match(HELP, /\bdark:text-zinc-400\b/);
+  assert.match(HELP, /\bmax-w-\[65ch\]/);
+  const { PrivacySection } = loadTsx('frontend/src/features/settings/sections/privacy.tsx');
+  const html = renderToHtml(createElement(PrivacySection, {}));
+  assert.doesNotMatch(html, /dark:text-zinc-500/, 'no line on the page keeps the dim dark-theme ink');
+  // The headings' blurbs keep SectionHeading's size; only their dark ink is
+  // lifted. Every other small line wears the shared helper style.
+  assert.doesNotMatch(html, /class="(?![^"]*\bmb-3\b)[^"]*\btext-xs text-zinc-500/, 'no helper line keeps the 12px size');
+  const count = html.split(HELP).length - 1;
+  assert.equal(count, 4, `both choices and both switches wear the helper style, found ${count}`);
+});
+
+test('both switches are announced as switches and say Off before the account is read (#5926)', () => {
+  const { PrivacySection } = loadTsx('frontend/src/features/settings/sections/privacy.tsx');
+  const html = renderToHtml(createElement(PrivacySection, {}));
+  for (const id of ['settings-profile-discoverable', 'settings-usage-analytics']) {
+    const input = html.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`));
+    assert.ok(input, `#${id} is rendered`);
+    assert.match(input[0], /role="switch"/, `#${id} is announced as a switch`);
+    assert.match(input[0], /class="un-switch"/);
+    assert.doesNotMatch(input[0], /checked/);
+  }
+  const off = `<span aria-hidden="true" class="ml-2 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">${message('settings:privacy.state.off')}</span>`;
+  assert.equal(html.split(off).length - 1, 2);
+  assert.ok(!html.includes(`>${message('settings:privacy.state.on')}</span>`));
+  // The analytics switch is still described by its explanation.
+  assert.match(html, /id="settings-usage-analytics"[^>]*aria-describedby="settings-usage-analytics-description"|aria-describedby="settings-usage-analytics-description"[^>]*id="settings-usage-analytics"/);
+});
+
+test('a switch that is on is checked and says On (#5926)', () => {
+  const { PrivacySwitch } = loadTsx('frontend/src/features/settings/sections/privacy-text.tsx');
+  const render = (checked) => renderToHtml(createElement(PrivacySwitch, {
+    id: 'settings-profile-discoverable',
+    label: message('settings:privacy.discoverable.label'),
+    checked,
+    disabled: false,
+    onChange: () => {},
+  }));
+  const on = render(true);
+  const input = on.match(/<input[^>]*>/)[0];
+  assert.match(input, /role="switch"/);
+  assert.match(input, /checked=""/);
+  assert.match(on, new RegExp(`<span aria-hidden="true"[^>]*>${message('settings:privacy.state.on')}</span>`));
+  assert.ok(!on.includes(`>${message('settings:privacy.state.off')}</span>`));
+  const off = render(false);
+  assert.doesNotMatch(off.match(/<input[^>]*>/)[0], /checked/);
+  assert.match(off, new RegExp(`<span aria-hidden="true"[^>]*>${message('settings:privacy.state.off')}</span>`));
+  assert.ok(on.includes(escape(message('settings:privacy.discoverable.label'))));
+  assert.equal(message('settings:privacy.state.on'), 'On');
+  assert.equal(message('settings:privacy.state.off'), 'Off');
+});

@@ -55,11 +55,6 @@ const SHOW_ONLY: Array<{ key: string; label: string }> = [
   { key: 'notjoined', label: 'discover:filters.hideJoined' },
 ];
 
-// The switches only an admin gets, copied from Browse.ADMIN_SHOW_ONLY.
-const ADMIN_SHOW_ONLY: Array<{ key: string; label: string }> = [
-  { key: 'unreviewed', label: 'discover:filter.unreviewed' },
-];
-
 interface Draft {
   only: string[];
   category: string;
@@ -71,8 +66,6 @@ interface SheetProps {
   types: Array<{ key: string; label: string }>;
   /** The view the sheet was opened from; Joined hides "Hide apps I've joined". */
   view: string;
-  /** Whether the viewer is an admin, which adds "Not yet reviewed". */
-  admin: boolean;
   /** The live filter state, copied into the draft when the sheet opens. */
   initial: Draft;
   /** Shown as a centred dialog, whose card carries its own padding. */
@@ -80,7 +73,7 @@ interface SheetProps {
   onClose: () => void;
 }
 
-function BrowseFilterSheet({ types, view, admin, initial, dialog, onClose }: SheetProps) {
+function BrowseFilterSheet({ types, view, initial, dialog, onClose }: SheetProps) {
   const t = useMessages('discover');
   const [draft, setDraft] = useState<Draft>(initial);
   const set = (patch: Partial<Draft>) => setDraft((prev) => ({ ...prev, ...patch }));
@@ -93,7 +86,6 @@ function BrowseFilterSheet({ types, view, admin, initial, dialog, onClose }: She
   // "Hide apps I've joined" is left out while Joined is showing: the two
   // together would always match nothing.
   const showOnly = SHOW_ONLY
-    .concat(admin ? ADMIN_SHOW_ONLY : [])
     .filter((row) => !(row.key === 'notjoined' && view === 'joined'));
 
   // The count follows the draft AND the live search, so the button says how
@@ -162,11 +154,6 @@ function BrowseFilterSheet({ types, view, admin, initial, dialog, onClose }: She
               <label key={row.key} className="flex cursor-pointer items-center justify-between gap-3 py-2">
                 <span className="text-[15px] text-zinc-900 dark:text-zinc-100">
                   {t(row.label)}
-                  {row.key === 'unreviewed' ? (
-                    <span className="ml-2 inline-block rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-semibold text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">
-                      {t('discover:filters.adminTag')}
-                    </span>
-                  ) : null}
                 </span>
                 <Switch
                   className="shrink-0"
@@ -276,7 +263,6 @@ export function openBrowseFilterSheet(): void {
     <BrowseFilterSheet
       types={controller.categoryOptions?.() || []}
       view={state.view || 'foryou'}
-      admin={!!state.adminFilters}
       dialog={dialog}
       initial={{
         only: [...(state.only || [])],

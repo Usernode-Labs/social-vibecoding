@@ -372,7 +372,12 @@ export function rulesFromColumn(raw: unknown): StoredRules | null {
   const rules: Rule[] = v.rules.filter((r: any) => r && typeof r.group === 'string'
     && ['atLeast', 'percentOfActive', 'percentOfEveryone', 'majority'].includes(r.kind)
     && (BUILT_IN_GROUPS.includes(r.group) || keys.has(r.group)))
-    .map((r: any) => ({ group: r.group, kind: r.kind, n: r.kind === 'majority' ? null : parseInt(r.n, 10) || 1 }));
+    .map((r: any) => {
+      const rule: Rule = { group: r.group, kind: r.kind, n: r.kind === 'majority' ? null : parseInt(r.n, 10) || 1 };
+      // A minimum a rule cannot take is dropped, as an unreadable rule is.
+      const min = r.min != null && r.kind !== 'atLeast' ? parseInt(r.min, 10) : NaN;
+      return Number.isFinite(min) && min >= 1 ? { ...rule, min } : rule;
+    });
   if (!rules.length) return null;
   const preset = typeof v.preset === 'string' && (PRESET_KEYS as readonly string[]).includes(v.preset) ? v.preset as PresetKey : null;
   return { preset, groups, rules };
@@ -611,7 +616,7 @@ export interface GovernedGate extends Gate {
   creatorYes?: boolean;
   partial?: boolean;
   passedBy?: { group: string; kind: string; n: number | null } | null;
-  rules?: Array<{ group: string; kind: string; n: number | null; size: number; yes: number; need: number | null; passed: boolean; empty: boolean }>;
+  rules?: Array<{ group: string; kind: string; n: number | null; size: number; yes: number; need: number | null; passed: boolean; empty: boolean; min?: number }>;
   // Set (true) only when the first-version rule let it through
   // (applyFirstVersion); absent otherwise.
   firstVersion?: boolean;
@@ -644,6 +649,10 @@ export interface GateOpts {
   // bot). On a rules project proposing is a person's yes; the bot's is none
   // (governance-rules.ts, "Only a PERSON's proposing is a yes").
   authorIsBot?: boolean;
+  // A coding agent submitted the change for its author (chat_sessions.
+  // external_agent): proposing is not their yes until they tap it
+  // (governance-rules.ts, "Only proposing ON HOMEROOM is a yes").
+  madeByAgent?: boolean;
   rulesFacts?: RulesFacts | null;
   // The change is its project's first version (services/first-version-
   // rule.js): applyFirstVersion below.
@@ -806,6 +815,7 @@ export function computeRulesGate(
   const authorId = opts.authorId != null && Number.isFinite(int(opts.authorId))
     ? int(opts.authorId) : null;
   const authorIsBot = !!opts.authorIsBot;
+  const madeByAgent = !!opts.madeByAgent;
   // The member floor on the majority rules of a flagged proposal: a yes from
   // someone other than its author, once the community has more than one member.
   let floor: Floor | null = null;
@@ -822,6 +832,7 @@ export function computeRulesGate(
     counts: { yes: Math.max(int(yesCount) || 0, 0), no: Math.max(int(noCount) || 0, 0) },
     authorId,
     authorIsBot,
+    madeByAgent,
     openedAt,
     now,
     noTimers: explicitApproval,
@@ -833,7 +844,7 @@ export function computeRulesGate(
   const { gate, owner, shown, results, passedBy } = evaluated;
   const creatorYes = !!(facts.creatorId && voters
     && (voters.yes.has(facts.creatorId)
-      || (authorId === facts.creatorId && !authorIsBot && !voters.no.has(facts.creatorId))));
+      || (authorId === facts.creatorId && !authorIsBot && !madeByAgent && !voters.no.has(facts.creatorId))));
   return {
     ...gate,
     policy: 'anyone',
@@ -854,6 +865,7 @@ export function computeRulesGate(
     rules: results.map((r) => ({
       group: r.group, kind: r.kind, n: r.n, size: r.size, yes: r.yes, need: r.need,
       passed: r.passed, empty: r.empty,
+      ...(r.min != null ? { min: r.min } : {}),
     })),
   };
 }

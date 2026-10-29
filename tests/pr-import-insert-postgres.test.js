@@ -73,6 +73,8 @@ const DDL = `
     handoff_base_sha     VARCHAR(40),
     imported_pr_author   VARCHAR(255),
     imported_pr_head_repo TEXT,
+    imported_pr_base_ref TEXT,
+    waits_for_session_id INTEGER,
     promoted_at          TIMESTAMPTZ,
     shared_at            TIMESTAMPTZ,
     created_at           TIMESTAMPTZ DEFAULT NOW(),
@@ -89,7 +91,7 @@ const DDL = `
     active_users_at_promote INTEGER
   )`;
 
-// The same 18-element parameter shape the handler binds ($9 is the immutable
+// The same 20-element parameter shape the handler binds ($9 is the immutable
 // GitHub base SHA recorded for exact-revision before & after shots; $11 is the head
 // repository #1196 records, which is what decides whether the proposal's head
 // is in the author's fork or in the app's own repository; $15 is the request
@@ -97,7 +99,9 @@ const DDL = `
 // mirrored so get_proposal can report a description, #1333; $17 is the
 // user-facing summary a submitter may send, which until now only on-platform
 // sessions had — an import wrote none, so the About sheet's plain-language
-// half was empty for every proposal that arrived this way).
+// half was empty for every proposal that arrived this way; $19 is the pull
+// request's base branch and $20 the open change it waits for when that base
+// is another change's branch, src/workflow/rules/pr-base.ts).
 //
 // NOTE the DDL above is hand-copied from src/db/schema.sql on purpose, so a
 // column added to the INSERT must be added there too — that omission is
@@ -119,6 +123,8 @@ function importParams(status, prNumber, linkedIssues = [1217]) {
     // for: no identifiers, no paths, nothing a non-developer has to decode.
     'Signing in now brings you back to what you were doing.',
     'c'.repeat(64),
+    // Stacked on another open change's branch: it waits for that change.
+    'claude/the-change-under-it', 41,
   ];
 }
 

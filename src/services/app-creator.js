@@ -8,8 +8,10 @@
 //   card        the first session's card, when one is owed: the model's,
 //               within its wait, else the fallback (services/app-sketch.js)
 //   repository  a fresh repository with the starter (and the card) as its
-//               first commit; a remix's copy of its source; an import's
-//               connector scaffold and create answers. Then `repo_url`.
+//               first commit, or, for a version of a ready-made original,
+//               the original's tree with the project's own words and name;
+//               a remix's copy of its source; an import's connector
+//               scaffold and create answers. Then `repo_url`.
 //
 // What it resolves is the machine's: the first commit, the image a
 // ready-made app may deploy instead of building, and what it measured. Its
@@ -28,6 +30,8 @@ const appSketch = require('./app-sketch');
 const creationTiming = require('./app-creation-timing');
 const starterImages = require('./starter-images');
 const repoQueue = require('./repo-create-queue');
+const originals = require('./originals');
+const lineage = require('./upstream-lineage');
 const { pushAppCreationPhase } = require('./ws');
 const repoRef = require('./repo-ref');
 
@@ -158,6 +162,11 @@ async function setUp(config, pool, appId, ctx) {
 async function seedStarter(config, pool, row, sketch, ctx) {
   if (!github.isEnabled()) return { sha: null, repoUrl: null, offer: null };
   try {
+    // A ready-made made as a version of its original (POST /api/apps wrote
+    // the link; services/originals.js sourceFor says what to copy, or that
+    // it is made as before).
+    const source = await originals.sourceFor(config, pool, row);
+    if (source) return await seedVersion(config, pool, row, sketch, ctx, source);
     const botUsername = await github.getBotUsername();
     const made = await repoQueue.withRetries(pool, async () => {
       // adoptExisting: a try after one that died between GitHub's create and
@@ -202,6 +211,56 @@ async function seedStarter(config, pool, row, sketch, ctx) {
   }
 }
 
+// A version of a ready-made original (docs/plans/versions.md, "Making a
+// ready-made"; services/originals.js): its first commit is the original's
+// tree at the commit it copies, with this project's own words.json, its name
+// in README, CLAUDE.md and LICENSE, its repository pointer, its card and its
+// dapp.json's name, description, icon and approval rule, and
+// `followOriginal: true`. A commit with no parent, which main is moved to,
+// like a remix's copy: it carries nothing of the original's history, and
+// any bytes the original holds (an image) arrive as they are.
+//
+// The lineage records the commit it copies (`syncedSha`) before anything is
+// pushed, so a try that resumes copies the same one and finds its own first
+// commit at the head by its message, and then that first commit
+// (`baseSha`). The image key is computed from these same files: the
+// original's image for this ready-made, built ahead (services/starter-
+// images.js), is the one its first deploy runs. `template` stays set, and
+// `template_version` is left empty: the lineage says which revision it is.
+async function seedVersion(config, pool, row, sketch, ctx, source) {
+  const template = templateOf(row);
+  const message = originals.versionMessage(row.name, source.original);
+  if (!source.committed) await lineage.writeUpstream(pool, row.id, { syncedSha: source.sha });
+  const botUsername = await github.getBotUsername();
+  const made = await repoQueue.withRetries(pool, async () => {
+    const repo = await github.createRepo(botUsername, row.slug, {
+      description: `${row.name}: built on Homeroom`,
+      adoptExisting: true,
+    });
+    const repoUrl = repo.html_url;
+    const files = source.tree
+      ? originals.versionFiles(source.tree, starterFiles(row, { repoUrl, sketch }), {
+        name: row.name, templateId: template, originalTemplate: source.original ? source.original.template : null,
+      })
+      : null;
+    const head = repo.adopted ? await github.headCommit(botUsername, row.slug) : null;
+    if (head && head.message === message) return { repoUrl, files, sha: head.sha };
+    if (!files) throw new Error('The project this is a version of cannot be read just now. Try again in a minute.');
+    const sha = await github.createRootCommit(botUsername, row.slug, files, { message });
+    await github.forceBranchToSha(botUsername, row.slug, 'main', sha);
+    return { repoUrl, files, sha };
+  }, { signal: ctx?.signal, label: { appId: row.id, slug: row.slug } });
+  const sha = String(made.sha || '').toLowerCase() || null;
+  await pool.query('UPDATE apps SET repo_url = $1, template_version = NULL WHERE id = $2', [made.repoUrl, row.id]);
+  if (sha) await lineage.writeUpstream(pool, row.id, { syncedSha: source.sha, baseSha: sha });
+  if (sketch) await appSketch.markCommitted(pool, row.id).catch(() => {});
+  const key = made.files ? starterImages.contextKey(made.files, starterImages.buildRecipe(config)) : null;
+  log.info('app-creator', 'Made as a version of its original', {
+    appId: row.id, slug: row.slug, original: source.original ? source.original.slug : null, syncedSha: source.sha, baseSha: sha,
+  });
+  return { sha, repoUrl: made.repoUrl, offer: sha ? { starter: { sha, template, ...(key ? { key } : {}) } } : null };
+}
+
 // An import keeps the repository it imported. Before #1218's follow-up an
 // imported app never received `.claude/settings.json`, and its users kept
 // getting a permission prompt on every read-only connector call: the
@@ -239,40 +298,63 @@ async function scaffoldImport(row) {
   return { sha: null, repoUrl, offer: null };
 }
 
-// A remix: its source's current main copied into a fresh bot-owned
-// repository, history-free (services/app-forker.js copyRepoTree, a force
-// push: the same copy again lands the same way), and the repository and
-// the lineage it was cut from written in ONE update. A copy whose
-// repository is recorded already is not copied again: its source may have
-// changed or gone since.
+// A version made from someone's project: its source's current main copied
+// into a fresh repository, history-free (services/app-forker.js
+// copyRepoTree, a force push: the same copy again lands the same way), and
+// the repository and the lineage it was cut from written in ONE update. A
+// copy whose repository is recorded already is not copied again: its source
+// may have changed or gone since.
+//
+// The lineage is written twice over: `forked_from` keeps its two commits
+// for the readers from before versions, and `apps.upstream` (the route
+// wrote its appId, slug, following and since) gets the same two under the
+// names updates and suggestions plan from (docs/plans/versions.md):
+// `syncedSha` the original's commit it copied, `baseSha` the version's own
+// first commit. A copy whose commits git did not give is marked `legacy`,
+// so they are looked for when first needed (upstream-lineage.resolveLegacy).
+// Whether it gets the original's updates is the route's choice, written
+// into its dapp.json as `followOriginal`; a row from before the choice
+// existed does not follow.
 async function copyFork(config, pool, row) {
   if (row.repo_url) return { sha: null, repoUrl: row.repo_url, offer: null };
   const forker = require('./app-forker');
+  const lineage = require('./upstream-lineage');
   const sourceApp = await forker.findForkSource(pool, row);
-  if (sourceApp?.self_hosted) throw new Error('Homeroom itself cannot be remixed.');
-  if (!sourceApp) throw new Error('The app this copy came from no longer exists.');
+  if (sourceApp?.self_hosted) throw new Error('You cannot make your own version of Homeroom itself.');
+  if (!sourceApp) throw new Error('The project this version came from no longer exists.');
   if (!sourceApp.repo_url) {
-    const err = new Error('The original app is not ready to copy yet.');
+    const err = new Error('The original is not ready for you to make your own version yet.');
     err.cloneFailed = true;
     throw err;
   }
   if (!github.isEnabled()) {
-    const err = new Error('Remixing is unavailable because GitHub integration is not configured.');
+    const err = new Error('You cannot make your own version here, because no code host is set up.');
     err.repoFailed = true;
     throw err;
   }
+  const link = lineage.readUpstream(row);
+  const follow = link ? link.following : false;
   const tempDir = `/tmp/usernode-fork-${row.slug}`;
   try {
     const botUsername = await github.getBotUsername();
-    const copied = await forker.copyRepoTree({ sourceApp, botUsername, forkSlug: row.slug, forkName: row.name, tempDir });
+    const copied = await forker.copyRepoTree({
+      sourceApp, botUsername, forkSlug: row.slug, forkName: row.name, tempDir, follow,
+    });
+    const shas = forker.forkLineageShas(copied);
+    const synced = shas.sourceSha && shas.forkBaseSha
+      ? { syncedSha: String(shas.sourceSha).toLowerCase(), baseSha: String(shas.forkBaseSha).toLowerCase(), legacy: false }
+      : { legacy: true };
     await pool.query(
       `UPDATE apps
           SET repo_url = $1,
               forked_from = CASE WHEN jsonb_typeof(forked_from) = 'object'
                                  THEN forked_from || $2::jsonb
-                                 ELSE forked_from END
+                                 ELSE forked_from END,
+              upstream = CASE WHEN jsonb_typeof(upstream) = 'object'
+                              THEN upstream || $4::jsonb
+                              ELSE upstream END
         WHERE id = $3`,
-      [copied.repoUrl, JSON.stringify(forker.forkLineageShas(copied)), row.id]);
+      [copied.repoUrl, JSON.stringify(shas), row.id, JSON.stringify(synced)]);
     return { sha: copied.mainSha ? String(copied.mainSha).toLowerCase() : null, repoUrl: copied.repoUrl, offer: null };
   } finally {
     await require('./docker').execFileAsync('rm', ['-rf', tempDir]).catch(() => {});

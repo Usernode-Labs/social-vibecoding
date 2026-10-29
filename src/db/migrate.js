@@ -57,6 +57,16 @@ async function migrate(config) {
   // twins, each app whose repository is now on the git host repointed, and
   // its proposals' GitHub links turned into their change pages.
   await require('../services/github-move').migrate(pool);
+  // Threads (#6019, stage 1): attach every request, change, governance row
+  // and message that existed before threads did. After the move above, so a
+  // request it copied has its thread; once, behind its marker.
+  await require('../services/threads').backfill(pool);
+  // And, once, whether each thread is open or closed (the follow-up's
+  // threads_refresh_state keeps that current from now on).
+  await require('../services/threads').refreshStates(pool);
+  // And, once, the changes that sat in a request's thread only because their
+  // PR number was the request's.
+  await require('../services/threads').separateNumberCollisions(pool);
   log.info('db', 'Schema up to date');
   finishPhase('schemaMs');
 
@@ -7826,9 +7836,9 @@ async function seedStagingHomeLayout(pool, config) {
 
 // Home screen's Discover row + the #admin/featured-apps section. Append the
 // synthetic apps created by seedStagingYourApps, even when the clone already
-// has a featured list: those real apps may not have working reviews yet.
-// Preserve their ordering and review state. Only the synthetic fixtures are
-// certified here, and ON CONFLICT keeps their positions on subsequent boots.
+// has a featured list, preserving its ordering. Only the synthetic fixtures
+// are added here, never one an admin flagged, and ON CONFLICT keeps their
+// positions on subsequent boots.
 //
 // Chess Arena is deliberately NOT a candidate: seedStagingYourApps
 // favorites it for every capture identity, so leaving it out exercises the
@@ -7841,24 +7851,21 @@ async function seedStagingFeaturedApps(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
   try {
-    // #1523: explicitly synthetic fixtures for captures and the reversible
-    // Discover-add check. Never certify a production-cloned app as tested.
+    // Explicitly synthetic fixtures for captures and the reversible
+    // Discover-add check: a featured app needs an icon for its card.
     await pool.query(
-      `UPDATE apps SET icon_emoji = '🧩',
-         main_sha = '0000000000000000000000000000000000000001',
-         directory_review_status = 'working', directory_reviewed_at = NOW(),
-         directory_reviewed_sha = '0000000000000000000000000000000000000001'
+      `UPDATE apps SET icon_emoji = '🧩'
        WHERE slug IN ('staging-demo-puzzle-chain', 'staging-demo-word-garden',
                       'staging-demo-pixel-racer')
          AND created_by = (SELECT id FROM users WHERE username = 'staging-demo-user')
-         AND directory_review_status = 'unreviewed'`
+         AND icon_emoji IS NULL AND icon_image_id IS NULL`
     );
     const { rows: candidates } = await pool.query(
       `SELECT id FROM apps
         WHERE slug IN ('staging-demo-puzzle-chain', 'staging-demo-word-garden',
                        'staging-demo-pixel-racer')
           AND created_by = (SELECT id FROM users WHERE username = 'staging-demo-user')
-          AND directory_review_status = 'working'
+          AND directory_review_status NOT IN ('demo', 'broken')
         ORDER BY id ASC`
     );
     for (const candidate of candidates) {
@@ -12700,8 +12707,57 @@ async function seedStagingImportedPrProposal(pool, config) {
     }
   }
 
+  // Fixture 4: an imported proposal stacked on fixture 1's branch, so it
+  // waits for #9310 (src/workflow/rules/pr-base.ts): the card's "Waits for
+  // #9310" tag and the change page's notice. The row holds what a look at
+  // the pull request records: the mock GitHub reports the same base for
+  // #9313 (services/github-mock.js FIXTURE_BASES), so a look keeps it. The
+  // wait is stamped only while #9310 is open. A preview that merged #9310
+  // moves #9313 onto main; after a restart the mock forgets that move and
+  // reports #9310's branch again, so #9313 then reads "Not based on main".
+  const headSha4 = 'd5e4c3b2a1f0e9d8c7b6a5948372615f4e3d2c1b';
+  const branch4 = 'staging-fixture/imported-pr-stacked';
+  let id4;
+  {
+    const { rows: have } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, branch4]
+    );
+    id4 = have[0]?.id;
+    if (!id4) {
+      const { rows } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_url, pr_title, pr_summary_md,
+            status, source, imported_pr_head_sha, imported_pr_author,
+            imported_pr_base_ref, waits_for_session_id,
+            check_state, checks_commit_sha, checks_checked_at,
+            votes_required, promoted_at, created_at)
+         VALUES
+           ($1, $2, $3, 9313, 'https://github.com/example/example/pull/9313',
+            '[staging fixture] Imported PR, stacked on #9310',
+            'In plain terms: this pull request is built on top of #9310, so it goes live only after #9310 does.',
+            'promoted', 'imported', $4, 'octo-contributor',
+            $6, (SELECT id FROM chat_sessions WHERE id = $7 AND status IN ('active', 'paused', 'promoted', 'merging')),
+            'passing', $4, NOW() - INTERVAL '6 minutes',
+            $5, NOW() - INTERVAL '7 minutes', NOW() - INTERVAL '8 minutes')
+         RETURNING id`,
+        [appId, importer.id, branch4, headSha4, votesRequired, branch1, id1]
+      );
+      id4 = rows[0].id;
+    } else {
+      await pool.query(
+        `UPDATE chat_sessions
+            SET source = 'imported', imported_pr_head_sha = $2, imported_pr_author = 'octo-contributor',
+                imported_pr_base_ref = $3, waits_for_session_id = $4
+          WHERE id = $1 AND status = 'promoted'
+            AND EXISTS (SELECT 1 FROM chat_sessions o WHERE o.id = $4 AND o.status IN ('active', 'paused', 'promoted', 'merging'))`,
+        [id4, headSha4, branch1, id1]
+      );
+    }
+  }
+
   log.info('db', 'Staging imported-PR fixtures seeded', {
-    appId, healthy: id1, headChanged: id2, justImported: id3,
+    appId, healthy: id1, headChanged: id2, justImported: id3, stacked: id4,
   });
 }
 
@@ -15964,4 +16020,7 @@ module.exports = {
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
   seedStagingGeneralChannel, seedStagingShotsNoticed, seedStagingShotsScreens,
+  // A test seam: preview-projects-source-repo.test.js counts what a preview's
+  // sample apps leave room for under the limit it runs with.
+  seedStagingAppCapApps,
 };

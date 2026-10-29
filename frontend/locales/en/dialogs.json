@@ -397,7 +397,7 @@
   },
   "allowance.title": {
     "text": "App allowance",
-    "description": "Label at the left of the allowance box shown in the create-app, import and remix forms: how many apps this person may still create."
+    "description": "Label at the left of the allowance box shown in the make, import and Make your own forms: how many apps this person may still create."
   },
   "allowance.checking": {
     "text": "Checking…",
@@ -413,27 +413,27 @@
   },
   "allowance.headline.usedNoLimit_one": {
     "text": "{{count}} app made · no limit",
-    "description": "Summary at the right of the allowance box, and the App slots row's line on the profile, for an account with no limit. {{count}} is how many apps it has created, imported or remixed. Keep the middle dot as a separator."
+    "description": "Summary at the right of the allowance box, and the App slots row's line on the profile, for an account with no limit. {{count}} is how many apps it has made, imported or made a version of. Keep the middle dot as a separator."
   },
   "allowance.headline.usedNoLimit_other": {
     "text": "{{count}} apps made · no limit",
-    "description": "Summary at the right of the allowance box, and the App slots row's line on the profile, for an account with no limit. {{count}} is how many apps it has created, imported or remixed. Keep the middle dot as a separator."
+    "description": "Summary at the right of the allowance box, and the App slots row's line on the profile, for an account with no limit. {{count}} is how many apps it has made, imported or made a version of. Keep the middle dot as a separator."
   },
   "allowance.headline.slots_one": {
     "text": "{{count}} app slots",
-    "description": "Summary at the right of the allowance box when only the limit is known. {{count}} is how many app slots the person has in total. An app slot is one unit of the allowance: each app a person creates, imports or remixes uses one."
+    "description": "Summary at the right of the allowance box when only the limit is known. {{count}} is how many app slots the person has in total. An app slot is one unit of the allowance: each project a person makes, imports or makes a version of uses one."
   },
   "allowance.headline.slots_other": {
     "text": "{{count}} app slots",
-    "description": "Summary at the right of the allowance box when only the limit is known. {{count}} is how many app slots the person has in total. An app slot is one unit of the allowance: each app a person creates, imports or remixes uses one."
+    "description": "Summary at the right of the allowance box when only the limit is known. {{count}} is how many app slots the person has in total. An app slot is one unit of the allowance: each project a person makes, imports or makes a version of uses one."
   },
   "allowance.headline.used_one": {
     "text": "{{used}} of {{count}} app slot used",
-    "description": "Summary at the right of the allowance box. {{count}} is how many app slots the person has in total and {{used}} how many are taken. An app slot is one unit of the allowance: each app a person creates, imports or remixes uses one."
+    "description": "Summary at the right of the allowance box. {{count}} is how many app slots the person has in total and {{used}} how many are taken. An app slot is one unit of the allowance: each project a person makes, imports or makes a version of uses one."
   },
   "allowance.headline.used_other": {
     "text": "{{used}} of {{count}} app slots used",
-    "description": "Summary at the right of the allowance box. {{count}} is how many app slots the person has in total and {{used}} how many are taken. An app slot is one unit of the allowance: each app a person creates, imports or remixes uses one."
+    "description": "Summary at the right of the allowance box. {{count}} is how many app slots the person has in total and {{used}} how many are taken. An app slot is one unit of the allowance: each project a person makes, imports or makes a version of uses one."
   },
   "allowance.headline.slotsRequested_one": {
     "text": "{{count}} app slots · more requested",
@@ -464,19 +464,19 @@
     "description": "Explanation in the allowance box when the number of free app slots could not be worked out and every slot is known to be taken."
   },
   "allowance.detail.available_one": {
-    "text": "{{count}} slot available. Creating, importing and remixing share this allowance.",
-    "description": "Explanation in the allowance box. {{count}} is how many app slots the person still has free. Creating, importing and remixing are the three ways of making an app."
+    "text": "{{count}} slot available. New projects, imports and versions share this allowance.",
+    "description": "Explanation in the allowance box. {{count}} is how many app slots the person still has free. New projects, imports and versions (a project of your own made from another, with Make your own) are the three ways of making an app."
   },
   "allowance.detail.available_other": {
-    "text": "{{count}} slots available. Creating, importing and remixing share this allowance.",
-    "description": "Explanation in the allowance box. {{count}} is how many app slots the person still has free. Creating, importing and remixing are the three ways of making an app."
+    "text": "{{count}} slots available. New projects, imports and versions share this allowance.",
+    "description": "Explanation in the allowance box. {{count}} is how many app slots the person still has free. New projects, imports and versions (a project of your own made from another, with Make your own) are the three ways of making an app."
   },
   "allowance.detail.availableSpent_one": {
-    "text": "{{count}} slot available. Creating, importing and remixing share this allowance. Request more slots to create another app.",
+    "text": "{{count}} slot available. New projects, imports and versions share this allowance. Request more slots to create another app.",
     "description": "Explanation in the allowance box when every app slot is taken. {{count}} is how many slots are free, normally 0. The last sentence points at the \"Request more\" button below."
   },
   "allowance.detail.availableSpent_other": {
-    "text": "{{count}} slots available. Creating, importing and remixing share this allowance. Request more slots to create another app.",
+    "text": "{{count}} slots available. New projects, imports and versions share this allowance. Request more slots to create another app.",
     "description": "Explanation in the allowance box when every app slot is taken. {{count}} is how many slots are free, normally 0. The last sentence points at the \"Request more\" button below."
   },
   "allowance.server.fullNoLimit": {
@@ -756,8 +756,8 @@
     "description": "Heading of the progress panel shown after an app was asked for, while an app is being imported from an existing repository. {{app}} is the app's name."
   },
   "createProgress.title.remixing": {
-    "text": "Remixing {{app}}",
-    "description": "Heading of the progress panel shown after an app was asked for, while the person's own copy (a remix) of someone else's app is being made. {{app}} is the copy's name."
+    "text": "Making {{app}}",
+    "description": "Heading of the progress panel shown after an app was asked for, while the person's own version of someone else's app is being made. {{app}} is the new version's name."
   },
   "createProgress.title.live": {
     "text": "{{app}} is live",
@@ -888,80 +888,92 @@
     "description": "Error on a create-project form when the server refused and gave no reason. {{status}} is the numeric HTTP status code. Homeroom is the product's name."
   },
   "fork.title.named": {
-    "text": "Remix <0>{{app}}</0>",
-    "description": "Heading of the dialog for making one's own copy of an app. \"Remix\" is a verb. {{app}} is the name of the app being copied; keep the numbered tag around it."
+    "text": "Make your own version of <0>{{app}}</0>",
+    "description": "Heading of the Make your own dialog, which makes the person their own version of an app: a project of their own made from it, the original, that is theirs to change. {{app}} is the original's name; keep the numbered tag around it."
   },
   "fork.title.unnamed": {
-    "text": "Remix <0>this app</0>",
-    "description": "Heading of the remix dialog when the name of the app being copied is not known. \"Remix\" is a verb. Keep the numbered tag around \"this app\"."
+    "text": "Make your own version of <0>this app</0>",
+    "description": "Heading of the Make your own dialog when the name of the app it is made from is not known. Keep the numbered tag around \"this app\"."
   },
   "fork.intro": {
-    "text": "Make your own copy. You get the code and the look, and it starts as Just you.",
-    "description": "Line under the heading of the remix dialog. \"Just you\" is the name of the audience setting for an app only its maker can use; keep it as a name."
+    "text": "It’s yours to change. It starts as Just you.",
+    "description": "Line under the heading of the Make your own dialog. \"Just you\" is the name of the audience setting for a project only its maker can use; keep it as a name."
   },
   "fork.nameLabel": {
-    "text": "Name for your copy",
-    "description": "Label of the text field in the remix dialog where the copy's name is typed."
+    "text": "Name for your version",
+    "description": "Label of the text field in the Make your own dialog where the new version's name is typed."
   },
   "fork.namePlaceholder": {
-    "text": "My copy",
-    "description": "Greyed example text inside the empty name field of the remix dialog."
+    "text": "My version",
+    "description": "Greyed example text inside the empty name field of the Make your own dialog."
   },
   "fork.defaultName.named": {
-    "text": "{{app}} (remix)",
-    "description": "Name the remix dialog suggests for the copy, filled into the name field. {{app}} is the name of the app being copied."
+    "text": "{{app}} (my version)",
+    "description": "Name the Make your own dialog suggests for the person's version, filled into the name field. {{app}} is the name of the app it is made from."
   },
   "fork.defaultName.unnamed": {
-    "text": "App (remix)",
-    "description": "Name the remix dialog suggests for the copy when the name of the app being copied is not known."
+    "text": "My version",
+    "description": "Name the Make your own dialog suggests for the person's version when the name of the app it is made from is not known."
   },
   "fork.info.copied": {
     "text": "<0>Copied:</0> the code, the look and the icon.",
-    "description": "First line of the box in the remix dialog that says what a copy holds. The numbered tag makes the lead-in bold."
+    "description": "First line of the box in the Make your own dialog that says what the person's version holds. The numbered tag makes the lead-in bold."
   },
   "fork.info.fresh": {
     "text": "<0>Starts fresh:</0> it’s Just you, with an empty database. Invite people or open it up later.",
-    "description": "Second line of the box in the remix dialog. \"Just you\" is the name of the audience setting for an app only its maker can use. The numbered tag makes the lead-in bold."
+    "description": "Second line of the box in the Make your own dialog. \"Just you\" is the name of the audience setting for a project only its maker can use. The numbered tag makes the lead-in bold."
   },
   "fork.info.notCopied": {
     "text": "<0>Not copied:</0> anyone’s data, keys, chat or members. If the app needs a key, you’ll add your own before it goes live.",
-    "description": "Third line of the box in the remix dialog. A key is a secret such as an API key. The numbered tag makes the lead-in bold."
+    "description": "Third line of the box in the Make your own dialog. A key is a secret such as an API key. The numbered tag makes the lead-in bold."
   },
-  "fork.info.public": {
-    "text": "Its code is public on GitHub.",
-    "description": "Last line of the box in the remix dialog: the copy's source code can be read by anyone on GitHub."
+  "fork.follow.title": {
+    "text": "Get {{app}}’s updates",
+    "description": "Label of the switch in the Make your own dialog, on by default: when the app the version is made from (the original) changes, the version is given that change to try and vote on. {{app}} is the original's name."
+  },
+  "fork.follow.titleUnnamed": {
+    "text": "Get its updates",
+    "description": "Label of the switch in the Make your own dialog, on by default, when the name of the app it is made from is not known: the version is given that app's changes to try and vote on."
+  },
+  "fork.follow.sub": {
+    "text": "When {{app}} changes, you get the change to try and vote on. Nothing changes unless you say yes.",
+    "description": "Line under the \"Get its updates\" switch in the Make your own dialog. {{app}} is the name of the app the version is made from."
+  },
+  "fork.follow.subUnnamed": {
+    "text": "When the original changes, you get the change to try and vote on. Nothing changes unless you say yes.",
+    "description": "Line under the \"Get its updates\" switch in the Make your own dialog when the name of the app it is made from is not known. \"The original\" is that app."
   },
   "fork.submit": {
-    "text": "Remix",
-    "description": "Button in the remix dialog: makes the copy. A verb."
+    "text": "Make my version",
+    "description": "Button in the Make your own dialog: makes the person's version."
   },
   "fork.submitting": {
-    "text": "Remixing…",
-    "description": "Text of the remix dialog's button while the copy is being requested."
+    "text": "Making it…",
+    "description": "Text of the Make your own dialog's button while the version is being asked for."
   },
   "fork.error.nameShort": {
     "text": "Name must be at least 3 characters.",
-    "description": "Error in the remix dialog when the copy's name is shorter than 3 characters."
+    "description": "Error in the Make your own dialog when the version's name is shorter than 3 characters."
   },
   "fork.error.failed": {
-    "text": "Could not make your copy.",
-    "description": "Error in the remix dialog when the server refused to make the copy and gave no reason."
+    "text": "Could not make your version.",
+    "description": "Error in the Make your own dialog when the server refused to make the version and gave no reason."
   },
   "fork.error.network": {
     "text": "Network error. Please try again.",
-    "description": "Error in the remix dialog when the request could not reach the server."
+    "description": "Error in the Make your own dialog when the request could not reach the server."
   },
   "fork.beingMade": {
-    "text": "Your copy is being made. It will appear in your apps when it is ready.",
-    "description": "Brief message at the bottom of the screen after a remix was accepted but its progress cannot be shown; the dialog closes and Home opens."
+    "text": "Your version is being made. It will appear in your apps when it is ready.",
+    "description": "Brief message at the bottom of the screen after the person's version was asked for but its progress cannot be shown; the dialog closes and Home opens."
   },
   "fork.retry.http": {
     "text": "Retry failed (HTTP {{status}}).",
-    "description": "Shown under \"Details\" in the progress panel when asking the server to retry a failed remix was refused without a reason. {{status}} is the numeric HTTP status code."
+    "description": "Shown under \"Details\" in the progress panel when asking the server to retry making a version that failed was refused without a reason. {{status}} is the numeric HTTP status code."
   },
   "fork.retry.unreachable": {
     "text": "Could not reach the server to retry. Try again from the app tile.",
-    "description": "Shown under \"Details\" in the progress panel when the retry of a failed remix could not be sent. The app tile is the app's icon on Home."
+    "description": "Shown under \"Details\" in the progress panel when the retry of a version that failed to be made could not be sent. The app tile is the app's icon on Home."
   },
   "importPr.title": {
     "text": "Import a pull request",
@@ -1390,10 +1402,6 @@
   "feedback.video.unreadable": {
     "text": "Couldn't read that clip. Try an MP4, WebM or MOV recording.",
     "description": "Status line of the \"Suggest an improvement\" dialog when a chosen video cannot be played by the browser. MP4, WebM and MOV are file formats."
-  },
-  "feedback.video.tooLong": {
-    "text": "Clips can be up to 60 seconds long. Trim it and try again.",
-    "description": "Status line of the \"Suggest an improvement\" dialog when a chosen video is longer than a minute."
   },
   "feedback.video.uploadFailed": {
     "text": "Video upload failed",
@@ -3263,6 +3271,18 @@
     "text": "More",
     "description": "Accessible name of the stepper's plus button."
   },
+  "whoDecides.rule.min.title": {
+    "text": "Also need a minimum",
+    "description": "Switch on the rule screen of the Who can see & change it sheet, where one approval rule is edited, under How many, for a Majority over time or % rule: turns on a fewest number of yeses the rule needs."
+  },
+  "whoDecides.rule.min.sub": {
+    "text": "It can’t go live on fewer yeses than this. Never more than the group has, so it keeps working if someone leaves.",
+    "description": "Line under the Also need a minimum switch on the rule screen of the Who can see & change it sheet, where one approval rule is edited: the rule never passes on fewer yeses than the number set, and the number is capped at the group's size."
+  },
+  "whoDecides.rule.min.label": {
+    "text": "At least",
+    "description": "Label of the stepper that sets a rule's minimum number of yeses, on the rule screen of the Who can see & change it sheet, where one approval rule is edited. The number follows it, so it reads \"At least 10\"."
+  },
   "whoDecides.rule.today.title": {
     "text": "Today",
     "description": "Section label over what the rule asks for with the project as it is now."
@@ -3299,13 +3319,37 @@
     "text": "{{percent}}% of the active people in {{group}} say yes",
     "description": "A rule, said as a clause. {{percent}} is a whole number; {{group}} is a group's name."
   },
+  "whoDecides.rule.phrase.percentOfActiveMin_one": {
+    "text": "{{percent}}% of the active people in {{group}} say yes, and at least {{count}} of them",
+    "description": "A rule, said as a clause, with a minimum number of yeses. {{percent}} is a whole number; {{group}} is a group's name; {{count}} is the minimum."
+  },
+  "whoDecides.rule.phrase.percentOfActiveMin_other": {
+    "text": "{{percent}}% of the active people in {{group}} say yes, and at least {{count}} of them",
+    "description": "A rule, said as a clause, with a minimum number of yeses. {{percent}} is a whole number; {{group}} is a group's name; {{count}} is the minimum."
+  },
   "whoDecides.rule.phrase.percentOfEveryone": {
     "text": "{{percent}}% of everyone in {{group}} says yes",
     "description": "A rule, said as a clause. {{percent}} is a whole number; {{group}} is a group's name."
   },
+  "whoDecides.rule.phrase.percentOfEveryoneMin_one": {
+    "text": "{{percent}}% of everyone in {{group}} says yes, and at least {{count}} of them",
+    "description": "A rule, said as a clause, with a minimum number of yeses. {{percent}} is a whole number; {{group}} is a group's name; {{count}} is the minimum."
+  },
+  "whoDecides.rule.phrase.percentOfEveryoneMin_other": {
+    "text": "{{percent}}% of everyone in {{group}} says yes, and at least {{count}} of them",
+    "description": "A rule, said as a clause, with a minimum number of yeses. {{percent}} is a whole number; {{group}} is a group's name; {{count}} is the minimum."
+  },
   "whoDecides.rule.phrase.majority": {
     "text": "Most active people in {{group}} say yes, over time",
     "description": "A rule, said as a clause: the platform's usual vote over a group. {{group}} is a group's name."
+  },
+  "whoDecides.rule.phrase.majorityMin_one": {
+    "text": "Most active people in {{group}} say yes, over time, and at least {{count}} of them",
+    "description": "A rule, said as a clause: the platform's usual vote over a group, with a minimum number of yeses. {{group}} is a group's name; {{count}} is the minimum."
+  },
+  "whoDecides.rule.phrase.majorityMin_other": {
+    "text": "Most active people in {{group}} say yes, over time, and at least {{count}} of them",
+    "description": "A rule, said as a clause: the platform's usual vote over a group, with a minimum number of yeses. {{group}} is a group's name; {{count}} is the minimum."
   },
   "whoDecides.rule.today.empty": {
     "text": "Can’t pass until {{group}} has someone in it.",
@@ -3334,6 +3378,22 @@
   "whoDecides.rule.today.majority": {
     "text": "Group vote’s math, or a quiet wait if nobody objects.",
     "description": "Line under Today on the rule screen of the Who can see & change it sheet, where one approval rule is edited, for a Majority over time rule: it counts like the Group vote preset, or a change goes live after a quiet wait when nobody votes no."
+  },
+  "whoDecides.rule.today.majorityMin_one": {
+    "text": "Group vote’s math, or a quiet wait if nobody objects, and never fewer than {{count}} yes.",
+    "description": "Line under Today on the rule screen of the Who can see & change it sheet, where one approval rule is edited, for a Majority over time rule with a minimum: it counts like the Group vote preset, or a change goes live after a quiet wait when nobody votes no, but never on fewer yeses than {{count}}, which is never more than the group has."
+  },
+  "whoDecides.rule.today.majorityMin_other": {
+    "text": "Group vote’s math, or a quiet wait if nobody objects, and never fewer than {{count}} yeses.",
+    "description": "Line under Today on the rule screen of the Who can see & change it sheet, where one approval rule is edited, for a Majority over time rule with a minimum: it counts like the Group vote preset, or a change goes live after a quiet wait when nobody votes no, but never on fewer yeses than {{count}}, which is never more than the group has."
+  },
+  "whoDecides.rule.today.percentOfActiveMin_one": {
+    "text": "Counts only people who have been active lately, and never fewer than {{count}} yes.",
+    "description": "Line under Today on the rule screen of the Who can see & change it sheet, where one approval rule is edited, for a rule counting a share of the active people with a minimum: only recently active people are counted, and it never goes live on fewer yeses than {{count}}, which is never more than the group has."
+  },
+  "whoDecides.rule.today.percentOfActiveMin_other": {
+    "text": "Counts only people who have been active lately, and never fewer than {{count}} yeses.",
+    "description": "Line under Today on the rule screen of the Who can see & change it sheet, where one approval rule is edited, for a rule counting a share of the active people with a minimum: only recently active people are counted, and it never goes live on fewer yeses than {{count}}, which is never more than the group has."
   },
   "whoDecides.rule.today.unknown": {
     "text": "Depends on how many people the group has.",

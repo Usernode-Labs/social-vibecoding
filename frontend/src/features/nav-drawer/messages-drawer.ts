@@ -11,10 +11,10 @@
  * `open()` (../messages/store.ts), and the strip slides to wherever the
  * route lands.
  *
- * A conversation with people, and an agent chat or an agent session (Evan,
- * 18 Oct 2026: on a phone they used to open on screens of their own, with no
- * list to swipe back to; now they open here, and their old addresses land
- * here too, app.js). Not a dev session, which opens on its project's page; a
+ * A conversation with people, and an agent session (Evan, 18 Oct 2026: on a
+ * phone they used to open on screens of their own, with no list to swipe
+ * back to; now they open here, and their old addresses land here too,
+ * app.js). Not a dev session, which opens on its project's page; a
  * channel, which belongs to its community; or a reply thread, which is a
  * level over its conversation with its own header. Those keep the screen as
  * it was.
@@ -30,7 +30,7 @@ import { createStore } from '../../lib/plain-store.js';
 import { createDepthChannel } from './drawer-store';
 
 export interface MessagesDrawerState {
-  /** The drawer holds the route: a phone, and the list, a conversation, an agent chat or an agent session. */
+  /** The drawer holds the route: a phone, and the list, a conversation or an agent session. */
   on: boolean;
   /** 0, the list; 1, a conversation. */
   level: 0 | 1;
@@ -56,18 +56,23 @@ export function messagesDrawerApplies(at: {
   embedded?: boolean;
   /** The open conversation's kind, once it is known. */
   activeKind?: string | null;
+  /** #6019: the open conversation is the chat with Homeroom bot, the AI tab's Main. */
+  bot?: boolean;
 }): boolean {
   if (!at.phone || !at.open || at.embedded) return false;
   if (at.appSlug || at.threadRootId) return false;
   if (at.agent && !onTheDrawer(at.agent)) return false;
   if (at.conversationId && at.activeKind === 'channel') return false;
+  // Main is the AI tab's, a level under its own page, not one of the inbox's
+  // conversations: its way back is the AI tab, not a pan to the inbox.
+  if (at.conversationId && at.bot) return false;
   return true;
 }
 
-/** Whether an agent thread is the drawer's: an agent chat or an agent session, not a dev session. Pure. */
+/** Whether an agent thread is the drawer's: an agent session, not a dev session. Pure. */
 export function onTheDrawer(agent: unknown): boolean {
   const kind = agent && typeof agent === 'object' ? (agent as { kind?: unknown }).kind : null;
-  return kind === 'chat' || kind === 'agent';
+  return kind === 'agent';
 }
 
 let goBack: (() => void) | null = null;

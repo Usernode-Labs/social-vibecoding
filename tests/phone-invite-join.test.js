@@ -132,8 +132,12 @@ test('the sheet\'s phone steps: the code, then the username on the phone\'s own 
   assert.match(src, /const firstStep: Step = phone \? 'phone' : otherWays;/);
   assert.match(src, /data-sign-in-sheet-to-email=""\s+onClick=\{\(e\) => \{ e\.preventDefault\(\); setError\(null\); setDetails\(null\); setStep\('email'\); \}\}/,
     'the email way, which leads on to the password, whatever is set up');
-  assert.match(src, /const recaptchaToken = await phoneRecaptchaToken\(\);\s+const res = await fetch\('\/api\/auth\/phone\/request'/);
-  assert.match(src, /body: JSON\.stringify\(\{ phoneNumber: value, \.\.\.\(recaptchaToken \? \{ recaptchaToken \} : \{\}\) \}\)/);
+  assert.match(src, /const \{ res, data \} = await postPhoneCodeRequest\('\/api\/auth\/phone\/request', value\);/);
+  // The token and the body are the shared helper's (./recaptcha.ts), which
+  // also earns the Firebase backup's check when the server asks for one.
+  const helper = read('frontend/src/features/auth/recaptcha.ts');
+  assert.match(helper, /const first = await send\(await phoneRecaptchaToken\(\)\);/);
+  assert.match(helper, /body: JSON\.stringify\(\{ phoneNumber, backup: true, \.\.\.\(recaptchaToken \? \{ recaptchaToken \} : \{\}\) \}\)/);
   const verify = src.slice(src.indexOf('const verifyPhone = useCallback'), src.indexOf('const finishAccount = useCallback'));
   assert.match(verify, /fetchSessionMint\('\/api\/auth\/phone\/verify'/);
   assert.match(verify, /sessionInfo: phoneSession\.current,\s+code,\s+\.\.\.\(phoneName\.current \? \{ name: phoneName\.current \} : \{\}\),\s+\.\.\.\(followInvite \? \{ followInvite: true \} : \{\}\),/);
@@ -193,7 +197,7 @@ test('Google\'s script loads only for a phone code, never with the shell', () =>
   assert.match(src, /size: 'invisible',\s+badge: 'inline',/);
   // The site key is read first: no key (Brevo sends the texts, #5840) means
   // no token and no Google script fetched at all.
-  assert.match(src, /const siteKey = await readSiteKey\(\);\s+if \(!siteKey\) return null;\s+const g = await loadScript\(\);/);
+  assert.match(src, /const siteKey = key \|\| await readSiteKey\(\);\s+if \(!siteKey\) return null;\s+const g = await loadScript\(\);/);
   assert.match(src, /export function phoneRecaptchaInUse\(\): Promise<boolean> \{/);
   assert.doesNotMatch(src, /Both start at once/);
   assert.doesNotMatch(read('frontend/src/head.html'), /recaptcha/i);
@@ -277,7 +281,7 @@ test('the waiting room: a queued group can be joined now by adding a phone, and 
   // number's <input> as the Code field and the number shows up in it (#4143).
   assert.match(src, /<form key="phone" /);
   assert.match(src, /<form key="code" /);
-  assert.match(src, /fetch\('\/api\/auth\/phone-link\/request'/);
+  assert.match(src, /postPhoneCodeRequest\('\/api\/auth\/phone-link\/request', value\)/);
   assert.match(src, /fetch\('\/api\/auth\/phone-link\/verify'/);
   const waiting = read('frontend/src/features/auth/waiting.tsx');
   assert.match(waiting, /setPhoneOffered\(options\?\.phone_sign_in === true\);/);

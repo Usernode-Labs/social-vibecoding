@@ -18,8 +18,10 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // like a chat one, so it rides the same switch, beside it.
     // #4535: a message in a request's discussion you posted in or filed is a
     // reply in the same sense, so it rides it too, beside `thread_reply`.
+    // #6019: so does `change_thread_reply`, its twin for a change's or a
+    // decision's thread.
     // Kept in lockstep with the seed in db/schema.sql.
-    kinds: Object.freeze(['mention', 'issue_mention', 'reply', 'thread_reply', 'issue_thread_reply', 'friend_request', 'friend_accept']),
+    kinds: Object.freeze(['mention', 'issue_mention', 'reply', 'thread_reply', 'issue_thread_reply', 'change_thread_reply', 'friend_request', 'friend_accept']),
   }),
   Object.freeze({
     key: 'invitations',

@@ -133,7 +133,7 @@ const app = (over) => ({
   name: 'Some App',
   status: 'running',
   icon_emoji: '🧩',
-  directory: { tier: 'ready', state: 'working', label: 'Reviewed working' },
+  directory: { tier: 'listed', state: 'listed', label: null, flagged: false, flaggedAt: null },
   is_collaborator: false,
   is_favorited: false,
   is_member: false,
@@ -147,35 +147,34 @@ const app = (over) => ({
 
 // ── featuredApps selection ────────────────────────────────────────
 
-// One reviewed app, two that cannot be offered at all, and four whose review
-// is absent, expired or negative. The two lanes disagree about the last four.
+// Two apps that can be offered, two that cannot at all, and one an admin
+// flagged, which neither lane offers whatever its numbers.
+const flaggedDirectory = { state: 'flagged', tier: 'hidden', label: 'Hidden from Discover', flagged: true, flaggedAt: null };
 const discoveryCandidates = () => [
   app({ slug: 'ready', active_users: 1 }),
   app({ slug: 'no-icon', icon_emoji: null, active_users: 100 }),
   app({ slug: 'not-running', status: 'creating', active_users: 100 }),
-  ...['unreviewed', 'outdated', 'demo', 'broken'].map((state) => app({
-    slug: state, active_users: 100, directory: { state, tier: state === 'outdated' || state === 'unreviewed' ? 'unreviewed' : 'more' },
-  })),
+  app({ slug: 'flagged', active_users: 1000, member_count: 1000, directory: flaggedDirectory }),
+  app({ slug: 'busy', active_users: 100 }),
 ];
 
-// Polish N3: a review ranks a community first but is not required. It
-// expires on every merge, and with none current the lane was always empty
-// while Discover listed dozens to join. Demo and broken reviews still keep
-// an app out, as no icon and not running do.
-test('popular puts reviewed communities first, offers unreviewed ones, and never a demo or broken one', () => {
+// No review ranks or gates the lane: it is the busiest communities, less the
+// ones an admin flagged, the way no icon and not running leave one out.
+test('popular is the busiest runnable communities, and never a flagged one', () => {
   const Home = makeHome();
-  assert.deepEqual(Home.popularApps(discoveryCandidates()).map((a) => a.slug), ['ready', 'unreviewed', 'outdated']);
-  assert.equal(Home.isDiscoveryReady(app({ demo: true })), true, 'staging inertness is not an editorial demo classification');
-  assert.equal(Home.isDiscoveryReady(app({ directory: { state: 'outdated', tier: 'unreviewed' } })), false,
-    'an expired review is not a current one');
+  assert.deepEqual(Home.popularApps(discoveryCandidates()).map((a) => a.slug), ['busy', 'ready']);
+  assert.equal(Home.isDiscoverable(app({ demo: true })), true, 'staging inertness is not a flag');
+  assert.equal(Home.isDiscoverable(app({ directory: flaggedDirectory })), false);
+  assert.equal(Home.isFlagged(app({ directory: flaggedDirectory })), true);
+  assert.equal(Home.isFlagged(app({ directory: undefined })), false);
+  assert.equal('isDiscoveryReady' in Home, false, 'no review to be ready by');
 });
 
-test('featured requires a running app with an icon, not a current review (#2565)', () => {
+test('featured requires a running app with an icon and no flag (#2565)', () => {
   const Home = makeHome();
   const featured = discoveryCandidates().map((a, i) => ({ ...a, featured: true, featured_order: i }));
-  assert.deepEqual(Home.featuredApps(featured).map((a) => a.slug),
-    ['ready', 'unreviewed', 'outdated', 'demo', 'broken'],
-    'featuring is the editorial decision: an absent or expired review no longer hides the app; no icon and not running still do');
+  assert.deepEqual(Home.featuredApps(featured).map((a) => a.slug), ['ready', 'busy'],
+    'featuring is the editorial decision; no icon, not running and a flag still leave an app out');
   assert.equal(Home.isDiscoverable(app({ self_hosted: true })), false, 'the platform itself is never offered');
   assert.equal(Home.isDiscoverable(app({ icon_emoji: null, icon_url: null })), false, 'nothing to draw');
   assert.equal(Home.isDiscoverable(app({ status: 'creating' })), false, 'cannot be opened yet');
@@ -854,28 +853,24 @@ function stagingFeaturedSeed(env = 'staging') {
 }
 
 for (const prepopulated of [false, true]) {
-  test(`staging Discover has addable reviewed fixtures with an ${prepopulated ? 'existing' : 'empty'} featured list`, async () => {
+  test(`staging Discover has addable fixtures with an ${prepopulated ? 'existing' : 'empty'} featured list`, async () => {
     const curation = require('../src/services/discovery-curation');
     const real = app({ id: 1, slug: 'real-cloned-app', directory_review_status: 'unreviewed', active_users: 10 });
+    // A fixture someone flagged in this preview is never featured by the seed.
     const fixtures = ['puzzle-chain', 'word-garden', 'pixel-racer'].map((name, i) => app({
-      id: i + 2, slug: `staging-demo-${name}`, directory_review_status: 'unreviewed', active_users: 0,
+      id: i + 2, slug: `staging-demo-${name}`, icon_emoji: null, active_users: 0,
+      directory_review_status: name === 'pixel-racer' ? 'broken' : 'unreviewed',
     }));
     const featured = new Map(prepopulated ? [[real.id, 7]] : []);
     const pool = { async query(raw, params = []) {
       const sql = raw.replace(/\s+/g, ' ').trim();
       // Model just the fixture persistence; the actual Home selection and
-      // review classification below execute production code.
+      // Discover classification below execute production code.
       if (sql.startsWith('UPDATE apps SET icon_emoji')) {
         assert.match(sql, /created_by = \(SELECT id FROM users WHERE username = 'staging-demo-user'\)/);
-        assert.match(sql, /AND directory_review_status = 'unreviewed'/);
-        for (const fixture of fixtures) {
-          if (fixture.directory_review_status !== 'unreviewed') continue;
-          Object.assign(fixture, {
-            icon_emoji: '🧩', main_sha: '0000000000000000000000000000000000000001',
-            directory_review_status: 'working', directory_reviewed_at: '2026-09-07T12:00:00Z',
-            directory_reviewed_sha: '0000000000000000000000000000000000000001',
-          });
-        }
+        assert.match(sql, /AND icon_emoji IS NULL AND icon_image_id IS NULL/);
+        assert.doesNotMatch(sql, /directory_review/, 'the seed certifies nothing');
+        for (const fixture of fixtures) if (!fixture.icon_emoji) fixture.icon_emoji = '🧩';
         return { rows: [] };
       }
       if (sql === 'SELECT 1 FROM featured_apps LIMIT 1') {
@@ -883,8 +878,8 @@ for (const prepopulated of [false, true]) {
       }
       if (sql.startsWith('SELECT id FROM apps')) {
         assert.match(sql, /created_by = \(SELECT id FROM users WHERE username = 'staging-demo-user'\)/);
-        assert.match(sql, /AND directory_review_status = 'working'/);
-        return { rows: fixtures.filter((a) => a.directory_review_status === 'working') };
+        assert.match(sql, /AND directory_review_status NOT IN \('demo', 'broken'\)/);
+        return { rows: fixtures.filter((a) => !curation.isFlagged(a)) };
       }
       if (sql.startsWith('INSERT INTO featured_apps')) {
         assert.match(sql, /COALESCE\(MAX\(sort_order\), -1\) \+ 1/);
@@ -900,18 +895,18 @@ for (const prepopulated of [false, true]) {
     await seed(pool);
     assert.deepEqual([...featured], first, 'reboot preserves existing positions without duplicates');
     if (prepopulated) assert.equal(featured.get(real.id), 7, 'cloned ordering is preserved');
-    assert.equal(real.directory_review_status, 'unreviewed', 'no real app is certified by the seed');
+    assert.equal(real.icon_emoji, '🧩', 'no real app is touched by the seed');
+    assert.equal(real.directory_review_status, 'unreviewed');
     const apps = [real, ...fixtures].map((a) => ({
       ...a, directory: curation.describe(a), featured: featured.has(a.id), featured_order: featured.get(a.id),
     }));
     const Home = makeHome();
     const offered = Home.featuredApps(apps);
-    // Featuring, not the review, decides the lane (#2565): a production app
-    // the clone brought over already featured is offered at its admin-set
-    // position even though the seed leaves it unreviewed. The fixtures follow
-    // in seed order.
+    // Featuring decides the lane (#2565): a production app the clone
+    // brought over already featured is offered at its admin-set position.
+    // The fixtures follow in seed order, less the flagged one.
     assert.deepEqual(offered.map((a) => a.slug),
-      (prepopulated ? [real.slug] : []).concat(fixtures.map((a) => a.slug)));
+      (prepopulated ? [real.slug] : []).concat(['staging-demo-puzzle-chain', 'staging-demo-word-garden']));
     assert.ok(offered.every((a) => !a.demo && !Home.isYours(a)),
       'real DB-backed fixtures must remain available to the Discover add/remove check');
   });

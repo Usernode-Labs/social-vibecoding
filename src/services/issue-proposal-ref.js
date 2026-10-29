@@ -107,4 +107,4 @@ async function resolveIssueProposalRefs(pool, appId, numbers, viewerId) {
   return out;
 }
 
-module.exports = { resolveIssueProposalRefs };
+module.exports = { resolveIssueProposalRefs, isNavigable, stateOf };

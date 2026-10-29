@@ -168,7 +168,7 @@ function browserDemo(): boolean {
 function publish(next: Partial<InternalState>): void {
   state = { ...state, ...next, revision: state.revision + 1 };
   for (const listener of [...listeners]) listener();
-  if (next.conversations || next.discussions) syncTabBadge();
+  if (next.conversations || next.discussions || next.route || next.active) syncTabBadge();
 }
 
 /**
@@ -187,11 +187,19 @@ function syncTabBadge(): void {
   // something unread counts on the Communities tab and Messages counts the
   // people and group chats alone. Only your own communities' channels count
   // there — the `more` rows are apps you were merely active in.
+  //
+  // #6019: THE HOMEROOM BOT'S CHAT IS THE AI TAB'S, not Messages': its row
+  // left this list, so its unread counts on AI, and the AI tab is the one
+  // lit while it is the conversation on screen.
+  const botId = state.conversations.find((item) => item.homeroomBot && item.kind !== 'channel')?.id
+    || (state.active?.homeroomBot ? state.active.id : null);
   navStore.set({
     messages: state.conversations
-      .filter((item) => item.kind !== 'channel' && item.unreadCount > 0).length,
+      .filter((item) => item.kind !== 'channel' && !item.homeroomBot && item.unreadCount > 0).length,
     communities: state.conversations.filter((item) => item.kind === 'channel' && item.unreadCount > 0).length
       + state.discussions.filter((item) => item.section !== 'more' && (item.unreadCount || 0) > 0).length,
+    ai: Math.max(0, Number(state.conversations.find((item) => item.homeroomBot && item.kind !== 'channel')?.unreadCount) || 0),
+    bot: !!state.route.open && !!botId && state.route.conversationId === botId,
   });
 }
 
@@ -884,16 +892,12 @@ export function route(
 }
 
 /**
- * An agent thread out of the address bar (#2813). A global chat's id is a
- * UUID and a session's a serial; anything else is not a thread this inbox
- * can open, and the pane falls back to "choose a conversation".
+ * An agent thread out of the address bar (#2813). A session's id is a
+ * serial; anything else is not a thread this inbox can open, and the pane
+ * falls back to "choose a conversation".
  */
 export function validAgentThread(agent?: MessagesAgentThread | null): MessagesAgentThread | null {
   if (!agent || typeof agent !== 'object') return null;
-  if (agent.kind === 'chat') {
-    const id = typeof agent.id === 'string' ? agent.id.trim() : '';
-    return /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id) ? { kind: 'chat', id } : null;
-  }
   if (agent.kind === 'session') {
     const slug = validSlug(agent.slug);
     return slug && validId(agent.id) ? { kind: 'session', slug, id: agent.id } : null;
@@ -907,7 +911,6 @@ export function validAgentThread(agent?: MessagesAgentThread | null): MessagesAg
 
 function sameAgentThread(a: MessagesAgentThread | null, b: MessagesAgentThread | null): boolean {
   if (!a || !b) return a === b;
-  if (a.kind === 'chat' && b.kind === 'chat') return a.id === b.id;
   if (a.kind === 'session' && b.kind === 'session') return a.slug === b.slug && a.id === b.id;
   if (a.kind === 'agent' && b.kind === 'agent') return a.id === b.id;
   return false;
@@ -919,17 +922,13 @@ function sameAgentThread(a: MessagesAgentThread | null, b: MessagesAgentThread |
  */
 export function agentThreadAddress(agent: MessagesAgentThread): string {
   if (agent.kind === 'agent') return `#messages/agent/${agent.id}`;
-  return agent.kind === 'chat'
-    ? `#messages/agent/${encodeURIComponent(agent.id)}`
-    : `#messages/session/${encodeURIComponent(agent.slug)}/${agent.id}`;
+  return `#messages/session/${encodeURIComponent(agent.slug)}/${agent.id}`;
 }
 
 /** Where the same thread lives as a screen of its own — a phone's destination. */
 export function fullScreenAddress(agent: MessagesAgentThread): string {
   if (agent.kind === 'agent') return `#agent/${agent.id}`;
-  return agent.kind === 'chat'
-    ? `#chat/${encodeURIComponent(agent.id)}`
-    : `#app/${encodeURIComponent(agent.slug)}/dev/sessions/${agent.id}`;
+  return `#app/${encodeURIComponent(agent.slug)}/dev/sessions/${agent.id}`;
 }
 
 /**
@@ -1154,6 +1153,12 @@ export function followPlatformSlug(): () => void {
   return subscribePlatformSlug(() => { if (state.route.open && !channelToHub()) syncChrome(); });
 }
 
+/** Whether the conversation open here, not embedded elsewhere, is the chat with Homeroom bot (Main). */
+function botOnShow(): boolean {
+  return !!state.route.conversationId && !state.route.embedded
+    && !!state.active && state.active.id === state.route.conversationId && !!state.active.homeroomBot;
+}
+
 export function syncChrome(): void {
   const app = typeof window !== 'undefined' ? window.App : undefined;
   if (!app) return;
@@ -1192,9 +1197,18 @@ export function syncChrome(): void {
     threadRootId: state.route.threadRootId,
     embedded: state.route.embedded,
     activeKind: state.active && state.active.id === state.route.conversationId ? state.active.kind : null,
+    bot: botOnShow(),
   })) {
     app.setBackIcon?.('none');
     app.setHeaderTitle?.(t('messages:store.header.messages'));
+    return;
+  }
+  // #6019: Main, the chat with Homeroom bot, is a level under the AI tab's
+  // page (features/ai/): its arrow goes back there, at every width, and the
+  // bar names it. A thread of it is a level under Main, as any reply thread is.
+  if (botOnShow() && !(isMobile() && state.route.threadRootId)) {
+    app.setBackIcon?.('arrow', '#ai');
+    app.setHeaderTitle?.(t('messages:store.header.main'));
     return;
   }
   const thread = listAside() && !!(state.route.conversationId || state.route.appSlug || state.route.agent);
@@ -2547,6 +2561,8 @@ export const messagesController = {
   openBot: (reference?: StagedObject | null) => { void openBot(reference); },
   // 16 Oct 2026: a request's page's See progress, at the request's own thread.
   openBotRequest: (slug: string, number: number) => { void openBotRequest(slug, number); },
+  // #6019: `#ai/thread/<id>`, one of the bot chat's threads (app.js).
+  openBotThread: (rootId: number) => { void openBot().then(() => openThreadAt(rootId, null)); },
   // B6: the App tab's Change something, under a first version's plan.
   quoteBotMessage: (conversationId?: number | null, messageId?: number | null) => { void quoteBotMessage(conversationId, messageId); },
   openAddress,

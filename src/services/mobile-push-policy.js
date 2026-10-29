@@ -337,6 +337,15 @@ function buildCopy(kind, context, now) {
         body: message,
       };
     }
+    // #6019: the same in a thread a change or a decision leads. `detail` is
+    // the change's number; a decision filed as a governance row has none.
+    case 'change_thread_reply': {
+      const what = /^\d+$/.test(detail) ? `change #${detail}` : 'a decision';
+      return actor && {
+        title: withApp(`@${actor} replied on ${what}`),
+        body: message,
+      };
+    }
     // A person's message in a small private group's discussion
     // (services/group-channel-notify.js). Only a fresh row rings, so this is
     // nearly always the one message; `detail` counts the messages folded in

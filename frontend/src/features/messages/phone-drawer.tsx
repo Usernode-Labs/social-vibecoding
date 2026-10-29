@@ -108,6 +108,7 @@ export function useMessagesDrawer(
     threadRootId: route.threadRootId,
     embedded: route.embedded,
     activeKind: active && active.id === route.conversationId ? active.kind : null,
+    bot: !!(active && active.id === route.conversationId && active.homeroomBot),
   });
   const level: 0 | 1 = route.conversationId || route.agent ? 1 : 0;
   const agentOpen = on && level === 1 && !!route.agent;

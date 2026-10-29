@@ -33,8 +33,11 @@
 //     `--unsafe-paths` is never passed, so nothing escapes the work tree;
 //   * the base commit is the platform's own recorded value, never input.
 //
-// The tmpdir, the PAT-first credential and the cleanup all come from
-// services/external-agent-head.js, shared with the mirror path.
+// The tmpdir, the write credential and the cleanup all come from
+// services/external-agent-head.js, shared with the mirror path. Only the
+// fetch of the base commit and the push hold the credential (through git's
+// credential helper, services/git-child.js); `git apply`, `git am` and the
+// commit run on the submitted patch with no secret of this process at all.
 
 const log = require('./logger');
 const head = require('./external-agent-head');
@@ -213,13 +216,13 @@ async function applyPatch({
   try {
     const label = targetBranch ? `patch-s${sessionId || 0}` : `patch-${taskId || 0}`;
     await head.withScratchRepo(label, async ({ dir, git }) => {
-      const remote = head.authenticatedRemote(credential.token, owner, repo);
+      const remote = head.appRemote(owner, repo);
       // A shallow fetch of the base commit is enough: the full tree and
       // every blob AT that commit are present, which is what `git apply
       // --3way` needs to reconstruct context from the index lines. Pushing
       // from a shallow clone works because the boundary commit exists on
       // the remote already.
-      await git(['fetch', '--depth', '1', '--no-tags', remote, String(baseSha)]);
+      await git(['fetch', '--depth', '1', '--no-tags', remote, String(baseSha)], { credential });
       await git(['checkout', '--detach', 'FETCH_HEAD']);
 
       const fs = require('fs/promises');
@@ -307,7 +310,7 @@ async function applyPatch({
         // commit, as the fork update's push does.
         try {
           await git(['push', `--force-with-lease=refs/heads/${branch}:${String(baseSha).toLowerCase()}`,
-            remote, `HEAD:refs/heads/${branch}`]);
+            remote, `HEAD:refs/heads/${branch}`], { credential });
         } catch (err) {
           // git's own words for a lease that no longer holds, read the way
           // external-agent-head.pushForkBranchToAppBranch reads them.
@@ -318,7 +321,7 @@ async function applyPatch({
           throw err;
         }
       } else {
-        await git(['push', remote, `HEAD:refs/heads/${branch}`]);
+        await git(['push', remote, `HEAD:refs/heads/${branch}`], { credential });
       }
       pushed = true;
     });
@@ -376,7 +379,7 @@ async function applyPatch({
     });
     // Never the proposal's own branch: it was there before this call.
     if (pushed && !targetBranch) {
-      await head.deleteBranch({ owner, repo, branch, token: credential.token });
+      await head.deleteBranch({ owner, repo, branch, credential });
     }
     return fail('platform_unavailable', 'Homeroom could not apply that patch just now. Try again shortly.', { retryable: true });
   }
@@ -392,7 +395,7 @@ async function applyPatch({
     credential: credential.source,
     cleanup: targetBranch
       ? async () => {}
-      : () => head.deleteBranch({ owner, repo, branch, token: credential.token }),
+      : () => head.deleteBranch({ owner, repo, branch, credential }),
   };
 }
 

@@ -446,6 +446,30 @@ test('prepare_work records the work order at the UPSTREAM base commit', async ()
   assert.equal(insert.params[5], result.branch);
 });
 
+// #5987: the "Open in Claude Code" link's prompt passes startedFrom, and the
+// task row records it so those tasks can be counted. Anything else is dropped.
+test('prepare_work records where a task was started from, and only a known value', async () => {
+  const run = async (startedFrom) => {
+    const queries = [];
+    const pool = fakePool([['INSERT INTO external_agent_tasks', [{ id: 31 }]]], queries);
+    const result = await withFetch(FORK_READY, [], () => svc.prepareWork(
+      { pool, config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
+      {
+        user: { id: 3 }, app: APP, issueNumber: 4, brief: 'x',
+        clientName: 'Claude — claude.ai', origin: 'https://usernode.example', startedFrom,
+      }
+    ));
+    assert.equal(result.ok, true);
+    const insert = queries.find((q) => q.sql.includes('INSERT INTO external_agent_tasks'));
+    assert.match(insert.sql, /started_from\)/);
+    return insert.params[13];
+  };
+  assert.equal(await run('claude_code_link'), 'claude_code_link');
+  assert.equal(await run(undefined), null);
+  assert.equal(await run('anything-else'), null);
+  assert.deepEqual([...svc.STARTED_FROM], ['claude_code_link']);
+});
+
 test('a missing fork still produces a work order — it is the agent’s job now', async () => {
   const queries = [];
   const pool = fakePool([['INSERT INTO external_agent_tasks', [{ id: 32 }]]], queries);
@@ -1652,7 +1676,7 @@ test('the mirror and patch helpers write with the App\'s installation token, nev
   try {
     process.env.GITHUB_BOT_TOKEN = 'ghp_thepat';
     const credential = await headSvc.resolveWriteCredential('Usernode-Labs');
-    assert.deepEqual(credential, { token: 'ghs_installationtoken', source: 'installation' });
+    assert.deepEqual(credential, { token: 'ghs_installationtoken', username: 'x-access-token', source: 'installation' });
     assert.deepEqual(asked, ['Usernode-Labs']);
   } finally {
     github.getInstallationToken = realInstall;
@@ -1661,20 +1685,23 @@ test('the mirror and patch helpers write with the App\'s installation token, nev
   }
 });
 
-test('a git failure never leaks the bot token into a log', () => {
+test('a git failure never leaks the bot token into a log, and the token is never in a remote URL', () => {
   const headSvc = require('../src/services/external-agent-head');
   const token = 'ghp_secretvalue';
   const message = `fatal: could not read from https://x-access-token:${token}@github.com/o/r.git`;
   const safe = headSvc.redactToken(message, token);
   assert.ok(!safe.includes(token));
   assert.match(safe, /\*\*\*/);
-  // The credential only ever appears inside a remote URL built here.
+  // No remote carries a credential: git asks a helper for it, in the
+  // environment of the one invocation handed it (services/git-child.js;
+  // tests/external-agent-git-env.test.js runs it).
+  assert.equal(headSvc.appRemote('Usernode-Labs', 'demo'), 'https://github.com/Usernode-Labs/demo.git');
+  assert.equal(headSvc.authenticatedRemote, undefined);
   const HEAD_SRC = fs.readFileSync(
     path.join(__dirname, '../src/services/external-agent-head.js'), 'utf8'
   );
-  assert.match(HEAD_SRC, /function authenticatedRemote/);
-  // Every git failure this file logs is redacted first: git puts the whole
-  // remote URL — token included — in its error text.
+  assert.doesNotMatch(HEAD_SRC, /x-access-token:\$\{|\.password = /);
+  // Every git failure this file logs is redacted first.
   for (const src of [HEAD_SRC, fs.readFileSync(
     path.join(__dirname, '../src/services/external-agent-patch.js'), 'utf8'
   )]) {
@@ -1682,11 +1709,10 @@ test('a git failure never leaks the bot token into a log', () => {
       assert.match(arg, /redactToken|err\.message \}\)|err && err\.message/,
         `a logged error must be redacted: ${arg}`);
     }
-    // And the token value itself only ever reaches three places: the
-    // remote URL builder, the redactor, and deleteBranch's own parameter.
+    // And the token value itself only ever reaches the redactor: git is
+    // handed the credential object, never the token in an argument.
     for (const [, context] of src.matchAll(/(\w+)\(([^()]*credential\.token[^()]*)\)/g)) {
-      assert.ok(['authenticatedRemote', 'redactToken', 'deleteBranch'].includes(context),
-        `unexpected use of the token: ${context}`);
+      assert.ok(['redactToken'].includes(context), `unexpected use of the token: ${context}`);
     }
   }
 });
@@ -1825,18 +1851,18 @@ function patchFromBase(app, { mbox }, ...edits) {
 async function applyToLocalApp(app, patch, taskId) {
   const patchSvc = require('../src/services/external-agent-patch');
   const headSvc = require('../src/services/external-agent-head');
-  const realRemote = headSvc.authenticatedRemote;
+  const realRemote = headSvc.appRemote;
   // The write credential: the GitHub App's installation token (services/github.js).
   const githubSvc = require('../src/services/github');
   const realInstallationToken = githubSvc.getInstallationToken;
-  headSvc.authenticatedRemote = () => `file://${app.bare}`;
+  headSvc.appRemote = () => `file://${app.bare}`;
   githubSvc.getInstallationToken = async () => 'local-test-token';
   try {
     return await patchSvc.applyPatch({
       owner: 'usernode-bot', repo: 'recipe-box', patch, baseSha: app.base, userId: 3, taskId,
     });
   } finally {
-    headSvc.authenticatedRemote = realRemote;
+    headSvc.appRemote = realRemote;
     githubSvc.getInstallationToken = realInstallationToken;
   }
 }
@@ -1914,7 +1940,7 @@ test('a patch lands ON an existing proposal branch under a lease, and a moved br
   const patchSvc = require('../src/services/external-agent-patch');
   const headSvc = require('../src/services/external-agent-head');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-patch-onto-'));
-  const realRemote = headSvc.authenticatedRemote;
+  const realRemote = headSvc.appRemote;
   // The write credential: the GitHub App's installation token (services/github.js).
   const githubSvc = require('../src/services/github');
   const realInstallationToken = githubSvc.getInstallationToken;
@@ -1936,7 +1962,7 @@ test('a patch lands ON an existing proposal branch under a lease, and a moved br
     gitIn(work, ['commit', '-qam', 'Fix the failing check']);
     const patch = gitIn(work, ['format-patch', '--stdout', `${base}..HEAD`]);
 
-    headSvc.authenticatedRemote = () => `file://${bare}`;
+    headSvc.appRemote = () => `file://${bare}`;
     githubSvc.getInstallationToken = async () => 'local-test-token';
     const refsBefore = gitIn(bare, ['for-each-ref', '--format=%(refname)']);
     const landed = await patchSvc.applyPatch({
@@ -1977,7 +2003,7 @@ test('a patch lands ON an existing proposal branch under a lease, and a moved br
     });
     assert.equal(bad.code, 'invalid_request');
   } finally {
-    headSvc.authenticatedRemote = realRemote;
+    headSvc.appRemote = realRemote;
     githubSvc.getInstallationToken = realInstallationToken;
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -5088,8 +5114,8 @@ test('preparing records the launchpad it was prepared in', async () => {
   assert.equal(result.ok, true);
 
   const insert = queries.find((q) => /INSERT INTO external_agent_tasks/.test(q.sql));
-  assert.match(insert.sql, /origin_session_id, linked_issues\)/, 'the column is written');
-  assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10, \$11, \$12, \$13\)/,
+  assert.match(insert.sql, /origin_session_id, linked_issues, started_from\)/, 'the column is written');
+  assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10, \$11, \$12, \$13, \$14\)/,
     'and the placeholder list grew with it');
   assert.equal(insert.params[11], 990404, 'with the session that asked');
 

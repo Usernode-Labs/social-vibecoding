@@ -181,3 +181,37 @@ test('a pinned thread follows anyone\'s message', () => {
   const h = incoming({ scrollTop: 1400, pinned: true, userId: 99 });
   assert.equal(h.scroll.scrollTop, 2100);
 });
+
+// #6022: opening a long message ("Show more", features/group-chat/long-body.tsx)
+// grows the row below the reader's line. A pinned follow would answer that
+// with a jump to the new bottom, past the text just revealed.
+test('#6022: opening a long message near the bottom keeps the reader where they are', () => {
+  const h = setup({ scrollHeight: 2000, clientHeight: 600, scrollTop: 0 });
+  const row = { id: 'long-body' };
+  h.scroll.contains = (el) => el === row;
+  h.scroll.scrollTo(1400);
+  assert.equal(h.gc._threadPinned, true, 'the reader is at the newest line');
+  // The body asks for the hold, then opens: 2000px of text appears under it.
+  h.gc.holdReadingPosition(row);
+  h.scroll.scrollHeight = 4000;
+  h.resize();
+  assert.equal(h.scroll.scrollTop, 1400, 'the pressed message stays put; the reader is not sent to the bottom');
+  assert.equal(h.gc._threadPinned, false);
+  // Scrolling to the new bottom follows again, as any scroll there does.
+  h.scroll.scrollTo(3400);
+  assert.equal(h.gc._threadPinned, true);
+  h.scroll.scrollHeight = 4100;
+  h.resize();
+  assert.equal(h.scroll.scrollTop, 4100);
+});
+
+test('#6022: without the hold the same growth jumps to the bottom (the bug), and another scroller\'s row holds nothing', () => {
+  const h = setup({ scrollHeight: 2000, clientHeight: 600, scrollTop: 0 });
+  h.scroll.contains = () => false;
+  h.scroll.scrollTo(1400);
+  h.gc.holdReadingPosition({ id: 'a row in another pane' });
+  assert.equal(h.gc._threadPinned, true, 'a row this scroller does not hold leaves its follow alone');
+  h.scroll.scrollHeight = 4000;
+  h.resize();
+  assert.equal(h.scroll.scrollTop, 4000);
+});

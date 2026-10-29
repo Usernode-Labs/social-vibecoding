@@ -77,7 +77,7 @@ import {
   anyOwed, armWalk, claimWalk, clearLook, FIRST_VISIT_CHECK_MS, lookOwed, noteTipShown, noteWalkRun, oweLook, oweTip,
   owedTip, owedWalk, oweWalk, readScreen, type TipRecord, type TipWho, tipDue, walkArms, walkDue, type WalkRecord,
 } from './first-visit';
-import { type Made, type MakeEntry, MakeScreen } from './make';
+import { type CreateAudience, type Made, type MakeEntry, MakeScreen } from './make';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
 import { noteMoment } from './made-moments';
 import { APP_MENU, BOTTOM_BARS, homeWalkSteps, lookAroundSteps, type TourScreen, type TourStep } from './tour-steps';
@@ -993,7 +993,7 @@ export type Mode =
   // `app`: handed to the app an invite opened (welcome), and down once it is drawn.
   | { kind: 'held'; app?: string }
   // `entry` 'create' is the Create button's (see the header); none is the first session's.
-  | { kind: 'make'; shot?: MakeShot; entry?: MakeEntry; startImport?: boolean }
+  | { kind: 'make'; shot?: MakeShot; entry?: MakeEntry; startImport?: boolean; idea?: string | null; audience?: CreateAudience }
   | { kind: 'made'; made: Made; entry?: MakeEntry }
   | { kind: 'tour'; info: FirstSessionInfo; path: TourPath; start?: number; moments?: boolean };
 
@@ -1206,13 +1206,22 @@ function viewerName(): string {
  * #create/import (or back) by the address turns it to the asked-for form,
  * as a cold load of that address would open it. A made screen stays.
  */
-export function openCreate(setMode: Dispatch<SetStateAction<Mode>>, startImport = false): boolean {
+export function openCreate(
+  setMode: Dispatch<SetStateAction<Mode>>,
+  startImport = false,
+  start: { idea?: string | null; audience?: CreateAudience } = {},
+): boolean {
   let opened = false;
   flushSync(() => setMode((prev) => {
     const turning = prev.kind === 'make' && prev.entry === 'create' && !!prev.startImport !== startImport;
     if (prev.kind !== 'none' && !turning) return prev;
     opened = true;
-    return startImport ? { kind: 'make', entry: 'create', startImport: true } : { kind: 'make', entry: 'create' };
+    if (startImport) return { kind: 'make', entry: 'create', startImport: true };
+    // #6019 follow-up: a private thread's New project starts from its words,
+    // for the audience the person chose.
+    return start.idea || start.audience
+      ? { kind: 'make', entry: 'create', idea: start.idea || null, audience: start.audience }
+      : { kind: 'make', entry: 'create' };
   }));
   if (opened) void invalidateAppAllowance();
   return opened;
@@ -1410,8 +1419,11 @@ export function FirstSession() {
       // The Create button (App.showCreateModal): the one front door for a
       // new project, for every signed-in viewer; `import` opens it on
       // importing a GitHub repo.
-      create(opts?: { import?: boolean }): boolean {
-        return openCreate(setMode, !!opts?.import);
+      create(opts?: { import?: boolean; idea?: string | null; audience?: CreateAudience }): boolean {
+        const audience = opts?.audience === 'solo' || opts?.audience === 'invited' || opts?.audience === 'open'
+          ? opts.audience : undefined;
+        const idea = typeof opts?.idea === 'string' ? opts.idea.slice(0, 4000) : null;
+        return openCreate(setMode, !!opts?.import, { idea, audience });
       },
     };
     w.UsernodeReact.firstSession = api;
@@ -1587,6 +1599,8 @@ export function FirstSession() {
         who={viewerName()}
         entry="create"
         startImport={!!mode.startImport}
+        idea={mode.idea ?? null}
+        audience={mode.audience}
         underHeader={underHeader}
         // Nothing is answered: the tile behind is refreshed, so the new
         // project is in the grid when the made screen goes, and the

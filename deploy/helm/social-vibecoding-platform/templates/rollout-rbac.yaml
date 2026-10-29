@@ -29,6 +29,13 @@ subjects:
   - kind: ServiceAccount
     name: social-platform-runtime
     namespace: {{ .Release.Namespace }}
+  {{- with .Values.platform.web.serviceAccountName }}
+  # The web Pods' own account (platform.web): they read their Deployment and
+  # Pod too.
+  - kind: ServiceAccount
+    name: {{ . }}
+    namespace: {{ $.Release.Namespace }}
+  {{- end }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role

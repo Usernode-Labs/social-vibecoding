@@ -63,6 +63,7 @@ const KINDS = Object.freeze([
   { kind: 'reply', app: true, chat: 'any', actor: true },
   { kind: 'thread_reply', app: true, chat: 'any', actor: true },
   { kind: 'issue_thread_reply', app: true, chat: 'any', actor: true, detail: '1' },
+  { kind: 'change_thread_reply', app: true, chat: 'any', actor: true, detail: '2' },
   { kind: 'issue_mention', app: true, actor: true, detail: '1' },
   { kind: 'channel_message', app: true, chat: 'any', actor: true },
   { kind: 'reaction', app: true, chat: 'own', actor: true, detail: '👍' },

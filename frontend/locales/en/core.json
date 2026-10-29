@@ -21,7 +21,15 @@
   },
   "tabs.discover": {
     "text": "Discover",
-    "description": "Tab in the main navigation: opens the screen for finding apps and communities to join."
+    "description": "Tab in the main navigation on a computer's sidebar, and on a phone the name of the Discover page, which Home's Discover section opens: the screen for finding apps and communities to join."
+  },
+  "tabs.ai": {
+    "text": "Homeroom bot",
+    "description": "Tab in the main navigation: opens the person's page with Homeroom bot, the AI that builds what people ask for (their private chat with it and their work across projects). The bot's own name. On a phone it sits under an icon in a bar of five, in one of its two wider seats; keep it within about twelve characters."
+  },
+  "tabs.unreadAi": {
+    "text": "Unread messages from the Homeroom bot",
+    "description": "Spoken name of the small count on the AI tab in the main navigation: how many messages from the Homeroom bot the person has not read."
   },
   "tabs.messages": {
     "text": "Messages",

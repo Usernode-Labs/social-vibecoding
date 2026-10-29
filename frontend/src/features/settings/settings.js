@@ -224,6 +224,14 @@
 
     // ── Screen state ─────────────────────────────────────────────────────
     _open: false,
+    // #5995: counts behind the menu's rows, reported by the pages' own loads.
+    _navStatus: {},
+    _navStatusPaint: false,
+    // #5997: the pages this viewer pinned to the top of the menu, in their
+    // order, and the groups they folded. Read from this device's storage on
+    // each open() (_loadNavPrefs); empty until then, so the prerender and a
+    // first paint without storage show the menu as it always was.
+    _navPrefs: { pinned: [], folded: [] },
     // Which PAGE is showing (or would show on a viewport crossing) — a page
     // key, never a part key (see SECTIONS). It doubles as "last visited in
     // this tab": open() keeps it when it is still a visible page, so
@@ -332,8 +340,8 @@
 
       // ── AI models & usage ───────────────────────────────────────────────
       // #5994 split the old "AI & building" group, which mixed the allowance,
-      // the connectors, the agent instructions and a global chat, into this
-      // group and the next: each row is faster to find under a heading that
+      // the connectors and the agent instructions, into this group and the
+      // next: each row is faster to find under a heading that
       // says what it is about.
       // The allowance leads: it is the figure most builders open Settings to
       // find. OpenRouter follows it — the included key and the default
@@ -403,13 +411,12 @@
 
       // ── Advanced ────────────────────────────────────────────────────────
       // #5994: the features you switch on to try, at the foot of the menu
-      // rather than among the AI rows. Experimental is the page of switches;
-      // Global Chat is itself an experimental feature, with a page of its
-      // own settings. Unlike #1554's "Advanced", this group never collapses
-      // (see tests/settings-screen.test.js, "no group collapses"): it is a
-      // heading like the four above it, and every row stays visible.
+      // rather than among the AI rows. Experimental is the page of switches.
+      // Unlike #1554's "Advanced", this group is never collapsed for you
+      // (see tests/settings-screen.test.js, "a group folds only when the
+      // person folds it"): it starts open like the four above it, and folds
+      // only if the viewer folds it (#5997).
       { key: 'experimental', label: 'settings:nav.part.experimental', group: 'settings:nav.group.advanced' },
-      { key: 'global-chat', label: 'settings:nav.part.globalChat', group: 'settings:nav.group.advanced' },
     ],
 
     // The label of each page that holds more than one part. A page of one
@@ -435,6 +442,57 @@
       'agent-files': 'settings:nav.subtitle.agentFiles',
     },
 
+    // #5995: a small grey "Beta" label on the rows of features still being
+    // tried, keyed by page. Words, not a colour: at most one per row.
+    TAGS: {
+      experimental: 'settings:nav.tag.beta',
+    },
+
+    // #5997: the small glyph before each page's name in both menus, keyed by
+    // page. A NAME, not markup: ./settings-nav.tsx maps it to a glyph of
+    // @/components/ui/icons (NAV_ICONS), so this file stays plain JS. A page
+    // without an entry draws no glyph.
+    ICONS: {
+      account: 'user',
+      'linked-accounts': 'link',
+      'contact-privacy': 'shield',
+      phones: 'phone',
+      wallet: 'wallet',
+      ai: 'sparkles',
+      connectors: 'terminal',
+      'agent-files': 'lines',
+      theme: 'sun',
+      accessibility: 'eye',
+      language: 'globe',
+      alerts: 'bell',
+      'app-permissions': 'lock',
+      developer: 'code',
+      tour: 'compass',
+      usernode: 'window',
+      about: 'info',
+      experimental: 'bulb',
+    },
+
+    // #5997: where this device remembers the menu's pins and folds, each a
+    // comma list of keys (page keys in pinned order; group keys, the catalog
+    // id's last segment). Per device, like Messages' folded sections
+    // (usernode:messages-folded): a convenience, not an account setting.
+    PINNED_KEY: 'usernode:settings-pinned',
+    FOLDED_KEY: 'usernode:settings-folded',
+
+    // #5995: how much is set up behind a row, said in words at its trailing
+    // edge ("2 linked"), keyed by page: [message, the counts summed]. The
+    // counts come from the lists the pages already load when Settings opens
+    // (_setNavStatus); a count never reported, or a zero, shows nothing.
+    // Connectors & CLI counts the connected chat apps alone: that list is
+    // active grants only, while the CLI list is paged credential history
+    // (revoked and expired rows included), so it cannot give a whole count.
+    STATUS: {
+      'linked-accounts': ['settings:nav.status.linked', ['socialIdentities']],
+      phones: ['settings:nav.status.linked', ['phones']],
+      connectors: ['settings:nav.status.connected', ['connectors']],
+    },
+
     // Extra words the nav's filter box matches for each part, beyond its own
     // label and its page's. Lower case, space separated: the words people
     // type for a thing, not the words the pane uses for it.
@@ -454,7 +512,6 @@
       connectors: 'settings:nav.keywords.connectors',
       cli: 'settings:nav.keywords.cli',
       'agent-files': 'settings:nav.keywords.agentFiles',
-      'global-chat': 'settings:nav.keywords.globalChat',
       experimental: 'settings:nav.keywords.experimental',
       theme: 'settings:nav.keywords.theme',
       'dev-console': 'settings:nav.keywords.devConsole',
@@ -1004,6 +1061,7 @@
       // Per-mount state: the Homeroom-app auto-retry is offered once per
       // visit to Settings, not once per document.
       Settings._usernodeAuthRetryUsed = false;
+      Settings._loadNavPrefs();
       Settings._ensureMediaListener();
       Settings._pendingSection = null;
       Settings._renderAllSections();
@@ -1309,20 +1367,108 @@
     // by the desktop sidebar and the mobile level-1 menu so the two can never
     // drift into different groupings.
     //
-    // No group collapses any more. #1554 shut seven rarely used panes inside
-    // an "Advanced" group to keep the menu short; folding parts into pages
-    // made it short without hiding anything, and two of those seven (what an
-    // app may use on your device, what it may spend) were privacy controls
-    // that should never have needed a disclosure to find.
+    // #5997: the pages the viewer pinned come first, as a Pinned group in
+    // their own order, and leave their usual group rather than showing twice;
+    // a group left with no pages is not drawn. A pin whose page is not offered
+    // right now (Homeroom Wallet while wallet linking is off) is skipped, and
+    // kept, so the page comes back pinned. Each group carries `key` (its
+    // catalog id's last segment) and `folded`; Pinned never folds.
+    //
+    // A group folds only when the viewer folds it. #1554 once shut seven
+    // rarely used panes inside a collapsed "Advanced" group BY DEFAULT, two
+    // of them privacy controls; that is why every group starts open, and why
+    // a fold is the viewer's own choice, remembered on their device.
     _groupedSections() {
-      const groups = [];
-      for (const p of Settings._visiblePages()) {
+      const pages = Settings._visiblePages();
+      const prefs = Settings._navPrefs;
+      const pinned = [];
+      for (const key of prefs.pinned) {
+        const p = pages.find((x) => x.key === key);
+        if (p && !pinned.includes(p)) pinned.push(p);
+      }
+      const groups = pinned.length
+        ? [{ name: 'settings:nav.group.pinned', key: 'pinned', folded: false, items: pinned }]
+        : [];
+      for (const p of pages) {
+        if (pinned.includes(p)) continue;
         const name = p.group || 'settings:nav.group.other';
         let g = groups.find((x) => x.name === name);
-        if (!g) { g = { name, items: [] }; groups.push(g); }
+        if (!g) {
+          const key = Settings._groupKey(p);
+          g = { name, key, folded: prefs.folded.includes(key), items: [] };
+          groups.push(g);
+        }
         g.items.push(p);
       }
       return groups;
+    },
+
+    // A page's own group's key: its catalog id's last segment ('aiModels').
+    // A pinned row carries it as `home`, the group an unpin sends it back to.
+    _groupKey(p) {
+      const name = p.group || 'settings:nav.group.other';
+      return name.slice(name.lastIndexOf('.') + 1);
+    },
+
+    // #5997: read the pins and folds this device remembers. Storage that is
+    // missing or throws (a private window, blocked site data) leaves the menu
+    // as it always was for this visit; nothing else depends on it.
+    _loadNavPrefs() {
+      const read = (key) => {
+        try {
+          const raw = localStorage.getItem(key);
+          return raw ? [...new Set(String(raw).split(',').map((k) => k.trim()).filter(Boolean))] : [];
+        } catch {
+          return [];
+        }
+      };
+      Settings._navPrefs = { pinned: read(Settings.PINNED_KEY), folded: read(Settings.FOLDED_KEY) };
+    },
+
+    // Write one list back and repaint both menus. A write that throws still
+    // changes the menu for this visit.
+    _saveNavPref(which, list) {
+      Settings._navPrefs = { ...Settings._navPrefs, [which]: list };
+      const key = which === 'pinned' ? Settings.PINNED_KEY : Settings.FOLDED_KEY;
+      try {
+        if (list.length) localStorage.setItem(key, list.join(','));
+        else localStorage.removeItem(key);
+      } catch { /* storage unavailable: the change lasts this visit */ }
+      Settings._renderNav();
+    },
+
+    // Pin a page (it goes to the bottom of Pinned) or unpin it (it goes back
+    // to its place in its group).
+    _setPinned(key, on) {
+      const list = Settings._navPrefs.pinned.filter((k) => k !== key);
+      if (on) list.push(key);
+      Settings._saveNavPref('pinned', list);
+    },
+
+    // Move a pinned page one place up (step -1) or down (+1) among the pinned
+    // pages the viewer can see. It swaps with that neighbour's slot in the
+    // stored list, so a pin hidden right now keeps its own place. A no-op at
+    // either end.
+    _movePinned(key, step) {
+      const list = Settings._navPrefs.pinned.slice();
+      const offered = new Set(Settings._visiblePages().map((p) => p.key));
+      const shown = list.filter((k) => offered.has(k));
+      const at = shown.indexOf(key);
+      const other = at < 0 ? undefined : shown[at + step];
+      if (!other) return;
+      const i = list.indexOf(key);
+      const j = list.indexOf(other);
+      list[i] = other;
+      list[j] = key;
+      Settings._saveNavPref('pinned', list);
+    },
+
+    // Fold a group down to its heading, or open it again.
+    _setGroupFolded(group, on) {
+      if (group === 'pinned') return;
+      const list = Settings._navPrefs.folded.filter((k) => k !== group);
+      if (on) list.push(group);
+      Settings._saveNavPref('folded', list);
     },
 
     str(s) {
@@ -1343,6 +1489,47 @@
           terms: `${tr(s.label)} ${Settings.KEYWORDS[s.key] ? tr(Settings.KEYWORDS[s.key]) : ''}`.toLowerCase(),
         })),
       };
+    },
+
+    // #5995: a page's load reports how many things it lists. Only a success
+    // reports; a failed or missing list leaves the row without a count.
+    //
+    // The repaint is DEFERRED to a microtask, never run inline: a React pane
+    // reports from an effect (./sections/linked-phones.tsx), and the nav
+    // store flushes synchronously (flushSync), which React refuses inside an
+    // effect with a console error. Several reports in one tick paint once.
+    _setNavStatus(key, count) {
+      const next = Number.isFinite(count) && count >= 0 ? count : null;
+      const prev = Object.prototype.hasOwnProperty.call(Settings._navStatus, key) ? Settings._navStatus[key] : null;
+      if (next === prev) return;
+      if (next === null) delete Settings._navStatus[key];
+      else Settings._navStatus[key] = next;
+      if (Settings._navStatusPaint) return;
+      Settings._navStatusPaint = true;
+      Promise.resolve().then(() => {
+        Settings._navStatusPaint = false;
+        if (Settings._open) Settings._renderNav();
+      });
+    },
+
+    // The trailing words for a page's row: '' when it counts nothing, when no
+    // count has arrived yet, or when the sum is zero. Zero says nothing.
+    _navStatusText(pageKey) {
+      const entry = Settings.STATUS[pageKey];
+      if (!entry) return '';
+      const [id, keys] = entry;
+      let count = 0;
+      for (const k of keys) {
+        if (Object.prototype.hasOwnProperty.call(Settings._navStatus, k)) count += Settings._navStatus[k];
+      }
+      return count > 0 ? tr(id, { count }) : '';
+    },
+
+    // The trailing extras both nav hosts draw on a row: a status phrase and a
+    // tag. A row with a tag shows only the tag (one thing on a row's edge).
+    _navExtras(pageKey) {
+      const tag = Settings.TAGS[pageKey] ? tr(Settings.TAGS[pageKey]) : '';
+      return { tag, status: tag ? '' : Settings._navStatusText(pageKey) };
     },
 
     // Desktop sidebar rows, grouped under headings — one row per PAGE.
@@ -1371,14 +1558,21 @@
         key: p.key,
         label: Settings.str(p.label),
         active: p.key === active,
-        className: 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm transition-colors '
+        className: 'settings-nav-item flex w-full items-center gap-2.5 text-left rounded-lg pl-3 pr-9 py-2 text-sm transition-colors '
           + (p.key === active
             ? 'font-semibold bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)] shadow-[inset_0_0_0_1px_var(--lit-line)]'
             : 'font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
+        // #5997: the glyph's name, and whether the viewer pinned the page.
+        icon: Settings.ICONS[p.key] || '',
+        pinned: Settings._navPrefs.pinned.includes(p.key),
+        home: Settings._groupKey(p),
+        ...Settings._navExtras(p.key),
         ...Settings._filterTerms(p),
       });
       return Settings._groupedSections().map((g, i) => ({
         name: tr(g.name),
+        key: g.key,
+        folded: g.folded,
         first: i === 0,
         items: g.items.map(item),
       }));
@@ -1394,10 +1588,16 @@
     _menuView() {
       return Settings._groupedSections().map((g) => ({
         name: tr(g.name),
+        key: g.key,
+        folded: g.folded,
         items: g.items.map((p) => ({
           key: p.key,
           label: Settings.str(p.label),
           subtitle: Settings.SUBTITLES[p.key] ? tr(Settings.SUBTITLES[p.key]) : '',
+          icon: Settings.ICONS[p.key] || '',
+          pinned: Settings._navPrefs.pinned.includes(p.key),
+          home: Settings._groupKey(p),
+          ...Settings._navExtras(p.key),
           ...Settings._filterTerms(p),
         })),
       }));
@@ -2120,6 +2320,7 @@
           // The connector surface is production-only; hide rather than
           // showing a section that can't work here.
           section.classList.add('hidden');
+          this._setNavStatus('connectors', null);
           return;
         }
         if (!response.ok) throw new Error(tr('settings:connectors.load.failed'));
@@ -2129,10 +2330,13 @@
         }
         section.classList.remove('hidden');
         this._connectors = data.connectors;
+        this._setNavStatus('connectors', data.connectors.length);
         this._connectorHint = data.hint || null;
         this._renderConnectors();
       } catch (err) {
         if (loadId !== this._connectorLoadId) return;
+        // A failed reload says nothing rather than an old count.
+        this._setNavStatus('connectors', null);
         this._publishConnectors({ phase: 'idle', connectors: [] });
         status.textContent = err.message || tr('settings:connectors.load.failed');
         status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
@@ -2335,6 +2539,7 @@
         });
         if (response.status === 404) {
           section.classList.add('hidden');
+          this._setNavStatus('socialIdentities', null);
           return;
         }
         if (!response.ok) throw new Error(`Social identity request failed (${response.status})`);
@@ -2347,8 +2552,12 @@
         // calls _loadGithubLink after attribution changes. The value is now
         // the provider-neutral response.
         this._githubLink = data;
+        this._setNavStatus('socialIdentities', ['github', 'x']
+          .filter((provider) => data.providers[provider] && data.providers[provider].linked).length);
         this._renderGithubLink();
       } catch {
+        // A failed reload says nothing rather than an old count.
+        this._setNavStatus('socialIdentities', null);
         this._publishSocialIdentity({
           phase: 'error',
           message: tr('settings:socialIdentity.load.failed'),

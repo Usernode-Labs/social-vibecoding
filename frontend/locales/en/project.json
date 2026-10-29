@@ -483,6 +483,122 @@
     "text": "Close this card",
     "description": "Accessible name and tooltip of the small close (✕) button at the top right of two cards on a project's hub: \"Share it\" and \"What do you want to change?\". Closing one hides it on that project for good; what it offered stays elsewhere on the page."
   },
+  "hub.update.title": {
+    "text": "Update from {{project}}",
+    "description": "Title of the card on a version's hub (a project made from another, the original) when the original has changed and that change is ready to look at. {{project}} is the original's name."
+  },
+  "hub.update.titleBehind": {
+    "text": "{{project}} has changed since you made this",
+    "description": "Title of the card on the hub of a version that does not get the original's updates, shown once when the original has changed since. {{project}} is the original's name."
+  },
+  "hub.update.behindLine": {
+    "text": "Your version doesn’t get its updates on its own. See what changed, then vote on it if you want it.",
+    "description": "Line on the card of a version that does not get the original's updates, under \"has changed since you made this\"."
+  },
+  "hub.update.ready": {
+    "text": "Its changes are ready for you to try and vote on.",
+    "description": "Line on the Update card when it lists none of the original's changes by name."
+  },
+  "hub.update.bringsMore_one": {
+    "text": "{{title}}, and {{count}} more",
+    "description": "Line on the Update card: the first of the original's changes it brings, {{title}}, and how many more there are, {{count}}."
+  },
+  "hub.update.bringsMore_other": {
+    "text": "{{title}}, and {{count}} more",
+    "description": "Line on the Update card: the first of the original's changes it brings, {{title}}, and how many more there are, {{count}}."
+  },
+  "hub.update.clash_one": {
+    "text": "It clashes with your own changes in {{count}} file, so it needs fitting to your version first.",
+    "description": "Line on the Update card when the original's change and the version's own changes touch the same file. {{count}} is how many files."
+  },
+  "hub.update.clash_other": {
+    "text": "It clashes with your own changes in {{count}} files, so it needs fitting to your version first.",
+    "description": "Line on the Update card when the original's change and the version's own changes touch the same files. {{count}} is how many files."
+  },
+  "hub.update.see": {
+    "text": "See the update",
+    "description": "Button on the Update card: puts the original's change up as a change on this version and opens it."
+  },
+  "hub.update.opening": {
+    "text": "Opening…",
+    "description": "Label of the Update card's \"See the update\" button while the change is being made."
+  },
+  "hub.update.notNow": {
+    "text": "Not now",
+    "description": "Button on the Update card: hides the card on this device."
+  },
+  "hub.update.fit": {
+    "text": "Ask Homeroom bot to fit it",
+    "description": "Button on the Update card and on the update's own page when the original's change clashes with the version's own: asks Homeroom bot to build it to fit this version, as a request. Homeroom bot is the product's assistant; keep the name."
+  },
+  "hub.update.fitAsked": {
+    "text": "Homeroom bot is on it. <0>See the request</0>",
+    "description": "Shown on the Update card once Homeroom bot was asked to fit the update. The tagged words link to the request it builds. \"See\" is a verb."
+  },
+  "hub.update.failed": {
+    "text": "That didn’t work. Try again.",
+    "description": "Error on the Update card when its button's request failed and the server gave no reason."
+  },
+  "hub.versions.title": {
+    "text": "From its versions",
+    "description": "Small-caps heading of the section on a project's hub about the versions others have made of it: what they suggest, what they have been making, and how its last update went."
+  },
+  "hub.versions.suggestions.title": {
+    "text": "Suggestions",
+    "description": "Row in the \"From its versions\" section: changes the versions have sent to this project for it to take."
+  },
+  "hub.versions.suggestions.from": {
+    "text": "{{title}}, from {{version}}",
+    "description": "Second line of the Suggestions row: the one suggestion, {{title}}, and the version that sent it, {{version}}."
+  },
+  "hub.versions.suggestions.fromPrivate": {
+    "text": "{{title}}, from a private version",
+    "description": "Second line of the Suggestions row: the one suggestion, {{title}}, sent by a version whose name is not shown."
+  },
+  "hub.versions.suggestions.more_one": {
+    "text": "{{title}}, and {{count}} more",
+    "description": "Second line of the Suggestions row: the first suggestion, {{title}}, and how many more there are, {{count}}."
+  },
+  "hub.versions.suggestions.more_other": {
+    "text": "{{title}}, and {{count}} more",
+    "description": "Second line of the Suggestions row: the first suggestion, {{title}}, and how many more there are, {{count}}."
+  },
+  "hub.versions.lately.title": {
+    "text": "Lately in its versions",
+    "description": "Row in the \"From its versions\" section: changes that went live lately in the versions made of this project."
+  },
+  "hub.versions.lately.first": {
+    "text": "{{title}}, in {{version}}",
+    "description": "Second line of the \"Lately in its versions\" row: the newest change, {{title}}, and the version it went live in, {{version}}."
+  },
+  "hub.versions.lately.firstMore_one": {
+    "text": "{{title}}, in {{version}}, and {{count}} more",
+    "description": "Second line of the \"Lately in its versions\" row: the newest change, {{title}}, the version it went live in, {{version}}, and how many more changes there were, {{count}}."
+  },
+  "hub.versions.lately.firstMore_other": {
+    "text": "{{title}}, in {{version}}, and {{count}} more",
+    "description": "Second line of the \"Lately in its versions\" row: the newest change, {{title}}, the version it went live in, {{version}}, and how many more changes there were, {{count}}."
+  },
+  "hub.versions.last.title": {
+    "text": "Your last update",
+    "description": "Row in the \"From its versions\" section: how this project's last change went down in the versions that get its updates."
+  },
+  "hub.versions.last.all": {
+    "text": "{{took}} of {{offered}} took it, {{skipped}} skipped, {{deciding}} deciding",
+    "description": "Second line of the \"Your last update\" row. {{offered}} is how many versions were given the update, {{took}} how many took it, {{skipped}} how many skipped it and {{deciding}} how many have not decided yet."
+  },
+  "hub.versions.last.noSkipped": {
+    "text": "{{took}} of {{offered}} took it, {{deciding}} deciding",
+    "description": "Second line of the \"Your last update\" row when none skipped it. {{offered}} is how many versions were given the update, {{took}} how many took it and {{deciding}} how many have not decided yet."
+  },
+  "hub.versions.last.noDeciding": {
+    "text": "{{took}} of {{offered}} took it, {{skipped}} skipped",
+    "description": "Second line of the \"Your last update\" row when every version has decided. {{offered}} is how many versions were given the update, {{took}} how many took it and {{skipped}} how many skipped it."
+  },
+  "hub.versions.last.took": {
+    "text": "{{took}} of {{offered}} took it",
+    "description": "Second line of the \"Your last update\" row when none skipped it and every version has decided. {{offered}} is how many versions were given the update and {{took}} how many took it."
+  },
   "workshop.allItems.title": {
     "text": "All items",
     "description": "Heading of the first section on a project's Workshop tab: the four figures about the project's requests and proposals."
@@ -651,29 +767,17 @@
     "text": "{{count}} to answer",
     "description": "Beside the \"Waiting on you\" heading in What's happening on a project's Workshop tab: how many of the viewer's items need their answer before they can move. {{count}} is that number."
   },
-  "workshop.yourVotes.title": {
-    "text": "Yours, up for a vote",
-    "description": "Heading of a part of the What's happening card on a project's Workshop tab: the viewer's own changes that are up for a vote now."
+  "workshop.upNext.title": {
+    "text": "Up next",
+    "description": "On a project's Workshop tab, in What's happening: the viewer's own work moving without them, soonest first (what is going live, then what is up for a vote and needs nothing from them). The section's heading."
   },
-  "workshop.yourVotes.count_one": {
-    "text": "{{count}} open",
-    "description": "Beside the \"Yours, up for a vote\" heading in What's happening on a project's Workshop tab: how many of the viewer's own changes and group decisions are up for a vote now. {{count}} is that number."
+  "workshop.upNext.count_one": {
+    "text": "{{count}} moving",
+    "description": "On a project's Workshop tab, in What's happening: the viewer's own work moving without them, soonest first (what is going live, then what is up for a vote and needs nothing from them). Beside the heading: how many rows it holds. {{count}} is that number."
   },
-  "workshop.yourVotes.count_other": {
-    "text": "{{count}} open",
-    "description": "Beside the \"Yours, up for a vote\" heading in What's happening on a project's Workshop tab: how many of the viewer's own changes and group decisions are up for a vote now. {{count}} is that number."
-  },
-  "workshop.goingLive.title": {
-    "text": "Going live",
-    "description": "Heading of a part of the What's happening card on a project's Workshop tab: the viewer's changes that were approved and merged and are not live yet, waiting for the release that makes them live."
-  },
-  "workshop.goingLive.count_one": {
-    "text": "{{count}} merged",
-    "description": "Beside the \"Going live\" heading in What's happening on a project's Workshop tab: how many of the viewer's changes were merged and are not live yet. {{count}} is that number."
-  },
-  "workshop.goingLive.count_other": {
-    "text": "{{count}} merged",
-    "description": "Beside the \"Going live\" heading in What's happening on a project's Workshop tab: how many of the viewer's changes were merged and are not live yet. {{count}} is that number."
+  "workshop.upNext.count_other": {
+    "text": "{{count}} moving",
+    "description": "On a project's Workshop tab, in What's happening: the viewer's own work moving without them, soonest first (what is going live, then what is up for a vote and needs nothing from them). Beside the heading: how many rows it holds. {{count}} is that number."
   },
   "workshop.fresh.title": {
     "text": "New for you",
@@ -1170,6 +1274,14 @@
   "needsYou.eyebrow.changeAdvisory": {
     "text": "Change · Your vote is advisory",
     "description": "Small label at the top of an item in the Needs you feed: the item is a proposed change whose outcome this person's vote does not decide — they are not an approver where only approvers decide, or outside every group the project's rules name. Their vote is recorded but does not affect the result. Change is a noun."
+  },
+  "needsYou.eyebrow.ballot": {
+    "text": "Pick one · Changes for one request",
+    "description": "Small label at the top of an item in the Needs you feed: two or more changes (or a change and a proposal to close it) compete for one request, and this person has not picked one yet."
+  },
+  "needsYou.eyebrow.botQuestion": {
+    "text": "Homeroom bot asked you",
+    "description": "Small label at the top of an item in the Needs you feed: a question Homeroom bot asked this person about their request, still unanswered."
   },
   "needsYou.previousItem": {
     "text": "Previous item",
@@ -2107,6 +2219,34 @@
     "text": "Share it",
     "description": "Heading of a card at the foot of the Hub of a project only its maker is in, offering to invite people or make it public. Share is a verb; \"it\" is the project."
   },
+  "communityCard.lineage.madeFrom.gets": {
+    "text": "Made from <0>{{project}}</0> · Gets its updates",
+    "description": "Line in the hero at the top of a project's hub, on a version (a project made from another, the original), when it gets the original's changes to try and vote on. {{project}} is the original's name; the tagged name links to it. Keep the middle dot as a separator."
+  },
+  "communityCard.lineage.madeFrom.doesNotGet": {
+    "text": "Made from <0>{{project}}</0> · Doesn’t get its updates",
+    "description": "Line in the hero at the top of a project's hub, on a version (a project made from another, the original), when it does not get the original's changes. {{project}} is the original's name; the tagged name links to it. Keep the middle dot as a separator."
+  },
+  "communityCard.lineage.versions.count_one": {
+    "text": "{{count}} version",
+    "description": "Line in the hero at the top of a project's hub, on a project others have made versions of (each a project of its own, made with Make your own), when none of them gets this project's updates. {{count}} is how many versions there are."
+  },
+  "communityCard.lineage.versions.count_other": {
+    "text": "{{count}} versions",
+    "description": "Line in the hero at the top of a project's hub, on a project others have made versions of (each a project of its own, made with Make your own), when none of them gets this project's updates. {{count}} is how many versions there are."
+  },
+  "communityCard.lineage.versions.oneGetsUpdates": {
+    "text": "1 version · it gets its updates",
+    "description": "Line in the hero at the top of a project's hub when one version of it has been made, and that version gets this project's changes to try and vote on. Keep the middle dot as a separator."
+  },
+  "communityCard.lineage.versions.manyGetUpdates_one": {
+    "text": "{{versions}} versions · {{count}} gets its updates",
+    "description": "Line in the hero at the top of a project's hub: {{versions}} is how many versions others have made of this project (always more than one here), and {{count}} how many of them get its changes to try and vote on. Keep the middle dot as a separator."
+  },
+  "communityCard.lineage.versions.manyGetUpdates_other": {
+    "text": "{{versions}} versions · {{count}} get its updates",
+    "description": "Line in the hero at the top of a project's hub: {{versions}} is how many versions others have made of this project (always more than one here), and {{count}} how many of them get its changes to try and vote on. Keep the middle dot as a separator."
+  },
   "communityCard.share.line": {
     "text": "Invite people to make it a private community, or make it public so anyone can join.",
     "description": "Text of the \"Share it\" card on the Hub of a project only its maker is in, above the Invite people and Make it public buttons. \"It\" is the project."
@@ -2547,9 +2687,157 @@
     "text": "Written for an earlier version of this change.",
     "description": "Note under a change's summary on its page when the change was updated after the summary was written, so the summary may no longer describe it."
   },
+  "topic.change.upstream.from": {
+    "text": "From {{project}}",
+    "description": "Name of the card on the page of an update: a change given to this version by the project it was made from, the original. {{project}} is the original's name."
+  },
+  "topic.change.upstream.made_one": {
+    "text": "{{count}} change made there",
+    "description": "Line under \"From\" on an update's card: how many of the original's changes it brings, {{count}}."
+  },
+  "topic.change.upstream.made_other": {
+    "text": "{{count}} changes made there",
+    "description": "Line under \"From\" on an update's card: how many of the original's changes it brings, {{count}}."
+  },
+  "topic.change.upstream.in": {
+    "text": "In {{project}}",
+    "description": "Heading inside the update's card, over what the update does in this version: which of its own changes it keeps, and what it does to its data and connections. {{project}} is this version's name."
+  },
+  "topic.change.upstream.keeps_one": {
+    "text": "Keeps your change: {{titles}}",
+    "description": "Line on an update's card: the version's own change, by its title, which the update keeps. {{titles}} is that title."
+  },
+  "topic.change.upstream.keeps_other": {
+    "text": "Keeps your changes: {{titles}}",
+    "description": "Line on an update's card: the version's own changes, by title, which the update keeps. {{titles}} is the titles, already joined into a list."
+  },
+  "topic.change.upstream.keepsMore_one": {
+    "text": "Keeps your changes: {{titles}}, and {{count}} more",
+    "description": "Line on an update's card: the version's own changes, which the update keeps. {{titles}} is the first few titles, already joined into a list, and {{count}} how many more there are."
+  },
+  "topic.change.upstream.keepsMore_other": {
+    "text": "Keeps your changes: {{titles}}, and {{count}} more",
+    "description": "Line on an update's card: the version's own changes, which the update keeps. {{titles}} is the first few titles, already joined into a list, and {{count}} how many more there are."
+  },
+  "topic.change.upstream.keepsCount_one": {
+    "text": "Keeps your change",
+    "description": "Line on an update's card when the version has one change of its own, which the update keeps, and its title is not known."
+  },
+  "topic.change.upstream.keepsCount_other": {
+    "text": "Keeps your {{count}} changes",
+    "description": "Line on an update's card: how many of the version's own changes the update keeps, {{count}}, when their titles are not known."
+  },
+  "topic.change.upstream.tables_one": {
+    "text": "Adds {{count}} table to your data: {{names}}. None of the data you have changes.",
+    "description": "Line on an update's card: the update makes a new table in the version's database. {{count}} is how many, {{names}} their names, already joined into a list."
+  },
+  "topic.change.upstream.tables_other": {
+    "text": "Adds {{count}} tables to your data: {{names}}. None of the data you have changes.",
+    "description": "Line on an update's card: the update makes new tables in the version's database. {{count}} is how many, {{names}} their names, already joined into a list."
+  },
+  "topic.change.upstream.dataSame": {
+    "text": "None of your data changes.",
+    "description": "Line on an update's card when the update leaves the version's database as it is."
+  },
+  "topic.change.upstream.destructive": {
+    "text": "Changes data you already have: {{items}}",
+    "description": "Line on an update's card when the update removes or reshapes part of the version's database. {{items}} is what it does, as written in the change, already joined into a list."
+  },
+  "topic.change.upstream.hosts_one": {
+    "text": "Connects to something new outside Homeroom: {{hosts}}",
+    "description": "Line on an update's card: the update makes the app talk to a new website or service on the internet. {{hosts}} is its address."
+  },
+  "topic.change.upstream.hosts_other": {
+    "text": "Connects to new things outside Homeroom: {{hosts}}",
+    "description": "Line on an update's card: the update makes the app talk to new websites or services on the internet. {{hosts}} is their addresses, already joined into a list."
+  },
+  "topic.change.upstream.hostsNone": {
+    "text": "No new outside connections",
+    "description": "Line on an update's card when the update makes the app talk to nothing new on the internet."
+  },
+  "topic.change.upstream.secrets_one": {
+    "text": "Needs a new key before it goes live: {{keys}}",
+    "description": "Line on an update's card: the update needs a secret (such as an API key) this version does not have yet. {{keys}} is its name."
+  },
+  "topic.change.upstream.secrets_other": {
+    "text": "Needs new keys before it goes live: {{keys}}",
+    "description": "Line on an update's card: the update needs secrets (such as API keys) this version does not have yet. {{keys}} is their names, already joined into a list."
+  },
+  "topic.change.upstream.ai": {
+    "text": "Starts using AI",
+    "description": "Line on an update's card: with this update the app begins to use an AI model."
+  },
+  "topic.change.upstream.storage": {
+    "text": "Starts storing files",
+    "description": "Line on an update's card: with this update the app begins to keep files, such as uploaded pictures."
+  },
+  "topic.change.upstream.skip.title": {
+    "text": "Not for your version?",
+    "description": "Title of the row under an update's Votes and Testing cards, offering to turn the update down for good."
+  },
+  "topic.change.upstream.skip.sub": {
+    "text": "Skip it, and these changes from {{project}} won’t come again. Its later updates still will.",
+    "description": "Line under \"Not for your version?\" on an update's page. {{project}} is the name of the project the version was made from."
+  },
+  "topic.change.upstream.skip.button": {
+    "text": "Skip this update",
+    "description": "Button on an update's page: turns the update down and closes it, leaving the version as it is."
+  },
+  "topic.change.upstream.skip.confirmTitle": {
+    "text": "Skip this update from {{project}}?",
+    "description": "Title of the question asked before an update is skipped. {{project}} is the name of the project the version was made from."
+  },
+  "topic.change.upstream.skip.confirmMessage": {
+    "text": "This change closes, and your version stays as it is.",
+    "description": "Line of the question asked before an update is skipped."
+  },
+  "topic.change.upstream.skip.confirm": {
+    "text": "Skip it",
+    "description": "The confirming button of the question asked before an update is skipped."
+  },
+  "topic.change.upstream.skip.failed": {
+    "text": "Could not skip it. Try again.",
+    "description": "Error on an update's page when \"Skip this update\" failed and the server gave no reason."
+  },
+  "topic.change.upstream.fit.title": {
+    "text": "It clashes with your own changes",
+    "description": "Title of the row under an update's Votes and Testing cards when the original's change and the version's own changes touch the same files."
+  },
+  "topic.change.upstream.fit.sub_one": {
+    "text": "{{count}} file needs fitting to your version: {{files}}",
+    "description": "Line under \"It clashes with your own changes\". {{count}} is how many files, {{files}} their names, already joined into a list."
+  },
+  "topic.change.upstream.fit.sub_other": {
+    "text": "{{count}} files need fitting to your version: {{files}}",
+    "description": "Line under \"It clashes with your own changes\". {{count}} is how many files, {{files}} their names, already joined into a list."
+  },
+  "topic.change.upstream.fit.asked": {
+    "text": "Homeroom bot is on it. <0>See the request</0>",
+    "description": "Shown on an update's page once Homeroom bot was asked to fit it. The tagged words link to the request it builds. \"See\" is a verb."
+  },
+  "topic.change.upstream.fit.failed": {
+    "text": "Could not ask Homeroom bot. Try again.",
+    "description": "Error on an update's page when \"Ask Homeroom bot to fit it\" failed and the server gave no reason."
+  },
   "topic.change.codeMissing": {
     "text": "This proposal’s code didn’t come across when Homeroom moved off GitHub. Its creator can submit it again, or Homeroom restores it when GitHub’s copy of the code arrives.",
     "description": "Amber notice on a change's page, above its Votes and Testing cards, when the change's code (its branch) is not on Homeroom's own code host because it did not come across when Homeroom moved off GitHub. GitHub is a product name; Homeroom is the product's own name. \"GitHub's copy of the code\" is the export of the old repositories that GitHub is sending to Homeroom. \"Submit it again\" means put the same change up again."
+  },
+  "topic.change.waitsFor": {
+    "text": "Waits for <0>#{{number}}: {{title}}</0>. This change is built on that change’s branch, so it can go live only after #{{number}} does. Homeroom then moves it onto main and brings it up to date; its checks run again on the result.",
+    "description": "Notice on a change's page, above its Votes and Testing cards, when the change is stacked on another open change: its pull request targets that change's branch instead of main. {{number}} and {{title}} are the other change's number and title; <0></0> links to that change's page. \"main\" is the name of the project's main line of code and stays as it is. Homeroom is the product's own name."
+  },
+  "topic.change.waitsForUntitled": {
+    "text": "Waits for <0>#{{number}}</0>. This change is built on that change’s branch, so it can go live only after #{{number}} does. Homeroom then moves it onto main and brings it up to date; its checks run again on the result.",
+    "description": "Notice on a change's page, above its Votes and Testing cards, when the change is stacked on another open change that has no title: its pull request targets that change's branch instead of main. {{number}} is the other change's number; <0></0> links to that change's page. \"main\" is the name of the project's main line of code and stays as it is. Homeroom is the product's own name."
+  },
+  "topic.change.waitsForUnnumbered": {
+    "text": "Waits for <0>another change</0>. This change is built on that change’s branch, so it can go live only after that change does. Homeroom then moves it onto main and brings it up to date; its checks run again on the result.",
+    "description": "Notice on a change's page, above its Votes and Testing cards, when the change is stacked on another open change that has no number yet: its pull request targets that change's branch instead of main. <0></0> links to that change's page. \"main\" is the name of the project's main line of code and stays as it is. Homeroom is the product's own name."
+  },
+  "topic.change.baseNotMain": {
+    "text": "Its pull request targets {{branch}}, not main, and no open change here is built on that branch. Change its base to main on GitHub before it can go live.",
+    "description": "Amber notice on a change's page, above its Votes and Testing cards, when its pull request targets a branch other than main that no open change in the project uses. {{branch}} is that branch's name as written on GitHub and stays as it is. \"main\" is the name of the project's main line of code and stays as it is. GitHub is a product name."
   },
   "topic.change.gate.noteSeeFailed": {
     "text": "{{note}} <0>See what failed</0>",
@@ -2598,6 +2886,170 @@
   "topic.change.stream.replies_other": {
     "text": "{{count}} replies",
     "description": "Line under a change, over the replies to it, on the change's page: how many replies people have written. {{count}} is that number. Reply is a noun."
+  },
+  "topic.thread.label": {
+    "text": "In this thread",
+    "description": "Small-caps label over a list on a request's or a change's page: the thread a request's or a change's page is in: every request, change and vote about one piece of work, listed under the page's own post."
+  },
+  "topic.thread.item.request": {
+    "text": "Request #{{number}}",
+    "description": "What one row of the list is, in its grey line: a request (something people asked a project for). {{number}} is its number. The list is the thread a request's or a change's page is in: every request, change and vote about one piece of work, listed under the page's own post."
+  },
+  "topic.thread.item.change": {
+    "text": "Change #{{number}}",
+    "description": "What one row of the list is, in its grey line: a change (a proposed edit to the project that people vote on). {{number}} is its number. The list is the thread a request's or a change's page is in: every request, change and vote about one piece of work, listed under the page's own post."
+  },
+  "topic.thread.item.changeUnnumbered": {
+    "text": "A change",
+    "description": "What one row of the list is, in its grey line, for a change that has no number yet. A change is a proposed edit to the project that people vote on."
+  },
+  "topic.thread.item.close": {
+    "text": "Vote to close",
+    "description": "What one row of the list is, in its grey line: a vote on closing the request without building it."
+  },
+  "topic.thread.item.decision": {
+    "text": "Decision",
+    "description": "What one row of the list is, in its grey line: a decision the project's people vote on, such as renaming it."
+  },
+  "topic.thread.state.open": {
+    "text": "Open",
+    "description": "Where a request in the list stands: nobody has closed it."
+  },
+  "topic.thread.state.closed": {
+    "text": "Closed",
+    "description": "Where a request in the list stands: it was closed."
+  },
+  "topic.thread.state.underway": {
+    "text": "Being made",
+    "description": "Where a change in the list stands: someone is still building it."
+  },
+  "topic.thread.state.voting": {
+    "text": "Up for a vote",
+    "description": "Where a change, a vote to close or a decision in the list stands: people are voting on it now."
+  },
+  "topic.thread.state.live": {
+    "text": "Live",
+    "description": "Where a change in the list stands: it was voted in and is part of the project now."
+  },
+  "topic.thread.state.settled": {
+    "text": "Settled",
+    "description": "Where a vote to close or a decision in the list stands: the vote is over."
+  },
+  "topic.thread.replies_one": {
+    "text": "{{count}} reply",
+    "description": "How many replies people wrote on one item in the list. {{count}} is that number. Reply is a noun."
+  },
+  "topic.thread.replies_other": {
+    "text": "{{count}} replies",
+    "description": "How many replies people wrote on one item in the list. {{count}} is that number. Reply is a noun."
+  },
+  "topic.thread.follow.notifyMe": {
+    "text": "Notify me",
+    "description": "Button beside the list on a request's or a change's page, for someone who is not following the thread: get a notification whenever someone replies on anything in it."
+  },
+  "topic.thread.follow.notifyMeHint": {
+    "text": "Get a notification when someone replies on anything in this thread.",
+    "description": "Hover text of the Notify me button on a request's or a change's page."
+  },
+  "topic.thread.follow.mute": {
+    "text": "Mute",
+    "description": "The same button for someone who is following the thread (they asked, built, voted or posted there, or pressed Notify me): stop its replies notifying them."
+  },
+  "topic.thread.follow.muteHint": {
+    "text": "Replies here notify you. Press to stop them.",
+    "description": "Hover text of the Mute button on a request's or a change's page."
+  },
+  "topic.thread.follow.muted": {
+    "text": "Muted",
+    "description": "The same button once the thread is muted: its replies do not notify the person. Pressing it again unmutes the thread."
+  },
+  "topic.thread.follow.mutedHint": {
+    "text": "Muted: replies here do not notify you, until you reply yourself. Press to unmute.",
+    "description": "Hover text of the button on a request's or a change's page while the thread is muted."
+  },
+  "topic.thread.move.merge": {
+    "text": "Proposed: merge into #{{number}}",
+    "description": "Line under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page: someone proposed merging this thread into another one. {{number}} is the other thread's number."
+  },
+  "topic.thread.move.split": {
+    "text": "Proposed: split {{what}} out",
+    "description": "Line under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page: someone proposed moving items out of this thread into a thread of their own. {{what}} lists them, for example \"#9\"."
+  },
+  "topic.thread.move.breakup_one": {
+    "text": "Proposed: break #{{number}} up into {{count}} smaller request",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. A waiting break-up of the request into smaller requests in the same thread. {{number}} is the request, {{count}} how many parts."
+  },
+  "topic.thread.move.breakup_other": {
+    "text": "Proposed: break #{{number}} up into {{count}} smaller requests",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. A waiting break-up of the request into smaller requests in the same thread. {{number}} is the request, {{count}} how many parts."
+  },
+  "topic.thread.move.breakUp": {
+    "text": "Break it up",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. Button: opens the form that breaks this request into smaller requests in the same thread."
+  },
+  "topic.thread.move.breakUpAbout": {
+    "text": "Each part becomes a request of its own here, with its own change and vote. #{{number}} closes with the last of them.",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. Over the break-up form. {{number}} is the request being broken up."
+  },
+  "topic.thread.move.partTitle_one": {
+    "text": "Part {{count}}: its title",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. Field in the break-up form: a smaller request's title. {{count}} is which part it is."
+  },
+  "topic.thread.move.partTitle_other": {
+    "text": "Part {{count}}: its title",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. Field in the break-up form: a smaller request's title. {{count}} is which part it is."
+  },
+  "topic.thread.move.partDone": {
+    "text": "Done when…",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. Field in the break-up form: what that smaller request is done when. Optional."
+  },
+  "topic.thread.move.addPart": {
+    "text": "Add a part",
+    "description": "On a request's page, the thread's moves (merge, split, break up), decided by its requesters agreeing or 24 hours with no objection. Button in the break-up form: one more smaller request."
+  },
+  "topic.thread.move.pending_one": {
+    "text": "Happens in {{count}} hour unless someone objects",
+    "description": "Second half of the line under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page about a proposed merge or split: when it happens on its own. {{count}} is the hours left."
+  },
+  "topic.thread.move.pending_other": {
+    "text": "Happens in {{count}} hours unless someone objects",
+    "description": "Second half of the line under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page about a proposed merge or split: when it happens on its own. {{count}} is the hours left."
+  },
+  "topic.thread.move.voting": {
+    "text": "Up for a vote, as someone objected",
+    "description": "Second half of the line under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page about a proposed merge or split once someone objected: the project's people vote on it."
+  },
+  "topic.thread.move.agree": {
+    "text": "Agree",
+    "description": "Button beside a proposed merge or split of a thread: the person, who asked for something in it, agrees. Once everyone who asked agrees, it happens."
+  },
+  "topic.thread.move.object": {
+    "text": "Object",
+    "description": "Button beside a proposed merge or split of a thread: the person objects, which puts it to the project's vote."
+  },
+  "topic.thread.move.mergeInto": {
+    "text": "Merge into another thread",
+    "description": "Button under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page: propose merging this thread into another one about the same work."
+  },
+  "topic.thread.move.splitOut": {
+    "text": "Split one out",
+    "description": "Button under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page: propose moving one item out of this thread into a thread of its own."
+  },
+  "topic.thread.move.number": {
+    "text": "Its number",
+    "description": "Box in the form for merging a thread: the number of the request or change whose thread this one goes into."
+  },
+  "topic.thread.move.choose": {
+    "text": "Choose what to split out",
+    "description": "First, empty choice of the picker in the form for splitting an item out of a thread."
+  },
+  "topic.thread.move.propose": {
+    "text": "Propose",
+    "description": "Send button of the form for merging or splitting a thread."
+  },
+  "topic.thread.move.failed": {
+    "text": "That didn't work. Try again.",
+    "description": "Error under the merge / split controls of a thread when the request failed."
   },
   "topic.change.stream.noReplies": {
     "text": "No replies yet",
@@ -2926,6 +3378,42 @@
   "topic.request.status.label": {
     "text": "Where this request is",
     "description": "Accessible name of the card on a request's page that shows how far the request has come: asked, plan written, built, voted in."
+  },
+  "topic.request.ownAgent.summary": {
+    "text": "Build it with your own Claude Code",
+    "description": "Folded line under the status card on a request's page; opening it shows a link that hands this request to Claude Code on the web, on the person's own Claude plan. \"Claude Code\" is a product name."
+  },
+  "topic.request.ownAgent.lead": {
+    "text": "Claude Code opens with a prompt to build this request already typed. Check it and press send. It runs on your own Claude plan.",
+    "description": "Explains, on a request's page, what the \"Open in Claude Code\" link below it does."
+  },
+  "topic.request.ownAgent.open": {
+    "text": "Open in Claude Code",
+    "description": "Link on a request's page that opens Claude Code on the web in a new tab with a prompt to build this request already typed. \"Claude Code\" is a product name."
+  },
+  "topic.request.ownAgent.needsHeading": {
+    "text": "You need",
+    "description": "Heading over the short list, on a request's page, of what the person needs for the \"Open in Claude Code\" link to work."
+  },
+  "topic.request.ownAgent.needs.plan": {
+    "text": "A Claude Pro, Max, Team or Enterprise plan with Claude Code on the web",
+    "description": "First item of the \"You need\" list under the \"Open in Claude Code\" link on a request's page. Plan names are product names."
+  },
+  "topic.request.ownAgent.needs.github": {
+    "text": "GitHub connected at claude.ai/code",
+    "description": "Second item of the \"You need\" list under the \"Open in Claude Code\" link on a request's page: the person has connected their GitHub account in Claude Code on the web."
+  },
+  "topic.request.ownAgent.needs.connector": {
+    "text": "Homeroom connected in Claude",
+    "description": "Third item of the \"You need\" list under the \"Open in Claude Code\" link on a request's page: the Homeroom connector is added to the person's Claude account. Followed by a tick when done, or an \"Add it\" link."
+  },
+  "topic.request.ownAgent.needs.connectorAdd": {
+    "text": "Add it",
+    "description": "Link after \"Homeroom connected in Claude\" on a request's page, when Homeroom cannot see the connector yet: opens the connector settings that show how to add it."
+  },
+  "topic.request.ownAgent.needs.done": {
+    "text": "Done",
+    "description": "Screen-reader text after a \"You need\" item on a request's page that is already set up, read in place of the tick."
   },
   "topic.request.status.specVersionReady": {
     "text": "Plan v{{version}} is ready for comments.",
@@ -3748,8 +4236,8 @@
     "description": "Accessible name of the list that opens when the person types # or PR# in a reply box under a card: picking a row inserts that pull request's or issue's number."
   },
   "menu.button.remix": {
-    "text": "Remix: make your own copy",
-    "description": "Tooltip and accessible name of the round ⋯ button on a project's page, for a visitor who can only read the project. Its menu then holds one action, Remix, which makes the person their own copy of the project."
+    "text": "Make your own version",
+    "description": "Tooltip and accessible name of the round ⋯ button on a project's page, for a visitor who can only read the project. Its menu then holds one action, Make your own, which makes the person their own version of the project."
   },
   "menu.button.manage": {
     "text": "Suggest an improvement, import a PR or manage this app",
@@ -3876,20 +4364,72 @@
     "description": "Second line of the 'Platform variables' row. 'env' is the developers' short word for environment variables; the values take effect the next time the platform is deployed."
   },
   "menu.suggestBack.title": {
-    "text": "Suggest this back",
-    "description": "Row among a project's settings, shown to the owner of a remix (a copy of another project): sends the copy's changes to the project it was copied from, as a proposal there. 'This' is the copy's changes."
+    "text": "Suggest to {{project}}",
+    "description": "Row among a project's settings, shown to the owner of a version (a project made from another, the original): sends some of the version's own changes to the original, for its members to try and vote on. {{project}} is the original's name."
   },
   "menu.suggestBack.sub": {
-    "text": "Send your changes to {{project}} as a proposal",
-    "description": "Second line of the 'Suggest this back' row. {{project}} is the name of the project this one was copied from. A proposal is a change put up for a vote."
+    "text": "Pick which of your changes to send",
+    "description": "Second line of the \"Suggest to\" row in a project's settings."
+  },
+  "menu.updates.title": {
+    "text": "Updates from {{project}}",
+    "description": "Row among a project's settings, on a version (a project made from another, the original): opens the sheet that says whether this version gets the original's changes to try and vote on, and changes that. {{project}} is the original's name."
+  },
+  "menu.updates.on": {
+    "text": "Gets its updates",
+    "description": "Second line of the \"Updates from\" row while the version gets the original's changes to try and vote on."
+  },
+  "menu.updates.off": {
+    "text": "Doesn’t get its updates",
+    "description": "Second line of the \"Updates from\" row while the version does not get the original's changes."
   },
   "menu.remix.title": {
-    "text": "Remix",
-    "description": "Row in a project's ⋯ menu: makes the person their own copy of this project to change freely. A verb here."
+    "text": "Make your own",
+    "description": "Row in a project's ⋯ menu: makes the person their own version of this project, a project of their own made from it, to change freely."
   },
   "menu.remix.sub": {
-    "text": "Make your own copy",
-    "description": "Second line of the 'Remix' row in a project's ⋯ menu, saying what remixing does."
+    "text": "Your own version to change",
+    "description": "Second line of the 'Make your own' row in a project's ⋯ menu."
+  },
+  "updates.title": {
+    "text": "Updates from {{project}}",
+    "description": "Title of the sheet opened from a version's \"Updates from\" row. {{project}} is the name of the project this version was made from, the original."
+  },
+  "updates.follow.title": {
+    "text": "Get {{project}}’s updates",
+    "description": "Label of the switch in the Updates sheet: whether this version gets the original's changes to try and vote on. {{project}} is the original's name."
+  },
+  "updates.follow.sub": {
+    "text": "When {{project}} changes, you get the change to try and vote on. Nothing changes unless you say yes.",
+    "description": "Line under the \"Get its updates\" switch in the Updates sheet. {{project}} is the original's name."
+  },
+  "updates.follow.vote": {
+    "text": "This is one of the project’s settings, so turning it on or off goes to a vote.",
+    "description": "Small note under the \"Get its updates\" switch in the Updates sheet: pressing the switch puts the change up for the members' vote rather than changing it at once."
+  },
+  "updates.follow.proposed": {
+    "text": "Up for a vote now. <0>Open it</0>",
+    "description": "Shown in the Updates sheet once pressing the switch has put the change up for a vote. The tagged words link to that change. \"Open\" is a verb."
+  },
+  "updates.follow.failed": {
+    "text": "Could not put it up for a vote. Try again.",
+    "description": "Error in the Updates sheet when the change to the switch could not be put up for a vote and the server gave no reason."
+  },
+  "updates.share.title": {
+    "text": "Share what we make with {{project}}",
+    "description": "Label of the second switch in the Updates sheet, on a private version: whether the original can see the titles of the changes that go live in this version. {{project}} is the original's name."
+  },
+  "updates.share.sub": {
+    "text": "{{project}} sees the titles of the changes that go live here. Never your data, or who’s in it.",
+    "description": "Line under the \"Share what we make\" switch in the Updates sheet. {{project}} is the original's name."
+  },
+  "updates.share.failed": {
+    "text": "Could not save that. Try again.",
+    "description": "Error in the Updates sheet when the \"Share what we make\" switch could not be saved."
+  },
+  "updates.load.failed": {
+    "text": "Could not load this. Close it and try again.",
+    "description": "Error in the Updates sheet when where the version stands could not be read."
   },
   "attr.assignee.removeHint": {
     "text": "Click again to remove your pick",
@@ -4128,76 +4668,92 @@
     "description": "Accessible name of the chip for one active filter above a project's list of requests and proposals; pressing the chip turns that filter off. {{filter}} is the chip's own label, for example a category or a person."
   },
   "suggestBack.title": {
-    "text": "Suggest this back to {{project}}",
-    "description": "Title and accessible name of the dialog a remix's owner opens to send the copy's changes to the project it was copied from. {{project}} is that original project's name."
+    "text": "Suggest to {{project}}",
+    "description": "Title and accessible name of the dialog a version's owner opens to send some of the version's changes to the project it was made from, the original. {{project}} is the original's name."
   },
   "suggestBack.intro": {
-    "text": "Your changes since you remixed go to {{project}} as a proposal. Its members try it and vote, like any other change.",
-    "description": "Explanation at the top of the 'Suggest this back' dialog. {{project}} is the name of the project the person's copy was made from; a proposal is a change put up for its members' vote."
+    "text": "Pick the changes to send. They go to {{project}} as a suggestion, for the people who decide its changes to try.",
+    "description": "Explanation at the top of the \"Suggest to\" dialog. {{project}} is the name of the project the person's version was made from."
   },
   "suggestBack.loading": {
     "text": "Loading your changes…",
-    "description": "Shown in the box of the 'Suggest this back' dialog while the list of the copy's changes is being fetched."
+    "description": "Shown in the box of the \"Suggest to\" dialog while the list of the version's changes is being fetched."
   },
   "suggestBack.changes.none": {
     "text": "No changes listed yet.",
-    "description": "Shown in the box of the 'Suggest this back' dialog when there is no change to list for the person's copy."
+    "description": "Shown in the box of the \"Suggest to\" dialog when there is no change to list for the person's version."
   },
   "suggestBack.changes.more_one": {
     "text": "and {{count}} more",
-    "description": "The whole last line of the list of changes in the 'Suggest this back' dialog. Each line of that list is its own element, one change per line; this final line stands for the changes that are not listed. {{count}} is how many those are."
+    "description": "The whole last line of the list of changes in the \"Suggest to\" dialog. Each line of that list is its own element, one change per line; this final line stands for the changes that are not listed. {{count}} is how many those are."
   },
   "suggestBack.changes.more_other": {
     "text": "and {{count}} more",
-    "description": "The whole last line of the list of changes in the 'Suggest this back' dialog. Each line of that list is its own element, one change per line; this final line stands for the changes that are not listed. {{count}} is how many those are."
+    "description": "The whole last line of the list of changes in the \"Suggest to\" dialog. Each line of that list is its own element, one change per line; this final line stands for the changes that are not listed. {{count}} is how many those are."
   },
   "suggestBack.changes.files_one": {
     "text": "{{count}} file changed",
-    "description": "The only line of the list of changes in the 'Suggest this back' dialog when the changes have no descriptions: how many files of the project differ."
+    "description": "The only line of the list of changes in the \"Suggest to\" dialog when the changes have no descriptions: how many files of the project differ."
   },
   "suggestBack.changes.files_other": {
     "text": "{{count}} files changed",
-    "description": "The only line of the list of changes in the 'Suggest this back' dialog when the changes have no descriptions: how many files of the project differ."
+    "description": "The only line of the list of changes in the \"Suggest to\" dialog when the changes have no descriptions: how many files of the project differ."
   },
   "suggestBack.notSent": {
-    "text": "Not sent: {{copy}}’s name, who can see it, its admins or its data.",
-    "description": "Small note in the 'Suggest this back' dialog listing what stays with the person's copy and is not part of what is sent. {{copy}} is the copy's own name."
+    "text": "Your name and words stay yours. Not sent: {{copy}}’s name, who can see it, its admins or its data.",
+    "description": "Small note in the \"Suggest to\" dialog listing what stays with the person's version and is not part of what is sent. {{copy}} is the version's own name."
+  },
+  "suggestBack.after": {
+    "text": "If it goes in, every version that gets {{project}}’s updates is given it, yours included.",
+    "description": "Small note in the \"Suggest to\" dialog: once the original takes the suggestion, every version that gets the original's changes is given it to try and vote on. {{project}} is the original's name."
   },
   "suggestBack.openOriginal": {
     "text": "Open {{project}}",
-    "description": "Link in the 'Suggest this back' dialog, after the server's sentence saying the person must first be let into the original project: goes to that project's page. 'Open' is a verb; {{project}} is its name."
+    "description": "Link in the \"Suggest to\" dialog, after the server's sentence saying the person must first be let into the original project: goes to that project's page. 'Open' is a verb; {{project}} is its name."
   },
   "suggestBack.openProposal": {
     "text": "Open the proposal",
-    "description": "Link in the 'Suggest this back' dialog, after the server's sentence saying these changes were already sent: goes to that existing proposal. 'Open' is a verb."
+    "description": "Link in the \"Suggest to\" dialog, after the server's sentence saying these changes were already sent: goes to that existing proposal. 'Open' is a verb."
   },
   "suggestBack.sent": {
-    "text": "Sent. Your changes are a proposal on {{project}} now. <0>Open the proposal</0>",
-    "description": "Confirmation that replaces the 'Suggest this back' dialog's content once the changes were sent. {{project}} is the original project's name; the tagged words link to the new proposal there. 'Open' is a verb."
+    "text": "Sent. {{project}} has your suggestion now. <0>See it</0>",
+    "description": "Confirmation that replaces the \"Suggest to\" dialog's content once the changes were sent. {{project}} is the original's name; the tagged words link to the suggestion there."
   },
   "suggestBack.send": {
     "text": "Send to {{project}}",
-    "description": "Main button of the 'Suggest this back' dialog: sends the copy's changes to the original project as a proposal. {{project}} is that project's name."
+    "description": "Main button of the \"Suggest to\" dialog when its changes cannot be picked one by one: sends them all to the original. {{project}} is that project's name."
+  },
+  "suggestBack.sendCount_one": {
+    "text": "Send {{count}} change",
+    "description": "Main button of the \"Suggest to\" dialog: sends the changes the person ticked to the original. {{count}} is how many are ticked."
+  },
+  "suggestBack.sendCount_other": {
+    "text": "Send {{count}} changes",
+    "description": "Main button of the \"Suggest to\" dialog: sends the changes the person ticked to the original. {{count}} is how many are ticked."
+  },
+  "suggestBack.pick.name": {
+    "text": "Your changes to send",
+    "description": "Accessible name of the list of tick boxes in the \"Suggest to\" dialog, one per change of the version's own."
   },
   "suggestBack.sending": {
     "text": "Sending…",
-    "description": "Label of the 'Suggest this back' dialog's main button while the changes are being sent."
+    "description": "Label of the \"Suggest to\" dialog's main button while the changes are being sent."
   },
   "suggestBack.error.loadRetry": {
     "text": "Could not load your changes. Close this and try again.",
-    "description": "Error in the 'Suggest this back' dialog when the server refused the request for the list of changes without giving its own reason. 'This' is the dialog."
+    "description": "Error in the \"Suggest to\" dialog when the server refused the request for the list of changes without giving its own reason. 'This' is the dialog."
   },
   "suggestBack.error.load": {
     "text": "Could not load your changes.",
-    "description": "Error in the 'Suggest this back' dialog when fetching the list of changes failed in an unexpected way."
+    "description": "Error in the \"Suggest to\" dialog when fetching the list of changes failed in an unexpected way."
   },
   "suggestBack.error.notSent": {
     "text": "Your changes were not sent. Try again.",
-    "description": "Error in the 'Suggest this back' dialog when the server refused to send the changes without giving its own reason."
+    "description": "Error in the \"Suggest to\" dialog when the server refused to send the changes without giving its own reason."
   },
   "suggestBack.error.network": {
     "text": "Network error. Please try again.",
-    "description": "Error in the 'Suggest this back' dialog when the request to send the changes could not reach the server."
+    "description": "Error in the \"Suggest to\" dialog when the request to send the changes could not reach the server."
   },
   "votingHelp.title": {
     "text": "How voting & merges work",
@@ -5250,5 +5806,149 @@
   "menu.whoDecides.sub": {
     "text": "Private or public, and how changes are approved",
     "description": "Second line of the 'Who can see & change it' row."
+  },
+  "topic.thread.ballot.label": {
+    "text": "Pick one",
+    "description": "Spoken name of the one vote between competing changes on a request's or a change's page: two or more changes for the same piece of work (or a change and a proposal to close it) are up for a vote, and the person picks one."
+  },
+  "topic.thread.ballot.about": {
+    "text": "The first to pass {{project}}’s approval rule goes live, and the others close. Neither counts as a No on each.",
+    "description": "Line under the one vote between competing changes: how it is decided. {{project}} is the project's name."
+  },
+  "topic.thread.ballot.neither": {
+    "text": "Neither",
+    "description": "The last choice of the ballot between competing changes: the person wants none of them to go live (it votes No on each)."
+  },
+  "topic.thread.page.someone": {
+    "text": "Someone",
+    "description": "Stands in for a person's name on a request's page, under the request: its changes and its vote to close, when the name is not known."
+  },
+  "topic.thread.page.change": {
+    "text": "Change · {{by}}",
+    "description": "Small-caps line over one change on a request's page, under the request: its changes and its vote to close that has no number yet. {{by}} is who built it (a username, or Homeroom bot)."
+  },
+  "topic.thread.page.changeNumbered": {
+    "text": "Change #{{number}} · {{by}}",
+    "description": "Small-caps line over one change on a request's page, under the request: its changes and its vote to close. {{number}} is the change's number, {{by}} who built it (a username, or Homeroom bot). The change's title follows on the next line."
+  },
+  "topic.thread.page.changeLettered": {
+    "text": "Change {{letter}} · {{by}}",
+    "description": "Small-caps line over one of several competing changes on a request's page, under the request: its changes and its vote to close. {{letter}} is the change's letter (A, B, C), {{by}} who built it."
+  },
+  "topic.thread.page.underway": {
+    "text": "Being built. Its votes open once it is up for a vote.",
+    "description": "Line under a change on a request's page, under the request: its changes and its vote to close that is still being built, where its Votes and Testing cards will be."
+  },
+  "topic.thread.page.earlier_one": {
+    "text": "{{count}} earlier reply on this change",
+    "description": "Button under a change on a request's page, under the request: its changes and its vote to close: opens the replies people wrote on the change's own page before. {{count}} is how many."
+  },
+  "topic.thread.page.earlier_other": {
+    "text": "{{count}} earlier replies on this change",
+    "description": "Button under a change on a request's page, under the request: its changes and its vote to close: opens the replies people wrote on the change's own page before. {{count}} is how many."
+  },
+  "topic.thread.page.earlierHide": {
+    "text": "Hide the earlier replies",
+    "description": "Button under a change on a request's page, under the request: its changes and its vote to close, while its earlier replies are open: folds them away again."
+  },
+  "topic.thread.page.rowBy": {
+    "text": "{{by}} · #{{number}}",
+    "description": "Second line of one competing change's row on a request's page, under the request: its changes and its vote to close: who built it and the change's number."
+  },
+  "topic.thread.ballot.close": {
+    "text": "Close it",
+    "description": "A choice of the one vote between a request's changes and a proposal to close the request, in place of Neither: the person wants the request closed with none of the changes."
+  },
+  "topic.thread.ballot.heading": {
+    "text": "{{n}} changes for #{{number}}",
+    "description": "Small-caps heading over competing changes on a request's page, under the request: its changes and its vote to close. {{n}} is how many changes (two or more), {{number}} the request's number."
+  },
+  "topic.thread.ballot.headingClose": {
+    "text": "A change, or closing it",
+    "description": "Small-caps heading on a request's page, under the request: its changes and its vote to close when one change and a proposal to close the request compete in one vote."
+  },
+  "topic.thread.ballot.headingCloseMany": {
+    "text": "{{n}} changes, or closing it",
+    "description": "Small-caps heading on a request's page, under the request: its changes and its vote to close when several changes and a proposal to close the request compete in one vote. {{n}} is how many changes."
+  },
+  "topic.thread.ballot.votes": {
+    "text": "Votes",
+    "description": "Name of the card that holds a vote on a request's page, under the request: its changes and its vote to close, as a change's own Votes card is named."
+  },
+  "topic.thread.ballot.yourPick": {
+    "text": "Up for a vote",
+    "description": "Figure in the corner of the one vote between competing changes, before the person has picked one."
+  },
+  "topic.thread.ballot.picked": {
+    "text": "You voted",
+    "description": "Figure in the corner of the one vote between competing changes, once the person has picked one (they can still change it)."
+  },
+  "topic.thread.ballot.tally": {
+    "text": "{{choice}}: {{yes}} of {{need}} yes votes",
+    "description": "Spoken name of one bar of the vote between competing changes. {{choice}} is the choice (A, B, Close it), {{yes}} its yes votes, {{need}} what the project's approval rule needs."
+  },
+  "topic.thread.ballot.aboutClose": {
+    "text": "The first to pass {{project}}’s approval rule wins: the change goes live, or the request closes.",
+    "description": "Line under the one vote between a request's changes and a proposal to close it: how it is decided. {{project}} is the project's name."
+  },
+  "topic.thread.close.kicker": {
+    "text": "{{by}} proposed closing it",
+    "description": "Small-caps line over a proposal to close the request on a request's page, under the request: its changes and its vote to close. {{by}} is who proposed it. Its reason follows."
+  },
+  "topic.thread.close.by": {
+    "text": "{{by}} proposed closing it",
+    "description": "Second line of the Close it row of the vote between a request's changes and closing it. {{by}} is who proposed closing it."
+  },
+  "topic.thread.close.byWhy": {
+    "text": "{{by}} proposed closing it · {{reason}}",
+    "description": "Second line of the Close it row of the vote between a request's changes and closing it. {{by}} is who proposed it, {{reason}} their reason in their own words."
+  },
+  "topic.thread.close.votes": {
+    "text": "Votes on closing it",
+    "description": "Spoken name of the Votes card of a proposal to close the request, on a request's page, under the request: its changes and its vote to close."
+  },
+  "topic.thread.close.figure": {
+    "text": "{{yes}} of {{need}} yes",
+    "description": "Figure in the corner of the Votes card of a proposal to close the request: {{yes}} yes votes so far of the {{need}} the project's approval rule needs."
+  },
+  "topic.thread.close.yes": {
+    "text": "Yes",
+    "description": "Button on the Votes card of a proposal to close the request: vote yes, close it."
+  },
+  "topic.thread.close.no": {
+    "text": "No",
+    "description": "Button on the Votes card of a proposal to close the request: vote no, keep it open."
+  },
+  "topic.thread.close.note": {
+    "text": "If it passes, every request here closes, and the changes up for a vote close with them.",
+    "description": "Line under the Votes card of a proposal to close the request, before the person has voted: what happens if the vote passes."
+  },
+  "topic.thread.close.saidYes": {
+    "text": "You said yes. If it passes, every request here closes.",
+    "description": "Line under the Votes card of a proposal to close the request, once the person voted yes."
+  },
+  "topic.thread.close.saidNo": {
+    "text": "You said no.",
+    "description": "Line under the Votes card of a proposal to close the request, once the person voted no."
+  },
+  "topic.thread.pill.choosing": {
+    "text": "Pick one",
+    "description": "Status pill beside a request's number in its page's header: two or more changes (or a change and a proposal to close it) are up for one vote between them."
+  },
+  "topic.thread.pill.vote": {
+    "text": "Up for a vote",
+    "description": "Status pill beside a request's number in its page's header: a change built for it is up for a vote."
+  },
+  "topic.thread.pill.close": {
+    "text": "Vote to close",
+    "description": "Status pill beside a request's number in its page's header: a proposal to close the request is up for a vote."
+  },
+  "topic.thread.pill.building": {
+    "text": "Being built",
+    "description": "Status pill beside a request's number in its page's header: a change for it is being built."
+  },
+  "topic.thread.pill.live": {
+    "text": "Live",
+    "description": "Status pill beside a request's number in its page's header: a change built for it went live."
   }
 }

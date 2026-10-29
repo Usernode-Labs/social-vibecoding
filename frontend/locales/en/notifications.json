@@ -303,6 +303,18 @@
     "text": "Clear {{count}} notifications",
     "description": "Accessible name of the small × button on a notification row that stands for several notifications of one kind in one project: marks all of them as read without opening them. {{count}} is how many."
   },
+  "row.clearTip": {
+    "text": "Mark as read",
+    "description": "Tooltip shown when the pointer rests on the small × button on an unread notification: says that the button marks that notification as read without opening it."
+  },
+  "row.clearGroupTip_one": {
+    "text": "Mark {{count}} notification as read",
+    "description": "Tooltip shown when the pointer rests on the small × button on a notification card that stands for several notifications: says that the button marks all of them as read without opening them. {{count}} is how many."
+  },
+  "row.clearGroupTip_other": {
+    "text": "Mark {{count}} notifications as read",
+    "description": "Tooltip shown when the pointer rests on the small × button on a notification card that stands for several notifications: says that the button marks all of them as read without opening them. {{count}} is how many."
+  },
   "row.save": {
     "text": "Save notification",
     "description": "Accessible name of the bookmark button at the right end of a notification row that is not saved: pins that notification in the Saved section at the top. It also names the bookmark beside a notification listed in a card's history."
@@ -1550,6 +1562,14 @@
   "row.chat.requestReplyUnnumbered": {
     "text": "Replied on a request",
     "description": "First line of a notification: somebody posted in the discussion of a request the viewer filed or posted in, when the request's number is not known. \"Request\" is a noun: something people asked a project for. The message is on the line below."
+  },
+  "row.chat.changeReply": {
+    "text": "Replied on change #{{number}}",
+    "description": "First line of a notification: somebody posted in the discussion of a change (a proposed edit to a project that people vote on) the viewer built, voted on or posted in. {{number}} is the change's number. \"Change\" is a noun. The message is on the line below."
+  },
+  "row.chat.decisionReply": {
+    "text": "Replied on a decision",
+    "description": "First line of a notification: somebody posted in the discussion of a decision the viewer voted on or posted in, such as renaming a project. \"Decision\" is a noun: something a project's people vote on. The message is on the line below."
   },
   "row.projectOpened.label": {
     "text": "It’s open: ready to use",

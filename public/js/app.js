@@ -88,9 +88,6 @@ const App = {
   // Platform-wide direct and group conversations (#488). The screen itself
   // is React-owned; this flag only coordinates the classic shell router.
   _inMessages: false,
-  // Experimental Global Chat (#2543), now a normal routed screen with one
-  // stable address per durable session.
-  _inGlobalChat: false,
   // Agent sessions (#2779): one conversation with the Mayor at #agent/<id>.
   _inAgentSession: false,
   // "Your proposals" (#5310): every proposal-carrying dev session the viewer
@@ -5076,7 +5073,6 @@ const App = {
         else if (App._inAdmin) App.navigateHome();
         else if (App._inSettings) App.navigateHome();
         else if (App._inBrowse) App.navigateHome();
-        else if (App._inGlobalChat) App.navigateHome();
         else if (App._inAgentSession) App.navigateHome();
         else if (App._inMessages) App.navigateHome();
         else if (App._inWorkshop) App.navigateHome();
@@ -5108,7 +5104,7 @@ const App = {
         // The same list as the `!hash` branch above (QA 2026-09-24 Q1).
         if (App.currentApp || App._inLeaderboard || App._inProfile
           || App._inAdmin || App._inSettings || App._inBrowse
-          || App._inGlobalChat || App._inAgentSession
+          || App._inAgentSession
           || App._inMessages || App._inWorkshop
           || App._inProfileProposals) {
           App.navigateHome();
@@ -5329,11 +5325,11 @@ const App = {
           return;
         }
         // #2813: AN AGENT THREAD OPENS BESIDE THE LIST TOO, on a desktop —
-        // a global agent chat at `#messages/agent/<id>`, an app's dev
-        // session at `#messages/session/<slug>/<id>`. On a PHONE an agent
-        // chat and an agent session open here as well, as the second level
-        // of the inbox's drawer (features/nav-drawer/messages-drawer.ts;
-        // Evan, 18 Oct 2026), so a swipe goes back to the list. A dev session
+        // an agent session at `#messages/agent/<id>`, an app's dev session
+        // at `#messages/session/<slug>/<id>`. On a PHONE an agent session
+        // opens here as well, as the second level of the inbox's drawer
+        // (features/nav-drawer/messages-drawer.ts; Evan, 18 Oct 2026), so a
+        // swipe goes back to the list. A dev session
         // is still a screen of its own there, so its address is swapped in
         // place for that screen's (`#app/<slug>/dev/sessions/<id>`): no
         // history entry of its own, so Back from it still lands on the inbox
@@ -5357,6 +5353,12 @@ const App = {
           // The pane does not open the conversation it is already showing
           // again, so a `?flow=` link to that one is handed to it here.
           if (agent.kind === 'agent') window.UsernodeReact?.agentSession?.applyHandoff?.(agent.id);
+          return;
+        }
+        // A Global Chat thread's address (a UUID, never all digits) names
+        // nothing since Global Chat was removed: the inbox opens instead.
+        if (parts[1] === 'agent' && parts[2]) {
+          App._retiredChatToInbox();
           return;
         }
         // #2783: `#messages/channel/<handle>` is where a `#name` channel
@@ -5394,20 +5396,38 @@ const App = {
         );
         return;
       }
-      // On a phone an agent chat and an agent session open in Messages, as
-      // the second level of its drawer, and their screens' addresses come
-      // with them (_agentToInbox): a chat with its id, an agent session or a
-      // new one, a ?flow= kept for that route to hand over. A bare #chat and
-      // #agent/<id>/changes keep their screens.
-      if (parts.length === 2 && ((parts[0] === 'chat' && parts[1])
-        || (parts[0] === 'agent' && (parts[1] === 'new' || App._numericSegment(parts[1]) != null)))
+      if (parts[0] === 'ai') {
+        // #6019: the AI tab. `#ai` is its own page (features/ai/): what
+        // needs you, your private threads, Up next. Main, the chat with the
+        // bot, is a conversation of the Messages screen (`#ai/main`), so the
+        // screen comes up and the store opens the chat, which then names
+        // itself in the address (`#messages/<id>`), with its arrow back to
+        // `#ai`; the AI tab is lit while it is on screen
+        // (features/nav/tab-bar.tsx). `#ai/thread/<id>` opens one of its
+        // threads.
+        App.setChromeless(false);
+        if (parts[1] !== 'main' && parts[1] !== 'thread') {
+          App.navigateToAi();
+          return;
+        }
+        App.navigateToMessages(null);
+        const root = parts[1] === 'thread' ? App._numericSegment(parts[2]) : null;
+        const messages = window.UsernodeReact?.messages;
+        if (root != null && root <= 2147483647 && messages?.openBotThread) messages.openBotThread(root);
+        else messages?.openBot?.();
+        return;
+      }
+      // On a phone an agent session opens in Messages, as the second level
+      // of its drawer, and its screen's address comes with it
+      // (_agentToInbox): an agent session or a new one, a ?flow= kept for
+      // that route to hand over. #agent/<id>/changes keeps its screen.
+      if (parts.length === 2 && parts[0] === 'agent'
+        && (parts[1] === 'new' || App._numericSegment(parts[1]) != null)
         && App._agentToInbox(`#messages/agent/${parts[1]}`, fragQuery)) return;
       if (parts[0] === 'chat') {
-        // #2543: Global Chat is an ordinary, resumable platform screen. Its
-        // UUID names the exact session selected from Improve; a bare #chat
-        // resumes the most recent one (and creates the first when needed).
-        App.setChromeless(false);
-        App.navigateToGlobalChat(parts[1] || null);
+        // Global Chat (#2543) was removed. Its addresses, a bare #chat and
+        // #chat/<id>, open the inbox.
+        App._retiredChatToInbox();
         return;
       }
       if (parts[0] === 'agent') {
@@ -5863,9 +5883,19 @@ const App = {
   // for the app's record before revealing the view anyway (navigateToApp).
   _TAB_REVEAL_WAIT_MS: 250,
 
-  // The rail's own places: the roots its five tabs navigate to.
+  // The rail's own places: the roots its tabs navigate to. #6019: AI is the
+  // Messages screen's bot chat. Discover is one of them: the rail keeps its
+  // tab (29 Oct 2026), and this list is only read at the rail's width.
   _RAIL_ROOTS: ['home-screen', 'browse-screen', 'messages-screen',
-    'workshop-screen', 'profile-screen'],
+    'workshop-screen', 'profile-screen', 'ai-screen'],
+
+  // Whether Discover is a tab of its own: on the desktop rail, from 768px,
+  // it is (lit, a root, no back arrow); on a phone it is a page of Home's,
+  // with an arrow back to Home (#6019). nav-store.js RAIL_TAB_FOR_SCREEN
+  // lights the tab by the same width, and browse.js asks this too.
+  _discoverIsTab() {
+    return !App._isPhoneLayout();
+  },
 
   // Whether entering `screenEl` with `preferred` is a switch between places
   // on the desktop rail. The rail has to be on screen now (not hidden inside
@@ -5897,8 +5927,8 @@ const App = {
   // the zoom transition).
   SCREEN_IDS: ['app-view', 'home-screen', 'browse-screen',
     'workshop-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
-    'settings-screen', 'messages-screen', 'global-chat-screen',
-    'agent-session-screen', 'profile-proposals-screen'],
+    'settings-screen', 'messages-screen',
+    'agent-session-screen', 'profile-proposals-screen', 'ai-screen'],
 
   // Reveal `revealId`, hide every other screen root (except any id in
   // `keepAlso`), and publish the incoming screen's default back slot.
@@ -5941,9 +5971,6 @@ const App = {
     // show and the router says home is, and the router is the one that is
     // right. See Home.publishImproveTarget, whose gate reads both.
     App._revealedScreen = revealId;
-    if (revealId !== 'global-chat-screen' && App._inGlobalChat) {
-      App._exitGlobalChat();
-    }
     if (revealId !== 'agent-session-screen' && App._inAgentSession) {
       App._exitAgentSession();
     }
@@ -6428,8 +6455,10 @@ const App = {
     // the app goes, by any route: the header's close, a tab, the peeked rail,
     // Back, Expand — and chromeless, which has no layout to stand beside.
     // Switching straight to another app keeps `inApp` true, and the panel.
+    // The AI tab's page has it too, in the place of the chat docked beside
+    // its list (features/ai/).
     if (!App.embeddedPanel) {
-      window.UsernodeReact?.sidePanel?.appPresence?.(inApp && !App.chromeless);
+      window.UsernodeReact?.sidePanel?.appPresence?.((inApp || screen === 'ai-screen') && !App.chromeless);
     }
     // …AND THE PARKED APP, from the same answer (#2762). The running app
     // going off screen is what parks it, and this is the one place that says
@@ -6459,8 +6488,8 @@ const App = {
     'profile-proposals-screen': 'my_proposals',
     'settings-screen': 'settings',
     'messages-screen': 'messages',
-    'global-chat-screen': 'assistant',
     'agent-session-screen': 'agent_session',
+    'ai-screen': 'ai',
   }),
 
   _navPending: null,
@@ -6873,9 +6902,6 @@ const App = {
     // one owner. tests/react-screen-ids-consistency.test.js pins the rule
     // for every screen root at once.
     'messages-screen',
-    // Global Chat (#2543). It is a normal hash-routed screen now, so the
-    // router publishes visibility through the same single-owner seam.
-    'global-chat-screen',
     // Agent sessions (#2779): features/agent-session/index.tsx takes
     // useVisibilityHiddenClass from its first commit, same seam.
     'agent-session-screen',
@@ -6886,6 +6912,9 @@ const App = {
     // Your proposals (#5310). React-owned end to end, same as Workshop —
     // features/profile/my-proposals.tsx takes useVisibilityHiddenClass.
     'profile-proposals-screen',
+    // The AI tab's main view (#6019 follow-up): features/ai/index.tsx takes
+    // useVisibilityHiddenClass from its first commit, same seam.
+    'ai-screen',
   ],
 
   // The publish/read half of that seam. The state is a plain object on
@@ -7433,6 +7462,32 @@ const App = {
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
+  // #6019 follow-up: the AI tab's own page (features/ai/), a tab root like
+  // the Workshop. Main, the chat with the bot, is the Messages screen's
+  // (`#ai/main`), a level under it. The page keeps no state of its own to
+  // leave, so nothing has to exit it: the next screen's reveal hides it.
+  navigateToAi() {
+    if (App._revealedScreen === 'ai-screen' && !App.currentApp) return;
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
+    if (App._inBrowse) App._exitBrowse();
+    if (App._inMessages) App._exitMessages();
+    if (App._inProfileProposals) App._exitProfileProposals();
+    if (App._inWorkshop) App._exitWorkshop();
+    const screen = document.getElementById('ai-screen');
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('ai-screen');
+      App._enterScreenChrome();
+      App.setHeaderTitle(PlatformI18n.t('shell:title.ai'));
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
   // State-only (#979) — see _exitLeaderboard.
   _exitWorkshop() {
     App._inWorkshop = false;
@@ -7857,15 +7912,15 @@ const App = {
     if (parts[1] === 'agent' && parts[2]) {
       let id = null;
       try { id = decodeURIComponent(parts[2]); } catch (_) { return null; }
-      // #2779: an agent session's id is a serial; a Global Chat thread's is
-      // a UUID, never all digits. So a number names an agent session, and so
-      // does `new`: the one New change opens, unsent until its first message.
+      // #2779: an agent session's id is a serial, so a number names one, and
+      // so does `new`: the one New change opens, unsent until its first
+      // message. Anything else (a removed Global Chat thread's UUID) is null.
       if (id === 'new') return { kind: 'agent', id: 'new' };
       const agentSessionId = App._numericSegment(id);
       if (agentSessionId != null && agentSessionId <= 2147483647) {
         return { kind: 'agent', id: agentSessionId };
       }
-      return { kind: 'chat', id };
+      return null;
     }
     if (parts[1] === 'session' && parts[2] && parts[3]) {
       let slug = null;
@@ -7884,16 +7939,15 @@ const App = {
   // The value is taken out of the address once handed over, so a reload,
   // Back, or the first message giving an unsent conversation its own address
   // does not open the sheet again. Any other value is ignored.
-  // ON A PHONE AN AGENT CHAT AND AN AGENT SESSION ARE MESSAGES' (the inbox's
-  // drawer, features/nav-drawer/messages-drawer.ts; Evan, 18 Oct 2026): the
-  // list sits beside them and a swipe goes back to it. So their own screens'
-  // addresses, `#chat/<id>`, `#agent/<id>` and `#agent/new`, are swapped in
-  // place for the inbox's (`#messages/agent/…`), the fragment's query (a
-  // `?flow=`) kept, and routed in this same pass, as the inbox's own
-  // addresses were swapped the other way before. A bare `#chat` (resume the
-  // latest), `#agent/<id>/changes` (the changes drawer, which the inbox does
-  // not carry), a wide window and the side panel's own document keep the
-  // screens. Returns whether it took the address.
+  // ON A PHONE AN AGENT SESSION IS MESSAGES' (the inbox's drawer,
+  // features/nav-drawer/messages-drawer.ts; Evan, 18 Oct 2026): the list sits
+  // beside it and a swipe goes back to it. So its own screen's addresses,
+  // `#agent/<id>` and `#agent/new`, are swapped in place for the inbox's
+  // (`#messages/agent/…`), the fragment's query (a `?flow=`) kept, and routed
+  // in this same pass, as the inbox's own addresses were swapped the other
+  // way before. `#agent/<id>/changes` (the changes drawer, which the inbox
+  // does not carry), a wide window and the side panel's own document keep
+  // the screen. Returns whether it took the address.
   _agentToInbox(address, fragQuery) {
     if (App.embeddedPanel || window.matchMedia('(min-width: 768px)').matches) return false;
     try {
@@ -7931,44 +7985,15 @@ const App = {
     window.UsernodeReact?.messages?.close?.();
   },
 
-  // Global Chat is a first-class screen whose individual sessions have
-  // stable #chat/<uuid> addresses. The React store owns transcript loading;
-  // this classic router owns the same screen swap and chrome as every other
-  // platform page.
-  navigateToGlobalChat(threadId) {
-    const globalChat = window.UsernodeReact?.globalChat;
-    if (App._inGlobalChat && globalChat?.isOpen?.()) {
-      globalChat.route?.(threadId || null);
-      return;
-    }
-    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
-    const leavingApp = !!App.currentApp;
-    App.currentApp = null;
-    if (App._inLeaderboard) App._exitLeaderboard();
-    if (App._inProfile) App._exitProfile();
-    if (App._inAdmin) App._exitAdminConsole();
-    if (App._inSettings) App._exitSettings();
-    if (App._inBrowse) App._exitBrowse();
-    if (App._inWorkshop) App._exitWorkshop();
-    if (App._inProfileProposals) App._exitProfileProposals();
-    if (App._inMessages) App._exitMessages();
-    const screen = document.getElementById('global-chat-screen');
-    App._inGlobalChat = true;
-    globalChat?.route?.(threadId || null);
-    PlatformUI.transition(() => {
-      if (leavingApp) AppView.close();
-      App._showOnlyScreen('global-chat-screen');
-      App._enterScreenChrome();
-      if (typeof Home !== 'undefined') Home.publishImproveTarget();
-      App.setHeaderTitle(PlatformI18n.t('shell:title.chat'));
-    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
-  },
-
-  // State-only teardown. _showOnlyScreen has already hidden the React root
-  // in the incoming transition callback before this clears its live request.
-  _exitGlobalChat() {
-    App._inGlobalChat = false;
-    window.UsernodeReact?.globalChat?.deactivate?.();
+  // Global Chat (#2543) was removed. Its addresses (`#chat`, `#chat/<id>`,
+  // `#messages/agent/<uuid>`) open the inbox: the address is replaced with
+  // `#messages`, so a reload or Back does not route the old one again.
+  _retiredChatToInbox() {
+    try {
+      history.replaceState(history.state, '', App._rootUrl('#messages'));
+    } catch (_) {}
+    App.setChromeless(false);
+    App.navigateToMessages(null);
   },
 
   // #2779: /app/<slug>/dev/sessions/new was the classic unsent-change
@@ -8004,7 +8029,7 @@ const App = {
     App.restoreFromHash();
   },
 
-  // #2779: an agent session's own screen. The same pair as Global Chat's:
+  // #2779: an agent session's own screen. A pair, as every React screen is:
   // the React store (features/agent-session) loads the conversation, and
   // this router owns the screen swap and chrome. The store retitles the bar
   // with the conversation's title once it has it.
@@ -8803,12 +8828,18 @@ const App = {
   // a tab it is not the root of is listed here with that tab's address.
   _BACK_SLOT: {
     'home-screen': ['none'],
-    'browse-screen': ['none'],
+    // #6019: on a phone Discover is a page of Home's (its Discover block
+    // opens it), so its list level has an arrow back to Home. On the desktop
+    // rail it is a tab, a root, and _backSlotFor answers 'none' there.
+    // browse.js publishes the same.
+    'browse-screen': ['arrow', '/'],
     'messages-screen': ['none'],
     'workshop-screen': ['none'],
+    // #6019 follow-up: the AI tab's page is a tab root; Main is a level
+    // under it (the Messages store's syncChrome points its arrow here).
+    'ai-screen': ['none'],
     'profile-screen': ['none'],
     'app-view': ['close'],
-    'global-chat-screen': ['arrow', '#messages'],
     'agent-session-screen': ['arrow', '#messages'],
     'leaderboard-screen': ['arrow', '#profile'],
     'settings-screen': ['arrow', '#profile'],
@@ -8903,6 +8934,9 @@ const App = {
   _backSlotFor(revealId) {
     const slot = App._BACK_SLOT[revealId];
     if (!slot) return ['home'];
+    // The table says the phone's answer for Discover, a page of Home's. On
+    // the desktop rail it is a tab of its own, a root: nothing in the slot.
+    if (revealId === 'browse-screen' && App._discoverIsTab()) return ['none'];
     if (revealId === 'app-view') {
       // THE DISCUSSION IS A LEVEL INSIDE MESSAGES, not a program to step out
       // of (#2718 review, twice). `/app/<slug>/dev/chat` is a ROW IN THE
@@ -9563,7 +9597,10 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
     case 'settings': return 'settings-screen';
     case 'admin': return 'admin-screen';
     case 'messages': return 'messages-screen';
-    case 'chat': return 'global-chat-screen';
+    case 'ai': return ['main', 'thread'].includes(frag.split('/')[1])
+      ? 'messages-screen'                    // #6019: Main, the bot's chat, in the inbox's screen
+      : 'ai-screen';                         // the AI tab's own page
+    case 'chat': return 'messages-screen';   // Global Chat's, removed: the inbox
     case 'agent': return 'agent-session-screen';
     case 'leaderboard': return 'leaderboard-screen';
     default: return null;                    // #notifications is a sheet over home

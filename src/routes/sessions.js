@@ -7,6 +7,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const llm = require('../services/llm');
 const github = require('../services/github');
+const platformOperations = require('../services/platform-operations');
 const proposalUpdate = require('../services/proposal-update');
 const webFetch = require('../services/web-fetch');
 const prMetadata = require('../services/pr-metadata');
@@ -107,6 +108,9 @@ async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId, { al
             cs.freshness_error, cs.check_phase, cs.check_trigger, cs.checks_progress,
             cs.platform_env_state, cs.platform_env_detail,
             cs.check_error_detail, cs.requires_explicit_approval,
+            cs.imported_pr_base_ref, cs.waits_for_session_id,
+            (SELECT jsonb_build_object('id', w.id, 'prNumber', w.pr_number, 'title', w.pr_title, 'status', w.status)
+               FROM chat_sessions w WHERE w.id = cs.waits_for_session_id) AS waits_for,
             (SELECT jsonb_object_agg(
                       sv.kind || '_' || sv.capture_index || '_' || sv.media,
                       jsonb_build_object(
@@ -497,7 +501,7 @@ const MANUAL_SESSION_TITLE_MAX = 256;
 // browser — are phased out. New work starts in an agent session, whose
 // Mayor creates each change through POST /api/apps/:slug/sessions on a
 // delegated grant; nothing else may create one any more (not a browser, a
-// shell cached before the switch, a CLI token, nor Global Chat's loopback),
+// shell cached before the switch, nor a CLI token),
 // and forking a chat into a new classic session is retired with them. Only
 // the creation routes read this.
 //
@@ -3388,10 +3392,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // immediately, and that turn may push. Deferring would only move the
       // same mint a few lines down the same request.
       const branchName = branchNames.devBranchName(`auto-issue-${issueNumber}`, Date.now(), issue && issue.title);
-      try {
-        await github.createBranch(repoOwner, repoName, branchName);
-      } catch (err) {
-        log.warn('sessions', 'GitHub branch creation failed (continuing)', { err: err.message });
+      // Created on a conductor (services/branch-operation.js).
+      const branched = await platformOperations.request({
+        op: 'branch.ensure', appId: app.id, userId: req.user.id,
+        input: { purpose: 'headless', branch: branchName },
+      });
+      if (!branched.ok) {
+        log.warn('sessions', 'Branch creation failed (continuing)', { status: branched.status, err: branched.error });
       }
 
       // #249: deterministic display name — "#N · issue title" — set at
@@ -3587,17 +3594,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { owner: repoOwner, repo: repoName } = repoRef.ownerRepo(src.repo_url) || {};
       let inheritedCodeBranch = false;
       if (github.isEnabled() && repoOwner && repoName) {
-        try {
-          await github.createBranch(repoOwner, repoName, branchName, src.branch_name || 'main');
-          inheritedCodeBranch = !!src.branch_name;
-        } catch (err) {
-          log.warn('sessions', 'Branch fork off auto session failed — falling back to main', { err: err.message, from: src.branch_name });
-          try {
-            await github.createBranch(repoOwner, repoName, branchName);
-          } catch (err2) {
-            log.warn('sessions', 'GitHub branch creation failed (continuing)', { err: err2.message });
-          }
-        }
+        // Created on a conductor (services/branch-operation.js), off the
+        // source run's own branch as it reads it, or main when that is gone.
+        const branched = await platformOperations.request({
+          op: 'branch.ensure', appId: src.app_id, userId: req.user.id,
+          input: { purpose: 'clone-headless', branch: branchName, sourceSessionId: src.id },
+        });
+        if (branched.ok) inheritedCodeBranch = !!branched.inheritedCodeBranch;
+        else log.warn('sessions', 'Branch creation failed (continuing)', { status: branched.status, err: branched.error, from: src.branch_name });
       }
 
       // #249: the clone inherits the auto session's display name.
@@ -3840,6 +3844,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           : null;
         // #4452: how long testing usually takes on this app.
         detail.checks_estimate = await require('../services/checks-estimate').forApp(pool, session.app_id);
+        // An update from this version's original, as the proposal read
+        // carries it (services/upstream-offers.js changeView); null otherwise.
+        detail.upstream = await require('../services/upstream-offers').changeView(pool, session.id);
       }
       // `?results=failing`: the change page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).
@@ -5426,7 +5433,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           // #3229: the branch is named after the change, from the same
           // LLM-free title the session's first name comes from.
           const ensured = await sessionLifecycle.ensureSessionBranch({
-            pool, sessionId: session.id, username: req.user.username,
+            pool, sessionId: session.id, username: req.user.username, userId: req.user.id,
             label: session.session_title || sessionTitles.deterministicTitle(message || ''),
           });
           session.branch_name = ensured.branchName;

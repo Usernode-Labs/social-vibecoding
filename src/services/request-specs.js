@@ -25,8 +25,8 @@
 // so a review round is version 2 rather than a second record. The version is
 // shared with the group at once (a spec posted for review is a spec to be
 // read), the spec card goes in the request's own thread exactly as the
-// Homeroom bot posts its spec there, and the markdown copy goes on the
-// GitHub issue for the people who read the request there.
+// Homeroom bot posts its spec there, and a comment on the request links to
+// it (#6020: a link, not a second copy of the plan, unless the card failed).
 //
 // Lengths are checked, never fixed: an HTML document over the viewer's cap
 // is refused with the numbers rather than stored as its projection alone.
@@ -36,14 +36,12 @@ const log = require('./logger');
 const specHtml = require('./spec-html');
 
 const SPEC_SOURCE = 'request_spec';
-// A markdown spec has no viewer cap of its own; this keeps one within what a
-// GitHub comment can carry whole, since that copy is the spec for anyone
-// reading the request on GitHub.
+// A markdown spec has no viewer cap of its own; this keeps it within what
+// a GitHub comment could carry whole.
 const MAX_SPEC_MARKDOWN_CHARS = 60000;
 const MAX_SPEC_HTML_CHARS = specHtml.MAX_SPEC_HTML_CHARS;
-// The GitHub copy of an HTML spec is its markdown projection. A projection
-// that outgrows a comment is clipped there, said so, and points at Homeroom,
-// where the whole spec is.
+// The comment carries the plan only when its line in the thread failed
+// (specCommentText); a plan longer than this is clipped there, and says so.
 const MAX_COMMENT_SPEC_CHARS = 60000;
 const MAX_LISTED_SPECS = 50;
 
@@ -136,21 +134,33 @@ function specCard({ sessionId, version, markdown, user }) {
   };
 }
 
-/** The GitHub comment: who posted it, where it is whole, then the markdown copy. */
-function specCommentText({ username, version, markdown, format, webPath }) {
+/**
+ * The comment on the request: who posted which version, and where to read it.
+ * #6020: it used to carry the whole plan under a `<details>` fold every time,
+ * which the request page drew again under the plan's own line in the thread.
+ * When that line went out (`announced`), the comment is one line and a link
+ * to the request, where the line and its card open the plan. When it did
+ * not, nothing on the page opens this version, so the comment carries the
+ * plan under its fold, and the page draws it as the plan's card
+ * (AppView._botSpecOf). The address is a markdown link, so no sentence
+ * punctuation runs on into it.
+ */
+function specCommentText({ username, version, markdown, webPath, announced = true }) {
+  const title = specTitle(markdown);
+  const lead = `**${username || 'Someone'}** posted a plan for this request (version ${version})`
+    + `${title ? `: "${title}"` : ''}.`;
+  if (announced) {
+    return webPath ? `${lead} [Read the plan on Homeroom](${webPath})` : `${lead} It is in the plan card on Homeroom.`;
+  }
   const text = String(markdown || '');
   const clipped = text.length > MAX_COMMENT_SPEC_CHARS;
-  const where = webPath ? ` on Homeroom: ${webPath}` : ' on Homeroom';
   return [
-    `**${username || 'Someone'}** posted a plan for this request (version ${version}).`
-      + (format === 'html'
-        ? ` Its before/after screens are in the plan card${where}.`
-        : ` It is in the plan card${where}.`),
+    lead,
     '',
     '<details><summary>The plan</summary>',
     '',
     clipped ? text.slice(0, MAX_COMMENT_SPEC_CHARS) : text,
-    ...(clipped ? ['', `[The first ${MAX_COMMENT_SPEC_CHARS} of ${text.length} characters. The whole plan is${where}.]`] : []),
+    ...(clipped ? ['', `[The first ${MAX_COMMENT_SPEC_CHARS} of ${text.length} characters.]`] : []),
     '',
     '</details>',
   ].join('\n');
@@ -230,11 +240,33 @@ async function postRequestSpec(pool, { app, repo, issueNumber, issueTitle = null
     client.release();
   }
 
+  // The plan's own pictures: screenshots its author uploaded (prepare_upload,
+  // kind "screenshot") that its text shows. An upload no request links is
+  // swept after 24 hours, so they are stamped with this request the way a
+  // request's own screenshots are. Only the author's, and only ones not yet
+  // linked; best effort, like the request route's own stamping.
+  if (html && repo) {
+    const ids = specHtml.planImageIds(html);
+    if (ids.length) {
+      try {
+        await pool.query(
+          `UPDATE issue_screenshots
+              SET issue_owner = $2, issue_repo = $3, issue_number = $4
+            WHERE id = ANY($1::varchar[]) AND user_id = $5 AND issue_number IS NULL`,
+          [ids, repo.owner, repo.repo, Number(issueNumber), user.id]
+        );
+      } catch (err) {
+        log.warn('request-specs', 'Plan screenshots not linked', { appId: app.id, issueNumber, err: err.message });
+      }
+    }
+  }
+
   // The card and the GitHub copy are announcements of a spec that is already
   // stored and readable, so neither can take the post back with it.
   const card = specCard({ sessionId, version, markdown: prepared.markdown, user });
+  let announced = false;
   try {
-    await ws.sendBotMessage(pool, app.id, {
+    announced = !!await ws.sendBotMessage(pool, app.id, {
       user, content: card.content, metadata: card.metadata,
       thread: { type: 'issue', ref: Number(issueNumber) }, msgType: card.msgType,
     });
@@ -245,7 +277,7 @@ async function postRequestSpec(pool, { app, repo, issueNumber, issueTitle = null
   if (repo && github.isEnabled && github.isEnabled()) {
     try {
       await github.createIssueComment(repo.owner, repo.repo, Number(issueNumber), specCommentText({
-        username: user.username, version, markdown: prepared.markdown, format: prepared.format, webPath,
+        username: user.username, version, markdown: prepared.markdown, webPath, announced,
       }));
       commentPosted = true;
     } catch (err) {

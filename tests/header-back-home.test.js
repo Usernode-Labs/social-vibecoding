@@ -644,25 +644,28 @@ test('the bell renders BEFORE the mark, to its left', () => {
 //
 // So this asserts BOTH writers agree, not just the one that reads first.
 
-test('both writers of the bar agree that the Browse list is a tab root', () => {
+test('both writers of the bar agree about the Browse list: a root on the rail, back to Home on a phone', () => {
   const browse = fs.readFileSync(
     path.join(__dirname, '..', 'frontend/src/features/apps/browse.js'), 'utf8'
   );
 
-  // #2718 review: Discover is a TAB now, so the list level shows nothing —
-  // the bar is on screen beside it and a corner control that goes home is a
-  // second way to press a button already in view. The empty bar #2639 fixed
-  // is not back: what fixed it was giving the viewer a way out, and the tab
-  // bar is a better one than the house.
+  // #6019: ON A PHONE Discover is a PAGE OF HOME'S, opened from Home's
+  // Discover section, so the list level has an arrow back to Home. ON THE
+  // DESKTOP RAIL it is a tab again (29 Oct 2026), a root with an empty
+  // corner, as #2718 had it. One predicate, App._discoverIsTab, decides for
+  // both writers.
   //
   // Writer 1: the screen reveal, through the table.
   const at = APP_JS.indexOf('  _showOnlyScreen(revealId, keepAlso) {');
   const body = APP_JS.slice(at, APP_JS.indexOf('\n  },', at));
   assert.match(body, /App\.setBackIcon\(\.\.\.App\._backSlotFor\(revealId\)\);/);
-  assert.match(APP_JS, /'browse-screen': \['none'\],/, 'and the table calls it a root');
+  assert.match(APP_JS, /'browse-screen': \['arrow', '\/'\],/, 'the table says the phone\'s answer, up to Home');
+  assert.match(APP_JS, /if \(revealId === 'browse-screen' && App\._discoverIsTab\(\)\) return \['none'\];/,
+    'and the rail\'s is a root');
+  assert.match(APP_JS, /_discoverIsTab\(\) \{\n    return !App\._isPhoneLayout\(\);\n  \},/);
 
   // Writer 2: Browse's own chrome sync, which runs after it and so decides.
-  assert.match(browse, /const backMode = upToList \? 'arrow' : 'none';/,
+  assert.match(browse, /const root = !upToList && !!App\._discoverIsTab\?\.\(\);\n    App\.setBackIcon\(root \? 'none' : 'arrow', upToList \? '#apps' : \(root \? undefined : '\/'\)\);/,
     'the list level agrees with the table');
   assert.doesNotMatch(browse, /: 'home';/,
     'no remaining house in the chrome sync');
@@ -679,10 +682,13 @@ test('the detail level keeps its own two answers', () => {
   const browse = fs.readFileSync(
     path.join(__dirname, '..', 'frontend/src/features/apps/browse.js'), 'utf8'
   );
-  // Unchanged by #2639: up to the list normally, home when the detail was
-  // opened from a Home card and there is no list behind it.
+  // Up to the list normally, and, when the detail was opened from a Home
+  // card and there is no list behind it, what the list itself shows: an
+  // arrow back to Home on a phone, nothing on the rail (#6019).
   assert.match(browse, /const upToList = onDetail && Browse\._detailOrigin !== 'home';/);
-  assert.match(browse, /App\.setBackIcon\(backMode, upToList \? '#apps' : undefined\)/);
+  assert.match(browse, /App\.setBackIcon\(root \? 'none' : 'arrow', upToList \? '#apps' : \(root \? undefined : '\/'\)\);/);
+  // A window resized across 768px syncs it again.
+  assert.match(browse, /window\.matchMedia\?\.\('\(min-width: 768px\)'\)\?\.addEventListener\?\.\('change', \(\) => \{\n        const screen = document\.getElementById\('browse-screen'\);\n        if \(screen && !screen\.classList\.contains\('hidden'\)\) Browse\._syncChrome\(\);/);
 });
 
 test('the back-slot table and the tab map agree about what is a root', () => {
@@ -713,11 +719,13 @@ test('the back-slot table and the tab map agree about what is a root', () => {
 
   // The tab bar's own hrefs, so the arrow lands where the tab does rather than
   // at an address this test made up.
-  const HREF = { home: '/', discover: '#apps', messages: '#messages', workshop: '#workshop', me: '#profile' };
-  // The root of each tab: the screen its tab navigates to.
+  const HREF = { home: '/', messages: '#messages', workshop: '#workshop', me: '#profile', ai: '#ai' };
+  // The root of each tab: the screen its tab navigates to. #6019: AI is its
+  // own page (features/ai/), and Main, the bot's chat, a level under it on
+  // the Messages screen; Discover is a page of Home's.
   const ROOT = {
-    home: 'home-screen', discover: 'browse-screen', messages: 'messages-screen',
-    workshop: 'workshop-screen', me: 'profile-screen',
+    home: 'home-screen', messages: 'messages-screen',
+    workshop: 'workshop-screen', me: 'profile-screen', ai: 'ai-screen',
   };
 
   for (const [screen, tab] of Object.entries(tabFor)) {
@@ -734,4 +742,15 @@ test('the back-slot table and the tab map agree about what is a root', () => {
   // going up, and #app-view is deliberately absent from the tab map.
   assert.deepEqual(slots['app-view'], ['close']);
   assert.ok(!tabFor['app-view'], 'and no tab claims it');
+
+  // THE RAIL'S OWN ANSWERS (29 Oct 2026): a screen the desktop rail lights
+  // a tab of its own for is that tab's root there, so _backSlotFor empties
+  // its corner at the rail's width. Today that is Discover alone.
+  const railBody = nav.match(/RAIL_TAB_FOR_SCREEN = Object\.freeze\(\{([\s\S]*?)\}\)/)[1];
+  const railFor = Object.fromEntries([...railBody.matchAll(/'([a-z-]+)': '([a-z]+)'/g)].map((m) => [m[1], m[2]]));
+  assert.deepEqual(railFor, { 'browse-screen': 'discover' });
+  for (const screen of Object.keys(railFor)) {
+    assert.match(APP_JS, new RegExp(`if \\(revealId === '${screen}' && App\\._discoverIsTab\\(\\)\\) return \\['none'\\];`),
+      `${screen} is a root on the rail`);
+  }
 });

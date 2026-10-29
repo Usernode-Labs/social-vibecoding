@@ -578,6 +578,19 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     assert.equal(feed[1].yes, 1, 'with the tally so far');
     assert.equal(feed[1].summary, '## Why\n- because', 'and the summary, for the card to set as a paragraph');
     assert.equal(typeof feed[0].epoch, 'number', 'and the epoch a vote must carry');
+    // The Homeroom bot tab's Needs you (?in=threads): only the threads I
+    // am in, here one I wrote in, and not once I mute it.
+    const olderThread = (await pool.query('SELECT thread_id FROM chat_sessions WHERE id = $1', [older])).rows[0].thread_id;
+    assert.ok(olderThread, 'a change has a thread of its own');
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref) VALUES ($1, $2, 'which one?', 'session', $3)`,
+      [garden.id, me.id, older]);
+    const inThreads = async () => overview.shapeNeedsFeed(
+      (await pool.query(overview.NEEDS_FEED_IN_THREADS_SQL, [me.id, false, false, 60])).rows).map((f) => f.title);
+    assert.deepEqual(await inThreads(), ['Older change'], 'not a change in a thread I am not in');
+    await pool.query('INSERT INTO thread_followers (thread_id, user_id, muted_at) VALUES ($1, $2, NOW())', [olderThread, me.id]);
+    assert.deepEqual(await inThreads(), [], 'nor one I muted');
+    await pool.query('DELETE FROM thread_followers WHERE thread_id = $1 AND user_id = $2', [olderThread, me.id]);
     // Leaving a project takes its cards with it.
     await communities.leave(pool, swap, me.id);
     const after = overview.shapeNeedsFeed((await pool.query(overview.NEEDS_FEED_SQL, [me.id, false, false, 60])).rows);

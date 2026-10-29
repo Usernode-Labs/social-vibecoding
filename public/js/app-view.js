@@ -5080,6 +5080,10 @@ const AppView = {
       const id = await AppView._sessionIdForChange(ref.pr);
       if (AppView._devTopic !== pending || !document.getElementById('dev-topic-thread')) return;
       if (!id) {
+        // #6019: numbers are one sequence per app, so a change address
+        // with a request's number is that request's thread.
+        if (await AppView._openByThread('proposal', ref.pr, () => AppView._devTopic === pending)) return;
+        if (AppView._devTopic !== pending) return;
         if (App._abandonWorkshopResume?.()) return;
         App.switchTab('dev');
         return;
@@ -5331,6 +5335,37 @@ const AppView = {
     await settled;
   },
 
+  // #6019: a request's address and a change's share one number sequence
+  // (services/app-numbers.js), so a number the page asked for as the other
+  // kind still names one thing. Ask its thread (routes/threads.js) what the
+  // number is and open that instead: `asked` is the kind the address said
+  // ('issue' or 'proposal'). Resolves whether it moved; `still()` says
+  // whether the page that asked is still the one on screen.
+  async _openByThread(asked, number, still) {
+    const slug = App.currentApp || AppView.appData?.slug;
+    const n = Number(number);
+    if (!slug || !Number.isInteger(n) || n <= 0) return false;
+    let data = null;
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/threads/${n}${AppView._demoQS()}`);
+      if (res.ok) data = await res.json();
+    } catch {
+      data = null;
+    }
+    if (!data || !Array.isArray(data.items) || (still && !still())) return false;
+    const change = data.items.find((i) => i.type === 'change' && Number(i.number) === n);
+    const request = data.items.find((i) => i.type === 'request' && Number(i.number) === n);
+    if (asked === 'issue' && change) {
+      await AppView.openTopic('proposal', Number(change.id));
+      return true;
+    }
+    if (asked === 'proposal' && request) {
+      await AppView.openTopic('issue', n);
+      return true;
+    }
+    return false;
+  },
+
   // #4367: the session a change's pull request number names on this app, or
   // null — from the server, which applies the proposal page's own visibility.
   async _sessionIdForChange(pr) {
@@ -5382,7 +5417,16 @@ const AppView = {
   // each fetcher is best-effort and swallows its own errors.
   async _fetchTopicItem(ref) {
     if (ref.kind === 'gov') return AppView._fetchGovProposalById(ref.id);
-    if (ref.kind === 'issue') return AppView._fetchIssueByNumber(ref.id);
+    if (ref.kind === 'issue') {
+      const row = await AppView._fetchIssueByNumber(ref.id);
+      if (row) return row;
+      // #6019: a request address with a change's number is that change.
+      // Asked before the page settles as missing, so a number that is
+      // neither still falls back to the board at the moment it always did.
+      const here = AppView._devTopic;
+      await AppView._openByThread('issue', ref.id, () => AppView._devTopic === here);
+      return null;
+    }
     return AppView._fetchProposalById(ref.id);
   },
 
@@ -5929,6 +5973,8 @@ const AppView = {
         canEdit: AppView._canEditIssueAuthor(issue),
       },
       status: AppView._requestStatusView(issue),
+      // #5987: the app the "Open in Claude Code" link names.
+      slug: (AppView.appData && AppView.appData.slug) || App.currentApp || '',
       // 16 Oct 2026: where Homeroom bot's work on it is, as every surface
       // draws it (routes/issues.js track): the page's track card.
       track: issue.track || null,
@@ -6081,6 +6127,12 @@ const AppView = {
       // The sentence is Homeroom bot's state, plan included: no "Plan v1 is
       // ready for comments." after it (request-head.tsx).
       botSays: !merged && (!!(waitingOnBot && waitingOnBot.kind === 'question') || !!upForVote || !!(st && st.key === 'bot')),
+      // #5987: offer "Build it with your own Claude Code" under the card only
+      // where starting work on it is still open to this viewer: an open
+      // request with no change built for it, nobody's bot on it, and no
+      // session of the viewer's own already working on it.
+      ownAgent: !closed && !merged && !ref && !AppView.readOnly && !bot && !waitingOnBot
+        && !issue.myPrSessionId && !(st && st.key === 'in_review'),
     };
   },
 
@@ -7180,6 +7232,34 @@ const AppView = {
       // Its code did not come across from GitHub (_codeMissing): the page
       // says so in a notice above Votes and Testing (change-head.tsx).
       codeMissing: kind !== 'gov' && AppView._codeMissing(item),
+      // Versions (docs/plans/versions.md): an update from the original this
+      // version was made from, as the proposal read gives it; change-head.tsx
+      // draws its From card and Skip this update. Null on any other change.
+      upstream: (item && item.upstream && typeof item.upstream === 'object') ? item.upstream : null,
+      // Stacked on another change's branch, or based on a branch no open
+      // change has (_stackedOn): said in a notice above Votes and Testing,
+      // with a door to the change it waits for.
+      ...AppView._stackedView(kind, item),
+    };
+  },
+
+  // The change page's half of _stackedOn: `waitsFor`, the change it waits
+  // for (its number, title and page), or `baseNotMain`, the branch its pull
+  // request targets. Nothing for a change that is merged or closed.
+  _stackedView(kind, item) {
+    if (kind === 'gov' || !item || ['merged', 'merging', 'closed', 'archived'].includes(item.status)) return {};
+    const stack = AppView._stackedOn(item);
+    if (!stack) return {};
+    if (!stack.waitsFor) return { baseNotMain: { branch: stack.base } };
+    const w = stack.waitsFor;
+    const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+    return {
+      waitsFor: {
+        sessionId: w.id,
+        number: w.number,
+        title: w.title,
+        href: w.number ? `#app/${slug}/dev/changes/${w.number}` : `#app/${slug}/dev/proposals/${w.id}`,
+      },
     };
   },
 
@@ -7894,7 +7974,7 @@ const AppView = {
           heading: underwayImported
             ? PlatformI18n.t('changes:card.reasons.attention')
             : (list.some((r) => !r.soft) ? PlatformI18n.t('changes:card.reasons.cantMerge') : PlatformI18n.t('changes:card.reasons.worthKnowing')),
-          items: list.map((r) => ({ key: r.key, label: r.label, detail: r.detail, soft: !!r.soft })),
+          items: list.map((r) => ({ key: r.key, label: r.label, detail: r.detail, soft: !!(r.soft || r.waiting) })),
         };
       }
     }
@@ -10437,7 +10517,7 @@ const AppView = {
       if (!keep(issuesData)) {
         AppView._govProposals = (issuesData.issues || [])
           .filter((i) => i.kind === 'secret_change' || i.kind === 'rename' || i.kind === 'close_issue'
-            || i.kind === 'maintenance_campaign' || i.kind === 'featured_illustration');
+            || i.kind === 'maintenance_campaign' || i.kind === 'featured_illustration' || i.kind === 'thread_move');
       }
       if (!keep(promotedData)) AppView._proposalsCtx = {
         majority,
@@ -11312,10 +11392,22 @@ const AppView = {
   },
 
   /**
+   * #6006: a change of the viewer's that a coding agent submitted for them
+   * is not their yes until they tap it (governance-rules.ts), so until they
+   * vote it waits on them. One made on Homeroom carries its author's yes and
+   * stays Up next, and a project's first version asks nobody's vote (D1).
+   */
+  _workshopOwesYes(p) {
+    return !!p && p.status === 'promoted' && !!p.external_agent && !p.my_vote
+      && p.first_version !== true && !AppView.readOnly;
+  },
+
+  /**
    * #4772: one row of the viewer's work, filed in its What's happening
    * section (`group`): Waiting on you when Homeroom bot waits on them for it
-   * (`waitingOn`, _workshopWaitingOn) or it is a change of theirs that needs
-   * their fix; Going live when it is merged or being merged; Yours, up for a
+   * (`waitingOn`, _workshopWaitingOn), it is a change of theirs that needs
+   * their fix, or one a coding agent submitted that still needs their own
+   * Yes (_workshopOwesYes); Going live when it is merged or being merged; Yours, up for a
    * vote for the rest of their changes and decisions up for a vote; else
    * Your work. A row waiting on them for the bot leads its tags with why.
    */
@@ -11324,10 +11416,12 @@ const AppView = {
     const key = AppView._workshopItemKey(kind, item);
     const w = waitingOn && key ? waitingOn.get(key) : null;
     let group = 'work';
-    if (w || (kind === 'proposal' && AppView._workshopNeedsFix(item))) group = 'waiting';
+    const owesYes = kind === 'proposal' && AppView._workshopOwesYes(item);
+    if (w || owesYes || (kind === 'proposal' && AppView._workshopNeedsFix(item))) group = 'waiting';
     else if (kind === 'merged' || (kind === 'proposal' && item.status === 'merging')) group = 'live';
     else if (kind === 'proposal' || kind === 'gov') group = 'vote';
-    const tag = w ? AppView._workshopWaitingTag(w) : null;
+    const tag = w ? AppView._workshopWaitingTag(w)
+      : owesYes ? { label: PlatformI18n.t('changes:workshop.row.tag.yourYes'), tone: 'warn' } : null;
     const brief = tag && row.brief ? { ...row.brief, tags: [tag, ...row.brief.tags] } : row.brief;
     return { ...row, brief, group };
   },
@@ -16175,6 +16269,24 @@ const AppView = {
     return /\[bot\]$/.test(a) || a === 'usernode-bot' || a.endsWith('-bot');
   },
 
+  // #6020: the comment Homeroom writes on a request when somebody posts a
+  // plan on it (services/request-specs.js specCommentText), as
+  // { author, version }, or null. Native requests write it as `homeroom`
+  // (services/requests.js `comment`); it opens "**evan** posted a plan for
+  // this request (version 2)". When the plan's own line made it into the
+  // thread it is one line and a link; when that line failed, it carries the
+  // plan under a fold, as every one did before. The page leaves it out only
+  // where the thread has that author's line for that version
+  // (request-model.ts `requestStream`). Only this shape: Homeroom bot's own
+  // plan comments, with their questions before the fold, are not touched.
+  _isPlanMirror(c) {
+    if (!c) return null;
+    const a = (c.author || '').toString().toLowerCase();
+    if (a !== 'homeroom' && !AppView._isBotCommentAuthor(a)) return null;
+    const m = /^\*\*([^*\n]+)\*\* posted a plan for this request \(version (\d+)\)/.exec(String(c.body || ''));
+    return m ? { author: m[1], version: Number(m[2]) } : null;
+  },
+
   // #3490: Homeroom bot's spec, as it writes one on the request it is
   // building (services/homeroom-bot-live.js specCommentText): a sentence
   // saying what it is, then the spec inside `<details><summary>The
@@ -16190,7 +16302,7 @@ const AppView = {
   // matched nothing, and the markers were back on screen as text. A clipped
   // spec is drawn as a spec too, ending in the clip's own "… [truncated]".
   _botSpecOf(c) {
-    if (!c || !AppView._isBotCommentAuthor(c.author)) return null;
+    if (!c || !(AppView._isBotCommentAuthor(c.author) || AppView._isPlanMirror(c))) return null;
     const m = /^([\s\S]*?)<details>\s*<summary>\s*The (?:spec|plan)\s*<\/summary>([\s\S]*?)(?:<\/details>\s*)?$/
       .exec(String(c.body || ''));
     if (!m) return null;
@@ -16270,6 +16382,7 @@ const AppView = {
         voteRef: null,
         specShare: null,
         githubSpec: spec ? { title: spec.title, markdown: spec.body, html: renderSpec(spec.body) } : null,
+        planMirror: AppView._isPlanMirror(c),
       };
     });
     const item = AppView._findItem('issue', Number(number));
@@ -17772,7 +17885,7 @@ const AppView = {
       const label = r.name || r.label || '';
       const n = Number.isFinite(r.count) ? r.count : NaN;
       rows.push({
-        key: r.key, tone: r.soft ? 'warn' : 'bad',
+        key: r.key, tone: r.soft || r.waiting ? 'warn' : 'bad',
         label: label || r.key,
         sub: r.key === 'behind' && Number.isFinite(n)
           ? PlatformI18n.t('changes:ledger.behind.commits', { count: n })
@@ -23500,6 +23613,25 @@ const AppView = {
     return p.code_missing === true && ['active', 'paused', 'promoted', 'merging'].includes(p.status);
   },
 
+  // An import whose pull request is not based on main, its repository's
+  // default branch (src/workflow/rules/pr-base.ts): the branch it targets
+  // and, when that is an open change's branch, that change ({ id, number,
+  // title }). Null for one based on main: the row then has no base. A
+  // parent that is no longer open (merged and the move onto main not done,
+  // or closed) is waited for by nobody: its base is just not main.
+  _stackedOn(p) {
+    if (!p || p.source !== 'imported') return null;
+    const base = p.imported_pr_base_ref;
+    if (!base) return null;
+    const w = p.waits_for && typeof p.waits_for === 'object' ? p.waits_for : null;
+    const open = !w || !w.status || ['active', 'paused', 'promoted', 'merging'].includes(w.status);
+    const id = open ? (parseInt((w && w.id) || p.waits_for_session_id, 10) || 0) : 0;
+    return {
+      base: String(base),
+      waitsFor: id ? { id, number: parseInt(w && w.prNumber, 10) || null, title: (w && w.title) || null } : null,
+    };
+  },
+
   blockReasons(pr) {
     const p = pr || {};
     const out = [];
@@ -23512,6 +23644,29 @@ const AppView = {
         label: PlatformI18n.t('changes:badge.reason.codeMissing.label'),
         detail: PlatformI18n.t('changes:badge.reason.codeMissing.detail'),
       }];
+    }
+    // Where its pull request merges (src/workflow/rules/pr-base.ts): an
+    // import stacked on another open change's branch waits for that change.
+    // It stops the merge, so the card says "can't merge yet", but nobody
+    // need act on this change, so it is drawn amber (`waiting`, as deferred
+    // checks are). One based on a branch no open change has cannot go live
+    // until somebody changes its base to main (red). First, because nothing
+    // else on it merges before that does.
+    const stack = AppView._stackedOn(p);
+    if (stack && stack.waitsFor) {
+      const n = stack.waitsFor.number;
+      out.push({
+        key: 'waits_for_change',
+        label: n ? PlatformI18n.t('changes:badge.reason.waitsFor.label', { number: n }) : PlatformI18n.t('changes:badge.reason.waitsFor.labelUnnumbered'),
+        detail: n ? PlatformI18n.t('changes:badge.reason.waitsFor.detail', { number: n }) : PlatformI18n.t('changes:badge.reason.waitsFor.detailUnnumbered'),
+        waiting: true,
+      });
+    } else if (stack) {
+      out.push({
+        key: 'base_not_main',
+        label: PlatformI18n.t('changes:badge.reason.baseNotMain.label'),
+        detail: PlatformI18n.t('changes:badge.reason.baseNotMain.detail', { branch: stack.base }),
+      });
     }
     const fresh = AppView._freshnessOf(p);
     // Merge-pipeline conflicts: a real attempt failed and a human is needed.
@@ -23903,9 +24058,10 @@ const AppView = {
           t: 'chip', key: `tag-${r.key}`,
           // Three tones, three meanings: `running` is in flight and nobody
           // need act (the only one that spins), `soft` is worth knowing and
-          // does not block, everything else stops the merge.
+          // does not block, everything else stops the merge. `waiting` stops
+          // it too, but nobody need act on this change, so it is amber.
           cls: r.running ? AppView.STATUS_TAG_CLS.running
-            : r.soft ? AppView.STATUS_TAG_CLS.soft
+            : r.soft || r.waiting ? AppView.STATUS_TAG_CLS.soft
               : AppView.STATUS_TAG_CLS.blocking,
           label: r.label, title: r.detail || undefined, meta: true,
           spinner: !!r.running,

@@ -372,6 +372,8 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #5927: the Homeroom menu says what it is ────────────────────────
+  'apps-switcher-title': 'The app menu\'s title, "Feedback & info", over the app\'s name in small caps, which was the whole label before (features/app-context/app-context-sheet.tsx). Rendered on the menu pane only; the second panes keep their back disc there.',
   // ── iPhone Duo: the side strip (24 Oct 2026) ───────────────────────
   'platform-side-strip-top': 'iPhone Duo: the top of the column of system chrome down the screen\'s edge, holding the header\'s back controls while <html data-side-strip> is set (features/nav/strip-back.tsx, app.css THE SIDE STRIP). Ships drawn as nothing; display:none off the strip.',
   'platform-side-strip-back': 'iPhone Duo: #back-btn\'s copy in the side strip, rendered from the same useBackSlot hook and handing its press to #back-btn. Ships hidden with no href, as #back-btn does.',
@@ -393,6 +395,8 @@ const ADDED_IDS = {
   // NOT here: it renders only while a query is active and nothing matches,
   // so it is not in the prerendered document — the same treatment the maps
   // give ids behind an open dialog.
+  // ── Versions: Make your own gets its original's updates ──────────────────
+  'fork-follow': 'Versions (docs/plans/versions.md): the "Get <original>\'s updates" switch in the Make your own dialog (#fork-modal, features/dialogs/fork-app.tsx), on by default and on again at every open; its state goes in POST /api/apps/:slug/fork as `follow`.',
   // ── #5048: private requests ──────────────────────────────────────────────
   'feedback-private-row': '#5048: the Suggest an improvement dialog\'s "Private request" box, which files the request in Homeroom only (POST /api/private-requests) where only platform admins can see it, never as a GitHub issue. Ships hidden; feedback-controller.js shows it to full admins on each open.',
   'feedback-private-checkbox': '#5048: the box itself, unticked on every open.',
@@ -535,7 +539,14 @@ const ADDED_IDS = {
   // same change (see RETIRED_IDS).
   'platform-tabs': '#2718: the shell\'s five sections as a permanent bar at the foot of every platform screen — Home, Discover, Messages, Workshop, Me. A React island (frontend/src/features/nav/tab-bar.tsx) and a direct child of <body>, not a child of any screen root: a bar rebuilt on every screen swap is a bar that flickers when you use it. `position: fixed` rather than a flex item at the end of the body column, because on `html[data-browser-scroller]` routes the DOCUMENT scrolls and body height goes `auto`, so a flex child there leaves the screen with the page. It ships VISIBLE, which is what the prerendered document carries; the three routes that hide it (a running app, chromeless, the signed-out shell) publish `platform-tabs` false through the visibility store, and App._syncPlatformTabs is the one place that decides.',
   'platform-tab-home': '#2718: the Home tab. The one tab whose href is a real path (`/`) rather than a hash route, so a cmd-click opens the launcher in a new tab; a plain click is intercepted and handed to App.navigateHome(), guarded by NavLink.isNativeClick exactly as the app menu\'s Home row was.',
-  'platform-tab-discover': '#2718: the Discover tab, to #apps. Keeps the magnifier the retired #switcher-row-discover carried rather than taking a grid glyph — moving a destination should not also rename it.',
+  // #6019: Discover left the phone's bar for a page Home's Discover block
+  // opens; its seat there went to AI, the Homeroom bot's chat, which left
+  // the Messages list. The desktop rail keeps a Discover tab (29 Oct 2026).
+  'platform-tab-discover': '#2718: the Discover tab, to #apps. #6019 retired it with Discover\'s seat on the phone\'s bar; it comes back on 29 Oct 2026 as the DESKTOP RAIL\'S, under Home (Evan: Home, Discover, Messages, AI, Communities). app.css hides it below 768px, where Home\'s Discover block opens the page.',
+  'platform-tab-ai': '#6019: the AI tab, to #ai: the Homeroom bot\'s chat, lit while it is the conversation on the Messages screen (features/nav/tab-bar.tsx). Takes the seat the Discover tab (#platform-tab-discover, #2718) had on the phone\'s bar, which left it for a page of Home\'s there.',
+  // #6019 follow-up: the AI tab's own page, which #ai opens.
+  'ai-screen': '#6019 follow-up: the AI tab\'s main view (features/ai/index.tsx): Your work, In progress (Up next until 29 Oct 2026) and Live this week, with Main, the chat with Homeroom bot, docked beside it on a wide window. Ships hidden and empty; its lists load in effects.',
+  'platform-tabs-ai-badge': '#6019: the AI tab\'s unread count, the bot chat\'s unread messages; ships hidden with no text, as #platform-tabs-badge does.',
   'platform-tab-messages': '#2718: the Messages tab, to #messages. The only tab that can carry a count (see #platform-tabs-badge).',
   'platform-tab-workshop': '#2718: the Workshop tab, to #workshop — which of your apps wants something from you, the question Home does not answer.',
   'platform-tab-me': '#2718: the Me tab, to #profile. Challenges, Settings, Wallet, Validator and Admin are all reached from it, which is what keeps the bar to five: a sixth tab would be a section nobody opens daily.',
@@ -1040,9 +1051,9 @@ const ADDED_IDS = {
   // in the bar, which lists the same conversations and the agents beside
   // them; its 'All messages' row and its pager went with it.
   'notifications-screen-mark-all': 'Mark-all-read on the sheet — same controller action as the drawer\'s #notifications-mark-all, React-wired instead of id-bound. Same naming note as the tab row above. It sat at the far RIGHT END of that tab row, in tab-sized ink on the same baseline as the three tabs, so a control that changes data read as a fourth place to go; it is a row UNDER the Unread tab now, with the list it empties, and renders nowhere else.',
-  // ── #2377: Global Chat (experimental) ───────────────────────────
-  'global-chat-screen': '#2377/#2543: the React-owned conversational screen. It ships hidden for hydration parity, then the hash router reveals the durable session selected from Improve.',
-  'global-chat-composer': '#2377: the compact prompt field inside Global Chat. The stable id gives its label and focus behavior one owner across desktop, mobile web, and the native wrapper.',
+  // #global-chat-screen and #global-chat-composer left this map when
+  // Global Chat (#2377, #2543) was removed with its screen. They were only
+  // ever ADDED ids, so they simply leave.
   // ── #2779: agent sessions (on for everyone; the Experimental pane's
   //    switch and its status line are retired and left this map) ──
   'agent-session-screen': '#2779: the React-owned agent session screen, one conversation with the Mayor that works on any app. Ships hidden and empty for hydration parity; the hash router reveals it at #agent/<id>, and App.REACT_SCREEN_IDS keeps its visibility single-owned. Everything inside it renders only once a conversation is open, so the root is its one static id.',

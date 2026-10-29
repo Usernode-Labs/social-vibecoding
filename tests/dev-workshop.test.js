@@ -1362,12 +1362,12 @@ test('#4505: catch-up retains your recently merged contributions, not your ongoi
     return at0 < 0 ? '' : happened.slice(happened.lastIndexOf('<li', at0), happened.indexOf('</li>', at0));
   };
   // YOUR OWN, ONCE LIVE, IS NEWS: "You" on the row. #4772: the one still
-  // rolling out is Going live's, in What's happening, until it is live, so
-  // it is listed once.
+  // rolling out is Up next's, in What's happening, until it is live, so it
+  // is listed once.
   assert.match(row('My recent live contribution'), /data-new=""[\s\S]*<span class="dev-ws-hrow-you">You<\/span><time/);
   assert.equal(row('My merge going live'), '', 'still going live, it is not in What happened');
-  const goingLive = html.slice(html.indexOf('data-ws-mine-section="live"'), html.indexOf('data-ws-happened-head'));
-  assert.match(goingLive, /<div class="dev-ws-hweek-head"><span class="dev-ws-week-head"><b>Going live<\/b><span>1 merged<\/span><\/span><\/div>[\s\S]*>My merge going live<\/a>/);
+  const goingLive = html.slice(html.indexOf('data-ws-mine-section="next"'), html.indexOf('data-ws-happened-head'));
+  assert.match(goingLive, /<div class="dev-ws-hweek-head"><span class="dev-ws-week-head"><b>Up next<\/b><span>1 moving<\/span><\/span><\/div>[\s\S]*>My merge going live<\/a>/);
   assert.ok(!row('My recent live contribution').includes('Going live'), 'a live one says nothing of the sort');
   assert.equal(row('My older contribution'), '', 'old merges stay in their week, a row of its own');
   assert.ok(!happened.includes('My ongoing contribution'), 'ongoing work stays in Your work');
@@ -2468,13 +2468,12 @@ test('#4538: a change Homeroom bot built from your request is Your work, still b
     'the bot change from the viewer\'s request is in Your work; the bot\'s other one is not');
 
   const html = workshopHtml(AppView, 'workshop');
-  // #4772: up for a vote, it is under Yours, up for a vote.
-  const lane = html.split('data-ws-lane="mine-vote"')[1] || '';
-  // The row names the bot as its maker and the request it is for — never
-  // "yours", because the bot made it. #4716: its PR number and the request
-  // it is for in words, and the bot once, as its tag; no age.
+  // #4772, #6019 follow-up: up for a vote and needing nothing from the
+  // viewer, it is Up next's, one line.
+  const lane = html.split('data-ws-lane="mine-next"')[1] || '';
+  // The row names the bot as its maker — never "yours", because the bot
+  // made it — once, as its tag; no age.
   assert.match(lane, /Dark mode toggle/);
-  assert.match(lane, /<span class="dev-ws-wrow-sub">PR #212 · for #208<\/span>/);
   assert.equal(lane.split('Homeroom bot').length - 1, 1, 'the bot is named once, by its tag');
   assert.ok(!lane.includes('yours'), 'the bot made it, so the line does not say yours');
 
@@ -2483,7 +2482,7 @@ test('#4538: a change Homeroom bot built from your request is Your work, still b
   const botRow = plain(v.mine.rows)[0];
   assert.deepEqual(botRow.brief.tags[0],
     { label: message('changes:workshop.row.tag.homeroomBot'), tone: 'plain', glyph: 'bot' });
-  assert.match(lane, /<span class="dev-ws-tag" data-tone="plain"><svg[^]*?Homeroom bot<\/span>/,
+  assert.match(lane, /<span class="dev-ws-hrow-tag" data-tone="plain"><svg[^]*?Homeroom bot<\/span>/,
     'the row wears the Homeroom bot tag, beside the sparkle');
   // The tag is Your work's: the board builds its own brief from the same
   // card model, and that one has none.
@@ -2582,7 +2581,7 @@ test('#4715: a merged change of yours that is still going live stays in Your wor
   assert.match(row84.slice(row84.indexOf('dev-ws-hrow-meta')), new RegExp(`data-tone="plain"><svg[^]*?</svg>${esc(message('changes:workshop.row.tag.homeroomBot'))}</span>`));
 });
 
-test('#4772: What\'s happening files your work as Waiting on you, Your work, Yours up for a vote and Going live, each once', () => {
+test('#4772, #6019: What\'s happening files your work as Waiting on you, Your work and Up next, each once', () => {
   const store = { 'workshopSeen:demo-app': String(Date.now() - 3.5 * 86400000) };
   const AppView = makeAppView({ localStorage: store });
   seed(AppView);
@@ -2625,8 +2624,10 @@ test('#4772: What\'s happening files your work as Waiting on you, Your work, You
   // The sections in order, under What's happening, each a part of ONE card
   // headed as What happened's weeks are (After-Workshop-C); then New for
   // you's and What happened.
+  // #6019 follow-up: Up next took the place of Yours, up for a vote and
+  // Going live, soonest first.
   const order = ['data-ws-part="happening"', 'data-ws-mine-section="waiting"', 'data-ws-mine=""',
-    'data-ws-mine-section="vote"', 'data-ws-mine-section="live"', 'data-ws-happened-head'];
+    'data-ws-mine-section="next"', 'data-ws-happened-head'];
   const idx = order.map((x) => html.indexOf(x));
   assert.ok(idx.every((i) => i >= 0), `every section is drawn: ${idx}`);
   assert.deepEqual([...idx].sort((a, b) => a - b), idx, 'in that order');
@@ -2642,24 +2643,21 @@ test('#4772: What\'s happening files your work as Waiting on you, Your work, You
   // Waiting on you's count asks for the viewer, so it is in the accent, as
   // This week's "N new" is; the others are muted.
   assert.match(section('waiting'), head('Waiting on you', '3 to answer', 'dev-ws-week-fresh'));
-  assert.match(section('vote'), head('Yours, up for a vote', '1 open'));
-  assert.match(section('live'), head('Going live', '1 merged'));
+  assert.match(section('next'), head('Up next', '2 moving'));
   const rowsOf = (chunk) => [...chunk.matchAll(/data-ws-row="([^"]+)"/g)].map((m) => m[1]);
   // All three of Waiting on you, with nothing behind a Show more.
   assert.deepEqual(rowsOf(section('waiting')), ['mine:proposal:62', 'mine:issue:13', 'mine:issue:12']);
   assert.ok(!section('waiting').includes('data-ws-mine-section-more='));
-  assert.deepEqual(rowsOf(section('vote')), ['mine:proposal:61']);
-  assert.deepEqual(rowsOf(section('live')), ['mine:merged:79']);
+  assert.deepEqual(rowsOf(section('next')), ['mine:merged:79', 'mine:proposal:61'], 'going live, then up for a vote');
   const work = part('data-ws-mine=""');
   assert.deepEqual(rowsOf(work), ['mine:my-session:51']);
   assert.match(work, head('Your work', '1 open'), 'Your work counts its own rows');
-  // Waiting on you, Your work and Going live are What happened's one-line
+  // Waiting on you, Your work and Up next are What happened's one-line
   // rows, ending with where each stands: its most important tag, in its
-  // tone. Yours, up for a vote keeps its two lines.
-  for (const chunk of [section('waiting'), work, section('live')]) {
+  // tone.
+  for (const chunk of [section('waiting'), work, section('next')]) {
     assert.ok(chunk.includes('<li class="dev-ws-hrow"') && !chunk.includes('dev-ws-lrow'));
   }
-  assert.ok(section('vote').includes('<div class="dev-ws-wrow dev-ws-lrow"') && !section('vote').includes('dev-ws-hrow"'));
   assert.match(section('waiting'), /<span class="dev-ws-hrow-tag" data-tone="bad">Checks failing · 1<\/span>/);
   assert.match(section('waiting'), /<span class="dev-ws-hrow-tag" data-tone="warn">Plan ready: tap Build it<\/span>/);
   assert.ok(!html.slice(html.indexOf('data-ws-happening=""'), html.indexOf('data-ws-happened-head')).includes('dev-ws-hrow-you'),
@@ -2708,6 +2706,36 @@ test('#5229: a back and forth with Homeroom bot is not Waiting on you, even from
   assert.equal(AppView._workshopWaitingTag({ why: 'talk', at: at(0.05), botLast: true }), null);
   const html = workshopHtml(AppView, 'workshop');
   assert.ok(!html.includes('data-ws-mine-section="waiting"'), 'nothing is waiting on me');
+});
+
+test('#6006: a change a coding agent submitted for you waits on your Yes, then moves on', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  const mine = { status: 'promoted', username: 'me', user_id: 1, created_at: at(1), promoted_at: at(1),
+    last_message_at: at(1), linked_issues: [], my_vote: null, check_state: 'passing' };
+  AppView._proposals.push(
+    { ...mine, id: 61, pr_number: 61, pr_title: 'Made on Homeroom' },
+    { ...mine, id: 63, pr_number: 63, pr_title: 'From Claude Code', external_agent: 'claude-code' },
+    { ...mine, id: 64, pr_number: 64, pr_title: 'From Codex, voted', external_agent: 'codex', my_vote: 'yes' },
+    { ...mine, id: 65, pr_number: 65, pr_title: 'A first version', external_agent: 'claude-code', first_version: true },
+  );
+  const v = AppView._workshopView();
+  const rows = Object.fromEntries(plain(v.mine.rows).map((r) => [r.key, r]));
+  assert.deepEqual(Object.fromEntries(Object.entries(rows).map(([k, r]) => [k, r.group])), {
+    'mine:proposal:61': 'vote', 'mine:proposal:63': 'waiting', 'mine:proposal:64': 'vote', 'mine:proposal:65': 'vote',
+  }, 'only the agent\'s submission still owed my Yes waits on me');
+  assert.deepEqual(rows['mine:proposal:63'].brief.tags[0], { label: message('changes:workshop.row.tag.yourYes'), tone: 'warn' });
+  assert.ok(rows['mine:proposal:63'].brief.vote.ask, 'its row carries the Vote');
+  // A viewer who may only read cannot vote, so nothing waits on them.
+  const appData = AppView.appData;
+  AppView.appData = { ...appData, can_collaborate: false };
+  assert.equal(AppView._workshopOwesYes(AppView._proposals.find((p) => p.id === 63)), false);
+  AppView.appData = appData;
+  const html = workshopHtml(AppView, 'workshop');
+  const from = html.indexOf('data-ws-mine-section="waiting"');
+  const waiting = html.slice(from, html.indexOf('data-ws-mine-section="next"'));
+  assert.ok(from >= 0 && waiting.includes('data-ws-row="mine:proposal:63"'));
+  assert.match(waiting, /<span class="dev-ws-hrow-tag" data-tone="warn">Needs your Yes<\/span>/);
 });
 
 test('#4772: a change of yours needs your fix only when it is yours to fix', () => {
@@ -3940,10 +3968,10 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
   // the ?demo=1 mocks give the viewer a row in each, in order.
   const sections = byName(/What's happening files your work in sections of one card/);
   assert.ok(sections && sections.path === '/?demo=1&ws=workshop#app/usernode-2d5619/dev');
-  assert.match(sections.expectSelector, /\[data-ws-mine-section="waiting"\][^]*\[data-ws-mine-section="vote"\][^]*\[data-ws-mine-section="live"\]/);
+  assert.match(sections.expectSelector, /\[data-ws-mine-section="waiting"\][^]*\[data-ws-mine-section="next"\]/);
   // After-Workshop-C: the parts of ONE card, the waiting and live ones in
   // This week's one-line row, the vote in the two-line one.
-  assert.match(sections.expectSelector, /\[data-ws-part="happening"\] \+ \[data-ws-happening\] > \[data-ws-mine-section="waiting"\]:has\(\.dev-ws-hrow\) ~ \[data-ws-mine-section="vote"\]:has\(\.dev-ws-lrow\) ~ \[data-ws-mine-section="live"\] \.dev-ws-hrow\[data-ws-row\]$/);
+  assert.match(sections.expectSelector, /\[data-ws-part="happening"\] \+ \[data-ws-happening\] > \[data-ws-mine-section="waiting"\]:has\(\.dev-ws-hrow\) ~ \[data-ws-mine-section="next"\] \.dev-ws-hrow\[data-ws-row\]$/);
   assert.ok(sections.expectSelector.length <= 256);
   // The summary cards ride the ROUTE check rather than a slot of their own:
   // the manifest keeps 20 of its 580 clear and was already at that working

@@ -258,8 +258,9 @@ test('isFirstVersion: one read, and a failed one sends the change to the vote', 
 
 // governedGate, the path checkAndMerge and the ready card take: it reads
 // whether the change is a first version and, on a rules project, whether
-// its author is a person.
-function scripted({ rulesRow, votes = [], author = BOT, synthetic = true, first = false } = {}) {
+// its author is a person and whether a coding agent submitted it for them
+// (tests/agent-submission-yes.test.js).
+function scripted({ rulesRow, votes = [], author = BOT, synthetic = true, first = false, agent = null } = {}) {
   const seen = [];
   return {
     seen,
@@ -274,6 +275,7 @@ function scripted({ rulesRow, votes = [], author = BOT, synthetic = true, first 
       if (/FROM pr_votes/.test(sql) && /SELECT user_id, vote/.test(sql)) return { rows: votes };
       if (/SELECT user_id AS author_id FROM chat_sessions/.test(sql)) return { rows: [{ author_id: author }] };
       if (/SELECT is_synthetic FROM users/.test(sql)) return { rows: [{ is_synthetic: synthetic }] };
+      if (/SELECT external_agent FROM chat_sessions/.test(sql)) return { rows: [{ external_agent: agent }] };
       if (/COUNT\(DISTINCT a.user_id\)/.test(sql)) return { rows: [{ cnt: 3, invited_floor: 2 }] };
       if (/SELECT self_hosted, collab_visibility FROM apps/.test(sql)) return { rows: [{ self_hosted: false, collab_visibility: 'private' }] };
       if (/SELECT COUNT\(\*\) as cnt FROM pr_votes/.test(sql)) return { rows: [{ cnt: 0 }] };
@@ -299,6 +301,12 @@ test('governedGate: the bot\'s change on Open floor waits for a person; a person
   governance.invalidateGovernance(953);
   const person = scripted({ rulesRow: OPEN_FLOOR_ROW, author: SAM, synthetic: false });
   assert.equal((await governance.governedGate(person, 953, { kind: 'pr', id: 72, openedAt: OPENED, now: NOW })).mergeable, true);
+  assert.ok(person.seen.some((sql) => /SELECT external_agent FROM chat_sessions/.test(sql)), 'and whether an agent submitted it');
+
+  // A person's change a coding agent submitted waits for their own tap.
+  governance.invalidateGovernance(958);
+  const agent = scripted({ rulesRow: OPEN_FLOOR_ROW, author: SAM, synthetic: false, agent: 'claude-code' });
+  assert.equal((await governance.governedGate(agent, 958, { kind: 'pr', id: 75, openedAt: OPENED, now: NOW })).mergeable, false);
 });
 
 test('governedGate: a first version goes live with no votes, read off the change unless the caller says', async () => {

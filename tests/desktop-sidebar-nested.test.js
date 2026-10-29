@@ -82,6 +82,49 @@ test('which conversations: the bot, then the four most recent of either section,
   assert.deepEqual(railConversations([], new Map()), []);
 });
 
+test('#5693: under Agents the sidebar seats the chats that ask for you only; the bot\'s chat is the AI tab (#6019)', () => {
+  const { railCandidates, railConversations } = loadTsx('frontend/src/features/messages/rail-inbox.ts');
+  const { agentAsksForYou, buildInbox } = loadTsx('frontend/src/features/messages/inbox.ts');
+  const at = (h) => new Date(Date.UTC(2026, 9, 18, h)).toISOString();
+  // The list's own sources, merged the way the Messages screen merges them.
+  const sessions = [
+    { key: 'proposed', lastActivityAt: at(12), busy: false, awaitingInput: false },
+    { key: 'paused', lastActivityAt: at(11) },
+    { key: 'asks', lastActivityAt: at(4), busy: false, awaitingInput: true },
+    { key: 'building', lastActivityAt: at(3), busy: true, awaitingInput: false },
+    { key: 'order', lastActivityAt: at(2), kind: 'task' },
+  ];
+  const mayors = [
+    { id: 1, lastActivityAt: at(13), busy: false },
+    { id: 2, lastActivityAt: at(1), busy: true },
+  ];
+  const inbox = buildInbox({
+    conversations: [
+      { id: 99, lastActivityAt: at(0), homeroomBot: true },
+      { id: 7, lastActivityAt: at(10) },
+    ],
+    sessions,
+    mayors,
+  });
+  const seats = (bySession, byMayor) => railCandidates(inbox, (entry) => agentAsksForYou(entry, bySession, byMayor));
+  const bySession = new Map(sessions.map((item) => [item.key, item]));
+  const byMayor = new Map(mayors.map((item) => [String(item.id), item]));
+  const keys = (rows) => rows.map((row) => row.key);
+  assert.deepEqual(keys(seats(bySession, byMayor)),
+    ['session:asks', 'session:building', 'session:order', 'mayor:2', 'person:7'],
+    'waiting on you, at work, an open work order and a busy agent chat are seated; the proposed, paused and idle ones are not, however recent; the bot\'s chat (99) is not a row of Messages');
+  // The sidebar seats the five most recent of them, under their headings.
+  assert.deepEqual(keys(railConversations(seats(bySession, byMayor), new Map())),
+    ['session:asks', 'session:building', 'session:order', 'mayor:2', 'person:7']);
+  // An agent that finishes leaves its seat on the next redraw.
+  const done = new Map(bySession);
+  done.set('building', { ...bySession.get('building'), busy: false });
+  const idleMayor = new Map([['1', mayors[0]], ['2', { ...mayors[1], busy: false }]]);
+  assert.deepEqual(keys(seats(done, idleMayor)), ['session:asks', 'session:order', 'person:7']);
+  // With nothing going on, Agents seats nothing; People are untouched.
+  assert.deepEqual(keys(seats(new Map(), new Map())), ['person:7']);
+});
+
 test('the places: the column\'s own list, topics after two behind "Show N more", the one you are on kept', () => {
   const places = {
     channels: [
@@ -116,7 +159,8 @@ test('the places: the column\'s own list, topics after two behind "Show N more",
 
 test('the markup: the conversations follow Messages, empty in the prerender, and nothing is nested there', () => {
   const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
-  assert.match(html, /<span class="platform-tab-label">Messages<\/span><\/a><div id="platform-rail-conversations" class="platform-rail-conversations"><\/div><div id="platform-rail-pinned"/);
+  assert.match(html, /<span class="platform-tab-label">Messages<\/span><\/a><div id="platform-rail-conversations" class="platform-rail-conversations"><\/div><a id="platform-tab-ai"/,
+    'Messages, its conversations, then AI (#6019, the rail\'s order: Evan, 29 Oct 2026)');
   assert.doesNotMatch(html, /platform-rail-nest/);
   const src = read('frontend/src/features/nav/rail-conversations.tsx');
   assert.match(src, /const open = sidebarRows && screen === 'messages-screen' && tab === 'messages';/);
@@ -125,7 +169,7 @@ test('the markup: the conversations follow Messages, empty in the prerender, and
   // The inbox publishes the rows from the whole merge, not the search's answer.
   const inbox = read('frontend/src/features/messages/index.tsx');
   assert.match(inbox, /const railOpenKey = inbox\.find\(isOpen\)\?\.key \|\| null;/);
-  assert.match(inbox, /const rows = railConversations\(inbox\)\n/);
+  assert.match(inbox, /const rows = railConversations\(railCandidates\(inbox, asksForYou\)\)\n/);
 });
 
 test('the motion: one clock for both parts, on the content\'s own height', () => {
@@ -167,7 +211,7 @@ test('the pages: one pane at a time in the inbox, All communities one page, and 
   assert.match(css, /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\):not\(\.platform-tabs-folded\)\) \.dev-ws-places-btn \{\n    display: none;\n  \}/);
 });
 
-test('the look: one indent a level, one unbroken line, the parent unfilled; Discover a compass', () => {
+test('the look: one indent a level, one unbroken line, the parent unfilled; AI a sparkle', () => {
   const css = block1024();
   assert.match(css, /\.platform-rail-nest-in::before \{\n    content: "";\n    position: absolute;\n    top: 2px;\n    bottom: 6px;\n    left: 18px;\n    width: 1px;/, 'one line, under the parent\'s tile, past the sub-headers');
   assert.match(css, /\.platform-rail-nest :is\(\.dev-ws-place, \.platform-rail-sub\) \{[^}]*margin-left: 24px;[^}]*\}/);
@@ -176,6 +220,9 @@ test('the look: one indent a level, one unbroken line, the parent unfilled; Disc
   assert.match(css, /\.platform-rail-community\[data-rail-open\]\[aria-current="page"\],\n  \.platform-tabs:has\(#platform-rail-conversations > \[data-nest="open"\] \[aria-current="page"\]\) #platform-tab-messages\[aria-current="page"\] \{\n    background: transparent;/);
   assert.match(css, /--platform-rail-full: 212px;/, 'the deeper rows need 212px');
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
+  // #6019: the Homeroom bot tab wears the bot's picture in line, not a
+  // sparkle. The rail keeps Discover's compass under Home (29 Oct 2026); on a
+  // phone it is a page of Home's.
+  assert.match(bar, /\{ key: 'ai' as const, label: 'core:tabs\.ai', href: '#ai', Icon: HomeroomBotIcon \}/);
   assert.match(bar, /\{ key: 'discover' as const, label: 'core:tabs\.discover', href: '#apps', Icon: CompassIcon \}/);
-  assert.match(read('frontend/@/components/ui/icons.tsx'), /export const CompassIcon = stroked\('CompassIcon', \[/);
 });

@@ -24,7 +24,7 @@ import { buttonVariants } from '@/components/ui/button';
 
 import { useMessages } from '../../lib/i18n/react';
 import { CodeBoxes } from './code-boxes';
-import { phoneRecaptchaToken } from './recaptcha';
+import { postPhoneCodeRequest } from './recaptcha';
 import { blockedOffline } from './shared';
 import { PhoneInput, readPhone } from './phone-input';
 import { RecaptchaNotice } from './sign-in-sheet';
@@ -75,14 +75,7 @@ export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
-      const recaptchaToken = await phoneRecaptchaToken();
-      const res = await fetch('/api/auth/phone-link/request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ phoneNumber: value, ...(recaptchaToken ? { recaptchaToken } : {}) }),
-      });
-      const data = await res.json().catch(() => ({}));
+      const { res, data } = await postPhoneCodeRequest('/api/auth/phone-link/request', value);
       if (!res.ok || !data.ok || typeof data.sessionInfo !== 'string') {
         setError(data.error || t('auth:addPhone.sendFailed'));
         return;

@@ -26,6 +26,7 @@
 import { t as message, htmlText } from '../../lib/i18n/runtime';
 import { AppCard } from '../apps/app-card.js';
 import { linkKind } from '../../lib/repo-link.js';
+import { rankSearch, searchKey } from '../../lib/search-rank.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
@@ -441,11 +442,11 @@ const Home = {
     return list;
   },
 
-  // The one form both matchers compare in: NFC, so a typed "Café" (é as one
-  // code point) meets a stored one written as e + combining accent, then
-  // trimmed and lower-cased. No locale-specific folding.
+  // The one form both matchers compare in: trimmed, lower-cased, Latin
+  // accents set aside, so "cafe" finds "Café" however its accent was
+  // written (lib/search-rank.js, the rule every app search shares, #5891).
   searchKey(value) {
-    return String(value || '').normalize('NFC').trim().toLowerCase();
+    return searchKey(value);
   },
 
   // Case-insensitive substring match on name and slug. An empty /
@@ -457,46 +458,40 @@ const Home = {
       || Home.searchKey(app?.slug).includes(q);
   },
 
-  // True when the query IS the app's name or slug (trimmed, any case), not
-  // merely inside it. An empty query is nobody's exact match.
+  // True when the query IS the app's name or slug (trimmed, any case, any
+  // accents), not merely inside it. An empty query is nobody's exact match.
   isExactMatch(app, query) {
     const q = Home.searchKey(query);
     if (!q) return false;
     return Home.searchKey(app?.name) === q || Home.searchKey(app?.slug) === q;
   },
 
-  // The matches, in input order, except that an exact match leads (#4793):
-  // typing an app's full name should find it first, not below three apps
-  // that merely contain it. The split is stable, so several exact matches
-  // keep their order among themselves and the rest keep theirs. Discover's
-  // search (Browse.visibleApps) runs through here too, so both fields rank
-  // the same way.
+  // The matches, in input order, except that an exact match leads (#4793,
+  // #5891): typing an app's full name should find it first, not below three
+  // apps that merely contain it. The split is stable, so several exact
+  // matches keep their order among themselves and the rest keep theirs.
+  // Discover's search (Browse.visibleApps) runs through here too, and the
+  // rule itself is lib/search-rank.js, which the communities and guest
+  // searches share, so every app search ranks the same way.
   filterApps(apps, query) {
-    const matches = (apps || []).filter((a) => Home.matchesQuery(a, query));
-    const exact = matches.filter((a) => Home.isExactMatch(a, query));
-    if (!exact.length) return matches;
-    return exact.concat(matches.filter((a) => !Home.isExactMatch(a, query)));
+    return rankSearch(apps, query, (a) => [a?.name, a?.slug]);
   },
 
   // How many admin-featured tiles the "Featured apps" row shows.
   FEATURED_LIMIT: 6,
 
-  // Can this app be offered on the Discover rail at all: it runs, it is not
-  // the platform itself, and it has an icon to draw. No editorial state here.
+  // Can this app be offered in Discover at all: it runs, it is not the
+  // platform itself, it has an icon to draw, and no admin has flagged it.
+  // The flag (`directory.flagged`, src/services/discovery-curation.js) is the
+  // one editorial state an app has, and it takes the app out of every
+  // Discover list and Featured.
   isDiscoverable(app) {
     return !!app && app.status === 'running' && !app.self_hosted
-      && !!(app.icon_url || app.icon_emoji);
+      && !!(app.icon_url || app.icon_emoji) && !Home.isFlagged(app);
   },
 
-  // Discoverable AND reviewed. The API derives `directory.tier` from an
-  // explicit admin review of the current deployment, not from active-user
-  // counts or the staging-only `demo` fixture flag. That review is pinned to
-  // the deployment it was made on and expires on every merge
-  // (src/services/discovery-curation.js), which is why the Browse grouping
-  // reads it, the popular lane only ranks by it, and the featured lane does
-  // not read it at all.
-  isDiscoveryReady(app) {
-    return Home.isDiscoverable(app) && app.directory?.tier === 'ready';
+  isFlagged(app) {
+    return !!(app && app.directory && app.directory.flagged);
   },
 
   // The featured row's contents for this viewer: admin-curated apps
@@ -506,13 +501,9 @@ const Home = {
   // (ascending, NULLs last) and capped at FEATURED_LIMIT.
   // Pure — unit-tested in tests/home-find-more.test.js.
   //
-  // Featuring IS the editorial decision, so the review state does not gate
-  // this lane (#2565). It used to: a "Reviewed working" review expires on
-  // every merge, so a featured app dropped out of Discover each time it
-  // shipped a change, and a fresh platform showed nothing at all. ADDING an
-  // app to Featured still requires a current review (PUT
-  // /api/admin/featured-apps); staying there does not. An admin who later
-  // marks a featured app broken unfeatures it as well.
+  // Featuring IS the editorial decision. A flagged app is never featured
+  // (flagging one takes it off the list, and the PUT refuses it), and
+  // isDiscoverable leaves one out here as well.
   //
   // ?shot=discover-empty forces the empty answer regardless (#949), for the
   // same reason ?shot=create-disabled exists above: "nothing left to
@@ -561,14 +552,8 @@ const Home = {
   // parseInt because a count arrives as a STRING when it comes straight off
   // a Postgres bigint.
   //
-  // Only public communities (`audience === 'open'`) qualify, running and
-  // with an icon, REVIEWED WORKING ONES FIRST. A review is not required
-  // (polish N3): it is pinned to one deployment and expires on every merge
-  // (#2565 is the same finding for the curated half), so on production on
-  // 19 Oct 2026 no app had a current one and this lane was always empty,
-  // while Discover listed 67 communities to join. One an admin reviewed as
-  // a demo or broken (`directory.tier === 'more'`) is still never offered.
-  // Also exclude:
+  // Only public communities (`audience === 'open'`) qualify, running, with
+  // an icon and not flagged (isDiscoverable). Also exclude:
   //   * `featured` — the curated half of the same lane already offers those.
   //     The renderer dedupes by slug anyway, since one lane is where a
   //     double-listing would show as the same card twice.
@@ -582,12 +567,11 @@ const Home = {
     if (Home._shotDiscoverEmpty()) return [];
     const users = (a) => (parseInt(a && a.active_users, 10) || 0);
     const members = (a) => (parseInt(a && a.member_count, 10) || 0);
-    const reviewed = (a) => (Home.isDiscoveryReady(a) ? 1 : 0);
     return (apps || [])
       .filter((a) => a && !a.featured && a.audience === 'open'
-        && Home.isDiscoverable(a) && a.directory?.tier !== 'more'
+        && Home.isDiscoverable(a)
         && ((!Home.isJoined(a) && !Home.isYours(a)) || Home._discoverKeep.has(a.slug)))
-      .sort((x, y) => (reviewed(y) - reviewed(x)) || (members(y) - members(x)) || (users(y) - users(x)))
+      .sort((x, y) => (members(y) - members(x)) || (users(y) - users(x)))
       .slice(0, Home.POPULAR_LIMIT);
   },
 
@@ -1505,6 +1489,14 @@ const Home = {
   // parking a handle on Home: there are TWO rails (Featured and Popular) and
   // a single slot would silently drop one of them.
 
+  // A SECOND SOURCE (#6025): the sidebar's community rows drag the same way.
+  // RailCommunities attaches this recognizer to #platform-rail-communities
+  // while Home is on show, with `itemSelector` naming its rows; everything
+  // below — the geometry, the plan, the preview, the add on settle — is the
+  // Discover path unchanged. A row carries `data-rail-community` rather than
+  // `data-slug`, so _dragSlug reads both; the slug means the same app either
+  // way, and a community row is carried as the same incoming app.
+
   // The app a cross-surface drag is carrying, or null when the card being
   // dragged already has a tile on the canvas.
   _incoming: null,
@@ -1514,7 +1506,7 @@ const Home = {
   // gesture over and the grid free to repaint.
   _pendingAdd: null,
 
-  _attachDiscoverPlacement(railEl) {
+  _attachDiscoverPlacement(railEl, opts = {}) {
     if (!railEl || !window.unNative?.attachGridPlacement) return null;
     const cols = Home.currentCols();
     const gridEl = () => (typeof document !== 'undefined'
@@ -1522,11 +1514,13 @@ const Home = {
     const handle = window.unNative.attachGridPlacement(railEl, {
       // Demo tiles stay drag-inert (#746) — they have no DB row to favourite
       // and no cell to persist. A card with no slug is the empty-lane note.
-      itemSelector: '.app-card[data-slug]:not([data-demo])',
+      // A SECOND SOURCE (#6025) names its own selector: the sidebar's
+      // community rows, which are not Discover cards.
+      itemSelector: opts.itemSelector || '.app-card[data-slug]:not([data-demo])',
       cellFromPoint: (x, y, info) => Home._targetCellFor(x, y, info, cols),
       canPlace: (el, cell) => !!Home._planFor(el, cell, cols),
       onLift: (el) => {
-        const slug = (el && el.dataset && el.dataset.slug) || '';
+        const slug = Home._dragSlug(el);
         const onCanvas = (Home._layoutCache || [])
           .some((it) => it.type === 'app' && it.slug === slug);
         Home._incoming = onCanvas
@@ -2870,16 +2864,19 @@ const Home = {
       ? `<button type="button" class="retry-btn relative inline-flex items-center rounded-full bg-violet-600 hover:bg-violet-500 px-1.5 text-[11px] leading-3 font-semibold text-white cursor-pointer transition-colors before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1" data-slug="${app.slug}" aria-label="${htmlText('home:grid.tile.retryNamed', { app: String(app.name || '') })}">${htmlText('core:common.retry')}</button>`
       : '';
 
-    // Fork lineage tag: a small amber ⑂ badge on the icon's bottom-left
-    // corner (opposite the hamburger badge) marking this tile as a remix.
-    // The full "Remixed from <name>" label lives on the app's own page;
-    // here it's glyph-only with the resolved live name (or "<deleted>")
-    // in the tooltip. `forked_from` is null for non-forks.
+    // Lineage tag: a small badge on the icon's bottom-left corner
+    // (opposite the hamburger badge) marking this tile as a version made
+    // from another app (docs/plans/versions.md). The full "Made from
+    // <name>" line lives on the app's own page; here it's glyph-only with
+    // the resolved live name (or "<deleted>") in the tooltip. It wears the
+    // audience badge's quiet face with a two-tile glyph (app-grid.tsx's
+    // copy, which says why); the ⑂ fork sign it had is gone with the word.
+    // `forked_from` is null for an app that is not a version.
     const forkName = app.forked_from && typeof app.forked_from === 'object'
       ? (app.forked_from.name || '<deleted>') : null;
     const forkDeleted = !!forkName && !app.forked_from.name;
     const forkTagHtml = forkName
-      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm" title="${(forkDeleted ? htmlText('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : htmlText('home:grid.tile.remixedFrom', { app: forkName }))}" aria-label="${(forkDeleted ? htmlText('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : htmlText('home:grid.tile.remixedFrom', { app: forkName }))}">⑂</span>`
+      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-white text-zinc-600 shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-800 dark:text-zinc-300" title="${(forkDeleted ? htmlText('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : htmlText('home:grid.tile.remixedFrom', { app: forkName }))}" aria-label="${(forkDeleted ? htmlText('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : htmlText('home:grid.tile.remixedFrom', { app: forkName }))}"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 9h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H11a2 2 0 0 1-2-2V9Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4"/></svg></span>`
       : '';
 
     const icon = Home.iconTileFor(app);
@@ -4116,7 +4113,8 @@ const Home = {
         run: (itemEl) => Home._menuCheckUpdates(app, itemEl),
       });
     }
-    // Fork, which people see as "Remix": available to anyone who can see
+    // Fork, which people see as "Make your own" (their own version of the
+    // app, docs/plans/versions.md): available to anyone who can see
     // the app (every card in this list is already visibility-filtered
     // server-side, so presence here implies view access). Hidden for the
     // platform self-app, which has no per-app repo/DB/container to copy.
@@ -4905,10 +4903,17 @@ const Home = {
   // after an add, and dragging it then moves the tile it already has rather
   // than adding a second one. `_incoming` is only ever the fallback, and only
   // ever set for a card with no tile on the canvas.
+  // A dragged element names its app: a Discover card carries `data-slug`, a
+  // sidebar community row carries `data-rail-community`, and both are the
+  // same app slug (#6025).
+  _dragSlug(el) {
+    return (el && el.dataset && (el.dataset.slug || el.dataset.railCommunity)) || '';
+  },
+
   _itemFor(el) {
     if (!el) return null;
     const layout = Home._layoutCache || [];
-    const slug = el.dataset?.slug;
+    const slug = Home._dragSlug(el);
     return layout.find((it) => it.type === 'app' && it.slug === slug)
       || (Home._incoming && Home._incoming.slug === slug ? Home._incoming : null);
   },

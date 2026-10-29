@@ -24,26 +24,38 @@
  * name and figure over its bar, its button beside them and one line under;
  * then the Before and after card. The view model is
  * `AppView._changeThreadView`; this only draws.
+ *
+ * An UPDATE (docs/plans/versions.md: a change a version was given by the
+ * project it was made from, its original) adds two things: under the summary,
+ * the From <original> card (what it brings from there, then "In <version>":
+ * which of the version's own changes it keeps, and what it does to its data
+ * and its outside connections, in words read off the diff); and under Votes
+ * and Testing, "Not for your version?" with Skip this update, or, when it
+ * clashes with the version's own changes, Ask Homeroom bot to fit it.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { forwardRef, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { Html } from '../../../lib/html';
 import { Diagram, readDiagram } from '../../../lib/diagram/diagram';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { listText, t as translate } from '../../../lib/i18n/runtime';
 import { releaseSentence } from '../../../lib/release-eta';
 import { useReleaseNow } from '../../../lib/use-release-now';
 import { Alert } from '@/components/ui/alert';
 import { Avatar } from '@/components/ui/feed';
 import { CheckIcon, EllipsisHorizontalIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../group-chat/swatch';
+import { AppIconContent, appIconKind } from '../../apps/app-card-view';
+import { askToFit, upstreamAction } from '../../versions/upstream';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ActionButton, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { ActionSpec, DevCardModel } from '../card/model';
-import type { ChangeGateView, ChangeThreadView, FixChecksView, TopicBody } from './model';
+import type { ChangeGateView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
 import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
+import { ThreadItems, pageSlug } from './thread-items';
 import { TopicBack } from './topic-back';
 import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view';
 import { IncludedIn, IssueAssociations, ProposalBody, SummaryMore } from './topic-head';
@@ -143,7 +155,7 @@ function FixRow({ fix, rerun }: { fix: FixChecksView; rerun: ReactNode }): React
  * beside it (`fix`, `rerun`). From the tap until the build conversation's
  * turn ends it reads "Fixing", with a door into that conversation.
  */
-function GateCard({ which, g, action, rerun = null, id, repeat = false }: {
+export function GateCard({ which, g, action, rerun = null, id, repeat = false }: {
   which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null; repeat?: boolean;
 }): ReactNode {
   const t = useMessages('project');
@@ -255,6 +267,53 @@ export function CodeMissingNotice(): ReactNode {
   );
 }
 
+/**
+ * Where its pull request merges, when that is not main
+ * (src/workflow/rules/pr-base.ts). Stacked on another open change's branch
+ * (`v.waitsFor`): it goes live only after that change does, and the notice
+ * names it, with a door to its page. Based on a branch no open change has
+ * (`v.baseNotMain`): it says what a person does about it. Said once, above
+ * Votes and Testing, as CodeMissingNotice is.
+ */
+export function StackNotice({ v }: { v: ChangeThreadView }): ReactNode {
+  const t = useMessages('project');
+  const w = v.waitsFor;
+  if (w) {
+    const door = (
+      <a
+        href={w.href}
+        className="font-semibold underline"
+        data-change-waits-for-link={w.sessionId}
+        onClick={(event) => {
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          (window as any).AppView?.openTopic?.('proposal', w.sessionId);
+        }}
+      />
+    );
+    return (
+      <Alert variant="notice" density="compact" className="mt-3" data-change-waits-for={w.sessionId}>
+        <span>
+          <RichMessage
+            id={!w.number ? 'project:topic.change.waitsForUnnumbered'
+              : w.title ? 'project:topic.change.waitsFor' : 'project:topic.change.waitsForUntitled'}
+            values={{ number: w.number ?? '', title: w.title || '' }}
+            components={[door]}
+          />
+        </span>
+      </Alert>
+    );
+  }
+  if (v.baseNotMain) {
+    return (
+      <Alert variant="notice" density="compact" className="mt-3" data-change-base-not-main="">
+        <span>{t('project:topic.change.baseNotMain', { branch: v.baseNotMain.branch })}</span>
+      </Alert>
+    );
+  }
+  return null;
+}
+
 /** The Before and after card: the shots, or the line that says where they are. */
 function ShotsCard({ s }: { s: NonNullable<ChangeThreadView['shots']> }): ReactNode {
   const t = useMessages('project');
@@ -280,16 +339,11 @@ function ShotsCard({ s }: { s: NonNullable<ChangeThreadView['shots']> }): ReactN
   );
 }
 
-export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSaved }: {
-  id: number | null;
-  card: DevCardModel;
-  body: TopicBody;
-  v: ChangeThreadView;
-  linkedIssues: number[];
-  onIssuesSaved: (issues: number[]) => void;
-}): ReactNode {
-  const t = useMessages('project');
-  const images = useInlineImageViewer();
+/**
+ * The buttons on a change's two cards, from its card model: Yes and No (or
+ * Propose) on Votes; Preview or Open app, the re-run and Fix it on Testing.
+ */
+function gateActions(card: DevCardModel, v: ChangeThreadView) {
   const all: ActionSpec[] = card.actions || [];
   const yes = all.find((a) => isVoteSpec(a, 'yes'));
   const no = all.find((a) => isVoteSpec(a, 'no'));
@@ -309,6 +363,42 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
         : (preview && !(v.testing.actions || []).some((a) => a.key === 'retry-preview') ? <ActionButton a={preview} /> : null)}
     </>
   ) : null;
+  return { voteAction, testAction, withFix, testingActions };
+}
+
+/**
+ * A change's Votes and Testing cards, one above the other, with their
+ * buttons: its own page draws them under its summary, and #6019's request
+ * page under each change in the request's thread (./thread-changes.tsx).
+ */
+export const ChangeGates = forwardRef<HTMLDivElement, { id: number | null; card: DevCardModel; v: ChangeThreadView }>(
+  function ChangeGates({ id, card, v }, ref) {
+    const { voteAction, testAction, withFix, testingActions } = gateActions(card, v);
+    return (
+      <div ref={ref} className="dev-change-pair">
+        <GateCard which="votes" g={v.votes} action={voteAction} id={id} />
+        <GateCard which="testing" g={v.testing} action={testAction} rerun={withFix ? testingActions : null} id={id} />
+      </div>
+    );
+  },
+);
+
+export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSaved, threadNumber = null, threadAsChange = false }: {
+  id: number | null;
+  card: DevCardModel;
+  body: TopicBody;
+  v: ChangeThreadView;
+  linkedIssues: number[];
+  onIssuesSaved: (issues: number[]) => void;
+  /** #6019: a number in the change's thread: its own pull request's, else its first request's. */
+  threadNumber?: number | null;
+  /** `threadNumber` is its own pull request's: its thread is read as the change's (a request may share it). */
+  threadAsChange?: boolean;
+}): ReactNode {
+  const t = useMessages('project');
+  const images = useInlineImageViewer();
+  // The Votes card's buttons, for its repeat in the pin host.
+  const { voteAction } = gateActions(card, v);
   const thanks = v.thanks && id ? <span className="contents" data-kudos-host={id} data-kudos-face="thread"></span> : null;
   const issues = body.issues || [];
   const back = host('gc-thread-back');
@@ -423,6 +513,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           <ChangeDiagram value={body.diagram} />
           <RequestWords html={body.summaryHtml || ''} />
           {body.summaryMore ? <SummaryMore m={body.summaryMore} /> : null}
+          {v.upstream ? <UpstreamCard u={v.upstream} /> : null}
           {body.descriptionFold && body.proposalBody
             ? <ProposalBody b={body.proposalBody} named="description" part="description" />
             : null}
@@ -446,12 +537,13 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
               thread={{ thanks }}
             />
           ) : null}
+          {/* #6019: the requests, other changes and votes in its thread. */}
+          {id ? <ThreadItems slug={pageSlug()} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} /> : null}
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
           {v.codeMissing ? <CodeMissingNotice /> : null}
-          <div ref={pair} className="dev-change-pair">
-            <GateCard which="votes" g={v.votes} action={voteAction} id={id} />
-            <GateCard which="testing" g={v.testing} action={testAction} rerun={withFix ? testingActions : null} id={id} />
-          </div>
+          {v.waitsFor || v.baseNotMain ? <StackNotice v={v} /> : null}
+          <ChangeGates ref={pair} id={id} card={card} v={v} />
+          {v.upstream ? <UpstreamDecline u={v.upstream} id={id} /> : null}
           {v.shots ? <ShotsCard s={v.shots} /> : null}
         </div>
       </article>
@@ -482,4 +574,215 @@ function ChangeDiagram({ value }: { value: unknown }): ReactNode {
     );
   }
   return <Diagram d={d} source="author" onFail={() => setFailed(true)} className="dev-change-diagram" />;
+}
+
+/* ── Versions: an update from the original ───────────────────────────── */
+
+/** The version this page is on, as the app view has it: its slug for the update's actions, its name for "In <version>". */
+function thisVersion(): { slug: string; name: string } {
+  const data = typeof window === 'undefined' ? null : (window as any).AppView?.appData;
+  const slug = typeof data?.slug === 'string' ? data.slug : '';
+  return { slug, name: (typeof data?.name === 'string' && data.name) || slug };
+}
+
+const names = (items: unknown): string[] => (Array.isArray(items) ? items.filter((x): x is string => typeof x === 'string' && !!x) : []);
+
+/**
+ * What an update brings, and what it does in this version, as the card's
+ * lines: the original's change titles, then the version's own changes it
+ * keeps, what it does to the data (tables it adds, or nothing, or what it
+ * changes of what is there), its outside connections, any new key it needs,
+ * and whether it starts using AI or storing files. Only what the diff says,
+ * never the bot's words; a fact the server left out is left out. Pure, for
+ * the tests.
+ */
+export function upstreamLines(u: ChangeUpstreamView | null | undefined): {
+  brings: string[];
+  here: Array<{ text: string; warn?: boolean }>;
+} {
+  if (!u) return { brings: [], here: [] };
+  const brings = (Array.isArray(u.brings) ? u.brings : []).map((b) => (b && typeof b.title === 'string' ? b.title : '')).filter(Boolean);
+  const here: Array<{ text: string; warn?: boolean }> = [];
+  const keeps = u.keeps && typeof u.keeps === 'object' ? u.keeps : null;
+  const kept = Math.max(0, Math.floor(Number(keeps?.count) || 0));
+  const titles = names(keeps?.titles);
+  if (titles.length && kept > titles.length) {
+    here.push({ text: translate('project:topic.change.upstream.keepsMore', { titles: listText(titles), count: kept - titles.length }) });
+  } else if (titles.length) {
+    here.push({ text: translate('project:topic.change.upstream.keeps', { titles: listText(titles), count: titles.length }) });
+  } else if (kept) {
+    here.push({ text: translate('project:topic.change.upstream.keepsCount', { count: kept }) });
+  }
+  const facts = u.facts && typeof u.facts === 'object' ? u.facts : null;
+  if (facts) {
+    const tables = names(facts.tablesAdded);
+    const destructive = names(facts.destructive);
+    const hosts = names(facts.hostsAdded);
+    const secrets = names(facts.secretsAdded);
+    if (destructive.length) {
+      here.push({ text: translate('project:topic.change.upstream.destructive', { items: listText(destructive) }), warn: true });
+    } else if (tables.length) {
+      here.push({ text: translate('project:topic.change.upstream.tables', { count: tables.length, names: listText(tables) }) });
+    } else {
+      here.push({ text: translate('project:topic.change.upstream.dataSame') });
+    }
+    here.push({
+      text: hosts.length
+        ? translate('project:topic.change.upstream.hosts', { count: hosts.length, hosts: listText(hosts) })
+        : translate('project:topic.change.upstream.hostsNone'),
+    });
+    if (secrets.length) here.push({ text: translate('project:topic.change.upstream.secrets', { count: secrets.length, keys: listText(secrets) }) });
+    if (facts.ai) here.push({ text: translate('project:topic.change.upstream.ai') });
+    if (facts.storage) here.push({ text: translate('project:topic.change.upstream.storage') });
+  }
+  return { brings, here };
+}
+
+/**
+ * FROM <ORIGINAL>: under an update's summary, a card on the request page's
+ * own surface. The original's tile and name over how many of its changes
+ * this brings; those changes, each with a check; then "In <this version>"
+ * and what it does here. The original's name is a text child, never markup.
+ */
+export function UpstreamCard({ u }: { u: ChangeUpstreamView }): ReactNode {
+  const t = useMessages('project');
+  const from = u.from && typeof u.from === 'object' ? u.from : null;
+  const project = (from && (from.name || from.slug)) || '';
+  const { brings, here } = upstreamLines(u);
+  if (!project) return null;
+  const tile = { slug: from?.slug || '', name: project, icon_emoji: from?.emoji || null, icon_url: null };
+  const version = thisVersion().name;
+  return (
+    <section className="dev-change-upstream" data-change-upstream={from?.slug || ''} aria-label={t('project:topic.change.upstream.from', { project })}>
+      <div className="dev-change-upstream-head">
+        <span className="app-icon-tile dev-change-upstream-tile" data-icon={appIconKind(tile)} aria-hidden="true">
+          <AppIconContent app={tile} />
+        </span>
+        <span className="min-w-0">
+          <span className="dev-change-upstream-name">{t('project:topic.change.upstream.from', { project })}</span>
+          {brings.length ? (
+            <span className="dev-change-upstream-sub">{t('project:topic.change.upstream.made', { count: brings.length })}</span>
+          ) : null}
+        </span>
+      </div>
+      {brings.length ? (
+        <ul className="dev-change-upstream-list" data-change-upstream-brings="">
+          {brings.map((line, i) => (
+            <li key={`${i}:${line}`}><CheckIcon className="dev-change-upstream-glyph" aria-hidden="true" /><span>{line}</span></li>
+          ))}
+        </ul>
+      ) : null}
+      {here.length && version ? (
+        <>
+          <p className="dev-change-upstream-label">{t('project:topic.change.upstream.in', { project: version })}</p>
+          <ul className="dev-change-upstream-list dev-change-upstream-here" data-change-upstream-here="">
+            {here.map((line, i) => (
+              <li key={`${i}:${line.text}`} className={line.warn ? 'dev-change-upstream-warn' : undefined}>
+                <span className="dev-change-upstream-dot" aria-hidden="true" />
+                <span>{line.text}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * NOT FOR YOUR VERSION?: under Votes and Testing, quieter than either. Skip
+ * this update closes the change and moves the version past it without
+ * touching its code (POST /api/apps/:slug/upstream/skip), after a question.
+ * An update that clashes with the version's own changes (`needs_fit`) says
+ * which files, and offers Ask Homeroom bot to fit it (…/upstream/fit, a
+ * request the bot builds) beside Skip. Only while it is still up, and never
+ * for a reader who cannot take part.
+ */
+export function UpstreamDecline({ u, id }: { u: ChangeUpstreamView; id: number | null }): ReactNode {
+  const t = useMessages('project');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [asked, setAsked] = useState<string | null>(null);
+  const state = u.state || 'open';
+  const from = u.from && typeof u.from === 'object' ? u.from : null;
+  const project = (from && (from.name || from.slug)) || '';
+  const av = typeof window === 'undefined' ? null : (window as any).AppView;
+  if (!project || av?.readOnly || (state !== 'open' && state !== 'needs_fit')) return null;
+  const fit = state === 'needs_fit';
+  const conflicts = names(u.conflicts);
+
+  const refresh = () => {
+    if (typeof av?._loadDevData === 'function') Promise.resolve(av._loadDevData()).catch(() => {});
+    if (id) window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: Number(id) }));
+  };
+  const skip = async () => {
+    const { slug } = thisVersion();
+    if (busy || !slug) return;
+    const ui = (window as any).PlatformUI;
+    const go = ui && typeof ui.confirm === 'function'
+      ? await ui.confirm({
+        title: t('project:topic.change.upstream.skip.confirmTitle', { project }),
+        message: t('project:topic.change.upstream.skip.confirmMessage'),
+        confirmLabel: t('project:topic.change.upstream.skip.confirm'),
+      })
+      : true;
+    if (!go) return;
+    setBusy(true);
+    setError('');
+    try {
+      await upstreamAction(slug, 'skip', {}, 'project:topic.change.upstream.skip.failed');
+      refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('project:topic.change.upstream.skip.failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const askFit = async () => {
+    const { slug } = thisVersion();
+    if (busy || !slug) return;
+    setBusy(true);
+    setError('');
+    try {
+      setAsked((await askToFit(slug, 'project:topic.change.upstream.fit.failed')) || '');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('project:topic.change.upstream.fit.failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="dev-change-upstream-skip" data-change-upstream-skip={state}>
+      <span className="min-w-0 flex-1">
+        <span className="dev-change-upstream-skip-title">
+          {fit ? t('project:topic.change.upstream.fit.title') : t('project:topic.change.upstream.skip.title')}
+        </span>
+        <span className="dev-change-upstream-skip-sub">
+          {fit && conflicts.length
+            ? t('project:topic.change.upstream.fit.sub', { count: conflicts.length, files: listText(conflicts) })
+            : t('project:topic.change.upstream.skip.sub', { project })}
+        </span>
+        {asked !== null ? (
+          <span className="dev-change-upstream-skip-sub" role="status">
+            <RichMessage
+              id="project:topic.change.upstream.fit.asked"
+              components={[asked ? <a className="dev-ws-link" href={asked} /> : <span />]}
+            />
+          </span>
+        ) : null}
+        {error ? <span className="dev-change-upstream-skip-sub dev-change-upstream-warn" role="alert">{error}</span> : null}
+      </span>
+      <span className="dev-change-upstream-skip-actions">
+        {fit && asked === null ? (
+          <button type="button" className="dev-change-upstream-skip-btn dev-change-upstream-fit-btn un-touch-target" data-change-upstream-fit="" disabled={busy} onClick={() => { void askFit(); }}>
+            {t('project:hub.update.fit')}
+          </button>
+        ) : null}
+        <button type="button" className="dev-change-upstream-skip-btn un-touch-target" data-change-upstream-skip-btn="" disabled={busy} onClick={() => { void skip(); }}>
+          {t('project:topic.change.upstream.skip.button')}
+        </button>
+      </span>
+    </div>
+  );
 }

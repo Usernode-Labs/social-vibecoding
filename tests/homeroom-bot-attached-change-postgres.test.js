@@ -254,13 +254,32 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
     'SELECT COUNT(*)::int AS n FROM homeroom_bot_dm_turns WHERE user_id = $1', [person.id],
   )).rows[0].n);
 
-  await t.test('B: Sam\'s problem with the attached change goes to that change, and the bot says what happens next', async () => {
+  await t.test('B: Sam\'s problem with the attached change is drafted for that change, and Post it sends it, saying what happens next', async () => {
     threadPosts.length = 0;
     await clearQueue();
     const message = await send(sam, samChat, 'Tapping mark as done doesn\'t do anything for me', change(pending.id));
     await dm.noteUserMessage(pool, CONFIG, {
       user: sam, conversationId: samChat, message,
       deps: { chat: noModel, apiKey: 'sk-test', openMcp: async () => null, seesImages: false },
+    });
+    // #6019: this chat is private. Drafted in a private thread of its own
+    // (Main's line for it quotes his message), with the change's card, and
+    // nothing sent or queued yet.
+    const opener = await reply(samChat, message.id);
+    assert.match(opener.content, /^I drafted that to post on Flat 4B Chores, in a thread only you can see\./);
+    const draft = (await pool.query(
+      `SELECT id, content, reply_to_id, metadata FROM conversation_messages
+        WHERE conversation_id = $1 AND sender_id = $2 AND thread_root_id = $3 ORDER BY id LIMIT 1`,
+      [samChat, bot.id, opener.id],
+    )).rows[0];
+    assert.deepEqual(draft.metadata.homeroomBot.answers, ['Post it', 'Keep it private']);
+    const { rows: draftObjects } = await pool.query('SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1', [draft.id]);
+    assert.deepEqual(draftObjects.map((o) => `${o.object_type}:${o.object_ref}`), [`code_proposal:${pending.id}`]);
+    assert.equal(threadPosts.length, 0);
+    assert.equal(await queueRow(), null);
+    const tap = (await conversations.sendMessage(pool, sam, samChat, { content: 'Post it', reply_to_id: draft.id })).message;
+    await mayor.decideOffer(pool, CONFIG, {
+      bot, user: sam, settings: await homeroomBot.readSettings(pool), deps: {}, message: tap,
     });
     // Posted in the change's discussion, as his, the way a reply typed there is.
     assert.equal(threadPosts.length, 1);
@@ -270,17 +289,16 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
     assert.equal(threadPosts[0].msg.content, 'Tapping mark as done doesn\'t do anything for me\n\n(Sent in a chat with Homeroom bot.)');
     // Its follow-up goes first, on his building time (he is not who asked for it).
     assert.deepEqual(await queueRow(), { reason: 'dm_revise', requested_by: sam.id, payer_user_id: sam.id });
-    // One line back, quoting him, with the change's card, and no model turn.
-    const answer = await reply(samChat, message.id);
+    // One line back, quoting the tap, with the change's card, and no model turn.
+    const answer = await reply(samChat, tap.id);
     assert.equal(answer.content,
       'Got it. I\'ll fix that in "Show whose turn each chore is" before it goes live. I\'m on it next, and your message is in the change\'s discussion.');
     assert.ok(!answer.content.includes(EM_DASH));
-    assert.equal(answer.metadata.homeroomBot.kind, 'chat');
     const { rows: objects } = await pool.query('SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1', [answer.id]);
     assert.deepEqual(objects.map((o) => `${o.object_type}:${o.object_ref}`), [`code_proposal:${pending.id}`]);
     assert.equal(await turnsOf(sam), 0, 'decided without the model');
-    const { rows: offers } = await pool.query('SELECT 1 FROM homeroom_bot_dm_actions WHERE user_id = $1', [sam.id]);
-    assert.equal(offers.length, 0, 'no new request offered');
+    const { rows: offers } = await pool.query('SELECT kind FROM homeroom_bot_dm_actions WHERE user_id = $1', [sam.id]);
+    assert.deepEqual(offers.map((o) => o.kind), ['post_reply'], 'the draft, and no new request offered');
   });
 
   await t.test('B: a question about the change is the model\'s, and it reads the card under the message', async () => {

@@ -4,8 +4,10 @@
 // (frontend/src/features/auth/landing.tsx).
 //
 //   - the pure sorting, filtering and featuring Discover does (guest-data.ts);
-//   - Discover rendered: every card a link to the project's own page, no card
-//     locked, "Try it" only where the app has a view for visitors;
+//   - Discover rendered: one card for every project, each one link to the
+//     project's own page, no card locked and no button on a card; Featured
+//     and All apps the same grid; the card's picture growing into the page
+//     as it opens (card-morph.ts);
 //   - the project page rendered: Try it or Sign in to use it, Join, counts
 //     and never a name;
 //   - the story's short version over Discover, which keeps the landing's
@@ -74,8 +76,11 @@ test('the sorts: most active, newest, most built, ties in the directory\'s order
 test('search reads the name and the description; a kind narrows to its apps', () => {
   const { filterApps } = loadTsx(DATA);
   assert.deepEqual(filterApps(APPS, 'shared todo', null).map((a) => a.slug), ['todo-list']);
-  // Case and spaces aside, a word in the name or the description finds it.
-  assert.deepEqual(filterApps(APPS, '  FRESH ', null).map((a) => a.slug), ['game-corner', 'fresh-one']);
+  // Case and spaces aside, a word in the name or the description finds it,
+  // and the project NAMED what was typed leads (#5891).
+  assert.deepEqual(filterApps(APPS, '  FRESH ', null).map((a) => a.slug), ['fresh-one', 'game-corner']);
+  assert.deepEqual(filterApps(APPS, 'fres', null).map((a) => a.slug), ['game-corner', 'fresh-one'],
+    'no exact name: the directory order');
   assert.deepEqual(filterApps(APPS, '', 'games').map((a) => a.slug), ['game-corner']);
   assert.deepEqual(filterApps(APPS, 'todo', 'games'), []);
 });
@@ -142,23 +147,27 @@ test('every card opens its project\'s page, no card is locked, and Featured is n
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
   assert.deepEqual([...html.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]), ['game-corner']);
   assert.deepEqual([...html.matchAll(/<article data-guest-card="([^"]+)"/g)].map((m) => m[1]), ['todo-list', 'fresh-one']);
-  // The picture and the name each open the page, at its clean address a
-  // search engine can follow; nothing is nested in a link.
-  assert.match(html, /<article data-guest-card="todo-list"[^>]*><a href="\/app\/todo-list" tabindex="-1" aria-hidden="true"/);
-  assert.match(html, /<a href="\/app\/todo-list" data-guest-card-link=""/);
-  assert.match(html, /data-guest-featured="game-corner"[^>]*><a href="\/app\/game-corner" tabindex="-1" aria-hidden="true"/, 'Featured too');
-  assert.doesNotMatch(html, /href="#app\/[^"]+\/workshop"/, 'no card or row links by fragment; only the votes line');
+  // ONE link per card, its name, at the page's clean address a search
+  // engine can follow; it stretches over the whole card, so the picture and
+  // the gaps open it too, and nothing is nested in a link.
+  for (const slug of ['todo-list', 'fresh-one', 'game-corner']) {
+    const card = cardOf(html, slug);
+    assert.equal((card.match(/<a /g) || []).length, 1, `${slug}: one link`);
+    assert.match(card, new RegExp(`<a href="/app/${slug}" data-guest-card-link=""`));
+    assert.match(card, /after:absolute after:inset-0 after:z-\[1\] after:rounded-\[20px\] after:content-\[(?:''|&#x27;&#x27;)\]/);
+  }
+  assert.doesNotMatch(html, /href="#app\//, 'no card links by fragment');
   // A plain click on Discover stays in the page, at the fragment signing in
-  // returns to; a new tab, or an address that is already a path, is the
-  // browser's.
+  // returns to, the card's picture growing into the page; a new tab, or an
+  // address that is already a path, is the browser's.
   const src = read(DISCOVER);
-  assert.match(src, /if \(e\.defaultPrevented \|\| e\.button !== 0 \|\| e\.metaKey \|\| e\.ctrlKey \|\| e\.shiftKey \|\| e\.altKey\) return;\s+if \(location\.pathname !== '\/'\) return;\s+e\.preventDefault\(\);\s+location\.hash = projectHash\(slug\);/);
+  assert.match(src, /if \(e\.defaultPrevented \|\| e\.button !== 0 \|\| e\.metaKey \|\| e\.ctrlKey \|\| e\.shiftKey \|\| e\.altKey\) return;\s+if \(location\.pathname !== '\/'\) return;\s+e\.preventDefault\(\);\s+(?:\/\/[^\n]*\n\s+)*morph\(cardCover\(slug\), \(\) => \{ location\.hash = projectHash\(slug\); \}, \(\) => projectHero\(slug\)\);/);
   assert.match(src, /return <a href=\{projectPath\(slug\)\} onClick=\{onClick\} \{\.\.\.rest\}>\{children\}<\/a>;/);
   assert.doesNotMatch(html, /<a [^>]*>(?:(?!<\/a>).)*<a /, 'no link inside a link');
   assert.doesNotMatch(html, /Account required|grayscale|data-icon="lock"/);
   const words = text(html);
   assert.ok(words.includes('Classic games, fresh every day.'));
-  assert.ok(words.includes(message('auth:guest.card.latest', { title: 'Add a dark theme' })));
+  assert.ok(!words.some((w) => /^Latest change/.test(w)), 'what changed lately is the project page\'s');
   assert.ok(!words.some((w) => /^0 /.test(w)), 'no zero is printed');
   // What a card says about itself stops at two lines: a display utility
   // beside line-clamp-2 undoes the clamp (#5851).
@@ -173,52 +182,67 @@ test('every card opens its project\'s page, no card is locked, and Featured is n
 const DAY = 24 * 60 * 60 * 1000;
 const ago = (days) => new Date(Date.now() - days * DAY).toISOString();
 const FACT_APPS = [
-  { slug: 'busy', name: 'Busy', member_count: 87, active_users: 43, open_votes: 3, last_merged_at: ago(1), merged_week: 6 },
-  { slug: 'week', name: 'Week', member_count: 11, active_users: 3, open_votes: 0, last_merged_at: ago(1), merged_week: 4 },
-  { slug: 'month', name: 'Month', member_count: 15, active_users: 8, open_votes: 0, last_merged_at: ago(8), merged_week: 0 },
-  { slug: 'quiet', name: 'Quiet', member_count: 3, active_users: 1, open_votes: 0, last_merged_at: ago(60), merged_week: 0 },
+  { slug: 'busy', name: 'Busy', member_count: 87, active_users: 43, open_votes: 3, last_merged_at: ago(1), merged_week: 6, latest_change: 'A leaderboard' },
+  { slug: 'some', name: 'Some', member_count: 11, active_users: 5, open_votes: 0, last_merged_at: ago(1), merged_week: 4 },
+  { slug: 'quiet', name: 'Quiet', member_count: 3, active_users: 4, open_votes: 0, last_merged_at: ago(60), merged_week: 0 },
 ].map((a) => ({ ...a, created_at: ago(200), requires_login: true, guest_ready: false, url: `https://${a.slug}.example`, contributors: [{}] }));
 
 function cardOf(html, slug) {
-  const at = html.indexOf(`<article data-guest-card="${slug}"`);
+  const at = html.search(new RegExp(`<article data-guest-(?:card|featured)="${slug}"`));
   assert.ok(at >= 0, slug);
   return html.slice(at, html.indexOf('</article>', at));
 }
 
-test('a count shows only from 25 members or 10 people active; under that, a card says what changed lately', () => {
-  const { MIN_MEMBERS, MIN_ACTIVE, MIN_BUILDERS } = loadTsx(DATA);
-  assert.deepEqual([MIN_MEMBERS, MIN_ACTIVE, MIN_BUILDERS], [25, 10, 5]);
+test('a card is its picture, its name and its own sentence; how many used it lately is a pill from five, in words for a screen reader', () => {
+  const { MIN_MEMBERS, MIN_ACTIVE, MIN_BUILDERS, MIN_PEOPLE } = loadTsx(DATA);
+  assert.deepEqual([MIN_MEMBERS, MIN_ACTIVE, MIN_BUILDERS, MIN_PEOPLE], [25, 10, 5, 5]);
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: FACT_APPS }));
-  const pair = (first, second) => message('auth:guest.card.pair', { first, second });
-  // Big enough: the counts, and what is up for a vote, which opens the page at its votes.
-  const busy = text(cardOf(html, 'busy'));
-  assert.ok(busy.includes(pair(message('auth:guest.card.members_other', { count: 87 }), message('auth:guest.card.active_other', { count: 43 }))));
-  assert.ok(busy.includes(message('auth:guest.card.votes_other', { count: 3 })));
-  assert.match(cardOf(html, 'busy'), /<a href="#app\/busy\/workshop\?ws=workshop" data-guest-card-votes=""[^>]*text-violet-700/);
-  // Too small: what changed this week, else when it last changed, else nothing.
-  // (Each card's text starts with its letter tile and its name.)
-  const week = text(cardOf(html, 'week'));
-  assert.deepEqual(week.slice(1), ['Week', message('auth:guest.card.week_other', { count: 4 })]);
-  const month = text(cardOf(html, 'month'));
-  assert.equal(month.length, 3);
-  assert.match(month[2], /^Updated /);
-  assert.deepEqual(text(cardOf(html, 'quiet')).slice(1), ['Quiet']);
-  for (const card of [week, month]) assert.ok(!card.some((w) => /member|people active/.test(w)), 'no small count');
-  assert.match(cardOf(html, 'week'), /data-guest-card-activity=""/);
+  // From five: a profile glyph and the number on the picture, hidden from a
+  // screen reader, which hears it in words with the name.
+  const busy = cardOf(html, 'busy');
+  assert.match(busy, /<span data-guest-card-people="" aria-hidden="true"[^>]*><svg[^>]*>.*?<\/svg>43<\/span>/);
+  assert.match(busy, new RegExp(`data-guest-card-link="" aria-label="${message('auth:guest.card.peopleLabel', { name: 'Busy', count: 43 })}"`));
+  assert.match(cardOf(html, 'some'), /data-guest-card-people=""[^>]*>.*?5<\/span>/);
+  // Under it, nothing: no pill and the link is the name alone.
+  const quiet = cardOf(html, 'quiet');
+  assert.doesNotMatch(quiet, /data-guest-card-people/);
+  assert.doesNotMatch(quiet, /aria-label=/);
+  // Members, votes and what changed lately are the project page's, not a card's.
+  for (const slug of ['busy', 'some', 'quiet']) {
+    const words = text(cardOf(html, slug));
+    assert.ok(!words.some((w) => /member|people active|up for a vote|voted in|Updated|Latest change/.test(w)), `${slug}: ${words}`);
+    assert.doesNotMatch(cardOf(html, slug), /data-guest-card-(?:fact|activity|votes)=/);
+  }
+  assert.deepEqual(text(quiet).slice(1), ['Quiet'], 'the letter tile, then the name');
 });
 
-test('a card shows the figure its list is sorted by', () => {
+test('Featured and All apps are one grid that reflows, two columns at least, and the cards look worth tapping', () => {
   const src = read(DISCOVER);
-  assert.match(src, /sort === 'new'\s+\? \(app\.created_at \? t\('auth:guest\.card\.made'/);
-  assert.match(src, /sort === 'built'\s+\? \(builders >= MIN_BUILDERS \? t\('auth:guest\.card\.builders'/);
-  assert.match(src, /<CardGrid apps=\{top\} sort=\{sort\} tryable=\{tryable\} inside=\{signedIn\} onOpenInside=\{onOpenInside\} \/>/);
+  assert.match(src, /const CARD_GRID = 'grid grid-cols-\[repeat\(auto-fill,minmax\(min\(190px,calc\(50%_-_6px\)\),1fr\)\)\] gap-3';/);
+  assert.match(src, /<CardGrid apps=\{featured\} featured \/>/);
+  assert.match(src, /<CardGrid apps=\{cards\} \/>/);
+  assert.doesNotMatch(src, /snap-x|overflow-x-auto/, 'nothing scrolls sideways');
+  const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
+  const card = cardOf(html, 'todo-list');
+  const cls = card.match(/^<article[^>]* class="([^"]+)"/)[1].split(' ');
+  // Raised at rest, rising under a pointer (hoverOnlyWhenSupported: not on a
+  // touch screen), giving under a press, ringed for the keyboard, still for
+  // anyone who asks for less motion.
+  for (const c of ['group', 'rounded-[20px]', 'hover:-translate-y-1', 'active:scale-[0.97]', 'has-[a:focus-visible]:outline', 'motion-reduce:hover:translate-y-0', 'motion-reduce:active:scale-100']) {
+    assert.ok(cls.includes(c), c);
+  }
+  assert.ok(cls.some((c) => c.startsWith('shadow-[inset_0_0_0_1px_var(--app-sheet-line),')), 'a shadow under the hairline');
+  // An icon cover: lit from the top left, the icon glowing behind itself,
+  // and an arrow that only shows under a pointer or keyboard focus.
+  const fresh = cardOf(html, 'fresh-one');
+  assert.match(fresh, /bg-\[radial-gradient\(120%_90%_at_22%_12%,rgba\(255,255,255,0\.28\),rgba\(255,255,255,0\)_58%\)\]/);
+  assert.match(card, /<span aria-hidden="true" class="absolute bottom-2 right-2 [^"]*opacity-0[^"]*group-hover:opacity-100[^"]*group-has-\[a:focus-visible\]:opacity-100/);
 });
 
-test('Featured holds what a visitor can try, each with Try it, and so does every card that can', () => {
+test('no card carries a button: Try it is the project page\'s, and a waitlisted account still sees everything featured', () => {
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
-  assert.match(html, /<a href="https:\/\/game-corner\.example" data-guest-try="game-corner"/);
-  assert.match(html, /<a href="https:\/\/fresh-one\.example" data-guest-try="fresh-one"/);
-  assert.doesNotMatch(html, /data-guest-try="todo-list"/, 'nothing a visitor can open');
+  assert.doesNotMatch(html, /data-guest-try=/);
+  assert.doesNotMatch(html, /<button[^>]*>Try it/);
   // A waitlisted account is signed in: every project opens for it, nothing asks it to sign up.
   const signedIn = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ signedIn: true }));
   assert.deepEqual([...signedIn.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]), ['todo-list', 'game-corner']);
@@ -231,22 +255,80 @@ const MANY = Array.from({ length: 20 }, (_, i) => ({
   created_at: ago(200), requires_login: i % 2 !== 0, guest_ready: false, url: `https://a${i + 1}.example`, contributors: [],
 }));
 
-test('the top is curated: four big cards on a phone, most active first, then More projects twelve rows at a time', () => {
+test('All apps is the same cards, most active first, ten at a time on a phone and twenty on a wide screen, then Show more', () => {
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: MANY }));
   assert.deepEqual([...html.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]), [], 'nothing featured by an admin');
-  assert.deepEqual([...html.matchAll(/<article data-guest-card="([^"]+)"/g)].map((m) => m[1]), ['a01', 'a02', 'a03', 'a04']);
-  const rows = [...html.matchAll(/data-guest-row="([^"]+)"/g)].map((m) => m[1]);
-  assert.equal(rows.length, 12);
-  assert.deepEqual(rows.slice(0, 4), ['a05', 'a06', 'a07', 'a08'], 'in order of people active, tryable or not');
+  assert.deepEqual([...html.matchAll(/<article data-guest-card="([^"]+)"/g)].map((m) => m[1]),
+    ['a01', 'a02', 'a03', 'a04', 'a05', 'a06', 'a07', 'a08', 'a09', 'a10'], 'in order of people active, tryable or not');
   assert.match(html, /data-guest-show-more=""/);
-  assert.ok(text(html).includes(message('auth:guest.more')));
-  // A row Try it where the visitor can, else a way to its page.
-  const row = (slug) => html.slice(html.indexOf(`data-guest-row="${slug}"`), html.indexOf('data-guest-row=', html.indexOf(`data-guest-row="${slug}"`) + 5));
-  assert.match(row('a05'), /data-guest-try="a05"/);
-  assert.doesNotMatch(row('a06'), /data-guest-try=/);
+  // The rows of "More projects" are gone.
+  assert.doesNotMatch(html, /data-guest-(?:more|row)=/);
   const src = read(DISCOVER);
-  assert.match(src, /const TOP_CARDS = 4;\nconst TOP_CARDS_WIDE = 8;/);
-  assert.match(src, /const ROWS_STEP = 12;/);
+  assert.match(src, /const CARDS_STEP = 10;\nconst CARDS_STEP_WIDE = 20;/);
+  assert.match(src, /onClick=\{\(\) => setShown\(cards\.length \+ step\)\}/);
+  const catalog = JSON.parse(read('frontend/locales/en/auth.json'));
+  assert.equal(catalog['guest.more'], undefined, 'its heading went with it');
+});
+
+test('the card grows into its project\'s page and back: a view transition with one name, skipped without support or with less motion', async () => {
+  const { morph, HERO_NAME } = loadTsx('frontend/src/features/guest/card-morph.ts');
+  assert.equal(HERO_NAME, 'guest-hero');
+  const el = (top = 100) => ({ style: { viewTransitionName: '' }, getBoundingClientRect: () => ({ width: 200, top, bottom: top + 120 }) });
+  const saved = { document: globalThis.document, window: globalThis.window };
+  const setup = ({ vt = true, reduce = false } = {}) => {
+    const log = [];
+    globalThis.window = { innerHeight: 900, matchMedia: () => ({ matches: reduce }) };
+    globalThis.document = vt ? {
+      startViewTransition(update) {
+        log.push('start');
+        const done = Promise.resolve().then(update);
+        return { ready: done, finished: done };
+      },
+    } : {};
+    return log;
+  };
+  try {
+    // Without support: the page simply changes.
+    let navigated = 0;
+    let from = el();
+    setup({ vt: false });
+    morph(from, () => { navigated++; }, () => el());
+    assert.equal(navigated, 1);
+    assert.equal(from.style.viewTransitionName, '');
+    // Asked for less motion: the same.
+    let log = setup({ reduce: true });
+    morph(el(), () => { navigated++; }, () => el());
+    assert.equal(navigated, 2);
+    assert.deepEqual(log, []);
+    // With it: the card's picture is named, then the name moves to the page's
+    // band once the new view is drawn, and comes off when it finishes.
+    log = setup();
+    from = el();
+    const to = el();
+    let named = '';
+    morph(from, () => { navigated++; }, () => { named = from.style.viewTransitionName; return to; });
+    assert.equal(from.style.viewTransitionName, 'guest-hero', 'named before the old view is taken');
+    await new Promise((r) => setTimeout(r, 50));
+    assert.deepEqual(log, ['start']);
+    assert.equal(navigated, 3);
+    assert.equal(named, '', 'one element carries the name at a time');
+    assert.equal(to.style.viewTransitionName, '', 'cleared once it finished');
+    // A target at rest off screen is left unnamed, so nothing flies away.
+    setup();
+    const far = el(5000);
+    const seen = [];
+    far.style = new Proxy({ viewTransitionName: '' }, { set(o, k, v) { seen.push(v); o[k] = v; return true; } });
+    morph(el(), () => {}, () => far);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.deepEqual(seen, [], 'never named');
+  } finally {
+    globalThis.document = saved.document;
+    globalThis.window = saved.window;
+  }
+  // Discover and the landing's back both use it; the band's picture is its target.
+  assert.match(read(PROJECT), /<GuestCover app=\{app\} hero className="aspect-\[16\/10\] min-w-0 flex-\[1_1_420px\] rounded-2xl" \/>/);
+  assert.match(read(LANDING), /morph\(projectHero\(slug\), \(\) => \{ location\.hash = to; \}, \(\) => cardCover\(slug\)\);/);
+  assert.match(read('public/css/app.css'), /::view-transition-group\(guest-hero\) \{\s+animation-duration: 0\.4s;/);
 });
 
 test('the kinds and the sort; what an account adds is the hero\'s, not a card in the grid', () => {
@@ -402,7 +484,7 @@ test('inside the Homeroom app the full story stays the front door, with Look aro
   // Discover opened from it has a back, and the back returns to the story.
   assert.match(src, /const appDiscover = storyOn && inApp && discoverLink;/);
   assert.match(src, /const showBack = !!openApp \|\| !!guestProject \|\| appDiscover;/);
-  assert.match(src, /location\.hash = appDiscover && !guestProject \? '#landing' : '#apps';/);
+  assert.match(src, /const to = appDiscover && !guestProject \? '#landing' : '#apps';/);
   // The full story keeps Continue and its email line, then the way to look
   // around: a link to #apps.
   const html = renderComponent(STORY, 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {}, lookAround: true });

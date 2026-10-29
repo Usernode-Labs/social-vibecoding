@@ -515,9 +515,10 @@ test('the guest back arrow closes the viewer directly (#1028)', () => {
   const back = tsx.slice(tsx.indexOf('id="landing-back-btn"'));
   assert.match(back.slice(0, 500), /onClick=\{onBack\}/);
   // An open app first: Back closes it, the same call the button always made.
-  // Only with no app open does it go from a project's page to Discover, or,
-  // inside the Homeroom app, from Discover back to the story.
-  assert.match(tsx, /const onBack = useCallback\(\(\) => \{\s*if \(st\.openSlug\) \{ live\.current\.closeLandingApp\(\); return; \}\s*(?:\/\/[^\n]*\n\s*)*location\.hash = appDiscover && !guestProject \? '#landing' : '#apps';\s*\}, \[st, appDiscover, guestProject\]\);/);
+  // Only with no app open does it go from a project's page to Discover (its
+  // band shrinking into its card, features/guest/card-morph.ts), or, inside
+  // the Homeroom app, from Discover back to the story.
+  assert.match(tsx, /const onBack = useCallback\(\(\) => \{\s*if \(st\.openSlug\) \{ live\.current\.closeLandingApp\(\); return; \}\s*(?:\/\/[^\n]*\n\s*)*const to = appDiscover && !guestProject \? '#landing' : '#apps';\s*(?:\/\/[^\n]*\n\s*)*if \(guestProject && to === '#apps'\) \{\s*const slug = guestProject\.slug;\s*morph\(projectHero\(slug\), \(\) => \{ location\.hash = to; \}, \(\) => cardCover\(slug\)\);\s*return;\s*\}\s*location\.hash = to;\s*\}, \[st, appDiscover, guestProject\]\);/);
   // The marker entry is unwound AFTER the close, behind a re-entrancy flag.
   assert.match(tsx, /unwindingViewerEntry/);
   // The popstate listener ignores a pop that lands ON the marker entry.
@@ -682,27 +683,16 @@ test('the landing\'s directory is the guest Discover, with no locked tiles', () 
   // the project page's "Try it" or "Sign in to use it", not a tile's.
   const discover = read('frontend/src/features/guest/guest-discover.tsx');
   assert.doesNotMatch(discover, /LockIcon|Account required|grayscale/);
-  assert.match(discover, /<ProjectLink slug=\{app\.slug\}/);
+  assert.match(discover, /<ProjectLink\s+slug=\{app\.slug\}/);
   assert.match(discover, /return <a href=\{projectPath\(slug\)\} onClick=\{onClick\}/);
   assert.doesNotMatch(tsx, /TileSkeleton/);
 });
 
-test('a failed read of the directory is retried before it is reported, and Try again re-runs it', () => {
+// A failed read of the directory is retried before it is reported, and Try
+// again joins a read already running (#6007): tests/session-guard-screens
+// .test.js runs that read (createAppsReader) through the real session guard.
+test('the failure line\'s Try again reads the directory again', () => {
   const tsx = read(LANDING_TSX);
-  // The read runs as the landing first shows, which after a sign-out is while
-  // the sign-out round trip is still settling, so one refused request is not
-  // a failure yet (#6007).
-  assert.match(tsx, /const APPS_ATTEMPTS = 3;/);
-  assert.match(tsx, /const APPS_RETRY_MS = 1000;/);
-  assert.match(tsx, /for \(let attempt = 1; attempt <= APPS_ATTEMPTS; attempt \+= 1\) \{/);
-  assert.match(tsx, /await new Promise\(\(resolve\) => setTimeout\(resolve, APPS_RETRY_MS\)\);/);
-  // Only the LAST attempt failing says so...
-  assert.match(tsx, /if \(attempt === APPS_ATTEMPTS\) \{\n\s*setAppsFailed\(true\);/);
-  // ...and a list read before it is kept for the shot and the shared link.
-  assert.doesNotMatch(tsx, /st\.appsList = \[\]/);
-  // A read already running is joined, not started again.
-  assert.match(tsx, /if \(st\.appsInFlight\) return st\.appsInFlight;/);
-  // The failure line's button reads the directory again.
   assert.match(tsx, /onRetry=\{\(\) => \{ st\.appsReady = live\.current\.loadLandingApps\(\); \}\}/);
 });
 

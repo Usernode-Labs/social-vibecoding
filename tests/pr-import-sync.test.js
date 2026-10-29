@@ -969,7 +969,7 @@ test('syncImportedProposal: merged or closed on GitHub is reported to the propos
     const res = await prImportSync.syncImportedProposal({ config: {}, pool, session: { ...SESSION } });
     assert.equal(res, 'merged');
     assert.deepEqual(looked, [{ sessionId: 321, appId: 9, from: 'promoted', merged: true, closed: true,
-      mergeSha: 'c'.repeat(40), mergedAt: '2026-10-19T10:00:00Z', closedAt: '2026-10-19T10:00:00Z' }]);
+      mergeSha: 'c'.repeat(40), mergedAt: '2026-10-19T10:00:00Z', closedAt: '2026-10-19T10:00:00Z', base: null }]);
     assert.equal(pool.moves.length, 0, 'a merged head is not installed for a vote');
   });
   // Closed: reported with when; a close the machine does not take yet (one
@@ -997,4 +997,147 @@ test('syncImportedProposal: a proposal being merged is reported as read, and the
   });
   assert.deepEqual(looked.map((m) => m.from), ['merging']);
   assert.deepEqual(closes, []);
+});
+
+// ── Where the pull request merges (src/workflow/rules/pr-base.ts) ─────
+//
+// "Merged" means "in main". A look keeps the row's base current and the open
+// change it waits for; one still based on a change that is already on main
+// is moved onto main; a merge into another branch is reported with that
+// base, so the proposal machine closes it as merged elsewhere (on 28 Oct
+// 2026 #5957 was merged into #5956's branch and recorded merged).
+
+const platformFake = require.cache[require.resolve('../src/workflow/platform.ts')].exports;
+
+// A pool that answers the base owner's read with `owner` ({ id, status, … }),
+// as the query would: a merged one only when it is the change the row was
+// waiting for ($5). Records every statement.
+function basePool(owner, { parentStatus = null } = {}) {
+  const pool = recordingPool();
+  pool.query = async (sql, params) => {
+    pool.calls.push({ sql, params });
+    if (/^SELECT status FROM chat_sessions WHERE id = \$1$/.test(sql)) return { rows: parentStatus ? [{ status: parentStatus }] : [] };
+    if (/WHERE cs\.app_id = \$1 AND cs\.branch_name = \$2/.test(sql)) {
+      const found = owner && (owner.status !== 'merged' || Number(params[4]) === owner.id);
+      return { rows: found ? [{ pr_number: 5956, pr_title: 'Parent', repo_url: 'https://github.com/acme/demo', ...owner }] : [] };
+    }
+    if (/^\s*UPDATE chat_sessions SET imported_pr_base_ref/.test(sql)) return { rows: [], rowCount: 1 };
+    return { rows: [] };
+  };
+  return pool;
+}
+const baseWrite = (pool) => pool.calls.find((c) => /UPDATE chat_sessions SET imported_pr_base_ref = \$2/.test(c.sql));
+
+test('a look records a stacked pull request\'s base and the open change it waits for', async () => {
+  const told = [];
+  platformFake.parentMerged = async (p) => { told.push(p); };
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: SESSION_HEAD, ref: 'feature/x' }, base: { ref: 'claude/sec09-parent' }, mergeable: true })],
+  ], async () => {
+    const pool = basePool({ id: 55, status: 'promoted' });
+    const session = { ...SESSION };
+    assert.equal(await prImportSync.syncImportedProposal({ config: {}, pool, session }), 'unchanged');
+    assert.deepEqual(baseWrite(pool).params, [321, 'claude/sec09-parent', 55]);
+    assert.deepEqual([session.imported_pr_base_ref, session.waits_for_session_id], ['claude/sec09-parent', 55]);
+    assert.deepEqual(told, [], 'its parent is open: it waits');
+  });
+  delete platformFake.parentMerged;
+});
+
+test('a look that finds it still based on a change already on main moves it onto main, as the parent\'s merge would', async () => {
+  const told = [];
+  platformFake.parentMerged = async (p) => { told.push(p); };
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: SESSION_HEAD, ref: 'feature/x' }, base: { ref: 'claude/sec09-parent' }, mergeable: true })],
+  ], async () => {
+    const pool = basePool({ id: 54, status: 'merged' });
+    const session = { ...SESSION, imported_pr_base_ref: 'claude/sec09-parent', waits_for_session_id: 54 };
+    await prImportSync.syncImportedProposal({ config: {}, pool, session });
+    assert.deepEqual(baseWrite(pool).params, [321, 'claude/sec09-parent', 54], 'it still waits for its parent until it has been moved onto main');
+    assert.deepEqual(told, [{ sessionId: 321, appId: 9, parentId: 54 }]);
+  });
+  delete platformFake.parentMerged;
+});
+
+test('a merged change it never waited for, or a fork\'s branch of the same name, is nobody\'s parent', async () => {
+  const told = [];
+  platformFake.parentMerged = async (p) => { told.push(p); };
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: SESSION_HEAD, ref: 'feature/x' }, base: { ref: 'develop' }, mergeable: true })],
+  ], async () => {
+    // `develop`, whose own pull request was imported and merged once.
+    const once = basePool({ id: 54, status: 'merged' });
+    await prImportSync.syncImportedProposal({ config: {}, pool: once, session: { ...SESSION } });
+    assert.deepEqual(baseWrite(once).params, [321, 'develop', null], 'based on develop, waiting for nobody');
+    // An open import whose head, on its author's fork, is also called develop.
+    const fork = basePool({ id: 56, status: 'promoted', source: 'imported', imported_pr_head_repo: 'someone/demo' });
+    await prImportSync.syncImportedProposal({ config: {}, pool: fork, session: { ...SESSION } });
+    assert.deepEqual(baseWrite(fork).params, [321, 'develop', null]);
+    assert.deepEqual(told, [], 'nothing is moved onto main');
+  });
+  delete platformFake.parentMerged;
+});
+
+test('a look at a pull request retargeted to main forgets what it waited for; one already on main reads nothing', async () => {
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: SESSION_HEAD, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
+  ], async () => {
+    const moved = basePool(null);
+    await prImportSync.syncImportedProposal({ config: {}, pool: moved, session: { ...SESSION, imported_pr_base_ref: 'claude/sec09-parent', waits_for_session_id: 54 } });
+    assert.deepEqual(baseWrite(moved).params, [321, null, null], 'the default branch is stored as no other base');
+    const level = basePool(null);
+    await prImportSync.syncImportedProposal({ config: {}, pool: level, session: { ...SESSION, imported_pr_base_ref: null } });
+    assert.equal(level.calls.length, 0);
+  });
+  // A repository whose default branch is master: its pull requests merge
+  // there, and nothing is read or written for them either.
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: SESSION_HEAD, ref: 'feature/x' }, base: { ref: 'master', repo: { default_branch: 'master' } }, mergeable: true })],
+  ], async () => {
+    const level = basePool(null);
+    await prImportSync.syncImportedProposal({ config: {}, pool: level, session: { ...SESSION } });
+    assert.equal(level.calls.length, 0);
+  });
+});
+
+test('a merge GitHub made into another branch is reported with that base, never as a merge into main', async () => {
+  looked.length = 0;
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ merged: true, state: 'closed', merge_commit_sha: 'c'.repeat(40), merged_at: '2026-10-28T17:31:27Z',
+      closed_at: '2026-10-28T17:31:27Z', head: { sha: 'b'.repeat(40) }, base: { ref: 'claude/sec09-parent' } })],
+  ], async () => {
+    const pool = recordingPool();
+    await prImportSync.syncImportedProposal({ config: {}, pool, session: { ...SESSION } });
+    assert.equal(looked.length, 1);
+    assert.equal(looked[0].base, 'claude/sec09-parent');
+    assert.equal(pool.moves.length, 0);
+  });
+});
+
+test('GitHub moved it onto main itself (the merged branch was deleted): it still syncs, so the link stays until that is done', async () => {
+  const told = [];
+  platformFake.parentMerged = async (p) => { told.push(p); };
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: SESSION_HEAD, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
+  ], async () => {
+    const waiting = { ...SESSION, imported_pr_base_ref: 'claude/sec09-parent', waits_for_session_id: 54 };
+    // Its parent's merge is recorded: the move is asked for (the retarget
+    // answers "already", and the sync runs).
+    const merged = basePool(null, { parentStatus: 'merged' });
+    await prImportSync.syncImportedProposal({ config: {}, pool: merged, session: { ...waiting } });
+    assert.deepEqual(told, [{ sessionId: 321, appId: 9, parentId: 54 }]);
+    assert.equal(baseWrite(merged), undefined, 'the link stays until the move is done');
+    // Still being recorded: nothing yet, its Merged tells the change.
+    told.length = 0;
+    const merging = basePool(null, { parentStatus: 'merging' });
+    await prImportSync.syncImportedProposal({ config: {}, pool: merging, session: { ...waiting } });
+    assert.deepEqual(told, []);
+    assert.equal(baseWrite(merging), undefined);
+    // Its author moved it to main while the parent is still open: their call.
+    const open = basePool(null, { parentStatus: 'promoted' });
+    await prImportSync.syncImportedProposal({ config: {}, pool: open, session: { ...waiting } });
+    assert.deepEqual(baseWrite(open).params, [321, null, null]);
+    assert.deepEqual(told, []);
+  });
+  delete platformFake.parentMerged;
 });

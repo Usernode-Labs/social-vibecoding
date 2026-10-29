@@ -265,7 +265,7 @@ test('a remix is inserted as Just you with reference-only lineage', async () => 
     assert.equal(res.status, 201, JSON.stringify(body));
     const insert = queries.find((q) => /WITH new_app AS/.test(q.sql));
     assert.ok(insert, 'the copy row is inserted');
-    assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, 'creating', 'private', 'private', \$4::jsonb\)/,
+    assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, 'creating', 'private', 'private', \$4::jsonb, \$5::jsonb\)/,
       'private to build and to view: Just you');
     assert.ok(!insert.params.includes('public'), 'the original\'s audience is not passed through');
     const lineage = JSON.parse(insert.params[3]);
@@ -273,8 +273,51 @@ test('a remix is inserted as Just you with reference-only lineage', async () => 
     assert.equal(lineage.appId, 11);
     assert.equal(lineage.slug, 'source-app');
     assert.ok(Date.parse(lineage.forkedAt) >= before - 1000, 'forkedAt is when the copy was made');
+    // The version's link to its original (docs/plans/versions.md): it gets
+    // the original's updates unless its maker said otherwise.
+    assert.match(insert.sql, /forked_from, upstream\)/);
+    assert.deepEqual(JSON.parse(insert.params[4]), {
+      appId: 11, slug: 'source-app', following: true, since: lineage.forkedAt,
+    });
     assert.deepEqual(retryCalls, [], 'nothing asked of the making by hand: its insert started it');
   } finally {
     server.close();
   }
+});
+
+test('making your own version takes follow: false, and refuses anything but a boolean', async () => {
+  failedApp = null;
+  currentUser = { id: 5, username: 'fork-owner', canAdminWrite: true };
+  const server = await startServer();
+  try {
+    let { res, body } = await post(server, '/api/apps/source-app/fork', { name: 'Mine', follow: false });
+    assert.equal(res.status, 201, JSON.stringify(body));
+    const insert = queries.find((q) => /WITH new_app AS/.test(q.sql));
+    assert.equal(JSON.parse(insert.params[4]).following, false);
+    queries = [];
+    ({ res, body } = await post(server, '/api/apps/source-app/fork', { name: 'Mine', follow: 'yes' }));
+    assert.equal(res.status, 400);
+    assert.match(body.error, /follow must be true or false/);
+    assert.ok(!queries.some((q) => /INSERT INTO apps/.test(q.sql)));
+  } finally {
+    server.close();
+  }
+});
+
+test('the refusals say "make your own version", never remix', async () => {
+  const { forkSourceReadinessError } = require(ids.appsRoute);
+  const said = [
+    forkSourceReadinessError(null),
+    forkSourceReadinessError(source({ self_hosted: true })),
+    forkSourceReadinessError(source({ status: 'creating' })),
+    forkSourceReadinessError(source({ status: 'error' })),
+    forkSourceReadinessError(source({ status: 'stopped' })),
+    forkSourceReadinessError(source({ repo_url: null })),
+  ];
+  for (const line of said) {
+    assert.ok(line, 'each says why');
+    assert.doesNotMatch(line, /remix|fork|copy|upstream|template|—/i, line);
+  }
+  assert.match(said[2], /Try making your own version again once it is ready/);
+  assert.equal(forkSourceReadinessError(source()), null);
 });

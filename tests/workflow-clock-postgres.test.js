@@ -292,6 +292,29 @@ test('the clock machine runs each job once at a time, wherever the workflow runs
     await r.stop();
   });
 
+  // What a new conductor relies on to open web readiness at once
+  // (src/workflow/platform.ts pullInSecurityClock): an Arm at one second and
+  // then at the job's interval, applied by any build alike, makes a waiting
+  // run due now and leaves the interval as it was.
+  await t.test('an Arm at one second then at its interval runs a waiting job now and keeps the interval', async () => {
+    let runs = 0;
+    const r = make([{ name: 'barrier', everyMs: 60 * 1000, async run() { runs += 1; return {}; } }]);
+    await r.start({ loops: true });
+    await arm(r, 'barrier', 60 * 1000, 'r1', new Date(Date.now() + 60 * 1000).toISOString());
+    assert.equal(runs, 0);
+    await r.appendAndWait(MACHINE, clockKey('barrier'), { type: 'Arm', payload: { job: 'barrier', everyMs: 1000, onDemand: false } },
+      { requestKey: 'pull-in:r1', source: { kind: 'system', name: 'release' } });
+    await r.appendAndWait(MACHINE, clockKey('barrier'), { type: 'Arm', payload: { job: 'barrier', everyMs: 60 * 1000, onDemand: false } },
+      { requestKey: 'pull-back:r1', source: { kind: 'system', name: 'release' } });
+    const pulled = (await instance('barrier')).data;
+    assert.equal(pulled.everyMs, 60 * 1000, 'the interval is the job\'s again');
+    assert.ok(Date.parse(pulled.due) <= Date.now() + 1000, 'due within a second');
+    await until(async () => runs === 1 && (await instance('barrier')).data.last?.ok === true, 'the pulled-in run ran');
+    const after = (await instance('barrier')).data;
+    assert.ok(Date.parse(after.due) >= Date.now() + 50 * 1000, 'and the next is an interval on');
+    await r.stop();
+  });
+
   await t.test('a clock keeps a week of history', async () => {
     const r = make([]);
     // Aged as the kernel would have written them (its tables refuse other writers).

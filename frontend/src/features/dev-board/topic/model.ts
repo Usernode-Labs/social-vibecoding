@@ -561,6 +561,8 @@ export interface RequestView {
    */
   editor: { issue: number; markdown: string; source: string | null; canEdit: boolean };
   status: RequestStatusView;
+  /** #5987: the app's slug, which the "Open in Claude Code" link names. */
+  slug?: string;
   /**
    * 16 Oct 2026: where Homeroom bot's work on it is, as the server words it
    * (services/homeroom-bot-track.js), read field by field by
@@ -591,6 +593,11 @@ export interface RequestStatusView {
    * its change), so no "Plan v1 is ready for comments." after it.
    */
   botSays?: boolean;
+  /**
+   * #5987: starting work on it is still open to this viewer, so the page
+   * offers "Build it with your own Claude Code" under the card.
+   */
+  ownAgent?: boolean;
 }
 
 /** #4455: one part of a Votes or Testing card's bar. */
@@ -700,6 +707,43 @@ export interface ChangeThreadView {
    * `code_missing`). The page says so above Votes and Testing.
    */
   codeMissing?: boolean;
+  /**
+   * An import stacked on another open change's branch
+   * (src/workflow/rules/pr-base.ts, `AppView._stackedView`): the change it
+   * waits for, said above Votes and Testing with a door to its page.
+   */
+  waitsFor?: { sessionId: number; number: number | null; title: string | null; href: string };
+  /**
+   * An import whose pull request targets a branch that is neither main nor
+   * an open change's: that branch, and the notice says what a person does.
+   */
+  baseNotMain?: { branch: string };
+  /**
+   * VERSIONS (docs/plans/versions.md): on an update, the change a version
+   * was given by the project it was made from, what it brings from there and
+   * what it does here (the proposal read's `upstream`, passed through by
+   * AppView._changeThreadView). change-head.tsx draws its From <original>
+   * card and Skip this update from it. Null or absent on every other change.
+   */
+  upstream?: ChangeUpstreamView | null;
+}
+
+/** An update's `upstream`, as the proposal read gives it; any field may be missing. */
+export interface ChangeUpstreamView {
+  from?: { slug: string; name?: string | null; emoji?: string | null } | null;
+  brings?: Array<{ title: string }> | null;
+  facts?: {
+    tablesAdded?: string[];
+    destructive?: string[];
+    hostsAdded?: string[];
+    secretsAdded?: string[];
+    ai?: boolean;
+    storage?: boolean;
+  } | null;
+  keeps?: { count: number; titles?: string[] } | null;
+  /** The update's state: `open` while it is up, `needs_fit` when it clashes. */
+  state?: string | null;
+  conflicts?: string[] | null;
 }
 
 export interface TopicBody {

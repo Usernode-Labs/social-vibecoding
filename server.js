@@ -68,7 +68,6 @@ const { appFileServeRoutes, appFileShellRoutes } = require('./src/routes/app-fil
 const appStorageRoutes = require('./src/routes/app-storage');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
 const { credentialRoutes } = require('./src/routes/credentials');
-const { globalChatRoutes } = require('./src/routes/global-chat');
 const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
 const appPlatformApiRoutes = require('./src/routes/app-platform-api');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
@@ -252,6 +251,14 @@ app.use(require('./src/routes/alerts-webhook').alertsWebhookRoutes(config));
 // parser, and the caller is a sandbox with no session, authenticated by the
 // task's own token. src/routes/external-agent-patch-upload.js has the rest.
 app.use(require('./src/routes/external-agent-patch-upload').externalAgentPatchUploadRoutes(config));
+
+// ── Connector uploads: a plan, a video or a screenshot ─────────────────────
+// The same door for the other large things a coding agent hands the
+// connector (post_spec's plan, create_request's video and screenshots). HERE
+// for the patch upload's reasons: raw bytes under any Content-Type, from a
+// sandbox with no session, authenticated by the upload's own one-time token.
+// src/routes/connector-uploads.js has the rest.
+app.use(require('./src/routes/connector-uploads').connectorUploadRoutes(config));
 
 // ── Projects made inside a platform preview ────────────────────────────────
 // A platform preview asks production for the database, build and runtime of
@@ -665,7 +672,6 @@ app.use(require('./src/routes/sign-in-providers').signInProviderRoutes(config));
 // (src/services/firebase-phone-auth.js).
 app.use(require('./src/routes/phone-auth').phoneAuthRoutes(config));
 app.use(credentialRoutes(config));
-app.use(globalChatRoutes(config));
 app.use(appRoutes(config));
 app.use(illustrationRoutes(config));
 // Shell relay for usernode.uploadFile()/deleteFile()/getStorageUsage()
@@ -694,6 +700,12 @@ app.use(demoModeRoutes(config));
 // "Suggest this back": a remix's owner sends the copy's changes to the app
 // it was copied from, as a proposal there (routes/suggest-back.js).
 app.use(require('./src/routes/suggest-back').suggestBackRoutes(config));
+// A version's updates from its original: read, open, skip, fit, share
+// (routes/upstream.js, services/upstream-offers.js).
+app.use(require('./src/routes/upstream').upstreamRoutes(config));
+// Versions: an original's hub ("From its versions") and a version's vote on
+// whether it gets its original's updates (routes/versions.js).
+app.use(require('./src/routes/versions').versionsRoutes(config));
 app.use(kudosRoutes(config));
 // Public read-only apps + contributors API. Mounted after authMiddleware
 // like kudosRoutes; reachable anonymously via the `/api/public/` prefix in
@@ -727,6 +739,11 @@ app.use(require('./src/routes/test-accounts').testAccountRoutes(config));
 // rules) through a full admin's connector session: each door hands on to the
 // console's own /api/v4/admin route (routes/challenge-admin.js).
 app.use(require('./src/routes/challenge-admin').challengeAdminRoutes(config));
+// Featured apps (the landing's Featured and Home's "Find more apps") and the
+// flag that takes an app out of Discover, through a full admin's connector
+// session: each door hands on to the console's own /api/admin route
+// (routes/featured-admin.js).
+app.use(require('./src/routes/featured-admin').featuredAdminRoutes(config));
 app.use(adminSupportRoutes(config));
 app.use(adminUserMergeRoutes(config));
 app.use(dashboardRoutes(config));
@@ -735,6 +752,10 @@ app.use(feedbackRoutes(config));
 // #5048: requests only platform admins can see, kept off GitHub.
 app.use(require('./src/routes/private-requests').privateRequestRoutes(config));
 app.use(notificationsRoutes(config));
+// #6019: a thread's Notify me and Mute, and (stage 3) the thread page's read.
+app.use(require('./src/routes/threads').threadsRoutes(config));
+// #6019 follow-up: the AI tab's main view (Your work, Up next, Live this week).
+app.use(require('./src/routes/ai-work').aiWorkRoutes(config));
 app.use(collaboratorRoutes(config));
 // Session-authenticated user directory for the shell's iframe bridge
 // relay (#1195) — must be AFTER authMiddleware; req.user is required.
@@ -1180,9 +1201,14 @@ async function start() {
   const room = await processes.waitForRoom();
   if (room.waitedMs > 0) log.info('server', 'Older processes gave back their connections; starting', room);
   // Conductors retire unsafe previews before starting work. Web processes
-  // wait for a fresh result from the existing security clock before serving.
+  // wait for a fresh result from the existing security clock before serving:
+  // how long, in the startup diagnostics and the log, since that wait is most
+  // of a web Pod's rollout when it is long.
+  const barrierStartedAt = Date.now();
   const previewRetirement = runsClusterMaintenance()
     ? await require('./src/services/platform-preview-startup').beforeServe(config, getPool(config)) : null;
+  const previewBarrierMs = Date.now() - barrierStartedAt;
+  if (previewRetirement) log.info('server', 'Preview retirement confirmed; starting', { waitedMs: previewBarrierMs, role: ownRole });
   // The limiters that gate a send, a bill or a guess count in Postgres: one
   // budget for every process, kept across a deploy (services/rate-limit-store.js).
   require('./src/services/rate-limit-store').setPool(getPool(config));
@@ -1203,6 +1229,7 @@ async function start() {
     migrationsOnStartup,
     migration,
     servicesMs: Date.now() - servicesStartedAt,
+    previewBarrierMs,
   });
 
   if (processRole.runsWorkflow(ownRole)) worker.ensureWorkerImage().catch((err) => {

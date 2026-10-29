@@ -46,8 +46,11 @@ test('app discussion history and inbox preview skip blocked authors', async (t) 
         id int PRIMARY KEY, app_id int NOT NULL, user_id int, content text NOT NULL,
         msg_type text NOT NULL DEFAULT 'message', metadata jsonb NOT NULL DEFAULT '{}',
         thread_type text, thread_ref int, created_at timestamptz NOT NULL DEFAULT now(),
-        moderation_hidden_at timestamptz, edited_at timestamptz, posted_via text, deleted_at timestamptz
+        moderation_hidden_at timestamptz, edited_at timestamptz, posted_via text, deleted_at timestamptz,
+        thread_id bigint
       );
+      -- #6019: a request's stream reads its whole thread (routes/chat.js).
+      CREATE TABLE requests (app_id int NOT NULL, number int NOT NULL, thread_id bigint);
       -- #2967: the tables the Messages list's "yours"/"more" sections and
       -- #2387's unread count read. Empty here: this test is about blocks.
       CREATE TABLE app_favorites (app_id int, user_id int, hidden boolean NOT NULL DEFAULT false);
