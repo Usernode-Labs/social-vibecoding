@@ -5123,6 +5123,18 @@
       "name": "#6019: a request's changes follow it under a rule, each with its own line and a door to its page (staging fixture: the changes built for #900001)",
       "path": "/#app/usernode-2d5619/dev/issues/900001",
       "expectSelector": "#gc-thread-head .dev-request-root > .min-w-0 > [data-thread-changes] [data-thread-change-line] > button[data-thread-change-open]"
+    },
+    {
+      "name": "#6019: the AI tab opens on its own page: Your work, with a private idea locked to you (Only you · Not in a community yet)",
+      "path": "/?demo=1#ai",
+      "expectSelector": "#ai-screen:not(.hidden) [data-ai-list=\"work\"] [data-ai-row=\"private\"][data-who=\"solo\"]",
+      "expectText": "Not in a community yet"
+    },
+    {
+      "name": "#6019: the AI tab's Up next lists your work moving without you, soonest first (going live before up for a vote)",
+      "path": "/?demo=1#ai",
+      "expectSelector": "#ai-screen:not(.hidden) [data-ai-list=\"next\"] [data-ai-next=\"going_live\"] ~ [data-ai-next=\"vote\"]",
+      "expectText": "Going live"
     }
   ],
   "governance": {

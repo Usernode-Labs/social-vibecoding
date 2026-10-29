@@ -57,6 +57,14 @@ export interface NeedItem {
   title?: string | null;
   app?: AiApp | null;
   href?: string | null;
+  /** A pick between competing changes: the request they compete for. */
+  ballot?: { number?: number | null; title?: string | null } | null;
+}
+
+/** Pure: the request or change number a Needs you card is about. */
+function needNumber(item: NeedItem): number | null {
+  if (item.kind === 'ballot') return item.ballot?.number || item.number || null;
+  return item.number || null;
 }
 
 export interface Phrase {
@@ -100,10 +108,12 @@ export function needHref(item: NeedItem): string | null {
   if (!slug) return null;
   const app = encodeURIComponent(slug);
   if (item.kind === 'governance') return `#app/${app}/dev/governance/${Number(item.id)}`;
-  if (item.number) {
-    return item.kind === 'proposal' || item.kind === 'ballot'
-      ? `#app/${app}/dev/changes/${Number(item.number)}`
-      : `#app/${app}/dev/issues/${Number(item.number)}`;
+  const number = needNumber(item);
+  if (number) {
+    // A ballot is decided on its request's page, where its changes are.
+    return item.kind === 'proposal'
+      ? `#app/${app}/dev/changes/${number}`
+      : `#app/${app}/dev/issues/${number}`;
   }
   return `#app/${app}/workshop`;
 }
@@ -118,14 +128,15 @@ export function yourWork(needs: NeedItem[] | null, work: AiWork | null): WorkRow
   const owed = new Set<string>();
   for (const item of needs || []) {
     const app = item.app || null;
-    if (app && item.number) owed.add(`${app.slug}#${item.number}`);
+    const number = needNumber(item);
+    if (app && number) owed.add(`${app.slug}#${number}`);
     rows.push({
       key: `need:${item.kind}:${item.id}`,
-      title: item.title || '',
+      title: (item.kind === 'ballot' && item.ballot?.title) || item.title || '',
       app,
       who: 'all',
-      sub: item.number
-        ? { id: 'messages:ai.row.where', values: where(app, item.number) }
+      sub: number
+        ? { id: 'messages:ai.row.where', values: where(app, number) }
         : { id: 'messages:ai.row.project', values: where(app, null) },
       pill: { id: PILLS[item.kind] || 'messages:ai.pill.needsYou' },
       href: needHref(item),
