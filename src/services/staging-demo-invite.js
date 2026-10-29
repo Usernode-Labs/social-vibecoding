@@ -11,10 +11,16 @@
  * never redeemable, on staging either: the page sets no invite cookie for
  * it, so a sign-in from it follows nothing, and the signed-in reads answer
  * it as a link that does not work. Joining it grants nothing.
+ *
+ * A second one, /invite/stagingdemoinvite00002, always reads as an EXPIRED
+ * link, so the dead-link page (DeadInvite, frontend/src/features/auth/
+ * invite-card.tsx) can be checked signed out with no setup (#6015). It has
+ * the same staging-only, never-redeemable rules, and sets no cookie either.
  */
 
 // The real token shape (community-invites.js TOKEN_RE: 22 of [A-Za-z0-9_-]).
 const DEMO_INVITE_TOKEN = 'stagingdemoinvite00001';
+const DEMO_EXPIRED_INVITE_TOKEN = 'stagingdemoinvite00002';
 
 function isStaging(env = process.env.USERNODE_ENV) {
   return env === 'staging';
@@ -49,14 +55,33 @@ function demoInvitePreview() {
   };
 }
 
+/** Whether this token is the expired demo link AND this server is staging. */
+function isDemoExpiredInvite(token, env = process.env.USERNODE_ENV) {
+  return isStaging(env) && token === DEMO_EXPIRED_INVITE_TOKEN;
+}
+
+/** The preview the signed-out page draws for it: a link past its end date. */
+function demoExpiredInvitePreview() {
+  return { live: false, reason: 'expired', demo: true };
+}
+
 /** What the signed-in reads say of it: a link that does not work. */
 function demoInviteDead() {
   return { live: false, reason: 'unknown', demo: true, mine: null, slug: null };
 }
 
+/** The same, for the expired demo link, with its own reason. */
+function demoExpiredInviteDead() {
+  return { live: false, reason: 'expired', demo: true, mine: null, slug: null };
+}
+
 module.exports = {
   DEMO_INVITE_TOKEN,
+  DEMO_EXPIRED_INVITE_TOKEN,
   isDemoInvite,
+  isDemoExpiredInvite,
   demoInvitePreview,
+  demoExpiredInvitePreview,
   demoInviteDead,
+  demoExpiredInviteDead,
 };
