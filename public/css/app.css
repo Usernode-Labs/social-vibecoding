@@ -15836,6 +15836,15 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .spec-html svg .spec-accent { fill: var(--accent, #0a6ee0); }
 .spec-html svg .spec-good { fill: #16a34a; }
 .spec-html svg .spec-bad { fill: #dc2626; }
+/* A plan's own pictures: screenshots uploaded to Homeroom, shown in the
+   text (frontend/src/lib/spec-html.ts keeps only those). A `spec-strip` is
+   a row of captioned pictures that scrolls sideways, the way a design doc
+   lays out a flow of phone screens. */
+.spec-html img { display: block; max-width: 100%; height: auto; border-radius: 12px; }
+.spec-html .spec-strip { display: flex; gap: 16px; overflow-x: auto; scroll-snap-type: x proximity; overscroll-behavior-x: contain; margin: 12px 0; padding: 2px 2px 10px; }
+.spec-html .spec-strip > figure { flex: 0 0 auto; width: min(240px, 72%); margin: 0; scroll-snap-align: start; }
+.spec-html .spec-strip > figure > img { width: 100%; }
+.spec-html .spec-strip figcaption { margin-top: 8px; font-size: 13px; line-height: 1.4; }
 .spec-html .spec-screens { margin: 12px 0; }
 .spec-html .spec-screens-caption { margin-top: 6px; font-size: 12px; color: var(--text-muted, #68686c); }
 .dev-topic-details { margin-top: 8px; }

@@ -25,6 +25,14 @@
 // so an exact-sha merge is never offered a pin the platform itself just
 // superseded.
 //
+// It also keeps the pull request's BASE current (src/workflow/rules/
+// pr-base.ts): the branch GitHub would merge it into, and the open change
+// that branch belongs to, which a stacked proposal waits for. One still based
+// on the branch of a change that is already on main is moved onto main (the
+// proposal machine's ParentMerged), and a merge GitHub reports into any
+// branch but main is handed over with that base, so it is never recorded as
+// merged.
+//
 // It is also the only pass that can correct a STALE conflict snapshot
 // (#1365). The drift refresh above runs only on a head change, and GitHub
 // answers `mergeable: null` for the first read after a push — the very read
@@ -40,6 +48,7 @@ const githubMock = require('./github-mock');
 const { usesMockGithubForImports } = require('../config');
 const { sameSha } = require('./pr-vote-revision');
 const repoRef = require('./repo-ref');
+const prBase = require('../workflow/rules/pr-base.ts');
 
 function parseRepo(url) {
   return repoRef.ownerRepo(url);
@@ -155,6 +164,7 @@ async function syncImportedProposal({ config, pool, session }) {
       const taken = await require('../workflow/platform.ts').prLooked({
         sessionId: session.id, appId: session.app_id, from: session.status, merged: !!pr.merged, closed: pr.state === 'closed',
         mergeSha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, closedAt: pr.closed_at || null,
+        base: prBase.otherBase(pr),
       });
       if (!taken) return 'unchanged';
       log.info('pr-import-sync', 'Imported pull request settled on GitHub', {
@@ -162,6 +172,8 @@ async function syncImportedProposal({ config, pool, session }) {
       });
       return pr.merged ? 'merged' : 'closed';
     }
+
+    await refreshBase({ pool, session, pr });
 
     const newHead = pr.head && pr.head.sha ? pr.head.sha : null;
     if (!newHead) return 'skipped';
@@ -180,6 +192,57 @@ async function syncImportedProposal({ config, pool, session }) {
       sessionId: session && session.id, err: err.message,
     });
     return 'skipped';
+  }
+}
+
+// The pull request's base, as this look read it, onto the row (and the change
+// it waits for). Still based on the branch of the change it was waiting for,
+// now on main: its parent landed while it pointed there (GitHub retargets a
+// dependent pull request only when the merged branch is deleted), so it is
+// moved onto main as the parent's own merge would have moved it (a message
+// that never arrived, an older release's pod during a rollout). Only that
+// recorded parent: a merged change it never waited for whose branch has the
+// same name moves nothing. Best-effort: a look never fails over its base.
+async function refreshBase({ pool, session, pr }) {
+  try {
+    // Null: its repository's default branch (rules/pr-base.ts otherBase).
+    const base = prBase.otherBase(pr);
+    // On main, as the row already reads (a base not read yet reads as main):
+    // nothing to read or write, so a look at an unchanged pull request stays
+    // a single GitHub read.
+    if (prBase.onMain(base) && prBase.onMain(session.imported_pr_base_ref) && session.waits_for_session_id == null) return;
+    // On main already, while it waited for a parent that landed (GitHub
+    // retargets a dependent pull request itself when the merged branch is
+    // deleted): it still syncs with main as the move would have, so the link
+    // stays until the proposal machine has done it, and the move is asked
+    // for once the parent's merge is recorded.
+    const waited = session.waits_for_session_id ?? null;
+    if (prBase.onMain(base) && waited != null) {
+      const { rows: [parent] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [waited]);
+      if (parent && parent.status === 'merging') return;
+      if (parent && parent.status === 'merged') {
+        await require('../workflow/platform.ts').parentMerged({ sessionId: session.id, appId: session.app_id, parentId: Number(waited) });
+        return;
+      }
+    }
+    const read = await prBase.recordBase(pool, { sessionId: session.id, appId: session.app_id, base, waited });
+    session.imported_pr_base_ref = read.base;
+    session.waits_for_session_id = read.waitsFor;
+    if (read.changed) {
+      log.info('pr-import-sync', 'Imported pull request base recorded', {
+        sessionId: session.id, prNumber: session.pr_number, base: read.base, waitsFor: read.waitsFor,
+      });
+      try {
+        require('./ws').pushVoteUpdate({ sessionId: session.id, appSlug: session.app_slug || null, merged: false });
+      } catch (_) { /* ws failures are non-fatal */ }
+    }
+    if (read.mergedOwner) {
+      await require('../workflow/platform.ts').parentMerged({
+        sessionId: session.id, appId: session.app_id, parentId: read.mergedOwner.id,
+      });
+    }
+  } catch (err) {
+    log.warn('pr-import-sync', 'base refresh failed (non-fatal)', { sessionId: session.id, err: err.message });
   }
 }
 
@@ -642,6 +705,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
 
 module.exports = {
   syncImportedProposal,
+  refreshBase,
   refreshStrandedConflictState,
   applyHeadChange,
   classifyImportedHeadMove,

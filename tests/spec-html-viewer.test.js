@@ -132,13 +132,20 @@ test('the browser half holds an author\'s markup to the rules: prose sanitised, 
   assert.match(src, /if \(showing && !frame\.getAttribute\('srcdoc'\) && frame\.dataset\.srcdoc\) frame\.setAttribute\('srcdoc', frame\.dataset\.srcdoc\);/);
   // Prose: a fixed list, no styles, scripts, ids or data attributes, and only the spec's own classes.
   const tags = /const PROSE_TAGS = \[([\s\S]*?)\];/.exec(src)[1];
-  for (const banned of ['script', 'style', 'iframe', 'img', 'input', 'form', 'foreignObject', 'use', 'image']) {
+  for (const banned of ['script', 'style', 'iframe', 'input', 'form', 'foreignObject', 'use', 'image']) {
     assert.ok(!new RegExp(`'${banned}'`).test(tags), `${banned} is not prose`);
   }
   const attrs = /const PROSE_ATTRS = \[([\s\S]*?)\];/.exec(src)[1];
-  for (const banned of ['style', 'id', 'src', 'xlink:href', 'onload']) {
+  for (const banned of ['style', 'id', 'xlink:href', 'onload', 'srcset']) {
     assert.ok(!new RegExp(`'${banned}'`).test(attrs), `${banned} is not a prose attribute`);
   }
+  // A plan's own pictures: an <img> in the prose survives only as a
+  // screenshot uploaded to Homeroom, by path or at this origin; every other
+  // source (another host, a data: URI, any other path) loses the picture.
+  assert.match(tags, /'img'/);
+  assert.match(src, /const PLAN_IMAGE_RE = \/\^\\\/issue-images\\\/\[a-f0-9\]\{32\}\$\/i;/);
+  assert.match(src, /url\.origin === window\.location\.origin && !url\.search && !url\.hash && PLAN_IMAGE_RE\.test\(url\.pathname\)/);
+  assert.match(src, /fragment\.querySelectorAll\('img'\)\.forEach\(\(img\) => \{\n\s+const path = planImagePath\(img\.getAttribute\('src'\) \|\| ''\);\n\s+if \(!path\) \{ img\.remove\(\); return; \}/);
   assert.match(src, /ALLOW_DATA_ATTR: false,/);
   assert.match(src, /\.filter\(\(c\) => \/\^spec-\[a-z0-9-\]\+\$\/\.test\(c\)\)/);
 });

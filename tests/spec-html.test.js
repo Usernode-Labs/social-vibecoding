@@ -194,3 +194,38 @@ test('screenStats measures each drawn screen and flags one past twice its budget
   assert.deepEqual(screenStats('# A markdown spec'), []);
   assert.deepEqual(screenStats(null), []);
 });
+
+// ── A plan's own pictures in its text ──────────────────────────────────
+//
+// A plan may show screenshots uploaded to Homeroom (prepare_upload, kind
+// "screenshot") in its text, alone or in a sideways `spec-strip`. The
+// GitHub copy names each at the platform's full address, so the issue
+// shows it too; posting the plan links each to the request
+// (request-specs.js), so the list of them is read off the document. Anything
+// else stays words, as an image always did.
+
+test('a plan\'s own pictures go into the GitHub copy as images, at the platform\'s address', () => {
+  const { planImageIds, planImageUrl } = require('../src/services/spec-html.js');
+  const domain = require('../src/services/caddy').USERNODE_DOMAIN;
+  const a = 'a1'.repeat(16);
+  const b = 'b2'.repeat(16);
+  const plan = `<article data-spec><h1>Threads</h1><section data-spec-tab="user"><h3>Example</h3>`
+    + `<div class="spec-strip"><figure><img src="/issue-images/${a}" alt="Step 1: in Main"><figcaption>evan asks for a night mode.</figcaption></figure>`
+    + `<figure><img src="https://${domain}/issue-images/${b}" alt="Step 2 [draft]"><figcaption>The draft.</figcaption></figure>`
+    + `<figure><img src="https://elsewhere.example/x.png" alt="Elsewhere"></figure>`
+    + `<figure><img src="/issue-images/${a}" alt="Again"></figure></div></section><section data-spec-tab="tech"><p>How.</p></section></article>`;
+  const md = specHtmlToMarkdown(plan);
+  assert.match(md, new RegExp(`!\\[Step 1: in Main\\]\\(https://${domain.replace(/\./g, '\\.')}/issue-images/${a}\\)`));
+  assert.match(md, new RegExp(`!\\[Step 2 draft\\]\\(https://${domain.replace(/\./g, '\\.')}/issue-images/${b}\\)`), 'brackets in the words cannot end the image early');
+  assert.match(md, /\[image: Elsewhere\]/, 'a picture the viewer would not load stays its words');
+  assert.match(md, /\*evan asks for a night mode\./, 'the caption follows its picture');
+  assert.deepEqual(planImageIds(plan), [a, b], 'each uploaded screenshot once, in order');
+
+  assert.equal(planImageUrl(`/issue-images/${a.toUpperCase()}`), `https://${domain}/issue-images/${a}`);
+  for (const other of ['/issue-images/short', `/issue-images/${a}?x=1`, `http://${domain}/issue-images/${a}`, `https://${domain}/issue-videos/${a}`, 'data:image/png;base64,AAAA', '']) {
+    assert.equal(planImageUrl(other), null, other);
+  }
+  // A screen's own markup is the screen's: its pictures are not the text's.
+  const screen = `<article data-spec><h1>T</h1><section data-spec-tab="user"><figure data-screens><template data-screen data-size="phone"><img src="/issue-images/${a}"></template></figure></section></article>`;
+  assert.deepEqual(planImageIds(screen), []);
+});

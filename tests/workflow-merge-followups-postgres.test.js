@@ -490,6 +490,172 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.ok((await lines(s)).some((l) => /is live/.test(l.content)));
   });
 
+  await t.test('a merge into another pull request\'s branch goes live with the merge that carried it to main', async () => {
+    // #5957 merged into #5956's branch (its commit never reached main), then
+    // #5956's squash brought both to main.
+    const a = await app({ selfHosted: true });
+    const carrier = await proposal(a);
+    const stacked = await proposal(a);
+    // An open change built on the stacked one went in with its merge.
+    const built = await proposal(a, { status: 'promoted' });
+    work.results.set(WORK.find, (input) => ({ found: input.sessionId === stacked.id ? [{ id: built.id, head: null }] : [] }));
+    await merge(stacked, { mergeSha: SHA('b') });
+    await settle();
+    assert.equal((await row(built.id)).included_in_session_id, stacked.id);
+    work.results.delete(WORK.find);
+    await merge(carrier, { mergeSha: SHA('c') });
+    work.results.set(WORK.verify, (input) => ({ sha: input.sha, contains: input.mergeSha === input.sha,
+      status: input.mergeSha === input.sha ? 'identical' : 'diverged' }));
+    work.results.set(WORK.carrier, (input) => (input.sessionId === stacked.id && input.release === SHA('c')
+      ? { carrier: { sessionId: carrier.id, prNumber: carrier.pr_number, prTitle: carrier.pr_title, mergeSha: SHA('c') } }
+      : { carrier: null }));
+    try {
+      await settle();
+      for (const s of [carrier, stacked]) await send(s, 'Deployed', { sha: SHA('c') });
+      await settle();
+      assert.equal((await instance(carrier)).state, 'live');
+      assert.ok(!(await workOf(carrier)).some((w) => w.kind === WORK.carrier), 'a merge in the build looks for no carrier');
+      const looked = (await workOf(stacked)).filter((w) => w.kind === WORK.carrier);
+      assert.deepEqual(looked.map((w) => [w.work_key, w.input.mergeSha, w.input.release]), [[`carrier:${SHA('c')}`, SHA('b'), SHA('c')]]);
+      const i = await instance(stacked);
+      assert.equal(i.state, 'live');
+      assert.equal(i.data.deliveredSha, SHA('c'));
+      assert.deepEqual(i.data.carriedBy, { sessionId: carrier.id, prNumber: carrier.pr_number, prTitle: carrier.pr_title });
+      // Its page reads "Live, included in" the carrier, whose Undo is its own.
+      const r = await row(stacked.id);
+      assert.ok(r.live_at);
+      assert.equal(r.merge_commit_sha, SHA('c'));
+      assert.equal(r.included_in_session_id, carrier.id);
+      assert.ok((await lines(stacked)).some((l) => /is live/.test(l.content)));
+      // What the stacked merge carried names the commit on main too.
+      assert.equal((await instance(built)).state, 'live');
+      assert.equal((await row(built.id)).merge_commit_sha, SHA('c'));
+
+      // No carrier in a build: it waits, and looks again in the next build,
+      // once each, from where the last look got to.
+      const lone = await proposal(a);
+      await merge(lone, { mergeSha: SHA('e') });
+      await settle();
+      const scan = { mergedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), id: carrier.id, recheck: [carrier.id] };
+      work.results.set(WORK.carrier, (input) => (input.sessionId === lone.id ? { carrier: null, scanned: scan } : { carrier: null }));
+      for (const sha of [SHA('f'), SHA('f'), SHA('9')]) { await send(lone, 'Deployed', { sha }); await settle(); }
+      assert.equal((await instance(lone)).state, 'delivering');
+      const looks = (await workOf(lone)).filter((w) => w.kind === WORK.carrier);
+      assert.deepEqual(looks.map((w) => w.work_key).sort(), [`carrier:${SHA('9')}`, `carrier:${SHA('f')}`]);
+      assert.deepEqual((await instance(lone)).data.carrierScan, scan);
+      assert.deepEqual(looks.find((w) => w.work_key === `carrier:${SHA('9')}`).input.after, scan);
+      // A build behind the merge (older than it) is no reason to look.
+      work.results.set(WORK.verify, (input) => ({ sha: input.sha, contains: false, status: 'behind' }));
+      await send(lone, 'Deployed', { sha: SHA('6') });
+      await settle();
+      assert.ok((await workOf(lone)).some((w) => w.work_key === `verify:${SHA('6')}`));
+      assert.ok(!(await workOf(lone)).some((w) => w.work_key === `carrier:${SHA('6')}`));
+      work.results.set(WORK.verify, (input) => ({ sha: input.sha, contains: input.mergeSha === input.sha,
+        status: input.mergeSha === input.sha ? 'identical' : 'diverged' }));
+      assert.equal((await row(lone.id)).included_in_session_id, null);
+
+      // A merge more than a month old stuck for good asks GitHub nothing more.
+      const old = await proposal(a);
+      await merge(old, { mergeSha: SHA('7'), mergedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString() });
+      await settle();
+      await send(old, 'Deployed', { sha: SHA('8') });
+      await settle();
+      assert.ok((await workOf(old)).some((w) => w.work_key === `verify:${SHA('8')}`), 'its own commit is still checked');
+      assert.ok(!(await workOf(old)).some((w) => w.kind === WORK.carrier));
+    } finally {
+      work.results.delete(WORK.verify);
+      work.results.delete(WORK.carrier);
+    }
+  });
+
+  await t.test('carried.find reads the app\'s later merges from the database, a page at a time from the last ruled out', async (t2) => {
+    const github = require('../src/services/github');
+    const { mergeFollowupsServices } = require('../src/workflow/merge-followups/services.ts');
+    const handler = mergeFollowupsServices({ config: {}, pool })[WORK.carrier];
+    const at = (minutes) => new Date(Date.now() - 3 * 60 * 60 * 1000 + minutes * 60 * 1000).toISOString();
+    const a = await app();
+    const other = await app();
+    const before = await proposal(a);
+    const stacked = await proposal(a);
+    const unrelated = await proposal(a);
+    const carrier = await proposal(a);
+    const elsewhere = await proposal(other);
+    await merge(before, { mergeSha: SHA('1'), mergedAt: at(0) });
+    await merge(stacked, { mergeSha: SHA('2'), mergedAt: at(1) });
+    await merge(unrelated, { mergeSha: SHA('3'), mergedAt: at(2) });
+    await merge(elsewhere, { mergeSha: SHA('4'), mergedAt: at(3) });
+    await merge(carrier, { mergeSha: SHA('5'), mergedAt: at(4) });
+    await settle();
+    // Every pull request but the unrelated one lists the stacked commit; only
+    // the carrier's merge is in the build.
+    const listed = [];
+    t2.mock.method(github, 'isEnabled', () => true);
+    t2.mock.method(github, 'listPullRequestCommitShas', async (_o, _r, n) => {
+      listed.push(n);
+      return { shas: n === unrelated.pr_number ? [SHA('9')] : [SHA('2')], complete: true };
+    });
+    let inBuild = SHA('5');
+    t2.mock.method(github, 'compareCommitAncestry', async (_o, _r, base) => ({ status: base === inBuild ? 'ahead' : 'diverged' }));
+    const run = (after = null) => handler.run({ key: 'carrier', attempt: 1, resumeFrom: null, checkpoint: async () => {}, input: {
+      owner: 'acme', repo: 'shop', appId: a.id, sessionId: stacked.id, mergeSha: SHA('2'), mergedAt: at(1), release: SHA('e'), after,
+    } });
+    // Its own app's merges since it, oldest first: not one before it, not
+    // itself, not another app's.
+    assert.deepEqual((await run()).carrier,
+      { sessionId: carrier.id, prNumber: carrier.pr_number, prTitle: carrier.pr_title, mergeSha: SHA('5') });
+    assert.deepEqual(listed, [unrelated.pr_number, carrier.pr_number]);
+    // Not in this build: the unrelated one is ruled out; the carrier lists
+    // it, so the next look reads it again and nothing before it.
+    inBuild = SHA('0');
+    const none = await run();
+    assert.equal(none.carrier, null);
+    assert.deepEqual([none.scanned.id, none.scanned.recheck], [carrier.id, [carrier.id]]);
+    listed.length = 0;
+    inBuild = SHA('5');
+    assert.equal((await run(none.scanned)).carrier.sessionId, carrier.id);
+    assert.deepEqual(listed, [carrier.pr_number]);
+
+    // A merge carried to main inside the carrier is named by it: the change
+    // that merged to main (a chain of stacked pull requests ends there).
+    const middle = await proposal(a);
+    await merge(middle, { mergeSha: SHA('6'), mergedAt: at(2) });
+    work.results.set(WORK.verify, (input) => ({ sha: input.sha, contains: false, status: 'diverged' }));
+    work.results.set(WORK.carrier, (input) => (input.sessionId === middle.id
+      ? { carrier: { sessionId: carrier.id, prNumber: carrier.pr_number, prTitle: carrier.pr_title, mergeSha: SHA('5') } } : { carrier: null }));
+    try { await delivered(middle, SHA('5')); } finally { work.results.delete(WORK.verify); work.results.delete(WORK.carrier); }
+    assert.equal((await row(middle.id)).included_in_session_id, carrier.id);
+    listed.length = 0;
+    const viaMiddle = await run();
+    assert.deepEqual(listed, [unrelated.pr_number, middle.pr_number], 'the unrelated one first: same time, lower id');
+    assert.deepEqual(viaMiddle.carrier, { sessionId: carrier.id, prNumber: carrier.pr_number, prTitle: carrier.pr_title, mergeSha: SHA('5') });
+  });
+
+  await t.test('a child app\'s stacked merge goes live with the deploy of the merge that carried it', async () => {
+    const a = await app();
+    const carrier = await proposal(a);
+    const stacked = await proposal(a);
+    await merge(stacked, { mergeSha: SHA('b') });
+    await merge(carrier, { mergeSha: SHA('c') });
+    work.results.set(WORK.verify, (input) => ({ sha: input.sha, contains: input.mergeSha === input.sha,
+      status: input.mergeSha === input.sha ? 'identical' : 'diverged' }));
+    work.results.set(WORK.carrier, (input) => (input.sessionId === stacked.id
+      ? { carrier: { sessionId: carrier.id, prNumber: carrier.pr_number, prTitle: carrier.pr_title, mergeSha: SHA('c') } }
+      : { carrier: null }));
+    try {
+      // app-delivery deploys main's tip and tells every merge waiting on it.
+      await delivered(carrier, SHA('c'));
+      await delivered(stacked, SHA('c'));
+      assert.equal((await instance(carrier)).state, 'live');
+      const i = await instance(stacked);
+      assert.equal(i.state, 'live');
+      assert.equal(i.data.deliveredSha, SHA('c'));
+      assert.equal((await row(stacked.id)).included_in_session_id, carrier.id);
+    } finally {
+      work.results.delete(WORK.verify);
+      work.results.delete(WORK.carrier);
+    }
+  });
+
   await t.test('only a promoted or merging proposal can be merged, and only the machine moves it', async () => {
     const a = await app();
     const s = await proposal(a, { status: 'active' });

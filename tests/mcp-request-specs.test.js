@@ -224,6 +224,12 @@ test('get_spec_format is the scout\'s own contract, tuned to the app', async () 
     assert.ok(other.format.includes(prompts.specHtmlContract(false)), 'every other app draws with the native kit');
     for (const guide of [platform, other]) {
       assert.ok(guide.format.includes(prompts.SPEC_DESIGN_BRIEF));
+      // The connector's own exception: an author who can upload screenshots
+      // may show them in the text, alone or in a sideways strip. The bot
+      // cannot, so prompts.js's shared contract does not say so.
+      assert.match(guide.format, /PICTURES IN THE TEXT: .*prepare_upload \(kind "screenshot"/);
+      assert.match(guide.format, /<div class="spec-strip">/);
+      assert.ok(!prompts.specHtmlContract(true).includes('PICTURES IN THE TEXT'));
       assert.match(guide.format, /## User-facing changes/);
       assert.match(guide.format, /## Technical implementation/);
       assert.match(guide.format, /post_spec/);
