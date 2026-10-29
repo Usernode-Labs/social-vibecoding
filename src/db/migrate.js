@@ -57,6 +57,10 @@ async function migrate(config) {
   // twins, each app whose repository is now on the git host repointed, and
   // its proposals' GitHub links turned into their change pages.
   await require('../services/github-move').migrate(pool);
+  // Threads (#6019, stage 1): attach every request, change, governance row
+  // and message that existed before threads did. After the move above, so a
+  // request it copied has its thread; once, behind its marker.
+  await require('../services/threads').backfill(pool);
   log.info('db', 'Schema up to date');
   finishPhase('schemaMs');
 
