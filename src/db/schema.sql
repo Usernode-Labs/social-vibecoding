@@ -16163,6 +16163,23 @@ CREATE TABLE IF NOT EXISTS preview_projects (
 COMMENT ON TABLE preview_projects IS 'staging:private';
 COMMENT ON COLUMN preview_projects.db_password IS 'staging:private';
 
+-- What a preview sent for a project's build or deploy, kept for the
+-- conductor that runs it (services/preview-projects.js, a platform
+-- operation): a build's files are megabytes and a deploy's env up to 256 KB,
+-- more than an operation's input carries. Each is kept with the request it
+-- is for, written in the same transaction that claims the project's row and
+-- appends that request, so the newest claim's request is the one that finds
+-- it; it is cleared once that request has run.
+CREATE TABLE IF NOT EXISTS preview_project_inputs (
+  project_id     BIGINT PRIMARY KEY REFERENCES preview_projects(id) ON DELETE CASCADE,
+  files          JSONB,
+  files_request  UUID,
+  env            JSONB,
+  env_request    UUID,
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE preview_project_inputs IS 'staging:private';
+
 -- ── Versions: originals and the versions made from them ───────────────
 --
 -- Every copy of a project is a version of one original, and the original's

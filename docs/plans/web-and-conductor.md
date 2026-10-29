@@ -255,9 +255,12 @@ the same request asked again makes the same branch. A route waits up to a minute
 no conductor admits within five seconds is refused so it never runs later
 (503), and one still running past the wait answers 503 `operation_pending`,
 never a success, and finishes. Each operation is its own work kind, so a
-conductor claims only the operations its build knows: during a rollout an
-older conductor leaves a newer operation queued for a newer one. The
-operations are:
+conductor claims only the operations its build knows, and the machine admits
+any well-formed `area.verb` name: during a rollout a conductor that knows an
+operation's name leaves one newer than it queued for a newer conductor. A
+build from before that rule refuses a name it does not know, so a release
+that adds operations can see them refused while such a conductor still runs:
+the caller answers 503 and gives back what it claimed. The operations are:
 
 - `manifest.propose`: every settings proposal that edits dapp.json (rename,
   visibility, who decides, admins, governance, a secret declaration, topics),
@@ -315,15 +318,32 @@ operations are:
 An account deletion's provider, worker and stored-file cleanups are the
 `account-deletion` clock's alone, every minute on a conductor; the routes that
 queue them no longer start a sweep of their own. With these, a web process
-makes no Kubernetes write in production (preview projects, off by default,
-still build and deploy from the request's process): its runtime calls are
-reads (status, deployment state, logs, quotas, a preview's state).
+makes no Kubernetes write in production: its runtime calls are reads
+(status, deployment state, logs, quotas, a preview's state).
 
-These move web dependencies behind durable commands. Web Pods still need
-their current Kubernetes and database permissions for other callers, including
-the remaining repository writes and startup work. Moving
-those callers, then splitting service accounts, Secret inputs and actual
-database login privileges, remains SEC-09 work. The event's source metadata
+Projects made inside a platform preview (services/preview-projects.js) are
+operations too (`previewProject.create`, `.build`, `.deploy`, `.restart`,
+`.remove`, services/preview-project-operation.js). Their routes still take the
+preview's credential, check each request and claim the project's row; the
+database, the source push, the build, the run, a restart and a removal are
+the conductor's. A build's files and a deploy's env are kept beside the row
+(`preview_project_inputs`), written in the transaction that claims it and
+appends the request, since they weigh more than an operation's input; a
+conductor must then take the request within five seconds, or it is refused
+for good and the claim given back. The
+requester is the session's author (any account): the preview's credential is
+the authority, and the conductor reads again, before every step, that the
+session is still a platform preview holding a live one. A step it refuses
+ends as failed, so the preview stops waiting. So a web Pod can run as an
+account with reads only (the chart's `platform.web.serviceAccountName`).
+
+These move web dependencies behind durable commands. Web Pods need no
+Kubernetes write and no OpenRouter management key: they can run as an account
+with reads only, and the chart keeps the key in a Secret only the conductor
+imports. They still hold the code-host credentials (the remaining repository
+writes, and reads made with write-capable tokens) and the database's admin
+login. Moving those callers, then separate database logins, remains SEC-09
+work. The event's source metadata
 also remains a convention among trusted processes; it does not authenticate
 a compromised producer.
 

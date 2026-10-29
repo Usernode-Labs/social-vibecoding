@@ -69,6 +69,14 @@ platform:
     # The workflow's metrics (GET /metrics, src/workflow/metrics.ts), on a
     # port of their own that the Service does not expose.
     metricsPort: 9464
+  # The Pods that serve requests (PROCESS_ROLE=web, with the conductor on).
+  # They change nothing in the cluster: the conductor does
+  # (docs/plans/web-and-conductor.md). serviceAccountName gives them an
+  # account of their own, which the cluster grants only reads (the infra
+  # repository's social-vibecoding-foundation chart owns it and its Roles).
+  # Empty: social-platform-runtime, the conductor's.
+  web:
+    serviceAccountName: ""
   image:
     repository: ghcr.io/replace-me/social-vibecoding-platform
     digest: ""
@@ -330,6 +338,8 @@ secrets:
   anthropicApiKey: ""
   anthropicAdminKey: ""
   # Optional OpenRouter management credential, supplied through encrypted external values.
+  # With the conductor on it is the conductor's alone (its own Secret, see
+  # templates/secret.yaml): the web Pods ask it for every managed key.
   openrouterManagementApiKey: ""
   # Optional Gmail sender credentials. Set all three in encrypted external values.
   gmailOauthClientId: ""

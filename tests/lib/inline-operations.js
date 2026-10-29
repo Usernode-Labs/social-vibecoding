@@ -10,6 +10,12 @@
 //   const restore = inlineOperations({ pool: () => poolMod.getPool(), user: () => currentUser, app: () => appRow });
 //   ...
 //   restore();
+//
+// An operation a route only asks a conductor to take (platform-operations
+// admit, nobody waits on its answer) is queued, and runs when the test calls
+// `await restore.drain()`, as a conductor runs it. `restore.refuseNext()`
+// makes the next request of either kind refused, as when no conductor takes
+// it.
 
 const operations = require('../../src/services/platform-operations');
 
@@ -36,16 +42,38 @@ function inlineOperations({ pool, user, app, config = {} }) {
       return pool().query(sql, params);
     },
   };
+  let refuse = 0;
   const prior = operations._setTransportForTests(async (p) => {
     n += 1;
     const requestId = `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    if (refuse > 0) { refuse -= 1; return { status: 'refused', requestId, reason: 'operation_unavailable' }; }
     try {
       return { status: 'done', requestId, result: await operations.run({ pool: wrapped, config }, { ...p, requestId }) };
     } catch (err) {
       return { status: 'failed', requestId, error: { message: err.message, code: err.code || null } };
     }
   });
-  return () => operations._setTransportForTests(prior);
+  const queued = [];
+  const priorAdmit = operations._setAdmitForTests({
+    append: async (_db, p) => { queued.push(p); return p; },
+    settle: async (p) => {
+      if (refuse === 0) return { status: 'accepted' };
+      refuse -= 1;
+      queued.splice(queued.indexOf(p), 1);
+      return { status: 'refused', reason: 'operation_unavailable' };
+    },
+  });
+  const restore = () => {
+    operations._setTransportForTests(prior);
+    operations._setAdmitForTests(priorAdmit);
+  };
+  restore.refuseNext = () => { refuse += 1; };
+  restore.drain = async () => {
+    const results = [];
+    while (queued.length) results.push(await operations.run({ pool: wrapped, config }, queued.shift()));
+    return results;
+  };
+  return restore;
 }
 
 module.exports = { inlineOperations };

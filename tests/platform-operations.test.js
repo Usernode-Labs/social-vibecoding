@@ -29,13 +29,21 @@ test('the event names a known operation, its request, requester and project, and
   assert.deepEqual(requested(ok), ok);
   assert.deepEqual(requested({ ...ok, appId: null }).appId, null);
   for (const [why, bad] of [
-    ['unknown operation', { ...ok, op: 'shell.exec' }],
+    ['an operation that is not area.verb', { ...ok, op: 'shell; exec' }],
+    ['no operation', { ...ok, op: undefined }],
     ['no request id', { ...ok, requestId: 'x' }],
     ['no requester', { ...ok, userId: null }],
     ['a project that is not an id', { ...ok, appId: '3' }],
     ['an input that is not an object', { ...ok, input: ['a'] }],
     ['an oversized input', { ...ok, input: { blob: 'x'.repeat(MAX_INPUT_BYTES) } }],
+    ['a preview project\'s step without its preview', { ...ok, op: 'previewProject.build', input: { projectId: 4 } }],
+    ['a preview project\'s step without its project', { ...ok, op: 'previewProject.remove', input: { sessionId: 9 } }],
   ]) assert.throws(() => requested(bad), Error, why);
+  // One this build does not know is still a request: its work waits for a
+  // conductor that knows it, instead of an older one refusing it in a rollout.
+  assert.equal(requested({ ...ok, op: 'later.operation' }).op, 'later.operation');
+  const step = { ...ok, appId: null, op: 'previewProject.deploy', input: { sessionId: 9, projectId: 4 } };
+  assert.deepEqual(requested(step), step, 'a preview project\'s step names its preview and project, never the files or env it runs with');
 });
 
 test('a route answers the operation, a refusal, a pending request or a failure', () => {

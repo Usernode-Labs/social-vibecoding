@@ -1283,6 +1283,28 @@ export function operationOutcome(requestId: string, i: { state: string; data: an
   return { status: 'pending', requestId };
 }
 
+// A request nobody waits on that a conductor must take at once (a preview
+// project's build or deploy, services/preview-projects.js): appended in the
+// caller's transaction under the caller's request id, then, once that has
+// committed, settled. One no conductor takes within `admitMs` (none running,
+// or only a build from before its operation, which refuses a name it does
+// not know) is refused, so it never runs and the caller can give back what it
+// claimed. 'unknown': a conductor holds it this moment; it is decided soon,
+// and may run.
+export async function appendOperationRequest(db: Queryable, p: OperationRequest): Promise<number> {
+  return appendEvent(db, PLATFORM_OPERATION, operationKey(p), { type: 'Requested', payload: p },
+    { appId: p.appId, actor: `user:${p.userId}`, source: { kind: 'route', name: OPERATION_WORK }, requestKey: p.requestId });
+}
+export async function settleOperation(eventId: number, { admitMs = 5000 }: { admitMs?: number } = {}):
+  Promise<{ status: 'accepted' | 'refused' | 'unknown'; reason?: string | null }> {
+  const rt = running();
+  const out = await rt.waitForEvent(eventId, admitMs);
+  const settled = out.status === 'pending' ? (await rt.refuseIfPending(eventId, 'operation_unavailable')) ?? out : out;
+  if (settled.status === 'accepted' || settled.status === 'replayed') return { status: 'accepted' };
+  if (settled.status === 'pending') return { status: 'unknown' };
+  return { status: 'refused', reason: settled.reason ?? settled.status };
+}
+
 // The same request appended in the caller's transaction, for an operation
 // nobody waits on (an Undo's revert, opened after the answer): it runs once
 // the transaction commits, on whichever conductor claims it.

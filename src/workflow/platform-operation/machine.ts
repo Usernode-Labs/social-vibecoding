@@ -14,6 +14,7 @@ export const WORK = 'operation.run';
 export const OPERATIONS: ReadonlySet<string> = new Set([
   'manifest.propose', 'branch.ensure', 'revert.open', 'domain.check', 'domain.teardown', 'app.remove',
   'openrouter.provision', 'openrouter.sync', 'openrouter.disable', 'openrouter.remove',
+  'previewProject.create', 'previewProject.build', 'previewProject.deploy', 'previewProject.restart', 'previewProject.remove',
 ]);
 // What an operation's input may weigh: what a route captured, never a file.
 export const MAX_INPUT_BYTES = 64 * 1024;
@@ -42,13 +43,22 @@ type State = { name: typeof NONE | 'queued'; data: null } | { name: 'done' | 'fa
 const ended = (name: 'done' | 'failed', data: Json): Outcome<State> => ({ next: { name, data } });
 const id = (v: unknown) => Number.isSafeInteger(v) && (v as number) >= 1 && (v as number) <= 2147483647;
 
+// An operation's name: `area.verb`. One this build does not know is still a
+// request: its work is a kind of its own (workKind), which only a conductor
+// that knows it claims, so during a rollout an older conductor leaves a newer
+// operation queued instead of refusing it.
+const OP_NAME = /^[a-z][A-Za-z]{0,31}\.[a-z][A-Za-z]{0,31}$/;
+
 export function requested(p: any): Request {
-  if (!OPERATIONS.has(p?.op)) throw new Error('An operation must name a known kind');
+  if (typeof p?.op !== 'string' || !OP_NAME.test(p.op)) throw new Error('An operation must name its kind');
   if (typeof p.requestId !== 'string' || !UUID.test(p.requestId)) throw new Error('An operation must name its request');
   if (!id(p.userId) || (p.appId !== null && !id(p.appId))) throw new Error('An operation must name its requester and project');
   if (!p.input || typeof p.input !== 'object' || Array.isArray(p.input)
       || JSON.stringify(p.input).length > MAX_INPUT_BYTES) throw new Error('An operation must carry its input');
   if (p.op === 'revert.open' && !id(p.input.sessionId)) throw new Error('An Undo must name its change');
+  if (p.op.startsWith('previewProject.') && (!id(p.input.sessionId) || !Number.isSafeInteger(p.input.projectId) || p.input.projectId < 1)) {
+    throw new Error('A preview project\'s operation must name its preview and project');
+  }
   return { op: p.op, requestId: p.requestId, appId: p.appId, userId: p.userId, input: p.input };
 }
 
