@@ -142,3 +142,32 @@ test('the screen renders as the prerender does: hidden, the bot\'s name, Your wo
   assert.ok(!html.includes('data-ai-row'), 'no rows before the effects read them');
   assert.ok(!html.includes('data-ai-main'), 'and Main is not docked before mount');
 });
+
+test('on a wide window: Main has its name over it, and a public row opens in the side panel in its place', () => {
+  const src = read('frontend/src/features/ai/index.tsx');
+  assert.match(src, /<aside className="ai-main-pane" aria-labelledby="ai-main-title" data-ai-main="">\s+<header className="ai-main-head" data-ai-main-head="">/);
+  assert.match(src, /<span id="ai-main-title"[^>]*>\s+\{t\('messages:store\.header\.main'\)\}/);
+  assert.match(src, /\{t\('messages:ai\.main\.sub'\)\}/);
+  assert.equal(message('messages:ai.main.sub'), 'Your chat with Homeroom bot. Only you can see it.');
+  // A request, a change or a decision: the panel takes it when Main is docked; its page otherwise.
+  assert.match(src, /if \(docked\) \{\s+try \{\s+if \(sidePanel\(\)\?\.take\?\.\(href\.replace\(\/\^#\/, ''\)\)\) return;/);
+  assert.equal((src.match(/onClick=\{\(\) => openPublic\(row\.href, docked\)\}/g) || []).length, 2, 'Up next and Live this week');
+  assert.match(src, /openPublic\(row\.href, docked\);\s+\};/, 'and Your work');
+  // A private thread is Main's: the panel gives its place back first.
+  assert.match(src, /sidePanel\(\)\?\.close\?\.\(\);\s+setAt\(\{ threadRootId: row\.rootId, focusMessageId: null \}\);/);
+  // The panel may stand beside the AI tab's page, and stays while it is up.
+  assert.match(read('frontend/src/features/side-panel/controller.ts'),
+    /const besideAi = typeof A\._isScreenVisible === 'function' && A\._isScreenVisible\('ai-screen'\);/);
+  assert.match(read('public/js/app.js'), /appPresence\?\.\(\(inApp \|\| screen === 'ai-screen'\) && !App\.chromeless\)/);
+});
+
+test('Main\'s column is held inside the window, and the panel takes its place', () => {
+  const css = read('public/css/app.css');
+  // A width chosen beside an app on a wide monitor must not run Main under the rail.
+  assert.match(css, /#ai-screen \{\s+--ai-main-w: max\(320px, min\(var\(--side-panel-w, 400px\), calc\(100vw - var\(--platform-rail-w, 0px\) - 480px\)\)\);\s+\}/);
+  assert.match(css, /#ai-screen\[data-ai-docked\] \{ padding-right: var\(--ai-main-w\); \}/);
+  assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*width: var\(--ai-main-w\);/);
+  assert.match(css, /#ai-screen \.ai-main-pane > \.messages-layout \{ flex: 1 1 auto; height: auto; min-height: 0; \}/);
+  assert.match(css, /html\[data-side-panel\] #ai-screen \.ai-main-pane \{ display: none; \}/);
+  assert.match(css, /html\[data-side-panel\] #ai-screen\[data-ai-docked\] \{ padding-right: var\(--side-panel-w\); \}/);
+});

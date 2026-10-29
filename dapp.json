@@ -774,6 +774,10 @@
     {
       "route": "#app/*/app",
       "reason": "The App tab's long form, the same running app: the side panel takes the next address change the same way."
+    },
+    {
+      "route": "#ai",
+      "reason": "The AI tab's page: on a desktop the side panel opens a request, a change or a conversation beside it, in the place of the docked chat (frontend/src/features/side-panel/controller.ts canTake), so the next address change is not drawn in the page."
     }
   ],
   "tests": [

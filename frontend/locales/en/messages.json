@@ -4030,5 +4030,9 @@
   "ai.ask.label": {
     "text": "Ask Homeroom bot",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. The bar at the foot of the screen on a phone: opens Main, the private chat with Homeroom bot."
+  },
+  "ai.main.sub": {
+    "text": "Your chat with Homeroom bot. Only you can see it.",
+    "description": "The AI tab on a wide window: the line under the title \"Main\" over the person's private chat with Homeroom bot, docked beside their list of work."
   }
 }

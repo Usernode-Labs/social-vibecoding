@@ -300,7 +300,7 @@ test('the island is wrapped and placed beside the app view; its seams mount at t
 // ── 3 & 4. The controller, driven ────────────────────────────────────────
 
 function topWindow({ width = 1280, app = 'notes-ab12', tab = 'app', chromeless = false,
-  visible = true, user = { id: 1 }, native = false, embedded = false } = {}) {
+  visible = true, user = { id: 1 }, native = false, embedded = false, screen = null } = {}) {
   const pushed = [];
   const routed = [];
   const opened = [];
@@ -317,7 +317,7 @@ function topWindow({ width = 1280, app = 'notes-ab12', tab = 'app', chromeless =
     setTimeout: (fn) => { timers.push(fn); return timers.length; },
     App: {
       user, chromeless, currentApp: app, currentTab: tab,
-      _isScreenVisible: (id) => id === 'app-view' && visible,
+      _isScreenVisible: (id) => (id === 'app-view' && visible) || (screen !== null && id === screen),
       _rootUrl: (hash) => `/?demo=1${hash || ''}`,
       _routeFromHash: () => routed.push(win.location.href),
       navigateHome: () => routed.push('home'),
@@ -344,9 +344,14 @@ function cleanup() {
   delete globalThis.document;
 }
 
-test('the panel takes a navigation only beside a running app, at desktop width, in the top document', () => {
+test('the panel takes a navigation only beside a running app or the AI tab\'s page, at desktop width, in the top document', () => {
+  const ai = { app: null, visible: false, screen: 'ai-screen' };
   const cases = [
     [{}, true, 'an app on its App tab, 1280 wide'],
+    [ai, true, 'the AI tab\'s page, where it takes the place of the chat docked beside the list'],
+    [{ ...ai, width: 1023 }, false, 'the AI tab below the breakpoint, where nothing is docked'],
+    [{ ...ai, chromeless: true }, false, 'the AI tab, chromeless'],
+    [{ app: null, visible: false, screen: 'messages-screen' }, false, 'any other platform screen'],
     [{ width: 1023 }, false, 'below the breakpoint'],
     [{ width: 390 }, false, 'a phone'],
     [{ tab: 'dev' }, false, 'the app\'s own Workshop is on screen, not the app'],
@@ -1325,6 +1330,20 @@ test('the divider ships on the panel\'s left edge as a focusable vertical separa
   const beforeReturn = divider.slice(0, divider.indexOf('\n  return ('));
   assert.match(beforeReturn, /useEffect\(\(\) => \{\s*settle\(\);/);
   assert.doesNotMatch(divider.slice(divider.indexOf('\n  return (')), /readStoredWidth|localStorage/);
+});
+
+test('the probe: beside an app, the app\'s left edge; beside the AI tab\'s page, the docked rail\'s', () => {
+  const { probeLayout } = api.resize;
+  const el = (box, classes = []) => ({ getBoundingClientRect: () => box, classList: { contains: (c) => classes.includes(c) } });
+  const win = (els) => ({ innerWidth: 1280, document: { getElementById: (id) => els[id] || null } });
+  const rail = el({ left: 0, right: 212, width: 212 });
+  assert.deepEqual(probeLayout(win({ 'app-view': el({ left: 76, width: 1204 }), 'platform-tabs': rail })), { innerWidth: 1280, appLeft: 76 },
+    'an app on screen answers for itself, as before');
+  assert.deepEqual(probeLayout(win({ 'app-view': el({ left: 0, width: 0 }), 'platform-tabs': rail })), { innerWidth: 1280, appLeft: 212 },
+    'no app on screen: the rail is what sits left of the page');
+  assert.deepEqual(probeLayout(win({ 'app-view': el({ left: 0, width: 0 }), 'platform-tabs': el({ left: 0, right: 212, width: 212 }, ['platform-tabs-peek']) })),
+    { innerWidth: 1280, appLeft: 0 }, 'a peeking rail takes no width');
+  assert.deepEqual(probeLayout(win({})), { innerWidth: 1280, appLeft: 0 });
 });
 
 test('the width\'s rules: 320px of panel and 480px of app at the least, whatever the window', () => {
