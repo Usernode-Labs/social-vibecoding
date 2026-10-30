@@ -60,10 +60,11 @@ const PUBLIC_PATHS = [
   // apps and who built them without an account; view-private apps and the
   // self-app are never surfaced. Same privacy tier as the leaderboard.
   '/api/public/',
-  // A signed-out page's two content-free reports (routes/ui-telemetry.js):
-  // a session guard fence and where an invite link settled. The page has no
-  // session by definition, and the route accepts only those two kinds, at
-  // most four a request, with no account and no receipt.
+  // The two content-free reports a signed-out page may send
+  // (routes/ui-telemetry.js): a session guard fence and where an invite
+  // link settled. The page has no session by definition, and the route
+  // accepts only those two kinds, at most four a request, with no account
+  // and no receipt.
   '/api/ui-telemetry/anonymous',
   // Waitlist social-connect OAuth round-trip (two-stage waitlist
   // survey). Pre-login by definition — waitlist signers have no account;
