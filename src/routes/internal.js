@@ -127,7 +127,8 @@ function internalRoutes(_config) {
         'shots_scope_mismatch', 'Shots token does not own this run.', 403
       );
     }
-    return shotsControl.withControl(pool, { runId, sessionId: req.workerSession.sessionId }, fn, opts);
+    return shotsControl.withControl(pool, { runId, sessionId: req.workerSession.sessionId }, fn,
+      { store: require('../services/media-store').getStore(_config), ...opts });
   }
   function shotsError(res, err) {
     const status = Number(err?.status)

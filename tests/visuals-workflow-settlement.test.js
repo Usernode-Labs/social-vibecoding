@@ -18,6 +18,7 @@ const frame = (index, status) => [
 ].join('\n');
 
 function harness(t) {
+  require('./lib/media-store').useMemoryMedia(t);
   for (const [mod, fn] of [
     ['../src/services/asset-route-check', 'maybeRunAssetRouteCheck'],
     ['../src/services/content-review', 'maybeRunContentReview'],
