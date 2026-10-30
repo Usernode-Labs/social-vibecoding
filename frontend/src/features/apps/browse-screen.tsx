@@ -51,6 +51,7 @@
 
 import { useRef } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { Chip, ChipRail } from '@/components/ui/chip';
 import { FilterIcon, SearchIcon } from '@/components/ui/icons';
 import {
@@ -100,6 +101,7 @@ export function BrowseScreen() {
     rows: any[] | null;
     site: { href: string; label: string } | null;
     empty: string | null;
+    make?: string | null;
     error: boolean;
     detail: any;
     showClear?: boolean;
@@ -368,7 +370,31 @@ export function BrowseScreen() {
           className={state.empty
             ? 'browse-pane-note px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-400'
             : 'hidden browse-pane-note px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-400'}
-        >{state.empty}</div>
+        >
+          {state.empty}
+          {/*
+              A search nothing in the directory answers is an idea for a
+              project (#5928): Make opens "What do you want to make?" with the
+              words already typed in. `make` is null in the prerender, so the
+              shipped #browse-empty stays exactly as it was.
+          */}
+          {state.empty && state.make ? (
+            <div className="mt-3">
+              <Button
+                id="browse-empty-make"
+                type="button"
+                variant="pillAccent"
+                size="sm"
+                ink="solid"
+                className="min-h-[44px] md:min-h-0"
+                onClick={() => {
+                  (window as unknown as { App?: { showCreateModal?: (o: { idea: string }) => boolean } })
+                    .App?.showCreateModal?.({ idea: state.make as string });
+                }}
+              >{t('discover:empty.search.make', { idea: state.make })}</Button>
+            </div>
+          ) : null}
+        </div>
       </div>
       {/*
           Level 2: the per-app detail page (#apps/<slug>). Absorbs what the

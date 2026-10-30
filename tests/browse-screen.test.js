@@ -1805,6 +1805,89 @@ test('render: empty result explains itself, with the query when there is one', (
   assert.match(state.empty, /No apps to show yet/, 'and a truly empty directory says so');
 });
 
+test('#5928: a search no app answers offers to make it; a filtered-away match does not', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [app({ slug: 'chess', name: 'Chess' })];
+  Browse._query = '  plant   swap ';
+  Browse.render();
+  assert.match(state.empty, /No apps match/);
+  assert.equal(state.make, 'plant swap', 'the words typed, tidied, are the idea');
+
+  // Chess exists, but the Joined view hides it: relaxing the view finds it,
+  // so there is nothing to make.
+  Browse._view = 'joined';
+  Browse._query = 'chess';
+  Browse.render();
+  assert.ok(state.empty, 'the joined view has nothing to show');
+  assert.equal(state.make, null, 'an app elsewhere in the directory matches');
+
+  // A web address offers its site row instead, and no empty line at all.
+  Browse._view = 'foryou';
+  Browse._query = 'example.com';
+  Browse.render();
+  assert.equal(state.empty, null);
+  assert.equal(state.make, null);
+
+  // No search, no offer, even when the list is empty.
+  Browse._apps = [];
+  Browse._query = '';
+  Browse.render();
+  assert.match(state.empty, /No apps to show yet/);
+  assert.equal(state.make, null);
+});
+
+test('#5928: makeIdeaFor caps the idea and ignores blank text', () => {
+  const { Browse } = makeBrowse();
+  assert.equal(Browse.makeIdeaFor('   ', []), null);
+  assert.equal(Browse.makeIdeaFor(null, []), null);
+  assert.equal(Browse.makeIdeaFor('x'.repeat(200), []).length, 80);
+});
+
+function renderBrowseScreen(patch, App) {
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+  const initial = {
+    level: 'list', rows: [], site: null, curated: true, grouped: true, moreExpanded: false,
+    empty: null, make: null, error: false, detail: null, sort: 'recommended', view: 'foryou',
+    only: [], activeCount: 0, filter: 'all', categories: [], category: 'all',
+  };
+  const value = { ...initial, ...patch };
+  const browseStore = { get: () => value, subscribe: () => () => {} };
+  const mod = loadTsx('frontend/src/features/apps/browse-screen.tsx', {
+    stubs: { './mount': { browseStore } },
+  });
+  const prevApp = globalThis.App;
+  if (App) globalThis.App = App;
+  try {
+    return renderToHtml(createElement(mod.BrowseScreen, {}));
+  } finally {
+    if (App) globalThis.App = prevApp;
+  }
+}
+
+test('#5928: the empty line draws Make with the idea only when there is one', () => {
+  const plain = renderBrowseScreen({ empty: 'No apps match “zz”.' });
+  assert.match(plain, /id="browse-empty"[^>]*>No apps match “zz”\.<\/div>/,
+    'without an idea, #browse-empty is the sentence alone');
+  assert.doesNotMatch(plain, /browse-empty-make/);
+
+  const html = renderBrowseScreen({ empty: 'No apps match “plant swap”.', make: 'plant swap' });
+  const btn = html.match(/<button[^>]*id="browse-empty-make"[^>]*>([^<]*)<\/button>/);
+  assert.ok(btn, 'the Make button is drawn under the sentence');
+  assert.equal(btn[1], message('discover:empty.search.make').replace('{{idea}}', 'plant swap'));
+  assert.match(btn[0], /bg-violet-600/, 'the accent pill: it is the action the line offers');
+
+  const prerender = renderBrowseScreen({});
+  assert.match(prerender, /id="browse-empty" class="hidden [^"]*"><\/div>/,
+    'the prerender ships #browse-empty empty and hidden, as before');
+});
+
+test('#5928: Make opens "What do you want to make?" with the search as the idea', () => {
+  const src = read('frontend/src/features/apps/browse-screen.tsx');
+  assert.match(src, /\.App\?\.showCreateModal\?\.\(\{ idea: state\.make as string \}\)/);
+  assert.match(read('public/js/app.js'), /showCreateModal\(opts\) \{[\s\S]*?front\.create\(opts\)/,
+    'App.showCreateModal hands opts (and so the idea) to the make screen');
+});
+
 // ── Data flow ────────────────────────────────────────────────────
 
 test('_load fetches /api/apps and shares the payload with Home', async () => {

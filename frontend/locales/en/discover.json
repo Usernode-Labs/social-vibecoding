@@ -251,6 +251,10 @@
     "text": "No apps match “{{query}}”.",
     "description": "Shown in place of Discover's list when the search finds nothing and no filter narrows it. {{query}} is what the person typed."
   },
+  "empty.search.make": {
+    "text": "Make “{{idea}}”",
+    "description": "Button under Discover's \"No apps match\" line when a search finds no app at all: opens \"What do you want to make?\" with what the person typed as the idea for a new project. {{idea}} is that search text; keep the quotation marks around it in your language's style."
+  },
   "empty.featured": {
     "text": "No featured apps yet.",
     "description": "Shown in place of Discover's list when the Featured filter is on and no app is featured."

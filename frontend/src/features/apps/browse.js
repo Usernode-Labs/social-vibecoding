@@ -375,7 +375,7 @@ const Browse = {
       if (Browse._slug) Browse._syncLevel();
     } catch (err) {
       if (Browse._store && !Browse._slug) {
-        Browse._store.set({ rows: [], empty: null, error: true });
+        Browse._store.set({ rows: [], empty: null, make: null, error: true });
       }
     }
   },
@@ -935,6 +935,18 @@ const Browse = {
     return { href: url.href, label };
   },
 
+  // What a search that found nothing offers to make (#5928): the words
+  // typed, for "What do you want to make?" to start from. Only when NO app in
+  // the directory matches them, whatever the view, switches or type: a match
+  // a filter hid is found by relaxing the filter, not by making a second one.
+  // A web address offers its site row instead (siteFor). Pure — unit-tested.
+  makeIdeaFor(query, apps) {
+    const q = String(query == null ? '' : query).replace(/\s+/g, ' ').trim();
+    if (!q || Browse.siteFor(q)) return null;
+    if (Home.filterApps(apps || [], q).length) return null;
+    return q.slice(0, 80);
+  },
+
   // The rows for the current view, switches, type, order and query. The view
   // and switches pick the set first (narrowApps), then the type narrows it,
   // then the sort orders it, then the search narrows it. The search covers
@@ -1123,6 +1135,9 @@ const Browse = {
       // The site row IS a result, so the "No apps match" line never shows
       // right under it.
       empty: site ? null : (rows.length ? null : Browse.emptyText(query, Browse.derivedFilter(), category)),
+      // The empty line's "Make" action: a search nothing in the directory
+      // answers is an idea for a project (#5928).
+      make: site || rows.length ? null : Browse.makeIdeaFor(query, Browse._apps),
     });
 
     Browse._maybeShotDetail(rows);
