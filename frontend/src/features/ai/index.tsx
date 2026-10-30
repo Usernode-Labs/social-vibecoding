@@ -68,7 +68,7 @@ import { useLiveLists } from './live';
 import { AiLists } from './lists';
 import { AiDrawer, MainPane, usePhone } from './phone-drawer';
 import {
-  heroWords, inProgress, isTopicHref, needsYou, owedCount, projectsOf, upNext,
+  heroWords, inProgress, isTopicHref, needsYou, owedCount, rankProjects, upNext,
   type AiApp, type AiThread, type AiWork, type NeedItem, type Phrase, type WorkRow,
 } from './model';
 
@@ -238,7 +238,7 @@ export function AiScreen(): ReactNode {
   const owed = owedCount(rows);
   const docked = wide && !!botId;
   const projects = useMemo(
-    () => new Set(projectsOf(rows, progress, waiting, live).map((app) => app.slug)),
+    () => new Set(rankProjects(rows, progress, waiting, live).map((p) => p.app.slug)),
     [rows, progress, waiting, live],
   );
   useLiveLists(() => setMoved((n) => n + 1), visible, { projects, botId });
