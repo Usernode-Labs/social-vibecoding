@@ -305,7 +305,7 @@ export function communityRowHref(slug: string | null | undefined, owed: number |
  */
 export function openCommunityRow(e: React.MouseEvent, slug: string | null | undefined, owed: number | null): void {
   if (!isPlainClick(e)) {
-    setTimeout(() => { AppContext.dismissForNav(); }, 0);
+    deferCommunityRowClose();
     return;
   }
   if (slug) {
@@ -314,6 +314,34 @@ export function openCommunityRow(e: React.MouseEvent, slug: string | null | unde
     else view?._landOnHub?.(slug);
   }
   followThenDismiss(e, slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#');
+}
+
+/**
+ * The close a modified click put off, for THIS opening of the menu only: if
+ * the menu closes another way before the tick (and maybe opens again), the
+ * pending close is dropped rather than shutting the new one, and the sheet's
+ * unmount drops it too.
+ */
+let pendingRowClose: { timer: ReturnType<typeof setTimeout>; off: () => void } | null = null;
+
+export function cancelCommunityRowClose(): void {
+  if (!pendingRowClose) return;
+  clearTimeout(pendingRowClose.timer);
+  pendingRowClose.off();
+  pendingRowClose = null;
+}
+
+function deferCommunityRowClose(): void {
+  cancelCommunityRowClose();
+  if (!appContextStore.get().open) return;
+  const off = appContextStore.subscribe(() => {
+    if (!appContextStore.get().open) cancelCommunityRowClose();
+  });
+  const timer = setTimeout(() => {
+    cancelCommunityRowClose();
+    AppContext.dismissForNav();
+  }, 0);
+  pendingRowClose = { timer, off };
 }
 
 // The click followThenDismiss below follows itself: the button alone, not
@@ -464,6 +492,8 @@ export function AppsSwitcherSheet(): ReactNode {
   // The home-screen row stays a private member's (`newcomer`).
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+  // A close the community row put off goes with the sheet.
+  useEffect(() => cancelCommunityRowClose, []);
   const newcomer = mounted && offeringGoToHomeroom(!!privateMember);
   const walkOwed = mounted && owedHomeWalk();
   // #4399: the home-screen offer that rides in the Go to Homeroom card while

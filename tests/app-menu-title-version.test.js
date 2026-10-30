@@ -215,3 +215,48 @@ test('a modified click on Go to community: the real close waits until the browse
   await new Promise((r) => setTimeout(r, 5));
   assert.equal(ui.AppContext.isOpen(), false, 'and then the menu closes, through its own dismissal');
 });
+
+test('the put-off close belongs to its own opening: a reopen before the tick stays open, an unmount drops it (#5927 item 3)', async (t) => {
+  const previousWindow = global.window;
+  const initial = { ...ui.appContextStore.get() };
+  const realDismiss = ui.AppContext.dismissForNav;
+  t.after(() => {
+    global.window = previousWindow;
+    ui.AppContext.dismissForNav = realDismiss;
+    ui.cancelCommunityRowClose();
+    ui.appContextStore.set(initial);
+  });
+  global.window = { ...(previousWindow || {}), location: { hash: '#home' }, AppView: {} };
+  const cmdClick = () => ui.openCommunityRow({
+    button: 0, metaKey: true, ctrlKey: false, shiftKey: false, altKey: false,
+    defaultPrevented: false, nativeEvent: { defaultPrevented: false }, preventDefault() {},
+  }, 'bread-bot', 4);
+  const tick = () => new Promise((r) => setTimeout(r, 5));
+  const listeners = ui.appContextStore.listenerCount();
+
+  // Closed and opened again before the tick: the new menu stays open.
+  ui.appContextStore.set({ open: true });
+  cmdClick();
+  ui.appContextStore.set({ open: false });
+  ui.appContextStore.set({ open: true });
+  await tick();
+  assert.equal(ui.AppContext.isOpen(), true, 'the old click does not close the new menu');
+  assert.equal(ui.appContextStore.listenerCount(), listeners, 'and leaves no listener behind');
+
+  // The sheet unmounts before the tick: its cleanup drops the close.
+  let dismissed = 0;
+  ui.AppContext.dismissForNav = () => { dismissed += 1; return Promise.resolve(); };
+  cmdClick();
+  ui.cancelCommunityRowClose(); // what the sheet's unmount effect runs
+  await tick();
+  assert.equal(dismissed, 0, 'no close after unmount');
+  assert.equal(ui.appContextStore.listenerCount(), listeners);
+
+  // Untouched, it still closes this opening once.
+  cmdClick();
+  await tick();
+  assert.equal(dismissed, 1);
+
+  const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(SHEET, /useEffect\(\(\) => cancelCommunityRowClose, \[\]\);/, 'the sheet drops it on unmount');
+});
