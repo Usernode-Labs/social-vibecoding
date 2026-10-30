@@ -13375,6 +13375,34 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_ask_answered_at TIMESTAMPTZ;
 -- server drops those events on arrival and the shell does not send them.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS usage_analytics BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- "Homeroom news by email" (#6044): marketing email, off for everyone until
+-- they tick it at sign-up or switch it on in Settings > Privacy
+-- (services/contact-preferences.js). Nothing sends marketing email yet; this
+-- is the consent it will need. Marketing texts keep their own per-number
+-- record, sms_marketing_consents.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS marketing_email BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Every answer to the contact opt-ins (#6044), as proof of consent: who, for
+-- which channel, yes or no, where it was given (the sign-up form or
+-- Settings), which wording they saw, and the address or number it was about
+-- at that moment. Append-only; the current choice lives on users and
+-- sms_marketing_consents. user_id is kept NULL after a deletion so the record
+-- of a withdrawal outlives the account, as sms_marketing_consents does.
+CREATE TABLE IF NOT EXISTS contact_consent_events (
+  id              BIGSERIAL PRIMARY KEY,
+  user_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  channel         TEXT NOT NULL CHECK (channel IN ('marketing_email', 'marketing_sms', 'activity_email')),
+  granted         BOOLEAN NOT NULL,
+  source          TEXT NOT NULL CHECK (source IN ('signup', 'settings')),
+  wording_version TEXT NOT NULL,
+  email           VARCHAR(255),
+  phone_e164      VARCHAR(16),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_contact_consent_events_user
+  ON contact_consent_events (user_id, created_at DESC);
+COMMENT ON TABLE contact_consent_events IS 'staging:private';
+
 -- "Are you 18 or older?" (#5095, compliance A-02): when the account said
 -- yes, asked the first time it opens a wallet, staking, node or passport
 -- feature. NULL until then, including "I'm under 18", which records

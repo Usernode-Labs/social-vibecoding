@@ -1711,9 +1711,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // and the reason on its page (the ?demo=1 release-blocked mock).
   // 748 → 749: +1 (#6035) a channel's message box wears the formatting
   // row, Bold through Bulleted list. 749 leaves 131 slots.
-  // 749 → 750: +1 (#6000) a closed request offers Propose reopening on its
-  // status card, opening the group vote. 750 leaves 130 slots.
-  checkCap.assertPinned(DAPP.tests.length, 750);
+  // 749 → 750: +1 (#6044) Settings' Privacy page has the Email & texts
+  // block, before Share usage analytics; no check covered that page, so
+  // nothing to fold it into.
+  // 750 → 751: +1 (#6000) a closed request offers Propose reopening on its
+  // status card, opening the group vote. 751 leaves 129 slots.
+  checkCap.assertPinned(DAPP.tests.length, 751);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

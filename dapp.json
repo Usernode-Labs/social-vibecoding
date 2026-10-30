@@ -3056,6 +3056,12 @@
       "expectText": "Delete your account and data"
     },
     {
+      "name": "Settings' Privacy page has an Email & texts block, before Share usage analytics, with Homeroom news by email and Activity emails",
+      "path": "/#settings/contact-privacy",
+      "expectSelector": "#settings-contact-preferences-section:has(#settings-contact-marketing-email):has(#settings-contact-activity-email) ~ #settings-usage-analytics-section",
+      "expectText": "Homeroom news by email"
+    },
+    {
       "name": "View on GitHub is an action on the app's own page, not a drawer row",
       "path": "/#apps/staging-demo-dormant-approvers",
       "expectSelector": "#browse-detail .browse-detail-action",

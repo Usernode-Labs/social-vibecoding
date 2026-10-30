@@ -396,7 +396,8 @@ test('its frame is the make screen\'s own literals', () => {
 test('Continue saves the username with the sheet\'s request, then hands off to the make screen only once the shell is ready (#4904)', () => {
   const src = read(WELCOME);
   const submit = src.slice(src.indexOf('const submit = useCallback('), src.indexOf('return (\n'));
-  assert.match(submit, /const saved = await saveAccount\(handle\);/);
+  // With the sign-up form's "Homeroom news by email" box (#6044).
+  assert.match(submit, /const saved = await saveAccount\(handle, \{ marketingEmail: account\.needsUsername && newsByEmail \}\);/);
   // Busy through the session read, then away: the sheet's `finish`, here.
   assert.match(submit, /clearConfirmation\(\);\s+const toMake = \(await beforeFinish\('new'\)\) === true;\s+const opened = await confirmSession\(toMake \? handOff : undefined\);\s+if \(!opened\) setLeaving\(false\);/);
   assert.match(submit, /\} finally \{\s+setBusy\(false\);\s+\}/);

@@ -689,6 +689,12 @@ const ADDED_IDS = {
   // ── #6043: the other two legal pages the terms name ──────────────────
   'settings-about-child-safety': 'Its Child safety standards row (#6043): a new-tab link to child_safety_link from GET /api/public/waitlist/options (src/services/marketing-links.js), the page the terms cite for child safety. Opened like the privacy row.',
   'settings-about-account-deletion': 'Its "Delete your account and data" row (#6043): a new-tab link to account_deletion_link from the same options, the page the terms and the app stores name for deleting an account. Opened like the privacy row.',
+  // ── #6044: Settings › Privacy › Email & texts ─────────────────────────
+  'settings-contact-preferences-section': 'Settings › Privacy\'s Email & texts block (#6044), before Share usage analytics: what Homeroom may send you. Its own state and GET/PUT /api/me/contact-preferences (src/services/contact-preferences.js).',
+  'settings-contact-marketing-email': 'Its "Homeroom news by email" switch: marketing email, off until switched on, disabled without a confirmed address. Every change is recorded as proof of consent.',
+  'settings-contact-marketing-email-help': 'The line under it: what it sends and how to stop, or why it cannot be switched on (no confirmed address).',
+  'settings-contact-activity-email': 'Its "Activity emails" switch: users.activity_email, on by default, the same choice as the unsubscribe link in those emails.',
+  'settings-contact-activity-email-help': 'The line under it: which emails it covers.',
   // ── Andrea's 27 Aug 2026 waitlist review: "Follow along" ────────
   'more-follow-row': 'Holds the "Follow on X / LinkedIn / Instagram" links on the stage-2 form. Empty in this document by design: each link renders only when WAITLIST_FOLLOW_<NETWORK>_URL is set, so an unconfigured network shows nothing rather than a dead profile link.',
   'more-followed': 'The "I followed along" checkbox, stored as `answers.followed_claim`. It is a SELF-REPORT and is deliberately kept out of `answers.verified`: LinkedIn returns aggregate follower statistics with no identity, Instagram exposes a count and no relationship lookup, and X retired its boolean friendship endpoint, so no network will confirm a follow for us. Hidden here because its label is shown only once at least one follow URL is configured.',

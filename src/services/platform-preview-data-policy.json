@@ -173,6 +173,7 @@
         "is_in_waitlist": "false",
         "is_synthetic": "false",
         "locale": "NULL",
+        "marketing_email": "false",
         "needs_communities_choice": "false",
         "needs_username_choice": "false",
         "participation_restricted_at": "NULL",
