@@ -1164,6 +1164,12 @@ async function start() {
   // starts, so a value that names no role fails boot here.
   const ownRole = processRole.processRole();
   const migrationsOnStartup = process.env.RUN_MIGRATIONS_ON_STARTUP !== 'false';
+  const databaseAccess = require('./src/services/database-role-access');
+  if (databaseAccess.enabled() && process.env.USERNODE_ENV !== 'staging') {
+    if (!['web', 'conductor'].includes(ownRole)) throw new Error('Database role separation requires explicit web/conductor processes');
+    if (migrationsOnStartup) throw new Error('Database role separation requires the dedicated migration job');
+    await databaseAccess.assertLogin(getPool(config), ownRole === 'web' ? 'web' : 'conductor');
+  }
   let migration = null;
   // Schema migration is serialized across colors with an advisory lock so
   // two booting platform containers can't run DDL concurrently during a

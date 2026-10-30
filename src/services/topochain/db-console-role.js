@@ -132,11 +132,12 @@ async function buildGrantStatements(pool) {
 // migrations are covered on every boot. Any failure leaves the
 // capability cleanly unavailable — `sql-query/execute` returns 503
 // rather than ever falling back to running a console query unscoped.
-async function ensureConsoleRole(config) {
+async function ensureConsoleRole(config, { admin = null } = {}) {
   try {
     const pool = getPool(config);
+    const roleAdmin = admin || pool;
 
-    await pool.query(`DO $$ BEGIN
+    await roleAdmin.query(`DO $$ BEGIN
       IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${ROLE}') THEN
         CREATE ROLE ${ROLE} NOLOGIN;
       END IF;
@@ -144,9 +145,14 @@ async function ensureConsoleRole(config) {
     // NOLOGIN: this role is never connected-to directly, only reached
     // via SET LOCAL ROLE from the app's own pooled connection — there
     // is no password to generate or rotate.
-    await pool.query(`ALTER ROLE ${ROLE} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOLOGIN`);
-    await pool.query(`ALTER ROLE ${ROLE} SET default_transaction_read_only = on`);
-    await pool.query(`ALTER ROLE ${ROLE} SET statement_timeout = '10s'`);
+    if (admin) {
+      await require('../database-role-access').assertReadonlyRole(roleAdmin, ROLE);
+      await roleAdmin.query(`ALTER ROLE ${ROLE} NOCREATEDB NOCREATEROLE NOINHERIT NOLOGIN`);
+    } else {
+      await pool.query(`ALTER ROLE ${ROLE} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOLOGIN`);
+    }
+    await roleAdmin.query(`ALTER ROLE ${ROLE} SET default_transaction_read_only = on`);
+    await roleAdmin.query(`ALTER ROLE ${ROLE} SET statement_timeout = '10s'`);
 
     const { rows: dbRows } = await pool.query('SELECT current_database() AS db, current_user AS usr');
     const dbName = dbRows[0].db;
@@ -177,7 +183,12 @@ async function ensureConsoleRole(config) {
     // this is what makes `SET LOCAL ROLE` work at all on a deployment
     // where the app connects as a non-superuser role — harmless either
     // way, so it's unconditional rather than superuser-detected.
-    if (SAFE_IDENT.test(dbUser)) {
+    if (admin) {
+      const users = [...Object.values(require('../database-role-access').names())]
+        .filter(user => user !== require('../database-role-access').names().provisioner);
+      for (const user of users) await admin.query(
+        `GRANT ${ROLE} TO ${quoteIdent(user)} WITH INHERIT FALSE, SET TRUE`);
+    } else if (SAFE_IDENT.test(dbUser)) {
       await pool.query(`GRANT ${ROLE} TO ${quoteIdent(dbUser)}`).catch((err) => {
         log.warn('topochain-console', 'GRANT role-to-connection-user failed (harmless if already superuser)', {
           err: err.message,

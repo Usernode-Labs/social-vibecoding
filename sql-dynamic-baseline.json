@@ -3,6 +3,20 @@
   "description": "Runtime-built .query() calls reviewed outside the static PostgreSQL validator.",
   "queries": [
     {
+      "source": "src/db/connection-census.js",
+      "kind": "runtime-expression",
+      "fingerprint": "c08ac50f84653d8af134",
+      "count": 1,
+      "preview": "split ? `SELECT current_setting('max_connections')::int AS max, COALESCE(sum(used), 0)::int AS used, COALESCE(sum(idle), 0)::int AS idle FROM public.homeroom_co"
+    },
+    {
+      "source": "src/db/connection-census.js",
+      "kind": "runtime-expression",
+      "fingerprint": "cd9746769424be50f55d",
+      "count": 1,
+      "preview": "split ? `SELECT datname, used::int AS count FROM public.homeroom_connection_counts() WHERE datname IS NOT NULL ORDER BY used DESC LIMIT $1` : `SELECT datname, c"
+    },
+    {
       "source": "src/db/migrate.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
@@ -1088,6 +1102,34 @@
       "preview": "`INSERT INTO credentials.user_ai_credentials (user_id, provider, purpose, secret_enc, secret_last4, secret_fingerprint, status, verified_at, revision) VALUES ($"
     },
     {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
+      "fingerprint": "83622e5a5ef7d176420d",
+      "count": 1,
+      "preview": "`GRANT ${privileges} ON ${kind} ${item.name} TO ${runtime}`"
+    },
+    {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
+      "fingerprint": "8dfce378dabb4eacb36e",
+      "count": 1,
+      "preview": "`REVOKE CREATE ON SCHEMA ${schema} FROM PUBLIC; GRANT USAGE ON SCHEMA ${schema} TO ${runtime}, ${reader}; ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA $"
+    },
+    {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
+      "fingerprint": "9f766fdb6eafbeca0016",
+      "count": 1,
+      "preview": "`GRANT SELECT ON ${kind} ${item.name} TO ${reader}`"
+    },
+    {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
+      "fingerprint": "bcac2736e4c8905c37f8",
+      "count": 1,
+      "preview": "`GRANT EXECUTE ON ROUTINE ${item.name} TO ${runtime}`"
+    },
+    {
       "source": "src/services/db-manager.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
@@ -1674,6 +1716,13 @@
       "fingerprint": "35f1322f2f4f01e6afff",
       "count": 1,
       "preview": "stmt"
+    },
+    {
+      "source": "src/services/topochain/db-console-role.js",
+      "kind": "structural-template",
+      "fingerprint": "4c6c90277104f2f11c38",
+      "count": 1,
+      "preview": "`GRANT ${ROLE} TO ${quoteIdent(user)} WITH INHERIT FALSE, SET TRUE`"
     },
     {
       "source": "src/services/topochain/db-console-role.js",

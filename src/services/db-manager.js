@@ -8,6 +8,7 @@ const { withResourceUse } = require('./build-retention-guard');
 const { STAGING_TEMPLATE_LOCK } = require('./advisory-locks');
 const dbRetry = require('./db-retry');
 const platformPreview = require('./platform-preview-data-policy');
+const databaseAccess = require('./database-role-access');
 
 const execFileAsync = promisify(execFile);
 
@@ -117,7 +118,8 @@ function connectionUrl(dbName, password, { server = PRIMARY_SERVER } = {}) {
     );
   }
   const role = ownerRoleName(dbName);
-  const admin = adminConnection(server);
+  const admin = databaseAccess.enabled()
+    ? databaseAccess.readUrl(server) : adminConnection(server);
   admin.username = role;
   admin.password = password;
   admin.pathname = `/${dbName}`;
@@ -233,6 +235,7 @@ function parseAdminUrl(value, label) {
 }
 
 function primaryAdminUrl() {
+  if (databaseAccess.enabled()) return databaseAccess.provisionerUrl(PRIMARY_SERVER);
   const value = process.env.DB_ADMIN_URL || process.env.DATABASE_URL;
   if (!value) throw new Error('DB_ADMIN_URL or DATABASE_URL is required for database administration');
   return parseAdminUrl(value, 'DB_ADMIN_URL/DATABASE_URL');
@@ -276,7 +279,8 @@ const KNOWN_SSLMODES = new Set(['allow', 'prefer', 'require', 'verify-ca', 'veri
 const PREVIEW_URL_HOST = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
 
 function previewAdminUrl() {
-  const value = String(process.env[PREVIEW_ADMIN_URL_ENV] || '').trim();
+  const value = String(process.env[PREVIEW_ADMIN_URL_ENV]
+    || (databaseAccess.enabled() ? process.env.STAGING_DB_READ_URL : '') || '').trim();
   if (!value) throw new Error(`${PREVIEW_ADMIN_URL_ENV} is not set`);
   const parsed = parseAdminUrl(value, PREVIEW_ADMIN_URL_ENV);
   if (!PREVIEW_URL_HOST.test(parsed.hostname)) {
@@ -314,11 +318,12 @@ const sameServerAddress = (a, b) => a.hostname.toLowerCase() === b.hostname.toLo
 // the one thing this split must never do. Said once, then ignored.
 let _sameServerWarned = false;
 function previewServerConfigured() {
-  if (!String(process.env[PREVIEW_ADMIN_URL_ENV] || '').trim()) return false;
+  if (!String(process.env[PREVIEW_ADMIN_URL_ENV]
+    || (databaseAccess.enabled() ? process.env.STAGING_DB_READ_URL : '') || '').trim()) return false;
   let preview;
   try { preview = previewAdminUrl(); } catch { return true; }   // surfaces at first use
   let primary;
-  try { primary = primaryAdminUrl(); } catch { return true; }
+  try { primary = databaseAccess.enabled() ? databaseAccess.readUrl() : primaryAdminUrl(); } catch { return true; }
   if (!sameServerAddress(preview, primary)) return true;
   if (!_sameServerWarned) {
     _sameServerWarned = true;
@@ -356,15 +361,17 @@ function serverKey(server) {
 }
 
 function adminConnection(server = PRIMARY_SERVER) {
+  if (databaseAccess.enabled()) databaseAccess.provisionerUrl(serverKey(server));
   return serverKey(server) === PREVIEW_SERVER ? previewAdminUrl() : primaryAdminUrl();
 }
 
 // The database administrative statements connect to. On the main server it
-// is `usernode`, as it always was. The preview server is somebody else's to
-// provision, so it is whichever database its URL names (`postgres` if none).
+// is historically `usernode`; split-role mode follows the provisioner URL
+// so it reaches the bootstrapped role helper. Preview follows its own URL.
 function adminDatabase(server = PRIMARY_SERVER) {
-  if (serverKey(server) === PRIMARY_SERVER) return 'usernode';
-  const name = decodeURIComponent(previewAdminUrl().pathname.replace(/^\//, '')) || 'postgres';
+  if (serverKey(server) === PRIMARY_SERVER && !databaseAccess.enabled()) return 'usernode';
+  const url = serverKey(server) === PRIMARY_SERVER ? primaryAdminUrl() : previewAdminUrl();
+  const name = decodeURIComponent(url.pathname.replace(/^\//, '')) || 'postgres';
   if (!SAFE_IDENT.test(name)) throw new Error(`${PREVIEW_ADMIN_URL_ENV} names an unusable maintenance database`);
   return name;
 }
@@ -403,7 +410,7 @@ function postgresEnv(dbName, server = PRIMARY_SERVER, as = null, pool = 'dbadmin
   // with the same URL. So a preview-side child process gets no PG* variable
   // from the platform's environment, only the ones written here. The main
   // server's processes inherit the environment exactly as they always did.
-  const inherited = serverKey(server) === PRIMARY_SERVER
+  const inherited = serverKey(server) === PRIMARY_SERVER && !databaseAccess.enabled()
     ? process.env
     : Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^PG/i.test(key)));
   return {
@@ -1125,6 +1132,23 @@ async function holdsNothingOfName(dbName, execute) {
   return String(out).trim() === 'f';
 }
 
+async function logicalCopyTemplate(sourceDb, server) {
+  if (!databaseAccess.enabled()) return 'template0';
+  const extensions = await extensionsOnlyAnAdminCanCreate(sourceDb, server);
+  if (!extensions.length) return 'template0';
+  const names = extensions.map(({ name }) => databaseAccess.literal(name)).join(', ');
+  const raw = await adminExecutor(server)(
+    `SELECT json_build_object('name', name, 'version', default_version)::text
+       FROM pg_catalog.pg_available_extensions WHERE name IN (${names}) ORDER BY name`, { tuplesOnly: true });
+  const versions = String(raw).split('\n').map(line => line.trim()).filter(Boolean).map(line => JSON.parse(line));
+  const template = databaseAccess.templateName(databaseAccess.names().provisioner, versions);
+  const found = await adminExecutor(server)(
+    `SELECT 1 FROM pg_catalog.pg_database WHERE datname = ${databaseAccess.literal(template)}
+       AND datdba = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)`, { tuplesOnly: true });
+  if (String(found).trim() !== '1') throw new Error('Database extension template is not prepared; run the database bootstrap job');
+  return template;
+}
+
 async function cloneDatabaseDirect(sourceDb, targetDb, { server = PRIMARY_SERVER } = {}) {
   log.info('db-manager', 'Cloning database', { sourceDb, targetDb });
   // The clone's own server: the role, the database, the restore, both
@@ -1166,7 +1190,8 @@ async function cloneDatabaseDirect(sourceDb, targetDb, { server = PRIMARY_SERVER
   // — the same end-state the TEMPLATE path produced. The
   // reassignUserObjectsTo passes below stay as the backstop for anything a
   // restore could still have left with another owner.
-  await inAdmin(`CREATE DATABASE ${targetDb} TEMPLATE template0 OWNER ${targetRole}`);
+  const emptyTemplate = await logicalCopyTemplate(sourceDb, server);
+  await inAdmin(`CREATE DATABASE ${targetDb} TEMPLATE ${emptyTemplate} OWNER ${targetRole}`);
   await inAdmin(`REVOKE CONNECT ON DATABASE ${targetDb} FROM PUBLIC`);
 
   // Don't dump data we are about to throw away. The scrub passes below
@@ -1434,7 +1459,8 @@ async function buildRedactedCopy(sourceDb, targetDb, ownerRole, { server = PRIMA
   }
   const inTarget = targetExecutor(server);
   const inAdmin = adminExecutor(server);
-  await inAdmin(`CREATE DATABASE ${targetDb} TEMPLATE template0 OWNER ${ownerRole}`);
+  const emptyTemplate = await logicalCopyTemplate(sourceDb, server);
+  await inAdmin(`CREATE DATABASE ${targetDb} TEMPLATE ${emptyTemplate} OWNER ${ownerRole}`);
   await inAdmin(`REVOKE CONNECT ON DATABASE ${targetDb} FROM PUBLIC`);
 
   // This role is NOLOGIN (a template / prepared-source role is shared and
@@ -2227,6 +2253,10 @@ async function withDatabaseConnectionNow(dbName, fn, { queryTimeoutMs = 30_000, 
   client.on('error', (err) => { lost = err; });
   try {
     try { await client.connect(); } catch (err) { throw previewConnectFailure(err, server); }
+    if (databaseAccess.enabled() && !as && dbName === adminDatabase(server)) {
+      await databaseAccess.assertLogin(client, 'provisioner');
+      await client.query('SELECT public.homeroom_adopt_app_roles()');
+    }
     // The same pin execInTarget applies (see there): inside an app database,
     // the session's search_path decides how the platform's SQL resolves
     // unqualified names, and the app can steer it. Set at the session level,
@@ -2309,6 +2339,11 @@ async function execInTarget(dbName, sql, opts = {}) {
 async function execInTargetNow(dbName, sql, opts = {}) {
   if (!SAFE_IDENT.test(dbName)) throw new Error(`execInTarget: unsafe dbName ${JSON.stringify(dbName)}`);
   const args = ['-X', '-v', 'ON_ERROR_STOP=1'];
+  if (databaseAccess.enabled() && !opts.as && dbName === adminDatabase(opts.server)) {
+    // Separate requests: CREATE/DROP DATABASE cannot share an implicit
+    // transaction with the role-delegation prelude.
+    args.push('-q', '-c', 'DO $adopt$ BEGIN PERFORM public.homeroom_adopt_app_roles(); END $adopt$;');
+  }
   if (opts.tuplesOnly) {
     // -A unaligned, -t tuples-only — produces clean newline-separated
     // values with no header/footer, suitable for parsing.
@@ -2556,7 +2591,13 @@ async function dumpRestoreNow(sourceDb, targetDb, excludeData = [], { targetServ
   const adminExtensions = as && !platformInput ? await extensionsOnlyAnAdminCanCreate(sourceDb, targetServer) : [];
   const platformTables = platformInput ? await prepareTrustedPlatformSchema(targetDb, { server: targetServer, as }) : null;
   for (const { name, schema } of adminExtensions) {
-    await execInTarget(targetDb, `CREATE EXTENSION IF NOT EXISTS "${name}" WITH SCHEMA "${schema}"`, { server: targetServer });
+    if (databaseAccess.enabled()) {
+      const found = await execInTarget(targetDb,
+        `SELECT 1 FROM pg_catalog.pg_extension WHERE extname = ${databaseAccess.literal(name)}`, { server: targetServer, tuplesOnly: true });
+      if (String(found).trim() !== '1') throw new Error('The prepared copy is missing a required extension');
+    } else {
+      await execInTarget(targetDb, `CREATE EXTENSION IF NOT EXISTS "${name}" WITH SCHEMA "${schema}"`, { server: targetServer });
+    }
   }
 
   // -Fc custom format piped straight into pg_restore (no temp file on
@@ -3745,13 +3786,28 @@ async function previewServerDatabaseHasSessions(dbName) {
 const PREVIEW_NAMES_TTL_MS = 60 * 1000;
 const _serverDbNames = new Map();
 
+async function readDatabaseNames(server) {
+  return onMainServer(server, async () => {
+    const url = databaseAccess.readUrl(server);
+    const client = new Client({ ...pgClientConfig(url, server),
+      connectionTimeoutMillis: 30_000, query_timeout: 30_000,
+      application_name: connectionName('dbadmin') });
+    try {
+      await client.connect();
+      const { rows } = await client.query("SELECT datname FROM pg_catalog.pg_database WHERE datname LIKE 'app\\_%'");
+      return rows.map(row => row.datname).join('\n');
+    } finally { await client.end().catch(() => {}); }
+  });
+}
+
 async function appDatabaseNames(server, { fresh = false } = {}) {
   const key = serverKey(server);
   const cached = _serverDbNames.get(key);
   if (!fresh && cached && (Date.now() - cached.at) < PREVIEW_NAMES_TTL_MS) return cached.ids;
-  const out = await adminExecutor(key)(
-    "SELECT datname FROM pg_database WHERE datname LIKE 'app\\_%'", { tuplesOnly: true }
-  );
+  const out = databaseAccess.enabled() && process.env.PROCESS_ROLE === 'web'
+    ? await readDatabaseNames(key)
+    : await adminExecutor(key)(
+      "SELECT datname FROM pg_database WHERE datname LIKE 'app\\_%'", { tuplesOnly: true });
   const ids = new Set(String(out || '').split('\n').map((line) => line.trim()).filter(Boolean).map(databaseIdentity));
   _serverDbNames.set(key, { at: Date.now(), ids });
   return ids;

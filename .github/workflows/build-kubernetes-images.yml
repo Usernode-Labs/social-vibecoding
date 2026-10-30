@@ -125,7 +125,7 @@ jobs:
     needs: plan
     if: ${{ !cancelled() && (github.event_name == 'pull_request' || needs.plan.outputs.should_release == 'true') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     permissions:
       contents: read
     services:
@@ -162,6 +162,30 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports[5432] }}/postgres
           TEST_PREVIEW_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres18.ports[5432] }}/postgres
+
+      # Use matching PG18 client tools against the two disposable services.
+      # Container wrappers forward PG* through the environment, never argv.
+      - name: Verify database identities and tenant copies
+        timeout-minutes: 3
+        run: |
+          tool_dir="$RUNNER_TEMP/database-role-tools"
+          mkdir -p "$tool_dir" "$RUNNER_TEMP/database-role-tmp"
+          for tool in psql pg_dump pg_restore; do
+            cat > "$tool_dir/$tool" <<'SH'
+          #!/bin/sh
+          exec docker run --rm --network host -i \
+            -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE \
+            -e PGAPPNAME -e PGOPTIONS -e PGSSLMODE -e PGCONNECT_TIMEOUT \
+            -v "$RUNNER_TEMP:$RUNNER_TEMP" -v "$PWD:$PWD:ro" -w "$PWD" \
+            postgres:18-alpine "$(basename "$0")" "$@"
+          SH
+            chmod +x "$tool_dir/$tool"
+          done
+          PATH="$tool_dir:$PATH" TMPDIR="$RUNNER_TEMP/database-role-tmp" \
+            node --test --test-timeout=180000 tests/database-role-split-postgres.test.js
+        env:
+          DATABASE_ROLES_TEST_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres17.ports[5432] }}/postgres
+          DATABASE_ROLES_TEST_PREVIEW_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres18.ports[5432] }}/postgres
 
       # A preceding database regression may already have built authentication.
       - run: |

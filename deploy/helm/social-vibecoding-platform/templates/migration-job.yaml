@@ -42,7 +42,17 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ include "social-vibecoding-platform.secretName" . }}
+            {{- if .Values.databaseRoles.enabled }}
+            - secretRef:
+                name: {{ include "social-vibecoding-platform.databaseMigrationSecret" . }}
+            {{- end }}
           env:
+            {{- include "social-vibecoding-platform.databaseRoleEnv" . | nindent 12 }}
+            {{- if .Values.databaseRoles.enabled }}
+            - {name: POSTGRES_PASSWORD, value: ""}
+            - {name: DATABASE_BOOTSTRAP_URL, value: ""}
+            - {name: STAGING_DATABASE_BOOTSTRAP_URL, value: ""}
+            {{- end }}
             - {name: NODE_ENV, value: production}
             - {name: DB_POOL_MAX, value: {{ .Values.migration.dbPoolMax | int64 | quote }}}
             # Its connections say they are the migration's (homeroom-migration,

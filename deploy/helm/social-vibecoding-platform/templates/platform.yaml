@@ -167,7 +167,23 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - secretRef:
                 name: {{ include "social-vibecoding-platform.fullname" . }}-conductor
             {{- end }}
+            {{- if and (eq .processRole "conductor") .Values.databaseRoles.enabled (not .Values.secrets.create) }}
+            - secretRef:
+                name: {{ .Values.databaseRoles.existingConductorSecret }}
+            {{- end }}
           env:
+            {{- include "social-vibecoding-platform.databaseRoleEnv" . | nindent 12 }}
+            {{- if .Values.databaseRoles.enabled }}
+            - {name: POSTGRES_PASSWORD, value: ""}
+            - {name: DATABASE_BOOTSTRAP_URL, value: ""}
+            - {name: STAGING_DATABASE_BOOTSTRAP_URL, value: ""}
+            {{- if eq .processRole "web" }}
+            - {name: DB_ADMIN_URL, value: ""}
+            {{- if .Values.previewPostgresql.enabled }}
+            - {name: STAGING_DB_ADMIN_URL, value: ""}
+            {{- end }}
+            {{- end }}
+            {{- end }}
             {{- if eq .processRole "web" }}
             # Also mask writer keys in an operator-supplied existing Secret.
             - {name: GITHUB_PRIVATE_KEY, value: ""}
@@ -209,6 +225,7 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             {{- else }}
             # An explicit empty value overrides a key left in the imported Secret.
             - {name: STAGING_DB_ADMIN_URL, value: ""}
+            - {name: STAGING_DB_READ_URL, value: ""}
             {{- end }}
             - {name: RUN_MIGRATIONS_ON_STARTUP, value: "false"}
             # During the rollout overlap both old and new platform Pods serve

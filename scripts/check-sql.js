@@ -323,6 +323,12 @@ async function applySchema(connectionUrl) {
   try {
     const schema = fs.readFileSync(path.join(ROOT, 'src', 'db', 'schema.sql'), 'utf8');
     await client.query(schema);
+    // The maintenance-only role helper is deployed by the bootstrap Job,
+    // outside schema.sql. Validate its callers against its actual declaration
+    // in this throwaway catalog; never invoke its administrative body here.
+    const { adoptionFunctionSql } = require('./bootstrap-database-roles');
+    await client.query(adoptionFunctionSql(require('../src/services/database-role-access').names(), 'sql_check_platform'));
+
   } finally {
     await client.end();
   }
