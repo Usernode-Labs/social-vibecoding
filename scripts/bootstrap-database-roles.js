@@ -53,30 +53,45 @@ async function ensureRole(client, name, password, provisioner = false, readonly 
   await client.query(`GRANT pg_use_reserved_connections TO ${ident(name)}`);
 }
 
+function eligibleRoleSql(roles, platformDb) {
+  return `(r.rolname LIKE 'app\\_%' OR r.rolname IN ('usernode_debug_ro','topochain_console_ro'))
+    AND r.rolname NOT IN (${Object.values(roles).map(lit).join(', ')})
+    AND NOT (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls)
+    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member = r.oid)
+    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_database d WHERE d.datdba = r.oid
+      AND (d.datname = ${lit(platformDb)} OR d.datname NOT LIKE 'app\\_%'))`;
+}
+
+async function assertTenantOwners(client, roles, platformDb) {
+  const { rows: [row] } = await client.query(`SELECT count(*)::int AS unresolved
+    FROM pg_catalog.pg_database db JOIN pg_catalog.pg_roles r ON r.oid = db.datdba
+    WHERE db.datname LIKE 'app\\_%' AND db.datname <> $1
+      AND NOT (r.rolname LIKE 'app\\_%' AND ${eligibleRoleSql(roles, platformDb)})`, [platformDb]);
+  if (row.unresolved) {
+    throw Object.assign(new Error('Tenant database ownership must be migrated before enabling database identities'),
+      { code: 'database_role_ownership_required' });
+  }
+}
+
 function adoptionFunctionSql(roles, platformDb) {
   const provisioner = roles.provisioner;
-  const exclusions = Object.values(roles).map(lit).join(', ');
   return `CREATE OR REPLACE FUNCTION public.homeroom_adopt_app_roles() RETURNS void
-    LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $adopt$
+    LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $adopt$
     DECLARE candidate record;
     BEGIN
       IF session_user <> ${lit(provisioner)} THEN RAISE EXCEPTION 'Database provisioner login required'; END IF;
-      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = session_user AND rolsuper) THEN
+      IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = session_user AND rolsuper) THEN
         RAISE EXCEPTION 'Database provisioner must not be a superuser';
       END IF;
+      PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('homeroom-role-adoption', 0));
       FOR candidate IN
-        SELECT r.rolname FROM pg_roles r
-         WHERE (r.rolname LIKE 'app\\_%' OR r.rolname IN ('usernode_debug_ro','topochain_console_ro'))
-           AND r.rolname NOT IN (${exclusions})
-           AND NOT (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls)
-           AND NOT EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member = r.oid)
-           AND NOT EXISTS (SELECT 1 FROM pg_database d WHERE d.datdba = r.oid
-             AND (d.datname = ${lit(platformDb)} OR d.datname NOT LIKE 'app\\_%'))
-           AND NOT EXISTS (SELECT 1 FROM pg_auth_members m JOIN pg_roles p ON p.oid = m.member
+        SELECT r.rolname FROM pg_catalog.pg_roles r
+         WHERE ${eligibleRoleSql(roles, platformDb)}
+           AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles p ON p.oid = m.member
              WHERE m.roleid = r.oid AND p.rolname = ${lit(provisioner)}
                AND m.admin_option AND m.inherit_option AND m.set_option)
       LOOP
-        EXECUTE format('GRANT %I TO %I WITH ADMIN TRUE, INHERIT TRUE, SET TRUE', candidate.rolname, ${lit(provisioner)});
+        EXECUTE pg_catalog.format('GRANT %I TO %I WITH ADMIN TRUE, INHERIT TRUE, SET TRUE', candidate.rolname, ${lit(provisioner)});
       END LOOP;
     END $adopt$;
     REVOKE ALL ON FUNCTION public.homeroom_adopt_app_roles() FROM PUBLIC;`;
@@ -98,17 +113,17 @@ async function installAdoption(client, roles, platformDb) {
 
 // Preserve the connection budget's complete counts without exposing other
 // sessions' SQL text through pg_read_all_stats to either serving login.
-async function installConnectionCounts(client, roles) {
+async function installConnectionCounts(client, users) {
   await client.query(`CREATE OR REPLACE FUNCTION public.homeroom_connection_counts()
     RETURNS TABLE(datname name, used bigint, idle bigint)
-    LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $counts$
+    LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $counts$
       SELECT a.datname, count(*), count(*) FILTER (WHERE a.state = 'idle')
         FROM pg_catalog.pg_stat_activity a WHERE a.backend_type = 'client backend'
        GROUP BY a.datname
     $counts$;
     REVOKE ALL ON FUNCTION public.homeroom_connection_counts() FROM PUBLIC;
     GRANT EXECUTE ON FUNCTION public.homeroom_connection_counts()
-      TO ${[roles.web, roles.conductor, roles.migrator].map(ident).join(', ')};`);
+      TO ${users.map(ident).join(', ')};`);
 }
 
 async function ownPlatformSchema(client, roles, database, env = process.env) {
@@ -189,27 +204,42 @@ async function prepareTemplates(url, roles, plans) {
       const name = access.templateName(roles.provisioner, extensions);
       if (prepared.has(name)) continue;
       const marker = JSON.stringify({ purpose: 'homeroom-extension-template', extensions: extensions.map(({ name, version }) => ({ name, version })) });
-      const { rows: existing } = await client.query(`SELECT pg_get_userbyid(datdba) AS owner,
-        shobj_description(oid,'pg_database') AS marker FROM pg_catalog.pg_database WHERE datname=$1`, [name]);
-      if (existing.length) {
-        if (existing[0].owner !== roles.provisioner || existing[0].marker !== marker) throw new Error('Existing extension template has unexpected ownership or provenance');
-      } else {
-        await client.query(`CREATE DATABASE ${ident(name)} TEMPLATE template0 OWNER ${ident(roles.provisioner)}`);
-        try {
-          await client.query(`REVOKE ALL ON DATABASE ${ident(name)} FROM PUBLIC`);
-          await connected(url, async template => {
-            for (const extension of extensions) await template.query(
-              `CREATE EXTENSION IF NOT EXISTS ${ident(extension.name)} WITH SCHEMA public`);
-          }, name);
-          await client.query(`COMMENT ON DATABASE ${ident(name)} IS ${lit(marker)};
-            ALTER DATABASE ${ident(name)} ALLOW_CONNECTIONS false`);
-        } catch (err) {
-          // Only the just-created empty template belongs to this attempt.
-          await client.query(`DROP DATABASE ${ident(name)} WITH (FORCE)`).catch(() => {});
-          throw err;
+      const lock = `homeroom-extension-template:${name}`;
+      await client.query('SELECT pg_catalog.pg_advisory_lock(pg_catalog.hashtextextended($1, 0))', [lock]);
+      try {
+        const { rows: existing } = await client.query(`SELECT pg_get_userbyid(datdba) AS owner,
+          shobj_description(oid,'pg_database') AS marker FROM pg_catalog.pg_database WHERE datname=$1`, [name]);
+        if (existing.length) {
+          if (existing[0].owner !== roles.provisioner || existing[0].marker !== marker) throw new Error('Existing extension template has unexpected ownership or provenance');
+        } else {
+          // A killed Job may leave this empty attempt behind, but can never
+          // reserve the canonical name before a complete template is ready.
+          const attempt = `homeroom_prepare_${crypto.randomBytes(12).toString('hex')}`;
+          await client.query(`CREATE DATABASE ${ident(attempt)} TEMPLATE template0 OWNER ${ident(roles.provisioner)}`);
+          try {
+            await client.query(`REVOKE ALL ON DATABASE ${ident(attempt)} FROM PUBLIC`);
+            await connected(url, async template => {
+              for (const extension of extensions) await template.query(
+                `CREATE EXTENSION IF NOT EXISTS ${ident(extension.name)} WITH SCHEMA public`);
+            }, attempt);
+            await client.query('BEGIN');
+            try {
+              await client.query(`COMMENT ON DATABASE ${ident(attempt)} IS ${lit(marker)};
+                ALTER DATABASE ${ident(attempt)} ALLOW_CONNECTIONS false;
+                ALTER DATABASE ${ident(attempt)} RENAME TO ${ident(name)}`);
+              await client.query('COMMIT');
+            } catch (err) { await client.query('ROLLBACK'); throw err; }
+          } catch (err) {
+            // Only this attempt's empty database can be removed. If publish
+            // committed before a connection loss, its canonical name stays.
+            await client.query(`DROP DATABASE IF EXISTS ${ident(attempt)} WITH (FORCE)`).catch(() => {});
+            throw err;
+          }
         }
+        prepared.add(name);
+      } finally {
+        await client.query('SELECT pg_catalog.pg_advisory_unlock(pg_catalog.hashtextextended($1, 0))', [lock]);
       }
-      prepared.add(name);
     }
     return prepared.size;
   });
@@ -224,6 +254,12 @@ async function bootstrap(env = process.env) {
   access.identifier(database);
   access.parseUrl(primary, 'DATABASE_BOOTSTRAP_URL');
   if (preview) access.parseUrl(preview, 'STAGING_DATABASE_BOOTSTRAP_URL');
+  // Refuse an unresolved legacy/restore owner before changing any login or
+  // schema. Ordinary migration must never silently leave such apps behind.
+  for (const [side, url] of [['primary', primary], ...(preview ? [['preview', preview]] : [])]) {
+    stage = `${side} tenant ownership preflight`;
+    await connected(url, client => assertTenantOwners(client, roles, database));
+  }
   stage = 'primary roles';
   await connected(primary, async client => {
     for (const [kind, name] of Object.entries(roles)) await ensureRole(client, name,
@@ -235,7 +271,7 @@ async function bootstrap(env = process.env) {
   stage = 'platform object ownership and grants';
   await connected(primary, async client => {
     await ownPlatformSchema(client, roles, database, env);
-    await installConnectionCounts(client, roles);
+    await installConnectionCounts(client, [roles.web, roles.conductor, roles.migrator]);
   }, database);
   stage = 'extension inventory';
   const plans = await extensionPlans(primary, database);
@@ -248,6 +284,7 @@ async function bootstrap(env = process.env) {
       await ensureRole(client, roles.web, env.STAGING_DATABASE_READ_PASSWORD, false, true);
       await ensureRole(client, roles.provisioner, env.STAGING_DATABASE_PROVISIONER_PASSWORD, true);
       await installAdoption(client, roles, database);
+      await installConnectionCounts(client, [roles.provisioner]);
       const maintenance = decodeURIComponent(access.parseUrl(preview, 'STAGING_DATABASE_BOOTSTRAP_URL').pathname.slice(1));
       await client.query(`GRANT CONNECT ON DATABASE ${ident(maintenance)} TO ${ident(roles.web)}, ${ident(roles.provisioner)}`);
     });

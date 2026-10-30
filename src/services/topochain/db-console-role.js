@@ -184,8 +184,8 @@ async function ensureConsoleRole(config, { admin = null } = {}) {
     // where the app connects as a non-superuser role — harmless either
     // way, so it's unconditional rather than superuser-detected.
     if (admin) {
-      const users = [...Object.values(require('../database-role-access').names())]
-        .filter(user => user !== require('../database-role-access').names().provisioner);
+      const roles = require('../database-role-access').names();
+      const users = [roles.web, roles.conductor, roles.migrator];
       for (const user of users) await admin.query(
         `GRANT ${ROLE} TO ${quoteIdent(user)} WITH INHERIT FALSE, SET TRUE`);
     } else if (SAFE_IDENT.test(dbUser)) {

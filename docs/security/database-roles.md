@@ -26,28 +26,40 @@ table-level separation between web and conductor.
 
 ## Release order
 
-1. Sync dedicated Secrets at wave -3. The shared Secret carries the web
-   database URL and preview reader. The conductor and migrator each import
-   their own override Secret.
-2. Run the bounded database bootstrap Sync hook at wave -2. Only this Job
+1. Sync only bootstrap/migrator input Secrets at wave -3. Keep the existing
+   serving Secrets unchanged until the bootstrap succeeds, so an old Pod
+   can still restart during a refused or failed bootstrap.
+2. Run the bounded database bootstrap Sync hook at wave -2. It first checks
+   tenant ownership on both servers before changing any login or schema.
+   Unresolved legacy/restore ownership refuses cutover; complete the existing
+   tenant ownership migration through the approved operator procedure first.
+   Only this Job
    imports the bootstrap Secret containing the legacy cluster-admin URLs.
    It creates/updates logins, transfers platform object ownership, applies
    grants and default grants, and prepares empty extension templates.
-3. Run ordinary migrations at wave -1, as the migrator. Read-only debug and
+3. Publish the shared/conductor runtime Secrets at wave -1, after successful
+   bootstrap. Argo orders Secrets before the migration Job in that wave.
+   Run ordinary migrations as the migrator. Read-only debug and
    SQL-console role DDL uses the provisioner; object grants use the migrator.
 4. Start serving Deployments at wave 0. Startup checks both authenticated and
    active identities, attributes, schema authority and inherited authority.
 
-The bootstrap is repeatable. It never reassigns ownership cluster-wide.
+The bootstrap is repeatable. Template preparation uses a unique attempt
+name and publishes the complete, locked template by atomic rename. A killed
+Job can leave an empty attempt, but the next retry can prepare a new one.
+Ordinary failures remove only their own attempt. Obsolete templates and
+interrupted empty attempts are retained for operator cleanup after draining;
+unknown databases are never adopted or deleted. The bootstrap never
+reassigns ownership cluster-wide.
 Extension objects retain their operator ownership and ACLs. Only platform
 objects in the two reviewed schemas change ownership; update
 `PLATFORM_SCHEMAS` and the real-schema test when adding a platform schema.
 
 Two bounded administrator-owned helpers remain. The maintenance database's
-role-adoption function is callable only by the provisioner login and can
-delegate only unprivileged tenant/read-only roles. It handles roles created
-by an older conductor during a rollout. The platform database's connection
-count function exposes aggregate counts, preserving connection-budget
+role-adoption function pins administrative catalog names, serializes callers,
+is callable only by the provisioner login and can delegate only unprivileged tenant/read-only roles. It handles roles created
+by an older conductor during a rollout. The platform and preview maintenance
+databases' connection count functions expose aggregate counts, preserving connection-budget
 diagnostics without granting access to other sessions' SQL text. Neither
 function permits arbitrary SQL or accepts a caller-selected target.
 
@@ -65,7 +77,10 @@ encrypted GitOps values. Keep existing administrator passwords available only
 for the bootstrap Secret. Do not remove those encrypted values yet. With
 `secrets.create=false`, supply distinct existing conductor, migrator and
 bootstrap Secrets; the shared existing Secret must contain the web URL and
-preview reader. Never put a bootstrap credential in any serving Secret.
+preview reader. External Secret publishers must preserve the same ordering:
+leave active serving URLs unchanged until bootstrap succeeds, then publish
+the new runtime URLs before ordinary migration/serving rollout. Never put
+a bootstrap credential in any serving Secret.
 
 The serving env explicitly masks retained legacy administrator fields. Helm
 also replaces retained conductor URLs when the feature is disabled. Reverting
@@ -84,7 +99,9 @@ or mutate production.
 
 `tests/database-role-split-postgres.test.js` uses two explicit disposable
 PostgreSQL servers. It exercises real grants and default grants, startup
-refusals, read-only capability setup, connection counts, tenant copies with
+refusals, both-server ownership preflight, interrupted template publication,
+concurrent adoption and temporary catalog-name isolation, read-only
+capability setup, primary/preview connection counts, tenant copies with
 forced RLS, a full platform preview, and a web export with a stale admin URL.
 The existing PostgreSQL 17/18 CI job supplies those servers and matching client
 tools. `tests/helm-database-roles.test.js` checks rendered effective identities,

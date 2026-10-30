@@ -10,6 +10,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const { fork } = require('node:child_process');
+const { once } = require('node:events');
 const { Writable } = require('node:stream');
 const { gunzipSync } = require('node:zlib');
 const { Client } = require('pg');
@@ -60,9 +62,11 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
   };
   const saved = Object.fromEntries(Object.keys(env).map(k => [k, process.env[k]]));
   const dbs = new Set([maintenance, platform, source]);
+  const children = new Set();
   let mainPool;
   let readonlyRolesCreated = false;
   t.after(async () => {
+    for (const child of children) child.kill('SIGKILL');
     if (mainPool) await mainPool.end();
     for (const [key,value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
@@ -100,8 +104,81 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
     LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'catalog lookup fixture'; END $$`));
   await use(PRIMARY, c => c.query(`ALTER DATABASE ${source} SET search_path = public, pg_catalog`));
   Object.assign(process.env, env);
+  await t.test('bootstrap checks both servers for unresolved owners before changing logins', async () => {
+    const legacy = source + '_legacy'; dbs.add(legacy);
+    await use(PREVIEW, c => c.query(`CREATE ROLE ${sourceOwner}`));
+    for (const base of [PRIMARY, PREVIEW]) await use(base, c => c.query(`CREATE DATABASE ${legacy}`));
+    for (const base of [PRIMARY, PREVIEW]) {
+      await assert.rejects(bootstrap(), { code: 'database_role_ownership_required' });
+      for (const cluster of [PRIMARY, PREVIEW]) await use(cluster, async c => {
+        const result = await c.query('SELECT count(*)::int n FROM pg_roles WHERE rolname=ANY($1::text[])', [Object.values(roles)]);
+        assert.equal(result.rows[0].n, 0, 'no cutover login is changed before both ownership checks pass');
+      });
+      await use(base, async c => {
+        await c.query(`ALTER DATABASE ${legacy} OWNER TO ${sourceOwner}`);
+      });
+    }
+  });
   await bootstrap();
   await bootstrap(); // re-running a release must preserve grants and templates
+
+  await t.test('bootstrap retries publish a complete template after an interrupted preparation', async () => {
+    await use(PRIMARY, async c => {
+      const result = await c.query('SELECT datname FROM pg_database WHERE datdba=(SELECT oid FROM pg_roles WHERE rolname=$1) AND starts_with(datname,$2)', [roles.provisioner, 'homeroom_empty_']);
+      assert.ok(result.rows.length);
+      for (const { datname } of result.rows) await c.query(`DROP DATABASE ${access.identifier(datname)} WITH (FORCE)`);
+    });
+    const child = fork(require.resolve('./fixtures/database-role-bootstrap'), [], { env: { ...process.env }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+    children.add(child);
+    const exited = once(child, 'exit');
+    try {
+      const message = await Promise.race([
+        once(child, 'message', { signal: AbortSignal.timeout(20000) }).then(([m]) => m),
+        exited.then(() => { throw new Error('bootstrap fixture exited before preparation'); }),
+      ]);
+      child.kill('SIGKILL'); await exited; children.delete(child);
+      assert.equal(message.type, 'prepared');
+      assert.match(message.name, /^homeroom_prepare_[a-f0-9]{24}$/);
+      await bootstrap();
+      await use(PRIMARY, async c => {
+        const ready = await c.query(`SELECT datallowconn, shobj_description(oid,'pg_database') AS marker
+          FROM pg_database WHERE datdba=(SELECT oid FROM pg_roles WHERE rolname=$1) AND starts_with(datname,$2)`, [roles.provisioner, 'homeroom_empty_']);
+        assert.ok(ready.rows.length);
+        for (const row of ready.rows) { assert.equal(row.datallowconn, false); assert.match(row.marker, /homeroom-extension-template/); }
+        // The interrupted empty attempt was never trusted as a ready template.
+        assert.equal((await c.query('SELECT 1 FROM pg_database WHERE datname=$1', [message.name])).rows.length, 1);
+        await c.query(`DROP DATABASE ${access.identifier(message.name)} WITH (FORCE)`);
+      });
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await exited; children.delete(child);
+    }
+  });
+
+  await t.test('role adoption uses the administrative catalogs despite temporary relation names', async () => {
+    const lateRole = source + '_late_owner';
+    await use(PRIMARY, c => c.query(`CREATE ROLE ${lateRole}`));
+    await use(env.DB_ADMIN_URL, async c => {
+      for (const table of ['pg_roles', 'pg_auth_members', 'pg_database']) {
+        await c.query(`CREATE TEMP VIEW ${table} AS SELECT * FROM pg_catalog.${table} WHERE false`);
+      }
+      await c.query('SELECT public.homeroom_adopt_app_roles()');
+      assert.equal((await c.query('SELECT pg_catalog.pg_has_role(current_user,$1,$2) ok', [lateRole, 'SET'])).rows[0].ok, true);
+    });
+    // Multiple maintenance callers may discover the same newly created role.
+    const concurrentRole = source + '_concurrent';
+    await use(PRIMARY, c => c.query(`CREATE ROLE ${concurrentRole}`));
+    let arrived = 0, release;
+    const ready = new Promise(resolve => { release = resolve; });
+    await Promise.all(Array.from({length: 6}, () => use(env.DB_ADMIN_URL, async c => {
+      if (++arrived === 6) release();
+      await ready;
+      await c.query('SELECT public.homeroom_adopt_app_roles()');
+    })));
+    await use(env.DB_ADMIN_URL, async c => {
+      assert.equal((await c.query('SELECT pg_catalog.pg_has_role(current_user,$1,$2) ok', [concurrentRole, 'SET'])).rows[0].ok, true);
+    });
+  });
 
   await t.test('serving logins have DML and default grants without DDL or role authority', async () => {
     for (const kind of ['web', 'conductor']) await use(at(PRIMARY, platform, roles[kind], passwords[kind]), async c => {
@@ -150,6 +227,16 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
         const result = await web.query('SELECT query FROM pg_stat_activity WHERE pid = $1', [admin.processID]);
         assert.equal(result.rows[0].query, '<insufficient privilege>');
       });
+    });
+  });
+
+  await t.test('preview pressure recovery can read complete counts on its maintenance connection', async () => {
+    await use(at(PREVIEW, maintenance), async () => {
+      const manager = require('../src/services/db-manager');
+      const census = await require('../src/db/connection-census').connectionCensus(manager.previewServerQueryable());
+      assert.ok(census, 'preview maintenance census must remain available');
+      assert.ok(census.used >= 2);
+      assert.ok(census.topDatabases.some(row => row.name === maintenance && row.count >= 2));
     });
   });
 

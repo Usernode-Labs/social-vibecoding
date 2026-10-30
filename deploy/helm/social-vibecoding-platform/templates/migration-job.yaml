@@ -52,6 +52,7 @@ spec:
             - {name: POSTGRES_PASSWORD, value: ""}
             - {name: DATABASE_BOOTSTRAP_URL, value: ""}
             - {name: STAGING_DATABASE_BOOTSTRAP_URL, value: ""}
+            - {name: STAGING_DB_ADMIN_URL, value: ""}
             {{- end }}
             - {name: NODE_ENV, value: production}
             - {name: DB_POOL_MAX, value: {{ .Values.migration.dbPoolMax | int64 | quote }}}

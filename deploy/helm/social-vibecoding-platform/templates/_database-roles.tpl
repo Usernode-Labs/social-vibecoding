@@ -63,10 +63,16 @@
       {{- end -}}
     {{- end -}}
   {{- else -}}
+    {{- $secretNames := list (include "social-vibecoding-platform.secretName" .) -}}
     {{- range $key := list "existingConductorSecret" "existingMigrationSecret" "existingBootstrapSecret" -}}
       {{- if empty (index $.Values.databaseRoles $key) -}}
         {{- fail (printf "databaseRoles.%s is required with externally managed secrets" $key) -}}
       {{- end -}}
+      {{- $name := index $.Values.databaseRoles $key -}}
+      {{- if has $name $secretNames -}}
+        {{- fail "databaseRoles requires distinct shared, conductor, migration and bootstrap Secrets" -}}
+      {{- end -}}
+      {{- $secretNames = append $secretNames $name -}}
     {{- end -}}
   {{- end -}}
 {{- end -}}

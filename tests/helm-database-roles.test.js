@@ -27,8 +27,9 @@ const named = (docs, kind, suffix) => docs.find(d => d.kind === kind && d.metada
 const container = doc => doc.spec.template.spec.containers[0];
 const env = doc => Object.fromEntries(container(doc).env.map(e => [e.name, e.value ?? '']));
 const refs = doc => container(doc).envFrom.filter(e => e.secretRef).map(e => e.secretRef.name);
-function effective(doc, docs) {
-  return Object.assign({}, ...refs(doc).map(name => docs.find(d => d.kind === 'Secret' && d.metadata.name === name).stringData), env(doc));
+function effective(doc, docs, existing = {}) {
+  return Object.assign({}, ...refs(doc).map(name =>
+    docs.find(d => d.kind === 'Secret' && d.metadata.name === name)?.stringData || existing[name]), env(doc));
 }
 
 test('rendered serving and migration configurations isolate the bootstrap credentials', { skip }, () => {
@@ -58,6 +59,19 @@ test('rendered serving and migration configurations isolate the bootstrap creden
   assert.equal(effective(bootstrap, docs).DATABASE_BOOTSTRAP_URL.includes('synthetic-main-admin'), true);
   assert.equal(bootstrap.spec.template.spec.automountServiceAccountToken, false);
   assert.ok(Number(bootstrap.metadata.annotations['argocd.argoproj.io/sync-wave']) < Number(migrate.metadata.annotations['argocd.argoproj.io/sync-wave']));
+  const wave = doc => Number(doc.metadata.annotations?.['argocd.argoproj.io/sync-wave'] || 0);
+  for (const doc of [web, conductor]) {
+    for (const name of refs(doc)) {
+      const secret = docs.find(d => d.kind === 'Secret' && d.metadata.name === name);
+      assert.ok(wave(bootstrap) < wave(secret), 'a failed bootstrap must leave old serving credentials usable');
+      assert.ok(wave(secret) <= wave(migrate), 'Secrets precede the migration Job by wave/kind');
+      assert.ok(wave(migrate) < wave(doc), 'serving rollout waits for migration');
+    }
+  }
+  for (const name of [...refs(bootstrap), refs(migrate).at(-1)]) {
+    assert.ok(wave(docs.find(d => d.kind === 'Secret' && d.metadata.name === name)) < wave(bootstrap));
+  }
+
   for (const d of [web, conductor, migrate, bootstrap]) {
     const entries = container(d).env;
     assert.equal(new Set(entries.map(e => e.name)).size, entries.length, d.metadata.name);
@@ -91,7 +105,27 @@ test('preview-disabled and external-Secret modes keep explicit masks and distinc
   assert.deepEqual(refs(named(external.docs, 'Deployment', '-conductor')), ['social-vibecoding', 'own-conductor']);
   assert.deepEqual(refs(named(external.docs, 'Job', '-migrate')), ['social-vibecoding', 'own-migrator']);
   assert.deepEqual(refs(named(external.docs, 'Job', '-database-bootstrap')), ['own-bootstrap']);
+  const retained = {
+    'social-vibecoding': { DATABASE_URL: 'postgres://homeroom_web:fixture@main.test/platform',
+      DB_ADMIN_URL: 'postgres://legacy_admin:fixture@main.test/postgres',
+      STAGING_DB_ADMIN_URL: 'postgres://legacy_admin:fixture@preview.test/postgres',
+      POSTGRES_PASSWORD: 'legacy-fixture', DATABASE_BOOTSTRAP_URL: 'legacy-fixture', STAGING_DATABASE_BOOTSTRAP_URL: 'legacy-fixture' },
+    'own-migrator': { DATABASE_URL: 'postgres://homeroom_migrator:fixture@main.test/platform', DB_ADMIN_URL: 'postgres://homeroom_provisioner:fixture@main.test/postgres' },
+  };
+  const migrationEnv = effective(named(external.docs, 'Job', '-migrate'), external.docs, retained);
+  for (const key of ['POSTGRES_PASSWORD', 'DATABASE_BOOTSTRAP_URL', 'STAGING_DATABASE_BOOTSTRAP_URL', 'STAGING_DB_ADMIN_URL']) assert.equal(migrationEnv[key], '', key);
+  assert.equal(new URL(migrationEnv.DATABASE_URL).username, 'homeroom_migrator');
+  assert.equal(new URL(migrationEnv.DB_ADMIN_URL).username, 'homeroom_provisioner');
+
   const bad = render(v => { v.secrets.create = false; }); assert.notEqual(bad.status, 0);
+  for (const duplicate of ['social-vibecoding', 'own-conductor', 'own-migrator']) {
+    const collision = render(v => {
+      v.secrets.create = false;
+      Object.assign(v.databaseRoles, { existingConductorSecret: 'own-conductor', existingMigrationSecret: 'own-migrator', existingBootstrapSecret: duplicate });
+    });
+    assert.notEqual(collision.status, 0); assert.match(collision.stderr, /distinct.*Secrets/);
+  }
+
 });
 
 test('disabling the split explicitly replaces retained conductor URLs with legacy URLs', { skip }, () => {
