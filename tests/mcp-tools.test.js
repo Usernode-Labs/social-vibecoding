@@ -3507,6 +3507,49 @@ test('the checks a proposal reports name the tests that are failing', () => {
   assert.ok(shaped.failing[1].includes('Settings saves'));
 });
 
+test('an advisory failure is not a failing check and does not gate the merge (#6037)', () => {
+  const session = {
+    id: 99, app_slug: 'recipe-box', status: 'promoted', source: 'native',
+    branch_name: 'dev/x', pr_number: 123, check_state: 'passing',
+    test_results: [{
+      name: 'Content rules', path: 'proposal diff', status: 'fail', advisory: true,
+      failureReason: 'Flagged: Gambling in app/views/arcade/show.html.erb. The diff is truncated.',
+    }],
+  };
+  const checks = tools.shapeChecks(session);
+  assert.deepEqual(checks.failing, [], 'an advisory row is never listed as failing');
+  assert.equal(checks.failingTotal, 0);
+  assert.equal(checks.failingTruncated, false);
+  assert.equal(checks.failures.length, 1, 'but its diagnosis is still reported');
+  assert.equal(checks.failures[0].advisory, true);
+  assert.match(checks.failures[0].reason, /arcade/);
+  assert.doesNotMatch(tools.shapeProposal(session, ORIGIN).nextStep, /gate merge/);
+  assert.doesNotMatch(tools.changeNextStep(session, checks, {}, 'agent_mayor'), /gate merge/);
+});
+
+test('a blocking failure stays failing, and a row with no advisory flag counts as blocking (#6037)', () => {
+  const results = [{
+    name: 'Content rules', path: 'proposal diff', status: 'fail', advisory: false,
+    failureReason: 'Flagged: Gambling in src/game.js.',
+  }];
+  const checks = tools.shapeChecks({ check_state: 'failing', test_results: results });
+  assert.equal(checks.failing.length, 1);
+  assert.equal(checks.failingTotal, 1);
+  assert.equal(checks.failures[0].advisory, false);
+  const session = {
+    id: 100, app_slug: 'recipe-box', status: 'promoted', source: 'native',
+    branch_name: 'dev/x', pr_number: 124, check_state: 'failing', test_results: results,
+  };
+  assert.match(tools.shapeProposal(session, ORIGIN).nextStep, /gate merge/);
+  assert.match(tools.changeNextStep(session, checks, {}, 'agent_mayor'), /gate merge/);
+
+  const legacy = tools.shapeChecks({
+    check_state: 'failing', test_results: [{ name: 'Old row', status: 'fail' }],
+  });
+  assert.equal(legacy.failing.length, 1, 'a legacy row with no advisory field still gates');
+  assert.equal(legacy.failures[0].advisory, false);
+});
+
 test('the unit suite row leads the failure reasons and keeps its whole file list', () => {
   // It is appended after the browser checks, and its reason is the one
   // place the agent learns which test files failed (change 4868).
