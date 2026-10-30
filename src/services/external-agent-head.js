@@ -150,6 +150,7 @@ function validRef(value) {
 // ever touching the value, 'git_host' or 'installation', the vocabulary
 // listActionsSecrets reports.
 async function resolveWriteCredential(owner) {
+  require('./code-host-write').requireCodeHostWrite('git.writeCredential');
   // An app repository on Homeroom's git host: its service account
   // (services/git-host.js), the only credential that writes there.
   if (require('./repo-ref').hostOfOwner(owner) === 'git_host') {

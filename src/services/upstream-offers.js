@@ -66,10 +66,8 @@
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { execFile } = require('node:child_process');
 const log = require('./logger');
 const lineage = require('./upstream-lineage');
-const gitChild = require('./git-child');
 const durableSteps = require('./durable-steps');
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
@@ -592,25 +590,8 @@ function canWrite(deps) {
 // invocations that ask for it (`auth`: the fetches and the pushes), through
 // the credential helper. Rejects as services/git-host.js git does: stderr
 // redacted, the exit code in `exitCode`.
-function scratchGit(deps, home, args, { auth = false, env = {}, input = null, timeout = GIT_TIMEOUT_MS } = {}) {
-  const s = deps.gitHost.settings();
-  const child = gitChild.invocation(args, { home, credential: auth ? { username: s.user, token: s.token } : null, env });
-  const redact = (text) => (deps.gitHost.redact ? deps.gitHost.redact(text) : String(text || ''));
-  const sub = args[0] === '-C' ? args[2] : args[0];
-  return new Promise((resolve, reject) => {
-    const proc = execFile('git', child.args, { env: child.env, timeout, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) {
-        const e = new Error(`git ${sub} failed: ${redact(stderr || err.message).trim().slice(0, 500)}`);
-        e.code = 'git_failed';
-        e.stderr = redact(stderr);
-        e.stdout = redact(stdout);
-        e.exitCode = err.code;
-        return reject(e);
-      }
-      return resolve({ stdout: String(stdout), stderr: redact(stderr) });
-    });
-    if (input != null) proc.stdin.end(input);
-  });
+function scratchGit(deps, home, args, options = {}) {
+  return deps.gitHost.git(args, { home, timeout: GIT_TIMEOUT_MS, ...options });
 }
 
 // The scratch repository is `<root>/repo`, its git's HOME `<root>/home`.

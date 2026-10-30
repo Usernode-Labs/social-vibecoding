@@ -86,5 +86,30 @@ test('with the conductor off, or a Secret the chart does not make, the key stays
     const deployment = doc(existing.docs, 'Deployment', name);
     assert.doesNotMatch(deployment, /OPENROUTER_MANAGED_KEYS_ENABLED/, `${name}: the imported Secret's key decides`);
     assert.doesNotMatch(deployment, /name: social-vibecoding-conductor\n\s*$/m);
+    if (name === 'social-vibecoding') {
+      for (const key of ['GITHUB_PRIVATE_KEY', 'GIT_HOST_TOKEN']) assert.match(deployment, new RegExp('name: ' + key + ', value: ""'));
+    }
   }
+});
+
+
+test('writer credentials belong to the conductor while the shared Secret carries read access', { skip }, () => {
+  const options = ['--set-string', 'config.gitHost.url=https://git.example.test,config.gitHost.user=writer,config.gitHost.readUser=reader',
+    '--set-string', 'secrets.gitHostToken=test-writer-token,secrets.gitHostReadToken=test-reader-token'];
+  const { docs } = render(options);
+  const shared = doc(docs, 'Secret', 'social-vibecoding');
+  const own = doc(docs, 'Secret', 'social-vibecoding-conductor');
+  for (const key of ['GITHUB_PRIVATE_KEY', 'GIT_HOST_TOKEN']) assert.match(shared, new RegExp(key + ': ""'));
+  assert.doesNotMatch(shared, /test-key|test-writer-token/);
+  assert.match(shared, /GIT_HOST_READ_TOKEN: "test-reader-token"/);
+  assert.match(own, /GITHUB_PRIVATE_KEY: "test-key"/);
+  assert.match(own, /GIT_HOST_TOKEN: "test-writer-token"/);
+  const web = doc(docs, 'Deployment', 'social-vibecoding');
+  assert.doesNotMatch(web, /name: social-vibecoding-conductor\n/);
+  assert.match(web, /GIT_HOST_READ_USER, value: "reader"/);
+  const unsplit = render([...options, '--set', 'platform.conductor.enabled=false']);
+  assert.match(doc(unsplit.docs, 'Secret', 'social-vibecoding'), /GITHUB_PRIVATE_KEY: "test-key"/);
+  assert.match(doc(unsplit.docs, 'Secret', 'social-vibecoding'), /GIT_HOST_TOKEN: "test-writer-token"/);
+  const missing = render(['--set-string', 'config.gitHost.url=https://git.example.test']);
+  assert.match(missing.error, /gitHostReadToken is required/);
 });

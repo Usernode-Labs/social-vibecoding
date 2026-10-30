@@ -100,6 +100,7 @@ test('ordinary tunables are writable', () => {
 test('credential and deploy-owned keys are refused', () => {
   for (const key of [
     'JWT_SECRET', 'SESSION_SECRET', 'ADMIN_PASSWORD', 'USERNODE_DB_PASSWORD',
+    'GIT_HOST_TOKEN', 'GIT_HOST_READ_TOKEN',
     'GITHUB_PRIVATE_KEY', 'GITHUB_BOT_TOKEN', 'ANTHROPIC_API_KEY',
     'USERNODE_APP_SECRET_KEY', 'ZEROSSL_API_KEY', 'ACME_DNS_API_TOKEN',
     'DATABASE_URL', 'PORT', 'GIT_SHA', 'USERNODE_ENV', 'USERNODE_DOMAIN',

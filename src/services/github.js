@@ -80,10 +80,11 @@ async function githubFetch(credential, url, init) {
 // asked (read off the stack before the request is sent, while the asking
 // frames are still on it). A client without Octokit's hook API (a test
 // double) is returned untouched.
-function instrument(octokit, credential) {
+function instrument(octokit, credential, { readOnly = false } = {}) {
   if (!octokit || !octokit.hook || typeof octokit.hook.wrap !== 'function') return octokit;
   octokit.hook.wrap('request', async (request, options) => {
     if (!['GET', 'HEAD'].includes(String(options?.method || 'GET').toUpperCase())) {
+      if (readOnly) throw Object.assign(new Error('GitHub read client refuses writes'), { code: 'github_read_only' });
       require('./code-host-write').requireCodeHostWrite('github.request');
     }
     let caller = 'unknown';
@@ -189,6 +190,10 @@ async function fetchActionsSecretsWith(octokit, owner, repo) {
  * Homeroom has on GitHub.
  */
 async function listActionsSecrets(owner, repo) {
+  if (!require('./process-role').runsWorkflow(require('./process-role').processRole())) {
+    if (pause.isPaused()) return actionsSecretsFailure('github_error', "Couldn't reach GitHub to list this repo's Actions secrets.");
+    return require('./github-read-access').actionsSecrets(owner, repo);
+  }
   if (!owner || !repo) return actionsSecretsFailure('not_found', 'No repository to read secrets from.');
 
   const cacheKey = normRepoKey(owner, repo);
@@ -277,7 +282,13 @@ function onGitHost(owner) { return require('./repo-ref').hostOfOwner(owner) === 
 function nativePulls() { return require('./native-pulls'); }
 function hostedGit() { return require('./hosted-git'); }
 
-async function init(config) {
+async function init(config, pool = null) {
+  app = null;
+  await require('./github-read-access').init(config, pool);
+  if (!require('./process-role').runsWorkflow(require('./process-role').processRole())) {
+    log.info('github', 'GitHub reads use conductor-published access');
+    return;
+  }
   if (!config.githubAppId || !config.githubPrivateKey) {
     log.warn('github', 'GitHub App credentials not configured — GitHub features disabled');
     return;
@@ -298,13 +309,11 @@ async function init(config) {
   checkActingInstallation();
 }
 
-// Whether app repositories can be read and written: on Homeroom's git host
-// (services/git-host.js), where they live since GitHub suspended the
-// account that held them, or through the GitHub App. A repository still on
-// GitHub is refused unless Homeroom acts on it (canActOn), whatever this
-// says.
+// Whether a code host is configured, independent of this process holding
+// write credentials. Web may admit conductor operations with read access only.
+// A GitHub repository is still subject to canActOn and the pause gate.
 function isEnabled() {
-  return !!app || require('./git-host').isConfigured();
+  return !!app || require('./github-read-access').configured() || require('./git-host').isConfigured();
 }
 
 // Whether this process set up the GitHub App (init): what isEnabled meant
@@ -314,12 +323,11 @@ function hasApp() {
   return !!app;
 }
 
-// Whether Homeroom can write app repositories, which branches and proposals
-// need: the git host's service account, or on GitHub the App. A repository
-// still on GitHub is refused unless Homeroom acts on it (canActOn). isEnabled
-// is read through the exports, as callers' tests stand it in.
+// Whether this process can write. Callers admitting a conductor operation
+// use isEnabled instead; only workflow work needs this capability.
 function hasWriteAccess() {
-  return module.exports.isEnabled();
+  const roles = require('./process-role');
+  return roles.runsWorkflow(roles.processRole()) && (!!app || require('./git-host').hasWriteAccess());
 }
 
 // The App itself, for the calls only it can make. With the git host
@@ -410,6 +418,9 @@ function checkActingInstallation() {
  * installing the App lifts the notice without a restart.
  */
 function canActOn(owner) {
+  if (!require('./process-role').runsWorkflow(require('./process-role').processRole())) {
+    return isActingOwner(owner) && require('./github-read-access').installed();
+  }
   if (!app || !isActingOwner(owner)) return false;
   if (actingInstallation.found !== true
       && Date.now() - actingInstallation.checkedAt >= RECHECK_INSTALLATION_MS) {
@@ -421,12 +432,12 @@ function canActOn(owner) {
 // GitHub logins are case-insensitive, and an owner parsed out of a stored
 // repo URL keeps whatever case the URL was written in, so the installation
 // is matched without regard to case.
-async function resolveInstallationId(owner) {
+async function resolveInstallationId(owner, { fresh = false } = {}) {
   assertActingOwner(owner);
   requireApp();
   const key = String(owner || '').toLowerCase();
   const cached = installationCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) return cached.id;
+  if (!fresh && cached && cached.expiresAt > Date.now()) return cached.id;
 
   for await (const { installation } of app.eachInstallation.iterator()) {
     if (String(installation.account?.login || '').toLowerCase() === key) {
@@ -436,7 +447,8 @@ async function resolveInstallationId(owner) {
     }
   }
   noteActingInstallation(owner, false);
-  throw new Error(`No GitHub App installation found for owner: ${owner}`);
+  installationCache.delete(key);
+  throw Object.assign(new Error(`No GitHub App installation found for owner: ${owner}`), { code: 'github_installation_missing' });
 }
 
 // An installation access token for `owner`. @octokit/auth-app caches it
@@ -444,6 +456,7 @@ async function resolveInstallationId(owner) {
 // once an hour, on the App's own credentials. A caller holds it only for the
 // call it makes now.
 async function getInstallationToken(owner) {
+  require('./code-host-write').requireCodeHostWrite('github.installationToken');
   const installationId = await resolveInstallationId(owner);
   pause.assertNotPaused();
   const auth = await requireApp().octokit.auth({ type: 'installation', installationId });
@@ -451,6 +464,37 @@ async function getInstallationToken(owner) {
     throw new Error(`No GitHub App installation token for owner: ${owner}`);
   }
   return auth.token;
+}
+
+// Only the conductor looks up installations and mints access. Read tokens
+// are restricted at issuance to the platform repository and these permissions.
+async function readInstallationId() {
+  require('./code-host-write').requireCodeHostWrite('github.readInstallation');
+  try { return await resolveInstallationId(actingOwner(), { fresh: true }); }
+  catch (err) { if (err.code === 'github_installation_missing') return null; throw err; }
+}
+async function mintReadToken(installationId) {
+  require('./code-host-write').requireCodeHostWrite('github.mintReadToken');
+  pause.assertNotPaused();
+  const repo = require('./repo-ref').parse(require('./repo-ref').platformRepoUrl());
+  if (repo?.host !== 'github') throw new Error('No platform GitHub repository configured');
+  if (installationId !== await resolveInstallationId(repo.owner)) {
+    throw new Error('GitHub platform installation changed; refresh read access');
+  }
+  const permissions = { contents: 'read', pull_requests: 'read', metadata: 'read' };
+  const auth = await requireApp().octokit.auth({
+    type: 'installation', installationId, repositoryNames: [repo.repo], permissions, refresh: true,
+  });
+  if (!auth?.token || !Number.isFinite(Date.parse(auth.expiresAt))
+      || Date.parse(auth.expiresAt) <= Date.now() + 60_000
+      || Date.parse(auth.expiresAt) > Date.now() + 65 * 60_000
+      || !Array.isArray(auth.repositoryNames) || auth.repositoryNames.length !== 1
+      || String(auth.repositoryNames[0]).toLowerCase() !== repo.repo.toLowerCase()
+      || !auth.permissions || Object.entries(auth.permissions).some(([key, value]) => permissions[key] !== value)
+      || Object.entries(permissions).some(([key, value]) => auth.permissions[key] !== value)) {
+    throw new Error('GitHub did not grant repository-scoped read access');
+  }
+  return { token: auth.token, expiresAt: auth.expiresAt };
 }
 
 // A full REST client (with .rest, unlike @octokit/app's own installation
@@ -520,21 +564,24 @@ function _setAppForTests(fake) {
   checkingInstallation = null;
 }
 
-// The client for a call on `owner`'s repositories on GitHub, read or write:
+// The writer client for a call on `owner`'s repositories on GitHub:
 // the App's installation on the platform repository's owner, and refused
 // for anyone else ("Who Homeroom is on GitHub" above).
 async function getOctokit(owner) {
+  require('./code-host-write').requireCodeHostWrite('github.writeClient');
   if (_octokitFactoryForTests) return _octokitFactoryForTests(owner);
   return getInstallationOctokit(owner);
 }
 
-// The client for a READ. Reads used to go through the App installation and
-// writes through the bot token, each on its own hourly budget
-// (GITHUB_READS_VIA_APP); with the bot token never sent again, both go
-// through the installation, so this is getOctokit. Kept so the read helpers
-// below say which they are.
+// Web receives only conductor-published, repository-scoped read access.
+// Conductors keep their installation client; both share the same rate budget.
 async function getReadOctokit(owner) {
-  return getOctokit(owner);
+  if (_octokitFactoryForTests) return _octokitFactoryForTests(owner);
+  if (require('./process-role').runsWorkflow(require('./process-role').processRole())) return getOctokit(owner);
+  assertActingOwner(owner);
+  const token = await require('./github-read-access').token(owner);
+  const { Octokit } = await import('@octokit/rest');
+  return instrument(new Octokit({ auth: token }), `installation:${owner}`, { readOnly: true });
 }
 
 async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initial commit' } = {}) {
@@ -613,7 +660,7 @@ async function getFileContent(owner, repo, filePath, ref) {
 // whether its first commit already landed (app-creator.js).
 async function headCommit(owner, repo, branch = 'main') {
   if (onGitHost(owner)) return hostedGit().headCommit(owner, repo, branch);
-  const octokit = await getOctokit(owner);
+  const octokit = await getReadOctokit(owner);
   try {
     const { data } = await octokit.rest.repos.getBranch({ owner, repo, branch });
     const commit = data && data.commit;
@@ -1938,6 +1985,8 @@ module.exports = {
   actingOwner,
   getInstallationOctokit,
   getInstallationToken,
+  readInstallationId,
+  mintReadToken,
   createRepo,
   _isRepoNameExistsError: isRepoNameExistsError,
   pushFiles,

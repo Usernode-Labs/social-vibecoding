@@ -26,6 +26,9 @@
 //                          writes through (defaults to GIT_HOST_URL)
 //   GIT_HOST_ORG           the organisation app repositories live in
 //                          (default `apps`)
+//   GIT_HOST_READ_USER / GIT_HOST_READ_TOKEN
+//                          web's read-only account and scoped token
+//                          (read user defaults to GIT_HOST_USER).
 //   GIT_HOST_USER / GIT_HOST_TOKEN
 //                          the platform's service account on it. Never
 //                          given to workers, agents or people.
@@ -77,13 +80,24 @@ function settings() {
     org: String(process.env.GIT_HOST_ORG || 'apps').trim() || 'apps',
     user: String(process.env.GIT_HOST_USER || '').trim(),
     token: String(process.env.GIT_HOST_TOKEN || '').trim(),
+    readToken: String(process.env.GIT_HOST_READ_TOKEN || '').trim(),
+    readUser: String(process.env.GIT_HOST_READ_USER || process.env.GIT_HOST_USER || '').trim(),
   };
 }
 
-/** Whether a git host is configured at all (a URL and a service account). */
-function isConfigured() {
+/** The host is configured independently of this process's credentials. */
+function isConfigured() { return !!settings().url; }
+function hasWriteAccess() {
+  const s = settings(), roles = require('./process-role');
+  return roles.runsWorkflow(roles.processRole()) && !!(s.url && s.user && s.token);
+}
+function readCredential() {
   const s = settings();
-  return !!(s.url && s.user && s.token);
+  const roles = require('./process-role');
+  const writer = roles.runsWorkflow(roles.processRole()) && s.token;
+  const token = writer || s.readToken;
+  const username = writer ? s.user : s.readUser;
+  return token && username ? { username, token } : null;
 }
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
@@ -150,9 +164,11 @@ function cloneUrl(repo, { internal = true } = {}) {
 // ── git, with the service account ─────────────────────────────────────
 
 function redact(text) {
-  const { token } = settings();
+  const { token, readToken } = settings();
   let out = String(text || '');
-  if (token) for (const t of [token, encodeURIComponent(token)]) out = out.split(t).join('***');
+  for (const secret of [token, readToken].filter(Boolean)) {
+    for (const t of [secret, encodeURIComponent(secret)]) out = out.split(t).join('***');
+  }
   return out;
 }
 
@@ -161,11 +177,12 @@ function redact(text) {
  * credential prompt with the service account; nothing else ever sees it.
  * Resolves { stdout, stderr }; rejects with stderr redacted.
  */
-function git(args, { cwd = undefined, auth = false, timeout = GIT_TIMEOUT_MS, input = null, env: extra = {} } = {}) {
+function git(args, { cwd = undefined, home = path.join(os.tmpdir(), 'homeroom-git-home'), auth = false, timeout = GIT_TIMEOUT_MS, input = null, env: extra = {} } = {}) {
   const s = settings();
+  const write = require('./git-child').isWrite(args);
   const childGit = require('./git-child').invocation(args, {
-    home: path.join(os.tmpdir(), 'homeroom-git-home'),
-    credential: auth ? { username: s.user, token: s.token } : null,
+    home,
+    credential: auth ? (write ? { username: s.user, token: s.token } : readCredential()) : null,
     env: extra,
   });
   return new Promise((resolve, reject) => {
@@ -191,11 +208,13 @@ async function api(method, apiPath, body = undefined, { allow = [] } = {}) {
     require('./code-host-write').requireCodeHostWrite('git-host.api.' + method);
   }
   const s = settings();
-  if (!isConfigured()) throw new GitHostError('The git host is not configured', { code: 'not_configured' });
+  const write = !['GET', 'HEAD'].includes(String(method).toUpperCase());
+  const token = write ? s.token : readCredential()?.token;
+  if (!isConfigured() || (write && !hasWriteAccess())) throw new GitHostError('The git host is not configured', { code: 'not_configured' });
   const resp = await fetch(`${s.internalUrl}/api/v1${apiPath}`, {
     method,
     headers: {
-      Authorization: `token ${s.token}`,
+      ...(token ? { Authorization: `token ${token}` } : {}),
       Accept: 'application/json',
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
     },
@@ -371,6 +390,8 @@ function defaultAuthor() {
 }
 
 module.exports = {
+  hasWriteAccess,
+  readCredential,
   GitHostError,
   RefMovedError,
   settings,

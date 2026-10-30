@@ -135,6 +135,12 @@ const workshopEveryMs = () => {
 };
 
 export const JOBS: readonly Job[] = Object.freeze([
+  {
+    name: 'github-read-access', everyMs: MIN, newestOnly: true,
+    async run(ctx, { config }) {
+      return legacy('services/github-read-access').refresh(config, ctx.input.previous);
+    },
+  },
   // ── Retention ───────────────────────────────────────────────────────
   {
     // CLI device codes and sessions past their audit window.

@@ -168,6 +168,11 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
                 name: {{ include "social-vibecoding-platform.fullname" . }}-conductor
             {{- end }}
           env:
+            {{- if eq .processRole "web" }}
+            # Also mask writer keys in an operator-supplied existing Secret.
+            - {name: GITHUB_PRIVATE_KEY, value: ""}
+            - {name: GIT_HOST_TOKEN, value: ""}
+            {{- end }}
             - name: PLATFORM_NAMESPACE
               valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
             - name: POD_IP
@@ -232,6 +237,7 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - {name: GIT_HOST_INTERNAL_URL, value: {{ .Values.config.gitHost.internalUrl | quote }}}
             - {name: GIT_HOST_ORG, value: {{ .Values.config.gitHost.org | quote }}}
             - {name: GIT_HOST_USER, value: {{ .Values.config.gitHost.user | quote }}}
+            - {name: GIT_HOST_READ_USER, value: {{ .Values.config.gitHost.readUser | default .Values.config.gitHost.user | quote }}}
             - {name: NODE_RPC_URL, value: {{ .Values.config.nodeRpcUrl | quote }}}
             - {name: EXPLORER_UPSTREAM, value: {{ .Values.config.explorerUpstream | quote }}}
             - {name: EXPLORER_UPSTREAM_BASE, value: {{ .Values.config.explorerUpstreamBase | quote }}}

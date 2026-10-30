@@ -1069,10 +1069,10 @@ test('a member\'s open and skip are a conductor\'s: membership read again, and a
   const kernelSteps = require('../src/workflow/kernel/steps.ts');
   const fx = fixture();
   const { s, deps, calls } = seed(fx);
-  // Every git child of a scratch repository asks for the service account's
-  // settings once.
+  // Count the shared transport's actual commands, including reads: recovery
+  // must reuse its completed plan and pushes.
   let git = 0;
-  const counted = { ...gitHost, settings: () => { git += 1; return gitHost.settings(); } };
+  const counted = { ...gitHost, git: (...args) => { git += 1; return gitHost.git(...args); } };
   const prior = upstreamOperation._setDepsForTests({ ...deps, gitHost: counted });
   t.after(() => upstreamOperation._setDepsForTests(prior));
   const routePool = routePoolOf(s);

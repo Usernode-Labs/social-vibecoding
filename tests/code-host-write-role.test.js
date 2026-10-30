@@ -35,7 +35,7 @@ test('web refuses every code-host write before host or repository I/O', async (t
     },
     'native-pulls': { merge: ['apps','x',1] },
     'native-merge': { squashMerge: [{}] },
-    'external-agent-head': { mirrorForkBranch: [{}], pushForkBranchToAppBranch: [{}], deleteBranch: [{}], removeBranch: [{}] },
+    'external-agent-head': { resolveWriteCredential: ['apps'], mirrorForkBranch: [{}], pushForkBranchToAppBranch: [{}], deleteBranch: [{}], removeBranch: [{}] },
     'external-agent-patch': { applyPatch: [{}] },
     'worker-git-push': { push: [{}] },
   };
