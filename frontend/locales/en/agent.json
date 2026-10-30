@@ -1571,6 +1571,26 @@
     "text": "Ready",
     "description": "State pill on a row of the person's changes in progress, in the Homeroom menu: the agent is idle and the change is ready for the person to continue."
   },
+  "menu.row.state.testing": {
+    "text": "Testing",
+    "description": "State pill on a row of the person's changes in progress, in the Homeroom menu: the change is up for a vote and its automated checks are running against the preview."
+  },
+  "menu.row.state.checksFailing_one": {
+    "text": "Checks failing · {{count}}",
+    "description": "State pill on a row of the person's changes in progress, in the Homeroom menu, when exactly one of the change's automated checks failed. {{count}} is that number."
+  },
+  "menu.row.state.checksFailing_other": {
+    "text": "Checks failing · {{count}}",
+    "description": "State pill on a row of the person's changes in progress, in the Homeroom menu, when more than one of the change's automated checks failed."
+  },
+  "menu.row.state.checksFailingPlain": {
+    "text": "Checks failing",
+    "description": "State pill on a row of the person's changes in progress, in the Homeroom menu, when the payload carries no count: the change's automated checks failed."
+  },
+  "menu.row.state.checksError": {
+    "text": "Checks couldn't run",
+    "description": "State pill on a row of the person's changes in progress, in the Homeroom menu: the change's automated checks errored before giving a verdict."
+  },
   "menu.row.unread": {
     "text": "Unread activity",
     "description": "Accessible name of the small dot on a row of the person's changes in progress, in the Homeroom menu: something happened on that change that the person has not seen."

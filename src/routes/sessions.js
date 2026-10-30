@@ -684,6 +684,48 @@ function stagingMockOwnSessions(userId, appSlug) {
     created_at: new Date(Date.now() - 15 * 24 * 3600 * 1000).toISOString(),
     last_activity_at: new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString(),
     app_slug: appSlug, app_name: 'Homeroom', busy: false,
+  },
+  // #6042: one mock per new pill state, so the Messages agents list shows
+  // the lifecycle in a demo preview — failing checks (with the count the
+  // payload's summary carries), checks running, and a merged change saying
+  // Live. All three sit INSIDE the five slots the agents list shows (2–4
+  // minutes, under the needs-you row's five), because a state a preview
+  // folds behind "N older chats" is a state a reviewer cannot see; the same
+  // arithmetic the 6-minute work order above documents. Fake 99xxxx ids,
+  // read-only and obviously fake, like every mock here. They start at 990112:
+  // 990109 is the archived-session mock's id further down this route, and
+  // 990110/990111 are the sessionIds the notifications demo rows point at —
+  // one number names one mock (tests/staging-demo-id-ranges.test.js).
+  {
+    id: 990112, branch_name: 'mock/my-session-checks-failing', pr_number: 990112,
+    pr_url: null, pr_title: '[Mock] Change with failing checks',
+    session_title: '[Mock] Change with failing checks',
+    status: 'active', linked_issues: [], shared_at: null,
+    check_state: 'failing', check_phase: null,
+    failing_checks: { total: 2, blocking: 2, rows: [] },
+    created_at: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
+    last_activity_at: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: false,
+  },
+  {
+    id: 990113, branch_name: 'mock/my-session-checks-running', pr_number: null,
+    pr_url: null, pr_title: null,
+    session_title: '[Mock] Change whose checks are running',
+    status: 'active', linked_issues: [], shared_at: null,
+    check_state: 'pending', check_phase: 'testing',
+    created_at: new Date(Date.now() - 90 * 60 * 1000).toISOString(),
+    last_activity_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: false,
+  },
+  {
+    id: 990114, branch_name: 'mock/my-session-merged', pr_number: 990114,
+    pr_url: null, pr_title: '[Mock] Merged change',
+    session_title: '[Mock] Change that went live',
+    status: 'merged', linked_issues: [], shared_at: null,
+    merged_at: new Date(Date.now() - 4 * 60 * 1000).toISOString(),
+    created_at: new Date(Date.now() - 4 * 3600 * 1000).toISOString(),
+    last_activity_at: new Date(Date.now() - 4 * 60 * 1000).toISOString(),
+    app_slug: appSlug, app_name: 'Homeroom', busy: false,
   }
 ].map((sample) => ({ ...sample, preview_placeholder: true }));
 }
@@ -2431,6 +2473,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //     - total    = active + promoted + paused (every non-archived row
   //                  we returned)
   //
+  //   #6042: a caller that opts in with include_merged=1 ALSO receives
+  //   merging/merged rows (bounded to the recent window in the WHERE), and
+  //   those count none of active/promoted/paused — a merged change holds no
+  //   slot — while `total` stays every row returned. The only opt-in caller
+  //   is the Improve controller (Messages/bell agent rows), whose rows show
+  //   the change's lifecycle; the dev tab's fetch sends no flag.
   //   "caps" carries the DENOMINATORS for that header — the viewer's own
   //   effective per-user ceilings ({ activeSessions, promotedSessions }),
   //   which are higher for full platform admins (services/session-caps.js).
@@ -2451,6 +2499,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // lists leave them out by default; the connector's proposal views opt
       // back in with include_settings=1, alongside include_imported above.
       const includeSettings = req.query.include_settings === '1';
+      // #6042: merged and merging changes ride along so a Messages row can
+      // say Live instead of vanishing the moment its change merges. Bounded
+      // to the recent window in the WHERE clause (the same week the agents
+      // list shows, AGENTS_RECENT_DAYS in features/messages/inbox.ts), and
+      // never counted against the viewer's session caps — see the totals
+      // reducer below. The dev tab's own fetch sends no flag and sees none.
+      const includeMerged = req.query.include_merged === '1';
       // last_activity_at = the newest message in the session's thread,
       // falling back to the session's own creation time. The dev tab's
       // card list sorts session rows by this ("most recent activity"),
@@ -2505,12 +2560,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
            ORDER BY id DESC
            LIMIT 1
          ) lt ON TRUE
-         WHERE cs.user_id = $1 AND cs.status IN ('active', 'promoted', 'paused')
+         WHERE cs.user_id = $1
+           AND (cs.status IN ('active', 'promoted', 'paused')
+                -- #6042: the recent merge history, for the Live pill — see
+                -- includeMerged above.
+                OR ($4::boolean AND cs.status IN ('merging', 'merged')
+                    AND COALESCE(cs.merged_at, cs.created_at) >= now() - interval '7 days'))
            AND cs.is_headless = FALSE
            AND ($2::boolean OR cs.source IS DISTINCT FROM 'imported')
            AND ($3::boolean OR cs.source IS DISTINCT FROM 'settings')
          ORDER BY last_activity_at DESC`,
-        [req.user.id, includeImported, includeSettings]
+        [req.user.id, includeImported, includeSettings, includeMerged]
       );
       // #1196: the same login /api/sessions/:id carries, read once for the
       // whole list rather than per row. It is what makes "can you push this
@@ -2544,11 +2604,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         };
       });
       sessions = await enrichImportedUnderwaySessions(pool, sessions, req.user.id);
+      // #6042: a merging or merged row holds no slot — the caps count work
+      // that can be paused or withdrawn, and a merged change is neither —
+      // so the reduce names them explicitly instead of letting the `else`
+      // spend an `active` slot on them. `total` stays every row returned.
       const totals = sessions.reduce(
         (acc, s) => {
           if (s.status === 'paused') acc.paused += 1;
           else if (s.status === 'promoted') acc.promoted += 1;
-          else acc.active += 1;
+          else if (s.status !== 'merging' && s.status !== 'merged') acc.active += 1;
           if (s.busy) acc.busy += 1;
           return acc;
         },
