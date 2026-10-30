@@ -14404,7 +14404,7 @@ DROP TRIGGER IF EXISTS issues_wf_governance_owned ON issues;
 CREATE TRIGGER issues_wf_governance_owned
   BEFORE UPDATE ON issues
   FOR EACH ROW
-  WHEN (OLD.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign', 'featured_illustration', 'thread_move'))
+  WHEN (OLD.kind IN ('secret_change', 'rename', 'close_issue', 'reopen_issue', 'maintenance_campaign', 'featured_illustration', 'thread_move'))
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=governance-proposal/issue:', 'status',
     'payload.appliedAt', 'payload.appliedBy', 'payload.withdrawnAt', 'payload.supersededAt');
 

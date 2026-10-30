@@ -814,6 +814,12 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "A closed request offers Propose reopening (#6000)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900032",
+      "expectText": "Propose reopening",
+      "expectSelector": "#dev-topic-thread .dev-request-status button.dev-request-primary[data-act=\"promptReopenIssue\"]"
+    },
+    {
       "name": "Dev board: session cards carry the live working spinner (#1038)",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
       "expectSelector": "#dev-body [data-session-chip=\"990102\"] .dc-status-spinner-arc, #dev-body [data-shared-session-row=\"990001\"] .dc-status-spinner-arc"

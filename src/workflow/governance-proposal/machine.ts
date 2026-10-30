@@ -94,7 +94,7 @@ const DELIVERY_FOLLOWUP = 'app-delivery';
 // old record is asked again of app-delivery.
 const OWN_REBUILD = 'app.rebuildProduction';
 // The follow-up kinds a retry can queue: those with a handler (services.ts).
-const RETRYABLE_WORK: ReadonlySet<string> = new Set(['github.closeIssue', 'governance.checkTarget', 'bot.requestsClosed', 'threads.closeChanges']);
+const RETRYABLE_WORK: ReadonlySet<string> = new Set(['github.closeIssue', 'github.reopenIssue', 'governance.checkTarget', 'bot.requestsClosed', 'threads.closeChanges']);
 const deliveryRequest = (appId: number) => ({
   to: { machine: DELIVERY, key: `app:${appId}` }, event: { type: 'DeployRequested', payload: { appId, reason: 'secret_change' } },
 });
@@ -113,6 +113,7 @@ function voteSubject(issue: Issue): string {
     case 'rename': return `rename proposal "${p.newName || issue.title}"`;
     case 'secret_change': return `secret ${p.action === 'delete' ? 'removal' : 'change'} "${p.key || issue.title}"`;
     case 'close_issue': return `close proposal for issue #${p.issueNumber || '?'}`;
+    case 'reopen_issue': return `reopen proposal for issue #${p.issueNumber || '?'}`;
     case 'maintenance_campaign': return `maintenance campaign "${p.title || issue.title}"`;
     case 'featured_illustration':
       return p.remove ? 'the proposal to remove the featured illustration' : 'the proposed featured illustration';
@@ -142,6 +143,7 @@ function appliedLine(issue: Issue, how: string, campaignTitle: string): string {
     case 'featured_illustration':
       return p.proposed ? `Featured illustration changed ${how}` : `Featured illustration removed ${how}`;
     case 'close_issue': return `Issue #${p.issueNumber} closed ${how}`;
+    case 'reopen_issue': return `Issue #${p.issueNumber} reopened ${how}`;
     case 'thread_move': return `${issue.title}: done ${how}`;
     case 'maintenance_campaign':
       return `Maintenance campaign "${campaignTitle}" approved ${how}. `
@@ -244,6 +246,18 @@ function apply(
       work.push({ kind: 'threads.closeChanges', key: 'changes',
         input: { appId: issue.appId, threadId: issue.threadId, closedBy: n, closed: [n, ...others] } });
     }
+  } else if (issue.kind === 'reopen_issue') {
+    const n = Number(p.issueNumber);
+    // The target's thread hears the result, as it heard the proposal start.
+    writes.push(chat(event, issue, line, { type: 'issue', ref: n }));
+    if (issue.app.repo) {
+      let comment = by ? `Reopened by admin override (${by.admin}) on Homeroom.` : `Reopened by group vote (${tally.upCount}/${tally.required}) on Homeroom.`;
+      const reason = typeof p.reason === 'string' ? p.reason.trim() : '';
+      if (reason) comment += `\n\n${issue.authorName || 'The proposer'}'s reason: ${reason}`;
+      work.push({ kind: 'github.reopenIssue', key: 'target',
+        input: { ...issue.app.repo, number: n, comment, marker: `homeroom-governance:${issueKey(issue.id)}:reopen`,
+          appId: issue.appId, appSlug: issue.app.slug } });
+    }
   } else if (issue.kind === 'secret_change' && !issue.app.selfHosted) {
     asked.push({ key: 'rebuild', input: { appId: issue.appId } });
   } else if (issue.kind === 'rename') {
@@ -325,12 +339,13 @@ function followupResult(s: { name: Closed; data: ClosedData }, e: Event<WorkResu
   const prev = s.data.followups[e.payload.workKey]!;
   const followups = { ...s.data.followups, [e.payload.workKey]: { ...prev, status, ...(e.payload.error ? { error: e.payload.error.message } : {}) } };
   const input = (prev.input || {}) as Record<string, Json>;
-  const closed = status === 'done' && e.payload.kind === 'github.closeIssue'
+  const synced = status === 'done' && (e.payload.kind === 'github.closeIssue' || e.payload.kind === 'github.reopenIssue')
     && !(e.payload.result as { gone?: boolean } | null)?.gone;
   return {
     next: { name: s.name, data: { ...s.data, followups } },
-    push: closed ? [
-      boardMoved(issuePush({ action: 'github_synced', appSlug: input.appSlug ?? null, appId: input.appId ?? null, source: 'close_issue_vote' })),
+    push: synced ? [
+      boardMoved(issuePush({ action: 'github_synced', appSlug: input.appSlug ?? null, appId: input.appId ?? null,
+        source: e.payload.kind === 'github.reopenIssue' ? 'reopen_issue_vote' : 'close_issue_vote' })),
     ] : undefined,
   };
 }
@@ -651,6 +666,15 @@ async function applyKind(tx: Tx, w: any, dataKey: string, ctx?: WriteContext) {
         `UPDATE issue_bounties SET status = 'voided', awarded_at = NOW()
           WHERE app_id = $1 AND github_issue_number = ANY($2::int[]) AND status = 'open'`,
         [w.appId, numbers]);
+      return;
+    }
+    case 'reopen_issue': {
+      // #6000: the platform's twin rows for the target come back. Bounties
+      // stay returned; people can pledge again once it is open.
+      await tx.query(
+        `UPDATE issues SET status = 'open'
+          WHERE app_id = $1 AND github_issue_number = $2 AND status = 'closed' AND kind = 'general'`,
+        [w.appId, Number(p.issueNumber)]);
       return;
     }
     case 'maintenance_campaign': {

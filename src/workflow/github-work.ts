@@ -20,7 +20,7 @@ const COMMENT_LOOKBACK_MS = 10 * 60 * 1000;
 // what the machines call (tests/lib/workflow-boundary.js) can read it.
 export async function closeAndComment(
   { input, resumeFrom, checkpoint }: Pick<WorkContext, 'input' | 'resumeFrom' | 'checkpoint'>,
-  what: 'issue' | 'pullRequest',
+  what: 'issue' | 'pullRequest' | 'reopenIssue',
 ): Promise<Json> {
   const gh = legacy('services/github');
   if (!gh.isEnabled()) throw permanent('GitHub is not configured');
@@ -29,6 +29,7 @@ export async function closeAndComment(
   if (!done.closed) {
     try {
       if (what === 'issue') await gh.closeIssue(input.owner, input.repo, input.number);
+      else if (what === 'reopenIssue') await gh.reopenIssue(input.owner, input.repo, input.number);
       else await gh.closePR(input.owner, input.repo, input.number);
     } catch (err) {
       if (gone(err)) return { gone: true };

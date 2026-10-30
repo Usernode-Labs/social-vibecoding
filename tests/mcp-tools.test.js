@@ -4207,9 +4207,12 @@ test('list_my_proposals carries branch home, so a list is enough to decide', () 
     path.join(__dirname, '../src/routes/sessions.js'), 'utf8'
   );
   const route = SESSIONS_SRC.slice(SESSIONS_SRC.indexOf("'/api/me/active-sessions'"));
-  assert.match(route.slice(0, 3000), /cs\.source/);
-  assert.match(route.slice(0, 3000), /cs\.imported_pr_head_repo/);
-  assert.match(route.slice(0, 3000), /a\.repo_url/);
+  // #6042 added the include_merged gate and its comment to the prologue,
+  // which carried the head-repo column past 3000; the window stays "the
+  // route's own query", with headroom for the next such gate.
+  assert.match(route.slice(0, 3600), /cs\.source/);
+  assert.match(route.slice(0, 3600), /cs\.imported_pr_head_repo/);
+  assert.match(route.slice(0, 3600), /a\.repo_url/);
 });
 
 // The second half of #1196: an agent that had just opened a proposal asked
@@ -4233,9 +4236,10 @@ test('list_my_proposals asks for imported proposals, which is what it opens', ()
   // The window is "the route's own query", not a fixed distance: the filter
   // sat 15 characters inside 3000 until #1959 put a second LATERAL and two
   // columns ahead of the WHERE clause, and #5379 added the settings gate
-  // beside it.
-  assert.match(route.slice(0, 4500), /cs\.source IS DISTINCT FROM 'imported'/);
-  assert.match(route.slice(0, 4500), /cs\.source IS DISTINCT FROM 'settings'/);
+  // beside it. #6042 put the merged/merging gate (and its comment) ahead of
+  // the WHERE clause too, which carried the filter past 4500.
+  assert.match(route.slice(0, 5600), /cs\.source IS DISTINCT FROM 'imported'/);
+  assert.match(route.slice(0, 5600), /cs\.source IS DISTINCT FROM 'settings'/);
   assert.match(SRC.slice(SRC.indexOf("server.registerTool('submit_work'")), /pr-import/);
 
   // And the connector allowlist matches on the PATH, so the query string

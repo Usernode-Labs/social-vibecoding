@@ -367,6 +367,38 @@
     "text": "Propose closing issue<0>#{{number}}</0>?",
     "description": "Heading of the dialog that asks whether to put closing an issue to a group vote. {{number}} is the issue's number; keep the # before it and the numbered tag around both."
   },
+  "reopenIssue.title": {
+    "text": "Propose reopening issue<0>#{{number}}</0>?",
+    "description": "Heading of the dialog that asks whether to put reopening a closed issue to a group vote. {{number}} is the issue's number; keep the # before it and the numbered tag around both."
+  },
+  "reopenIssue.explanation": {
+    "text": "This opens a group vote. If it passes, the issue is reopened here and on GitHub.",
+    "description": "Line under the heading of the reopen-issue dialog: what pressing \"Propose reopen\" does."
+  },
+  "reopenIssue.reason.label": {
+    "text": "Why should this issue be reopened?<0>(optional)</0>",
+    "description": "Label of the reason box in the reopen-issue dialog. The numbered tag sets \"(optional)\" in a lighter weight."
+  },
+  "reopenIssue.reason.placeholder": {
+    "text": "e.g. not actually fixed, closed by mistake…",
+    "description": "Greyed example text inside the empty reason box of the reopen-issue dialog: typical reasons for reopening an issue."
+  },
+  "reopenIssue.reason.hint": {
+    "text": "Posted publicly on the GitHub issue when the vote passes.",
+    "description": "Help text under the reason box of the reopen-issue dialog: where the typed reason will appear."
+  },
+  "reopenIssue.submit": {
+    "text": "Propose reopen",
+    "description": "Button in the reopen-issue dialog: starts the group vote on reopening the issue. \"reopen\" is the act of reopening the issue."
+  },
+  "reopenIssue.error.http": {
+    "text": "Proposal failed (HTTP {{status}}).",
+    "description": "Error in the reopen-issue dialog when the server refused and gave no reason. {{status}} is the numeric HTTP status code."
+  },
+  "reopenIssue.error.detail": {
+    "text": "Proposal failed: {{reason}}",
+    "description": "Error in the reopen-issue dialog when the request could not be sent. {{reason}} is the browser's own description of what went wrong."
+  },
   "closeIssue.explanation": {
     "text": "This opens a group vote. If it passes, the issue is closed here and on GitHub.",
     "description": "Line under the heading of the close-issue dialog: what pressing \"Propose close\" does."

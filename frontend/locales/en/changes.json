@@ -771,6 +771,22 @@
     "text": "Closing this request is waiting for approval",
     "description": "Tooltip on the disabled Close proposed button of a request."
   },
+  "request.actions.proposeReopen": {
+    "text": "Propose reopening",
+    "description": "Button on a closed request's page: asks the group to vote on reopening the request. \"Reopening\" is a verb, to make the request open again."
+  },
+  "request.actions.proposeReopenTitle": {
+    "text": "Ask the group to reopen this request. If they approve, it's open again",
+    "description": "Tooltip on the Propose reopening button of a closed request. It ends without a full stop."
+  },
+  "request.actions.reopenProposed": {
+    "text": "Reopen proposed",
+    "description": "Label of the disabled button on a closed request when a vote to reopen it is already open. \"Reopen\" is a noun here: the reopening has been proposed."
+  },
+  "request.actions.reopenProposedTitle": {
+    "text": "Reopening this request is waiting for approval",
+    "description": "Tooltip on the disabled Reopen proposed button of a closed request."
+  },
   "request.actions.proposeClose": {
     "text": "Propose to close",
     "description": "Button on a request's page: asks the group to vote on closing the request. \"Close\" is a verb, to mark the request as finished."
@@ -4123,6 +4139,14 @@
     "text": "Closing issue, still working, GitHub may be slow…",
     "description": "Status chip, beside a spinner, on a governance proposal's card (a vote on a setting or on closing a request, not on code) once the vote has passed and the decision is being carried out: the request (issue) is being closed. Shown once it has taken more than a few seconds. \"GitHub\" is the service's name. Keep the ellipsis."
   },
+  "governance.apply.reopeningIssue": {
+    "text": "Reopening the issue…",
+    "description": "Status chip, beside a spinner, on a governance proposal's card (a vote on a setting or on reopening a request, not on code) once the vote has passed and the decision is being carried out: the request (issue) is being reopened. Keep the ellipsis."
+  },
+  "governance.apply.reopeningIssueSlow": {
+    "text": "Reopening the issue, still working, GitHub may be slow…",
+    "description": "Status chip, beside a spinner, on a governance proposal's card (a vote on a setting or on reopening a request, not on code) once the vote has passed and the decision is being carried out: the request (issue) is being reopened. Shown once it has taken more than a few seconds. \"GitHub\" is the service's name. Keep the ellipsis."
+  },
   "governance.apply.envVar": {
     "text": "Applying env-var change…",
     "description": "Status chip, beside a spinner, on a governance proposal's card (a vote on a setting or on closing a request, not on code) once the vote has passed and the decision is being carried out: a change to one of the app's environment variables is being applied. \"env-var\" is short for environment variable. Keep the ellipsis."
@@ -4230,6 +4254,10 @@
   "governance.title.closeIssue": {
     "text": "Close issue #{{number}}: \"{{title}}\"",
     "description": "Title of a governance proposal's card that asks the group to close a request. \"Close\" is a verb. {{number}} is the request's number (or \"?\" when unknown) and {{title}} its title."
+  },
+  "governance.title.reopenIssue": {
+    "text": "Reopen issue #{{number}}: \"{{title}}\"",
+    "description": "Title of a governance proposal's card that asks the group to reopen a closed request. \"Reopen\" is a verb. {{number}} is the request's number (or \"?\" when unknown) and {{title}} its title."
   },
   "governance.meta.kind": {
     "text": "Governance proposal",
@@ -4934,6 +4962,22 @@
   "issue.menu.closeProposedTitle": {
     "text": "Closing this request is waiting for approval",
     "description": "Tooltip of the disabled \"Close proposed\" row in a request's ⋯ menu."
+  },
+  "issue.menu.proposeReopen": {
+    "text": "Propose reopening",
+    "description": "Row in the ⋯ menu of a closed request's card: opens the dialog that asks the group to vote on reopening the request."
+  },
+  "issue.menu.proposeReopenTitle": {
+    "text": "Ask the group to reopen this request. If they approve, it's open again",
+    "description": "Tooltip of the \"Propose reopening\" row in a closed request's ⋯ menu."
+  },
+  "issue.menu.reopenProposed": {
+    "text": "Reopen proposed",
+    "description": "Row in the ⋯ menu of a closed request's card: disabled, shown while a proposal to reopen the request is being voted on."
+  },
+  "issue.menu.reopenProposedTitle": {
+    "text": "Reopening this request is waiting for approval",
+    "description": "Tooltip of the disabled \"Reopen proposed\" row in a closed request's ⋯ menu."
   },
   "issue.menu.proposeClose": {
     "text": "Propose to close",

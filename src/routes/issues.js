@@ -99,7 +99,7 @@ async function isIssueAuthor(pool, appId, parsed, issueNumber, user, currentBody
 // maintenance_campaign (#853's generalization) is self-app-only,
 // admin-proposed fleet maintenance — see the create branch below and
 // services/fleet-maintenance.js for the engine the apply path starts.
-const VALID_KINDS = ['general', 'secret_change', 'close_issue', 'maintenance_campaign'];
+const VALID_KINDS = ['general', 'secret_change', 'close_issue', 'reopen_issue', 'maintenance_campaign'];
 const MAX_SECRET_VALUE_LENGTH = 4096;
 // Campaign instructions are an LLM prompt, not an essay — but audits
 // with embedded code snippets are legitimate, so the cap is generous.
@@ -174,8 +174,8 @@ async function botWorkFor(pool, appId) {
 // PRs the engine opens are the repo-visible artifact; a twin issue on
 // the PLATFORM repo would be noise.
 function shouldCreateGithubTwin(kind) {
-  return kind !== 'secret_change' && kind !== 'close_issue' && kind !== 'maintenance_campaign'
-    && kind !== 'featured_illustration';
+  return kind !== 'secret_change' && kind !== 'close_issue' && kind !== 'reopen_issue'
+    && kind !== 'maintenance_campaign' && kind !== 'featured_illustration';
 }
 
 // Staging-only mock issues for GET /api/apps/:slug/github-issues. A
@@ -412,6 +412,12 @@ function stagingMockClosedIssues(repoUrl) {
     mk(900032, '[Mock] Retire the old tips banner',
       'Staging-only closed mock request. A close vote closed it, so its page '
       + 'says so in a grey band at the top of the card.', 9, { mockClosedVia: 'vote' }),
+    // #6000: the request #6000 was filed about, closed by vote with no linked
+    // change, so its page offers "Propose reopening" in the status card and
+    // the ⋯ menu. A closed mock like the two above; no-op in production.
+    mk(5841, 'Add tier list features: per-person picks, item comments with @mentions, and help tooltip',
+      'Staging-only closed mock request for #6000. A close vote closed it, so '
+      + 'its page offers asking the group to reopen it.', 1, { mockClosedVia: 'vote' }),
   ];
 }
 
@@ -1097,7 +1103,7 @@ function issueRoutes(config) {
          FROM issues i
          LEFT JOIN users u ON i.created_by = u.id
          WHERE i.app_id = $1 AND i.id = $2
-           AND i.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign',
+           AND i.kind IN ('secret_change', 'rename', 'close_issue', 'reopen_issue', 'maintenance_campaign',
                           'featured_illustration', 'thread_move')
          LIMIT 1`,
         [appId, id, userId]
@@ -1473,6 +1479,69 @@ function issueRoutes(config) {
         payload = { issueNumber, issueTitle, reason: reason || null };
         title = `Close issue #${issueNumber}: "${issueTitle}"`.slice(0, 512);
         description = reason || null;
+      } else if (kind === 'reopen_issue') {
+        // #6000: a closed request the group is asked to bring back. The
+        // target's current state is read from GitHub, raw, so a closed issue
+        // that is not on the public list (or a pull request number) is
+        // refused rather than turned into a vote with no effect.
+        const issueNumber = Number(payload?.issueNumber);
+        if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+          return res.status(400).json({ error: 'payload.issueNumber must be a positive integer' });
+        }
+        const reason = typeof payload?.reason === 'string' ? payload.reason.trim() : '';
+        if (reason.length > MAX_CLOSE_REASON_LENGTH) {
+          return res.status(400).json({
+            error: `payload.reason must be ≤ ${MAX_CLOSE_REASON_LENGTH} chars`,
+          });
+        }
+
+        const parsed = parseOwnerRepo(app.repo_url);
+        if (!requestsOn() || !parsed) {
+          return res.status(422).json({
+            error: 'Cannot verify the request right now: requests are unavailable for this app.',
+          });
+        }
+        let target;
+        try {
+          target = await github.getIssue(parsed.owner, parsed.repo, issueNumber);
+        } catch (err) {
+          if (err?.status === 404) {
+            return res.status(404).json({
+              error: `Issue #${issueNumber} isn't an issue on this repo.`,
+            });
+          }
+          return res.status(422).json({
+            error: "Couldn't confirm this issue is closed right now. Try again in a moment.",
+          });
+        }
+        if (!target || target.pull_request) {
+          return res.status(404).json({
+            error: `Issue #${issueNumber} isn't an issue on this repo.`,
+          });
+        }
+        if (target.state !== 'closed') {
+          return res.status(409).json({
+            error: `Issue #${issueNumber} is already open`,
+          });
+        }
+
+        // Dedupe: one open reopen proposal per issue per app, as close is.
+        const { rows: dupRows } = await pool.query(
+          `SELECT id FROM issues
+            WHERE app_id = $1 AND kind = 'reopen_issue' AND status = 'open'
+              AND (payload->>'issueNumber')::int = $2`,
+          [app.id, issueNumber]
+        );
+        if (dupRows.length) {
+          return res.status(409).json({
+            error: `A reopen proposal for issue #${issueNumber} is already open`,
+          });
+        }
+
+        const issueTitle = String(target.title || '').slice(0, 300);
+        payload = { issueNumber, issueTitle, reason: reason || null };
+        title = `Reopen issue #${issueNumber}: "${issueTitle}"`.slice(0, 512);
+        description = reason || null;
       } else if (kind === 'maintenance_campaign') {
         // Fleet maintenance (#853): only proposable on the self-hosted
         // platform app (the campaign's blast radius is EVERY child app,
@@ -1643,6 +1712,8 @@ function issueRoutes(config) {
           : `${req.user.username} proposed setting secret ${payload.key}`;
       } else if (kind === 'close_issue') {
         chatPrefix = `${req.user.username} proposed closing issue #${payload.issueNumber}: "${payload.issueTitle}"`;
+      } else if (kind === 'reopen_issue') {
+        chatPrefix = `${req.user.username} proposed reopening issue #${payload.issueNumber}: "${payload.issueTitle}"`;
       } else if (kind === 'maintenance_campaign') {
         chatPrefix = `${req.user.username} proposed a maintenance campaign: "${payload.title}"`;
       } else {
@@ -1676,10 +1747,10 @@ function issueRoutes(config) {
       // thread yet). A close_issue proposal ALSO posts into its target
       // issue's thread so followers of the issue see the vote start.
       if (kind === 'secret_change' || kind === 'rename' || kind === 'close_issue'
-          || kind === 'maintenance_campaign' || kind === 'featured_illustration') {
+          || kind === 'reopen_issue' || kind === 'maintenance_campaign' || kind === 'featured_illustration') {
         await sendSystemMessage(pool, app.id, createdMsg, 'system',
           null, { type: 'governance', ref: rows[0].id }).catch(() => {});
-        if (kind === 'close_issue' && payload.issueNumber) {
+        if ((kind === 'close_issue' || kind === 'reopen_issue') && payload.issueNumber) {
           await sendSystemMessage(pool, app.id, createdMsg, 'system',
             null, { type: 'issue', ref: payload.issueNumber }).catch(() => {});
         }
@@ -3311,8 +3382,9 @@ function issueRoutes(config) {
       // The machine answers a closed proposal itself (a retry of an apply
       // that succeeded replays its result).
       if (issue.kind !== 'secret_change' && issue.kind !== 'close_issue'
+          && issue.kind !== 'reopen_issue'
           && issue.kind !== 'maintenance_campaign' && issue.kind !== 'featured_illustration') {
-        return res.status(400).json({ error: 'Only secret-change, close-issue, maintenance-campaign, and featured-illustration proposals can be admin-applied' });
+        return res.status(400).json({ error: 'Only secret-change, close-issue, reopen-issue, maintenance-campaign, and featured-illustration proposals can be admin-applied' });
       }
       // Campaigns are self-app governance with fleet-wide blast radius:
       // only a FULL platform admin may force one, never an app admin.
