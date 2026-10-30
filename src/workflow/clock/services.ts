@@ -143,6 +143,13 @@ export const JOBS: readonly Job[] = Object.freeze([
   },
   // ── Retention ───────────────────────────────────────────────────────
   {
+    // Resumable migration: each row's committed key is its checkpoint.
+    // Continues checking for byte rows an older process wrote in a rollout.
+    name: 'media-shots-backfill', everyMs: MIN, leaseMs: 5 * MIN, newestOnly: true,
+    run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/media-shots-backfill').run(
+      pool, legacy('services/media-store').createMediaStore(config), { shouldStop: stopped(ctx) }),
+  },
+  {
     // Immutable media no row references, including rolled-back uploads,
     // once a day old. The clock persists its bucket-listing cursor.
     name: 'media-gc', everyMs: 5 * MIN, leaseMs: 5 * MIN, newestOnly: true,

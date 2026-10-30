@@ -1,4 +1,5 @@
 'use strict';
+require('./lib/media-store').useMemoryMedia(require('node:test'));
 
 // The steps of a before & after shots run (services/shots-orchestrator.js),
 // as the shots machine's work runs them, against the full PostgreSQL schema
@@ -276,7 +277,7 @@ test('the steps of a shots run against the full PostgreSQL schema', { timeout: 1
     await agent(s, id, deps);
     assert.equal(calls.dispatches[0].deviceDensity, true);
     const { rows: [file] } = await pool.query(
-      `SELECT width, height, density, dense_width, dense_height, octet_length(dense_data) > 0 AS kept
+      `SELECT width, height, density, dense_width, dense_height, dense_object_key IS NOT NULL AND dense_data IS NULL AS kept
          FROM shot_run_files WHERE run_id = $1 AND side = 'head'`, [id]);
     assert.deepEqual(file, { width: 1280, height: 800, density: 2, dense_width: 2560, dense_height: 1600, kept: true });
     assert.equal((await shotsControl.read(pool, id)).agent.deviceDensity, true, 'the run keeps its own choice');
