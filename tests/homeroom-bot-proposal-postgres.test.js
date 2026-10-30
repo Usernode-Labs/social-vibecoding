@@ -164,7 +164,10 @@ test('a bot proposal is named by its spec and led by its own description', { tim
     assert.equal(row.pr_summary_source, 'generated');
     assert.equal(row.pr_summary_stale, false);
     assert.ok(pr.body.startsWith(`${DESCRIPTION}\n\n`), 'the pull request leads with it');
-    assert.match(pr.body, new RegExp(`^Closes #${issue}$`, 'm'), 'and still closes its issue');
+    // On GitHub the request is named by its page, never `#N` (GitHub's own number).
+    assert.match(pr.body, new RegExp(`^Closes \\[request ${issue}\\]\\([^)]+/dev/issues/${issue}\\)$`, 'm'),
+      'and still closes its issue');
+    assert.doesNotMatch(pr.body, new RegExp(`#${issue}\\b`));
   });
 
   await t.test('a build that left its block out is described by the spec\'s user-facing half', async () => {
