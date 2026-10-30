@@ -139,7 +139,7 @@ type ScreenRowView = NotificationRowView & {
   appLine: string;
   /**
    * #5406: the app the row came from, for the Unread tab's per-app groups.
-   * Conversation kinds carry no app — they group under "Other".
+   * Conversation kinds carry no app — they group under "Across Homeroom".
    */
   appId?: number | null;
   /**
@@ -291,7 +291,7 @@ function SectionHead({ children }: { children: ReactNode }): ReactNode {
  * (the same words each row's meta line already carries); the pill is the
  * sheet's own "Mark all read" pill in miniature, and clears that app's every
  * unread notification — including ones the sheet has not paged in — through
- * the controller's markAppRead. The "Other" group (notifications that belong
+ * the controller's markAppRead. The app-less group (notifications that belong
  * to no app) renders no button: nothing but Mark all read owns those.
  *
  * #5580: the heading of a project's stack. While the stack is open it also
@@ -369,14 +369,16 @@ function AppGroupHead({ groupKey, label, appId, onRead, onShowLess }: {
  * The Unread tab's groups (#5406): rows bucketed by app, in feed order.
  * The first time an app is seen is its newest notification, so the groups
  * are ordered by their newest row and the rows keep their order inside a
- * group. Rows that belong to no app (messages, friends, account) share one
- * "Other" group, under the key `'other'`; `appId` 0 counts as an app, so the
+ * group. Rows that belong to no app (account, people, the cross-project vote
+ * reminder, which vote-digest files with no app whenever several changes
+ * wait, even all in one project) share one group, "Across Homeroom" (#5929
+ * renamed it from the vague "Other"), under the key `'other'`; `appId` 0 counts as an app, so the
  * staging demo mocks group and show the button.
  */
 type AppGroup = {
   key: string;
   appId: number | null;
-  /** The first row's appLine, before the "Other" fallback the renderer applies. */
+  /** The first row's appLine, before the app-less heading the renderer falls back to. */
   appLine: string;
   /** #5580: the project's own name, from the first row that carries it. */
   appName?: string | null;
@@ -1524,7 +1526,11 @@ export function NotificationsSheetView() {
   // #5580: each project is a stack of cards (./notification-stacks.tsx),
   // under the same heading and its Mark read.
   const renderAppGroup = (group: AppGroup): ReactNode => {
-    const label = group.key === 'other' || !group.appLine ? t('notifications:sheet.group.other') : groupName(group);
+    // #5929: a project's group whose name is not known is still one
+    // project's, so it is never headed as the app-less group.
+    const label = group.key === 'other'
+      ? t('notifications:sheet.group.other')
+      : groupName(group) || t('notifications:sheet.group.unnamedProject');
     return (
       <ProjectStack
         key={group.key}

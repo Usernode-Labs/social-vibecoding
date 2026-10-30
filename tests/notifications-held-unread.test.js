@@ -196,3 +196,30 @@ test('one app group says Mark all read once; two groups each keep their Mark rea
   assert.match(two, /data-notif-app-read="3"/);
   assert.match(two, /data-notif-app-read="4"/);
 });
+
+// #5929: the group of notifications that belong to no project was headed
+// "Other", which said nothing about what was in it.
+test('the app-less group is headed "Across Homeroom"; a project group keeps its name', () => {
+  const html = renderSheet({ list: [
+    // vote-digest.js files several waiting changes with no app, even when
+    // they are all in one project: this row is that digest.
+    view(10, { appId: null, appLine: '', label: 'Waiting for your approval', segments: [{ t: 'strong', v: '3 changes' }] }),
+    view(11, { appId: 3, appLine: 'Notes', appName: 'Notes' }),
+  ] });
+  const head = html.match(/data-notif-app-group="other"[^>]*>\s*<span[^>]*>([^<]*)<\/span>/);
+  assert.ok(head, 'the app-less group renders its heading');
+  assert.equal(head[1], 'Across Homeroom');
+  assert.doesNotMatch(html, />Other</, 'the vague "Other" is gone');
+  assert.match(html, /data-notif-app-group="a:3"[^>]*>\s*<span[^>]*>Notes<\/span>/);
+});
+
+test('a project group with no name is "Unnamed project", never the app-less heading', () => {
+  const html = renderSheet({ list: [
+    view(10, { appId: 7, appLine: '', appName: null }),
+    view(11, { appId: 8, appLine: '', appName: 'Polls' }),
+  ] });
+  assert.match(html, /data-notif-app-group="a:7"[^>]*>\s*<span[^>]*>Unnamed project<\/span>/);
+  assert.match(html, /data-notif-app-group="a:8"[^>]*>\s*<span[^>]*>Polls<\/span>/,
+    'a group whose name is known only from appName still shows it');
+  assert.doesNotMatch(html, /Across Homeroom/);
+});

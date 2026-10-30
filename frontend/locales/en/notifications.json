@@ -16,8 +16,12 @@
     "description": "Accessible name of that button. {{app}} is the project's name."
   },
   "sheet.group.other": {
-    "text": "Other",
-    "description": "Heading on the Unread filter over the notifications that belong to no project (messages, friends, account)."
+    "text": "Across Homeroom",
+    "description": "Heading on the Unread filter over the notifications that are not filed under a single project's group: account notices, people, and the daily reminder of changes waiting for the viewer's approval (which, when several changes wait, is filed here even if they all belong to one project). It replaced the vague \"Other\"."
+  },
+  "sheet.group.unnamedProject": {
+    "text": "Unnamed project",
+    "description": "Heading on the Unread filter over one project's notifications when the project's name is not known (for example, it was removed or is not visible to the viewer)."
   },
   "stack.showAll_one": {
     "text": "Show {{count}} notification",

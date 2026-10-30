@@ -241,6 +241,19 @@ test('rowView carries appId for an app row and null for a conversation row', () 
   assert.ok(Array.isArray(views[1].segments));
 });
 
+test('#5929: a digest of several changes in ONE project carries no app, so it groups with the app-less rows', () => {
+  // vote-digest.js writes app_id only when exactly one change waits; three
+  // in the same project arrive with no app, which is why the app-less
+  // group's heading cannot claim its rows are tied to no project.
+  const views = loadController()([
+    {
+      id: 5, kind: 'vote_digest', appId: null, appSlug: null, appName: null, detail: '3',
+      readAt: null, createdAt: new Date().toISOString(),
+    },
+  ]);
+  assert.equal(views[0].appId, null);
+});
+
 // ── 3. the sheet groups on Unread ───────────────────────────────────────
 
 test('sheet groups unread rows by app and renders the per-app Mark read button', () => {
@@ -266,7 +279,8 @@ test('sheet groups unread rows by app and renders the per-app Mark read button',
 test('the catalog holds the four new entries', () => {
   assert.equal(CATALOG['sheet.markAppRead'].text, 'Mark read');
   assert.equal(CATALOG['sheet.markAppReadLabel'].text, 'Mark all from {{app}} as read');
-  assert.equal(CATALOG['sheet.group.other'].text, 'Other');
+  // #5929: "Other" said nothing about what the group held.
+  assert.equal(CATALOG['sheet.group.other'].text, 'Across Homeroom');
   assert.equal(
     CATALOG['toast.markAppFailed'].text,
     'Couldn’t mark these notifications as read. Try again.'
