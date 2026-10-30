@@ -115,3 +115,17 @@ test('Homeroom\'s line names the build this document loaded, not the newer one o
   assert.equal(textOf(app, 'app-menu-version'),
     message('agent:appContext.about.version.app', { version: 'b0b0b0b' }));
 });
+
+test('Go to community opens on Needs you while decisions wait on you, else on the hub (#5927 item 3)', () => {
+  assert.equal(ui.communityRowPlace(7), 'needs', 'the badge counts decisions, so the row opens on the list of them');
+  assert.equal(ui.communityRowPlace(1), 'needs');
+  assert.equal(ui.communityRowPlace(0), 'status', 'nothing waits: the hub');
+  assert.equal(ui.communityRowPlace(null), 'status', 'no figure (loading, offline): the hub');
+
+  const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  const at = SHEET.indexOf('id="app-menu-row-workshop"');
+  const row = SHEET.slice(at, SHEET.indexOf('/>', SHEET.indexOf('followThenDismiss(e', at)));
+  assert.match(row, /communityRowPlace\(owed\) === 'needs'\) view\?\._landOnTab\?\.\(slug, 'needs'\)/,
+    'the click lands on the place the badge describes');
+  assert.match(row, /else view\?\._landOnHub\?\.\(slug\)/, 'and on the hub when there is no badge');
+});

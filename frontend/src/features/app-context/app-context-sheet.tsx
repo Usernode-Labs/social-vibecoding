@@ -267,6 +267,16 @@ function loadedPlatformShort(): string | null {
  * `defaultPrevented`) only closes the menu, and a modified click never gets
  * here as a navigation of ours: the browser opens its tab.
  */
+/**
+ * Where the "Go to community" row opens the project page (#5927 item 3): on
+ * Needs you, the list of what waits on this person, while its badge counts
+ * any; on the hub otherwise. `owed` is the badge's own figure, so the row
+ * opens on what it says.
+ */
+export function communityRowPlace(owed: number | null): 'needs' | 'status' {
+  return typeof owed === 'number' && owed > 0 ? 'needs' : 'status';
+}
+
 function followThenDismiss(e: React.MouseEvent, href: string): void {
   if (e.defaultPrevented || e.nativeEvent.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey
     || !href.startsWith('#') || href === '#') {
@@ -906,8 +916,15 @@ export function AppsSwitcherSheet(): ReactNode {
             // running app on a desktop it opens full width, leaving the app,
             // as every link to a community does: a community's page is never
             // the side panel's (../side-panel/routes.ts).
+            // #5927 item 3: while it says decisions wait on you, it opens
+            // on the list of them, the project's Needs you place, rather
+            // than the hub, where they are one card among others.
             onClick={(e) => {
-              if (slug) (window as any).AppView?._landOnHub?.(slug);
+              if (slug) {
+                const view = (window as any).AppView;
+                if (communityRowPlace(owed) === 'needs') view?._landOnTab?.(slug, 'needs');
+                else view?._landOnHub?.(slug);
+              }
               followThenDismiss(e, slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#');
             }}
           />

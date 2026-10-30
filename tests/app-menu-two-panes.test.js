@@ -150,7 +150,10 @@ test('the Workshop row says what it owes you, and stays silent when it cannot', 
     'the badge is the Workshop row\'s trailing figure');
   assert.match(sheet, /id="app-menu-workshop-owed"/);
   assert.match(sheet, /aria-label=\{t\('agent:appContext\.row\.toVote', \{ count: owed \}\)\}/);
-  assert.equal(message('agent:appContext.row.toVote', { count: 3 }), '3 to vote');
+  // #5927 item 3: "3 to vote" did not say what was voted on, and read like a
+  // notification. It says it in words.
+  assert.equal(message('agent:appContext.row.toVote', { count: 3 }), '3 decisions waiting on you');
+  assert.equal(message('agent:appContext.row.toVote', { count: 1 }), '1 decision waiting on you');
 
   // ONE SOURCE, TWO READERS: /api/workshop/counts is the Workshop tab's own
   // endpoint, so this is the same figure that screen shows on the same app's
@@ -164,7 +167,7 @@ test('the Workshop row says what it owes you, and stays silent when it cannot', 
   // an offline or refused request leaves the row exactly as it was.
   assert.match(effect, /catch \{/);
   assert.match(effect, /typeof n === 'number' && n > 0/,
-    'zero is silence too — "0 to vote" is a row shouting that it has nothing');
+    'zero is silence too — "0 decisions" is a row shouting that it has nothing');
 
   // Nothing during render, so the prerender ships no figure and hydration has
   // nothing to correct.

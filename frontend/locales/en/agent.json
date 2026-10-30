@@ -2060,12 +2060,12 @@
     "description": "Row in the app menu (the sheet opened from the app's name in the header): opens the hub page of the community that owns this app."
   },
   "appContext.row.toVote_one": {
-    "text": "{{count}} to vote",
-    "description": "Shown at the right of the \"Go to community\" row in the app menu (the sheet opened from the app's name in the header), also its tooltip and accessible name: how many proposals wait for this person's vote. {{count}} is that number."
+    "text": "{{count}} decision waiting on you",
+    "description": "Shown at the right of the \"Go to community\" row in the app menu (the sheet opened from the app's name in the header), also its tooltip and accessible name: how many decisions in this project wait on this person (changes and group decisions to vote on, questions to answer). The row then opens the project's Needs you list of them. {{count}} is that number; hidden at zero."
   },
   "appContext.row.toVote_other": {
-    "text": "{{count}} to vote",
-    "description": "Shown at the right of the \"Go to community\" row in the app menu (the sheet opened from the app's name in the header), also its tooltip and accessible name: how many proposals wait for this person's vote. {{count}} is that number."
+    "text": "{{count}} decisions waiting on you",
+    "description": "Shown at the right of the \"Go to community\" row in the app menu (the sheet opened from the app's name in the header), also its tooltip and accessible name: how many decisions in this project wait on this person (changes and group decisions to vote on, questions to answer). The row then opens the project's Needs you list of them. {{count}} is that number; hidden at zero."
   },
   "appContext.row.terminal": {
     "text": "Developer terminal",
