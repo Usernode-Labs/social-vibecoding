@@ -584,7 +584,7 @@ async function pictureFor(db, appId) {
 }
 
 /**
- * The shot a live link's page shows, as { data, contentType, sha256 }, or
+ * The shot a live link's page shows, as a key (or legacy bytes), type and hash, or
  * null: the link must be live and its project must have one (pictureFor).
  */
 async function pictureBytes(pool, token) {
@@ -593,11 +593,12 @@ async function pictureBytes(pool, token) {
   const picture = await pictureFor(pool, invite.app_id);
   if (!picture || picture.kind !== 'shot') return null;
   const { rows } = await pool.query(
-    'SELECT data, content_type, sha256 FROM shot_artifacts WHERE id = $1',
+    'SELECT data, object_key, bytes, content_type, sha256 FROM shot_artifacts WHERE id = $1',
     [picture.artifactId]
   );
   if (!rows[0]) return null;
-  return { data: rows[0].data, contentType: rows[0].content_type, sha256: rows[0].sha256 };
+  return { data: rows[0].data, objectKey: rows[0].object_key, sizeBytes: rows[0].bytes,
+    contentType: rows[0].content_type, sha256: rows[0].sha256 };
 }
 
 function pictureUrls(token, picture) {

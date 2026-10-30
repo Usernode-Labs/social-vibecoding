@@ -4,6 +4,8 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const galleryDemo = require('../services/gallery-demo');
+const mediaStore = require('../services/media-store');
+const { rangeFor } = require('../services/check-visual-media');
 
 // Public artifact serving for before/after visuals (#195).
 //
@@ -16,7 +18,7 @@ const galleryDemo = require('../services/gallery-demo');
 // Artifacts are immutable: a re-capture inserts new ids and deletes the
 // old rows, so a year-long immutable cache header is safe (a deleted id
 // just 404s for fresh fetchers; caches holding it are harmless).
-function visualsRoutes(config) {
+function visualsRoutes(config, { store = mediaStore.getStore(config) } = {}) {
   const router = Router();
   const pool = getPool(config);
 
@@ -38,12 +40,13 @@ function visualsRoutes(config) {
     }
     try {
       const { rows } = await pool.query(
-        `SELECT content_type, data FROM session_visuals WHERE id = $1`,
+        `SELECT content_type, data, object_key, bytes, legacy_etag FROM session_visuals WHERE id = $1`,
         [id]
       );
-      if (!rows.length || !rows[0].data) return res.status(404).end();
-      const contentType = rows[0].content_type || 'application/octet-stream';
-      const data = rows[0].data;
+      if (!rows.length || (rows[0].data == null && !rows[0].object_key)) return res.status(404).end();
+      const row = rows[0];
+      const contentType = row.content_type || 'application/octet-stream';
+      const total = row.object_key ? Number(row.bytes) : row.data.length;
 
       // #2515: the type here is a STORED value, so a capture whose recorded
       // content_type says image/* while its bytes are markup must not be
@@ -53,30 +56,36 @@ function visualsRoutes(config) {
       res.set('Cache-Control', 'public, max-age=31536000, immutable');
       res.set('Accept-Ranges', 'bytes');
 
-      // Minimal single-range support: some browsers issue Range requests
-      // for <video> sources. The artifacts are small (<= 8 MB) so slicing
-      // the in-memory Buffer is cheap; anything unparsable falls through
-      // to a plain 200 full-body response, which players also accept.
-      const range = req.headers.range;
-      if (range) {
-        const m = range.match(/^bytes=(\d*)-(\d*)$/);
-        if (m && (m[1] !== '' || m[2] !== '')) {
-          const total = data.length;
-          let start = m[1] === '' ? Math.max(0, total - parseInt(m[2], 10)) : parseInt(m[1], 10);
-          let end = (m[1] !== '' && m[2] !== '') ? parseInt(m[2], 10) : total - 1;
-          if (Number.isFinite(start) && Number.isFinite(end) && start <= end && start < total) {
-            end = Math.min(end, total - 1);
-            res.status(206);
-            res.set('Content-Range', `bytes ${start}-${end}/${total}`);
-            return res.send(data.subarray(start, end + 1));
-          }
-          res.set('Content-Range', `bytes */${data.length}`);
-          return res.status(416).end();
-        }
+      const range = rangeFor(req.headers.range, total);
+      if (range === false) {
+        res.set('Content-Range', `bytes */${total}`);
+        return res.status(416).end();
       }
-      res.send(data);
+      if (range) {
+        res.status(206);
+        res.set('Content-Range', `bytes ${range.start}-${range.end}/${total}`);
+        if (!row.object_key) return res.send(row.data.subarray(range.start, range.end + 1));
+        // Express previously hashed the sliced response for its weak ETag.
+        // Read ONLY the requested range (at most this route's 8 MB cap),
+        // keeping that exact validator without downloading the full video.
+        const chunks = [];
+        for await (const chunk of await mediaStore.stream(store, row.object_key, range)) chunks.push(Buffer.from(chunk));
+        return res.send(Buffer.concat(chunks));
+      }
+      if (!row.object_key) return res.send(row.data);
+      res.set('ETag', row.legacy_etag);
+      res.set('Content-Length', String(total));
+      if (req.fresh) {
+        res.removeHeader('Content-Type');
+        res.removeHeader('Content-Length');
+        return res.status(304).end();
+      }
+      if (req.method === 'HEAD') return res.end();
+      return await mediaStore.respond(res, store, row);
     } catch (err) {
       log.error('visuals', 'Failed to serve artifact', { id, err: err.message });
+      if (res.headersSent || res.destroyed) return res.destroy();
+      for (const header of ['Cache-Control', 'ETag', 'Content-Type', 'Content-Length', 'Content-Range']) res.removeHeader(header);
       res.status(500).end();
     }
   });
