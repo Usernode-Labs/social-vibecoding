@@ -73,23 +73,28 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
     `INSERT INTO requests (app_id, number, title, created_by, state) VALUES ($1, $2, $3, $4, $5) RETURNING id, thread_id`,
     [a.id, number, title, by.id, state]);
   const change = (a, pr, by, issue, status, extra = {}) => one(
-    `INSERT INTO chat_sessions (app_id, user_id, pr_number, linked_issues, status, shared_at, promoted_at, merged_at, live_at)
-     VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8) RETURNING id`,
-    [a.id, by.id, pr, [issue], status, extra.promotedAt || null, extra.mergedAt || null, extra.liveAt || null]);
+    `INSERT INTO chat_sessions (app_id, user_id, pr_number, linked_issues, status, shared_at, promoted_at, merged_at, live_at, check_state)
+     VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9) RETURNING id`,
+    [a.id, by.id, pr, [issue], status, extra.promotedAt || null, extra.mergedAt || null, extra.liveAt || null, extra.checkState || null]);
 
   // Hers: asked for, nothing in flight.
   await request(app, 1, ada, 'Print view');
   // Hers, with Bob's change up for a vote she has not voted on: Needs you's.
   await request(app, 2, ada, 'Dark mode');
-  await change(app, 3, bob, 2, 'promoted', { promotedAt: new Date() });
+  await change(app, 3, bob, 2, 'promoted', { promotedAt: new Date(), checkState: 'passing' });
   // Bob's, which she only voted on: nothing left for her, so not listed.
   await request(app, 4, bob, 'Search');
-  const searched = await change(app, 5, bob, 4, 'promoted', { promotedAt: new Date(Date.now() - 3600000) });
+  const searched = await change(app, 5, bob, 4, 'promoted', { promotedAt: new Date(Date.now() - 3600000), checkState: 'passing' });
   await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [searched.id, ada.id]);
   // Hers, with Bob's change she voted Yes on: In progress, saying so.
   await request(app, 12, ada, 'Filters');
-  const filters = await change(app, 13, bob, 12, 'promoted', { promotedAt: new Date(Date.now() - 2 * 3600000) });
+  const filters = await change(app, 13, bob, 12, 'promoted', { promotedAt: new Date(Date.now() - 2 * 3600000), checkState: 'passing' });
   await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [filters.id, ada.id]);
+  // Hers, with Bob's change she voted Yes on whose checks have not passed yet:
+  // it waits for its checks, not for votes (#6060).
+  await request(app, 21, ada, 'Check pending');
+  const pending = await change(app, 22, bob, 21, 'promoted', { promotedAt: new Date(Date.now() - 3600000), checkState: 'pending' });
+  await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [pending.id, ada.id]);
   // Hers, which Homeroom bot is building; and Bob's, being built, where she
   // only wrote.
   await request(app, 14, ada, 'Calendar');
@@ -133,7 +138,8 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   // Up next: hers waiting on other people's votes first, then the requests nobody has picked up.
   assert.equal(titles(work.waiting)[0], 'Filters:vote');
   assert.equal(work.waiting[0].myVote, 'yes');
-  assert.deepEqual(titles(work.waiting).slice(1).sort(), ['Print view:not_picked_up', 'Tags:not_picked_up'].sort());
+  assert.equal(titles(work.waiting)[1], 'Check pending:checking', 'its checks have not passed: it says checks, not votes');
+  assert.deepEqual(titles(work.waiting).slice(2).sort(), ['Print view:not_picked_up', 'Tags:not_picked_up'].sort());
   assert.deepEqual(work.needs, [], 'no plan of the bot\'s waits for her');
   assert.deepEqual(titles(work.live), ['Badges:live']);
   const all = [...work.needs, ...work.next, ...work.waiting, ...work.live];

@@ -50,7 +50,7 @@ export interface AiThread {
   what:
     | 'plan' | 'decide' | 'build_stopped'
     | 'going_live' | 'merging' | 'fixing' | 'revising' | 'building' | 'reading'
-    | 'vote' | 'decision' | 'fix_queued' | 'followup_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'on_hold'
+    | 'vote' | 'checking' | 'decision' | 'fix_queued' | 'followup_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'on_hold'
     | 'not_picked_up'
     | 'live';
   at: string | null;
@@ -350,6 +350,7 @@ const THREAD_WORDS: Record<string, string> = {
   building: 'messages:ai.next.building',
   reading: 'messages:ai.next.reading',
   vote: 'messages:ai.up.vote',
+  checking: 'messages:ai.up.checking',
   fix_queued: 'messages:ai.up.fixQueued',
   followup_queued: 'messages:ai.up.followUpQueued',
   build_queued: 'messages:ai.up.buildQueued',
@@ -394,6 +395,7 @@ const SHORT_WORDS: Record<string, string> = {
   reading: 'messages:ai.short.reading',
   building: 'messages:ai.short.building',
   vote: 'messages:ai.short.votes',
+  checking: 'messages:ai.short.checks',
   decision: 'messages:ai.short.votes',
   fix_queued: 'messages:ai.short.builder',
   followup_queued: 'messages:ai.short.builder',
