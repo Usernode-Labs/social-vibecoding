@@ -1077,8 +1077,9 @@ async function applyProposedTitle({ pool, gh, session, owner, repo, title, viewe
 // Whose PR it is decides this exactly as it decides a rename, through the same
 // callerOwnsPr: an external contributor's body is theirs.
 //
-// The two MANAGED blocks survive. `Closes #N` is rebuilt from the keywords
-// already in the body, and the marker-delimited "Before / after" block the
+// The two MANAGED blocks survive. The closing lines are rebuilt from the
+// keywords already in the body, in pr-metadata's form for the host, and the
+// marker-delimited "Before / after" block the
 // capture upserts is carried across verbatim — replacing a body wholesale
 // would drop the screenshots the group is looking at, which is a worse bug
 // than the one being fixed.
@@ -1105,7 +1106,8 @@ async function applyProposedDescription({ pool, gh, session, owner, repo, descri
   }
 
   const visuals = prMetadata.extractVisualsBlock(existing);
-  const closing = prMetadata.buildClosingBlock(prMetadata.parseClosingKeywords(existing));
+  const closing = prMetadata.buildClosingBlock(prMetadata.parseClosingKeywords(existing),
+    { repoUrl: session.repo_url || null, owner, appSlug: session.app_slug || null });
   let body = closing ? `${description}\n\n${closing}` : description;
   if (visuals) body = prMetadata.upsertVisualsBlock(body, visuals);
   if (body === existing) {
@@ -1353,7 +1355,8 @@ async function projectLinkedIssues({ pool, gh, session, owner, repo, addIssues, 
   const requestedAdds = adds.filter((n) => linkedIssues.includes(n));
   const missing = requestedAdds.filter((n) => !declared.includes(n));
   if (missing.length) {
-    const closing = prMetadata.buildClosingBlock(missing);
+    const closing = prMetadata.buildClosingBlock(missing,
+      { repoUrl: session.repo_url || null, owner, appSlug: session.app_slug || null });
     nextBody = nextBody ? `${nextBody}\n\n${closing}` : closing;
   }
 

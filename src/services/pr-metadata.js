@@ -5,7 +5,7 @@ const llm = require('./llm');
 const limits = require('./limits');
 const github = require('./github');
 const turnEffects = require('./turn-effects');
-const { changeHref } = require('./change-destination');
+const { changeHref, appWebPath } = require('./change-destination');
 const sessionTitles = require('./session-title');
 const proposalDescription = require('./proposal-description');
 const summaryFreshness = require('./summary-freshness');
@@ -28,11 +28,44 @@ function sanitizeIssueNumbers(arr) {
   return Array.from(set).sort((a, b) => a - b);
 }
 
-// Build the GitHub closing-keyword block for a PR body: one `Closes #N`
-// line per issue, already sanitized + sorted. Empty string when there are
-// no linked issues, so the body is byte-identical to the legacy output.
-function buildClosingBlock(issues) {
-  return sanitizeIssueNumbers(issues).map((n) => `Closes #${n}`).join('\n');
+// A request's page on Homeroom, as an address, or null without a slug.
+function requestPageUrl(appSlug, number) {
+  const domain = require('./caddy').USERNODE_DOMAIN;
+  if (!appSlug || !domain) return null;
+  return appWebPath(`https://${domain}`, encodeURIComponent(String(appSlug)), `dev/issues/${Number(number)}`);
+}
+
+// Whether a pull request on this repository is read on GitHub. `repoUrl` is
+// the stored address (apps.repo_url); `owner` is for a caller that kept only
+// owner/repo. Neither known: not GitHub, so the line stays `Closes #N`.
+function closesOnGithub({ repoUrl = null, owner = null } = {}) {
+  if (repoUrl) return repoRef.isGithub(repoUrl);
+  return owner ? repoRef.hostOfOwner(owner) === 'github' : false;
+}
+
+// Build the closing block for a PR body: one line per request, already
+// sanitized + sorted. Empty string when there are no linked requests, so the
+// body is byte-identical to the legacy output.
+//
+// How a line names the request depends on where the body is read. Requests
+// are Homeroom's (services/app-numbers.js), and on Homeroom's git host they
+// share one number sequence with the pull requests, so `Closes #N` is the
+// request. On GitHub, `#N` is GitHub's own number, and GitHub numbers its pull
+// requests with a counter that knows nothing of Homeroom's requests: request
+// 6050's `Closes #6050` linked PR #6048 to pull request #6050, an unrelated
+// change (30 Oct 2026). So a body on GitHub names each request by its page,
+// with no `#`: `Closes [request 6050](https://…/dev/issues/6050)`. Nothing
+// is lost: GitHub closed nothing on them anyway, and the merge closes the
+// linked requests itself (issue-close-watcher.js). `where` is
+// { repoUrl, owner, appSlug }, as closesOnGithub reads them.
+function closingLine(n, where) {
+  if (!closesOnGithub(where)) return `Closes #${n}`;
+  const url = requestPageUrl(where.appSlug, n);
+  return url ? `Closes [request ${n}](${url})` : `Closes request ${n}`;
+}
+
+function buildClosingBlock(issues, where = {}) {
+  return sanitizeIssueNumbers(issues).map((n) => closingLine(n, where || {})).join('\n');
 }
 
 // Apply one dispatch's issue declarations (#733) to a session's existing
@@ -51,19 +84,21 @@ function applyIssueDeclarations(existing, adds, removes) {
   ]).filter((n) => !removed.has(n));
 }
 
-// Strip the platform-format `Closes #N` line for each given number from a
-// PR body (#733): the targeted patch that keeps an already-open PR's
-// closing block truthful after a mid-session scope cut, without the
-// full-body regeneration (and LLM call) a build turn performs. Only exact
-// platform-emitted lines are touched — the whole line must be `Closes #N`
-// with optional trailing whitespace, and its newline is consumed — so
-// hand-written variants ("Fixes #166", prose like "see #166") and longer
-// numbers sharing a prefix (#1660 vs #166) are left alone.
+// Strip the platform-format closing line for each given number from a PR
+// body (#733): the targeted patch that keeps an already-open PR's closing
+// block truthful after a mid-session scope cut, without the full-body
+// regeneration (and LLM call) a build turn performs. Only exact
+// platform-emitted lines are touched — the whole line must be one
+// buildClosingBlock writes (`Closes #N`, `Closes [request N](…)` or
+// `Closes request N`) with optional trailing whitespace, and its newline is
+// consumed — so hand-written variants ("Fixes #166", prose like "see #166")
+// and longer numbers sharing a prefix (#1660 vs #166) are left alone.
 function stripClosingLines(body, numbers) {
   if (typeof body !== 'string' || !body) return typeof body === 'string' ? body : '';
   let out = body;
   for (const n of sanitizeIssueNumbers(numbers)) {
-    out = out.replace(new RegExp(`^Closes #${n}[ \\t]*(?:\\r?\\n|$)`, 'gm'), '');
+    out = out.replace(
+      new RegExp(`^Closes (?:#${n}|\\[request ${n}\\]\\([^)\\s]*\\)|request ${n})[ \\t]*(?:\\r?\\n|$)`, 'gm'), '');
   }
   return out;
 }
@@ -338,7 +373,9 @@ async function syncShotsPrBlock(pool, sessionId) {
 
 // Extract the issue numbers a PR body declares it closes via GitHub's
 // closing keywords (close/closes/closed, fix/fixes/fixed, resolve/resolves/
-// resolved), optionally followed by a colon, e.g. "Closes #75", "fixed: #80".
+// resolved), optionally followed by a colon, e.g. "Closes #75", "fixed: #80",
+// and the form a body on GitHub names a request by ("Closes request 75",
+// "Closes [request 75](…)", see closingLine).
 // Returns a sanitized (deduped, sorted, positive-int) list. Used by the
 // migrate-time backfill to recover linked_issues for PRs whose bodies carry
 // closing keywords but predate the #75 linkage plumbing. Cross-repo
@@ -346,7 +383,7 @@ async function syncShotsPrBlock(pool, sessionId) {
 // models same-repo issues, which is all the pill renders.
 function parseClosingKeywords(body) {
   if (typeof body !== 'string' || !body) return [];
-  const re = /(?<![A-Za-z0-9_/-])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b\s*:?\s+#(\d+)\b/gi;
+  const re = /(?<![A-Za-z0-9_/-])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b\s*:?\s+(?:#|\[?request\s+)(\d+)\b/gi;
   const found = [];
   let m;
   while ((m = re.exec(body)) !== null) found.push(Number(m[1]));
@@ -868,9 +905,11 @@ async function applyPrMetadata({
     if (!preferredTitle && personTitle) preferredTitle = personTitle;
   }
 
-  // Deterministic `Closes #N` block (#75), regenerated from the linked set
-  // on every turn so it's always current and never doubled.
-  const closingBlock = buildClosingBlock(linkedIssues);
+  // Deterministic closing block (#75), regenerated from the linked set on
+  // every turn so it's always current and never doubled.
+  const closingBlock = buildClosingBlock(linkedIssues, {
+    repoUrl: session?.repo_url || null, owner: repoOwner, appSlug: appSlug || session?.app_slug || session?.slug,
+  });
 
   // Deterministic "How to test" section (#127), regenerated from the
   // session's latest testing guidance on every turn.

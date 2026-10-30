@@ -993,7 +993,7 @@ async function runFollowUpTurn({
             mode,
             prompt,
             model,
-            commitMsg: commitMsg || `Homeroom bot: follow-up on #${issueNumber}`,
+            commitMsg: commitMsg || `Homeroom bot: follow-up on request ${issueNumber}`,
             resumeSessionId: null,
             branchName: session.branch_name,
             // Its push lands on a proposal already up for a vote: a failed turn's

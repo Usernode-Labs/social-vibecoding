@@ -2300,7 +2300,9 @@ test('a connector-opened proposal is its author\'s own: the mirrored pull reques
   const body = patches.find((p) => p.body).body;
   assert.match(body, /The toggle now survives a reload\./);
   assert.doesNotMatch(body, /first submission/);
-  assert.match(body, /Closes #2138/, 'the managed block survives the rewrite');
+  // On GitHub the block names the request by its page, never `#2138` (GitHub's own number).
+  assert.match(body, /^Closes \[request 2138\]\(https:\/\/[^)]+\/app\/recipe-box\/dev\/issues\/2138\)$/m,
+    'the managed block survives the rewrite');
   assert.equal(mirrors[0][0], body, 'and the row mirrors it so get_proposal can report it');
   // Underneath, still the app-repo push and the import reconcile of #1196.
   assert.equal(log.push.length, 1);
@@ -2416,7 +2418,8 @@ test('an author\'s description rewrites the PR body and keeps its managed blocks
   // the before/after screenshots the group is looking at — a worse bug than
   // the one being fixed.
   assert.match(written, /<!-- usernode:visuals -->[\s\S]*BEFORE\/AFTER[\s\S]*<!-- \/usernode:visuals -->/);
-  assert.match(written, /Closes #91/);
+  assert.match(written, /^Closes \[request 91\]\([^)]+\/dev\/issues\/91\)$/m);
+  assert.doesNotMatch(written, /#91/);
   assert.equal(mirrors[0][0], written, 'and the row mirrors it so get_proposal can report it');
 });
 
@@ -2553,7 +2556,7 @@ test('applyLinkedIssues: a live PR gets the closing line appended, hand-written 
   assert.deepEqual(session.linked_issues, [7, 45]);
   // #7 is already declared by the author's own "Fixes #7" — only #45 lands,
   // via the same parser the migrate-time backfill trusts.
-  assert.deepEqual(bodies, ['Adds the thing.\n\nFixes #7\n\nCloses #45']);
+  assert.deepEqual(bodies, ['Adds the thing.\n\nFixes #7\n\nCloses request 45']);
   // But BOTH are recorded as reflected in the body, so pr-metadata's drift
   // gate does not rewrite a body that is already right.
   assert.deepEqual(session.pr_linked_issues_applied, [7, 45]);
@@ -2644,7 +2647,9 @@ test('updateLinkedIssues: removals rewrite only Usernode-managed closing lines',
     prBodyUpdated: true,
     prBodyStatus: 'updated',
   });
-  assert.deepEqual(bodies, ['Summary\n\nCloses #18\n\nFixes #99\n\nCloses #27']);
+  // A line already in the body stays as written; the one appended names the
+  // request as a pull request on GitHub must (pr-metadata.js closingLine).
+  assert.deepEqual(bodies, ['Summary\n\nCloses #18\n\nFixes #99\n\nCloses request 27']);
   assert.deepEqual(session.pr_linked_issues_applied, [18, 27]);
   assert.deepEqual(writes.map(([kind]) => kind), ['linked', 'body_mirror', 'applied']);
 });
@@ -2674,7 +2679,7 @@ test('updateLinkedIssues: repeating a DB no-op repairs a previously missed PR bo
 
   assert.equal(result.changed, false, 'the durable association was already present');
   assert.equal(result.prBodyUpdated, true, 'the same delta still repairs GitHub');
-  assert.equal(body, 'Summary\n\nCloses #27');
+  assert.equal(body, 'Summary\n\nCloses request 27');
   assert.deepEqual(writes, [[[27], 501]]);
   assert.ok(!pool.queries.some(({ sql }) => sql.includes('SET linked_issues')),
     'a retry does not rewrite the source-of-truth column');
@@ -2733,7 +2738,7 @@ test('updateLinkedIssues: a pull request the platform opened for its author take
   });
   assert.equal(result.prBodyStatus, 'updated');
   assert.equal(result.prBodyUpdated, true);
-  assert.deepEqual(bodies, ['Built with Claude Code.\n\nCloses #2138']);
+  assert.deepEqual(bodies, ['Built with Claude Code.\n\nCloses request 2138']);
   assert.deepEqual(mirrored.pr_linked_issues_applied, [2138]);
 
   // A collaborator's own branch in the same repository, imported from the
@@ -2778,7 +2783,8 @@ test('an update that carries linkedIssues stores them before the tails, on every
   assert.deepEqual(session.linked_issues, [45]);
   assert.deepEqual(order.map((o) => o[0]), ['linked', 'body', 'reconcile'],
     'stored, then the live body patched, then the tail — never the other way round');
-  assert.equal(order[1][1], 'Dev session by evan via Homeroom\n\nCloses #45');
+  assert.equal(order[1][1], 'Dev session by evan via Homeroom\n\n'
+    + `Closes [request 45](https://${require('../src/services/caddy').USERNODE_DOMAIN}/app/recipe-box/dev/issues/45)`);
 
   // Source half, for the ORDER on the paths the stubs above do not read
   // (same reasoning as the testing-metadata order test).
