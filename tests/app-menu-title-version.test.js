@@ -122,10 +122,65 @@ test('Go to community opens on Needs you while decisions wait on you, else on th
   assert.equal(ui.communityRowPlace(0), 'status', 'nothing waits: the hub');
   assert.equal(ui.communityRowPlace(null), 'status', 'no figure (loading, offline): the hub');
 
-  const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  const at = SHEET.indexOf('id="app-menu-row-workshop"');
-  const row = SHEET.slice(at, SHEET.indexOf('/>', SHEET.indexOf('followThenDismiss(e', at)));
-  assert.match(row, /communityRowPlace\(owed\) === 'needs'\) view\?\._landOnTab\?\.\(slug, 'needs'\)/,
-    'the click lands on the place the badge describes');
-  assert.match(row, /else view\?\._landOnHub\?\.\(slug\)/, 'and on the hub when there is no badge');
+  // The link the browser opens by itself (new tab, middle click) names the
+  // same place: Needs you's own address while the badge shows.
+  assert.equal(ui.communityRowHref('bread-bot', 3), '/app/bread-bot/workshop?ws=needs');
+  assert.equal(ui.communityRowHref('bread-bot', 0), '#app/bread-bot/workshop');
+  assert.equal(ui.communityRowHref('bread-bot', null), '#app/bread-bot/workshop');
+  assert.equal(ui.communityRowHref(null, 3), '#');
+
+  // Rendered closed (the prerender), there is no figure, so the hub's link.
+  const html = renderSheet({ target: 'app', slug: 'bread-bot', name: 'Bread Bot' });
+  assert.match(html, /id="app-menu-row-workshop"[^>]*href="#app\/bread-bot\/workshop"/);
+});
+
+test('pressing Go to community: a plain click lands on its place, a modified one changes nothing here (#5927 item 3)', (t) => {
+  const previousWindow = global.window;
+  const realDismiss = ui.AppContext.dismissForNav;
+  t.after(() => { global.window = previousWindow; ui.AppContext.dismissForNav = realDismiss; });
+
+  let calls;
+  let dismissed;
+  const location = { hash: '#home' };
+  global.window = {
+    ...(previousWindow || {}),
+    location,
+    AppView: {
+      _landOnTab: (slug, tab) => calls.push(['tab', slug, tab]),
+      _landOnHub: (slug) => calls.push(['hub', slug]),
+    },
+  };
+  ui.AppContext.dismissForNav = () => { dismissed += 1; };
+  const press = (mods, owed) => {
+    calls = []; dismissed = 0; location.hash = '#home';
+    let prevented = false;
+    const e = {
+      button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false,
+      defaultPrevented: false, nativeEvent: { defaultPrevented: false },
+      preventDefault() { prevented = true; },
+      ...mods,
+    };
+    ui.openCommunityRow(e, 'bread-bot', owed);
+    return { calls, dismissed, prevented, hash: location.hash };
+  };
+
+  const plain = press({}, 7);
+  assert.deepEqual(plain.calls, [['tab', 'bread-bot', 'needs']], 'a plain click opens the page on Needs you');
+  assert.ok(plain.prevented, 'and follows the page address in place');
+  assert.equal(plain.hash, '#app/bread-bot/workshop');
+  assert.equal(plain.dismissed, 1);
+
+  const none = press({}, 0);
+  assert.deepEqual(none.calls, [['hub', 'bread-bot']], 'nothing waiting: the hub, as before');
+
+  for (const mods of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
+    const r = press(mods, 7);
+    assert.deepEqual(r.calls, [], `${JSON.stringify(mods)}: this page's place is left alone`);
+    assert.equal(r.prevented, false, 'the browser opens the link itself');
+    assert.equal(r.hash, '#home');
+    assert.equal(r.dismissed, 1, 'the menu still closes');
+  }
+
+  const taken = press({ defaultPrevented: true }, 7);
+  assert.deepEqual(taken.calls, [], 'a click something else took changes nothing here either');
 });

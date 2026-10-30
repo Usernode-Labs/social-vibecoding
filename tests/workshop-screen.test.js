@@ -1006,7 +1006,7 @@ test('#communities is a route of its own, and #workshop still lands there', () =
   // in the study draws under a mini-app — as a plain "Go to workshop" row
   // (#2761). It spent a round as the App | Workshop strip's segment; the
   // owner asked for a row, not a toggle.
-  assert.match(sheetTsx, /href=\{slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#'\}/,
+  assert.match(sheetTsx, /communityRowHref\(slug: string \| null \| undefined, owed: number \| null\): string \{[\s\S]*?: `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop`;[\s\S]*?href=\{communityRowHref\(slug, owed\)\}/,
     "and the app's menu links out to it, scoped");
   assert.match(sheetTsx, /id="app-menu-row-workshop"/, 'as a row');
   assert.ok(!/AppViewTabs/.test(sheetTsx), 'and not as a toggle segment');

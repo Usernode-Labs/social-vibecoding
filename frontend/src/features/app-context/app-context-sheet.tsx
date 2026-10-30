@@ -149,6 +149,7 @@ import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 import { recordAppUse } from './app-recency';
 import { hydrateNeedsSeen, unseenNeeds } from '../workshop/needs-seen';
+import { placeHref } from '../dev-board/workshop/places';
 import { navStore } from '../nav/nav-store.js';
 
 /**
@@ -275,6 +276,41 @@ function loadedPlatformShort(): string | null {
  */
 export function communityRowPlace(owed: number | null): 'needs' | 'status' {
   return typeof owed === 'number' && owed > 0 ? 'needs' : 'status';
+}
+
+/**
+ * The row's link, for whatever the browser does with it itself: a new tab,
+ * a middle click, a copied address. While the badge shows it is Needs you's
+ * own address (`?ws=needs`, ../dev-board/workshop/places.ts placeHref), so a
+ * tab opened from it lands where a plain tap does; otherwise the hub's.
+ */
+export function communityRowHref(slug: string | null | undefined, owed: number | null): string {
+  if (!slug) return '#';
+  return communityRowPlace(owed) === 'needs'
+    ? placeHref(slug, 'needs')
+    : `#app/${encodeURIComponent(slug)}/workshop`;
+}
+
+/**
+ * A press on the row. Only a plain click is ours: it says which place the
+ * page opens on (AppView._landOnTab / _landOnHub), then follows the page's
+ * own address in place. A modified or middle click, or one something else
+ * took, changes nothing on this page before the browser opens the link.
+ */
+export function openCommunityRow(e: React.MouseEvent, slug: string | null | undefined, owed: number | null): void {
+  if (slug && isPlainClick(e)) {
+    const view = (window as any).AppView;
+    if (communityRowPlace(owed) === 'needs') view?._landOnTab?.(slug, 'needs');
+    else view?._landOnHub?.(slug);
+  }
+  followThenDismiss(e, slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#');
+}
+
+// The click followThenDismiss below follows itself: the button alone, not
+// one something else took.
+function isPlainClick(e: React.MouseEvent): boolean {
+  return !(e.defaultPrevented || e.nativeEvent.defaultPrevented || e.button !== 0
+    || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey);
 }
 
 function followThenDismiss(e: React.MouseEvent, href: string): void {
@@ -898,7 +934,7 @@ export function AppsSwitcherSheet(): ReactNode {
             id="app-menu-row-workshop"
             dataContextRow="workshop"
             elRef={workshopRowRef}
-            href={slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#'}
+            href={communityRowHref(slug, owed)}
             icon={<UserGroupIcon />}
             label={t('agent:appContext.row.community')}
             trailing={owed ? (
@@ -919,14 +955,7 @@ export function AppsSwitcherSheet(): ReactNode {
             // #5927 item 3: while it says decisions wait on you, it opens
             // on the list of them, the project's Needs you place, rather
             // than the hub, where they are one card among others.
-            onClick={(e) => {
-              if (slug) {
-                const view = (window as any).AppView;
-                if (communityRowPlace(owed) === 'needs') view?._landOnTab?.(slug, 'needs');
-                else view?._landOnHub?.(slug);
-              }
-              followThenDismiss(e, slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#');
-            }}
+            onClick={(e) => openCommunityRow(e, slug, owed)}
           />
           {/*
               GO TO APP DISCUSSION and INVITE TO COMMUNITY LEFT THE MENU (UI

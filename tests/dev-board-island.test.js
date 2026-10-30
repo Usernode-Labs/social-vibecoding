@@ -439,7 +439,7 @@ test('the view toggle is real React state, and the className writer is gone', ()
   // The Workshop is a hash route, so it has to be an anchor — cmd/ctrl-click
   // and "open in new tab" work on it, the rule tests/nav-new-tab.test.js pins
   // across the shell. MenuRow always renders an <a>.
-  assert.match(SHEET, /href=\{slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#'\}/,
+  assert.match(SHEET, /communityRowHref\(slug: string \| null \| undefined, owed: number \| null\): string \{[\s\S]*?: `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop`;[\s\S]*?href=\{communityRowHref\(slug, owed\)\}/,
     'the Workshop row is an anchor at the workshop route');
   // No control navigates to the board route — `#app/<slug>/board` and
   // `?view=kanban` still resolve onto the kanban, and dapp.json checks both.
