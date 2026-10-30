@@ -383,7 +383,13 @@ async function getProposalDiff(owner, repo, basehead, charBudget) {
     out += block;
   }
   if (truncated) out += `\n…diff truncated at ~${charBudget} chars (${files.length} files changed in total)…\n`;
-  return { diff: out, fileCount: files.length, truncated };
+  // #6037: the full list, the same shape github.getProposalDiff returns.
+  // The local compare is not capped, so the list is always complete.
+  return {
+    diff: out, fileCount: files.length, truncated,
+    files: files.map((f) => ({ filename: f.filename, previous: f.previous_filename || null })),
+    filesComplete: true,
+  };
 }
 
 async function compareFiles(owner, repo, basehead, charBudget = 60000, { cap = 300 } = {}) {

@@ -1642,7 +1642,14 @@ async function getProposalDiff(owner, repo, basehead, charBudget = PROPOSAL_DIFF
   if (truncated) {
     out += `\n…diff truncated at ~${charBudget} chars (${files.length} files changed in total)…\n`;
   }
-  return { diff: out, fileCount: files.length, truncated };
+  return {
+    diff: out, fileCount: files.length, truncated,
+    // #6037: the full list, so a reviewer knows what exists beyond the
+    // truncated text. `filesComplete` false means the compare's 300-file
+    // page was full, so an unlisted path is not proven absent.
+    files: files.map((f) => ({ filename: f.filename, previous: f.previous_filename || null })),
+    filesComplete: files.length < COMPARE_FILES_CAP,
+  };
 }
 
 // #3654: the files a compare touched, with their status and patch, for the

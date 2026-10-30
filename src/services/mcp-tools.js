@@ -1056,6 +1056,12 @@ function shapeChecks(session) {
   // stopped in setup) names no failing test, so it is not listed as one.
   // When it is why the run errored, `error` below carries its reason.
   const failed = results.filter((t) => t && t.status && t.status !== 'pass' && !unitSuiteRow.isNotRunRow(t));
+  // #6037: a failed row stored as advisory (Content rules in advisory mode,
+  // a check that has not graduated) does not gate the merge, so it is not a
+  // "failing" check. It is still reported, with `advisory: true`, in
+  // `failures`. A legacy row with no `advisory` flag counts as blocking.
+  const blocking = failed.filter((t) => !t.advisory);
+  const advisoryFailed = failed.filter((t) => !!t.advisory);
   const ranOn = session.checks_commit_sha || null;
   const head = headShaOf(session);
   // #3978. The unit-suite row's stored per-test excerpts, previewed inline:
@@ -1113,7 +1119,7 @@ function shapeChecks(session) {
     baseVerdict: session.checks_base_verdict || (session.checks_base_sha ? 'unknown' : null),
     baseBehindBy: typeof session.checks_base_behind_by === 'number'
       ? session.checks_base_behind_by : null,
-    failing: failed
+    failing: blocking
       .slice(0, MAX_LIST_ITEMS)
       .map((t) => untrusted(t.name || t.path || 'unnamed test', MAX_TITLE_CHARS)),
     // #1323. How many failed, and whether the list above is all of them.
@@ -1121,9 +1127,10 @@ function shapeChecks(session) {
     // `total: 153` reads as "50 failed, 103 passed" — the reading that sent a
     // real investigation down a deploy-race theory when in fact all 153 had
     // failed identically, which is the signature of a broken preview and
-    // nothing else.
-    failingTotal: failed.length,
-    failingTruncated: failed.length > MAX_LIST_ITEMS,
+    // nothing else. #6037: only checks that gate the merge are counted here;
+    // a failed advisory row is listed in `failures` with `advisory: true`.
+    failingTotal: blocking.length,
+    failingTruncated: blocking.length > MAX_LIST_ITEMS,
     // And WHY they failed, which the capture stored per row and this shape
     // used to drop on the floor.
     //
@@ -1132,8 +1139,10 @@ function shapeChecks(session) {
     // and its reason is the per-file list that tells the agent which test
     // files to run. Ten rows and 400 characters in, it held neither.
     failures: [
-      ...failed.filter(unitSuiteRow.isUnitSuiteRow),
-      ...failed.filter((t) => !unitSuiteRow.isUnitSuiteRow(t)),
+      ...blocking.filter(unitSuiteRow.isUnitSuiteRow),
+      ...blocking.filter((t) => !unitSuiteRow.isUnitSuiteRow(t)),
+      ...advisoryFailed.filter(unitSuiteRow.isUnitSuiteRow),
+      ...advisoryFailed.filter((t) => !unitSuiteRow.isUnitSuiteRow(t)),
     ].slice(0, MAX_FAILURE_DETAILS).map((t) => ({
       name: untrusted(t.name || t.path || 'unnamed test', MAX_TITLE_CHARS),
       path: t.path ? untrusted(String(t.path), MAX_TITLE_CHARS) : null,
@@ -1142,6 +1151,9 @@ function shapeChecks(session) {
       // The repo unit suite's row previews its first failing tests' excerpts
       // here; a declared check's reason IS its diagnosis and stays alone.
       details: unitSuiteRow.isUnitSuiteRow(t) ? inlineDetails(t) : [],
+      // #6037: always present, never conditional (#2137): true when this row
+      // does not gate the merge.
+      advisory: !!t.advisory,
     })),
     // True when the row kept more excerpts than the preview shows (or the
     // run itself was capped): get_check_output returns the whole stored text.
@@ -4442,13 +4454,15 @@ function registerTools(server, ctx) {
         baseBehindBy: z.number().nullable()
           .describe('How many commits the default branch has moved since ranOnBase. Null when unmeasured.'),
         failing: z.array(z.string())
-          .describe('Names of the tests that are not passing, capped at 50. While state is pending these are left '
-            + 'over from the PREVIOUS run and may already be fixed.'),
+          .describe('Names of the checks that gate the merge and are not passing, capped at 50. A failed '
+            + 'ADVISORY row is not listed here; find it in `failures` with `advisory: true`. While state is '
+            + 'pending these are left over from the PREVIOUS run and may already be fixed.'),
         failingTotal: z.number()
-          .describe('How many tests are not passing — the length of the list above BEFORE its cap. Compare it with '
-            + '`total`: equal means every test failed, which is a broken preview rather than a broken change.'),
+          .describe('How many merge-gating checks are not passing — the length of the list above BEFORE its cap. '
+            + 'Failed advisory rows are not counted here. Compare it with `total`: equal means every check failed, '
+            + 'which is a broken preview rather than a broken change.'),
         failingTruncated: z.boolean()
-          .describe('True when `failing` was cut at the cap and names more failures than it lists.'),
+          .describe('True when `failing` was cut at the cap and names more merge-gating failures than it lists.'),
         failures: z.array(z.object({
           name: z.string(),
           path: z.string().nullable(),
@@ -4461,6 +4475,10 @@ function registerTools(server, ctx) {
             + 'and a clipped excerpt carrying the assertion message and expected/actual. Empty on every other '
             + 'row — a declared check\'s reason is its diagnosis. When `detailsTruncated` is true, '
             + 'get_check_output returns the whole stored excerpt.'),
+          advisory: z.boolean()
+            .describe('True when this failed row does not gate the merge (Content rules in advisory mode, a check '
+              + 'that has not graduated). It is reported here for diagnosis but is absent from `failing` and '
+              + '`failingTotal`.'),
         })).describe('WHY the first few failed — the navigation or assertion error the run recorded, falling back '
           + 'to the first console error. When every entry carries the same reason, that reason is the whole '
           + 'diagnosis and no test needs fixing.'),
