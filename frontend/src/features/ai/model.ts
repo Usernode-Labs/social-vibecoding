@@ -9,9 +9,11 @@
  *               the tile.
  *   In progress yours being worked on, soonest first: the bot reading it, a
  *               change being made or fixed, merging, going live.
- *   Up next     yours waiting on someone else: other people's votes, a free
- *               builder, or somebody to pick it up. Each says which.
- *   Live        yours that went live this week, folded.
+ *   Waiting     yours with nothing to do on the row: other people's votes, a
+ *               free builder or slot, the clock. Each says which, and where
+ *               a vote you owe would move it, says that too (30 Oct 2026:
+ *               "Up next" read as yours to do next).
+ *   Live        yours that went live this week.
  *
  * The last four are GET /api/ai/work's, and where Homeroom bot works on a
  * request for you, its list is the bot's own word on it (services/ai-work.js
@@ -46,7 +48,7 @@ export interface AiThread {
   href: string;
   group: 'needs' | 'next' | 'waiting' | 'live';
   what:
-    | 'plan'
+    | 'plan' | 'decide' | 'build_stopped'
     | 'going_live' | 'merging' | 'fixing' | 'revising' | 'building' | 'reading'
     | 'vote' | 'decision' | 'fix_queued' | 'followup_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'on_hold'
     | 'not_picked_up'
@@ -59,6 +61,10 @@ export interface AiThread {
   by?: 'bot' | 'you' | 'someone';
   /** Held back: until a change up for a vote is decided, or by the day's limit. */
   heldBy?: 'approvals' | 'daily';
+  /** A request someone has claimed and has no change for yet: who. */
+  claimedBy?: string | null;
+  /** Held for a slot: how many of Homeroom bot's changes holding one wait on your vote (upNext). */
+  yourVotes?: number;
 }
 
 export interface AiWork {
@@ -82,6 +88,25 @@ export interface NeedItem {
   ballot?: { number?: number | null; title?: string | null } | null;
   /** A change for a request: the request it closes (absent from an older server). */
   request?: { number?: number | null; title?: string | null } | null;
+  /** Who proposed it, by username: Homeroom bot's own changes hold its slots. */
+  author?: string | null;
+}
+
+/** Homeroom bot's account: its changes up for a vote hold a project's build slots. */
+const BOT_USERNAME = 'homeroom_bot';
+
+/** Pure: whether a Needs you card is a vote on one of Homeroom bot's changes, which holds a build slot until decided. */
+function holdsSlot(item: NeedItem): boolean {
+  return item.kind === 'proposal' && String(item.author || '').toLowerCase() === BOT_USERNAME;
+}
+
+/** Pure: the projects where a request of yours waits for one of those slots. */
+function heldProjects(work: AiWork | null): Set<string> {
+  const held = new Set<string>();
+  for (const t of work?.waiting || []) {
+    if (t.what === 'held' && t.heldBy !== 'daily' && t.app) held.add(t.app.slug);
+  }
+  return held;
 }
 
 /** Pure: the request or change number a Needs you card is about, as its page is addressed. */
@@ -121,20 +146,32 @@ export interface WorkRow {
   rootId: number | null;
 }
 
-/** How many rows of Needs you, and of In progress and Up next, show before Show more. */
-export const WORK_FIRST = 8;
-export const NEXT_FIRST = 4;
 /**
- * How many of the feed's cards show before Show more. The heading counts the
- * rest, so a long queue of votes never buries your plans and private threads
- * under it.
+ * How many rows each project shows in a section before its own Show more
+ * (./lists.tsx groups every section's rows by project). Needs you shows the
+ * most: it is what you came for.
  */
-export const NEEDS_FIRST = 3;
+export const GROUP_FIRST = { needs: 5, next: 3, waiting: 3, live: 3 } as const;
 
-/** Pure: Needs you before Show more: the first NEEDS_FIRST of the feed's cards, then the rest in order, WORK_FIRST rows in all. */
-export function foldWork(rows: WorkRow[]): WorkRow[] {
-  let needs = 0;
-  return rows.filter((row) => !row.key.startsWith('need:') || ++needs <= NEEDS_FIRST).slice(0, WORK_FIRST);
+/** Pure: rows under their project, once each, in the order the projects first come. */
+export function byProject<T extends { app: AiApp | null }>(rows: T[]): { app: AiApp | null; items: T[] }[] {
+  const groups: { app: AiApp | null; items: T[] }[] = [];
+  const at = new Map<string, number>();
+  for (const row of rows) {
+    const key = row.app?.slug || '';
+    if (!at.has(key)) { at.set(key, groups.length); groups.push({ app: row.app, items: [] }); }
+    groups[at.get(key)!].items.push(row);
+  }
+  return groups;
+}
+
+/** Pure: the projects in any list, once each, in the order they first come: the filter's chips. */
+export function projectsOf(rows: WorkRow[], ...threads: AiThread[][]): AiApp[] {
+  const projects: AiApp[] = [];
+  for (const app of [...rows.map((r) => r.app), ...threads.flat().map((t) => t.app)]) {
+    if (app && !projects.some((p) => p.slug === app.slug)) projects.push(app);
+  }
+  return projects;
 }
 
 const PILLS: Record<string, string> = {
@@ -144,6 +181,8 @@ const PILLS: Record<string, string> = {
   question: 'messages:ai.pill.answer',
   bot_question: 'messages:ai.pill.answer',
   plan: 'messages:ai.pill.buildIt',
+  decide: 'messages:ai.pill.decide',
+  build_stopped: 'messages:ai.pill.tryAgain',
 };
 
 /** Pure: the page a Needs you card is decided on. */
@@ -197,6 +236,7 @@ function isOwed(owed: Set<string>, t: AiThread): boolean {
 export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow[] {
   const rows: WorkRow[] = [];
   const owed = owedKeys(needs);
+  const held = heldProjects(work);
   for (const item of needs || []) {
     const app = item.app || null;
     rows.push({
@@ -204,7 +244,11 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       title: (item.kind === 'ballot' && item.ballot?.title) || item.title || '',
       app,
       who: 'all',
-      sub: whereLine(app, shownNumber(item)),
+      // A vote on a change of Homeroom bot's, where a request of yours waits
+      // for one of its slots: deciding it lets that request be built.
+      sub: app && held.has(app.slug) && holdsSlot(item)
+        ? { id: 'messages:ai.row.voteFreesSlot', values: where(app, shownNumber(item)) }
+        : whereLine(app, shownNumber(item)),
       pill: { id: PILLS[item.kind] || 'messages:ai.pill.needsYou' },
       href: needHref(item),
       rootId: null,
@@ -213,11 +257,20 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
   for (const t of work?.needs || []) {
     if (isOwed(owed, t)) continue;
     rows.push({
-      key: `plan:${t.threadId}`,
+      key: `${t.what === 'decide' ? 'decide' : t.what === 'build_stopped' ? 'stopped' : 'plan'}:${t.threadId}`,
       title: t.title || '',
       app: t.app,
       who: 'all',
-      sub: whereLine(t.app, t.number),
+      // Homeroom bot read it and handed it back (its verdict "a person must
+      // decide"): nothing moves until a person does, so it is Needs you's,
+      // and says why rather than "Nobody is building it yet" (30 Oct 2026).
+      // A build of Homeroom bot's that came to nothing waits on somebody
+      // asking again, so it is here too, with Try again.
+      sub: t.what === 'decide'
+        ? { id: 'messages:ai.row.decide', values: where(t.app, t.number) }
+        : t.what === 'build_stopped'
+          ? { id: 'messages:ai.row.buildStopped', values: where(t.app, t.number) }
+          : whereLine(t.app, t.number),
       pill: { id: PILLS[t.what] || 'messages:ai.pill.needsYou' },
       href: t.href,
       rootId: null,
@@ -245,19 +298,50 @@ export function owedCount(rows: WorkRow[]): number {
   return rows.filter((row) => row.pill).length;
 }
 
+/** The phone's second line for a Needs you row, by the reason its tooltip gives. */
+const WHY: Record<string, string> = {
+  'messages:ai.row.decide': 'messages:ai.why.decide',
+  'messages:ai.row.buildStopped': 'messages:ai.why.buildStopped',
+  'messages:ai.row.voteFreesSlot': 'messages:ai.why.voteFreesSlot',
+};
+
+/**
+ * Pure: a Needs you row's reason, where it is news: a phone shows it under
+ * the title, where nothing hovers to show the tooltip. A plain vote or a
+ * plan says nothing more than its pill does, so it has none.
+ */
+export function whyOf(row: WorkRow): Phrase | null {
+  const id = WHY[row.sub.id];
+  return id ? { id } : null;
+}
+
+/** Pure: the same for an In progress or Waiting row: a slot your votes can free. */
+export function threadWhy(t: AiThread): Phrase | null {
+  if (t.what === 'held' && t.yourVotes) return { id: 'messages:ai.why.heldYours', values: { count: t.yourVotes } };
+  return null;
+}
+
 /** Pure: In progress, less any thread the feed already lists. */
 export function inProgress(needs: NeedItem[] | null, work: AiWork | null): AiThread[] {
   const owed = owedKeys(needs);
   return (work?.next || []).filter((t) => !isOwed(owed, t));
 }
 
-/** Pure: Up next, less any thread the feed already lists. */
+/**
+ * Pure: Waiting, less any thread the feed already lists. A request held for
+ * one of Homeroom bot's slots counts the bot's changes on its project that
+ * wait on your vote: those votes are what frees one.
+ */
 export function upNext(needs: NeedItem[] | null, work: AiWork | null): AiThread[] {
   const owed = owedKeys(needs);
-  return (work?.waiting || []).filter((t) => !isOwed(owed, t));
+  return (work?.waiting || []).filter((t) => !isOwed(owed, t)).map((t) => {
+    if (t.what !== 'held' || t.heldBy === 'daily' || !t.app) return t;
+    const yourVotes = (needs || []).filter((item) => item.app?.slug === t.app!.slug && holdsSlot(item)).length;
+    return yourVotes ? { ...t, yourVotes } : t;
+  });
 }
 
-/** The words of an In progress or Up next row's second line, by what it waits on. */
+/** The words of an In progress or Waiting row's tooltip, by what it waits on. */
 const THREAD_WORDS: Record<string, string> = {
   going_live: 'messages:ai.next.goingLive',
   merging: 'messages:ai.next.merging',
@@ -276,7 +360,7 @@ const THREAD_WORDS: Record<string, string> = {
   not_picked_up: 'messages:ai.up.notPickedUp',
 };
 
-/** Pure: one In progress or Up next row's second line: its project, and what it waits on. */
+/** Pure: one In progress or Waiting row's whole line (its tooltip): its project, and what it waits on. */
 export function nextWords(t: AiThread): Phrase {
   const values = where(t.app, t.number);
   if (t.what === 'not_picked_up') {
@@ -293,9 +377,45 @@ export function nextWords(t: AiThread): Phrase {
     return { id: 'messages:ai.up.decision', values: project };
   }
   if (t.what === 'held' && t.heldBy === 'daily') return { id: 'messages:ai.up.heldDaily', values };
+  if (t.what === 'held' && t.yourVotes) return { id: 'messages:ai.up.heldYours', values: { ...values, count: t.yourVotes } };
   if (t.what === 'building' && t.by === 'bot') return { id: 'messages:ai.next.botBuilding', values };
   if (t.what === 'building' && t.by === 'you') return { id: 'messages:ai.next.youBuilding', values };
+  // Claimed, with no change yet: who has it, not "Nobody is building it yet".
+  if (t.what === 'building' && t.claimedBy) return { id: 'messages:ai.next.claimed', values: { ...values, username: t.claimedBy } };
   return { id: THREAD_WORDS[t.what] || 'messages:ai.row.where', values };
+}
+
+/** The one word on the right of an In progress or Waiting row, by what it waits on. Whole ids, so the inventory finds them. */
+const SHORT_WORDS: Record<string, string> = {
+  going_live: 'messages:ai.short.goingLive',
+  merging: 'messages:ai.short.merging',
+  fixing: 'messages:ai.short.fixing',
+  revising: 'messages:ai.short.revising',
+  reading: 'messages:ai.short.reading',
+  building: 'messages:ai.short.building',
+  vote: 'messages:ai.short.votes',
+  decision: 'messages:ai.short.votes',
+  fix_queued: 'messages:ai.short.builder',
+  followup_queued: 'messages:ai.short.builder',
+  queued: 'messages:ai.short.builder',
+  build_queued: 'messages:ai.short.turn',
+  held: 'messages:ai.short.slot',
+  stalled: 'messages:ai.short.stalled',
+  on_hold: 'messages:ai.short.monday',
+  not_picked_up: 'messages:ai.short.nobody',
+};
+
+/**
+ * Pure: the one word on the right of an In progress or Waiting row
+ * (./lists.tsx): who is at it, or what it waits on. The whole line
+ * (nextWords) is its tooltip.
+ */
+export function shortWords(t: AiThread): Phrase {
+  if (t.what === 'building' && t.by === 'bot') return { id: 'messages:ai.short.bot' };
+  if (t.what === 'building' && t.by === 'you') return { id: 'messages:ai.short.you' };
+  if (t.what === 'building' && t.claimedBy) return { id: 'messages:ai.short.claimed', values: { username: t.claimedBy } };
+  if (t.what === 'held' && t.heldBy === 'daily') return { id: 'messages:ai.short.tomorrow' };
+  return { id: SHORT_WORDS[t.what] || 'messages:ai.short.waiting' };
 }
 
 /** Pure: the hero's line under the bot's name: what needs you, what is in progress. */

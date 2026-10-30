@@ -4,15 +4,19 @@
 // Plan v3: "what needs you comes first, then your private threads, with a
 // lock on the tile, then Up next: what's moving without you, soonest first.
 // Ask Homeroom bot opens Main." 29 Oct 2026 (Evan): Needs you (it holds
-// other people's threads too), In progress (being worked on), Up next
-// (waiting on someone else), each the bot's own word where it works on the
-// request; and a thread opens on this page.
+// other people's threads too), In progress (being worked on), Waiting (on
+// someone else; "Up next" until 30 Oct), each the bot's own word where it
+// works on the request; and a thread opens on this page. 30 Oct 2026: one
+// line a row, grouped by project, with a chip for each (./lists.tsx); on a
+// phone the list and Main Chat are one drawer; Homeroom bot's status answer
+// reads the same lists.
 //
 // What this pins:
 //   1. Needs you's order: the Needs you feed, the bot's plans waiting for
-//      Build it, then private threads; each thread is listed once.
-//   2. In progress and Up next: what goes in each, in what order, and the
-//      words each row says, the bot's stages among them.
+//      Build it and the requests it handed back (Decide, Try again), then
+//      private threads; each thread is listed once.
+//   2. In progress and Waiting: what goes in each, in what order, and the
+//      words each row says, the bot's stages and claims among them.
 //   3. The screen's first render is the prerender: hidden, the bot's name,
 //      no rows; the lists load in effects, Main is docked only after mount.
 //   4. The routes: #homeroom-bot is the page, #homeroom-bot/main and
@@ -85,31 +89,39 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
   assert.equal(needsYou(null, { private: [], next: [], waiting: [], live: [] }).length, 0, 'an older server, with no plans');
 });
 
-test('a long queue of votes folds to three, so the plans and private threads still show', () => {
-  const { needsYou, foldWork, NEEDS_FIRST, WORK_FIRST } = loadTsx(MODEL);
-  const needs = Array.from({ length: 9 }, (_, i) => ({ kind: 'proposal', id: i + 1, number: 500 + i, title: `Change ${i}`, app }));
+test('each section groups its rows by project, and a project shows its first few before its own Show more', () => {
+  const { needsYou, byProject, projectsOf, GROUP_FIRST } = loadTsx(MODEL);
+  const games = { slug: 'games', name: 'Game corner', icon_url: null, icon_emoji: '🎮' };
+  const needs = [
+    { kind: 'proposal', id: 1, number: 500, title: 'Change 0', app },
+    { kind: 'proposal', id: 2, number: 600, title: 'Score board', app: games },
+    { kind: 'proposal', id: 3, number: 501, title: 'Change 1', app },
+  ];
   const work = {
-    private: [
-      { rootId: 91, title: 'A calendar idea', kind: 'idea', app: null, at: null },
-      { rootId: 92, title: 'Sort by date', kind: 'draft_request', app, at: null },
-    ],
+    private: [{ rootId: 91, title: 'A calendar idea', kind: 'idea', app: null, at: null }],
     needs: [thread(7, 410, 'plan', { group: 'needs' })],
-    next: [],
-    waiting: [],
-    live: [],
+    next: [], waiting: [], live: [thread(8, 411, 'live', { group: 'live', app: games })],
   };
   const rows = needsYou(needs, work);
-  assert.equal(NEEDS_FIRST, 3);
-  assert.deepEqual(foldWork(rows).map((r) => r.key), [
-    'need:proposal:1', 'need:proposal:2', 'need:proposal:3',
-    'plan:7', 'private:91', 'private:92',
-  ], 'the heading counts the other six and Show more opens them');
-  assert.equal(rows.length, 12, 'Show more still opens every row, in order');
-  const many = { ...work, private: Array.from({ length: 12 }, (_, i) => ({ rootId: 100 + i, title: `Idea ${i}`, kind: 'idea', app: null, at: null })) };
-  assert.equal(foldWork(needsYou(needs, many)).length, WORK_FIRST, 'and the fold is never longer than the first eight');
+  const groups = byProject(rows);
+  assert.deepEqual(groups.map((g) => [g.app && g.app.slug, g.items.map((r) => r.key)]), [
+    ['garden', ['need:proposal:1', 'need:proposal:3', 'plan:7']],
+    ['games', ['need:proposal:2']],
+    [null, ['private:91']],
+  ], 'under each project once, in the order the projects first come; a private idea in no project apart');
+  assert.deepEqual(projectsOf(rows, [], [], work.live).map((p) => p.slug), ['garden', 'games'], 'a chip for each project in any list');
+  assert.deepEqual({ ...GROUP_FIRST }, { needs: 5, next: 3, waiting: 3, live: 3 }, 'Needs you shows the most: it is what you came for');
+  const lists = read('frontend/src/features/ai/lists.tsx');
+  assert.match(lists, /const hidden = Math\.max\(0, g\.items\.length - first\);/);
+  assert.match(lists, /aria-hidden=\{open \? undefined : true\}\s+inert=\{!open\}/, 'the folded rest is out of reach until it opens');
+  assert.match(lists, /\{g\.app \? <SmallTile app=\{g\.app\} size="head" \/> : <LockIcon className="h-4 w-4 shrink-0" aria-hidden="true" \/>\}/);
+  assert.equal(message('messages:ai.short.private'), 'Only you', 'the heading over private ideas in no project');
+  // One project picked: its chip names it, so its name is not said again.
+  assert.match(lists, /const heads = picked\.length !== 1;/);
+  assert.match(lists, /<FadeRail role="group" aria-label=\{t\('messages:ai\.filter\.label'\)\} data-ai-project-chips="">/);
 });
 
-test('In progress and Up next each leave out a thread the feed lists, by its request or its change', () => {
+test('In progress and Waiting each leave out a thread the feed lists, by its request or its change', () => {
   const { inProgress, upNext } = loadTsx(MODEL);
   const needs = [{ kind: 'proposal', id: 1, number: 6025, title: 'Its change', app }];
   const work = {
@@ -139,12 +151,13 @@ test('a vote on a change for a request names the request\'s number, and opens on
   assert.equal(words(plain.sub), 'Garden club · #6050', 'a change for no request keeps its own number');
 });
 
-test('each In progress and Up next row says what it waits on, in the bot\'s words where it is the bot\'s', () => {
+test('each In progress and Waiting row says what it waits on, in the bot\'s words where it is the bot\'s', () => {
   const { nextWords, heroWords } = loadTsx(MODEL);
   const row = (what, extra = {}) => ({ threadId: 1, number: 7, app, what, ...extra });
   assert.deepEqual([
     row('going_live'), row('merging'), row('fixing'), row('revising'), row('reading'),
     row('building', { by: 'bot' }), row('building', { by: 'you' }), row('building', { by: 'someone' }),
+    row('building', { by: 'someone', claimedBy: 'snait' }),
   ].map((r) => words(nextWords(r))), [
     'Garden club · #7 · Going live', 'Garden club · #7 · Merging',
     'Garden club · #7 · Homeroom bot is fixing what its tests found',
@@ -152,7 +165,8 @@ test('each In progress and Up next row says what it waits on, in the bot\'s word
     'Garden club · #7 · Homeroom bot is reading it',
     'Garden club · #7 · Homeroom bot is building it', 'Garden club · #7 · You\'re building it',
     'Garden club · #7 · Being built',
-  ]);
+    'Garden club · #7 · snait is building it',
+  ], 'a claim with no change yet names who has it');
   assert.deepEqual([
     row('vote', { myVote: 'yes' }), row('vote', { myVote: 'no' }), row('vote', { myVote: null }),
     row('fix_queued'), row('followup_queued'), row('build_queued'),
@@ -182,10 +196,50 @@ test('each In progress and Up next row says what it waits on, in the bot\'s word
     'Garden club · Waiting for votes', 'Garden club · Waiting for votes · you voted Yes',
     'Garden club · Waiting for votes · you voted No',
   ]);
-  assert.equal(message('messages:ai.next.title'), 'In progress');
-  assert.equal(message('messages:ai.up.title'), 'Up next');
+  assert.equal(message('messages:ai.next.titleCount', { count: 2 }), 'In progress · 2');
+  assert.equal(message('messages:ai.up.titleCount', { count: 2 }), 'Waiting · 2');
   assert.equal(words(heroWords(2, 3)), 'Needs you: 2 · In progress: 3');
   assert.equal(words(heroWords(0, 3)), 'In progress: 3');
+});
+
+test('a row\'s one word on the right, and on a phone the reason where it is news', () => {
+  const { shortWords, whyOf, threadWhy, needsYou, upNext } = loadTsx(MODEL);
+  const row = (what, extra = {}) => ({ threadId: 1, number: 7, app, what, ...extra });
+  assert.deepEqual([
+    row('going_live'), row('building', { by: 'bot' }), row('building', { by: 'you' }), row('building', { by: 'someone', claimedBy: 'snait' }),
+    row('building', { by: 'someone' }), row('vote'), row('decision'), row('queued'), row('build_queued'),
+    row('held', { heldBy: 'approvals' }), row('held', { heldBy: 'daily' }), row('on_hold'), row('not_picked_up'), row('mystery'),
+  ].map((r) => words(shortWords(r))), [
+    'Going live', 'Homeroom bot', 'You', 'snait', 'Being built', 'Votes', 'Votes', 'A builder', 'Its turn',
+    'A slot', 'Tomorrow', 'Monday', 'Nobody yet', 'Waiting',
+  ]);
+  // Every id is one whole literal, so the inventory can check it exists.
+  assert.ok(!read(MODEL).includes('messages:ai.short.${'));
+  // Handed back by the bot: Decide, and Try again, each with its reason.
+  const work = {
+    private: [], next: [], live: [],
+    needs: [thread(7, 410, 'decide', { group: 'needs' }), thread(8, 411, 'build_stopped', { group: 'needs' })],
+    waiting: [thread(9, 412, 'held', { heldBy: 'approvals' })],
+  };
+  const bots = [{ kind: 'proposal', id: 1, number: 600, title: 'Its change', app, author: 'homeroom_bot' }];
+  const rows = needsYou(bots, work);
+  assert.deepEqual(rows.map((r) => [r.key, r.pill && message(r.pill.id), words(r.sub)]), [
+    ['need:proposal:1', 'Vote', 'Garden club · #600 · Your vote helps free a build slot'],
+    ['decide:7', 'Decide', 'Garden club · #410 · Homeroom bot says a person needs to decide'],
+    ['stopped:8', 'Try again', 'Garden club · #411 · Homeroom bot\'s build stopped'],
+  ]);
+  assert.deepEqual(rows.map((r) => whyOf(r) && words(whyOf(r))), [
+    'Your vote helps free a build slot', 'Homeroom bot needs a person to decide', 'Homeroom bot\'s build stopped',
+  ]);
+  assert.equal(whyOf(needsYou([{ kind: 'proposal', id: 2, number: 601, title: 'Plain', app }], null)[0]), null, 'a plain vote says no more than its pill');
+  const [held] = upNext(bots, work);
+  assert.equal(held.yourVotes, 1);
+  assert.equal(words(threadWhy(held)), 'A vote you owe can free its slot');
+  assert.equal(threadWhy(row('queued')), null);
+  const lists = read('frontend/src/features/ai/lists.tsx');
+  assert.match(lists, /<span className="block truncate text-xs leading-4 text-zinc-500 dark:text-zinc-400 md:hidden" aria-hidden="true" data-ai-line-why="">\{line\.why\}<\/span>/,
+    'the reason is a phone\'s second line; the tooltip says it everywhere');
+  assert.match(lists, /const ROW = 'flex w-full min-h-\[44px\] md:min-h-\[36px\]/, 'a phone\'s 44px tap target');
 });
 
 test('the server: a vote you have given waits on others (Up next), and the bot\'s stage decides where its requests go', () => {
@@ -213,6 +267,16 @@ test('the server: a vote you have given waits on others (Up next), and the bot\'
   assert.equal(aiWork.standing({ ...open, state: 'closed' }, ME, now, null, { stage: 'plan' }), null, 'never on a closed thread');
   assert.deepEqual(aiWork.standing(open, ME, now), { group: 'waiting', what: 'not_picked_up', at, quietDays: 0 },
     'nobody building it, and not the bot\'s');
+  // 30 Oct 2026: handed back by the bot, it is Needs you's, until somebody takes it up.
+  assert.deepEqual(bot('decide'), { group: 'needs', what: 'decide', at }, 'a person needs to decide: not "Nobody is building it yet"');
+  assert.deepEqual(bot('build_stopped'), { group: 'needs', what: 'build_stopped', at }, 'its build stopped: Try again');
+  assert.deepEqual(aiWork.standing({ ...open, claimed_by: 'snait' }, ME, now, null, { stage: 'decide', since: at }),
+    { group: 'next', what: 'building', at, by: 'someone', claimedBy: 'snait' }, 'claimed since: being built, by who has it');
+  assert.equal(aiWork.standing({ ...open, change_status: 'active', change_user: ME, last_activity_at: at }, ME, now, null, { stage: 'build_stopped' }).what,
+    'building', 'or with a change of theirs');
+  assert.deepEqual(aiWork.standing({ ...open, claimed_by: 'aw_me', claimed_mine: true }, ME, now),
+    { group: 'next', what: 'building', at, by: 'you' }, 'their own claim');
+  assert.equal(aiWork.standing({ ...open, own: false, claimed_by: 'snait' }, ME, now), null, 'one they only wrote in, claimed, asks nothing of them');
   // A decision up for a vote waits for votes; one whose vote is owed is the feed's.
   const decision = { state: 'open', own: true, kind: 'decision', number: null, created_at: at, decision_status: 'open' };
   assert.deepEqual(aiWork.standing({ ...decision, decision_mine: true }, ME, now), { group: 'waiting', what: 'decision', at, myVote: null });
@@ -232,7 +296,7 @@ test('the server: a vote you have given waits on others (Up next), and the bot\'
   }
 });
 
-test('the server arranges Up next nearest to live first, and matches the bot\'s stages by request', () => {
+test('the server arranges Waiting nearest to live first, and matches the bot\'s stages by request', () => {
   const aiWork = require('../src/services/ai-work');
   const now = new Date('2026-10-29T12:00:00Z');
   const row = (id, number, extra = {}) => ({
@@ -254,16 +318,81 @@ test('the server arranges Up next nearest to live first, and matches the bot\'s 
   assert.deepEqual(lists.next, []);
 });
 
+test('a request the bot handed back is one its records say it left for a person, or whose build stopped', async () => {
+  const { handedBack, stageOf } = require('../src/services/homeroom-bot-progress');
+  const looked = { mode: 'live', verdict: 'person', request_closed: false, proposal_status: null };
+  assert.equal(stageOf(looked), null, 'nothing about it is in progress');
+  assert.equal(handedBack(looked), 'decide');
+  assert.equal(handedBack({ ...looked, verdict: 'ready', build_ok: false, build_error: 'turn timed out' }), 'build_stopped');
+  assert.equal(handedBack({ ...looked, verdict: 'ready', build_ok: false, build_error: 'skipped: answered meanwhile' }), null, 'a skip did not stop');
+  assert.equal(handedBack({ ...looked, verdict: 'ready', build_ok: false, build_error: 'blocked: needs a key' }), null, 'nor one that asks for detail');
+  assert.equal(handedBack({ ...looked, request_closed: true }), null, 'never on a closed request');
+  assert.equal(handedBack({ ...looked, proposal_status: 'promoted' }), null, 'nor with a change of it up');
+  assert.equal(handedBack({ ...looked, mode: 'shadow' }), null, 'only its acted-on looks');
+  assert.equal(handedBack({ ...looked, verdict: 'empty' }), null);
+  // botStages reads it where nothing is in progress.
+  const aiWork = require('../src/services/ai-work');
+  const stages = await aiWork.botStages(null, { id: 5 }, {
+    liveSvc: { isStaging: () => false },
+    settings: { mode: 'live' },
+    progress: {
+      handedBack,
+      requestStates: async () => [
+        { row: { ...looked, slug: 'garden', issue_number: 6010, run_at: '2026-10-29T10:00:00Z' }, state: null },
+        { row: { ...looked, slug: 'garden', issue_number: 6011, verdict: 'failed' }, state: null },
+      ],
+    },
+  });
+  assert.deepEqual([...stages], [['garden#6010', { stage: 'decide', since: '2026-10-29T10:00:00Z', capSuppressed: null }]]);
+});
+
+test('Homeroom bot answers "where do things stand?" from the lists this page draws', () => {
+  const aiWork = require('../src/services/ai-work');
+  const games = { slug: 'games', name: 'Game corner' };
+  const needs = [
+    { kind: 'proposal', id: 1, number: 6032, title: 'Spell out the rules', app, author: 'homeroom_bot', request: { number: 6038 } },
+    { kind: 'ballot', id: 2, number: 6040, title: 'A or B', app, ballot: { number: 6039, title: 'Night theme' } },
+  ];
+  const work = {
+    private: [{ rootId: 9, title: 'A calendar idea', app: null }],
+    needs: [thread(1, 6010, 'decide', { group: 'needs', title: 'Points table' }), thread(2, 6038, 'plan', { group: 'needs' })],
+    next: [thread(3, 6020, 'building', { group: 'next', by: 'someone', claimedBy: 'snait', title: 'Sound toggle', app: games })],
+    waiting: [thread(4, 6014, 'held', { heldBy: 'approvals', title: 'Export' }), thread(5, 6039, 'vote', { title: 'Owed already' })],
+    live: [thread(6, 6001, 'live', { group: 'live', title: 'Pause button' })],
+  };
+  const lists = aiWork.listsOf(needs, work, { botUsername: 'homeroom_bot' });
+  assert.deepEqual(lists.needsYou.map((r) => [r.number || null, r.title, r.says]), [
+    [6038, 'Spell out the rules', 'waits for their vote'],
+    [6039, 'Night theme', 'waits for them to pick one of its changes'],
+    [6010, 'Points table', 'Homeroom bot handed it back: a person needs to decide'],
+    [null, 'A calendar idea', 'their private thread with Homeroom bot, not posted yet'],
+  ], 'the feed\'s cards by their requests\' numbers, then what the bot handed back; #6038\'s plan is the vote above');
+  assert.deepEqual(lists.inProgress.map((r) => [r.projectName, r.says]), [['Game corner', 'snait is building it']]);
+  assert.deepEqual(lists.waiting.map((r) => r.says), ['ready to build; a vote they owe on Homeroom bot\'s changes can free its slot'],
+    'the vote owed on #6039 is Needs you\'s alone');
+  assert.deepEqual(lists.liveThisWeek.map((r) => r.says), ['live']);
+  assert.deepEqual(lists.counts, { needsYou: 3, inProgress: 1, waiting: 1, liveThisWeek: 1 }, 'the headings\' counts: a private thread asks nothing');
+  // my_work carries them, and the prompt says to answer from them.
+  const mayor = read('src/services/homeroom-bot-mayor.js');
+  assert.match(mayor, /onYourPage = await \(deps\.aiWork \|\| require\('\.\/ai-work'\)\)\.pageLists\(pool, \{/);
+  assert.match(mayor, /call my_work and answer from its onYourPage:/);
+  assert.match(mayor, /myWork\(pool, \{ userId: user\.id, user, settings, config: ctx\.config, deps \}\)/);
+  // The feed is read the way its route reads it.
+  assert.match(read('src/services/ai-work.js'), /feed\(pool, \{ user, showSelfHosted, inThreads: true \}\)/);
+});
+
 test('Needs you here is the threads you are in, counted in the label\'s ink, with no link to every vote', () => {
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /readJson<\{ items\?: NeedItem\[\] \}>\(`\/api\/workshop\/needs-feed\?in=threads\$\{qs \? '&demo=1' : ''\}`\)/);
-  assert.match(src, /<SecHead>\s+\{owed \? t\('messages:ai\.work\.titleCount', \{ count: owed \}\) : t\('messages:ai\.work\.title'\)\}\s+<\/SecHead>/,
-    'the count is in the label\'s own words and ink, not the accent a link wears');
+  assert.match(read('frontend/src/features/ai/lists.tsx'),
+    /head=\{owedShown \? t\('messages:ai\.work\.titleCount', \{ count: owedShown \}\) : t\('messages:ai\.work\.title'\)\}/,
+    'the count is in the label\'s own words, not a link');
   assert.ok(!src.includes('ws=needs#communities'), 'All votes is gone');
   assert.equal(message('messages:ai.work.title'), 'Needs you');
   assert.equal(message('messages:ai.work.titleCount', { count: 5 }), 'Needs you · 5');
   const route = read('src/routes/workshop-overview.js');
-  assert.match(route, /pool\.query\(req\.query\.in === 'threads' \? NEEDS_FEED_IN_THREADS_SQL : NEEDS_FEED_SQL, \[/);
+  assert.match(route, /inThreads: req\.query\.in === 'threads',/);
+  assert.match(route, /pool\.query\(inThreads \? NEEDS_FEED_IN_THREADS_SQL : NEEDS_FEED_SQL, \[/);
   const { NEEDS_FEED_SQL, NEEDS_FEED_IN_THREADS_SQL } = require('../src/routes/workshop-overview');
   assert.match(NEEDS_FEED_IN_THREADS_SQL, /AND \(o\.kind = 'question'\s+OR \(o\.thread_id IN \(SELECT mine\.thread_id FROM/, 'the bot\'s questions to you show wherever they are');
   assert.match(NEEDS_FEED_IN_THREADS_SQL, /f\.muted_at IS NOT NULL/, 'not a thread you muted');
@@ -276,6 +405,9 @@ test('Needs you here is the threads you are in, counted in the label\'s ink, wit
     'a closed thread is read only for its merged change');
   assert.match(THREADS_SQL, /PARTITION BY COALESCE\(ch\.status = 'merged', FALSE\)\s+ORDER BY mine\.own DESC,/);
   assert.match(THREADS_SQL, /\) listed\s+WHERE place <= \$4/);
+  // A claim this week names who has it (homeroom-bot.js CLAIM_TTL_DAYS).
+  assert.match(THREADS_SQL, /ic\.claimed_at > NOW\(\) - make_interval\(days => 7\)/);
+  assert.match(THREADS_SQL, /cl\.username AS claimed_by, cl\.mine AS claimed_mine,/);
   // The feed names a change's request, which the rows above go by.
   const { shapeNeedsFeed } = require('../src/routes/workshop-overview');
   const base = { kind: 'proposal', id: 1, title: 'Its change', number: 6032, slug: 'garden', name: 'Garden club' };
@@ -293,10 +425,10 @@ test('the first render is the prerender: hidden, the bot\'s name, no rows; lists
   assert.match(src, /readJson<AiWork>\(`\/api\/ai\/work\$\{qs\}`\)/);
   // Main docked beside it only on a wide window, after mount.
   assert.match(src, /const \[wide, setWide\] = useState\(false\);/);
-  assert.match(src, /\{docked \? \(\s*<aside className="ai-main-pane"/);
+  assert.match(src, /\{docked \? \(\s*<aside id="ai-main-pane" ref=\{mainRef\} className="ai-main-pane"/);
   assert.match(src, /<EmbeddedConversation conversationId=\{botId!\} active=\{visible\} at=\{at\} \/>/);
   // Ask Homeroom bot opens Main; a private thread opens in it.
-  assert.match(src, /<a href="#homeroom-bot\/main" className="messages-composer-card ai-askbar-card"/);
+  assert.match(src, /<a\s+href="#homeroom-bot\/main"\s+className="messages-composer-card ai-askbar-card"/);
   assert.match(src, /else go\(`#homeroom-bot\/thread\/\$\{row\.rootId\}`\);/);
 });
 
@@ -307,7 +439,7 @@ test('a page drawn before sign-in is confirmed asks again once it is, and its As
   // chat go again then, instead of staying empty until a reload.
   assert.match(src, /const again = \(\) => setSession\(\(n\) => n \+ 1\);\s+document\.addEventListener\('sv:session', again\);\s+return \(\) => document\.removeEventListener\('sv:session', again\);/);
   assert.match(src, /return \(\) => \{ live = false; \};\s+\}, \[visible, session\]\);/);
-  assert.match(src, /\}, \[visible, wide, botId, session\]\);/);
+  assert.match(src, /\}, \[visible, wide, phone, botId, session\]\);/);
   assert.match(read('public/js/app.js'), /document\.dispatchEvent\(new CustomEvent\('sv:session', \{\s+detail: \{ user: App\.user, verifiedSession: true \},/,
     'the confirmation it waits for');
   // A wide window whose Main is not docked (yet, or at all) keeps the bar
@@ -335,23 +467,26 @@ test('the screen renders as the prerender does: hidden, the bot\'s name, Needs y
   assert.match(html, /<h1 class="[^"]*">Homeroom bot<\/h1>/);
   assert.match(html, /Needs you/);
   assert.match(html, /<a href="#homeroom-bot\/main" class="messages-composer-card ai-askbar-card" aria-label="Ask Homeroom bot">/);
-  assert.ok(!html.includes('data-ai-row'), 'no rows before the effects read them');
+  assert.ok(!html.includes('data-ai-line'), 'no rows before the effects read them');
+  assert.ok(!html.includes('ai-drawer'), 'and no drawer before mount, on a phone either');
   assert.ok(!html.includes('data-ai-main'), 'and Main is not docked before mount');
 });
 
 test('a thread opens on this page: beside the list in Main\'s place, or on its page with a way back here', () => {
   const src = read('frontend/src/features/ai/index.tsx');
-  assert.match(src, /<aside className="ai-main-pane" aria-labelledby="ai-main-title" data-ai-main="">\s+<header className="ai-main-head" data-ai-main-head="">/);
+  assert.match(src, /<aside id="ai-main-pane" ref=\{mainRef\} className="ai-main-pane" aria-labelledby="ai-main-title" data-ai-main="">\s+<SidePanelDivider [^>]*\/>\s+<header className="ai-main-head" data-ai-main-head="">/);
   assert.match(src, /<span id="ai-main-title"[^>]*>\s+\{t\('messages:store\.header\.main'\)\}/);
   assert.match(src, /\{t\('messages:ai\.main\.sub'\)\}/);
-  assert.equal(message('messages:ai.main.sub'), 'Your chat with Homeroom bot. Only you can see it.');
-  // The panel takes it wherever it can (a wide window), with the row's project; its page otherwise.
-  assert.match(src, /if \(sidePanel\(\)\?\.take\?\.\(href\.replace\(\/\^#\/, ''\), \{ place: app \}\)\) return;/);
+  assert.equal(message('messages:ai.main.sub'), 'Only you can see this chat');
+  assert.equal(message('messages:store.header.main'), 'Main Chat', 'Main Chat, over it, in Messages and in the drawer alike');
+  // The panel takes it wherever it can (a wide window), with the row's project and title; its page otherwise.
+  assert.match(src, /if \(sidePanel\(\)\?\.take\?\.\(href\.replace\(\/\^#\/, ''\), \{ place: app, label \}\)\) \{/);
   assert.match(src, /if \(isTopicHref\(href\)\) improve\(\)\?\.enterTopicFrom\?\.\(BOT_PAGE\);\s+go\(href\);/,
     'a topic page opened from here goes back here');
   assert.match(src, /const BOT_PAGE = '#homeroom-bot';/);
-  assert.equal((src.match(/onClick=\{\(\) => openPublic\(row\.href, row\.app\)\}/g) || []).length, 2, 'In progress and Up next, and Live this week');
-  assert.match(src, /openPublic\(row\.href, row\.app\);\s+\};/, 'and Needs you');
+  assert.match(src, /const openThread = \(th: AiThread\) => openPublic\(th\.href, th\.app, th\.title, aboutRow\(th\), botId\);/,
+    'In progress, Waiting and Live this week');
+  assert.match(src, /openPublic\(row\.href, row\.app, row\.title, aboutRow\(row\), botId\);\s+\};/, 'and Needs you');
   const { isTopicHref } = loadTsx(MODEL);
   assert.equal(isTopicHref('#app/garden/dev/issues/12'), true);
   assert.equal(isTopicHref('#app/garden/dev/changes/12'), true);
@@ -369,20 +504,58 @@ test('a thread opens on this page: beside the list in Main\'s place, or on its p
   assert.match(app, /\(App\._isMessagesThread\(\) \? 'messages' : App\._isBotTopic\(\) \? 'ai' : 'workshop'\)/, 'it keeps Homeroom bot lit');
 });
 
+test('on a phone the list and Main Chat are one drawer, as Messages\' are; a request opens on its page', () => {
+  const src = read('frontend/src/features/ai/index.tsx');
+  const drawer = read('frontend/src/features/ai/phone-drawer.tsx');
+  // Messages' own strip, slide and landing rule.
+  assert.match(drawer, /import \{ isPan, landingIn, MESSAGES_AT, SLIDE_EASE, SLIDE_MS \} from '\.\.\/nav-drawer\/drawer-math';/);
+  assert.match(drawer, /transition: still \? 'none' : `transform \$\{SLIDE_MS\}ms \$\{SLIDE_EASE\}`/);
+  assert.match(drawer, /const still = drag != null \|\| reducedMotion\(\);/, 'none under Reduce Motion');
+  // The level not in view is out of reach, not only out of sight.
+  assert.match(drawer, /<div className="ai-drawer-list" inert=\{level === 1\} aria-hidden=\{level === 1 \? true : undefined\}>\{list\}<\/div>/);
+  assert.match(drawer, /<div className="ai-drawer-pane" inert=\{level === 0\} aria-hidden=\{level === 0 \? true : undefined\}>\{pane\}<\/div>/);
+  assert.match(drawer, /<button type="button" className="messages-peek-open ai-drawer-peek" aria-label=\{peekLabel\} onClick=\{\(\) => onLevel\(1\)\} \/>/, 'the peek opens it');
+  // Only Main Chat: no page in a frame (Evan, 30 Oct: "the Messages approach").
+  assert.ok(!drawer.includes('<iframe'), 'a request is never drawn in the drawer');
+  assert.match(src, /if \(phone\) openMain\(row\.rootId\);/, 'a private thread slides Main in, at it');
+  assert.match(src, /onClick=\{\(e\) => \{ if \(phone\) \{ e\.preventDefault\(\); setAt\(null\); openMain\(null\); \} \}\}/, 'and so does the Ask bar');
+  assert.match(src, /data-ai-drawer=\{phone \? level : undefined\}/);
+  assert.match(drawer, /const PHONE_QUERY = '\(max-width: 767\.98px\)';/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.ai-drawer-list \{\s+position: absolute; top: 0; bottom: 0; left: 0; width: 85%;/);
+  assert.match(css, /\.ai-drawer-back::after \{ content: ""; position: absolute; inset: -6px; \}/, 'its arrow is pressed as a 44px target');
+  assert.equal(message('messages:ai.drawer.peek', { title: message('messages:store.header.main') }), 'Open Main Chat');
+});
+
+test('what a row opens rides along in Main Chat\'s composer, and only there', () => {
+  const src = read('frontend/src/features/ai/index.tsx');
+  assert.match(src, /window\.dispatchEvent\(new CustomEvent\('usernode:messages-object-selected', \{ detail: \{ \.\.\.about, conversationId: botId \} \}\)\);/);
+  const composer = read('frontend/src/features/messages/composer.tsx');
+  assert.match(composer, /const \{ conversationId: to, \.\.\.object \} = detail;\s+if \(to != null && to !== conversationId\) return;\s+setObject\(object\);/,
+    'a composer under another conversation, mounted under a hidden screen, keeps what it had');
+  const { aboutRow } = loadTsx('frontend/src/features/ai/index.tsx');
+  assert.deepEqual(aboutRow({ href: '#app/garden/dev/issues/12', title: 'Dark mode', app }), { type: 'issue', appSlug: 'garden', issueNumber: 12, title: 'Dark mode' });
+  assert.deepEqual(aboutRow({ key: 'need:governance:4', href: '#app/garden/dev/governance/4', title: 'Rename', app }),
+    { type: 'governance', appSlug: 'garden', proposalId: 4, title: 'Rename' });
+  assert.equal(aboutRow({ href: '#app/garden/workshop', title: 'x', app }), null, 'a Workshop is no item');
+});
+
 test('beside this page the panel is the page\'s own column: ‹ Main and the project, no Expand, Close or Back', () => {
   const panel = read('frontend/src/features/side-panel/side-panel.tsx');
   assert.match(panel, /<button\s+type="button"\s+className="side-panel-main dev-topic-back un-touch-target"\s+aria-label=\{t\('agent:sidePanel\.mainLabel'\)\}\s+onClick=\{\(\) => controller\.close\(\)\}\s+>/,
     '‹ Main gives Main its place back, in the topic\'s own chip');
-  assert.match(panel, /<PanelPlace route=\{s\.route\} place=\{s\.place\} reported=\{s\.reported\} \/>/);
+  assert.match(panel, /<PanelHeading route=\{s\.route\} place=\{s\.place\} reported=\{s\.reported\} label=\{s\.label\} \/>/);
   assert.match(panel, /href=\{`#app\/\$\{encodeURIComponent\(slug\)\}\/workshop`\}/, 'the project, as a door to its page');
   assert.match(panel, /\(window as any\)\.AppView\?\._landOnHub\?\.\(slug\)/, 'which opens on its Hub');
-  assert.equal(message('agent:sidePanel.main'), 'Main');
+  assert.equal(message('agent:sidePanel.main'), 'Main Chat', 'the chat\'s name, as its title says it');
+  assert.equal(message('agent:sidePanel.mainLabel'), 'Back to Main Chat');
   const controller = read('frontend/src/features/side-panel/controller.ts');
   assert.match(controller, /export const BESIDE_AI_CLASS = 'side-panel-beside-ai';/);
   assert.match(controller, /classList\.toggle\(BESIDE_AI_CLASS, isBesideAi\(\)\)/);
-  assert.match(controller, /const \{ place = null, \.\.\.rest \} = given \|\| \{\};/, 'the project is this document\'s, not the page\'s hint');
+  assert.match(controller, /const \{ place = null, label = null, \.\.\.rest \} = given \|\| \{\};/, 'the project and the title are this document\'s, not the page\'s hint');
   const css = read('public/css/app.css');
-  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(#side-panel-back, #side-panel-title, #side-panel-expand, #side-panel-close, \.side-panel-divider\) \{\s+display: none;\s+\}/);
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(#side-panel-back, #side-panel-title, #side-panel-expand, #side-panel-close\) \{\s+display: none;\s+\}/,
+    'the panel\'s controls go, but not its left edge, the handle Main\'s edge is too');
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(\.side-panel-main, \.side-panel-place\) \{ display: inline-flex; \}/);
   assert.match(css, /\.side-panel-head > :is\(\.side-panel-main, \.side-panel-place\) \{ display: none; \}/, 'and beside an app, as it was');
   assert.match(css, /html\.in-side-panel\.side-panel-beside-ai :is\(\.dev-topic-backs, \.dev-topic-back\) \{ display: none; \}/,
@@ -391,14 +564,21 @@ test('beside this page the panel is the page\'s own column: ‹ Main and the pro
 
 test('Main\'s column is held inside the window, and the panel takes its place at its width', () => {
   const css = read('public/css/app.css');
-  // A width chosen beside an app on a wide monitor must not run Main under the rail.
-  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-main-w: max\(320px, min\(var\(--side-panel-w, 400px\), calc\(100vw - var\(--platform-rail-w, 0px\) - 480px\)\)\);\s+\}/);
+  // A width chosen beside an app on a wide monitor must not run Main under
+  // the rail; with none chosen, Main takes the room the list does not need
+  // (30 Oct 2026), 400px to 720px.
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-main-auto: clamp\(400px, calc\(100vw - var\(--platform-rail-w, 0px\) - 720px\), 720px\);\s+--ai-main-w: max\(320px, min\(var\(--side-panel-chosen-w, var\(--ai-main-auto\)\), calc\(100vw - var\(--platform-rail-w, 0px\) - 480px\)\)\);\s+\}/);
   assert.match(css, /#ai-screen\[data-ai-docked\] \{ padding-right: var\(--ai-main-w\); \}/);
   assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*width: var\(--ai-main-w\);/);
   assert.match(css, /#ai-screen \.ai-main-pane > \.messages-layout \{ flex: 1 1 auto; height: auto; min-height: 0; \}/);
   assert.match(css, /html\[data-side-panel\] #ai-screen \.ai-main-pane \{ display: none; \}/);
   assert.match(css, /@media \(min-width: 1024px\) \{\s+html\[data-side-panel\] #ai-screen \{ padding-right: var\(--ai-main-w\); \}\s+\}/);
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{\s+width: var\(--ai-main-w\);/, 'so the list does not move');
+  // 30 Oct 2026: Main's left edge is the side panel's handle, and sets the same width.
+  const src = read('frontend/src/features/ai/index.tsx');
+  assert.match(src, /import \{ SidePanelDivider \} from '\.\.\/side-panel\/side-panel';/);
+  assert.match(src, /<aside id="ai-main-pane" ref=\{mainRef\} className="ai-main-pane"[^>]*>\s+<SidePanelDivider panelRef=\{mainRef\} shown=\{docked\} id="ai-main-divider" controls="ai-main-pane" \/>/);
+  assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /export function SidePanelDivider\(\{\s+panelRef,\s+shown,\s+id = 'side-panel-divider',\s+controls = 'platform-side-panel',/);
 });
 
 test('the tab says Homeroom bot: a wide seat on a phone, two lines in the Duo column', () => {

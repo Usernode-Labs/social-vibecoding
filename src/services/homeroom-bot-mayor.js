@@ -367,6 +367,10 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  are on (say it, for example "step 4 of 7: building it, 6 minutes so far"), what is happening, since when,',
     '  and who it waits on. For the whole list of their requests, call my_work. For ANY question about their',
     '  work, answer only from what these return. Use request_detail for the whole story of one request.',
+    // 30 Oct 2026: the same lists the Homeroom bot tab draws, so the answer and the page agree.
+    '- For "where do things stand?", "what needs me?" or "status?", call my_work and answer from its onYourPage:',
+    '  the lists their Homeroom bot tab shows, by the same names and counts (Needs you, In progress, Waiting,',
+    '  Live this week), each row with what it says. Name nothing those lists leave out, such as a closed request.',
     // B6: a first version's plan is theirs to build or change, by its card.
     '- A new project\'s plan waits for them before you build its first version (progress says so). They start it',
     '  with Build it under the plan, or change it by replying to the plan with what to change; say so. You cannot',
@@ -503,7 +507,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'my_work',
-      description: 'Everything you are doing or have done for this person: each of their requests you know of, on any project, with its status (looking at it now or building it now and since when, waiting in your queue, waiting for their answer, proposal up for a vote with its checks and votes, live, left for the group, could not build) and whether you build on its project; what you are working on for them this minute; and how much of this week\'s building time they have used.',
+      description: 'Everything you are doing or have done for this person: each of their requests you know of, on any project, with its status (looking at it now or building it now and since when, waiting in your queue, waiting for their answer, proposal up for a vote with its checks and votes, live, left for the group, could not build) and whether you build on its project; what you are working on for them this minute; how much of this week\'s building time they have used; and onYourPage, the lists their Homeroom bot tab shows (Needs you, In progress, Waiting, Live this week, with counts), which a status answer is read from.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
@@ -836,9 +840,10 @@ function stepLine(entry) {
  * its queue that it has not looked at yet, and the first versions it is
  * waiting to file. Newest first. What is in progress, and how far along,
  * is `progress`'s (homeroom-bot-progress.js): a build has no queue row, so
- * the queue alone would call a request being built idle.
+ * the queue alone would call a request being built idle. Given the `user`
+ * (as a turn has them), `onYourPage` is their Homeroom bot tab's lists.
  */
-async function myWork(pool, { userId, settings, config = null, deps = {} }) {
+async function myWork(pool, { userId, user = null, settings, config = null, deps = {} }) {
   const bot = botModule(deps);
   // #3772: what the bot does FOR them. A request of theirs it only read in
   // the background (shadow triage of a project it does not build on) is not
@@ -951,7 +956,21 @@ async function myWork(pool, { userId, settings, config = null, deps = {} }) {
       .map((w) => ({ project: w.appSlug, projectName: w.appName, number: w.issueNumber, since: w.since }));
   const cap = Number(await dmModule(deps).weeklyCapCents(pool, settings, userId)) || 0;
   const spent = cap > 0 ? await dmModule(deps).weeklySpentCents(pool, userId) : 0;
+  // 30 Oct 2026: the Homeroom bot tab's own lists, which a status answer is
+  // read from (ai-work.js pageLists). Without them the answer still has the
+  // requests above.
+  let onYourPage = null;
+  if (user) {
+    try {
+      onYourPage = await (deps.aiWork || require('./ai-work')).pageLists(pool, {
+        user, showSelfHosted: !!user.isAdmin || !!config?.selfAppPublicVoting,
+      });
+    } catch (err) {
+      log.warn('homeroom-bot-mayor', 'Could not read the Homeroom bot tab\'s lists', { userId, err: err.message });
+    }
+  }
   return {
+    ...(onYourPage ? { onYourPage } : {}),
     workingOnNow,
     requests,
     firstVersionsNotFiledYet: firsts.map((f) => {
@@ -1810,7 +1829,7 @@ async function runTool(pool, ctx, name, args) {
       }
       case 'my_work': {
         ctx.readWork = true;
-        const work = await myWork(pool, { userId: user.id, settings, config: ctx.config, deps });
+        const work = await myWork(pool, { userId: user.id, user, settings, config: ctx.config, deps });
         if (work?.workingOnNow?.length) ctx.workBusy = true;
         return work;
       }

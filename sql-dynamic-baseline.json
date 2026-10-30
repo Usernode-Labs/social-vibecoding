@@ -943,9 +943,9 @@
     {
       "source": "src/routes/workshop-overview.js",
       "kind": "runtime-expression",
-      "fingerprint": "66e0ecdfdfb67c8fc4d2",
+      "fingerprint": "2c97f61d5d93920a4851",
       "count": 1,
-      "preview": "req.query.in === 'threads' ? NEEDS_FEED_IN_THREADS_SQL : NEEDS_FEED_SQL"
+      "preview": "inThreads ? NEEDS_FEED_IN_THREADS_SQL : NEEDS_FEED_SQL"
     },
     {
       "source": "src/services/account-deletion.js",

@@ -13,31 +13,42 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 //
 // `?demo=1` on staging adds a few obviously fake rows of each kind, so the
 // view's declared checks and its before & after shots have something to
-// draw on a copy where the fixture account is in no thread.
+// draw on a copy where the fixture account is in no thread. They are on the
+// projects the Needs you feed's demo cards are on (routes/workshop-overview.js
+// DEMO_NEEDS_FEED), so the page tells one story: two projects, grouped, with
+// a chip each, and every kind of row, Decide, Try again and a claim among
+// them. Like those cards' slugs, these are in no database.
 function demoWork() {
-  const app = { slug: 'staging-demo-app', name: 'Staging demo app', icon_url: null, icon_emoji: null };
+  const app = { slug: 'staging-demo-your-app', name: 'Staging demo app', icon_url: null, icon_emoji: null };
+  const game = { slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_url: null, icon_emoji: '🎮' };
   const now = Date.now();
   const at = (hours) => new Date(now - hours * 3600000).toISOString();
+  const issue = (a, n) => `#app/${a.slug}/dev/issues/${n}`;
   return {
     private: [
       { rootId: -9101, title: 'Staging demo idea: a calendar for the garden', kind: 'idea', app: null, at: at(2) },
       { rootId: -9102, title: 'Staging demo draft: sort by date', kind: 'draft_request', app, at: at(5) },
     ],
     needs: [
-      { threadId: -9210, number: 9210, kind: 'work', title: 'Staging demo: a reminder email', app, change: null, href: '#app/staging-demo-app/dev/issues/9210', group: 'needs', what: 'plan', at: at(4) },
+      { threadId: -9210, number: 9210, kind: 'work', title: 'Staging demo: a reminder email', app, change: null, href: issue(app, 9210), group: 'needs', what: 'plan', at: at(4) },
+      { threadId: -9214, number: 9214, kind: 'work', title: 'Staging demo: a points table for the season', app, change: null, href: issue(app, 9214), group: 'needs', what: 'decide', at: at(7) },
+      { threadId: -9215, number: 9215, kind: 'work', title: 'Staging demo: a high score board', app: game, change: null, href: issue(game, 9215), group: 'needs', what: 'build_stopped', at: at(9) },
     ],
     next: [
-      { threadId: -9201, number: 9201, kind: 'work', title: 'Staging demo: dark mode', app, change: { id: -9201, number: 9202 }, href: '#app/staging-demo-app/dev/issues/9201', group: 'next', what: 'going_live', at: at(1) },
-      { threadId: -9208, number: 9208, kind: 'work', title: 'Staging demo: tag filter', app, change: { id: -9208, number: 9209 }, href: '#app/staging-demo-app/dev/issues/9208', group: 'next', what: 'building', at: at(3), by: 'bot' },
+      { threadId: -9201, number: 9201, kind: 'work', title: 'Staging demo: dark mode', app, change: { id: -9201, number: 9202 }, href: issue(app, 9201), group: 'next', what: 'going_live', at: at(1) },
+      { threadId: -9208, number: 9208, kind: 'work', title: 'Staging demo: tag filter', app, change: { id: -9208, number: 9209 }, href: issue(app, 9208), group: 'next', what: 'building', at: at(3), by: 'bot' },
+      { threadId: -9216, number: 9216, kind: 'work', title: 'Staging demo: a sound toggle', app: game, change: null, href: issue(game, 9216), group: 'next', what: 'building', at: at(5), by: 'someone', claimedBy: 'staging-demo-partner' },
     ],
     waiting: [
-      { threadId: -9203, number: 9203, kind: 'work', title: 'Staging demo: search the board', app, change: { id: -9203, number: 9204 }, href: '#app/staging-demo-app/dev/issues/9203', group: 'waiting', what: 'vote', at: at(20), myVote: 'yes' },
-      { threadId: -9212, number: null, kind: 'decision', title: 'Staging demo: a new card picture', app, change: null, href: '#app/staging-demo-app/workshop', group: 'waiting', what: 'decision', at: at(8), myVote: null },
-      { threadId: -9211, number: 9211, kind: 'work', title: 'Staging demo: export to a spreadsheet', app, change: null, href: '#app/staging-demo-app/dev/issues/9211', group: 'waiting', what: 'held', heldBy: 'approvals', at: at(6) },
-      { threadId: -9205, number: 9205, kind: 'work', title: 'Staging demo: print view', app, change: null, href: '#app/staging-demo-app/dev/issues/9205', group: 'waiting', what: 'not_picked_up', at: at(240), quietDays: 10 },
+      { threadId: -9203, number: 9203, kind: 'work', title: 'Staging demo: search the board', app, change: { id: -9203, number: 9204 }, href: issue(app, 9203), group: 'waiting', what: 'vote', at: at(20), myVote: 'yes' },
+      { threadId: -9212, number: null, kind: 'decision', title: 'Staging demo: a new card picture', app, change: null, href: `#app/${app.slug}/workshop`, group: 'waiting', what: 'decision', at: at(8), myVote: null },
+      { threadId: -9211, number: 9211, kind: 'work', title: 'Staging demo: export to a spreadsheet', app, change: null, href: issue(app, 9211), group: 'waiting', what: 'held', heldBy: 'approvals', at: at(6) },
+      { threadId: -9217, number: 9217, kind: 'work', title: 'Staging demo: two-player mode', app: game, change: null, href: issue(game, 9217), group: 'waiting', what: 'build_queued', at: at(2) },
+      { threadId: -9205, number: 9205, kind: 'work', title: 'Staging demo: print view', app, change: null, href: issue(app, 9205), group: 'waiting', what: 'not_picked_up', at: at(240), quietDays: 10 },
     ],
     live: [
-      { threadId: -9206, number: 9206, kind: 'work', title: 'Staging demo: weekly digest', app, change: { id: -9206, number: 9207 }, href: '#app/staging-demo-app/dev/issues/9206', group: 'live', what: 'live', at: at(30) },
+      { threadId: -9206, number: 9206, kind: 'work', title: 'Staging demo: weekly digest', app, change: { id: -9206, number: 9207 }, href: issue(app, 9206), group: 'live', what: 'live', at: at(30) },
+      { threadId: -9218, number: 9218, kind: 'work', title: 'Staging demo: a pause button', app: game, change: { id: -9218, number: 9219 }, href: issue(game, 9218), group: 'live', what: 'live', at: at(50) },
     ],
   };
 }
