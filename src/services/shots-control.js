@@ -497,7 +497,18 @@ async function load(db, runId, { lock = false } = {}) {
   return { row, control: fromRow(row, files) };
 }
 
-async function persist(db, control) {
+async function persist(db, control, store) {
+  const dirty = [...control.dirty].map((key) => control.saved.get(key));
+  // Backfill locks a source row before its registry keys. Take existing
+  // slot locks in that order too, before uploading a retake of the same
+  // bytes; otherwise each transaction could wait on the other's lock.
+  if (dirty.length) await db.query(
+    'SELECT slot FROM shot_run_files WHERE run_id = $1 AND slot = ANY($2::text[]) ORDER BY slot FOR UPDATE',
+    [control.runId, dirty.map(dbSlot)]);
+  const uploads = dirty.flatMap((file) => [{ data: file.data, contentType: file.contentType },
+    ...(file.dense?.data ? [{ data: file.dense.data, contentType: file.contentType }] : [])]);
+  const keys = await mediaStore.putMany(db, store, uploads);
+  let nextKey = 0;
   await db.query(
     `UPDATE shot_run_control
         SET skipped = $2::jsonb, failed = $3::jsonb, notes = $4::jsonb, notices = $5::jsonb,
@@ -508,16 +519,18 @@ async function persist(db, control) {
       JSON.stringify(objectOf(control.notes)), JSON.stringify(control.notices),
       JSON.stringify(objectOf(control.conditions)), control.skippedAll, control.skippedAllFailed,
       JSON.stringify(toolFailureOf(control.lastToolFailure))]);
-  for (const key of control.dirty) {
-    const f = control.saved.get(key);
+  for (const f of dirty) {
+    const objectKey = keys[nextKey++];
+    const denseObjectKey = f.dense?.data ? keys[nextKey++] : null;
     const slot = dbSlot(f);
     await db.query(
       `INSERT INTO shot_run_files
          (run_id, slot, story_id, viewport, side, variant, media, theme, content_type, data, width, height, bytes, sha256,
-          density, dense_data, dense_width, dense_height, dense_bytes, dense_sha256, part, scale, focus_rect, public_safe)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24)
+          density, dense_data, dense_width, dense_height, dense_bytes, dense_sha256, part, scale, focus_rect, public_safe,
+          object_key, dense_object_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24, $25, $26)
        ON CONFLICT (run_id, slot) DO UPDATE
-         SET data = EXCLUDED.data, object_key = NULL, dense_object_key = NULL,
+         SET data = EXCLUDED.data, object_key = EXCLUDED.object_key, dense_object_key = EXCLUDED.dense_object_key,
              content_type = EXCLUDED.content_type, media = EXCLUDED.media,
              theme = EXCLUDED.theme, width = EXCLUDED.width, height = EXCLUDED.height, bytes = EXCLUDED.bytes,
              sha256 = EXCLUDED.sha256, density = EXCLUDED.density, dense_data = EXCLUDED.dense_data,
@@ -525,11 +538,12 @@ async function persist(db, control) {
              dense_bytes = EXCLUDED.dense_bytes, dense_sha256 = EXCLUDED.dense_sha256,
              part = EXCLUDED.part, scale = EXCLUDED.scale, focus_rect = EXCLUDED.focus_rect,
              public_safe = EXCLUDED.public_safe, saved_at = NOW()`,
-      [control.runId, slot, f.storyId, f.viewport, f.side, f.variant, f.media, f.theme || 'light', f.contentType, f.data,
-        f.width, f.height, f.bytes, f.sha256, f.density > 1 ? f.density : 1, f.dense?.data || null,
+      [control.runId, slot, f.storyId, f.viewport, f.side, f.variant, f.media, f.theme || 'light', f.contentType, null,
+        f.width, f.height, f.bytes, f.sha256, f.density > 1 ? f.density : 1, null,
         f.dense?.width || null, f.dense?.height || null, f.dense?.bytes ?? null, f.dense?.sha256 || null,
         f.variant === 'closeup' ? f.part : 0, f.variant === 'closeup' ? f.scale : null,
-        f.variant === 'closeup' && f.focusRect ? JSON.stringify(f.focusRect) : null, f.publicSafe === true ? true : null]);
+        f.variant === 'closeup' && f.focusRect ? JSON.stringify(f.focusRect) : null, f.publicSafe === true ? true : null,
+        objectKey, denseObjectKey]);
   }
   control.dirty.clear();
 }
@@ -555,7 +569,7 @@ async function assertCurrent(db, control) {
  * `readOnly`: the call only reads (the brief, a home tile), so it neither
  * waits for the agent's saves nor writes anything back but a refusal.
  */
-async function withControl(pool, { runId, sessionId }, fn, { readOnly = false } = {}) {
+async function withControl(pool, { runId, sessionId }, fn, { readOnly = false, store = mediaStore.getStore() } = {}) {
   if (!RUN_ID.test(String(runId || ''))) throw new ShotsControlError('shots_control_not_found', 'This preview run is no longer active.', 410);
   let refused = null;
   const run = readOnly ? (body) => body(pool) : (body) => inTransaction(pool, body);
@@ -570,7 +584,7 @@ async function withControl(pool, { runId, sessionId }, fn, { readOnly = false } 
     await assertCurrent(db, control);
     try {
       const answer = await fn(control, db);
-      if (!readOnly) await persist(db, control);
+      if (!readOnly) await persist(db, control, store);
       return { answer };
     } catch (error) {
       // Only the refusal is kept; whatever the call half did is not.

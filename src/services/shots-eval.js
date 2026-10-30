@@ -476,8 +476,9 @@ async function trialRecipe(pool, config, trialId, attemptId) {
  * earlier attempt kept. Only while that attempt is the trial's and its
  * shots under way. Resolves how many.
  */
-async function storeTrialFiles(pool, trialId, attemptId, slots) {
-  const files = await require('./shots-control').filesFor(pool, attemptId, slots);
+async function storeTrialFiles(pool, trialId, attemptId, slots, { store = require('./media-store').getStore() } = {}) {
+  const media = require('./media-store');
+  const files = await require('./shots-control').filesFor(pool, attemptId, slots, { withData: false, store });
   const newId = require('./shots-state').newId;
   const client = await pool.connect();
   try {
@@ -489,15 +490,18 @@ async function storeTrialFiles(pool, trialId, attemptId, slots) {
     await client.query('DELETE FROM shots_eval_artifacts WHERE trial_id = $1', [Number(trialId)]);
     // Dark shots and close-ups (shots-closeups.js) are extras an eval does not judge.
     const kept = files.filter((a) => a?.theme !== 'dark' && a?.variant !== 'closeup');
+    const legacyFiles = kept.filter((a) => !a.objectKey);
+    const uploaded = await media.putMany(client, store, legacyFiles.map((a) => ({ data: a.data, contentType: a.contentType })));
+    legacyFiles.forEach((a, i) => { a.objectKey = uploaded[i]; });
     for (const a of kept) {
       // eslint-disable-next-line no-await-in-loop
       await client.query(
         `INSERT INTO shots_eval_artifacts
            (id, trial_id, story_id, viewport, side, variant, media, content_type,
-            data, width, height, bytes, sha256, focus_rect)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)`,
+            data, width, height, bytes, sha256, focus_rect, object_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15)`,
         [newId(), Number(trialId), a.storyId, a.viewport, a.side, a.variant, a.media, a.contentType,
-          a.data, a.width, a.height, a.bytes, a.sha256, a.focusRect ? JSON.stringify(a.focusRect) : null]);
+          null, a.width, a.height, a.bytes, a.sha256, a.focusRect ? JSON.stringify(a.focusRect) : null, a.objectKey]);
     }
     await client.query('COMMIT');
     return kept.length;
