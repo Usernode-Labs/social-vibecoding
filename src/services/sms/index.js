@@ -230,7 +230,7 @@ async function sendMarketingSms(pool, config, { phoneNumber, content, tag = 'mar
   if (!consent || !consent.opted_in_at) {
     throw new SmsError('no_consent', 'That number has not opted in to marketing texts.', 422);
   }
-  if (consent.opted_out_at) {
+  if (isOptedOut(consent)) {
     throw new SmsError('opted_out', 'That number has opted out of marketing texts.', 422);
   }
 
@@ -247,6 +247,19 @@ async function sendMarketingSms(pool, config, { phoneNumber, content, tag = 'mar
   }, deps);
 }
 
+/**
+ * Whether a consent row says no. An opt-out (a STOP reply, a provider event,
+ * a switch turned off) wins over every opt-in before it; a NEW opt-in the
+ * person gives afterwards (#6044: the switch in Settings, or the box at
+ * sign-up) wins over that opt-out. Both timestamps stay on the row, so the
+ * history of the number's answers is never erased.
+ */
+function isOptedOut(consent) {
+  if (!consent || !consent.opted_out_at) return false;
+  if (!consent.opted_in_at) return true;
+  return new Date(consent.opted_out_at).getTime() >= new Date(consent.opted_in_at).getTime();
+}
+
 async function consentFor(pool, phone) {
   if (!pool) return null;
   const { rows } = await pool.query(
@@ -256,8 +269,9 @@ async function consentFor(pool, phone) {
   return rows[0] || null;
 }
 
-/** Record an opt-in. A later opt-out is left in place: only a new, explicit
- *  opt-in from a person clears an opt-out, and that is a caller decision. */
+/** Record an opt-in. An earlier opt-out stays on the row; this opt-in, being
+ *  newer, is what isOptedOut reads. Only a person's own explicit answer
+ *  should call this (services/contact-preferences.js, #6044). */
 async function recordConsent(pool, { phoneNumber, userId = null, source = null }) {
   const { phone } = validatePhone(phoneNumber);
   await pool.query(
@@ -299,6 +313,7 @@ module.exports = {
   sendTestSms,
   recordConsent,
   recordOptOut,
+  isOptedOut,
   recordDelivery,
   appendOptOut,
   last4,

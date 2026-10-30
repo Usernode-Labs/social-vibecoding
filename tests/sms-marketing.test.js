@@ -67,6 +67,14 @@ test('a number that opted out gets nothing', async () => {
   assert.equal(calls.length, 0);
 });
 
+test('a new opt-in after an opt-out lets texts through again (#6044)', () => {
+  // Only the person's own later yes does this; the STOP stays on the row.
+  assert.equal(sms.isOptedOut({ opted_in_at: '2026-03-01', opted_out_at: '2026-02-01' }), false);
+  assert.equal(sms.isOptedOut({ opted_in_at: '2026-01-01', opted_out_at: '2026-02-01' }), true);
+  assert.equal(sms.isOptedOut({ opted_in_at: null, opted_out_at: '2026-02-01' }), true);
+  assert.equal(sms.isOptedOut({ opted_in_at: '2026-01-01', opted_out_at: null }), false);
+});
+
 test('quiet hours refuse rather than queue', async () => {
   const { fetchImpl, calls } = okFetch();
   await assert.rejects(

@@ -36,6 +36,7 @@ import { SectionHeading } from '@/components/ui/field';
 import { useMessages } from '../../../lib/i18n/react';
 import { useWindowEvent } from '../../../lib/legacy-dom';
 
+import { ContactPreferencesSection } from './contact-preferences';
 import { HELP, PrivacySwitch } from './privacy-text';
 import { UsageAnalyticsSection } from './usage-analytics';
 
@@ -195,6 +196,9 @@ export function PrivacySection() {
           </p>
         ) : null}
       </div>
+      {/* #6044: Email & texts, what Homeroom may send you; its own state and
+          its own endpoint (./contact-preferences.tsx). */}
+      <ContactPreferencesSection />
       {/* #5097: Share usage analytics, the page's last block; its own state
           and its own endpoint (./usage-analytics.tsx). */}
       <UsageAnalyticsSection />

@@ -36,6 +36,7 @@ const { signUpMetadata } = require('../services/sign-up-from');
 const { validatePassword } = require('../services/password-policy');
 const usernames = require('../services/usernames');
 const contactPrivacy = require('../services/contact-privacy');
+const contactPreferences = require('../services/contact-preferences');
 const linkedPhones = require('../services/linked-phones');
 const uiTelemetry = require('../services/ui-telemetry');
 const usageAnalytics = require('../services/usage-analytics');
@@ -573,6 +574,10 @@ function authRoutes(config) {
       });
       clearSignupCookie(res);
       createSessionCookie(res, completed.session.token, completed.session.expiresAt);
+      // The sign-up form's "Homeroom news by email" box (#6044). Saved only
+      // when ticked, and never fails the sign-up.
+      await contactPreferences.recordSignupChoices(pool, completed.user.id,
+        contactPreferences.signupChoicesFrom(req.body), log);
       return res.json({
         user: {
           id: completed.user.id,
@@ -1569,6 +1574,46 @@ function authRoutes(config) {
       res.json({ ok: true, enabled: stored, uiTelemetryEligible: stored && await uiTelemetry.isRecordable(pool, req.user) });
     } catch (err) {
       log.error('settings', 'Failed to save the usage analytics choice', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Email & texts (#6044), Settings > Privacy: marketing email, activity
+  // email and marketing texts (services/contact-preferences.js). Each answer
+  // that changes something is recorded as proof of consent.
+  router.get('/api/me/contact-preferences', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const prefs = await contactPreferences.read(pool, req.user.id);
+      if (!prefs) return res.status(404).json({ error: 'Account not found' });
+      res.set('Cache-Control', 'no-store');
+      res.json(prefs);
+    } catch (err) {
+      log.error('settings', 'Failed to read the contact preferences', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/me/contact-preferences', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const body = req.body || {};
+    const changes = {};
+    for (const key of ['marketingEmail', 'activityEmail', 'marketingSms']) {
+      if (body[key] === undefined) continue;
+      if (typeof body[key] !== 'boolean') return res.status(400).json({ error: `${key} must be true or false` });
+      changes[key] = body[key];
+    }
+    if (!Object.keys(changes).length) return res.status(400).json({ error: 'Nothing to change' });
+    try {
+      const prefs = await contactPreferences.update(pool, req.user.id, changes, { source: 'settings' });
+      if (!prefs) return res.status(404).json({ error: 'Account not found' });
+      log.info('settings', 'Contact preferences saved', { userId: req.user.id, changed: Object.keys(changes) });
+      res.json({ ok: true, ...prefs });
+    } catch (err) {
+      if (err instanceof contactPreferences.ContactPreferencesError) {
+        return res.status(err.status).json({ error: err.message, code: err.code });
+      }
+      log.error('settings', 'Failed to save the contact preferences', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
