@@ -13,6 +13,7 @@
 const { createHash } = require('node:crypto');
 const { createObjectStore } = require('./app-files');
 const { pipeline } = require('node:stream/promises');
+const transactionIO = require('./media-transaction-io');
 
 const PREFIX = 'media/sha256/';
 const KEY = /^media\/sha256\/[a-f0-9]{64}$/;
@@ -33,7 +34,7 @@ function requireStore(store) {
   return store;
 }
 
-function createMediaStore(config, options) {
+function createMediaStore(config, { client } = {}) {
   const values = [config?.mediaStorageEndpoint, config?.mediaStorageBucket,
     config?.mediaStorageAccessKey, config?.mediaStorageSecretKey];
   if (values.every((v) => !v)) return null;
@@ -41,10 +42,17 @@ function createMediaStore(config, options) {
   const url = new URL(values[0]);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password
       || url.pathname !== '/' || url.search || url.hash) throw new Error('Invalid MEDIA_STORAGE_ENDPOINT');
+  client ||= new (require('minio').Client)({
+    endPoint: url.hostname,
+    port: url.port ? Number(url.port) : (url.protocol === 'https:' ? 443 : 80),
+    useSSL: url.protocol === 'https:',
+    accessKey: values[2], secretKey: values[3],
+    transport: transactionIO.transport(url.protocol),
+  });
   return createObjectStore({
     storageEndpoint: values[0], storageBucket: values[1],
     storageAccessKey: values[2], storageSecretKey: values[3],
-  }, options);
+  }, { client });
 }
 
 // No cached disabled state: a caller supplies its own config/store. Routes
@@ -82,9 +90,12 @@ async function put(tx, store, data, contentType = 'application/octet-stream') {
      ON CONFLICT (object_key) DO UPDATE SET object_key = EXCLUDED.object_key`, [key]);
   // An immutable key is never rewritten, including on workflow retries:
   // a rewrite would make a fresh billable version in the versioned bucket.
-  const existing = await store.statObject(key);
-  if (existing && Number(existing.size) !== data.length) throw new Error(`Media object size mismatch: ${key}`);
-  if (!existing) await store.putObject(key, data, contentType);
+  await transactionIO.run(tx, async (signal) => {
+    const existing = await store.statObject(key);
+    signal.throwIfAborted();
+    if (existing && Number(existing.size) !== data.length) throw new Error(`Media object size mismatch: ${key}`);
+    if (!existing) await store.putObject(key, data, contentType);
+  });
   return key;
 }
 
@@ -150,7 +161,7 @@ async function removeOrphan(pool, store, key, cutoff) {
       await tx.query('COMMIT');
       return false;
     }
-    const stat = await store.statObject(key);
+    const stat = await transactionIO.run(tx, () => store.statObject(key));
     // Check again under the lock: an upload may have created this object
     // since listing began. An invalid/missing timestamp is never old enough.
     const modified = stat?.lastModified == null ? NaN : new Date(stat.lastModified).getTime();
@@ -167,7 +178,7 @@ async function removeOrphan(pool, store, key, cutoff) {
       await tx.query('COMMIT');
       return false;
     }
-    if (stat) await store.removeObject(key);
+    if (stat) await transactionIO.run(tx, () => store.removeObject(key));
     await tx.query('COMMIT');
     return !!stat;
   } catch (err) {
