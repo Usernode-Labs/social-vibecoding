@@ -60,6 +60,12 @@ test('reader release can publish keyed files and retake a keyed slot without ret
   assert.equal(published.object_key, oldKey);
   assert.equal(published.data, null);
   assert.deepEqual(await media.bytes(store, published), old);
+  // The existing <table>_media_check only validates png/webm/gif. It must
+  // not mask the new invariant after data becomes nullable.
+  await assert.rejects(pool.query('UPDATE shot_run_files SET object_key = NULL WHERE run_id = $1', [runId]), { code: '23514' });
+  await assert.rejects(pool.query('UPDATE shot_run_files SET data = $2 WHERE run_id = $1', [runId, old]), { code: '23514' });
+  await assert.rejects(pool.query('UPDATE shot_artifacts SET object_key = NULL WHERE run_id = $1', [runId]), { code: '23514' });
+  await assert.rejects(pool.query('UPDATE shot_artifacts SET data = $2 WHERE run_id = $1', [runId, old]), { code: '23514' });
   const owner = await pool.connect();
   await owner.query('BEGIN');
   await owner.query('SELECT slot FROM shot_run_files WHERE run_id = $1 FOR UPDATE', [runId]);

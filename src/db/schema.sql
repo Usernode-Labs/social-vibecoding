@@ -15350,8 +15350,10 @@ DO $$
 DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['shot_run_files', 'shot_artifacts', 'shots_eval_artifacts', 'shot_diagnostic_artifacts'] LOOP
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = t::regclass AND conname = t || '_media_check') THEN
-      EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I CHECK ((object_key IS NOT NULL) <> (data IS NOT NULL))', t, t || '_media_check');
+    -- PostgreSQL already uses <table>_media_check for the media enum.
+    -- A separate name must enforce exactly one storage representation.
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = t::regclass AND conname = t || '_storage_check') THEN
+      EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I CHECK ((object_key IS NOT NULL) <> (data IS NOT NULL))', t, t || '_storage_check');
     END IF;
   END LOOP;
   FOREACH t IN ARRAY ARRAY['shot_run_files', 'shot_artifacts'] LOOP
