@@ -10873,16 +10873,18 @@ html .un-backdrop.platform-backdrop-dim {
 @media (max-width: 767px) and (pointer: coarse) {
   /* The root does not scroll in sheet mode; the card is the scroller. */
   [data-dialog-sheet] { overflow: hidden; }
+  /* THE CARD'S PERCENTAGES NEED A DEFINITE HEIGHT (#5802, EVERY SHEET SINCE
+     #6040). The wrapper has only `min-h-full`, so a percentage `max-height`
+     on the card resolved to `none`: the card grew to its content height, the
+     hidden root clipped it, and a tall sheet could not scroll (Who can see &
+     change it on a phone, #6040). The root is `fixed inset-0`, so its height
+     is definite: the wrapper takes it and every card's cap below (and the
+     keyboard rule's) resolves. */
   [data-dialog-sheet] [data-modal-backdrop] {
+    height: 100%;
     align-items: flex-end;
     padding: 0;
   }
-  /* THE CARD'S PERCENTAGES NEED A DEFINITE HEIGHT (#5802). The wrapper has
-     only `min-h-full`, so a percentage `max-height` on the card resolved to
-     `none` and Safari left the card at its layout place under the keys. The
-     root is `fixed inset-0`, so its height is definite: the wrapper takes it
-     and the card's cap below (and the keyboard rule's) resolves. */
-  #feedback-modal[data-dialog-sheet] [data-modal-backdrop] { height: 100%; }
   [data-dialog-sheet] [data-modal-backdrop] > div {
     width: 100%;
     max-width: none;
@@ -10892,17 +10894,18 @@ html .un-backdrop.platform-backdrop-dim {
     max-height: min(92%, calc(100% - var(--platform-safe-top, 0px) - 8px));
     overflow-y: auto;
     overscroll-behavior: contain;
+    /* The keyboard rule below moves the card with `bottom`, which a static
+       box ignores; this makes every sheet card that box (#5802, #6040). */
+    position: relative;
     transform: translateY(100%);
     transition: transform 200ms ease-out;
   }
-  /* THE CARD LIFTS ONTO THE KEYS, AND A FOCUSED FIELD CLEARS THE BUTTONS
-     (#5802). The keyboard rule below moves the card with `bottom`, which a
-     static box ignores; `position: relative` makes the card that box. The
-     scroll padding is the action row (12px + a 36px button + 48px) and an
-     8px gap, the #4542 rule for the sheet, so a field revealed at the
-     scroller's foot stays above Cancel and Post request. */
+  /* A FOCUSED FIELD CLEARS THE BUTTONS (#5802). The scroll padding is the
+     action row (12px + a 36px button + 48px) and an 8px gap, the #4542 rule
+     for the sheet, so a field revealed at the scroller's foot stays above
+     Cancel and Post request. Only the feedback sheet has that row; the
+     other sheets carry no extra space for one (#6040). */
   #feedback-modal[data-dialog-sheet] [data-modal-backdrop] > div {
-    position: relative;
     scroll-padding-bottom: 104px;
   }
   [data-dialog-sheet][data-dialog-sheet-shown] [data-modal-backdrop] > div {
