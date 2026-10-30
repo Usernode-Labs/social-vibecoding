@@ -106,49 +106,81 @@ export function stripWidth(doc: Pick<Document, 'documentElement'> | null = typeo
 let probe: HTMLElement | null = null;
 
 /**
- * The left and right insets as the page resolves them. JS cannot read env(),
- * so a hidden probe on <html> (the body is React's to hydrate) carries them
- * as padding, through the kit's override first, exactly as app.css reads
- * them.
+ * A hidden probe on <html> (the body is React's to hydrate) that carries the
+ * left and right insets, through the kit's override first, exactly as app.css
+ * reads them. JS cannot read env(), so they ride as padding: the LEFT inset
+ * as its left padding and the RIGHT inset as its TOP padding. With no width
+ * or height of its own, its border box is then (left inset x right inset),
+ * so a change to either one resizes it, and a ResizeObserver hears it.
  */
+function sideInsetProbe(doc: Document): HTMLElement {
+  if (!probe || !probe.isConnected) {
+    probe = doc.createElement('div');
+    probe.setAttribute('aria-hidden', 'true');
+    probe.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;'
+      + 'visibility:hidden;pointer-events:none;'
+      + 'padding-left:var(--un-safe-inset-left,env(safe-area-inset-left,0px));'
+      + 'padding-top:var(--un-safe-inset-right,env(safe-area-inset-right,0px))';
+    doc.documentElement.appendChild(probe);
+  }
+  return probe;
+}
+
+/** The left and right insets as the page resolves them. */
 function readSideInsets(doc: Document, win: Window): SideInsets {
   try {
-    if (!probe || !probe.isConnected) {
-      probe = doc.createElement('div');
-      probe.setAttribute('aria-hidden', 'true');
-      probe.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;'
-        + 'visibility:hidden;pointer-events:none;'
-        + 'padding-left:var(--un-safe-inset-left,env(safe-area-inset-left,0px));'
-        + 'padding-right:var(--un-safe-inset-right,env(safe-area-inset-right,0px))';
-      doc.documentElement.appendChild(probe);
-    }
-    const cs = win.getComputedStyle(probe);
-    return { left: parseFloat(cs.paddingLeft) || 0, right: parseFloat(cs.paddingRight) || 0 };
+    const cs = win.getComputedStyle(sideInsetProbe(doc));
+    return { left: parseFloat(cs.paddingLeft) || 0, right: parseFloat(cs.paddingTop) || 0 };
   } catch {
     return { left: 0, right: 0 };
   }
 }
 
+type ResizeObserverWindow = Window & { ResizeObserver?: typeof ResizeObserver };
+
 /**
  * Follow the inset. Read once now, so the attribute is on <html> before the
  * app's launch cover lifts (it waits for DOMContentLoaded, which a deferred
- * module runs before), and again whenever the viewport changes: folding,
- * unfolding, rotating and Split View all resize it.
+ * module runs before), and again whenever the inset itself changes.
+ *
+ * WHY NOT ONLY ON RESIZE (30 Oct 2026). Folding, unfolding, rotating and
+ * Split View all resize the viewport, and this used to read the inset then
+ * and nowhere else. On a real Duo the tabs were sometimes left at the foot
+ * of the folded cover: WebKit can hand the page its new safe area in a
+ * layout pass after the resize that announced the new size, or with no
+ * resize at all, and the read at the resize saw the old inset. The probe's
+ * own box follows the inset (sideInsetProbe), so a ResizeObserver on it
+ * reads every change whenever it lands. The window's events stay, for an
+ * engine with no ResizeObserver.
  */
 export function watchSideStrip(doc: Document = document, win: Window = window): () => void {
   const root = doc.documentElement;
   const shot = stripShotSide(win.location?.search || '');
   if (shot) root.style.setProperty(`--un-safe-inset-${shot}`, `${STRIP_SHOT_PX}px`);
+  const RO = (win as ResizeObserverWindow).ResizeObserver;
+  let observer: ResizeObserver | null = null;
+  let observed: HTMLElement | null = null;
   const update = () => {
     const insets = readSideInsets(doc, win);
     const side = stripSide(insets);
     applyStrip(root, side, side ? insets[side] : 0);
+    // A probe made anew (its old one was taken out of the document) is
+    // observed in its place.
+    if (observer && probe && probe !== observed) {
+      if (observed) observer.unobserve(observed);
+      observer.observe(probe, { box: 'border-box' });
+      observed = probe;
+    }
   };
+  if (RO) {
+    try { observer = new RO(update); } catch { observer = null; }
+  }
   update();
   win.addEventListener('resize', update);
   win.addEventListener('orientationchange', update);
   win.visualViewport?.addEventListener('resize', update);
   return () => {
+    observer?.disconnect();
     win.removeEventListener('resize', update);
     win.removeEventListener('orientationchange', update);
     win.visualViewport?.removeEventListener('resize', update);
