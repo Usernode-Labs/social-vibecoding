@@ -108,3 +108,33 @@ Removing the byte columns and compatibility branch waits for both the shots
 and check-visual backfills and is roadmap step 4. VACUUM FULL is a later
 operator maintenance action. The fixture seeds that still use byte rows
 also need conversion before that removal.
+
+## Check visuals
+
+Step 3 follows the same reader-first release sequence on top of the shots
+release: `codex/media-storage-check-visual-readers`, then
+`codex/media-storage-check-visuals`. Fully roll out the check-visual readers
+and preview publication before enabling its keyed writes and backfill.
+Neither a feature flag nor a second byte write is needed. Rollbacks must
+retain both the shots and check-visual reader support after keys exist.
+
+`check_run_media` holds a run's media until the preview machine publishes it
+to `session_visuals`. Both tables gain an indexed restrictive registry FK,
+SHA-256, size and the old full-response ETag. Publication copies the key and
+metadata, preserving the artifact ID and its `/visuals/:id` URL. The GC's
+ordinary reference lookup covers both tables, so it never takes a row lock
+on a visual while its replacement waits for that key.
+
+Unlike the shots endpoint, `/visuals/:id` used Express weak SHA-1 ETags, not
+SHA-256. Full responses retain that exact validator and stream from storage;
+matching conditional requests and HEAD need no object read. Range requests
+pass their offsets to S3 and buffer **only the requested range** to retain
+Express's old ETag of the sliced body (artifacts are capped at 8 MB). This
+preserves status, headers, malformed-range behavior and conditional 304s
+without downloading a whole video for a small range. SHA-256 remains the
+shared object identity. The anonymous GitHub camo route stays on Homeroom.
+
+Bruno approved retaining merged check visuals indefinitely on 30 Oct.
+They remain referenced by their published rows and have no age-based media
+expiry. Existing explicit row replacement and parent-deletion behavior is
+unchanged; moving bytes does not introduce a new retention policy.
