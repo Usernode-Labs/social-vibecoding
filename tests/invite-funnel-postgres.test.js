@@ -379,7 +379,11 @@ test('invite opens, sign-ins and joins through the real routes, against the full
   });
 
   await t.test('the Journey counts where signed-out invite pages landed, beside unchanged opens', async () => {
-    const before = (await journey.firstSession(pool, { week: journey.allTime() })).opens.opened;
+    // The reading's window ends at its own clock, and a row inserted this
+    // instant can sit in its next millisecond. End the window a minute
+    // ahead so the landings below are inside it however fast this runs.
+    const week = journey.allTime(new Date(Date.now() + 60000));
+    const before = (await journey.firstSession(pool, { week })).opens.opened;
     for (const settled of ['card', 'card', 'card', 'dead', 'failed']) {
       await pool.query(
         `INSERT INTO events (user_id, event_type, metadata)
@@ -387,7 +391,7 @@ test('invite opens, sign-ins and joins through the real routes, against the full
         [JSON.stringify({ kind: 'invite_settlement', settled, screen: 'shell_boot',
           eventId: crypto.randomUUID(), visitId: crypto.randomUUID() })]);
     }
-    const r = (await journey.firstSession(pool, { week: journey.allTime() })).opens;
+    const r = (await journey.firstSession(pool, { week })).opens;
     assert.deepEqual(r.landed, { card: 3, dead: 1, failed: 1, timeout: 0 },
       'each signed-out landing is counted where it first settled');
     assert.equal(r.opened, before, 'the open count itself is unchanged');
