@@ -130,10 +130,23 @@ test('the card resolves the keyboard arithmetic and clears the sticky row (#5802
   const block = APP_CSS.slice(at, APP_CSS.indexOf('/* THE COMMENT SHEET', at));
   // The wrapper's height was indefinite, so a percentage max-height on the
   // card computed to `none` and Safari left it under the keys.
-  assert.match(block, /#feedback-modal\[data-dialog-sheet\] \[data-modal-backdrop\] \{ height: 100%; \}/,
-    'the card\'s percentage cap resolves against the fixed root');
-  assert.match(block, /#feedback-modal\[data-dialog-sheet\] \[data-modal-backdrop\] > div \{[\s\S]*?position: relative;[\s\S]*?scroll-padding-bottom: 104px;/,
-    'the card takes the keyboard rule\'s `bottom`, and a focused field clears the buttons');
+  assert.match(block, /\[data-dialog-sheet\] \[data-modal-backdrop\] \{[\s\S]*?height: 100%;[\s\S]*?align-items: flex-end;[\s\S]*?padding: 0;[\s\S]*?\n  \}/,
+    'every sheet\'s card percentage cap resolves against the fixed root');
+  assert.doesNotMatch(block, /#feedback-modal\[data-dialog-sheet\] \[data-modal-backdrop\] \{ height: 100%; \}/,
+    'the definite height is not feedback-only (#6040)');
+  assert.match(block, /\[data-dialog-sheet\] \[data-modal-backdrop\] > div \{[\s\S]*?max-height: min\(92%,[\s\S]*?position: relative;[\s\S]*?\n  \}/,
+    'every sheet card takes the keyboard rule\'s `bottom` (#6040)');
+  assert.match(block, /#feedback-modal\[data-dialog-sheet\] \[data-modal-backdrop\] > div \{\s*scroll-padding-bottom: 104px;\s*\}/,
+    'a focused field clears the buttons, on the one sheet that has them');
+});
+
+test('Who can see & change it and Report are phone sheets too (#6040)', () => {
+  // Both set the same option feedback does, so the generic sheet rules and
+  // the wrapper's definite height are what let their tall cards scroll.
+  assert.match(read('frontend/src/features/dialogs/who-decides.tsx'), /phoneSheet: true,/,
+    'Who can see & change it is a sheet on a phone');
+  assert.match(read('frontend/src/features/dialogs/report.tsx'), /phoneSheet: true,/,
+    'Report is a sheet on a phone');
 });
 
 test('the sheet card is the one scroller, and a drag in it is never handed to the page (#5701)', () => {
