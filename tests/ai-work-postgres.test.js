@@ -14,6 +14,9 @@
 //      without asking anything of them, so it is not listed (29 Oct 2026).
 //   3. Private threads are their own threads in the chat with the bot that
 //      have gone nowhere yet, and the bot's drafts for them.
+//   4. A request somebody pressed Claim on is being built, by who has it
+//      (30 Oct 2026), and Homeroom bot's status answer reads the lists the
+//      page draws (pageLists): the Needs you feed for her threads, then these.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/ai-work-postgres.test.js
 
@@ -203,6 +206,36 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   assert.deepEqual(busyWork.needs.map((r) => `${r.title}:${r.what}`), ['Her old plan:plan'], 'the bot\'s plan waits for her Build it');
   assert.equal(busyWork.live.length, aiWork.THREADS_MAX, 'Live this week reads its own most rows');
 
+  // 30 Oct 2026: claimed, with no change yet. Bob's claim on hers is In
+  // progress, named for him; her own claim is hers; a claim older than the
+  // week the bot gives one is no claim.
+  await request(app, 18, ada, 'Sound toggle');
+  await request(app, 19, ada, 'Pause button');
+  await request(app, 20, ada, 'Old claim');
+  await pool.query(
+    `INSERT INTO issue_claims (app_id, github_issue_number, user_id, claimed_at)
+     VALUES ($1, 18, $2, NOW()), ($1, 19, $3, NOW()), ($1, 20, $2, NOW() - interval '8 days')`,
+    [app.id, bob.id, ada.id]);
+  const claimed = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } });
+  const of = (title) => [...claimed.next, ...claimed.waiting].find((r) => r.title === title);
+  assert.deepEqual([of('Sound toggle').what, of('Sound toggle').by, of('Sound toggle').claimedBy], ['building', 'someone', 'aw_bob']);
+  assert.deepEqual([of('Pause button').what, of('Pause button').by], ['building', 'you']);
+  assert.equal(of('Old claim').what, 'not_picked_up', 'a claim past its week');
+
+  // Homeroom bot's answer: the page's lists. The votes she owes (Bob's change
+  // for her Dark mode, the rename) are Needs you's, from the feed (a
+  // member's, so she joins); the rest are the lists above.
+  await pool.query(
+    `INSERT INTO community_members (community_id, user_id) SELECT community_id, $2 FROM apps WHERE id = $1 ON CONFLICT DO NOTHING`,
+    [app.id, ada.id]);
+  const page = await aiWork.pageLists(pool, { user: { id: ada.id }, deps: { bot } });
+  assert.ok(page.needsYou.some((r) => r.number === 2 && r.says === 'waits for their vote'), 'Bob\'s change, by her request\'s number');
+  assert.ok(page.needsYou.some((r) => r.title === 'Rename to Seed Shop' && r.says === 'waits for their vote'), 'and the decision she owes');
+  assert.ok(page.inProgress.some((r) => r.title === 'Sound toggle' && r.says === 'aw_bob is building it'));
+  assert.ok(page.waiting.some((r) => r.title === 'Filters' && r.says === 'waiting for votes; they voted Yes'));
+  assert.deepEqual(page.liveThisWeek.map((r) => r.title), ['Badges']);
+  assert.equal(page.counts.inProgress, page.inProgress.length);
+
   // Private threads: her own message with replies, and the bot's draft for her.
   const convo = await one(`INSERT INTO conversations (kind) VALUES ('direct') RETURNING id`);
   await pool.query(
@@ -252,4 +285,13 @@ test('the demo rows are obviously fake, and staging-only', () => {
   for (const row of [...demo.private, ...demo.needs, ...demo.next, ...demo.waiting, ...demo.live]) {
     assert.match(row.title, /^Staging demo/, row.title);
   }
+  // One story with the Needs you feed's demo cards: their projects, so the
+  // page groups the two and has a chip for each, and every kind of row.
+  const { DEMO_NEEDS_FEED } = require('../src/routes/workshop-overview');
+  const feedSlugs = new Set(DEMO_NEEDS_FEED.map((it) => it.app.slug));
+  const rows = [...demo.needs, ...demo.next, ...demo.waiting, ...demo.live];
+  assert.ok(rows.every((r) => feedSlugs.has(r.app.slug)), 'on the feed\'s demo projects');
+  assert.equal(new Set(rows.map((r) => r.app.slug)).size, 2);
+  assert.deepEqual(demo.needs.map((r) => r.what), ['plan', 'decide', 'build_stopped']);
+  assert.ok(demo.next.some((r) => r.claimedBy === 'staging-demo-partner'), 'a claim');
 });

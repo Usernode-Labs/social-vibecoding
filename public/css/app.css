@@ -18106,14 +18106,25 @@ body:has(#ai-screen:not(.hidden)) {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 18px 10px;
+  padding: 12px 18px;
   border-bottom: 1px solid var(--app-sheet-line);
+  background-color: var(--dc-sheet-fill);
 }
 #ai-screen .ai-main-pane > .messages-layout { flex: 1 1 auto; height: auto; min-height: 0; }
+/* ONE SHEET (30 Oct 2026). The chat is the Messages screen's, which lifts
+   itself off the page as a sheet of its own: a rounded corner, a hairline
+   and a shadow. Inside this column that drew a card under a band, its
+   corner cutting into the first row. Here the column is the sheet: the
+   name above wears the chat's fill, and the chat lies flat under it. */
+#ai-screen .ai-main-pane .messages-thread-pane {
+  border-radius: 0;
+  border-top: 0;
+  box-shadow: none;
+}
 /* A request or a change opened from the list: the side panel in Main's
    place, and Main back when the panel closes. It is drawn as this page's
    own column, not as a panel of its own (29 Oct 2026): Main's width, edge
-   and header, with ‹ Main and the project the page is in over it, and none
+   and header, with ‹ Main Chat and the project the page is in over it, and none
    of the panel's own controls (side-panel.tsx) but its left edge: that is
    the handle Main's own edge is (30 Oct 2026), and both set one width. */
 html[data-side-panel] #ai-screen .ai-main-pane { display: none; }
@@ -18131,10 +18142,61 @@ body:has(#ai-screen:not(.hidden)) .side-panel :is(#side-panel-back, #side-panel-
 }
 body:has(#ai-screen:not(.hidden)) .side-panel :is(.side-panel-main, .side-panel-place) { display: inline-flex; }
 /* And the page in it leaves out its own way back, "‹ Workshop": the column's
-   ‹ Main is the way back, and its project is beside it. The class is on the
+   ‹ Main Chat is the way back, and its project is beside it. The class is on the
    panel document's <html> while it stands beside this page (side-panel
    controller BESIDE_AI_CLASS). */
 html.in-side-panel.side-panel-beside-ai :is(.dev-topic-backs, .dev-topic-back) { display: none; }
+/* AND THE COLUMN IS ONE SHEET (30 Oct 2026), as Main is: the page lies flat
+   under the column's heading rather than lifting its own sheets off it. The
+   heading names what is open and its number, so a request's or a change's own
+   bar keeps only its status, its category and its ⋯ here, and goes when it
+   has none of them. */
+html.in-side-panel.side-panel-beside-ai .dc-lift { border-radius: 0; border-top: 0; box-shadow: none; }
+html.in-side-panel.side-panel-beside-ai .dev-request-bar :is([data-request-kicker], .dev-request-bar-title) { display: none; }
+html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu-btn, [data-request-status], [data-request-category])) { display: none; }
+/* ── The AI tab on a phone, as a drawer (features/ai/phone-drawer.tsx) ──
+   The Messages drawer's strip: the list at 85% of the screen, the thread
+   beside it, peeking at the list's right until it is opened, then the whole
+   screen. The thread is Main Chat. The page does not scroll; the list does. */
+#ai-screen[data-ai-drawer] { overflow: hidden; }
+.ai-drawer { position: absolute; inset: 0; overflow: hidden; touch-action: pan-y; }
+.ai-drawer-strip { position: absolute; inset: 0; will-change: transform; }
+.ai-drawer-list {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 85%;
+  overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
+}
+.ai-drawer-thread {
+  position: absolute; top: 0; bottom: 0; left: 85%; width: 100%;
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--home-ground);
+  border-left: 1px solid var(--app-sheet-line);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08);
+}
+.ai-drawer-pane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.ai-drawer-pane > .messages-layout { flex: 1 1 auto; height: auto; min-height: 0; }
+.ai-drawer-thread .messages-thread-pane { border-radius: 0; border-top: 0; box-shadow: none; }
+.ai-drawer-head {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-bottom: 1px solid var(--app-sheet-line);
+  background-color: var(--dc-sheet-fill);
+}
+.ai-drawer-back {
+  flex: none; width: 32px; height: 32px; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--brand-ink); background: var(--brand-tint);
+  transition: opacity 300ms, transform 300ms;
+  position: relative;
+}
+/* A 32px disc, pressed as the shell's 44px tap target. */
+.ai-drawer-back::after { content: ""; position: absolute; inset: -6px; }
+/* On the list the arrow has nowhere to go: it arrives as the thread opens. */
+.ai-drawer[data-level="0"] .ai-drawer-back { opacity: 0; transform: translateX(8px); pointer-events: none; }
+.ai-drawer-thread > .ai-drawer-peek { z-index: 5; }
+/* The Ask bar sits at the list's foot, in its column, not over the screen. */
+#ai-screen .ai-drawer-list .ai-askbar { position: sticky; left: auto; right: auto; bottom: 0; }
+#ai-screen .ai-drawer-list .ai-askbar-gap { display: none; }
+@media (prefers-reduced-motion: reduce) { .ai-drawer-back { transition: none; } }
+.ai-drawer[data-panning] { user-select: none; -webkit-user-select: none; }
 /* Where the window has the room, the feed takes a project's stage width
    (720px) out of the screen's 672px column, as far as that column's own
    margins go. */
@@ -24821,33 +24883,40 @@ html.side-panel-resizing * {
   display: inline-flex;
 }
 /* Beside the AI tab's page (its section above has the why): Main's header
-   row, its padding, its hairline and its height, so the page below starts
-   where Main's chat does. */
+   row, its padding, its hairline, its fill and its height, so the page below
+   starts where Main's chat does. */
 body:has(#ai-screen:not(.hidden)) .side-panel-head {
   height: auto;
   min-height: 63px;
   gap: 10px;
-  padding: 12px 18px 10px;
+  padding: 12px 18px;
+  background-color: var(--dc-sheet-fill);
 }
 /* The topic's back chip, centred in the row rather than at its top. */
 .side-panel-head > .side-panel-main { margin: 0; align-self: center; }
-/* The project, as a row's title reads (15px, 650), and a door to it. */
+/* The column's heading, as Main's header reads (30 Oct 2026): the project's
+   tile, then what is open over where it is, the rows' 15 over 13. The
+   project's name is the door to it, underlined under the pointer. */
 .side-panel-place {
+  flex: 1 1 auto;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
-  margin-left: auto;
-  padding: 3px 6px 3px 3px;
-  border-radius: 12px;
+}
+.side-panel-place-title {
   font-size: 15px;
   font-weight: 650;
   line-height: 20px;
   color: var(--text-primary);
-  text-decoration: none;
 }
-.side-panel-place > svg { color: var(--text-faint); }
-.side-panel-place:hover { background: var(--state-neutral-bg); }
-.side-panel-place:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.side-panel-place-where {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-faint);
+}
+.side-panel-place-link { color: inherit; text-decoration: none; border-radius: 4px; }
+.side-panel-place-link:hover { color: var(--text-primary); text-decoration: underline; text-underline-offset: 2px; }
+.side-panel-place-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .side-panel-body {
   position: relative;

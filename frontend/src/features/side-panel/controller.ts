@@ -98,12 +98,19 @@ export interface PanelHint {
    * document's alone: the panel's document is not told.
    */
   place?: { slug: string; name: string; icon_url?: string | null; icon_emoji?: string | null } | null;
+  /**
+   * What the page being opened is called, as the door names it (the AI
+   * tab's row: a request's or a change's title). Beside that page the header
+   * row titles the column with it while the panel is still on that page. The
+   * top document's alone, as `place` is.
+   */
+  label?: string | null;
 }
 
 /**
  * The class on the panel DOCUMENT's <html> while the panel stands beside
  * the AI tab's page rather than an app. That page draws the panel as its
- * own column, with ‹ Main and the project over it (./side-panel.tsx), so
+ * own column, with ‹ Main Chat and the project over it (./side-panel.tsx), so
  * the page in it leaves out its own way back (app.css: the topic's
  * "‹ Workshop" chip), which would be a second one to somewhere else.
  */
@@ -353,7 +360,7 @@ export function take(route: string, hint?: PanelHint | null): boolean {
 export function open(route: string, given?: PanelHint | null): void {
   const s = sidePanelStore.get();
   // The project is this document's to draw; the rest is the page's.
-  const { place = null, ...rest } = given || {};
+  const { place = null, label = null, ...rest } = given || {};
   const hint: PanelHint | null = given ? rest : null;
   if (!s.frameSrc) {
     stack = [];
@@ -370,7 +377,7 @@ export function open(route: string, given?: PanelHint | null): void {
       frameKey: s.frameKey + 1,
       loading: true,
     });
-    publish(route, { place });
+    publish(route, { place, label: label ? { route, text: label } : null });
     return;
   }
   // A panel the viewer had closed starts a fresh history; an open one keeps
@@ -381,7 +388,7 @@ export function open(route: string, given?: PanelHint | null): void {
   desired = route;
   desiredHint = hint;
   sidePanelStore.set({ open: true });
-  publish(route, { place });
+  publish(route, { place, label: label ? { route, text: label } : null });
   markBeside();
   if (ready) {
     desiredHint = null;

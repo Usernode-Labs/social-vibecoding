@@ -939,6 +939,22 @@ function shapeNeedsFeed(rows) {
 }
 
 /**
+ * The Needs you feed for `user`, as GET /api/workshop/needs-feed answers it:
+ * every decision they owe, or (`inThreads`) only those in the threads they
+ * are in, the Homeroom bot tab's. Homeroom bot's my_work reads the same
+ * (services/ai-work.js pageLists), so its answer names what the tab does.
+ */
+async function needsFeedFor(pool, { user, showSelfHosted = false, inThreads = false, shotsPresent = false }) {
+  const { rows } = await pool.query(inThreads ? NEEDS_FEED_IN_THREADS_SQL : NEEDS_FEED_SQL, [
+    user.id, !!showSelfHosted, !!user.isAdmin, NEEDS_FEED_MAX,
+  ]);
+  await withCodeMissing(pool, rows);
+  await withPictures(pool, rows, { shotsPresent, viewer: user });
+  await withViewerDecides(pool, rows, user.id);
+  return decidingFirst(shapeNeedsFeed(await withVotesRequired(pool, rows)));
+}
+
+/**
  * The demo overlay under the real counts.
  *
  * Exported and pure so tests can exercise it with no database. REAL COUNTS
@@ -1202,14 +1218,12 @@ function workshopOverviewRoutes(config) {
   router.get('/api/workshop/needs-feed', async (req, res) => {
     try {
       if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
-      const showSelfHosted = !!req.user.isAdmin || !!config.selfAppPublicVoting;
-      const { rows } = await pool.query(req.query.in === 'threads' ? NEEDS_FEED_IN_THREADS_SQL : NEEDS_FEED_SQL, [
-        req.user.id, showSelfHosted, !!req.user.isAdmin, NEEDS_FEED_MAX,
-      ]);
-      await withCodeMissing(pool, rows);
-      await withPictures(pool, rows, { shotsPresent: !!config.shots?.present, viewer: req.user });
-      await withViewerDecides(pool, rows, req.user.id);
-      const items = decidingFirst(shapeNeedsFeed(await withVotesRequired(pool, rows)));
+      const items = await needsFeedFor(pool, {
+        user: req.user,
+        showSelfHosted: !!req.user.isAdmin || !!config.selfAppPublicVoting,
+        inThreads: req.query.in === 'threads',
+        shotsPresent: !!config.shots?.present,
+      });
       if (IS_STAGING && req.query.demo === '1') {
         return res.json({ items: decidingFirst(withDemoNeedsFeed(items)), max: NEEDS_FEED_MAX });
       }
@@ -1226,7 +1240,7 @@ function workshopOverviewRoutes(config) {
 module.exports = {
   workshopOverviewRoutes, demoNeedsVoteRoutes, withDemoCounts, DEMO_COUNTS, COUNTS_SQL,
   withDemoItems, DEMO_ITEMS, ITEMS_SQL, ITEMS_PER_APP, ITEMS_TOTAL, groupItems,
-  NEEDS_FEED_SQL, NEEDS_FEED_IN_THREADS_SQL, NEEDS_FEED_MAX, BOT_QUESTIONS_SQL, BOT_QUESTIONS_MAX, shapeNeedsFeed, withVotesRequired, withViewerDecides, decidingFirst,
+  NEEDS_FEED_SQL, NEEDS_FEED_IN_THREADS_SQL, NEEDS_FEED_MAX, needsFeedFor, BOT_QUESTIONS_SQL, BOT_QUESTIONS_MAX, shapeNeedsFeed, withVotesRequired, withViewerDecides, decidingFirst,
   withPictures, withCodeMissing, pictureFields, decisionFacts, DEMO_NEEDS_FEED, withDemoNeedsFeed,
   isDemoNeedsProposal,
   OWED_BY_COMMUNITY_SQL, owedByCommunity,

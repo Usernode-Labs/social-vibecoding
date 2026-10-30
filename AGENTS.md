@@ -229,6 +229,10 @@ is no replay plan to write and nothing to verify locally.
 - **The phone's bar is Home · Communities · AI · Messages · You; the
   desktop rail is Home, Discover, Messages, AI, Communities, then You**
   (#6019). AI is the Homeroom bot's chat, which is not a row of Messages.
+  Its page (`frontend/src/features/ai/`) lists your work beside Main Chat,
+  the chat itself; on a phone the two are one drawer, Messages' own strip
+  (`phone-drawer.tsx`), and a request, a change or a decision opens on its
+  own page, never in the drawer.
   Discover is a tab on the rail only: on a phone it is a page Home's
   Discover section opens, with Back to Home. The markup is the rail's
   order, and app.css orders the phone's five cells.
@@ -535,6 +539,17 @@ carry most of them.
 - **Rows are 15 over 13.** `ListRow`'s title is 15px at weight 650, its
   subtitle 13px muted. Messages' `.messages-row-name` / `-preview` use the
   same pair. A 17px bold row title makes every row a heading.
+  **The Homeroom bot tab's lists are the one exception** (30 Oct 2026,
+  `frontend/src/features/ai/lists.tsx`): every thread you are in across
+  projects, so a row is one 14px line (a glyph, its number from 768px, its
+  title and one word on the right), grouped under its project's name
+  instead of a tile on each row, 36px on a desktop and 44px on a phone. The
+  line a second row would carry is its tooltip; a phone, where nothing
+  hovers, shows it as a 12px second line only where it is news (a request
+  the bot handed back, a vote that frees a build slot). The word on the
+  right is the row's one pill, in the accent when it asks for you ("Vote",
+  "Build it"), plain when it only says where things stand. Do not copy the
+  one-line row into a list without that reason.
 - **A label over a card is small caps; a title inside a card is a
   sentence.** `SectionHeader` is 12px bold uppercase, tracked `0.06em`, muted
   (Messages' `.messages-section-head` matches it). It is the only uppercase

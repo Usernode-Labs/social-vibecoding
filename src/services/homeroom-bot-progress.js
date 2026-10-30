@@ -583,6 +583,25 @@ function firstVersionStopped(row) {
   return !/^(?:skipped|blocked):/.test(String(row.build_error || ''));
 }
 
+/**
+ * Pure (30 Oct 2026): a request Homeroom bot looked at and handed back to
+ * the person, from its row (requestRows) while nothing about it is in
+ * progress (stageOf answered null), or null. 'decide' when its newest look
+ * left it for a person to decide (verdict 'person', the Go ahead its DM
+ * offers); 'build_stopped' when the build came to nothing as
+ * firstVersionStopped tells it, which reads no first-version field (the Try
+ * again its DM offers). Only on a request still open with no change of it
+ * up or merged. Nothing moves on either until somebody does something, so
+ * the Homeroom bot tab lists them under Needs you (services/ai-work.js
+ * botStages), where they read "Nobody is building it yet" before.
+ */
+function handedBack(row) {
+  if (!row || row.mode !== 'live' || row.request_closed === true) return null;
+  if (['promoted', 'merging', 'merged'].includes(row.proposal_status)) return null;
+  if (row.verdict === 'person') return 'decide';
+  return firstVersionStopped(row) ? 'build_stopped' : null;
+}
+
 /** Pure: what a request that is not in progress came to, or null. */
 function outcomeOf(row) {
   if (row.proposal_status === 'merged') return 'approved and live';
@@ -1391,6 +1410,7 @@ module.exports = {
   checksOnHead,
   firstVersionStage,
   firstVersionStopped,
+  handedBack,
   buildUnderWay,
   attemptOutcome,
   attachAttempts,

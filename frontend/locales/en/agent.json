@@ -2124,16 +2124,32 @@
     "description": "Accessible title of the embedded page inside the side panel, the pane docked beside an app on a wide screen."
   },
   "sidePanel.main": {
-    "text": "Main",
-    "description": "Text of the back chip over a request's or proposal's page shown beside the Homeroom bot tab's list on a wide screen, in the place of Main, the person's private chat with Homeroom bot: it shows Main there again. \"Main\" is that chat's name; keep it the same as its title. Shown after a left-pointing chevron."
+    "text": "Main Chat",
+    "description": "Beside the AI tab's page, on the column a request or a change opened in: the chip that closes it and gives Main Chat, the person's private chat with Homeroom bot, its place back. \"Main Chat\" is that chat's name; keep it the same as its title. A back chip, with a chevron before it."
   },
   "sidePanel.mainLabel": {
-    "text": "Back to Main",
-    "description": "Accessible name of the Main back chip over a request's or proposal's page beside the Homeroom bot tab's list: it shows Main, the person's private chat with Homeroom bot, in its place again."
+    "text": "Back to Main Chat",
+    "description": "Screen-reader label of the \"Main Chat\" chip beside the AI tab's page: it closes the page opened in the column and shows Main Chat, the person's private chat with Homeroom bot, again."
   },
   "sidePanel.openProject": {
     "text": "Open {{project}}",
     "description": "Accessible name of the link over a request's or proposal's page beside the Homeroom bot tab's list, showing the project the page belongs to: opens that project's page. {{project}} is the project's name. \"Open\" is a verb."
+  },
+  "sidePanel.where.request": {
+    "text": "<0>{{project}}</0> · Request #{{number}}",
+    "description": "Beside the AI tab's page: the line under the title of a request opened in the column. {{project}} is the project's name, a link to its page (the tags); {{number}} is the request's number."
+  },
+  "sidePanel.where.change": {
+    "text": "<0>{{project}}</0> · Change #{{number}}",
+    "description": "Beside the AI tab's page: the line under the title of a change (a proposal) opened in the column. {{project}} is the project's name, a link to its page (the tags); {{number}} is the change's number."
+  },
+  "sidePanel.where.decision": {
+    "text": "<0>{{project}}</0> · Decision",
+    "description": "Beside the AI tab's page: the line under the title of a group decision (a vote on a new name, a card picture, …) opened in the column. {{project}} is the project's name, a link to its page (the tags)."
+  },
+  "sidePanel.where.project": {
+    "text": "<0>{{project}}</0>",
+    "description": "Beside the AI tab's page: the line under the title of any other page of a project opened in the column. {{project}} is the project's name, a link to its page (the tags)."
   },
   "sidePanel.resize": {
     "text": "Resize panel",

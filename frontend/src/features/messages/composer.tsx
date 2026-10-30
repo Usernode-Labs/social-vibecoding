@@ -139,8 +139,13 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   useEffect(() => {
     if (inThread) return undefined;
     const onSelected = (event: Event) => {
-      const detail = (event as CustomEvent<SharedObjectReference>).detail;
-      if (detail) { setObject(detail); setPrompt(null); inputRef.current?.focus(); }
+      const detail = (event as CustomEvent<SharedObjectReference & { conversationId?: number }>).detail;
+      if (!detail) return;
+      // Addressed to one conversation (the Homeroom bot tab's Main): every
+      // other composer mounted under a hidden screen leaves it alone.
+      const { conversationId: to, ...object } = detail;
+      if (to != null && to !== conversationId) return;
+      setObject(object); setPrompt(null); inputRef.current?.focus();
     };
     // Ask for changes: the change itself, attached, and the caret in the box.
     const attachPending = () => {
