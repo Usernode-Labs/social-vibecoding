@@ -4063,6 +4063,18 @@
     "text": "{{project}} · #{{number}} · Waiting for votes · you voted No",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Second line of an Up next row: its change is up for a vote, the person voted No on it, and it waits for other people's votes. \"No\" is the vote button's label; keep it the same as the button."
   },
+  "ai.up.decision": {
+    "text": "{{project}} · Waiting for votes",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Second line of an Up next row with no number: a group decision the person put up (a new name, a new card picture, …) that has nothing to build and waits for other people's votes. {{project}} is the project's name."
+  },
+  "ai.up.decisionYes": {
+    "text": "{{project}} · Waiting for votes · you voted Yes",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Second line of an Up next row with no number: a group decision (a new name, a new card picture, …) the person voted Yes on, waiting for other people's votes. {{project}} is the project's name. \"Yes\" is the vote button's label; keep it the same as the button."
+  },
+  "ai.up.decisionNo": {
+    "text": "{{project}} · Waiting for votes · you voted No",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Second line of an Up next row with no number: a group decision (a new name, a new card picture, …) the person voted No on, waiting for other people's votes. {{project}} is the project's name. \"No\" is the vote button's label; keep it the same as the button."
+  },
   "ai.up.fixQueued": {
     "text": "{{project}} · #{{number}} · A test failed · waiting for a free builder to fix it",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Second line of an Up next row: one of its change's tests failed, and Homeroom bot will fix it when one of its builders is free."

@@ -298,13 +298,36 @@ test('#4539: on a closed request the plan and the question stop waiting, and the
   assert.equal(stage({ proposal_status: 'promoted', check_state: 'passing', proposal_at: ago(20), question_at: ago(9) }).stage, 'question');
   assert.equal(stage({ proposal_status: 'promoted', check_state: 'passing', proposal_at: ago(20), question_at: ago(9), request_closed: true }).stage,
     'vote', 'the closed request\'s open proposal still shows its state');
-  // A build already begun, or held back by a limit, is unchanged.
+  // A build already begun is unchanged.
   assert.equal(stage({ ...waiting, request_closed: true, build_session_id: 7, build_status: 'active', build_started_at: ago(40) }).stage,
     'planning', 'a build under way builds on');
-  assert.equal(stage({ ...waiting, request_closed: true, cap_suppressed: 'proposals_per_app' }).stage, 'held');
   // What it came to, for finishedLately and the DM's answer.
   assert.equal(progress.outcomeOf({ ...waiting, request_closed: true }), 'not built: the request was closed');
   assert.equal(progress.outcomeOf({ ...waiting }), null, 'open: nothing has come of it yet');
+});
+
+// 30 Oct 2026: Main said four closed requests were "ready to build, held
+// back" while the bot tab left them out. The bot's refresh reads open
+// requests only, so no build of a closed one is still to start: held back by
+// a limit, waiting its turn or stalled, it is not in progress, and it came
+// to "not built" like the waiting plan above.
+test('#4539: on a closed request no build still to start reads as in progress', () => {
+  const ready = { mode: 'live', verdict: 'ready', build_ok: null, run_at: ago(50) };
+  const toStart = {
+    held: { cap_suppressed: 'proposals_per_app' },
+    heldDaily: { cap_suppressed: 'questions_per_day' },
+    build_queued: { build_waiting_at: ago(45) },
+    stalled: {},
+  };
+  for (const [name, extra] of Object.entries(toStart)) {
+    assert.notEqual(stage({ ...ready, ...extra }), null, `${name}: in progress while the request is open`);
+    assert.equal(stage({ ...ready, ...extra, request_closed: true }), null, `${name}: not in progress once it is closed`);
+    assert.equal(progress.outcomeOf({ ...ready, ...extra, request_closed: true }), 'not built: the request was closed', name);
+    assert.equal(progress.outcomeOf({ ...ready, ...extra }), null, `${name}: open, nothing has come of it yet`);
+  }
+  // A change already up for a vote still shows its own state.
+  assert.equal(stage({ ...ready, cap_suppressed: 'proposals_per_app', request_closed: true,
+    proposal_status: 'promoted', check_state: 'passing', proposal_at: ago(20) }).stage, 'vote');
 });
 
 // WP1 (#10): a second build of one request was invisible to the bot's

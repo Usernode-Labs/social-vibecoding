@@ -23,7 +23,9 @@
 //                       reading it, a change being made or fixed, merging, or
 //                       merged and going live;
 //              waiting  Up next: one of theirs waiting on someone else: up
-//                       for a vote they have voted on (or that is theirs),
+//                       for a vote they have voted on (or that is theirs), a
+//                       change's or a group decision's (which has nothing to
+//                       build),
 //                       waiting for a free builder or held back (as the bot
 //                       says in Main), or a request nobody has picked up;
 //              live     a change of it went live in the last week.
@@ -81,16 +83,34 @@ function threadsInSql(viewer) {
   ) why GROUP BY thread_id`;
 }
 
-// $1 viewer, $2 show self-hosted, $3 admin, $4 the most rows, $5 days a
-// closed thread stays listed (Live this week).
+// $1 viewer, $2 show self-hosted, $3 admin, $4 the most rows of each kind,
+// $5 days a closed thread stays listed (Live this week).
+//
+// THE MOST ROWS (30 Oct 2026). Up to $4 threads with a merged change (Live
+// this week, Going live) and, apart, up to $4 of the rest, their own before
+// those they only voted or wrote in. With one budget for both, newest first,
+// a week of changes going live filled it and every request of the viewer's
+// older than about a day was never read: a plan waiting for their Build it
+// and requests nobody was building were on neither list while Main named
+// them. Nor are threads read that standing() can never list: closed with
+// nothing merged, live more than $5 days ago, or merged and not live yet in
+// a thread that is not theirs.
 const THREADS_SQL = `
 WITH mine AS (${threadsInSql('$1')})
+SELECT * FROM (
 SELECT t.id, mine.own, t.number, t.kind, t.title AS thread_title, t.state, t.created_at, t.closed_at,
        a.slug, a.name, a.icon_emoji, a.icon_image_id,
        req.title AS request_title, req.state AS request_state, req.updated_at AS request_at,
        ch.id AS change_id, ch.pr_number, ch.status AS change_status, ch.user_id AS change_user,
        ch.title AS change_title, ch.promoted_at, ch.merged_at, ch.live_at, ch.last_activity_at,
-       ch.voted, ch.my_vote, ch.by_agent
+       ch.voted, ch.my_vote, ch.by_agent,
+       dec.status AS decision_status, dec.mine AS decision_mine, dec.my_vote AS decision_vote,
+       COALESCE(ch.live_at, ch.merged_at, ch.promoted_at, ch.last_activity_at, req.updated_at, t.created_at) AS sort_at,
+       ROW_NUMBER() OVER (
+         PARTITION BY COALESCE(ch.status = 'merged', FALSE)
+         ORDER BY mine.own DESC,
+                  COALESCE(ch.live_at, ch.merged_at, ch.promoted_at, ch.last_activity_at, req.updated_at, t.created_at) DESC
+       ) AS place
   FROM threads t
   JOIN mine ON mine.thread_id = t.id
   JOIN apps a ON a.id = t.app_id
@@ -121,8 +141,23 @@ SELECT t.id, mine.own, t.number, t.kind, t.title AS thread_title, t.state, t.cre
               cs.id DESC
      LIMIT 1
   ) ch ON TRUE
+  -- A decision's group vote (a rename, a card picture, ...): whether it is
+  -- still open, and whether the viewer filed it or has voted on it, so the
+  -- row says it waits for votes, or leaves it to the Needs you feed when the
+  -- viewer's own vote is owed (OWED_GOVERNANCE_WHERE).
+  LEFT JOIN LATERAL (
+    SELECT i.status, (i.created_by = $1) AS mine,
+           (SELECT v.vote FROM issue_votes v WHERE v.issue_id = i.id AND v.user_id = $1 LIMIT 1) AS my_vote
+      FROM issues i
+     WHERE t.kind = 'decision' AND i.thread_id = t.id
+     ORDER BY i.id DESC
+     LIMIT 1
+  ) dec ON TRUE
  WHERE t.merged_into IS NULL
-   AND (t.state = 'open' OR t.closed_at > NOW() - make_interval(days => $5))
+   AND (t.state = 'open' OR (t.closed_at > NOW() - make_interval(days => $5) AND ch.status = 'merged'))
+   AND (ch.status IS DISTINCT FROM 'merged'
+        OR ch.live_at > NOW() - make_interval(days => $5)
+        OR (ch.live_at IS NULL AND (mine.own OR ch.user_id = $1)))
    AND NOT EXISTS (SELECT 1 FROM thread_followers f
                     WHERE f.thread_id = t.id AND f.user_id = $1 AND f.muted_at IS NOT NULL)
    -- A change in flight in a thread they only voted or wrote in is never
@@ -131,8 +166,9 @@ SELECT t.id, mine.own, t.number, t.kind, t.title AS thread_title, t.state, t.cre
    -- further down were cut off before they could be listed.
    AND (mine.own OR ch.status IS NULL OR ch.status = 'merged' OR ch.user_id = $1)
    AND ${VISIBLE_APP_WHERE}
- ORDER BY COALESCE(ch.live_at, ch.merged_at, ch.promoted_at, ch.last_activity_at, req.updated_at, t.created_at) DESC
- LIMIT $4`;
+) listed
+ WHERE place <= $4
+ ORDER BY sort_at DESC`;
 
 // $1 viewer, $2 the bot, $3 the most rows. A thread they started is one of
 // their own messages in the chat with the bot that has replies; a draft the
@@ -262,6 +298,16 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null) {
     const bot = botId != null && row.change_user != null && Number(row.change_user) === Number(botId);
     return { group: 'next', what: 'building', at: iso(row.last_activity_at), by: bot ? 'bot' : theirs ? 'you' : 'someone' };
   }
+  // A decision up for the group's vote (a rename, a card picture, ...) has
+  // nothing to build: it waits for votes, as a change up for one does. Not
+  // "Nobody is building it yet", which it said before (30 Oct 2026).
+  if (row.kind === 'decision' && row.decision_status != null) {
+    if (row.decision_status !== 'open' || !own) return null;
+    const myVote = row.decision_vote === 'yes' || row.decision_vote === 'no' ? row.decision_vote : null;
+    // Their vote still owed: the Needs you feed's, as a change's is.
+    if (!myVote && row.decision_mine !== true) return null;
+    return { group: 'waiting', what: 'decision', at: iso(row.created_at), myVote };
+  }
   if (row.request_state === 'open' || row.kind === 'decision') {
     const at = row.request_at || row.created_at;
     const quiet = at ? Math.floor((now - new Date(at)) / DAY_MS) : 0;
@@ -277,7 +323,7 @@ const NEXT_ORDER = { going_live: 0, merging: 1, fixing: 2, revising: 2, building
 // longest), a follow-up waiting its turn, a build waiting its turn or held
 // back, a request waiting to be read, then one nobody has picked up.
 const WAITING_ORDER = {
-  vote: 0, fix_queued: 1, followup_queued: 1, build_queued: 2, held: 3, stalled: 3, queued: 4, on_hold: 5, not_picked_up: 6,
+  vote: 0, decision: 0, fix_queued: 1, followup_queued: 1, build_queued: 2, held: 3, stalled: 3, queued: 4, on_hold: 5, not_picked_up: 6,
 };
 
 /** The key a thread's request is matched to the bot's stage by. */
