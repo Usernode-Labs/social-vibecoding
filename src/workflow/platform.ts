@@ -1430,6 +1430,7 @@ function failed(outcome: EventOutcome): Reply | null {
 
 const RESULT_KEYS = new Map([
   ['rename', 'renamed'], ['secret_change', 'secretChanged'], ['close_issue', 'issueClosed'],
+  ['reopen_issue', 'issueReopened'],
   ['maintenance_campaign', 'campaignStarted'], ['featured_illustration', 'illustrationChanged'],
 ]);
 

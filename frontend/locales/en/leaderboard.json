@@ -1047,6 +1047,10 @@
     "text": "Close issue",
     "description": "Small label on a vote row of the Kudos tab's \"My history\" list: the decision was about closing a request. \"Close\" is a verb."
   },
+  "kudos.history.kind.reopenIssue": {
+    "text": "Reopen issue",
+    "description": "Small label on a vote row of the Kudos tab's \"My history\" list: the decision was about reopening a closed request. \"Reopen\" is a verb."
+  },
   "kudos.history.kind.maintenance": {
     "text": "Maintenance campaign",
     "description": "Small label on a vote row of the Kudos tab's \"My history\" list: the decision was about starting a round of maintenance work on the project."

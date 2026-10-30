@@ -149,7 +149,7 @@ async function validateForShare(pool, user, raw, { conversationId = null } = {})
       `SELECT id, app_id, title, status, kind, created_by
          FROM issues
         WHERE id = $1 AND app_id = $2
-          AND kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign',
+          AND kind IN ('secret_change', 'rename', 'close_issue', 'reopen_issue', 'maintenance_campaign',
                        'featured_illustration', 'thread_move')`,
       [ref.objectRef, app.id]
     ));
@@ -273,7 +273,7 @@ async function hydrateOne(pool, user, ref) {
         `SELECT i.id, i.title, i.status, u.username
            FROM issues i LEFT JOIN users u ON u.id = i.created_by
           WHERE i.id = $1 AND i.app_id = $2
-            AND i.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign',
+            AND i.kind IN ('secret_change', 'rename', 'close_issue', 'reopen_issue', 'maintenance_campaign',
                            'featured_illustration', 'thread_move')`,
         [ref.object_ref, app.id]
       );

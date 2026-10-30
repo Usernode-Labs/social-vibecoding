@@ -372,6 +372,14 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #6000: propose reopening a closed request ───────────────────────
+  'reopen-issue-modal': 'The Propose reopening dialog (features/dialogs/reopen-issue.tsx), the mirror of #close-issue-modal, opened from a closed request\'s status card or its ⋯ menu. Ships hidden.',
+  'reopen-issue-number': 'The dialog title\'s #N span, filled from the issue the dialog was opened for.',
+  'reopen-issue-form': 'The dialog\'s form: the optional reason box and the two buttons.',
+  'reopen-issue-reason': 'The optional reason box, uncontrolled; posted publicly on GitHub when the vote passes.',
+  'reopen-issue-error': 'The dialog\'s error line, hidden until a proposal is refused.',
+  'reopen-issue-cancel': 'The dialog\'s Cancel button.',
+  'reopen-issue-submit': 'The dialog\'s Propose reopen button. Disabled while a request is in flight.',
   // ── #5927: the Homeroom menu says what it is ────────────────────────
   'apps-switcher-title': 'The app menu\'s title, "Feedback & info", over the app\'s name in small caps, which was the whole label before (features/app-context/app-context-sheet.tsx). Rendered on the menu pane only; the second panes keep their back disc there.',
   // ── iPhone Duo: the side strip (24 Oct 2026) ───────────────────────

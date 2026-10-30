@@ -6096,6 +6096,24 @@ const AppView = {
     const toChange = ref ? { label: PlatformI18n.t('changes:request.status.action.seeChange'), href: ref.href } : null;
     if (closed) {
       action = toChange;
+      // #6000: a closed request with no change to look at offers the way to
+      // ask the group to bring it back. One open vote at a time, greyed out.
+      if (!action && !AppView.readOnly) {
+        const reopenProposal = (AppView._govProposals || []).find((g) =>
+          g.kind === 'reopen_issue' && g.status === 'open'
+          && Number(g.payload && g.payload.issueNumber) === issue.number);
+        action = reopenProposal
+          ? {
+            label: PlatformI18n.t('changes:request.actions.reopenProposed'),
+            title: PlatformI18n.t('changes:request.actions.reopenProposedTitle'),
+            disabled: true,
+          }
+          : {
+            label: PlatformI18n.t('changes:request.actions.proposeReopen'),
+            title: PlatformI18n.t('changes:request.actions.proposeReopenTitle'),
+            act: { fn: 'promptReopenIssue', args: [issue.number] },
+          };
+      }
     } else if (merged) {
       action = toChange;
     } else if (!AppView.readOnly && issue.myPrSessionId) {
@@ -7987,6 +8005,23 @@ const AppView = {
           key: 'close', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:request.actions.proposeClose'),
           title: PlatformI18n.t('changes:request.actions.proposeCloseTitle'),
           act: { fn: 'promptCloseIssue', args: [item.number] },
+        });
+    } else if (kind === 'issue' && !AppView.readOnly && item.state === 'closed') {
+      // #6000: a closed request's one action here is asking the group to
+      // reopen it, or the disabled row while that vote is open.
+      const n = item.number;
+      const reopenProposal = (AppView._govProposals || []).find((g) =>
+        g.kind === 'reopen_issue' && g.status === 'open'
+        && Number(g.payload && g.payload.issueNumber) === n);
+      pills.push(reopenProposal
+        ? {
+          key: 'reopen', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:request.actions.reopenProposed'), disabled: true,
+          title: PlatformI18n.t('changes:request.actions.reopenProposedTitle'),
+        }
+        : {
+          key: 'reopen', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:request.actions.proposeReopen'),
+          title: PlatformI18n.t('changes:request.actions.proposeReopenTitle'),
+          act: { fn: 'promptReopenIssue', args: [n] },
         });
     }
 
@@ -10552,6 +10587,7 @@ const AppView = {
       if (!keep(issuesData)) {
         AppView._govProposals = (issuesData.issues || [])
           .filter((i) => i.kind === 'secret_change' || i.kind === 'rename' || i.kind === 'close_issue'
+            || i.kind === 'reopen_issue'
             || i.kind === 'maintenance_campaign' || i.kind === 'featured_illustration' || i.kind === 'thread_move');
       }
       if (!keep(promotedData)) AppView._proposalsCtx = {
@@ -19962,6 +19998,7 @@ const AppView = {
   // tail joined on.
   GOV_APPLY_LABEL_IDS: {
     close_issue: { now: 'changes:governance.apply.closingIssue', slow: 'changes:governance.apply.closingIssueSlow' },
+    reopen_issue: { now: 'changes:governance.apply.reopeningIssue', slow: 'changes:governance.apply.reopeningIssueSlow' },
     secret_change: { now: 'changes:governance.apply.envVar', slow: 'changes:governance.apply.envVarSlow' },
     rename: { now: 'changes:governance.apply.rename', slow: 'changes:governance.apply.renameSlow' },
     maintenance_campaign: { now: 'changes:governance.apply.campaign', slow: 'changes:governance.apply.campaignSlow' },
@@ -20208,11 +20245,14 @@ const AppView = {
     const downCount = parseInt(issue.down_count) || 0;
     const isRename = issue.kind === 'rename';
     const isCloseIssue = issue.kind === 'close_issue';
+    const isReopenIssue = issue.kind === 'reopen_issue';
     const titleText = isRename
       ? PlatformI18n.t('changes:governance.title.rename', { name: (issue.payload && issue.payload.newName) || issue.title })
       : isCloseIssue
         ? PlatformI18n.t('changes:governance.title.closeIssue', { number: (issue.payload && issue.payload.issueNumber) || '?', title: (issue.payload && issue.payload.issueTitle) || issue.title })
-        : issue.title;
+        : isReopenIssue
+          ? PlatformI18n.t('changes:governance.title.reopenIssue', { number: (issue.payload && issue.payload.issueNumber) || '?', title: (issue.payload && issue.payload.issueTitle) || issue.title })
+          : issue.title;
     // A settled (applied/closed) governance row — a close-issue proposal
     // opened from the Completed list. The vote is history: no Yes/No/
     // admin/withdraw controls, no countdown; the pill is a snapshot.
@@ -20859,6 +20899,13 @@ const AppView = {
   promptCloseIssue(issueNumber) {
     if (!AppView.appData) return;
     dialogIsland('closeIssue')?.open(issueNumber);
+  },
+
+  // #6000: "Propose reopening", the mirror of promptCloseIssue. Forwards to
+  // the reopen-issue dialog's island controller.
+  promptReopenIssue(issueNumber) {
+    if (!AppView.appData) return;
+    dialogIsland('reopenIssue')?.open(issueNumber);
   },
 
   // New work on this app. #2779: it starts in an unsent agent session
@@ -22556,6 +22603,26 @@ const AppView = {
       if (!st.noNav) {
         items.push(...AppView._attrMenuItems('issue', n, issue));
       }
+    }
+    // #6000: a closed request offers the way to ask the group to reopen it.
+    // The disabled row says why it cannot be started a second time.
+    if (!AppView.readOnly && issue.state === 'closed') {
+      const reopenProposal = (AppView._govProposals || []).find((g) =>
+        g.kind === 'reopen_issue' && g.status === 'open'
+        && Number(g.payload && g.payload.issueNumber) === n);
+      items.push(reopenProposal
+        ? {
+          label: PlatformI18n.t('changes:issue.menu.reopenProposed'),
+          icon: 'retry',
+          title: PlatformI18n.t('changes:issue.menu.reopenProposedTitle'),
+          disabled: true,
+        }
+        : {
+          label: PlatformI18n.t('changes:issue.menu.proposeReopen'),
+          icon: 'retry',
+          title: PlatformI18n.t('changes:issue.menu.proposeReopenTitle'),
+          act: () => AppView.promptReopenIssue(n),
+        });
     }
     items.push({
       label: PlatformI18n.t('changes:issue.menu.share'),

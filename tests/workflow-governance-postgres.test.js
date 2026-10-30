@@ -94,7 +94,8 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
   const pushed = [];
   const rt = createRuntime({
     pool, machines: [machine], pollMs: 50, publish: async (q, list) => { pushed.push(...list); },
-    services: { 'github.closeIssue': fake('github.closeIssue'), 'governance.checkTarget': fake('governance.checkTarget'),
+    services: { 'github.closeIssue': fake('github.closeIssue'), 'github.reopenIssue': fake('github.reopenIssue'),
+      'governance.checkTarget': fake('governance.checkTarget'),
       'bot.requestsClosed': fake('bot.requestsClosed'), 'threads.closeChanges': fake('threads.closeChanges') },
   });
   runtimes.push(rt);
@@ -230,6 +231,30 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     await vote(ill, voter, 'up');
     assert.equal((await inst(ill)).state, 'refused');
     assert.match((await row(ill)).payload.appliedBy, /^refused:(no_image|image_unavailable)$/);
+  });
+
+  await t.test('#6000 a reopen vote reopens the twin rows and asks GitHub to reopen', async () => {
+    const author = await user();
+    const voter = await user();
+    const a = await app();
+    const { rows: [twin] } = await pool.query(
+      `INSERT INTO issues (app_id, title, kind, payload, created_by, github_issue_number, status)
+       VALUES ($1, 'twin', 'general', '{}'::jsonb, $2, 84, 'closed') RETURNING *`,
+      [a.id, author.id]);
+    const reopen = await issue(a, author, 'reopen_issue', { issueNumber: 84, issueTitle: 'Back', reason: 'Closed by mistake' });
+    await file(reopen);
+    await vote(reopen, voter, 'up');
+    await settle();
+    assert.equal((await inst(reopen)).state, 'applied');
+    assert.equal((await row(twin)).status, 'open', 'its platform twin comes back');
+    const { rows: [ghWork] } = await pool.query(
+      `SELECT * FROM wf_work WHERE key = $1 AND kind = 'github.reopenIssue'`, [issueKey(reopen.id)]);
+    assert.deepEqual([ghWork.work_key, ghWork.input.number], ['target', 84]);
+    assert.match(ghWork.input.comment, /Reopened by group vote \(1\/1\) on Homeroom\.\n\n.*'s reason: Closed by mistake/);
+    assert.equal(ghWork.input.marker, `homeroom-governance:${issueKey(reopen.id)}:reopen`);
+    assert.deepEqual((await pool.query(
+      `SELECT content FROM chat_messages WHERE thread_type = 'issue' AND thread_ref = 84`)).rows.map((r) => r.content),
+    ['Issue #84 reopened by group vote (1/1)']);
   });
 
   await t.test('a close vote asks for the bot\'s proposals on the closed request as durable work', async () => {

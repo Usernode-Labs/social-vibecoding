@@ -855,7 +855,8 @@ const closeProposalLimiter = makeLimiter({
 // global express.json() mounts before any router (see server.js). A
 // missing/non-JSON body falls through to the default bucket.
 function issueKindLimiter(req, res, next) {
-  const limiter = req.body?.kind === 'close_issue' ? closeProposalLimiter : issueCreateLimiter;
+  const kind = req.body?.kind;
+  const limiter = kind === 'close_issue' || kind === 'reopen_issue' ? closeProposalLimiter : issueCreateLimiter;
   return limiter(req, res, next);
 }
 
