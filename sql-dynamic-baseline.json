@@ -516,13 +516,6 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
-      "fingerprint": "0882e61966e68334f071",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.status, cs.linked_issues, cs.shared_at, cs.transcript_shar"
-    },
-    {
-      "source": "src/routes/sessions.js",
-      "kind": "structural-template",
       "fingerprint": "1c821d7ef624ede242e9",
       "count": 1,
       "preview": "`SELECT version, built_at, commit_sha, pr_number, shared_to_group_at, LENGTH(content) AS char_count, content, content_html FROM chat_session_specs s WHERE s.ses"
@@ -533,6 +526,13 @@
       "fingerprint": "42c89c7dc3cd0cb79eb0",
       "count": 1,
       "preview": "`SELECT DISTINCT ON (s.session_id) s.session_id, s.version, s.built_at FROM chat_session_specs s JOIN chat_sessions owner_session ON owner_session.id = s.sessio"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
+      "fingerprint": "828c54db9a579ee9fdcb",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.status, cs.linked_issues, cs.shared_at, cs.transcript_shar"
     },
     {
       "source": "src/routes/sessions.js",
