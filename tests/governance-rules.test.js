@@ -309,7 +309,7 @@ test('a minimum makes a rule list no preset, so it is never written as one', () 
   const v = rules.parseRulesBlock({ rules: [{ group: 'creator', atLeast: 1 }, { group: 'members', majority: true, minimum: 10 }] });
   assert.equal(rules.matchPreset(v.rules), null);
   assert.equal('preset' in rules.blockFor(v), false);
-  assert.match(rules.describeRules(v), /its own rules/);
+  assert.equal(rules.describeRules(v), "the creator's yes, or a vote of All members");
   // The same rule with and without a minimum are two rules.
   assert.doesNotThrow(() => rules.parseRulesBlock({ rules: [
     { group: 'members', majority: true }, { group: 'members', majority: true, minimum: 10 },
@@ -552,4 +552,131 @@ test('a new project is created on You or the group unless it asks otherwise', ()
   assert.deepEqual(createOptions.governanceBlock(chosen.governance), { preset: 'two_yeses' });
   const old = createOptions.parseCreateOptions({ audience: 'solo', governance: { approvers: 'invited' } });
   assert.deepEqual(createOptions.governanceBlock(old.governance), { approvers: 'invited', approvals: 'default' });
+});
+
+// ── Saying the rules in words ─────────────────────────────────────────
+// #6038: a change's title and description are built from the rules it sets,
+// not "its own rules (3 rules)".
+
+test('each measure has its sentence and its short form', () => {
+  const crews = [{ name: 'Lifeguards', people: ['evan', 'maya'] }];
+  const lifeguards = 'lifeguards';
+  assert.equal(rules.ruleSentence({ group: 'creator', kind: 'atLeast', n: 1 }, []), 'The creator says yes');
+  assert.equal(rules.ruleShort({ group: 'creator', kind: 'atLeast', n: 1 }, []), "the creator's yes");
+  assert.equal(rules.ruleSentence({ group: lifeguards, kind: 'atLeast', n: 1 }, crews),
+    'At least 1 person in Lifeguards says yes');
+  assert.equal(rules.ruleShort({ group: lifeguards, kind: 'atLeast', n: 1 }, crews), '1 yes from Lifeguards');
+  assert.equal(rules.ruleSentence({ group: lifeguards, kind: 'atLeast', n: 2 }, crews),
+    'At least 2 people in Lifeguards say yes');
+  assert.equal(rules.ruleShort({ group: lifeguards, kind: 'atLeast', n: 2 }, crews), '2 yeses from Lifeguards');
+  assert.equal(rules.ruleSentence({ group: lifeguards, kind: 'percentOfActive', n: 50 }, crews),
+    '50% of the active people in Lifeguards say yes');
+  assert.equal(rules.ruleShort({ group: lifeguards, kind: 'percentOfActive', n: 50 }, crews), '50% of active Lifeguards');
+  assert.equal(rules.ruleSentence({ group: 'members', kind: 'percentOfEveryone', n: 60 }, []),
+    '60% of everyone in All members says yes');
+  assert.equal(rules.ruleShort({ group: 'members', kind: 'percentOfEveryone', n: 60 }, []), '60% of All members');
+  assert.equal(rules.ruleSentence({ group: 'members', kind: 'majority', n: null }, []),
+    'Most active people in All members say yes, over time');
+  assert.equal(rules.ruleShort({ group: 'members', kind: 'majority', n: null }, []), 'a vote of All members');
+  // A minimum stays in the description, never in the short form.
+  assert.equal(rules.ruleSentence({ group: 'members', kind: 'majority', n: null, min: 10 }, []),
+    'Most active people in All members say yes, over time, and at least 10 of them');
+  assert.equal(rules.ruleShort({ group: 'members', kind: 'majority', n: null, min: 10 }, []), 'a vote of All members');
+});
+
+test('built-in and named groups are said the way the sheet says them', () => {
+  const crews = [{ name: 'Lifeguards', people: [] }];
+  assert.equal(rules.groupLabel('creator', []), 'the creator');
+  assert.equal(rules.groupLabel('members', []), 'All members');
+  assert.equal(rules.groupLabel('admins', []), 'App admins');
+  assert.equal(rules.groupLabel('lifeguards', crews), 'Lifeguards');
+  assert.equal(rules.groupLabel('gone', []), 'gone');
+});
+
+test('a project\'s own rules describe as those rules, not "its own rules"', () => {
+  const v = rules.parseRulesBlock({
+    groups: [{ name: 'Lifeguards', people: ['evan', 'maya'] }],
+    rules: [
+      { group: 'creator', atLeast: 1 },
+      { group: 'Lifeguards', atLeast: 2 },
+      { group: 'members', majority: true, minimum: 10 },
+    ],
+  });
+  assert.equal(rules.describeRules(v), "the creator's yes, 2 yeses from Lifeguards, or a vote of All members");
+  // A preset keeps its name.
+  assert.equal(rules.describeRules(rules.parseRulesBlock({ preset: 'two_yeses' })), 'Two yeses');
+  assert.equal(rules.describeRules(null), 'the default time-&-majority vote');
+});
+
+test('a list too long for a title names its first two rules and how many more', () => {
+  const group = { name: 'Lifeguards of the North Shore', people: ['evan', 'maya'] };
+  const v = rules.parseRulesBlock({
+    groups: [group],
+    rules: [
+      { group: group.name, atLeast: 1 },
+      { group: group.name, atLeast: 2 },
+      { group: group.name, atLeast: 3 },
+      { group: group.name, atLeast: 4 },
+    ],
+  });
+  assert.equal(rules.describeRules(v), '1 yes from Lifeguards of the North Shore, 2 yeses from Lifeguards of the North Shore, or 2 more rules');
+});
+
+test('describeRulesInFull expands a preset and lists every named group', () => {
+  const preset = rules.describeRulesInFull(rules.parseRulesBlock({ preset: 'you_or_the_group' }));
+  assert.deepEqual(preset.sentences, [
+    'The creator says yes.',
+    'Most active people in All members say yes, over time.',
+  ]);
+  assert.deepEqual(preset.groups, []);
+  const own = rules.describeRulesInFull(rules.parseRulesBlock({
+    groups: [{ name: 'Lifeguards', people: ['evan'] }, { name: 'Crew', people: [] }],
+    rules: [{ group: 'Lifeguards', atLeast: 2 }],
+  }));
+  assert.deepEqual(own.sentences, ['At least 2 people in Lifeguards say yes.']);
+  assert.deepEqual(own.groups.map((g) => g.name), ['Lifeguards', 'Crew']);
+});
+
+test('diffRules says what was added, removed, and who joined a group', () => {
+  const was = {
+    preset: null,
+    groups: [{ name: 'Lifeguards', key: 'lifeguards', people: ['evan'], ids: [] }],
+    rules: [
+      { group: 'creator', kind: 'atLeast', n: 1 },
+      { group: 'lifeguards', kind: 'percentOfEveryone', n: 60 },
+    ],
+  };
+  const now = rules.parseRulesBlock({
+    groups: [{ name: 'Lifeguards', people: ['evan', 'maya'] }, { name: 'Crew', people: ['ana'] }],
+    rules: [
+      { group: 'creator', atLeast: 1 },
+      { group: 'Lifeguards', atLeast: 2 },
+      { group: 'members', majority: true, minimum: 10 },
+    ],
+  });
+  const diff = rules.diffRules(was, now);
+  assert.deepEqual(diff.added.map((r) => rules.ruleShort(r, now.groups)), ['2 yeses from Lifeguards', 'a vote of All members']);
+  assert.deepEqual(diff.removed.map((r) => rules.ruleShort(r, was.groups)), ['60% of Lifeguards']);
+  assert.deepEqual(diff.groupsAdded.map((g) => g.name), ['Crew']);
+  assert.deepEqual(diff.groupsRemoved, []);
+  assert.deepEqual(diff.peopleChanged, [{ name: 'Lifeguards', added: ['maya'], removed: [] }]);
+  // People compare case-insensitively, and a group that goes is removed.
+  const samePeople = rules.diffRules(
+    { preset: null, groups: [{ name: 'Lifeguards', people: ['Evan'] }], rules: [{ group: 'lifeguards', kind: 'atLeast', n: 1 }] },
+    rules.parseRulesBlock({ groups: [{ name: 'Lifeguards', people: ['evan'] }], rules: [{ group: 'Lifeguards', atLeast: 1 }] }),
+  );
+  assert.deepEqual(samePeople.peopleChanged, []);
+  const gone = rules.diffRules(was, rules.parseRulesBlock({ rules: [{ group: 'creator', atLeast: 1 }] }));
+  assert.deepEqual(gone.groupsRemoved.map((g) => g.name), ['Lifeguards']);
+  // No today to compare with.
+  assert.equal(rules.diffRules(null, now), null);
+});
+
+test('a preset on either side is expanded before the rules are compared', () => {
+  const diff = rules.diffRules(
+    { preset: 'two_yeses', groups: [], rules: [{ group: 'members', kind: 'atLeast', n: 2 }] },
+    rules.parseRulesBlock({ preset: 'you_or_the_group' }),
+  );
+  assert.deepEqual(diff.added.map((r) => `${r.group}:${r.kind}`), ['creator:atLeast', 'members:majority']);
+  assert.deepEqual(diff.removed.map((r) => `${r.group}:${r.kind}`), ['members:atLeast']);
 });
