@@ -9,6 +9,7 @@ const media = require('../src/services/media-store');
 const control = require('../src/services/shots-control');
 const fixtures = require('./fixtures/shots');
 const { useMemoryMedia } = require('./lib/media-store');
+const { within } = require('./lib/wait-for');
 
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -27,7 +28,7 @@ test('reader release can publish keyed files and retake a keyed slot without ret
   pool.on('error', () => {});
   t.after(async () => { await pool.end(); await admin.query(`DROP DATABASE ${name} WITH (FORCE)`); await admin.end(); });
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
-  const store = useMemoryMedia(t);
+  const store = useMemoryMedia(t, { now: () => 0 });
   const intent = fixtures.intent();
   const { rows: [user] } = await pool.query("INSERT INTO users (username, password) VALUES ('compat', 'x') RETURNING id");
   const { rows: [app] } = await pool.query("INSERT INTO apps (name, slug, created_by) VALUES ('Compat', 'compat', $1) RETURNING id", [user.id]);
@@ -59,6 +60,13 @@ test('reader release can publish keyed files and retake a keyed slot without ret
   assert.equal(published.object_key, oldKey);
   assert.equal(published.data, null);
   assert.deepEqual(await media.bytes(store, published), old);
+  const owner = await pool.connect();
+  await owner.query('BEGIN');
+  await owner.query('SELECT slot FROM shot_run_files WHERE run_id = $1 FOR UPDATE', [runId]);
+  const sweep = media.sweep(pool, store);
+  try {
+    assert.equal((await within(sweep, 2000, 'cleanup to retain a locked referenced row')).removed, 0);
+  } finally { await owner.query('ROLLBACK'); owner.release(); await sweep; }
   // A reader release still writes bytes; the next release writes keys.
   // Both must replace the old key/density and read the actual new bytes.
   await pool.query("UPDATE chat_sessions SET shots_state = 'exploring' WHERE id = $1", [session.id]);
