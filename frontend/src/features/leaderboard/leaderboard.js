@@ -820,6 +820,7 @@ const Leaderboard = {
     secret_change: 'leaderboard:kudos.history.kind.secretChange',
     rename: 'leaderboard:kudos.history.kind.rename',
     close_issue: 'leaderboard:kudos.history.kind.closeIssue',
+    reopen_issue: 'leaderboard:kudos.history.kind.reopenIssue',
     maintenance_campaign: 'leaderboard:kudos.history.kind.maintenance',
     featured_illustration: 'leaderboard:kudos.history.kind.featuredIllustration',
     thread_move: 'leaderboard:kudos.history.kind.threadMove',

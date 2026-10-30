@@ -80,6 +80,9 @@ const DIALOG_IDS = [
   // proposal for both. Its own dialog: it replaces the approval controls of
   // members-modal and the Access section of app-settings-modal.
   'who-decides-modal',
+  // #6000: propose reopening a closed request. Its own dialog, the mirror of
+  // close-issue-modal, opened from a closed request's status card or ⋯ menu.
+  'reopen-issue-modal',
 ];
 
 /**
@@ -167,10 +170,11 @@ function rootTag(src, id) {
 test('every dialog root is rendered by exactly one dialog component', () => {
   // 13 → 14 with #2721's shared report dialog, 14 → 13 with the create
   // dialog's retirement, 13 → 14 with #4405's Custom domain dialog, and
-  // 14 → 15 with #4417's Topics dialog. The count guards the list above against being trimmed to make this test
-  // pass; the per-id assertions below are what actually check the 1:1
-  // mapping.
-  assert.equal(DIALOG_IDS.length, 16);
+  // 14 → 15 with #4417's Topics dialog. #6000's reopen-issue dialog brings
+  // the list to 17. The count guards the list above against being trimmed to
+  // make this test pass; the per-id assertions below are what actually check
+  // the 1:1 mapping.
+  assert.equal(DIALOG_IDS.length, 17);
   for (const id of DIALOG_IDS) {
     const owners = [...componentSrc].filter(([, src]) => src.includes(`id="${id}"`));
     assert.equal(owners.length, 1, `#${id} should be rendered by exactly one features/dialogs/* component, got ${owners.map((o) => o[0])}`);
