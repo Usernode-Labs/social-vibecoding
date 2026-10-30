@@ -4181,11 +4181,79 @@
   },
   "ai.filter.label": {
     "text": "Show the work of",
-    "description": "The AI tab's main view: accessible name of the row of project chips over the lists, which narrows them to the projects picked."
+    "description": "The AI tab's main view: accessible name of the row of project chips over the lists, which narrows them to the projects picked; also the title of the More projects panel those chips end with (a sheet on a phone)."
   },
   "ai.filter.all": {
     "text": "All",
     "description": "The AI tab's main view: the first chip over the lists, showing every project's work. Pressed when no project chip is."
+  },
+  "ai.filter.more_one": {
+    "text": "{{count}} more",
+    "description": "The AI tab's main view: the last chip over the lists, after the three projects that need the person most; opens the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show. {{count}} is how many projects have no chip of their own."
+  },
+  "ai.filter.more_other": {
+    "text": "{{count}} more",
+    "description": "The AI tab's main view: the last chip over the lists, after the three projects that need the person most; opens the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show. {{count}} is how many projects have no chip of their own."
+  },
+  "ai.filter.search": {
+    "text": "Find a project",
+    "description": "The AI tab's main view: placeholder and accessible name of the search box at the top of the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show; filters the projects by name."
+  },
+  "ai.filter.group.needs": {
+    "text": "Needs you",
+    "description": "The AI tab's main view: small caps heading in the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show, over the projects with something waiting on the person."
+  },
+  "ai.filter.group.busy": {
+    "text": "In progress or waiting",
+    "description": "The AI tab's main view: small caps heading in the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show, over the projects with work under way or waiting on someone else, and nothing waiting on the person."
+  },
+  "ai.filter.group.quiet": {
+    "text": "Nothing open",
+    "description": "The AI tab's main view: small caps heading in the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show, over the projects that only had work go live this week."
+  },
+  "ai.filter.note.needs_one": {
+    "text": "{{count}} needs you",
+    "description": "The AI tab's main view: right of a project in the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show, in the accent. {{count}} is how many things in it wait on the person."
+  },
+  "ai.filter.note.needs_other": {
+    "text": "{{count}} need you",
+    "description": "The AI tab's main view: right of a project in the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show, in the accent. {{count}} is how many things in it wait on the person."
+  },
+  "ai.filter.note.progress_one": {
+    "text": "{{count}} in progress",
+    "description": "The AI tab's main view: right of a project in the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show. {{count}} is how many of the person's requests in it are being worked on."
+  },
+  "ai.filter.note.progress_other": {
+    "text": "{{count}} in progress",
+    "description": "The AI tab's main view: right of a project in the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show. {{count}} is how many of the person's requests in it are being worked on."
+  },
+  "ai.filter.note.waiting_one": {
+    "text": "{{count}} waiting",
+    "description": "The AI tab's main view: right of a project in the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show. {{count}} is how many of the person's requests in it wait on someone else (votes, a free builder, the clock)."
+  },
+  "ai.filter.note.waiting_other": {
+    "text": "{{count}} waiting",
+    "description": "The AI tab's main view: right of a project in the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show. {{count}} is how many of the person's requests in it wait on someone else (votes, a free builder, the clock)."
+  },
+  "ai.filter.note.live_one": {
+    "text": "{{count}} live this week",
+    "description": "The AI tab's main view: right of a project in the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show. {{count}} is how many of the person's requests in it went live in the last week."
+  },
+  "ai.filter.note.live_other": {
+    "text": "{{count}} live this week",
+    "description": "The AI tab's main view: right of a project in the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show. {{count}} is how many of the person's requests in it went live in the last week."
+  },
+  "ai.filter.none": {
+    "text": "No project called “{{query}}”",
+    "description": "The AI tab's main view: in the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show when its search matches no project. {{query}} is what the person typed."
+  },
+  "ai.filter.showAll": {
+    "text": "Show all projects",
+    "description": "The AI tab's main view: link at the foot of the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show; unpicks every project so the lists show all of them again."
+  },
+  "ai.filter.done": {
+    "text": "Done",
+    "description": "The AI tab's main view: button at the foot of the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show; closes it. Picks apply as they are made."
   },
   "ai.live.number": {
     "text": "#{{number}}",

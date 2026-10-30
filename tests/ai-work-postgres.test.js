@@ -286,12 +286,16 @@ test('the demo rows are obviously fake, and staging-only', () => {
     assert.match(row.title, /^Staging demo/, row.title);
   }
   // One story with the Needs you feed's demo cards: their projects, so the
-  // page groups the two and has a chip for each, and every kind of row.
+  // page groups the two, and every kind of row. Four more projects only wait
+  // or went live, so the filter has more projects than its three chips and
+  // shows its More.
   const { DEMO_NEEDS_FEED } = require('../src/routes/workshop-overview');
   const feedSlugs = new Set(DEMO_NEEDS_FEED.map((it) => it.app.slug));
   const rows = [...demo.needs, ...demo.next, ...demo.waiting, ...demo.live];
-  assert.ok(rows.every((r) => feedSlugs.has(r.app.slug)), 'on the feed\'s demo projects');
-  assert.equal(new Set(rows.map((r) => r.app.slug)).size, 2);
+  assert.ok([...demo.needs, ...demo.next].every((r) => feedSlugs.has(r.app.slug)), 'what needs you and what is under way is on the feed\'s demo projects');
+  assert.equal(new Set(rows.filter((r) => feedSlugs.has(r.app.slug)).map((r) => r.app.slug)).size, 2);
+  assert.equal(new Set(rows.map((r) => r.app.slug)).size, 6, 'three chips and "3 more"');
+  assert.ok(rows.every((r) => /^staging-demo-/.test(r.app.slug)), 'on demo projects only');
   assert.deepEqual(demo.needs.map((r) => r.what), ['plan', 'decide', 'build_stopped']);
   assert.ok(demo.next.some((r) => r.claimedBy === 'staging-demo-partner'), 'a claim');
 });

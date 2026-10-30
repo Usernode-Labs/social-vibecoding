@@ -7,7 +7,8 @@
 // other people's threads too), In progress (being worked on), Waiting (on
 // someone else; "Up next" until 30 Oct), each the bot's own word where it
 // works on the request; and a thread opens on this page. 30 Oct 2026: one
-// line a row, grouped by project, with a chip for each (./lists.tsx); on a
+// line a row, grouped by project, with chips to narrow them (./lists.tsx;
+// the three projects that need you most and a More for the rest); on a
 // phone the list and Main Chat are one drawer; Homeroom bot's status answer
 // reads the same lists.
 //
@@ -93,7 +94,7 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
 });
 
 test('each section groups its rows by project, and a project shows its first few before its own Show more', () => {
-  const { needsYou, byProject, projectsOf, GROUP_FIRST } = loadTsx(MODEL);
+  const { needsYou, byProject, GROUP_FIRST } = loadTsx(MODEL);
   const games = { slug: 'games', name: 'Game corner', icon_url: null, icon_emoji: '🎮' };
   const needs = [
     { kind: 'proposal', id: 1, number: 500, title: 'Change 0', app },
@@ -112,7 +113,6 @@ test('each section groups its rows by project, and a project shows its first few
     ['games', ['need:proposal:2']],
     [null, ['private:91']],
   ], 'under each project once, in the order the projects first come; a private idea in no project apart');
-  assert.deepEqual(projectsOf(rows, [], [], work.live).map((p) => p.slug), ['garden', 'games'], 'a chip for each project in any list');
   assert.deepEqual({ ...GROUP_FIRST }, { needs: 5, next: 3, waiting: 3, live: 3 }, 'Needs you shows the most: it is what you came for');
   const lists = read('frontend/src/features/ai/lists.tsx');
   assert.match(lists, /const hidden = Math\.max\(0, g\.items\.length - first\);/);
@@ -121,7 +121,56 @@ test('each section groups its rows by project, and a project shows its first few
   assert.equal(message('messages:ai.short.private'), 'Only you', 'the heading over private ideas in no project');
   // One project picked: its chip names it, so its name is not said again.
   assert.match(lists, /const heads = picked\.length !== 1;/);
-  assert.match(lists, /<FadeRail role="group" aria-label=\{t\('messages:ai\.filter\.label'\)\} data-ai-project-chips="">/);
+});
+
+test('the filter: the three projects that need you most as chips, then any picked past them, and More for every project', () => {
+  const { needsYou, rankProjects, railProjects, RAIL_PROJECTS } = loadTsx(MODEL);
+  const at = (slug, name) => ({ slug, name, icon_url: null, icon_emoji: null });
+  const [garden, games, run, birds, zines] = [
+    at('garden', 'Garden club'), at('games', 'Game corner'), at('run', 'Run club'), at('birds', 'Bird count'), at('zines', 'Zines'),
+  ];
+  const rows = needsYou([
+    { kind: 'proposal', id: 1, number: 500, title: 'One', app: games },
+    { kind: 'proposal', id: 2, number: 501, title: 'Two', app: garden },
+    { kind: 'proposal', id: 3, number: 502, title: 'Three', app: garden },
+  ], { private: [], next: [], waiting: [], live: [] });
+  const ranked = rankProjects(rows,
+    [thread(1, 10, 'building', { group: 'next', app: run }), thread(2, 11, 'building', { group: 'next', app: games })],
+    [thread(3, 12, 'vote', { app: zines })],
+    [thread(4, 13, 'live', { group: 'live', app: birds }), thread(5, 14, 'live', { group: 'live', app: birds })]);
+  assert.deepEqual(ranked.map((p) => [p.app.slug, p.needs, p.progress, p.waiting, p.live]), [
+    ['garden', 2, 0, 0, 0],
+    ['games', 1, 1, 0, 0],
+    ['run', 0, 1, 0, 0],
+    ['zines', 0, 0, 1, 0],
+    ['birds', 0, 0, 0, 2],
+  ], 'what needs you most first, then what is under way, then waiting, then only live; once each');
+  assert.equal(RAIL_PROJECTS, 3);
+  assert.deepEqual(railProjects(ranked, []).map((a) => a.slug), ['garden', 'games', 'run'], 'three chips');
+  assert.deepEqual(railProjects(ranked, ['birds', 'games']).map((a) => a.slug), ['birds', 'garden', 'games', 'run'],
+    'a project picked from More joins the rail beside All, so the filter is on screen even on a phone; the first three keep their places');
+  const tied = rankProjects([], [], [], [thread(6, 15, 'live', { group: 'live', app: zines }), thread(7, 16, 'live', { group: 'live', app: birds })]);
+  assert.deepEqual(tied.map((p) => p.app.slug), ['birds', 'zines'], 'a tie goes by name');
+
+  const lists = read('frontend/src/features/ai/lists.tsx');
+  assert.match(lists, /<FadeRail role="group" aria-label=\{t\('messages:ai\.filter\.label'\)\} data-ai-project-chips="" className="min-w-0 flex-1">/);
+  assert.match(lists, /\{rail\.map\(\(app\) => \(/, 'the rail draws the chips railProjects gives it');
+  // More stands outside the rail, so a narrow rail never scrolls it away,
+  // and it is a menu button, not a toggle.
+  assert.match(lists, /<\/FadeRail>\s*\{past > 0 \? \(\s*<Chip/);
+  assert.match(lists, /aria-pressed=\{undefined\}\s+aria-haspopup="dialog"\s+aria-expanded=\{!!more\}/);
+  assert.match(lists, /\{t\('messages:ai\.filter\.more', \{ count: past \}\)\}/);
+  assert.equal(message('messages:ai.filter.more', { count: 28 }), '28 more');
+
+  const picker = read('frontend/src/features/ai/project-picker.tsx');
+  assert.match(picker, /createPortal\(sheet \? <PickerSheet \{\.\.\.props\} \/> : <PickerMenu anchor=\{anchor\} \{\.\.\.props\} \/>, document\.body\)/,
+    'a sheet on a phone, a menu under the chip on a wide window; nothing in the prerender');
+  assert.match(picker, /type="checkbox"[\s\S]*?checked=\{picked\.includes\(p\.app\.slug\)\}[\s\S]*?onChange=\{\(\) => onToggle\(p\.app\.slug\)\}/, 'a pick applies at once');
+  assert.match(picker, /e\.target\.closest\('\[data-ai-project-more\]'\)/, 'a press on More toggles it rather than closing and reopening');
+  assert.equal(message('messages:ai.filter.note.needs', { count: 1 }), '1 needs you');
+  assert.equal(message('messages:ai.filter.note.needs', { count: 3 }), '3 need you');
+  assert.equal(message('messages:ai.filter.note.live', { count: 2 }), '2 live this week');
+  assert.equal(message('messages:ai.filter.group.busy'), 'In progress or waiting');
 });
 
 test('In progress and Waiting each leave out a thread the feed lists, by its request or its change', () => {

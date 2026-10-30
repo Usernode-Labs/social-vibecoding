@@ -3,8 +3,8 @@
  * prototype and a day of iterating on the page as an artifact):
  *
  *   [tile] Homeroom bot              ← a sheet of its own: the title, then
- *          Needs you: 15 · …           a chip a project to see only theirs
- *   ( All ) ( Homeroom ) ( Game Corner ) …
+ *          Needs you: 15 · …           chips to see only some projects' work
+ *   ( All ) ( Homeroom ) ( Game Corner ) ( Run Club )    ( 28 more ⌄ )
  *
  *   NEEDS YOU · 15                   ← a band, the sheet's width
  *   [tile] Homeroom
@@ -32,7 +32,11 @@
  *   project chips    pick one or several projects to see only theirs (the
  *                    shell's filter chip, a toggle each; none picked is
  *                    All). One picked: its name is not said again over
- *                    every section.
+ *                    every section. The rail shows any picked from More,
+ *                    then the three that need you most; its last chip, "N
+ *                    more", opens every project with a search
+ *                    (./project-picker.tsx, 30 Oct 2026: a chip a project
+ *                    was unusable with dozens).
  *   no row lines     space and the project's name group the rows; the only
  *                    lines are over In progress and Waiting.
  *
@@ -51,28 +55,19 @@ import {
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
-import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import {
-  GROUP_FIRST, byProject, nextWords, projectsOf, shortWords, threadWhy, whyOf,
+  GROUP_FIRST, byProject, nextWords, railProjects, rankProjects, shortWords, threadWhy, whyOf,
   type AiApp, type AiThread, type Phrase, type WorkRow,
 } from './model';
+import { usePhone } from './phone-drawer';
+import { ProjectPicker } from './project-picker';
+import { SmallTile } from './small-tile';
 
 // The plane a list stands on, as GroupedList draws one: the sheet's solid
 // fill, 20px, one inset hairline. Complete literals for Tailwind.
 const PLANE = 'mx-4 rounded-[20px] bg-[color:var(--dc-sheet-solid)] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
 // A chip on a sheet: the sheet's own hairline round it, so a white chip does not melt into it.
 const CHIP_EDGE = 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
-
-/** A project's tile at a one-line row's size, or a project heading's. */
-export function SmallTile({ app, size = 'row' }: { app: AiApp | null; size?: 'row' | 'head' }): ReactNode {
-  const box = size === 'head' ? 'w-4 h-4 rounded-[5px] text-[9px]' : 'w-5 h-5 rounded-md text-[11px]';
-  if (!app) return <span className={`${box} shrink-0 bg-zinc-200 dark:bg-zinc-700`} aria-hidden="true" />;
-  return (
-    <span className={`app-icon-tile ${box} shrink-0 overflow-hidden flex items-center justify-center font-bold`} data-icon={appIconKind(app as any)} aria-hidden="true">
-      <AppIconContent app={app as any} />
-    </span>
-  );
-}
 
 interface Line {
   key: string;
@@ -319,10 +314,15 @@ export function AiLists({ hero, ready, rows, owed, progress, waiting, live, open
 }): ReactNode {
   const t = useMessages('messages');
   const say = (p: Phrase | null) => (p ? t(p.id, p.values) : null);
-  // The projects in any list, in the order they first come; the ones picked.
+  // The projects in any list, the ones that need you most first; the ones
+  // picked; the chips the rail shows; and More, open under its chip.
   const [only, setOnly] = useState<string[]>([]);
-  const projects = projectsOf(rows, progress, waiting, live);
-  const picked = only.filter((slug) => projects.some((p) => p.slug === slug));
+  const [more, setMore] = useState<DOMRect | null>(null);
+  const phone = usePhone();
+  const ranked = rankProjects(rows, progress, waiting, live);
+  const picked = only.filter((slug) => ranked.some((p) => p.app.slug === slug));
+  const rail = railProjects(ranked, picked);
+  const past = ranked.length - rail.length;
   const shows = (app: AiApp | null) => !picked.length || (!!app && picked.includes(app.slug));
   const toggle = (slug: string) => setOnly(picked.includes(slug) ? picked.filter((x) => x !== slug) : [...picked, slug]);
 
@@ -367,20 +367,50 @@ export function AiLists({ hero, ready, rows, owed, progress, waiting, live, open
     <div className="flex flex-col gap-3 pt-4" data-ai-lists="">
       <div className={`${PLANE} pt-1`} data-ai-sheet="head">
         {hero}
-        {projects.length > 1 ? (
-          <FadeRail role="group" aria-label={t('messages:ai.filter.label')} data-ai-project-chips="">
-            <Chip size="bar" className={`px-4 ${CHIP_EDGE}`} selected={!picked.length} onClick={() => setOnly([])}>
-              {t('messages:ai.filter.all')}
-            </Chip>
-            {projects.map((app) => (
-              <Chip key={app.slug} size="bar" className={`gap-2 pl-2.5 pr-4 ${CHIP_EDGE}`} selected={picked.includes(app.slug)} onClick={() => toggle(app.slug)} data-ai-chip={app.slug}>
-                <SmallTile app={app} />
-                {app.name || app.slug}
+        {ranked.length > 1 ? (
+          // More stands outside the rail, at its end, so a phone's narrow
+          // rail never scrolls it out of reach.
+          <div className="flex items-start" data-ai-project-filter="">
+            <FadeRail role="group" aria-label={t('messages:ai.filter.label')} data-ai-project-chips="" className="min-w-0 flex-1">
+              <Chip size="bar" className={`px-4 ${CHIP_EDGE}`} selected={!picked.length} onClick={() => setOnly([])}>
+                {t('messages:ai.filter.all')}
               </Chip>
-            ))}
-          </FadeRail>
+              {rail.map((app) => (
+                <Chip key={app.slug} size="bar" className={`gap-2 pl-2.5 pr-4 ${CHIP_EDGE}`} selected={picked.includes(app.slug)} onClick={() => toggle(app.slug)} data-ai-chip={app.slug}>
+                  <SmallTile app={app} />
+                  {app.name || app.slug}
+                </Chip>
+              ))}
+            </FadeRail>
+            {past > 0 ? (
+              <Chip
+                size="bar"
+                className={`mb-4 mr-4 mt-3 gap-1 pl-4 pr-3 ${CHIP_EDGE}`}
+                selected={false}
+                aria-pressed={undefined}
+                aria-haspopup="dialog"
+                aria-expanded={!!more}
+                onClick={(e) => setMore(more ? null : e.currentTarget.getBoundingClientRect())}
+                data-ai-project-more=""
+              >
+                {t('messages:ai.filter.more', { count: past })}
+                <ChevronDownIcon aria-hidden="true" />
+              </Chip>
+            ) : null}
+          </div>
         ) : <div className="pb-3" />}
       </div>
+      {more ? (
+        <ProjectPicker
+          sheet={phone}
+          anchor={more}
+          ranked={ranked}
+          picked={picked}
+          onToggle={toggle}
+          onClear={() => setOnly([])}
+          onClose={() => setMore(null)}
+        />
+      ) : null}
       <div className={`${PLANE} pb-4`} data-ai-sheet="open">
         <Section
           list="work"

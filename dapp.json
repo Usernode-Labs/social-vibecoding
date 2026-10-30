@@ -5165,9 +5165,9 @@
       "expectSelector": "#gc-thread-head .dev-request-root > .min-w-0 > [data-thread-changes] [data-thread-change-line] > button[data-thread-change-open]"
     },
     {
-      "name": "#6019: the AI tab opens on its own page: Needs you, grouped by project, with a plan waiting for your Build it and a request Homeroom bot handed back for a person to decide, another project's build that stopped (Try again), and a private idea under Only you",
+      "name": "#6019: the AI tab opens on its own page: Needs you, grouped by project, with a plan waiting for your Build it and a request Homeroom bot handed back for a person to decide, another project's build that stopped (Try again), and a private idea under Only you; over it, the project chips end in a More for the projects past the first three",
       "path": "/?demo=1#homeroom-bot",
-      "expectSelector": "#ai-screen:not(.hidden) [data-ai-list=\"work\"]:has([data-ai-line=\"stopped\"]):has([data-ai-group=\"none\"] [data-ai-line=\"private\"]) [data-ai-group=\"staging-demo-your-app\"] [data-ai-line=\"plan\"] ~ [data-ai-line=\"decide\"]",
+      "expectSelector": "#ai-screen:not(.hidden):has([data-ai-project-more]) [data-ai-list=\"work\"]:has([data-ai-line=\"stopped\"]):has([data-ai-group=\"none\"] [data-ai-line=\"private\"]) [data-ai-group=\"staging-demo-your-app\"] [data-ai-line=\"plan\"] ~ [data-ai-line=\"decide\"]",
       "expectText": "Try again"
     },
     {

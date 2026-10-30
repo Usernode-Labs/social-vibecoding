@@ -15,12 +15,18 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // view's declared checks and its before & after shots have something to
 // draw on a copy where the fixture account is in no thread. They are on the
 // projects the Needs you feed's demo cards are on (routes/workshop-overview.js
-// DEMO_NEEDS_FEED), so the page tells one story: two projects, grouped, with
-// a chip each, and every kind of row, Decide, Try again and a claim among
-// them. Like those cards' slugs, these are in no database.
+// DEMO_NEEDS_FEED), so the page tells one story: two projects, grouped, and
+// every kind of row, Decide, Try again and a claim among them. Four more
+// demo projects have a row waiting or gone live, so the filter has more
+// projects than chips and shows its More (30 Oct 2026). Like those cards'
+// slugs, these are in no database.
 function demoWork() {
   const app = { slug: 'staging-demo-your-app', name: 'Staging demo app', icon_url: null, icon_emoji: null };
   const game = { slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_url: null, icon_emoji: '🎮' };
+  const album = { slug: 'staging-demo-long-name', name: 'Staging demo photo album and journal', icon_url: null, icon_emoji: '📔' };
+  const picture = { slug: 'staging-demo-image-icon', name: 'Staging demo image icon', icon_url: null, icon_emoji: null };
+  const dice = { slug: 'staging-demo-featured-2', name: 'Staging demo featured 2', icon_url: null, icon_emoji: '🎲' };
+  const puzzle = { slug: 'staging-demo-featured-3', name: 'Staging demo featured 3', icon_url: null, icon_emoji: '🧩' };
   const now = Date.now();
   const at = (hours) => new Date(now - hours * 3600000).toISOString();
   const issue = (a, n) => `#app/${a.slug}/dev/issues/${n}`;
@@ -45,10 +51,14 @@ function demoWork() {
       { threadId: -9211, number: 9211, kind: 'work', title: 'Staging demo: export to a spreadsheet', app, change: null, href: issue(app, 9211), group: 'waiting', what: 'held', heldBy: 'approvals', at: at(6) },
       { threadId: -9217, number: 9217, kind: 'work', title: 'Staging demo: two-player mode', app: game, change: null, href: issue(game, 9217), group: 'waiting', what: 'build_queued', at: at(2) },
       { threadId: -9205, number: 9205, kind: 'work', title: 'Staging demo: print view', app, change: null, href: issue(app, 9205), group: 'waiting', what: 'not_picked_up', at: at(240), quietDays: 10 },
+      { threadId: -9220, number: 9220, kind: 'work', title: 'Staging demo: a page for each month', app: album, change: null, href: issue(album, 9220), group: 'waiting', what: 'build_queued', at: at(4) },
     ],
     live: [
       { threadId: -9206, number: 9206, kind: 'work', title: 'Staging demo: weekly digest', app, change: { id: -9206, number: 9207 }, href: issue(app, 9206), group: 'live', what: 'live', at: at(30) },
       { threadId: -9218, number: 9218, kind: 'work', title: 'Staging demo: a pause button', app: game, change: { id: -9218, number: 9219 }, href: issue(game, 9218), group: 'live', what: 'live', at: at(50) },
+      { threadId: -9221, number: 9221, kind: 'work', title: 'Staging demo: a bigger cover picture', app: picture, change: { id: -9221, number: 9222 }, href: issue(picture, 9221), group: 'live', what: 'live', at: at(26) },
+      { threadId: -9223, number: 9223, kind: 'work', title: 'Staging demo: roll two dice', app: dice, change: { id: -9223, number: 9224 }, href: issue(dice, 9223), group: 'live', what: 'live', at: at(60) },
+      { threadId: -9225, number: 9225, kind: 'work', title: 'Staging demo: a hint button', app: puzzle, change: { id: -9225, number: 9226 }, href: issue(puzzle, 9225), group: 'live', what: 'live', at: at(80) },
     ],
   };
 }
