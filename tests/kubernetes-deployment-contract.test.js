@@ -261,7 +261,8 @@ test('Kubernetes workflow resolves all three images before publishing a release'
   assert.match(workflow, /IMAGE_DIGEST: \$\{\{ steps\.reuse\.outputs\.digest \|\| steps\.build\.outputs\.digest \}\}/);
   assert.match(workflow, /no-cache: \$\{\{ steps\.reuse\.outputs\.refresh == 'true' \}\}/);
   assert.match(workflow, /pull: true/);
-  assert.match(workflow, /needs: \[build, scheduled-image-audit\]/);
+  // The gates run beside the image builds, and publishing waits for all of them.
+  assert.match(workflow, /needs: \[build, scheduled-image-audit, security-lockfiles, security-regressions, preview-schema-compatibility\]/);
   assert.match(workflow, /schedule:[\s\S]*cron: '23 5 \* \* \*'/);
   assert.match(workflow, /npm view @anthropic-ai\/claude-code@latest version/);
   assert.equal((workflow.match(/npm view @anthropic-ai\/claude-code@latest version/g) || []).length, 1,
