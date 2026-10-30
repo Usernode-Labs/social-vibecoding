@@ -50,7 +50,14 @@ const waitlist = require('../services/waitlist');
 const releaseLinks = require('../services/release-links');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail, sendWaitlistCodeMail } = require('../services/topochain/mailer');
-const { inviteUrl, privacyNoticeUrl, siteUrl, waitlistUrl } = require('../services/marketing-links');
+const {
+  accountDeletionUrl,
+  childSafetyUrl,
+  inviteUrl,
+  privacyNoticeUrl,
+  siteUrl,
+  waitlistUrl,
+} = require('../services/marketing-links');
 const { loadContributors, shapeContributor } = require('../services/contributors');
 const { listPublicApps, isPublicDirectoryApp, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
 const { loadProjectOverview } = require('../services/public-project');
@@ -282,6 +289,10 @@ function publicApiRoutes(config) {
   // `privacy_link` is Homeroom's privacy notice on the marketing site
   // (services/marketing-links.js), which the same notice names beside the
   // terms and Settings › About links to (#5094, #5106). Never null.
+  //
+  // `child_safety_link` and `account_deletion_link` are the two other legal
+  // pages the terms name, which Settings › About lists beside them (#6043).
+  // Never null either.
   async function currentTermsLink() {
     try {
       const { rows } = await pool.query(
@@ -308,6 +319,8 @@ function publicApiRoutes(config) {
       phone_sign_in: phoneAuth.offered(config),
       terms_link: await currentTermsLink(),
       privacy_link: privacyNoticeUrl(config),
+      child_safety_link: childSafetyUrl(config),
+      account_deletion_link: accountDeletionUrl(config),
       // The same, from the Homeroom app's own sheets (the bridge's
       // signInWithProvider), once the app's client IDs are saved.
       native_sign_in_providers: await signInProviders.offeredNativeProviders(pool, config),
