@@ -1415,6 +1415,14 @@
     "text": "Anybody on Homeroom can message you, invite you or send you a friend request, including people you don't know.",
     "description": "Small explanation under the \"Anyone\" choice in Settings > Privacy."
   },
+  "privacy.discoverable.title": {
+    "text": "Who can find me",
+    "description": "Heading of the second section of Settings > Privacy, over the \"Let people find my profile\" switch. It is about who finds your username in a search, not who can message you."
+  },
+  "privacy.discoverable.intro": {
+    "text": "Who can find your username when they search for someone to message, mention or invite.",
+    "description": "Explanation under the \"Who can find me\" heading in Settings > Privacy."
+  },
   "privacy.discoverable.label": {
     "text": "Let people find my profile",
     "description": "Label of a switch in Settings > Privacy, off by default. When on, people who are not in a project with you can find your username when they search for people."

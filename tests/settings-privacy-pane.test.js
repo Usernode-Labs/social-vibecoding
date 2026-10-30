@@ -73,6 +73,23 @@ test('the line under each choice says what is true now (#5926)', () => {
   assert.match(message('settings:privacy.whoCanMessage.anyoneDescription'), /people you don't know/);
 });
 
+test('finding your profile is its own section, not part of messaging (#5926 item 6)', () => {
+  const { PrivacySection } = loadTsx('frontend/src/features/settings/sections/privacy.tsx');
+  const html = renderToHtml(createElement(PrivacySection, {}));
+  const headings = [...html.matchAll(/<h3[^>]*>([^<]*)<\/h3>/g)].map((m) => m[1]);
+  assert.deepEqual(headings, [
+    escape(message('settings:privacy.whoCanMessage.title')),
+    escape(message('settings:privacy.discoverable.title')),
+    escape(message('settings:privacy.usageAnalytics.title')),
+  ], 'three sections: messaging, finding, analytics');
+  assert.equal(message('settings:privacy.discoverable.title'), 'Who can find me');
+  // The switch sits under its own heading, after the messaging radios.
+  const findAt = html.indexOf(escape(message('settings:privacy.discoverable.title')));
+  assert.ok(findAt > html.indexOf('id="settings-who-can-message"'));
+  assert.ok(findAt < html.indexOf('id="settings-profile-discoverable"'));
+  assert.ok(html.includes(escape(message('settings:privacy.discoverable.intro'))));
+});
+
 test('the pane reads and writes the route the rules sit behind', () => {
   assert.match(PANE, /const ENDPOINT = '\/api\/me\/contact-privacy';/);
   assert.match(PANE, /method: 'POST'/);
