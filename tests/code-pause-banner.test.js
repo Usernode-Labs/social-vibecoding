@@ -109,6 +109,47 @@ test('codeChangesPaused: a repository on GitHub that is paused or out of Homeroo
   }
 });
 
+test('on web a missing or stale reading does not hold the project, and a real pause still warns', async (t) => {
+  const PLATFORM = 'https://github.com/Usernode-Labs/social-vibecoding';
+  const prev = { role: process.env.PROCESS_ROLE, repo: process.env.USERNODE_PLATFORM_REPO };
+  process.env.PROCESS_ROLE = 'web';
+  process.env.USERNODE_PLATFORM_REPO = PLATFORM;
+  const reads = require('../src/services/github-read-access');
+  const pause = require('../src/services/github-pause');
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const state = { record: null };
+  const pool = { async query() { return { rows: [{ access: state.record }] }; } };
+  const cfg = { githubAppId: '123', dataEncryptionKey: 'test-only-data-key', platformRepoUrl: PLATFORM };
+  const snapshot = (installed, ageMs = 0) => ({
+    scope: '123:usernode-labs/social-vibecoding', installed,
+    checkedAt: new Date(now - ageMs).toISOString(),
+  });
+  try {
+    pause._setForTests({ on: false, deadStatus: null });
+    await reads.init(cfg, pool);
+    assert.equal(pause.codeChangesPaused(PLATFORM), false, 'no snapshot yet is unknown, not a hold');
+
+    state.record = snapshot(true, 7 * 60_000);
+    await reads.init(cfg, pool);
+    assert.equal(pause.codeChangesPaused(PLATFORM), false, 'a stale reading is unknown, not a hold');
+
+    state.record = snapshot(false);
+    await reads.init(cfg, pool);
+    assert.equal(pause.codeChangesPaused(PLATFORM), true, 'the App is known to be gone');
+
+    state.record = snapshot(true, 7 * 60_000);
+    await reads.init(cfg, pool);
+    pause._setForTests({ on: true });
+    assert.equal(pause.codeChangesPaused(PLATFORM), true, 'a real pause still warns with the same stale snapshot');
+  } finally {
+    pause._setForTests({ on: false, deadStatus: null });
+    await reads.init(null, null);
+    if (prev.role === undefined) delete process.env.PROCESS_ROLE; else process.env.PROCESS_ROLE = prev.role;
+    if (prev.repo === undefined) delete process.env.USERNODE_PLATFORM_REPO; else process.env.USERNODE_PLATFORM_REPO = prev.repo;
+  }
+});
+
 test('the project payload carries it, read from the app\'s own repository', () => {
   const at = APPS_SRC.indexOf("router.get('/api/apps/:slug', async");
   const route = APPS_SRC.slice(at, APPS_SRC.indexOf('res.json({ app: appPayload });', at));

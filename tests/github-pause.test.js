@@ -127,6 +127,33 @@ test('a 401 on the bot token pauses the process (a revoked or placeholder token)
   assert.equal(pause.isPaused(), true);
 });
 
+test('on web a real pause still warns when the read-access snapshot is stale', async (t) => {
+  const REPO = 'https://github.com/Usernode-Labs/social-vibecoding';
+  const prev = { role: process.env.PROCESS_ROLE, repo: process.env.USERNODE_PLATFORM_REPO };
+  process.env.PROCESS_ROLE = 'web';
+  process.env.USERNODE_PLATFORM_REPO = REPO;
+  const reads = require('../src/services/github-read-access');
+  const now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const stale = {
+    scope: '123:usernode-labs/social-vibecoding', installed: true,
+    checkedAt: new Date(now - 7 * 60_000).toISOString(),
+  };
+  const pool = { async query() { return { rows: [{ access: stale }] }; } };
+  try {
+    await reads.init({ githubAppId: '123', dataEncryptionKey: 'test-only-data-key', platformRepoUrl: REPO }, pool);
+    pause._setForTests({ on: false, deadStatus: null });
+    assert.equal(pause.codeChangesPaused(REPO), false, 'a stale snapshot alone is unknown, not a hold');
+    pause._setForTests({ on: true });
+    assert.equal(pause.codeChangesPaused(REPO), true, 'a real pause still warns with the same stale snapshot');
+  } finally {
+    await reads.init(null, null);
+    pause._setForTests({ on: false, deadStatus: null });
+    if (prev.role === undefined) delete process.env.PROCESS_ROLE; else process.env.PROCESS_ROLE = prev.role;
+    if (prev.repo === undefined) delete process.env.USERNODE_PLATFORM_REPO; else process.env.USERNODE_PLATFORM_REPO = prev.repo;
+  }
+});
+
 test('a dead token outlives the setting being turned off', async () => {
   pause.noteRefusal('pat', { status: 401 });
   await pause.refresh(settingPool('false'));
