@@ -12,6 +12,57 @@ const appAccess = require('../src/services/app-access');
 const appAdmins = require('../src/services/app-admins');
 const state = require('../src/services/shots-state');
 
+test('keyed shots stream ranges with the same headers, and refuse access before reading storage', async (t) => {
+  const media = require('../src/services/media-store');
+  const store = require('./lib/media-store').useMemoryMedia(t);
+  const clip = fixtures.webm();
+  const key = media.objectKey(clip);
+  await store.putObject(key, clip, 'video/webm');
+  let allowed = true;
+  const pool = { query: async (sql) => {
+    if (String(sql).includes('FROM chat_sessions cs')) return { rows: [{ id: 42, app_id: 9 }] };
+    if (String(sql).includes('FROM shot_artifacts a')) return { rows: [{ data: null, object_key: key,
+      sha256: key.slice(media.PREFIX.length), bytes: clip.length, content_type: 'video/webm', variant: 'animation' }] };
+    throw new Error('Unexpected query');
+  } };
+  const url = `${await serve(t, { pool, user: () => 7,
+    stubs: [[appAccess, 'getAppForUser', async () => allowed ? { id: 9, slug: 'demo' } : null]],
+  })}/${'1'.repeat(32)}`;
+  const full = await fetch(url);
+  assert.equal(full.status, 200);
+  assert.equal(full.headers.get('etag'), `"${key.slice(media.PREFIX.length)}"`);
+  assert.equal(full.headers.get('cache-control'), 'private, max-age=31536000, immutable');
+  assert.equal(full.headers.get('vary'), 'Cookie, Authorization');
+  assert.equal(full.headers.get('content-length'), String(clip.length));
+  assert.deepEqual(Buffer.from(await full.arrayBuffer()), clip);
+  const part = await fetch(url, { headers: { range: 'bytes=10-29' } });
+  assert.equal(part.status, 206);
+  assert.equal(part.headers.get('content-range'), `bytes 10-29/${clip.length}`);
+  assert.equal(part.headers.get('content-length'), '20');
+  assert.deepEqual(Buffer.from(await part.arrayBuffer()), clip.subarray(10, 30));
+  assert.deepEqual(store.calls.filter((c) => c.op === 'get').map((c) => c.range), [null, { start: 10, end: 29 }]);
+  assert.equal((await fetch(url, { headers: { range: 'bytes=9999-' } })).status, 416);
+  allowed = false;
+  assert.equal((await fetch(url)).status, 404);
+  assert.equal(store.calls.filter((c) => c.op === 'get').length, 2, 'neither invalid ranges nor denied requests touch storage');
+});
+
+test('a missing keyed object fails instead of serving old bytes or caching an error as immutable', async (t) => {
+  const media = require('../src/services/media-store');
+  require('./lib/media-store').useMemoryMedia(t);
+  const pool = { query: async (sql) => ({ rows: String(sql).includes('FROM chat_sessions cs') ? [{ id: 42, app_id: 9 }]
+    : [{ data: Buffer.from('old bytes'), object_key: media.objectKey(Buffer.from('absent')), bytes: 6,
+      sha256: 'a'.repeat(64), content_type: 'image/png' }] }) };
+  const url = `${await serve(t, { pool, user: () => 7,
+    stubs: [[appAccess, 'getAppForUser', async () => ({ id: 9, slug: 'demo' })]],
+  })}/${'1'.repeat(32)}`;
+  const res = await fetch(url);
+  assert.equal(res.status, 500);
+  assert.equal(res.headers.get('cache-control'), null);
+  assert.notEqual(res.headers.get('etag'), `"${'a'.repeat(64)}"`);
+  assert.deepEqual(await res.json(), { error: 'Internal server error' });
+});
+
 // Mounts the shots routes over a fake pool with the given stubs, the way
 // server.js does (JSON bodies parsed first), and restores every stub after.
 async function serve(t, { pool, user, config = { shots: { present: true, execute: true } }, stubs = [] }) {

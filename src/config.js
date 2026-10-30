@@ -891,6 +891,11 @@ function load() {
     storageAccessKey: process.env.MINIO_ROOT_USER || '',
     storageSecretKey: process.env.MINIO_ROOT_PASSWORD || '',
     storageBucket: process.env.STORAGE_BUCKET || 'usernode-app-files',
+    // Platform media is separate from app uploads, including in local dev.
+    mediaStorageEndpoint: process.env.MEDIA_STORAGE_ENDPOINT || '',
+    mediaStorageBucket: process.env.MEDIA_STORAGE_BUCKET || '',
+    mediaStorageAccessKey: process.env.MEDIA_STORAGE_ACCESS_KEY || '',
+    mediaStorageSecretKey: process.env.MEDIA_STORAGE_SECRET_KEY || '',
     // GitHub URL of the platform's own repo. Read by feedback (file
     // issues here), the import-flow guard (refuse to import the self-
     // repo as a child app), and the self-app boot seed (Phase 2f).

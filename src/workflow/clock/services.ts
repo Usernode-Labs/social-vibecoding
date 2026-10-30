@@ -143,6 +143,17 @@ export const JOBS: readonly Job[] = Object.freeze([
   },
   // ── Retention ───────────────────────────────────────────────────────
   {
+    // Immutable media no row references, including rolled-back uploads,
+    // once a day old. The clock persists its bucket-listing cursor.
+    name: 'media-gc', everyMs: 5 * MIN, leaseMs: 5 * MIN, newestOnly: true,
+    run: (ctx: WorkContext, { pool, config }: JobDeps) => {
+      const media = legacy('services/media-store');
+      return media.sweep(pool, media.createMediaStore(config), {
+        after: (ctx.input.previous as any)?.after || '', shouldStop: stopped(ctx),
+      });
+    },
+  },
+  {
     // CLI device codes and sessions past their audit window.
     name: 'cli-auth-cleanup', everyMs: 6 * HOUR,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/cli-auth').cleanupCliAuth(pool),

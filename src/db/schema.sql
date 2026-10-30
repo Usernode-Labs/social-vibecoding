@@ -10196,6 +10196,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_shot_runs_current_head
   WHERE state NOT IN ('stale', 'cancelled');
 COMMENT ON TABLE shot_runs IS 'staging:private';
 
+-- Shared immutable platform media. Key columns reference this registry so
+-- cleanup cannot delete an object that ANY migrated table still owns.
+-- No bytes live here. A rolled-back upload may leave an object without a
+-- registry row: the media-gc clock discovers it in the bucket listing.
+CREATE TABLE IF NOT EXISTS media_objects (
+  object_key TEXT PRIMARY KEY CHECK (object_key ~ '^media/sha256/[a-f0-9]{64}$')
+);
+COMMENT ON TABLE media_objects IS 'staging:private';
+
 CREATE TABLE IF NOT EXISTS shot_artifacts (
   id                 VARCHAR(32) PRIMARY KEY
     CHECK (id ~ '^[0-9a-f]{32}$'),
@@ -15317,6 +15326,44 @@ CREATE TABLE IF NOT EXISTS shots_eval_artifacts (
   UNIQUE (trial_id, story_id, viewport, side, variant, media)
 );
 COMMENT ON TABLE shots_eval_artifacts IS 'staging:private';
+
+-- Platform media moves one row at a time. The workflow backfill uploads
+-- before setting its key and clearing bytes in one transaction. Readers
+-- use that row's key, with the byte column only for rows not backfilled yet.
+ALTER TABLE shot_run_files ADD COLUMN IF NOT EXISTS object_key TEXT REFERENCES media_objects(object_key);
+ALTER TABLE shot_run_files ADD COLUMN IF NOT EXISTS dense_object_key TEXT REFERENCES media_objects(object_key);
+ALTER TABLE shot_run_files ALTER COLUMN data DROP NOT NULL;
+ALTER TABLE shot_artifacts ADD COLUMN IF NOT EXISTS object_key TEXT REFERENCES media_objects(object_key);
+ALTER TABLE shot_artifacts ADD COLUMN IF NOT EXISTS dense_object_key TEXT REFERENCES media_objects(object_key);
+ALTER TABLE shot_artifacts ALTER COLUMN data DROP NOT NULL;
+ALTER TABLE shots_eval_artifacts ADD COLUMN IF NOT EXISTS object_key TEXT REFERENCES media_objects(object_key);
+ALTER TABLE shots_eval_artifacts ALTER COLUMN data DROP NOT NULL;
+ALTER TABLE shot_diagnostic_artifacts ADD COLUMN IF NOT EXISTS object_key TEXT REFERENCES media_objects(object_key);
+ALTER TABLE shot_diagnostic_artifacts ALTER COLUMN data DROP NOT NULL;
+CREATE INDEX IF NOT EXISTS shot_run_files_object_key_idx ON shot_run_files(object_key) WHERE object_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS shot_run_files_dense_object_key_idx ON shot_run_files(dense_object_key) WHERE dense_object_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS shot_artifacts_object_key_idx ON shot_artifacts(object_key) WHERE object_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS shot_artifacts_dense_object_key_idx ON shot_artifacts(dense_object_key) WHERE dense_object_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS shots_eval_artifacts_object_key_idx ON shots_eval_artifacts(object_key) WHERE object_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS shot_diagnostic_artifacts_object_key_idx ON shot_diagnostic_artifacts(object_key) WHERE object_key IS NOT NULL;
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['shot_run_files', 'shot_artifacts', 'shots_eval_artifacts', 'shot_diagnostic_artifacts'] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = t::regclass AND conname = t || '_media_check') THEN
+      EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I CHECK ((object_key IS NOT NULL) <> (data IS NOT NULL))', t, t || '_media_check');
+    END IF;
+  END LOOP;
+  FOREACH t IN ARRAY ARRAY['shot_run_files', 'shot_artifacts'] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = t::regclass AND conname = t || '_density_check'
+                    AND pg_get_constraintdef(oid) LIKE '%dense_object_key%') THEN
+      EXECUTE format('ALTER TABLE %I DROP CONSTRAINT IF EXISTS %I', t, t || '_density_check');
+      EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I CHECK (density BETWEEN 1 AND 4
+        AND ((density = 1) = (dense_data IS NULL AND dense_object_key IS NULL))
+        AND NOT (dense_data IS NOT NULL AND dense_object_key IS NOT NULL))', t, t || '_density_check');
+    END IF;
+  END LOOP;
+END $$;
 
 -- A blind PAIR: the control's trial and one configuration's, of the same
 -- proposal and repetition, for an admin's pick through the connector (left,
