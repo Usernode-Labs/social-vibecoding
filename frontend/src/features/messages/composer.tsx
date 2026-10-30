@@ -1,14 +1,15 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 
-import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
+import { ArrowUpIcon, ArrowUpTrayIcon, BoldIcon, HeadingIcon, ItalicIcon, ListBulletIcon, PaperClipIcon, PlusIcon, QuoteIcon, UnderlineIcon } from '@/components/ui/icons';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import * as api from './api';
+import { applyFormat, hasFormatting, type FormatKind } from './composer-format';
 import { waitingFor } from './waiting-for';
 import { channels, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setReply, takePendingAttach, takePendingShare, useMessagesSnapshot } from './store';
 import { mirrorsReplies } from './bot-question';
 import { botRequestNames, threadsAllowed } from './bot-shared';
 import type { ConversationUser, MessageAttachment, SharedObjectCard, SharedObjectReference, StagedObject } from './types';
-import { fileSize, pendingObjectLabel, senderName } from './format';
+import { fileSize, MessageMarkdown, pendingObjectLabel, senderName } from './format';
 import { plainText } from './plain-text';
 import { useAutoGrow } from '../../lib/use-auto-grow';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
@@ -24,6 +25,17 @@ import { NotifyAsk } from '../notify-ask/notify-ask';
 const MAX_ATTACHMENTS = 4;
 // People asked for per `@` prefix in a channel (#3361).
 const CHANNEL_MENTION_LIMIT = 8;
+
+// #6035: the formatting row a channel's composer wears. Each button is named
+// by its catalog entry, shown as its tooltip and announced by screen readers.
+const FORMAT_BUTTONS: Array<{ kind: FormatKind; label: string; Icon: typeof BoldIcon }> = [
+  { kind: 'bold', label: 'messages:composer.format.bold', Icon: BoldIcon },
+  { kind: 'italic', label: 'messages:composer.format.italic', Icon: ItalicIcon },
+  { kind: 'underline', label: 'messages:composer.format.underline', Icon: UnderlineIcon },
+  { kind: 'heading', label: 'messages:composer.format.heading', Icon: HeadingIcon },
+  { kind: 'quote', label: 'messages:composer.format.quote', Icon: QuoteIcon },
+  { kind: 'bullet', label: 'messages:composer.format.bullets', Icon: ListBulletIcon },
+];
 
 function attachmentLimit(file: File): number {
   const name = file.name.toLowerCase();
@@ -309,6 +321,15 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     emojiCaret.current = null;
     inputRef.current?.setSelectionRange(at, at);
   }, [value]);
+  // #6035: where the selection goes after a formatting button edited the
+  // text, put back in the same layout effect as an emoji swap's caret.
+  const formatCaret = useRef<{ start: number; end: number } | null>(null);
+  useLayoutEffect(() => {
+    const selection = formatCaret.current;
+    if (!selection) return;
+    formatCaret.current = null;
+    inputRef.current?.setSelectionRange(selection.start, selection.end);
+  }, [value]);
   const emoji = useMemo(() => {
     const input = inputRef.current;
     const cursor = input?.selectionStart ?? value.length;
@@ -389,12 +410,33 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     input?.focus();
   }
 
+  /** #6035: Ctrl/Cmd+B and Ctrl/Cmd+I in a channel, as other chat apps do. */
+  function onFormatKey(event: ReactKeyboardEvent<HTMLTextAreaElement>): boolean {
+    if (!isChannel || event.nativeEvent.isComposing || event.altKey || event.shiftKey) return false;
+    if (!(event.metaKey || event.ctrlKey)) return false;
+    const key = event.key.toLowerCase();
+    if (key !== 'b' && key !== 'i') return false;
+    event.preventDefault();
+    formatSelected(key === 'b' ? 'bold' : 'italic');
+    return true;
+  }
+
   function updateValue(next: string) {
     const trimmed = next.slice(0, 8000);
     setValue(trimmed); setDraft(scope, trimmed);
     notifyTyping(true);
     if (typingStop.current) window.clearTimeout(typingStop.current);
     typingStop.current = window.setTimeout(() => notifyTyping(false), 2200);
+  }
+
+  /** #6035: format the selection (or the caret's line/spot) and keep the focus. */
+  function formatSelected(kind: FormatKind) {
+    const input = inputRef.current;
+    if (!input) return;
+    const result = applyFormat(input.value.slice(0, 8000), input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length, kind);
+    formatCaret.current = { start: result.start, end: result.end };
+    input.focus({ preventScroll: true });
+    updateValue(result.value);
   }
 
   function insertMention(username: string) {
@@ -518,6 +560,11 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const planReply = reply?.sender.bot && reply.metadata?.homeroomBot?.kind === 'plan' ? reply.metadata.homeroomBot : null;
   // Where the count turns amber, and the only length a phone shows it at.
   const nearLimit = value.length > 7600;
+  // #6035, Drea: the draft as it will be sent, drawn by the same renderer a
+  // sent message is. It is shown once the draft carries formatting, so a
+  // plain message's box stays the one row it was; the field keeps the
+  // source that gets sent.
+  const preview = isChannel && hasFormatting(value) && plainText(value).length > 0 ? value.trim() : null;
 
   return (
     <div className={`messages-composer platform-safe-bar ${inThread ? 'messages-composer-thread' : ''} ${dragging ? 'messages-composer-dragging' : ''}`} {...drop.handlers}>
@@ -548,6 +595,23 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
           </div>
         </div>
       ) : null}
+      {preview ? (
+        <div className="messages-format-preview" role="group" aria-label={t('messages:composer.format.preview')}>
+          <span className="messages-format-preview-label" aria-hidden="true">{t('messages:composer.format.preview')}</span>
+          <div className="messages-format-preview-body">
+            <MessageMarkdown content={preview} />
+          </div>
+        </div>
+      ) : null}
+      {isChannel ? (
+        <div className="messages-format-bar" role="toolbar" aria-label={t('messages:composer.format.bar')}>
+          {FORMAT_BUTTONS.map(({ kind, label, Icon }) => (
+            <button key={kind} type="button" className="messages-format-btn" data-format={kind} onMouseDown={(event) => event.preventDefault()} onClick={() => formatSelected(kind)} disabled={dictating} aria-label={t(label)} title={t(label)}>
+              <Icon aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      ) : null}
       <div className="flex items-end gap-1.5">
         <input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { void addFiles([...(event.target.files || [])]); event.target.value = ''; }} />
         <div className="messages-composer-add" ref={addRef}>
@@ -570,7 +634,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
             </div>
           ) : null}
         </div>
-        <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : (prompt || t('messages:composer.placeholder'))} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
+        <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); else if (onFormatKey(event)) return; }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : (prompt || t('messages:composer.placeholder'))} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
         <SpeakButton scope={`messages:${scope}`} getText={() => inputRef.current?.value || ''} onText={updateValue} maxLength={8000} onBusyChange={setDictating} disabled={!boxShown} />
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={dictating || !!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label={t('messages:composer.send')}><ArrowUpIcon aria-hidden="true" /></button>
       </div>

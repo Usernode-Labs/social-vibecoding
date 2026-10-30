@@ -8809,6 +8809,23 @@ const DevChat = {
       marked.use({
         breaks: true,
         gfm: true,
+        // #6035: underline has no commonmark form, so `++text++` is its own
+        // inline token. It sits beside emphasis rather than inside it, and
+        // an anchored tokenizer leaves code spans, which marked reads first,
+        // untouched.
+        extensions: [{
+          name: 'underline',
+          level: 'inline',
+          start(src) { return src.indexOf('++'); },
+          tokenizer(src) {
+            const match = /^\+\+(?=\S)([\s\S]*?\S)\+\+(?!\+)/.exec(src);
+            if (!match) return undefined;
+            return { type: 'underline', raw: match[0], tokens: this.lexer.inlineTokens(match[1]) };
+          },
+          renderer(token) {
+            return `<u>${this.parser.parseInline(token.tokens)}</u>`;
+          },
+        }],
         renderer: {
           code({ text, lang, escaped }) {
             let language = lang || '';
@@ -8996,7 +9013,7 @@ const DevChat = {
     const out = DOMPurify.sanitize(html, {
       ALLOWED_TAGS: ['a', 'b', 'strong', 'i', 'em', 'code', 'pre', 'h3', 'h4', 'h5',
         'p', 'br', 'ol', 'ul', 'li', 'div', 'span', 'table', 'thead', 'tbody',
-        'tr', 'th', 'td', 'hr', 'del',
+        'tr', 'th', 'td', 'hr', 'del', 'u',
         // #3940: the inline issue-video player rides the same opt-in as
         // the images it sits beside (renderMarkdown's images option).
         ...(allowImages ? ['img', 'video'] : [])],
