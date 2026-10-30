@@ -14,20 +14,24 @@
 // is read again on Postgres's refusal).
 //
 // A staging preview sets up neither (config.runsClusterMaintenance): its
-// rows are a copy of production's. Never throws: a role that cannot be set
-// up leaves its capability unavailable, and the release goes on.
+// rows are a copy of production's. A capability's own setup failure leaves
+// it unavailable. In split mode an invalid/unavailable provisioner login
+// fails the migration instead of booting with the wrong database authority.
 
 const { runsClusterMaintenance } = require('../config');
 const log = require('./logger');
 
 async function ensureRoles(config) {
   if (!runsClusterMaintenance()) return { skipped: 'staging' };
-  // In sequence, never together: both rewrite the same catalog rows (#891).
-  await require('./debug-access').ensureRole(config).catch((err) => {
-    log.warn('db-roles', 'prod-debug role bootstrap failed (capability disabled)', { err: err.message });
-  });
-  await require('./topochain/db-console-role').ensureConsoleRole(config).catch((err) => {
-    log.warn('db-roles', 'topochain SQL console role bootstrap failed (capability disabled)', { err: err.message });
+  // Role DDL uses the provisioner; table/column grants use the migrator.
+  // A single administrative connection stays inside the migration budget.
+  await require('./database-role-grants').withRoleAdmin(async (admin) => {
+    await require('./debug-access').ensureRole(config, { admin }).catch((err) => {
+      log.warn('db-roles', 'prod-debug role bootstrap failed (capability disabled)', { err: err.message });
+    });
+    await require('./topochain/db-console-role').ensureConsoleRole(config, { admin }).catch((err) => {
+      log.warn('db-roles', 'topochain SQL console role bootstrap failed (capability disabled)', { err: err.message });
+    });
   });
   return { ok: true };
 }

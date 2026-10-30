@@ -15538,9 +15538,9 @@ async function seedStagingProfileCustomization(pool, config) {
 //     the stored password. If it was dropped (manual postgres
 //     intervention, partial backup restore, etc.), recreate it.
 //
-// Skipped for self_hosted apps: the platform's own DB is owned by
-// the `usernode` superuser intentionally — db-manager needs that
-// superuser to spawn child app DBs and create roles.
+// Self-hosted apps keep the platform's schema identity. In split mode the
+// migrator owns it; tenant lifecycle uses the separate provisioner. The
+// bootstrap refuses unresolved legacy tenant ownership before cutover.
 //
 // Failure for any one app is logged but does NOT abort boot; other
 // apps continue to migrate. A failed adoption leaves the app in the

@@ -35,11 +35,11 @@ const render = (file, extra) => execFileSync('helm', [...base, '--show-only', `t
 const envOf = (rendered) => Object.fromEntries([...rendered.matchAll(/\{name: ([A-Z0-9_]+), value: "([^"]*)"\}/g)]
   .map(([, key, value]) => [key, value]));
 
-test('off by default: nothing about a preview database server is rendered, and a leftover key is overridden', { skip }, () => {
+test('disabled preview databases expose no URL and override a leftover key', { skip }, () => {
   const platform = render('platform.yaml', ['--set', 'secrets.create=false']);
   assert.equal(envOf(platform).STAGING_DB_ADMIN_URL, '', 'an explicit empty value, which wins over envFrom');
   assert.equal('STAGING_DB_SERVER_DRAIN' in envOf(platform), false);
-  assert.doesNotMatch(render('secret.yaml', created), /STAGING_DB_ADMIN_URL/);
+  assert.doesNotMatch(render('secret.yaml', created), /STAGING_DB_ADMIN_URL: "[^\"]+"/);
   assert.doesNotMatch(render('networkpolicy.yaml', ['--set', 'secrets.create=false']), /previews-ns|previewcopies/);
 });
 

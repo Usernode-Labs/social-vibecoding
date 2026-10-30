@@ -17,6 +17,10 @@ function databaseName(connectionString) {
 }
 
 async function ensureTargetDatabase(config) {
+  if (require('../src/services/database-role-access').enabled()) {
+    await require('../src/services/database-role-access').assertLogin(getPool(config), 'migrator');
+    return; // The bootstrap job creates/owns the platform database first.
+  }
   const adminUrl = process.env.DB_ADMIN_URL;
   if (!adminUrl) throw new Error('DB_ADMIN_URL is required for the Kubernetes migration Job');
 
@@ -41,6 +45,10 @@ async function ensureServerBudget(config, pool) {
   const client = new Client({ connectionString: process.env.DB_ADMIN_URL, application_name: connectionName('admin') });
   try {
     await client.connect();
+    if (require('../src/services/database-role-access').enabled()) {
+      await require('../src/services/database-role-access').assertLogin(client, 'provisioner');
+      await client.query('SELECT public.homeroom_adopt_app_roles()');
+    }
     const out = await require('../src/services/server-budget').ensureServerBudget(config, { admin: client, pool });
     console.log('[migration] connection budget', JSON.stringify({ capped: out.capped.length }));
   } catch (error) {
@@ -56,6 +64,7 @@ async function main() {
   try {
     await ensureTargetDatabase(config);
     await migrate(config);
+    await require('../src/services/database-role-grants').ensureRuntimeGrants(getPool(config));
     // The read-only database roles, by the new build over the new schema,
     // before any Pod of the release starts (services/db-roles.js).
     await require('../src/services/db-roles').ensureRoles(config);
