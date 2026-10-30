@@ -936,15 +936,25 @@ const Browse = {
   },
 
   // What a search that found nothing offers to make (#5928): the words
-  // typed, for "What do you want to make?" to start from. Only when NO app in
-  // the directory matches them, whatever the view, switches or type: a match
-  // a filter hid is found by relaxing the filter, not by making a second one.
+  // typed, whole, for "What do you want to make?" to start from (it takes
+  // up to 4000 characters; the button only shortens what it shows). Only
+  // when no app a person can reach matches them, whatever the view,
+  // switches or type: a match a filter hid is found by relaxing the filter,
+  // not by making a second one. Reachable is reachableApps; a flagged app
+  // Discover never lists does not count. The match is the results search's
+  // own (Home.filterApps) on the same raw text, so the two never disagree.
   // A web address offers its site row instead (siteFor). Pure — unit-tested.
   makeIdeaFor(query, apps) {
-    const q = String(query == null ? '' : query).replace(/\s+/g, ' ').trim();
+    const q = String(query == null ? '' : query).trim();
     if (!q || Browse.siteFor(q)) return null;
-    if (Home.filterApps(apps || [], q).length) return null;
-    return q.slice(0, 80);
+    if (Home.filterApps(Browse.reachableApps(apps), query).length) return null;
+    return q;
+  },
+
+  // Every app some view can show: what Discover lists (listedApps) and what
+  // you have joined, which the Joined view keeps even when flagged.
+  reachableApps(apps) {
+    return (apps || []).filter((a) => a && (!Home.isFlagged(a) || Home.isJoined(a)));
   },
 
   // The rows for the current view, switches, type, order and query. The view

@@ -1808,10 +1808,10 @@ test('render: empty result explains itself, with the query when there is one', (
 test('#5928: a search no app answers offers to make it; a filtered-away match does not', () => {
   const { Browse, state } = makeBrowse();
   Browse._apps = [app({ slug: 'chess', name: 'Chess' })];
-  Browse._query = '  plant   swap ';
+  Browse._query = '  plant swap ';
   Browse.render();
   assert.match(state.empty, /No apps match/);
-  assert.equal(state.make, 'plant swap', 'the words typed, tidied, are the idea');
+  assert.equal(state.make, 'plant swap', 'the words typed, trimmed, are the idea');
 
   // Chess exists, but the Joined view hides it: relaxing the view finds it,
   // so there is nothing to make.
@@ -1836,14 +1836,39 @@ test('#5928: a search no app answers offers to make it; a filtered-away match do
   assert.equal(state.make, null);
 });
 
-test('#5928: makeIdeaFor caps the idea and ignores blank text', () => {
+test('#5928: makeIdeaFor keeps the whole idea and ignores blank text', () => {
   const { Browse } = makeBrowse();
   assert.equal(Browse.makeIdeaFor('   ', []), null);
   assert.equal(Browse.makeIdeaFor(null, []), null);
-  assert.equal(Browse.makeIdeaFor('x'.repeat(200), []).length, 80);
+  const long = 'a garden '.repeat(60).trim();
+  assert.equal(Browse.makeIdeaFor(long, []), long, 'never cut: the make screen takes 4000');
 });
 
-function renderBrowseScreen(patch, App) {
+test('#5928: a flagged app nobody can reach does not hide Make; a joined one does', () => {
+  const { Browse } = makeBrowse();
+  const flagged = app({ slug: 'plant-swap', name: 'Plant Swap', directory: { flagged: true } });
+  assert.equal(Browse.makeIdeaFor('plant', [flagged]), 'plant',
+    'Discover never lists a flagged app, so no filter can show it');
+  const joined = app({ slug: 'plant-swap', name: 'Plant Swap', directory: { flagged: true }, is_member: true });
+  assert.equal(Browse.makeIdeaFor('plant', [joined]), null,
+    'the Joined view keeps a flagged app you are in, so it is found there');
+});
+
+test('#5928: Make and the results search match the same way', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [app({ slug: 'plant-swap', name: 'Plant Swap' })];
+  for (const q of ['plant  swap', 'Plant Swap', 'plant']) {
+    Browse._query = q;
+    Browse.render();
+    assert.equal(!!state.make, state.rows.length === 0,
+      `"${q}": Make shows exactly when the results are empty`);
+  }
+  Browse._query = 'plant  swap';
+  Browse.render();
+  assert.equal(state.make, 'plant  swap', 'two spaces find nothing, so Make offers them');
+});
+
+function renderBrowseScreen(patch) {
   const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
   const initial = {
     level: 'list', rows: [], site: null, curated: true, grouped: true, moreExpanded: false,
@@ -1855,13 +1880,7 @@ function renderBrowseScreen(patch, App) {
   const mod = loadTsx('frontend/src/features/apps/browse-screen.tsx', {
     stubs: { './mount': { browseStore } },
   });
-  const prevApp = globalThis.App;
-  if (App) globalThis.App = App;
-  try {
-    return renderToHtml(createElement(mod.BrowseScreen, {}));
-  } finally {
-    if (App) globalThis.App = prevApp;
-  }
+  return renderToHtml(createElement(mod.BrowseScreen, {}));
 }
 
 test('#5928: the empty line draws Make with the idea only when there is one', () => {
@@ -1871,7 +1890,7 @@ test('#5928: the empty line draws Make with the idea only when there is one', ()
   assert.doesNotMatch(plain, /browse-empty-make/);
 
   const html = renderBrowseScreen({ empty: 'No apps match “plant swap”.', make: 'plant swap' });
-  const btn = html.match(/<button[^>]*id="browse-empty-make"[^>]*>([^<]*)<\/button>/);
+  const btn = html.match(/<button[^>]*id="browse-empty-make"[^>]*><span class="min-w-0 truncate">([^<]*)<\/span><\/button>/);
   assert.ok(btn, 'the Make button is drawn under the sentence');
   assert.equal(btn[1], message('discover:empty.search.make').replace('{{idea}}', 'plant swap'));
   assert.match(btn[0], /bg-violet-600/, 'the accent pill: it is the action the line offers');
@@ -1881,11 +1900,23 @@ test('#5928: the empty line draws Make with the idea only when there is one', ()
     'the prerender ships #browse-empty empty and hidden, as before');
 });
 
-test('#5928: Make opens "What do you want to make?" with the search as the idea', () => {
-  const src = read('frontend/src/features/apps/browse-screen.tsx');
-  assert.match(src, /\.App\?\.showCreateModal\?\.\(\{ idea: state\.make as string \}\)/);
-  assert.match(read('public/js/app.js'), /showCreateModal\(opts\) \{[\s\S]*?front\.create\(opts\)/,
-    'App.showCreateModal hands opts (and so the idea) to the make screen');
+test('#5928: pressing Make opens "What do you want to make?" with the whole search', () => {
+  const { loadTsx } = require('./lib/render-tsx');
+  const mod = loadTsx('frontend/src/features/apps/browse-screen.tsx', {
+    stubs: { './mount': { browseStore: { get: () => ({}), subscribe: () => () => {} } } },
+  });
+  const calls = [];
+  const prevWindow = globalThis.window;
+  globalThis.window = { App: { showCreateModal: (opts) => { calls.push(opts); return true; } } };
+  try {
+    const idea = 'a garden '.repeat(30).trim();
+    const button = mod.MakeFromSearch({ idea, label: `Make “${idea}”` });
+    assert.equal(button.props.id, 'browse-empty-make');
+    button.props.onClick();
+    assert.deepEqual(calls, [{ idea }], 'showCreateModal gets the idea, uncut');
+  } finally {
+    globalThis.window = prevWindow;
+  }
 });
 
 // ── Data flow ────────────────────────────────────────────────────

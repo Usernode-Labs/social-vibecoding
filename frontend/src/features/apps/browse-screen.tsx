@@ -90,6 +90,31 @@ const VIEW_TABS: Array<{ key: string; label: string }> = [
   { key: 'joined', label: 'discover:filter.joined' },
 ];
 
+/**
+ * The empty line's Make button (#5928): opens "What do you want to make?"
+ * (App.showCreateModal) with the whole search as the idea. The label is cut
+ * to one line on screen; the idea is never shortened. No hooks, so a test
+ * can call it and press it.
+ */
+export function MakeFromSearch({ idea, label }: { idea: string; label: string }) {
+  return (
+    <Button
+      id="browse-empty-make"
+      type="button"
+      layout="iconRow"
+      variant="pillAccent"
+      size="sm"
+      ink="solid"
+      className="min-h-[44px] md:min-h-0 max-w-full"
+      title={label}
+      onClick={() => {
+        (window as unknown as { App?: { showCreateModal?: (o: { idea: string }) => boolean } })
+          .App?.showCreateModal?.({ idea });
+      }}
+    ><span className="min-w-0 truncate">{label}</span></Button>
+  );
+}
+
 export function BrowseScreen() {
   const t = useMessages('discover');
   const screenRef = useRef<HTMLElement | null>(null);
@@ -380,18 +405,7 @@ export function BrowseScreen() {
           */}
           {state.empty && state.make ? (
             <div className="mt-3">
-              <Button
-                id="browse-empty-make"
-                type="button"
-                variant="pillAccent"
-                size="sm"
-                ink="solid"
-                className="min-h-[44px] md:min-h-0"
-                onClick={() => {
-                  (window as unknown as { App?: { showCreateModal?: (o: { idea: string }) => boolean } })
-                    .App?.showCreateModal?.({ idea: state.make as string });
-                }}
-              >{t('discover:empty.search.make', { idea: state.make })}</Button>
+              <MakeFromSearch idea={state.make} label={t('discover:empty.search.make', { idea: state.make })} />
             </div>
           ) : null}
         </div>
