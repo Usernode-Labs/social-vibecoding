@@ -48,6 +48,8 @@
  * THE FIRST RENDER IS THE PRERENDER: the screen hidden, the bot's name and
  * no rows. The lists load in effects once the screen is shown to somebody
  * signed in, and the docked pane and the drawer exist only after mount.
+ * While the screen is up they are read again whenever a thread they list
+ * moves (./live.ts), not only when it is shown again.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -56,15 +58,17 @@ import type { ReactNode } from 'react';
 import { LockIcon, MicrophoneIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
+import { FRESH } from '../../lib/live-reads';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { EmbeddedConversation } from '../messages';
 import { openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
 import { SidePanelDivider } from '../side-panel/side-panel';
+import { useLiveLists } from './live';
 import { AiLists } from './lists';
 import { AiDrawer, MainPane, usePhone } from './phone-drawer';
 import {
-  heroWords, inProgress, isTopicHref, needsYou, owedCount, upNext,
+  heroWords, inProgress, isTopicHref, needsYou, owedCount, projectsOf, upNext,
   type AiApp, type AiThread, type AiWork, type NeedItem, type Phrase, type WorkRow,
 } from './model';
 
@@ -77,9 +81,9 @@ function demoQuery(): string {
   return new URLSearchParams(window.location.search).get('demo') === '1' ? '?demo=1' : '';
 }
 
-async function readJson<T>(path: string): Promise<T | null> {
+async function readJson<T>(path: string, init?: RequestInit): Promise<T | null> {
   try {
-    const res = await fetch(path, { credentials: 'same-origin' });
+    const res = await fetch(path, { ...init, credentials: 'same-origin' });
     return res.ok ? ((await res.json()) as T) : null;
   } catch {
     return null;
@@ -199,15 +203,26 @@ export function AiScreen(): ReactNode {
   }, []);
 
   // Read on every showing: what is yours changes while you are elsewhere.
+  // And again while the page is up, each time a thread it lists moves
+  // (./live.ts counts those in `moved`). Every read after the first asks
+  // past the service worker's saved copy, since it is for what changed
+  // since; one that fails keeps the lists as they were.
+  const [moved, setMoved] = useState(0);
+  const readBefore = useRef(false);
   useEffect(() => {
     if (!visible || typeof window === 'undefined' || !(window as any).App?.user) return undefined;
     let live = true;
     const qs = demoQuery();
-    void readJson<AiWork>(`/api/ai/work${qs}`).then((data) => { if (live && data) setWork(data); });
-    void readJson<{ items?: NeedItem[] }>(`/api/workshop/needs-feed?in=threads${qs ? '&demo=1' : ''}`)
-      .then((data) => { if (live) setNeeds(Array.isArray(data?.items) ? data!.items : []); });
+    const again = readBefore.current;
+    readBefore.current = true;
+    const init = again ? FRESH : undefined;
+    void readJson<AiWork>(`/api/ai/work${qs}`, init).then((data) => { if (live && data) setWork(data); });
+    void readJson<{ items?: NeedItem[] }>(`/api/workshop/needs-feed?in=threads${qs ? '&demo=1' : ''}`, init)
+      .then((data) => {
+        if (live && (data || !again)) setNeeds(Array.isArray(data?.items) ? data!.items : []);
+      });
     return () => { live = false; };
-  }, [visible, session]);
+  }, [visible, session, moved]);
 
   // Main beside the list, on a desktop, or peeking beside it in a phone's
   // drawer: the chat with the bot, opened once.
@@ -219,9 +234,14 @@ export function AiScreen(): ReactNode {
   const rows = useMemo(() => needsYou(needs, work), [needs, work]);
   const progress = useMemo(() => inProgress(needs, work), [needs, work]);
   const waiting = useMemo(() => upNext(needs, work), [needs, work]);
-  const live: AiThread[] = work?.live || [];
+  const live: AiThread[] = useMemo(() => work?.live || [], [work]);
   const owed = owedCount(rows);
   const docked = wide && !!botId;
+  const projects = useMemo(
+    () => new Set(projectsOf(rows, progress, waiting, live).map((app) => app.slug)),
+    [rows, progress, waiting, live],
+  );
+  useLiveLists(() => setMoved((n) => n + 1), visible, { projects, botId });
 
   // Main, slid in on a phone: at a private thread of it, or where it was.
   const openMain = (threadRootId: number | null) => {

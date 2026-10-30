@@ -3078,6 +3078,9 @@ const App = {
     App.eventsWs.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        // The Homeroom bot page keeps its lists current from these: it
+        // picks the events that move a thread it lists (features/ai/live.ts).
+        window.UsernodeReact?.aiScreen?.handleEvent?.(data);
         switch (data.type) {
           // A cross-instance event whose payload did not fit in a NOTIFY
           // (8000 bytes), so the emitting pod sent a nudge instead of a

@@ -23,6 +23,9 @@
 //      #homeroom-bot/thread/<id> are Main; #ai, the old address, lands there.
 //   5. A thread opens beside the list in Main's place (the side panel drawn
 //      as the page's column), or on its page with a way back here.
+//   6. While the page is up, its lists are read again when a thread they
+//      list moves (./live.ts): which socket events count, one read a burst,
+//      none while the browser tab is hidden.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -383,7 +386,7 @@ test('Homeroom bot answers "where do things stand?" from the lists this page dra
 
 test('Needs you here is the threads you are in, counted in the label\'s ink, with no link to every vote', () => {
   const src = read('frontend/src/features/ai/index.tsx');
-  assert.match(src, /readJson<\{ items\?: NeedItem\[\] \}>\(`\/api\/workshop\/needs-feed\?in=threads\$\{qs \? '&demo=1' : ''\}`\)/);
+  assert.match(src, /readJson<\{ items\?: NeedItem\[\] \}>\(`\/api\/workshop\/needs-feed\?in=threads\$\{qs \? '&demo=1' : ''\}`, init\)/);
   assert.match(read('frontend/src/features/ai/lists.tsx'),
     /head=\{owedShown \? t\('messages:ai\.work\.titleCount', \{ count: owedShown \}\) : t\('messages:ai\.work\.title'\)\}/,
     'the count is in the label\'s own words, not a link');
@@ -422,7 +425,7 @@ test('the first render is the prerender: hidden, the bot\'s name, no rows; lists
   assert.match(src, /useVisibilityHiddenClass\(screenRef, 'ai-screen', false\);/);
   // Data only once the screen is shown to somebody signed in.
   assert.match(src, /if \(!visible \|\| typeof window === 'undefined' \|\| !\(window as any\)\.App\?\.user\) return undefined;/);
-  assert.match(src, /readJson<AiWork>\(`\/api\/ai\/work\$\{qs\}`\)/);
+  assert.match(src, /readJson<AiWork>\(`\/api\/ai\/work\$\{qs\}`, init\)/);
   // Main docked beside it only on a wide window, after mount.
   assert.match(src, /const \[wide, setWide\] = useState\(false\);/);
   assert.match(src, /\{docked \? \(\s*<aside id="ai-main-pane" ref=\{mainRef\} className="ai-main-pane"/);
@@ -438,7 +441,7 @@ test('a page drawn before sign-in is confirmed asks again once it is, and its As
   // boot and again once the server confirms it; both reads and the docked
   // chat go again then, instead of staying empty until a reload.
   assert.match(src, /const again = \(\) => setSession\(\(n\) => n \+ 1\);\s+document\.addEventListener\('sv:session', again\);\s+return \(\) => document\.removeEventListener\('sv:session', again\);/);
-  assert.match(src, /return \(\) => \{ live = false; \};\s+\}, \[visible, session\]\);/);
+  assert.match(src, /return \(\) => \{ live = false; \};\s+\}, \[visible, session, moved\]\);/);
   assert.match(src, /\}, \[visible, wide, phone, botId, session\]\);/);
   assert.match(read('public/js/app.js'), /document\.dispatchEvent\(new CustomEvent\('sv:session', \{\s+detail: \{ user: App\.user, verifiedSession: true \},/,
     'the confirmation it waits for');
@@ -592,4 +595,117 @@ test('the tab says Homeroom bot: a wide seat on a phone, two lines in the Duo co
     'tightened and let out of the cell rather than cut');
   assert.match(css, /html\[data-side-strip\] #platform-tab-ai \.platform-tab-label \{\s+font-size: 9\.5px;\s+letter-spacing: -\.02em;\s+line-height: 1\.05;\s+white-space: normal;\s+text-align: center;\s+\}/,
     'the Duo column: "Homeroom" over "bot"');
+});
+
+const LIVE = 'frontend/src/features/ai/live.ts';
+
+test('the lists are read again for an event that moves a thread they list, and only for one', () => {
+  const { movesLists } = loadTsx(LIVE);
+  const showing = { projects: new Set(['garden']), botId: 77 };
+  const moves = (event) => movesLists(event, showing);
+  // A change or a request in a project the lists show.
+  assert.equal(moves({ type: 'vote_update', appSlug: 'garden', sessionId: 4 }), true);
+  assert.equal(moves({ type: 'session_update', appSlug: 'garden', action: 'promoted' }), true);
+  assert.equal(moves({ type: 'issue_update', appSlug: 'garden', action: 'closed' }), true);
+  assert.equal(moves({ type: 'app_version_changed', appSlug: 'garden', sha: 'abc' }), true, 'a merge going live');
+  assert.equal(moves({ type: 'vote_update' }), true, 'one that names no project could be about any');
+  // …and not in one they do not show: those go to everyone who may view it.
+  assert.equal(moves({ type: 'vote_update', appSlug: 'bread', sessionId: 4 }), false);
+  assert.equal(moves({ type: 'issue_update', appSlug: 'bread' }), false);
+  // A change's own banners move no row.
+  for (const action of ['behind_main', 'freshness', 'sync_status', 'staging_ready']) {
+    assert.equal(moves({ type: 'session_update', appSlug: 'garden', action }), false, action);
+  }
+  // Yours alone, from any project: something asked of you, or answered.
+  assert.equal(moves({ type: 'notification_new', notification: {} }), true);
+  assert.equal(moves({ type: 'notifications_changed' }), true);
+  // Main Chat's messages: a private thread comes and goes with them.
+  assert.equal(moves({ type: 'conversation_message_created', conversationId: 77, threadRootId: 5 }), true);
+  assert.equal(moves({ type: 'conversation_message_updated', conversation_id: '77' }), true);
+  assert.equal(moves({ type: 'conversation_message_created', conversationId: 12 }), false, 'another conversation');
+  assert.equal(movesLists({ type: 'conversation_message_created', conversationId: 77 }, { projects: new Set(), botId: null }), false);
+  // Nothing else on the socket.
+  for (const type of ['session_state', 'session_event', 'kudos_update', 'conversation_typing', 'budget_updated', 'homeroom_bot_work_changed']) {
+    assert.equal(moves({ type, appSlug: 'garden', conversationId: 77 }), false, type);
+  }
+  assert.equal(moves(null), false);
+});
+
+test('a correction the service worker makes to one of the lists\' reads is theirs', () => {
+  const { isListRead } = loadTsx(LIVE);
+  const at = (p) => isListRead(new URL(p, 'https://homeroom.test'));
+  assert.equal(at('/api/ai/work'), true);
+  assert.equal(at('/api/ai/work?demo=1'), true);
+  assert.equal(at('/api/workshop/needs-feed?in=threads'), true);
+  assert.equal(at('/api/workshop/needs-feed?in=threads&demo=1'), true);
+  assert.equal(at('/api/workshop/needs-feed'), false, 'the Communities screen\'s feed');
+  assert.equal(at('/api/workshop/counts'), false);
+});
+
+test('one read a burst, a few seconds apart at least, and none while the browser tab is hidden', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+  const { pacedReads, GATHER_MS, GAP_MS } = loadTsx(LIVE);
+  assert.ok(GATHER_MS > 0 && GAP_MS > GATHER_MS);
+  let hidden = false;
+  let reads = 0;
+  const paced = pacedReads(() => { reads += 1; }, () => hidden);
+
+  // Showing the page just read: the first burst waits out the gap from it.
+  paced.ask();
+  paced.ask();
+  t.mock.timers.tick(GAP_MS - 1);
+  assert.equal(reads, 0);
+  t.mock.timers.tick(1);
+  assert.equal(reads, 1, 'the burst is one read');
+
+  // Long after: a burst is gathered for GATHER_MS, then read once.
+  t.mock.timers.tick(GAP_MS * 3);
+  paced.ask();
+  t.mock.timers.tick(GATHER_MS / 2);
+  paced.ask();
+  paced.ask();
+  t.mock.timers.tick(GATHER_MS / 2);
+  assert.equal(reads, 2);
+  t.mock.timers.tick(GAP_MS * 3);
+  assert.equal(reads, 2, 'and nothing more was asked');
+
+  // Hidden: nothing is read, and what was asked is read when the tab is back.
+  hidden = true;
+  paced.ask();
+  t.mock.timers.tick(GAP_MS);
+  assert.equal(reads, 2);
+  paced.seen();
+  t.mock.timers.tick(GAP_MS);
+  assert.equal(reads, 2, 'still hidden');
+  hidden = false;
+  paced.seen();
+  t.mock.timers.tick(GATHER_MS);
+  assert.equal(reads, 3);
+  paced.seen();
+  t.mock.timers.tick(GAP_MS);
+  assert.equal(reads, 3, 'a tab coming back with nothing owed reads nothing');
+
+  // The page going stops what was asked.
+  paced.ask();
+  paced.stop();
+  t.mock.timers.tick(GAP_MS * 2);
+  assert.equal(reads, 3);
+});
+
+test('the page listens while it is shown: the socket through app.js, the bot\'s work, and live reads', () => {
+  const live = read(LIVE);
+  // app.js hands it every events-socket message, ahead of its own switch.
+  assert.match(read('public/js/app.js'), /const data = JSON\.parse\(event\.data\);\s+(\/\/[^\n]*\n\s+)*window\.UsernodeReact\?\.aiScreen\?\.handleEvent\?\.\(data\);\s+switch \(data\.type\) \{/);
+  assert.match(live, /bridge\.aiScreen = \{ handleEvent \};/);
+  // Only while the page is shown, and all of it let go when it is not.
+  assert.match(live, /if \(!visible \|\| typeof window === 'undefined'\) return undefined;/);
+  assert.match(live, /listeners\.add\(onEvent\);\s+window\.addEventListener\(WORK_CHANGED_EVENT, reads\.ask\);\s+document\.addEventListener\('visibilitychange', reads\.seen\);\s+const unwatch = watch\(reads\.ask, \{ reads: isListRead \}\);/);
+  assert.match(live, /reads\.stop\(\);\s+listeners\.delete\(onEvent\);\s+window\.removeEventListener\(WORK_CHANGED_EVENT, reads\.ask\);\s+document\.removeEventListener\('visibilitychange', reads\.seen\);\s+unwatch\(\);/);
+  // The page: each read it is asked for is the showing's read again, past
+  // the worker's saved copy after the first, keeping the lists on a failure.
+  const src = read('frontend/src/features/ai/index.tsx');
+  assert.match(src, /useLiveLists\(\(\) => setMoved\(\(n\) => n \+ 1\), visible, \{ projects, botId \}\);/);
+  assert.match(src, /const init = again \? FRESH : undefined;/);
+  assert.match(src, /readJson<AiWork>\(`\/api\/ai\/work\$\{qs\}`, init\)/);
+  assert.match(src, /if \(live && \(data \|\| !again\)\) setNeeds\(/);
 });
