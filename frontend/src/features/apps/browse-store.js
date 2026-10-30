@@ -42,6 +42,12 @@ export const browseStore = createStore({
    * hint — it has `error`.
    */
   empty: null,
+  /**
+   * The search text #browse-empty offers to make (#5928), while a search
+   * matches no app in the whole directory; else null, which draws no button.
+   * null is the PRERENDER value: there is no query in the SSG pass.
+   */
+  make: null,
   /** True after a failed /api/apps read, while the list level is showing. */
   error: false,
   /** null until the detail level is entered; else a detail descriptor. */

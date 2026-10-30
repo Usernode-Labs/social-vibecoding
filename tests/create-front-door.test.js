@@ -112,7 +112,7 @@ test('the island opens the Create door over nothing else, on importing when aske
   const src = read(ISLAND);
   // #6019 follow-up: a private thread's New project hands it an idea and who
   // it is for; the door still opens over nothing else.
-  assert.match(src, /create\(opts\?: \{ import\?: boolean; idea\?: string \| null; audience\?: CreateAudience \}\): boolean \{[\s\S]*?return openCreate\(setMode, !!opts\?\.import, \{ idea, audience \}\);\s+\},/);
+  assert.match(src, /create\(opts\?: \{ import\?: boolean; idea\?: string \| null; ideaSource\?: IdeaSource; audience\?: CreateAudience \}\): boolean \{[\s\S]*?return openCreate\(setMode, !!opts\?\.import, \{ idea, ideaSource, audience \}\);\s+\},/);
   assert.doesNotMatch(src, /made\(made: Made\): boolean|onMoreOptions|dialogs\?\.create/, 'no hand-off from a dialog, and no way to one');
 });
 

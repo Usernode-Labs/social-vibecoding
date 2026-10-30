@@ -51,6 +51,7 @@
 
 import { useRef } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { Chip, ChipRail } from '@/components/ui/chip';
 import { FilterIcon, SearchIcon } from '@/components/ui/icons';
 import {
@@ -89,6 +90,31 @@ const VIEW_TABS: Array<{ key: string; label: string }> = [
   { key: 'joined', label: 'discover:filter.joined' },
 ];
 
+/**
+ * The empty line's Make button (#5928): opens "What do you want to make?"
+ * (App.showCreateModal) with the whole search as the idea. The label is cut
+ * to one line on screen; the idea is never shortened. No hooks, so a test
+ * can call it and press it.
+ */
+export function MakeFromSearch({ idea, label }: { idea: string; label: string }) {
+  return (
+    <Button
+      id="browse-empty-make"
+      type="button"
+      layout="iconRow"
+      variant="pillAccent"
+      size="sm"
+      ink="solid"
+      className="min-h-[44px] md:min-h-0 max-w-full"
+      title={label}
+      onClick={() => {
+        (window as unknown as { App?: { showCreateModal?: (o: { idea: string; ideaSource: 'search' }) => boolean } })
+          .App?.showCreateModal?.({ idea, ideaSource: 'search' });
+      }}
+    ><span className="min-w-0 truncate">{label}</span></Button>
+  );
+}
+
 export function BrowseScreen() {
   const t = useMessages('discover');
   const screenRef = useRef<HTMLElement | null>(null);
@@ -100,6 +126,7 @@ export function BrowseScreen() {
     rows: any[] | null;
     site: { href: string; label: string } | null;
     empty: string | null;
+    make?: string | null;
     error: boolean;
     detail: any;
     showClear?: boolean;
@@ -368,7 +395,20 @@ export function BrowseScreen() {
           className={state.empty
             ? 'browse-pane-note px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-400'
             : 'hidden browse-pane-note px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-400'}
-        >{state.empty}</div>
+        >
+          {state.empty}
+          {/*
+              A search nothing in the directory answers is an idea for a
+              project (#5928): Make opens "What do you want to make?" with the
+              words already typed in. `make` is null in the prerender, so the
+              shipped #browse-empty stays exactly as it was.
+          */}
+          {state.empty && state.make ? (
+            <div className="mt-3">
+              <MakeFromSearch idea={state.make} label={t('discover:empty.search.make', { idea: state.make })} />
+            </div>
+          ) : null}
+        </div>
       </div>
       {/*
           Level 2: the per-app detail page (#apps/<slug>). Absorbs what the

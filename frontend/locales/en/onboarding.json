@@ -1015,6 +1015,10 @@
     "text": "Filled in from your waitlist answer.",
     "description": "Hint under the \"What should it do?\" box when it was filled in with what the member wrote when they joined the waitlist."
   },
+  "firstSession.make.searchIdea": {
+    "text": "Filled in from your search.",
+    "description": "Hint under the \"What should it do?\" box when it was filled in with what the member searched for in Discover and no app matched."
+  },
   "firstSession.make.nameLabel": {
     "text": "What should we call it?",
     "description": "Label of the name field on the \"What do you want to make?\" screen, where a member describes a new project: the name of the new project. \"it\" is the project."

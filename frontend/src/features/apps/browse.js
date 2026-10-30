@@ -375,7 +375,7 @@ const Browse = {
       if (Browse._slug) Browse._syncLevel();
     } catch (err) {
       if (Browse._store && !Browse._slug) {
-        Browse._store.set({ rows: [], empty: null, error: true });
+        Browse._store.set({ rows: [], empty: null, make: null, error: true });
       }
     }
   },
@@ -935,6 +935,28 @@ const Browse = {
     return { href: url.href, label };
   },
 
+  // What a search that found nothing offers to make (#5928): the words
+  // typed, whole, for "What do you want to make?" to start from (it takes
+  // up to 4000 characters; the button only shortens what it shows). Only
+  // when no app a person can reach matches them, whatever the view,
+  // switches or type: a match a filter hid is found by relaxing the filter,
+  // not by making a second one. Reachable is reachableApps; a flagged app
+  // Discover never lists does not count. The match is the results search's
+  // own (Home.filterApps) on the same raw text, so the two never disagree.
+  // A web address offers its site row instead (siteFor). Pure — unit-tested.
+  makeIdeaFor(query, apps) {
+    const q = String(query == null ? '' : query).trim();
+    if (!q || Browse.siteFor(q)) return null;
+    if (Home.filterApps(Browse.reachableApps(apps), query).length) return null;
+    return q;
+  },
+
+  // Every app some view can show: what Discover lists (listedApps) and what
+  // you have joined, which the Joined view keeps even when flagged.
+  reachableApps(apps) {
+    return (apps || []).filter((a) => a && (!Home.isFlagged(a) || Home.isJoined(a)));
+  },
+
   // The rows for the current view, switches, type, order and query. The view
   // and switches pick the set first (narrowApps), then the type narrows it,
   // then the sort orders it, then the search narrows it. The search covers
@@ -1123,6 +1145,9 @@ const Browse = {
       // The site row IS a result, so the "No apps match" line never shows
       // right under it.
       empty: site ? null : (rows.length ? null : Browse.emptyText(query, Browse.derivedFilter(), category)),
+      // The empty line's "Make" action: a search nothing in the directory
+      // answers is an idea for a project (#5928).
+      make: site || rows.length ? null : Browse.makeIdeaFor(query, Browse._apps),
     });
 
     Browse._maybeShotDetail(rows);
