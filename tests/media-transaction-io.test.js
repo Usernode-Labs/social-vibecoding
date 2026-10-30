@@ -8,13 +8,15 @@ const io = require('../src/services/media-transaction-io');
 const media = require('../src/services/media-store');
 const { deferred } = require('./lib/wait-for');
 
-test('storage wait keeps its transaction active without overlapping heartbeat queries', async () => {
+test('storage wait keeps its transaction active without overlapping heartbeat queries', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
   const tx = new EventEmitter();
   const queried = deferred(), queryDone = deferred(), remote = deferred();
   let calls = 0;
   tx.query = () => { calls++; queried.resolve(); return queryDone.promise; };
   let settled = false;
   const work = io.run(tx, () => remote.promise, { heartbeatMs: 5, timeoutMs: 2000 }).then(() => { settled = true; });
+  t.mock.timers.tick(5);
   await queried.promise;
   remote.resolve();
   await Promise.resolve();
@@ -39,12 +41,14 @@ test('a client lost during storage work rejects the operation and handles its la
   assert.equal(tx.listenerCount('error'), 0);
 });
 
-test('a failed heartbeat cannot turn a finished upload into a successful operation', async () => {
+test('a failed heartbeat cannot turn a finished upload into a successful operation', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
   const tx = new EventEmitter(), entered = deferred(), heartbeat = deferred(), upload = deferred();
   tx.query = () => { entered.resolve(); return heartbeat.promise; };
   const error = new Error('heartbeat failed');
   const work = io.run(tx, () => upload.promise, { heartbeatMs: 5 });
   const rejected = assert.rejects(work, (err) => err === error);
+  t.mock.timers.tick(5);
   await entered.promise;
   upload.resolve();
   heartbeat.reject(error);
