@@ -517,7 +517,10 @@ test('Go to community opens the hub full width, leaving the app, because no comm
   const at = sheet.indexOf('id="app-menu-row-workshop"');
   const row = sheet.slice(at, sheet.indexOf('GO TO APP DISCUSSION and INVITE TO COMMUNITY', at));
   assert.doesNotMatch(row, /sidePanel/);
-  assert.match(row, /followThenDismiss\(e, slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#'\);/);
+  assert.match(row, /onClick=\{\(e\) => openCommunityRow\(e, slug, owed\)\}/);
+  const open = sheet.slice(sheet.indexOf('export function openCommunityRow('), sheet.indexOf('function isPlainClick('));
+  assert.doesNotMatch(open, /sidePanel/);
+  assert.match(open, /followThenDismiss\(e, slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#'\);/);
 });
 
 test('Expand from an agent session goes to Messages, the conversation beside the inbox (#2779)', () => {

@@ -149,6 +149,7 @@ import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 import { recordAppUse } from './app-recency';
 import { hydrateNeedsSeen, unseenNeeds } from '../workshop/needs-seen';
+import { placeHref } from '../dev-board/workshop/places';
 import { navStore } from '../nav/nav-store.js';
 
 /**
@@ -267,6 +268,89 @@ function loadedPlatformShort(): string | null {
  * `defaultPrevented`) only closes the menu, and a modified click never gets
  * here as a navigation of ours: the browser opens its tab.
  */
+/**
+ * Where the "Go to community" row opens the project page (#5927 item 3): on
+ * Needs you, the list of what waits on this person, while its badge counts
+ * any; on the hub otherwise. `owed` is the badge's own figure, so the row
+ * opens on what it says.
+ */
+export function communityRowPlace(owed: number | null): 'needs' | 'status' {
+  return typeof owed === 'number' && owed > 0 ? 'needs' : 'status';
+}
+
+/**
+ * The row's link, for whatever the browser does with it itself: a new tab,
+ * a middle click, a copied address. While the badge shows it is Needs you's
+ * own address (`?ws=needs`, ../dev-board/workshop/places.ts placeHref), so a
+ * tab opened from it lands where a plain tap does; otherwise the hub's.
+ */
+export function communityRowHref(slug: string | null | undefined, owed: number | null): string {
+  if (!slug) return '#';
+  return communityRowPlace(owed) === 'needs'
+    ? placeHref(slug, 'needs')
+    : `#app/${encodeURIComponent(slug)}/workshop`;
+}
+
+/**
+ * A press on the row. Only a plain click is ours: it says which place the
+ * page opens on (AppView._landOnTab / _landOnHub), then follows the page's
+ * own address in place. A modified or middle click, or one something else
+ * took, changes nothing on this page, and the browser opens the link.
+ *
+ * ITS MENU CLOSES A TICK LATER. The browser reads the link after this
+ * handler returns, and closing publishes `open: false` synchronously
+ * (flushSync), which clears the badge's figure (`owed`) and with it the
+ * Needs you address: a new tab opened from a closed-in-time row went to the
+ * hub. Deferred, the close comes after the browser has read the link.
+ */
+export function openCommunityRow(e: React.MouseEvent, slug: string | null | undefined, owed: number | null): void {
+  if (!isPlainClick(e)) {
+    deferCommunityRowClose();
+    return;
+  }
+  if (slug) {
+    const view = (window as any).AppView;
+    if (communityRowPlace(owed) === 'needs') view?._landOnTab?.(slug, 'needs');
+    else view?._landOnHub?.(slug);
+  }
+  followThenDismiss(e, slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#');
+}
+
+/**
+ * The close a modified click put off, for THIS opening of the menu only: if
+ * the menu closes another way before the tick (and maybe opens again), the
+ * pending close is dropped rather than shutting the new one, and the sheet's
+ * unmount drops it too.
+ */
+let pendingRowClose: { timer: ReturnType<typeof setTimeout>; off: () => void } | null = null;
+
+export function cancelCommunityRowClose(): void {
+  if (!pendingRowClose) return;
+  clearTimeout(pendingRowClose.timer);
+  pendingRowClose.off();
+  pendingRowClose = null;
+}
+
+function deferCommunityRowClose(): void {
+  cancelCommunityRowClose();
+  if (!appContextStore.get().open) return;
+  const off = appContextStore.subscribe(() => {
+    if (!appContextStore.get().open) cancelCommunityRowClose();
+  });
+  const timer = setTimeout(() => {
+    cancelCommunityRowClose();
+    AppContext.dismissForNav();
+  }, 0);
+  pendingRowClose = { timer, off };
+}
+
+// The click followThenDismiss below follows itself: the button alone, not
+// one something else took.
+function isPlainClick(e: React.MouseEvent): boolean {
+  return !(e.defaultPrevented || e.nativeEvent.defaultPrevented || e.button !== 0
+    || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey);
+}
+
 function followThenDismiss(e: React.MouseEvent, href: string): void {
   if (e.defaultPrevented || e.nativeEvent.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey
     || !href.startsWith('#') || href === '#') {
@@ -408,6 +492,8 @@ export function AppsSwitcherSheet(): ReactNode {
   // The home-screen row stays a private member's (`newcomer`).
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+  // A close the community row put off goes with the sheet.
+  useEffect(() => cancelCommunityRowClose, []);
   const newcomer = mounted && offeringGoToHomeroom(!!privateMember);
   const walkOwed = mounted && owedHomeWalk();
   // #4399: the home-screen offer that rides in the Go to Homeroom card while
@@ -888,7 +974,7 @@ export function AppsSwitcherSheet(): ReactNode {
             id="app-menu-row-workshop"
             dataContextRow="workshop"
             elRef={workshopRowRef}
-            href={slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#'}
+            href={communityRowHref(slug, owed)}
             icon={<UserGroupIcon />}
             label={t('agent:appContext.row.community')}
             trailing={owed ? (
@@ -906,10 +992,10 @@ export function AppsSwitcherSheet(): ReactNode {
             // running app on a desktop it opens full width, leaving the app,
             // as every link to a community does: a community's page is never
             // the side panel's (../side-panel/routes.ts).
-            onClick={(e) => {
-              if (slug) (window as any).AppView?._landOnHub?.(slug);
-              followThenDismiss(e, slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#');
-            }}
+            // #5927 item 3: while it says decisions wait on you, it opens
+            // on the list of them, the project's Needs you place, rather
+            // than the hub, where they are one card among others.
+            onClick={(e) => openCommunityRow(e, slug, owed)}
           />
           {/*
               GO TO APP DISCUSSION and INVITE TO COMMUNITY LEFT THE MENU (UI

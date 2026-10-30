@@ -3269,9 +3269,9 @@
       "expectText": "About"
     },
     {
-      "name": "The menu links out to the project's community, scoped to the app, as a Go to community row (#2718, #2761, #3287)",
+      "name": "The menu links out to the project's community, scoped to the app, as a Go to community row: its hub, or its Needs you while decisions wait on the viewer (#2718, #2761, #3287, #5927)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav a#app-menu-row-workshop[href=\"#app/usernode-2d5619/workshop\"]",
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav a#app-menu-row-workshop:is([href=\"#app/usernode-2d5619/workshop\"], [href=\"/app/usernode-2d5619/workshop?ws=needs\"]:has(#app-menu-workshop-owed))",
       "expectText": "Go to community"
     },
     {

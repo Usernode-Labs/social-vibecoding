@@ -3942,7 +3942,7 @@ test('workshop replaced feed as a mode, and the retired names resolve onto it', 
 
 test('the Workshop is a menu row, and an anchor at its route (#2761)', () => {
   assert.match(SHEET_TSX, /id="app-menu-row-workshop"\s+dataContextRow="workshop"/);
-  assert.match(SHEET_TSX, /href=\{slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#'\}/);
+  assert.match(SHEET_TSX, /communityRowHref\(slug: string \| null \| undefined, owed: number \| null\): string \{[\s\S]*?: `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop`;[\s\S]*?href=\{communityRowHref\(slug, owed\)\}/);
   assert.ok(!SHEET_TSX.includes('data-context-row="activity"'), 'the Activity segment retired');
   assert.ok(!/data-context-row="board"|dataContextRow="board"/.test(SHEET_TSX),
     'and the Board segment after it — the Workshop and the kanban are one '
