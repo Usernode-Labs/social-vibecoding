@@ -134,6 +134,20 @@ async function removeOrphan(pool, store, key, cutoff) {
     await tx.query(
       `INSERT INTO media_objects (object_key) VALUES ($1)
        ON CONFLICT (object_key) DO UPDATE SET object_key = EXCLUDED.object_key`, [checkedKey(key)]);
+    // Avoid the FK delete check taking locks on an owner's row while a
+    // retake holds that row and waits for this registry key. This ordinary
+    // MVCC read is conservative; the FK below remains the final authority
+    // for new or other referencing tables, and concurrent new references.
+    const { rows: [references] } = await tx.query(`SELECT EXISTS (
+      SELECT 1 FROM shot_run_files WHERE object_key = $1 OR dense_object_key = $1
+      UNION ALL SELECT 1 FROM shot_artifacts WHERE object_key = $1 OR dense_object_key = $1
+      UNION ALL SELECT 1 FROM shots_eval_artifacts WHERE object_key = $1
+      UNION ALL SELECT 1 FROM shot_diagnostic_artifacts WHERE object_key = $1
+    ) AS present`, [key]);
+    if (references.present) {
+      await tx.query('COMMIT');
+      return false;
+    }
     const stat = await store.statObject(key);
     // Check again under the lock: an upload may have created this object
     // since listing began. An invalid/missing timestamp is never old enough.

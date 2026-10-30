@@ -47,6 +47,9 @@ deletes the object before committing the registry deletion. A provider
 failure rolls back that deletion and fails the work, so the clock retries.
 An upload arriving behind cleanup waits for the lock and recreates the
 object before it commits any reference.
+An ordinary reference lookup avoids locking an owner's row during cleanup;
+retakes and backfill take source-row locks before registry-key locks. This
+keeps a retake of the same bytes from deadlocking with either job.
 
 ## Local checks
 
