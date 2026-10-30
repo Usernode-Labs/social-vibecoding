@@ -415,8 +415,8 @@ const workflow = () => require('./preview-workflow');
 // turn's recovery that found its code landed, so they never drift apart.
 //
 // Returns 'handed_off' when the machine has it, 'skipped' when there's
-// nothing to build (no owner/repo, no bot token, branch not ahead of main;
-// the machine records that verdict).
+// no commits beyond main. Missing credentials are never a check verdict:
+// the conductor's preview machine still receives the revision.
 //
 // Creates a PR only when one is missing — the active-session recovery case
 // where CC finished but post-processing died before opening the PR.
@@ -438,24 +438,7 @@ async function rebuildSessionStaging({ config, pool, session, reason, headSha = 
 
   const { owner, repo } = repoRef.ownerRepo(session.repo_url) || {};
   if (!owner || !repo) {
-    // #461: every no-op below used to return silently, leaving check_state
-    // NULL — the merge gate blocks NULL as "still running its tests" and the
-    // stuck-checks sweeper re-picked the row every pass, re-skipped, forever.
-    // Record an explicit terminal 'skipped' verdict (gate-passing) instead.
-    await recordChecksSkipped({
-      session, commitSha: session.checks_commit_sha || null,
-      reason: 'checks unavailable: GitHub is not configured',
-    });
-    return 'skipped';
-  }
-
-  // The git host's service account, or GitHub through the App.
-  if (!require('./git-host').isConfigured() && !require('./github').hasApp()) {
-    await recordChecksSkipped({
-      session, commitSha: session.checks_commit_sha || null,
-      reason: 'checks unavailable: GitHub is not configured',
-    });
-    return 'skipped';
+    throw Object.assign(new Error('Checks require a repository'), { code: 'repo_unavailable' });
   }
 
   // #866: what identifies this session's code in the app's own repo.

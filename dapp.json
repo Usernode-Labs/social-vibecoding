@@ -51,20 +51,26 @@
       "key": "GITHUB_APP_ID",
       "required": true,
       "default": "",
-      "description": "GitHub App ID for the bot account that owns app repos. Without this, app creation fails and no PRs can be opened. `default: \"\"` lets a self-app staging clone boot for UI work — github.init() degrades to disabled when this is empty (see services/github.js)."
+      "description": "GitHub App ID for the platform repository. Non-secret configuration on web and conductor; installation lookup and token minting run on the conductor."
     },
     {
       "key": "GITHUB_PRIVATE_KEY",
       "required": true,
       "private": true,
       "staging_default": "",
-      "description": "PEM private key for the GitHub App. Single-line with literal \\n escape sequences; the loader un-escapes at startup. `staging_default: \"\"` pairs with GITHUB_APP_ID — both empty means github.init() takes the disabled branch and staging boots without GitHub features."
+      "description": "Conductor-only PEM private key for the GitHub App. Single-line with literal \\n escape sequences. Web uses conductor-minted repository-scoped read tokens. Empty in self-app staging."
     },
     {
       "key": "GIT_HOST_TOKEN",
       "private": true,
       "staging_default": "",
-      "description": "The platform's service account token on Homeroom's git host (GIT_HOST_URL), where app repositories live since GitHub suspended the account that held them (26 Oct 2026). Creates repositories, pushes the platform's commits and merges, and reads private repositories. Never given to workers, agents or people. Empty with GIT_HOST_URL unset: no git host, and app repositories stay where their repo_url says."
+      "description": "Conductor-only service account token for repository creation, pushes and merges on the git host. Web uses GIT_HOST_READ_TOKEN. Never supplied to workers or agents."
+    },
+    {
+      "key": "GIT_HOST_READ_TOKEN",
+      "private": true,
+      "staging_default": "",
+      "description": "Read-only Forgejo token for web. Use a non-admin account with read-only access to app repositories and only read:repository scope. The conductor retains its separate writer credential."
     },
     {
       "key": "ANTHROPIC_API_KEY",
@@ -171,6 +177,12 @@
       "group": "Platform",
       "default": "",
       "description": "The platform's service account on the git host, whose token is GIT_HOST_TOKEN."
+    },
+    {
+      "key": "GIT_HOST_READ_USER",
+      "group": "Platform",
+      "default": "",
+      "description": "The non-admin account for GIT_HOST_READ_TOKEN. Defaults to GIT_HOST_USER when unset."
     },
     {
       "key": "MAX_APPS",

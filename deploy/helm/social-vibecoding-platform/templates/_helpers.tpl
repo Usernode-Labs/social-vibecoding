@@ -230,6 +230,9 @@ administrative connection and a psql).
       {{- end -}}
     {{- end -}}
   {{- end -}}
+  {{- if and .Values.platform.enabled .Values.platform.conductor.enabled .Values.secrets.create .Values.config.gitHost.url (empty .Values.secrets.gitHostReadToken) -}}
+    {{- fail "secrets.gitHostReadToken is required when the conductor and git host are enabled; provision read-only Forgejo access before rollout" -}}
+  {{- end -}}
   {{- if and .Values.platform.enabled .Values.secrets.create (or (empty .Values.secrets.githubAppId) (empty .Values.secrets.githubPrivateKey)) -}}
     {{- fail "secrets.githubAppId and secrets.githubPrivateKey are required when platform is enabled" -}}
   {{- end -}}

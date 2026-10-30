@@ -197,7 +197,7 @@ test('background GitHub work is held while paused, and not otherwise', () => {
 test('every workflow process reads the pause before GitHub\'s client starts', () => {
   const src = read('src/workflow/setup.ts');
   const startAt = src.indexOf("legacy('services/github-pause').start(");
-  const initAt = src.indexOf("legacy('services/github').init(config)");
+  const initAt = src.indexOf("legacy('services/github').init(config, pool)");
   assert.ok(startAt > 0 && initAt > startAt);
 });
 

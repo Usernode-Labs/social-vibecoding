@@ -1374,7 +1374,7 @@ function adminRoutes(config) {
   router.get('/api/admin/github-budget', (_req, res) => {
     const snap = githubBudget.snapshot();
     const configured = {
-      app: !!(config && config.githubAppId && config.githubPrivateKey),
+      app: !!(config && config.githubAppId),
     };
     if (IS_STAGING && !snap.credentials.length) {
       return res.json({ ...githubBudget.demoSnapshot(), configured, demo: true });

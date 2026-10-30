@@ -66,10 +66,8 @@
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { execFile } = require('node:child_process');
 const log = require('./logger');
 const lineage = require('./upstream-lineage');
-const gitChild = require('./git-child');
 const durableSteps = require('./durable-steps');
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
@@ -579,8 +577,8 @@ function withDefaults(deps) {
   return deps ? { ...defaultDeps(), ...deps } : defaultDeps();
 }
 
-/** Whether this process may write to app repositories at all. */
-function canWrite(deps) {
+/** Whether upstream updates have a configured host outside a platform preview. */
+function updatesAvailable(deps) {
   return process.env.USERNODE_ENV !== 'staging' && !!(deps.gitHost && deps.gitHost.isConfigured());
 }
 
@@ -592,25 +590,8 @@ function canWrite(deps) {
 // invocations that ask for it (`auth`: the fetches and the pushes), through
 // the credential helper. Rejects as services/git-host.js git does: stderr
 // redacted, the exit code in `exitCode`.
-function scratchGit(deps, home, args, { auth = false, env = {}, input = null, timeout = GIT_TIMEOUT_MS } = {}) {
-  const s = deps.gitHost.settings();
-  const child = gitChild.invocation(args, { home, credential: auth ? { username: s.user, token: s.token } : null, env });
-  const redact = (text) => (deps.gitHost.redact ? deps.gitHost.redact(text) : String(text || ''));
-  const sub = args[0] === '-C' ? args[2] : args[0];
-  return new Promise((resolve, reject) => {
-    const proc = execFile('git', child.args, { env: child.env, timeout, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) {
-        const e = new Error(`git ${sub} failed: ${redact(stderr || err.message).trim().slice(0, 500)}`);
-        e.code = 'git_failed';
-        e.stderr = redact(stderr);
-        e.stdout = redact(stdout);
-        e.exitCode = err.code;
-        return reject(e);
-      }
-      return resolve({ stdout: String(stdout), stderr: redact(stderr) });
-    });
-    if (input != null) proc.stdin.end(input);
-  });
+function scratchGit(deps, home, args, options = {}) {
+  return deps.gitHost.git(args, { home, timeout: GIT_TIMEOUT_MS, ...options });
 }
 
 // The scratch repository is `<root>/repo`, its git's HOME `<root>/home`.
@@ -912,7 +893,7 @@ async function tellMembers({ pool, deps, versionId, sessionId, platformId }) {
 async function openUpdate({ config, pool, versionId, soft = false, deps: given, steps = durableSteps.none() } = {}) {
   const deps = withDefaults(given);
   if (!(await deps.enabled(config, pool))) return refusal(409, 'versions_off', MESSAGES.off);
-  if (!canWrite(deps)) return refusal(409, 'unavailable', MESSAGES.unavailable);
+  if (!updatesAvailable(deps)) return refusal(409, 'unavailable', MESSAGES.unavailable);
   const ctx = await context({ config, pool, versionId, deps });
   if (!ctx.ok) {
     // One that cannot be planned says so on its row, and is not tried again
@@ -1071,7 +1052,7 @@ async function openUpdate({ config, pool, versionId, soft = false, deps: given, 
  */
 async function refreshUpdate({ config, pool, versionId, deps: given } = {}) {
   const deps = withDefaults(given);
-  if (!(await deps.enabled(config, pool)) || !canWrite(deps)) return { skipped: 'off' };
+  if (!(await deps.enabled(config, pool)) || !updatesAvailable(deps)) return { skipped: 'off' };
   const row = await readOffer(pool, versionId);
   if (!row || row.state !== 'open' || !row.session_id || !['active', 'promoted'].includes(row.session_status)) {
     return { skipped: 'not_open' };
@@ -1150,7 +1131,7 @@ async function fitRequestOf(pool, appId, fromSha) {
  */
 async function settleUpdate({ config, pool, versionId, deps: given } = {}) {
   const deps = withDefaults(given);
-  if (!(await deps.enabled(config, pool)) || !canWrite(deps)) return { skipped: 'off' };
+  if (!(await deps.enabled(config, pool)) || !updatesAvailable(deps)) return { skipped: 'off' };
   const row = await readOffer(pool, versionId);
   if (!row || !sha(row.theirs_sha)) return { skipped: 'nothing' };
   let state = null;
@@ -1184,7 +1165,7 @@ async function skipUpdate({ config, pool, versionId, user, deps: given, steps = 
   const moved = steps.get('advance');
   if (moved) return { ok: true, state: moved.state };
   if (!(await deps.enabled(config, pool))) return refusal(409, 'versions_off', MESSAGES.off);
-  if (!canWrite(deps)) return refusal(409, 'unavailable', MESSAGES.unavailable);
+  if (!updatesAvailable(deps)) return refusal(409, 'unavailable', MESSAGES.unavailable);
   const row = await readOffer(pool, versionId);
   // This skip's own close, settled by the clock since (settleUpdate): skipped.
   if (row && row.state === 'skipped' && steps.has('close')) return { ok: true, state: 'skipped' };
@@ -1289,7 +1270,7 @@ async function fitUpdate({ config, pool, versionId, user, deps: given } = {}) {
     const conflicts = readConflicts(row.conflicts);
     let diff = '';
     const theirs = sha(row.theirs_sha);
-    if (theirs && conflicts.length && canWrite(deps)) {
+    if (theirs && conflicts.length && updatesAvailable(deps)) {
       diff = await withScratch(`fit-${version.id}`, deps, async (dir) => {
         const run = runner(deps, dir);
         await run(['fetch', '--no-tags', '-q', deps.gitHost.cloneUrl(versionRepo), theirs], { auth: true });
@@ -1432,7 +1413,7 @@ async function changeView(pool, sessionId) {
 async function sweep(config, pool, { deps: given } = {}) {
   const deps = withDefaults(given);
   if (!(await deps.enabled(config, pool))) return { off: true };
-  if (!canWrite(deps)) return { off: 'unavailable' };
+  if (!updatesAvailable(deps)) return { off: 'unavailable' };
   const marked = (await pool.query(SQL.mark)).rowCount || 0;
   const items = [];
   const seen = new Set();
@@ -1514,7 +1495,6 @@ module.exports = {
   SQL,
   advance,
   branchFor,
-  canWrite,
   changeView,
   describe,
   factsOf,

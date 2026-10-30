@@ -410,12 +410,39 @@ with reads only, and the chart keeps the key in a Secret only the conductor
 imports. Code-host write entry points and transports refuse web with
 `workflow_role_required`, before credential lookup or outside I/O; native
 pull-request metadata remains a database write. Git children use the isolated
-`git-child` environment, including hosted-git mirror plumbing. Web still holds
-code-host credentials for reads with write-capable tokens and the database's
-admin login. Restricted read credentials and the role-specific Secret split,
-then separate database logins, remain SEC-09 work. The event's source metadata
-also remains a convention among trusted processes; it does not authenticate
-a compromised producer.
+`git-child` environment, including hosted-git mirror plumbing.
+
+With the split enabled, `GITHUB_PRIVATE_KEY` and `GIT_HOST_TOKEN` are empty in
+shared chart-created Secrets and present only in the conductor Secret, which
+it imports after the shared one. Web also explicitly masks both variables in
+its Pod env, including with an operator-supplied existing Secret. `isEnabled`
+means a host is configured; `hasWriteAccess` means this process can write.
+Routes admitting operations use the former, and conductor work rechecks the
+latter. Local `all` processes retain the combined configuration.
+
+The `github-read-access` clock mints short-lived installation tokens restricted
+to the platform repository, with only contents, pull requests and metadata
+read permissions. Its result holds an encrypted token and installation fact;
+web caches reads of that result, never initializes the App, and refuses expired
+or mismatched access. Failed refreshes keep still-valid access in the clock's
+last successful result. Actions-secret names are published by the conductor
+separately, without giving web the secrets permission. No token is returned by
+a new HTTP endpoint or stored in plaintext in the workflow journal.
+
+Forgejo uses `GIT_HOST_READ_TOKEN` and `GIT_HOST_READ_USER` on web. The read user
+defaults to `GIT_HOST_USER`; operators should use a non-admin account with
+read-only access to all current and future app repositories, and a token with
+only `read:repository`. Provision `secrets.gitHostReadToken` and
+`config.gitHost.readUser` in the infra values before deploying the new chart;
+validation refuses a split git-host deployment without the read token. Git
+reads, mirror fetches and upstream planning share the same guarded transport
+and credential selection. Conductors retain their writer for read-after-write.
+Missing web credentials never become a skipped checks verdict: recovery hands
+the revision to the preview machine; malformed repository metadata is refused.
+
+Separate database logins remain SEC-09 work. The event's source metadata also
+remains a convention among trusted processes; it does not authenticate a
+compromised producer.
 
 ## Successors
 

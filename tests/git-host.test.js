@@ -90,11 +90,13 @@ test('repo_url is the page on the public host, parsed in one place', (t) => {
   assert.throws(() => gitHost.repoUrl('x.git'), /Invalid repository name/);
 });
 
-test('isConfigured needs a URL and the service account', (t) => {
+test('host configuration and writer access are separate', (t) => {
   withEnv(t, { GIT_HOST_URL: 'https://git.example.test', GIT_HOST_USER: 'homeroom', GIT_HOST_TOKEN: undefined });
-  assert.equal(gitHost.isConfigured(), false);
+  assert.equal(gitHost.isConfigured(), true);
+  assert.equal(gitHost.hasWriteAccess(), false);
   process.env.GIT_HOST_TOKEN = 't';
   assert.equal(gitHost.isConfigured(), true);
+  assert.equal(gitHost.hasWriteAccess(), true);
 });
 
 test('the first commit, readRef, a compare-and-swap that refuses a moved ref, and deleting one', async (t) => {
@@ -171,4 +173,37 @@ test('the service token never reaches argv or a URL', () => {
   assert.equal(child.env.USERNODE_GIT_PASSWORD, 'sample-token');
   assert.equal(child.env.GIT_CONFIG_GLOBAL, '/dev/null');
   assert.doesNotMatch(src, /\$\{s\.token\}@|:\$\{s\.token\}|token\)\}@/);
+});
+
+
+test('web uses the separate reader for git and API access', async (t) => {
+  withEnv(t, { PROCESS_ROLE: 'web', GIT_HOST_URL: 'https://git.example.test', GIT_HOST_INTERNAL_URL: 'http://forgejo.internal',
+    GIT_HOST_USER: 'writer', GIT_HOST_TOKEN: 'test-writer-token', GIT_HOST_READ_USER: 'reader', GIT_HOST_READ_TOKEN: 'test-reader-token' });
+  assert.equal(gitHost.isConfigured(), true);
+  assert.equal(gitHost.hasWriteAccess(), false);
+  assert.deepEqual(gitHost.readCredential(), { username: 'reader', token: 'test-reader-token' });
+  const calls = [];
+  t.mock.method(global, 'fetch', async (_url, init) => { calls.push(init); return new Response('{}'); });
+  await gitHost.api('GET', '/repos/apps/test');
+  assert.equal(calls[0].headers.Authorization, 'token test-reader-token');
+  await assert.rejects(gitHost.api('POST', '/orgs/apps/repos', {}), { code: 'workflow_role_required' });
+  const cp = require('node:child_process');
+  let child;
+  t.mock.method(cp, 'execFile', (_bin, args, opts, cb) => { child = { args, opts }; cb(null, '', ''); return {}; });
+  const id = require.resolve('../src/services/git-host'), saved = require.cache[id];
+  delete require.cache[id];
+  try {
+    const subject = require('../src/services/git-host');
+    await subject.git(['ls-remote', 'http://forgejo.internal/apps/test.git'], { auth: true });
+    assert.equal(child.opts.env.USERNODE_GIT_PASSWORD, 'test-reader-token');
+    assert.equal(child.opts.env.USERNODE_GIT_USERNAME, 'reader');
+    assert.equal(JSON.stringify(child.args).includes('test-reader-token'), false);
+    await assert.rejects(Promise.resolve().then(() => subject.git(['-C', '/tmp', 'push', 'origin', 'main'], { auth: true })), { code: 'workflow_role_required' });
+  } finally { require.cache[id] = saved; }
+  delete process.env.GIT_HOST_READ_TOKEN;
+  assert.equal(gitHost.readCredential(), null, 'web never falls back to a writer');
+  await gitHost.api('GET', '/repos/apps/test');
+  assert.equal(calls[1].headers.Authorization, undefined, 'anonymous reads send no writer');
+  process.env.PROCESS_ROLE = 'conductor';
+  assert.deepEqual(gitHost.readCredential(), { username: 'writer', token: 'test-writer-token' });
 });

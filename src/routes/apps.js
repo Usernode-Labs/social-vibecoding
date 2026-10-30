@@ -2460,7 +2460,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     if (!repoRef.parse(app.repo_url)) {
       return { canDeclare: false, reason: 'This app has no repository to open a proposal against.' };
     }
-    if (!github.hasWriteAccess()) {
+    if (!github.isEnabled()) {
       return {
         canDeclare: false,
         reason: 'Declaring a variable needs a code host configured on the platform.',
@@ -2812,7 +2812,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
 
       // GitHub preconditions — same three guards and wording as
       // visibility-pr / governance-pr / admins-pr.
-      if (!github.hasWriteAccess()) {
+      if (!github.isEnabled()) {
         return res.status(503).json({
           error: 'Declaring a variable needs a code host configured on the platform.',
         });
@@ -2954,7 +2954,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(400).json({ error: 'App is already named that' });
       }
 
-      if (!github.hasWriteAccess()) {
+      if (!github.isEnabled()) {
         return res.status(503).json({
           error: 'Renames need a code host configured on the platform.',
         });
@@ -3108,7 +3108,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         if (identityRefusal) return res.status(403).json(identityRefusal);
       }
 
-      if (!github.hasWriteAccess()) {
+      if (!github.isEnabled()) {
         return res.status(503).json({
           error: 'Visibility changes need a code host configured on the platform.',
         });
@@ -3199,7 +3199,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         if (identityRefusal) return res.status(403).json(identityRefusal);
       }
 
-      if (!github.hasWriteAccess()) {
+      if (!github.isEnabled()) {
         return res.status(503).json({
           error: 'Changes to who decides need a code host configured on the platform.',
         });
@@ -3434,7 +3434,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(400).json({ error: 'The app already declares those admins' });
       }
 
-      if (!github.hasWriteAccess()) {
+      if (!github.isEnabled()) {
         return res.status(503).json({
           error: 'Admin changes need a code host configured on the platform.',
         });
@@ -3530,7 +3530,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(400).json({ error: 'The app already has those approval settings' });
       }
 
-      if (!github.hasWriteAccess()) {
+      if (!github.isEnabled()) {
         return res.status(503).json({
           error: 'Governance changes need a code host configured on the platform.',
         });
@@ -3620,7 +3620,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (!(await appAccess.checkAppAccess(pool, app, req.user, 'collab'))) {
         return res.status(403).json({ error: 'Only people who can build here can propose a change to its topics' });
       }
-      if (!github.hasWriteAccess()) {
+      if (!github.isEnabled()) {
         return res.status(503).json({
           error: 'Topic changes need a code host configured on the platform.',
         });

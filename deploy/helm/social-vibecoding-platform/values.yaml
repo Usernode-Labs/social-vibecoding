@@ -237,6 +237,8 @@ config:
     internalUrl: ""
     org: apps
     user: ""
+    # Non-admin account with repository read access (defaults to user).
+    readUser: ""
   nodeRpcUrl: http://replace-me.invalid:3000
   # Explorer host[:port] without a scheme. Public hosts use HTTPS; private
   # numeric addresses use HTTP, matching the platform's existing proxy logic.
@@ -322,6 +324,9 @@ secrets:
   githubPrivateKey: ""
   # The git host's service account token (config.gitHost). Supply through SOPS.
   gitHostToken: ""
+  # Web's separate read:repository token. Use a non-admin account with read-only
+  # access to the apps org; provision through SOPS before deploying the split.
+  gitHostReadToken: ""
   # Optional signed pull_request webhook; supply through encrypted external values.
   githubWebhookSecret: ""
   # Optional GitHub account-linking OAuth credentials. Set both in encrypted external values.
