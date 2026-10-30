@@ -622,6 +622,8 @@ export interface ChecksExplainView {
   /** The run: its checks_checked_at. */
   at: string;
   fallback: string | null;
+  /** The page the first failing check opened on the preview, when it can be reopened. */
+  page?: { path: string; stagingUrl: string } | null;
 }
 
 /**

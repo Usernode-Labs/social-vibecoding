@@ -2855,6 +2855,10 @@
     "text": "See what failed",
     "description": "Link-style button under the Testing card on a change's page when its checks failed and there is nothing else to say: opens the Details sheet at the failed checks."
   },
+  "topic.change.gate.openPage": {
+    "text": "Open the page it checked",
+    "description": "Link-style button after the sentence on the Testing card of a change's page when a failed check opened a page on the change's preview: opens that page on the preview so anyone can see what the check saw."
+  },
   "topic.change.gate.fix": {
     "text": "Fix it",
     "description": "Main button on the Testing card of a change's page when its automated checks failed, shown to the change's author: asks the AI agent that built the change to fix what failed. \"It\" is what failed."

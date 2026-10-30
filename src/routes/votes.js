@@ -605,9 +605,15 @@ function stagingMockProposals(viewer) {
         '[Mock] #2061: waiting on the author — checks are failing',
         5, 3, 0, 4, { required: 3 }),
       check_state: 'failing',
+      // The preview its failing checks ran on, so the Testing card's "Open
+      // the page it checked" link is reviewable on ?demo=1 (the URL is
+      // deliberately unroutable, like the other mock previews).
+      staging_url: 'https://mock-preview.invalid',
       // What the model writes for this run (services/checks-explanation.js),
       // served by the ?demo=1 branch of GET /api/sessions/:id/checks-explanation.
-      checks_explanation: 'Kudos totals come out one too high after somebody changes their name, and the board stops loading on a narrow screen.',
+      // The expected-versus-found shape the prompt asks for: the words the
+      // check looked for beside the words the page showed.
+      checks_explanation: 'The sample page should say “is blocked at ‘Audit all three lockfiles’”, but it only says “Release blocked”.',
       // #3978: the failing rows carry their diagnosis, and the unit-suite
       // row carries its per-test excerpts, so the "Why it failed" fold on
       // this route shows what a real failing proposal shows. Kept in the

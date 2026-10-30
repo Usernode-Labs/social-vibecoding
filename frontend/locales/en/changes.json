@@ -8700,20 +8700,20 @@
     "description": "One sentence of the line under the figure on the Testing card of a change's page when the change's automated checks did not run."
   },
   "page.testing.lead.tests_one": {
-    "text": "One of the app’s tests failed.",
+    "text": "One of this change’s tests failed.",
     "description": "First sentence on the Testing card of a change's page when the app's own automated tests found a problem with the change. It is followed by a sentence saying what went wrong. {{count}} is how many tests failed; English spells out the singular, and a language whose singular form is also used for 21 or 101 should print {{count}}."
   },
   "page.testing.lead.tests_other": {
-    "text": "{{count}} of the app’s tests failed.",
+    "text": "{{count}} of this change’s tests failed.",
     "description": "First sentence on the Testing card of a change's page when the app's own automated tests found a problem with the change. It is followed by a sentence saying what went wrong. {{count}} is how many tests failed."
   },
   "page.testing.lead.checks_one": {
-    "text": "One of the app’s checks failed.",
-    "description": "First sentence on the Testing card of a change's page when the app's automated checks found a problem with the change. It is followed by a sentence saying what went wrong. {{count}} is how many checks failed; English spells out the singular, and a language whose singular form is also used for 21 or 101 should print {{count}}."
+    "text": "One of this change’s checks failed on its preview.",
+    "description": "First sentence on the Testing card of a change's page when the change's automated checks found a problem on the change's own preview. It is followed by a sentence saying what went wrong. \"Preview\" is the copy of the app with this change in it, not the live app. {{count}} is how many checks failed; English spells out the singular, and a language whose singular form is also used for 21 or 101 should print {{count}}."
   },
   "page.testing.lead.checks_other": {
-    "text": "{{count}} of the app’s checks failed.",
-    "description": "First sentence on the Testing card of a change's page when the app's automated checks found a problem with the change. It is followed by a sentence saying what went wrong. {{count}} is how many checks failed."
+    "text": "{{count}} of this change’s checks failed on its preview.",
+    "description": "First sentence on the Testing card of a change's page when the change's automated checks found a problem on the change's own preview. It is followed by a sentence saying what went wrong. \"Preview\" is the copy of the app with this change in it, not the live app. {{count}} is how many checks failed."
   },
   "page.testing.why.testSaid": {
     "text": "The test “{{test}}” failed with: {{said}}",
