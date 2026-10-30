@@ -209,6 +209,27 @@ test('the page leaves the Source line out of the words, and the editor puts it b
   assert.equal(r.askedAt, '2026-10-08T14:01:11Z');
 });
 
+// #6000: a closed request can be proposed for reopening; while that vote is
+// open the action says so, and a change that closed it keeps "See the change".
+test('#6000 a closed request offers Propose reopening', () => {
+  const av = appView();
+  const closed = av._requestStatusView(issue({ state: 'closed', closed_via: 'vote' }));
+  assert.equal(closed.action.label, 'Propose reopening');
+  assert.deepEqual(JSON.parse(JSON.stringify(closed.action.act)), { fn: 'promptReopenIssue', args: [4417] });
+
+  av._govProposals = [{ kind: 'reopen_issue', status: 'open', payload: { issueNumber: 4417 } }];
+  const waiting = av._requestStatusView(issue({ state: 'closed', closed_via: 'vote' }));
+  assert.equal(waiting.action.label, 'Reopen proposed');
+  assert.equal(waiting.action.disabled, true);
+  assert.equal(waiting.action.act, undefined);
+
+  av._govProposals = [];
+  const withChange = av._requestStatusView(issue({
+    state: 'closed', addressed_by: { sessionId: 9, state: 'merged', prNumber: 12 },
+  }));
+  assert.equal(withChange.action.label, 'See the change', 'one button: the change wins');
+});
+
 test('the status sentence says who is on it once, and when the claim lapses', () => {
   const av = appView();
   const expiresAt = '2026-10-15T13:00:00Z';

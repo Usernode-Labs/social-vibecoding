@@ -188,7 +188,8 @@ test('platform exports are explicit on direct, template and prepared shots clone
       assert.equal(await scalar("SELECT count(*)::int FROM community_members WHERE user_id=22 AND community_id=(SELECT community_id FROM apps WHERE slug='usernode-2d5619')"),1);
       assert.ok(await scalar("SELECT count(*)::int FROM chat_sessions")>0);
       assert.ok(await scalar("SELECT count(*)::int FROM apps")>1);
-      assert.equal(await scalar("SELECT id::int FROM terms_versions WHERE published_at IS NOT NULL ORDER BY published_at DESC LIMIT 1"),900500);
+      assert.equal(await scalar("SELECT count(*)::int FROM terms_versions WHERE id=900500 AND published_at IS NOT NULL"),1);
+      assert.equal(await scalar("SELECT count(*)::int FROM terms_versions WHERE version='1.0-2026-10-29' AND published_at IS NOT NULL"),1);
       assert.equal(await scalar("SELECT username FROM users WHERE id=21"),'preview-user-21');
       await pool.end();console.log('PREVIEW_BOOT_VERIFIED');
     })().catch(error=>{console.error(error);process.exitCode=1;});`;

@@ -447,8 +447,31 @@ test('issue: the full demoted set, and Open on GitHub last', () => {
   assert.equal(labels[labels.length - 1], 'Open on GitHub');
 });
 
-test('issue: a disabled row still EXPLAINS itself rather than vanishing', () => {
+test('#6000 a closed issue offers Propose reopening in its ⋯ menu', () => {
   const AppView = makeAppView();
+  const closed = ISSUE({ state: 'closed' });
+  const row = menuItems(AppView, issueCardHtml(AppView, closed))
+    .find((i) => /Propose reopening/.test(i.label));
+  assert.ok(row, 'the row is there on a closed issue');
+  assert.equal(row.icon, 'retry');
+  assert.match(row.title, /Ask the group to reopen/);
+  assert.ok(row.act, 'and it opens the dialog');
+
+  AppView._govProposals = [{ kind: 'reopen_issue', status: 'open', payload: { issueNumber: 5 } }];
+  const waiting = menuItems(AppView, issueCardHtml(AppView, closed))
+    .find((i) => /Reopen proposed/.test(i.label));
+  assert.ok(waiting.disabled);
+  assert.ok(!waiting.act, 'a disabled row carries no handler');
+  assert.match(waiting.title, /waiting for approval/);
+
+  // The Workshop's inline expansion draws the same offer as a pill.
+  AppView._govProposals = [];
+  const pill = AppView._detailActionsView('issue', closed).pills.find((p) => p.key === 'reopen');
+  assert.equal(pill.label, 'Propose reopening');
+  assert.deepEqual(JSON.parse(JSON.stringify(pill.act)), { fn: 'promptReopenIssue', args: [5] });
+});
+
+test('issue: a disabled row still EXPLAINS itself rather than vanishing', () => {  const AppView = makeAppView();
   // An open close proposal: the row stays, disabled, saying why.
   AppView._govProposals = [{ kind: 'close_issue', status: 'open', payload: { issueNumber: 5 } }];
   const closed = menuItems(AppView, issueCardHtml(AppView, ISSUE()))

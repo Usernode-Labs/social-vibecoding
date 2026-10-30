@@ -176,13 +176,13 @@ test('the governance kinds, the by-id read and the share resolver carry the kind
     'the governance machine decides it');
   const issues = read('src/routes/issues.js');
   // #6019 added 'thread_move' after it.
-  assert.match(issues, /AND i\.kind IN \('secret_change', 'rename', 'close_issue', 'maintenance_campaign',\s*'featured_illustration', 'thread_move'\)\s*LIMIT 1/,
+  assert.match(issues, /AND i\.kind IN \('secret_change', 'rename', 'close_issue', 'reopen_issue', 'maintenance_campaign',\s*'featured_illustration', 'thread_move'\)\s*LIMIT 1/,
     'GET /api/apps/:slug/governance/:id resolves the kind');
   const shared = read('src/services/shared-objects.js');
   assert.equal((shared.match(/'maintenance_campaign',\s*'featured_illustration', 'thread_move'\)/g) || []).length, 2);
   // The generic create route does not accept it: the bytes travel with the
   // save, through the illustration endpoint.
-  assert.match(issues, /const VALID_KINDS = \['general', 'secret_change', 'close_issue', 'maintenance_campaign'\];/);
+  assert.match(issues, /const VALID_KINDS = \['general', 'secret_change', 'close_issue', 'reopen_issue', 'maintenance_campaign'\];/);
   // And it gets no GitHub twin, like the other platform-governance kinds.
   const { shouldCreateGithubTwin } = require('../src/routes/issues');
   assert.equal(shouldCreateGithubTwin('featured_illustration'), false);

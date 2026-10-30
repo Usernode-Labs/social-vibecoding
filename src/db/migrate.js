@@ -89,6 +89,7 @@ async function migrate(config) {
   await seedStagingSupportUser(pool);
   await seedStagingDuplicateUser(pool);
   await seedSelfApp(pool, config);
+  await seedTermsVersions(pool);
   await seedStagingPrivateRequest(pool);
   // The Homeroom bot's first-version configurations (services/bot-configs.js):
   // the three it starts from, each written once; then, once, an untouched
@@ -1402,6 +1403,42 @@ async function seedAdmin(pool, config) {
     log.info('db', 'Admin user created', { username: config.adminUsername });
   } else {
     log.debug('db', 'Admin user already exists');
+  }
+}
+
+// The published terms-of-service versions, one entry per revision (#6043).
+// The rows before these came across once from the old database
+// (scripts/topochain-load.js) and nothing writes terms_versions in
+// production otherwise, so a new revision is published by adding it here:
+// on the next boot it becomes the current version (the latest
+// published_at, routes/topochain/mobile.js), the sign-in screens link to its
+// terms_link, and anybody who accepted an earlier version is told the terms
+// changed (frontend/src/features/settings/terms-first-run.js).
+//
+// Nothing serves body_markdown (the terms sheet shows the title, the version
+// and the link), so it names the revision and points at the full text on the
+// website rather than carrying a second copy that could drift from it.
+// Keyed on the unique `version`, so a reboot writes nothing, and an entry is
+// never edited in place once shipped: a corrected text is a new version.
+const TERMS_VERSIONS = [
+  {
+    version: '1.0-2026-10-29',
+    title: 'Homeroom Platform - Terms of Service',
+    link: 'https://onhomeroom.com/legal/terms-of-service',
+    publishedAt: '2026-10-29T00:00:00Z',
+  },
+];
+
+async function seedTermsVersions(pool) {
+  for (const v of TERMS_VERSIONS) {
+    const body = `# ${v.title}\n\nVersion ${v.version}. The full text is at ${v.link}`;
+    await pool.query(
+      `INSERT INTO terms_versions
+         (version, title, body_markdown, terms_link, published_at, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+       ON CONFLICT (version) DO NOTHING`,
+      [v.version, v.title, body, v.link, v.publishedAt]
+    );
   }
 }
 
@@ -14598,11 +14635,18 @@ async function seedStagingTopochain(pool, config) {
     // app.js). `user_terms_consents` is staging:private — truncated on
     // clone — so this collides with nothing real, and the natural-key
     // arbiter keeps re-boots (and the two explicit rows above) idempotent.
+    //
+    // Every PUBLISHED version, not just the demo one above: the real
+    // versions come across with the clone (terms_versions is public) and
+    // seedTermsVersions adds new ones, and whichever is newest is the
+    // current one the shell checks (#6043).
     await pool.query(
       `INSERT INTO user_terms_consents
          (user_id, terms_version_id, status, responded_at, created_at, updated_at)
-       SELECT u.id, 900500, 'accepted', NOW() - INTERVAL '7 days', NOW(), NOW()
+       SELECT u.id, tv.id, 'accepted', NOW() - INTERVAL '7 days', NOW(), NOW()
          FROM users u
+        CROSS JOIN terms_versions tv
+        WHERE tv.published_at IS NOT NULL
        ON CONFLICT (user_id, terms_version_id) DO NOTHING`
     );
 
@@ -16005,6 +16049,7 @@ async function seedStagingPlatformMail(pool) {
 // meant to be called from anywhere else in the app.
 module.exports = {
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingProfileCustomization,
+  seedTermsVersions, TERMS_VERSIONS,
   seedStagingBotChatRequest,
   seedStagingBotProjectNotification,
   seedStagingPlatformMail, auditDuplicatePrSessions,

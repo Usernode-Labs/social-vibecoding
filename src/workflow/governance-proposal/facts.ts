@@ -193,6 +193,7 @@ async function readRefusal(tx: Tx, issue: Issue, dataKey: string): Promise<strin
     case 'rename':
       return String(p.newName || '').trim() ? null : 'missing_new_name';
     case 'close_issue':
+    case 'reopen_issue':
       return Number.isInteger(Number(p.issueNumber)) && Number(p.issueNumber) > 0 ? null : 'missing_issue_number';
     case 'maintenance_campaign':
       return typeof p.instructions === 'string' && p.instructions.trim() ? null : 'missing_instructions';

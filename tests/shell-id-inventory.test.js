@@ -372,6 +372,14 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #6000: propose reopening a closed request ───────────────────────
+  'reopen-issue-modal': 'The Propose reopening dialog (features/dialogs/reopen-issue.tsx), the mirror of #close-issue-modal, opened from a closed request\'s status card or its ⋯ menu. Ships hidden.',
+  'reopen-issue-number': 'The dialog title\'s #N span, filled from the issue the dialog was opened for.',
+  'reopen-issue-form': 'The dialog\'s form: the optional reason box and the two buttons.',
+  'reopen-issue-reason': 'The optional reason box, uncontrolled; posted publicly on GitHub when the vote passes.',
+  'reopen-issue-error': 'The dialog\'s error line, hidden until a proposal is refused.',
+  'reopen-issue-cancel': 'The dialog\'s Cancel button.',
+  'reopen-issue-submit': 'The dialog\'s Propose reopen button. Disabled while a request is in flight.',
   // ── #5927: the Homeroom menu says what it is ────────────────────────
   'apps-switcher-title': 'The app menu\'s title, "Feedback & info", over the app\'s name in small caps, which was the whole label before (features/app-context/app-context-sheet.tsx). Rendered on the menu pane only; the second panes keep their back disc there.',
   // ── iPhone Duo: the side strip (24 Oct 2026) ───────────────────────
@@ -678,6 +686,9 @@ const ADDED_IDS = {
   'settings-about-legal': 'Settings → About\'s Legal block, under the version rows: where a signed-in person finds the terms and Homeroom\'s privacy notice again after the sign-in screens named them (#5094, #5106). The Homeroom app shows this same screen, which is what puts them in the app\'s Settings too.',
   'settings-about-terms': 'Its Terms row: opens the terms sheet settings.js owns (Settings.showTermsSheet), the same one the Homeroom app\'s "about & legal" block opens.',
   'settings-about-privacy': 'Its Privacy notice row: a new-tab link to the address GET /api/public/waitlist/options serves as privacy_link (src/services/marketing-links.js). Inside the Homeroom app public/js/nav-link.js hands it to the bridge\'s openExternal. No href in the prerender; it arrives with the options.',
+  // ── #6043: the other two legal pages the terms name ──────────────────
+  'settings-about-child-safety': 'Its Child safety standards row (#6043): a new-tab link to child_safety_link from GET /api/public/waitlist/options (src/services/marketing-links.js), the page the terms cite for child safety. Opened like the privacy row.',
+  'settings-about-account-deletion': 'Its "Delete your account and data" row (#6043): a new-tab link to account_deletion_link from the same options, the page the terms and the app stores name for deleting an account. Opened like the privacy row.',
   // ── Andrea's 27 Aug 2026 waitlist review: "Follow along" ────────
   'more-follow-row': 'Holds the "Follow on X / LinkedIn / Instagram" links on the stage-2 form. Empty in this document by design: each link renders only when WAITLIST_FOLLOW_<NETWORK>_URL is set, so an unconfigured network shows nothing rather than a dead profile link.',
   'more-followed': 'The "I followed along" checkbox, stored as `answers.followed_claim`. It is a SELF-REPORT and is deliberately kept out of `answers.verified`: LinkedIn returns aggregate follower statistics with no identity, Instagram exposes a count and no relationship lookup, and X retired its boolean friendship endpoint, so no network will confirm a follow for us. Hidden here because its label is shown only once at least one follow URL is configured.',

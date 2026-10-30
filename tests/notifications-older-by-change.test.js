@@ -125,7 +125,7 @@ test('the section headings are the catalog\'s', () => {
 
 test('revealed, Unread keeps its stacks and draws the older rows as sections of cards', () => {
   assert.match(SHEET_SRC, /const olderGrouped = tab === 'unread' && olderShown;/);
-  assert.match(SHEET_SRC, /const appGroups = groupedUnread \|\| olderGrouped \? groupUnreadByApp\(unread, t\) : \[\];/);
+  assert.match(SHEET_SRC, /const appGroups = groupedUnread \|\| olderGrouped \? groupUnreadByApp\(unread, t, held\.asked\) : \[\];/);
   // The older rows are every row Unread does not list.
   assert.match(SHEET_SRC, /const listedIds = new Set\(unread\.map\(\(view\) => view\.id\)\);/);
   assert.match(SHEET_SRC, /const olderSections = olderGrouped \? groupOlderByTime\(all\.filter\(\(view\) => !listedIds\.has\(view\.id\)\), t\) : \[\];/);

@@ -814,6 +814,12 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "A closed request offers Propose reopening (#6000)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900032",
+      "expectText": "Propose reopening",
+      "expectSelector": "#dev-topic-thread .dev-request-status button.dev-request-primary[data-act=\"promptReopenIssue\"]"
+    },
+    {
       "name": "Dev board: session cards carry the live working spinner (#1038)",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
       "expectSelector": "#dev-body [data-session-chip=\"990102\"] .dc-status-spinner-arc, #dev-body [data-shared-session-row=\"990001\"] .dc-status-spinner-arc"
@@ -3044,9 +3050,10 @@
       "expectText": "Communities here build apps together"
     },
     {
-      "name": "Settings' About pane keeps the mobile app version and the platform version as separate rows",
+      "name": "Settings' About pane keeps the mobile app version and the platform version as separate rows, then lists the four legal pages: terms, privacy notice, child safety standards and account deletion",
       "path": "/#settings/about",
-      "expectSelector": "#settings-about-section #drawer-row-platform-version ~ #drawer-row-native-app-version"
+      "expectSelector": "#settings-about-section:has(#drawer-row-platform-version ~ #drawer-row-native-app-version) ~ #settings-about-legal #settings-about-terms ~ #settings-about-privacy ~ #settings-about-child-safety ~ #settings-about-account-deletion",
+      "expectText": "Delete your account and data"
     },
     {
       "name": "View on GitHub is an action on the app's own page, not a drawer row",
