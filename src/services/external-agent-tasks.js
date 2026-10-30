@@ -4995,9 +4995,9 @@ function linkedIssuesFor(task) {
 // Two things close a request when the work lands, and a connector submission
 // carried neither (#1217):
 //
-//   1. the `Closes #N` keyword in the PR body — GitHub is what actually
-//      closes the issue on merge, and the platform's post-merge watcher only
-//      polls for it having happened; and
+//   1. the closing line in the PR body (`Closes #N`, or on GitHub the
+//      request's page: pr-metadata.js closingLine), which says on the pull
+//      request what it closes; and
 //   2. chat_sessions.linked_issues — what the watcher expects to close, what
 //      the merge path suppresses optimistically, and what the Dev board reads
 //      to show a request as being worked on.
@@ -5010,7 +5010,7 @@ function linkedIssuesFor(task) {
 function prBodyFor({ body, task }) {
   const { buildClosingBlock } = require('./pr-metadata');
   const text = stripEnvelope(body).slice(0, 4000);
-  const closing = buildClosingBlock(linkedIssuesFor(task));
+  const closing = buildClosingBlock(linkedIssuesFor(task), { repoUrl: task?.repo_url || null, appSlug: task?.app_slug || null });
   return closing ? `${text}\n\n${closing}` : text;
 }
 

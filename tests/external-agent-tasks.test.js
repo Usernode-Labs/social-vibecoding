@@ -1267,6 +1267,11 @@ test('the service never opens a proposal itself', () => {
 // a connector-submitted proposal carried no `Closes #N` for GitHub to honour
 // on merge and no linked_issues for the close watcher or the Dev board, and
 // the request it implemented stayed open and unmarked.
+//
+// On GitHub the line names the request by its page, never `#N`: that is
+// GitHub's own number, and its pull requests take every number a request has
+// (pr-metadata.js closingLine). TASK_ROW's app is on GitHub.
+const REQUEST_4 = `Closes [request 4](https://${require('../src/services/caddy').USERNODE_DOMAIN}/app/recipe-box/dev/issues/4)`;
 
 test('the request a task was prepared from reaches both the PR body and the import', async () => {
   const created = [];
@@ -1291,9 +1296,9 @@ test('the request a task was prepared from reaches both the PR body and the impo
   ));
 
   assert.equal(result.ok, true);
-  // (1) The keyword GitHub acts on, after the description rather than
-  // instead of it. TASK_ROW's issue_number is 4.
-  assert.equal(created[0].body, 'Adds a toggle.\n\nCloses #4');
+  // (1) The closing line, after the description rather than instead of it.
+  // TASK_ROW's issue_number is 4.
+  assert.equal(created[0].body, `Adds a toggle.\n\n${REQUEST_4}`);
   // (2) The set the platform acts on, carried with the import because the
   // route is what creates the session row.
   assert.deepEqual(imports[0].extra, { linkedIssues: [4] });
@@ -1313,6 +1318,10 @@ test('a long description never pushes the closing keyword out of the body', () =
     svc.prBodyFor({ body: '<untrusted-content>brief</untrusted-content>', task: { issue_number: 9 } }),
     'brief\n\nCloses #9'
   );
+  // The task's app on GitHub: the request's page, and the clip still leaves it whole.
+  const onGithub = svc.prBodyFor({ body: 'x'.repeat(6000), task: { issue_number: 4, repo_url: 'https://github.com/usernode-bot/recipe-box', app_slug: 'recipe-box' } });
+  assert.ok(onGithub.endsWith(`\n\n${REQUEST_4}`));
+  assert.equal(onGithub.length, 4000 + `\n\n${REQUEST_4}`.length);
 
   // What counts as a request number is one rule, shared with the column.
   assert.deepEqual(svc.linkedIssuesFor({ issue_number: 1217 }), [1217]);
@@ -1558,7 +1567,7 @@ test('the <untrusted-content> envelope never reaches GitHub, but stays in the wo
   assert.doesNotMatch(created[0].body, /untrusted-content/);
   // The description, then the closing keyword for the request the task was
   // prepared from (#1217) — the fixture's issue_number is 4.
-  assert.equal(created[0].body, 'and validate they exist\n\nCloses #4');
+  assert.equal(created[0].body, `and validate they exist\n\n${REQUEST_4}`);
 
   // But the envelope keeps doing its job where it matters: the work order
   // goes to a second agent that has a shell.

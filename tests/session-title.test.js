@@ -1115,8 +1115,9 @@ test('a deterministic PR title never carries the issue-card scaffolding (#2500)'
     assert.equal(githubCalls[0].type, 'create');
     assert.equal(githubCalls[0].opts.title, 'Add claimed issues to workshop current work');
     assert.doesNotMatch(githubCalls[0].opts.title, /Please implement GitHub issue/);
-    // The seeded linkage is what puts `Closes #N` in the body (#2537).
-    assert.match(githubCalls[0].opts.body, /^Closes #2496$/m);
+    // The seeded linkage is what puts the closing line in the body (#2537),
+    // naming the request in words on GitHub, where `#2496` is GitHub's own.
+    assert.match(githubCalls[0].opts.body, /^Closes request 2496$/m);
   } finally {
     restore();
   }
@@ -1153,7 +1154,7 @@ test('a deterministic PR title for a bot build never carries "Build issue N:" (#
     assert.equal(githubCalls[0].opts.title, 'Quota notifications are cryptic codes');
     // The issue is where the proposal says it is: in Addresses, and in the
     // body's closing line.
-    assert.match(githubCalls[0].opts.body, /^Closes #3233$/m);
+    assert.match(githubCalls[0].opts.body, /^Closes request 3233$/m);
   } finally {
     restore();
   }

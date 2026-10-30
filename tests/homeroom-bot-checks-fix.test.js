@@ -384,7 +384,7 @@ test('red checks on its own proposal: one build turn fixes them, the proposal is
   assert.equal(h.calls.loop.mode, 'build');
   assert.match(h.calls.exec[0].opts.prompt, /Cooking mode text-size control offers all steps/);
   assert.match(h.calls.exec[0].opts.prompt, /"Text size" but the button says "Aa"/);
-  assert.match(h.calls.exec[0].opts.commitMsg, /fix the failing checks on #50/);
+  assert.match(h.calls.exec[0].opts.commitMsg, /fix the failing checks on request 50$/);
   assert.equal(h.calls.reconciled.length, 1, 'votes cleared, checks re-run, as for any revision');
   const insert = insertOf(h);
   assert.equal(insert.params[4], 'revise', 'counts toward MAX_REVISIONS like any revision');
@@ -766,7 +766,7 @@ test('a change its shots show failing: one build turn fixes it, said as what did
   assert.match(prompt, /Homeroom also tried what this change says it does/);
   assert.match(prompt, /- "Tapping "mark as done" ticks a chore off\."\n {2}Steps it took: Open the app > Tap "mark as done"\n {2}What happened: POST \/api\/chores\/1\/done answered 500, twice\./);
   assert.doesNotMatch(prompt, /automated checks on the proposal's current commit/, 'no checks failed, so none are listed');
-  assert.match(commitMsg, /fix what did not work on #50/);
+  assert.match(commitMsg, /fix what did not work on request 50$/);
   assert.equal(h.calls.reconciled.length, 1, 'a revision like any other: votes cleared, checks and shots again');
   assert.equal(insertOf(h).params[21], HEAD, 'the head is looked at once');
   assert.equal(h.calls.onProposal[0].text,
@@ -826,7 +826,7 @@ test('a skip the change can seed: one build turn adds the data, said as what the
   assert.match(prompt, /could not show one of the changes you declared/);
   assert.match(prompt, /Why it was skipped: The after copy has no '\[Mock\] Advisory vote' row/);
   assert.match(prompt, /gated on IS_STAGING/);
-  assert.match(commitMsg, /seed what the before and after shots of #50 need/);
+  assert.match(commitMsg, /seed what the before and after shots of request 50 need/);
   assert.equal(h.calls.reconciled.length, 1, 'a revision like any other: votes cleared, checks and shots again on the new head');
   assert.equal(insertOf(h).params[21], HEAD, 'the head is looked at once');
   assert.match(h.calls.onProposal[0].text, /^Homeroom bot added sample data so this change's before and after screens can show "/);

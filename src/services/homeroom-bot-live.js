@@ -61,7 +61,7 @@
 // stays exactly one implementation of "put a change up for a vote".
 
 const { firstPerson } = require('./homeroom-bot-words');
-const { FIX_COMMIT_MESSAGES } = require('./homeroom-commits');
+const { FIX_COMMIT_MESSAGES, buildCommitMessage } = require('./homeroom-commits');
 const log = require('./logger');
 const { stripSpecWrapperFence } = require('./spec-format');
 const { agentApiFailure, finalAnswerText } = require('./agent-result-text');
@@ -4622,7 +4622,7 @@ async function buildAndPropose({
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
   // time-outs, most of them cheap, with nothing recorded about why.
   const progress = lastActivity();
-  const commitMsg = `Homeroom bot: #${issueNumber} ${title}`.slice(0, 120);
+  const commitMsg = buildCommitMessage(issueNumber, title);
   // #4449: Live watches the build turn, beside it, from its start to its end.
   let liveTurn = null;
   if (onBuildTurn) {
