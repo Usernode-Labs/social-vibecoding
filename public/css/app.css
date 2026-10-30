@@ -25316,9 +25316,13 @@ html.in-side-panel body {
 }
 
 /* The item's page beside the list, on a wide window (workshop/side-panel.tsx).
-   The list moves left to make room and keeps its place. */
+   The list is centered in the room left of the panel (its 560px, the 24px
+   inset and the 32px gap = 616px): 24px + (100% - 640px - 760px) / 2, floored
+   at the 24px inset. Below a 1400px container the margin is 24px and the
+   column fills that room, as before. */
 #dev-workshop:has(> .dev-ws[data-ws-side-open]) {
-  margin-left: 24px; margin-right: 0; max-width: min(760px, calc(100% - 616px));
+  margin-left: max(24px, calc((100% - 1352px) / 2)); margin-right: 0;
+  max-width: min(760px, calc(100% - 616px));
 }
 .dev-ws-side {
   position: fixed; z-index: 40; right: 24px; width: 560px;
@@ -25480,7 +25484,7 @@ html.in-side-panel body {
    A row opens its page in the Workshop's panel; the board keeps its place
    to its left, its columns 316px, and scrolls sideways (the Workshop brings
    the tapped column beside the panel). */
-#dev-workshop.dev-ws-has-board:has(> .dev-ws[data-ws-side-open]) { max-width: calc(100% - 616px); }
+#dev-workshop.dev-ws-has-board:has(> .dev-ws[data-ws-side-open]) { margin-left: 24px; max-width: calc(100% - 616px); }
 .dev-ws[data-ws-side-open] :is(#dev-kanban, .dev-kanban-stages) { grid-template-columns: repeat(4, 316px); }
 
 @media (max-width: 639px) {
