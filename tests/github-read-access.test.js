@@ -88,13 +88,15 @@ test('web reads with published access while conductor admission stays configured
   const sent = [];
   t.mock.method(global, 'fetch', async (url, init) => {
     sent.push({ url: String(url), auth: new Headers(init.headers).get('authorization') });
-    const body = String(url).includes('/branches/')
-      ? { commit: { sha: 'a'.repeat(40), commit: { message: 'head' } } }
-      : { object: { sha: 'a'.repeat(40) } };
+    const body = new URL(String(url)).pathname === '/repos/Usernode-Labs/social-vibecoding'
+      ? { private: false } : String(url).includes('/branches/')
+        ? { commit: { sha: 'a'.repeat(40), commit: { message: 'head' } } }
+        : { object: { sha: 'a'.repeat(40) } };
     return new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
   });
   assert.equal(await github.getBranchSha('Usernode-Labs', 'social-vibecoding', 'main'), 'a'.repeat(40));
   assert.equal((await github.headCommit('Usernode-Labs', 'social-vibecoding')).sha, 'a'.repeat(40));
+  assert.deepEqual(await github.checkRepoPublic('Usernode-Labs', 'social-vibecoding'), { ok: true, private: false });
   assert.ok(sent.every((c) => c.auth === 'token test-scoped-read-token'));
   const client = await github.getReadOctokit('Usernode-Labs');
   await assert.rejects(client.rest.git.createRef({ owner: 'Usernode-Labs', repo: 'social-vibecoding', ref: 'refs/heads/test', sha: 'a'.repeat(40) }), { code: 'github_read_only' });
@@ -104,7 +106,7 @@ test('web reads with published access while conductor admission stays configured
   await assert.rejects(github.getReadOctokit('somebody-else'), { code: 'github_paused' });
   const names = await github.listActionsSecrets('Usernode-Labs', 'social-vibecoding');
   assert.equal(names.secrets[0].name, 'TEST_NAME');
-  assert.equal(sent.length, 2, 'metadata and refused calls send nothing');
+  assert.equal(sent.length, 3, 'published metadata and refused calls send nothing');
   assert.equal(state.record.installed, true);
 });
 

@@ -577,8 +577,8 @@ function withDefaults(deps) {
   return deps ? { ...defaultDeps(), ...deps } : defaultDeps();
 }
 
-/** Whether this process may write to app repositories at all. */
-function canWrite(deps) {
+/** Whether upstream updates have a configured host outside a platform preview. */
+function updatesAvailable(deps) {
   return process.env.USERNODE_ENV !== 'staging' && !!(deps.gitHost && deps.gitHost.isConfigured());
 }
 
@@ -893,7 +893,7 @@ async function tellMembers({ pool, deps, versionId, sessionId, platformId }) {
 async function openUpdate({ config, pool, versionId, soft = false, deps: given, steps = durableSteps.none() } = {}) {
   const deps = withDefaults(given);
   if (!(await deps.enabled(config, pool))) return refusal(409, 'versions_off', MESSAGES.off);
-  if (!canWrite(deps)) return refusal(409, 'unavailable', MESSAGES.unavailable);
+  if (!updatesAvailable(deps)) return refusal(409, 'unavailable', MESSAGES.unavailable);
   const ctx = await context({ config, pool, versionId, deps });
   if (!ctx.ok) {
     // One that cannot be planned says so on its row, and is not tried again
@@ -1052,7 +1052,7 @@ async function openUpdate({ config, pool, versionId, soft = false, deps: given, 
  */
 async function refreshUpdate({ config, pool, versionId, deps: given } = {}) {
   const deps = withDefaults(given);
-  if (!(await deps.enabled(config, pool)) || !canWrite(deps)) return { skipped: 'off' };
+  if (!(await deps.enabled(config, pool)) || !updatesAvailable(deps)) return { skipped: 'off' };
   const row = await readOffer(pool, versionId);
   if (!row || row.state !== 'open' || !row.session_id || !['active', 'promoted'].includes(row.session_status)) {
     return { skipped: 'not_open' };
@@ -1131,7 +1131,7 @@ async function fitRequestOf(pool, appId, fromSha) {
  */
 async function settleUpdate({ config, pool, versionId, deps: given } = {}) {
   const deps = withDefaults(given);
-  if (!(await deps.enabled(config, pool)) || !canWrite(deps)) return { skipped: 'off' };
+  if (!(await deps.enabled(config, pool)) || !updatesAvailable(deps)) return { skipped: 'off' };
   const row = await readOffer(pool, versionId);
   if (!row || !sha(row.theirs_sha)) return { skipped: 'nothing' };
   let state = null;
@@ -1165,7 +1165,7 @@ async function skipUpdate({ config, pool, versionId, user, deps: given, steps = 
   const moved = steps.get('advance');
   if (moved) return { ok: true, state: moved.state };
   if (!(await deps.enabled(config, pool))) return refusal(409, 'versions_off', MESSAGES.off);
-  if (!canWrite(deps)) return refusal(409, 'unavailable', MESSAGES.unavailable);
+  if (!updatesAvailable(deps)) return refusal(409, 'unavailable', MESSAGES.unavailable);
   const row = await readOffer(pool, versionId);
   // This skip's own close, settled by the clock since (settleUpdate): skipped.
   if (row && row.state === 'skipped' && steps.has('close')) return { ok: true, state: 'skipped' };
@@ -1270,7 +1270,7 @@ async function fitUpdate({ config, pool, versionId, user, deps: given } = {}) {
     const conflicts = readConflicts(row.conflicts);
     let diff = '';
     const theirs = sha(row.theirs_sha);
-    if (theirs && conflicts.length && canWrite(deps)) {
+    if (theirs && conflicts.length && updatesAvailable(deps)) {
       diff = await withScratch(`fit-${version.id}`, deps, async (dir) => {
         const run = runner(deps, dir);
         await run(['fetch', '--no-tags', '-q', deps.gitHost.cloneUrl(versionRepo), theirs], { auth: true });
@@ -1413,7 +1413,7 @@ async function changeView(pool, sessionId) {
 async function sweep(config, pool, { deps: given } = {}) {
   const deps = withDefaults(given);
   if (!(await deps.enabled(config, pool))) return { off: true };
-  if (!canWrite(deps)) return { off: 'unavailable' };
+  if (!updatesAvailable(deps)) return { off: 'unavailable' };
   const marked = (await pool.query(SQL.mark)).rowCount || 0;
   const items = [];
   const seen = new Set();
@@ -1495,7 +1495,6 @@ module.exports = {
   SQL,
   advance,
   branchFor,
-  canWrite,
   changeView,
   describe,
   factsOf,

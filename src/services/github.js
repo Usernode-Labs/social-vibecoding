@@ -1,8 +1,7 @@
 const log = require('./logger');
 const budget = require('./github-budget');
 const pause = require('./github-pause');
-
-let App;
+const roles = require('./process-role');
 let app;
 
 // Neutralize `@handle` mentions in outgoing content so Homeroom never
@@ -190,7 +189,7 @@ async function fetchActionsSecretsWith(octokit, owner, repo) {
  * Homeroom has on GitHub.
  */
 async function listActionsSecrets(owner, repo) {
-  if (!require('./process-role').runsWorkflow(require('./process-role').processRole())) {
+  if (!roles.runsWorkflow(roles.processRole())) {
     if (pause.isPaused()) return actionsSecretsFailure('github_error', "Couldn't reach GitHub to list this repo's Actions secrets.");
     return require('./github-read-access').actionsSecrets(owner, repo);
   }
@@ -209,40 +208,29 @@ async function listActionsSecrets(owner, repo) {
   };
 
   const attempt = async () => {
-    const errors = [];
-    const clients = [];
-    if (app || _octokitFactoryForTests) clients.push(['installation', () => getOctokit(owner)]);
-    if (!clients.length) {
+    if (!app && !_octokitFactoryForTests) {
       return actionsSecretsFailure('no_token',
         'GitHub is not configured on this platform, so its Actions secrets can\'t be listed.');
     }
-
-    for (const [source, make] of clients) {
-      try {
-        const octokit = await make();
-        const secrets = await fetchActionsSecretsWith(octokit, owner, repo);
-        secrets.sort((a, b) => a.name.localeCompare(b.name));
-        return { ok: true, secrets, source };
-      } catch (err) {
-        errors.push({ source, status: err?.status, message: err?.message });
+    try {
+      const octokit = await getOctokit(owner);
+      const secrets = await fetchActionsSecretsWith(octokit, owner, repo);
+      secrets.sort((a, b) => a.name.localeCompare(b.name));
+      return { ok: true, secrets, source: 'installation' };
+    } catch (err) {
+      log.warn('github', 'Actions-secrets listing failed (failing open)', {
+        repo: `${owner}/${repo}`, errors: [{ source: 'installation', status: err?.status, message: err?.message }],
+      });
+      if (err?.status === 403 || err?.status === 401) {
+        return actionsSecretsFailure('forbidden', ACTIONS_SECRETS_FORBIDDEN_MESSAGE);
       }
+      if (err?.status === 404) {
+        // GitHub also uses 404 when the caller cannot see this metadata.
+        return actionsSecretsFailure('not_found', ACTIONS_SECRETS_FORBIDDEN_MESSAGE);
+      }
+      return actionsSecretsFailure('github_error',
+        "Couldn't reach GitHub to list this repo's Actions secrets.");
     }
-
-    const statuses = errors.map((e) => e.status);
-    log.warn('github', 'Actions-secrets listing failed (failing open)', {
-      repo: `${owner}/${repo}`, errors,
-    });
-    if (statuses.includes(403) || statuses.includes(401)) {
-      return actionsSecretsFailure('forbidden', ACTIONS_SECRETS_FORBIDDEN_MESSAGE);
-    }
-    if (statuses.includes(404)) {
-      // 404 on this endpoint is GitHub's "you may not know this exists"
-      // for a caller without admin rights, so say the same thing as 403
-      // rather than implying the repo is gone.
-      return actionsSecretsFailure('not_found', ACTIONS_SECRETS_FORBIDDEN_MESSAGE);
-    }
-    return actionsSecretsFailure('github_error',
-      "Couldn't reach GitHub to list this repo's Actions secrets.");
   };
 
   // Hard timeout: the panel must never hang waiting on GitHub.
@@ -285,7 +273,7 @@ function hostedGit() { return require('./hosted-git'); }
 async function init(config, pool = null) {
   app = null;
   await require('./github-read-access').init(config, pool);
-  if (!require('./process-role').runsWorkflow(require('./process-role').processRole())) {
+  if (!roles.runsWorkflow(roles.processRole())) {
     log.info('github', 'GitHub reads use conductor-published access');
     return;
   }
@@ -294,8 +282,7 @@ async function init(config, pool = null) {
     return;
   }
 
-  const mod = await import('@octokit/app');
-  App = mod.App;
+  const { App } = await import('@octokit/app');
 
   app = new App({
     appId: config.githubAppId,
@@ -326,7 +313,6 @@ function hasApp() {
 // Whether this process can write. Callers admitting a conductor operation
 // use isEnabled instead; only workflow work needs this capability.
 function hasWriteAccess() {
-  const roles = require('./process-role');
   return roles.runsWorkflow(roles.processRole()) && (!!app || require('./git-host').hasWriteAccess());
 }
 
@@ -418,7 +404,7 @@ function checkActingInstallation() {
  * installing the App lifts the notice without a restart.
  */
 function canActOn(owner) {
-  if (!require('./process-role').runsWorkflow(require('./process-role').processRole())) {
+  if (!roles.runsWorkflow(roles.processRole())) {
     return isActingOwner(owner) && require('./github-read-access').installed();
   }
   if (!app || !isActingOwner(owner)) return false;
@@ -577,7 +563,7 @@ async function getOctokit(owner) {
 // Conductors keep their installation client; both share the same rate budget.
 async function getReadOctokit(owner) {
   if (_octokitFactoryForTests) return _octokitFactoryForTests(owner);
-  if (require('./process-role').runsWorkflow(require('./process-role').processRole())) return getOctokit(owner);
+  if (roles.runsWorkflow(roles.processRole())) return getOctokit(owner);
   assertActingOwner(owner);
   const token = await require('./github-read-access').token(owner);
   const { Octokit } = await import('@octokit/rest');
@@ -1827,7 +1813,7 @@ const { parseGithubUrl } = require('../workflow/rules/github-url.ts');
 // fatal (bootstrap) or just log (audit).
 async function checkRepoPublic(owner, repo) {
   if (onGitHost(owner)) return hostedGit().checkRepoPublic(owner, repo);
-  if (!app && !_octokitFactoryForTests) {
+  if (!app && !require('./github-read-access').configured() && !_octokitFactoryForTests) {
     return { ok: false, code: 'no_token', message: 'The GitHub App is not configured.' };
   }
   // A read, on every worker start, through the App installation. Refused
