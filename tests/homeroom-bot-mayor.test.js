@@ -338,6 +338,7 @@ test('#3772: what a typed message decides about a draft', () => {
 
 test('#3772: the request numbers a reply names, less a proposal\'s or a pull request\'s', () => {
   assert.deepEqual(mayor.requestNumbers('Filed #14, see request #3 and proposal #6011, PR #12, pr#13, &#39; x#9'), [14, 3]);
+  assert.deepEqual(mayor.requestNumbers('Change #6002 closes #5997'), [5997], 'a change is named by its pull request number');
   assert.deepEqual(mayor.requestNumbers('nothing here'), []);
 });
 

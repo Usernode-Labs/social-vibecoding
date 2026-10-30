@@ -86,6 +86,7 @@ const log = require('./logger');
 const { withoutEmDashes } = require('./em-dashes');
 const progressSvc = require('./homeroom-bot-progress');
 const repoRef = require('./repo-ref');
+const { labelledAsPullRequest } = require('./request-mentions');
 
 const MAX_HISTORY = 24;
 const MAX_ROUNDS = 6;
@@ -1337,15 +1338,15 @@ const CLAIMS = Object.freeze([
 
 /**
  * The request numbers `text` names ("#14", "request #14"), less those of a
- * proposal or pull request ("proposal #6011", "PR #12").
+ * proposal, pull request or change ("proposal #6011", "PR #12",
+ * "Change #6002"; request-mentions.js).
  */
 function requestNumbers(text) {
   const out = new Set();
   const re = /(^|[^\w&/#])#(\d{1,7})\b/g;
   let m;
   while ((m = re.exec(String(text || ''))) !== null) {
-    const before = String(text).slice(Math.max(0, m.index - 16), m.index + m[1].length).toLowerCase();
-    if (/\b(?:pr|proposal|pull request)\s*$/.test(before)) continue;
+    if (labelledAsPullRequest(text, m.index + m[1].length)) continue;
     out.add(Number(m[2]));
   }
   return [...out];

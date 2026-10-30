@@ -70,6 +70,7 @@ const crypto = require('crypto');
 const log = require('./logger');
 const githubService = require('./github');
 const repoRef = require('./repo-ref');
+const { labelledAsPullRequest } = require('./request-mentions');
 const githubBudget = require('./github-budget');
 const externalAgentHead = require('./external-agent-head');
 const externalAgentPatch = require('./external-agent-patch');
@@ -4837,12 +4838,16 @@ async function submitWorkLocked(deps, params) {
 
 // `#123` references in a brief, in order, deduplicated. The brief is the
 // caller's own text on a job that names no request; this only ever feeds a
-// suggestion, so a number that turns out to be a pull request or a closed
-// request costs nothing — the connector checks them against the open list.
+// suggestion, and the connector checks the numbers against the open list,
+// so a closed request costs nothing. A number written as a pull request's
+// ("PR #6048") is left out: on a project still on GitHub a pull request can
+// hold an open request's number (request-mentions.js).
 function mentionedIssueNumbers(brief) {
   const text = stripEnvelope(brief);
   const found = [];
-  for (const m of text.matchAll(/(?:^|[^\w&#/])#(\d{1,9})\b/g)) found.push(m[1]);
+  for (const m of text.matchAll(/(?:^|[^\w&#/])#(\d{1,9})\b/g)) {
+    if (!labelledAsPullRequest(text, m.index + m[0].indexOf('#'))) found.push(m[1]);
+  }
   return normalizeIssueNumbers(found);
 }
 
