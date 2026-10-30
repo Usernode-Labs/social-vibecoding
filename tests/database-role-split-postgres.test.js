@@ -99,7 +99,11 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
     ALTER TABLE public.notes OWNER TO ${sourceOwner};
     ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.notes FORCE ROW LEVEL SECURITY;
-    CREATE POLICY nobody ON public.notes USING(false)`));
+    CREATE POLICY nobody ON public.notes USING(false);
+    CREATE SCHEMA copy_fixture AUTHORIZATION ${sourceOwner};
+    CREATE TABLE copy_fixture.retained(id int PRIMARY KEY, body text);
+    INSERT INTO copy_fixture.retained VALUES (1, 'synthetic secondary-schema row');
+    ALTER TABLE copy_fixture.retained OWNER TO ${sourceOwner}`));
   await use(at(PRIMARY, source), c => c.query(`CREATE FUNCTION public.current_setting(text) RETURNS text
     LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'catalog lookup fixture'; END $$`));
   await use(PRIMARY, c => c.query(`ALTER DATABASE ${source} SET search_path = public, pg_catalog`));
@@ -287,6 +291,18 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
       assert.equal(result.via, i === 0 ? 'direct' : 'template');
       await use(manager.connectionUrl(target, result.password, { server: result.server }), async c => {
         assert.equal((await c.query('SELECT count(*)::int n FROM notes')).rows[0].n, 0);
+        assert.equal((await c.query('SELECT body FROM copy_fixture.retained')).rows[0].body,
+          'synthetic secondary-schema row');
+        const schema = await c.query("SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname='copy_fixture'");
+        assert.equal(schema.rows[0].owner, manager.ownerRoleName(target));
+        const reset = await c.query(`SELECT r.rolsuper AS operator_owned,
+          p.proowner = e.extowner AS extension_owned,
+          has_function_privilege(current_user, p.oid, 'EXECUTE') AS executable
+          FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner
+          JOIN pg_depend d ON d.classid='pg_proc'::regclass AND d.objid=p.oid AND d.deptype='e'
+          JOIN pg_extension e ON d.refclassid='pg_extension'::regclass AND d.refobjid=e.oid
+          WHERE e.extname='pg_stat_statements' AND p.proname='pg_stat_statements_reset'`);
+        assert.deepEqual(reset.rows, [{ operator_owned: true, extension_owned: true, executable: false }]);
         await denied(c, `SET ROLE ${roles.provisioner}`);
       });
       await use(at(PREVIEW, target, roles.provisioner, passwords.previewProvisioner), async c => {
@@ -294,22 +310,58 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
       });
       await assert.rejects(use(at(PREVIEW, target, roles.web, passwords.previewRead), c => c.query('SELECT 1')), { code: '42501' });
     }
+    await use(at(PRIMARY, source), async c => {
+      const owners = await c.query(`SELECT pg_get_userbyid(n.nspowner) AS schema_owner,
+        pg_get_userbyid(r.relowner) AS table_owner FROM pg_namespace n
+        JOIN pg_class r ON r.relnamespace=n.oid WHERE n.nspname='copy_fixture' AND r.relname='retained'`);
+      assert.deepEqual(owners.rows, [{ schema_owner: sourceOwner, table_owner: sourceOwner }]);
+      assert.equal((await c.query('SELECT count(*)::int n FROM copy_fixture.retained')).rows[0].n, 1);
+    });
   });
 
   await t.test('platform previews load the deployed schema and redact data as their own owner', async () => {
-    const target = platform + '_staging_s903_abcdef'; dbs.add(target);
     const username = `fixture_${id}`;
-    await use(at(PRIMARY, platform, roles.conductor, passwords.conductor), c =>
+    const { rows: [user] } = await use(at(PRIMARY, platform, roles.conductor, passwords.conductor), c =>
       c.query("INSERT INTO users(username, password) VALUES ($1, $2) RETURNING id", [username, 'synthetic-source-hash']));
+    await use(at(PRIMARY, platform, roles.conductor, passwords.conductor), c =>
+      c.query("INSERT INTO credentials.user_ai_credentials(user_id, provider, purpose, secret_enc) VALUES ($1, 'openrouter', 'coding_agent', 'synthetic-ciphertext')", [user.id]));
     await use(at(PRIMARY, platform, roles.conductor, passwords.conductor), c =>
       c.query("INSERT INTO apps(name,slug,self_hosted) VALUES ('Homeroom fixture','usernode-2d5619',TRUE)"));
     const manager = require('../src/services/db-manager');
-    const result = await manager.cloneDatabase(platform, target);
-    assert.equal(result.server, manager.PREVIEW_SERVER);
-    await use(manager.connectionUrl(target, result.password, { server: result.server }), async c => {
-      const { rows } = await c.query("SELECT password FROM public.users WHERE username LIKE 'preview-user-%'");
-      assert.equal(rows.length, 1); assert.notEqual(rows[0].password, 'synthetic-source-hash');
-      assert.equal((await c.query('SELECT count(*)::int n FROM credentials.user_ai_credentials')).rows[0].n, 0);
+    dbs.add(platform + '_stgtmpl');
+    dbs.add(platform + '_stgtmpl_next');
+    async function checkCopy(target, result) {
+      assert.equal(result.server, manager.PREVIEW_SERVER);
+      await use(manager.connectionUrl(target, result.password, { server: result.server }), async c => {
+        const { rows } = await c.query("SELECT password FROM public.users WHERE username LIKE 'preview-user-%'");
+        assert.equal(rows.length, 1); assert.notEqual(rows[0].password, 'synthetic-source-hash');
+        assert.equal((await c.query('SELECT count(*)::int n FROM credentials.user_ai_credentials')).rows[0].n, 0);
+        const schema = await c.query("SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname='credentials'");
+        assert.equal(schema.rows[0].owner, manager.ownerRoleName(target));
+        await denied(c, `SET ROLE ${roles.provisioner}`);
+      });
+    }
+    for (const [number, viaTemplate] of [[903, false], [904, true]]) {
+      const target = platform + `_staging_s${number}_abcdef`; dbs.add(target);
+      const result = await manager.cloneDatabase(platform, target, { viaTemplate });
+      assert.equal(result.via, viaTemplate ? 'template' : 'direct');
+      await checkCopy(target, result);
+    }
+    const sourceId = `role-fixture-${id}`;
+    dbs.add(manager.preparedCloneSourceName(platform, sourceId));
+    const prepared = await manager.prepareStagingCloneSource(platform, { sourceId });
+    const target = platform + '_staging_s905_abcdef'; dbs.add(target);
+    try {
+      const result = await manager.cloneFromPreparedSource(prepared, target);
+      assert.equal(result.via, 'prepared-template');
+      await checkCopy(target, result);
+    } finally {
+      await manager.releasePreparedCloneSource(prepared);
+    }
+    await use(at(PRIMARY, platform, roles.conductor, passwords.conductor), async c => {
+      assert.equal((await c.query('SELECT count(*)::int n FROM credentials.user_ai_credentials')).rows[0].n, 1);
+      const database = await c.query("SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname=current_database()");
+      assert.equal(database.rows[0].owner, roles.migrator);
     });
   });
 
