@@ -165,13 +165,52 @@ export function byProject<T extends { app: AiApp | null }>(rows: T[]): { app: Ai
   return groups;
 }
 
-/** Pure: the projects in any list, once each, in the order they first come: the filter's chips. */
-export function projectsOf(rows: WorkRow[], ...threads: AiThread[][]): AiApp[] {
-  const projects: AiApp[] = [];
-  for (const app of [...rows.map((r) => r.app), ...threads.flat().map((t) => t.app)]) {
-    if (app && !projects.some((p) => p.slug === app.slug)) projects.push(app);
-  }
-  return projects;
+/** How many projects the filter shows as chips before its More (./lists.tsx). */
+export const RAIL_PROJECTS = 3;
+
+/** A project in any list, with how many of its rows each list holds: what the filter says about it. */
+export interface ProjectTally {
+  app: AiApp;
+  needs: number;
+  progress: number;
+  waiting: number;
+  live: number;
+}
+
+/**
+ * Pure: the projects in any list, once each, the ones that need you most
+ * first: by Needs you, then In progress, then Waiting, then name. The
+ * filter's chips are the first few and its More lists them all (30 Oct 2026,
+ * Evan: a chip a project, in the order they first came, was a rail nobody
+ * could use with dozens of projects).
+ */
+export function rankProjects(rows: WorkRow[], progress: AiThread[], waiting: AiThread[], live: AiThread[]): ProjectTally[] {
+  const at = new Map<string, ProjectTally>();
+  const count = (app: AiApp | null, list: 'needs' | 'progress' | 'waiting' | 'live') => {
+    if (!app) return;
+    let tally = at.get(app.slug);
+    if (!tally) { tally = { app, needs: 0, progress: 0, waiting: 0, live: 0 }; at.set(app.slug, tally); }
+    tally[list] += 1;
+  };
+  rows.forEach((r) => count(r.app, 'needs'));
+  progress.forEach((t) => count(t.app, 'progress'));
+  waiting.forEach((t) => count(t.app, 'waiting'));
+  live.forEach((t) => count(t.app, 'live'));
+  const name = (p: ProjectTally) => p.app.name || p.app.slug;
+  return [...at.values()].sort((a, b) => (b.needs - a.needs) || (b.progress - a.progress) || (b.waiting - a.waiting)
+    || name(a).localeCompare(name(b)));
+}
+
+/**
+ * Pure: the projects the rail shows as chips: any picked from More, then the
+ * first few of the ranking. A pick from More comes first, beside All, so
+ * what the lists are narrowed to is on screen even where a phone's rail
+ * shows two chips; the first few keep their places, so a chip pressed there
+ * does not move.
+ */
+export function railProjects(ranked: ProjectTally[], picked: string[]): AiApp[] {
+  const past = ranked.slice(RAIL_PROJECTS).filter((p) => picked.includes(p.app.slug));
+  return [...past, ...ranked.slice(0, RAIL_PROJECTS)].map((p) => p.app);
 }
 
 const PILLS: Record<string, string> = {
