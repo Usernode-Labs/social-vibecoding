@@ -3213,7 +3213,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // sheet warns that if both pass the later one may overwrite the
       // earlier. The community read still returns the open one
       // (findWhoDecidesPr) so the sheet can link to it.
-      const result = await proposeManifest(res, app, req.user, 'who-decides', diff);
+      // The rules as they are today ride along so the description can say
+      // what is added or removed (services/who-decides-pr.js).
+      const args = diff.governance
+        ? { ...diff, was: { rules: gov.rules || null, approverPolicy: gov.approverPolicy, approvalsRequired: gov.approvalsRequired } }
+        : diff;
+      const result = await proposeManifest(res, app, req.user, 'who-decides', args);
       if (!result) return;
       res.status(201).json({
         ok: true,

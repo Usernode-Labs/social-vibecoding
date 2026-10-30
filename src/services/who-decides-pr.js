@@ -33,6 +33,7 @@
 
 const governanceRules = require('./governance-rules');
 const renamePr = require('./rename-pr');
+const appManifest = require('./app-manifest');
 
 const VISIBILITIES = Object.freeze(['private', 'public']);
 
@@ -123,6 +124,59 @@ async function checkPeople(pool, governance) {
   }
 }
 
+/** "Lifeguards: @evan, @maya.", or "Lifeguards: nobody yet." */
+function groupPeopleLine(group) {
+  return group.people.length
+    ? `${group.name}: ${group.people.map((p) => `@${p}`).join(', ')}.`
+    : `${group.name}: nobody yet.`;
+}
+
+/**
+ * The governance part of the PR body: each rule as a sentence, every named
+ * group with its people, and what is different from the rules the project
+ * has today (`change.was`, absent on an operation queued before it was
+ * passed). Nothing here decides anything: it describes the change.
+ */
+function describeRulesChange(change) {
+  const full = governanceRules.describeRulesInFull(change.governance);
+  const lines = ['A change goes live when any one of these rules passes:'];
+  for (const sentence of full.sentences) lines.push(`- ${sentence}`);
+  if (full.groups.length) {
+    lines.push('');
+    for (const group of full.groups) lines.push(groupPeopleLine(group));
+  }
+  const was = change.was || null;
+  const diff = was ? governanceRules.diffRules(was.rules, change.governance) : null;
+  if (diff) {
+    // A removed rule may name a group that is going too: read both lists.
+    const groups = [...(change.governance.groups || []), ...((was.rules && was.rules.groups) || [])];
+    const changes = [];
+    for (const rule of diff.added) changes.push(`- Added: ${governanceRules.ruleSentence(rule, groups)}.`);
+    for (const rule of diff.removed) changes.push(`- Removed: ${governanceRules.ruleSentence(rule, groups)}.`);
+    for (const group of diff.groupsAdded) {
+      const people = group.people.length ? ` (${group.people.map((p) => `@${p}`).join(', ')})` : '';
+      changes.push(`- New group: ${group.name}${people}.`);
+    }
+    for (const group of diff.groupsRemoved) changes.push(`- Group removed: ${group.name}.`);
+    for (const { name, added, removed } of diff.peopleChanged) {
+      const how = [];
+      if (added.length) how.push(`adds ${added.map((p) => `@${p}`).join(', ')}`);
+      if (removed.length) how.push(`removes ${removed.map((p) => `@${p}`).join(', ')}`);
+      changes.push(`- ${name}: ${how.join(', ')}.`);
+    }
+    if (changes.length) {
+      lines.push('');
+      lines.push('Compared with today:');
+      lines.push(...changes);
+    }
+  }
+  if (was && !was.rules) {
+    lines.push('');
+    lines.push(`Until now: ${appManifest.describeGovernance(was.approverPolicy, was.approvalsRequired)}.`);
+  }
+  return lines.join('\n');
+}
+
 /**
  * Open the PR. `change` is diffChange's output (at least one part set).
  * Resolves `{ sessionId, prNumber, prUrl, branch, title }`.
@@ -135,9 +189,9 @@ async function createWhoDecidesPR(config, pool, app, change, actor, { steps } = 
       ? 'makes it a public community: anyone can see it and join, and everyone who can see it can suggest changes'
       : 'makes it a private community: only its members can see it');
   }
-  if (change.governance) {
-    parts.push(`approves its changes by ${governanceRules.describeRules(change.governance)}`);
-  }
+  const intro = change.governance && !change.visibility
+    ? `${actor.username} (via Homeroom) proposed a change to how changes to "${app.name}" are approved.`
+    : `${actor.username} (via Homeroom) proposed a change to who can see and change "${app.name}": it ${parts.join(', and ')}.`;
   const block = change.governance ? governanceRules.blockFor(change.governance) : null;
   const result = await renamePr.createManifestPR(config, pool, app, actor, {
     steps,
@@ -152,7 +206,8 @@ async function createWhoDecidesPR(config, pool, app, change, actor, { steps } = 
     commitMessage: title,
     prTitle: title,
     prBody:
-      `${actor.username} (via Homeroom) proposed a change to who can see and change "${app.name}": it ${parts.join(', and ')}.\n\n`
+      intro + '\n\n'
+      + (change.governance ? `${describeRulesChange(change)}\n\n` : '')
       + 'This PR updates '
       + [change.visibility ? 'the `visibility` block' : null, block ? 'the `governance` block' : null].filter(Boolean).join(' and ')
       + ' in `dapp.json`. A change to who decides goes live on the creator\'s yes, or on the group\'s real yes votes, '
