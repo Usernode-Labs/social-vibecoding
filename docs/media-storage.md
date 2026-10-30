@@ -21,6 +21,14 @@ client, not a pool. Do not commit between the upload and the reference.
 Upload failure aborts the transaction. Retrying an existing object does not
 rewrite it or create another billable version.
 
+Storage I/O inside a transaction sends a serialized database heartbeat every
+10 seconds, keeping the registry lock alive under the production idle guard.
+Each storage wait has a two-minute deadline that aborts its MinIO HTTP requests.
+A checked-out client disconnect rejects that operation instead of becoming an
+unhandled process error; the caller rolls back and workflow work can retry.
+The same guard covers cleanup's storage calls. Global database timeouts stay
+unchanged, and a stalled upload never clears the row's original bytes.
+
 Every key column must have an immediate foreign key to
 `media_objects(object_key)`, with the ordinary restrictive delete behavior.
 Index that referencing column so the cleanup foreign-key check is bounded.
