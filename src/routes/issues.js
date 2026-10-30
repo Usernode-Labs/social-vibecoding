@@ -412,6 +412,12 @@ function stagingMockClosedIssues(repoUrl) {
     mk(900032, '[Mock] Retire the old tips banner',
       'Staging-only closed mock request. A close vote closed it, so its page '
       + 'says so in a grey band at the top of the card.', 9, { mockClosedVia: 'vote' }),
+    // #6000: the request #6000 was filed about, closed by vote with no linked
+    // change, so its page offers "Propose reopening" in the status card and
+    // the ⋯ menu. A closed mock like the two above; no-op in production.
+    mk(5841, 'Add tier list features: per-person picks, item comments with @mentions, and help tooltip',
+      'Staging-only closed mock request for #6000. A close vote closed it, so '
+      + 'its page offers asking the group to reopen it.', 1, { mockClosedVia: 'vote' }),
   ];
 }
 
