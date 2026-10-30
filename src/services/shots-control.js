@@ -23,6 +23,7 @@ const comparison = require('./shots-diff-worker');
 const log = require('./logger');
 const closeups = require('./shots-closeups');
 const homeTile = require('./shots-home-tile');
+const mediaStore = require('./media-store');
 
 class ShotsControlError extends Error {
   constructor(code, message, status = 409) {
@@ -419,8 +420,8 @@ function publicSafeOf(showsPrivate) {
   return showsPrivate === '0' || showsPrivate === false ? true : null;
 }
 
-// A saved file as RunControl keeps it: everything but its bytes, which stay
-// in the database (a retake replaces the row; publication copies it).
+// A saved file as RunControl keeps it: everything but its bytes. The store
+// holds those (the old byte column until backfill); publication copies keys.
 function fileEntry(row) {
   return {
     storyId: row.story_id, viewport: row.viewport, side: row.side, variant: row.variant, media: row.media,
@@ -428,7 +429,7 @@ function fileEntry(row) {
     theme: row.theme === 'dark' ? 'dark' : 'light',
     contentType: row.content_type, width: row.width, height: row.height, bytes: row.bytes, sha256: row.sha256,
     // A still kept at device density as well (services/shots-density.js):
-    // its original's size, whose bytes also stay in the database.
+    // its original's size, whose bytes have their own object key.
     density: Number.isInteger(row.density) && row.density > 1 ? row.density : 1,
     dense: Number.isInteger(row.density) && row.density > 1 ? {
       width: row.dense_width, height: row.dense_height, bytes: row.dense_bytes, sha256: row.dense_sha256,
@@ -516,7 +517,8 @@ async function persist(db, control) {
           density, dense_data, dense_width, dense_height, dense_bytes, dense_sha256, part, scale, focus_rect, public_safe)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24)
        ON CONFLICT (run_id, slot) DO UPDATE
-         SET data = EXCLUDED.data, content_type = EXCLUDED.content_type, media = EXCLUDED.media,
+         SET data = EXCLUDED.data, object_key = NULL, dense_object_key = NULL,
+             content_type = EXCLUDED.content_type, media = EXCLUDED.media,
              theme = EXCLUDED.theme, width = EXCLUDED.width, height = EXCLUDED.height, bytes = EXCLUDED.bytes,
              sha256 = EXCLUDED.sha256, density = EXCLUDED.density, dense_data = EXCLUDED.dense_data,
              dense_width = EXCLUDED.dense_width, dense_height = EXCLUDED.dense_height,
@@ -629,13 +631,16 @@ async function read(pool, runId) {
 }
 
 // Every saved file with its bytes, for the slots named (the screen diff).
-async function filesFor(pool, runId, slots = null) {
+async function filesFor(pool, runId, slots = null, { withData = true, store = mediaStore.getStore() } = {}) {
   const { rows } = await pool.query(
     `SELECT slot, story_id, viewport, side, variant, media, theme, content_type, data, width, height, bytes, sha256,
-            density, part, scale, focus_rect
+            density, part, scale, focus_rect, object_key
        FROM shot_run_files WHERE run_id = $1 ${slots ? 'AND slot = ANY($2::text[])' : ''}`,
     slots ? [runId, slots] : [runId]);
-  return rows.map((row) => ({ ...fileEntry(row), data: row.data }));
+  const files = [];
+  for (const row of rows) files.push({ ...fileEntry(row), objectKey: row.object_key || null,
+    data: withData ? await mediaStore.bytes(store, row) : row.data });
+  return files;
 }
 
 async function remove(pool, runId) {

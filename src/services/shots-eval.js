@@ -857,7 +857,7 @@ async function proposalShots(pool, runId, {
   if (!trials.length) return httpError(404, `Eval ${id} has no trial of proposal ${sid} (repetition ${rep})`);
   const sideCode = side === 'before' ? 'base' : side === 'after' ? 'head' : null;
   const { rows: files } = await pool.query(
-    `SELECT trial_id, story_id, viewport, side, variant, content_type, data, width, height
+    `SELECT trial_id, story_id, viewport, side, variant, content_type, data, object_key, bytes, width, height
        FROM shots_eval_artifacts
       WHERE trial_id = ANY($1::int[]) AND media = 'png' AND variant = $2
         AND ($3::text IS NULL OR story_id = $3::text)
@@ -876,7 +876,7 @@ async function proposalShots(pool, runId, {
     publishedState = s?.shots_state || null;
     if (s?.shots_run_id && s.shots_state === 'verified') {
       ({ rows: publishedFiles } = await pool.query(
-        `SELECT story_id, viewport, side, variant, content_type, data, width, height
+        `SELECT story_id, viewport, side, variant, content_type, data, object_key, bytes, width, height
            FROM shot_artifacts
           WHERE run_id = $1 AND media = 'png' AND variant = $2
             AND ($3::text IS NULL OR story_id = $3::text)
@@ -902,12 +902,14 @@ async function proposalShots(pool, runId, {
     || a.order - b.order
     || (a.side === 'base' ? 0 : 1) - (b.side === 'base' ? 0 : 1));
   const images = [];
+  const store = require('./media-store').getStore();
   let total = 0;
   let leftOut = 0;
   for (const f of all) {
-    const bytes = Buffer.isBuffer(f.data) ? f.data.length : Buffer.from(f.data || '').length;
+    const bytes = f.object_key ? Number(f.bytes) : Buffer.byteLength(f.data || '');
     if (!bytes) continue;
     if (images.length >= MAX_IMAGES || total + bytes > MAX_IMAGE_BYTES) { leftOut += 1; continue; }
+    f.data = await require('./media-store').bytes(store, f);
     total += bytes;
     images.push(imageOf(f, `${String(f.story_id).slice(0, 96)} · ${f.viewport} · ${f.armLabel} · ${f.side === 'base' ? 'before' : 'after'}`));
   }
@@ -982,7 +984,7 @@ async function sideView(pool, trial, { images }) {
   const view = { changes: changeResults(trial).map(({ id, status, reason, note }) => ({ id, status, reason, note })), images: [] };
   if (!images) return view;
   const { rows } = await pool.query(
-    `SELECT story_id, viewport, side, variant, content_type, data, width, height
+    `SELECT story_id, viewport, side, variant, content_type, data, object_key, bytes, width, height
        FROM shots_eval_artifacts
       WHERE trial_id = $1 AND media = 'png' AND variant = 'context'
       ORDER BY story_id, viewport, CASE side WHEN 'base' THEN 0 ELSE 1 END
@@ -992,9 +994,11 @@ async function sideView(pool, trial, { images }) {
   const storyOrder = new Map(((trial.intent || {}).stories || []).map((s, i) => [s.id, i]));
   rows.sort((a, b) => (storyOrder.get(a.story_id) ?? 99) - (storyOrder.get(b.story_id) ?? 99));
   let total = 0;
+  const store = require('./media-store').getStore();
   for (const r of rows) {
-    const bytes = Buffer.isBuffer(r.data) ? r.data.length : 0;
+    const bytes = r.object_key ? Number(r.bytes) : Buffer.byteLength(r.data || '');
     if (!bytes || view.images.length >= MAX_PAIR_IMAGES_PER_SIDE || total + bytes > MAX_IMAGE_BYTES / 2) continue;
+    r.data = await require('./media-store').bytes(store, r);
     total += bytes;
     view.images.push(imageOf(r, `${String(r.story_id).slice(0, 96)} · ${r.viewport} · ${r.side === 'base' ? 'before' : 'after'}`));
   }

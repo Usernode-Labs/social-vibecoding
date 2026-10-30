@@ -1629,9 +1629,9 @@
     {
       "source": "src/services/shots-control.js",
       "kind": "structural-template",
-      "fingerprint": "ed6515c11d2b8c24cb99",
+      "fingerprint": "d6f860ff0554e7f6405d",
       "count": 1,
-      "preview": "`SELECT slot, story_id, viewport, side, variant, media, theme, content_type, data, width, height, bytes, sha256, density, part, scale, focus_rect FROM shot_run_"
+      "preview": "`SELECT slot, story_id, viewport, side, variant, media, theme, content_type, data, width, height, bytes, sha256, density, part, scale, focus_rect, object_key FR"
     },
     {
       "source": "src/services/shots-demo-states.js",
