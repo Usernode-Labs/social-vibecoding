@@ -17,6 +17,7 @@ const { gunzipSync } = require('node:zlib');
 const { Client } = require('pg');
 const access = require('../src/services/database-role-access');
 const { bootstrap } = require('../scripts/bootstrap-database-roles');
+const { ensureRuntimeGrants } = require('../src/services/database-role-grants');
 
 // Explicit opt-in: this regression creates cluster roles on TWO disposable
 // test servers, never on the generic SQL-lint connection or a platform DB.
@@ -199,12 +200,16 @@ test('database identities preserve runtime, migration and tenant-copy behavior',
       await denied(c, 'CREATE ROLE role_probe');
       // Every statement of the actual schema must remain runnable by its owner.
       await c.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+      await ensureRuntimeGrants(c, env);
     });
     for (const kind of ['web', 'conductor']) await use(at(PRIMARY, platform, roles[kind], passwords[kind]), async c => {
       const { rows } = await c.query("INSERT INTO public.role_default_grant(body) VALUES ('default grant') RETURNING id");
       assert.ok(rows[0].id > 0);
       await c.query('UPDATE public.role_default_grant SET body=body');
       await c.query('DELETE FROM public.role_default_grant');
+      await c.query('SELECT * FROM public.schema_migrations');
+      for (const sql of ['DELETE FROM public.schema_migrations',
+        'TRUNCATE public.schema_migrations']) await denied(c, sql);
     });
     await use(at(PRIMARY, platform, roles.migrator, passwords.migrator), c => c.query('DROP TABLE public.role_default_grant'));
     await use(env.DB_ADMIN_URL, c => access.assertLogin(c, 'provisioner'));

@@ -3,7 +3,8 @@
   "optionalTables": {
     "public.game_results": "360911e519c5374ef67abf103c9b9445062aabc967f3b082e8cd308459200b3e",
     "public.game_room_players": "d9bd3b3167922921201a373ab97d9a625ec8aec78c8fc056aff362cc00816b57",
-    "public.game_rooms": "b4853c86c2c9cb64628b68816437cbd35c543ccf122222c0999e358087601974"
+    "public.game_rooms": "b4853c86c2c9cb64628b68816437cbd35c543ccf122222c0999e358087601974",
+    "public.schema_migrations": "517977e0ab849e995559108d7c838f777db784d252cf514c8d2abd1348492681"
   },
   "optionalSequences": {
     "public.app_category_registry_id_seq": "3755add381200d20a3f6dfe43c57ad58713b5882071c25915df1859a14647f61",

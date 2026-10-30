@@ -97,6 +97,7 @@ RUN npm ci --omit=dev --cache /tmp/npm-cache && rm -rf /tmp/npm-cache
 COPY --chown=node:node server.js dapp.json ./
 COPY --chown=node:node src ./src
 COPY --chown=node:node scripts ./scripts
+RUN node scripts/build-schema.js
 COPY --chown=node:node worker ./worker
 # The ready-made apps and game starters a new project's repository is written
 # from (services/app-templates.js). They sit outside src/ only so that

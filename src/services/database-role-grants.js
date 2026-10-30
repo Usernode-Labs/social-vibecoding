@@ -31,11 +31,21 @@ async function ensureRuntimeGrants(pool, env = process.env) {
   // Extension objects keep their operator ownership and existing ACLs.
   // Never attempt to take them over or grant broader extension access.
   const { rows } = await pool.query(`
-    SELECT c.oid::regclass::text AS name, c.relkind AS kind
+    SELECT c.oid::regclass::text AS name, c.relkind AS kind,
+           n.nspname || '.' || c.relname AS qualified_name
       FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
      WHERE n.nspname = ANY($2::text[]) AND c.relowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = $1)
        AND c.relkind IN ('r','p','v','m','f','S')`, [roles.migrator, PLATFORM_SCHEMAS]);
   for (const item of rows) {
+    if (item.qualified_name === 'public.schema_migrations') {
+      // Migration receipts are evidence owned by the migrator, never runtime
+      // application data. Undo any inherited/default runtime grants too.
+      // Read access is required by the existing unredacted pg_dump export.
+      await pool.query(`GRANT SELECT ON TABLE public.schema_migrations TO ${runtime}, ${reader};
+        REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+        ON TABLE public.schema_migrations FROM ${runtime}, ${reader}`);
+      continue;
+    }
     // regclass's rendering is quoted by PostgreSQL and schema qualified
     // when public is not on search_path. It is catalog output, never input.
     const kind = item.kind === 'S' ? 'SEQUENCE' : 'TABLE';

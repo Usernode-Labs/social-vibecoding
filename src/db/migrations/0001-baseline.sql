@@ -1,3 +1,6 @@
+-- Frozen baseline at the tracked-migration cutover.
+-- Required boot reference inserts live only in reference-data.js.
+
 -- Users & auth
 CREATE TABLE IF NOT EXISTS users (
   id              SERIAL PRIMARY KEY,
@@ -2753,13 +2756,7 @@ CREATE TABLE IF NOT EXISTS platform_settings (
 -- src/routes/sessions.js (USER_DAILY_LIMIT_CENTS=2500, GLOBAL=20000)
 -- so a fresh deploy preserves the prior behavior. ON CONFLICT DO
 -- NOTHING means existing operator-set values survive every boot.
-INSERT INTO platform_settings (key, value) VALUES
-  ('user_daily_limit_cents',   '2500'),
-  ('global_daily_limit_cents', '20000'),
-  -- #361: separate "system tokens" budget that funds platform-driven
-  -- merge-conflict / sync-with-main resolution turns. Defaults to $25/day.
-  ('system_tokens_daily_limit_cents', '2500')
-ON CONFLICT (key) DO NOTHING;
+
 
 -- #1788: the platform-default per-user WEEKLY cap. #2571 makes it the ONLY
 -- per-user cap (the daily one is switched off in src/services/limits.js) and
@@ -2768,9 +2765,7 @@ ON CONFLICT (key) DO NOTHING;
 -- only statement that writes this key on boot: an operator-set value — which
 -- is what production runs on, set from the admin Limits page — survives every
 -- deploy untouched. No migration rewrites it.
-INSERT INTO platform_settings (key, value) VALUES
-  ('user_weekly_limit_cents', '5000')
-ON CONFLICT (key) DO NOTHING;
+
 
 -- One-shot backfill of users.weekly_limit_cents for everyone who already
 -- holds a DAILY override. Without it, a raised daily cap would collide with
@@ -3384,9 +3379,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_events_app_down_minute
   WHERE event_type IN ('app_unavailable', 'app_restarted') AND metadata ? 'minute';
 -- When those rows began: an open from before it had no way to be seen
 -- failing, so "App opens that worked" counts only the opens since.
-INSERT INTO platform_settings (key, value) VALUES
-  ('app_outages_tracked_since', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
-ON CONFLICT (key) DO NOTHING;
+
 
 -- Tagged staging:private so the analytics log (which is derived from
 -- chat_sessions / pr_kudos, both already private) is TRUNCATEd in staging
@@ -6307,22 +6300,7 @@ CREATE INDEX IF NOT EXISTS idx_users_username_lower_pattern ON users (LOWER(user
 -- per-row columns already on `leaderboard_snapshots` (Task 1), scored
 -- per activity rather than configured as a flat point value.
 ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS description TEXT;
-INSERT INTO platform_settings (key, value, description) VALUES
-  ('topochain_first_block_points',              '250',
-    'Points awarded for producing a season event''s first block.'),
-  ('topochain_produced_half_blocks_points',     '0',
-    'Points awarded for producing at least half of the expected blocks.'),
-  ('topochain_top_1_points',                    '1500',
-    'Points awarded for finishing rank 1 on the leaderboard.'),
-  ('topochain_top_2_points',                    '1000',
-    'Points awarded for finishing rank 2 on the leaderboard.'),
-  ('topochain_top_3_points',                    '500',
-    'Points awarded for finishing rank 3 on the leaderboard.'),
-  ('topochain_success_50_percent_points',       '1000',
-    'Points awarded for a block-production success rate of at least 50%.'),
-  ('topochain_inviting_new_participant_points', '0',
-    'Points awarded for inviting a new participant into the competition.')
-ON CONFLICT (key) DO NOTHING;
+
 
 -- Staging privacy (SPEC §6), table-level: every row of these tables is
 -- sensitive in its entirety in a staging clone (truncated by
@@ -7126,10 +7104,7 @@ ON CONFLICT (key) DO NOTHING;
 -- filter it replaces. Deleting this row does not "reset" anything useful:
 -- the next boot re-stamps it at NOW() and throws away every clean change
 -- recorded so far.
-INSERT INTO platform_settings (key, value, description) VALUES
-  ('model_cost_observed_since', NOW()::text,
-    'Marker: the instant the platform began recording coding-agent spend per model (#2592). The Model costs console counts only changes created at or after it. Do not delete — deleting re-stamps it at the next boot and discards every clean change recorded so far.')
-ON CONFLICT (key) DO NOTHING;
+
 
 -- ── Hosted MCP connector: OAuth 2.1 authorization server ────────────────
 --
@@ -8940,9 +8915,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_channel_key
 -- The room itself, in production and staging alike: it is the platform's,
 -- not demo data. `conversations` is staging:private, so a fresh staging
 -- clone starts without it and this line puts it back.
-INSERT INTO conversations (kind, title, channel_key)
-VALUES ('channel', 'general', 'general')
-ON CONFLICT (channel_key) WHERE channel_key IS NOT NULL DO NOTHING;
+-- Required reference rows are supplied by reference-data.js after migrations.
 
 CREATE INDEX IF NOT EXISTS idx_notifications_user_conversation_unread
   ON notifications (user_id, conversation_id, created_at DESC)
@@ -11910,23 +11883,7 @@ END $$;
 -- for real on every app but the paused ones, for everyone with platform
 -- access (`live` is still refused by the settings route). Ships `off` so the
 -- change that adds the bot is itself inert.
-INSERT INTO platform_settings (key, value) VALUES
-  ('homeroom_bot_mode', 'off'),
-  ('homeroom_bot_concurrency', '1'),
-  ('homeroom_bot_batch_size', '10'),
-  ('homeroom_bot_paused_apps', '[]'),
-  ('homeroom_bot_shadow_builds', 'off'),
-  ('homeroom_bot_build_concurrency', '2'),
-  ('homeroom_bot_shadow_build_platform', 'off'),
-  -- #3624: $50 a week for each person's requests.
-  ('homeroom_bot_user_weekly_cents', '5000'),
-  -- And $100 for an admin's, in place of it.
-  ('homeroom_bot_admin_weekly_cents', '10000'),
-  -- Live work 12 at once, 3 per person; a DM is read.
-  ('homeroom_bot_live_at_once', '12'),
-  ('homeroom_bot_per_person', '3'),
-  ('homeroom_bot_dm_chat', 'on')
-ON CONFLICT (key) DO NOTHING;
+
 -- Live work went from 6 at once, 2 per person, to 12 and 3 when every
 -- project went live. A database still on the old seed (no admin ever saved
 -- these: updated_by is unset) moves up once; an admin's own number stays,
@@ -11945,9 +11902,7 @@ UPDATE platform_settings SET value = '3', updated_at = NOW()
 -- already wrote stands.
 DELETE FROM platform_settings
  WHERE key IN ('homeroom_bot_live_apps', 'homeroom_bot_dm_users', 'homeroom_bot_audience', 'homeroom_bot_live_platform');
-INSERT INTO platform_settings (key, value)
-VALUES ('homeroom_bot_audience_since', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
-ON CONFLICT (key) DO NOTHING;
+
 
 -- #2721. Private, durable moderation records; target IDs intentionally have
 -- no cascading FK: removing a target must not remove evidence or the audit.
@@ -14812,9 +14767,7 @@ END $$;
 -- the marker below is when tracking began, so a first boot does not stamp
 -- all of history with that boot's time.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS platform_live_at TIMESTAMPTZ;
-INSERT INTO platform_settings (key, value) VALUES
-  ('platform_live_tracked_since', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
-ON CONFLICT (key) DO NOTHING;
+
 
 -- #4083: every account without access has a spot on the waitlist, however it
 -- was made. Signups now get one as they are made (waitlist.ensureAccountSignup);
@@ -16910,3 +16863,13 @@ BEGIN
 END $$;
 ALTER TABLE requests ADD COLUMN IF NOT EXISTS part_of INTEGER CHECK (part_of IS NULL OR part_of > 0);
 CREATE INDEX IF NOT EXISTS requests_part_of_idx ON requests (app_id, part_of) WHERE part_of IS NOT NULL;
+
+-- Applied schema changes, committed atomically with their DDL. Preview copies
+-- keep the structure but start their own migration history.
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id TEXT PRIMARY KEY,
+  checksum TEXT NOT NULL CHECK (checksum ~ '^[a-f0-9]{64}$'),
+  schema_sha256 TEXT NOT NULL CHECK (schema_sha256 ~ '^[a-f0-9]{64}$'),
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE schema_migrations IS 'staging:private';

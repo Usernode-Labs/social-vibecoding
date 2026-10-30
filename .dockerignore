@@ -17,3 +17,6 @@ public.precompressed/
 SPEC.md
 TODO
 template/
+
+# Generated from the migration history and reference seeds.
+src/db/schema.sql

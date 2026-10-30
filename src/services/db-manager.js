@@ -1333,7 +1333,10 @@ async function cloneDatabaseDirect(sourceDb, targetDb, { server = PRIMARY_SERVER
     { server, as: { user: targetRole, password }, queryTimeoutMs: PREPARED_SOURCE_TIMEOUT_MS }) : null;
   if (!platformInput) await redactPrivateData(targetDb, asOwner);
   if (platformOutput && (await platformPreview.inspect(sourceDb, execInTarget)).schema !== platformInput.schema) throw platformPreview.refuse('source schema changed during copy');
-  if (platformOutput) await stampPlatformCopy(targetDb, sourceDb, platformInput.schema, platformOutput.schema, { server });
+  if (platformOutput) {
+    await asOwner(targetDb, require('../db/schema-migrations').snapshotHistorySql());
+    await stampPlatformCopy(targetDb, sourceDb, platformInput.schema, platformOutput.schema, { server });
+  }
 
   log.info('db-manager', 'Database cloned with new role', { sourceDb, targetDb, targetRole, server });
   return { password, ...(platformOutput ? { platformPreviewPolicy: platformPreview.DIGEST } : {}) };
@@ -1500,6 +1503,7 @@ async function buildRedactedCopy(sourceDb, targetDb, ownerRole, { server = PRIMA
         execute => platformPreview.sanitize(targetDb, execute),
         { server, as: { user: ownerRole, password: redactionPassword }, queryTimeoutMs: PREPARED_SOURCE_TIMEOUT_MS });
       if ((await platformPreview.inspect(sourceDb, execInTarget)).schema !== platformInput.schema) throw platformPreview.refuse('source schema changed during copy');
+      await asOwner(targetDb, require('../db/schema-migrations').snapshotHistorySql());
       await stampPlatformCopy(targetDb, sourceDb, platformInput.schema, output.schema, { server });
     } else await redactPrivateData(targetDb, asOwner);
   } catch (err) {
@@ -1737,6 +1741,7 @@ async function cloneFromTemplate(templateDb, targetDb, {
       if (platformProvenance) {
         const output = await platformPreview.sanitize(targetDb, execute);
         if (output.schema !== platformProvenance.copySchema) throw platformPreview.refuse('template schema provenance mismatch');
+        await execute(targetDb, require('../db/schema-migrations').snapshotHistorySql());
       } else await redactPrivateData(targetDb, execute, { onProgress });
     }
     catch (error) {
@@ -2956,7 +2961,7 @@ async function prepareTrustedPlatformSchema(targetDb, { server, as }) {
   const env = postgresEnv(targetDb, server, as);
   // No source-defined schema, comments, routine bodies, type labels, index
   // expressions or trigger code enter the copy. This is the deployed file.
-  await execFileAsync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-f', require.resolve('../db/schema.sql')],
+  await execFileAsync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-f', require('../db/schema-source').ensureSchema()],
     { env, timeout: 120000, maxBuffer: 8 * 1024 * 1024 });
   const execute = (db, sql, opts = {}) => execInTarget(db, sql, { ...opts, server, as });
   const copy = await platformPreview.inspect(targetDb, execute);

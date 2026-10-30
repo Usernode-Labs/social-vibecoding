@@ -93,6 +93,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --production
 COPY . .
+RUN node scripts/build-schema.js
 # COPY generated assets after the source tree so a developer's ignored local
 # builds can never replace the artifacts generated from this image's sources.
 COPY --from=shell /build/public/index.html ./public/index.html
