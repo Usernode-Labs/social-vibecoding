@@ -99,7 +99,8 @@ function pausedError(why = reason()) {
  * proposed, pushed or merged to it from Homeroom (the worker push and the
  * merge refuse). The project page says so (GET /api/apps/:slug
  * `codeChangesPaused`); requests and discussions are Homeroom's own and
- * carry on. A repository on Homeroom's git host is never held.
+ * carry on. A repository on Homeroom's git host is never held. On web, a
+ * missing or late read-access snapshot does not hold: it is unknown.
  */
 function codeChangesPaused(repoUrl) {
   const parsed = require('./repo-ref').parse(repoUrl);

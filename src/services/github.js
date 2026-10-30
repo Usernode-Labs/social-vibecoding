@@ -402,10 +402,15 @@ function checkActingInstallation() {
  * codeChangesPaused). While the installation is not known to exist it is
  * looked up again in the background, every few minutes at most, so
  * installing the App lifts the notice without a restart.
+ *
+ * Web reads the conductor's published snapshot instead of the App. There an
+ * absent or stale snapshot is unknown, not a hold, matching the workflow
+ * side's `found !== false`: only a fresh record saying the App is gone holds
+ * the notice, so a late clock refresh never shows it while changes merge.
  */
 function canActOn(owner) {
   if (!roles.runsWorkflow(roles.processRole())) {
-    return isActingOwner(owner) && require('./github-read-access').installed();
+    return isActingOwner(owner) && !require('./github-read-access').knownMissing();
   }
   if (!app || !isActingOwner(owner)) return false;
   if (actingInstallation.found !== true
