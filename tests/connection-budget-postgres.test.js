@@ -1,4 +1,5 @@
 'use strict';
+// test:changed: when src/ (all connection constructors must use the shared naming helper)
 
 // What every connection the platform opens says and how long it waits
 // (src/db/connection-options.js; item 4, the connection budget), against
@@ -141,8 +142,9 @@ test('every connection the platform opens is named by connectionName: no literal
   const named = files.filter((f) => literal.test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(root, f));
   assert.deepEqual(named, []);
   const { connectionName } = require('../src/db/connection-options');
-  for (const pool of ['dbadmin', 'dbcopy', 'census', 'export', 'shots', 'retention', 'presence', 'admin']) {
+  for (const pool of ['dbadmin', 'dbcopy', 'census', 'export', 'shots', 'retention', 'presence', 'admin', 'schema-observer']) {
     assert.match(connectionName(pool, { PROCESS_ROLE: 'conductor' }), new RegExp(`^homeroom-conductor-${pool}$`));
   }
   assert.equal(connectionName('admin', { DB_APPLICATION_NAME: 'homeroom-migration' }), 'homeroom-migration-admin');
+  assert.equal(connectionName('schema-observer', { DB_APPLICATION_NAME: 'homeroom-migration' }), 'homeroom-migration-schema-observer');
 });

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "migrations": [
+    {
+      "id": "0001-baseline",
+      "sha256": "ea0aebf51584046daf041d2ec1c03d2d71670d080f50981c6fcadee12217f942",
+      "schemaSha256": "ea0aebf51584046daf041d2ec1c03d2d71670d080f50981c6fcadee12217f942"
+    }
+  ]
+}

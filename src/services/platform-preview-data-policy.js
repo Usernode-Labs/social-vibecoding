@@ -15,7 +15,7 @@ const APP_ID_LABEL = 'social.usernode.io/app-id';
 // invalidates templates and serving previews even without a manual bump.
 const DIGEST = crypto.createHash('sha256').update(fs.readFileSync(__filename))
   .update(JSON.stringify(policy)).update(JSON.stringify(schema))
-  .update(fs.readFileSync(require.resolve('../db/schema.sql')))
+  .update(require('../db/schema-source').schemaSql())
   .update(fs.readFileSync(require.resolve('./db-manager')))
   .update(fs.readFileSync(require.resolve('./application-runtime')))
   .update(fs.readFileSync(require.resolve('./platform-preview-retirement'))).digest('hex').slice(0, 40);

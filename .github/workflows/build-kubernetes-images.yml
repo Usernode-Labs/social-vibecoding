@@ -153,6 +153,8 @@ jobs:
           rm -rf "$image_npm_root/npm/node_modules/undici"
           mv "$image_npm_root/undici" "$image_npm_root/npm/node_modules/undici"
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Generate database initialization SQL
+        run: node scripts/build-schema.js
       # Authority fixtures load real workflow handlers that depend on bcrypt.
       - run: |
           npm rebuild bcrypt --build-from-source

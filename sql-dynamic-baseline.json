@@ -25,13 +25,6 @@
     },
     {
       "source": "src/db/migrate.js",
-      "kind": "runtime-built-identifier",
-      "fingerprint": "df0ad6e43880f09c90eb",
-      "count": 1,
-      "preview": "schema"
-    },
-    {
-      "source": "src/db/migrate.js",
       "kind": "structural-template",
       "fingerprint": "2e2b82f344f408c6c819",
       "count": 1,
@@ -85,6 +78,13 @@
       "fingerprint": "fc7626a63bf5115a5be2",
       "count": 1,
       "preview": "`REINDEX TABLE ${quoteIdent(table.name)}`"
+    },
+    {
+      "source": "src/db/schema-migrations.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "45386419554fcf68896b",
+      "count": 1,
+      "preview": "migration.sql"
     },
     {
       "source": "src/db/session-locks.js",
@@ -1107,6 +1107,13 @@
       "fingerprint": "83622e5a5ef7d176420d",
       "count": 1,
       "preview": "`GRANT ${privileges} ON ${kind} ${item.name} TO ${runtime}`"
+    },
+    {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
+      "fingerprint": "85af22e27498525bb8b4",
+      "count": 1,
+      "preview": "`GRANT SELECT ON TABLE public.schema_migrations TO ${runtime}, ${reader}; REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE public.schema_mi"
     },
     {
       "source": "src/services/database-role-grants.js",

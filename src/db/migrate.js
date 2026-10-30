@@ -11,6 +11,8 @@ const { encrypt } = require('../services/secrets');
 // drafts, so the staging fixture can't drift from what production emits.
 const issueDraftSvc = require('../services/issue-draft');
 const { reindexAfterHostMove } = require('./reindex-after-host-move');
+const { applySchemaWithLockRetry } = require('./schema-migrations');
+const { seedReferenceData } = require('./reference-data');
 // Read by seedStagingPlatformMail's at-the-ceiling fixture, so the number
 // of seeded sends tracks the rule instead of restating it.
 const mailRateLimit = require('../services/mail/rate-limit');
@@ -34,11 +36,6 @@ async function migrate(config) {
   };
   const pool = getPool(config);
 
-  const schema = fs.readFileSync(
-    path.join(__dirname, 'schema.sql'),
-    'utf-8'
-  );
-
   // #687 (PR-import, Slice 1): READ-ONLY pre-flight guard. Run BEFORE the
   // schema apply so we abort the boot cleanly (before any DDL) if the
   // invariant the PR-import feature is about to rely on is already
@@ -47,7 +44,8 @@ async function migrate(config) {
   finishPhase('preflightMs');
 
   log.info('db', 'Running migrations...');
-  await applySchemaWithLockRetry(pool, schema);
+  await applySchemaWithLockRetry(pool);
+  await seedReferenceData(pool);
   await require('../services/moderation-migration').importLegacyReports(pool);
   await require('../services/moderation').purgeExpired(pool);
   // The verified-identity rule's one-time production rollout: on, with $20
@@ -478,89 +476,6 @@ async function markBareDateActivities(pool) {
     log.info('db', 'Marked activities saved at midnight as day-only', { count: result.rowCount });
   }
   return result.rowCount || 0;
-}
-
-// The schema apply is dozens of `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` /
-// `CREATE INDEX IF NOT EXISTS` statements; each needs a brief ACCESS
-// EXCLUSIVE lock on its table even when it turns out to be a no-op. A
-// concurrent pg_dump of this same database — every staging-preview build of
-// the self-app runs one, via `docker exec` inside the usernode-db container,
-// where it survives the platform container being recreated mid-deploy —
-// holds ACCESS SHARE on every table for its whole multi-minute duration
-// (~10 GB as of 2026-07). A bare `pool.query(schema)` queues behind it
-// silently until the deploy's 120s health gate expires and rolls the deploy
-// back with no diagnostics (2026-07-30 incident, Actions run 30578204174).
-//
-// lock_timeout bounds only lock *acquisition* waits, never statement
-// runtime, so a legitimately slow DDL (a new index on a big table) is
-// unaffected. On timeout Postgres raises 55P03; we log every active session
-// on the database (the blocker is visible there — pg_dump shows up under
-// application_name) and retry. Dumps always finish, so waiting in bounded,
-// observable slices strictly dominates one unbounded invisible wait.
-//
-// Live queries can also lock these tables in a different order (for example,
-// reading apps before users while the schema alters users before apps).
-// PostgreSQL breaks that cycle by aborting a transaction with 40P01. Retry
-// that deadlock just like a lock timeout, within the same attempt budget.
-//
-// The statements are idempotent, so a timeout or deadlock is safe to rerun:
-// the simple-query protocol runs the whole multi-statement string in one
-// implicit transaction, and a failure rolls all of it back.
-const SCHEMA_LOCK_TIMEOUT = '10s';
-const SCHEMA_APPLY_RETRIES = 25; // × (10s timeout + 3s delay) ≈ 5.4 min cap
-const SCHEMA_RETRY_DELAY_MS = 3000;
-
-async function applySchemaWithLockRetry(pool, schema) {
-  for (let attempt = 1; ; attempt++) {
-    const client = await pool.connect();
-    try {
-      await client.query(`SET lock_timeout = '${SCHEMA_LOCK_TIMEOUT}'`);
-      await client.query(schema);
-      return;
-    } catch (err) {
-      const retryable = err.code === '55P03' || err.code === '40P01';
-      if (!retryable || attempt >= SCHEMA_APPLY_RETRIES) throw err;
-      const message = err.code === '40P01'
-        ? 'Schema apply deadlocked; retrying'
-        : 'Schema apply blocked on a table lock; retrying';
-      log.warn('db', message, {
-        code: err.code, attempt, maxAttempts: SCHEMA_APPLY_RETRIES,
-        lockTimeout: SCHEMA_LOCK_TIMEOUT,
-      });
-    } finally {
-      // Destroy rather than release: the session-level lock_timeout must
-      // not leak back into the shared pool.
-      client.release(true);
-    }
-    // Free the connection before diagnostics borrow from the same pool;
-    // keeping it checked out would stall forever with a one-connection pool.
-    await logSchemaApplyBlockers(pool);
-    await new Promise((resolve) => setTimeout(resolve, SCHEMA_RETRY_DELAY_MS));
-  }
-}
-
-// Best-effort visibility into WHO we were queued behind. Logged once per
-// blocked attempt so a stuck deploy's container logs answer "waiting on
-// what?" directly instead of requiring a live pg_stat_activity session.
-async function logSchemaApplyBlockers(pool) {
-  try {
-    const { rows } = await pool.query(`
-      SELECT pid, usename, application_name, state, wait_event_type,
-             (now() - query_start)::text AS running_for,
-             left(query, 160) AS query
-      FROM pg_stat_activity
-      WHERE datname = current_database()
-        AND pid <> pg_backend_pid()
-        AND state IS DISTINCT FROM 'idle'
-      ORDER BY query_start ASC
-      LIMIT 10
-    `);
-    log.warn('db', 'Active sessions on this database during schema-apply lock wait', {
-      sessions: rows,
-    });
-  } catch (err) {
-    log.warn('db', 'Could not inspect schema-apply blockers', { message: err.message });
-  }
 }
 
 // #687 (PR-import, Slice 1): READ-ONLY boot audit. The PR-import feature
@@ -1841,7 +1756,7 @@ async function seedStagingDuplicateUser(pool) {
 // the Messages channels section opens on a room with something in it.
 //
 // `conversations` and its message table are staging:private, so a clone
-// starts with the room (schema.sql recreates it on every boot) and no
+// gets its room from the boot reference seed and starts with no
 // history. Two fake speakers of their own, never the viewer: the checks read
 // the room as the view-only check user, and seeding THAT user's words would
 // fabricate the thing being checked. Idempotent through the messages'
@@ -13818,9 +13733,9 @@ async function seedStagingArchiveProposalFixtures(pool, config) {
 // one, two block-producer-queue users and three waitlist signups — all of
 // them for the admin console (Seasons, Events & Challenges), whose lists
 // each had exactly one state to show while a single running season was the
-// only thing seeded. `topochain_*` platform_settings are NOT seeded here:
-// schema.sql:3819-3834 inserts all seven on every boot, so the settings
-// screen is already populated and a second copy would only drift.
+// only thing seeded. The boot reference seed restores the seven default
+// `topochain_*` platform_settings before these fixtures run; schema replay
+// is not required, and operator-set values remain untouched.
 //
 // Idempotent via fixed ids in the 900500+ range (this platform's
 // "obviously fake, staging-demo" numbering convention — see

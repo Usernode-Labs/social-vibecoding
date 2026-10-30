@@ -9,6 +9,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Client } = require('pg');
 const policy = require('../src/services/platform-preview-data-policy');
+const { loadPlan } = require('../src/db/schema-migrations');
 const BASE = process.env.TEST_DATABASE_URL || process.env.SQL_CHECK_CONNECTION_URL;
 const PREVIEW = process.env.TEST_PREVIEW_DATABASE_URL;
 const at = (url, db) => { const u = new URL(url); u.pathname = `/${db}`; return String(u); };
@@ -37,6 +38,7 @@ INSERT INTO public.waitlist_signups(email,answers) VALUES ('private-waitlist@exa
 INSERT INTO public.language_translations(language,namespace,key,source,text,model)
  VALUES ('es','shell','safe-key',repeat('a',64),'Traducción pública','public-model') ON CONFLICT DO NOTHING;
 INSERT INTO public.agent_model_compatibility(backend,model_id,status,note) VALUES('codex','public-model','verified','PRIVATE_OPERATOR_NOTE') ON CONFLICT DO NOTHING;
+INSERT INTO public.schema_migrations(id,checksum,schema_sha256) VALUES ('forged-source-history',repeat('f',64),repeat('f',64));
 INSERT INTO public.platform_settings(key,value) VALUES('private-setting','PRIVATE_SETTING') ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value;
 CREATE FUNCTION public.private_runtime_config() RETURNS text LANGUAGE sql AS $$ SELECT 'PRIVATE_SCHEMA_VALUE'::text $$;
 COMMENT ON TABLE public.users IS 'PRIVATE_SCHEMA_COMMENT';
@@ -56,6 +58,13 @@ async function assertSanitized(client) {
     [{id:10,slug:policy.PLATFORM_SLUG,manifest_snapshot:null,last_failure:null,db_password:null}]);
   const { catalog } = await policy.inspect('clone',psql(client));
   for (const name of policy.exclusions(catalog)) {
+    if (name === 'public.schema_migrations') {
+      const expected = loadPlan()
+        .map(m => ({ id: m.id, checksum: m.sha256, schema_sha256: m.schemaSha256 }));
+      assert.deepEqual((await client.query('SELECT id,checksum,schema_sha256 FROM public.schema_migrations ORDER BY id')).rows, expected,
+        'only locally generated receipts survive; source history is never trusted or copied');
+      continue;
+    }
     assert.equal((await client.query(`SELECT EXISTS(SELECT 1 FROM ${name}) AS present`)).rows[0].present,false,name);
   }
   assert.equal((await client.query("SELECT note FROM public.agent_model_compatibility WHERE model_id='public-model'")).rows[0].note,null);
@@ -106,12 +115,12 @@ test('platform exports are explicit on direct, template and prepared shots clone
   await src.query('SET search_path = pg_catalog');
   const inventory = await policy.inspect(source,psql(src));
   assert.ok(policy.exclusions(inventory.catalog).includes('public.app_report_snapshots'),'omission of a private comment cannot export a table');
-  let bootDatabaseUrl;
+  const bootDatabaseUrls = [];
   for (const [suffix, options] of [['_staging_s1_abcdef',{}],['_staging_s2_abcdef',{viaTemplate:true}]]) {
     const target=source+suffix;
     const result=await db.cloneDatabase(source,target,options);
     assert.equal(result.platformPreviewPolicy,policy.DIGEST);
-    if (options.viaTemplate) bootDatabaseUrl=db.connectionUrl(target,result.password,{server:result.server});
+    bootDatabaseUrls.push(db.connectionUrl(target,result.password,{server:result.server}));
     const clone=await connection(db.connectionUrl(target,result.password,{server:result.server}));
     await assertSanitized(clone);await clone.end();
   }
@@ -182,6 +191,24 @@ test('platform exports are explicit on direct, template and prepared shots clone
       await require('./src/db/migrate').migrate(config);
       const pool=require('./src/db/pool').getPool(config);
       const scalar=async sql=>Object.values((await pool.query(sql)).rows[0])[0];
+      assert.equal(await scalar("SELECT count(*)::int FROM conversations WHERE kind='channel' AND channel_key='general'"),1);
+      assert.equal(await scalar("SELECT count(*)::int FROM conversation_messages WHERE idempotency_key LIKE 'staging-general-%'"),3);
+      const points=(await pool.query("SELECT key,value,description FROM platform_settings WHERE key LIKE 'topochain_%' ORDER BY key")).rows;
+      assert.deepEqual(Object.fromEntries(points.map(row=>[row.key,row.value])),{
+        topochain_first_block_points:'250',topochain_inviting_new_participant_points:'0',
+        topochain_produced_half_blocks_points:'0',topochain_success_50_percent_points:'1000',
+        topochain_top_1_points:'1500',topochain_top_2_points:'1000',topochain_top_3_points:'500',
+      });
+      assert.ok(points.every(row=>row.description));
+      assert.equal(await scalar("SELECT value FROM platform_settings WHERE key='user_weekly_limit_cents'"),'5000');
+      assert.equal(await scalar("SELECT value FROM platform_settings WHERE key='homeroom_bot_mode'"),'off');
+      await pool.query("UPDATE platform_settings SET value='777',description='Operator choice' WHERE key='topochain_first_block_points'");
+      await pool.query("UPDATE conversations SET title='Operator channel title' WHERE channel_key='general'");
+      const beforeDefaults=(await pool.query("SELECT key,value,description,updated_at FROM platform_settings ORDER BY key")).rows;
+      await require('./src/db/reference-data').seedReferenceData(pool);
+      assert.deepEqual((await pool.query("SELECT key,value,description,updated_at FROM platform_settings ORDER BY key")).rows,beforeDefaults);
+      assert.equal(await scalar("SELECT title FROM conversations WHERE channel_key='general'"),'Operator channel title');
+
       assert.equal(await scalar("SELECT id FROM users WHERE username='usernode-capture'"),22);
       assert.equal(await scalar("SELECT id FROM users WHERE username='usernode-capture-admin'"),23);
       assert.equal(await scalar("SELECT count(*)::int FROM apps WHERE slug='usernode-2d5619'"),1);
@@ -195,11 +222,13 @@ test('platform exports are explicit on direct, template and prepared shots clone
     })().catch(error=>{console.error(error);process.exitCode=1;});`;
   const {promisify}=require('node:util');
   const {execFile}=require('node:child_process');
-  const {stdout}=await promisify(execFile)(process.execPath,['-e',bootstrap],{
-    cwd:require('node:path').resolve(__dirname,'..'),timeout:90000,maxBuffer:8*1024*1024,
-    env:{...process.env,DATABASE_URL:bootDatabaseUrl,DB_ADMIN_URL:'',STAGING_DB_ADMIN_URL:'',USERNODE_ENV:'staging',USERNODE_APP_ID:'10',
-      ADMIN_USERNAME:'preview-bootstrap-admin',ADMIN_PASSWORD:'fixture-only-password',SESSION_SECRET:'fixture-only-session-secret',MAX_APPS:'0'},
-  });
-  assert.match(stdout,/PREVIEW_BOOT_VERIFIED/);
+  for (const bootDatabaseUrl of bootDatabaseUrls) {
+    const {stdout}=await promisify(execFile)(process.execPath,['-e',bootstrap],{
+      cwd:require('node:path').resolve(__dirname,'..'),timeout:90000,maxBuffer:8*1024*1024,
+      env:{...process.env,DATABASE_URL:bootDatabaseUrl,DB_ADMIN_URL:'',STAGING_DB_ADMIN_URL:'',USERNODE_ENV:'staging',USERNODE_APP_ID:'10',
+        ADMIN_USERNAME:'preview-bootstrap-admin',ADMIN_PASSWORD:'fixture-only-password',SESSION_SECRET:'fixture-only-session-secret',MAX_APPS:'0'},
+    });
+    assert.match(stdout,/PREVIEW_BOOT_VERIFIED/);
+  }
 
 });

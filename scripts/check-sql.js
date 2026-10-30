@@ -321,7 +321,7 @@ async function applySchema(connectionUrl) {
   const client = new Client({ connectionString: connectionUrl });
   await client.connect();
   try {
-    const schema = fs.readFileSync(path.join(ROOT, 'src', 'db', 'schema.sql'), 'utf8');
+    const schema = require('../src/db/schema-source').schemaSql();
     await client.query(schema);
     // The maintenance-only role helper is deployed by the bootstrap Job,
     // outside schema.sql. Validate its callers against its actual declaration

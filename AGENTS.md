@@ -168,6 +168,17 @@ selects a skill.
   (the slowest file takes about twelve seconds); a test that never settles
   fails after three minutes instead of holding the summary open.
 
+## Schema changes need a tracked migration
+
+`src/db/migrations/` is the SQL source of truth. Add the next numbered SQL
+file, then run `node scripts/record-schema-migration.js <number-name>` to
+append its checksums. Never edit, reorder or delete applied files or the
+immutable baseline. Reference inserts live once in `src/db/reference-data.js`.
+`src/db/schema.sql` is generated and ignored: never edit or commit it.
+`npm run build:schema` regenerates it; npm test/start/dev and image builds do
+this automatically. See `docs/database/schema-migrations.md` for adoption,
+transaction boundaries, preview compatibility and PostgreSQL checks.
+
 ## Declare visible changes for before/after shots
 
 Every proposal that changes something people can see gets before/after shots.

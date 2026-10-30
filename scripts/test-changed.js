@@ -270,10 +270,19 @@ function covers(declared, file) {
 // The mapping: which suites each changed file (and each importer) selects,
 // by name or by a suite's declaration; `declared` lists the latter.
 function selectSuites(changed, suiteTexts, importers = new Map()) {
+  // schema.sql is ignored/generated, but hundreds of structural guards read
+  // it by path. Source changes must still select those consumers.
+  const schemaInputs = changed.filter(file => file.startsWith('src/db/migrations/')
+    || ['src/db/reference-data.js', 'src/db/schema-source.js',
+      'scripts/build-schema.js', 'scripts/record-schema-migration.js'].includes(file));
+  const dependencies = new Map(importers);
+  if (schemaInputs.length && !changed.includes('src/db/schema.sql')) {
+    dependencies.set('src/db/schema.sql', schemaInputs);
+  }
   const bySuite = new Map();
   const byFile = new Map();
   const declarations = new Map([...suiteTexts].map(([suite, text]) => [suite, declaredPaths(text)]));
-  const consider = [...changed.map((f) => [f, null]), ...[...importers].map(([f, via]) => [f, via])];
+  const consider = [...changed.map((f) => [f, null]), ...[...dependencies].map(([f, via]) => [f, via])];
   for (const [file, via] of consider) {
     const hits = [];
     const declared = [];
