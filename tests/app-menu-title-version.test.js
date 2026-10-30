@@ -178,9 +178,40 @@ test('pressing Go to community: a plain click lands on its place, a modified one
     assert.deepEqual(r.calls, [], `${JSON.stringify(mods)}: this page's place is left alone`);
     assert.equal(r.prevented, false, 'the browser opens the link itself');
     assert.equal(r.hash, '#home');
-    assert.equal(r.dismissed, 1, 'the menu still closes');
+    assert.equal(r.dismissed, 0, 'and the menu does not close under the browser while it reads the link');
   }
 
   const taken = press({ defaultPrevented: true }, 7);
   assert.deepEqual(taken.calls, [], 'a click something else took changes nothing here either');
+});
+
+test('a modified click on Go to community: the real close waits until the browser has read the link (#5927 item 3)', async (t) => {
+  // Closing publishes `open: false` synchronously, which clears the badge's
+  // figure and so the row's Needs you address. The browser reads the link
+  // once the click handler returns, so nothing may publish before then.
+  const previousWindow = global.window;
+  const initial = { ...ui.appContextStore.get() };
+  t.after(() => { global.window = previousWindow; ui.appContextStore.set(initial); });
+  global.window = { ...(previousWindow || {}), location: { hash: '#home' }, AppView: {} };
+
+  ui.appContextStore.set({ open: true });
+  assert.equal(ui.AppContext.isOpen(), true);
+  const published = [];
+  const off = ui.appContextStore.subscribe(() => published.push(ui.appContextStore.get().open));
+  t.after(() => { if (typeof off === 'function') off(); });
+
+  const owed = 4;
+  const e = {
+    button: 0, metaKey: true, ctrlKey: false, shiftKey: false, altKey: false,
+    defaultPrevented: false, nativeEvent: { defaultPrevented: false }, preventDefault() {},
+  };
+  ui.openCommunityRow(e, 'bread-bot', owed);
+  // What the browser reads now: the menu is still open, so `owed` and the
+  // row's href are what they were when the person clicked.
+  assert.deepEqual(published, [], 'nothing published during the click');
+  assert.equal(ui.AppContext.isOpen(), true);
+  assert.equal(ui.communityRowHref('bread-bot', owed), '/app/bread-bot/workshop?ws=needs');
+
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(ui.AppContext.isOpen(), false, 'and then the menu closes, through its own dismissal');
 });

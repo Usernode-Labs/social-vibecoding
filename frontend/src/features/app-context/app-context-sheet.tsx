@@ -295,10 +295,20 @@ export function communityRowHref(slug: string | null | undefined, owed: number |
  * A press on the row. Only a plain click is ours: it says which place the
  * page opens on (AppView._landOnTab / _landOnHub), then follows the page's
  * own address in place. A modified or middle click, or one something else
- * took, changes nothing on this page before the browser opens the link.
+ * took, changes nothing on this page, and the browser opens the link.
+ *
+ * ITS MENU CLOSES A TICK LATER. The browser reads the link after this
+ * handler returns, and closing publishes `open: false` synchronously
+ * (flushSync), which clears the badge's figure (`owed`) and with it the
+ * Needs you address: a new tab opened from a closed-in-time row went to the
+ * hub. Deferred, the close comes after the browser has read the link.
  */
 export function openCommunityRow(e: React.MouseEvent, slug: string | null | undefined, owed: number | null): void {
-  if (slug && isPlainClick(e)) {
+  if (!isPlainClick(e)) {
+    setTimeout(() => { AppContext.dismissForNav(); }, 0);
+    return;
+  }
+  if (slug) {
     const view = (window as any).AppView;
     if (communityRowPlace(owed) === 'needs') view?._landOnTab?.(slug, 'needs');
     else view?._landOnHub?.(slug);
