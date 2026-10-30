@@ -17,6 +17,7 @@ import { menuItems, roveMenuFocus } from '../../lib/menu-keys';
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from '../improve/improve-store.js';
 import { AppsSwitcherSheet } from './app-context-sheet';
+import { kitSheetTakesEscape } from './kit-escape';
 import { appContextStore, AppContext } from './mount';
 import './app-openings';
 
@@ -171,8 +172,13 @@ export function AppContextIsland() {
     return () => { if (timer) clearTimeout(timer); };
   }, []);
 
-  // Escape closes the sheet — web presentation only; adopted into a kit
-  // sheet the kit's modal stack owns the key. Same rule as the Improve panel.
+  // Escape closes the sheet, in every presentation. On the web it is this
+  // listener's alone, the Improve panel's rule. Adopted into a kit sheet (a
+  // phone or a tablet, which can have a keyboard) it is this listener's too:
+  // the kit's sheet answers a swipe and its backdrop but never Escape, since
+  // it does not join the kit's modal stack (#5927 item 10). There it stands
+  // aside for a kit surface above the menu (./kit-escape.ts), and the arrows
+  // stay the kit's.
   //
   // KEYBOARD (QA 2026-09-24 Q18), web presentation only as well. Opening it
   // from the mark moves focus to the menu's first row, the arrows (and Home,
@@ -195,7 +201,10 @@ export function AppContextIsland() {
       }
     }
     const onKey = (event: KeyboardEvent) => {
-      if (AppContext._sheet) return;
+      if (AppContext._sheet) {
+        if (kitSheetTakesEscape(event, document, 'apps-switcher-sheet')) void AppContext.close();
+        return;
+      }
       const el = sheet();
       const inside = !!el && el.contains(event.target as Node);
       if (event.key === 'Escape') {
