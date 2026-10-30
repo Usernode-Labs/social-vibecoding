@@ -92,12 +92,63 @@ test('a handed-off work order keeps its own word', () => {
     { text: 'Handed off', spins: false });
 });
 
+// ── #6042: the pill learns the change's lifecycle ──────────────────────
+//
+// Every idle row used to say Ready, and the word was wrong for a change up
+// for vote, one failing its checks and one already live. The row now reads
+// the change's own fields (carried through toRow as sessionStatus /
+// checkState / checkPhase / failingChecks) and names the state in the words
+// the change's own page uses — no arc in any of them, because on this row
+// the arc means an AI turn.
+test('the pill names the change’s lifecycle, in the change page’s own words', () => {
+  assert.deepEqual(pill({ ...VIEW, sessionStatus: 'promoted' }),
+    { text: 'Waiting for approval', spins: false });
+  assert.deepEqual(pill({ ...VIEW, sessionStatus: 'merging' }),
+    { text: 'Going live', spins: false });
+  assert.deepEqual(pill({ ...VIEW, sessionStatus: 'merged' }),
+    { text: 'Live', spins: false });
+  assert.deepEqual(pill({ ...VIEW, checkState: 'failing', failingChecks: 2 }),
+    { text: 'Checks failing · 2', spins: false });
+  assert.deepEqual(pill({ ...VIEW, checkState: 'failing' }),
+    { text: 'Checks failing', spins: false });
+  assert.deepEqual(pill({ ...VIEW, checkState: 'error' }),
+    // The helper reads the rendered HTML, so the catalog's apostrophe comes
+    // back entity-escaped.
+    { text: 'Checks couldn&#x27;t run', spins: false });
+  assert.deepEqual(pill({ ...VIEW, checkState: 'pending', checkPhase: 'testing' }),
+    { text: 'Testing', spins: false });
+});
+
+test('the lifecycle reads by the dev board’s precedence: the vote, then the checks', () => {
+  // The bar is the vote (AppView.statusPillState): a promoted change reads
+  // Waiting for approval even with failing checks — the board carries the
+  // reasons as tags beside the vote instead of in its place.
+  assert.deepEqual(pill({ ...VIEW, sessionStatus: 'promoted', checkState: 'failing', failingChecks: 3 }),
+    { text: 'Waiting for approval', spins: false });
+  // …a turn in flight beats even that (pinned above, restated on the chain):
+  assert.deepEqual(pill({ ...VIEW, sessionStatus: 'promoted', busy: true }),
+    { text: 'Working', spins: true });
+  // 'deferred' checks are set aside until the merge is clean — not running.
+  assert.deepEqual(pill({ ...VIEW, checkState: 'pending', checkPhase: 'deferred' }),
+    { text: 'Ready', spins: false });
+  // A verdict that is not a problem reads Ready, as it always did.
+  assert.deepEqual(pill({ ...VIEW, checkState: 'passing' }), { text: 'Ready', spins: false });
+  // A direct question to the viewer outranks the vote too.
+  assert.deepEqual(pill({ ...VIEW, sessionStatus: 'promoted', awaitingInput: true }),
+    { text: 'Needs you', spins: false });
+});
+
 test('the qualification is words, not a fourth state', () => {
   // One Ready branch, one tone — the same table
-  // tests/improve-session-spinner.test.js counts three branches of.
+  // tests/improve-session-spinner.test.js counts the branches of. #6042 grew
+  // the table to the change's whole lifecycle, so the pinned shape is the
+  // ladder's two ends: waiting on the viewer is its own branch (still ahead
+  // of every lifecycle state), and plain Ready is the fallthrough everything
+  // else lands on.
   const start = ROW_TSX.indexOf('function stateOf(');
   const body = ROW_TSX.slice(start, ROW_TSX.indexOf('\n}\n', start));
-  assert.match(body, /label: session\.awaitingInput \? t\('agent:menu\.row\.state\.needsYou'\) : t\('agent:menu\.row\.state\.ready'\),/);
+  assert.match(body, /if \(session\.awaitingInput\) \{[\s\S]{0,400}?return \{ label: t\('agent:menu\.row\.state\.needsYou'\)/);
+  assert.match(body, /return \{\s*\n\s*label: t\('agent:menu\.row\.state\.ready'\),/);
   assert.equal(message('agent:menu.row.state.needsYou'), 'Needs you');
   assert.equal(message('agent:menu.row.state.ready'), 'Ready');
   assert.equal((body.match(/bg-emerald-500\/15 text-emerald-700 dark:text-emerald-400/g) || []).length, 1,
@@ -257,6 +308,15 @@ test('the open sheet refetches when the turn ends, and the row takes the new ver
   assert.equal(row(store).busy, false);
   assert.equal(row(store).awaitingInput, false, 'the answered spec is plain Ready');
   assert.equal(row(store).status, null);
+});
+
+test('the fetch opts into the recent merge history (#6042)', async () => {
+  // The one caller of include_merged: the rows here name the change's
+  // lifecycle, so a merged change has to keep arriving long enough to say
+  // Live. The dev tab's own fetch sends no flag and sees none of them.
+  const { Improve, fetches } = load([payload({})]);
+  await Improve.loadSessions();
+  assert.equal(fetches[0], '/api/me/active-sessions?include_merged=1');
 });
 
 test('the status seam #1417 left still reads', async () => {

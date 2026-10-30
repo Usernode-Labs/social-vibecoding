@@ -73,6 +73,16 @@ export type SessionRowView = {
   lastActivityAt?: string | null;
   /** #2779: the agent session a change was started from; Messages lists it there. */
   agentSessionId?: number | null;
+  /** #6042: the change's own lifecycle (`chat_sessions.status`) — promoted is
+   *  up for vote, merging is merging, merged is live. Absent on older
+   *  payloads and on work orders, which have no proposal behind them. */
+  sessionStatus?: 'active' | 'paused' | 'promoted' | 'merging' | 'merged' | string | null;
+  /** The automated checks' last verdict (`chat_sessions.check_state`). */
+  checkState?: string | null;
+  /** Where the check run is ('building' | 'testing' | 'queued' | 'deferred'). */
+  checkPhase?: string | null;
+  /** How many checks failed, from the payload's `failing_checks` summary. */
+  failingChecks?: number | null;
 };
 
 // `relTime` lived here. It ran a thirty-day bucket and then months, so a row
@@ -150,14 +160,34 @@ export type SessionRowView = {
  * is what a screen reader gets. An idle row carries no dot at all — nothing
  * on it is green any more except the pill's own tinted `Ready`, which says
  * what it means in words.
+ *
+ * ── The pill learns the change's lifecycle (#6042) ─────────────────────
+ *
+ * Until #6042 every idle row said `Ready` — a change up for vote, one
+ * failing its checks and one already live were the same word, and the word
+ * was wrong for three of them. The pill now reads the change's own fields
+ * (`chat_sessions.status` and `check_state`, carried through
+ * `toRow()` as `sessionStatus` / `checkState`) and names the state, in the
+ * words the change's own page uses for it: Waiting for approval (violet),
+ * Testing (amber), Checks failing · N / Checks couldn't run (red), Going
+ * live (amber), Live (emerald). The precedence is the dev board's rule
+ * (AppView.statusPillState): a direct question to the viewer beats the vote,
+ * the vote beats the checks — "the bar is the vote, and only the vote". No
+ * arc in any of them: on this row the arc means an AI turn, and one fact
+ * keeps one cue.
  */
 function stateOf(session: SessionRowView): {
   label: string; pill: string; spinner: boolean;
 } {
+  // The emerald the settled states share. ONE literal: the pill's tone is
+  // "the change is back with you" whether it says Needs you, Live or Ready —
+  // the words carry the difference, not a fourth colour.
+  const emerald = 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400';
+  const amber = 'bg-amber-400/20 text-amber-700 dark:text-amber-300';
   if (session.busy) {
     return {
       label: t('agent:menu.row.state.working'),
-      pill: 'bg-amber-400/20 text-amber-700 dark:text-amber-300',
+      pill: amber,
       spinner: true,
     };
   }
@@ -168,14 +198,70 @@ function stateOf(session: SessionRowView): {
       spinner: false,
     };
   }
-  return {
+  // A direct question to the viewer beats everything but a turn in flight.
+  if (session.awaitingInput) {
     // QA 2026-09-24 Q29: "Needs you", not "Ready for your input". The
     // longer label took 144px of a 344px Messages row and left the change's
     // TITLE — the part a reader has to read — at "[Mock] Yo…". Same fact,
     // same predicate, and the word the caption and the Workshop's own
     // "Needs you" already use for it.
-    label: session.awaitingInput ? t('agent:menu.row.state.needsYou') : t('agent:menu.row.state.ready'),
-    pill: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+    return { label: t('agent:menu.row.state.needsYou'), pill: emerald, spinner: false };
+  }
+  // ── #6042: the change's lifecycle, in the words its own page uses ─────
+  //
+  // The bar is the VOTE, and only the vote — the dev board's own rule
+  // (AppView.statusPillState, public/js/app-view.js): a reader scans for
+  // "where has this got to, and does it want me?", and the answer is the
+  // vote, which stays true while a check is red. So a promoted change reads
+  // Waiting for approval even with failing checks, the way the board's card
+  // carries the reasons as tags beside the vote instead of in its place.
+  //
+  // No spinner below. On this row the arc means "an AI turn is in flight"
+  // (#1597), and checks running or a merge applying is a different fact —
+  // one fact wants one cue.
+  if (session.sessionStatus === 'promoted') {
+    return {
+      label: t('agent:session.changeStatus.waitingForApproval'),
+      pill: 'bg-violet-500/15 text-violet-700 dark:text-violet-400',
+      spinner: false,
+    };
+  }
+  if (session.sessionStatus === 'merging') {
+    return { label: t('agent:session.changeStatus.goingLive'), pill: amber, spinner: false };
+  }
+  // Merged is LIVE, in the words the board's pill uses ("a merged change is
+  // LIVE"). Live is the platform's one settled state that keeps a fill —
+  // the end is the good news there, as on the board.
+  if (session.sessionStatus === 'merged') {
+    return { label: t('agent:session.changeStatus.live'), pill: emerald, spinner: false };
+  }
+  if (session.checkState === 'failing') {
+    return {
+      // The count when the payload's summary carries one, plain when not —
+      // the board tag's shape ("Checks failing · 3", badge.reason.checksFailing).
+      label: session.failingChecks
+        ? t('agent:menu.row.state.checksFailing', { count: session.failingChecks })
+        : t('agent:menu.row.state.checksFailingPlain'),
+      pill: 'bg-red-500/20 text-red-700 dark:text-red-400',
+      spinner: false,
+    };
+  }
+  if (session.checkState === 'error') {
+    return {
+      label: t('agent:menu.row.state.checksError'),
+      pill: 'bg-red-500/20 text-red-700 dark:text-red-400',
+      spinner: false,
+    };
+  }
+  // Checks running against the preview. 'deferred' is not this: the checks
+  // are set aside until the merge is clean, so the change is not being
+  // tested and the row falls through to Ready.
+  if (session.checkState === 'pending' && session.checkPhase !== 'deferred') {
+    return { label: t('agent:menu.row.state.testing'), pill: amber, spinner: false };
+  }
+  return {
+    label: t('agent:menu.row.state.ready'),
+    pill: emerald,
     spinner: false,
   };
 }
