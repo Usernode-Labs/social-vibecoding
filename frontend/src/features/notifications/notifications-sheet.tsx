@@ -180,6 +180,8 @@ type ScreenRowView = NotificationRowView & {
   count?: number;
   /** #5580: the project's own name, for its stack's heading. */
   appName?: string | null;
+  /** #5929: the row waits on the reader (rowView): its project's group comes first on Unread. */
+  needsYou?: boolean;
   /** #5877: that project's icon, so its bot row wears the project's tile. */
   appIconUrl?: string | null;
   appIconEmoji?: string | null;
@@ -369,7 +371,13 @@ function AppGroupHead({ groupKey, label, appId, onRead, onShowLess }: {
  * The Unread tab's groups (#5406): rows bucketed by app, in feed order.
  * The first time an app is seen is its newest notification, so the groups
  * are ordered by their newest row and the rows keep their order inside a
- * group. Rows that belong to no app (account, people, the cross-project vote
+ * group. #5929: urgency comes before recency: a group holding a row that
+ * waits on the reader (`needsYou`: a vote asked of them, Homeroom bot's
+ * needs-you, a friend request) goes above every group that holds none, each
+ * side keeping its newest-first order. A row read or answered while the
+ * sheet is open keeps its group where it was (useHeldUnread lists it, and
+ * `asked` still counts it, until the sheet closes), so nothing jumps under
+ * the reader's finger. Rows that belong to no app (account, people, the cross-project vote
  * reminder, which vote-digest files with no app whenever several changes
  * wait, even all in one project) share one group, "Across Homeroom" (#5929
  * renamed it from the vague "Other"), under the key `'other'`; `appId` 0 counts as an app, so the
@@ -383,6 +391,8 @@ type AppGroup = {
   /** #5580: the project's own name, from the first row that carries it. */
   appName?: string | null;
   entries: Entry[];
+  /** #5929: one of its rows waits on the reader. */
+  needsYou?: boolean;
 };
 
 /**
@@ -394,7 +404,11 @@ function groupName(group: AppGroup): string {
   return group.appName || group.appLine;
 }
 
-export function groupUnreadByApp(rows: ScreenRowView[], t: Translate): AppGroup[] {
+export function groupUnreadByApp(
+  rows: ScreenRowView[],
+  t: Translate,
+  asked: (view: ScreenRowView) => boolean = (view) => !!view.needsYou,
+): AppGroup[] {
   const groups: AppGroup[] = [];
   const byKey = new Map<string, AppGroup>();
   for (const view of rows) {
@@ -406,6 +420,7 @@ export function groupUnreadByApp(rows: ScreenRowView[], t: Translate): AppGroup[
       groups.push(group);
     }
     if (!group.appName && view.appName) group.appName = view.appName;
+    if (asked(view)) group.needsYou = true;
     group.entries.push({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view });
   }
   // #5580: one story's notifications become one card first (foldStories in
@@ -414,7 +429,7 @@ export function groupUnreadByApp(rows: ScreenRowView[], t: Translate): AppGroup[
   for (const group of groups) {
     if (group.appId != null) group.entries = foldRepeats(foldStories(group.entries), t);
   }
-  return groups;
+  return [...groups.filter((group) => group.needsYou), ...groups.filter((group) => !group.needsYou)];
 }
 
 /** The older rows' sections on Unread, newest first. */
@@ -651,9 +666,20 @@ type HeldUnread = {
   listed: (view: ScreenRowView) => boolean;
   /** Let these rows go, so clearing them takes them off Unread. */
   release: (ids: Iterable<ScreenRowView['id']>) => void;
+  /**
+   * #5929: waited on the reader at some point while the sheet has been open,
+   * so answering it (a friend request accepted, the digest's last vote cast)
+   * leaves its group where it was until the sheet closes.
+   */
+  asked: (view: ScreenRowView) => boolean;
 };
 
-type HoldSets = { held: Set<ScreenRowView['id']>; released: Set<ScreenRowView['id']> };
+type HoldSets = {
+  held: Set<ScreenRowView['id']>;
+  released: Set<ScreenRowView['id']>;
+  /** #5929: rows that have been `needsYou` during this visit. */
+  asked?: Set<ScreenRowView['id']>;
+};
 
 /**
  * One render of useHeldUnread: closed, nothing is held; open, every row
@@ -664,9 +690,13 @@ export function holdUnread(sets: HoldSets, open: boolean, all: readonly ScreenRo
   if (!open) {
     sets.held.clear();
     sets.released.clear();
+    sets.asked?.clear();
     return;
   }
-  for (const view of all) if (view.unread && !sets.released.has(view.id)) sets.held.add(view.id);
+  for (const view of all) {
+    if (view.unread && !sets.released.has(view.id)) sets.held.add(view.id);
+    if (view.needsYou && sets.asked) sets.asked.add(view.id);
+  }
 }
 
 /** Let rows go (useHeldUnread's `release`). */
@@ -678,7 +708,7 @@ export function releaseHeld(sets: HoldSets, ids: Iterable<ScreenRowView['id']>):
 }
 
 export function useHeldUnread(open: boolean, all: ScreenRowView[]): HeldUnread {
-  const sets = useRef<HoldSets>({ held: new Set(), released: new Set() });
+  const sets = useRef<HoldSets>({ held: new Set(), released: new Set(), asked: new Set() });
   // Kept in step with the render, not in an effect: an effect runs after the
   // frame that drew the list, and that frame would already be missing the row.
   holdUnread(sets.current, open, all);
@@ -686,6 +716,7 @@ export function useHeldUnread(open: boolean, all: ScreenRowView[]): HeldUnread {
   return {
     listed: (view) => view.unread || sets.current.held.has(view.id),
     release,
+    asked: (view) => !!view.needsYou || !!sets.current.asked?.has(view.id),
   };
 }
 
@@ -1509,7 +1540,7 @@ export function NotificationsSheetView() {
   // and once the older rows are revealed on Unread the tab is the archive
   // again, so it draws Today/Earlier as it always did. `unread` is feed
   // order (newest first), so groupUnreadByApp's insertion order keeps the
-  // groups newest-first too.
+  // groups newest-first too, once the ones waiting on the reader lead (#5929).
   const groupedUnread = tab === 'unread' && !olderShown;
   // Evan, 21 Oct 2026: the older rows were a flat list, so revealing them
   // undid the stacks the tab opened on. Revealed, Unread keeps its stacks.
@@ -1520,7 +1551,7 @@ export function NotificationsSheetView() {
   // (groupOlderByTime), each naming its project on its meta line. Nothing
   // there is to be cleared, so nothing there needs piling up.
   const olderGrouped = tab === 'unread' && olderShown;
-  const appGroups = groupedUnread || olderGrouped ? groupUnreadByApp(unread, t) : [];
+  const appGroups = groupedUnread || olderGrouped ? groupUnreadByApp(unread, t, held.asked) : [];
   const listedIds = new Set(unread.map((view) => view.id));
   const olderSections = olderGrouped ? groupOlderByTime(all.filter((view) => !listedIds.has(view.id)), t) : [];
   // #5580: each project is a stack of cards (./notification-stacks.tsx),

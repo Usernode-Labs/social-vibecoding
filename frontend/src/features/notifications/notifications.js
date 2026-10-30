@@ -2689,7 +2689,10 @@ function botMomentLine(detail, message) {
   if (d.appName && d.requestTitle && d.issueNumber && !d.firstVersion) {
     meta = t('notifications:row.bot.metaRequest', { project: d.appName, number: d.issueNumber });
   } else if (d.appName) meta = t('notifications:row.bot.meta', { project: d.appName });
-  return { label, subject, meta };
+  // #5929: a needs-you asks the reader for something, except the one that
+  // says it waits on somebody else.
+  const needsYou = d.moment === 'needs_you' && d.said !== 'decide_others';
+  return { label, subject, meta, needsYou };
 }
 
 // A whole message with one emphasised part, as a row's segments: the catalog
@@ -2821,6 +2824,13 @@ function rowView(n) {
     // a card about it says it is on ("on #5588") and what its history is.
     storyKey: storyKeyOf(n),
     storyRef: storyRefOf(n),
+    // #5929: the row waits on the reader: a change asking for their vote
+    // (VOTE_ASK_KINDS, less stale_pr: that is the author's warning that
+    // OTHERS have not voted, or, 'blocked', that the merge stands still),
+    // Homeroom bot's needs-you (botMomentLine), a friend request still to
+    // answer. A project's group holding one comes first on Unread
+    // (groupUnreadByApp in ./notifications-sheet.tsx).
+    needsYou: (VOTE_ASK_KINDS.has(n.kind) && n.kind !== 'stale_pr') || n.kind === 'build_needs_you',
     // Meta-line attribution. Null unless the source user actually DID this.
     by: null,
     // The kind line. Every branch below overwrites it; '' would render a
@@ -2908,6 +2918,7 @@ function rowView(n) {
         conversationId: n.conversationId != null ? Number(n.conversationId) : null,
         appLine: bot.meta || t('notifications:row.source.messages'),
         botMoment: true,
+        needsYou: !!bot.needsYou,
         // Run six: the row wears the bot's own face (the sheet's AvatarChip),
         // never a letter tile of its handle — unless it is about a project,
         // which then wears that project's tile (#5877).
@@ -2960,6 +2971,7 @@ function rowView(n) {
       label: request ? t('notifications:row.friend.request') : t('notifications:row.friend.accepted'),
       segments: [{ t: 'who', v: who }],
       ...(request && n.friendRequestPending ? {
+        needsYou: true,
         actions: [
           { key: 'friend_accept', label: t('notifications:row.friend.accept'), primary: true },
           { key: 'friend_decline', label: t('notifications:row.friend.decline') },
@@ -3195,13 +3207,13 @@ function rowView(n) {
   if (n.kind === 'change_ready') {
     const subject = prLabel || n.sessionTitle || t('notifications:row.changeReady.aChange');
     if (n.sessionStatus === 'merged') {
-      return { ...base, icon: '\u{1F389}', by: n.sourceUsername || null, ...headline(t('notifications:row.changeReady.live'), subject) };
+      return { ...base, needsYou: false, icon: '\u{1F389}', by: n.sourceUsername || null, ...headline(t('notifications:row.changeReady.live'), subject) };
     }
     if (n.sessionStatus === 'merging') {
-      return { ...base, icon: '\u{1F680}', by: n.sourceUsername || null, ...headline(t('notifications:row.changeReady.goingLive'), subject) };
+      return { ...base, needsYou: false, icon: '\u{1F680}', by: n.sourceUsername || null, ...headline(t('notifications:row.changeReady.goingLive'), subject) };
     }
     if (n.sessionStatus === 'archived') {
-      return { ...base, icon: '\u{1F5C2}\uFE0F', by: n.sourceUsername || null, ...headline(t('notifications:row.changeReady.closed'), subject) };
+      return { ...base, needsYou: false, icon: '\u{1F5C2}\uFE0F', by: n.sourceUsername || null, ...headline(t('notifications:row.changeReady.closed'), subject) };
     }
     return {
       ...base,
@@ -3406,7 +3418,7 @@ function rowView(n) {
     const count = Number.isFinite(Number(n.digestWaiting)) && n.digestWaiting != null
       ? Number(n.digestWaiting) : (Number(n.detail) || 0);
     if (count === 0) {
-      return { ...base, icon: '\u{1F5F3}\uFE0F', ...headline(t('notifications:row.voteDigest.none'), null) };
+      return { ...base, needsYou: false, icon: '\u{1F5F3}\uFE0F', ...headline(t('notifications:row.voteDigest.none'), null) };
     }
     return {
       ...base,
