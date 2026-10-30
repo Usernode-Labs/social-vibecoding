@@ -21,6 +21,11 @@ test('a sign-up box starts unticked, with its label and the line saying it is op
     ['sms', 'auth:signupOptIn.sms', 'auth:signupOptIn.smsNote'],
   ]) {
     const html = renderToHtml(createElement(SignupOptIn, { id: `box-${kind}`, kind, checked: false, onChange() {} }));
+    // The box sits in its own "Keep in touch" card (#6050), labelled by it.
+    assert.ok(html.includes(message('auth:signupOptIn.title')), `${kind} card heading`);
+    assert.match(html, new RegExp(`<p id="box-${kind}-title"[^>]*>${message('auth:signupOptIn.title').replace(/&/g, '&amp;')}</p>`));
+    assert.match(html, new RegExp(`<div data-signup-opt-in="${kind}" role="group" aria-labelledby="box-${kind}-title"`));
+    assert.match(html, /rounded-2xl bg-white px-4 py-3 shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\]/, `${kind} card surface`);
     assert.match(html, new RegExp(`<input id="box-${kind}" type="checkbox"`));
     assert.doesNotMatch(html, /checked=""/, `${kind} arrives unticked`);
     assert.ok(html.includes(message(label)), `${kind} label`);
