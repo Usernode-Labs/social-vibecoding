@@ -708,11 +708,15 @@ test('blanket accepted consent for every remaining cloned user (issue #1297)', (
   // current published version is null, so the seed must erase that state
   // for every cloned account or the sheet slides over every preview route
   // the declared checks screenshot. Natural-key arbiter, not (id): the
-  // blanket rows ride the BIGSERIAL default.
-  const start = body.indexOf('SELECT u.id, 900500, \'accepted\'');
+  // blanket rows ride the BIGSERIAL default. It covers every PUBLISHED
+  // version (#6043): the real ones arrive with the clone or from
+  // seedTermsVersions, and the newest of them is the current one.
+  const start = body.indexOf('SELECT u.id, tv.id, \'accepted\'');
   assert.ok(start > 0, 'the blanket INSERT ... SELECT over users must exist');
   const block = body.slice(body.lastIndexOf('INSERT INTO user_terms_consents', start), start + 400);
   assert.match(block, /FROM users u/);
+  assert.match(block, /CROSS JOIN terms_versions tv/);
+  assert.match(block, /WHERE tv\.published_at IS NOT NULL/);
   assert.match(block, /ON CONFLICT \(user_id, terms_version_id\) DO NOTHING/);
 });
 

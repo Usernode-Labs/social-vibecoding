@@ -1809,7 +1809,7 @@
   },
   "about.legal.title": {
     "text": "Legal",
-    "description": "Heading over two links in Settings > About, under the version rows: Homeroom's terms and its privacy notice."
+    "description": "Heading over four links in Settings > About, under the version rows: Homeroom's terms, its privacy notice, its child safety standards and how to delete your account."
   },
   "about.legal.terms": {
     "text": "Terms",
@@ -1818,6 +1818,14 @@
   "about.legal.privacy": {
     "text": "Privacy notice",
     "description": "Link in Settings > About, under the Legal heading: opens Homeroom's privacy notice, which says what personal data Homeroom collects and how it uses it, in a new tab."
+  },
+  "about.legal.childSafety": {
+    "text": "Child safety standards",
+    "description": "Link in Settings > About, under the Legal heading, after the privacy notice: opens Homeroom's child safety standards, which say how it prevents and reports child sexual abuse and exploitation, in a new tab."
+  },
+  "about.legal.accountDeletion": {
+    "text": "Delete your account and data",
+    "description": "Link in Settings > About, under the Legal heading, last: opens the page explaining how to delete your Homeroom account and what happens to your data, in a new tab."
   },
   "about.platformVersion.label": {
     "text": "Platform version",

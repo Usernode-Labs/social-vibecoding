@@ -319,3 +319,20 @@ test('Settings → About ends with the terms and the privacy notice (#5094, #510
   assert.match(aboutTsx, /const privacy = useWaitlistOptions\(\)\?\.privacy_link \|\| undefined;/);
   assert.match(aboutTsx, /const show = settings\?\.showTermsSheet;/);
 });
+
+test('Settings → About also lists the child safety standards and account deletion (#6043)', () => {
+  // The two other legal pages the terms name, after the privacy notice and
+  // opened the same way: a new tab, the address from the options.
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const { AboutSection } = loadTsx(`${SETTINGS_DIR}/sections/about.tsx`);
+  const html = renderToHtml(createElement(AboutSection, {}));
+  const privacy = html.indexOf('id="settings-about-privacy"');
+  const childSafety = html.indexOf('id="settings-about-child-safety"');
+  const deletion = html.indexOf('id="settings-about-account-deletion"');
+  assert.ok(privacy > 0 && childSafety > privacy && deletion > childSafety,
+    'privacy notice, then child safety standards, then account deletion');
+  assert.match(html, /<a id="settings-about-child-safety" target="_blank" rel="noopener noreferrer"[^>]*>Child safety standards<\/a>/);
+  assert.match(html, /<a id="settings-about-account-deletion" target="_blank" rel="noopener noreferrer"[^>]*>Delete your account and data<\/a>/);
+  assert.match(aboutTsx, /const childSafety = useWaitlistOptions\(\)\?\.child_safety_link \|\| undefined;/);
+  assert.match(aboutTsx, /const accountDeletion = useWaitlistOptions\(\)\?\.account_deletion_link \|\| undefined;/);
+});

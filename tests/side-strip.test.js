@@ -17,7 +17,7 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const APP_CSS = read('public/css/app.css');
 const {
   STRIP_ATTR, STRIP_W_PROP, STRIP_MIN_PX, STRIP_SHOT_PX,
-  stripSide, stripShotSide, applyStrip,
+  stripSide, stripShotSide, applyStrip, watchSideStrip,
 } = loadTsx('frontend/src/lib/side-strip.ts');
 
 test('stripSide: only a wide inset on one side is a strip', () => {
@@ -68,9 +68,80 @@ test('applyStrip: publishes the side and width, and takes them away again', () =
 
 test('the probe reads the kit override before env(), as app.css does', () => {
   const src = read('frontend/src/lib/side-strip.ts');
-  assert.match(src, /padding-right:var\(--un-safe-inset-right,env\(safe-area-inset-right,0px\)\)/);
+  // The right inset rides as TOP padding, so the probe's box is
+  // (left x right) and a change to either one resizes it.
+  assert.match(src, /padding-top:var\(--un-safe-inset-right,env\(safe-area-inset-right,0px\)\)/);
   assert.match(src, /padding-left:var\(--un-safe-inset-left,env\(safe-area-inset-left,0px\)\)/);
+  assert.match(src, /right: parseFloat\(cs\.paddingTop\)/);
   assert.match(read('frontend/src/main.tsx'), /import '\.\/lib\/side-strip';/);
+});
+
+// A document and window just big enough for watchSideStrip: the probe's
+// computed padding is whatever `insets` says now.
+function fakePage({ withObserver = true } = {}) {
+  const insets = { left: 0, right: 0 };
+  const attrs = new Map();
+  const props = new Map();
+  const listeners = new Map();
+  const observers = [];
+  const root = {
+    getAttribute: (n) => (attrs.has(n) ? attrs.get(n) : null),
+    setAttribute: (n, v) => attrs.set(n, v),
+    removeAttribute: (n) => attrs.delete(n),
+    style: { setProperty: (n, v) => props.set(n, v), removeProperty: (n) => props.delete(n) },
+    appendChild: (el) => { el.isConnected = true; },
+  };
+  const doc = {
+    documentElement: root,
+    createElement: () => ({ isConnected: false, style: {}, setAttribute() {} }),
+  };
+  const win = {
+    location: { search: '' },
+    getComputedStyle: () => ({ paddingLeft: `${insets.left}px`, paddingTop: `${insets.right}px` }),
+    addEventListener: (type, fn) => listeners.set(type, fn),
+    removeEventListener: (type) => listeners.delete(type),
+  };
+  if (withObserver) {
+    win.ResizeObserver = class {
+      constructor(callback) { this.callback = callback; this.targets = []; this.disconnected = false; observers.push(this); }
+      observe(target, options) { this.targets.push({ target, options }); }
+      unobserve() {}
+      disconnect() { this.disconnected = true; }
+    };
+  }
+  return { insets, attrs, listeners, observers, doc, win };
+}
+
+test('the strip follows the inset itself, not only a resize (the tabs left at the foot on a real Duo)', () => {
+  const page = fakePage();
+  const stop = watchSideStrip(page.doc, page.win);
+  assert.equal(page.attrs.get(STRIP_ATTR), undefined, 'unfolded: no column yet');
+  const [observer] = page.observers;
+  assert.ok(observer, 'the probe is watched');
+  assert.equal(observer.targets.length, 1);
+  assert.deepEqual(observer.targets[0].options, { box: 'border-box' }, 'its padding is its border box');
+  // Folded: the viewport's resize came and went with the old inset, and
+  // the new one lands in a later layout pass.
+  page.listeners.get('resize')();
+  assert.equal(page.attrs.get(STRIP_ATTR), undefined);
+  page.insets.right = 84;
+  observer.callback([]);
+  assert.equal(page.attrs.get(STRIP_ATTR), 'right', 'the inset moving is enough');
+  page.insets.right = 0;
+  page.insets.left = 84;
+  observer.callback([]);
+  assert.equal(page.attrs.get(STRIP_ATTR), 'left', 'a column that moves sides is a change too');
+  stop();
+  assert.equal(observer.disconnected, true);
+  assert.equal(page.listeners.size, 0);
+});
+
+test('with no ResizeObserver, the window\'s resize still reads the inset', () => {
+  const page = fakePage({ withObserver: false });
+  watchSideStrip(page.doc, page.win);
+  page.insets.right = 84;
+  page.listeners.get('resize')();
+  assert.equal(page.attrs.get(STRIP_ATTR), 'right');
 });
 
 // ── app.css ─────────────────────────────────────────────────────────────
