@@ -285,3 +285,56 @@ test('#5263: a dead link\'s page welcomes, says what happened and what to do, an
   assert.equal(onInviteLink(`/invite/${TOKEN}/extra`), false);
   assert.equal(onInviteLink('/'), false);
 });
+
+// Where the invite page settled is reported once, beside the opens the
+// Journey already counts.
+test('the invite page reports where it first settled, once', async (t) => {
+  const settled = [];
+  globalThis.UITelemetry = { inviteSettled: (kind) => settled.push(kind) };
+  t.after(() => { delete globalThis.UITelemetry; });
+
+  const live = mountHook({ pathname: `/invite/${TOKEN}`, fetchImpl: answering(LIVE) });
+  await flush();
+  assert.deepEqual(settled, ['card']);
+  live.unmount();
+
+  settled.length = 0;
+  const dead = mountHook({ pathname: `/invite/${TOKEN}`, fetchImpl: answering({ live: false, reason: 'expired' }) });
+  await flush();
+  assert.deepEqual(settled, ['dead']);
+  dead.unmount();
+
+  settled.length = 0;
+  const failed = mountHook({ pathname: `/invite/${TOKEN}`, fetchImpl: () => Promise.reject(new TypeError('Failed to fetch')) });
+  await flush();
+  assert.deepEqual(settled, ['failed']);
+  failed.unmount();
+
+  settled.length = 0;
+  const mistyped = mountHook({ pathname: '/invite/nope', fetchImpl: answering(LIVE) });
+  await flush();
+  assert.deepEqual(settled, ['dead']);
+  mistyped.unmount();
+
+  settled.length = 0;
+  const elsewhere = mountHook({ pathname: '/', fetchImpl: answering(LIVE) });
+  await flush();
+  assert.deepEqual(settled, []);
+  elsewhere.unmount();
+});
+
+test('a card that arrives after the wait still counts as too long', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const settled = [];
+  globalThis.UITelemetry = { inviteSettled: (kind) => settled.push(kind) };
+  t.after(() => { delete globalThis.UITelemetry; });
+  let resolve;
+  const hook = mountHook({ pathname: `/invite/${TOKEN}`, fetchImpl: () => new Promise((r) => { resolve = r; }) });
+  t.mock.timers.tick(8000);
+  assert.deepEqual(settled, ['timeout']);
+  resolve({ json: () => Promise.resolve(LIVE) });
+  await flush();
+  assert.deepEqual(settled, ['timeout'], 'the first settlement wins');
+  assert.equal(hook.read().preview.live, true, 'the card still replaces the pitch');
+  hook.unmount();
+});

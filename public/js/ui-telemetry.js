@@ -61,6 +61,18 @@
     'rate_limited', 'server_error', 'target_unavailable', 'unavailable',
     'unknown',
   ]);
+  // Session fences (lib/api-cache-identity.ts) and where an invite page
+  // settled. Both are content-free and bounded: one fence report per window,
+  // at most eight paths, and an invite settles once a page load.
+  const FENCE_REASONS = new Set(['epoch', 'scope', 'native']);
+  const FENCE_PATH_RE = /^\/api(\/[A-Za-z0-9._~:<>-]{1,64}){0,12}$/;
+  const MAX_FENCE_ENTRIES = 8;
+  const MAX_FENCE_COUNT = 1000;
+  const INVITE_OUTCOMES = new Set(['card', 'dead', 'failed', 'timeout']);
+  // A signed-out page holds a couple of reports for 2 s, then sends them once
+  // to the anonymous collector and never retries.
+  const MAX_HELD = 4;
+  const HELD_DELAY_MS = 2000;
   const MAX_QUEUE = 80;
   const MAX_BATCH = 25;
   const MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -346,6 +358,11 @@
     let booted = false;
     let clientErrorsSent = 0;
     const clientErrorCodes = new Set();
+    // Signed-out pages have no user queue: fence and invite reports wait here
+    // briefly and go to /api/ui-telemetry/anonymous once.
+    let held = [];
+    let heldTimer = null;
+    let inviteSettledOnce = false;
 
     function adminRoute() {
       try { return String(env.location?.hash || '').startsWith('#admin'); } catch (_) { return false; }
@@ -466,6 +483,101 @@
       persist();
       schedule();
       return item.id;
+    }
+
+    // Where a content-free report goes: a verified (or pending) user's queue
+    // when there is one, else the short-lived signed-out list. A signed-in
+    // fence from a page with no user at all cannot be delivered.
+    function routeContentFree(item, signedIn) {
+      const build = platformBuild();
+      if (build) item.build = build;
+      if (currentUser || pendingUser) return enqueue(item);
+      if (signedIn) return null;
+      if (held.length >= MAX_HELD) return null;
+      held.push(item);
+      if (!heldTimer) heldTimer = setTimer(() => sendHeld(false), HELD_DELAY_MS);
+      return item.id;
+    }
+
+    function sendHeld(keepalive) {
+      if (heldTimer) { clearTimer(heldTimer); heldTimer = null; }
+      if (!held.length || !fetcher || collectionDisabled) return;
+      // Sent once: a failure is a lost report, never retried.
+      const events = held.splice(0, MAX_HELD);
+      try {
+        const request = fetcher('/api/ui-telemetry/anonymous', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          keepalive: keepalive === true,
+          body: JSON.stringify({
+            schemaVersion: SCHEMA_VERSION,
+            batchId: randomId(),
+            events,
+            delivery: { failedBatches: 0, droppedEvents: 0 },
+          }),
+        });
+        if (request && typeof request.catch === 'function') request.catch(() => {});
+      } catch (_) { /* best effort */ }
+    }
+
+    function dropHeld() {
+      if (heldTimer) { clearTimer(heldTimer); heldTimer = null; }
+      held = [];
+    }
+
+    // One page load's fences (lib/api-cache-identity.ts createFenceLog).
+    // The shape is checked again here; a path never carries a query or a
+    // live token.
+    function reportFence(report) {
+      try {
+        if (collectionDisabled || adminRoute()) return null;
+        const fences = report && Array.isArray(report.fences) ? report.fences : [];
+        if (!fences.length || fences.length > MAX_FENCE_ENTRIES) return null;
+        const clean = [];
+        for (const fence of fences) {
+          if (!fence || !FENCE_REASONS.has(fence.reason)) return null;
+          const path = fence.path;
+          if (typeof path !== 'string' || path.length > 160 || !FENCE_PATH_RE.test(path)) return null;
+          if (path.startsWith('/api/ui-telemetry/')) return null;
+          // A live 22-character link code never leaves the page.
+          if (/\/[A-Za-z0-9_-]{22,}(?=\/|$)/.test(path)) return null;
+          if (!Number.isInteger(fence.count) || fence.count < 1 || fence.count > MAX_FENCE_COUNT) return null;
+          clean.push({ path, reason: fence.reason, public: path.startsWith('/api/public/'), count: fence.count });
+        }
+        const signedIn = report.signedIn === true;
+        const item = {
+          id: randomId(),
+          visitId,
+          kind: 'session_fence',
+          screen: (currentNav && currentNav.screen) || 'shell_boot',
+          occurredAt: new Date(clock()).toISOString(),
+          sequence: ++sequence,
+          signedIn,
+          fences: clean,
+        };
+        return routeContentFree(item, signedIn);
+      } catch (_) { return null; }
+    }
+
+    // Where an invite link's page settled: card, dead, failed, timeout. The
+    // first call a page load makes wins; nothing else is recorded.
+    function inviteSettled(settled) {
+      try {
+        if (collectionDisabled || adminRoute()) return null;
+        if (inviteSettledOnce || !INVITE_OUTCOMES.has(settled)) return null;
+        inviteSettledOnce = true;
+        const item = {
+          id: randomId(),
+          visitId,
+          kind: 'invite_settlement',
+          screen: 'shell_boot',
+          occurredAt: new Date(clock()).toISOString(),
+          sequence: ++sequence,
+          settled,
+        };
+        return routeContentFree(item, false);
+      } catch (_) { return null; }
     }
 
     // A script error carries its own four fields and nothing else: no
@@ -686,9 +798,17 @@
         userEpoch += 1;
         resetObservations();
         collectionDisabled = true;
+        dropHeld();
         return;
       }
       collectionDisabled = false;
+      // A signed-out report held on this page belongs to the account that
+      // just signed in, and travels in its queue from here.
+      if (held.length) {
+        const moving = held.splice(0);
+        if (heldTimer) { clearTimer(heldTimer); heldTimer = null; }
+        queue = queue.concat(moving);
+      }
       const samePendingUser = pendingUser === next;
       if (pendingUser && pendingUser !== next) {
         clearStored(pendingUser);
@@ -949,6 +1069,9 @@
     } catch (_) { /* optional */ }
     if (env && typeof env.addEventListener === 'function') {
       env.addEventListener('pagehide', () => {
+        // A signed-out page's held reports go out with keepalive before the
+        // ordinary flush, and are never retried.
+        sendHeld(true);
         // A load that finished but never landed on a screen is kept under
         // shell_boot (#4965); it rides out in this same flush.
         if (loadEnded) recordPageLoad();
@@ -967,6 +1090,7 @@
 
     return {
       screen, navigate, markNextVia, attempt, outcome, cancel, setUser, clearUser, flush,
+      reportFence, inviteSettled,
       contextHeaders, errorCodeFor,
       // Content-free diagnostics for tests and an attached inspector. No
       // queued record body is exposed through the product API.

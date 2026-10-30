@@ -27,6 +27,15 @@
 //   alerting_silent        Alertmanager's Watchdog stopped arriving
 //                          (platform_signal_sources)
 //
+// Wave 3, in its own module under signal-observers/:
+//   session_fence_public   a signed-out page, or a read under /api/public/,
+//                          was cut off by the browser's session guard
+//   session_fence_jump     a build cuts off signed-in reads at least twice
+//                          as often per 1,000 loads as the build before it
+//   invite_pitch_failed    signed-out invite pages fell back to the pitch
+//                          because the invite could not be read
+//                          (services/signal-observers/session-fences.js)
+//
 // Infra alerts themselves are pushed, not read: routes/alerts-webhook.js.
 //
 // Everything an item says publicly is written here from typed facts (counts,
@@ -465,6 +474,7 @@ const OBSERVERS = Object.freeze([
   { kinds: ['bot_health'], run: lazy('bot-health') },
   { kinds: ['figure_off_target'], run: lazy('figures-off-target') },
   { kinds: ['turn_recovery_gave_up'], run: lazy('turn-recovery') },
+  { kinds: ['session_fence_public', 'session_fence_jump', 'invite_pitch_failed'], run: lazy('session-fences') },
 ]);
 
 /**

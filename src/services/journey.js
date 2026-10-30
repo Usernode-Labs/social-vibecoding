@@ -2241,7 +2241,25 @@ const INVITE_FUNNEL_SQL = `WITH real AS (
            WHERE x.status = 'joined'
              AND COALESCE(x.applied_at, x.created_at) >= w.from_at
              AND COALESCE(x.applied_at, x.created_at) < $2::timestamptz
-             AND x.user_id IN (SELECT r.id FROM real r)) AS joined
+             AND x.user_id IN (SELECT r.id FROM real r)) AS joined,
+         (SELECT COUNT(*)::int FROM events e
+           WHERE e.event_type = 'ui_experience' AND e.metadata->>'kind' = 'invite_settlement'
+             AND e.metadata->>'settled' = 'card'
+             AND e.created_at >= w.from_at AND e.created_at < $2::timestamptz) AS landed_card,
+         (SELECT COUNT(*)::int FROM events e
+           WHERE e.event_type = 'ui_experience' AND e.metadata->>'kind' = 'invite_settlement'
+             AND e.metadata->>'settled' = 'dead'
+             AND e.created_at >= w.from_at AND e.created_at < $2::timestamptz) AS landed_dead,
+         (SELECT COUNT(*)::int FROM events e
+           WHERE e.event_type = 'ui_experience' AND e.metadata->>'kind' = 'invite_settlement'
+             AND e.metadata->>'settled' = 'failed'
+             AND e.created_at >= w.from_at AND e.created_at < $2::timestamptz) AS landed_failed,
+         (SELECT COUNT(*)::int FROM events e
+           WHERE e.event_type = 'ui_experience' AND e.metadata->>'kind' = 'invite_settlement'
+             AND e.metadata->>'settled' = 'timeout'
+             AND e.created_at >= w.from_at AND e.created_at < $2::timestamptz) AS landed_timeout,
+         (SELECT MIN(e.created_at) FROM events e
+           WHERE e.event_type = 'ui_experience' AND e.metadata->>'kind' = 'invite_settlement') AS landed_since
     FROM win w
     CROSS JOIN LATERAL (
       SELECT COUNT(*)::int AS signed_in,
@@ -2276,6 +2294,16 @@ function inviteFunnelReading(row, { week, cohort = false } = {}) {
     signedInByInvite: Number(row.signed_in_by_invite || 0),
     signedInAlready: Number(row.signed_in_already || 0),
     joined: Number(row.joined || 0),
+    // Where signed-out invite pages settled, counted beside the opens. Not
+    // recorded before the first landing, so an older window says so.
+    landed: row.landed_since == null
+      ? notRecorded('No invite page has reported where it settled yet.')
+      : {
+        card: Number(row.landed_card || 0),
+        dead: Number(row.landed_dead || 0),
+        failed: Number(row.landed_failed || 0),
+        timeout: Number(row.landed_timeout || 0),
+      },
   };
 }
 

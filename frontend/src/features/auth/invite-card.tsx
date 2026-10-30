@@ -224,14 +224,28 @@ export function useInvitePreview(): { preview: InvitePreview | null; pending: bo
     const token = inviteTokenFrom(location.pathname);
     // #5263: no token can look like this, so it is the server's `unknown`
     // without the trip.
-    if (!token) { setPreview({ live: false, reason: 'unknown' }); setPending(false); return undefined; }
+    if (!token) {
+      setPreview({ live: false, reason: 'unknown' }); setPending(false);
+      settleInvite('dead');
+      return undefined;
+    }
+    // Where this page first settled, reported once: the card, the dead-link
+    // page, or the pitch after the read failed or took too long. A card that
+    // arrives after the wait still leaves the page recorded as "too long".
+    let settled = false;
+    const settle = (kind: 'card' | 'dead' | 'failed' | 'timeout') => {
+      if (settled || !live) return;
+      settled = true;
+      settleInvite(kind);
+    };
     let live = true;
-    const giveUp = setTimeout(() => { if (live) setPending(false); }, INVITE_PREVIEW_WAIT_MS);
+    const giveUp = setTimeout(() => { if (live) { setPending(false); settle('timeout'); } }, INVITE_PREVIEW_WAIT_MS);
     const read = (again: boolean): Promise<void> => fetch(`/api/public/invites/${encodeURIComponent(token)}`)
       .then((res) => res.json())
       .then((body: InvitePreview) => {
         if (!live) return;
-        if (body && typeof body.live === 'boolean') setPreview(body);
+        if (body && typeof body.live === 'boolean') { setPreview(body); settle(body.live ? 'card' : 'dead'); }
+        else settle('failed');
         setPending(false);
       })
       .catch((err) => {
@@ -239,13 +253,18 @@ export function useInvitePreview(): { preview: InvitePreview | null; pending: bo
         // (lib/api-cache-identity.ts). The preview is the same for anyone,
         // so the boundary cannot have changed it: read it once more.
         if (live && again && err?.name === 'AbortError') return read(false);
-        if (live) setPending(false); /* the landing still works without the card */
+        if (live) { setPending(false); settle('failed'); } /* the landing still works without the card */
         return undefined;
       });
     read(true).finally(() => clearTimeout(giveUp));
     return () => { live = false; clearTimeout(giveUp); };
   }, []);
   return { preview, pending };
+}
+
+/** Best effort, never changes what the page draws. */
+function settleInvite(kind: 'card' | 'dead' | 'failed' | 'timeout'): void {
+  try { (globalThis as any).UITelemetry?.inviteSettled?.(kind); } catch { /* the page is unchanged */ }
 }
 
 function Tile({ project }: { project: NonNullable<InvitePreview['project']> }) {

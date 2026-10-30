@@ -187,7 +187,8 @@ test('the first session: a maker\'s and an invited person\'s first hour, timed f
     assert.ok(src.includes(`['${key}', '${label}', `), `the ${label} step`);
   }
   assert.match(src, /\{scope\.cohort \? null : \(\s*<div id="admin-journey-first-session-opens">/);
-  assert.match(src, /\{isNotRecorded\(data\.opens\) \? <Num v=\{data\.opens\} \/> : <InviteFunnelRows funnel=\{data\.opens\} \/>\}/);
+  assert.match(src, /\{isNotRecorded\(data\.opens\) \? <Num v=\{data\.opens\} \/> : \(\s*<>\s*<InviteFunnelRows funnel=\{data\.opens\} \/>\s*<InviteLandedRows landed=\{data\.opens\.landed\} opened=\{data\.opens\.opened\} \/>\s*<\/>\s*\)\}/,
+    'the landed block sits under the funnel it belongs to');
   // #4272: Signed in is everyone who reached Homeroom signed in through a
   // link, so it reads as a total, and its two ways are lines of their own:
   // signed up or in from the link, the step's conversion out of the people

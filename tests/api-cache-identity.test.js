@@ -361,3 +361,108 @@ test('aborting one native verification waiter settles it without cancelling anot
   assert.deepEqual(await (await other).json(), { fake: 'current' });
   assert.equal(h.calls.length, 2, 'only the uncancelled private request is sent');
 });
+
+// ── The guard reports each fence ───────────────────────────────────────
+const { fencePath, createFenceLog } = loadTsx('frontend/src/lib/api-cache-identity.ts');
+
+test('fencePath drops the query, replaces tokens and ids, and never reports telemetry', () => {
+  assert.equal(fencePath(`/api/public/invites/${'A'.repeat(22)}?utm=x#frag`), '/api/public/invites/<token>');
+  assert.equal(fencePath('/api/apps/42/issues?page=2'), '/api/apps/<id>/issues');
+  assert.equal(fencePath('/api/apps/run-club/issue/deadbeef1234'), '/api/apps/run-club/issue/<id>');
+  assert.equal(fencePath('/api/public/profiles/ada%20lovelace'), '/api/public/profiles/<value>');
+  assert.equal(fencePath('/api/ui-telemetry/batch'), null);
+  assert.equal(fencePath('/brand/people.png'), null);
+  assert.equal(fencePath(`/api/${'a.b'.repeat(100)}`).length, 160);
+  assert.equal(fencePath('/api/public/profiles/ada?token=secret'), '/api/public/profiles/ada');
+});
+
+function fenceLog() {
+  const timers = [];
+  const reports = [];
+  const log = createFenceLog({
+    setTimer: (fn) => { timers.push(fn); return timers.length; },
+    clearTimer: () => {},
+    deliver: (report) => reports.push(report),
+  });
+  return { log, reports, timers };
+}
+
+test('one page load folds a burst into one report per signed-in group, with counts', () => {
+  const { log, reports } = fenceLog();
+  for (let i = 0; i < 3; i += 1) log.note('/api/private?page=1', 'epoch', true);
+  log.note('/api/public/invites/abcdefghijklmnopqrstuv', 'scope', false);
+  log.note('/api/private', 'scope', true);
+  log.close();
+  assert.equal(reports.length, 2);
+  const signedIn = reports.find((r) => r.signedIn === true);
+  const signedOut = reports.find((r) => r.signedIn === false);
+  assert.deepEqual(signedIn.fences.find((f) => f.path === '/api/private'),
+    { path: '/api/private', reason: 'epoch', public: false, count: 3 }, 'the query never reaches the report');
+  assert.equal(signedIn.fences.find((f) => f.path === '/api/private').count, 3);
+  assert.deepEqual(signedOut.fences[0], {
+    path: '/api/public/invites/<token>', reason: 'scope', public: true, count: 1,
+  }, 'a link code is replaced and the public flag is set');
+});
+
+test('at most eight paths a group and three windows a page load', () => {
+  const { log, reports } = fenceLog();
+  for (let i = 0; i < 9; i += 1) log.note(`/api/path${i}`, 'scope', false);
+  log.close();
+  assert.equal(reports[0].fences.length, 8);
+  for (let w = 0; w < 3; w += 1) { log.note('/api/late', 'native', false); log.close(); }
+  log.note('/api/late/again', 'native', false);
+  log.close();
+  assert.equal(reports.length, 3, 'three windows a page load, then nothing more');
+});
+
+test('a replaced cookie, a reset and a moved native session are told apart', async () => {
+  const scope = page({ fetcher: async () => json({ fake: 'B' }, B) });
+  const scopeReports = [];
+  scope.win.UITelemetry = { reportFence: (r) => scopeReports.push(r) };
+  const cookieHeld = deferred();
+  const viaCookie = page({ fetcher: () => cookieHeld.promise });
+  viaCookie.win.UITelemetry = { reportFence: (r) => scopeReports.push(r) };
+  const reading = viaCookie.win.fetch('/api/private');
+  viaCookie.setCookie(B);
+  cookieHeld.resolve(json({ fake: 'B' }));
+  await assert.rejects(reading, { name: 'AbortError' });
+  viaCookie.handlers.pagehide();
+  assert.equal(scopeReports[0].fences[0].reason, 'scope');
+
+  const epochReports = [];
+  const held = deferred();
+  const h = page({ fetcher: () => held.promise });
+  h.win.UITelemetry = { reportFence: (r) => epochReports.push(r) };
+  const pending = h.win.fetch('/api/private');
+  h.win.UsernodeReact.apiCache.reset();
+  held.resolve(json({ fake: 'A' }));
+  await assert.rejects(pending, { name: 'AbortError' });
+  h.handlers.pagehide();
+  assert.equal(epochReports[0].fences[0].reason, 'epoch');
+
+  const nativeReports = [];
+  const nativeHeld = deferred();
+  const n = page({ native: true, fetcher: () => nativeHeld.promise });
+  n.win.UITelemetry = { reportFence: (r) => nativeReports.push(r) };
+  const nativeRead = n.win.fetch('/api/private');
+  n.renewal.epoch += 1;
+  nativeHeld.resolve(json({ fake: 'A' }));
+  await assert.rejects(nativeRead, { name: 'AbortError' });
+  n.handlers.pagehide();
+  assert.equal(nativeReports[0].fences[0].reason, 'native');
+  assert.equal(nativeReports[0].signedIn, true);
+});
+
+test('a fenced public read is reported signed out and public', async () => {
+  const reports = [];
+  const held = deferred();
+  const p = page({ initial: null, native: true, fetcher: () => held.promise });
+  p.win.UITelemetry = { reportFence: (r) => reports.push(r) };
+  const read = p.win.fetch('/api/public/profiles/ada');
+  p.renewal.epoch += 1;
+  held.resolve(json({ fake: 'A' }, ''));
+  await assert.rejects(read, { name: 'AbortError' });
+  p.handlers.pagehide();
+  const entry = reports[0].fences[0];
+  assert.deepEqual([entry.path, entry.public, reports[0].signedIn], ['/api/public/profiles/ada', true, false]);
+});
