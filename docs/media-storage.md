@@ -71,7 +71,43 @@ Run the suites covering a branch with:
 npm run test:changed -- --base <exact-base-sha>
 ```
 
-## Shots and the first rollout
+## Two-release rollout
+
+Shots and check visuals ship together in two releases, with no feature flag:
+
+1. [#6050](https://github.com/Usernode-Labs/social-vibecoding/pull/6050),
+   `codex/media-storage-readers`: expand the schema for all six media tables,
+   add the shared registry and orphan cleanup, and teach every media reader
+   and publication path about object keys. Capture saves continue writing
+   bytes; legacy shot retakes clear old keys when replacing bytes. Neither
+   backfill runs and neither capture writer creates object keys in this
+   release. Wait until all web and conductor processes, including draining
+   workers, run this release or later.
+2. [#6051](https://github.com/Usernode-Labs/social-vibecoding/pull/6051),
+   `codex/media-storage-shots`: switch both capture writers to immutable
+   objects and run both workflow backfills. A remaining process from the
+   reader release can read keys or safely write a transitional byte row;
+   the backfills catch those rows. The existing branch name covers both
+   media families after consolidation.
+
+The bucket and credentials from infra #56 must be live before release 2.
+After #6050 merges, refresh #6051 against its actual merged SHA and require
+passing checks. A squash merge can change ancestry. Do not merge both PRs
+before release 1 has fully rolled out: an original process cannot read the
+keyed rows that release 2 starts writing and backfilling.
+
+After the first key is written, rollback must preserve #6050's key-aware
+readers for both media families. The per-row byte read remains only while a
+row has not been backfilled. No dual byte/object write path is introduced.
+The former check-visual PRs #6052 and #6053 are superseded by these two PRs.
+
+Dropping byte columns and the compatibility read branch waits for both
+backfills to reach zero, older byte writers to be gone, and staging fixture
+seeds to be converted. That is a separate roadmap step 4 PR. Bruno schedules
+VACUUM FULL afterwards at a quiet time. These notes authorize no merge,
+deployment or maintenance action.
+
+## Shots
 
 The shots integration includes both densities in `shot_run_files` and
 `shot_artifacts`, plus `shots_eval_artifacts` and `shot_diagnostic_artifacts`.
@@ -87,36 +123,10 @@ those committed rows. The clock keeps checking for byte rows an older,
 compatible release wrote during a rollout. Density and retention behavior
 are unchanged; dense originals are retained as Bruno approved on 30 Oct.
 
-This change requires two releases, with no feature flag:
-
-1. Release `codex/media-storage-readers` first: expand the schema, teach all
-   readers and publication about keys, and make the legacy retake writer
-   clear old keys when it writes bytes. It creates no shot object keys and
-   runs no shots backfill. Wait until every serving or draining process
-   runs that release or later; original readers cannot read keyed rows.
-2. Release `codex/media-storage-shots`: new saves use keys and the workflow
-   backfill runs. A remaining process from the reader release can still
-   read new keys or write a legacy byte row safely. The backfill catches it.
-
-The media bucket and credentials (#56) must be live before release 2.
-After the first key is written, rollback must preserve the reader release's
-key support. Rolling back to code from before release 1 would serve empty
-bytes for keyed rows. Both branches stay local until Bruno authorizes PRs;
-this document is not an instruction to merge or deploy automatically.
-
-Removing the byte columns and compatibility branch waits for both the shots
-and check-visual backfills and is roadmap step 4. VACUUM FULL is a later
-operator maintenance action. The fixture seeds that still use byte rows
-also need conversion before that removal.
-
 ## Check visuals
 
-Step 3 follows the same reader-first release sequence on top of the shots
-release: `codex/media-storage-check-visual-readers`, then
-`codex/media-storage-check-visuals`. Fully roll out the check-visual readers
-and preview publication before enabling its keyed writes and backfill.
-Neither a feature flag nor a second byte write is needed. Rollbacks must
-retain both the shots and check-visual reader support after keys exist.
+Check-visual readers and preview publication are in release 1; their keyed
+writer and workflow backfill are in release 2, alongside the shots changes.
 
 `check_run_media` holds a run's media until the preview machine publishes it
 to `session_visuals`. Both tables gain an indexed restrictive registry FK,
@@ -138,3 +148,15 @@ Bruno approved retaining merged check visuals indefinitely on 30 Oct.
 They remain referenced by their published rows and have no age-based media
 expiry. Existing explicit row replacement and parent-deletion behavior is
 unchanged; moving bytes does not introduce a new retention policy.
+
+The writer release uploads every kept capture before committing its key,
+hash, size and full-response validator. Its existing replacement transaction
+locks the session and old rows before registry keys. Upload or insert failure
+rolls back the replacement; any orphaned upload is left to `media-gc`.
+
+`media-check-visuals-backfill` runs through the workflow clock in bounded,
+round-robin batches over both tables. It reports `remaining.check_run_media`,
+`remaining.session_visuals` and `done`. Each row's committed key is the
+checkpoint across retries and process restarts. A missing store is never a
+completed backfill. Existing ids, timestamps, capture provenance, merged
+history and the old full-body ETag survive the migration.
