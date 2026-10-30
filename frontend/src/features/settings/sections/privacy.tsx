@@ -7,8 +7,9 @@
  *    default) or "Anyone". It decides who may start a new direct message,
  *    invite you to a group chat, a project or its approvers, or send a
  *    friend request. A conversation that already exists keeps working.
- *  - Let people find my profile (off by default): whether people outside
- *    your projects find your username in a search.
+ *  - Who can find me › Let people find my profile (off by default):
+ *    whether people outside your projects find your username in a search.
+ *    It has its own heading (#5926): it is not about messaging.
  *    The line under each control says what is true now (#5926): the
  *    switch's explanation follows its state.
  *
@@ -169,7 +170,12 @@ export function PrivacySection() {
             );
           })}
         </div>
+        {/* #5926: who can find you is not who can message you, so it is a
+            section of its own, with its own heading. */}
         <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+          <SectionHeading title={t('settings:privacy.discoverable.title')} blurbClassName="dark:text-zinc-400">
+            {t('settings:privacy.discoverable.intro')}
+          </SectionHeading>
           <PrivacySwitch
             id="settings-profile-discoverable"
             label={t('settings:privacy.discoverable.label')}
