@@ -14775,6 +14775,33 @@ CREATE INDEX IF NOT EXISTS check_run_media_run_idx ON check_run_media (run_id);
 CREATE INDEX IF NOT EXISTS check_run_media_session_idx ON check_run_media (session_id);
 COMMENT ON TABLE check_run_media IS 'staging:private';
 
+-- The media registry is defined above with shots. Legacy byte rows remain
+-- readable until the workflow backfill commits each key and its metadata.
+ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS object_key TEXT REFERENCES media_objects(object_key);
+ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS sha256 VARCHAR(64);
+ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS bytes INTEGER;
+ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS legacy_etag TEXT;
+ALTER TABLE session_visuals ALTER COLUMN data DROP NOT NULL;
+ALTER TABLE check_run_media ADD COLUMN IF NOT EXISTS object_key TEXT REFERENCES media_objects(object_key);
+ALTER TABLE check_run_media ADD COLUMN IF NOT EXISTS sha256 VARCHAR(64);
+ALTER TABLE check_run_media ADD COLUMN IF NOT EXISTS bytes INTEGER;
+ALTER TABLE check_run_media ADD COLUMN IF NOT EXISTS legacy_etag TEXT;
+ALTER TABLE check_run_media ALTER COLUMN data DROP NOT NULL;
+CREATE INDEX IF NOT EXISTS session_visuals_object_key_idx ON session_visuals(object_key) WHERE object_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS check_run_media_object_key_idx ON check_run_media(object_key) WHERE object_key IS NOT NULL;
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['session_visuals', 'check_run_media'] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = t::regclass AND conname = t || '_media_check') THEN
+      EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I CHECK (
+        (object_key IS NULL AND data IS NOT NULL) OR
+        (object_key IS NOT NULL AND data IS NULL AND sha256 IS NOT NULL AND sha256 ~ ''^[a-f0-9]{64}$''
+          AND bytes IS NOT NULL AND bytes >= 0 AND legacy_etag IS NOT NULL))', t, t || '_media_check');
+    END IF;
+  END LOOP;
+END $$;
+
 -- platform_live_at: a merge into Homeroom itself, when a production build
 -- that carries it first started serving. Homeroom ships in a release cut
 -- after the merge, so live_at (the merge, on the legacy paths) cannot say.
