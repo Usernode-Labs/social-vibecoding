@@ -538,6 +538,10 @@ test('waitlist options: the marketing waitlist URL comes from config', async () 
     // And the privacy notice the sign-in line and Settings › About link to
     // (#5094, #5106), on the same site.
     assert.equal(body.privacy_link, 'https://example.test/legal/privacy-notice');
+    // And the two other legal pages the terms name, which Settings › About
+    // lists beside them (#6043).
+    assert.equal(body.child_safety_link, 'https://example.test/legal/child-safety-standards');
+    assert.equal(body.account_deletion_link, 'https://example.test/legal/account-deletion');
   } finally { await srv.close(); }
 });
 
@@ -550,6 +554,8 @@ test('waitlist options: an unconfigured origin still serves a usable URL', async
     assert.equal(body.waitlist_url, 'https://onhomeroom.com/waitlist');
     assert.equal(body.marketing_url, 'https://onhomeroom.com');
     assert.equal(body.privacy_link, 'https://onhomeroom.com/legal/privacy-notice');
+    assert.equal(body.child_safety_link, 'https://onhomeroom.com/legal/child-safety-standards');
+    assert.equal(body.account_deletion_link, 'https://onhomeroom.com/legal/account-deletion');
   } finally { await srv.close(); }
 });
 
@@ -571,7 +577,7 @@ test('waitlist options: the seven question maps are served untouched beside it',
     }
     assert.deepEqual(
       Object.keys(body).sort(),
-      [...Object.keys(expected), 'marketing_url', 'native_sign_in_providers', 'phone_sign_in', 'privacy_link', 'sign_in_providers', 'story_landing', 'terms_link', 'waitlist_url'].sort(),
+      [...Object.keys(expected), 'account_deletion_link', 'child_safety_link', 'marketing_url', 'native_sign_in_providers', 'phone_sign_in', 'privacy_link', 'sign_in_providers', 'story_landing', 'terms_link', 'waitlist_url'].sort(),
       'the public payload grew or lost a field'
     );
     // And the service's own constants are unmutated by the spread: the live
