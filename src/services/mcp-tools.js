@@ -5363,8 +5363,10 @@ function registerTools(server, ctx) {
   // work only touches, or one it deliberately leaves — so the agent is pointed
   // at update_proposal_issues, the owner's own metadata-only link, with the
   // numbers filled in. Only open requests are named: the mentions are checked
-  // against the app's open list, which excludes pull requests, and a failed
-  // read says nothing rather than guessing.
+  // against the app's open list, and a failed read says nothing rather than
+  // guessing. Each is named with its title: on a project still on GitHub a
+  // pull request can hold an open request's number, so a match can still be
+  // an unrelated request, and its title is how the agent sees that.
   const unlinkedRequestsNote = async (result) => {
     const mentioned = Array.isArray(result.mentionedIssues) ? result.mentionedIssues : [];
     if (!result.proposalId || !mentioned.length) return '';
@@ -5374,10 +5376,14 @@ function registerTools(server, ctx) {
     const list = Array.isArray(issues.body && issues.body.issues) ? issues.body.issues : [];
     const open = mentioned.filter((n) => list.some((i) => i.number === n));
     if (!open.length) return '';
-    const refs = open.map((n) => `#${n}`).join(', ');
+    const refs = open.map((n) => {
+      const title = untrusted(list.find((i) => i.number === n).title, 120);
+      return title ? `#${n} ${title}` : `#${n}`;
+    }).join(', ');
     return ` It is linked to no request, so no request closes when it merges. Its brief mentions open `
       + `request${open.length === 1 ? '' : 's'} ${refs}: if this change implements `
-      + `${open.length === 1 ? 'it' : 'them'}, call update_proposal_issues with proposalId ${result.proposalId} `
+      + `${open.length === 1 ? 'it' : 'them'} (check ${open.length === 1 ? 'its title' : 'their titles'} first), `
+      + `call update_proposal_issues with proposalId ${result.proposalId} `
       + `and addIssues [${open.join(', ')}], which links ${open.length === 1 ? 'it' : 'them'} and adds the `
       + '`Closes` lines to the pull request. Next time, name them in prepare_work\'s requestNumbers.';
   };

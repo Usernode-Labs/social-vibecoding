@@ -180,6 +180,13 @@ test('the submission reports what it linked, and what the brief only mentioned',
   );
   // Not a request reference: part of a word, an HTML entity, a path.
   assert.deepEqual(svc.mentionedIssueNumbers('PR#12 &#39; a/#5 x#6'), []);
+  // Nor a number written as a pull request's: on a project still on GitHub a
+  // pull request can hold an open request's number. On 30 Oct 2026 "PR #6048"
+  // in a brief was offered as request 6048, an unrelated legal request.
+  assert.deepEqual(
+    svc.mentionedIssueNumbers('PR #6048 said "Closes #6050"; pull request #12, proposal #7, Change #8 and pr #9, not #10.'),
+    [6050, 10]
+  );
   assert.deepEqual(svc.mentionedIssueNumbers(''), []);
   assert.deepEqual(svc.mentionedIssueNumbers(null), []);
 });
@@ -330,7 +337,7 @@ test('submit_work points at update_proposal_issues when the brief names open req
     const res = await withPlatform([], () => handlers.get('submit_work')({ taskId: 70, branch: 'b' }));
     assert.deepEqual(res.structuredContent.linkedIssues, []);
     assert.match(res.structuredContent.nextStep,
-      /It is linked to no request, so no request closes when it merges\. Its brief mentions open request #3033: if this change implements it, call update_proposal_issues with proposalId 4900 and addIssues \[3033\]/);
+      /It is linked to no request, so no request closes when it merges\. Its brief mentions open request #3033 <untrusted-content>Pills fill the box<\/untrusted-content>: if this change implements it \(check its title first\), call update_proposal_issues with proposalId 4900 and addIssues \[3033\]/);
     assert.doesNotMatch(res.structuredContent.nextStep, /3040|\b12\b/);
   } finally {
     restore();
