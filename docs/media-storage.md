@@ -138,3 +138,15 @@ Bruno approved retaining merged check visuals indefinitely on 30 Oct.
 They remain referenced by their published rows and have no age-based media
 expiry. Existing explicit row replacement and parent-deletion behavior is
 unchanged; moving bytes does not introduce a new retention policy.
+
+The writer release uploads every kept capture before committing its key,
+hash, size and full-response validator. Its existing replacement transaction
+locks the session and old rows before registry keys. Upload or insert failure
+rolls back the replacement; any orphaned upload is left to `media-gc`.
+
+`media-check-visuals-backfill` runs through the workflow clock in bounded,
+round-robin batches over both tables. It reports `remaining.check_run_media`,
+`remaining.session_visuals` and `done`. Each row's committed key is the
+checkpoint across retries and process restarts. A missing store is never a
+completed backfill. Existing ids, timestamps, capture provenance, merged
+history and the old full-body ETag survive the migration.

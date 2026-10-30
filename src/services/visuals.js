@@ -6,8 +6,8 @@
 // commit range plausibly affects the UI (changed-file heuristic), spawns
 // the one-shot headless-Chromium capture container (capture/) to shoot
 // the production app ("before") and the staging container ("after") over
-// the internal docker network, stores the artifacts in Postgres
-// (session_visuals, latest set per session only), patches the GitHub PR
+// the internal docker network, uploads the artifacts and stores their keys
+// in Postgres (session_visuals, latest set per session only), patches the GitHub PR
 // body's marker-delimited "Before / after" block when a PR exists, and
 // emits a `visuals_ready` event so open dev-chat cards upgrade in place.
 //
@@ -19,6 +19,8 @@
 // contract as the #183 non-fatal staging build).
 
 const crypto = require('crypto');
+const mediaStore = require('./media-store');
+const visualMedia = require('./check-visual-media');
 const path = require('path');
 const log = require('./logger');
 const checkStore = require('../workflow/rules/check-store.ts');
@@ -1495,7 +1497,8 @@ function groupRows(rows, expectedCommit = null) {
 // `hold` ({ runId }, the preview machine's checks run): the media go to
 // check_run_media under the run's id instead, and the transition that
 // settles the run publishes them to session_visuals with its verdict.
-async function storeArtifacts(pool, sessionId, commitHash, targets, shots, dropped = null, hold = null) {
+async function storeArtifacts(pool, sessionId, commitHash, targets, shots, dropped = null, hold = null,
+  { store = mediaStore.getStore() } = {}) {
   const pathByIndex = new Map();
   const viewportByIndex = new Map();
   const scenarioByIndex = new Map();
@@ -1542,24 +1545,33 @@ async function storeArtifacts(pool, sessionId, commitHash, targets, shots, dropp
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    // Serializes replacement sets for a session, while keeping uploads and
+    // their references in the existing transaction. Deletes lock old rows
+    // before registry keys, the same order the backfill takes.
+    await client.query('SELECT id FROM chat_sessions WHERE id = $1 FOR UPDATE', [sessionId]);
     if (hold) await client.query('DELETE FROM check_run_media WHERE run_id = $1', [hold.runId]);
     else await client.query('DELETE FROM session_visuals WHERE session_id = $1', [sessionId]);
-    for (const r of (hasAfter ? rows : [])) {
-      const values = [r.id, sessionId, commitHash || null, r.kind, r.media, CONTENT_TYPES[r.media], r.buf, r.capturedPath || null, r.index, r.capturedViewport,
+    const kept = hasAfter ? rows : [];
+    const keys = await mediaStore.putMany(client, store, kept.map((r) => ({ data: r.buf, contentType: CONTENT_TYPES[r.media] })));
+    for (const [i, r] of kept.entries()) {
+      const meta = visualMedia.metadata(r.buf);
+      const values = [r.id, sessionId, commitHash || null, r.kind, r.media, CONTENT_TYPES[r.media], null, r.capturedPath || null, r.index, r.capturedViewport,
         Number.isInteger(r.status) && r.status > 0 ? r.status : null,
         r.kind === 'before' && !!r.fellBack,
         r.scenarioId, r.scenarioFingerprint];
       if (hold) {
         await client.query(
-          `INSERT INTO check_run_media (id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index, captured_viewport, shot_status, before_fell_back, scenario_id, scenario_fingerprint, run_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-          [...values, hold.runId]
+          `INSERT INTO check_run_media (id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index, captured_viewport, shot_status, before_fell_back, scenario_id, scenario_fingerprint, run_id,
+            object_key, sha256, bytes, legacy_etag)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+          [...values, hold.runId, keys[i], meta.sha256, meta.bytes, meta.legacyEtag]
         );
       } else {
         await client.query(
-          `INSERT INTO session_visuals (id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index, captured_viewport, shot_status, before_fell_back, scenario_id, scenario_fingerprint)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-          values
+          `INSERT INTO session_visuals (id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index, captured_viewport, shot_status, before_fell_back, scenario_id, scenario_fingerprint,
+            object_key, sha256, bytes, legacy_etag)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+          [...values, keys[i], meta.sha256, meta.bytes, meta.legacyEtag]
         );
       }
     }
