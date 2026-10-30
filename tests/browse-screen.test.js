@@ -1913,7 +1913,7 @@ test('#5928: pressing Make opens "What do you want to make?" with the whole sear
     const button = mod.MakeFromSearch({ idea, label: `Make “${idea}”` });
     assert.equal(button.props.id, 'browse-empty-make');
     button.props.onClick();
-    assert.deepEqual(calls, [{ idea }], 'showCreateModal gets the idea, uncut');
+    assert.deepEqual(calls, [{ idea, ideaSource: 'search' }], 'showCreateModal gets the idea, uncut, and says it came from a search');
   } finally {
     globalThis.window = prevWindow;
   }

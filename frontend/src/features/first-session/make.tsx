@@ -308,6 +308,20 @@ export function makeTitle(entry: MakeEntry, who: string): string {
  */
 export const WAITLIST_IDEA_LINE = 'onboarding:firstSession.make.waitlistIdea';
 
+/**
+ * The same quiet line for an idea Discover's search handed in (#5928): the
+ * words searched for that no app answered. A message id.
+ */
+export const SEARCH_IDEA_LINE = 'onboarding:firstSession.make.searchIdea';
+
+/**
+ * Where an idea handed to the make screen came from, which decides the line
+ * under the box: the waitlist answer (the first session's, and the default),
+ * a Discover search (#5928), or a private thread's words (#6019), which says
+ * nothing because the person just wrote them there.
+ */
+export type IdeaSource = 'waitlist' | 'search' | 'thread';
+
 /** The import form's heading and line (./import-repo.tsx), as message ids. */
 export const IMPORT_TITLE = 'onboarding:firstSession.import.title';
 export const IMPORT_LINE = 'onboarding:firstSession.import.line';
@@ -368,7 +382,7 @@ export const MAKE_ROOT = 'platform-kb-surface fixed inset-0 z-[9000] flex flex-c
 export const MAKE_ROOT_UNDER_HEADER = 'platform-kb-surface platform-under-header fixed inset-x-0 bottom-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100';
 
 export function MakeScreen({
-  who, onMade, onLookAround, entry = 'first-session', onClose, startImport = false, underHeader = false, idea = null,
+  who, onMade, onLookAround, entry = 'first-session', onClose, startImport = false, underHeader = false, idea = null, ideaSource = 'waitlist',
   audience = 'invited',
 }: {
   who: string;
@@ -388,6 +402,8 @@ export function MakeScreen({
    * one, the screen opens on Your own idea with it in the box.
    */
   idea?: string | null;
+  /** Where `idea` came from (IdeaSource): the line under the box says so. */
+  ideaSource?: IdeaSource;
   /**
    * #6019 follow-up: who a project made from a private thread's idea is for
    * (Just me, A group, A community), as the person answered there. Create
@@ -935,7 +951,8 @@ export function MakeScreen({
                     placeholder={t('onboarding:firstSession.make.briefPlaceholder')}
                     className={`${BRIEF_INPUT}${briefScrolled ? ` ${BRIEF_FADE}` : ''} resize-none leading-[22px]`}
                   />
-                  {waitlistIdea && brief === waitlistIdea ? <p data-make-waitlist-idea="" className={HINT}>{t(WAITLIST_IDEA_LINE)}</p> : null}
+                  {waitlistIdea && brief === waitlistIdea && ideaSource === 'waitlist' ? <p data-make-waitlist-idea="" className={HINT}>{t(WAITLIST_IDEA_LINE)}</p> : null}
+                  {waitlistIdea && brief === waitlistIdea && ideaSource === 'search' ? <p data-make-search-idea="" className={HINT}>{t(SEARCH_IDEA_LINE)}</p> : null}
                 </>
               )}
               <div className="flex justify-end">

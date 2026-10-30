@@ -108,8 +108,8 @@ export function MakeFromSearch({ idea, label }: { idea: string; label: string })
       className="min-h-[44px] md:min-h-0 max-w-full"
       title={label}
       onClick={() => {
-        (window as unknown as { App?: { showCreateModal?: (o: { idea: string }) => boolean } })
-          .App?.showCreateModal?.({ idea });
+        (window as unknown as { App?: { showCreateModal?: (o: { idea: string; ideaSource: 'search' }) => boolean } })
+          .App?.showCreateModal?.({ idea, ideaSource: 'search' });
       }}
     ><span className="min-w-0 truncate">{label}</span></Button>
   );
