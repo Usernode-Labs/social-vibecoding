@@ -433,8 +433,8 @@ function stageOf(input, { now = new Date() } = {}) {
   const row = leftOverQueue(input) ? { ...input, queue_id: null, started_at: null, enqueued_at: null, queue_reason: null } : input;
   const proposalOpen = row.proposal_status === 'promoted' || row.proposal_status === 'merging';
   // #4539: the request itself was closed. Its waiting plan and the open
-  // question about it no longer wait on the person, and the ready plan reads
-  // as not in progress; a proposal still open shows its own state.
+  // question about it no longer wait on the person, and a build not started
+  // yet reads as not in progress; a proposal still open shows its own state.
   const closed = row.request_closed === true;
   const it = row.first_version ? 'the description' : 'the request';
   if (proposalOpen) {
@@ -489,6 +489,13 @@ function stageOf(input, { now = new Date() } = {}) {
   }
   // The newest look decided to build it, and nothing has finished it yet.
   if (row.mode === 'live' && row.verdict === 'ready' && row.build_ok == null && !row.run_proposal) {
+    // #4539, 30 Oct 2026: on a closed request nothing waits to be built any
+    // more. The bot's refresh reads open requests only, so a build held back
+    // by a limit, a plan waiting for Build it, or one waiting its turn never
+    // starts; it reads as not built because the request was closed
+    // (outcomeOf). Main said "held back" of four closed requests while the
+    // bot tab rightly left them out. A build already under way builds on.
+    if (closed && !row.build_session_id) return null;
     if (row.cap_suppressed) {
       return {
         stage: 'held',
@@ -499,10 +506,8 @@ function stageOf(input, { now = new Date() } = {}) {
       };
     }
     // B6: a first version's plan, sent to its creator, waits for Build it.
-    // #4539: not on a closed request — it stops waiting, and reads as not
-    // built because the request was closed (outcomeOf).
+    // Not on a closed request (above).
     if (row.plan_waiting_at && !row.build_waiting_at && !row.build_session_id) {
-      if (closed) return null;
       return {
         stage: 'plan', since: row.plan_waiting_at, waitingOn: 'them',
         doing: 'the plan is ready and waits for Build it',
@@ -583,10 +588,11 @@ function outcomeOf(row) {
   if (row.proposal_status === 'merged') return 'approved and live';
   if (row.proposal_status === 'closed') return 'the change was closed without going live';
   if (row.mode !== 'live') return null;
-  // #4539: the request was closed while its plan still waited for Build it:
-  // it was not built because the request was closed.
+  // #4539: the request was closed while it was still to be built (its plan
+  // waited for Build it, a limit held it back, or it waited its turn): it
+  // was not built because the request was closed.
   if (row.request_closed === true && row.verdict === 'ready' && row.build_ok == null
-    && row.plan_waiting_at && !row.build_session_id) {
+    && !row.run_proposal && !row.build_session_id) {
     return 'not built: the request was closed';
   }
   if (row.build_ok === false && /^skipped:/.test(String(row.build_error || ''))) {

@@ -394,6 +394,7 @@ const BOT_QUESTIONS_SQL = `
 //      → { items: FeedItem[] }
 //   FeedItem = { kind: 'proposal'|'governance', id, title, summary, author,
 //                number, epoch, at, yes, no, approve?, advisory?, uncounted?,
+//                request? (a proposal's request: { number, title }; requestOf),
 //                staging_url (a proposal's live preview or null; feedStagingUrl),
 //                app: { slug, name, icon_url, icon_emoji } }
 //
@@ -885,6 +886,17 @@ function ballotOf(row) {
   };
 }
 
+/**
+ * 30 Oct 2026: the request a change closes (NEEDS_FEED_SQL's ballot_for, the
+ * first request it links), which the Homeroom bot tab names it by, as the
+ * bot does in Main. `{ request }` when it has one, else nothing.
+ */
+function requestOf(row) {
+  const forRow = row.ballot_for && typeof row.ballot_for === 'object' ? row.ballot_for : null;
+  if (!forRow || forRow.number == null) return {};
+  return { request: { number: Number(forRow.number), title: forRow.title || null } };
+}
+
 const FEED_KINDS = new Set(['proposal', 'governance', 'question']);
 
 function shapeNeedsFeed(rows) {
@@ -898,6 +910,7 @@ function shapeNeedsFeed(rows) {
     summary: (row.summary || '').trim() || null,
     author: row.author || null,
     number: row.number == null ? null : Number(row.number),
+    ...(row.kind === 'proposal' && !ballot ? requestOf(row) : {}),
     epoch: row.epoch == null ? null : Number(row.epoch),
     at: row.at instanceof Date ? row.at.toISOString() : (row.at || null),
     yes: row.yes == null ? null : Number(row.yes),
@@ -968,6 +981,8 @@ const DEMO_NEEDS_FEED = [
     kind: 'proposal', id: -103, title: 'Sort recipes by rating',
     summary: 'Adds a Rating option to the sort menu, highest first, and remembers the choice per person.',
     author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-24T12:00:00Z', yes: 2, no: 0,
+    // The request it closes, which the Homeroom bot tab names it by (requestOf).
+    request: { number: 9213, title: 'Staging demo: sort by rating' },
     // No preview: the demo project has no container (stagingMockProposals
     // gives its cards none either), so "Try it" is not offered.
     staging_url: null,

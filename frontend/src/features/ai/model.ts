@@ -48,12 +48,12 @@ export interface AiThread {
   what:
     | 'plan'
     | 'going_live' | 'merging' | 'fixing' | 'revising' | 'building' | 'reading'
-    | 'vote' | 'fix_queued' | 'followup_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'on_hold'
+    | 'vote' | 'decision' | 'fix_queued' | 'followup_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'on_hold'
     | 'not_picked_up'
     | 'live';
   at: string | null;
   quietDays?: number;
-  /** Up for a vote: how you voted, if you have. */
+  /** Up for a vote (a change's, or a decision's): how you voted, if you have. */
   myVote?: 'yes' | 'no' | null;
   /** Being made: by Homeroom bot, by you, or by someone else. */
   by?: 'bot' | 'you' | 'someone';
@@ -80,12 +80,24 @@ export interface NeedItem {
   href?: string | null;
   /** A pick between competing changes: the request they compete for. */
   ballot?: { number?: number | null; title?: string | null } | null;
+  /** A change for a request: the request it closes (absent from an older server). */
+  request?: { number?: number | null; title?: string | null } | null;
 }
 
-/** Pure: the request or change number a Needs you card is about. */
+/** Pure: the request or change number a Needs you card is about, as its page is addressed. */
 function needNumber(item: NeedItem): number | null {
   if (item.kind === 'ballot') return item.ballot?.number || item.number || null;
   return item.number || null;
+}
+
+/**
+ * Pure: the number a Needs you row shows. A change for a request goes by the
+ * request's, as Homeroom bot names it in Main and as the request's own rows
+ * here do (30 Oct 2026: the tab said #6032 where the bot said #6038).
+ */
+function shownNumber(item: NeedItem): number | null {
+  if (item.kind === 'proposal' && item.request?.number) return item.request.number;
+  return needNumber(item);
 }
 
 export interface Phrase {
@@ -166,8 +178,10 @@ function whereLine(app: AiApp | null, number: number | null | undefined): Phrase
 export function owedKeys(needs: NeedItem[] | null): Set<string> {
   const owed = new Set<string>();
   for (const item of needs || []) {
-    const number = needNumber(item);
-    if (item.app && number) owed.add(`${item.app.slug}#${number}`);
+    if (!item.app) continue;
+    for (const number of [needNumber(item), shownNumber(item)]) {
+      if (number) owed.add(`${item.app.slug}#${number}`);
+    }
   }
   return owed;
 }
@@ -190,7 +204,7 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       title: (item.kind === 'ballot' && item.ballot?.title) || item.title || '',
       app,
       who: 'all',
-      sub: whereLine(app, needNumber(item)),
+      sub: whereLine(app, shownNumber(item)),
       pill: { id: PILLS[item.kind] || 'messages:ai.pill.needsYou' },
       href: needHref(item),
       rootId: null,
@@ -271,6 +285,13 @@ export function nextWords(t: AiThread): Phrase {
   }
   if (t.what === 'vote' && t.myVote === 'yes') return { id: 'messages:ai.up.voteYes', values };
   if (t.what === 'vote' && t.myVote === 'no') return { id: 'messages:ai.up.voteNo', values };
+  // A decision has no number: its project, and that it waits for votes.
+  if (t.what === 'decision') {
+    const project = { project: values.project };
+    if (t.myVote === 'yes') return { id: 'messages:ai.up.decisionYes', values: project };
+    if (t.myVote === 'no') return { id: 'messages:ai.up.decisionNo', values: project };
+    return { id: 'messages:ai.up.decision', values: project };
+  }
   if (t.what === 'held' && t.heldBy === 'daily') return { id: 'messages:ai.up.heldDaily', values };
   if (t.what === 'building' && t.by === 'bot') return { id: 'messages:ai.next.botBuilding', values };
   if (t.what === 'building' && t.by === 'you') return { id: 'messages:ai.next.youBuilding', values };

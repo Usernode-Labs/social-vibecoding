@@ -143,6 +143,66 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   assert.deepEqual(work.next[0].app, { slug: 'aw-seeds', name: 'Seed swap', icon_url: null, icon_emoji: null });
   assert.equal(work.next[0].href, '#app/aw-seeds/dev/issues/6', 'a request\'s thread opens on its page');
 
+  // 30 Oct 2026: a decision up for the group's vote has nothing to build. Hers
+  // waits for votes; one she voted on and follows says how she voted; one
+  // whose vote she still owes is the Needs you feed's.
+  const decision = (by, title) => one(
+    `INSERT INTO issues (app_id, kind, title, created_by, payload) VALUES ($1, 'rename', $2, $3, '{}') RETURNING id, thread_id`,
+    [app.id, title, by.id]);
+  await decision(ada, 'Rename to Seed Box');
+  const owed = await decision(bob, 'Rename to Seed Shop');
+  const votedOn = await decision(bob, 'Rename to Seeds');
+  await pool.query(`INSERT INTO issue_votes (issue_id, user_id, vote) VALUES ($1, $2, 'no')`, [votedOn.id, ada.id]);
+  await pool.query('INSERT INTO thread_followers (thread_id, user_id) VALUES ($1, $3), ($2, $3)',
+    [owed.thread_id, votedOn.thread_id, ada.id]);
+  const decided = (await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } })).waiting
+    .filter((r) => r.kind === 'decision').map((r) => [r.title, r.what, r.myVote, r.number]);
+  assert.deepEqual(decided.sort(), [
+    ['Rename to Seed Box', 'decision', null, null],
+    ['Rename to Seeds', 'decision', 'no', null],
+  ], 'they wait for votes, not for somebody to build them; the one she owes is Needs you\'s');
+
+  // 30 Oct 2026: somebody who votes on everything. A week of changes going
+  // live and of requests she only wrote in no longer push her own request off
+  // the end: Homeroom bot's plan for it, waiting for her Build it, is read and
+  // listed, and so is Live this week, up to its own most rows. A thread
+  // closed with nothing merged can never be listed, so it is not read.
+  const busy = await one(
+    `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
+     VALUES ('Busy', 'aw-busy', 'running', $1, 'public', 'public') RETURNING id, slug`, [bob.id]);
+  const cara = await user('aw_cara');
+  await pool.query(
+    `INSERT INTO requests (app_id, number, title, created_by, updated_at) VALUES ($1, 1, 'Her old plan', $2, NOW() - interval '3 days')`,
+    [busy.id, cara.id]);
+  await pool.query(
+    `INSERT INTO requests (app_id, number, title, created_by) SELECT $1, n, 'Live ' || n, $2 FROM generate_series(100, 189) n`,
+    [busy.id, bob.id]);
+  await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, pr_number, linked_issues, status, shared_at, merged_at, live_at)
+     SELECT $1, $2, n + 1000, ARRAY[n], 'merged', NOW(), NOW() - interval '2 hours', NOW() - interval '1 hour'
+       FROM generate_series(100, 189) n`, [busy.id, bob.id]);
+  await pool.query(
+    `INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) SELECT id, $2, 'yes', 0 FROM chat_sessions WHERE app_id = $1`,
+    [busy.id, cara.id]);
+  for (const [from, to, state] of [[200, 289, 'open'], [300, 389, 'closed']]) {
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, created_by, state) SELECT $1, n, 'Asked ' || n, $2, $5 FROM generate_series($3::int, $4::int) n`,
+      [busy.id, bob.id, from, to, state]);
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref) SELECT $1, $2, '+1', 'issue', n FROM generate_series($3::int, $4::int) n`,
+      [busy.id, cara.id, from, to]);
+  }
+  const planned = {
+    liveSvc: { isStaging: () => false },
+    settings: { mode: 'live' },
+    progress: { requestStates: async () => [{ row: { slug: 'aw-busy', issue_number: 1 }, state: { stage: 'plan', since: null } }] },
+  };
+  const read = await pool.query(aiWork.THREADS_SQL, [cara.id, false, false, aiWork.THREADS_MAX, aiWork.LIVE_DAYS]);
+  assert.ok(!read.rows.some((r) => r.state === 'closed' && r.change_status !== 'merged'), 'closed with nothing merged: not read');
+  const busyWork = await aiWork.workFor(pool, { user: { id: cara.id }, deps: { bot, ...planned } });
+  assert.deepEqual(busyWork.needs.map((r) => `${r.title}:${r.what}`), ['Her old plan:plan'], 'the bot\'s plan waits for her Build it');
+  assert.equal(busyWork.live.length, aiWork.THREADS_MAX, 'Live this week reads its own most rows');
+
   // Private threads: her own message with replies, and the bot's draft for her.
   const convo = await one(`INSERT INTO conversations (kind) VALUES ('direct') RETURNING id`);
   await pool.query(

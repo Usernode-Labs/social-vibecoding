@@ -123,6 +123,22 @@ test('In progress and Up next each leave out a thread the feed lists, by its req
   assert.deepEqual(upNext(null, work).map((t) => t.threadId), [3, 4]);
 });
 
+// 30 Oct 2026: the tab said "#6032" for the change Homeroom bot called
+// request #6038 in Main. A change for a request goes by the request's number,
+// opens on the change's own page, and still leaves out the request's thread.
+test('a vote on a change for a request names the request\'s number, and opens on the change', () => {
+  const { needsYou, upNext, owedKeys } = loadTsx(MODEL);
+  const needs = [{ kind: 'proposal', id: 1, number: 6032, title: 'Spell out the approval rules', app, request: { number: 6038, title: 'Rule changes' } }];
+  const [row] = needsYou(needs, null);
+  assert.equal(words(row.sub), 'Garden club · #6038');
+  assert.equal(row.href, '#app/garden/dev/changes/6032');
+  assert.deepEqual([...owedKeys(needs)].sort(), ['garden#6032', 'garden#6038']);
+  const work = { private: [], next: [], waiting: [thread(3, 6038, 'vote', { change: { id: 9, number: 6032 } })], live: [] };
+  assert.deepEqual(upNext(needs, work), [], 'once, in Needs you');
+  const [plain] = needsYou([{ kind: 'proposal', id: 2, number: 6050, title: 'No request', app }], null);
+  assert.equal(words(plain.sub), 'Garden club · #6050', 'a change for no request keeps its own number');
+});
+
 test('each In progress and Up next row says what it waits on, in the bot\'s words where it is the bot\'s', () => {
   const { nextWords, heroWords } = loadTsx(MODEL);
   const row = (what, extra = {}) => ({ threadId: 1, number: 7, app, what, ...extra });
@@ -158,6 +174,14 @@ test('each In progress and Up next row says what it waits on, in the bot\'s word
     'Garden club · #7 · Nobody is building it yet · quiet 10 days',
     'Garden club · Nobody is building it yet',
   ], 'a row with no number (a decision) says no "#"');
+  // 30 Oct 2026: a decision up for a vote waits for votes, not a builder.
+  assert.deepEqual([
+    row('decision', { number: null, myVote: null }), row('decision', { number: null, myVote: 'yes' }),
+    row('decision', { number: null, myVote: 'no' }),
+  ].map((r) => words(nextWords(r))), [
+    'Garden club · Waiting for votes', 'Garden club · Waiting for votes · you voted Yes',
+    'Garden club · Waiting for votes · you voted No',
+  ]);
   assert.equal(message('messages:ai.next.title'), 'In progress');
   assert.equal(message('messages:ai.up.title'), 'Up next');
   assert.equal(words(heroWords(2, 3)), 'Needs you: 2 · In progress: 3');
@@ -189,6 +213,13 @@ test('the server: a vote you have given waits on others (Up next), and the bot\'
   assert.equal(aiWork.standing({ ...open, state: 'closed' }, ME, now, null, { stage: 'plan' }), null, 'never on a closed thread');
   assert.deepEqual(aiWork.standing(open, ME, now), { group: 'waiting', what: 'not_picked_up', at, quietDays: 0 },
     'nobody building it, and not the bot\'s');
+  // A decision up for a vote waits for votes; one whose vote is owed is the feed's.
+  const decision = { state: 'open', own: true, kind: 'decision', number: null, created_at: at, decision_status: 'open' };
+  assert.deepEqual(aiWork.standing({ ...decision, decision_mine: true }, ME, now), { group: 'waiting', what: 'decision', at, myVote: null });
+  assert.deepEqual(aiWork.standing({ ...decision, decision_vote: 'yes' }, ME, now), { group: 'waiting', what: 'decision', at, myVote: 'yes' });
+  assert.equal(aiWork.standing(decision, ME, now), null, 'a vote she owes is Needs you\'s');
+  assert.equal(aiWork.standing({ ...decision, own: false, decision_vote: 'yes' }, ME, now), null, 'one she only voted on');
+  assert.equal(aiWork.standing({ ...decision, decision_mine: true, decision_status: 'applied' }, ME, now), null, 'decided');
   // Every stage the bot words a request at (homeroom-bot-progress.js
   // STEP_OF_STAGE) has a list here, but those its change says as well.
   const progress = read('src/services/homeroom-bot-progress.js');
@@ -237,9 +268,20 @@ test('Needs you here is the threads you are in, counted in the label\'s ink, wit
   assert.match(NEEDS_FEED_IN_THREADS_SQL, /AND \(o\.kind = 'question'\s+OR \(o\.thread_id IN \(SELECT mine\.thread_id FROM/, 'the bot\'s questions to you show wherever they are');
   assert.match(NEEDS_FEED_IN_THREADS_SQL, /f\.muted_at IS NOT NULL/, 'not a thread you muted');
   assert.ok(!NEEDS_FEED_SQL.includes('thread_followers f'), 'Communities › Needs you keeps every decision owed');
-  // The most rows are not spent on threads that are never listed.
+  // The most rows are not spent on threads that are never listed, and Live
+  // this week has its own, apart from the rest, their own first (30 Oct 2026).
   const { THREADS_SQL } = require('../src/services/ai-work');
   assert.match(THREADS_SQL, /AND \(mine\.own OR ch\.status IS NULL OR ch\.status = 'merged' OR ch\.user_id = \$1\)/);
+  assert.match(THREADS_SQL, /AND \(t\.state = 'open' OR \(t\.closed_at > NOW\(\) - make_interval\(days => \$5\) AND ch\.status = 'merged'\)\)/,
+    'a closed thread is read only for its merged change');
+  assert.match(THREADS_SQL, /PARTITION BY COALESCE\(ch\.status = 'merged', FALSE\)\s+ORDER BY mine\.own DESC,/);
+  assert.match(THREADS_SQL, /\) listed\s+WHERE place <= \$4/);
+  // The feed names a change's request, which the rows above go by.
+  const { shapeNeedsFeed } = require('../src/routes/workshop-overview');
+  const base = { kind: 'proposal', id: 1, title: 'Its change', number: 6032, slug: 'garden', name: 'Garden club' };
+  assert.deepEqual(shapeNeedsFeed([{ ...base, ballot_for: { number: 6038, title: 'Rule changes' } }])[0].request,
+    { number: 6038, title: 'Rule changes' });
+  assert.equal(shapeNeedsFeed([base])[0].request, undefined, 'a change for no request has none');
 });
 
 test('the first render is the prerender: hidden, the bot\'s name, no rows; lists in effects', () => {
