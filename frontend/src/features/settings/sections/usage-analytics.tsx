@@ -104,11 +104,25 @@ export function UsageAnalyticsSection() {
         onChange={(e) => void change(e.currentTarget.checked)}
       />
       {/* #5926: what is true now, then what it records and what it never
-          records, each on its own line. */}
-      <div id="settings-usage-analytics-description" className={`${HELP} mt-2 space-y-1`}>
+          records, each a short heading over a bulleted list (item 4). */}
+      <div id="settings-usage-analytics-description" className={`${HELP} mt-2 space-y-2`}>
         <p>{t(on ? 'settings:privacy.usageAnalytics.stateOn' : 'settings:privacy.usageAnalytics.stateOff')}</p>
-        <p>{t('settings:privacy.usageAnalytics.records')}</p>
-        <p>{t('settings:privacy.usageAnalytics.neverRecords')}</p>
+        <div>
+          <p>{t('settings:privacy.usageAnalytics.records.title')}</p>
+          <ul className="mt-0.5 list-disc pl-5">
+            <li>{t('settings:privacy.usageAnalytics.records.screens')}</li>
+            <li>{t('settings:privacy.usageAnalytics.records.apps')}</li>
+            <li>{t('settings:privacy.usageAnalytics.records.loadTimes')}</li>
+            <li>{t('settings:privacy.usageAnalytics.records.actions')}</li>
+          </ul>
+        </div>
+        <div>
+          <p>{t('settings:privacy.usageAnalytics.neverRecords.title')}</p>
+          <ul className="mt-0.5 list-disc pl-5">
+            <li>{t('settings:privacy.usageAnalytics.neverRecords.typing')}</li>
+            <li>{t('settings:privacy.usageAnalytics.neverRecords.screen')}</li>
+          </ul>
+        </div>
       </div>
       {error ? <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-400">{error}</p> : null}
     </div>

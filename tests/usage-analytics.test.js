@@ -164,15 +164,36 @@ test('Settings > Privacy carries the switch, off until the saved choice is read'
     'and waits for the server');
   assert.ok(html.includes(message('settings:privacy.usageAnalytics.label')));
   // #5926: the first line says what is true now (off, in the first
-  // render); what is recorded and what never is are lines of their own.
-  for (const id of ['stateOff', 'records', 'neverRecords']) {
-    assert.ok(html.includes(message(`settings:privacy.usageAnalytics.${id}`).replace(/'/g, '&#x27;')),
-      `with the ${id} line`);
+  // render); what is recorded and what never is follow, each a short
+  // heading over a bulleted list (item 4), in the switch's description.
+  const enc = (id) => message(`settings:privacy.usageAnalytics.${id}`).replace(/'/g, '&#x27;');
+  assert.ok(html.includes(enc('stateOff')), 'with the off line');
+  assert.ok(!html.includes(enc('stateOn')), 'not the on line while the switch is off');
+  const description = html.slice(html.indexOf('id="settings-usage-analytics-description"'));
+  const lists = [
+    ['records.title', ['records.screens', 'records.apps', 'records.loadTimes', 'records.actions']],
+    ['neverRecords.title', ['neverRecords.typing', 'neverRecords.screen']],
+  ];
+  let from = 0;
+  for (const [title, items] of lists) {
+    const list = `<p>${enc(title)}</p><ul class="mt-0.5 list-disc pl-5">${items.map((id) => `<li>${enc(id)}</li>`).join('')}</ul>`;
+    const at = description.indexOf(list, from);
+    assert.ok(at > 0, `${title}: a heading over one bullet per item, in order`);
+    from = at + list.length;
   }
-  assert.ok(!html.includes(message('settings:privacy.usageAnalytics.stateOn').replace(/'/g, '&#x27;')),
-    'not the on line while the switch is off');
-  assert.match(message('settings:privacy.usageAnalytics.records'), /^When it's on, we record: /);
-  assert.match(message('settings:privacy.usageAnalytics.neverRecords'), /^We never record: what you type or what is on screen\.$/);
+  // The same things the one paragraph said, and nothing more.
+  assert.equal(message('settings:privacy.usageAnalytics.records.title'), "When it's on, we record:");
+  assert.deepEqual(lists[0][1].map((id) => message(`settings:privacy.usageAnalytics.${id}`)), [
+    'The screens you open, and in what order',
+    'Which apps you open',
+    'How long pages take to load',
+    'Whether a few actions worked',
+  ]);
+  assert.equal(message('settings:privacy.usageAnalytics.neverRecords.title'), 'We never record:');
+  assert.deepEqual(lists[1][1].map((id) => message(`settings:privacy.usageAnalytics.${id}`)), [
+    'What you type',
+    'What is on screen',
+  ]);
 
   const pane = read('frontend/src/features/settings/sections/usage-analytics.tsx');
   assert.match(pane, /detail\?\.section === 'contact-privacy'\) void load\(\);/, 'read again when the page opens');

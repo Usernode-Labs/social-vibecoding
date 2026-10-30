@@ -1471,13 +1471,37 @@
     "text": "On. Homeroom keeps a record linked to your account, to see where people get stuck or lost. Turning it off stops this from then on.",
     "description": "First line under the Share usage analytics switch in Settings > Privacy while the switch is on: what is true now. \"Lost\" means unable to find their way around."
   },
-  "privacy.usageAnalytics.records": {
-    "text": "When it's on, we record: the screens you open and in what order, which apps you open, how long pages take to load and whether a few actions worked.",
-    "description": "Line under the Share usage analytics switch in Settings > Privacy, after the on/off line: everything that is recorded while the switch is on."
+  "privacy.usageAnalytics.records.title": {
+    "text": "When it's on, we record:",
+    "description": "Heading of the list of what is recorded while the switch is on, in Settings > Privacy, under the Share usage analytics switch, after the on/off line. The items follow as a bulleted list."
   },
-  "privacy.usageAnalytics.neverRecords": {
-    "text": "We never record: what you type or what is on screen.",
-    "description": "Last line under the Share usage analytics switch in Settings > Privacy: what is never recorded, whether the switch is on or off."
+  "privacy.usageAnalytics.records.screens": {
+    "text": "The screens you open, and in what order",
+    "description": "Item of the \"When it's on, we record:\" list in Settings > Privacy, under the Share usage analytics switch."
+  },
+  "privacy.usageAnalytics.records.apps": {
+    "text": "Which apps you open",
+    "description": "Item of the \"When it's on, we record:\" list in Settings > Privacy, under the Share usage analytics switch."
+  },
+  "privacy.usageAnalytics.records.loadTimes": {
+    "text": "How long pages take to load",
+    "description": "Item of the \"When it's on, we record:\" list in Settings > Privacy, under the Share usage analytics switch."
+  },
+  "privacy.usageAnalytics.records.actions": {
+    "text": "Whether a few actions worked",
+    "description": "Item of the \"When it's on, we record:\" list in Settings > Privacy, under the Share usage analytics switch: whether some actions succeeded or failed."
+  },
+  "privacy.usageAnalytics.neverRecords.title": {
+    "text": "We never record:",
+    "description": "Heading of the last list in Settings > Privacy, under the Share usage analytics switch: what is never recorded, whether the switch is on or off. The items follow as a bulleted list."
+  },
+  "privacy.usageAnalytics.neverRecords.typing": {
+    "text": "What you type",
+    "description": "Item of the \"We never record:\" list in Settings > Privacy, under the Share usage analytics switch."
+  },
+  "privacy.usageAnalytics.neverRecords.screen": {
+    "text": "What is on screen",
+    "description": "Item of the \"We never record:\" list in Settings > Privacy, under the Share usage analytics switch: the contents of the person's screen."
   },
   "privacy.usageAnalytics.saveFailed": {
     "text": "Could not save that. Try again.",
