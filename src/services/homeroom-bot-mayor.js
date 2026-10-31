@@ -4642,6 +4642,9 @@ module.exports = {
   askModel,
   parseArgs,
   codeOf,
+  // #6071: the design thread's turn (design-bot.js) is recorded and limited as these are.
+  recordTurn,
+  turnsLastHour,
   botKey,
   platformCall,
   withdrawNow,

@@ -122,6 +122,7 @@ import {
   ChevronRightIcon,
   FlagIcon,
   InfoCircleIcon,
+  DraftEditIcon,
   PhonePlusIcon,
   PlusWideIcon,
   TerminalIcon,
@@ -140,6 +141,7 @@ import { homeroomHomeScreen, openHomeroomInBrowser, takeArrival } from '../mobil
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
+import { designThisScreen } from '../design/start';
 import { prepareComment } from '../improve/suggest-shortcut';
 import { openReport } from '../dialogs/report';
 import { waitlistOptions } from '../auth/waitlist-shared';
@@ -1027,6 +1029,25 @@ export function AppsSwitcherSheet(): ReactNode {
               }}
             />
           ) : null}
+          {/*
+              DESIGN THIS SCREEN (#6071): copies what is on view once this
+              menu has gone (Homeroom's page, or the app on its App tab) into
+              a private design thread in the person's chat with Homeroom bot,
+              who edits it with them (../design/start.ts). A row of the list
+              rather than a second button under the filled one, so
+              `#improve-quick-actions > #improve-row-feedback:only-child`
+              and `#improve-quick-actions + #switcher-nav` still hold.
+          */}
+          <MenuRow
+            id="improve-row-design"
+            href="#"
+            icon={<DraftEditIcon />}
+            label={t('agent:menu.designScreen')}
+            onClick={(e) => {
+              e.preventDefault();
+              void AppContext.dismissForNav().then(() => designThisScreen());
+            }}
+          />
           {/*
               ABOUT is the second PANE of this sheet, not a second sheet: the
               kit cannot present one while it is still dismissing another, and

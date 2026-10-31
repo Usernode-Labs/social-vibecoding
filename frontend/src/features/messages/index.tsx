@@ -93,6 +93,7 @@ import {
   useMessagesSnapshot,
 } from './store';
 import { typingLine } from './typing-line';
+import { DesignPane, DesignViewSwitch, isDesignRoot, setDesignView, useDesignView } from './design-pane';
 import { issueRefHref } from './channels';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { PageBackButton } from '../dev-board/workshop/page-back';
@@ -2693,6 +2694,12 @@ function ReplyThreadPanel() {
           </div>
           {where ? <div className="messages-thread-sub">{where}</div> : null}
         </div>
+        {/* #6071: in a design thread, the way to its preview: on a phone the
+            switch back to it; in an embedded copy of the chat (the AI tab),
+            a link to it in Messages. */}
+        {isDesignRoot(root)
+          ? (snap.route.embedded ? <EmbeddedDesignLink conversationId={conversationId} rootId={rootId} /> : <DesignViewSwitch onView={setDesignView} />)
+          : null}
         {/* On a phone the Messages screen's header bar has the way back
             (app.css hides this one there, polish N16). */}
         <button type="button" className="messages-thread-action" data-reply-close="" aria-label={t('messages:replies.close')} title={t('messages:replies.close')} onClick={() => closeThread()}>
@@ -2925,10 +2932,21 @@ export function EmbeddedConversation({ conversationId, active, at = null }: {
   );
 }
 
+/** #6071: a design thread opened in an embedded copy of the chat has its preview in Messages, linked from the thread. */
+function EmbeddedDesignLink({ conversationId, rootId }: { conversationId: number; rootId: number }) {
+  const t = useMessages('messages');
+  return (
+    <a className="messages-thread-action px-2 text-[13px] font-semibold" href={`#messages/${conversationId}/thread/${rootId}`} data-design-open="">
+      {t('messages:design.pane.openInMessages')}
+    </a>
+  );
+}
+
 export function MessagesScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
   const layoutRef = useRef<HTMLDivElement | null>(null);
   const snap = useMessagesSnapshot();
+  const designView = useDesignView();
   useVisibilityHiddenClass(screenRef, 'messages-screen', false);
   useEffect(() => initializeMessagesStore(), []);
   // THE CHANGES HALF OF THIS INBOX ASKS FOR ITSELF (#2770). The Improve store's list
@@ -2977,7 +2995,15 @@ export function MessagesScreen() {
   // them: the sidebar's rows are the way.
   const sidebarRows = useSidebarRows();
   const railClass = sidebarRows && !drawer.on ? (discussionOpen ? ' messages-list-in-rail' : ' messages-list-page') : '';
-  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}${railClass}${drawerClass}`;
+  // #6071: a design thread draws its preview in the conversation's place
+  // (./design-pane.tsx); on a phone the preview and the thread take turns.
+  const designRootId = snap.route.conversationId && snap.route.threadRootId && !snap.route.embedded ? snap.route.threadRootId : null;
+  const designRoot = designRootId
+    ? (snap.thread?.rootId === designRootId ? snap.thread.root : null) || snap.messages.find((item) => item.id === designRootId) || null
+    : null;
+  const designOpen = !!designRootId && isDesignRoot(designRoot);
+  const designClass = designOpen ? ` messages-has-design messages-design-view-${designView}` : '';
+  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}${railClass}${drawerClass}${designClass}`;
   // No background of its own: the route paints the wallpaper (the
   // body:has(#messages-screen) rules in app.css), and the two frosted planes
   // need a transparent ancestor chain to have anything to blur.
@@ -2987,6 +3013,9 @@ export function MessagesScreen() {
         <div ref={layoutRef} className={layout} data-messages-drawer={drawer.on ? drawer.level : undefined} {...(drawer.handlers || {})}>
           <ConversationList drawer={drawer.on} litId={drawer.peek ? drawer.peek.conversation.id : null} />
           {drawer.peek ? <ConversationPeek peek={drawer.peek} /> : <ConversationThread />}
+          {designOpen && snap.route.conversationId && designRootId ? (
+            <DesignPane conversationId={snap.route.conversationId} rootId={designRootId} view={designView} onView={setDesignView} />
+          ) : null}
           {snap.route.conversationId && snap.route.threadRootId && !snap.route.embedded ? <ReplyThreadPanel /> : null}
           {snap.route.appSlug && snap.route.threadRootId ? <AppReplyThreadPanel slug={snap.route.appSlug} rootId={snap.route.threadRootId} /> : null}
         </div>
