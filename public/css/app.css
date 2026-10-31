@@ -25493,6 +25493,13 @@ html.in-side-panel body {
 .dev-ws-wrow-status > .dev-badge { height: 22px; font-size: 12px; margin: 0; }
 .dev-ws-wrow-status > button.dev-badge { position: relative; z-index: 1; }
 .dev-ws-wrow-status > .dev-ws-wrow-live { flex: none; }
+/* #6075: the final counted vote beside a live row's "✓ Live", in the muted
+   13px of the row's own subtitle line. Read-only history, so it is text,
+   never a second pill. */
+.dev-ws-wrow-tally {
+  flex: none; font-size: 13px; line-height: 1.35; color: var(--text-muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
 .dev-ws-wrow-menu { position: relative; z-index: 1; flex: none; display: inline-flex; margin: -3px -6px 0 -2px; }
 .dev-ws-wrow-menu > .gc-vote-btn.dev-card-menu-btn {
   width: 28px; height: 28px; padding: 0; border-color: transparent;

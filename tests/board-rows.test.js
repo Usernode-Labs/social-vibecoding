@@ -88,6 +88,7 @@ function makeAppView({ search = '', mySessions = [] } = {}) {
   AppView._merged = [{
     id: 78, pr_number: 1572, pr_title: 'Add screen transitions to Game Corner', status: 'merged',
     username: 'alice', created_at: at(2), merged_at: at(2), last_message_at: at(2), row_type: 'pr', linked_issues: [1500],
+    yes_count: 3, no_count: 1, votes_required: 3,
   }];
   AppView._mergedCtx = { majority: 1, activeUsers: 2 };
   AppView._mergedTotal = 2750; AppView._mergedHasMore = true;
@@ -142,13 +143,28 @@ test('a board column draws the board variant: no tile, the line in words, the ca
   // Done: every row is live, so the bar leads the tags at its words' width,
   // and there is no band.
   const done = column(html, 'done');
-  assert.match(done, /<span class="dev-ws-wrow-sub">PR #1572 · alice · closed #1500 · 2d ago<\/span><span class="dev-ws-wrow-status"><span class="dev-ws-row-state dev-ws-row-state-ok dev-ws-wrow-live"[^>]*>✓ Live<\/span>/);
+  assert.match(done, /<span class="dev-ws-wrow-sub">PR #1572 · alice · closed #1500 · 2d ago<\/span><span class="dev-ws-wrow-status"><span class="dev-ws-row-state dev-ws-row-state-ok dev-ws-wrow-live"[^>]*>✓ Live<\/span><span class="dev-ws-wrow-tally" title="3 yes and 1 no\. It needed 3 yes to pass\.">3\/3 yes · 1 no<\/span>/,
+    '#6075: the final counted vote sits beside the live pill');
   assert.ok(!done.includes('dev-ws-row-band'), 'no bar across a live row');
   assert.ok(!/data-tone="ok"[^>]*>(?:<svg[^>]*>[\s\S]*?<\/svg>)?Live</.test(done), 'and no second, small Live tag');
 
   // #4718: the board's rows carry no votes line — the bar and Vote stay on
   // the band under the row, and live rows keep their one tags line.
   assert.ok(!html.includes('dev-ws-wrow-votes'), 'no votes line on the board');
+});
+
+test('#6075: a live row with no counted votes shows no tally', () => {
+  const AppView = makeAppView();
+  // An imported PR: no counted votes, so its live row carries no tally and
+  // never reads "0/1".
+  AppView._merged = [{
+    id: 79, pr_number: 1571, pr_title: 'Bump the image library', status: 'merged',
+    username: 'dependabot', created_at: at(2), merged_at: at(2), last_message_at: at(2), row_type: 'pr',
+  }];
+  const done = column(kanbanHtml(AppView), 'done');
+  assert.match(done, /dev-ws-wrow-live">✓ Live<\/span><\/span>/,
+    'the live pill is the tags line’s only state');
+  assert.ok(!done.includes('dev-ws-wrow-tally'), 'no counted votes, no tally');
 });
 
 test('the row’s parts: its source', () => {
