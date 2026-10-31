@@ -3723,6 +3723,18 @@
     "text": "Set aside in {{time}}",
     "description": "Status bar on a proposal's card while its rejection window counts down: the proposal was voted down and will be closed without merging when the time runs out. {{time}} is the time left, already abbreviated, for example ~2h 5m."
   },
+  "card.tally.yes": {
+    "text": "{{yes}}/{{needed}} yes",
+    "description": "Final vote count shown beside the Live status of a change that has shipped, when nobody voted against it. {{yes}} is how many yes votes counted and {{needed}} how many were needed to pass, for example \"2/2 yes\"."
+  },
+  "card.tally.yesNo": {
+    "text": "{{yes}}/{{needed}} yes · {{no}} no",
+    "description": "Final vote count shown beside the Live status of a change that has shipped, after the yes votes against the number needed, then the no votes. {{yes}} is how many yes votes counted, {{needed}} how many were needed to pass and {{no}} how many voted no, for example \"3/3 yes · 1 no\"."
+  },
+  "card.tally.title": {
+    "text": "{{yes}} yes and {{no}} no. It needed {{needed}} yes to pass.",
+    "description": "Hover text for the final vote count beside the Live status of a change that has shipped: the whole sentence the short count stands for. {{yes}} is how many yes votes counted, {{no}} how many voted no and {{needed}} how many yes votes were needed to pass."
+  },
   "card.countdown.daysHours": {
     "text": "~{{days}}d {{hours}}h",
     "description": "Approximate time left on a proposal's countdown, a day or more, shown inside \"Goes live in …\". {{days}} and {{hours}} are numbers; d and h abbreviate days and hours. Keep the leading ~ (about)."
