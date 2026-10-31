@@ -17,7 +17,9 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const APP_CSS = read('public/css/app.css');
 const {
   STRIP_ATTR, STRIP_W_PROP, STRIP_MIN_PX, STRIP_SHOT_PX,
+  BAND_ATTR, BAND_H_PROP,
   stripSide, stripShotSide, applyStrip, watchSideStrip,
+  topBand, topBandShot, applyTopBand,
 } = loadTsx('frontend/src/lib/side-strip.ts');
 
 test('stripSide: only a wide inset on one side is a strip', () => {
@@ -68,18 +70,69 @@ test('applyStrip: publishes the side and width, and takes them away again', () =
 
 test('the probe reads the kit override before env(), as app.css does', () => {
   const src = read('frontend/src/lib/side-strip.ts');
-  // The right inset rides as TOP padding, so the probe's box is
-  // (left x right) and a change to either one resizes it.
+  // The right inset rides as TOP padding and the top inset as BOTTOM
+  // padding, so the probe's box is (left x (right + top)) and a change to
+  // any of them resizes it.
   assert.match(src, /padding-top:var\(--un-safe-inset-right,env\(safe-area-inset-right,0px\)\)/);
   assert.match(src, /padding-left:var\(--un-safe-inset-left,env\(safe-area-inset-left,0px\)\)/);
+  assert.match(src, /padding-bottom:var\(--un-safe-inset-top,env\(safe-area-inset-top,0px\)\)/);
   assert.match(src, /right: parseFloat\(cs\.paddingTop\)/);
+  assert.match(src, /top: parseFloat\(cs\.paddingBottom\)/);
   assert.match(read('frontend/src/main.tsx'), /import '\.\/lib\/side-strip';/);
+});
+
+// ── The top band: the unfolded Duo, held upright (6070) ────────────────
+
+test('topBand: a tall top inset with no side column is the Duo\'s band', () => {
+  assert.equal(topBand({ top: 80, left: 0, right: 0 }), 80, 'the unfolded Duo held upright');
+  assert.equal(topBand({ top: 59, left: 0, right: 0 }), 0, 'an ordinary iPhone status bar');
+  assert.equal(topBand({ top: STRIP_MIN_PX - 1, left: 0, right: 0 }), 0, 'below the floor');
+  assert.equal(topBand({ top: STRIP_MIN_PX, left: 0, right: 0 }), STRIP_MIN_PX, 'the floor itself');
+  assert.equal(topBand({ top: 80, left: 0, right: 84 }), 0, 'a column reported too: the strip wins');
+  assert.equal(topBand({ top: 80, left: 84, right: 0 }), 0);
+  assert.equal(topBand({ top: Number.NaN, left: 0, right: 0 }), 0);
+  assert.equal(topBand({ top: undefined, left: 0, right: 0 }), 0);
+  assert.equal(topBand(null), 0);
+});
+
+test('?side-strip=up paints the Duo\'s top band, not a column', () => {
+  assert.equal(topBandShot('?side-strip=up'), true);
+  assert.equal(topBandShot('?side-strip=right'), false);
+  assert.equal(topBandShot('?side-strip=1'), false);
+  assert.equal(topBandShot(''), false);
+  assert.equal(stripShotSide('?side-strip=up'), null, 'no column from the band flag');
+  assert.equal(topBandShot('?side-strip=up&demo=1'), true, 'the flag composes with the state');
+});
+
+test('applyTopBand: publishes the band and its height, and takes them away again', () => {
+  const attrs = new Map();
+  const props = new Map();
+  let writes = 0;
+  const root = {
+    getAttribute: (n) => (attrs.has(n) ? attrs.get(n) : null),
+    setAttribute: (n, v) => { writes += 1; attrs.set(n, v); },
+    removeAttribute: (n) => { writes += 1; attrs.delete(n); },
+    style: {
+      setProperty: (n, v) => props.set(n, v),
+      removeProperty: (n) => props.delete(n),
+    },
+  };
+  applyTopBand(root, 80);
+  assert.equal(attrs.has(BAND_ATTR), true);
+  assert.equal(props.get(BAND_H_PROP), '80px');
+  applyTopBand(root, 80);
+  assert.equal(writes, 1, 'an unchanged band is not written again');
+  applyTopBand(root, 0);
+  assert.equal(attrs.has(BAND_ATTR), false, 'back to a plain phone: gone');
+  assert.equal(props.has(BAND_H_PROP), false);
+  applyTopBand(root, 0);
+  assert.equal(writes, 2, 'nothing to take away twice');
 });
 
 // A document and window just big enough for watchSideStrip: the probe's
 // computed padding is whatever `insets` says now.
 function fakePage({ withObserver = true } = {}) {
-  const insets = { left: 0, right: 0 };
+  const insets = { top: 0, left: 0, right: 0 };
   const attrs = new Map();
   const props = new Map();
   const listeners = new Map();
@@ -97,7 +150,11 @@ function fakePage({ withObserver = true } = {}) {
   };
   const win = {
     location: { search: '' },
-    getComputedStyle: () => ({ paddingLeft: `${insets.left}px`, paddingTop: `${insets.right}px` }),
+    getComputedStyle: () => ({
+      paddingLeft: `${insets.left}px`,
+      paddingTop: `${insets.right}px`,
+      paddingBottom: `${insets.top}px`,
+    }),
     addEventListener: (type, fn) => listeners.set(type, fn),
     removeEventListener: (type) => listeners.delete(type),
   };
@@ -109,7 +166,7 @@ function fakePage({ withObserver = true } = {}) {
       disconnect() { this.disconnected = true; }
     };
   }
-  return { insets, attrs, listeners, observers, doc, win };
+  return { insets, attrs, props, listeners, observers, doc, win, root };
 }
 
 test('the strip follows the inset itself, not only a resize (the tabs left at the foot on a real Duo)', () => {
@@ -144,11 +201,65 @@ test('with no ResizeObserver, the window\'s resize still reads the inset', () =>
   assert.equal(page.attrs.get(STRIP_ATTR), 'right');
 });
 
+test('the top band follows the top inset, on a phone that reports no column', () => {
+  const page = fakePage();
+  const stop = watchSideStrip(page.doc, page.win);
+  assert.equal(page.attrs.has(BAND_ATTR), false, 'a phone: no band');
+  const [observer] = page.observers;
+  // Unfolded, held upright: the band lands in a layout pass of its own.
+  page.insets.top = 80;
+  observer.callback([]);
+  assert.equal(page.attrs.has(BAND_ATTR), true, 'the band is on');
+  assert.equal(page.props.get(BAND_H_PROP), '80px');
+  assert.equal(page.attrs.has(STRIP_ATTR), false, 'no column beside it');
+  // Folded: the column arrives and the band leaves, in whichever order the
+  // insets are read.
+  page.insets.top = 0;
+  page.insets.right = 84;
+  observer.callback([]);
+  assert.equal(page.attrs.has(BAND_ATTR), false, 'a column is not a band');
+  assert.equal(page.attrs.get(STRIP_ATTR), 'right');
+  stop();
+});
+
+test('a browser tab never has a band, whatever the engine reports (#2509)', () => {
+  const page = fakePage();
+  page.root.classList = { contains: (name) => name === 'web-browser-chrome' };
+  watchSideStrip(page.doc, page.win);
+  const [observer] = page.observers;
+  page.insets.top = 80;
+  observer.callback([]);
+  assert.equal(page.attrs.has(BAND_ATTR), false, 'the browser owns the top of the screen');
+});
+
+test('?side-strip=up still paints the band in a browser tab: it is a review state', () => {
+  const page = fakePage();
+  page.root.classList = { contains: (name) => name === 'web-browser-chrome' };
+  page.win.location.search = '?side-strip=up';
+  page.insets.top = STRIP_SHOT_PX;
+  watchSideStrip(page.doc, page.win);
+  assert.equal(page.attrs.has(BAND_ATTR), true, 'the flag paints the device it names');
+});
+
+test('?side-strip=up paints the 84px top inset the probe reads as a band', () => {
+  const page = fakePage();
+  page.win.location.search = '?side-strip=up';
+  page.insets.top = STRIP_SHOT_PX;
+  const stop = watchSideStrip(page.doc, page.win);
+  assert.equal(page.props.get('--un-safe-inset-top'), '84px');
+  assert.equal(page.attrs.has(BAND_ATTR), true);
+  assert.equal(page.props.get(BAND_H_PROP), '84px');
+  assert.equal(page.attrs.has(STRIP_ATTR), false, 'the flag paints no column');
+  stop();
+});
+
 // ── app.css ─────────────────────────────────────────────────────────────
 
 const block = (() => {
   const start = APP_CSS.indexOf('THE SIDE STRIP — iPhone Duo');
-  const end = APP_CSS.indexOf('/* ── #platform-parked — the app you left');
+  // The top band's block follows this one now (6070), so the slice ends at
+  // its heading rather than at the next section after both.
+  const end = APP_CSS.indexOf('THE TOP BAND — iPhone Duo', start);
   assert.ok(start > 0 && end > start, 'the side strip block is in app.css');
   return APP_CSS.slice(start, end);
 })();
@@ -349,4 +460,39 @@ test('the strip controls are rendered from the header\'s own back slot', () => {
   assert.match(header, /export function useBackSlot\(\)/);
   assert.match(header, /const \{ mode, href: resolvedBackHref, paneBack \} = useBackSlot\(\);/);
   assert.match(read('frontend/src/Shell.tsx'), /<Island name="StripBack"><StripBack \/><\/Island>/);
+});
+
+// ── app.css: THE TOP BAND (6070) ───────────────────────────────────────
+
+const bandBlock = (() => {
+  const start = APP_CSS.indexOf('THE TOP BAND — iPhone Duo');
+  const end = APP_CSS.indexOf('/* ── #platform-parked — the app you left', start);
+  assert.ok(start > 0 && end > start, 'the top band block is in app.css');
+  return APP_CSS.slice(start, end);
+})();
+
+test('the top band block is keyed on the band, and only on a phone with an inset', () => {
+  const selectors = [...bandBlock.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{[^{}]*\}/g)]
+    .map((m) => m[1].trim())
+    .filter((sel) => sel && !sel.startsWith('@media') && !sel.startsWith('@supports'));
+  assert.ok(selectors.length >= 2, 'the height and the bars');
+  for (const sel of selectors) {
+    assert.match(sel, /html\[data-top-band/, `${sel} applies only with the band`);
+  }
+  assert.match(bandBlock, /@media \(max-width: 767px\) \{\s*@supports \(padding: env\(safe-area-inset-top\)\) \{/,
+    'phones only, and only where a top inset exists');
+});
+
+test('the top band gives the header the band and its foot to the screens below', () => {
+  assert.match(bandBlock, /html\[data-top-band\] \{\s*--platform-header-h: max\(0px, calc\(3\.25rem - var\(--platform-band-h\)\)\);/,
+    'the height below loses what the band now covers');
+  const bars = bandBlock.match(/html\[data-top-band\] :is\(#platform-header, #landing-header\)\.un-safe-top-extend,[^{]*\{([^}]*)\}/);
+  assert.ok(bars, 'one rule lays both bars into the band');
+  assert.match(bars[0], /html\[data-top-band\]\[data-community-tint\] body:has\(#app-view:not\(\.hidden\)\) #platform-header\.un-safe-top-extend/,
+    'and repeats the community tint\'s app-view rule so it outranks it');
+  assert.match(bars[1], /padding-top: 0\.5rem !important;/, 'the inset leaves the padding; the 8px pad stays');
+  assert.match(bars[1], /padding-bottom: max\(1rem, calc\(var\(--platform-band-h\) - 2\.25rem\)\);/,
+    'the row keeps its 16px floor, and the bar\'s foot meets the band\'s foot');
+  assert.match(bars[1], /align-items: flex-start;/, 'the row sits at the top of the taller box');
+  assert.match(bars[1], /padding-right: calc\(1rem \+ 84px\);/, 'the right group clears the clock and camera');
 });

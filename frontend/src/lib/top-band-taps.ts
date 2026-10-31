@@ -23,10 +23,12 @@
  * is left alone.
  *
  * Only while `data-side-strip` is on <html>: Mobile Safari keeps the Duo's
- * column for itself, and no other phone hands the page one.
+ * column for itself, and no other phone hands the page one. The unfolded
+ * Duo held upright puts the header's controls in the same top band
+ * (`data-top-band`, ./side-strip.ts), so that layout finishes them too.
  */
 
-import { STRIP_ATTR } from './side-strip';
+import { BAND_ATTR, STRIP_ATTR } from './side-strip';
 
 /** How far down the cover's band reaches: measured 62 to 65px. */
 export const BAND_PX = 64;
@@ -60,7 +62,8 @@ export function watchTopBandTaps(doc: Document = document, win: Window = window)
 
   const onStart = (e: TouchEvent) => {
     start = null;
-    if (!doc.documentElement.hasAttribute(STRIP_ATTR) || e.touches.length !== 1) return;
+    const root = doc.documentElement;
+    if ((!root.hasAttribute(STRIP_ATTR) && !root.hasAttribute(BAND_ATTR)) || e.touches.length !== 1) return;
     const t = e.touches[0];
     if (t.clientY >= BAND_PX) return;
     start = { id: t.identifier, x: t.clientX, y: t.clientY, at: e.timeStamp };
