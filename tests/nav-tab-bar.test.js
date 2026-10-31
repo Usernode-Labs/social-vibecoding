@@ -1354,3 +1354,15 @@ test('#2795, #2798: the peeked strip is the frosted one and fades; a blue hover 
   assert.match(css,
     /@media \(hover: hover\) \{\s*\.platform-tab:not\(\[aria-current="page"\]\):hover \{\s*background: color-mix\(in srgb, var\(--lit-tint\) 55%, transparent\);/);
 });
+
+test('the folded Duo\'s corner shifts the bar\'s cells, never its shape (6072)', () => {
+  assert.match(css, /html\[data-side-corner="right"\] #platform-tabs \{\s*padding-right: var\(--platform-corner-w, 0px\);/);
+  assert.match(css, /html\[data-side-corner="left"\] #platform-tabs \{\s*padding-left: var\(--platform-corner-w, 0px\);/);
+  // The corner keeps the phone's five-cell bar: the strip's column layout is
+  // keyed on data-side-strip, and the two facts are never set together.
+  const at = css.indexOf('THE SIDE CORNER — iPhone Duo');
+  const corner = css.slice(at, css.indexOf('/* ── #platform-parked — the app you left', at));
+  assert.ok(at > 0 && corner.length > 0, 'the corner block is in app.css');
+  assert.doesNotMatch(corner, /data-side-strip/);
+  assert.doesNotMatch(corner, /flex-direction: column/);
+});

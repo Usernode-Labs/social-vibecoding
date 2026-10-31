@@ -372,6 +372,8 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #6071: design threads ───────────────────────────────────────────
+  'improve-row-design': 'Design this screen, a row of the Homeroom menu\'s list before About (features/app-context/app-context-sheet.tsx): once the menu has gone, captures the screen on view into a private design thread with Homeroom bot (features/design/start.ts).',
   // ── #6000: propose reopening a closed request ───────────────────────
   'reopen-issue-modal': 'The Propose reopening dialog (features/dialogs/reopen-issue.tsx), the mirror of #close-issue-modal, opened from a closed request\'s status card or its ⋯ menu. Ships hidden.',
   'reopen-issue-number': 'The dialog title\'s #N span, filled from the issue the dialog was opened for.',

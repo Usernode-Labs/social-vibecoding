@@ -116,8 +116,8 @@ test('deep links validate ids and route list/thread without a client events sock
   assert.match(messagesRoute, /App\.navigateToMessages\(/);
   assert.match(api, /id <= MAX_ID/);
   assert.match(store, /const target = validId\(conversationId\) \? `#messages\/\$\{conversationId\}` : '#messages'/);
-  assert.match(store, /api\.setTyping\(conversationId, typing\)/,
-    'typing uses its authenticated HTTP endpoint');
+  assert.match(store, /api\.setTyping\(conversationId, typing, threadRootId\)/,
+    'typing uses its authenticated HTTP endpoint (31 Oct 2026: naming the thread it is typed in)');
   assert.doesNotMatch(store, /eventsWs.*send|eventsWsSend/,
     'the global event socket remains server-to-client only');
 });
@@ -277,7 +277,9 @@ test('composer and moderation payloads match the backend contracts', () => {
     'a synchronously delivered share clears its fallback before opening');
   assert.match(composer, /if \(conversationId\) \{[\s\S]{0,120}takePendingShare\(\)/,
     'selecting or creating a destination consumes the one-shot on route change');
-  assert.match(composer, /\}, \[conversationId\]\);/,
+  // The pending-share effect's own dependencies (this used to match the
+  // typing cleanup's `[conversationId]` instead, which now names the thread).
+  assert.match(composer, /window\.removeEventListener\('usernode:messages-attach', attachPending\);\s*\};\s*\}, \[conversationId, inThread\]\);/,
     'the pending-share effect follows destination changes');
   const share = store.slice(store.indexOf('export async function share('),
     store.indexOf('export function takePendingShare'));
