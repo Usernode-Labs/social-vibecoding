@@ -50,6 +50,23 @@
  * Neither is a column of chrome, and neither moves anything here. Mobile Safari keeps the Duo's column for its own buttons,
  * so a page in it sees a 382px viewport with no inset, and stays a phone.
  *
+ * ── THE SIDE CORNER: folded, the island in one corner ─────────────────
+ *
+ * In the 466x678 folded pose the report shows, iOS keeps its clock, camera
+ * and signal in a narrow pill at the top-right corner instead of the wider
+ * column above: about 52px, under STRIP_MIN_PX, so neither fact above was
+ * set and the header's bell and app chip sat under it. A one-sided inset
+ * that is wider than nothing and narrower than a strip, with no column and
+ * no top band, on a phone held upright, is that corner:
+ *
+ *   data-side-corner     the side the system's corner is on
+ *   --platform-corner-w  its width, in px
+ *
+ * app.css keeps the header's controls, the content and the five cells of
+ * the bar out of it (THE SIDE CORNER block). A sideways Android phone has a
+ * one-sided cutout too, which is why the pose must be upright; a strip or a
+ * top band always wins, and the three facts are never set together.
+ *
  * ── `?side-strip=right` ───────────────────────────────────────────────
  *
  * The checks run in a desktop Chromium that has no insets, so a plain URL
@@ -61,6 +78,7 @@
  * A pure presentation flag with no writes, ungated for the same reason.
  * `?side-strip=up` is the same for the top band: it paints an 84px top
  * inset, and the probe reads it as the band the Duo reports.
+ * `?side-strip=corner` paints a 52px right inset, the folded Duo's corner.
  */
 
 export const STRIP_ATTR = 'data-side-strip';
@@ -72,6 +90,11 @@ export const BAND_H_PROP = '--platform-band-h';
 export const STRIP_MIN_PX = 64;
 /** What `?side-strip=` paints: the Duo's column (or band), measured. */
 export const STRIP_SHOT_PX = 84;
+/** The folded Duo's corner, as the report's screenshot measures it. */
+export const CORNER_ATTR = 'data-side-corner';
+export const CORNER_W_PROP = '--platform-corner-w';
+/** What `?side-strip=corner` paints: the pill in the folded Duo's corner. */
+export const CORNER_SHOT_PX = 52;
 
 export type StripSide = 'left' | 'right';
 export type SideInsets = { top?: number; left: number; right: number };
@@ -113,6 +136,30 @@ export function topBandShot(search: string): boolean {
   try { return new URLSearchParams(search).get('side-strip') === 'up'; } catch { return false; }
 }
 
+/**
+ * Which side the Duo's narrow corner is on, or null. Only a one-sided inset
+ * wider than nothing and narrower than a strip, with no column or band, on a
+ * phone held upright: a sideways phone's cutout and an iPhone's two-sided
+ * landscape notch are not this pose.
+ */
+export function sideCorner(
+  insets: SideInsets | null | undefined,
+  { portrait }: { portrait: boolean },
+): StripSide | null {
+  if (!insets || !portrait) return null;
+  if (stripSide(insets) || topBand(insets)) return null;
+  const left = Number(insets.left) || 0;
+  const right = Number(insets.right) || 0;
+  if (right > 0 && right < STRIP_MIN_PX && left < 1) return 'right';
+  if (left > 0 && left < STRIP_MIN_PX && right < 1) return 'left';
+  return null;
+}
+
+/** `?side-strip=corner` paints the folded Duo's corner, to review it. */
+export function cornerShot(search: string): boolean {
+  try { return new URLSearchParams(search).get('side-strip') === 'corner'; } catch { return false; }
+}
+
 type RootLike = {
   style: Pick<CSSStyleDeclaration, 'setProperty' | 'removeProperty'>;
   setAttribute(name: string, value: string): void;
@@ -130,6 +177,18 @@ export function applyStrip(root: RootLike, side: StripSide | null, width: number
   } else if (root.getAttribute(STRIP_ATTR) !== null) {
     root.removeAttribute(STRIP_ATTR);
     root.style.removeProperty(STRIP_W_PROP);
+  }
+}
+
+/** Publish the corner on <html>, or take it away. Writes only on a change. */
+export function applyCorner(root: RootLike, side: StripSide | null, width: number): void {
+  if (side) {
+    const px = `${Math.round(width)}px`;
+    if (root.getAttribute(CORNER_ATTR) !== side) root.setAttribute(CORNER_ATTR, side);
+    root.style.setProperty(CORNER_W_PROP, px);
+  } else if (root.getAttribute(CORNER_ATTR) !== null) {
+    root.removeAttribute(CORNER_ATTR);
+    root.style.removeProperty(CORNER_W_PROP);
   }
 }
 
@@ -218,6 +277,8 @@ export function watchSideStrip(doc: Document = document, win: Window = window): 
   const shot = stripShotSide(search);
   if (shot) root.style.setProperty(`--un-safe-inset-${shot}`, `${STRIP_SHOT_PX}px`);
   if (topBandShot(search)) root.style.setProperty('--un-safe-inset-top', `${STRIP_SHOT_PX}px`);
+  const shotCorner = cornerShot(search);
+  if (shotCorner) root.style.setProperty('--un-safe-inset-right', `${CORNER_SHOT_PX}px`);
   const RO = (win as ResizeObserverWindow).ResizeObserver;
   let observer: ResizeObserver | null = null;
   let observed: HTMLElement | null = null;
@@ -233,6 +294,14 @@ export function watchSideStrip(doc: Document = document, win: Window = window): 
       ? 0
       : topBand(insets);
     applyTopBand(root, band);
+    // The corner belongs to the app's own window, held upright: a browser
+    // tab's chrome is its own (#2509), and a sideways phone's one-sided
+    // inset is a camera cutout, not the Duo's corner. The shot flag paints
+    // the device it names, as `?side-strip=right` does.
+    const portrait = win.innerHeight > win.innerWidth;
+    const cornerAllowed = !!root.classList?.contains('in-native-webview') || shotCorner;
+    const corner = cornerAllowed ? sideCorner(insets, { portrait }) : null;
+    applyCorner(root, corner, corner ? insets[corner] : 0);
     // A probe made anew (its old one was taken out of the document) is
     // observed in its place.
     if (observer && probe && probe !== observed) {

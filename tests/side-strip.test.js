@@ -18,8 +18,10 @@ const APP_CSS = read('public/css/app.css');
 const {
   STRIP_ATTR, STRIP_W_PROP, STRIP_MIN_PX, STRIP_SHOT_PX,
   BAND_ATTR, BAND_H_PROP,
+  CORNER_ATTR, CORNER_W_PROP, CORNER_SHOT_PX,
   stripSide, stripShotSide, applyStrip, watchSideStrip,
   topBand, topBandShot, applyTopBand,
+  sideCorner, cornerShot, applyCorner,
 } = loadTsx('frontend/src/lib/side-strip.ts');
 
 test('stripSide: only a wide inset on one side is a strip', () => {
@@ -129,6 +131,57 @@ test('applyTopBand: publishes the band and its height, and takes them away again
   assert.equal(writes, 2, 'nothing to take away twice');
 });
 
+// ── The side corner: the folded Duo's pill (6072) ──────────────────────
+
+test('sideCorner: a narrow one-sided inset on an upright phone is the corner', () => {
+  const portrait = { portrait: true };
+  assert.equal(sideCorner({ left: 0, right: 52 }, portrait), 'right', 'the folded Duo in the report');
+  assert.equal(sideCorner({ left: 52, right: 0 }, portrait), 'left', 'Split View against the left edge');
+  assert.equal(sideCorner({ left: 59, right: 59 }, portrait), null, 'both sides: a landscape notch');
+  assert.equal(sideCorner({ left: 0, right: 84 }, portrait), null, 'a column wins');
+  assert.equal(sideCorner({ left: 0, right: STRIP_MIN_PX }, portrait), null, 'the floor itself is a strip');
+  assert.equal(sideCorner({ top: 80, left: 0, right: 0 }, portrait), null, 'a top band wins');
+  assert.equal(sideCorner({ left: 0, right: 52 }, { portrait: false }), null, 'a sideways phone is not this pose');
+  assert.equal(sideCorner({ left: 0, right: 0 }, portrait), null, 'a plain portrait phone');
+  assert.equal(sideCorner(null, portrait), null);
+  assert.equal(CORNER_SHOT_PX, 52, 'the corner as the report measures it');
+});
+
+test('?side-strip=corner paints the folded Duo\'s corner for a browser', () => {
+  assert.equal(cornerShot('?side-strip=corner'), true);
+  assert.equal(cornerShot('?side-strip=right'), false);
+  assert.equal(cornerShot('?side-strip=up'), false);
+  assert.equal(cornerShot(''), false);
+  assert.equal(stripShotSide('?side-strip=corner'), null, 'no column from the corner flag');
+  assert.equal(topBandShot('?side-strip=corner'), false, 'no band from it either');
+  assert.equal(cornerShot('?side-strip=corner&demo=1'), true, 'the flag composes with the state');
+});
+
+test('applyCorner: publishes the side and width, and takes them away again', () => {
+  const attrs = new Map();
+  const props = new Map();
+  let writes = 0;
+  const root = {
+    getAttribute: (n) => (attrs.has(n) ? attrs.get(n) : null),
+    setAttribute: (n, v) => { writes += 1; attrs.set(n, v); },
+    removeAttribute: (n) => { writes += 1; attrs.delete(n); },
+    style: {
+      setProperty: (n, v) => props.set(n, v),
+      removeProperty: (n) => props.delete(n),
+    },
+  };
+  applyCorner(root, 'right', 52);
+  assert.equal(attrs.get(CORNER_ATTR), 'right');
+  assert.equal(props.get(CORNER_W_PROP), '52px');
+  applyCorner(root, 'right', 52);
+  assert.equal(writes, 1, 'an unchanged side is not written again');
+  applyCorner(root, null, 0);
+  assert.equal(attrs.has(CORNER_ATTR), false, 'a plain phone: gone');
+  assert.equal(props.has(CORNER_W_PROP), false);
+  applyCorner(root, null, 0);
+  assert.equal(writes, 2, 'nothing to take away twice');
+});
+
 // A document and window just big enough for watchSideStrip: the probe's
 // computed padding is whatever `insets` says now.
 function fakePage({ withObserver = true } = {}) {
@@ -150,6 +203,9 @@ function fakePage({ withObserver = true } = {}) {
   };
   const win = {
     location: { search: '' },
+    // Upright by default: the corner's pose. A landscape case sets its own.
+    innerWidth: 390,
+    innerHeight: 844,
     getComputedStyle: () => ({
       paddingLeft: `${insets.left}px`,
       paddingTop: `${insets.right}px`,
@@ -251,6 +307,55 @@ test('?side-strip=up paints the 84px top inset the probe reads as a band', () =>
   assert.equal(page.props.get(BAND_H_PROP), '84px');
   assert.equal(page.attrs.has(STRIP_ATTR), false, 'the flag paints no column');
   stop();
+});
+
+test('the corner follows a narrow one-sided inset in the app, upright', () => {
+  const page = fakePage();
+  page.root.classList = { contains: (name) => name === 'in-native-webview' };
+  const stop = watchSideStrip(page.doc, page.win);
+  assert.equal(page.attrs.has(CORNER_ATTR), false, 'a plain phone: no corner');
+  const [observer] = page.observers;
+  page.insets.right = CORNER_SHOT_PX;
+  observer.callback([]);
+  assert.equal(page.attrs.get(CORNER_ATTR), 'right', 'the inset moving is enough');
+  assert.equal(page.props.get(CORNER_W_PROP), '52px');
+  assert.equal(page.attrs.has(STRIP_ATTR), false, 'the corner is not a column');
+  // Sideways, the same inset is a cutout: the corner goes.
+  page.win.innerWidth = 844;
+  page.win.innerHeight = 390;
+  observer.callback([]);
+  assert.equal(page.attrs.has(CORNER_ATTR), false, 'a sideways phone keeps its own layout');
+  // Upright again, and with a real column it is the strip that wins.
+  page.win.innerWidth = 466;
+  page.win.innerHeight = 678;
+  page.insets.right = 84;
+  observer.callback([]);
+  assert.equal(page.attrs.has(CORNER_ATTR), false, 'a column is not the corner');
+  assert.equal(page.attrs.get(STRIP_ATTR), 'right');
+  stop();
+});
+
+test('a browser tab never has the corner, whatever the engine reports', () => {
+  const page = fakePage();
+  page.root.classList = { contains: (name) => name === 'web-browser-chrome' };
+  watchSideStrip(page.doc, page.win);
+  const [observer] = page.observers;
+  page.insets.right = CORNER_SHOT_PX;
+  observer.callback([]);
+  assert.equal(page.attrs.has(CORNER_ATTR), false, 'the browser chrome is its own');
+});
+
+test('?side-strip=corner paints 52px and sets the corner in a tab', () => {
+  const page = fakePage();
+  page.root.classList = { contains: (name) => name === 'web-browser-chrome' };
+  page.win.location.search = '?side-strip=corner';
+  page.insets.right = CORNER_SHOT_PX;
+  watchSideStrip(page.doc, page.win);
+  assert.equal(page.props.get('--un-safe-inset-right'), '52px');
+  assert.equal(page.attrs.get(CORNER_ATTR), 'right', 'the flag paints the device it names');
+  assert.equal(page.props.get(CORNER_W_PROP), '52px');
+  assert.equal(page.attrs.has(STRIP_ATTR), false, 'the flag paints no column');
+  assert.equal(page.attrs.has(BAND_ATTR), false, 'and no band');
 });
 
 // ── app.css ─────────────────────────────────────────────────────────────
@@ -466,7 +571,9 @@ test('the strip controls are rendered from the header\'s own back slot', () => {
 
 const bandBlock = (() => {
   const start = APP_CSS.indexOf('THE TOP BAND — iPhone Duo');
-  const end = APP_CSS.indexOf('/* ── #platform-parked — the app you left', start);
+  // THE SIDE CORNER block follows the band (6072), so the slice ends at its
+  // heading rather than at the next section after both.
+  const end = APP_CSS.indexOf('THE SIDE CORNER — iPhone Duo', start);
   assert.ok(start > 0 && end > start, 'the top band block is in app.css');
   return APP_CSS.slice(start, end);
 })();
@@ -495,4 +602,37 @@ test('the top band gives the header the band and its foot to the screens below',
     'the row keeps its 16px floor, and the bar\'s foot meets the band\'s foot');
   assert.match(bars[1], /align-items: flex-start;/, 'the row sits at the top of the taller box');
   assert.match(bars[1], /padding-right: calc\(1rem \+ 84px\);/, 'the right group clears the clock and camera');
+});
+
+// ── app.css: THE SIDE CORNER (6072) ─────────────────────────────────────
+
+const cornerBlock = (() => {
+  const start = APP_CSS.indexOf('THE SIDE CORNER — iPhone Duo');
+  const end = APP_CSS.indexOf('/* ── #platform-parked — the app you left', start);
+  assert.ok(start > 0 && end > start, 'the side corner block is in app.css');
+  return APP_CSS.slice(start, end);
+})();
+
+test('the corner block is keyed on the corner, and only on a phone', () => {
+  const selectors = [...cornerBlock.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{[^{}]*\}/g)]
+    .map((m) => m[1].trim())
+    .filter((sel) => sel && !sel.startsWith('@media'));
+  assert.ok(selectors.length >= 6, 'the content, the header and the bar, both sides');
+  for (const sel of selectors) {
+    assert.match(sel, /html\[data-side-corner/, `${sel} applies only with the corner`);
+  }
+  assert.match(cornerBlock, /@media \(max-width: 767px\) \{/, 'phones only');
+  assert.doesNotMatch(cornerBlock, /data-side-strip/, 'the column layout is never keyed on the corner');
+});
+
+test('the corner keeps the content, the header\'s controls and the five cells out of it', () => {
+  assert.match(cornerBlock, /html\[data-side-corner="right"\] body,\s*html\[data-side-corner="right"\] #auth-landing-screen \{\s*padding-right: var\(--platform-corner-w, 0px\);/);
+  assert.match(cornerBlock, /html\[data-side-corner="left"\] body,\s*html\[data-side-corner="left"\] #auth-landing-screen \{\s*padding-left: var\(--platform-corner-w, 0px\);/);
+  assert.match(cornerBlock, /html\[data-side-corner="right"\] #platform-header \{\s*margin-right: calc\(-1 \* var\(--platform-corner-w, 0px\)\);\s*padding-right: calc\(1rem \+ 84px\);/,
+    'the header spans the screen; its controls clear the 84px corner (6070)');
+  assert.match(cornerBlock, /html\[data-side-corner="left"\] #platform-header \{\s*margin-left: calc\(-1 \* var\(--platform-corner-w, 0px\)\);\s*padding-left: calc\(1rem \+ 84px\);/,
+    'mirrored for Split View against the left edge');
+  assert.match(cornerBlock, /html\[data-side-corner="right"\] #platform-tabs \{\s*padding-right: var\(--platform-corner-w, 0px\);/,
+    'the bar keeps its ground; its cells stay left of the corner');
+  assert.match(cornerBlock, /html\[data-side-corner="left"\] #platform-tabs \{\s*padding-left: var\(--platform-corner-w, 0px\);/);
 });

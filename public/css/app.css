@@ -23075,6 +23075,61 @@ html[data-side-strip="left"] #platform-header {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   THE SIDE CORNER — iPhone Duo folded, its island in one corner
+   ═══════════════════════════════════════════════════════════════════
+
+   In the 466x678 folded pose the report shows, iOS keeps the clock, the
+   camera and the signal in a narrow pill at the top-right corner rather
+   than the full column above: about 52px, so under STRIP_MIN_PX and not a
+   strip. Nothing read that space, and the header's bell and app chip, the
+   page's own buttons and the last tile in a row sat under the system's
+   pill.
+
+   frontend/src/lib/side-strip.ts turns a one-sided inset wider than
+   nothing and narrower than a strip, with no column and no top band, on a
+   phone held upright, into one fact on <html>:
+
+     data-side-corner     the side the system's corner is on
+     --platform-corner-w  its width, in px (52 in `?side-strip=corner`)
+
+   This is the layout. The header still runs edge to edge — its ground
+   under the clock, as it runs into the folded Duo's column above — while
+   its controls move clear of the corner; the content stops at the corner;
+   and the five-cell bar keeps its ground across the screen with its cells
+   beside the corner. The strip's column layout above is never keyed on
+   this attribute: the two facts are never set together, and an ordinary
+   phone or a browser tab renders exactly as it did.
+
+   The 84px the header's controls keep clear of the corner is the same
+   number the top band spends on the clock and camera's corner (6070). */
+@media (max-width: 767px) {
+  html[data-side-corner="right"] body,
+  html[data-side-corner="right"] #auth-landing-screen {
+    padding-right: var(--platform-corner-w, 0px);
+  }
+  html[data-side-corner="left"] body,
+  html[data-side-corner="left"] #auth-landing-screen {
+    padding-left: var(--platform-corner-w, 0px);
+  }
+  /* The header's ground spans the screen, its controls clear the corner. */
+  html[data-side-corner="right"] #platform-header {
+    margin-right: calc(-1 * var(--platform-corner-w, 0px));
+    padding-right: calc(1rem + 84px);
+  }
+  html[data-side-corner="left"] #platform-header {
+    margin-left: calc(-1 * var(--platform-corner-w, 0px));
+    padding-left: calc(1rem + 84px);
+  }
+  /* The five cells stay left of the corner; the bar's ground does not. */
+  html[data-side-corner="right"] #platform-tabs {
+    padding-right: var(--platform-corner-w, 0px);
+  }
+  html[data-side-corner="left"] #platform-tabs {
+    padding-left: var(--platform-corner-w, 0px);
+  }
+}
+
 
 
 /* ── #platform-parked — the app you left ─────────────────────────────
