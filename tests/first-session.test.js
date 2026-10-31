@@ -26,13 +26,13 @@ test('the walk on Home: three cards, each ringing one place, with Next, and Done
   const { homeWalkSteps, tileOf } = loadTsx(`${DIR}/tour-steps.ts`);
   const steps = homeWalkSteps({ slug: 'sunday-run-club', name: 'Sunday Run Club' });
   // Evan, 15 Oct 2026 ("1, 2, 3 on Home"): the project's tile, Homeroom bot
-  // (in AI since #6019), and Communities, one short title and one short sentence
+  // (its own tab since #6019), and Communities, one short title and one short sentence
   // each, and each about the reader's own project ("a more contextual
   // tour", the same day). A project with no example change (one Homeroom
   // bot built, a game, an import) gets the bot card's words without one.
   assert.deepEqual(steps.map((s) => [s.screen, s.target, s.title, s.text]), [
     ['home', '#app-list .app-card[data-slug="sunday-run-club"]', 'Welcome to Homeroom', 'Sunday Run Club lives here, on Home.'],
-    ['home', '#platform-tab-ai', 'Homeroom bot', 'It\'s in AI. Ask it to make any changes to Sunday Run Club.'],
+    ['home', '#platform-tab-ai', 'Homeroom bot', 'It\'s in the Homeroom bot tab. Ask it to make any changes to Sunday Run Club.'],
     ['home', '#platform-tab-workshop', 'Communities', 'Sunday Run Club\'s hub is here. Invite people and decide what changes.'],
   ]);
   assert.deepEqual(homeWalkSteps({ slug: 'sunday-run-club', name: 'Sunday Run Club', example: null }), steps, 'null is no example');
@@ -862,7 +862,7 @@ test('"Look around first" has its own four cards on Home, each pointing at one p
     ['home', '#home-create-tile', 'Make something any time', 'New project starts a community and its app.'],
     ['home', '#home-discover-section', 'Find apps in Discover', 'Open any app, or join its community.'],
     ['home', '#platform-tab-workshop', 'Communities you join show up here', 'Each one has its own hub and discussion.'],
-    ['home', '#platform-tab-ai', 'Homeroom bot is in AI', 'It makes apps with you. You can always find it here.'],
+    ['home', '#platform-tab-ai', 'Homeroom bot has its own tab', 'It makes apps with you. You can always find it here.'],
   ]);
   // Nobody is taken anywhere: no step is a tap, each rings its place, and
   // the last one ends it.

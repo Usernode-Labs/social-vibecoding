@@ -2286,4 +2286,21 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal((await read(quiet)).metadata.homeroomBot.actions, undefined, 'none offered, none drawn');
     assert.equal((await read(sent)).metadata.homeroomBot.status, 'closed', 'the earlier ones went when it answered again');
   });
+
+  await t.test('#6071 follow-up: offer_design puts Pick the screen first under the reply, for the project it names', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    const sent = await turn('the note cards look cramped', scripted([
+      [['offer_design', { project: 'note-board' }]],
+      [['reply', { text: 'Pick the screen and we can redo it together.', suggestions: ['Show my requests'] }]],
+    ]));
+    const meta = (await read(sent)).metadata.homeroomBot;
+    assert.deepEqual(meta.actions.map((a) => [a.label, a.type, a.style]), [[mayor.PICK_SCREEN, 'design', 'primary'], ['Show my requests', 'prompt', 'secondary']]);
+    assert.equal(meta.appSlug, 'note-board');
+    assert.equal(meta.appName, 'Note board', 'the picker names the project');
+    const ctx = { user: ada };
+    assert.equal((await mayor.offerDesign(pool, ctx, { project: 'no-such-project' })).ok, false, 'a project she cannot see is no offer');
+    assert.equal(ctx.designOffer, undefined);
+    assert.equal((await mayor.offerDesign(pool, ctx, {})).ok, true);
+    assert.deepEqual(ctx.designOffer, { appSlug: null, appName: null }, 'or any project');
+  });
 });

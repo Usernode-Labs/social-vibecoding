@@ -268,8 +268,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // LockIcon and UserGroupIcon LEFT this list with communities, stage 3:
     // the create dialog's first step (who it is for) draws them on its
     // "A group" and "A community" rows, and the dialog prerenders every step.
-    // DraftEditIcon LEFT this list with #6071: the Homeroom menu's Design
-    // this screen row draws it, and the menu prerenders.
+    // DraftEditIcon is back on this list: the Homeroom menu's Design this
+    // screen row (#6071) left the menu for Homeroom bot's new thread.
+    'M12 20h9',
     // DownloadIcon (#4055): the image viewer's Download and a message's
     // "Download image", both drawn only after a tap.
     'M12 3v12m0 0l-4-4m4 4l4-4M5 13v7h14v-7',
@@ -305,6 +306,7 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M16 11V3H8v8M5 7H3v4a2 2 0 002 2h3M19 7h2v4a2 2 0 01-2 2h-3M8 15a4 4 0 008 0h-8z M12 15v3m-3 3h6',
     'M16.023 9.348h4.992V4.356m-4.992 4.992l3.181-3.183a8.25 8.25 0 00-13.803 3.7M4.031 9.865v4.99m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7',
     'M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-7.322c.983.143 1.954.317 2.916.52a6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0',
+    'M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z',
     'M16.5 6.5a2.12 2.12 0 0 1 3 3L9 20l-4 1 1-4z',
     'M17 21v-8H7v8',
     'M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z',

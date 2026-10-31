@@ -179,6 +179,8 @@ const PLATFORM_TOOLS = Object.freeze([
 const PLATFORM_GRANT_SECONDS = 300;
 
 const FILE_IT = 'File it';
+// #6071 follow-up: offer_design's button (a `design` action: the screen picker, on the device).
+const PICK_SCREEN = 'Pick the screen';
 const NOT_NOW = 'Not now';
 // #11 (WP3): the answers under an offer to withdraw one of its proposals.
 const WITHDRAW_IT = 'Withdraw it';
@@ -351,7 +353,15 @@ function otherThreadLines(thread) {
     '  message here, in this thread.',
   ];
   const d = thread.draft;
-  if (d?.appSlug) {
+  if (d?.kind === 'ask') {
+    // #6071 follow-up: started from your "+", with what its welcome block picked.
+    const what = { fix: 'to fix something broken', add: 'to add something new', design: 'to change how a screen looks' }[d.changeKind] || 'to make a change';
+    lines.push(
+      `- They started this thread with your "+", ${what}${d.appSlug ? ` on ${d.appName || d.appSlug} (project "${d.appSlug}")` : ', on any project'}.`,
+      '  Help them say what they want, then offer it as a request with offer_request. When it is about how a screen',
+      '  looks, call offer_design: a Pick the screen button takes them to the screen, and you design it with them.',
+    );
+  } else if (d?.appSlug) {
     const name = d.appName || d.appSlug;
     const title = d.title ? ` ("${clip(d.title, 140)}")` : '';
     if (d.kind === 'draft_request' && d.state === 'filed' && d.issueNumber) {
@@ -746,6 +756,18 @@ const TOOLS = [
           reason: { type: 'string', description: 'Why they want it withdrawn, in a few plain words, as they put it. They see it with the offer.' },
         },
         required: ['proposal', 'reason'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'offer_design',
+      description: 'Offer to work on how a screen looks, as a design (#6071): a "Pick the screen" button goes under your reply. It takes them to the project, where they go to the screen they mean and tap Use this screen; a private design thread opens with that screen, and you edit it with them there. Use it when they want to change how something looks or is laid out, rather than describing it in a request. Say in your reply what the button does. `project`: the project, by name or slug, when you know it.',
+      parameters: {
+        type: 'object',
+        properties: { project: { type: 'string', description: 'The project the screen is in, by name or slug. Leave it out when they have not said.' } },
         additionalProperties: false,
       },
     },
@@ -1915,6 +1937,26 @@ async function resolveCards(pool, user, cards) {
   });
 }
 
+/**
+ * #6071 follow-up: offer_design. A Pick the screen button goes under the
+ * turn's reply (answer(): metadata.actions, type 'design'), for `project`
+ * when it names one they may see. Nothing is made until they pick a screen.
+ */
+async function offerDesign(pool, ctx, args = {}) {
+  let app = null;
+  if (typeof args.project === 'string' && args.project.trim()) {
+    app = await findApp(pool, args.project);
+    if (!app || !(await canView(pool, app, ctx.user))) {
+      return { ok: false, error: `There is no project called ${clip(args.project, 80)} that they can see. Ask which one, or leave project out.` };
+    }
+  }
+  ctx.designOffer = app ? { appSlug: app.slug, appName: app.name || app.slug } : { appSlug: null, appName: null };
+  return {
+    ok: true,
+    note: 'A Pick the screen button goes under your reply. Tell them it takes them to the screen, where they tap Use this screen, and that you will design it with them in a private thread.',
+  };
+}
+
 /** Run one tool call for this person. Never throws: errors are results. */
 async function runTool(pool, ctx, name, args) {
   const { user, settings, deps } = ctx;
@@ -1943,6 +1985,7 @@ async function runTool(pool, ctx, name, args) {
         return detail;
       }
       case 'comment_on_request': return await commentOnRequest(pool, ctx, args);
+      case 'offer_design': return await offerDesign(pool, ctx, args);
       case 'start_request': return await startRequest(pool, ctx, args);
       case 'my_projects': return await myProjects(pool, { user, settings, deps });
       case 'list_source': return await listSource(pool, { user, project: args.project, dir: args.dir, match: args.match, deps });
@@ -2654,11 +2697,17 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   // What they might say next, as buttons to tap (dm.retireSuggestions
   // closes them once the bot says something newer).
   const next = suggestionLabels(ctx.reply?.suggestions);
+  // #6071 follow-up: offer_design's Pick the screen leads the buttons.
+  const pick = ctx.designOffer ? [{ id: 'design', label: PICK_SCREEN, style: 'primary', type: 'design' }] : [];
+  const prompts = next.length ? require('./homeroom-bot-dm').promptActions(next) : [];
+  const actions = [...pick, ...prompts].slice(0, 3);
+  const project = ctx.designOffer?.appSlug ? { appSlug: ctx.designOffer.appSlug, appName: ctx.designOffer.appName }
+    : named.project ? { appSlug: named.project } : {};
   return say(text, {
     objects: unique,
     metadata: {
-      kind: 'chat', ...(named.project ? { appSlug: named.project } : {}),
-      ...(next.length ? { actions: require('./homeroom-bot-dm').promptActions(next), status: 'open' } : {}),
+      kind: 'chat', ...project,
+      ...(actions.length ? { actions, status: 'open' } : {}),
     },
   });
 }
@@ -4530,6 +4579,8 @@ module.exports = {
   MAX_CARDS,
   FILE_IT,
   NOT_NOW,
+  PICK_SCREEN,
+  offerDesign,
   WITHDRAW_IT,
   KEEP_IT,
   OFFER_ANSWERS,

@@ -190,9 +190,10 @@ test('the transcript draws a moment whole in the bot\'s chat, and keeps the room
   assert.match(screen, /const moment = botDm && alsoInChat\(message\);\s*if \(message\.threadRootId && !moment\) \{/);
   assert.match(screen, /rows\.push\(<ThreadActivityRow key=/, 'rooms keep ThreadActivityRow');
   assert.match(screen, /const grouped = !moment && !!previous/, 'a moment carries its own name');
-  // The thread pane names a request's thread by the request, over its project.
-  assert.match(screen, /\{request \? botThreadTitle\(request\) : t\('messages:replies\.title'\)\}/);
-  assert.match(screen, /const where = request \? request\.project :/);
+  // The thread pane names a request's thread by the request, over its project;
+  // a thread from the bot's "+" (#6071 follow-up) by what it is for.
+  assert.match(screen, /\{started \? startedThreadTitle\(t, started\.changeKind\) : request \? botThreadTitle\(request\) : t\('messages:replies\.title'\)\}/);
+  assert.match(screen, /: request \? request\.project : active \?/);
 });
 
 test('a plan in its request\'s thread hides no card and reads the card it hangs off', () => {

@@ -10,6 +10,7 @@ import { AnsweredChoices } from './bot-plan-view';
 import { useTrackOf } from './bot-track';
 import { answerBotQuestion, quoteInComposer, tapBotAction } from './store';
 import type { ConversationMessage, HomeroomBotAction, HomeroomBotMeta } from './types';
+import { startScreenPick } from '../design/pick';
 
 /*
  * #3624: what hangs under a message from the Homeroom bot.
@@ -227,6 +228,12 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
   function press(action: HomeroomBotAction) {
     if (action.type === 'open') {
       void tapBotAction(message, action).catch(() => {});
+      return;
+    }
+    // #6071 follow-up: Pick the screen: the picker opens on the device, for
+    // the message's project, and the buttons stay.
+    if (action.type === 'design') {
+      startScreenPick({ appSlug: meta.appSlug || null, appName: meta.appName || null });
       return;
     }
     // #4231: decided here, on the device, and the buttons stay.

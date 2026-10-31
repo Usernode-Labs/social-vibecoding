@@ -318,6 +318,26 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // #6071 follow-up: a new thread with the bot, from its "+"
+  // (frontend/src/features/messages/new-thread.tsx): made when the person
+  // sends its first message, with what the welcome block picked.
+  //
+  //   POST /api/conversations/homeroom-bot/new-thread   { project?, kind? } → { conversationId, rootId }
+  router.post('/api/conversations/homeroom-bot/new-thread', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+      const body = req.body || {};
+      return answerDoor(res, await privateThreads().startThread(pool, {
+        user: req.user,
+        project: typeof body.project === 'string' && body.project ? body.project.slice(0, 120) : null,
+        kind: typeof body.kind === 'string' ? body.kind : 'any',
+      }));
+    } catch (err) {
+      log.error('conversations', 'new bot thread failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // #6071: design threads (services/design-threads.js). A screen the person
   // captured opens as a private thread of their chat with the bot; its pane
   // reads the thread and its versions here, and Propose it files the design

@@ -121,7 +121,8 @@ const BOT_QUESTION_STATES = new Set(['open', 'answered', 'closed']);
 // B7: a change's ready card adds three: its preview (Try it), the person's
 // own Yes (Approve) and a reply quoting the card (Change something).
 // #4231: and `invite`, under a new project's first version going live.
-const BOT_ACTION_TYPES = new Set(['server', 'open', 'prompt', 'preview', 'vote', 'reply', 'invite']);
+// #6071 follow-up: `design` opens the screen picker for the message's project (../design/pick.tsx).
+const BOT_ACTION_TYPES = new Set(['server', 'open', 'prompt', 'preview', 'vote', 'reply', 'invite', 'design']);
 const MAX_BOT_ACTIONS = 3;
 
 /** B3: a bot message's buttons, as types.ts HomeroomBotAction: at most three, one primary. */
@@ -251,6 +252,7 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       appName: optional('appName'),
       ...(strictId(pick(bot, 'designVersion')) ? { designVersion: strictId(pick(bot, 'designVersion'))! } : {}),
       designTitle: optional('designTitle'),
+      ...(['fix', 'add', 'design'].includes(String(pick(bot, 'changeKind'))) ? { changeKind: String(pick(bot, 'changeKind')) as HomeroomBotMeta['changeKind'] } : {}),
       ...(issueNumber ? { issueNumber } : {}),
       issueTitle: optional('issueTitle'),
       ...(pick(bot, 'firstVersion') === true ? { firstVersion: true } : {}),
@@ -677,6 +679,18 @@ export interface DesignCapture {
 }
 
 const DESIGNS = '/api/conversations/homeroom-bot/designs';
+
+/**
+ * #6071 follow-up: make the thread a blank one from Homeroom bot's "+" is
+ * about to be, with what its welcome block picked (the project, by slug, or
+ * any; the kind of change). Its first message is then sent into it.
+ */
+export async function startBotThread(input: { project: string | null; kind: string }): Promise<{ conversationId: number; rootId: number }> {
+  const data = record(await request<unknown>('/api/conversations/homeroom-bot/new-thread', { method: 'POST', body: JSON.stringify(input) }));
+  const rootId = strictId(pick(data, 'rootId'));
+  if (!rootId) throw new Error(text(pick(data, 'error')) || 'The thread could not be started');
+  return { conversationId: strictId(pick(data, 'conversationId')) || 0, rootId };
+}
 
 /** Open a design thread for a captured screen: where it is, to open it. */
 export async function startDesign(capture: DesignCapture): Promise<{ conversationId: number; rootId: number; href: string }> {

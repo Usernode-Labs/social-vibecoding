@@ -3425,7 +3425,99 @@
   },
   "design.pane.openInMessages": {
     "text": "Open the design",
-    "description": "In a design thread opened beside the AI tab, where its preview is not drawn: opens the thread in Messages, with the preview beside it."
+    "description": "In a design thread opened in the Homeroom bot tab's Main Chat, where its preview is not drawn: opens the thread in Messages, with the preview beside it."
+  },
+  "newThread.start": {
+    "text": "New thread",
+    "description": "The \"+\" button in the Homeroom bot tab's header and in the header of the chat with Homeroom bot in Messages: starts a new blank thread with the bot. Its accessible name and tooltip."
+  },
+  "newThread.title": {
+    "text": "New thread",
+    "description": "Title of the blank thread pane the \"+\" opens, before anything is sent in it."
+  },
+  "newThread.sub": {
+    "text": "With Homeroom bot, only you can see it",
+    "description": "Line under the title of the blank thread pane: the thread is private to the person."
+  },
+  "newThread.close": {
+    "text": "Close",
+    "description": "Closes the blank thread pane without starting anything."
+  },
+  "newThread.project": {
+    "text": "Project",
+    "description": "Label of the menu in a new thread that chooses the project the change is for."
+  },
+  "newThread.anyProject": {
+    "text": "Any project",
+    "description": "The project menu's first choice and default in a new thread: the change is not tied to one project yet."
+  },
+  "newThread.kind": {
+    "text": "Change",
+    "description": "Label of the menu in a new thread that chooses what kind of change to make."
+  },
+  "newThread.kinds.any": {
+    "text": "Any kind of change",
+    "description": "The change menu's first choice and default in a new thread."
+  },
+  "newThread.kinds.fix": {
+    "text": "Fix something broken",
+    "description": "A choice in the change menu of a new thread with Homeroom bot."
+  },
+  "newThread.kinds.add": {
+    "text": "Add something new",
+    "description": "A choice in the change menu of a new thread with Homeroom bot."
+  },
+  "newThread.kinds.design": {
+    "text": "Design a screen",
+    "description": "A choice in the change menu of a new thread with Homeroom bot: work on how a screen looks, in a design thread with a live preview."
+  },
+  "newThread.designHint": {
+    "text": "Go to the screen you want to change and tap Use this screen. You and Homeroom bot design it in a private thread.",
+    "description": "Shown in a new thread when Design a screen is chosen and no project is: what Pick the screen does next."
+  },
+  "newThread.designHintProject": {
+    "text": "Go to the screen of {{project}} you want to change and tap Use this screen. You and Homeroom bot design it in a private thread.",
+    "description": "Shown in a new thread when Design a screen and a project are chosen: what Pick the screen does next."
+  },
+  "newThread.pickScreen": {
+    "text": "Pick the screen",
+    "description": "Button in a new thread when Design a screen is chosen: takes the person to the project with a floating Use this screen bar."
+  },
+  "newThread.hint": {
+    "text": "Start a change here, or just type what you want into the chat.",
+    "description": "Small text at the end of the welcome block of a new thread with Homeroom bot."
+  },
+  "newThread.placeholder": {
+    "text": "Message Homeroom bot",
+    "description": "Placeholder and accessible name of the message box in a new blank thread."
+  },
+  "newThread.send": {
+    "text": "Send",
+    "description": "Sends the first message of a new thread, which starts it."
+  },
+  "newThread.failed": {
+    "text": "The thread couldn't be started just now. Try again in a minute.",
+    "description": "Shown in a new thread when starting it failed for a reason that was not said."
+  },
+  "design.pick.label": {
+    "text": "Pick a screen to design",
+    "description": "Accessible name of the floating bar shown while the person picks the screen to design."
+  },
+  "design.pick.hint": {
+    "text": "Go to the screen you want to design, then tap Use this screen.",
+    "description": "The floating bar shown while picking a screen to design, when no project was chosen."
+  },
+  "design.pick.hintProject": {
+    "text": "Go to the screen of {{project}} you want to design, then tap Use this screen.",
+    "description": "The floating bar shown while picking a screen to design, for a chosen project."
+  },
+  "design.pick.use": {
+    "text": "Use this screen",
+    "description": "The floating bar's button: copies the screen on view into a design thread with Homeroom bot."
+  },
+  "design.pick.cancel": {
+    "text": "Cancel",
+    "description": "The floating bar's button that stops picking a screen, saving nothing."
   },
   "design.pane.showPreview": {
     "text": "Preview",
