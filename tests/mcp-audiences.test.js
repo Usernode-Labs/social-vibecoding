@@ -86,11 +86,11 @@ test('an unknown kind sees nothing at all', () => {
   assert.equal(audiences.toolVisibleTo('__proto__', 'get_app'), false);
 });
 
-test('the Mayor\'s writes are exactly the confirmed tools plus recheck', () => {
+test('the Mayor\'s writes are exactly the confirmed tools plus the two immediate ones', () => {
   const { specs } = register('agent_mayor');
   const writes = [...specs].filter(([, spec]) => spec.annotations.readOnlyHint === false).map(([name]) => name);
-  assert.deepEqual(writes.sort(), [...audiences.MAYOR_CONFIRMED_TOOLS, 'recheck_change'].sort(),
-    'every Mayor write except recheck runs only on a confirmation card');
+  assert.deepEqual(writes.sort(), [...audiences.MAYOR_CONFIRMED_TOOLS, 'recheck_change', 'release_change'].sort(),
+    'every Mayor write except recheck and release runs only on a confirmation card');
   for (const name of audiences.MAYOR_CONFIRMED_TOOLS) {
     assert.ok(audiences.AGENT_MAYOR_TOOLS.includes(name), `${name} is on the Mayor's list`);
   }
@@ -136,6 +136,8 @@ const SAMPLE_ARGS = {
   recheck_change: { changeId: 50 },
   sync_change: { changeId: 50 },
   withdraw_change: { changeId: 50 },
+  // #6068: the owner's Clear status, from the Mayor.
+  release_change: { changeId: 50 },
 };
 
 function fakePlatform(overrides = {}) {
@@ -155,6 +157,7 @@ function fakePlatform(overrides = {}) {
     'POST /api/sessions/50/recheck': { status: 'running', checkState: 'pending' },
     'POST /api/sessions/50/sync-main': { ok: true, syncResult: 'clean', behind: 0, pushOk: true, conflictFiles: [] },
     'POST /api/sessions/50/archive': { ok: true },
+    'POST /api/sessions/50/release': { released: ['turn'], stillHeld: [], busy: false },
     ...overrides,
   };
   const fetchImpl = async (url, init = {}) => {
@@ -325,7 +328,17 @@ test('the next step walks a change through its whole life', () => {
     { id: 50, app_slug: 'recipe-box', branch_name: 'b', ...session }, live, '', kind
   ).nextStep;
   assert.match(step({ branch_name: null, status: 'active' }), /Nothing has been built on Change 50 yet/);
-  assert.match(step({ status: 'active' }, { busy: true }), /working on Change 50 right now/);
+  // #6068: only a real coding turn reads as the agent working. Anything else
+  // names what holds it, and a change held only by dead records says so and
+  // points at release_change.
+  assert.match(step({ status: 'active' }, { busy: true, turn: { startedAt: new Date().toISOString(), kind: 'build' } }),
+    /The coding agent is working on Change 50 right now/);
+  assert.match(step({ status: 'active' }, { busy: true, holders: [{ kind: 'bot', since: new Date().toISOString() }] }),
+    /Change 50 is being worked on right now: the Homeroom bot is reading it/);
+  assert.match(step({ status: 'active' }, { busy: true, stuck: true, holders: [{ kind: 'bot', since: new Date().toISOString() }] }),
+    /still says it is being worked on, but nothing is running on it\. release_change/);
+  assert.doesNotMatch(step({ status: 'active' }, { busy: true, stuck: true }), /coding agent is working/,
+    'a stuck change has no turn to wait for');
   assert.match(step({ status: 'active' }, { sync: { phase: 'merging' } }), /being synced with main/);
   assert.match(step({ status: 'active', check_state: 'pending' }), /Checks are running/);
   assert.match(step({ status: 'active', check_state: 'pending', check_phase: 'deferred' }), /conflicts with main\. sync_change/);

@@ -212,6 +212,14 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/turn-leftovers').sweep(pool),
   },
   {
+    // #6068: a change that still says it is being worked on while nothing
+    // runs on it. Only a branch-less change (nothing was ever built) is
+    // cleared with nobody asking; a change with code keeps its page's Clear
+    // status (services/change-busy.js).
+    name: 'change-busy', everyMs: 2 * MIN, leaseMs: 5 * MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/change-busy').sweep(pool),
+  },
+  {
     // Turns' streams (stream_events) a finished turn did not clear, and the
     // watchers of a process that went (services/session-bus.js).
     name: 'turn-stream-retention', everyMs: 15 * MIN,

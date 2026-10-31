@@ -1025,6 +1025,27 @@
       "preview": "`UPDATE app_domains SET ${sets.join(', ')} WHERE ${where} RETURNING ${ROW_COLUMNS}`"
     },
     {
+      "source": "src/services/change-busy.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "1ac8a2ae4d0b904b6ae6",
+      "count": 1,
+      "preview": "SWEEP_SQL"
+    },
+    {
+      "source": "src/services/change-busy.js",
+      "kind": "runtime-expression",
+      "fingerprint": "5583a532b2c039158ebe",
+      "count": 1,
+      "preview": "sessionHoldersSql('$1')"
+    },
+    {
+      "source": "src/services/change-busy.js",
+      "kind": "structural-template",
+      "fingerprint": "0f06790b5097439e6ddd",
+      "count": 1,
+      "preview": "`SELECT (${workflowTurnHeldSql('cs.active_turn')}) AS held FROM chat_sessions cs WHERE cs.id = $1`"
+    },
+    {
       "source": "src/services/check-history.js",
       "kind": "structural-template",
       "fingerprint": "173151499155de6a5f5f",
@@ -1706,9 +1727,9 @@
     {
       "source": "src/services/sync-main.js",
       "kind": "structural-template",
-      "fingerprint": "95e0e13f01f38d328407",
+      "fingerprint": "e2db6940c7a91408d251",
       "count": 1,
-      "preview": "`SELECT cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'ru"
+      "preview": "`SELECT ${workedOnSql({ turns: false, sync: false })} AS busy FROM chat_sessions cs WHERE cs.id = $1`"
     },
     {
       "source": "src/services/topochain/challenge-onboarding.js",

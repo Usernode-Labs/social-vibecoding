@@ -388,6 +388,36 @@ async function sweepExpiredLeases(pool) {
   return rows.length;
 }
 
+// A caller outside the heartbeat sweep (services/change-busy.js, the owner's
+// Clear status): release this session's lease and fail the turns still on it,
+// as an expired lease does. 'expired' is the closest reason the column allows
+// (it means the platform reaped the lease, not that the machine left), and
+// the turn's own error detail says what happened.
+async function abandonSessionTurns(pool, sessionId) {
+  const { rows: leases } = await pool.query(
+    `UPDATE session_agent_leases
+        SET released_at = NOW(), release_reason = 'expired'
+      WHERE session_id = $1 AND released_at IS NULL
+      RETURNING id, session_id`,
+    [Number(sessionId)]
+  );
+  if (!leases.length) return 0;
+  const { rows: turnRows } = await pool.query(
+    `UPDATE local_agent_turns
+        SET status = 'abandoned', finished_at = NOW(), updated_at = NOW(),
+            error_detail = 'The platform cleared a stuck status.'
+      WHERE lease_id = ANY($1::BIGINT[]) AND status = ANY($2::TEXT[])
+      RETURNING session_id`,
+    [leases.map((r) => r.id), LIVE_TURN_STATUSES]
+  );
+  for (const row of leases) notifyTurn(row.session_id);
+  for (const row of turnRows) notifyTurn(row.session_id);
+  log.info('local-agent', 'Released a session\'s local agent lease', {
+    sessionId: Number(sessionId), leases: leases.length, abandonedTurns: turnRows.length,
+  });
+  return turnRows.length || leases.length;
+}
+
 // ---------------------------------------------------------------------------
 // Turns
 // ---------------------------------------------------------------------------
@@ -881,6 +911,7 @@ module.exports = {
   releaseLeasesForTokens,
   notifyReleased,
   sweepExpiredLeases,
+  abandonSessionTurns,
   getTurn,
   liveTurnForSession,
   enqueueTurn,

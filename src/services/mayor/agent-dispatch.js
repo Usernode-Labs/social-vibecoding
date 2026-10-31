@@ -323,74 +323,14 @@ async function runDispatch({
   }
   if (await shouldStop()) return stoppedBeforeStart();
   const release = d.activeWorkers.beginSessionOperation(changeId);
-  await release.recorded;
-  // #937: a new dispatch is the boundary that retires the previous turn's
-  // pending stop, exactly as a new classic turn is.
-  d.worker.clearPendingStop(changeId);
-
-  let seq = 0;
-  const seqPrefix = `${Date.now().toString(36)}c${changeId}`;
-  // One event, on every channel that watches a change: the conversation's
-  // stream, the change's bus key and the global WebSocket. The change's own
-  // end-of-run events stay on the change's channels: the conversation's turn
-  // announces its own stop and its own end.
-  const send = (type, data = {}) => {
-    const event = { type, _seq: `${seqPrefix}-${++seq}`, ...data };
-    if (!CHANGE_ONLY.has(type)) sendAgent(type, { ...data, changeId });
-    if (!SSE_ONLY.has(type)) {
-      try {
-        d.broadcastGlobal({ ...event, sessionId: changeId, event: type, type: 'session_event' });
-      } catch { /* best effort */ }
-    }
-    d.sessionBus.publish(changeId, event);
-  };
-  const sendStatus = async (text, metadata) => {
-    send('status', { text, ...(metadata || {}) });
-    await pool.query(
-      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-       VALUES ($1, 'system', $2, $3)`,
-      [changeId, text, JSON.stringify(metadata || {})]
-    ).catch(() => {});
-  };
-  const stopHandle = d.stopRegistry.createHandle({ sessionId: changeId, phase: 'cc', send });
-  d.stopRegistry.set(changeId, stopHandle);
-  onStopHandle({ changeId, handle: stopHandle });
-
-  const heartbeatRes = {
-    write: (chunk) => { try { if (res && typeof res.write === 'function') res.write(chunk); } catch { /* gone */ } },
-  };
-  let attachmentsBlock = '';
-  if (Array.isArray(attachmentIds) && attachmentIds.length) {
-    try {
-      attachmentsBlock = d.attachments.buildDispatchBlock(await d.attachments.loadByIds(pool, attachmentIds));
-    } catch (err) {
-      log.warn('agent-dispatch', 'Attachments could not be read for the build', { agentSessionId, err: err.message });
-    }
-  }
-  const args = {
-    pool,
-    config,
-    req: { user },
-    res: heartbeatRes,
-    session: change,
-    selectedModel: codingModelFor(change, d, choice),
-    userMessage: userMessage || prompt,
-    toolPromptArg: prompt || userMessage,
-    attachmentsBlock,
-    discussionBlock: '',
-    repoOwner,
-    repoName,
-    send,
-    sendStatus,
-    stopHandle,
-    userApiKey: apiKey,
-    deferTurnCleanup: true,
-    owner,
-  };
-
+  // Declared right after the claim, and before anything that can throw: a
+  // throw in the setup below used to skip the release and leave the change
+  // held for as long as this process lived (request #6068).
+  let stopHandle = null;
+  let handedBack = false;
   const releaseAll = () => {
     release();
-    d.stopRegistry.deleteIf(changeId, stopHandle);
+    if (stopHandle) d.stopRegistry.deleteIf(changeId, stopHandle);
   };
   // Release the durable turn record. Before that, the wrap-up is marked
   // posted so a recovery racing this cannot write a second one.
@@ -407,60 +347,147 @@ async function runDispatch({
       });
     }
   };
-
-  let result;
-  try {
-    if (await shouldStop()) stopHandle.stopped = true;
-    result = stopHandle.stopped ? null : kind === 'scout'
-      ? await turnDeps.runScoutTool(args)
-      : await turnDeps.runClaudeCodeTool(args);
-  } catch (err) {
-    log.error('agent-mayor', 'Dispatch failed', { agentSessionId, changeId, err: err.message });
-    releaseAll();
-    await turnDeps.scheduleRetainedInteractiveTurn({ pool, sessionId: changeId, scheduleInteractiveRecovery })
-      .catch(() => {});
-    send('done', {});
-    return {
-      ran: true, changeId, kind, isError: true, stopped: false,
-      toolResultText: 'failed: the coding agent could not finish this run. The platform recovers what it can.',
-      finish: async () => {},
-    };
-  }
-
-  if (stopHandle.stopped) {
-    await finishDurableTurn(result && result.turnId, { wrapUpPosted: false });
-    releaseAll();
-    send('stopped', { phase: 'cc', by: stopHandle.stoppedBy });
-    send('done', {});
-    return {
-      ran: true, changeId, kind, isError: false, stopped: true, stoppedBy: stopHandle.stoppedBy,
-      toolResultText: 'stopped: the user stopped the coding agent.',
-      finish: async () => {},
-    };
-  }
-
-  let finished = false;
-  return {
-    ran: true,
-    changeId,
-    kind,
-    isError: !!(result && result.isError),
-    stopped: false,
-    toolResultText: String((result && result.toolResultText) || ''),
-    ...(typeof result?.permanent === 'boolean' ? { permanent: result.permanent, pushFailureCode: result.pushFailureCode } : {}),
-    stagingUrl: (result && result.stagingUrl) || null,
-    turnId: (result && result.turnId) || null,
-    finish: async ({ wrapUpPosted = true } = {}) => {
-      if (finished) return;
-      finished = true;
-      try {
-        await finishDurableTurn(result && result.turnId, { wrapUpPosted });
-      } finally {
-        releaseAll();
-        send('done', {});
-      }
-    },
+  // The record a failed dispatch may have left: its own id, so the failure
+  // path can end it now rather than wait for a recovery pass.
+  const retainedTurnId = async () => {
+    try {
+      const turn = await require('../turn-lifecycle').loadActiveTurn(pool, changeId);
+      return turn ? require('../turn-lifecycle').turnIdentity(turn) : null;
+    } catch {
+      return null;
+    }
   };
+
+  try {
+    await release.recorded;
+    // #937: a new dispatch is the boundary that retires the previous turn's
+    // pending stop, exactly as a new classic turn is.
+    d.worker.clearPendingStop(changeId);
+
+    let seq = 0;
+    const seqPrefix = `${Date.now().toString(36)}c${changeId}`;
+    // One event, on every channel that watches a change: the conversation's
+    // stream, the change's bus key and the global WebSocket. The change's own
+    // end-of-run events stay on the change's channels: the conversation's turn
+    // announces its own stop and its own end.
+    const send = (type, data = {}) => {
+      const event = { type, _seq: `${seqPrefix}-${++seq}`, ...data };
+      if (!CHANGE_ONLY.has(type)) sendAgent(type, { ...data, changeId });
+      if (!SSE_ONLY.has(type)) {
+        try {
+          d.broadcastGlobal({ ...event, sessionId: changeId, event: type, type: 'session_event' });
+        } catch { /* best effort */ }
+      }
+      d.sessionBus.publish(changeId, event);
+    };
+    const sendStatus = async (text, metadata) => {
+      send('status', { text, ...(metadata || {}) });
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [changeId, text, JSON.stringify(metadata || {})]
+      ).catch(() => {});
+    };
+    stopHandle = d.stopRegistry.createHandle({ sessionId: changeId, phase: 'cc', send });
+    d.stopRegistry.set(changeId, stopHandle);
+    onStopHandle({ changeId, handle: stopHandle });
+
+    const heartbeatRes = {
+      write: (chunk) => { try { if (res && typeof res.write === 'function') res.write(chunk); } catch { /* gone */ } },
+    };
+    let attachmentsBlock = '';
+    if (Array.isArray(attachmentIds) && attachmentIds.length) {
+      try {
+        attachmentsBlock = d.attachments.buildDispatchBlock(await d.attachments.loadByIds(pool, attachmentIds));
+      } catch (err) {
+        log.warn('agent-dispatch', 'Attachments could not be read for the build', { agentSessionId, err: err.message });
+      }
+    }
+    const args = {
+      pool,
+      config,
+      req: { user },
+      res: heartbeatRes,
+      session: change,
+      selectedModel: codingModelFor(change, d, choice),
+      userMessage: userMessage || prompt,
+      toolPromptArg: prompt || userMessage,
+      attachmentsBlock,
+      discussionBlock: '',
+      repoOwner,
+      repoName,
+      send,
+      sendStatus,
+      stopHandle,
+      userApiKey: apiKey,
+      deferTurnCleanup: true,
+      owner,
+    };
+
+    let result;
+    try {
+      if (await shouldStop()) stopHandle.stopped = true;
+      result = stopHandle.stopped ? null : kind === 'scout'
+        ? await turnDeps.runScoutTool(args)
+        : await turnDeps.runClaudeCodeTool(args);
+    } catch (err) {
+      log.error('agent-mayor', 'Dispatch failed', { agentSessionId, changeId, err: err.message });
+      // The run is dead whatever it left: end the record it wrote now, so the
+      // change is not held until the recovery pass reaches it, and keep the
+      // scheduler for the cleanup that could not commit.
+      const left = await retainedTurnId();
+      if (left) await finishDurableTurn(left, { wrapUpPosted: false }).catch(() => {});
+      else await turnDeps.scheduleRetainedInteractiveTurn({ pool, sessionId: changeId, scheduleInteractiveRecovery })
+        .catch(() => {});
+      send('done', {});
+      return {
+        ran: true, changeId, kind, isError: true, stopped: false,
+        toolResultText: 'failed: the coding agent could not finish this run. The platform recovers what it can.',
+        finish: async () => {},
+      };
+    }
+
+    if (stopHandle.stopped) {
+      await finishDurableTurn(result && result.turnId, { wrapUpPosted: false });
+      send('stopped', { phase: 'cc', by: stopHandle.stoppedBy });
+      send('done', {});
+      return {
+        ran: true, changeId, kind, isError: false, stopped: true, stoppedBy: stopHandle.stoppedBy,
+        toolResultText: 'stopped: the user stopped the coding agent.',
+        finish: async () => {},
+      };
+    }
+
+    let finished = false;
+    // The wrap-up runs after this function returns: its finish() owns the
+    // release from here, so the finally below must leave it alone.
+    handedBack = true;
+    return {
+      ran: true,
+      changeId,
+      kind,
+      isError: !!(result && result.isError),
+      stopped: false,
+      toolResultText: String((result && result.toolResultText) || ''),
+      ...(typeof result?.permanent === 'boolean' ? { permanent: result.permanent, pushFailureCode: result.pushFailureCode } : {}),
+      stagingUrl: (result && result.stagingUrl) || null,
+      turnId: (result && result.turnId) || null,
+      finish: async ({ wrapUpPosted = true } = {}) => {
+        if (finished) return;
+        finished = true;
+        try {
+          await finishDurableTurn(result && result.turnId, { wrapUpPosted });
+        } finally {
+          releaseAll();
+          send('done', {});
+        }
+      },
+    };
+  } finally {
+    // A throw anywhere above (a stop handle that cannot be made, a stream
+    // that cannot be reached) must not leave the operation claimed.
+    if (!handedBack) releaseAll();
+  }
 }
 
 module.exports = {

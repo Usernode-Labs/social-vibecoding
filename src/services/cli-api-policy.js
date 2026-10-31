@@ -430,6 +430,11 @@ const AGENT_MAYOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'POST', pattern: '/api/sessions/:id/promote' },
   { method: 'POST', pattern: '/api/sessions/:id/resume' },
   { method: 'POST', pattern: '/api/sessions/:id/recheck' },
+  // release_change (#6068): clear the records that still say a change is
+  // being worked on while nothing runs on it. The handler refuses anyone but
+  // the owner or an admin, an already-closed change, and any change with a
+  // live holder, so it can end only work that has already ended.
+  { method: 'POST', pattern: '/api/sessions/:id/release' },
   { method: 'POST', pattern: '/api/sessions/:id/sync-main' },
   { method: 'POST', pattern: '/api/sessions/:id/archive' },
 ]);

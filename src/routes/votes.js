@@ -1320,6 +1320,25 @@ function stagingMockProposals(viewer) {
         0.4, 0, 0, 0, { required: 3, windowEndsAt: null }),
       external_agent: 'claude-code',
     },
+    // #6068: a change whose coding-agent run ended early and left its records
+    // saying it is being worked on, with nothing running. Its page says so
+    // above Votes and Testing with Clear status for its author. Hand-set
+    // here, like 990102's `busy`, because the demo details read answers for
+    // a row that is not in the database.
+    {
+      ...mk(9000496, 900496,
+        '[Mock] Your change left busy after its agent stopped',
+        1.5, 0, 0, 0, { required: 3, windowEndsAt: null }),
+      status: 'active',
+      promoted_at: null,
+      busy: true,
+      stuck: {
+        holders: [{ kind: 'bot', since: hoursAgo(2) }],
+        since: hoursAgo(2),
+        heldMs: 2 * 3600 * 1000,
+      },
+      canClearBusy: true,
+    },
   ];
   // Spread the community-voted priority/assignee across a few rows (the mk
   // factory otherwise stamps every proposal high / staging-tester) so the
@@ -1383,7 +1402,7 @@ function stagingMockProposals(viewer) {
 // for a vote, one that needs their fix, and (#6006) one a coding agent
 // submitted that waits for their Yes. Without a user they stay mocks nobody
 // owns.
-const OWN_DEMO_PROPOSALS = new Set([9000493, 9000494, 9000495]);
+const OWN_DEMO_PROPOSALS = new Set([9000493, 9000494, 9000495, 9000496]);
 function ownDemoProposals(rows, user) {
   if (!user || user.id == null || !user.username) return rows;
   return rows.map((row) => (OWN_DEMO_PROPOSALS.has(row.id)

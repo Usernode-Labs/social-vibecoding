@@ -101,7 +101,11 @@ const WRAP_UP_EFFECT_KEYS = Object.freeze({
   spend: 'turn_wrapup_spend',
 });
 
-const IMMEDIATE_WRITE_TOOLS = new Set(['recheck_change']);
+// Writes a Mayor may make without a confirmation card: they move no code and
+// clear no vote. recheck_change re-runs checks on the commit already there;
+// release_change (#6068) clears records that are already dead and refuses
+// while anything is really running.
+const IMMEDIATE_WRITE_TOOLS = new Set(['recheck_change', 'release_change']);
 const SUGGEST_REPLIES = 'suggest_replies';
 const WEB_FETCH = 'web_fetch';
 const GET_PROD_STATUS = 'get_prod_status';

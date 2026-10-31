@@ -381,7 +381,10 @@ test('get_change says when the running turn started and what kind it is', async 
   // look runs (bot-request).
   const sessions = read('src/routes/sessions.js');
   assert.match(sessions, /const own = turnLifecycle\.ownerOf\(durableTurn\);\n\s+turn = \{\n\s+startedAt: durableTurn\.startedAt \|\| null,\n\s+kind: own\?\.machine === 'bot-request' \? 'homeroom_bot_follow_up' : \(durableTurn\.mode \|\| null\),/);
-  assert.match(sessions, /busy, progress, phase, stopping, stopRequestedAt, stoppable, estimate, turn,/);
+  assert.match(sessions, /progress, phase, stopping, stopRequestedAt, stoppable, estimate, turn,/);
+  // #6068: the status route also names every holder and whether they are all
+  // stale, which is what get_change reads for busyHolders and stuck.
+  assert.match(sessions, /stuck: changeBusy\.stuckOf\(holders\)/);
 });
 
 // #4575: the bot's build and review-fix turns on a session wait for a

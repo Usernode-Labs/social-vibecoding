@@ -3884,6 +3884,12 @@
       "expectText": "needs a Spanish version"
     },
     {
+      "name": "A change left busy after its agent stopped tells its author so, with Clear status (#6068)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000496",
+      "expectSelector": "[data-change-stuck]:has([data-change-clear-busy].gc-vote-btn-accent)",
+      "expectText": "nothing is running on it"
+    },
+    {
       "name": "Freshness (#1442): a conflicting proposal says so on its merge step, with its votes still open above it",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000034",
       "expectSelector": ".dev-topic-steps .dev-step[data-note=\"votes\"] ~ .dev-step[data-note=\"mergeability\"][data-req-gate=\"integration\"]",

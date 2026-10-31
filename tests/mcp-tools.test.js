@@ -2937,6 +2937,8 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'recheck_change',
     // #3654. Grading a finished benchmark run again: full platform admins only.
     'regrade_bench_run',
+    // #6068. Clear a change's stuck working state, the page's Clear status.
+    'release_change',
     'release_request',
     'remove_challenge', 'reorder_challenges',
     'rerun_bench_trial',
@@ -3185,7 +3187,7 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
     'move_challenge',
     'post_message', 'post_spec', 'prepare_upload', 'prepare_work', 'promote_change', 'propose_close_request',
     'propose_featured_illustration',
-    'rate_homeroom_bot_run', 'recheck_change', 'regrade_bench_run', 'remove_challenge', 'reorder_challenges', 'rerun_bench_trial',
+    'rate_homeroom_bot_run', 'recheck_change', 'regrade_bench_run', 'release_change', 'remove_challenge', 'reorder_challenges', 'rerun_bench_trial',
     'retire_test_account',
     'run_challenge_scoring',
     // The Homeroom bot's configurations: full admins only.
