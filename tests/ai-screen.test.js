@@ -221,6 +221,7 @@ test('each In progress and Waiting row says what it waits on, in the bot\'s word
   ], 'a claim with no change yet names who has it');
   assert.deepEqual([
     row('vote', { myVote: 'yes' }), row('vote', { myVote: 'no' }), row('vote', { myVote: null }),
+    row('checking'),
     row('fix_queued'), row('followup_queued'), row('build_queued'),
     row('held', { heldBy: 'approvals' }), row('held', { heldBy: 'daily' }), row('stalled'),
     row('queued'), row('on_hold'),
@@ -228,6 +229,7 @@ test('each In progress and Waiting row says what it waits on, in the bot\'s word
   ].map((r) => words(nextWords(r))), [
     'Garden club · #7 · Waiting for votes · you voted Yes', 'Garden club · #7 · Waiting for votes · you voted No',
     'Garden club · #7 · Waiting for votes',
+    'Garden club · #7 · Waiting for checks',
     'Garden club · #7 · A test failed · waiting for a free builder to fix it',
     'Garden club · #7 · Waiting for a free builder to follow up on the replies',
     'Garden club · #7 · Ready to build · waiting its turn',
@@ -259,10 +261,10 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
   const row = (what, extra = {}) => ({ threadId: 1, number: 7, app, what, ...extra });
   assert.deepEqual([
     row('going_live'), row('building', { by: 'bot' }), row('building', { by: 'you' }), row('building', { by: 'someone', claimedBy: 'snait' }),
-    row('building', { by: 'someone' }), row('vote'), row('decision'), row('queued'), row('build_queued'),
+    row('building', { by: 'someone' }), row('vote'), row('checking'), row('decision'), row('queued'), row('build_queued'),
     row('held', { heldBy: 'approvals' }), row('held', { heldBy: 'daily' }), row('on_hold'), row('not_picked_up'), row('mystery'),
   ].map((r) => words(shortWords(r))), [
-    'Going live', 'Homeroom bot', 'You', 'snait', 'Being built', 'Votes', 'Votes', 'A builder', 'Its turn',
+    'Going live', 'Homeroom bot', 'You', 'snait', 'Being built', 'Votes', 'Checks', 'Votes', 'A builder', 'Its turn',
     'A slot', 'Tomorrow', 'Monday', 'Nobody yet', 'Waiting',
   ]);
   // Every id is one whole literal, so the inventory can check it exists.
@@ -300,8 +302,17 @@ test('the server: a vote you have given waits on others (Up next), and the bot\'
   const at = '2026-10-29T10:00:00.000Z';
   const ME = 5;
   const open = { state: 'open', own: true, request_state: 'open', request_at: at, created_at: at };
-  assert.deepEqual(aiWork.standing({ ...open, change_status: 'promoted', change_user: 9, voted: true, my_vote: 'yes', promoted_at: at }, ME, now),
+  const promoted = { ...open, change_status: 'promoted', change_user: 9, voted: true, my_vote: 'yes', promoted_at: at };
+  assert.deepEqual(aiWork.standing({ ...promoted, check_state: 'passing' }, ME, now),
     { group: 'waiting', what: 'vote', at, myVote: 'yes' });
+  // #6060: checks that have not passed hold it, so the row says Checks, not
+  // Votes. A vote cannot merge it until they pass.
+  assert.deepEqual(aiWork.standing({ ...promoted, check_state: 'skipped' }, ME, now),
+    { group: 'waiting', what: 'vote', at, myVote: 'yes' }, 'skipped checks count as passed');
+  for (const checkState of ['pending', 'failing', 'error', 'unknown', null]) {
+    assert.deepEqual(aiWork.standing({ ...promoted, check_state: checkState }, ME, now),
+      { group: 'waiting', what: 'checking', at }, `${checkState || 'NULL'} waits for its checks`);
+  }
   const bot = (stage, extra = {}) => aiWork.standing(open, ME, now, null, { stage, since: at, ...extra });
   assert.deepEqual(bot('plan'), { group: 'needs', what: 'plan', at }, 'a plan waiting for Build it is Needs you\'s');
   assert.equal(bot('question'), null, 'the bot\'s question is the feed\'s Answer');
@@ -363,10 +374,12 @@ test('the server arranges Waiting nearest to live first, and matches the bot\'s 
     row(1, 6038),
     row(2, 6014),
     row(3, 6002),
-    row(4, 6025, { change_status: 'promoted', change_user: 9, voted: true, my_vote: 'yes', promoted_at: '2026-10-29T03:00:00Z', change_id: 1, pr_number: 6025 }),
+    row(4, 6025, { change_status: 'promoted', change_user: 9, voted: true, my_vote: 'yes', promoted_at: '2026-10-29T03:00:00Z', change_id: 1, pr_number: 6025, check_state: 'passing' }),
+    // #6060: a change still waiting for its checks sorts with the votes, ahead of held.
+    row(5, 6026, { change_status: 'promoted', change_user: 9, voted: true, my_vote: 'yes', promoted_at: '2026-10-29T04:00:00Z', change_id: 2, pr_number: 6026, check_state: 'pending' }),
   ], 5, now, null, bots);
   assert.deepEqual(lists.needs.map((t) => t.number), [6002], 'the plan waiting for Build it');
-  assert.deepEqual(lists.waiting.map((t) => `${t.number}:${t.what}`), ['6025:vote', '6014:held', '6038:not_picked_up']);
+  assert.deepEqual(lists.waiting.map((t) => `${t.number}:${t.what}`), ['6025:vote', '6026:checking', '6014:held', '6038:not_picked_up']);
   assert.deepEqual(lists.next, []);
 });
 

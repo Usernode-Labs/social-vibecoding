@@ -122,7 +122,10 @@ test('on a ballot an agent\'s submission is not its author\'s pick until they ma
 });
 
 test('the AI tab leaves your own agent-made change to Needs you until you vote on it', () => {
-  const row = { change_status: 'promoted', change_user: SAM, state: 'open', promoted_at: OPENED, voted: false };
+  // check_state: 'passing' so this row is a change waiting on votes, which is
+  // what this test is about; one still waiting for its checks says so instead
+  // (#6060), pinned in tests/ai-screen.test.js.
+  const row = { change_status: 'promoted', check_state: 'passing', change_user: SAM, state: 'open', promoted_at: OPENED, voted: false };
   assert.deepEqual(aiWork.standing(row, SAM), { group: 'waiting', what: 'vote', at: OPENED, myVote: null }, 'made on Homeroom: yours, up for a vote (Up next)');
   assert.equal(aiWork.standing({ ...row, by_agent: true }, SAM), null, 'made by an agent: a vote you owe');
   assert.deepEqual(aiWork.standing({ ...row, by_agent: true, voted: true, my_vote: 'yes' }, SAM),

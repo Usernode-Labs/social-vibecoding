@@ -108,7 +108,7 @@ SELECT t.id, mine.own, t.number, t.kind, t.title AS thread_title, t.state, t.cre
        req.title AS request_title, req.state AS request_state, req.updated_at AS request_at,
        ch.id AS change_id, ch.pr_number, ch.status AS change_status, ch.user_id AS change_user,
        ch.title AS change_title, ch.promoted_at, ch.merged_at, ch.live_at, ch.last_activity_at,
-       ch.voted, ch.my_vote, ch.by_agent,
+       ch.voted, ch.my_vote, ch.by_agent, ch.check_state,
        dec.status AS decision_status, dec.mine AS decision_mine, dec.my_vote AS decision_vote,
        cl.username AS claimed_by, cl.mine AS claimed_mine,
        COALESCE(ch.live_at, ch.merged_at, ch.promoted_at, ch.last_activity_at, req.updated_at, t.created_at) AS sort_at,
@@ -129,7 +129,7 @@ SELECT t.id, mine.own, t.number, t.kind, t.title AS thread_title, t.state, t.cre
   ) req ON TRUE
   LEFT JOIN LATERAL (
     SELECT cs.id, cs.pr_number, cs.status, cs.user_id, cs.promoted_at, cs.merged_at, cs.live_at,
-           cs.last_activity_at,
+           cs.last_activity_at, cs.check_state,
            COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, '')) AS title,
            EXISTS (SELECT 1 FROM pr_votes v
                     WHERE v.session_id = cs.id AND v.user_id = $1
@@ -315,6 +315,11 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null) {
     // agent submitted it for them: their yes is a tap (governance-rules.ts).
     if (!row.voted && (!theirs || row.by_agent)) return null;
     if (!own) return null;
+    // Checks that have not passed hold it: a vote cannot merge it yet, so the
+    // row names the checks, not the votes (#6060).
+    if (row.check_state !== 'passing' && row.check_state !== 'skipped') {
+      return { group: 'waiting', what: 'checking', at: iso(row.promoted_at) };
+    }
     // Waiting on other people's votes: Up next, not In progress.
     const myVote = row.my_vote === 'yes' || row.my_vote === 'no' ? row.my_vote : null;
     return { group: 'waiting', what: 'vote', at: iso(row.promoted_at), myVote };
@@ -353,11 +358,12 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null) {
 // In progress is soonest first: going live, then merging, then a change
 // being fixed or followed up, then made, then a request being read.
 const NEXT_ORDER = { going_live: 0, merging: 1, fixing: 2, revising: 2, building: 3, reading: 4 };
-// Waiting is the nearest to live first: a vote (the oldest has waited
-// longest), a follow-up waiting its turn, a build waiting its turn or held
-// back, a request waiting to be read, then one nobody has picked up.
+// Waiting is the nearest to live first: a vote or a change still waiting for
+// its checks (the oldest has waited longest), a follow-up waiting its turn, a
+// build waiting its turn or held back, a request waiting to be read, then one
+// nobody has picked up.
 const WAITING_ORDER = {
-  vote: 0, decision: 0, fix_queued: 1, followup_queued: 1, build_queued: 2, held: 3, stalled: 3, queued: 4, on_hold: 5, not_picked_up: 6,
+  vote: 0, checking: 0, decision: 0, fix_queued: 1, followup_queued: 1, build_queued: 2, held: 3, stalled: 3, queued: 4, on_hold: 5, not_picked_up: 6,
 };
 
 /** The key a thread's request is matched to the bot's stage by. */
