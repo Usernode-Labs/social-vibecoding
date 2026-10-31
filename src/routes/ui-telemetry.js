@@ -4,7 +4,7 @@ const express = require('express');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
-const { uiTelemetryLimiter } = require('../middleware/rate-limits');
+const { uiTelemetryLimiter, uiTelemetryAnonLimiter } = require('../middleware/rate-limits');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const telemetry = require('../services/ui-telemetry');
 const languageSync = require('../services/language-sync-runner');
@@ -44,6 +44,43 @@ function uiTelemetryRoutes(config, { pool = getPool(config) } = {}) {
       });
     } catch (err) {
       log.error('ui-telemetry', 'Batch insert failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Signed-out pages may report two content-free kinds and nothing else:
+  // a session guard's fence and where an invite link settled. No account, no
+  // receipt, at most four reports a request, and never retried by the page.
+  router.post('/api/ui-telemetry/anonymous', uiTelemetryAnonLimiter, sameOriginBrowserOnly, json, async (req, res) => {
+    if (req.user) {
+      // A signed-in report travels on the batch route, which enforces the
+      // opt-in and stores it against the account.
+      return res.status(202).json({ ok: true, accepted: 0, submitted: 0, discarded: true });
+    }
+    let batch;
+    try {
+      batch = telemetry.parseBatch(req.body);
+    } catch (err) {
+      if (err instanceof telemetry.TelemetryValidationError) {
+        return res.status(400).json({ error: 'invalid_telemetry', message: err.message });
+      }
+      log.error('ui-telemetry', 'Anonymous batch validation failed unexpectedly', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+    const allowed = batch.events.length <= 4 && batch.events.every((event) => (
+      event.kind === 'invite_settlement'
+      || (event.kind === 'session_fence' && event.signedIn === false)
+    ));
+    if (!allowed) {
+      return res.status(400).json({ error: 'invalid_telemetry', message: 'unsupported anonymous report' });
+    }
+    try {
+      const result = await telemetry.insertBatch(pool, null, batch, { receipt: false });
+      return res.status(result.duplicate ? 200 : 202).json({
+        ok: true, accepted: result.accepted, submitted: batch.events.length,
+      });
+    } catch (err) {
+      log.error('ui-telemetry', 'Anonymous batch insert failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -108,7 +145,8 @@ function uiTelemetryRoutes(config, { pool = getPool(config) } = {}) {
   });
 
   router.use((err, req, res, next) => {
-    if (err?.type === 'entity.too.large' && req.path === '/api/ui-telemetry/batch') {
+    if (err?.type === 'entity.too.large'
+        && (req.path === '/api/ui-telemetry/batch' || req.path === '/api/ui-telemetry/anonymous')) {
       return res.status(413).json({ error: 'telemetry_too_large' });
     }
     return next(err);

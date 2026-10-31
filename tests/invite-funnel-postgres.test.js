@@ -41,8 +41,16 @@ test('the funnel reading: from the first sign-in through an invite, everyone\'s,
   const week = { start: new Date('2026-09-28T00:00:00Z'), end: new Date('2026-10-05T00:00:00Z') };
   const row = { since: '2026-09-30T12:00:00Z', opened: 9, signed_in: 4, signed_in_by_invite: 3, signed_in_already: 1, joined: 2 };
   assert.deepEqual(journey.inviteFunnelReading(row, { week }),
-    { from: '2026-09-30T12:00:00.000Z', opened: 9, signedIn: 4, signedInByInvite: 3, signedInAlready: 1, joined: 2 },
+    {
+      from: '2026-09-30T12:00:00.000Z', opened: 9, signedIn: 4, signedInByInvite: 3, signedInAlready: 1, joined: 2,
+      landed: { recorded: false, reason: 'No invite page has reported where it settled yet.' },
+    },
     'counted from the first sign-in, which came during the week, and the sign-ins in their two ways');
+  assert.deepEqual(journey.inviteFunnelReading({
+    ...row, landed_since: '2026-09-30T13:00:00Z',
+    landed_card: 8, landed_dead: 1, landed_failed: 0, landed_timeout: 2,
+  }, { week }).landed, { card: 8, dead: 1, failed: 0, timeout: 2 },
+  'where the invite page landed, beside an unchanged open count');
   assert.equal(journey.inviteFunnelReading({ ...row, since: '2026-09-01T00:00:00Z' }, { week }).from,
     '2026-09-28T00:00:00.000Z', 'from the start of the week once the record is older');
   assert.equal(journey.inviteFunnelReading({ ...row, since: null }, { week }).recorded, false, 'never recorded');
@@ -357,6 +365,7 @@ test('invite opens, sign-ins and joins through the real routes, against the full
     assert.deepEqual(r.opens, {
       from: new Date(since).toISOString(), opened: 3,
       signedIn: 5, signedInByInvite: 3, signedInAlready: 2, joined: 4,
+      landed: { recorded: false, reason: 'No invite page has reported where it settled yet.' },
     }, 'three opens; five signed in with it, Carol, Dan and Erin from the link and Sam and Fay already; four joined');
     assert.equal(r.recordedFrom.signedIn, new Date(since).toISOString());
     // Dan on the left-out list: his sign-in and join go, his open signed
@@ -367,5 +376,24 @@ test('invite opens, sign-ins and joins through the real routes, against the full
     // A week before the first sign-in through an invite reads "not recorded".
     const old = await journey.firstSession(pool, { week: journey.parseWeek('2026-01-05', new Date()) });
     assert.equal(old.opens.recorded, false);
+  });
+
+  await t.test('the Journey counts where signed-out invite pages landed, beside unchanged opens', async () => {
+    // The reading's window ends at its own clock, and a row inserted this
+    // instant can sit in its next millisecond. End the window a minute
+    // ahead so the landings below are inside it however fast this runs.
+    const week = journey.allTime(new Date(Date.now() + 60000));
+    const before = (await journey.firstSession(pool, { week })).opens.opened;
+    for (const settled of ['card', 'card', 'card', 'dead', 'failed']) {
+      await pool.query(
+        `INSERT INTO events (user_id, event_type, metadata)
+         VALUES (NULL, 'ui_experience', $1::jsonb)`,
+        [JSON.stringify({ kind: 'invite_settlement', settled, screen: 'shell_boot',
+          eventId: crypto.randomUUID(), visitId: crypto.randomUUID() })]);
+    }
+    const r = (await journey.firstSession(pool, { week })).opens;
+    assert.deepEqual(r.landed, { card: 3, dead: 1, failed: 1, timeout: 0 },
+      'each signed-out landing is counted where it first settled');
+    assert.equal(r.opened, before, 'the open count itself is unchanged');
   });
 });

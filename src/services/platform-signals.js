@@ -151,6 +151,18 @@ const KINDS = Object.freeze({
     topic: 'infra', fixer: 'person', source: 'poll', fileAfterMs: DAY, quietMs: DAY, admin: 'analytics',
     done: 'The figure is back on its target for a day.',
   }),
+  session_fence_public: Object.freeze({
+    topic: 'onboarding', fixer: 'bot', source: 'poll', fileAfterMs: 0, quietMs: 6 * HOUR, admin: 'analytics',
+    done: 'No signed-out page or public read is fenced for 6 hours.',
+  }),
+  session_fence_jump: Object.freeze({
+    topic: 'infra', fixer: 'bot', source: 'poll', fileAfterMs: 0, quietMs: DAY, admin: 'analytics',
+    done: 'The newer build fences signed-in reads no more often than the build before it for a day.',
+  }),
+  invite_pitch_failed: Object.freeze({
+    topic: 'onboarding', fixer: 'bot', source: 'poll', fileAfterMs: 0, quietMs: DAY, admin: 'analytics',
+    done: 'Fewer than 3 signed-out invite pages fall back to the pitch in a day.',
+  }),
   turn_recovery_gave_up: Object.freeze({
     topic: 'infra', fixer: 'bot', source: 'poll', fileAfterMs: 0, quietMs: DAY, admin: 'incidents',
     done: 'Every interrupted turn is picked up again, with none given up on for a day.',

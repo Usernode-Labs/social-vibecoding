@@ -70,6 +70,99 @@ export function readApiCacheScope(doc: Pick<Document, 'cookie'> | undefined = ty
 
 type Context = { epoch: number; scope: string | null; nativeEpoch: number };
 
+export type FenceReason = 'epoch' | 'scope' | 'native';
+
+const TOKEN_SEGMENT_RE = /^[A-Za-z0-9_-]{22,}$/;
+const HEX_SEGMENT_RE = /^[0-9a-f]{8,}$/i;
+const UUID_SEGMENT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SAFE_SEGMENT_RE = /^[A-Za-z0-9._~:-]+$/;
+
+/**
+ * Pure: a read's path as it may leave the page: the query and hash are gone
+ * already, a 22-character link or waitlist token is `<token>`, an id of
+ * digits, hex or a UUID is `<id>`, and any segment with a percent escape or
+ * a character outside the safe set is `<value>`. Telemetry's own upload is
+ * never a fence worth reporting. Clipped to 160 characters.
+ */
+export function fencePath(pathname: string): string | null {
+  let path = String(pathname || '');
+  const cut = path.search(/[?#]/);
+  if (cut >= 0) path = path.slice(0, cut);
+  if (!path.startsWith('/api/')) return null;
+  if (path.startsWith('/api/ui-telemetry/')) return null;
+  const out = path.split('/').map(segment => {
+    if (!segment) return segment;
+    if (TOKEN_SEGMENT_RE.test(segment)) return '<token>';
+    if (/^\d+$/.test(segment) || HEX_SEGMENT_RE.test(segment) || UUID_SEGMENT_RE.test(segment)) return '<id>';
+    if (!SAFE_SEGMENT_RE.test(segment)) return '<value>';
+    return segment;
+  }).join('/');
+  return out.length > 160 ? out.slice(0, 160) : out;
+}
+
+export type FenceEntry = { path: string; reason: FenceReason; public: boolean; count: number };
+export type FenceReport = { signedIn: boolean; fences: FenceEntry[] };
+
+const FENCE_WINDOW_MS = 5000;
+const MAX_FENCE_PATHS = 8;
+const MAX_FENCE_COUNT = 1000;
+const MAX_FENCE_WINDOWS = 3;
+
+/**
+ * One page load's fences, folded: the first opens a five-second window, and
+ * each report is one `signedIn` group of paths with their reasons and
+ * counts. At most three windows a load, so a burst is one report and a page
+ * that keeps fencing cannot flood the collector. `deliver` is best effort.
+ */
+export function createFenceLog({ setTimer, clearTimer, deliver }: {
+  setTimer: (fn: () => void, ms: number) => any;
+  clearTimer: (id: any) => void;
+  deliver: (report: FenceReport) => void;
+}) {
+  type Group = { signedIn: boolean; entries: Map<string, FenceEntry>; overflow: number };
+  let current: { groups: Map<string, Group>; timer: any } | null = null;
+  let windows = 0;
+
+  function close(): void {
+    if (!current) return;
+    const { groups, timer } = current;
+    current = null;
+    clearTimer(timer);
+    windows++;
+    for (const group of groups.values()) {
+      if (!group.entries.size) continue;
+      const report: FenceReport = { signedIn: group.signedIn, fences: [...group.entries.values()] };
+      try { deliver(report); } catch { /* reporting never changes the guard */ }
+    }
+  }
+
+  function note(pathname: string, reason: FenceReason, signedIn: boolean): void {
+    const path = fencePath(pathname);
+    if (!path) return;
+    if (!current) {
+      if (windows >= MAX_FENCE_WINDOWS) return;
+      current = { groups: new Map(), timer: setTimer(close, FENCE_WINDOW_MS) };
+    }
+    const key = signedIn ? 'in' : 'out';
+    let group = current.groups.get(key);
+    if (!group) {
+      group = { signedIn, entries: new Map(), overflow: 0 };
+      current.groups.set(key, group);
+    }
+    const entryKey = `${reason}|${path}`;
+    const entry = group.entries.get(entryKey);
+    if (entry) {
+      entry.count = Math.min(MAX_FENCE_COUNT, entry.count + 1);
+    } else if (group.entries.size < MAX_FENCE_PATHS) {
+      group.entries.set(entryKey, { path, reason, public: path.startsWith('/api/public/'), count: 1 });
+    } else {
+      group.overflow++;
+    }
+  }
+
+  return { note, close };
+}
+
 export function installApiCacheIdentity(win: any = typeof window !== 'undefined' ? window : null): void {
   if (!win || typeof win.fetch !== 'function' || win.__apiCacheIdentityInstalled) return;
   const send: typeof fetch = win.fetch.bind(win);
@@ -86,12 +179,50 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
   let viewer: string | null | undefined;
   let nativeVerification: { epoch: number; boundary: number; pending: Promise<void> } | null = null;
 
-  const changed = () => new DOMException('Session changed', 'AbortError');
+  // Why each bump happened, keyed by the epoch number it produced, so a fence
+  // can say whether a reset, a replaced cookie or a native renewal moved it.
+  const causes = new Map<number, FenceReason>();
+  function rememberCause(next: number, reason: FenceReason): void {
+    causes.set(next, reason);
+    if (causes.size > 16) {
+      const oldest = causes.keys().next().value;
+      if (oldest != null) causes.delete(oldest);
+    }
+  }
+
+  const fenceReasons = new WeakMap<object, FenceReason>();
+  const changed = (reason: FenceReason) => {
+    const error = new DOMException('Session changed', 'AbortError');
+    fenceReasons.set(error, reason);
+    return error;
+  };
+  // A fence's cause: the bump this read saw, else a moved native session,
+  // else a response scope that did not match (a replaced cookie).
+  function reasonFor(context: Context): FenceReason {
+    const bumped = causes.get(context.epoch + 1);
+    if (bumped) return bumped;
+    return renewal().epoch !== context.nativeEpoch ? 'native' : 'scope';
+  }
+  const isSignedIn = (context?: Context | null) => (context ? context.scope !== null : false)
+    || scope() !== null || currentViewer() != null;
+
+  const fenceLog = createFenceLog({
+    setTimer: (fn, ms) => (win.setTimeout || setTimeout)(fn, ms),
+    clearTimer: id => (win.clearTimeout || clearTimeout)(id),
+    deliver: (report) => { try { win.UITelemetry?.reportFence?.(report); } catch { /* best effort */ } },
+  });
+  const noteFence = (pathname: string, reason: FenceReason, context?: Context | null) => {
+    try { fenceLog.note(pathname, reason, isSignedIn(context)); } catch { /* never changes the fence */ }
+  };
+
   function observe(): Context {
     const next = scope(), nativeEpoch = renewal().epoch;
     // Bootstrapping a legacy session's missing hint need not discard its
     // already-running, server-confirmed reads. Replacing a real hint does.
-    if ((observedScope !== null && next !== observedScope) || nativeEpoch !== observedNativeEpoch) epoch++;
+    if ((observedScope !== null && next !== observedScope) || nativeEpoch !== observedNativeEpoch) {
+      epoch++;
+      rememberCause(epoch, nativeEpoch !== observedNativeEpoch ? 'native' : 'scope');
+    }
     observedScope = next;
     observedNativeEpoch = nativeEpoch;
     return { epoch, scope: next, nativeEpoch };
@@ -116,7 +247,7 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
   // way, so an invite link showed the waitlist pitch instead of its card.
   function reset({ broadcast = false, unlessAnonymous = false } = {}): void {
     boundary++;
-    if (!(unlessAnonymous && anonymous())) epoch++;
+    if (!(unlessAnonymous && anonymous())) { epoch++; rememberCause(epoch, 'epoch'); }
     observedScope = scope();
     observedNativeEpoch = renewal().epoch;
     if (broadcast) broadcastBoundary();
@@ -137,16 +268,17 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
   async function adoptNativeIdentity(res: Response, context: Context, boundaryAtStart: number,
     expectedViewer: string | null | undefined): Promise<Context> {
     const label = res.headers.get(API_SCOPE_HEADER);
-    if (!res.ok || res.redirected || !/^[a-f0-9]{64}$/.test(label || '')) throw changed();
+    if (!res.ok || res.redirected || !/^[a-f0-9]{64}$/.test(label || '')) throw changed('native');
     const data = await res.clone().json();
     const active = renewal(), cookie = scope();
-    if (boundaryAtStart !== boundary || active.epoch !== context.nativeEpoch || active.settled
+    const movedBoundary = boundaryAtStart !== boundary;
+    if (movedBoundary || active.epoch !== context.nativeEpoch || active.settled
         || currentViewer() !== expectedViewer || data?.user?.id == null
         || (expectedViewer !== undefined && String(data.user.id) !== expectedViewer)
-        || (cookie !== context.scope && cookie !== label)) throw changed();
+        || (cookie !== context.scope && cookie !== label)) throw changed(movedBoundary ? 'epoch' : 'native');
     // The real auth middleware may already have renewed both cookies.
     // Permit that exact server-confirmed label, never an intervening login.
-    if (!rememberScope(res, label!)) throw changed();
+    if (!rememberScope(res, label!)) throw changed('native');
     const confirmed = observe();
     verifiedNativeEpoch = confirmed.nativeEpoch;
     return confirmed;
@@ -191,15 +323,20 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
 
   // Fence body consumption as well as fetch resolution. JSON parsing or a
   // stream may complete after logout even when response headers arrived first.
-  function guarded(res: Response, context: Context, responseScope: string | null): Response {
-    const check = () => { if (!current(context, responseScope)) throw changed(); };
+  function guarded(res: Response, context: Context, responseScope: string | null, pathname: string): Response {
+    const check = () => {
+      if (current(context, responseScope)) return;
+      const reason = reasonFor(context);
+      noteFence(pathname, reason, context);
+      throw changed(reason);
+    };
     let stream: ReadableStream | null | undefined;
     return new Proxy(res, {
       get(target, prop) {
         if (prop === 'clone') return () => {
           check();
           if (stream?.locked) throw new TypeError('Response body is locked');
-          return guarded(target.clone(), context, responseScope);
+          return guarded(target.clone(), context, responseScope, pathname);
         };
         if (['json', 'text', 'arrayBuffer', 'blob', 'formData', 'bytes'].includes(String(prop))) {
           const read = (target as any)[prop];
@@ -244,6 +381,8 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
     const raw = typeof Request !== 'undefined' && input instanceof Request ? input.url : String(input);
     const url = new URL(raw, win.location.href);
     if (url.origin !== win.location.origin || !url.pathname.startsWith('/api/')) return send(input, init);
+    let startedContext: Context | null = null;
+    try {
     const req = new Request(typeof Request !== 'undefined' && input instanceof Request ? input : url.href, init);
     const auth = url.pathname.startsWith('/api/auth/');
     const mutation = auth && req.method !== 'GET' && req.method !== 'HEAD'
@@ -259,6 +398,7 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
       catch { req.signal.throwIfAborted(); /* the server still decides */ }
     }
     let before = observe();
+    startedContext = before;
     const headers = new Headers(req.headers);
     headers.delete(API_SCOPE_HEADER);
     const tokenRequest = headers.has('authorization') || headers.has('x-usernode-token')
@@ -303,8 +443,18 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
     // 401 status remains visible to the native-renewal retry wrapper; its
     // old body is still fenced by guarded().
     if (res.ok && (!current(context, responseScope)
-        || (context.scope !== null && responseScope !== null && context.scope !== responseScope))) throw changed();
-    return guarded(res, context, responseScope);
+        || (context.scope !== null && responseScope !== null && context.scope !== responseScope))) throw changed(reasonFor(context));
+    return guarded(res, context, responseScope, url.pathname);
+    } catch (err) {
+      // A fence this call made is reported once for this read (a shared
+      // native verification rejected for several readers counts each), and
+      // the very same error is rethrown so callers still see AbortError.
+      try {
+        const reason = err && typeof err === 'object' ? fenceReasons.get(err as object) : undefined;
+        if (reason) fenceLog.note(url.pathname, reason, isSignedIn(startedContext));
+      } catch { /* best effort */ }
+      throw err;
+    }
   };
   const bridge = (win.UsernodeReact ||= {});
   bridge.apiCache = {
@@ -316,6 +466,12 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
       viewer = next;
     },
   };
+  // Registered at install, before UI telemetry's own listeners, so a page
+  // being closed sends its fence window out ahead of the ordinary flush.
+  win.addEventListener?.('pagehide', () => { try { fenceLog.close(); } catch { /* best effort */ } });
+  win.addEventListener?.('visibilitychange', () => {
+    try { if (win.document?.visibilityState === 'hidden') fenceLog.close(); } catch { /* best effort */ }
+  });
   win.addEventListener?.('storage', (event: StorageEvent) => {
     if (event.key !== BOUNDARY_KEY) return;
     reset();

@@ -832,8 +832,9 @@ test('admin surface explains coverage and non-failure signals', () => {
   assert.match(service, /not zero failures/);
   assert.match(source, /success.*failed outcomes/i);
   assert.match(source, /Neither signal alone establishes frustration/);
-  assert.match(server, /req\.path === '\/api\/ui-telemetry\/batch'\) return next\(\)/,
-    'the global parser must leave the body for the stricter collector limit');
+  assert.match(server,
+    /req\.path === '\/api\/ui-telemetry\/batch' \|\| req\.path === '\/api\/ui-telemetry\/anonymous'/,
+    'the global parser must leave the body for the stricter collector limit, signed-out reports included');
 });
 
 test('client reports navigation once per change, with how they got there, a hidden mark and returns', async () => {
@@ -1096,3 +1097,165 @@ test('real PostgreSQL counts each person once, under the language of their lates
       { language: 'es-MX', people: 2 }, { language: 'de', people: 1 }, { language: 'ja', people: 1 },
     ]);
   });
+
+// ── session_fence and invite_settlement ────────────────────────────────
+test('a fence report keeps only route templates, reasons, counts and flags', () => {
+  const parsed = telemetry.parseBatch(batch([
+    event({
+      kind: 'session_fence', screen: 'shell_boot', signedIn: false,
+      fences: [{ path: '/api/public/invites/<token>', reason: 'epoch', public: true, count: 3 }],
+    }),
+  ]));
+  assert.deepEqual(parsed.events[0].fences, [{
+    path: '/api/public/invites/:token', reason: 'epoch', public: true, count: 3,
+  }], 'the stored path is the route\'s own pattern, never an address');
+  assert.equal(parsed.events[0].signedIn, false);
+  assert.equal(parsed.events[0].kind, 'session_fence');
+});
+
+test('a live token, a query string and an unknown reason are refused', () => {
+  const fence = (f) => telemetry.parseBatch(batch([
+    event({ kind: 'session_fence', signedIn: false, fences: [f] }),
+  ]));
+  assert.throws(() => fence({ path: `/api/public/invites/${'A'.repeat(22)}`, reason: 'epoch', count: 1 }),
+    /live token/);
+  assert.throws(() => fence({ path: '/api/private?token=secret', reason: 'epoch', count: 1 }),
+    /invalid/);
+  assert.throws(() => fence({ path: '/api/private', reason: 'logout', count: 1 }), /not allowlisted/);
+  assert.throws(() => fence({ path: '/api/private', reason: 'epoch', count: 0 }), /integer/);
+  assert.throws(() => fence({ path: '/api/private', reason: 'epoch', count: 1, token: 'x' }),
+    /unsupported field/);
+});
+
+test('an invite settlement is one of four words and nothing else', () => {
+  const parsed = telemetry.parseBatch(batch([
+    event({ kind: 'invite_settlement', screen: 'shell_boot', settled: 'failed' }),
+  ]));
+  assert.equal(parsed.events[0].settled, 'failed');
+  for (const settled of ['card', 'dead', 'timeout']) {
+    assert.equal(telemetry.parseBatch(batch([
+      event({ kind: 'invite_settlement', settled }),
+    ])).events[0].settled, settled);
+  }
+  assert.throws(() => telemetry.parseBatch(batch([
+    event({ kind: 'invite_settlement', settled: 'opened' }),
+  ])), /not allowlisted/);
+  assert.throws(() => telemetry.parseBatch(batch([
+    event({ kind: 'invite_settlement', settled: 'card', signedIn: false }),
+  ])), /unsupported field/);
+  assert.throws(() => telemetry.parseBatch(batch([
+    event({ kind: 'screen_visit', fences: [] }),
+  ])), /only valid on a session_fence/);
+});
+
+test('the client holds a signed-out fence report and sends it once', async () => {
+  const sent = [];
+  const timers = [];
+  const handlers = {};
+  const env = {
+    document: null,
+    location: { origin: 'https://h.test', hash: '', href: 'https://h.test/' },
+    setTimeout: (fn) => { timers.push(fn); return timers.length; },
+    clearTimeout: () => {},
+    addEventListener: (name, fn) => { handlers[name] = fn; },
+    fetch: (url, init) => { sent.push({ url, body: JSON.parse(init.body) }); return Promise.resolve({ ok: true }); },
+  };
+  const ui = createUITelemetry(env);
+  ui.reportFence({ signedIn: false, fences: [
+    { path: '/api/public/invites/<token>', reason: 'epoch', public: true, count: 2 },
+  ] });
+  assert.equal(sent.length, 0, 'held for a moment, not sent at once');
+  handlers.pagehide();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].url, '/api/ui-telemetry/anonymous');
+  assert.deepEqual(sent[0].body.events[0].fences,
+    [{ path: '/api/public/invites/<token>', reason: 'epoch', public: true, count: 2 }]);
+  assert.equal(sent[0].body.events[0].kind, 'session_fence');
+  handlers.pagehide();
+  assert.equal(sent.length, 1, 'never retried');
+});
+
+test('the client refuses a fence report holding a query or a live token', () => {
+  const sent = [];
+  const ui = createUITelemetry({
+    document: null, location: { origin: 'https://h.test', hash: '', href: 'https://h.test/' },
+    setTimeout: () => 1, clearTimeout: () => {}, addEventListener: () => {},
+    fetch: (url, init) => { sent.push(JSON.parse(init.body)); return Promise.resolve({ ok: true }); },
+  });
+  assert.equal(ui.reportFence({ signedIn: false, fences: [{ path: '/api/private?token=x', reason: 'epoch', count: 1 }] }), null);
+  assert.equal(ui.reportFence({ signedIn: false, fences: [{ path: `/api/public/invites/${'A'.repeat(22)}`, reason: 'epoch', count: 1 }] }), null);
+  assert.equal(ui.reportFence({ signedIn: true, fences: [{ path: '/api/private', reason: 'epoch', count: 1 }] }), null,
+    'a signed-in report with no account is dropped');
+});
+
+test('invite settlement is recorded once a page load', () => {
+  const sent = [];
+  const handlers = {};
+  const ui = createUITelemetry({
+    document: null, location: { origin: 'https://h.test', hash: '', href: 'https://h.test/' },
+    setTimeout: () => 1, clearTimeout: () => {}, addEventListener: (n, f) => { handlers[n] = f; },
+    fetch: (url, init) => { sent.push(JSON.parse(init.body)); return Promise.resolve({ ok: true }); },
+  });
+  assert.ok(ui.inviteSettled('card'));
+  assert.equal(ui.inviteSettled('dead'), null, 'the first settlement wins');
+  handlers.pagehide();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].events.length, 1);
+  assert.deepEqual([sent[0].events[0].kind, sent[0].events[0].settled], ['invite_settlement', 'card']);
+});
+
+test('the anonymous route takes only content-free signed-out reports, with no account and no receipt', async (t) => {
+  let express;
+  try { express = require('express'); } catch { return t.skip('express is not installed'); }
+  const { uiTelemetryRoutes } = require('../src/routes/ui-telemetry');
+  const rows = [];
+  const client = {
+    async query(sql, params) {
+      if (/^\s*INSERT INTO events/.test(sql)) {
+        rows.push({ sql, params });
+        return { rowCount: 1, rows: [{ id: rows.length }] };
+      }
+      return { rowCount: 0, rows: [] };
+    },
+    release() {},
+  };
+  const pool = { connect: async () => client, query: async () => ({ rows: [] }) };
+  const app = express();
+  let signedIn = false;
+  app.use((req, _res, next) => { if (signedIn) req.user = { id: 7, username: 'ana' }; next(); });
+  app.use(uiTelemetryRoutes({}, { pool }));
+  const server = await new Promise((resolve) => {
+    const opened = app.listen(0, '127.0.0.1', () => resolve(opened));
+  });
+  t.after(() => server.close());
+  const url = `http://127.0.0.1:${server.address().port}/api/ui-telemetry/anonymous`;
+  const post = (events, schemaVersion = 2) => fetch(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ schemaVersion, batchId: id('batch'), events, delivery: { failedBatches: 0, droppedEvents: 0 } }),
+  });
+
+  const settlement = event({ kind: 'invite_settlement', screen: 'shell_boot', settled: 'failed' });
+  assert.equal((await post([settlement])).status, 202);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].params[0], null, 'stored with no account');
+  assert.equal(rows[0].params[2], 'ui_experience');
+  assert.doesNotMatch(rows[0].sql, /ui_telemetry_delivery/);
+  assert.equal(JSON.parse(rows[0].params[3]).settled, 'failed');
+
+  rows.length = 0;
+  assert.equal((await post([event({ kind: 'session_fence', signedIn: false,
+    fences: [{ path: '/api/public/invites/<token>', reason: 'epoch', count: 1 }] })])).status, 202);
+  assert.equal(JSON.parse(rows[0].params[3]).fences[0].path, '/api/public/invites/:token');
+
+  assert.equal((await post([event({ kind: 'session_fence', signedIn: true,
+    fences: [{ path: '/api/private', reason: 'epoch', count: 1 }] })])).status, 400,
+  'a signed-in fence travels on the batch route');
+  assert.equal((await post([event({ kind: 'screen_visit', screen: 'home' })])).status, 400);
+  assert.equal((await post(Array.from({ length: 5 }, () => event({ kind: 'invite_settlement', settled: 'card' })))).status, 400,
+    'at most four reports a request');
+
+  signedIn = true;
+  rows.length = 0;
+  assert.equal((await post([settlement])).status, 202);
+  assert.equal(rows.length, 0, 'a signed-in caller is discarded, never stored anonymously');
+});

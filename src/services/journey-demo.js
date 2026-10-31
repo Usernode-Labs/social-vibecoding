@@ -560,6 +560,11 @@ function firstSession(day, all = false) {
       since: DEMO_RECORDED_FROM, opened: all ? 26 : 11,
       signed_in: all ? 12 : 5, signed_in_by_invite: all ? 8 : 3, signed_in_already: all ? 4 : 2,
       joined: all ? 7 : joined,
+      // #6002: where each signed-out invite page landed, once each. The four
+      // add up to the opens, and "the read failed" sits at zero the way it
+      // should on a healthy release.
+      landed_since: DEMO_RECORDED_FROM,
+      landed_card: all ? 23 : 9, landed_dead: 1, landed_failed: 0, landed_timeout: all ? 2 : 1,
     },
     { week: window, cohort: !!ids },
   );

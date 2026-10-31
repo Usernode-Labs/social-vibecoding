@@ -83,6 +83,13 @@ const KINDS = Object.freeze(new Set([
   // the screen showing. services/signal-observers/client-errors.js files
   // the ones several visits hit; topic-figures.js counts the visits.
   'client_error',
+  // A page load's reads that the browser's session guard cut off
+  // (frontend/src/lib/api-cache-identity.ts): one report per window, naming
+  // the route templates, whether the page was signed in and the reason.
+  'session_fence',
+  // Where a signed-out invite link's page settled: the card, the dead-link
+  // page, or the pitch after the read failed or took too long.
+  'invite_settlement',
 ]));
 const OUTCOMES = Object.freeze(new Set(['success', 'failure', 'cancelled']));
 const ERROR_CODES = Object.freeze(new Set([
@@ -96,7 +103,16 @@ const EVENT_KEYS = Object.freeze([
   'id', 'visitId', 'attemptId', 'kind', 'screen', 'action', 'outcome',
   'errorCode', 'durationMs', 'appSlug', 'build', 'occurredAt', 'sequence',
   'via', 'errorName', 'template', 'frame',
+  'signedIn', 'fences', 'settled',
 ]);
+// These describe a fence or an invite landing, never another kind's event.
+const CONTENT_FREE_ONLY_KEYS = Object.freeze(['signedIn', 'fences', 'settled']);
+const FENCE_REASONS = Object.freeze(new Set(['epoch', 'scope', 'native']));
+const INVITE_OUTCOMES = Object.freeze(new Set(['card', 'dead', 'failed', 'timeout']));
+const MAX_FENCES = 8;
+const MAX_FENCE_COUNT = 1000;
+const FENCE_PATH_RE = /^\/api(\/[A-Za-z0-9._~:<>-]{1,64}){0,12}$/;
+const TOKEN_SEGMENT_RE = /^[A-Za-z0-9_-]{22,}$/;
 
 // ── client_error ────────────────────────────────────────────────────────
 //
@@ -371,13 +387,162 @@ function parseClientError(value, index, nowMs) {
   };
 }
 
+// ── session_fence and invite_settlement ─────────────────────────────────
+//
+// A fence report and an invite landing carry no text a person could have
+// typed: a route template, a reason, a count and a boolean, or one of four
+// words. The client drops the query and replaces link codes; the collector
+// stores the route's own pattern, so a project name or username in an
+// address is never kept.
+const ROUTE_TEMPLATES_FALLBACK = Object.freeze([
+  '/api/public/invites/:token',
+  '/api/public/invites/:token/picture',
+  '/api/public/invites/:token/icon.png',
+  '/api/public/apps/:slug/overview',
+  '/api/public/profiles/:username',
+  '/api/public/waitlist/options',
+  '/api/public/waitlist/confirm',
+  '/api/public/waitlist/resend',
+  '/api/public/waitlist/status',
+  '/api/public/apps',
+  '/api/auth/me',
+  '/api/auth/logout',
+  '/api/ui-telemetry/batch',
+  '/api/ui-telemetry/anonymous',
+]);
+let routeTemplateCache = null;
+function knownRouteTemplates() {
+  if (routeTemplateCache) return routeTemplateCache;
+  let routes = ROUTE_TEMPLATES_FALLBACK;
+  try {
+    const inventory = require('./global-chat/classic-inventory.generated.json');
+    if (Array.isArray(inventory?.routes) && inventory.routes.length) routes = inventory.routes;
+  } catch { /* the bundled list is enough for the routes people use */ }
+  routeTemplateCache = routes.filter((r) => typeof r === 'string' && r.startsWith('/api/'));
+  return routeTemplateCache;
+}
+
+/** Pure: a fence path as the route's own pattern, never the address. */
+function routeTemplate(path) {
+  if (typeof path !== 'string' || !FENCE_PATH_RE.test(path) || path.includes('?')) {
+    throw new TelemetryValidationError('fence path is invalid');
+  }
+  const segments = path.split('/');
+  if (segments.some((s) => TOKEN_SEGMENT_RE.test(s))) {
+    throw new TelemetryValidationError('fence path carries a live token');
+  }
+  let best = null;
+  let bestScore = -1;
+  for (const route of knownRouteTemplates()) {
+    const parts = route.split('/');
+    if (parts.length !== segments.length) continue;
+    let score = 0;
+    let matched = true;
+    for (let i = 0; i < parts.length; i += 1) {
+      if (parts[i].startsWith(':')) continue;
+      if (parts[i] !== segments[i]) { matched = false; break; }
+      score += 1;
+    }
+    if (matched && score > bestScore) { best = route; bestScore = score; }
+  }
+  if (best) return best;
+  const first = segments[2];
+  const prefix = first ? `/api/${first}` : '/api';
+  const known = knownRouteTemplates().some((r) => r === prefix || r.startsWith(`${prefix}/`));
+  return known ? `${prefix}/…` : '/api/…';
+}
+
+function parseSessionFence(value, index, nowMs) {
+  const label = `events[${index}]`;
+  exactKeys(value, ['id', 'visitId', 'kind', 'screen', 'build', 'occurredAt', 'sequence', 'signedIn', 'fences'], label);
+  const screen = oneOf(value.screen, SCREENS, `${label}.screen`);
+  if (typeof value.signedIn !== 'boolean') {
+    throw new TelemetryValidationError(`${label}.signedIn must be a boolean`);
+  }
+  if (!Array.isArray(value.fences) || value.fences.length < 1 || value.fences.length > MAX_FENCES) {
+    throw new TelemetryValidationError(`${label}.fences must contain 1-${MAX_FENCES} entries`);
+  }
+  const fences = value.fences.map((fence, i) => {
+    exactKeys(fence, ['path', 'reason', 'public', 'count'], `${label}.fences[${i}]`);
+    const path = routeTemplate(fence.path);
+    const reason = oneOf(fence.reason, FENCE_REASONS, `${label}.fences[${i}].reason`);
+    const count = integer(fence.count, `${label}.fences[${i}].count`, 1, MAX_FENCE_COUNT);
+    return { path, reason, public: path.startsWith('/api/public/'), count };
+  });
+  let build = null;
+  if (value.build != null) {
+    if (typeof value.build !== 'string' || !BUILD_RE.test(value.build)) {
+      throw new TelemetryValidationError(`${label}.build is invalid`);
+    }
+    build = value.build;
+  }
+  return {
+    eventId: opaqueId(value.id, `${label}.id`),
+    visitId: opaqueId(value.visitId, `${label}.visitId`),
+    attemptId: null,
+    kind: 'session_fence',
+    screen,
+    action: null,
+    outcome: null,
+    errorCode: null,
+    durationMs: null,
+    appSlug: null,
+    build,
+    occurredAt: eventTimestamp(value.occurredAt, nowMs),
+    sequence: integer(value.sequence, `${label}.sequence`, 1, 1_000_000),
+    via: null,
+    signedIn: value.signedIn,
+    fences,
+    settled: null,
+  };
+}
+
+function parseInviteSettlement(value, index, nowMs) {
+  const label = `events[${index}]`;
+  exactKeys(value, ['id', 'visitId', 'kind', 'screen', 'build', 'occurredAt', 'sequence', 'settled'], label);
+  const screen = oneOf(value.screen, SCREENS, `${label}.screen`);
+  const settled = oneOf(value.settled, INVITE_OUTCOMES, `${label}.settled`);
+  let build = null;
+  if (value.build != null) {
+    if (typeof value.build !== 'string' || !BUILD_RE.test(value.build)) {
+      throw new TelemetryValidationError(`${label}.build is invalid`);
+    }
+    build = value.build;
+  }
+  return {
+    eventId: opaqueId(value.id, `${label}.id`),
+    visitId: opaqueId(value.visitId, `${label}.visitId`),
+    attemptId: null,
+    kind: 'invite_settlement',
+    screen,
+    action: null,
+    outcome: null,
+    errorCode: null,
+    durationMs: null,
+    appSlug: null,
+    build,
+    occurredAt: eventTimestamp(value.occurredAt, nowMs),
+    sequence: integer(value.sequence, `${label}.sequence`, 1, 1_000_000),
+    via: null,
+    signedIn: null,
+    fences: null,
+    settled,
+  };
+}
+
 function parseEvent(value, index, nowMs) {
   exactKeys(value, EVENT_KEYS, `events[${index}]`);
   const kind = oneOf(value.kind, KINDS, `events[${index}].kind`);
   if (kind === 'client_error') return parseClientError(value, index, nowMs);
+  if (kind === 'session_fence') return parseSessionFence(value, index, nowMs);
+  if (kind === 'invite_settlement') return parseInviteSettlement(value, index, nowMs);
   const scriptOnly = CLIENT_ERROR_ONLY_KEYS.find((key) => value[key] != null);
   if (scriptOnly) {
     throw new TelemetryValidationError(`${scriptOnly} is only valid on a client_error`);
+  }
+  const contentFreeOnly = CONTENT_FREE_ONLY_KEYS.find((key) => value[key] != null);
+  if (contentFreeOnly) {
+    throw new TelemetryValidationError(`${contentFreeOnly} is only valid on a session_fence or invite_settlement`);
   }
   const screen = oneOf(value.screen, SCREENS, `events[${index}].screen`);
   const action = oneOf(value.action, ACTIONS, `events[${index}].action`, true);
@@ -524,11 +689,16 @@ function eventMetadata(event, language = null) {
   if (language && event.kind === 'screen_visit' && event.screen === 'shell_boot') {
     metadata.language = language;
   }
+  if (event.signedIn != null) metadata.signedIn = event.signedIn;
+  if (Array.isArray(event.fences)) metadata.fences = event.fences;
+  if (event.settled != null) metadata.settled = event.settled;
   return metadata;
 }
 
 // `language` is browserLanguage() of the delivering request, or null.
-async function insertBatch(pool, userId, batch, { language = null } = {}) {
+// `receipt` is false for the signed-out route: it has no account to write a
+// delivery receipt for, and the client never retries it.
+async function insertBatch(pool, userId, batch, { language = null, receipt = true } = {}) {
   const client = await pool.connect();
   let accepted = 0;
   try {
@@ -544,7 +714,7 @@ async function insertBatch(pool, userId, batch, { language = null } = {}) {
       );
       accepted += result.rowCount || 0;
     }
-    const receipt = await client.query(
+    const receiptRow = receipt !== false && await client.query(
       `INSERT INTO events (user_id, event_type, metadata)
        VALUES ($1, $2, $3::jsonb)
        ON CONFLICT DO NOTHING
@@ -557,7 +727,7 @@ async function insertBatch(pool, userId, batch, { language = null } = {}) {
         droppedEvents: batch.delivery.droppedEvents,
       })]
     );
-    if (!receipt.rowCount) {
+    if (receiptRow && !receiptRow.rowCount) {
       // A lost success response makes the client retry the same batch with
       // increased loss counters. Preserve the original accepted count while
       // letting that later delivery evidence reach the coverage report.
@@ -959,6 +1129,7 @@ module.exports = {
   normalizeErrorTemplate,
   parseBatch,
   pageLoads,
+  routeTemplate,
   recordServerFailure,
   safeServerError,
   storedErrorTemplate,

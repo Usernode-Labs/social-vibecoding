@@ -309,7 +309,8 @@ app.use((req, res, next) => {
   // The browser diagnostics collector owns a stricter 32 KiB parser in
   // routes/ui-telemetry.js. Leave its stream untouched here so that lower
   // bound is enforced before JSON decoding.
-  if (req.method === 'POST' && req.path === '/api/ui-telemetry/batch') return next();
+  if (req.method === 'POST'
+      && (req.path === '/api/ui-telemetry/batch' || req.path === '/api/ui-telemetry/anonymous')) return next();
   // Private conversation uploads carry raw bytes and own a bounded 21 MB
   // parser in routes/conversations.js. In particular, a .json file may have
   // application/json content-type; letting this global parser consume it
