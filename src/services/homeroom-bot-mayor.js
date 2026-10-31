@@ -267,6 +267,10 @@ const DEFERRED_TEXT = 'I can\'t reach my model right now, so I couldn\'t answer 
   + 'you don\'t need to send it again.';
 // The last of those tries failed too.
 const DEFERRED_GAVE_UP_TEXT = 'I still couldn\'t reach my model to answer your message above. Ask me again when you\'re ready.';
+// 31 Oct 2026: the same, when that answer also owed their earlier messages
+// (owedNote), so none of them is left as though it was answered.
+const DEFERRED_GAVE_UP_OWED_TEXT = 'I still couldn\'t reach my model to answer your message above, or the ones you sent '
+  + 'before it that I said I\'d come back to. Ask me again when you\'re ready.';
 // #3733: what the one plain request (plainAnswer) is told. #3772: it can do
 // nothing but answer, so it never drafts a request, says something was done,
 // or blames lookups; anything it cannot answer from the conversation it
@@ -333,6 +337,44 @@ function platformRules() {
 }
 
 /**
+ * Pure (31 Oct 2026): what a turn written in a thread that is no request's
+ * is told: that the conversation below is that thread, and for a draft's
+ * private thread what became of the draft, so "is the card out of date?"
+ * under a filed draft is answered about the request it became. Empty outside
+ * a thread.
+ */
+function otherThreadLines(thread) {
+  if (!thread) return [];
+  const lines = [
+    'THIS CONVERSATION',
+    '- They are writing in a thread of this chat, and the conversation below is that thread. Answer their newest',
+    '  message here, in this thread.',
+  ];
+  const d = thread.draft;
+  if (d?.appSlug) {
+    const name = d.appName || d.appSlug;
+    const title = d.title ? ` ("${clip(d.title, 140)}")` : '';
+    if (d.kind === 'draft_request' && d.state === 'filed' && d.issueNumber) {
+      lines.push(
+        `- It is the private thread you opened for a request to file on ${name}${title}. They filed it: it is request`,
+        `  #${Number(d.issueNumber)}. For your records of it, call request_detail with project "${d.appSlug}" and number`,
+        `  ${Number(d.issueNumber)}. Anything else they ask here is a new question: a new problem is a new request.`,
+      );
+    } else if (d.kind === 'draft_request' && d.state === 'open') {
+      lines.push(`- It is the private thread you opened for a request to file on ${name}${title}. It is not filed yet.`);
+    } else if (d.kind === 'draft_request') {
+      lines.push(`- It is the private thread you opened for a request to file on ${name}${title}. They put it away: nothing was filed.`);
+    } else {
+      const now = d.state === 'posted' ? 'They posted them.'
+        : d.state === 'open' ? 'Nothing is posted yet.' : 'They put them away: nothing was posted.';
+      lines.push(`- It is the private thread you opened for words to post on ${name}. ${now}`);
+    }
+  }
+  lines.push('');
+  return lines;
+}
+
+/**
  * Pure (one story): what a turn written in a request's thread is told about
  * that request, so it answers about it, in its thread, without asking which
  * one they mean. Empty outside a thread.
@@ -351,12 +393,13 @@ function threadLines(request) {
   ];
 }
 
-function systemPrompt({ username, perPerson = 2, today = new Date(), platform = true, request = null }) {
+function systemPrompt({ username, perPerson = 2, today = new Date(), platform = true, request = null, thread = null }) {
   return [
     `You are Homeroom bot, talking with @${username} in a direct message on Homeroom. Homeroom is a platform where`,
     'people build small web apps together. Every change to a project is voted on by the project\'s group.',
     '',
     ...threadLines(request),
+    ...(request ? [] : otherThreadLines(thread)),
     `What you do for ${username}: you read the requests they post on their projects, ask them a question when a`,
     'request is unclear, build the clear ones into changes for the group to vote on, and tell them here how it is',
     `going. You work through a queue, on up to ${perPerson} of their requests at once: you read one request per`,
@@ -1449,6 +1492,41 @@ const NO_OFFER_NOTE = '[Homeroom: their newest message reads like a decision on 
   + 'waiting for them, so nothing has been filed. If they want something filed, call offer_request so they can tap '
   + 'File it under it, and never say it was filed.]';
 
+// 31 Oct 2026: their earlier messages whose answer this turn took over (the
+// bot-dm machine's `also`, deps.alsoUnanswered): a promised answer used to be
+// dropped when they wrote again, and never came. Each is quoted to the
+// model, at most this many characters of it.
+const OWED_CHARS = 400;
+
+/**
+ * The note that tells a turn which earlier messages of theirs it owes an
+ * answer too, quoting each: their own, in this conversation, oldest first.
+ * Null when there are none (or none can be read). Never throws.
+ */
+async function owedNote(pool, { conversationId, userId, ids }) {
+  const wanted = (Array.isArray(ids) ? ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  if (!wanted.length) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, content FROM conversation_messages
+        WHERE id = ANY($1::int[]) AND conversation_id = $2 AND sender_id = $3 AND deleted_at IS NULL
+        ORDER BY id`,
+      [wanted, conversationId, userId],
+    );
+    const quoted = rows.map((m) => String(m.content || '').trim()).filter(Boolean);
+    if (!quoted.length) return null;
+    return [
+      '[Homeroom: before their newest message they also wrote these, and your answers to them never came (you said',
+      'you would come back to them):',
+      ...quoted.map((text) => `- "${clip(text.replace(/\s+/g, ' '), OWED_CHARS)}"`),
+      'Answer these as well as their newest message, in this one reply, and never say you answered them before.]',
+    ].join('\n');
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not read the messages a DM answer owes', { conversationId, err: err.message });
+    return null;
+  }
+}
+
 // ── One turn ──────────────────────────────────────────────────────────────
 
 // #3769: how the platform's own messages in the DM read in the model's history.
@@ -1471,21 +1549,40 @@ function imagePart(picture) {
  */
 async function historyMessages(pool, {
   conversationId, botId, upToId, imageInput = false, takeImages = null, cardsOf = null, viewer = null, threadRootId = null,
+  withRootQuote = false,
 }) {
   // One story per request: written in a request's thread, the turn reads
   // that thread (its card and everything under it); anywhere else, the main
-  // chat as the person sees it (the moments shown there included).
+  // chat as the person sees it (the moments shown there included). 31 Oct
+  // 2026: written in any other thread (a draft's private one), that thread,
+  // led by the message its first one quotes (`withRootQuote`: what they
+  // asked in the main chat that the bot opened it for).
   const { rows } = await pool.query(
     `SELECT id, sender_id, content, metadata, moderation_hidden_at FROM conversation_messages
       WHERE conversation_id = $1 AND id <= $2 AND deleted_at IS NULL
         AND msg_type = 'message'
         AND (CASE WHEN $4::int IS NULL
                   THEN (thread_root_id IS NULL OR (metadata->'homeroomBot'->>'alsoInChat') = 'true')
-                  ELSE (id = $4 OR thread_root_id = $4) END)
+                  ELSE (id = $4 OR thread_root_id = $4
+                        OR ($5::boolean AND id = (SELECT r.reply_to_id FROM conversation_messages r
+                                                   WHERE r.id = $4 AND r.conversation_id = $1))) END)
       ORDER BY id DESC LIMIT $3`,
-    [conversationId, upToId, MAX_HISTORY, threadRootId],
+    [conversationId, upToId, MAX_HISTORY, threadRootId, withRootQuote === true],
   );
   rows.reverse();
+  // 31 Oct 2026: the history always ends on the message being answered. One
+  // the filter above left out (written in a thread the turn did not know)
+  // left the model a conversation that ended on the bot's own line: that
+  // day's turns came back empty or cut off, and the one that answered,
+  // answered an older message.
+  if (upToId && !rows.some((m) => Number(m.id) === Number(upToId))) {
+    const { rows: [own] = [] } = await pool.query(
+      `SELECT id, sender_id, content, metadata, moderation_hidden_at FROM conversation_messages
+        WHERE id = $1 AND conversation_id = $2 AND deleted_at IS NULL`,
+      [upToId, conversationId],
+    );
+    if (own) rows.push(own);
+  }
   const theirs = rows.filter((m) => Number(m.sender_id) !== Number(botId) && !m.moderation_hidden_at).map((m) => Number(m.id));
   const { rows: files } = theirs.length
     ? await pool.query(
@@ -2012,6 +2109,26 @@ function retryPlan(err, { forced = false, elapsedMs = 0, attempt = 1 } = {}) {
   return plan;
 }
 
+// 31 Oct 2026: the failures that are the serving provider's, so the next
+// try leaves it out. Every answer to Evan's thread that day ran out of output
+// or came back empty, and a fresh session sorted by latency sent all three
+// tries of 13010 back to the same provider.
+const PROVIDER_FAILURES = new Set([
+  'output_limit', 'empty_answer', 'provider_error', 'provider_unavailable', 'invalid_response', 'stream_error',
+  'timeout', 'rate_limited', 'response_too_large',
+]);
+
+// At most this many are left out in one turn.
+const MAX_AVOIDED_PROVIDERS = 3;
+
+/** Pure: the providers a turn's next request leaves out: the ones before, and the one that just failed it. */
+function avoidProviders(before, err) {
+  const list = Array.isArray(before) ? before.slice() : [];
+  const name = typeof err?.provider === 'string' ? err.provider.trim() : '';
+  if (name && PROVIDER_FAILURES.has(err?.code) && !list.includes(name) && list.length < MAX_AVOIDED_PROVIDERS) list.push(name);
+  return list;
+}
+
 /**
  * One model request of a turn, asked again as retryPlan says. Every failure
  * is logged with its code, HTTP status, provider and generation, and kept in
@@ -2046,6 +2163,7 @@ async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_
         // OpenRouter's session pins a provider. It is this turn's, not the
         // person's, and a retry moves to a fresh one.
         sessionId: `hrbot-dm-${t.user.id}-${t.message.id}${t.route > 1 ? `-r${t.route}` : ''}`,
+        ...(Array.isArray(t.avoid) && t.avoid.length ? { ignoreProviders: t.avoid } : {}),
         ...rest,
         ...overrides,
       });
@@ -2054,7 +2172,9 @@ async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_
       t.usage.costUsd += res?.usage?.costUsd || 0;
       const calls = Array.isArray(res?.toolCalls) ? res.toolCalls : [];
       if (!calls.length && !String(res?.content || '').trim()) {
-        throw Object.assign(new Error('The model answered with nothing'), { code: 'empty_answer' });
+        throw Object.assign(new Error('The model answered with nothing'), {
+          code: 'empty_answer', provider: res?.provider ?? null, generationId: res?.generationId ?? null,
+        });
       }
       return res;
     } catch (err) {
@@ -2064,6 +2184,11 @@ async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_
         userId: t.user.id, messageId: t.message.id, where, attempt, code, status: err?.status ?? null,
         provider: err?.provider ?? null, generationId: err?.generationId ?? null, err: clip(err?.message, 200),
       });
+      // 31 Oct 2026: the rest of the turn goes to other providers than the
+      // ones that failed it (avoidProviders), the plain answer included; a
+      // request refused as it was built is asked again without that.
+      if (err?.code === 'invalid_request') t.avoid = null;
+      else if (Array.isArray(t.avoid)) t.avoid = avoidProviders(t.avoid, err);
       let plan = null;
       if (attempt < attempts && err?.status === 400 && hasPictures(messages)) {
         // A picture the provider cannot read fails the whole request: the
@@ -2111,7 +2236,14 @@ async function plainAnswer(t, history) {
       where: 'plain',
       attempts: 1,
       messages: [
-        { role: 'system', content: `${systemPrompt({ username: t.user.username, perPerson: t.settings.perPerson, platform: false })}\n\n${PLAIN_NOTE}` },
+        {
+          role: 'system',
+          content: `${systemPrompt({
+            username: t.user.username, perPerson: t.settings.perPerson, platform: false,
+            // 31 Oct 2026: where they wrote it, as the rounds were told.
+            thread: !t.ctx?.deps?.threadRequest && t.ctx?.deps?.threadRootId ? { draft: t.ctx.deps.threadDraft || null } : null,
+          })}\n\n${PLAIN_NOTE}${t.ctx?.owed ? `\n\n${t.ctx.owed}` : ''}`,
+        },
         ...history.slice(-PLAIN_HISTORY).map(plainMessage),
       ],
       tools: [PLAIN_REPLY_TOOL],
@@ -2216,11 +2348,19 @@ async function answerLater(pool, config, { bot, user, conversationId, message, d
   const settings = await botModule(deps).readSettings(pool);
   if (!dm.hasBot(settings, user)) return null;
   log.info('homeroom-bot-mayor', 'Asking a DM answer again', { userId: user.id, messageId: message.id, attempt });
+  // 31 Oct 2026: a later try reads the thread the message was written in, as
+  // its first try did (answerUserMessage); it used to read the main chat.
+  const where = typeof dm.threadDeps === 'function'
+    ? await dm.threadDeps(pool, { userId: user.id, conversationId, message }).catch(() => ({}))
+    : {};
   const run = () => runDmTurn(pool, config, {
-    bot, user, settings, conversationId, message, deps: { ...deps, deferAttempt: attempt },
+    bot, user, settings, conversationId, message, deps: { ...deps, ...where, deferAttempt: attempt },
   });
   return typeof dm.whileTyping === 'function'
-    ? dm.whileTyping(pool, { botId: bot.id, conversationId, ws: deps.ws }, run)
+    ? dm.whileTyping(pool, {
+      botId: bot.id, conversationId, ws: deps.ws,
+      threadRootId: Number(message.threadRootId ?? message.thread_root_id) || null,
+    }, run)
     : run();
 }
 
@@ -2296,7 +2436,12 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     startedMs: Date.now(),
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     failures: [],
+    // The providers that failed this turn, left out of its later requests
+    // (avoidProviders); null once a request was refused as it was built.
+    avoid: [],
   };
+  // 31 Oct 2026: earlier messages of theirs this answer owes too (owedNote).
+  ctx.owed = await owedNote(pool, { conversationId, userId: user.id, ids: deps.alsoUnanswered });
   const toolsUsed = [];
   // What a failure after this point still records (turn).
   state.turn = t;
@@ -2351,7 +2496,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // still answered.
       try {
         history = await historyMessages(pool, {
-          conversationId, botId: bot.id, upToId: message.id, imageInput, takeImages, threadRootId: deps.threadRequest?.rootId || null,
+          conversationId, botId: bot.id, upToId: message.id, imageInput, takeImages,
+          threadRootId: deps.threadRequest?.rootId || deps.threadRootId || null,
+          withRootQuote: !deps.threadRequest && !!deps.threadRootId,
           cardsOf: () => activityModule(deps).cardsFor(pool, { user, settings, config }),
           viewer: user,
         });
@@ -2367,6 +2514,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           content: systemPrompt({
             username: user.username, perPerson: settings.perPerson, platform: platformTools.length > 0,
             request: deps.threadRequest || null,
+            thread: !deps.threadRequest && deps.threadRootId ? { draft: deps.threadDraft || null } : null,
           }),
         },
         ...history,
@@ -2377,6 +2525,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       if (ctx.decisionWithoutOffer) {
         messages.push({ role: 'system', content: NO_OFFER_NOTE });
       }
+      if (ctx.owed) messages.push({ role: 'system', content: ctx.owed });
       const ids = new Set();
       let limit = MAX_ROUNDS;
       const runRounds = async () => {
@@ -2483,7 +2632,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     // onLater). A later try says nothing until it has an answer, and the
     // last one says it could not.
     const next = (deps.deferAttempt || 0) + 1;
-    if (next > DEFER_DELAYS_MS.length) return say(DEFERRED_GAVE_UP_TEXT);
+    if (next > DEFER_DELAYS_MS.length) return say(ctx.owed ? DEFERRED_GAVE_UP_OWED_TEXT : DEFERRED_GAVE_UP_TEXT);
     if (typeof deps.onLater === 'function') deps.onLater(next);
     if (deps.deferAttempt) return null;
   }
@@ -3014,6 +3163,17 @@ async function settleOffer(pool, config, {
     });
     await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);
     await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'filed', ref: filed.issueNumber });
+    // 31 Oct 2026: the draft's card says what it became. It kept saying "not
+    // filed yet" after File it filed it as #6071: the number went to the
+    // offer's row and the thread's, never to the message the card is drawn
+    // from. Written there, and every device that has it open reads it again.
+    if (action.message_id) {
+      await dm.setQuestionState(pool, Number(action.message_id), {
+        issueNumber: Number(filed.issueNumber), issueTitle: action.title,
+      }, { conversationId: action.conversation_id, userId: user.id }).catch((err) => {
+        log.warn('homeroom-bot-mayor', 'Could not put the filed request on its draft\'s card', { actionId: action.id, err: err.message });
+      });
+    }
     const name = app.name || app.slug;
     const builds = liveModule(deps).isLiveFor(settings, app);
     if (builds && filed.queueId) {
@@ -4449,6 +4609,8 @@ module.exports = {
   DEFER_DELAYS_MS,
   DEFERRED_TEXT,
   DEFERRED_GAVE_UP_TEXT,
+  DEFERRED_GAVE_UP_OWED_TEXT,
+  owedNote,
   AUTOMATIC_LABEL,
   NO_OFFER_NOTE,
   cleanReply,

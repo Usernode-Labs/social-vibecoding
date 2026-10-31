@@ -854,6 +854,65 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const { rows: [filedRow] } = await pool.query(
       'SELECT state, result_ref FROM private_threads WHERE root_message_id = $1', [draftCard.threadRootId]);
     assert.deepEqual(filedRow, { state: 'filed', result_ref: n }, 'filed, it leaves the AI tab\'s private threads');
+    // 31 Oct 2026: and the draft's card carries the number, so it is drawn
+    // as request #n rather than "not filed yet".
+    const decidedDraft = (await read(offered)).metadata.homeroomBot;
+    assert.deepEqual([decidedDraft.status, decidedDraft.chosen, decidedDraft.issueNumber, decidedDraft.issueTitle],
+      ['answered', 'yes', n, 'Tags']);
+    // One filed before that kept only the status gets its number at boot, once.
+    await pool.query(
+      `UPDATE conversation_messages SET metadata = jsonb_set(metadata, '{homeroomBot}',
+         (metadata->'homeroomBot') - 'issueNumber' - 'issueTitle') WHERE id = $1`, [offered.messageId]);
+    const { backfillFiledDraftCards } = require('../src/db/migrate');
+    await backfillFiledDraftCards(pool);
+    await backfillFiledDraftCards(pool);
+    const backfilled = (await read(offered)).metadata.homeroomBot;
+    assert.deepEqual([backfilled.kind, backfilled.issueNumber, backfilled.issueTitle], ['confirm', n, 'Tags']);
+
+    // 31 Oct 2026: a message written in the draft's private thread is
+    // answered from that thread, led by what she asked in Main, and told the
+    // draft became request #n. It used to read Main, which leaves thread
+    // replies out: the model never saw what she wrote there.
+    const inThread = await say('the card still says not filed, is it out of date?', { thread_root_id: draftCard.threadRootId });
+    const where = await dm.threadDeps(pool, { userId: ada.id, conversationId: opened.conversationId, message: inThread });
+    assert.equal(where.threadRootId, draftCard.threadRootId);
+    assert.deepEqual(
+      where.threadDraft,
+      { kind: 'draft_request', state: 'filed', appSlug: 'note-board', appName: 'Note board', title: 'Tags', issueNumber: n },
+    );
+    const asked = [];
+    const answerIt = scripted([[['reply', { text: `It was filed as request #${n}.` }]]]);
+    const threadAnswer = await read(await mayor.runDmTurn(pool, CONFIG, {
+      bot, user: ada, settings, conversationId: opened.conversationId, message: inThread,
+      deps: { chat: (req) => { asked.push(structuredClone(req.messages)); return answerIt(req); }, apiKey: 'sk-test', openMcp, ...where },
+    }));
+    assert.equal(threadAnswer.threadRootId, draftCard.threadRootId, 'answered in the thread');
+    const sent = asked[0];
+    const words = sent.filter((m) => m.role !== 'system').map((m) => (typeof m.content === 'string' ? m.content : m.content?.[0]?.text) || '');
+    assert.equal(sent[sent.length - 1].role, 'user', 'the history ends on her message');
+    assert.match(words[words.length - 1], /the card still says not filed/);
+    assert.match(words[0], /could you add tags to note board\?/, 'led by what she asked in Main');
+    assert.ok(words.some((w) => /I drafted it as a request on Note board/.test(w)), 'the thread\'s first line');
+    assert.ok(!words.some((w) => /what about dark mode/.test(w)), 'nothing else from Main');
+    assert.match(sent[0].content, new RegExp(`They filed it: it is request\\s+#${n}\\.`));
+
+    // 31 Oct 2026: an answer that took over earlier ones the bot promised to
+    // come back to (the machine's `also`) is told to answer them too.
+    const owedAsk = await say('can you file the card bug too?', { thread_root_id: draftCard.threadRootId });
+    const newest = await say('and that you never show typing in threads', { thread_root_id: draftCard.threadRootId });
+    const owedSeen = [];
+    const answerAll = scripted([[['reply', { text: 'Both noted.' }]]]);
+    await mayor.runDmTurn(pool, CONFIG, {
+      bot, user: ada, settings, conversationId: opened.conversationId, message: newest,
+      deps: {
+        chat: (req) => { owedSeen.push(structuredClone(req.messages)); return answerAll(req); },
+        apiKey: 'sk-test', openMcp, ...where, alsoUnanswered: [owedAsk.id, ask.id + 999999],
+      },
+    });
+    const note = owedSeen[0].find((m) => m.role === 'system' && /your answers to them never came/.test(m.content));
+    assert.ok(note, 'the turn is told what it owes');
+    assert.match(note.content, /- "can you file the card bug too\?"/);
+    assert.equal(note.content.split('\n- ').length - 1, 1, 'only her own messages in this chat, never one that does not exist');
 
     // One conversation (#6019): "I'm building it now" is a quiet line in
     // Main, beside the request's card; the post is told it reached her, so
@@ -1047,6 +1106,21 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(asks[1].session, `${asks[0].session}-r2`);
     const { rows: [row] } = await pool.query('SELECT error FROM homeroom_bot_dm_turns ORDER BY id DESC LIMIT 1');
     assert.equal(row.error, null, 'the turn answered');
+    assert.equal(asks.length, 2);
+
+    // 31 Oct 2026: the next try leaves out the provider that ran out or
+    // answered with nothing, for the rest of the turn; a fresh session alone
+    // went back to it.
+    const routed = [];
+    const together = async (req) => {
+      routed.push(req.ignoreProviders || null);
+      if (routed.length === 1) throw Object.assign(new Error('cut off'), { code: 'output_limit', provider: 'Together' });
+      if (routed.length === 2) return { content: '', toolCalls: [], provider: 'Novita', usage: {} };
+      return scripted([[['reply', { text: 'It is request #5.' }]]])(req);
+    };
+    const away = await turn('is it filed?', together);
+    assert.equal((await read(away)).content, 'It is request #5.');
+    assert.deepEqual(routed, [null, ['Together'], ['Together', 'Novita']]);
 
     // A provider that refuses the forced reply on the last round: the round
     // goes again with the choice left to the model.

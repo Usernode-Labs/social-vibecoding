@@ -184,8 +184,8 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
 
   useEffect(() => () => {
     if (typingStop.current) window.clearTimeout(typingStop.current);
-    notifyTyping(false);
-  }, [conversationId]);
+    notifyTyping(false, threadRootId);
+  }, [conversationId, threadRootId]);
 
   const boxShown = !!active && active.membershipStatus === 'member' && !!active.canSend;
   useEffect(() => {
@@ -429,9 +429,10 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   function updateValue(next: string) {
     const trimmed = next.slice(0, 8000);
     setValue(trimmed); setDraft(scope, trimmed);
-    notifyTyping(true);
+    // 31 Oct 2026: typed in a thread, it is that thread's typing line.
+    notifyTyping(true, threadRootId);
     if (typingStop.current) window.clearTimeout(typingStop.current);
-    typingStop.current = window.setTimeout(() => notifyTyping(false), 2200);
+    typingStop.current = window.setTimeout(() => notifyTyping(false, threadRootId), 2200);
   }
 
   /** #6035: format the selection (or the caret's line/spot) and keep the focus. */
@@ -516,7 +517,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // `preventScroll` for the same reason.
   function submit() {
     if (dictating || uploading || (!value.trim() && !attachments.length && !object)) return;
-    setError(''); notifyTyping(false); setPrompt(null);
+    setError(''); notifyTyping(false, threadRootId); setPrompt(null);
     const input = { content: value.trim(), attachmentIds: attachments.map((item) => item.id), attachments, object: object ? referenceOf(object) : undefined };
     const answerable = active?.homeroomBot !== true;
     setValue(''); setAttachments([]); setObject(null);
@@ -639,7 +640,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
             </div>
           ) : null}
         </div>
-        <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); else if (onFormatKey(event)) return; }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : (prompt || t('messages:composer.placeholder'))} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
+        <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); else if (onFormatKey(event)) return; }} onBlur={() => notifyTyping(false, threadRootId)} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : (prompt || t('messages:composer.placeholder'))} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
         <SpeakButton scope={`messages:${scope}`} getText={() => inputRef.current?.value || ''} onText={updateValue} maxLength={8000} onBusyChange={setDictating} disabled={!boxShown} />
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={dictating || !!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label={t('messages:composer.send')}><ArrowUpIcon aria-hidden="true" /></button>
       </div>
