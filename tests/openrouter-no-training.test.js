@@ -285,3 +285,16 @@ test('the app-facing LLM proxy forwards to Anthropic only, so no app can reach O
   assert.match(proxy, /const upstreamUrl = `\$\{anthropicStream\.ANTHROPIC_UPSTREAM\}\/\$\{upstreamPathRaw\}`;/);
   assert.doesNotMatch(proxy, /openrouter/i);
 });
+
+test('31 Oct 2026: a retry leaves out the providers that failed it, by slug, and still denies data collection', () => {
+  const transport = require('../src/services/openrouter');
+  const base = { model: 'z-ai/glm-5.3-flash', reasoning: 'low', messages: [], tools: [] };
+  const away = transport.buildRequest({ ...base, ignoreProviders: ['Together', 'Inference.net', 'Together', '', null] });
+  assert.deepEqual(away.provider.ignore, ['together', 'inference-net']);
+  assertDenied(away, 'buildRequest with ignoreProviders');
+  assert.equal(away.provider.sort, 'latency', 'the rest of the routing is kept');
+  assert.equal('ignore' in transport.buildRequest(base).provider, false, 'nothing left out unless asked');
+  assert.equal(transport.providerSlug('Google AI Studio'), 'google-ai-studio');
+  assert.equal(transport.providerSlug('deepinfra/turbo'), 'deepinfra/turbo');
+  assert.equal(transport.providerSlug('!!!'), null);
+});

@@ -2175,6 +2175,25 @@ form.agent-session-composer:focus-within {
   .messages-layout.messages-has-reply-thread > .messages-thread-pane { margin-left: 12px; }
 }
 
+/* #6071: a design thread's preview (features/messages/design-pane.tsx), in
+   the conversation's place from 768px, beside the thread; on a phone the
+   preview and the thread take turns (the Preview and Chat switch). */
+.messages-design-pane {
+  display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden;
+  background: var(--dc-sheet-solid, #fff); border-radius: 20px; box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
+.messages-design-stage { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 16px 16px; }
+@media (min-width: 768px) {
+  .messages-layout.messages-has-design > .messages-thread-pane { display: none; }
+  .messages-layout.messages-has-design > .messages-design-pane { margin: 14px 8px 0 12px; }
+  .messages-design-view-switch { display: none; }
+}
+@media (max-width: 767px) {
+  .messages-layout.messages-has-design > .messages-design-pane { width: 100%; margin-top: 12px; }
+  .messages-layout.messages-has-design.messages-design-view-preview > .messages-reply-pane { display: none; }
+  .messages-layout.messages-has-design.messages-design-view-chat > .messages-design-pane { display: none; }
+}
+
 .messages-reply-count {
   display: flex;
   align-items: center;
@@ -23019,6 +23038,114 @@ html[data-side-strip="left"] #platform-header {
   html[data-side-strip] .nav-drawer-outer-list,
   html[data-side-strip] .nav-drawer-places-scroll {
     padding-bottom: calc(24px + var(--platform-safe-bottom, 0px));
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   THE TOP BAND — iPhone Duo unfolded, held upright (31 Oct 2026)
+   ═══════════════════════════════════════════════════════════════════
+
+   Unfolded and upright the Duo is 669px wide, and iOS moves the clock, the
+   camera and the Wi-Fi ring into a band across the top instead of the column
+   down its edge. The page is handed that band as `env(safe-area-inset-top)`
+   — 80px on the simulator (iOS 27.1) — and #2305 spends it as the header's
+   own padding-top, so the bar read as 80px of empty ground with its 52px
+   row underneath.
+
+   frontend/src/lib/side-strip.ts turns a top inset of 64px or more, with NO
+   side column, into one fact on <html>:
+
+     data-top-band        the band is there
+     --platform-band-h    its height, in px (84 in `?side-strip=up`)
+
+   and this is the layout. The header's row moves UP into the band beside
+   the system controls, as the header already runs into the folded Duo's
+   column above: the inset leaves its padding-top, its foot falls on the
+   band's foot, and its right group keeps clear of the clock and camera's
+   corner. `--platform-header-h` loses what the band now covers, so the bar
+   plus the safe inset is still max(52px, band) under the bar and under
+   every screen and sheet below it.
+
+   Nothing here applies without the attribute, and only on a phone: ordinary
+   phones reserve 47 to 62px, landscape reports 0, and a browser tab never
+   sets it (#2509, applyTopBand). */
+@media (max-width: 767px) {
+  @supports (padding: env(safe-area-inset-top)) {
+    html[data-top-band] {
+      --platform-header-h: max(0px, calc(3.25rem - var(--platform-band-h)));
+    }
+    /* THE BARS: one rule, both of them, so parity survives the band (the
+       #2305 rule above is `!important`, hence the `!important` here). The
+       second selector repeats the community tint's app-view rule with
+       `html[data-top-band]` added, so it outranks that rule too. The bar
+       keeps its 8px pad and drops the inset; its bottom padding is the 16px
+       foot plus whatever the band leaves over the row, so its foot meets the
+       band's foot and the -mb-2 notch is unchanged. `align-items` keeps the
+       row at the top of that taller box, and the right padding keeps the
+       bell and the account button clear of the 84px corner the clock and
+       camera use — the same width as the folded Duo's column. */
+    html[data-top-band] :is(#platform-header, #landing-header).un-safe-top-extend,
+    html[data-top-band][data-community-tint] body:has(#app-view:not(.hidden)) #platform-header.un-safe-top-extend {
+      padding-top: 0.5rem !important;
+      padding-bottom: max(1rem, calc(var(--platform-band-h) - 2.25rem));
+      align-items: flex-start;
+      padding-right: calc(1rem + 84px);
+    }
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   THE SIDE CORNER — iPhone Duo folded, its island in one corner
+   ═══════════════════════════════════════════════════════════════════
+
+   In the 466x678 folded pose the report shows, iOS keeps the clock, the
+   camera and the signal in a narrow pill at the top-right corner rather
+   than the full column above: about 52px, so under STRIP_MIN_PX and not a
+   strip. Nothing read that space, and the header's bell and app chip, the
+   page's own buttons and the last tile in a row sat under the system's
+   pill.
+
+   frontend/src/lib/side-strip.ts turns a one-sided inset wider than
+   nothing and narrower than a strip, with no column and no top band, on a
+   phone held upright, into one fact on <html>:
+
+     data-side-corner     the side the system's corner is on
+     --platform-corner-w  its width, in px (52 in `?side-strip=corner`)
+
+   This is the layout. The header still runs edge to edge — its ground
+   under the clock, as it runs into the folded Duo's column above — while
+   its controls move clear of the corner; the content stops at the corner;
+   and the five-cell bar keeps its ground across the screen with its cells
+   beside the corner. The strip's column layout above is never keyed on
+   this attribute: the two facts are never set together, and an ordinary
+   phone or a browser tab renders exactly as it did.
+
+   The 84px the header's controls keep clear of the corner is the same
+   number the top band spends on the clock and camera's corner (6070). */
+@media (max-width: 767px) {
+  html[data-side-corner="right"] body,
+  html[data-side-corner="right"] #auth-landing-screen {
+    padding-right: var(--platform-corner-w, 0px);
+  }
+  html[data-side-corner="left"] body,
+  html[data-side-corner="left"] #auth-landing-screen {
+    padding-left: var(--platform-corner-w, 0px);
+  }
+  /* The header's ground spans the screen, its controls clear the corner. */
+  html[data-side-corner="right"] #platform-header {
+    margin-right: calc(-1 * var(--platform-corner-w, 0px));
+    padding-right: calc(1rem + 84px);
+  }
+  html[data-side-corner="left"] #platform-header {
+    margin-left: calc(-1 * var(--platform-corner-w, 0px));
+    padding-left: calc(1rem + 84px);
+  }
+  /* The five cells stay left of the corner; the bar's ground does not. */
+  html[data-side-corner="right"] #platform-tabs {
+    padding-right: var(--platform-corner-w, 0px);
+  }
+  html[data-side-corner="left"] #platform-tabs {
+    padding-left: var(--platform-corner-w, 0px);
   }
 }
 

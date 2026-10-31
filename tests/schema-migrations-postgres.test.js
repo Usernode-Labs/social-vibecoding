@@ -59,7 +59,11 @@ test('legacy adoption preserves rows, matches the fresh snapshot and never repla
   await p.query("INSERT INTO users (username, password) VALUES ('existing-person', 'local-only')");
   await apply(p, { observe: noObserver });
   const first = (await p.query('SELECT * FROM schema_migrations')).rows;
-  assert.equal(first.length, 1);
+  // One receipt per migration in the history: the baseline, then each delta
+  // (#6071 added the first, 0002-design-threads).
+  const history = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src/db/migrations/manifest.json'), 'utf8')).migrations;
+  assert.equal(first.length, history.length);
+  assert.ok(history.length >= 1);
   assert.equal((await p.query("SELECT count(*)::int AS n FROM users WHERE username='existing-person'")).rows[0].n, 1);
   await p.query('SET search_path=pg_catalog');
   const upgraded = JSON.parse((await p.query(policy.CATALOG_SQL)).rows[0].inventory);

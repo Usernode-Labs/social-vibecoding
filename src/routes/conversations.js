@@ -318,6 +318,84 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // #6071: design threads (services/design-threads.js). A screen the person
+  // captured opens as a private thread of their chat with the bot; its pane
+  // reads the thread and its versions here, and Propose it files the design
+  // as a request with its plan. Every read is the owner's alone, and the
+  // writes are their own taps: same-origin, on no connector's list.
+  //
+  //   POST /api/conversations/homeroom-bot/designs                          { html, surface, title, route?, appSlug?, width, height }
+  //   GET  /api/conversations/homeroom-bot/designs/:rootId                  → the thread and its versions (no HTML)
+  //   GET  /api/conversations/homeroom-bot/designs/:rootId/versions/:version → { version, html }
+  //   POST /api/conversations/homeroom-bot/designs/:rootId/propose          { version?, title?, notes? }
+  const designThreads = () => require('../services/design-threads');
+  router.post('/api/conversations/homeroom-bot/designs', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+      const body = req.body || {};
+      return answerDoor(res, await designThreads().startDesign(pool, config, {
+        user: req.user,
+        html: typeof body.html === 'string' ? body.html : '',
+        surface: typeof body.surface === 'string' ? body.surface : '',
+        title: typeof body.title === 'string' ? body.title : '',
+        route: typeof body.route === 'string' ? body.route : null,
+        appSlug: typeof body.appSlug === 'string' ? body.appSlug.slice(0, 120) : null,
+        width: body.width,
+        height: body.height,
+      }));
+    } catch (err) {
+      log.error('conversations', 'design thread start failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+  router.get('/api/conversations/homeroom-bot/designs/:rootId', async (req, res) => {
+    try {
+      const rootId = threadRoot(req);
+      if (!rootId) return res.status(404).json({ error: 'No such design' });
+      if (!req.user?.id) return res.status(401).json({ error: 'Unauthorized' });
+      const design = await designThreads().designFor(pool, { userId: req.user.id, rootId });
+      if (!design) return res.status(404).json({ error: 'No such design' });
+      const { threadId: _threadId, ...shown } = design;
+      return res.json(shown);
+    } catch (err) {
+      log.error('conversations', 'design thread read failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+  router.get('/api/conversations/homeroom-bot/designs/:rootId/versions/:version', async (req, res) => {
+    try {
+      const rootId = threadRoot(req);
+      const version = Number(req.params.version);
+      if (!rootId || !Number.isInteger(version) || version <= 0) return res.status(404).json({ error: 'No such version' });
+      if (!req.user?.id) return res.status(401).json({ error: 'Unauthorized' });
+      const found = await designThreads().versionOf(pool, { userId: req.user.id, rootId, version });
+      if (!found) return res.status(404).json({ error: 'No such version' });
+      res.set('Cache-Control', 'private, no-store');
+      return res.json({ version: found.version, html: found.html });
+    } catch (err) {
+      log.error('conversations', 'design version read failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+  router.post('/api/conversations/homeroom-bot/designs/:rootId/propose', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const rootId = threadRoot(req);
+      if (!rootId) return res.status(404).json({ error: 'No such design' });
+      if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+      const body = req.body || {};
+      const version = body.version == null ? null : Number(body.version);
+      return answerDoor(res, await designThreads().proposeDesign(pool, config, {
+        user: req.user, rootId,
+        version: Number.isInteger(version) && version > 0 ? version : null,
+        title: typeof body.title === 'string' ? body.title : null,
+        notes: typeof body.notes === 'string' ? body.notes : null,
+      }));
+    } catch (err) {
+      log.error('conversations', 'design propose failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Run six (14 Oct 2026): "We'll tell you when it's live" under a first
   // version's plan (frontend/src/features/messages/notify-me.tsx): whether
   // its maker is told when it is ready and live, on from Make it
@@ -587,7 +665,19 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       // DM machine hears it in the message's own transaction
       // (src/workflow/bot-dm/), and its work answers, wherever it runs. The
       // message is sent whatever the bot does with it.
+      // #6071: a comment pinned on a design's preview carries its point,
+      // checked against the person's own design thread it is written in.
+      let metadata = null;
+      if (input.design_pin != null) {
+        const pin = await require('../services/design-threads').pinFor(pool, {
+          user: req.user, conversationId: id, threadRootId: input.thread_root_id, pin: input.design_pin,
+        });
+        if (!pin) return res.status(400).json({ error: 'That comment\'s point is not on this design.' });
+        metadata = { designPin: pin };
+      }
+      delete input.design_pin;
       const result = await conversations.sendMessage(pool, req.user, id, input, {
+        metadata,
         afterInsert: (db, sent) => require('../services/homeroom-bot-dm').heardInDm(db, {
           user: req.user, conversationId: id, messageId: sent.messageId, membership: sent.membership, memberIds: sent.memberIds,
         }),
@@ -806,11 +896,16 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   router.post('/api/conversations/:id/typing', conversationReactionLimiter, async (req, res) => {
     const id = conversations.strictId(req.params.id);
     if (!id || typeof req.body?.typing !== 'boolean') return sendNotFound(res);
+    // 31 Oct 2026: typing in a thread names it, so the line is drawn there.
+    const rawRoot = req.body?.thread_root_id;
+    const threadRootId = rawRoot == null ? null : conversations.strictId(rawRoot);
+    if (rawRoot != null && !threadRootId) return sendNotFound(res);
     try {
       const memberIds = await conversations.withLockedAudience(pool, req.user, id, (audience) => {
         pushAudience(audience, {
           type: 'conversation_typing', conversationId: id,
           userId: req.user.id, typing: req.body.typing,
+          ...(threadRootId ? { threadRootId } : {}),
         }, { excludeUserId: req.user.id, actorUserId: req.user.id });
       });
       if (!memberIds) return sendNotFound(res);

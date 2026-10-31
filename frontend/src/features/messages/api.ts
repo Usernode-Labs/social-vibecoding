@@ -1,4 +1,5 @@
 import type {
+  DesignPin,
   ConversationDetail,
   ConversationMember,
   ConversationMessage,
@@ -248,6 +249,8 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       kind,
       appSlug: optional('appSlug'),
       appName: optional('appName'),
+      ...(strictId(pick(bot, 'designVersion')) ? { designVersion: strictId(pick(bot, 'designVersion'))! } : {}),
+      designTitle: optional('designTitle'),
       ...(issueNumber ? { issueNumber } : {}),
       issueTitle: optional('issueTitle'),
       ...(pick(bot, 'firstVersion') === true ? { firstVersion: true } : {}),
@@ -413,6 +416,7 @@ export function normalizeMessage(input: unknown, fallbackConversationId = 0): Co
   const replyRow = record(pick(row, 'reply', 'replyTo', 'reply_to'));
   const replyId = strictId(pick(replyRow, 'id', 'messageId', 'message_id'));
   const botMeta = normalizeBotMeta(pick(row, 'metadata'));
+  const designPin = normalizeDesignPin(pick(record(pick(row, 'metadata')), 'designPin'));
   return {
     id: strictId(pick(row, 'id', 'messageId', 'message_id')) || 0,
     conversationId,
@@ -439,8 +443,21 @@ export function normalizeMessage(input: unknown, fallbackConversationId = 0): Co
     // the star rendered empty, and nothing anywhere errored.
     saved: pick(row, 'saved', 'bookmarked') === true,
     // #3624: the Homeroom bot's question and its answers, when it has one.
-    ...(botMeta ? { metadata: botMeta } : {}),
+    // #6071: a person's comment pinned on a design carries its point.
+    ...(botMeta || designPin ? { metadata: { ...(botMeta || {}), ...(designPin ? { designPin } : {}) } } : {}),
   };
+}
+
+/** #6071: a design pin as the server sends it, or null. */
+export function normalizeDesignPin(input: unknown): DesignPin | null {
+  const row = record(input);
+  const version = strictId(pick(row, 'version'));
+  const x = Number(pick(row, 'x'));
+  const y = Number(pick(row, 'y'));
+  if (!version || !(x >= 0 && x <= 1) || !(y >= 0 && y <= 1)) return null;
+  const el = record(pick(row, 'element'));
+  const element = { tag: text(pick(el, 'tag')).slice(0, 30), id: text(pick(el, 'id')).slice(0, 60), text: text(pick(el, 'text')).slice(0, 80) };
+  return { version, x, y, ...(element.tag || element.text ? { element } : {}) };
 }
 
 export function normalizeConversation(input: unknown): ConversationDetail {
@@ -620,14 +637,92 @@ export async function listMessages(id: number, before?: number | null, options?:
   };
 }
 
-export async function sendMessage(id: number, input: { content: string; replyToId?: number; threadRootId?: number; attachmentIds?: string[]; object?: SharedObjectReference; idempotencyKey: string }): Promise<ConversationMessage> {
+export async function sendMessage(id: number, input: { content: string; replyToId?: number; threadRootId?: number; attachmentIds?: string[]; object?: SharedObjectReference; idempotencyKey: string; designPin?: DesignPin }): Promise<ConversationMessage> {
   const payload: JsonRecord = { content: input.content, idempotency_key: input.idempotencyKey };
+  if (input.designPin) payload.design_pin = input.designPin as unknown as JsonRecord;
   if (input.replyToId) payload.reply_to_id = input.replyToId;
   if (input.threadRootId) payload.thread_root_id = input.threadRootId;
   if (input.attachmentIds?.length) payload.attachment_ids = input.attachmentIds;
   if (input.object) payload.object = input.object;
   const data = record(await request<unknown>(`/api/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify(payload) }));
   return normalizeMessage(pick(data, 'message') ?? data, id);
+}
+
+// ── #6071: design threads ─────────────────────────────────────────────────
+
+/** A design thread as its pane reads it (routes/conversations.js). */
+export interface DesignThread {
+  rootId: number;
+  conversationId: number;
+  state: string;
+  number: number | null;
+  app: { slug: string; name: string } | null;
+  title: string;
+  surface: 'platform' | 'app';
+  route: string | null;
+  width: number;
+  height: number;
+  latest: number;
+  versions: Array<{ version: number; author: string; note: string | null; messageId: number | null }>;
+}
+
+export interface DesignCapture {
+  html: string;
+  surface: 'platform' | 'app';
+  title: string;
+  route: string | null;
+  appSlug: string | null;
+  width: number;
+  height: number;
+}
+
+const DESIGNS = '/api/conversations/homeroom-bot/designs';
+
+/** Open a design thread for a captured screen: where it is, to open it. */
+export async function startDesign(capture: DesignCapture): Promise<{ conversationId: number; rootId: number; href: string }> {
+  const data = record(await request<unknown>(DESIGNS, { method: 'POST', body: JSON.stringify(capture) }));
+  return {
+    conversationId: strictId(pick(data, 'conversationId')) || 0,
+    rootId: strictId(pick(data, 'rootId')) || 0,
+    href: text(pick(data, 'href')),
+  };
+}
+
+export async function getDesign(rootId: number): Promise<DesignThread> {
+  const data = record(await request<unknown>(`${DESIGNS}/${rootId}`));
+  const app = record(pick(data, 'app'));
+  return {
+    rootId: strictId(pick(data, 'rootId')) || rootId,
+    conversationId: strictId(pick(data, 'conversationId')) || 0,
+    state: text(pick(data, 'state')) || 'open',
+    number: strictId(pick(data, 'number')),
+    app: text(pick(app, 'slug')) ? { slug: text(pick(app, 'slug')), name: text(pick(app, 'name')) || text(pick(app, 'slug')) } : null,
+    title: text(pick(data, 'title')),
+    surface: pick(data, 'surface') === 'app' ? 'app' : 'platform',
+    route: text(pick(data, 'route')) || null,
+    width: Number(pick(data, 'width')) || 1280,
+    height: Number(pick(data, 'height')) || 800,
+    latest: Number(pick(data, 'latest')) || 0,
+    versions: array(pick(data, 'versions')).map((v) => {
+      const row = record(v);
+      return {
+        version: Number(pick(row, 'version')) || 0,
+        author: text(pick(row, 'author')),
+        note: text(pick(row, 'note')) || null,
+        messageId: strictId(pick(row, 'messageId')),
+      };
+    }).filter((v) => v.version > 0),
+  };
+}
+
+export async function getDesignVersion(rootId: number, version: number): Promise<{ version: number; html: string }> {
+  const data = record(await request<unknown>(`${DESIGNS}/${rootId}/versions/${version}`));
+  return { version: Number(pick(data, 'version')) || version, html: typeof pick(data, 'html') === 'string' ? String(pick(data, 'html')) : '' };
+}
+
+export async function proposeDesign(rootId: number, input: { version: number; title: string; notes: string }): Promise<{ number: number | null; href: string; plan: boolean }> {
+  const data = record(await request<unknown>(`${DESIGNS}/${rootId}/propose`, { method: 'POST', body: JSON.stringify(input) }));
+  return { number: strictId(pick(data, 'number')), href: text(pick(data, 'href')), plan: pick(data, 'plan') !== false };
 }
 
 /**
@@ -746,9 +841,9 @@ export async function markRead(conversationId: number, messageId: number): Promi
   await request<unknown>(`/api/conversations/${conversationId}/read`, { method: 'POST', body: JSON.stringify({ message_id: messageId }) });
 }
 
-export async function setTyping(conversationId: number, typing: boolean): Promise<void> {
+export async function setTyping(conversationId: number, typing: boolean, threadRootId: number | null = null): Promise<void> {
   await request<unknown>(`/api/conversations/${conversationId}/typing`, {
-    method: 'POST', body: JSON.stringify({ typing }),
+    method: 'POST', body: JSON.stringify({ typing, ...(threadRootId ? { thread_root_id: threadRootId } : {}) }),
   });
 }
 

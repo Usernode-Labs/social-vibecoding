@@ -25,6 +25,12 @@ const MAX_CONTENT_CHARS = 512 * 1024;
 const MAX_TOOL_ARGUMENT_CHARS = 256 * 1024;
 
 const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
+// 31 Oct 2026: a provider a caller asks the route to leave out (`ignore`),
+// by its slug. A response names its provider ("Together", "Inference.net");
+// providerSlug turns that into the slug the routing takes ("together",
+// "inference-net"). At most this many on one request.
+const PROVIDER_SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,40}(?:\/[a-z0-9._-]{1,40})?$/;
+const MAX_IGNORED_PROVIDERS = 8;
 
 class OpenRouterProviderError extends Error {
   constructor(code, message, {
@@ -108,6 +114,7 @@ function buildRequest({
   temperature = 0.1,
   parallelToolCalls = null,
   toolChoice = 'auto',
+  ignoreProviders = null,
 }) {
   const copiedTools = jsonArray(tools, 'tools', MAX_TOOLS);
   const availableToolNames = new Set(copiedTools.map((tool) => tool?.function?.name).filter(Boolean));
@@ -164,6 +171,13 @@ function buildRequest({
   // allows several tool calls in one reply. The DM (#3772) and the model
   // helpers (#3949) each hit this through a default or an explicit false.
   if (parallelToolCalls === true) request.parallel_tool_calls = true;
+  // 31 Oct 2026: a retry sent away from the provider that just failed it.
+  // A fresh session alone went back to the same one: sorted by latency,
+  // three tries of one DM answer all went to Together and all ran out of
+  // output there.
+  const ignore = [...new Set((Array.isArray(ignoreProviders) ? ignoreProviders : [])
+    .map(providerSlug).filter(Boolean))].slice(0, MAX_IGNORED_PROVIDERS);
+  if (ignore.length) request.provider = noTrainingProvider({ ...request.provider, ignore });
   if (temperature != null) {
     request.temperature = boundedNumber(temperature, 0.1, 0, 2, 'temperature');
   }
@@ -175,6 +189,18 @@ function buildRequest({
     request.session_id = normalized;
   }
   return request;
+}
+
+/**
+ * Pure: a provider's routing slug from the name a response gives it, or null
+ * for one that does not make a slug ("Together" → "together", "Google AI
+ * Studio" → "google-ai-studio"). A slug passes through unchanged.
+ */
+function providerSlug(name) {
+  if (typeof name !== 'string') return null;
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9/._-]+/g, '-').replace(/\.(?=[a-z])/g, '-')
+    .replace(/-+/g, '-').replace(/^-|-$/g, '');
+  return PROVIDER_SLUG_RE.test(slug) ? slug : null;
 }
 
 function nonnegative(value) {
@@ -495,6 +521,7 @@ module.exports = {
   modelId,
   reasoningEffort,
   buildRequest,
+  providerSlug,
   usageFrom,
   retryAfterMs,
   streamChat,

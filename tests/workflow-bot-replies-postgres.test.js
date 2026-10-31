@@ -339,13 +339,50 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
     // Written to since: that try is dropped, the new message answered.
     await wrote(ben, 202);
     assert.deepEqual(calls(dm.WORK.answer).map((c) => c.key), ['msg:201', 'msg:201:d1', 'msg:202']);
+    // 31 Oct 2026: and that answer owes 201 too: it was promised and never came.
+    assert.deepEqual(calls(dm.WORK.answer)[2].input.also, [201]);
+    assert.equal('also' in calls(dm.WORK.answer)[0].input, false, 'nothing owed on a first answer');
     i = await inst('bot-dm', dmKey(ben));
     assert.equal(i.data.later?.messageId, 202, 'the new one is now the one tried later');
     await fire('bot-dm', dmKey(ben));
     await fire('bot-dm', dmKey(ben));
     await fire('bot-dm', dmKey(ben));
     assert.deepEqual(calls(dm.WORK.answer).map((c) => c.key).slice(3), ['msg:202:d1', 'msg:202:d2', 'msg:202:d3']);
+    assert.deepEqual(calls(dm.WORK.answer).slice(3).map((c) => c.input.also), [[201], [201], [201]], 'every later try of 202 owes 201');
     assert.equal((await inst('bot-dm', dmKey(ben))).state, 'idle', 'the last try said it could not, and nothing more is asked');
+  });
+
+  await t.test('D-owed: an answer that would be asked again, dropped for a message written meanwhile, is owed by that message\'s answer', async () => {
+    reset();
+    const dora = await user('dora');
+    let gate;
+    const held = new Promise((r) => { gate = r; });
+    // 31 Oct 2026, as Evan's thread went: each answer the model could not
+    // give, and the next message already waiting.
+    work.answer.set(dm.WORK.answer, async (input) => {
+      if (input.messageId === 401) await held;
+      return { sent: true, later: input.messageId < 403 ? 1 : null };
+    });
+    await rt.append('bot-dm', dmKey(dora), { type: 'Wrote', payload: { userId: dora.id, conversationId: 1, messageId: 401, attempt: 0 } },
+      { requestKey: `t-${++rk}`, source: { kind: 'route' } });
+    await rt.drain();
+    const first = rt.runServices();
+    try {
+      await until(() => calls(dm.WORK.answer).length === 1, 'the answer to 401 started');
+      for (const id of [402, 403]) {
+        await rt.append('bot-dm', dmKey(dora), { type: 'Wrote', payload: { userId: dora.id, conversationId: 1, messageId: id, attempt: 0 } },
+          { requestKey: `t-${++rk}`, source: { kind: 'route' } });
+      }
+      await rt.drain();
+    } finally {
+      gate();
+      await first;
+    }
+    await settle();
+    const answers = calls(dm.WORK.answer).filter((c) => c.input.userId === dora.id);
+    assert.deepEqual(answers.map((c) => [c.key, c.input.also || []]),
+      [['msg:401', []], ['msg:402', [401]], ['msg:403', [401, 402]]]);
+    assert.equal((await inst('bot-dm', dmKey(dora))).state, 'idle', 'answered: nothing is asked again');
   });
 
   await t.test('D-sorry: an answer that fails for good gets one fixed line, and the next message is answered', async () => {

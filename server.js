@@ -340,6 +340,12 @@ app.use((req, res, next) => {
       && /^\/api\/apps\/[^/]+\/issues\/[^/]+\/spec$/.test(req.path)) {
     return express.json({ limit: '1mb' })(req, res, next);
   }
+  // #6071: a screen captured into a design thread is a whole page's HTML,
+  // up to 900 KB (services/design-threads.js MAX_HTML_BYTES), which the
+  // service checks and refuses with a reason.
+  if (req.method === 'POST' && req.path === '/api/conversations/homeroom-bot/designs') {
+    return express.json({ limit: '1mb' })(req, res, next);
+  }
   // #4194: a request's body may be as long as GitHub allows (65,536
   // characters, services/issue-body-limit.js), which JSON escaping and
   // multi-byte text take past the global 100kb parser; the feedback submit
