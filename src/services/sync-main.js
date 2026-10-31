@@ -97,15 +97,12 @@ async function persistConflictState(pool, session, { state, files }) {
 const IDLE_POLL_MS = 3000;
 const IDLE_WAIT_MS = 10 * 60 * 1000;
 async function sessionBusy(pool, sessionId) {
-  const { botLookingSql, buildHoldSql, operationsLiveSql, shotsRunningSql } = require('../workflow/session-work.ts');
+  // The same holders every other surface reads, less its own sync item (it
+  // would wait on itself) and less the turn machine's instance (the coding
+  // record below already answers for a run).
+  const { workedOnSql } = require('../workflow/session-work.ts');
   const { rows: [r] } = await pool.query(
-    `SELECT cs.active_turn IS NOT NULL
-            OR EXISTS (SELECT 1 FROM local_agent_turns t
-                        WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))
-            OR ${operationsLiveSql('cs.id')}
-            OR ${shotsRunningSql('cs.id')}
-            OR ${buildHoldSql('cs')}
-            OR ${botLookingSql('cs.id')} AS busy
+    `SELECT ${workedOnSql({ turns: false, sync: false })} AS busy
        FROM chat_sessions cs WHERE cs.id = $1`, [sessionId]);
   return !!r?.busy;
 }

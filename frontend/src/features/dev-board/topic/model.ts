@@ -710,6 +710,15 @@ export interface ChangeThreadView {
    */
   codeMissing?: boolean;
   /**
+   * #6068: the change still says it is being worked on while nothing is
+   * running on it (the details read's `stuck`, src/services/change-busy.js):
+   * its holders are all stale records. The page says so above Votes and
+   * Testing and offers its author Clear status. Null on every other change.
+   */
+  stuck?: { holders: Array<{ kind: string; since: string | null }>; since: string | null; heldMs: number } | null;
+  /** #6068: the Clear status button belongs to the reader (owner or admin). */
+  mine?: boolean;
+  /**
    * An import stacked on another open change's branch
    * (src/workflow/rules/pr-base.ts, `AppView._stackedView`): the change it
    * waits for, said above Votes and Testing with a door to its page.

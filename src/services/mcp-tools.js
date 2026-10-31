@@ -156,7 +156,8 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 //   start_change,
 //   promote_change,
 //   sync_change,
-//   withdraw_change        — the native change lifecycle (#2779), registered
+//   withdraw_change,
+//   release_change         — the native change lifecycle (#2779), registered
 //                            only for an agent session's Mayor
 //   submit_work            — opens or advances a proposal, for the group to vote on
 //   create_request         — files on the app's board and as a GitHub issue
@@ -206,6 +207,9 @@ const ACTING_TOOLS = Object.freeze([
   'promote_change',
   'sync_change',
   'withdraw_change',
+  // #6068: it clears records that are already dead and refuses while
+  // anything is really running, so it moves no code and touches no vote.
+  'release_change',
   'submit_work',
   'create_request',
   // #6026: it starts a real app (repository, container, database) and spends
@@ -1849,6 +1853,28 @@ const CHANGE_NEXT_STEP_WORDS = Object.freeze({
   },
 });
 
+// What holds a change, in the words a reader can act on. The same kind names
+// GET /api/sessions/:id/status returns (src/workflow/session-work.ts).
+const HOLDER_WORDS = Object.freeze({
+  turn: 'a coding turn is running',
+  local_agent: 'a turn is running on a machine you attached',
+  operation: 'an earlier dispatch is still open',
+  bot: 'the Homeroom bot is reading it',
+  build: 'a build is running',
+  shots: 'its before and after shots are being taken',
+  sync: 'it is being synced with main',
+  turn_instance: 'a turn is running on it',
+});
+
+function holderWords(holders) {
+  const seen = [...new Set((Array.isArray(holders) ? holders : [])
+    .map((h) => HOLDER_WORDS[h && h.kind])
+    .filter(Boolean))];
+  if (!seen.length) return '';
+  if (seen.length === 1) return seen[0];
+  return `${seen.slice(0, -1).join(', ')} and ${seen[seen.length - 1]}`;
+}
+
 function changeNextStep(session, checks, live, kind = 'agent_mayor') {
   const words = CHANGE_NEXT_STEP_WORDS[kind] || CHANGE_NEXT_STEP_WORDS.external;
   const ref = changeRefSentence(session);
@@ -1871,7 +1897,18 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
     return `${ref} is ${status || 'no longer open'}, so there is nothing to move on it.`;
   }
   if (live.busy && kind !== 'worker_read') {
-    return `The coding agent is working on ${ref} right now. Wait for that turn to finish before asking for more.`;
+    // #6068: only a real coding turn reads as the agent working. Anything
+    // else names what is running, and a change held only by dead records says
+    // so and points at the release instead of a turn that does not exist.
+    if (live.turn) {
+      return `The coding agent is working on ${ref} right now. Wait for that turn to finish before asking for more.`;
+    }
+    if (live.stuck) {
+      return `${ref} still says it is being worked on, but nothing is running on it. `
+        + `release_change clears that so the coding agent can be dispatched again; Homeroom also clears it on its own within a few minutes.`;
+    }
+    const what = holderWords(live.holders);
+    return `${ref} is being worked on right now${what ? `: ${what}` : ''}. Call get_change again once it finishes.`;
   }
   if (live.syncing) {
     return `${ref} is being synced with main right now. Call get_change again once it finishes.`;
@@ -1955,12 +1992,35 @@ function runningTurnOf(turn) {
   };
 }
 
+// One holder, kept to the status route's own shape: a short kind code and an
+// ISO date or null.
+function holderOf(h) {
+  if (!h || typeof h !== 'object') return null;
+  const kind = String(h.kind || '');
+  if (!TURN_KIND_RE.test(kind)) return null;
+  const since = h.since ? new Date(h.since) : null;
+  return {
+    kind,
+    since: since && !Number.isNaN(since.getTime()) ? since.toISOString() : null,
+  };
+}
+
 function shapeChange(session, live, origin, kind = 'agent_mayor') {
   const status = (live && typeof live === 'object') ? live : {};
   const sync = status.sync && typeof status.sync === 'object' ? status.sync : null;
+  // #6068: every record holding it, and whether they are all dead. A busy
+  // change with no turn is still possible (a sync, a bot look) and is named.
+  const holders = (Array.isArray(status.holders) ? status.holders : [])
+    .map(holderOf)
+    .filter(Boolean);
+  const turn = runningTurnOf(status.turn);
   const liveState = {
     busy: typeof status.busy === 'boolean' ? status.busy : false,
     syncing: !!(sync && sync.phase),
+    turn,
+    holders,
+    // The status route answers the stuck object (or null); any of it is stuck.
+    stuck: !!status.stuck,
   };
   const checks = shapeChecks(session);
   return {
@@ -1971,7 +2031,12 @@ function shapeChange(session, live, origin, kind = 'agent_mayor') {
     busy: typeof status.busy === 'boolean' ? status.busy : null,
     // #4533: the turn that holds it, from its record: when it started and
     // what kind of turn it is. Null with no turn on record.
-    runningTurn: runningTurnOf(status.turn),
+    runningTurn: turn,
+    // #6068: everything working on it right now, named (`turn`, `sync`,
+    // `bot`, ...), and whether they are all stale records with nothing
+    // running. release_change clears a stuck one.
+    busyHolders: holders,
+    stuck: liveState.stuck,
     syncing: liveState.syncing,
     hasBranch: !!session.branch_name,
     branchName: session.branch_name || null,
@@ -4994,9 +5059,13 @@ function registerTools(server, ctx) {
       ...changeSummarySchema,
       title: z.string(),
       busy: z.boolean().nullable()
-        .describe('Whether the coding agent is running a turn on it right now. Null when the live status could not be read.'),
+        .describe('Whether anything is working on it right now (a coding turn, a sync, the Homeroom bot reading it, a build, its shots). Not only a coding turn: see busyHolders for what. Null when the live status could not be read.'),
       runningTurn: z.object({ startedAt: z.string().nullable(), kind: z.string().nullable() }).nullable()
-        .describe('The turn on record as running on it: when it started, and its kind (build, scout, sync for a sync with main, shots for the before & after shots, homeroom_bot_follow_up for the Homeroom bot answering on it or fixing its checks). Null when none is on record.'),
+        .describe('The coding turn on record as running on it: when it started, and its kind (build, scout, sync for a sync with main, shots for the before & after shots, homeroom_bot_follow_up for the Homeroom bot answering on it or fixing its checks). Null when none is on record.'),
+      busyHolders: z.array(z.object({ kind: z.string(), since: z.string().nullable() }))
+        .describe('Everything working on it right now, one entry per record: kind is turn, local_agent, operation, bot, build, shots, sync or turn_instance, and since is when it started. Empty when nothing is working on it.'),
+      stuck: z.boolean()
+        .describe('True when every holder is a stale record with nothing running (no coding turn): the change says it is being worked on but is not. release_change clears it; Homeroom also clears it on its own within a few minutes.'),
       syncing: z.boolean(),
       hasBranch: z.boolean()
         .describe('False until the first turn has built anything.'),
@@ -5234,6 +5303,50 @@ function registerTools(server, ctx) {
       changeId,
       withdrawn: true,
       nextStep: `Change ${changeId} is withdrawn and closed for good. Further work on it is a new change.`,
+    });
+  });
+
+  // ── release_change ───────────────────────────────────────────────────
+  // #6068: a change whose records still say it is being worked on while
+  // nothing is. The same act as its page's "Clear status". Safe to call
+  // without a confirmation card: the route releases only records that are
+  // already dead, and refuses while anything is really running.
+  server.registerTool('release_change', {
+    title: 'Clear a change\'s stuck status',
+    description: 'Clear a change that still says it is being worked on while nothing is running on it, so the coding agent can be dispatched on it again. The same act as the change\'s "Clear status" button. It releases only records that are already dead: while a coding turn, a sync, a build or the Homeroom bot is really running, nothing is released and it says what is. Homeroom also clears a change like this on its own within a few minutes, so call it when the user does not want to wait. Only the user\'s own changes (or a platform admin).',
+    inputSchema: { changeId: changeIdSchema() },
+    outputSchema: {
+      changeId: z.number(),
+      released: z.array(z.string())
+        .describe('The kinds of record that were cleared (turn, operation, bot, build, ...); empty when nothing was left to clear.'),
+      busy: z.boolean(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ changeId }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    const result = await callPlatform(baseUrl, accessToken, 'POST', `/api/sessions/${changeId}/release`, {});
+    if (!result.ok) {
+      if (result.status === 409) {
+        const body = result.body || {};
+        if (body.error === 'still_working') {
+          return toolError('still_working', 'Something is still running on this change, so nothing was released.', {
+            stillHeld: Array.isArray(body.stillHeld) ? body.stillHeld : [],
+          });
+        }
+      }
+      return changeRouteError(result);
+    }
+    const body = result.body || {};
+    const released = Array.isArray(body.released) ? body.released.filter((k) => typeof k === 'string') : [];
+    return toolResult({
+      changeId,
+      released,
+      busy: false,
+      nextStep: released.length
+        ? `Change ${changeId} is idle again: nothing was running on it, so the coding agent can be dispatched on it.`
+        : `Change ${changeId} was not stuck: nothing is running on it, so the coding agent can be dispatched on it.`,
     });
   });
 

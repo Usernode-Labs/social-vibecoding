@@ -33,13 +33,16 @@ const KINDS = Object.freeze(['external', 'agent_mayor', 'worker_read']);
 
 // Held back from external clients. start_change is not offered to them in
 // v1 (they hand work to their own coding agent through prepare_work); the
-// other three decide a change's fate, which an external client does through
+// others decide a change's fate, which an external client does through
 // submit_work, the vote, or the browser.
 const DELEGATED_ONLY_TOOLS = Object.freeze([
   'start_change',
   'promote_change',
   'sync_change',
   'withdraw_change',
+  // #6068: the same lifecycle. It clears a change's dead records, and an
+  // external client has no page to clear one from.
+  'release_change',
 ]);
 
 const AGENT_MAYOR_TOOLS = Object.freeze([
@@ -68,6 +71,7 @@ const AGENT_MAYOR_TOOLS = Object.freeze([
   'recheck_change',
   'sync_change',
   'withdraw_change',
+  'release_change',
 ]);
 
 // Exactly the six reads the worker bridge proxies. Nothing that lists every
@@ -82,9 +86,10 @@ const WORKER_READ_TOOLS = Object.freeze([
 ]);
 
 // The agent_mayor tools that change something, and so run only on a
-// confirmation the user gave in the transcript. recheck_change is the one
-// exception: it re-runs checks on the commit already there, moves no code and
-// clears no vote, so it needs a write token but not a card.
+// confirmation the user gave in the transcript. recheck_change and
+// release_change are the exceptions: one re-runs checks on the commit already
+// there and the other clears records that are already dead, and neither
+// moves code or clears a vote, so they need a write token but not a card.
 const MAYOR_CONFIRMED_TOOLS = Object.freeze([
   'create_request',
   'claim_request',

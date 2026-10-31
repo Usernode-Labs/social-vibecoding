@@ -233,7 +233,11 @@ test('every confirmed tool is a card, and only those', () => {
     assert.equal(actions.isConfirmedTool(name), expected, name);
   }
   assert.ok(!actions.isConfirmedTool('recheck_change'), 'recheck runs without a card');
-  assert.deepEqual([...agentTurn.IMMEDIATE_WRITE_TOOLS], ['recheck_change']);
+  // #6068: clearing a stuck status is the other write that runs without a
+  // card. The route releases only records that are already dead and refuses
+  // while anything is really running, so there is nothing to confirm.
+  assert.ok(!actions.isConfirmedTool('release_change'), 'release runs without a card');
+  assert.deepEqual([...agentTurn.IMMEDIATE_WRITE_TOOLS], ['recheck_change', 'release_change']);
 });
 
 test('recheck runs at once, on a one-action write grant bound to the change', async () => {

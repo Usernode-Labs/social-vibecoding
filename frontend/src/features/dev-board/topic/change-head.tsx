@@ -54,6 +54,7 @@ import { ActionButton, StatusPill, TitleContent, VoteButton, isVoteSpec } from '
 import type { ActionSpec, DevCardModel } from '../card/model';
 import type { ChangeGateView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
 import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
+import { HELD_KIND_MESSAGES, useClearStuck } from './stuck-busy';
 import { RequestWords, SpecCard, sentences } from './request-head';
 import { ThreadItems, pageSlug } from './thread-items';
 import { TopicBack } from './topic-back';
@@ -329,6 +330,48 @@ export function StackNotice({ v }: { v: ChangeThreadView }): ReactNode {
   return null;
 }
 
+/**
+ * #6068: the change still says it is being worked on while nothing is
+ * running on it (services/change-busy.js). Said once, above Votes and
+ * Testing, in the same amber notice the code-missing and waits-for notices
+ * use, with the Testing card's own accent pill for its author's one repair
+ * action: Clear status.
+ *
+ * The refusal names what is really holding it, so pressing it on a change
+ * that is genuinely running says so instead of claiming success. After a
+ * clear the page re-reads its row and the notice goes away because the
+ * change is idle; until that read lands, the box says it was cleared.
+ */
+export function StuckBusyNotice({ id, v }: { id: number | null; v: ChangeThreadView }): ReactNode {
+  const t = useMessages('project');
+  const { asking, refused, cleared, tap } = useClearStuck(id);
+  if (!v.stuck && !cleared) return null;
+  const heldKey = refused && refused.length ? HELD_KIND_MESSAGES[refused[0]] : null;
+  return (
+    <Alert variant="notice" density="compact" className="mt-3" data-change-stuck="">
+      <span className="flex flex-wrap items-center gap-3">
+        <span>{cleared ? t('project:topic.change.stuckBusyCleared') : t('project:topic.change.stuckBusy')}</span>
+        {v.mine && !cleared ? (
+          <button
+            type="button"
+            className="gc-vote-btn gc-vote-btn-accent"
+            data-change-clear-busy=""
+            disabled={asking}
+            onClick={tap}
+          >
+            {asking ? t('project:topic.change.stuckBusyClearing') : t('project:topic.change.stuckBusyClear')}
+          </button>
+        ) : null}
+      </span>
+      {refused ? (
+        <p className="dev-change-gate-refused" role="alert">
+          {heldKey ? t(heldKey) : t('project:topic.change.stuckBusyRefused')}
+        </p>
+      ) : null}
+    </Alert>
+  );
+}
+
 /** The Before and after card: the shots, or the line that says where they are. */
 function ShotsCard({ s }: { s: NonNullable<ChangeThreadView['shots']> }): ReactNode {
   const t = useMessages('project');
@@ -555,6 +598,10 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {/* #6019: the requests, other changes and votes in its thread. */}
           {id ? <ThreadItems slug={pageSlug()} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} /> : null}
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
+          {/* #6068: the stuck-status notice is a notice of the same kind, in
+              the same place: above Votes and Testing, before the code-missing
+              and waits-for ones, so their own order is unchanged. */}
+          <StuckBusyNotice id={id} v={v} />
           {v.codeMissing ? <CodeMissingNotice /> : null}
           {v.waitsFor || v.baseNotMain ? <StackNotice v={v} /> : null}
           <ChangeGates ref={pair} id={id} card={card} v={v} />

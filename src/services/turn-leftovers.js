@@ -77,4 +77,28 @@ async function sweep(pool, { deps = {} } = {}) {
   return { records: rows.length };
 }
 
-module.exports = { sweep, RECORD_RETRY, RECORDS_SQL };
+/**
+ * Ask for one record's recovery now, for a caller that is not the clock
+ * (services/change-busy.js: the owner's Clear status, and the sweep). The
+ * same identity and turn id as the pass, so asking twice is a replay and the
+ * two paths are one ask. Answers false when there is no record to ask about.
+ */
+async function recoverNow(pool, sessionId, { deps = {} } = {}) {
+  const platform = deps.platform || require('../workflow/platform.ts');
+  const { rows: [r] } = await pool.query(
+    `SELECT cs.id, cs.app_id, ${IDENTITY} AS identity
+       FROM chat_sessions cs
+      WHERE cs.id = $1 AND cs.active_turn IS NOT NULL`,
+    [Number(sessionId)]
+  );
+  if (!r) return false;
+  await platform.askTurn(pool, {
+    key: `session:${Number(r.id)}`,
+    turnId: leftoverId('leftover', r.identity),
+    kind: 'recover', appId: r.app_id,
+    input: { sessionId: Number(r.id), identity: r.identity, last: false },
+  });
+  return true;
+}
+
+module.exports = { sweep, recoverNow, RECORD_RETRY, RECORDS_SQL };

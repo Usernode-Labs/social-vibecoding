@@ -2831,6 +2831,54 @@
     "text": "This proposal’s code didn’t come across when Homeroom moved off GitHub. Its creator can submit it again, or Homeroom restores it when GitHub’s copy of the code arrives.",
     "description": "Amber notice on a change's page, above its Votes and Testing cards, when the change's code (its branch) is not on Homeroom's own code host because it did not come across when Homeroom moved off GitHub. GitHub is a product name; Homeroom is the product's own name. \"GitHub's copy of the code\" is the export of the old repositories that GitHub is sending to Homeroom. \"Submit it again\" means put the same change up again."
   },
+  "topic.change.stuckBusy": {
+    "text": "This change still says it is being worked on, but nothing is running on it.",
+    "description": "Amber notice on a change's page, above its Votes and Testing cards, when the change still reports that it is busy while no work is actually running on it. One button beside it, Clear status, puts it back to idle so the coding agent can be sent again."
+  },
+  "topic.change.stuckBusyClear": {
+    "text": "Clear status",
+    "description": "Button on a change's page, beside the notice that the change still says it is being worked on while nothing is running. Pressing it puts the change back to idle so the coding agent can be sent again. Shown only to the change's author or a platform admin."
+  },
+  "topic.change.stuckBusyClearing": {
+    "text": "Clearing…",
+    "description": "Text of the Clear status button on a change's page while the request to clear the stuck status is being sent."
+  },
+  "topic.change.stuckBusyCleared": {
+    "text": "Status cleared. The coding agent can start again.",
+    "description": "Shown in place of the stuck-status notice on a change's page right after the author pressed Clear status, until the page has re-read the change."
+  },
+  "topic.change.stuckBusyRefused": {
+    "text": "Something is still running on this change. Try again when it finishes.",
+    "description": "Error under the Clear status button on a change's page when the request failed for a reason the server did not name, such as a dropped connection."
+  },
+  "topic.change.stuckBusyHeld.operation": {
+    "text": "An earlier dispatch is still open on this change.",
+    "description": "Error under the Clear status button on a change's page when clearing was refused because an earlier dispatch on the change is still recorded as running."
+  },
+  "topic.change.stuckBusyHeld.bot": {
+    "text": "The Homeroom bot is still reading this change.",
+    "description": "Error under the Clear status button on a change's page when clearing was refused because the Homeroom bot is still reading or following up on the change. Homeroom is the product's own name."
+  },
+  "topic.change.stuckBusyHeld.build": {
+    "text": "A build is still running on this change.",
+    "description": "Error under the Clear status button on a change's page when clearing was refused because a build is still running on the change."
+  },
+  "topic.change.stuckBusyHeld.localAgent": {
+    "text": "A turn is still running on a machine you attached.",
+    "description": "Error under the Clear status button on a change's page when clearing was refused because a coding turn is running on a computer the person attached to their account. 'A turn' is one coding-agent run."
+  },
+  "topic.change.stuckBusyHeld.sync": {
+    "text": "This change is still being synced with main.",
+    "description": "Error under the Clear status button on a change's page when clearing was refused because the change is being merged with the project's main line of code. 'main' stays as it is."
+  },
+  "topic.change.stuckBusyHeld.shots": {
+    "text": "Its before and after shots are still being taken.",
+    "description": "Error under the Clear status button on a change's page when clearing was refused because the before and after screenshots of the change are still being recorded."
+  },
+  "topic.change.stuckBusyHeld.turn": {
+    "text": "A turn is still running on this change.",
+    "description": "Error under the Clear status button on a change's page when clearing was refused because a coding-agent run is still going on the change. 'A turn' is one coding-agent run."
+  },
   "topic.change.waitsFor": {
     "text": "Waits for <0>#{{number}}: {{title}}</0>. This change is built on that change’s branch, so it can go live only after #{{number}} does. Homeroom then moves it onto main and brings it up to date; its checks run again on the result.",
     "description": "Notice on a change's page, above its Votes and Testing cards, when the change is stacked on another open change: its pull request targets that change's branch instead of main. {{number}} and {{title}} are the other change's number and title; <0></0> links to that change's page. \"main\" is the name of the project's main line of code and stays as it is. Homeroom is the product's own name."

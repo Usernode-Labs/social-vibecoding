@@ -82,15 +82,19 @@ test('idle workers are the eviction clock\'s, against the full PostgreSQL schema
   await t.test('never a worker something works on: a turn, a durable build', async () => {
     reset();
     const turning = await session({ turn: { turnId: crypto.randomUUID(), phase: 'executing' } });
-    await pool.query(`INSERT INTO wf_instances (machine, key, state, data, machine_version)
-                      VALUES ('bot-build', 'run:9', 'building', '{}'::jsonb, 1)`).catch(async () => {
+    // #6068: a durable build holds while its build.run item is outstanding,
+    // as the kernel's pipeline writes it.
+    {
       const c = await pool.connect();
       try {
         await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
         await c.query(`INSERT INTO wf_instances (machine, key, state, data, machine_version) VALUES ('bot-build', 'run:9', 'building', '{}'::jsonb, 1)`);
+        await c.query(`INSERT INTO wf_work (machine, key, kind, work_key, input, status, claim_id, lease_until)
+                       VALUES ('bot-build', 'run:9', 'build.run', 'run', '{}'::jsonb, 'running',
+                               gen_random_uuid(), NOW() + interval '1 hour')`);
         await c.query('COMMIT');
       } finally { c.release(); }
-    });
+    }
     const building = await session({ owner: 'bot-build/run:9' });
     await used(turning, '1 hour');
     await used(building, '1 hour');

@@ -7265,6 +7265,12 @@ const AppView = {
       // Its code did not come across from GitHub (_codeMissing): the page
       // says so in a notice above Votes and Testing (change-head.tsx).
       codeMissing: kind !== 'gov' && AppView._codeMissing(item),
+      // #6068: it still says it is being worked on while nothing runs on it
+      // (the details read's `stuck`, services/change-busy.js). The notice
+      // above Votes and Testing offers its author Clear status; `mine` is
+      // whether that button belongs to the reader.
+      stuck: kind !== 'gov' && item.stuck && typeof item.stuck === 'object' ? item.stuck : null,
+      mine: item.canClearBusy === true,
       // Versions (docs/plans/versions.md): an update from the original this
       // version was made from, as the proposal read gives it; change-head.tsx
       // draws its From card and Skip this update. Null on any other change.

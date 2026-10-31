@@ -31,7 +31,8 @@ export const SHOTS_LIVE_STATES: readonly string[] = Object.freeze(['building_cop
 export function shotsRunningSql(sessionId: string): string {
   return `EXISTS (SELECT 1 FROM wf_instances w
                    WHERE w.machine = 'shots' AND w.key = 'session:' || ${sessionId}
-                     AND w.state IN (${SHOTS_LIVE_STATES.map((st) => `'${st}'`).join(', ')}))`;
+                     AND w.state IN (${SHOTS_LIVE_STATES.map((st) => `'${st}'`).join(', ')})
+                     AND w.flag IS NULL)`;
 }
 
 // The preview machine's work that is a build or a checks run.
@@ -122,7 +123,11 @@ export function buildHoldSql(alias: string): string {
              SELECT 1 FROM wf_instances b
               WHERE b.machine = split_part(${alias}.workflow_owner, '/', 1)
                 AND b.key = substr(${alias}.workflow_owner, length(split_part(${alias}.workflow_owner, '/', 1)) + 2)
-                AND b.state = 'building'))`;
+                AND b.state = 'building'
+                AND b.flag IS NULL
+                AND EXISTS (SELECT 1 FROM wf_work bw
+                             WHERE bw.machine = b.machine AND bw.key = b.key
+                               AND bw.kind = 'build.run' AND bw.status <> 'settled')))`;
 }
 
 // ── Turns workflow work runs ────────────────────────────────────────────
@@ -172,7 +177,11 @@ export function botLookingSql(sessionId: string): string {
   return `EXISTS (SELECT 1 FROM wf_instances bl
                    WHERE bl.machine = 'bot-request'
                      AND bl.state IN (${BOT_LOOKING_STATES.map((st) => `'${st}'`).join(', ')})
-                     AND (bl.data->'look'->>'sessionId')::int = ${sessionId})`;
+                     AND bl.flag IS NULL
+                     AND (bl.data->'look'->>'sessionId')::int = ${sessionId}
+                     AND EXISTS (SELECT 1 FROM wf_work lw
+                                  WHERE lw.machine = 'bot-request' AND lw.key = bl.key
+                                    AND lw.kind = 'bot.look' AND lw.status <> 'settled'))`;
 }
 
 // The instance whose workflow turn is on the session `$1`, starting or
@@ -219,15 +228,108 @@ export const TURN_OWNER_SQL = `
 // operations of one process: the reader's own, which it answers from memory.
 // The same in every process and after a restart (the Homeroom bot's voice
 // reads it to say whether a run is going on a change).
-export function workedOnSql({ turns = true, exceptHolder = null }: { turns?: boolean; exceptHolder?: string | null } = {}): string {
-  return `(cs.active_turn IS NOT NULL
-           OR EXISTS (SELECT 1 FROM local_agent_turns t
-                       WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))
-           OR ${shotsRunningSql('cs.id')}
-           OR ${operationsLiveSql('cs.id', null, [], exceptHolder)}
-           OR ${buildHoldSql('cs')}
-           OR ${syncWorkingSql('cs.id')}
-           OR ${botLookingSql('cs.id')}${turns ? `
-           OR EXISTS (SELECT 1 FROM wf_instances tm
-                       WHERE tm.machine = 'turn' AND tm.key = 'session:' || cs.id AND tm.state = 'running')` : ''})`;
+export interface HolderOptions {
+  turns?: boolean;
+  // A sync's own wait for idle leaves its own item out, or it would wait on
+  // itself (services/sync-main.js).
+  sync?: boolean;
+  exceptHolder?: string | null;
+}
+
+// ── Holders: the same work, named ──────────────────────────────────────
+// One row per record that says work is happening on the session: `kind`,
+// `since`, and a `ref` a releaser needs (an operation's id). workedOnSql is
+// an EXISTS over this, so a surface that asks "is anything running?" and one
+// that asks "what is running?" cannot disagree.
+//
+// A machine state (`wf_instances.state`) is a projection: it changes only
+// when a transition runs, and a transition that faulted is held with the old
+// state still in place. So no machine-state clause counts unless the
+// instance is unflagged AND the work item that would move it is outstanding.
+// That is the difference between "a record says work started" and "work is
+// running", and it is what made a change stay busy after its run ended
+// (request #6068).
+export const HOLDER_KINDS: readonly string[] = Object.freeze([
+  'turn', 'local_agent', 'shots', 'operation', 'build', 'sync', 'bot', 'turn_instance',
+]);
+
+function holderSelects(alias: string, { turns = true, sync = true, exceptHolder = null }: HolderOptions = {}): string[] {
+  const a = alias;
+  const out = [
+    // A coding turn's record: the one kind a person can wait on by name.
+    `SELECT 'turn'::text AS kind,
+            COALESCE(${a}.active_turn->>'startedAt', ${a}.active_turn->>'lifecycleUpdatedAt')::timestamptz AS since,
+            NULL::text AS ref
+       WHERE ${a}.active_turn IS NOT NULL`,
+    // A turn on a machine the user attached.
+    `SELECT 'local_agent'::text, t.created_at, NULL::text
+       FROM local_agent_turns t
+      WHERE t.session_id = ${a}.id AND t.status IN ('queued', 'offered', 'accepted', 'running')`,
+    // The before & after shots.
+    `SELECT 'shots'::text, w.updated_at, NULL::text
+       FROM wf_instances w
+      WHERE w.machine = 'shots' AND w.key = 'session:' || ${a}.id
+        AND w.state IN (${SHOTS_LIVE_STATES.map((st) => `'${st}'`).join(', ')})
+        AND w.flag IS NULL`,
+    // Anything else an old flow does: a dispatch, an upload, a hand-off. Its
+    // process's presence lock is its liveness.
+    `SELECT 'operation'::text, (o->>'since')::timestamptz, (o->>'id')::text
+       FROM wf_instances p,
+            jsonb_array_elements(COALESCE(p.data->'operations', '[]'::jsonb)) AS o
+      WHERE p.machine = 'preview' AND p.key = 'session:' || ${a}.id
+        AND p.state NOT IN ('detached', 'retired')${exceptHolder ? `
+        AND (o->>'holder') IS DISTINCT FROM ${holderLiteral(exceptHolder)}` : ''}
+        AND ${holderAliveSql(`(o->>'holder')`)}`,
+    // A durable build, its turns and the time between them included.
+    `SELECT 'build'::text, b.updated_at, NULL::text
+       FROM wf_instances b
+      WHERE ${a}.workflow_owner IS NOT NULL
+        AND b.machine = split_part(${a}.workflow_owner, '/', 1)
+        AND b.key = substr(${a}.workflow_owner, length(split_part(${a}.workflow_owner, '/', 1)) + 2)
+        AND b.state = 'building' AND b.flag IS NULL
+        AND EXISTS (SELECT 1 FROM wf_work bw
+                     WHERE bw.machine = b.machine AND bw.key = b.key
+                       AND bw.kind = 'build.run' AND bw.status <> 'settled')`,
+    // The Homeroom bot reading or following up on it.
+    `SELECT 'bot'::text,
+            COALESCE((bl.data->'look'->>'startedAt')::timestamptz, bl.updated_at),
+            NULL::text
+       FROM wf_instances bl
+      WHERE bl.machine = 'bot-request'
+        AND bl.state IN (${BOT_LOOKING_STATES.map((st) => `'${st}'`).join(', ')})
+        AND bl.flag IS NULL
+        AND (bl.data->'look'->>'sessionId')::int = ${a}.id
+        AND EXISTS (SELECT 1 FROM wf_work lw
+                     WHERE lw.machine = 'bot-request' AND lw.key = bl.key
+                       AND lw.kind = 'bot.look' AND lw.status <> 'settled')`,
+  ];
+  if (sync) {
+    out.push(`SELECT 'sync'::text, sw.created_at, NULL::text
+       FROM wf_work sw
+      WHERE sw.machine = 'proposal' AND sw.key = 'session:' || ${a}.id
+        AND sw.kind = 'branch.sync' AND sw.status <> 'settled'`);
+  }
+  if (turns) {
+    out.push(`SELECT 'turn_instance'::text, tm.updated_at, NULL::text
+       FROM wf_instances tm
+      WHERE tm.machine = 'turn' AND tm.key = 'session:' || ${a}.id
+        AND tm.state = 'running' AND tm.flag IS NULL
+        AND EXISTS (SELECT 1 FROM wf_work tw
+                     WHERE tw.machine = 'turn' AND tw.key = tm.key
+                       AND tw.kind = 'turn.run' AND tw.status <> 'settled')`);
+  }
+  return out;
+}
+
+// Every holder of the session `session` (an SQL value), one row each, for a
+// caller that names what is working on it (services/change-busy.js).
+export function sessionHoldersSql(session: string, opts: HolderOptions = {}): string {
+  return `SELECT h.kind, h.since, h.ref
+            FROM chat_sessions hcs
+            CROSS JOIN LATERAL (${holderSelects('hcs', opts).join('\n    UNION ALL\n    ')}) h
+           WHERE hcs.id = ${session}`;
+}
+
+export function workedOnSql(opts: HolderOptions = {}): string {
+  return `EXISTS (${sessionHoldersSql('cs.id', opts)})`;
 }

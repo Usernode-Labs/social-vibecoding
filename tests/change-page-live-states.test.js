@@ -33,7 +33,7 @@ const vm = require('node:vm');
 const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
-const { ChangeBar, ChangeThreadHead } = loadTsx('frontend/src/features/dev-board/topic/change-head.tsx');
+const { ChangeBar, ChangeThreadHead, StuckBusyNotice } = loadTsx('frontend/src/features/dev-board/topic/change-head.tsx');
 const refreshRules = loadTsx('frontend/src/features/dev-board/topic/change-detail-refresh.ts');
 
 const ROOT = path.join(__dirname, '..');
@@ -314,4 +314,37 @@ test('a board reload about another change moves the open change in the Workshop 
   h.App.handleSessionUpdate({ sessionId: OTHER, appSlug: SLUG, action: 'updated' });
   await h.settle();
   assert.deepEqual(h.page.events.filter((e) => e !== OTHER), []);
+});
+
+// #6068: a change left busy after its coding agent stopped says so on its
+// page, and Clear status belongs to its author (or an admin) alone.
+test('#6068: a stuck change says so, and only its author gets Clear status', () => {
+  const stuck = {
+    holders: [{ kind: 'bot', since: '2026-10-31T10:00:00.000Z' }],
+    since: '2026-10-31T10:00:00.000Z',
+    heldMs: 20 * 60 * 1000,
+  };
+  const html = (v) => renderToHtml(createElement(StuckBusyNotice, { id: ID, v }));
+  const mine = html({ stuck, mine: true });
+  assert.match(mine, /data-change-stuck/, 'the notice is drawn');
+  assert.match(mine, /data-change-clear-busy/, 'its author gets the button');
+  assert.match(mine, new RegExp(esc(message('project:topic.change.stuckBusy'))), 'and the words the page uses');
+  const other = html({ stuck, mine: false });
+  assert.match(other, /data-change-stuck/, 'a reader who is not its author still sees it');
+  assert.doesNotMatch(other, /data-change-clear-busy/, 'without the button');
+  assert.equal(html({ stuck: null, mine: true }), '', 'an idle change has no notice');
+  assert.equal(html({ stuck: null, mine: false }), '', 'nor for a reader who is not its author');
+});
+
+test('#6068: the change page view carries the stuck state and who may clear it', () => {
+  const h = harness({ place: 'panel' });
+  const stuck = { holders: [{ kind: 'operation', since: '2026-10-31T09:00:00.000Z' }], since: '2026-10-31T09:00:00.000Z', heldMs: 3600000 };
+  const view = (patch) => h.AppView._changeThreadView('session', row(patch), null, { hero: {} });
+  const stuckView = view({ stuck, canClearBusy: true });
+  assert.deepEqual(stuckView.stuck, stuck);
+  assert.equal(stuckView.mine, true);
+  const foreign = view({ stuck, canClearBusy: false });
+  assert.equal(foreign.mine, false);
+  assert.equal(view({}).stuck, null, 'the details read says nothing: no notice');
+  assert.equal(view({}).mine, false);
 });

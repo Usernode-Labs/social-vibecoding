@@ -94,9 +94,10 @@ function freshFixtures() {
 const fakePool = {
   async query(sql, params = []) {
     fx.queries.push({ sql, params });
-    // What works on the sessions on any process (active-workers
-    // busySessionsAnywhere): the fixtures' `working` ids.
-    if (/cs\.id = ANY\(\$1::int\[\]\) AND \(cs\.active_turn IS NOT NULL/.test(sql)) {
+    // What works on the sessions on any process: active-workers
+    // busySessionsAnywhere, over #6068's holder list. The fixtures' `working`
+    // ids are the ones it names.
+    if (/cs\.id = ANY\(\$1::int\[\]\) AND EXISTS \(SELECT h\.kind/.test(sql)) {
       return { rows: (fx.working || []).filter((id) => (params[0] || []).includes(id)).map((id) => ({ id })) };
     }
     // Whether one session is worked on now (isSessionBusyAnywhere).
@@ -482,7 +483,7 @@ test('a session somebody started working on since the sweep listed it keeps its 
   const real = fakePool.query;
   let listed = false;
   fakePool.query = async (sql, params) => {
-    if (/cs\.id = ANY\(\$1::int\[\]\) AND \(cs\.active_turn IS NOT NULL/.test(sql)) listed = true;
+    if (/cs\.id = ANY\(\$1::int\[\]\) AND EXISTS \(SELECT h\.kind/.test(sql)) listed = true;
     else if (listed) fx.working = [5806];
     return real(sql, params);
   };
@@ -504,7 +505,7 @@ test('a preview whose session was put up for a vote, or started a checks run, si
     const real = fakePool.query;
     let listed = false;
     fakePool.query = async (sql, params) => {
-      if (/cs\.id = ANY\(\$1::int\[\]\) AND \(cs\.active_turn IS NOT NULL/.test(sql)) listed = true;
+      if (/cs\.id = ANY\(\$1::int\[\]\) AND EXISTS \(SELECT h\.kind/.test(sql)) listed = true;
       const out = await real(sql, params);
       if (listed && /FROM chat_sessions/.test(sql) && !/AS busy/.test(sql)) {
         return { ...out, rows: out.rows.map((r) => (r.id === 5806 ? { ...r, ...change } : r)) };
@@ -1197,7 +1198,7 @@ test('Kubernetes: the admin sweep leaves a session another process works on, as 
   const job = await runSweep(reap, KUBE);
   const taken = job.previews.map((p) => p.sessionId).sort((a, b) => a - b);
   assert.deepEqual(taken, [3711, 4001, 4658, 5806], 'not the session worked on elsewhere');
-  const busyRead = fx.queries.find((q) => /cs\.id = ANY\(\$1::int\[\]\) AND \(cs\.active_turn IS NOT NULL/.test(q.sql));
+  const busyRead = fx.queries.find((q) => /cs\.id = ANY\(\$1::int\[\]\) AND EXISTS \(SELECT h\.kind/.test(q.sql));
   assert.ok(busyRead && busyRead.params[0].includes(5080));
 });
 

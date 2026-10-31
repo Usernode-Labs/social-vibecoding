@@ -245,6 +245,9 @@ const {
 } = require('../services/active-workers');
 const { workedOnSql } = require('../workflow/session-work.ts');
 const sessionState = require('../services/session-state');
+// #6068: what holds a change, and the one release both the Clear status
+// button and the change-busy clock use.
+const changeBusy = require('../services/change-busy');
 const turnWatchdog = require('../services/turn-watchdog');
 const recoveryRetry = require('../services/recovery-retry');
 const turnLifecycle = require('../services/turn-lifecycle');
@@ -3906,7 +3909,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     try {
       if (req.path.endsWith('/details') && process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
         const mock = stagingMockSharedSessions().find((s) => s.id === Number(req.params.id))
-          || stagingMockOwnSessions(req.user.id, config.selfAppSlug).find((s) => s.id === Number(req.params.id));
+          || stagingMockOwnSessions(req.user.id, config.selfAppSlug).find((s) => s.id === Number(req.params.id))
+          // #6068: an under-way change's demo row lives with the proposals
+          // (routes/votes.js), as the checks explanation's own demo read does.
+          || require('./votes').stagingMockProposalFor(Number(req.params.id), req.user);
         if (mock) {
           return res.set('Cache-Control', 'no-store').json({
             session: { ...mock, checks_estimate: require('../services/checks-estimate').DEMO_ESTIMATE },
@@ -3936,6 +3942,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         : session;
       if (req.path.endsWith('/details')) {
         detail.busy = await isSessionBusyAnywhere(Number(session.id), { pool });
+        // #6068: the change page's notice. `stuck` is null unless every
+        // record holding it is a stale one with nothing running, and
+        // `canClearBusy` is who the Clear status button belongs to.
+        const detailHolders = await changeBusy.holders(pool, Number(session.id)).catch(() => []);
+        detail.busyHolders = detailHolders.map((h) => ({ kind: h.kind, since: h.since }));
+        detail.stuck = changeBusy.stuckOf(detailHolders);
+        detail.canClearBusy = session.user_id === req.user.id || !!req.user.isAdmin;
         // #2371: the author reviews a change before submitting it, and before
         // then its only description is the spec. Read separately and only for
         // the owner of an underway change, so the shared projection above
@@ -6070,6 +6083,20 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // safety net for adopted workers and the brief period between
     // adding to activeWorkers and registering with the warm registry.
     let busy = await isSessionBusyAnywhere(sessionId, { pool });
+    // #6068: name what holds it, so a busy change can say what is running
+    // and a change left busy by a dead record can be cleared. Read from the
+    // same expression `busy` comes from; a moment of this process's own work
+    // whose record has not landed yet is named too, so `busy` never has
+    // nothing behind it.
+    let holders = [];
+    try {
+      holders = await changeBusy.holders(pool, sessionId);
+    } catch (err) {
+      log.warn('sessions', 'Could not read what holds the session', { sessionId, err: err.message });
+    }
+    if (!holders.length && isSessionBusy(sessionId)) {
+      holders = [{ kind: 'operation', since: new Date().toISOString(), ref: null }];
+    }
     // #906 staging fixtures — see stagingCohortFixtureSessions above.
     let fixtureStoppable = null;
     if (!busy) {
@@ -6282,7 +6309,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // clearEstimate. `stopRequestedAt` is epoch ms | null (#937) and drives
     // the client's stop-escalation ladder across reloads.
     res.json({
-      busy, progress, phase, stopping, stopRequestedAt, stoppable, estimate, turn,
+      busy,
+      // #6068: what holds it, and whether every holder is a stale record
+      // nothing is running (services/change-busy.js). A stale holder can be
+      // released from the change's page or the Mayor's release_change.
+      holders: holders.map((h) => ({ kind: h.kind, since: h.since })),
+      stuck: changeBusy.stuckOf(holders),
+      progress, phase, stopping, stopRequestedAt, stoppable, estimate, turn,
       spend: busy ? workerProgress.get(sessionId)?.spend || null : null,
       agentBackend: progressAgentBackend,
       agentModel: progressAgentModel,
@@ -6311,6 +6344,46 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     } catch (err) {
       log.error('sessions', 'Stop failed', { sessionId, message: err.message });
       return res.status(err.httpStatus || 503).json({ error: err.httpStatus ? err.message : 'Could not confirm that the agent stopped. Retry Stop.', code: err.httpStatus ? err.code : 'stop_unconfirmed' });
+    }
+  });
+
+  // POST /api/sessions/:id/release — clear a change's stuck working state
+  // (#6068): the same act as the change page's "Clear status" and the
+  // Mayor's release_change. It ends only records that are already dead (no
+  // coding turn, nothing young), so a real turn, sync, build, look or shots
+  // run is refused rather than stopped. It writes one line in the change's
+  // thread when something was released. Owner or admin, as recheck is.
+  router.post('/api/sessions/:id/release', sameOriginBrowserOnly, async (req, res) => {
+    const sessionId = Number.parseInt(req.params.id, 10);
+    if (!Number.isSafeInteger(sessionId) || sessionId <= 0) return res.status(400).json({ error: 'Bad session id' });
+    try {
+      const { rows } = await pool.query(
+        'SELECT id, user_id, status FROM chat_sessions WHERE id = $1',
+        [sessionId]
+      );
+      const session = rows[0];
+      if (!session) return res.status(404).json({ error: 'Session not found' });
+      const isOwner = session.user_id === req.user.id;
+      if (!isOwner && !req.user?.isAdmin) return res.status(403).json({ error: 'Not allowed' });
+      if (!['active', 'paused', 'promoted'].includes(session.status)) {
+        return res.status(409).json({
+          error: 'not_open',
+          message: `This change is ${session.status || 'no longer open'}, so there is no status to clear.`,
+        });
+      }
+      const result = await changeBusy.clear(pool, sessionId, { by: req.user.username || null });
+      if (result.stillHeld.length) {
+        return res.status(409).json({
+          error: 'still_working',
+          message: 'Something is still running on this change.',
+          released: result.released,
+          stillHeld: result.stillHeld.map((h) => ({ kind: h.kind, since: h.since })),
+        });
+      }
+      return res.json({ released: result.released, stillHeld: [], busy: false });
+    } catch (err) {
+      log.error('sessions', 'Release failed', { sessionId, message: err.message });
+      return res.status(500).json({ error: 'Could not clear this change\'s status.' });
     }
   });
 
