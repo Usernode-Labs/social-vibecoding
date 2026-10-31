@@ -44,7 +44,7 @@ export function botDmServices({ config, pool }: Deps): Record<string, WorkHandle
         const out = await dm().answerOwed(pool, config, {
           userId: Number(input.userId), conversationId: Number(input.conversationId), messageId: Number(input.messageId),
           attempt: Number(input.attempt) || 0, workKey: key, once,
-          also: Array.isArray(input.also) ? input.also.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [],
+          also: Array.isArray(input.also) ? input.also.map(Number).filter((n: number) => Number.isInteger(n) && n > 0) : [],
         });
         return { sent: !!out?.sent, later: out?.later ?? null, skipped: out?.skipped ?? null };
       },
