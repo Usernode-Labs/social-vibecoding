@@ -4083,6 +4083,10 @@
     "text": "{{project}} · #{{number}} · Waiting for votes",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): its change is up for a vote and waits for other people's votes; the person's own does not need giving (a change they made on Homeroom counts as their yes)."
   },
+  "ai.up.checking": {
+    "text": "{{project}} · #{{number}} · Waiting for checks",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): its change is up for a vote, but its checks have not passed yet, so the checks are what it waits on."
+  },
   "ai.up.voteYes": {
     "text": "{{project}} · #{{number}} · Waiting for votes · you voted Yes",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): its change is up for a vote, the person voted Yes on it, and it waits for other people's votes. \"Yes\" is the vote button's label; keep it the same as the button."
@@ -4298,6 +4302,10 @@
   "ai.short.votes": {
     "text": "Votes",
     "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: it waits for the group's votes."
+  },
+  "ai.short.checks": {
+    "text": "Checks",
+    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: it waits for its checks to pass before the vote can merge it."
   },
   "ai.short.builder": {
     "text": "A builder",
