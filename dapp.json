@@ -5037,9 +5037,9 @@
       "expectText": "Invitation pending"
     },
     {
-      "name": "The chat with Homeroom bot draws each request as one row: its project's tile, a badge saying where it stands, its number in its own colour and its title, so the question waiting on you wears the amber badge (its answers are in the request's thread); beside it, a request the bot offers to file stays a message with File it and Not now, and no Write my own (#3624), and quotes the message it answers (#3707)",
+      "name": "The chat with Homeroom bot draws each request as one row: its project's tile, a badge saying where it stands, its number in its own colour and its title, so the request waiting on you wears the amber badge, and its question is drawn whole in the chat with its answers (31 Oct 2026); beside it, a request the bot offers to file stays a message with File it and Not now, and no Write my own (#3624), and quotes the message it answers (#3707)",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#messages-screen:not(.hidden):has(.messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)) .messages-bot-news[data-bot-news=\"question\"]:has([data-request-tag]) [data-bot-news-state=needs] [data-bot-badge=needs]",
+      "expectSelector": "#messages-screen:not(.hidden):has(.messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)) .messages-bot-news[data-bot-news=\"activity\"]:has([data-request-tag]) [data-bot-news-state=needs] [data-bot-badge=needs]",
       "expectText": "Which night should the rota start on?",
       "id": "homeroom-bot-dm-question",
       "visual": true,
