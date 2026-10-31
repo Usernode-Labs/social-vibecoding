@@ -1876,6 +1876,12 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
   if (live.syncing) {
     return `${ref} is being synced with main right now. Call get_change again once it finishes.`;
   }
+  // Some work the bot cannot see still holds it (a check, a durable build, a
+  // process's record), but no coding turn is on record: it can ask again.
+  if (live.held && !live.turn && kind !== 'worker_read') {
+    return `No coding turn is running on ${ref}, though other work on it may still be finishing. `
+      + 'Ask for the work again; if the dispatch answers that the change is busy, wait a minute and retry.';
+  }
   if (!session.branch_name) {
     return `Nothing has been built on ${ref} yet. ${words.build}`;
   }
@@ -1958,8 +1964,16 @@ function runningTurnOf(turn) {
 function shapeChange(session, live, origin, kind = 'agent_mayor') {
   const status = (live && typeof live === 'object') ? live : {};
   const sync = status.sync && typeof status.sync === 'object' ? status.sync : null;
+  // A coding turn on record is the only thing that makes a change busy to the
+  // bot. The status's own `busy` also counts work a live process holds, which
+  // the bot cannot see and which ends on its own; a run that stopped early
+  // can leave that set with no turn behind it (#6068).
+  const runningTurn = runningTurnOf(status.turn);
+  const held = status.busy === true;
   const liveState = {
-    busy: typeof status.busy === 'boolean' ? status.busy : false,
+    busy: held && !!runningTurn,
+    held,
+    turn: !!runningTurn,
     syncing: !!(sync && sync.phase),
   };
   const checks = shapeChecks(session);
@@ -1968,10 +1982,12 @@ function shapeChange(session, live, origin, kind = 'agent_mayor') {
     appSlug: session.app_slug || null,
     title: untrusted(session.pr_title || session.session_title, MAX_TITLE_CHARS),
     status: session.status || null,
-    busy: typeof status.busy === 'boolean' ? status.busy : null,
+    // What the field describes: whether the coding agent is running a turn on
+    // it right now. Null only when the status could not be read.
+    busy: typeof status.busy === 'boolean' ? !!runningTurn : null,
     // #4533: the turn that holds it, from its record: when it started and
     // what kind of turn it is. Null with no turn on record.
-    runningTurn: runningTurnOf(status.turn),
+    runningTurn,
     syncing: liveState.syncing,
     hasBranch: !!session.branch_name,
     branchName: session.branch_name || null,

@@ -889,6 +889,17 @@ export async function askTurn(db: Queryable, p: {
     { requestKey: `ask:${p.key}:${p.turnId}`, source: { kind: 'route', name: 'turn' }, appId: p.appId ?? null });
 }
 
+// A turn instance left `running` with no run item behind it (its result was
+// refused, so nothing will end it): the turn-leftovers clock appends the Tick
+// its own timer would have appended at MAX_TURN_MS. `turnId` keeps a pass
+// that races the real result from ending the turn that follows, and makes a
+// second pass a replay.
+export async function endOrphanTurn(db: Queryable, p: { key: string; turnId: string }): Promise<void> {
+  await appendEvent(db, TURN, p.key,
+    { type: 'Tick', payload: { turnId: p.turnId } as any },
+    { requestKey: `orphan:${p.key}:${p.turnId}`, source: sys('turn-leftovers') });
+}
+
 // A person's Stop of the turn running on `key`: the machine stops its coding
 // agent by its journal; the turn hears it from its claim (stamped first).
 export async function stopTurn(p: { key: string; by: string | null }): Promise<void> {

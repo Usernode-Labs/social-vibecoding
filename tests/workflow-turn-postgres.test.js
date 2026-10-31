@@ -226,7 +226,7 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     await rt.drain();
     const { rows: [i] } = await pool.query('SELECT state, machine_version FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, key]);
     assert.deepEqual([i.state, Number(i.machine_version)], ['running', machine.version]);
-    assert.equal(machine.version, 3);
+    assert.equal(machine.version, 4);
     const older = createRuntime({ pool, machines: [{ ...machine, version: 2 }], pollMs: 50, publish: async () => {}, services: {} });
     runtimes.push(older);
     const tick = await send({ key }, 'Tick', {}, { kind: 'system' });
@@ -355,6 +355,34 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
       await settle();
     } finally { work.answer = null; release(); }
     assert.equal((await items(c, WORK.run)).find((w) => w.work_key === 'run:turn-t').status, 'settled');
+  });
+
+  // #6068: the turn-leftovers clock ends an instance nothing runs on with a
+  // Tick that names its turn, so a pass that races the real result never
+  // ends the turn that follows.
+  await t.test('T5b a Tick names its turn: another turn\'s is ignored, this one\'s ends it as lost', async () => {
+    const c = await conversation();
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    work.answer = async () => { await gate; return { ok: true }; };
+    try {
+      await ask(c, 'turn-named');
+      await rt.drain();
+      const running = rt.runServices();
+      await waitFor(() => runs(c).length === 1, { label: 'the turn\'s run to start' });
+      await send(c, 'Tick', { turnId: 'another-turn' }, { kind: 'system' });
+      await rt.drain();
+      assert.equal((await instance(c)).state, 'running', 'not the turn running here');
+      await send(c, 'Tick', { turnId: 'turn-named' }, { kind: 'system' });
+      await rt.drain();
+      assert.equal((await instance(c)).state, 'idle', 'its own turn, past its time');
+      assert.equal((await claim(c)).active_turn, null);
+      assert.deepEqual((await notes(c)).map((n) => [n.content, n.metadata.agentTurnId]),
+        [[INTERRUPTED_TEXT, 'turn-named']], 'ended as lost, with Retry');
+      release();
+      await running;
+      await settle();
+    } finally { work.answer = null; release(); }
   });
 
   await t.test('T6 only a conversation or a change is a turn\'s stream, and only the platform asks', async () => {
@@ -1164,6 +1192,86 @@ test('turn machine against the full PostgreSQL schema', { timeout: 180000 }, asy
     } finally {
       recovery.recoverOwnedTurn = wasRecover;
       forceStop.run = wasForce;
+      await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [c.id]);
+    }
+  });
+
+  // #6068: a turn instance still `running` whose run item settled without
+  // ending it (a result the kernel refused) is an orphan: nothing will ever
+  // end it, and it held its change for up to six hours with no record.
+  const { workedOnSql } = require('../src/workflow/session-work.ts');
+  const workedOn = async (id) => (await pool.query(
+    `SELECT ${workedOnSql()} AS busy FROM chat_sessions cs WHERE cs.id = $1`, [id])).rows[0].busy;
+  const ageTurn = (key) => asTransition(pool,
+    `UPDATE wf_instances SET data = jsonb_set(data, '{running,startedAt}', to_jsonb(NOW() - make_interval(secs => 600)))
+      WHERE machine = 'turn' AND key = $1`, [key]);
+  const settleRun = (key) => asTransition(pool,
+    `UPDATE wf_work SET status = 'settled', settled_at = NOW()
+      WHERE machine = 'turn' AND key = $1 AND kind = $2 AND status <> 'settled'`, [key, WORK.run]);
+
+
+  await t.test('L7 a turn instance whose run item settled without ending it holds nothing, and the clock ends it once', async () => {
+    const c = await change();
+    await send({ key: c.key }, 'Asked', { turnId: 'orphan-run', kind: 'classic', input: { sessionId: c.id } });
+    await rt.drain();
+    assert.equal((await instance({ key: c.key })).state, 'running');
+    assert.equal(await workedOn(c.id), true, 'its run item is outstanding');
+    // The item settles (a result the kernel refused) and the instance is
+    // left running with nothing behind it.
+    await settleRun(c.key);
+    assert.equal(await workedOn(c.id), false, 'an instance nothing runs on holds nothing');
+    // A turn that has just started is never mistaken for one.
+    assert.equal((await leftoverPass()).orphanTurns, 0, 'it has not been still for two minutes');
+    await ageTurn(c.key);
+    assert.equal((await leftoverPass()).orphanTurns, 1);
+    await rt.drain();
+    await waitFor(async () => (await instance({ key: c.key })).state !== 'running', { label: 'the orphan to end' });
+    const { rows: ticks } = await pool.query(
+      `SELECT payload FROM wf_events WHERE machine = 'turn' AND key = $1 AND type = 'Tick' ORDER BY id`, [c.key]);
+    assert.deepEqual(ticks.map((r) => r.payload), [{ turnId: 'orphan-run' }], 'one Tick, naming its turn');
+    assert.equal((await leftoverPass()).orphanTurns, 0, 'a second pass finds nothing (and a repeat is a replay)');
+    await settle();
+  });
+
+  await t.test('L8 an orphan turn on a conversation releases its claim as interrupted, with Retry', async () => {
+    const c = await conversation();
+    assert.equal(await ask(c, 'orphan-agent'), true);
+    await rt.drain();
+    assert.equal((await instance(c)).state, 'running');
+    await settleRun(c.key);
+    await ageTurn(c.key);
+    assert.equal((await leftoverPass()).orphanTurns, 1);
+    await rt.drain();
+    await waitFor(async () => (await instance(c)).state !== 'running', { label: 'the orphan to end' });
+    assert.equal((await claim(c)).active_turn, null);
+    assert.deepEqual((await notes(c)).map((n) => [n.content, n.metadata.agentSessionEvent, n.metadata.retryable]),
+      [[INTERRUPTED_TEXT, 'turn_interrupted', true]], 'the usual Retry note');
+    await settle();
+  });
+
+  // The same orphan blocked the record recovery (its `NOT EXISTS … running`
+  // clause): a record beside it is now asked a recover turn, and the Tick
+  // that ends the orphan starts it.
+  await t.test('L9 a record left beside an orphan turn instance is asked its recover turn', async () => {
+    const c = await change();
+    await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`, [c.id,
+      JSON.stringify({ turnId: 'stuck-job', mode: 'build', startedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString() })]);
+    try {
+      await send({ key: c.key }, 'Asked', { turnId: 'orphan-with-record', kind: 'classic', input: { sessionId: c.id } });
+      await rt.drain();
+      await settleRun(c.key);
+      await ageTurn(c.key);
+      const pass = await leftoverPass();
+      assert.equal(pass.records >= 1, true);
+      assert.equal(pass.orphanTurns, 1);
+      assert.deepEqual((await askedOn(c.key)).filter((p) => p.kind === 'recover')
+        .map((p) => [p.kind, p.turnId, p.input.sessionId]),
+        [['recover', 'leftover-stuck-job', c.id]]);
+      await rt.drain();
+      await waitFor(async () => (await instance({ key: c.key })).data.running?.turnId === 'leftover-stuck-job',
+        { label: 'the recover turn the orphan held to start' });
+      await settle();
+    } finally {
       await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [c.id]);
     }
   });

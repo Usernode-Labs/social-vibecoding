@@ -325,7 +325,7 @@ test('the next step walks a change through its whole life', () => {
     { id: 50, app_slug: 'recipe-box', branch_name: 'b', ...session }, live, '', kind
   ).nextStep;
   assert.match(step({ branch_name: null, status: 'active' }), /Nothing has been built on Change 50 yet/);
-  assert.match(step({ status: 'active' }, { busy: true }), /working on Change 50 right now/);
+  assert.match(step({ status: 'active' }, { busy: true, turn: { kind: 'scout' } }), /working on Change 50 right now/);
   assert.match(step({ status: 'active' }, { sync: { phase: 'merging' } }), /being synced with main/);
   assert.match(step({ status: 'active', check_state: 'pending' }), /Checks are running/);
   assert.match(step({ status: 'active', check_state: 'pending', check_phase: 'deferred' }), /conflicts with main\. sync_change/);
@@ -337,8 +337,34 @@ test('the next step walks a change through its whole life', () => {
   assert.match(step({ status: 'merging' }), /is merging now/);
   assert.match(step({ status: 'merged' }), /part of the app now/);
   assert.match(step({ status: 'archived' }), /withdrawn and is closed for good/);
-  assert.doesNotMatch(step({ status: 'active' }, { busy: true }, 'worker_read'), /working on/,
+  assert.doesNotMatch(step({ status: 'active' }, { busy: true, turn: { kind: 'scout' } }, 'worker_read'), /working on/,
     'the worker is the turn that is running');
+});
+
+// #6068: a status that says busy with no turn on record is a holder nothing
+// is running behind (a run that stopped early). The bot must not report the
+// change as busy, nor tell its owner to wait for a turn that does not exist.
+test('a busy status with no turn on record is idle and retryable', () => {
+  const change = (session, live, kind = 'agent_mayor') => tools.shapeChange(
+    { id: 50, app_slug: 'recipe-box', branch_name: 'b', status: 'active', ...session }, live, '', kind
+  );
+  const held = change({}, { busy: true });
+  assert.equal(held.busy, false, 'busy means a coding turn is running');
+  assert.equal(held.runningTurn, null);
+  assert.match(held.nextStep, /^No coding turn is running on Change 50/);
+  assert.match(held.nextStep, /Ask for the work again/);
+  assert.doesNotMatch(held.nextStep, /working on Change 50 right now/);
+  const worker = change({}, { busy: true }, 'worker_read');
+  assert.doesNotMatch(worker.nextStep, /working on|No coding turn is running/,
+    'a worker is itself the turn, so it is told what to do with the change');
+  assert.match(worker.nextStep, /No checks have reported/);
+  const running = change({}, { busy: true, turn: { kind: 'scout' } });
+  assert.equal(running.busy, true);
+  assert.deepEqual(running.runningTurn, { startedAt: null, kind: 'scout' });
+  assert.match(running.nextStep, /The coding agent is working on Change 50 right now/);
+  assert.equal(change({}, {}).busy, null, 'an unreadable status stays unknown');
+  // A real sync still reads as busy work, and says so.
+  assert.match(change({}, { busy: true, sync: { phase: 'merging' } }).nextStep, /being synced with main/);
 });
 
 test('start_change creates, names and links, and reports what did not stick', async () => {
