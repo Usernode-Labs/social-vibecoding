@@ -20038,6 +20038,12 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 @media (min-width: 768px) {
   .messages-layout-embedded > .messages-reply-pane { margin-left: 8px; }
 }
+/* #6071 follow-up: a new thread from Homeroom bot's "+" in the Homeroom bot
+   tab's Main Chat (features/messages/new-thread.tsx) takes the chat's place,
+   docked beside the lists or not: it is a fresh start, and its ✕ brings Main
+   back. In Messages it opens beside the chat, as a thread does. */
+.messages-layout-embedded.messages-has-blank-thread > .messages-thread-pane { display: none; }
+.messages-layout-embedded.messages-has-blank-thread > .messages-reply-pane { flex: 1 1 auto; margin-left: 0; }
 /* A PROJECT'S OWN CHANNEL'S REPLY THREAD, IN PLACE TOO (#3653). The pane
    Messages opens beside an app channel (AppReplyThreadPane) opens beside the
    group chat's pane here: to its right on a desktop, over it on a phone,

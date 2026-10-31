@@ -95,6 +95,7 @@ import {
 } from './store';
 import { typingLine } from './typing-line';
 import { DesignPane, DesignViewSwitch, isDesignRoot, setDesignView, useDesignView } from './design-pane';
+import { NewThreadButton, NewThreadPanel, startedThreadTitle, useNewThread } from './new-thread';
 import { issueRefHref } from './channels';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { PageBackButton } from '../dev-board/workshop/page-back';
@@ -1428,6 +1429,8 @@ function ThreadHeader() {
       </button>
       )}
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label={t('messages:header.groupMembers')} title={t('messages:header.groupMembers')}><UserGroupIcon aria-hidden="true" /></button> : null}
+      {/* #6071 follow-up: a new thread with Homeroom bot (./new-thread.tsx). */}
+      {botDm ? <NewThreadButton conversationId={active.id} className="messages-thread-action" /> : null}
       <FullWidthToggle />
       <div className="relative" ref={menuWrapRef}>
         <button ref={menuBtnRef} type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label={t('messages:header.actions')} aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
@@ -2638,8 +2641,12 @@ function ReplyThreadPanel({ backToMain = false }: {
   // thread of this chat's is drawn for it, even for the moment that takes.
   if (botChat && kind === 'direct' && requestPageOf(root)) return null;
   const rootMeta = botChat && root?.sender.bot ? root.metadata?.homeroomBot || null : null;
-  const request = rootMeta ? botRequestNames(rootMeta) : null;
-  const where = request ? request.project : active ? (kind === 'channel' ? `#${active.channelKey || active.title}` : active.title) : '';
+  // #6071 follow-up: a thread from the bot's "+" is named by what it is for
+  // and its project, never as a request it is not.
+  const started = rootMeta?.kind === 'opened_thread' ? rootMeta : null;
+  const request = rootMeta && !started ? botRequestNames(rootMeta) : null;
+  const where = started ? (started.appName || started.appSlug || t('messages:newThread.anyProject'))
+    : request ? request.project : active ? (kind === 'channel' ? `#${active.channelKey || active.title}` : active.title) : '';
   const replies = thread?.messages || [];
   // #5219: on a request's thread the request's public discussion rides
   // along, and the two read in one transcript, in the order they were said.
@@ -2721,12 +2728,13 @@ function ReplyThreadPanel({ backToMain = false }: {
         <div className="min-w-0 flex-1">
           <div className="messages-thread-name flex min-w-0 items-center gap-2">
             {request && !request.firstVersion ? <RequestTag number={request.number} size="head" /> : null}
-            <span className="min-w-0 truncate">{request ? botThreadTitle(request) : t('messages:replies.title')}</span>
+            <span className="min-w-0 truncate">{started ? startedThreadTitle(t, started.changeKind) : request ? botThreadTitle(request) : t('messages:replies.title')}</span>
           </div>
           {where ? <div className="messages-thread-sub">{where}</div> : null}
         </div>
         {/* #6071: in a design thread, the way to its preview: on a phone the
-            switch back to it; in an embedded copy of the chat (the AI tab),
+            switch back to it; in an embedded copy of the chat (the Homeroom
+            bot tab's Main Chat),
             a link to it in Messages. */}
         {isDesignRoot(root)
           ? (snap.route.embedded ? <EmbeddedDesignLink conversationId={conversationId} rootId={rootId} /> : <DesignViewSwitch onView={setDesignView} />)
@@ -2969,10 +2977,13 @@ export function EmbeddedConversation({ conversationId, active, at = null, mainCh
     const next = take();
     if (next) embed(conversationId, next);
   }, [at]); // eslint-disable-line react-hooks/exhaustive-deps
+  // #6071 follow-up: a blank thread from Homeroom bot's "+", in the thread's place.
+  const blank = useNewThread(conversationId) && here && !snap.route.threadRootId;
   return (
-    <div className={`messages-layout messages-layout-embedded${here && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}`} data-main-chat={mainChat ? '' : undefined}>
+    <div className={`messages-layout messages-layout-embedded${here && (snap.route.threadRootId || blank) ? ' messages-has-reply-thread' : ''}${blank ? ' messages-has-blank-thread' : ''}`} data-main-chat={mainChat ? '' : undefined}>
       {here ? <ConversationThread embedded /> : <ChannelLoading />}
       {here && snap.route.threadRootId ? <ReplyThreadPanel backToMain={mainChat} /> : null}
+      {blank ? <NewThreadPanel conversationId={conversationId} /> : null}
     </div>
   );
 }
@@ -3048,7 +3059,9 @@ export function MessagesScreen() {
     : null;
   const designOpen = !!designRootId && isDesignRoot(designRoot);
   const designClass = designOpen ? ` messages-has-design messages-design-view-${designView}` : '';
-  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}${railClass}${drawerClass}${designClass}`;
+  // #6071 follow-up: a blank thread from Homeroom bot's "+", in the thread's place.
+  const blankThread = useNewThread(snap.route.conversationId) && !snap.route.threadRootId && !snap.route.embedded;
+  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && (snap.route.threadRootId || blankThread) ? ' messages-has-reply-thread' : ''}${railClass}${drawerClass}${designClass}`;
   // No background of its own: the route paints the wallpaper (the
   // body:has(#messages-screen) rules in app.css), and the two frosted planes
   // need a transparent ancestor chain to have anything to blur.
@@ -3062,6 +3075,7 @@ export function MessagesScreen() {
             <DesignPane conversationId={snap.route.conversationId} rootId={designRootId} view={designView} onView={setDesignView} />
           ) : null}
           {snap.route.conversationId && snap.route.threadRootId && !snap.route.embedded ? <ReplyThreadPanel /> : null}
+          {blankThread && snap.route.conversationId ? <NewThreadPanel conversationId={snap.route.conversationId} /> : null}
           {snap.route.appSlug && snap.route.threadRootId ? <AppReplyThreadPanel slug={snap.route.appSlug} rootId={snap.route.threadRootId} /> : null}
         </div>
       </main>

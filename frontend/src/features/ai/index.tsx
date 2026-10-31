@@ -61,6 +61,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { FRESH } from '../../lib/live-reads';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { EmbeddedConversation } from '../messages';
+import { NewThreadButton } from '../messages/new-thread';
 import { openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
 import { SidePanelDivider } from '../side-panel/side-panel';
@@ -263,10 +264,18 @@ export function AiScreen(): ReactNode {
   };
   const openThread = (th: AiThread) => openPublic(th.href, th.app, th.title, aboutRow(th), botId);
 
+  // #6071 follow-up: "+" starts a new blank thread with the bot, in Main
+  // Chat (../messages/new-thread.tsx): docked beside the lists, slid in on a
+  // phone, or Main's own page between the two.
+  const openBlank = () => {
+    if (phone) { setAt(null); openMain(null); return; }
+    if (docked) { sidePanel()?.close?.(); return; }
+    go('#homeroom-bot/main');
+  };
   const hero = (
     <section className="flex items-center gap-3 px-4 pt-3" data-ai-hero="">
       <img src={BOT_AVATAR} alt="" className="w-12 h-12 rounded-2xl object-cover shrink-0" />
-      <span className="min-w-0 flex flex-col">
+      <span className="min-w-0 flex-1 flex flex-col">
         <h1 className="text-[1.375rem] font-bold leading-tight">{t('messages:ai.hero.name')}</h1>
         {work ? (
           <span className="text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-hero-sub="">
@@ -274,6 +283,11 @@ export function AiScreen(): ReactNode {
           </span>
         ) : null}
       </span>
+      <NewThreadButton
+        conversationId={botId || null}
+        onOpen={openBlank}
+        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-zinc-700 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800 [&>svg]:h-5 [&>svg]:w-5"
+      />
     </section>
   );
 

@@ -196,6 +196,10 @@ SELECT t.id, mine.own, t.number, t.kind, t.title AS thread_title, t.state, t.cre
 const PRIVATE_SQL = `
 SELECT m.id AS root_id, m.content, m.created_at, p.kind, a.slug, a.name,
        a.icon_emoji, a.icon_image_id,
+       -- A thread started from the bot's "+" is named by their first words in it.
+       (SELECT f.content FROM conversation_messages f
+         WHERE f.thread_root_id = m.id AND f.sender_id = $1 AND f.deleted_at IS NULL
+         ORDER BY f.id LIMIT 1) AS first_own,
        (SELECT MAX(r.created_at) FROM conversation_messages r
          WHERE r.thread_root_id = m.id AND r.deleted_at IS NULL) AS last_at
   FROM conversations c
@@ -445,7 +449,7 @@ async function botStages(pool, user, deps = {}) {
 function shapePrivate(row) {
   return {
     rootId: Number(row.root_id),
-    title: firstLine(row.content),
+    title: firstLine(row.kind === 'ask' && row.first_own ? row.first_own : row.content),
     kind: row.kind || 'idea',
     app: appOf(row),
     at: iso(row.last_at || row.created_at),

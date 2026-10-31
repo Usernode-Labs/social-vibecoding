@@ -325,6 +325,8 @@ const COLUMNS = {
     re: /attachScreenFx\(\s*'dev-chat',\s*document\.getElementById\('dc-messages'\)/,
   },
   'frontend/src/features/messages/index.tsx': { hook: true },
+  // #6071 follow-up: a new thread with Homeroom bot, in a thread's place.
+  'frontend/src/features/messages/new-thread.tsx': { hook: true },
 };
 
 function walk(dir, out = []) {

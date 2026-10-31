@@ -2,7 +2,8 @@
 
 // #6071: a design thread's pane and the frame it draws a version in
 // (frontend/src/features/messages/design-pane.tsx, frontend/src/features/
-// design/frame.ts), and the way in from the Homeroom mark's menu.
+// design/frame.ts), and the way in: a new thread with Homeroom bot, or its
+// Pick the screen button.
 //
 // What this pins:
 //   1. A version is drawn under a policy that loads nothing from anywhere but
@@ -80,18 +81,23 @@ test('the pane reads nothing in its first render, and says it is drawing', () =>
   assert.equal(isDesignRoot({ sender: { bot: true }, metadata: { homeroomBot: { kind: 'opened_draft' } } }), false);
 });
 
-test('Messages draws the pane for a design thread, and the mark\'s menu opens one', () => {
+test('Messages draws the pane for a design thread, and the bot\'s new thread opens one', () => {
   const index = read('frontend/src/features/messages/index.tsx');
   assert.match(index, /const designOpen = !!designRootId && isDesignRoot\(designRoot\);/);
   assert.match(index, /<DesignPane conversationId=\{snap\.route\.conversationId\} rootId=\{designRootId\} view=\{designView\} onView=\{setDesignView\} \/>/);
   const css = read('public/css/app.css');
   assert.match(css, /\.messages-layout\.messages-has-design > \.messages-thread-pane \{ display: none; \}/);
-  // A row of the mark's menu, run once the menu has gone, so the capture is
-  // of the screen and not of the menu over it.
+  // Not the mark's menu any more: a new thread's Design a screen, or the
+  // bot's own Pick the screen, goes to the screen with a Use this screen bar.
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /id="improve-row-design"[\s\S]*?void AppContext\.dismissForNav\(\)\.then\(\(\) => designThisScreen\(\)\);/);
-  assert.doesNotMatch(read('frontend/src/features/improve/actions.tsx'), /improve-row-design/, 'never beside the one filled action');
-  assert.equal(message('agent:menu.designScreen'), 'Design this screen');
+  assert.doesNotMatch(sheet, /improve-row-design|designThisScreen|agent:menu\.designScreen/);
+  assert.doesNotMatch(read('frontend/src/features/improve/actions.tsx'), /improve-row-design/);
+  assert.throws(() => message('agent:menu.designScreen'));
+  const pick = read('frontend/src/features/design/pick.tsx');
+  assert.match(pick, /endScreenPick\(\);\n\s+await designThisScreen\(\);/, 'the bar goes before the capture');
+  assert.match(read('frontend/src/features/design/capture.ts'), /'#design-pick-host'/, 'and the capture leaves it out anyway');
+  assert.match(read('frontend/src/features/messages/new-thread.tsx'), /onClick=\{\(\) => \{ closeNewThread\(\); startScreenPick\(\{ appSlug: project \|\| null, appName: projectName \}\); \}\}/);
+  assert.match(read('frontend/src/features/messages/bot-question.tsx'), /action\.type === 'design'[\s\S]*?startScreenPick\(/);
 });
 
 test('the bridge answers a capture only to Homeroom, and its mirror is the same file', () => {

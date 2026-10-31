@@ -49,7 +49,7 @@ test('the model is asked for what they might say next, and its suggestions becom
     '  How long will   it take? ', 'how long will it take?', 'x'.repeat(61), '', null, 42, 'Start it now', 'Show my requests', 'One more',
   ]), ['How long will it take?', 'Start it now', 'Show my requests'], 'plain, each once, at most three, none cut mid-word');
   assert.deepEqual(mayor.suggestionLabels(undefined), []);
-  assert.match(source, /\.\.\.\(next\.length \? \{ actions: require\('\.\/homeroom-bot-dm'\)\.promptActions\(next\), status: 'open' \} : \{\}\)/);
+  assert.match(source, /const prompts = next\.length \? require\('\.\/homeroom-bot-dm'\)\.promptActions\(next\) : \[\];\n\s+const actions = \[\.\.\.pick, \.\.\.prompts\]\.slice\(0, 3\);[\s\S]*?\.\.\.\(actions\.length \? \{ actions, status: 'open' \} : \{\}\)/);
 });
 
 // ── 2. Where it is stuck ────────────────────────────────────────────────

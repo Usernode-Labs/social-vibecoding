@@ -1,6 +1,8 @@
 /**
- * #6071: "Design this screen", from the Homeroom mark's menu
- * (../improve/actions.tsx). It captures what the person is looking at (an
+ * #6071: design this screen. Since the follow-up it is reached from Homeroom
+ * bot's new thread (Design a screen) or the bot's own Pick the screen, both
+ * through the floating Use this screen bar (./pick.tsx), no longer from the
+ * Homeroom mark's menu. It captures what the person is looking at (an
  * app on its App tab, through its bridge, or else Homeroom's own page,
  * ./capture.ts), opens it as a design thread in their chat with Homeroom
  * bot, and takes them there, where the bot edits it with them.

@@ -197,4 +197,65 @@ async function postIt(pool, { user, rootId, project, number, text = null, deps =
   return { ok: true, state: 'posted', number: n, app: { slug: app.slug, name }, href: hrefFor(app, n, change ? 'change' : 'request') };
 }
 
-module.exports = { ownRoot, stateOf, fileIt, postIt, MAX_TEXT, MAX_TITLE };
+// ── A new thread, from Homeroom bot's "+" (#6071 follow-up) ──────────────
+
+// The kinds of change a new thread's welcome block offers
+// (frontend/src/features/messages/new-thread.tsx), as the bot reads them.
+const CHANGE_KINDS = Object.freeze({
+  any: null,
+  fix: 'fix something broken',
+  add: 'add something new',
+  design: 'change how a screen looks',
+});
+
+/** Pure: the bot's line in Main that a new thread hangs off. */
+function startLine({ kind, appName }) {
+  const what = CHANGE_KINDS[kind] || null;
+  if (what && appName) return `New thread, to ${what} on ${appName}.`;
+  if (what) return `New thread, to ${what}.`;
+  if (appName) return `New thread, about ${appName}.`;
+  return 'New thread.';
+}
+
+/**
+ * Start a thread with the bot, from its "+": the bot's line in Main the
+ * thread hangs off (metadata kind 'opened_thread', with what the welcome
+ * block picked), and the thread's row (kind 'ask'), which the bot reads for
+ * what the thread is for (homeroom-bot-dm.js messageThread). The person's
+ * first message is then sent into it, and the bot answers there. Resolves
+ * { ok, conversationId, rootId } or a refusal.
+ */
+async function startThread(pool, { user, project = null, kind = 'any', deps = {} }) {
+  const dm = deps.dm || require('./homeroom-bot-dm');
+  const mayor = deps.mayor || require('./homeroom-bot-mayor');
+  if (!user?.id || user.isSynthetic) return { ok: false, status: 403, error: 'forbidden' };
+  const changeKind = Object.prototype.hasOwnProperty.call(CHANGE_KINDS, kind) ? kind : 'any';
+  let app = null;
+  if (project) {
+    app = await mayor.findApp(pool, String(project));
+    if (!app || !(await mayor.canView(pool, app, user))) return { ok: false, status: 404, error: 'No such project' };
+  }
+  const bot = deps.bot || await dm.botAccount(pool);
+  if (!bot) return { ok: false, status: 503, error: 'Homeroom bot is not available' };
+  const appName = app ? app.name || app.slug : null;
+  const said = await dm.sendDm(pool, {
+    bot,
+    userId: user.id,
+    content: startLine({ kind: changeKind, appName }),
+    threadRootId: false,
+    moment: null,
+    metadata: {
+      kind: 'opened_thread', changeKind,
+      ...(app ? { appSlug: app.slug, appName } : {}),
+    },
+  });
+  if (!said?.messageId) return { ok: false, status: 502, error: 'The thread could not be started just now.' };
+  await pool.query(
+    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
+     VALUES ($1, $2, $3, $4, 'ask', 'open') ON CONFLICT (root_message_id) DO NOTHING`,
+    [user.id, said.conversationId, said.messageId, app ? app.id : null],
+  );
+  return { ok: true, conversationId: Number(said.conversationId), rootId: Number(said.messageId) };
+}
+
+module.exports = { ownRoot, stateOf, fileIt, postIt, startThread, startLine, CHANGE_KINDS, MAX_TEXT, MAX_TITLE };
