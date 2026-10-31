@@ -598,9 +598,12 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {/* #6019: the requests, other changes and votes in its thread. */}
           {id ? <ThreadItems slug={pageSlug()} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} /> : null}
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
+          {/* #6068: the stuck-status notice is a notice of the same kind, in
+              the same place: above Votes and Testing, before the code-missing
+              and waits-for ones, so their own order is unchanged. */}
+          <StuckBusyNotice id={id} v={v} />
           {v.codeMissing ? <CodeMissingNotice /> : null}
           {v.waitsFor || v.baseNotMain ? <StackNotice v={v} /> : null}
-          <StuckBusyNotice id={id} v={v} />
           <ChangeGates ref={pair} id={id} card={card} v={v} />
           {v.upstream ? <UpstreamDecline u={v.upstream} id={id} /> : null}
           {v.shots ? <ShotsCard s={v.shots} /> : null}

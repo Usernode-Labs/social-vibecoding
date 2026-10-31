@@ -99,7 +99,13 @@ test('no sweep stops a worker a durable build holds: the eviction clock reads it
   const eviction = fs.readFileSync(path.join(__dirname, '..', 'src/services/worker-eviction.js'), 'utf8');
   assert.match(eviction, /AND NOT \$\{workedOnSql\(\)\}/);
   const work = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/session-work.ts'), 'utf8');
-  assert.match(work.slice(work.indexOf('export function workedOnSql(')), /OR \$\{buildHoldSql\('cs'\)\}/);
+  // #6068: workedOnSql is the holder list's own expression, and the list's
+  // durable-build clause is the same hold: an unflagged 'building' instance
+  // whose build.run item is still outstanding.
+  assert.match(work.slice(work.indexOf('export function workedOnSql(')),
+    /EXISTS \(\$\{sessionHoldersSql\('cs\.id', opts\)\}\)/);
+  assert.match(work,
+    /SELECT 'build'::text, b\.updated_at, NULL::text[\s\S]{0,500}?AND b\.state = 'building' AND b\.flag IS NULL[\s\S]{0,400}?bw\.kind = 'build\.run' AND bw\.status <> 'settled'/);
   // Adoption keeps a durable build's worker as it is
   // (tests/homeroom-bot-restart-recovery.test.js).
   // (Moved out of server.js unchanged: services/turn-recovery.js. A turn's

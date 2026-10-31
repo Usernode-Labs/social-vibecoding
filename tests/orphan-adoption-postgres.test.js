@@ -125,6 +125,12 @@ test('only what no work item holds is recovered', { timeout: 120000 }, async (t)
     await c.query('BEGIN');
     await c.query(`SET LOCAL app.wf_writer = 'transition'`);
     await c.query(`INSERT INTO wf_instances (machine, key, state, machine_version) VALUES ('bot-build', 'run:9', 'building', 1)`);
+    // #6068: a durable build holds while its build.run item is outstanding,
+    // as the pipeline writes it. Without the item the instance is a leftover
+    // of its own, not a live build.
+    await c.query(`INSERT INTO wf_work (machine, key, kind, work_key, input, status, claim_id, lease_until)
+                   VALUES ('bot-build', 'run:9', 'build.run', 'run', '{}'::jsonb, 'running',
+                           gen_random_uuid(), NOW() + interval '1 hour')`);
     await c.query('COMMIT');
   } finally { c.release(); }
   // A process of another release, serving: the pass runs all the same
