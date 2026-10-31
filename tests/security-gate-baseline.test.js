@@ -192,3 +192,74 @@ test('the workflow gives each gate its baseline, and a gate with none stays stri
   assert.match(check, /node scripts\/security-findings\.js "\$out\/vulnerabilities\.json" "\$component" \$baseline \|\| status=1/);
   assert.match(check, /node scripts\/security-findings\.js "\$out\/image-vulnerabilities\.json" "\$component" \$baseline \|\| status=1/);
 });
+
+// A fake `docker` that records each call and writes what the scan steps read:
+// Trivy's reports into the mounted /output, an SBOM attestation, a saved tar.
+function fakeDocker(dir) {
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'docker'), `#!/bin/sh
+printf '%s\\n' "$*" >> "${path.join(dir, 'calls.log')}"
+out=; prev=; report=
+for a in "$@"; do
+  case "$prev" in -v) case "$a" in *:/output) out="\${a%:/output}" ;; esac ;; --output) report="\${a#/output/}" ;; -o) touch "$a" ;; esac
+  prev="$a"
+done
+case "$*" in
+  *"imagetools inspect"*) cat "${path.join(dir, 'attestation.json')}" ;;
+  *"--entrypoint node"*) cat > /dev/null; echo '{}' ;;
+  *" sbom "*|*" image --skip-db-update"*) cp "${path.join(dir, 'report.json')}" "$out/$report" ;;
+esac
+`, { mode: 0o755 });
+  return bin;
+}
+
+test('an image with the same digest as the live image is not pulled, saved or rescanned, and cannot block', () => {
+  const live = 'ghcr.io/usernode-labs/social-vibecoding-worker@sha256:' + 'c'.repeat(64);
+  const other = 'ghcr.io/usernode-labs/social-vibecoding-worker@sha256:' + 'd'.repeat(64);
+  const sbom = { spdxVersion: 'SPDX-2.3', packages: [{ name: 'libssl3', versionInfo: '3.0.15-1~deb12u1' }] };
+  // A fixable HIGH on a package the image ships: only the live image's own
+  // SBOM makes it "already shipped".
+  const report = { SchemaVersion: 2, Results: [{ Target: 'worker', Vulnerabilities: [
+    { Severity: 'HIGH', PkgName: 'libssl3', InstalledVersion: '3.0.15-1~deb12u1', VulnerabilityID: 'CVE-2026-9', FixedVersion: '3.0.16-1~deb12u1' },
+  ] }] };
+  const run = (image, baselineImage, attestation) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'image-check-'));
+    const out = path.join(dir, 'out');
+    fs.writeFileSync(path.join(dir, 'sbom.spdx.json'), JSON.stringify(sbom));
+    fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(report));
+    fs.writeFileSync(path.join(dir, 'attestation.json'), JSON.stringify(attestation));
+    const res = spawnSync('sh', ['scripts/check-image-security.sh', image, out, path.join(dir, 'sbom.spdx.json'), 'worker'], {
+      cwd: ROOT, encoding: 'utf8',
+      env: { ...process.env, PATH: `${fakeDocker(dir)}:${process.env.PATH}`, BASELINE_IMAGE: baselineImage, GITHUB_STEP_SUMMARY: path.join(dir, 'summary.md') },
+    });
+    return { res, dir, out, calls: fs.readFileSync(path.join(dir, 'calls.log'), 'utf8') };
+  };
+
+  // The live image, reused: no probe, no save, no second SBOM read; it passes.
+  const same = run(live, live, {});
+  assert.equal(same.res.status, 0, same.res.stderr);
+  assert.doesNotMatch(same.calls, /--entrypoint node/, 'not run for the runtime probes');
+  assert.doesNotMatch(same.calls, /image save/, 'not saved to a tar');
+  assert.doesNotMatch(same.calls, /imagetools inspect/, 'its own SBOM is the live SBOM');
+  assert.match(same.calls, / sbom --skip-db-update/, 'the SBOM scan still runs');
+  assert.match(same.res.stdout, /::notice title=worker image is the live image::Same digest as the live image \(sha256:c{64}\)/);
+  assert.match(same.res.stdout, /::warning title=Already shipped: worker image::worker: libssl3@3\.0\.15-1~deb12u1: CVE-2026-9/);
+  assert.ok(fs.existsSync(path.join(same.out, 'live-image.txt')));
+  assert.match(fs.readFileSync(path.join(same.dir, 'summary.md'), 'utf8'), /### worker image\n\nSame digest as the live image/);
+
+  // A different image keeps every check, against the live image's attestation.
+  const changed = run(other, live, { SPDX: sbom });
+  assert.equal(changed.res.status, 0, changed.res.stderr);
+  assert.equal((changed.calls.match(/--entrypoint node/g) || []).length, 2, 'both runtime probes');
+  assert.match(changed.calls, /image save -o/);
+  assert.match(changed.calls, /imagetools inspect ghcr\.io\/usernode-labs\/social-vibecoding-worker@sha256:c{64}/);
+  assert.match(changed.calls, / image --skip-db-update/, 'the full-image scan');
+  assert.ok(!fs.existsSync(path.join(changed.out, 'live-image.txt')));
+
+  // A different image with no readable live SBOM blocks on the finding.
+  const strict = run(other, live, {});
+  assert.equal(strict.res.status, 1);
+  assert.match(strict.res.stdout, /::warning title=worker image::The live image's SBOM could not be read; every finding blocks\./);
+  assert.match(strict.res.stdout, /::error title=Security gate: worker image::worker: libssl3/);
+});
