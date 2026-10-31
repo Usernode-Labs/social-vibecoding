@@ -2175,6 +2175,25 @@ form.agent-session-composer:focus-within {
   .messages-layout.messages-has-reply-thread > .messages-thread-pane { margin-left: 12px; }
 }
 
+/* #6071: a design thread's preview (features/messages/design-pane.tsx), in
+   the conversation's place from 768px, beside the thread; on a phone the
+   preview and the thread take turns (the Preview and Chat switch). */
+.messages-design-pane {
+  display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden;
+  background: var(--dc-sheet-solid, #fff); border-radius: 20px; box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
+.messages-design-stage { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 16px 16px; }
+@media (min-width: 768px) {
+  .messages-layout.messages-has-design > .messages-thread-pane { display: none; }
+  .messages-layout.messages-has-design > .messages-design-pane { margin: 14px 8px 0 12px; }
+  .messages-design-view-switch { display: none; }
+}
+@media (max-width: 767px) {
+  .messages-layout.messages-has-design > .messages-design-pane { width: 100%; margin-top: 12px; }
+  .messages-layout.messages-has-design.messages-design-view-preview > .messages-reply-pane { display: none; }
+  .messages-layout.messages-has-design.messages-design-view-chat > .messages-design-pane { display: none; }
+}
+
 .messages-reply-count {
   display: flex;
   align-items: center;

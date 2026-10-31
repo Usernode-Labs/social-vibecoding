@@ -28,8 +28,20 @@ export interface ConversationUser {
  * news on the request replaced it). `mirrors`: a reply to it is posted on
  * the request's public discussion.
  */
+/** #6071: a comment pinned on a design's preview: the version, the point as fractions of its drawn size, what was under it. */
+export interface DesignPin {
+  version: number;
+  x: number;
+  y: number;
+  element?: { tag: string; id: string; text: string };
+}
+
 export interface HomeroomBotMeta {
   kind: string;
+  /** #6071: a design thread's version this message says (kind 'design_version'). */
+  designVersion?: number;
+  /** #6071: the screen a design thread is of (kind 'opened_design'). */
+  designTitle?: string;
   appSlug?: string;
   appName?: string;
   issueNumber?: number;
@@ -627,8 +639,8 @@ export interface ConversationMessage {
   reactions: MessageReaction[];
   attachments: MessageAttachment[];
   objects: SharedObjectCard[];
-  /** Set by the platform only, on the Homeroom bot's messages (#3624). */
-  metadata?: { homeroomBot?: HomeroomBotMeta } | null;
+  /** Set by the platform only, on the Homeroom bot's messages (#3624); a person's carries a design pin at most (#6071). */
+  metadata?: { homeroomBot?: HomeroomBotMeta; designPin?: DesignPin } | null;
   /**
    * Whether the VIEWER has saved this message — their own private bookmark,
    * never an aggregate. Hydrated with the page (services/conversations.js), so

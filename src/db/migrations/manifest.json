@@ -5,6 +5,11 @@
       "id": "0001-baseline",
       "sha256": "ea0aebf51584046daf041d2ec1c03d2d71670d080f50981c6fcadee12217f942",
       "schemaSha256": "ea0aebf51584046daf041d2ec1c03d2d71670d080f50981c6fcadee12217f942"
+    },
+    {
+      "id": "0002-design-threads",
+      "sha256": "2929c4396044ac1a13a820f84022b94c4a573ce62a94dd390d8501f3bea5f2bc",
+      "schemaSha256": "56e7f2fb72948b3eb63e19b7eda6fe823add2b22a298c17a746d663d902b8d65"
     }
   ]
 }

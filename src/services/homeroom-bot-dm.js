@@ -4278,6 +4278,12 @@ async function answerUserMessage(pool, config, { bot, user, settings, conversati
   // or changes its waiting plan; anything else is the model's, told which
   // request it is about. What the bot says back goes in the same thread
   // (sendDm's threadRootFor, from the message it answers).
+  // #6071: written in one of their design threads, it is about the design:
+  // the bot edits it (design-bot.js), and nothing else answers there.
+  const design = await (deps.designThreads || require('./design-threads')).threadOf(pool, { userId: user.id, conversationId, message });
+  if (design) {
+    return (deps.designBot || require('./design-bot')).answer(pool, config, { bot, user, settings, conversationId, message, design, deps });
+  }
   const thread = await threadRequest(pool, { userId: user.id, conversationId, message });
   if (thread && !quoted) {
     const open = await newestOpenQuestion(pool, user.id, { appId: thread.appId, issueNumber: thread.issueNumber });

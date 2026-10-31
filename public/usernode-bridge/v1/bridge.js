@@ -7795,6 +7795,158 @@
   })();
   /* __USERNODE_SNAPSHOT_END__ */
 
+  /* __USERNODE_CAPTURE_BEGIN__ */
+  // ── This app's page as HTML, for a design thread (#6071) ──────────────
+  //
+  // A person can capture the screen they are looking at into a private
+  // design thread in their chat with Homeroom bot, where the bot edits it
+  // with them. The shell cannot read this frame, which is another origin, so
+  // it asks, and the bridge copies THIS document: a detached clone, never the
+  // live page, with what the person typed into its fields written in, the
+  // CSS this page can read written into one <style>, and its scripts, frames
+  // and hidden parts left out. Nothing else ever asks; nothing here runs
+  // until it does.
+  //
+  // ONLY HOMEROOM MAY ASK, exactly as for the picture above: the asking
+  // frame must be this window's parent, its origin the platform's as
+  // platform.json names it, and the reply goes to that origin alone. The
+  // page's address is sent without its query (the platform's token rides
+  // there), and a password field's value never leaves.
+  //
+  //   parent → { __usernode_capture: "take", id }
+  //   frame  → { __usernode_capture: "page", id, html, width, height, title, path }
+  //            or { ..., id, error }
+  (function () {
+    try {
+      if (!(window.parent && window.parent !== window)) return;
+    } catch (_) { return; }
+
+    var CONFIG_SRC = "/usernode-bridge/v1/platform.json";
+    var MAX_BYTES = 900 * 1024;
+    var _origin = null;
+
+    function platformOrigin() {
+      if (_origin) return _origin;
+      var p = Promise.resolve().then(function () {
+        return window.fetch(CONFIG_SRC, { credentials: "omit", cache: "no-cache" });
+      }).then(function (res) {
+        return res && res.ok ? res.json() : null;
+      }).then(function (config) {
+        var u;
+        try { u = new URL(String((config && config.platform_origin) || "")); } catch (_) { return null; }
+        if (u.protocol !== "https:" || u.username || u.password) return null;
+        return u.protocol + "//" + u.host;
+      }, function () { return null; });
+      _origin = p;
+      p.then(function (o) { if (!o && _origin === p) _origin = null; });
+      return p;
+    }
+
+    // The CSS this page can read (its own sheets and inline styles; another
+    // origin's sheet throws and is left out), as one block of text.
+    function readableCss() {
+      var out = [];
+      var sheets = document.styleSheets || [];
+      for (var i = 0; i < sheets.length; i++) {
+        var rules = null;
+        try { rules = sheets[i].cssRules; } catch (_) { rules = null; }
+        if (!rules) continue;
+        for (var j = 0; j < rules.length; j++) {
+          try { out.push(rules[j].cssText); } catch (_) { /* skip the rule */ }
+        }
+      }
+      return out.join("\n");
+    }
+
+    function same(list, other, fn) {
+      for (var i = 0; i < list.length && i < other.length; i++) fn(list[i], other[i]);
+    }
+
+    function serialize() {
+      var live = document.documentElement;
+      var clone = live.cloneNode(true);
+      // What the person typed, so the copy shows it (never a password).
+      same(live.querySelectorAll("input, textarea, select"), clone.querySelectorAll("input, textarea, select"), function (field, copy) {
+        if (copy.tagName !== field.tagName) return;
+        var type = String(field.type || "").toLowerCase();
+        if (field.tagName === "INPUT") {
+          if (type === "password" || type === "hidden" || type === "file") { copy.removeAttribute("value"); return; }
+          if (type === "checkbox" || type === "radio") {
+            if (field.checked) copy.setAttribute("checked", ""); else copy.removeAttribute("checked");
+          } else {
+            copy.setAttribute("value", field.value);
+          }
+        } else if (field.tagName === "TEXTAREA") {
+          copy.textContent = field.value;
+        } else {
+          var options = copy.querySelectorAll("option");
+          for (var n = 0; n < options.length; n++) {
+            if (field.options[n] && field.options[n].selected) options[n].setAttribute("selected", "");
+            else options[n].removeAttribute("selected");
+          }
+        }
+      });
+      // A frame is a page of its own: a plain box of its size in its place.
+      same(live.querySelectorAll("iframe"), clone.querySelectorAll("iframe"), function (frame, copy) {
+        var r = frame.getBoundingClientRect();
+        var box = document.createElement("div");
+        box.className = copy.className;
+        box.setAttribute("style", (copy.getAttribute("style") || "") + ";width:" + Math.round(r.width) + "px;height:" + Math.round(r.height) + "px;background:#e4e4e7");
+        copy.parentNode.replaceChild(box, copy);
+      });
+      // An image this page drew is kept by its full address.
+      same(live.querySelectorAll("img"), clone.querySelectorAll("img"), function (img, copy) {
+        if (img.currentSrc || img.src) copy.setAttribute("src", img.currentSrc || img.src);
+        copy.removeAttribute("srcset");
+      });
+      var drop = clone.querySelectorAll("script, noscript, template, object, embed, base, link, meta[http-equiv], [hidden], #__un-platform-link");
+      for (var d = 0; d < drop.length; d++) if (drop[d].parentNode) drop[d].parentNode.removeChild(drop[d]);
+      var styled = clone.querySelectorAll("style");
+      for (var k = 0; k < styled.length; k++) if (styled[k].parentNode) styled[k].parentNode.removeChild(styled[k]);
+      var all = clone.querySelectorAll("*");
+      for (var a = 0; a < all.length; a++) {
+        var attrs = all[a].attributes;
+        for (var b = attrs.length - 1; b >= 0; b--) if (/^on/i.test(attrs[b].name)) all[a].removeAttribute(attrs[b].name);
+      }
+      var head = clone.querySelector("head");
+      if (!head) { head = document.createElement("head"); clone.insertBefore(head, clone.firstChild); }
+      var style = document.createElement("style");
+      style.setAttribute("data-captured", "");
+      style.textContent = readableCss();
+      head.insertBefore(style, head.firstChild);
+      return "<!doctype html>\n" + clone.outerHTML;
+    }
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data || data.__usernode_capture !== "take") return;
+      var id = data.id;
+      if (typeof id !== "string" || !id || id.length > 100) return;
+      var from = e.origin;
+      platformOrigin().then(function (allowed) {
+        if (!allowed || from !== allowed) return;
+        var fields = { __usernode_capture: "page", id: id };
+        try {
+          var html = serialize();
+          var size = typeof TextEncoder === "function" ? new TextEncoder().encode(html).length : html.length;
+          if (size > MAX_BYTES) fields.error = "too_big";
+          else {
+            fields.html = html;
+            fields.width = window.innerWidth;
+            fields.height = window.innerHeight;
+            fields.title = String(document.title || "").slice(0, 120);
+            fields.path = String(location.pathname || "/").slice(0, 200);
+          }
+        } catch (err) {
+          fields.error = String((err && err.message) || err || "failed").slice(0, 200);
+        }
+        try { window.parent.postMessage(fields, allowed); } catch (_) { /* parent gone */ }
+      });
+    });
+  })();
+  /* __USERNODE_CAPTURE_END__ */
+
   /* __USERNODE_PLATFORM_LINK_START__ */
   // ── The Homeroom button (an app opened at its own address) ────────────
   //

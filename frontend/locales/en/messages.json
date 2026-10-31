@@ -3335,6 +3335,134 @@
     "text": "Thread",
     "description": "Title at the top of the side pane showing a thread of replies under one message. A noun."
   },
+  "design.start.opening": {
+    "text": "Opening a design thread for this screen…",
+    "description": "Toast while the screen just captured is sent to open a private design thread in the chat with Homeroom bot."
+  },
+  "design.start.tooBig": {
+    "text": "This screen is too big to capture. Try a smaller window, or a simpler screen.",
+    "description": "Toast when the Homeroom page on view is too large to copy into a design thread."
+  },
+  "design.start.appUnanswered": {
+    "text": "This app didn't send its screen, so it couldn't be captured. Try again in a moment.",
+    "description": "Toast when the app on its App tab did not answer the request for a copy of its screen (an old bridge, or it was busy)."
+  },
+  "design.start.failed": {
+    "text": "The design thread couldn't be opened just now. Try again in a minute.",
+    "description": "Toast when opening a design thread failed for a reason that was not said."
+  },
+  "design.pane.label": {
+    "text": "Design preview",
+    "description": "Accessible name of the pane beside a design thread that draws the design's current version."
+  },
+  "design.pane.loading": {
+    "text": "Drawing the design…",
+    "description": "Shown in the design pane while the design or one of its versions is loading."
+  },
+  "design.pane.failed": {
+    "text": "The design couldn't be drawn just now.",
+    "description": "Shown in the design pane when the design or a version of it could not be read."
+  },
+  "design.pane.pickVersion": {
+    "text": "Version shown",
+    "description": "Screen-reader label of the picker that chooses which version of the design the preview draws."
+  },
+  "design.pane.versionOption": {
+    "text": "Version {{version}}",
+    "description": "One choice in the design pane's version picker, for a version with no note."
+  },
+  "design.pane.versionNote": {
+    "text": "Version {{version}}: {{note}}",
+    "description": "One choice in the design pane's version picker: the version number, then what the bot said it changed."
+  },
+  "design.pane.ofTotal": {
+    "text": "of {{total}}",
+    "description": "After the version picker in the design pane: how many versions there are, as in \"Version 3 of 5\"."
+  },
+  "design.pane.comment": {
+    "text": "Comment",
+    "description": "Button in the design pane that turns on pinning a comment on the preview."
+  },
+  "design.pane.commentDone": {
+    "text": "Done",
+    "description": "The same button while pinning is on: turns it off."
+  },
+  "design.pane.commentHint": {
+    "text": "Click the preview where you want a change, then say what.",
+    "description": "Hint under the design pane's header while pinning a comment is on."
+  },
+  "design.pane.pinOn": {
+    "text": "On {{what}}",
+    "description": "Above the box for a pinned comment's words: the element the pin is on, in a few words taken from it."
+  },
+  "design.pane.pinPlaceholder": {
+    "text": "What should change here?",
+    "description": "Placeholder of the box for a comment pinned on the design."
+  },
+  "design.pane.pinSend": {
+    "text": "Send",
+    "description": "Sends the pinned comment to Homeroom bot in the design thread."
+  },
+  "design.pane.pinCancel": {
+    "text": "Cancel",
+    "description": "Drops the pin being placed and its words."
+  },
+  "design.pane.propose": {
+    "text": "Propose it",
+    "description": "Button in the design pane that opens the card for filing the design as a public request."
+  },
+  "design.pane.proposed": {
+    "text": "Proposed as request #{{number}}",
+    "description": "Link in the design pane once the design was filed: opens the request it became."
+  },
+  "design.pane.frameTitle": {
+    "text": "Version {{version}} of the design",
+    "description": "Accessible title of the frame that draws one version of the design."
+  },
+  "design.pane.showChat": {
+    "text": "Chat",
+    "description": "On a phone: switches from the design's preview to its thread."
+  },
+  "design.pane.openInMessages": {
+    "text": "Open the design",
+    "description": "In a design thread opened beside the AI tab, where its preview is not drawn: opens the thread in Messages, with the preview beside it."
+  },
+  "design.pane.showPreview": {
+    "text": "Preview",
+    "description": "On a phone, in a design thread's header: switches from the thread to the design's preview."
+  },
+  "design.propose.heading": {
+    "text": "Propose this design",
+    "description": "Heading of the card that files the design as a request."
+  },
+  "design.propose.warning": {
+    "text": "This files a public request on {{project}} under your name. Its plan shows the first version and version {{version}} side by side, and anyone who can see the project can see them. Check they show nothing private, such as names, messages or numbers. This thread stays private.",
+    "description": "Warning in the Propose it card, before anything is filed: what becomes public."
+  },
+  "design.propose.defaultTitle": {
+    "text": "Design: {{title}}",
+    "description": "The request's title the Propose it card starts with: the screen's name after \"Design:\"."
+  },
+  "design.propose.titleLabel": {
+    "text": "Title",
+    "description": "Label of the request title field in the Propose it card."
+  },
+  "design.propose.notesLabel": {
+    "text": "What changes, and why",
+    "description": "Label of the notes field in the Propose it card; the notes become the request's description."
+  },
+  "design.propose.send": {
+    "text": "File the request",
+    "description": "Submit button of the Propose it card."
+  },
+  "design.propose.cancel": {
+    "text": "Cancel",
+    "description": "Closes the Propose it card without filing."
+  },
+  "design.propose.failed": {
+    "text": "It couldn't be filed just now. Try again in a minute.",
+    "description": "Shown in the Propose it card when filing failed for a reason that was not said."
+  },
   "replies.close": {
     "text": "Close thread",
     "description": "Accessible name and tooltip of the X button on the thread side pane: closes the thread and returns to the conversation."
