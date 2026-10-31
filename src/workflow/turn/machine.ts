@@ -80,6 +80,16 @@ const decodeStop = (payload: unknown) => {
   return { by: typeof p?.by === 'string' && p.by.trim() ? p.by.trim().slice(0, 100) : null };
 };
 
+// The timer's Tick carries nothing; the turn-leftovers clock's names the turn
+// it means to end, so a sweep that races the real result never ends the turn
+// that follows.
+const decodeTick = (payload: unknown) => {
+  const p = payload as { turnId?: unknown } | null;
+  if (p?.turnId === undefined || p.turnId === null) return {};
+  if (typeof p.turnId !== 'string' || !TURN_ID.test(p.turnId)) throw new Error('Tick needs a turnId');
+  return { turnId: p.turnId };
+};
+
 // The change whose coding turn this instance's running item owns, for a
 // Stop. For a change's own turn (`session:<id>`), as a turn starts or ends:
 // its row, for the `session_state` its boards and header read, and whether
@@ -198,9 +208,11 @@ export function turnMachine() {
     // conversation named after its request (turn.name): an older Pod would
     // end its turn without them. 3: a change's dev chat turn that did not
     // end its own way owes its repair (turn.repair), which an older Pod's
-    // end of it would not queue.
-    version: 3,
-    events: { Asked: decodeAsked, StopRequested: decodeStop, Tick: () => ({}) },
+    // end of it would not queue. 4: a Tick may name the turn it ends
+    // (turn-leftovers), which an older Pod would read as one for whichever
+    // turn runs then.
+    version: 4,
+    events: { Asked: decodeAsked, StopRequested: decodeStop, Tick: decodeTick },
     create: ['Asked'],
     decode: (row) => ({ name: row.state, data: row.data as Data }),
     facts: (tx, _s, e, ctx) => readFacts(tx, e, ctx.key),
@@ -244,7 +256,10 @@ export function turnMachine() {
         // Past its time: the run cancelled, its coding agent stopped and its
         // record released, its claim released.
         Tick: {
-          to: (s: S, _e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<S> => {
+          to: (s: S, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<S> => {
+            // A clock that named another turn than the one running here (a
+            // sweep that raced this turn's real result) ends nothing.
+            if (e.payload?.turnId && e.payload.turnId !== cur(s).turnId) return { next: s };
             const out = ended(s, ctx.key, ctx, 'lost');
             const work: WorkRequest[] = [...(out.work || [])];
             if (f.ownedSessionId) {

@@ -139,7 +139,7 @@ test('only what no work item holds is recovered', { timeout: 120000 }, async (t)
 
   await t.test('a recover turn is asked, once, for what was left: unheld, quiet', async () => {
     const out = await pass();
-    assert.deepEqual(out, { records: 2 });
+    assert.deepEqual(out, { records: 2, orphanTurns: 0 });
     const adopted = await asked();
     // A quarantined record is asked too: the adoption stops its worker and
     // keeps the record for an operator (turn-recovery.js adoptOrphanWorker).

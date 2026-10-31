@@ -13,7 +13,7 @@
 // the adoption the leader ran (turn-recovery.js adoptOrphanWorker), again a
 // while after the last ask, a bounded number of times (RECORD_RETRY).
 
-const { workflowTurnHeldSql, buildHoldSql } = require('../workflow/session-work.ts');
+const { workflowTurnHeldSql, buildHoldSql, turnRunLiveSql } = require('../workflow/session-work.ts');
 
 // Per pass.
 const LIMIT = 50;
@@ -45,7 +45,8 @@ const RECORDS_SQL = `
      AND COALESCE(cs.active_turn->>'lifecycleUpdatedAt', cs.active_turn->>'startedAt')::timestamptz
            < NOW() - make_interval(secs => ${QUIET_SECONDS})
      AND NOT EXISTS (SELECT 1 FROM wf_instances t
-                      WHERE t.machine = 'turn' AND t.key = 'session:' || cs.id AND t.state = 'running')
+                      WHERE t.machine = 'turn' AND t.key = 'session:' || cs.id AND t.state = 'running'
+                        AND ${turnRunLiveSql('t')})
      -- A turn being stopped (its time ran out, or a Stop that releases it):
      -- its stop work releases the record once the run is confirmed stopped.
      AND NOT EXISTS (SELECT 1 FROM wf_work s
@@ -55,6 +56,22 @@ const RECORDS_SQL = `
      AND ra.asks < ${RECORD_RETRY.asks}
      AND (ra.last_at IS NULL OR ra.last_at < NOW() - make_interval(mins => ${RECORD_RETRY.minutes}))
    ORDER BY cs.id
+   LIMIT ${LIMIT}`;
+
+// A turn instance still `running` with no run item behind it: its item
+// settled without ending it (a result the kernel refused, a transition that
+// failed), so nothing will ever end it and it holds its change until
+// MAX_TURN_MS. Only one quiet for as long as a record is one: a turn that has
+// just started writes its item in the same transaction as `running`. Both a
+// conversation's and a change's instance, by key.
+const ORPHAN_TURNS_SQL = `
+  SELECT t.key, t.data->'running'->>'turnId' AS turn_id
+    FROM wf_instances t
+   WHERE t.machine = 'turn' AND t.state = 'running'
+     AND NOT ${turnRunLiveSql('t')}
+     AND (t.data->'running'->>'startedAt')::timestamptz
+           < NOW() - make_interval(secs => ${QUIET_SECONDS})
+   ORDER BY t.key
    LIMIT ${LIMIT}`;
 
 // A turn id the turn machine accepts, the same for the same leftover, so a
@@ -74,7 +91,17 @@ async function sweep(pool, { deps = {} } = {}) {
       input: { sessionId: Number(r.id), identity: r.identity, last: asks + 1 >= RECORD_RETRY.asks },
     });
   }
-  return { records: rows.length };
+  // A turn instance nothing will end: ended as its own timer would have at
+  // MAX_TURN_MS, now that no run is behind it. Its Tick names the turn, so a
+  // pass that races the real result cannot end the turn that follows.
+  const orphans = await pool.query(ORPHAN_TURNS_SQL);
+  let orphanTurns = 0;
+  for (const t of orphans.rows) {
+    if (!t.turn_id) continue;
+    await platform.endOrphanTurn(pool, { key: t.key, turnId: t.turn_id });
+    orphanTurns += 1;
+  }
+  return { records: rows.length, orphanTurns };
 }
 
-module.exports = { sweep, RECORD_RETRY, RECORDS_SQL };
+module.exports = { sweep, RECORD_RETRY, RECORDS_SQL, ORPHAN_TURNS_SQL };
