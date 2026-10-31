@@ -123,9 +123,14 @@ export function DesignPane({ conversationId, rootId, view, onView }: {
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => setFit(stage.clientWidth));
+    // Its content box: the stage's own padding is no room for the frame.
+    const measure = () => {
+      const style = window.getComputedStyle(stage);
+      setFit(Math.max(0, stage.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0)));
+    };
+    const observer = new ResizeObserver(measure);
     observer.observe(stage);
-    setFit(stage.clientWidth);
+    measure();
     return () => observer.disconnect();
   }, [design?.rootId]);
   const scale = design && fit ? Math.min(1, fit / design.width) : 1;
@@ -204,13 +209,15 @@ export function DesignPane({ conversationId, rootId, view, onView }: {
   return (
     <section className="messages-design-pane" data-design-pane={rootId} data-design-view={view} aria-label={t('messages:design.pane.label')}>
       <header className="flex flex-wrap items-center gap-2 px-4 pt-3 pb-2">
-        <div className="min-w-0 flex-1">
+        {/* At least 12rem wide, so on a phone the buttons wrap under it
+            rather than squeezing it until the picker runs into them. */}
+        <div className="min-w-[12rem] flex-1">
           <div className="truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{design?.title || t('messages:design.pane.loading')}</div>
           {design ? (
-            <label className="mt-0.5 flex items-center gap-1 text-[13px] text-zinc-500">
+            <label className="mt-0.5 flex min-w-0 items-center gap-1 text-[13px] text-zinc-500">
               <span className="sr-only">{t('messages:design.pane.pickVersion')}</span>
               <select
-                className="bg-transparent text-[13px] text-zinc-600 dark:text-zinc-300"
+                className="min-w-0 max-w-[16rem] truncate bg-transparent text-[13px] text-zinc-600 dark:text-zinc-300"
                 value={shown}
                 onChange={(event) => { setChosen(Number(event.target.value)); setDraft(null); }}
                 data-design-version=""
@@ -221,7 +228,7 @@ export function DesignPane({ conversationId, rootId, view, onView }: {
                   </option>
                 ))}
               </select>
-              <span aria-hidden="true">{t('messages:design.pane.ofTotal', { total: latest })}</span>
+              <span className="shrink-0" aria-hidden="true">{t('messages:design.pane.ofTotal', { total: latest })}</span>
             </label>
           ) : null}
         </div>

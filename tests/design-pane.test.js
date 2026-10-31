@@ -86,8 +86,11 @@ test('Messages draws the pane for a design thread, and the mark\'s menu opens on
   assert.match(index, /<DesignPane conversationId=\{snap\.route\.conversationId\} rootId=\{designRootId\} view=\{designView\} onView=\{setDesignView\} \/>/);
   const css = read('public/css/app.css');
   assert.match(css, /\.messages-layout\.messages-has-design > \.messages-thread-pane \{ display: none; \}/);
-  const actions = read('frontend/src/features/improve/actions.tsx');
-  assert.match(actions, /id="improve-row-design"[\s\S]*onClick=\{\(\) => \{ void designThisScreen\(\); \}\}/);
+  // A row of the mark's menu, run once the menu has gone, so the capture is
+  // of the screen and not of the menu over it.
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(sheet, /id="improve-row-design"[\s\S]*?void AppContext\.dismissForNav\(\)\.then\(\(\) => designThisScreen\(\)\);/);
+  assert.doesNotMatch(read('frontend/src/features/improve/actions.tsx'), /improve-row-design/, 'never beside the one filled action');
   assert.equal(message('agent:menu.designScreen'), 'Design this screen');
 });
 

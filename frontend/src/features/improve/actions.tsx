@@ -24,7 +24,6 @@ import { owedHomeWalk } from '../app-context/about-data';
 import { useFirstSessionVisit } from '../first-session/tour-running';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
-import { designThisScreen } from '../design/start';
 
 /**
  * `flex-1` so the one action spans the menu's width, which is what the
@@ -84,40 +83,15 @@ function QuickAction({ id, label, onClick }: {
 export function ImproveQuickActions(): ReactNode {
   const t = useMessages('agent');
   return (
-    <>
-      <div
-        id="improve-quick-actions"
-        className="shrink-0 flex items-stretch gap-2 px-4 pt-1 pb-2"
-      >
-        <QuickAction
-          id="improve-row-feedback"
-          label={t('agent:menu.suggestImprovement')}
-          onClick={() => Improve.giveFeedback()}
-        />
-      </div>
-      <DesignScreenAction />
-    </>
-  );
-}
-
-/**
- * #6071: Design this screen. A quiet row under the one filled action, not a
- * second button beside it: it copies what is on screen now (Homeroom's page,
- * or the app on its App tab) into a private design thread in the person's
- * chat with Homeroom bot, who edits it with them (../design/start.ts).
- */
-function DesignScreenAction(): ReactNode {
-  const t = useMessages('agent');
-  return (
-    <div className="shrink-0 px-4 pb-2">
-      <button
-        id="improve-row-design"
-        type="button"
-        onClick={() => { void designThisScreen(); }}
-        className="w-full h-9 px-3 rounded-full text-sm font-semibold text-violet-700 hover:bg-violet-50 dark:text-violet-300 dark:hover:bg-violet-950/40 transition-colors un-touch-target"
-      >
-        {t('agent:menu.designScreen')}
-      </button>
+    <div
+      id="improve-quick-actions"
+      className="shrink-0 flex items-stretch gap-2 px-4 pt-1 pb-2"
+    >
+      <QuickAction
+        id="improve-row-feedback"
+        label={t('agent:menu.suggestImprovement')}
+        onClick={() => Improve.giveFeedback()}
+      />
     </div>
   );
 }

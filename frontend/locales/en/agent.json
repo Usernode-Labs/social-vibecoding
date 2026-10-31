@@ -1525,7 +1525,7 @@
   },
   "menu.designScreen": {
     "text": "Design this screen",
-    "description": "A quiet button in the Homeroom mark's menu, under Suggest an improvement. It copies the screen on view (a Homeroom page, or the app on its App tab) into a private design thread in the person's chat with Homeroom bot, who edits it with them."
+    "description": "A row of the Homeroom mark's menu, before About. Once the menu has closed it copies the screen on view (a Homeroom page, or the app on its App tab) into a private design thread in the person's chat with Homeroom bot, who edits it with them."
   },
   "menu.update.platformReady": {
     "text": "Homeroom has an update",
