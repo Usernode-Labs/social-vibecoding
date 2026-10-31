@@ -45,7 +45,10 @@ interface PendingSend {
 export interface Typist { name: string; unnamed: boolean }
 
 interface InternalState extends MessagesSnapshot {
-  typing: Record<number, Typist[]>;
+  // By composer scope (scopeKey): a conversation's main stream under its id,
+  // a thread under `<id>:t<root>` (31 Oct 2026: typing in a thread is drawn
+  // in that thread's pane).
+  typing: Record<ComposerScope, Typist[]>;
 }
 
 type Listener = () => void;
@@ -119,7 +122,7 @@ const pendingByConversation = new Map<number, PendingSend[]>();
  */
 const unsent = new Map<string, { conversationId: number; payload: PendingSend; after: number }>();
 const sentKeys = new Map<number, string>();
-const typingSentAt = new Map<number, number>();
+const typingSentAt = new Map<ComposerScope, number>();
 const typingExpiry = new Map<string, number>();
 /**
  * #4220: a "stopped typing" that waits for its message. The bot sends its
@@ -132,7 +135,7 @@ const typingExpiry = new Map<string, number>();
  * key) until that read publishes, and never longer than TYPING_HOLD_MS.
  */
 const landing = new Map<number, number>();
-const heldTyping = new Map<string, { conversationId: number; shown: string }>();
+const heldTyping = new Map<string, { conversationId: number; scope: ComposerScope; shown: string }>();
 /**
  * Who is typing under each shown word: `conversationId:word` to user id to
  * whether that person has no username. The word is the stand-in only while
@@ -2335,6 +2338,10 @@ export function handleEvent(raw: ConversationEvent): void {
       const rootId = api.strictId(event.threadRootId ?? event.thread_root_id);
       if (onScreen(conversationId)) {
         const load = loadThread(conversationId, true);
+        // The open thread's own read, when the message is in it: a stop
+        // typed there holds its line until that read has drawn it too.
+        const threadLoad = rootId && state.thread?.rootId === rootId
+          ? loadReplyThread(conversationId, rootId, true) : null;
         if (event.type === 'conversation_message_created') {
           landing.set(conversationId, (landing.get(conversationId) || 0) + 1);
           const landed = () => {
@@ -2343,9 +2350,8 @@ export function handleEvent(raw: ConversationEvent): void {
             landing.delete(conversationId);
             releaseHeldTyping(conversationId);
           };
-          void load.then(landed, landed);
+          void Promise.all([load, threadLoad]).then(landed, landed);
         }
-        if (rootId && state.thread?.rootId === rootId) void loadReplyThread(conversationId, rootId, true);
       }
       void loadConversations(true);
       break;
@@ -2401,8 +2407,10 @@ export function handleEvent(raw: ConversationEvent): void {
       const botPeer = state.active?.id === conversationId && state.active.peer?.bot && state.active.peer.id === userId
         ? state.active.peer.displayName || '' : '';
       if (!userId || userId === currentUser().id || !username) break;
-      const current = state.typing[conversationId] || [];
-      const expiryKey = `${conversationId}:${userId}`;
+      // Where they type: the main stream, or the thread the event names.
+      const scope = scopeKey(conversationId, api.strictId(event.threadRootId ?? event.thread_root_id) || null);
+      const current = state.typing[scope] || [];
+      const expiryKey = `${scope}:${userId}`;
       const existingExpiry = typingExpiry.get(expiryKey);
       if (existingExpiry && typeof window !== 'undefined') window.clearTimeout(existingExpiry);
       typingExpiry.delete(expiryKey);
@@ -2412,15 +2420,15 @@ export function handleEvent(raw: ConversationEvent): void {
       // #4220: a stop while the message it typed is still being read keeps
       // the line until that read publishes (releaseHeldTyping), or the cap.
       if (event.typing === false && landing.get(conversationId) && isShown && typeof window !== 'undefined') {
-        heldTyping.set(expiryKey, { conversationId, shown });
+        heldTyping.set(expiryKey, { conversationId, scope, shown });
         typingExpiry.set(expiryKey, window.setTimeout(() => {
           typingExpiry.delete(expiryKey);
           heldTyping.delete(expiryKey);
-          dropTyping(conversationId, shown);
+          dropTyping(scope, shown);
         }, TYPING_HOLD_MS));
         break;
       }
-      const holdersKey = `${conversationId}:${shown}`;
+      const holdersKey = `${scope}:${shown}`;
       let next: Typist[];
       if (event.typing === false) {
         // The word leaves the line, and with it everybody typing under it.
@@ -2434,11 +2442,11 @@ export function handleEvent(raw: ConversationEvent): void {
         const entry: Typist = { name: shown, unnamed: [...holders.values()].every(Boolean) };
         next = isShown ? current.map((each) => (each.name === shown ? entry : each)) : [...current, entry];
       }
-      publish({ typing: { ...state.typing, [conversationId]: next } });
+      publish({ typing: { ...state.typing, [scope]: next } });
       if (event.typing !== false && typeof window !== 'undefined') {
         typingExpiry.set(expiryKey, window.setTimeout(() => {
           typingExpiry.delete(expiryKey);
-          dropTyping(conversationId, shown);
+          dropTyping(scope, shown);
         }, 6000));
       }
       break;
@@ -2446,12 +2454,12 @@ export function handleEvent(raw: ConversationEvent): void {
   }
 }
 
-function dropTyping(conversationId: number, shown: string): void {
-  const now = state.typing[conversationId] || [];
+function dropTyping(scope: ComposerScope, shown: string): void {
+  const now = state.typing[scope] || [];
   const next = now.filter((entry) => entry.name !== shown);
   if (next.length === now.length) return;
-  typingHolders.delete(`${conversationId}:${shown}`);
-  publish({ typing: { ...state.typing, [conversationId]: next } });
+  typingHolders.delete(`${scope}:${shown}`);
+  publish({ typing: { ...state.typing, [scope]: next } });
 }
 
 /** #4220: the message the held names were typing has been drawn. */
@@ -2462,29 +2470,31 @@ function releaseHeldTyping(conversationId: number): void {
     const timer = typingExpiry.get(key);
     if (timer && typeof window !== 'undefined') window.clearTimeout(timer);
     typingExpiry.delete(key);
-    dropTyping(conversationId, held.shown);
+    dropTyping(held.scope, held.shown);
   }
 }
 
-/** The names on a conversation's typing line, in the order they came. */
-export function typingUsers(conversationId: number): Typist[] {
-  return state.typing[conversationId] || [];
+/** The names on a conversation's typing line, or a thread's in it, in the order they came. */
+export function typingUsers(conversationId: number, threadRootId: number | null = null): Typist[] {
+  return state.typing[scopeKey(conversationId, threadRootId)] || [];
 }
 
-export function notifyTyping(typing: boolean): void {
+/** That the viewer is typing, or stopped, in the open conversation, or in a thread of it (`threadRootId`). */
+export function notifyTyping(typing: boolean, threadRootId: number | null = null): void {
   const conversationId = state.route.conversationId;
   if (!conversationId) return;
+  const scope = scopeKey(conversationId, threadRootId);
   const now = Date.now();
-  if (typing && now - (typingSentAt.get(conversationId) || 0) < 1800) return;
+  if (typing && now - (typingSentAt.get(scope) || 0) < 1800) return;
   // "Stopped typing" is only news after "typing" was sent. The composer
   // says it on blur and on unmount, and its unmount for one conversation
   // runs after the route has already moved to the next one — so without
   // this a hop between threads pinged a conversation nobody had typed in,
   // which the demo routes answer with a 404 and the check harness counts
   // as a console error.
-  if (!typing && !typingSentAt.get(conversationId)) return;
-  typingSentAt.set(conversationId, typing ? now : 0);
-  void api.setTyping(conversationId, typing).catch(() => { /* ephemeral */ });
+  if (!typing && !typingSentAt.get(scope)) return;
+  typingSentAt.set(scope, typing ? now : 0);
+  void api.setTyping(conversationId, typing, threadRootId).catch(() => { /* ephemeral */ });
 }
 
 export async function share(reference?: SharedObjectReference): Promise<void> {

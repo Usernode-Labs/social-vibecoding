@@ -739,20 +739,27 @@ async function sendDm(pool, {
 const TYPING_RENEW_MS = 4000;
 const TYPING_MAX_MS = 3 * 60 * 1000;
 
-// conversation id -> { holders: Map<holder, deadline>, timer }. A person can
-// write again while the bot still answers their last message (the model's
-// turns run one after another): the line stays up until the last answer is
-// out, rather than going off between them.
+// Where the bot types: a conversation's main chat, or one thread in it
+// (31 Oct 2026: an answer to a message written in a thread lands in that
+// thread, and its typing line is drawn there; it used to be the main chat's
+// alone, which a phone does not show while a thread is open).
+const typingPlace = (conversationId, threadRootId) => `${conversationId}:${threadRootId || 0}`;
+
+// place -> { holders: Map<holder, deadline>, timer }. A person can write
+// again while the bot still answers their last message (the model's turns
+// run one after another): the line stays up until the last answer is out,
+// rather than going off between them.
 const typingNow = new Map();
-// conversation id -> the send in flight: a conversation's typing events go
-// out in order, so a quick answer's "stopped" never overtakes its "typing".
+// place -> the send in flight: a place's typing events go out in order, so
+// a quick answer's "stopped" never overtakes its "typing".
 const typingSends = new Map();
 
-async function pushTyping(pool, botId, conversationId, typing, ws) {
+async function pushTyping(pool, botId, conversationId, typing, ws, threadRootId = null) {
   try {
     await conversations.withLockedAudience(pool, { id: botId }, conversationId, (audience) => {
       ws.pushConversationEvent(audience, {
         type: 'conversation_typing', conversationId, userId: botId, typing,
+        ...(threadRootId ? { threadRootId } : {}),
       }, { excludeUserId: botId, actorUserId: botId });
     });
   } catch (err) {
@@ -761,11 +768,12 @@ async function pushTyping(pool, botId, conversationId, typing, ws) {
   }
 }
 
-function sendTyping(pool, botId, conversationId, typing, ws) {
-  const prior = typingSends.get(conversationId) || Promise.resolve();
-  const next = prior.then(() => pushTyping(pool, botId, conversationId, typing, ws));
-  typingSends.set(conversationId, next);
-  next.then(() => { if (typingSends.get(conversationId) === next) typingSends.delete(conversationId); });
+function sendTyping(pool, botId, conversationId, typing, ws, threadRootId = null) {
+  const place = typingPlace(conversationId, threadRootId);
+  const prior = typingSends.get(place) || Promise.resolve();
+  const next = prior.then(() => pushTyping(pool, botId, conversationId, typing, ws, threadRootId));
+  typingSends.set(place, next);
+  next.then(() => { if (typingSends.get(place) === next) typingSends.delete(place); });
   return next;
 }
 
@@ -773,17 +781,19 @@ function sendTyping(pool, botId, conversationId, typing, ws) {
  * Show the bot typing in one conversation until the returned stop() is
  * called, or TYPING_MAX_MS passes. Never throws.
  */
-function startTyping(pool, { botId, conversationId, ws = null }) {
+function startTyping(pool, { botId, conversationId, threadRootId = null, ws = null }) {
   const id = Number(conversationId);
   if (!botId || !Number.isSafeInteger(id) || id <= 0) return async () => {};
+  const root = Number.isSafeInteger(Number(threadRootId)) && Number(threadRootId) > 0 ? Number(threadRootId) : null;
+  const place = typingPlace(id, root);
   const io = ws || require('./ws');
-  let entry = typingNow.get(id);
+  let entry = typingNow.get(place);
   if (!entry) {
     const created = { holders: new Map(), timer: null };
     created.end = () => {
       clearInterval(created.timer);
-      if (typingNow.get(id) === created) typingNow.delete(id);
-      return sendTyping(pool, botId, id, false, io);
+      if (typingNow.get(place) === created) typingNow.delete(place);
+      return sendTyping(pool, botId, id, false, io, root);
     };
     created.timer = setInterval(() => {
       const now = Date.now();
@@ -794,11 +804,11 @@ function startTyping(pool, { botId, conversationId, ws = null }) {
         return;
       }
       // One renewal at a time: a slow database never queues them up.
-      if (!typingSends.has(id)) sendTyping(pool, botId, id, true, io);
+      if (!typingSends.has(place)) sendTyping(pool, botId, id, true, io, root);
     }, TYPING_RENEW_MS);
     created.timer.unref?.();
-    typingNow.set(id, created);
-    created.first = sendTyping(pool, botId, id, true, io);
+    typingNow.set(place, created);
+    created.first = sendTyping(pool, botId, id, true, io, root);
     entry = created;
   }
   const holder = Symbol('typing');
@@ -817,8 +827,8 @@ function startTyping(pool, { botId, conversationId, ws = null }) {
 const TYPING_FIRST_WAIT_MS = 2000;
 
 /** Run `work` with the bot typing in the conversation, and stop when it settles. */
-async function whileTyping(pool, { botId, conversationId, ws = null }, work) {
-  const stop = startTyping(pool, { botId, conversationId, ws });
+async function whileTyping(pool, { botId, conversationId, threadRootId = null, ws = null }, work) {
+  const stop = startTyping(pool, { botId, conversationId, threadRootId, ws });
   // "typing" goes out before anything the answer does: a quick answer's own
   // events (its quote answered, its message) used to reach the reader first
   // when the typing event's audience lookup was slower than the answer.
@@ -3699,6 +3709,62 @@ async function threadRequest(pool, { userId, conversationId, message }) {
   };
 }
 
+/**
+ * 31 Oct 2026: the thread a person's message was written in when it is no
+ * request's (threadRequest): its root, and for a private thread the bot
+ * opened for a draft (private_threads, a request to file or words to post)
+ * what became of the draft: { rootId, draft: { kind, state, appSlug,
+ * appName, title, issueNumber } | null }. Null in the main chat. A turn
+ * written there reads that thread: it used to read the main chat, which
+ * leaves thread replies out, so the model never saw what they wrote in a
+ * draft's thread and answered an older message, or nothing at all.
+ */
+async function messageThread(pool, { userId, conversationId, message }) {
+  let rootId = Number(message?.threadRootId ?? message?.thread_root_id) || null;
+  if (!rootId && message?.id) {
+    const { rows: [row] = [] } = await pool.query(
+      'SELECT thread_root_id FROM conversation_messages WHERE id = $1 AND conversation_id = $2',
+      [Number(message.id), conversationId],
+    ).catch(() => ({ rows: [] }));
+    rootId = Number(row?.thread_root_id) || null;
+  }
+  if (!rootId) return null;
+  const { rows: [p] = [] } = await pool.query(
+    `SELECT p.kind, p.state, p.result_ref, a.slug, a.name,
+            (SELECT d.title FROM homeroom_bot_dm_actions d
+               JOIN conversation_messages m ON m.id = d.message_id
+              WHERE m.thread_root_id = p.root_message_id AND d.user_id = p.user_id
+              ORDER BY d.id DESC LIMIT 1) AS title
+       FROM private_threads p
+       LEFT JOIN apps a ON a.id = p.app_id
+      WHERE p.root_message_id = $1 AND p.user_id = $2`,
+    [rootId, userId],
+  ).catch(() => ({ rows: [] }));
+  const draft = p && ['draft_request', 'draft_reply'].includes(p.kind) && p.slug
+    ? {
+      kind: p.kind,
+      state: p.state,
+      appSlug: p.slug,
+      appName: p.name || p.slug,
+      title: p.title || null,
+      issueNumber: Number(p.result_ref) || null,
+    }
+    : null;
+  return { rootId, draft };
+}
+
+/**
+ * What a turn is told about where a message was written: a request's thread
+ * ({ threadRequest }), any other thread ({ threadRootId, threadDraft }), or
+ * the main chat ({}).
+ */
+async function threadDeps(pool, { userId, conversationId, message }) {
+  const request = await threadRequest(pool, { userId, conversationId, message });
+  if (request) return { threadRequest: request };
+  const other = await messageThread(pool, { userId, conversationId, message });
+  return other ? { threadRootId: other.rootId, threadDraft: other.draft } : {};
+}
+
 /** The newest question the bot asked this person that is still open. */
 async function newestOpenQuestion(pool, userId, { appId = null, issueNumber = null } = {}) {
   const { rows } = await pool.query(
@@ -4158,7 +4224,9 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
     });
   }
   // #3684: typing from here until the answer is sent (whileTyping above).
-  return whileTyping(pool, { botId: bot.id, conversationId, ws: deps.ws },
+  // In the thread they wrote in, where the answer lands (sendDm's threadRootFor).
+  const threadRootId = Number(message.threadRootId ?? message.thread_root_id) || null;
+  return whileTyping(pool, { botId: bot.id, conversationId, threadRootId, ws: deps.ws },
     () => answerUserMessage(pool, config, { bot, user, settings, conversationId, message, deps }));
 }
 
@@ -4190,7 +4258,9 @@ async function heardInDm(db, { user, conversationId, messageId, membership, memb
  * failure a retry can cure. Resolves { sent, later }: `later` is the try the
  * machine asks next, when the model could not answer.
  */
-async function answerOwed(pool, config, { userId, conversationId, messageId, attempt = 0, workKey, once = null, deps = {} }) {
+async function answerOwed(pool, config, {
+  userId, conversationId, messageId, attempt = 0, workKey, once = null, also = [], deps = {},
+}) {
   const bot = deps.bot || await botAccount(pool);
   if (!bot) return { sent: false, skipped: 'no_bot' };
   if (await answeredAlready(pool, { botId: bot.id, conversationId, messageId, attempt })) {
@@ -4212,7 +4282,12 @@ async function answerOwed(pool, config, { userId, conversationId, messageId, att
   let later = null;
   // Strict: an answer that could not be delivered fails the work, which is
   // retried and then says it could not (dm.sorry), never counted as said.
-  const turnDeps = { ...deps, bot, workKey, once, strict: true, onLater: (n) => { later = n; } };
+  const turnDeps = {
+    ...deps, bot, workKey, once, strict: true, onLater: (n) => { later = n; },
+    // 31 Oct 2026: their earlier messages whose answer this one took over
+    // (the bot-dm machine's `also`): the turn answers them too.
+    ...(Array.isArray(also) && also.length ? { alsoUnanswered: also } : {}),
+  };
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
   const sent = attempt > 0
     ? await mayor.answerLater(pool, config, { bot, user, conversationId: Number(conversationId), message, deps: turnDeps }, attempt)
@@ -4289,6 +4364,12 @@ async function answerUserMessage(pool, config, { bot, user, settings, conversati
     }
   }
   if (thread) deps = { ...deps, threadRequest: thread };
+  else {
+    // 31 Oct 2026: any other thread (a draft's private one among them) is
+    // read as that thread too, never as the main chat.
+    const other = await messageThread(pool, { userId: user.id, conversationId, message });
+    if (other) deps = { ...deps, threadRootId: other.rootId, threadDraft: other.draft };
+  }
   if (quoted) {
     const decided = await mayor.decideOffer(pool, config, { bot, user, settings, conversationId, message, deps });
     if (decided) return decided;
@@ -5759,6 +5840,8 @@ module.exports = {
   threadRootFor,
   notePlanChanged,
   threadRequest,
+  messageThread,
+  threadDeps,
   noteStep,
   waitingPhrase,
   BUILT_TESTING_TEXT,

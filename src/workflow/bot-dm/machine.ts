@@ -39,7 +39,12 @@ export const WORK = Object.freeze({
 
 type Name = 'idle' | 'answering' | 'trying_later';
 interface Note { kind: string; status: 'pending' | 'done' | 'failed' | 'exhausted' }
-interface Owed { messageId: number; conversationId: number; attempt: number }
+// `also`: their earlier messages whose answer this one's took over (31 Oct
+// 2026): an answer the model could not give was dropped when they wrote
+// again, on the word that the newer answer reads the older message too. It
+// did not, and two promised answers never came. Now the newer answer is told
+// which messages it owes as well (answerOwed), oldest first.
+interface Owed { messageId: number; conversationId: number; attempt: number; also?: number[] }
 export interface Data {
   userId: number;
   // Messages written and not answered yet, oldest first.
@@ -111,10 +116,25 @@ const created = (e: Event<any>): Data => ({ userId: e.payload.userId, queue: [],
 const live = (s: DState, e: Event<any>): Data => (s.name === NONE ? created(e) : (s as Live).data);
 const answerKey = (o: Owed) => `msg:${o.messageId}${o.attempt ? `:d${o.attempt}` : ''}`;
 
+// At most this many earlier messages ride on one answer: the newest of them.
+const MAX_ALSO = 5;
+// `o`, owing too what `dropped` owed: its message (an answer it was still
+// to get, from the same conversation) and whatever rode on it.
+function owing(o: Owed, dropped: Owed | null): Owed {
+  if (!dropped || dropped.messageId === o.messageId) return o;
+  const before = [...(o.also || []), ...(dropped.also || []),
+    ...(dropped.conversationId === o.conversationId ? [dropped.messageId] : [])];
+  const also = [...new Set(before)].filter((id) => id < o.messageId).sort((a, b) => a - b).slice(-MAX_ALSO);
+  return also.length ? { ...o, also } : o;
+}
+
 function answer(d: Data, o: Owed, more: Omit<Outcome<DState>, 'next'> = {}): Outcome<DState> {
   const key = answerKey(o);
   const work: WorkRequest[] = [...(more.work || []),
-    { kind: WORK.answer, key, input: { userId: d.userId, conversationId: o.conversationId, messageId: o.messageId, attempt: o.attempt, key } }];
+    { kind: WORK.answer, key, input: {
+      userId: d.userId, conversationId: o.conversationId, messageId: o.messageId, attempt: o.attempt, key,
+      ...(o.also?.length ? { also: o.also } : {}),
+    } }];
   return step('answering', { ...d, current: o, later: null }, { ...more, work, timer: null });
 }
 
@@ -133,10 +153,10 @@ function wrote(s: DState, e: Event<any>): Outcome<DState> {
     || [d.current, d.later, ...d.queue].some((q) => q && q.messageId === o.messageId && q.attempt >= o.attempt);
   if (seen) return step(s.name === NONE ? 'idle' : (s.name as Name), d);
   if (s.name === 'answering') return step('answering', { ...d, queue: [...d.queue, o] });
-  // Written to since an answer it would try again: that try is dropped (the
-  // new message's answer reads the old one too), as [main]'s deferredTurn
-  // skipped it.
-  return answer({ ...d, later: null }, o);
+  // Written to since an answer it would try again: that try is dropped, as
+  // [main]'s deferredTurn skipped it, and the new message's answer owes the
+  // old one too (owing).
+  return answer({ ...d, later: null }, owing(o, d.later));
 }
 
 const tryAgain = (s: DState): Outcome<DState> => {
@@ -162,6 +182,12 @@ function answered(status: 'done' | 'failed' | 'exhausted') {
       const o: Owed = { ...cur, attempt: later };
       return step('trying_later', { ...d, current: null, later: o },
         { timer: { at: new Date(ctx.now.getTime() + DEFER_DELAYS_MS[later - 1]!), event: { type: 'TryAgain' } } });
+    }
+    // A try it would have asked again, dropped for the message written
+    // since: that message's answer owes this one too.
+    if (later > 0 && later <= DEFER_DELAYS_MS.length && d.queue.length) {
+      const [first, ...rest] = d.queue;
+      return next({ ...d, queue: [owing(first!, cur), ...rest] });
     }
     return next(d);
   };

@@ -299,6 +299,7 @@ async function migrate(config) {
   // After backfillVotesRequired, which reads the merge announcements.
   await clearAutomatedChannelLines(pool);
   await backfillPlanRows(pool);
+  await backfillFiledDraftCards(pool);
   await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
   await migrateAppDbsToPerRole(pool, config);
@@ -366,6 +367,29 @@ async function backfillUsernameChoiceForEmailHandles(pool) {
     });
   }
   return result.rowCount || 0;
+}
+
+// 31 Oct 2026: a request the bot drafted and File it filed carries its
+// number on the offer's message from now on (homeroom-bot-mayor.js
+// settleOffer), and the card is drawn as that request. An offer filed before
+// kept "not filed yet" for good: its number was only on the offer's row.
+// Copied once from there; a no-op after its first run. Best-effort.
+async function backfillFiledDraftCards(pool) {
+  try {
+    const { rowCount } = await pool.query(
+      `UPDATE conversation_messages m
+          SET metadata = jsonb_set(m.metadata, '{homeroomBot}',
+                (m.metadata->'homeroomBot') || jsonb_build_object('issueNumber', a.issue_number, 'issueTitle', a.title))
+         FROM homeroom_bot_dm_actions a
+        WHERE a.message_id = m.id AND a.kind = 'file_request' AND a.status = 'done' AND a.issue_number IS NOT NULL
+          AND jsonb_typeof(m.metadata->'homeroomBot') = 'object'
+          AND m.metadata->'homeroomBot'->>'kind' = 'confirm'
+          AND (m.metadata->'homeroomBot'->'issueNumber') IS NULL`
+    );
+    if (rowCount) log.info('db', 'Filed drafts\' cards now name their requests', { messages: rowCount });
+  } catch (err) {
+    log.warn('db', 'Could not put filed requests on their drafts\' cards', { message: err.message });
+  }
 }
 
 // #5379: manifest proposals the platform wrote before createManifestPR began
@@ -15972,6 +15996,7 @@ module.exports = {
   followPlatformDefaultModel,
   seedStagingHelperCalls,
   clearAutomatedChannelLines,
+  backfillFiledDraftCards,
   backfillLinkedIssuesFromPrBodies,
   backfillPlanRows,
   backfillProposalIssuerAssignments, backfillVotesRequired,

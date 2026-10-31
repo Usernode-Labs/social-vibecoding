@@ -746,9 +746,9 @@ export async function markRead(conversationId: number, messageId: number): Promi
   await request<unknown>(`/api/conversations/${conversationId}/read`, { method: 'POST', body: JSON.stringify({ message_id: messageId }) });
 }
 
-export async function setTyping(conversationId: number, typing: boolean): Promise<void> {
+export async function setTyping(conversationId: number, typing: boolean, threadRootId: number | null = null): Promise<void> {
   await request<unknown>(`/api/conversations/${conversationId}/typing`, {
-    method: 'POST', body: JSON.stringify({ typing }),
+    method: 'POST', body: JSON.stringify({ typing, ...(threadRootId ? { thread_root_id: threadRootId } : {}) }),
   });
 }
 
