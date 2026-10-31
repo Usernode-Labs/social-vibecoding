@@ -214,6 +214,7 @@ test('first artefacts and the first-session reading against the full PostgreSQL 
     // Ben opened it already signed in (#4272: the sign-ins in their two ways).
     assert.deepEqual(r.opens, {
       from: window.start.toISOString(), opened: 2, signedIn: 1, signedInByInvite: 0, signedInAlready: 1, joined: 1,
+      landed: { recorded: false, reason: 'Not recorded before invite pages reported where they landed.' },
     }, 'two opens, ben signing in and ben joining, counted from the start of the window');
     assert.deepEqual(r.examples.map((e) => [e.path, e.name, e.slug]), [['join', 'ben', 'book-swap'], ['make', 'ana', 'book-swap']]);
     assert.ok(r.recordedFrom.make && r.recordedFrom.reward && r.recordedFrom.opens && r.recordedFrom.signedIn);

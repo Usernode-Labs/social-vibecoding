@@ -1337,8 +1337,10 @@ type FirstSessionStep = {
   key: string; reached: number; inSession: number; medianSeconds: number | null;
   targetSeconds: number | null; withinTarget: number | null;
 };
+type InviteLanded = { card: number; dead: number; failed: number; timeout: number };
 type InviteFunnel = {
   from: string; opened: number; signedIn: number; signedInByInvite: number; signedInAlready: number; joined: number;
+  landed?: InviteLanded | NotRecorded;
 };
 type FirstSessionData = {
   week: string; finished: boolean; sessionMinutes: number;
@@ -1533,6 +1535,35 @@ function InviteFunnelRows({ funnel }: { funnel: InviteFunnel }) {
   );
 }
 
+// Where invite pages first settled (#6002), each against the opens.
+const INVITE_LANDED: ReadonlyArray<readonly [keyof InviteLanded, string]> = [
+  ['card', 'The invite card'],
+  ['dead', 'The dead-link page'],
+  ['failed', 'The pitch, the read failed'],
+  ['timeout', 'The pitch, the read took too long'],
+];
+
+function InviteLandedRows({ landed, opened }: { landed: InviteLanded | NotRecorded; opened: number }) {
+  return (
+    <div id="admin-journey-first-session-landed">
+      <div className={`${JUI.label} mt-4 mb-1.5`}>Where the invite page landed</div>
+      {isNotRecorded(landed) ? <Num v={landed} /> : (
+        <>
+          <div className="space-y-0.5">
+            {INVITE_LANDED.map(([key, label]) => (
+              <div key={key} data-journey-invite-landed={key} className="flex items-baseline justify-between gap-2 text-sm">
+                <span>{label}</span>
+                <span className="tabular-nums shrink-0">{conversion(landed[key], opened)}</span>
+              </div>
+            ))}
+          </div>
+          <p className={`mt-1 ${JUI.fine}`}>Where invite pages first settled, each outcome counted once per signed-in person, and once per network a day for signed-out pages, which are anonymous and unverified. "The read failed" should stay near zero.</p>
+        </>
+      )}
+    </div>
+  );
+}
+
 function FirstSessionCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
   const { data, failed } = useJourney<FirstSessionData>(scoped('/api/admin/journey/first-session', scope));
   if (!data) return <Card id="admin-journey-first-session" title="First session"><Loading failed={failed} what="the first session" /></Card>;
@@ -1588,6 +1619,8 @@ function FirstSessionCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson 
         <div id="admin-journey-first-session-opens">
           <div className={`${JUI.label} mt-4 mb-1.5`}>{funnelFrom ? `Invite links · from ${weekLabel(funnelFrom)}` : 'Invite links'}</div>
           {isNotRecorded(data.opens) ? <Num v={data.opens} /> : <InviteFunnelRows funnel={data.opens} />}
+          {isNotRecorded(data.opens) || !data.opens.landed ? null
+            : <InviteLandedRows landed={data.opens.landed} opened={data.opens.opened} />}
         </div>
       )}
       <div className={`${JUI.label} mt-4 mb-1.5`}>Newest first sessions</div>
@@ -2221,4 +2254,4 @@ const AdminJourney = {
 if (typeof window !== 'undefined') (window as any).AdminJourney = AdminJourney;
 
 // InviteFunnelRows for its render test (tests/admin-journey-section.test.js).
-export { AdminJourney, InviteFunnelRows, CreationTimingRows, exampleTiming };
+export { AdminJourney, InviteFunnelRows, InviteLandedRows, CreationTimingRows, exampleTiming };

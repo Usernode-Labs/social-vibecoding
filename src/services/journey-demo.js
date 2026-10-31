@@ -560,6 +560,8 @@ function firstSession(day, all = false) {
       since: DEMO_RECORDED_FROM, opened: all ? 26 : 11,
       signed_in: all ? 12 : 5, signed_in_by_invite: all ? 8 : 3, signed_in_already: all ? 4 : 2,
       joined: all ? 7 : joined,
+      landed_since: DEMO_RECORDED_FROM,
+      landed_card: all ? 23 : 10, landed_dead: all ? 1 : 0, landed_failed: 0, landed_timeout: all ? 2 : 1,
     },
     { week: window, cohort: !!ids },
   );

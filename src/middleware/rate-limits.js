@@ -39,7 +39,7 @@ function retryPhrase(seconds) {
 // (a mail, a billed SMS), a bill (a paid model call) or a guess (a password,
 // a code, a token) is: the rest bound a runaway client, where this process's
 // own count is enough.
-function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, skipSuccessfulRequests = false, exemptAdmins = false, skip = null, key = null, v4Envelope = false, shared = false }) {
+function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, skipSuccessfulRequests = false, exemptAdmins = false, skip = null, key = null, v4Envelope = false, shared = false, logIp = true }) {
   const options = {
     windowMs,
     max,
@@ -65,9 +65,11 @@ function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFail
       const retryAfterSeconds = resetTime
         ? Math.max(0, Math.ceil((new Date(resetTime).getTime() - Date.now()) / 1000))
         : Math.ceil(windowMs / 1000);
+      // `logIp: false`: a collector of anonymous reports logs no address
+      // for one it turned away (#6002).
       log.warn('rate-limit', 'Throttled', {
         name,
-        ip: clientIp(req),
+        ...(logIp ? { ip: clientIp(req) } : {}),
         userId: req.user?.id,
         path: req.path,
       });
@@ -1641,6 +1643,17 @@ const uiTelemetryLimiter = makeLimiter({
   message: 'Telemetry is arriving too quickly. It will retry shortly.',
 });
 
+// A signed-out page's own reports (#6002): the reads the session guard cut
+// off and where an invite page landed. A page sends at most three, never
+// retried, so six a minute per address is room for a page or two.
+const uiTelemetryAnonLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 6,
+  name: 'ui-telemetry-anon',
+  logIp: false,
+  message: 'Telemetry is arriving too quickly.',
+});
+
 // The made screen's moments (services/first-session-moments.js): one small
 // POST per thing it showed or was tapped, from a maker's own first session.
 // A whole session sends a dozen or two, the tour's cards a few seconds
@@ -1713,4 +1726,4 @@ const linkCardLimiter = makeLimiter({
 const dictationLimiter = makeLimiter({ windowMs: 60000, max: 12, name: 'dictation', shared: true, keyByUser: true,
   message: 'Too many recordings. Try again in a minute.' });
 
-module.exports = { dictationLimiter, FEEDBACK_SUBMITS_PER_HOUR, linkCardLimiter, benchGradingLimiter, benchRunLimiter, benchStudioLimiter, challengeAdminLimiter, featuredAdminLimiter, testAccountLimiter, inviteLinkCreateLimiter, inviteRedeemLimiter, invitePreviewLimiter, emojiTileLimiter, agentSessionCreateLimiter, appAllowanceRequestLimiter, topochainMobileReadLimiter, partnerActivityLimiter, partnerActivityParticipantLimiter, explorerProxyLimiter, githubLookupLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, usernameCheckLimiter, releaseLinkLimiter, phoneOtpRequestLimiter, phoneOtpRequestPhoneLimiter, phoneVerifyLimiter, oauthSignInLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, friendshipLimiter, messageBookmarkLimiter, notificationBookmarkLimiter, appChatReadLimiter, attributeVoteLimiter, governanceVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, feedbackSubmitLimiter, boardOrderLimiter, issueScreenshotLimiter, requestSpecLimiter, feedbackVideoLimiter, profileWriteLimiter, usernameChangeLimiter, usernameChooseLimiter, publicProfileReadLimiter, publicProjectReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, uiTelemetryLimiter, firstSessionMomentLimiter, workshopAskLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, waitlistStatusLimiter, waitlistStatusIpLimiter, waitlistAnswersLimiter, smsTestLimiter, smsTestNumberLimiter, mailTestLimiter };
+module.exports = { dictationLimiter, FEEDBACK_SUBMITS_PER_HOUR, linkCardLimiter, benchGradingLimiter, benchRunLimiter, benchStudioLimiter, challengeAdminLimiter, featuredAdminLimiter, testAccountLimiter, inviteLinkCreateLimiter, inviteRedeemLimiter, invitePreviewLimiter, emojiTileLimiter, agentSessionCreateLimiter, appAllowanceRequestLimiter, topochainMobileReadLimiter, partnerActivityLimiter, partnerActivityParticipantLimiter, explorerProxyLimiter, githubLookupLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, usernameCheckLimiter, releaseLinkLimiter, phoneOtpRequestLimiter, phoneOtpRequestPhoneLimiter, phoneVerifyLimiter, oauthSignInLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, friendshipLimiter, messageBookmarkLimiter, notificationBookmarkLimiter, appChatReadLimiter, attributeVoteLimiter, governanceVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, feedbackSubmitLimiter, boardOrderLimiter, issueScreenshotLimiter, requestSpecLimiter, feedbackVideoLimiter, profileWriteLimiter, usernameChangeLimiter, usernameChooseLimiter, publicProfileReadLimiter, publicProjectReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, uiTelemetryLimiter, uiTelemetryAnonLimiter, firstSessionMomentLimiter, workshopAskLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, waitlistStatusLimiter, waitlistStatusIpLimiter, waitlistAnswersLimiter, smsTestLimiter, smsTestNumberLimiter, mailTestLimiter };
