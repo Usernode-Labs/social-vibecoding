@@ -3731,6 +3731,8 @@ async function messageThread(pool, { userId, conversationId, message }) {
   if (!rootId) return null;
   const { rows: [p] = [] } = await pool.query(
     `SELECT p.kind, p.state, p.result_ref, a.slug, a.name,
+            (SELECT r.metadata->'homeroomBot'->>'changeKind' FROM conversation_messages r
+              WHERE r.id = p.root_message_id) AS change_kind,
             (SELECT d.title FROM homeroom_bot_dm_actions d
                JOIN conversation_messages m ON m.id = d.message_id
               WHERE m.thread_root_id = p.root_message_id AND d.user_id = p.user_id
@@ -3750,7 +3752,18 @@ async function messageThread(pool, { userId, conversationId, message }) {
       issueNumber: Number(p.result_ref) || null,
     }
     : null;
-  return { rootId, draft };
+  // #6071 follow-up: a thread started from the bot's "+", with what its
+  // welcome block picked: the project (or any) and the kind of change.
+  const started = p && p.kind === 'ask'
+    ? {
+      kind: 'ask',
+      state: p.state,
+      appSlug: p.slug || null,
+      appName: p.slug ? p.name || p.slug : null,
+      changeKind: ['fix', 'add', 'design'].includes(p.change_kind) ? p.change_kind : 'any',
+    }
+    : null;
+  return { rootId, draft: draft || started };
 }
 
 /**

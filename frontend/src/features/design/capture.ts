@@ -31,7 +31,7 @@ export const MAX_CAPTURE_BYTES = 900 * 1024;
 const DROP = [
   'script', 'noscript', 'template', 'object', 'embed', 'base',
   'link:not([rel~="stylesheet"])', 'meta[http-equiv]', '[hidden]',
-  '#comment-pin-host', '#platform-side-panel',
+  '#comment-pin-host', '#platform-side-panel', '#design-pick-host',
 ].join(',');
 
 // The page's top three levels, where the screens the router is not showing

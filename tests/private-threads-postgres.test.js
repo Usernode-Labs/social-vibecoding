@@ -15,6 +15,9 @@
 //      own message, in that request's thread, and is done once.
 //   4. A project they have not joined answers join_required, and nothing is
 //      filed or posted.
+//   5. A new thread from the bot's "+" (#6071 follow-up) is the bot's line in
+//      Main with what its welcome block picked, and the bot's turn in it is
+//      told the project and the kind of change.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/private-threads-postgres.test.js
 
@@ -156,5 +159,46 @@ test('private threads against the full schema', { timeout: 120000 }, async (t) =
     assert.equal(posted.code, 'join_required');
     assert.equal(nextIssue, 41);
     assert.deepEqual(await privateThreads.stateOf(pool, { user: sam, rootId: root.id }), { state: 'open' });
+  });
+
+  await t.test('a new thread from the bot\'s "+" hangs off its line in Main, and the bot reads what it is for', async () => {
+    const dm = require('../src/services/homeroom-bot-dm');
+    const aiWork = require('../src/services/ai-work');
+    const made = await privateThreads.startThread(pool, { user: ada, project: app.slug, kind: 'fix' });
+    assert.equal(made.ok, true, made.error);
+    assert.equal(made.conversationId, Number(opened.conversationId), 'in her chat with the bot');
+    const { rows: [root] } = await pool.query(
+      'SELECT sender_id, thread_root_id, content, metadata FROM conversation_messages WHERE id = $1', [made.rootId],
+    );
+    assert.equal(root.sender_id, bot.id);
+    assert.equal(root.thread_root_id, null, 'a line of Main');
+    assert.equal(root.content, 'New thread, to fix something broken on Seed swap.');
+    assert.deepEqual(
+      { kind: root.metadata.homeroomBot.kind, changeKind: root.metadata.homeroomBot.changeKind, appSlug: root.metadata.homeroomBot.appSlug },
+      { kind: 'opened_thread', changeKind: 'fix', appSlug: 'pt-seed-swap' },
+    );
+    const first = await say(ada, 'The swap button does nothing on my phone', { thread_root_id: made.rootId });
+    const where = await dm.messageThread(pool, { userId: ada.id, conversationId: opened.conversationId, message: first });
+    assert.deepEqual(where, {
+      rootId: made.rootId,
+      draft: { kind: 'ask', state: 'open', appSlug: 'pt-seed-swap', appName: 'Seed swap', changeKind: 'fix' },
+    });
+    // The Homeroom bot tab lists it by her first words in it, not the bot's line.
+    const { rows } = await pool.query(aiWork.PRIVATE_SQL, [ada.id, bot.id, aiWork.PRIVATE_MAX]);
+    const listed = rows.find((r) => Number(r.root_id) === made.rootId);
+    assert.equal(listed.kind, 'ask');
+    assert.equal(listed.first_own, 'The swap button does nothing on my phone');
+
+    // Any project, any kind; a project she cannot see is no project; nobody synthetic starts one.
+    const any = await privateThreads.startThread(pool, { user: sam, project: null, kind: 'whatever' });
+    assert.equal(any.ok, true, any.error);
+    const { rows: [line] } = await pool.query('SELECT content, metadata FROM conversation_messages WHERE id = $1', [any.rootId]);
+    assert.equal(line.content, 'New thread.');
+    assert.equal(line.metadata.homeroomBot.changeKind, 'any');
+    assert.equal((await dm.messageThread(pool, { userId: sam.id, conversationId: any.conversationId, message: { threadRootId: any.rootId } })).draft.appSlug, null);
+    assert.equal((await privateThreads.startThread(pool, { user: ada, project: 'no-such-project', kind: 'add' })).status, 404);
+    assert.equal((await privateThreads.startThread(pool, { user: { ...bot, isSynthetic: true }, project: null })).status, 403);
+    assert.equal(privateThreads.startLine({ kind: 'design', appName: null }), 'New thread, to change how a screen looks.');
+    assert.equal(privateThreads.startLine({ kind: 'any', appName: 'Seed swap' }), 'New thread, about Seed swap.');
   });
 });

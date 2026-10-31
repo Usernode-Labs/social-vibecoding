@@ -42,6 +42,8 @@ export interface HomeroomBotMeta {
   designVersion?: number;
   /** #6071: the screen a design thread is of (kind 'opened_design'). */
   designTitle?: string;
+  /** #6071 follow-up: what a thread from the bot's "+" is for (kind 'opened_thread'); none is any kind of change. */
+  changeKind?: 'fix' | 'add' | 'design';
   appSlug?: string;
   appName?: string;
   issueNumber?: number;
@@ -201,8 +203,10 @@ export interface HomeroomBotAction {
    * #4231: `invite` opens the invite sheet for the message's project (`appSlug`), in place.
    * #5506: `withdraw` has the bot withdraw the change (`sessionId`), drawn by
    * the ready card itself when its reader may (HomeroomBotReadyNow.canWithdraw).
+   * #6071 follow-up: `design` opens the screen picker for the message's
+   * project (`appSlug`, or any), on the device (../design/pick.tsx).
    */
-  type: 'server' | 'open' | 'prompt' | 'preview' | 'vote' | 'reply' | 'invite' | 'withdraw';
+  type: 'server' | 'open' | 'prompt' | 'preview' | 'vote' | 'reply' | 'invite' | 'withdraw' | 'design';
   target?: string;
   sessionId?: number;
   epoch?: number;
