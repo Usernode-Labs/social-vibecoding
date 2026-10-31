@@ -105,10 +105,12 @@ test('the request, change and decision pages draw it', () => {
   // to close under the request (thread-changes.tsx), and lists the rest.
   const head = read('frontend/src/features/dev-board/topic/request-head.tsx');
   assert.match(head, /const threadRead = useThreadPayload\(slug, r\.number\);/);
-  assert.match(head, /<ThreadChanges slug=\{slug\} data=\{threadRead\.data\} number=\{r\.number\} changes=\{layout\.changes\} close=\{layout\.close\} onChanged=\{threadRead\.reread\} \/>/);
-  assert.match(head, /<ThreadItems slug=\{slug\} number=\{r\.number\} here=\{here\} payload=\{threadRead\.data\} items=\{layout\.listed\} onChanged=\{threadRead\.reread\} \/>/);
+  // 31 Oct 2026: each change with the plan it was built from; the thread's
+  // own rows (Mute, its moves) in the page's ⋯ (./thread-page-menu.test.js).
+  assert.match(head, /<ThreadChanges slug=\{slug\} data=\{threadRead\.data\} number=\{r\.number\} changes=\{layout\.changes\} close=\{layout\.close\} plans=\{plans\} onChanged=\{threadRead\.reread\} \/>/);
+  assert.match(head, /<ThreadItems slug=\{slug\} number=\{r\.number\} here=\{here\} payload=\{threadRead\.data\} items=\{layout\.listed\} onChanged=\{threadRead\.reread\} menuKey=\{menuKey\} \/>/);
   assert.match(read('frontend/src/features/dev-board/topic/change-head.tsx'),
-    /<ThreadItems slug=\{pageSlug\(\)\} number=\{threadNumber\} asChange=\{threadAsChange\} here=\{\{ type: 'change', id \}\} \/>/);
+    /<ThreadItems slug=\{pageSlug\(\)\} number=\{threadNumber\} asChange=\{threadAsChange\} here=\{\{ type: 'change', id \}\} menuKey=\{menuKey \|\| null\} \/>/);
   const topic = read('frontend/src/features/dev-board/topic/topic-head.tsx');
   assert.match(topic, /threadNumber=\{Number\(session\?\.pr_number\) \|\| Number\(linkedIssues\[0\]\) \|\| null\} threadAsChange=\{Number\(session\?\.pr_number\) > 0\}/,
     'a change\'s page reads its own thread by its pull request, else its first request\'s');
@@ -286,7 +288,8 @@ test('a break-up says what it does and when; its form needs two parts', () => {
   });
   assert.equal(`${words(lines.what)}. ${words(lines.when)}`, 'Proposed: break #20 up into 2 smaller requests. Happens in 5 hours unless someone objects');
   const src = read('frontend/src/features/dev-board/topic/thread-moves.tsx');
-  assert.match(src, /const breakable = data\.thread\.lead === 'request'\s+&& data\.items\.some\(\(i\) => i\.type === 'request' && i\.number === number && i\.status === 'open'\);/);
+  // Offered where an open request leads the thread (moveChoices, ./thread-page-menu.test.js).
+  assert.match(src, /if \(data\.thread\.lead === 'request' && data\.items\.some\(\(i\) => i\.type === 'request' && i\.number === number && i\.status === 'open'\)\) out\.push\('breakup'\);/);
   assert.match(src, /disabled=\{busy \|\| filledParts\.length < 2\}/);
   assert.match(src, /kind: 'breakup', request: number, parts: filledParts\.map/);
 });

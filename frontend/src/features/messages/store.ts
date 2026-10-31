@@ -8,6 +8,7 @@ import { WORK_CHANGED_EVENT, inMainStream, openAppTarget, threadsAllowed } from 
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
 import { platformHubServed, platformSlug, subscribePlatformSlug } from './channel-hub';
 import { type AppDiscussion, type InboxSection } from './inbox';
+import { openRequestPage, requestPageOf, type RequestPage } from './request-page';
 import { markFor } from './unread-anchor';
 import type {
   ConversationDetail,
@@ -1321,18 +1322,25 @@ export async function openBot(reference?: StagedObject | null): Promise<void> {
 
 /**
  * 16 Oct 2026 (C4): "See progress" on a request's page. The chat with the
- * bot, opened at that request's story: its thread, at the message waiting
- * on the person when there is one, read off the request's track
- * (services/homeroom-bot-track.js). Before, it opened the chat alone, and
- * the person had to find the request in it. A request with no thread yet
- * opens the chat, as before.
+ * bot, opened at that request: at the message waiting on the person when
+ * there is one, read off the request's track (services/homeroom-bot-track.js),
+ * else at the last thing the chat said about it. Before, it opened the chat
+ * alone, and the person had to find the request in it. 31 Oct 2026: never
+ * in a thread of the request's: its story is the page this was pressed on
+ * (./request-page.ts), so a message in one of the old ones is passed over.
  */
 export async function openBotRequest(slug: string, number: number): Promise<void> {
   await openBot();
   try {
     const work = await api.getHomeroomBotWork({ fresh: true });
     const track = (work.tracks || []).find((item) => item.appSlug === slug && item.issueNumber === Number(number));
-    if (track?.rootId) openThreadAt(track.rootId, track.askId || null);
+    const known = track?.askId ? state.messages.find((item) => item.id === track.askId) : null;
+    const ask = track?.askId && !known?.threadRootId ? track.askId : null;
+    const about = (item: ConversationMessage) => !item.threadRootId && item.sender.bot
+      && item.metadata?.homeroomBot?.appSlug === slug && Number(item.metadata?.homeroomBot?.issueNumber) === Number(number);
+    const last = [...state.messages].reverse().find(about);
+    const at = ask || last?.id || null;
+    if (at) openThreadAt(null, at);
   } catch { /* the chat itself, then */ }
 }
 
@@ -1617,7 +1625,14 @@ export function setReply(scope: ComposerScope, message: ConversationMessage | nu
  */
 function botThreadOf(message: ConversationMessage): number | null {
   if (!message.sender.bot || !threadsAllowed(state.active) || state.active?.kind !== 'direct') return null;
-  return validId(message.threadRootId) ? message.threadRootId as number : null;
+  const root = validId(message.threadRootId) ? message.threadRootId as number : null;
+  if (!root || state.route.threadRootId === root) return root;
+  // 31 Oct 2026: a request's story thread from before is not drawn any more
+  // (./request-page.ts), so what answers a moment from one, shown in the
+  // main stream, is said there. A thread of the person's own keeps its own.
+  const rootRow = findRow(root);
+  if (rootRow) return requestPageFor(rootRow) ? null : root;
+  return requestPageOf(message) ? null : root;
 }
 
 /**
@@ -2017,10 +2032,23 @@ export function clearThreadFocus(): void {
   if (state.threadFocusId) publish({ threadFocusId: null });
 }
 
+/**
+ * 31 Oct 2026: in the chat with Homeroom bot, the page a thread off `root`
+ * stands for, when it is a request's story rather than a thread of the
+ * person's own (./request-page.ts). Null anywhere else.
+ */
+function requestPageFor(root: ConversationMessage | null | undefined): RequestPage | null {
+  if (!root || state.active?.kind !== 'direct' || !threadsAllowed(state.active)) return null;
+  return requestPageOf(root);
+}
+
 /** Open the thread that hangs off a message of the open conversation. */
 export function openThread(rootId: number): void {
   const conversationId = state.route.conversationId;
   if (typeof window === 'undefined' || !conversationId || !validId(rootId)) return;
+  // A request's story opens on the request's page, never as a thread here.
+  const page = requestPageFor(findRow(rootId));
+  if (page) { openRequestPage(page, conversationId); return; }
   // #3494: in its community's page the thread opens beside the room there,
   // with no address of its own: the page's address is the page's.
   if (state.route.embedded) {
@@ -2090,6 +2118,14 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
       const key = sentKeys.get(item.id);
       return key ? { ...item, clientKey: key } : item;
     });
+    // A link to a request's story from before (a bookmark, a notification)
+    // lands on the request's page: the thread is not drawn.
+    const story = requestPageFor(page.root || findRow(rootId));
+    if (story) {
+      closeThread();
+      openRequestPage(story, conversationId);
+      return;
+    }
     publish({
       thread: {
         conversationId, rootId, root: page.root || findRow(rootId) || null,

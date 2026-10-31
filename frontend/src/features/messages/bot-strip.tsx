@@ -15,6 +15,7 @@ import { tryChange } from './bot-ready';
 import { requestHue, requestKey, storyRootIn } from './bot-request';
 import { ENDED_STATES, trackEnding, trackLine, trackShort, trackStateWord } from './bot-track';
 import { loadBotWork, useBotWork } from './bot-work';
+import { openRequestPage, requestPage } from './request-page';
 import { loadedMessages, openThreadAt } from './store';
 import type { BotTrack, HomeroomBotCurrentJob, HomeroomBotJob, HomeroomBotPastJob, HomeroomBotWork } from './types';
 
@@ -44,10 +45,10 @@ import type { BotTrack, HomeroomBotCurrentJob, HomeroomBotJob, HomeroomBotPastJo
  *   - DONE TODAY, folded to its heading and count until pressed: a line
  *     each, with a small tile and how it ended, like the chat's settled rows.
  *
- * Every row opens its request's story, as the chat's row does: the pane
- * beside the chat, at the message waiting on them (the entry's `ask`,
- * flashed: store.openThreadAt). A request from before threads opens on its
- * oldest piece (./bot-request.ts storyRootIn). Opening one closes the drawer.
+ * Every row opens its request's story, as the chat's row does: the
+ * request's own page (31 Oct 2026, ./request-page.ts), or the message in the
+ * chat waiting on them (the entry's `ask`, flashed: store.openThreadAt).
+ * Opening one closes the drawer.
  *
  * Each request appears once, in the first group that fits, with its number
  * in its own colour. No step numbers and no timings: the thread says those.
@@ -442,8 +443,21 @@ const PILL_PRIMARY = 'inline-flex shrink-0 items-center rounded-full bg-violet-6
 const PILL_SECONDARY = 'inline-flex shrink-0 items-center rounded-full bg-white px-3 py-1.5 text-[13px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-50 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700';
 const NEED_INK = 'text-amber-700 dark:text-amber-400';
 
-/** Open a row's request: its story at the message it names, else its own page. */
+/**
+ * Open a row's request. What waits on the person in the main chat (a
+ * question, a plan) opens there, at the message; anything else opens the
+ * request's own page, its story (31 Oct 2026, ./request-page.ts), never a
+ * thread of this chat's.
+ */
 function openRow(row: StripRow): void {
+  const asked = row.focusId ? loadedMessages().find((item) => item.id === row.focusId) : null;
+  if (row.focusId && !asked?.threadRootId && !row.rootId) { openThreadAt(null, row.focusId); return; }
+  const page = requestPage({
+    appSlug: row.job.appSlug, appName: row.job.appUnnamed ? null : row.job.appName,
+    issueNumber: row.job.issueNumber, firstVersion: row.job.firstVersion, title: row.job.title,
+  });
+  if (page) { openRequestPage(page, loadedMessages()[0]?.conversationId || null); return; }
+  // A request no page is named for (the staging demo's): its story where it is told.
   const rootId = row.rootId || storyRootIn(loadedMessages(), requestKey(row.job));
   if (rootId || row.focusId) { openThreadAt(rootId, row.focusId); return; }
   if (row.job.href && typeof window !== 'undefined') window.location.hash = row.job.href;

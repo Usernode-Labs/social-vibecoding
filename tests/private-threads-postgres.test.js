@@ -103,7 +103,8 @@ test('private threads against the full schema', { timeout: 120000 }, async (t) =
       const out = await privateThreads.fileIt(pool, {}, { user: who, rootId, project: app.slug, deps });
       assert.equal(out.status, 404, why);
     }
-    assert.deepEqual(await privateThreads.stateOf(pool, { user: ada, rootId: theirs.id }), { state: 'open' });
+    // 31 Oct 2026: an open thread with no row yet is an idea in no project, answering nothing.
+    assert.deepEqual(await privateThreads.stateOf(pool, { user: ada, rootId: theirs.id }), { state: 'open', kind: 'idea', app: null, target: null });
   });
 
   await t.test('File it files her words as a request on the project she picks, says so in the thread, once', async () => {
@@ -120,6 +121,10 @@ test('private threads against the full schema', { timeout: 120000 }, async (t) =
     const { rows: [row] } = await pool.query('SELECT kind, state, result_ref, target_thread_id FROM private_threads WHERE root_message_id = $1', [root.id]);
     assert.deepEqual({ ...row, target_thread_id: Number(row.target_thread_id) },
       { kind: 'draft_request', state: 'filed', result_ref: 41, target_thread_id: Number(issue.thread_id) });
+    // Where it went says what it was, and the thread it is now, by its number.
+    const where = await privateThreads.stateOf(pool, { user: ada, rootId: root.id });
+    assert.deepEqual({ kind: where.kind, target: where.target, app: where.app },
+      { kind: 'draft_request', target: 41, app: { slug: app.slug, name: 'Seed swap' } });
     const said = await replies(root.id);
     assert.deepEqual(said.map((r) => [r.sender_id, r.content]), [[bot.id, 'Filed it as request #41 on Seed swap, under your name.']]);
     const again = await privateThreads.fileIt(pool, {}, { user: ada, rootId: root.id, project: app.slug, deps });
@@ -155,6 +160,6 @@ test('private threads against the full schema', { timeout: 120000 }, async (t) =
     const posted = await privateThreads.postIt(pool, { user: sam, rootId: root.id, project: app.slug, number: 41, deps: {} });
     assert.equal(posted.code, 'join_required');
     assert.equal(nextIssue, 41);
-    assert.deepEqual(await privateThreads.stateOf(pool, { user: sam, rootId: root.id }), { state: 'open' });
+    assert.deepEqual(await privateThreads.stateOf(pool, { user: sam, rootId: root.id }), { state: 'open', kind: 'idea', app: null, target: null });
   });
 });

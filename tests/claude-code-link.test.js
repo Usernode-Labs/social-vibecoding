@@ -7,8 +7,9 @@
 //      encoded so it round-trips, `repositories` only for a valid owner/repo,
 //      never `environment`, null for a slug or number Homeroom would not mint,
 //      and no way for a request's title or body to reach the URL.
-//   2. The request page's folded "Build it with your own Claude Code"
-//      (topic/own-agent-link.tsx) renders the link and what you need.
+//   2. The request page's "Build it with your own Claude Code"
+//      (topic/own-agent-link.tsx), a row of its ⋯ since 31 Oct 2026,
+//      renders the link and what you need.
 //   3. The "Build with" sheet's Claude Code tab uses the same builder for a
 //      conversation about one request.
 
@@ -128,9 +129,15 @@ test('the request page folds the link under the card, with what you need', () =>
   }
 });
 
-test('the status card draws it only when the view offers it', () => {
+// 31 Oct 2026: a row of the request's ⋯, offered only when the view offers
+// it, and drawn under the status once the row is pressed; no longer a fold
+// under Build it now.
+test('the request\'s ⋯ offers it only when the view does, and the page draws it once pressed', () => {
   const head = read('frontend/src/features/dev-board/topic/request-head.tsx');
-  assert.match(head, /\{s\.ownAgent && !s\.closed && slug && number \? <OwnAgentLink slug=\{slug\} number=\{number\} \/> : null\}/);
+  assert.match(head, /const ownAgent = !!\(r\.status\.ownAgent && !r\.status\.closed && agentSlug && r\.number\);/);
+  assert.match(head, /useThreadMenu\(menuKey, 'agent', ownAgent \? \[\{/);
+  assert.match(head, /\{ownAgent && agentOpen \? <OwnAgentLink slug=\{agentSlug\} number=\{r\.number\} startOpen onClose=\{\(\) => setAgentOpen\(false\)\} \/> : null\}/);
+  assert.doesNotMatch(head, /\{s\.ownAgent && !s\.closed && slug && number \? <OwnAgentLink/, 'not a fold under Build it now');
   // The status is read once it is opened, never on load (declared checks never click).
   assert.match(read(OWN), /if \(!open \|\| !slug\) return undefined;/);
 });

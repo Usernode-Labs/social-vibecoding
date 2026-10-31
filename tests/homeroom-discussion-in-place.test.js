@@ -202,7 +202,8 @@ test('#3494: exactly one copy of the thread is drawn, and the page\'s has no hea
   assert.match(embedded, /if \(!active \|\| messagesOpen\) return undefined;\s*embed\(conversationId, take\(\)\);\s*return \(\) => release\(conversationId\);/);
   // Polish board #19: until the room is in place, the room's own loading row.
   assert.match(embedded, /\{here \? <ConversationThread embedded \/> : <ChannelLoading \/>\}/);
-  assert.match(embedded, /\{here && snap\.route\.threadRootId \? <ReplyThreadPanel \/> : null\}/);
+  // 31 Oct 2026: in Main Chat (`mainChat`) the thread leads with Back to Main Chat.
+  assert.match(embedded, /\{here && snap\.route\.threadRootId \? <ReplyThreadPanel backToMain=\{mainChat\} \/> : null\}/);
 });
 
 test('#3494: the Discussion tab turns for Homeroom too, and mounts #general while the page is on screen', () => {

@@ -861,6 +861,38 @@ test('a folded kudos slot is a ⋯ row: the slot’s line, acting through its bu
   assert.equal(AppView._cardMenuItems('proposal:7').length, 0);
 });
 
+// 31 Oct 2026: a thread's own rows (Notify me or Mute, its moves, Build it
+// with your own Claude Code) sat on its page as pills and a fold. Its head
+// publishes them into the page's ⋯ instead (dev-board/topic/thread-menu.ts),
+// one list per source, after the card's own rows; a menu open on the page
+// lists them at once, and a head that goes takes them back.
+test('a thread\'s own rows join its ⋯, one list per source, and leave with it', () => {
+  const AppView = makeAppView();
+  const drawn = [];
+  AppView._fillCardMenu = (el, items) => { drawn.push(items.map((i) => i.label)); };
+  AppView._cardMenus['request:18'] = [{ label: 'Edit request', act: () => {} }];
+  let muted = 0;
+  AppView._setThreadCardActions('request:18', 'thread', [
+    { label: 'Mute', icon: 'mute', act: () => { muted += 1; } },
+    { label: 'Merge into another thread', icon: 'move', act: () => {} },
+    { label: 'no act' },
+  ]);
+  AppView._setThreadCardActions('request:18', 'agent', [{ label: 'Build it with your own Claude Code', icon: 'generate', act: () => {} }]);
+  const rows = AppView._cardMenuItems('request:18');
+  assert.deepEqual(rows.map((r) => r.label), ['Edit request', 'Build it with your own Claude Code', 'Mute', 'Merge into another thread'],
+    'the card\'s rows, then each source\'s in order; a row with nothing to do is dropped');
+  rows[2].act();
+  assert.equal(muted, 1);
+  assert.equal(AppView._menuIconGlyph(rows[2]), AppView.MENU_ICONS.mute);
+  // Open on the page: the menu shows a source's rows the moment they come.
+  AppView._openCardMenu = { key: 'request:18', el: {}, trigger: null, own: null };
+  AppView._setThreadCardActions('request:18', 'thread', []);
+  assert.deepEqual(drawn.at(-1), ['Edit request', 'Build it with your own Claude Code']);
+  AppView._setThreadCardActions('request:18', 'agent', []);
+  assert.deepEqual(AppView._cardMenuItems('request:18').map((r) => r.label), ['Edit request']);
+  assert.equal(AppView._threadCardActions['request:18'], undefined, 'nothing left behind for the key');
+});
+
 // A row's click reads the CURRENT list by index, so a pill folded while the
 // menu is open has to redraw it: drawn from the old list, every row under the
 // new one pointed one row off ("Change assignee…" opened the category picker).

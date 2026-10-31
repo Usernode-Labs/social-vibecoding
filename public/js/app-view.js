@@ -8167,6 +8167,31 @@ const AppView = {
     const open = AppView._openCardMenu;
     if (open && open.key === key && open.el) AppView._fillCardMenu(open.el, AppView._cardMenuItems(key, open.own));
   },
+  // A thread's own rows on its page's ⋯ (31 Oct 2026, #6019 follow-up):
+  // Notify me or Mute, the moves (merge, split, break up) and, on a request,
+  // Build it with your own Claude Code, which sat on the page as pills and a
+  // fold. The page's React head publishes them under the ⋯'s key
+  // (features/dev-board/topic/thread-menu.ts), one list per `source`, as
+  // descriptors whose `act` is the head's own closure. _cardMenuItems lists
+  // them AFTER the card's own rows, sources in name order.
+  _threadCardActions: Object.create(null),
+  _setThreadCardActions(key, source, items) {
+    if (!key || !source) return;
+    const list = Array.isArray(items) ? items.filter((it) => it && it.label && typeof it.act === 'function') : [];
+    const by = AppView._threadCardActions[key] || Object.create(null);
+    if (list.length) by[source] = list;
+    else delete by[source];
+    if (Object.keys(by).length) AppView._threadCardActions[key] = by;
+    else delete AppView._threadCardActions[key];
+    // A menu already open on this page lists them too (see _setFoldedCardActions).
+    const open = AppView._openCardMenu;
+    if (open && open.key === key && open.el) AppView._fillCardMenu(open.el, AppView._cardMenuItems(key, open.own));
+  },
+  _threadMenuRows(key) {
+    const by = AppView._threadCardActions[key];
+    if (!by) return [];
+    return Object.keys(by).sort().reduce((rows, source) => rows.concat(by[source]), []);
+  },
   // The kudos slot, folded off the band (useFoldedActions: not even its clap
   // fit beside Open card, Preview and ⋯): the slot's current face as a ⋯ row
   // — "Thank <author> for putting this up", or "Give kudos" once it is the
@@ -8229,7 +8254,8 @@ const AppView = {
   _cardMenuItems(key, own) {
     const list = AppView._cardMenus[key] || [];
     const folded = AppView._foldedCardActions[key] || [];
-    const rows = folded.length ? folded.map((a) => AppView._foldedMenuItem(a)).concat(list) : list;
+    const thread = AppView._threadMenuRows(key);
+    const rows = (folded.length ? folded.map((a) => AppView._foldedMenuItem(a)).concat(list) : list).concat(thread);
     if (!own) return rows;
     return [{
       label: PlatformI18n.t('changes:card.menu.openCard'),
@@ -8307,6 +8333,9 @@ const AppView = {
     details: '≡',          // ≡ the technical half, as a sheet
     edit: '✎',             // edit the reader-facing description
     share: '↑',            // ↑ into Messages, distinct from ↗ leaving the platform
+    notify: '🔔',          // 🔔 a thread's Notify me, and Unmute
+    mute: '🔕',            // 🔕 a thread's Mute
+    move: '⇄',             // ⇄ a thread's merge, split or break up
     // Nothing should reach this, but a descriptor added later without an
     // icon must still line up with its neighbours rather than losing the
     // leading column and shifting its own label left.

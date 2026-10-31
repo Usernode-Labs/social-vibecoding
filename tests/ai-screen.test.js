@@ -491,7 +491,7 @@ test('the first render is the prerender: hidden, the bot\'s name, no rows; lists
   // Main docked beside it only on a wide window, after mount.
   assert.match(src, /const \[wide, setWide\] = useState\(false\);/);
   assert.match(src, /\{docked \? \(\s*<aside id="ai-main-pane" ref=\{mainRef\} className="ai-main-pane"/);
-  assert.match(src, /<EmbeddedConversation conversationId=\{botId!\} active=\{visible\} at=\{at\} \/>/);
+  assert.match(src, /<EmbeddedConversation conversationId=\{botId!\} active=\{visible\} at=\{at\} mainChat \/>/);
   // Ask Homeroom bot opens Main; a private thread opens in it.
   assert.match(src, /<a\s+href="#homeroom-bot\/main"\s+className="messages-composer-card ai-askbar-card"/);
   assert.match(src, /else go\(`#homeroom-bot\/thread\/\$\{row\.rootId\}`\);/);

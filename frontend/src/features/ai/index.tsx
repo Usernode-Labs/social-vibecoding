@@ -349,7 +349,7 @@ export function AiScreen(): ReactNode {
               </span>
             </span>
           </header>
-          <EmbeddedConversation conversationId={botId!} active={visible} at={at} />
+          <EmbeddedConversation conversationId={botId!} active={visible} at={at} mainChat />
         </aside>
       ) : null}
     </main>

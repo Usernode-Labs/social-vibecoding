@@ -57,20 +57,31 @@ async function ownRoot(pool, { user, bot, rootId }) {
   return root || null;
 }
 
-/** Where a private thread went: { state, number, href } or the open state. */
+/**
+ * Where a private thread went: { state, number, href }, or the open state.
+ * Open, it also says what it is (`kind`: a draft request, a draft reply, an
+ * idea or a question), the project it is for and, for a draft reply, the
+ * thread it answers (`target`, its number), so the thread offers only the
+ * doors that apply, already pointed there (31 Oct 2026). A thread with no
+ * row is one they started themselves: an idea in no project.
+ */
 async function stateOf(pool, { user, rootId }) {
   const { rows: [row] } = await pool.query(
-    `SELECT p.state, p.result_ref, p.kind, a.slug, a.name
-       FROM private_threads p LEFT JOIN apps a ON a.id = p.app_id
+    `SELECT p.state, p.result_ref, p.kind, a.slug, a.name, t.number AS target_number
+       FROM private_threads p
+       LEFT JOIN apps a ON a.id = p.app_id
+       LEFT JOIN threads t ON t.id = p.target_thread_id
       WHERE p.root_message_id = $1 AND p.user_id = $2`,
     [Number(rootId), user.id]
   );
-  if (!row) return { state: 'open' };
+  if (!row) return { state: 'open', kind: 'idea', app: null, target: null };
   const app = row.slug ? { slug: row.slug, name: row.name || row.slug } : null;
   return {
     state: row.state,
+    kind: row.kind,
     number: row.result_ref == null ? null : Number(row.result_ref),
     app,
+    target: row.target_number == null ? null : Number(row.target_number),
     href: app && row.result_ref != null ? hrefFor(app, row.result_ref, row.kind === 'draft_reply' ? 'thread' : 'request') : null,
   };
 }

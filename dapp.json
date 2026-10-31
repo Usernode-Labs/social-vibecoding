@@ -5066,10 +5066,10 @@
       ]
     },
     {
-      "name": "#4097, #5392, one request, one story: in the chat with Homeroom bot each request is one row that opens its story, its earlier news folded into its newest row, which counts the updates; finished requests fold into one line of words (N finished · N couldn't build) that opens the rows saying how each ended, and a change ready for your yes says so",
+      "name": "#4097, #5392, one request, one story: in the chat with Homeroom bot each request is one row that opens its page, its earlier news folded into its newest row, which counts the updates; finished requests fold into one line of words (N finished · N couldn't build) that opens the rows saying how each ended; a question still waiting on you is drawn whole in the chat, its answers under it (31 Oct 2026)",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": ".messages-thread-scroll:has([data-bot-settled-toggle] [data-bot-settled-count=failed]):has([data-bot-settled-toggle] [data-bot-settled-count=finished]) [data-bot-news=question] [data-bot-news-state=needs] [data-bot-thread-link]",
-      "expectText": "Ready for your yes"
+      "expectSelector": ".messages-thread-scroll:has([data-bot-settled-count=failed]):has([data-bot-settled-count=finished]):has([data-bot-news-state=needs] [data-bot-thread-link]) article:has([data-bot-thread-label]) [data-bot-question=open] [data-bot-answer]",
+      "expectText": "Which night should the rota start on?"
     },
     {
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",

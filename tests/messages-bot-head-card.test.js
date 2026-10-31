@@ -368,14 +368,20 @@ test('the staging preview’s declared check finds the demo DM’s news as one r
   const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#4097/.test(t.name));
   assert.ok(check, 'declared');
   assert.equal(check.path, '/?demo=1#messages/910005');
-  assert.match(check.expectSelector, /:has\(\[data-bot-settled-toggle\] \[data-bot-settled-count=finished\]\)/, 'a first version that went live is folded with the finished');
-  assert.match(check.expectSelector, /\[data-bot-news=question\] \[data-bot-news-state=needs\] \[data-bot-thread-link\]$/, 'the question still waiting counts its updates');
+  assert.match(check.expectSelector, /:has\(\[data-bot-settled-count=finished\]\)/, 'a first version that went live is folded with the finished');
+  // 31 Oct 2026: the request still waiting is a row that counts its updates,
+  // and its question is drawn whole in the chat, its answers under it: the
+  // thread that drew it whole is gone (./bot-request-page.test.js).
+  assert.match(check.expectSelector, /:has\(\[data-bot-news-state=needs\] \[data-bot-thread-link\]\)/, 'the request still waiting counts its updates');
+  assert.match(check.expectSelector, /article:has\(\[data-bot-thread-label\]\) \[data-bot-question=open\] \[data-bot-answer\]$/, 'its question, whole, with its answers');
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
-  assert.equal(check.expectText, 'Ready for your yes', 'the change ready to try, where it stands now');
-  // The fixture it reads (services/staging-messages.js ensureBotDmFixture):
-  // the change ready to try, a request of its own.
+  assert.equal(check.expectText, 'Which night should the rota start on?', 'the question still waiting, in its own words');
+  // The fixture it reads (services/staging-messages.js ensureBotDmStory):
+  // request #18's question, open, in the story the bot told before Main
+  // Chat was one conversation.
   const fixture = read('src/services/staging-messages.js');
-  assert.match(fixture, /kind: 'proposal', \.\.\.ready,/);
+  assert.match(fixture, /const question = 'Which night should the rota start on\?';/);
+  assert.match(fixture, /kind: 'question', \.\.\.about, mirrors: true, status: 'open',/);
 });
 
 // ── Chat replies (homeroom-bot-mayor.js) ────────────────────────────────

@@ -1780,12 +1780,13 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
             {body.closedBand ? <ClosedBand b={body.closedBand} /> : null}
             {body.addressedBy ? <AddressedBy r={body.addressedBy} /> : null}
             <DevCard model={card} />
-            {/* #6019: a decision's thread, and the viewer's Notify me / Mute for it. */}
+            {/* #6019: a decision's thread; the viewer's Notify me / Mute for it is a row of the card's ⋯ when it has one. */}
             {GOVERNANCE_KINDS.has(item?.kind) && Number(item?.thread_id) > 0 ? (
               <ThreadItems
                 slug={pageSlug()}
                 threadId={Number(item.thread_id)}
                 here={{ type: item.kind === 'close_issue' ? 'close' : 'decision', id: Number(item.id) }}
+                menuKey={card.rail?.menuKey || null}
               />
             ) : null}
           </div>

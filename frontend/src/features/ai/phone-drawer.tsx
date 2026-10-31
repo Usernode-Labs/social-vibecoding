@@ -71,7 +71,7 @@ export function MainPane({ botId, active, at, onBack }: {
           </span>
         </span>
       </header>
-      {botId ? <EmbeddedConversation conversationId={botId} active={active} at={at} /> : null}
+      {botId ? <EmbeddedConversation conversationId={botId} active={active} at={at} mainChat /> : null}
     </>
   );
 }

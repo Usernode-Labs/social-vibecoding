@@ -307,8 +307,8 @@ test('#4511: the reader\'s own send moves them only when they were at the bottom
 });
 
 test('#4511/#4513: a Messages reply thread follows only a pinned reader, and holds the bottom as the composer grows', () => {
-  const panel = THREAD.slice(THREAD.indexOf('function ReplyThreadPanel()'), THREAD.indexOf('function AppReplyThreadPanel('));
-  assert.ok(panel.length > 0);
+  const panel = THREAD.slice(THREAD.indexOf('function ReplyThreadPanel('), THREAD.indexOf('function AppReplyThreadPanel('));
+  assert.ok(panel.length > 1000);
   assert.match(panel, /const pinned = useStickToBottom\(scroller, true\);/);
   assert.match(panel, /useIsomorphicLayoutEffect\(\(\) => \{ pinned\.current = true; \}, \[conversationId, rootId\]\);/,
     'a thread opens at its newest reply');

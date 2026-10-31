@@ -18,6 +18,12 @@
  * own words as a quote folded at four lines, the card that says where it
  * stands, and one card per spec (`requestThreadStore`, which the stream
  * publishes, since the specs are posted in it).
+ *
+ * 31 Oct 2026: a plan a change was built from (the same session) is drawn
+ * with that change, not in the list of plans (./thread-changes.tsx). And
+ * the ⋯ lists the thread's own rows (./thread-menu.ts): Build it with your
+ * own Claude Code, which opens its panel here, then Notify me / Mute and
+ * the moves (./thread-items.tsx).
  */
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -55,6 +61,7 @@ import { requestPill, threadLayout, type ThreadHere } from './thread-model';
 import { TopicBack } from './topic-back';
 import { saveIssueBody } from './topic-head';
 import { OwnAgentLink } from './own-agent-link';
+import { requestMenuKey, useThreadMenu } from './thread-menu';
 
 function appView(): any {
   return typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -76,7 +83,12 @@ function host(id: string): Element | null {
  * as a change's status pill rides beside "Change #N" (./change-head.tsx
  * ChangeBar), once its thread is read (`pill`).
  */
-export function RequestBar({ r, pill = null }: { r: RequestView; pill?: StatusPillState | null }): ReactNode {
+export function RequestBar({ r, pill = null, threadMenu = false }: {
+  r: RequestView;
+  pill?: StatusPillState | null;
+  /** The thread has ⋯ rows of its own (./thread-menu.ts): the ⋯ shows even when the request has none. */
+  threadMenu?: boolean;
+}): ReactNode {
   const t = useMessages('project');
   // F18 (#5683): the bar names the request itself, under a small-caps line
   // that says its number and, once it is settled, how it ended.
@@ -97,11 +109,11 @@ export function RequestBar({ r, pill = null }: { r: RequestView; pill?: StatusPi
         <div className="messages-thread-name line-clamp-2 dev-request-bar-title">{r.title}</div>
         {r.category ? <div className="messages-thread-sub" data-request-category="">{r.category}</div> : null}
       </div>
-      {r.menuKey ? (
+      {r.menuKey || threadMenu ? (
         <button
           type="button"
           className="messages-thread-action dev-card-menu-btn"
-          data-card-menu={r.menuKey}
+          data-card-menu={requestMenuKey(r.menuKey, r.number)}
           aria-haspopup="true"
           aria-label={t('project:topic.request.bar.more')}
           title={t('project:topic.request.bar.more')}
@@ -276,12 +288,9 @@ function RequestEditor({ r, onClose }: { r: RequestView; onClose: () => void }):
  * is at marked; one sentence; the claim's lapse in small words; and the one
  * thing this viewer would do next. A step already done gets no fill.
  */
-function RequestStatus({ s, specs, tracked = false, slug = '', number = 0 }: {
+function RequestStatus({ s, specs, tracked = false }: {
   s: RequestStatusView;
   specs: RequestSpecCard[];
-  /** #5987: the app and request the "Open in Claude Code" link names. */
-  slug?: string;
-  number?: number;
   /** Homeroom bot's track card follows, with its own steps (TrackBar): one
       row of steps on the page, not two that disagree (polish board #12). */
   tracked?: boolean;
@@ -333,7 +342,6 @@ function RequestStatus({ s, specs, tracked = false, slug = '', number = 0 }: {
           )}
         </div>
       ) : null}
-      {s.ownAgent && !s.closed && slug && number ? <OwnAgentLink slug={slug} number={number} /> : null}
     </div>
   );
 }
@@ -382,6 +390,29 @@ export function SpecCard({ card }: { card: RequestSpecCard }): ReactNode {
   );
 }
 
+/**
+ * Pure: which plans a change in the thread was built from, by that change's
+ * session (a plan is posted on a session, and the session that carries it
+ * out is the change), and the plans no change was built from yet, in
+ * order. Every version of a built plan goes with its change; the newest is
+ * the one shown.
+ */
+export function plansByChange(specs: readonly RequestSpecCard[], changes: readonly { id: number }[]): {
+  plans: Map<number, RequestSpecCard>;
+  unbuilt: RequestSpecCard[];
+} {
+  const ids = new Set(changes.map((c) => c.id));
+  const plans = new Map<number, RequestSpecCard>();
+  const unbuilt: RequestSpecCard[] = [];
+  for (const card of specs) {
+    const session = card.read.kind === 'shared' ? card.read.sessionId : null;
+    if (session != null && ids.has(session)) {
+      if (!plans.has(session)) plans.set(session, card);
+    } else unbuilt.push(card);
+  }
+  return { plans, unbuilt };
+}
+
 export function RequestHead({ r }: { r: RequestView }): ReactNode {
   const thread = useStoreState(requestThreadStore);
   const specs = thread.number === r.number ? thread.specs : [];
@@ -411,10 +442,24 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // give way to them; a closed request still says how it ended.
   const working = layout.changes.length > 0 || !!layout.close;
   const pill = requestPill(layout, r.status.closed ? 'closed' : track ? track.state : null, (id) => translate(id));
+  // A plan a change in the thread was built from goes with that change.
+  const { plans, unbuilt } = useMemo(() => plansByChange(specs, layout.changes), [specs, layout.changes]);
+  // #5987, 31 Oct 2026: Build it with your own Claude Code is a ⋯ row; it
+  // opens its panel under the request.
+  const agentSlug = r.slug || '';
+  const ownAgent = !!(r.status.ownAgent && !r.status.closed && agentSlug && r.number);
+  const [agentOpen, setAgentOpen] = useState(false);
+  const menuKey = requestMenuKey(r.menuKey, r.number);
+  useThreadMenu(menuKey, 'agent', ownAgent ? [{
+    label: translate('project:topic.request.ownAgent.summary'),
+    icon: 'generate',
+    act: () => setAgentOpen(true),
+  }] : []);
+  const threadMenu = ownAgent || !!threadRead.data?.follow;
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
-      {bar ? createPortal(<RequestBar r={r} pill={pill} />, bar) : null}
+      {bar ? createPortal(<RequestBar r={r} pill={pill} threadMenu={threadMenu} />, bar) : null}
       {images.viewer}
       <article className="messages-message dev-request-root" data-ref-issue={r.number} data-request-root={r.number}>
         <Avatar shape="square" size="sm" color={swatchFor(r.asker)} aria-hidden="true">
@@ -430,8 +475,9 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
           </h1>
           {editing ? <RequestEditor r={r} onClose={() => setEditing(false)} /> : <RequestWords html={r.bodyHtml} />}
           {working && !r.status.closed ? null : (
-            <RequestStatus s={r.status} specs={specs} tracked={!!track} slug={r.slug || ''} number={r.number} />
+            <RequestStatus s={r.status} specs={specs} tracked={!!track} />
           )}
+          {ownAgent && agentOpen ? <OwnAgentLink slug={agentSlug} number={r.number} startOpen onClose={() => setAgentOpen(false)} /> : null}
           {track && !working ? (
             // 16 Oct 2026 (C4, V3): the same card a request's thread leads
             // with, where it is and why, its bar and its pictures, in place
@@ -442,17 +488,17 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               <TrackCard track={track} title={r.title} links={trackLinks(track, { request: false })} pictures />
             </div>
           ) : null}
-          {specs.length ? (
+          {unbuilt.length ? (
             <div className="messages-object-list dev-request-specs">
-              {specs.map((card) => <SpecCard key={card.key} card={card} />)}
+              {unbuilt.map((card) => <SpecCard key={card.key} card={card} />)}
             </div>
           ) : null}
           {/* #6019: the changes and the vote to close in this request's
               thread, under a rule; then the rest of it as a list. */}
           {threadRead.data ? (
-            <ThreadChanges slug={slug} data={threadRead.data} number={r.number} changes={layout.changes} close={layout.close} onChanged={threadRead.reread} />
+            <ThreadChanges slug={slug} data={threadRead.data} number={r.number} changes={layout.changes} close={layout.close} plans={plans} onChanged={threadRead.reread} />
           ) : null}
-          <ThreadItems slug={slug} number={r.number} here={here} payload={threadRead.data} items={layout.listed} onChanged={threadRead.reread} />
+          <ThreadItems slug={slug} number={r.number} here={here} payload={threadRead.data} items={layout.listed} onChanged={threadRead.reread} menuKey={menuKey} />
         </div>
       </article>
     </>
