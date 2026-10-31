@@ -223,6 +223,29 @@ test('#4220: a stop with no new message on its way clears the line at once', asy
   assert.deepEqual(h.state().typing[42], []);
 });
 
+test('31 Oct 2026: typing in a thread is that thread\'s line, and never the conversation\'s', async () => {
+  const h = harness([serverMessage(1, BOT, 'Hello.')]);
+  Object.assign(globalThis.window, { setTimeout: () => 1, clearTimeout: () => {} });
+  const dm = {
+    ...DM,
+    members: [{ ...ME, status: 'member' }, { ...BOT, status: 'member' }],
+    peer: { id: BOT.id, bot: true, displayName: 'Homeroom bot' },
+  };
+  h.api.getConversation = async () => dm;
+  await openDm(h);
+  const typing = (on, threadRootId) => h.store.messagesController.handleEvent({
+    type: 'conversation_typing', conversationId: 42, userId: BOT.id, typing: on, ...(threadRootId ? { threadRootId } : {}),
+  });
+  typing(true, 1);
+  assert.deepEqual(h.store.typingUsers(42, 1).map((typist) => typist.name), ['Homeroom bot'], 'drawn in the thread');
+  assert.deepEqual(h.store.typingUsers(42), [], 'not beside it');
+  typing(true);
+  assert.deepEqual(h.store.typingUsers(42).map((typist) => typist.name), ['Homeroom bot']);
+  typing(false, 1);
+  assert.deepEqual(h.store.typingUsers(42, 1), [], 'the thread\'s stops');
+  assert.deepEqual(h.store.typingUsers(42).map((typist) => typist.name), ['Homeroom bot'], 'the conversation\'s stays');
+});
+
 // The typing line shows what it showed before the text moved (base 1e6c91e33):
 // each shown name once, and a name leaves when anybody typing under it stops
 // or expires. What is new is only whose name it is: `unnamed` follows the

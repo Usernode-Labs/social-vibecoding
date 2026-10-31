@@ -318,6 +318,20 @@ test('an offer draws the change it carries in its line’s place, or the request
   assert.match(draft, /data-bot-head-card="draft"><div class="messages-object-card">/, 'nothing to open yet');
   assert.match(draft, />Add a search box</);
   assert.match(draft, />Plant pal · not filed yet</);
+
+  // 31 Oct 2026: filed by File it, the same offer carries its number and is
+  // drawn as the request it became, linked, never "not filed yet" again.
+  asked.length = 0;
+  const filed = botHead('Want me to file this?\n\n**Plant pal** · new request: Add a search box\n\nSearch notes by their text.',
+    { ...offer, issueNumber: 14, issueTitle: 'Add a search box', status: 'answered', chosen: 'yes' });
+  assert.deepEqual([filed.kind, filed.issueNumber, filed.title], ['request', 14, 'Add a search box']);
+  assert.equal(filed.link.href, '#app/plant-pal/dev/issues/14');
+  const filedHtml = draw(filed);
+  assert.match(filedHtml, /data-bot-head-card="request" data-bot-request-card="14"/);
+  assert.match(filedHtml, /<a href="#app\/plant-pal\/dev\/issues\/14"/);
+  assert.doesNotMatch(filedHtml, /not filed yet/);
+  // A change offered for withdrawal never takes a number for a request.
+  assert.equal(botHead('Want me to withdraw it?\n\n**Plant pal** · proposal: Plant photos', { ...offer, issueNumber: 14 }).kind, 'change');
 });
 
 test('a line with nothing after it is the card alone', () => {

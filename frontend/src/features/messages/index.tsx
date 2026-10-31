@@ -2492,6 +2492,7 @@ function ReplyThreadPanel() {
   const conversationId = snap.route.conversationId;
   const rootId = snap.route.threadRootId;
   const thread = snap.thread && snap.thread.rootId === rootId ? snap.thread : null;
+  const threadTyping = conversationId && rootId ? typingUsers(conversationId, rootId) : [];
   // 16 Oct 2026: a request's thread marks where each of its tries began
   // (./bot-track.tsx), when the bot built it more than once.
   const trackRoot = thread?.root || snap.messages.find((item) => item.id === rootId) || null;
@@ -2741,6 +2742,11 @@ function ReplyThreadPanel() {
           return divider ? <Fragment key={message.clientKey || message.id}>{divider}{row}</Fragment> : row;
         })}
       </div>
+      {/* 31 Oct 2026: who is typing in this thread (the bot answering a
+          message written here among them), as the conversation's own line
+          says it. It was drawn beside the conversation alone, which a phone
+          hides while a thread is open. */}
+      <div className="messages-typing" aria-live="polite">{typingLine(t, threadTyping)}</div>
       <JumpToLatest scroller={scroller} />
       <MessageComposer threadRootId={rootId} />
     </aside>

@@ -815,6 +815,26 @@ test('two answers in one DM keep one typing line up until the last is sent', asy
   assert.deepEqual(typing(), [true, false]);
 });
 
+test('31 Oct 2026: an answer to a message in a thread types in that thread, apart from the main chat', async (t) => {
+  const { events, ws } = typingHarness(t);
+  const finishers = [];
+  const work = () => new Promise((resolve) => { finishers.push(resolve); });
+  const inThread = dm.whileTyping({}, { botId: 2, conversationId: 45, threadRootId: 13006, ws }, work);
+  const inMain = dm.whileTyping({}, { botId: 2, conversationId: 45, ws }, work);
+  await settle();
+  const said = () => events.filter((e) => e.payload.type === 'conversation_typing')
+    .map((e) => [e.payload.threadRootId || null, e.payload.typing]);
+  assert.deepEqual(said().sort(), [[13006, true], [null, true]].sort(), 'one line in each place');
+  assert.deepEqual(events[0].payload.threadRootId === undefined ? events[1].payload : events[0].payload,
+    { type: 'conversation_typing', conversationId: 45, userId: 2, typing: true, threadRootId: 13006 });
+  finishers[0]('thread');
+  await inThread;
+  assert.deepEqual(said().filter(([, typing]) => !typing), [[13006, false]], 'the thread\'s stops, the main chat\'s stays');
+  finishers[1]('main');
+  await inMain;
+  assert.deepEqual(said().filter(([, typing]) => !typing), [[13006, false], [null, false]]);
+});
+
 test('a message from somebody let in is answered while the bot types; anybody else\'s is not', async (t) => {
   const { ws, typing } = typingHarness(t);
   const pool = {
@@ -909,7 +929,7 @@ test('"typing" goes out before the answer starts, bounded', () => {
   const fn = src.slice(src.indexOf('async function whileTyping('), src.indexOf('// ── Who a request is for'));
   assert.ok(fn.indexOf('stop.ready') < fn.indexOf('await work()'), 'the answer waits for its typing event');
   assert.match(fn, /setTimeout\(resolve, TYPING_FIRST_WAIT_MS\)/, 'but never long');
-  assert.match(src, /created\.first = sendTyping\(pool, botId, id, true, io\);/);
+  assert.match(src, /created\.first = sendTyping\(pool, botId, id, true, io, root\);/);
   assert.match(src, /stop\.ready = entry\.first \|\| Promise\.resolve\(\);/);
 });
 

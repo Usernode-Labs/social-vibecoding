@@ -806,11 +806,16 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   router.post('/api/conversations/:id/typing', conversationReactionLimiter, async (req, res) => {
     const id = conversations.strictId(req.params.id);
     if (!id || typeof req.body?.typing !== 'boolean') return sendNotFound(res);
+    // 31 Oct 2026: typing in a thread names it, so the line is drawn there.
+    const rawRoot = req.body?.thread_root_id;
+    const threadRootId = rawRoot == null ? null : conversations.strictId(rawRoot);
+    if (rawRoot != null && !threadRootId) return sendNotFound(res);
     try {
       const memberIds = await conversations.withLockedAudience(pool, req.user, id, (audience) => {
         pushAudience(audience, {
           type: 'conversation_typing', conversationId: id,
           userId: req.user.id, typing: req.body.typing,
+          ...(threadRootId ? { threadRootId } : {}),
         }, { excludeUserId: req.user.id, actorUserId: req.user.id });
       });
       if (!memberIds) return sendNotFound(res);
