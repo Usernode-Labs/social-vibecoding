@@ -165,7 +165,14 @@ test('a moment in the main chat is the whole message under its label, which open
 
 test('a request\'s card says how many updates its thread holds, in words; rooms keep their chip', () => {
   const { MessageRow } = loadTsx('frontend/src/features/messages/message-row.tsx');
-  const card = message(BOT, 31, { content: 'Dark mode', metadata: { homeroomBot: META }, thread: THREAD });
+  // 31 Oct 2026: a card that names its project's request has no thread here:
+  // its story is the request's page (./bot-request-page.test.js).
+  const named = message(BOT, 31, { content: 'Dark mode', metadata: { homeroomBot: META }, thread: THREAD });
+  const namedHtml = renderToHtml(createElement(MessageRow, { message: named, conversationId: 42, kind: 'direct', botChat: true }));
+  assert.doesNotMatch(namedHtml, /data-bot-thread-link|msgx-thread-summary/);
+  // One from before cards named their project keeps its thread.
+  const { appSlug: _slug, ...older } = META;
+  const card = message(BOT, 31, { content: 'Dark mode', metadata: { homeroomBot: older }, thread: THREAD });
   const html = renderToHtml(createElement(MessageRow, { message: card, conversationId: 42, kind: 'direct', botChat: true }));
   assert.match(html, /data-bot-thread-link="31">3 updates in its thread ›<\/button>/);
   assert.doesNotMatch(html, /msgx-thread-summary|msgx-thread-face/);

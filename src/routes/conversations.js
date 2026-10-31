@@ -259,7 +259,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   // connector's list. A project they have not joined answers 403
   // join_required, which the client offers Join for.
   //
-  //   GET  /api/conversations/homeroom-bot/threads/:rootId       → { state, number?, app?, href? }
+  //   GET  /api/conversations/homeroom-bot/threads/:rootId       → { state, kind?, number?, app?, target?, href? }
   //   POST /api/conversations/homeroom-bot/threads/:rootId/file  { project, title?, text? }
   //   POST /api/conversations/homeroom-bot/threads/:rootId/post  { project, number, text? }
   const privateThreads = () => require('../services/private-threads');

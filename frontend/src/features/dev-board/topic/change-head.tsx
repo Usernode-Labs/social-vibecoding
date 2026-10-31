@@ -56,6 +56,7 @@ import type { ChangeGateView, ChangeThreadView, ChangeUpstreamView, FixChecksVie
 import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
 import { ThreadItems, pageSlug } from './thread-items';
+import { changeMenuKey } from './thread-menu';
 import { TopicBack } from './topic-back';
 import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view';
 import { IncludedIn, IssueAssociations, ProposalBody, SummaryMore } from './topic-head';
@@ -418,6 +419,10 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   const issues = body.issues || [];
   const back = host('gc-thread-back');
   const bar = host('gc-thread-bar');
+  // 31 Oct 2026: the ⋯ lists the thread's Notify me / Mute and moves
+  // (./thread-items.tsx), so a signed-in viewer always has one.
+  const signedIn = typeof window !== 'undefined' && !!(window as any).App?.user;
+  const menuKey = card.rail?.menuKey || (signedIn ? changeMenuKey(null, id ?? null) : '');
   // Run four (13 Oct 2026): a door that sends someone to vote on this change
   // ("See the change", a vote's notification) opens it at the Votes card,
   // below the header, rather than at its title (./votes-in-view.ts).
@@ -504,7 +509,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
-      {bar ? createPortal(<ChangeBar v={v} menuKey={card.rail?.menuKey || ''} detailsId={id && body.changeId ? id : null} />, bar) : null}
+      {bar ? createPortal(<ChangeBar v={v} menuKey={menuKey} detailsId={id && body.changeId ? id : null} />, bar) : null}
       {pin ? createPortal(
         <div className="dev-change-gate-repeat" hidden={topInView}>
           <GateCard which="votes" g={v.votes} action={voteAction} id={id} repeat />
@@ -553,7 +558,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
             />
           ) : null}
           {/* #6019: the requests, other changes and votes in its thread. */}
-          {id ? <ThreadItems slug={pageSlug()} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} /> : null}
+          {id ? <ThreadItems slug={pageSlug()} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} menuKey={menuKey || null} /> : null}
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
           {v.codeMissing ? <CodeMissingNotice /> : null}
           {v.waitsFor || v.baseNotMain ? <StackNotice v={v} /> : null}

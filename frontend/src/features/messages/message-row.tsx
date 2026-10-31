@@ -22,6 +22,7 @@ import { BotPlanCard, BotTwoQuestions, isPlanMessage, isTwoQuestions } from './b
 import { BotThanksCard, isThanksMessage } from './bot-thanks-card';
 import { BotReadyCard, isReadyMessage } from './bot-ready';
 import { alsoInChat, botRequestNames, botThreadLabel, threadsAllowed, type ChangeBlock } from './bot-shared';
+import { openRequestPage, requestPageOf } from './request-page';
 import { BotHeadWords, botHead, isHeadCard } from './bot-head-card';
 import { LinkEmbeds } from './link-cards';
 import { plainText } from './plain-text';
@@ -165,7 +166,11 @@ export const MessageRow = memo(function MessageRow({
   // request's card (or a message that already has one), and a moment the
   // main chat also shows (`alsoInChat`) opens the thread it was posted in.
   const threads = threadsAllowed({ kind, homeroomBot: botChat });
-  const threadRoot = !live || inThread || !threads ? null
+  // 31 Oct 2026: in the chat with Homeroom bot a request's story is the
+  // request's own page (./request-page.ts), so its news opens that and has
+  // no thread here: no Reply in thread, no "N updates in its thread".
+  const story = botChat && kind === 'direct' && !inThread ? requestPageOf(message) : null;
+  const threadRoot = !live || inThread || !threads || story ? null
     : message.threadRootId ? message.threadRootId
       : kind !== 'direct' || isActivityMessage(message) || message.thread ? message.id : null;
   const canThread = threadRoot !== null;
@@ -389,7 +394,7 @@ export const MessageRow = memo(function MessageRow({
           card it names — for this reader, and never one already above. */}
       {message.content && !message.moderated ? <LinkEmbeds text={message.content} exclude={message.objects} /> : null}
       {message.reactions.length ? <div className="messages-reactions">{message.reactions.map((reaction) => <button type="button" key={reaction.emoji} aria-pressed={reaction.reacted} title={reaction.users ? listText(reaction.users) : undefined} onClick={() => void toggle(reaction.emoji)} className={reaction.reacted ? 'messages-reaction-mine' : ''}><span>{reaction.emoji}</span><span>{reaction.count}</span></button>)}</div> : null}
-      {message.thread && !inThread && kind === 'direct' && threads ? (
+      {message.thread && !inThread && kind === 'direct' && threads && !story ? (
         // One request, one story: in the chat with Homeroom bot the thread
         // under a request's card is its updates, said in words.
         <button
@@ -399,7 +404,7 @@ export const MessageRow = memo(function MessageRow({
           data-bot-thread-link={message.id}
           onClick={() => openThread(message.id)}
         >{t('messages:row.botThread.updates', { count: message.thread.replyCount })}</button>
-      ) : message.thread && !inThread ? (
+      ) : message.thread && !inThread && !story ? (
         <ThreadSummaryChip
           replyCount={message.thread.replyCount}
           lastReplyAt={message.thread.lastReplyAt}
@@ -493,7 +498,7 @@ export const MessageRow = memo(function MessageRow({
             type="button"
             className="block max-w-full truncate text-left text-[0.8125rem] font-medium text-zinc-500 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-100"
             data-bot-thread-label={message.threadRootId}
-            onClick={() => openThread(message.threadRootId as number)}
+            onClick={() => (story ? openRequestPage(story, conversationId) : openThread(message.threadRootId as number))}
           >{inChatLabel}</button>
         ) : null}
         {/* #5680: in a conversation the words sit in a bubble on their

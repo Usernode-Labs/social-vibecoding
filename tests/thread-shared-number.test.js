@@ -23,7 +23,7 @@ test('a change\'s page reads its thread as the change\'s, by its own pull reques
   const head = read('frontend/src/features/dev-board/topic/topic-head.tsx');
   assert.match(head, /threadNumber=\{Number\(session\?\.pr_number\) \|\| Number\(linkedIssues\[0\]\) \|\| null\} threadAsChange=\{Number\(session\?\.pr_number\) > 0\}/);
   assert.match(read('frontend/src/features/dev-board/topic/change-head.tsx'),
-    /<ThreadItems slug=\{pageSlug\(\)\} number=\{threadNumber\} asChange=\{threadAsChange\} here=\{\{ type: 'change', id \}\} \/>/);
+    /<ThreadItems slug=\{pageSlug\(\)\} number=\{threadNumber\} asChange=\{threadAsChange\} here=\{\{ type: 'change', id \}\} menuKey=\{menuKey \|\| null\} \/>/);
 });
 
 test('the AI tab names a change\'s own numberless thread by the change', () => {

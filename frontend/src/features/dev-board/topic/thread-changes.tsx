@@ -19,6 +19,13 @@
  *   [B] Night mode by schedule · dewi · #406 · Checks running
  *   [ Votes   A ▮▮▯ 1 · B ▮▯▯ 0 · Neither 0 ] [A][B][Neither]
  *
+ * 31 Oct 2026: a change built from a plan says so under its name, with
+ * the plan's Read (`plans`, ./request-head.tsx plansByChange), and the plan
+ * is not listed again over the changes:
+ *
+ *   [A] Dark theme that follows the system setting · ana · #6067 · ✓ Checks passed
+ *       📋 Built from the plan "Follow the system setting" · Read
+ *
  * Each change is read the way its own page reads it (topic-head.tsx
  * readChangeDetail, then AppView._topicViewFor), so its cards are its page's
  * cards, with their buttons, and they move when its page would: on the
@@ -40,6 +47,7 @@ import { ChangeGates } from './change-head';
 import { changeDetailAsk, mergeChangePatch } from './change-detail-refresh';
 import type { ChangeThreadView } from './model';
 import { readChangeDetail } from './topic-head';
+import { openRequestSpec, type RequestSpecCard } from './request-model';
 import {
   ballotOf,
   ballotVotes,
@@ -159,6 +167,30 @@ function ChangeLine({ item, letter = null }: { item: ThreadItem; letter?: string
   );
 }
 
+/** The plan a change was built from, under its name, with the plan's own Read. */
+function PlanLine({ plan }: { plan: RequestSpecCard }): ReactNode {
+  const t = useMessages('project');
+  const [loading, setLoading] = useState(false);
+  return (
+    <span className="mt-1 flex min-w-0 items-center gap-1.5 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-plan={plan.key}>
+      <span aria-hidden="true">📋</span>
+      <span className="min-w-0 truncate">{t('project:topic.thread.page.fromPlan', { title: plan.title })}</span>
+      <button
+        type="button"
+        className="shrink-0 font-semibold text-violet-700 hover:underline disabled:opacity-60 dark:text-violet-300"
+        disabled={loading}
+        aria-label={t('project:topic.request.spec.readNamed', { title: plan.title })}
+        onClick={async () => {
+          setLoading(true);
+          try { await openRequestSpec(plan); } finally { setLoading(false); }
+        }}
+      >
+        {loading ? t('project:topic.request.spec.opening') : t('project:topic.request.spec.read')}
+      </button>
+    </span>
+  );
+}
+
 /** What was said on a change's own page, folded under it; new replies go on the request. */
 function EarlierReplies({ item }: { item: ThreadItem }): ReactNode {
   const t = useMessages('project');
@@ -191,12 +223,13 @@ function EarlierReplies({ item }: { item: ThreadItem }): ReactNode {
 }
 
 /** One change, on its own: its name, its two cards, and its earlier replies. */
-function ChangeBlock({ item }: { item: ThreadItem }): ReactNode {
+function ChangeBlock({ item, plan = null }: { item: ThreadItem; plan?: RequestSpecCard | null }): ReactNode {
   const t = useMessages('project');
   const [view] = useChangeViews([item]);
   return (
     <div className="mt-3" data-thread-change={item.id} data-thread-change-state={item.state || ''}>
       <ChangeLine item={item} />
+      {plan ? <PlanLine plan={plan} /> : null}
       {item.state === 'underway' ? (
         <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{t('project:topic.thread.page.underway')}</p>
       ) : view ? (
@@ -210,7 +243,7 @@ function ChangeBlock({ item }: { item: ThreadItem }): ReactNode {
 const letterOf = (i: number) => String.fromCharCode(65 + i);
 
 /** One competing change's row, with its Testing in a word and its preview. */
-function CompetingRow({ item, i, view }: { item: ThreadItem; i: number; view: ChangeView | null }): ReactNode {
+function CompetingRow({ item, i, view, plan = null }: { item: ThreadItem; i: number; view: ChangeView | null; plan?: RequestSpecCard | null }): ReactNode {
   const t = useMessages('project');
   const preview = view ? (view.card.actions || []).find((a) => a.preview) : null;
   const testing = view ? view.v.testing : null;
@@ -229,6 +262,7 @@ function CompetingRow({ item, i, view }: { item: ThreadItem; i: number; view: Ch
             </span>
           ) : null}
         </span>
+        {plan ? <PlanLine plan={plan} /> : null}
       </span>
       {preview ? <span className="shrink-0"><ActionButton a={preview} /></span> : null}
     </div>
@@ -285,7 +319,7 @@ function Bar({ yes, need, label }: { yes: number; need: number; label: string })
  * Neither or Close it. The first to pass its project's rule wins and closes
  * the rest (services/threads.js closeRivals, closeThreadChanges).
  */
-export function Competing({ slug, data, anchor, options, close, onChanged }: {
+export function Competing({ slug, data, anchor, options, close, onChanged, plans = null }: {
   slug: string | null;
   data: ThreadPayload;
   /** The requests the page is about (./thread-model.ts ballotOf). */
@@ -293,6 +327,8 @@ export function Competing({ slug, data, anchor, options, close, onChanged }: {
   options: ThreadItem[];
   close: ThreadItem | null;
   onChanged: () => void;
+  /** The plan each change was built from, by its id. */
+  plans?: ReadonlyMap<number, RequestSpecCard> | null;
 }): ReactNode {
   const t = useMessages('project');
   const [busy, setBusy] = useState(false);
@@ -332,7 +368,7 @@ export function Competing({ slug, data, anchor, options, close, onChanged }: {
     <div className="mt-3" data-thread-ballot={options.length} data-thread-ballot-close={close ? close.id : undefined} aria-busy={busy}>
       <div className={KICKER}>{heading}</div>
       <div className="mt-2 overflow-hidden rounded-2xl bg-[color:var(--messages-surface)]" role="list" aria-label={t('project:topic.thread.ballot.label')}>
-        {options.map((o, i) => <CompetingRow key={o.id} item={o} i={i} view={views[i]} />)}
+        {options.map((o, i) => <CompetingRow key={o.id} item={o} i={i} view={views[i]} plan={plans?.get(o.id) || null} />)}
         {close ? (
           <div role="listitem" className="flex items-start gap-3 border-t border-[color:var(--app-sheet-line)] px-3.5 py-3" data-change-row="close">
             <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-zinc-200/80 text-zinc-700 dark:bg-zinc-700/80 dark:text-zinc-200" aria-hidden="true"><XIcon className="h-4 w-4" /></span>
@@ -464,7 +500,7 @@ function CloseVote({ slug, close, onChanged }: { slug: string | null; close: Thr
  * or nothing at all) is drawn on its own, with its own cards. Nothing when
  * the thread holds neither.
  */
-export function ThreadChanges({ slug, data, number, changes, close, onChanged }: {
+export function ThreadChanges({ slug, data, number, changes, close, onChanged, plans = null }: {
   slug: string | null;
   data: ThreadPayload;
   /** The request the page is: what its ballot is about. */
@@ -472,6 +508,8 @@ export function ThreadChanges({ slug, data, number, changes, close, onChanged }:
   changes: ThreadItem[];
   close: ThreadItem | null;
   onChanged: () => void;
+  /** The plan each change was built from, by its id (./request-head.tsx plansByChange). */
+  plans?: ReadonlyMap<number, RequestSpecCard> | null;
 }): ReactNode {
   if (!changes.length && !close) return null;
   const anchor = [number];
@@ -485,9 +523,9 @@ export function ThreadChanges({ slug, data, number, changes, close, onChanged }:
     <section className="mt-4 border-t border-[color:var(--app-sheet-line)]" data-thread-changes={changes.length}>
       {ballot ? (
         <Competing key={ballot.options.map((o) => o.id).join(',')} slug={slug} data={data} anchor={anchor}
-          options={ballot.options} close={ballot.close} onChanged={onChanged} />
+          options={ballot.options} close={ballot.close} onChanged={onChanged} plans={plans} />
       ) : null}
-      {rest.map((item) => <Fragment key={item.id}><ChangeBlock item={item} /></Fragment>)}
+      {rest.map((item) => <Fragment key={item.id}><ChangeBlock item={item} plan={plans?.get(item.id) || null} /></Fragment>)}
       {closeAlone ? <CloseVote slug={slug} close={closeAlone} onChanged={onChanged} /> : null}
     </section>
   );

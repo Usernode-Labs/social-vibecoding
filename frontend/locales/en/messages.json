@@ -3559,6 +3559,10 @@
     "text": "Close thread",
     "description": "Accessible name and tooltip of the X button on the thread side pane: closes the thread and returns to the conversation."
   },
+  "replies.backToMain": {
+    "text": "Back to Main Chat",
+    "description": "Accessible name and tooltip of the back arrow on a thread opened in Main Chat (the person's private chat with Homeroom bot, on the AI tab): closes the thread and shows Main Chat again. \"Main Chat\" is that chat's name; keep it the same as its title."
+  },
   "replies.resize": {
     "text": "Resize the thread",
     "description": "Accessible name of the divider between a chat and its open thread on a computer, which is dragged left and right to make the thread narrower or wider."

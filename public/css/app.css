@@ -18140,6 +18140,22 @@ body:has(#ai-screen:not(.hidden)) {
   border-top: 0;
   box-shadow: none;
 }
+/* A THREAD IN MAIN CHAT (31 Oct 2026). Main Chat is a column of 400 to
+   720px, too narrow for the chat and a thread side by side: Messages draws
+   them so from a 768px window, and here that made two panes of about 200px,
+   a word a line. The thread covers the chat, as it does on a phone, lies
+   flat as the chat does, and its back arrow (ReplyThreadPanel `backToMain`)
+   returns to the chat. The phone's drawer holds Main Chat the same way. */
+.messages-layout[data-main-chat].messages-has-reply-thread > .messages-thread-pane { display: none; }
+.messages-layout[data-main-chat] > .messages-reply-pane {
+  flex: 1 1 auto;
+  width: 100%;
+  margin: 0;
+  border-radius: 0;
+  border-top: 0;
+  box-shadow: none;
+}
+.messages-layout[data-main-chat] > .messages-reply-pane > .messages-reply-resizer { display: none; }
 /* A request or a change opened from the list: the side panel in Main's
    place, and Main back when the panel closes. It is drawn as this page's
    own column, not as a panel of its own (29 Oct 2026): Main's width, edge

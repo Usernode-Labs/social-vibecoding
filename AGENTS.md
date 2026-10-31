@@ -243,7 +243,11 @@ is no replay plan to write and nothing to verify locally.
   Its page (`frontend/src/features/ai/`) lists your work beside Main Chat,
   the chat itself; on a phone the two are one drawer, Messages' own strip
   (`phone-drawer.tsx`), and a request, a change or a decision opens on its
-  own page, never in the drawer.
+  own page, never in the drawer. Main Chat keeps no thread of a request's:
+  the bot's news about one opens the request's page
+  (`features/messages/request-page.ts`), what still asks something there is
+  drawn whole in the chat, and a thread in it is only a private one the
+  person started, which the page lists.
   Discover is a tab on the rail only: on a phone it is a page Home's
   Discover section opens, with Back to Home. The markup is the rail's
   order, and app.css orders the phone's five cells.

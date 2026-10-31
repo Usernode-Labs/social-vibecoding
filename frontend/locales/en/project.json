@@ -2979,6 +2979,10 @@
     "text": "Muted: replies here do not notify you, until you reply yourself. Press to unmute.",
     "description": "Hover text of the button on a request's or a change's page while the thread is muted."
   },
+  "topic.thread.follow.unmute": {
+    "text": "Unmute",
+    "description": "A row of a request's or a change's ⋯ menu, once the person has muted its thread: notifications for replies in the thread start again. A verb in the imperative."
+  },
   "topic.thread.move.merge": {
     "text": "Proposed: merge into #{{number}}",
     "description": "Line under the list of a thread (every request, change and vote about one piece of work) on a request's or a change's page: someone proposed merging this thread into another one. {{number}} is the other thread's number."
@@ -3498,6 +3502,10 @@
   "topic.request.spec.readNamed": {
     "text": "Read {{title}}",
     "description": "Accessible name of the Read button on a plan's card (under a request, or on the page of a change built from the plan). {{title}} is the plan's title. Read is a verb in the imperative."
+  },
+  "topic.thread.page.fromPlan": {
+    "text": "Built from the plan \"{{title}}\"",
+    "description": "On a request's page, under a change built from a plan posted on the request: says which plan it carries out, beside the plan's Read button. {{title}} is the plan's title."
   },
   "topic.request.spec.opening": {
     "text": "Opening…",

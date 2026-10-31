@@ -10,6 +10,7 @@ import { newsIcon } from './bot-shared';
 import { endedWords, OpenState, ProjectTile, RequestTag, SettledLine, trayEnded, trayNow, type StripRow } from './bot-strip';
 import { tracksByKey } from './bot-track';
 import { useBotWork } from './bot-work';
+import { openRequestPage, requestPageOf } from './request-page';
 import { openThreadAt } from './store';
 import type { ConversationMessage, HomeroomBotMeta, HomeroomBotWork } from './types';
 
@@ -23,11 +24,14 @@ import type { ConversationMessage, HomeroomBotMeta, HomeroomBotWork } from './ty
  *            Needs your answer · 3 updates
  *
  * the project's tile, the request's number and title and where it stands.
- * Every row opens the same way: a tap opens the request's story in the pane
- * beside the chat, at the message. That is its thread (the message's
- * `threadRootId`, or the card itself); for news from before threads, which
- * has no thread, it is the oldest piece, which the pane draws with the
- * pieces after it (./bot-request.ts storyRootIn). Inside, everything is whole.
+ * Every row opens the same way: a tap opens the request's own page, its
+ * public thread (31 Oct 2026, ./request-page.ts): beside the bot page on a
+ * desktop, else the page. It used to open a thread of this chat's own
+ * beside it, a second view of the same request that nothing else listed.
+ *
+ * What still asks something here (a question and its answers, a plan and
+ * its Build it, a button to press) is not folded into a line: it is drawn
+ * whole where it was said (asksInChat), so it is answered in the chat.
  *
  * A row says at a glance whether it is still open. One the tray holds open
  * is two lines with a full tile, and a badge in amber while it waits on the
@@ -195,6 +199,20 @@ export function newsTitle(meta: HomeroomBotMeta): string {
   return meta.issueNumber ? translate('messages:bot.strip.requestNumber', { number: String(meta.issueNumber) }) : project;
 }
 
+/**
+ * Pure: whether a piece of news still asks something the chat answers: a
+ * question with its answers, two at once, a plan to build, buttons to
+ * press. Such a message is drawn whole in the main chat rather than folded
+ * into its request's line, for as long as it is open. What it asks once the
+ * tray no longer holds its request is the caller's to read (newsStatusOf):
+ * that has moved on, and is a line again.
+ */
+export function asksInChat(message: ConversationMessage): boolean {
+  const meta = metaOf(message);
+  if (!meta || message.deleted || meta.status !== 'open' || meta.replaced) return false;
+  return !!(meta.question || meta.questions?.length || meta.actions?.length || (meta.kind === 'plan' && meta.plan));
+}
+
 /** Pure: the thread a line opens, or null for a message from before threads (its story opens on its oldest piece). */
 export function newsThread(message: ConversationMessage): number | null {
   if (message.threadRootId) return message.threadRootId;
@@ -228,13 +246,17 @@ export function BotNewsLine({ message, focused = false, earlier = [], updates: u
   const meta = metaOf(message);
   if (!meta) return null;
   const status = newsStatus(meta, trayNow(work), trayEnded(work));
-  // Its story: the thread, else the oldest piece from before threads.
-  const rootId = newsThread(message) ?? (earlier[0]?.id || message.id);
   const key = requestKey(meta);
   const icon = newsIcon(work, meta.appSlug, meta.appName);
   const updates = updatesIn ?? (meta.kind === 'activity' && message.thread ? message.thread.replyCount : 0);
+  // Its story: the request's own page. News that names no project's page
+  // (sent before the bot's news named its project) opens where it is told,
+  // its thread or, from before threads, its oldest piece.
+  const page = requestPageOf(message);
+  const rootId = newsThread(message) ?? (earlier[0]?.id || message.id);
   function tap() {
-    openThreadAt(rootId, rootId === message.id ? null : message.id);
+    if (page) openRequestPage(page, message.conversationId);
+    else openThreadAt(rootId, rootId === message.id ? null : message.id);
   }
 
   return (

@@ -4,7 +4,11 @@
  *
  *   Proposed: merge into #12. Happens in 23 hours unless someone objects.
  *   [Agree] [Object]
- *   [Move…]  → Merge into #__ | Split one out: (choose) | Break it up: parts
+ *   ⋯ Merge into another thread → #__ | Split one out → (choose) | Break it up → parts
+ *
+ * 31 Oct 2026: the three moves are rows of the page's ⋯ (./thread-menu.ts),
+ * not pills under every thread; the row opens its form here (`open`). Where
+ * a page has no ⋯ to put them in, they stay pills (`pills`).
  *
  * Break it up (#6019 follow-up) turns the thread's request into smaller
  * requests in the same thread, each with a title and what it is done when;
@@ -16,7 +20,7 @@
  * client's fetch wrapper turns into a Join prompt.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 
 import { useMessages } from '../../../lib/i18n/react';
@@ -24,6 +28,32 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { moveLines, splittable, type Phrase, type ThreadPayload } from './thread-model';
+
+export type MoveKind = 'merge' | 'split' | 'breakup';
+
+/**
+ * The moves this thread can be proposed for, in the ⋯'s order: none on a
+ * decision, a closed thread or one with a move already waiting; Split one
+ * out where it holds more than its lead; Break it up where an open request
+ * leads it. Pure.
+ */
+export function moveChoices(data: ThreadPayload | null): MoveKind[] {
+  if (!data || !data.thread.number || data.thread.kind === 'decision' || data.thread.state !== 'open') return [];
+  if ((data.moves || []).length) return [];
+  const number = data.thread.number;
+  const candidates = splittable(data);
+  const out: MoveKind[] = ['merge'];
+  if (candidates.length > 0 && candidates.length < data.items.length) out.push('split');
+  if (data.thread.lead === 'request' && data.items.some((i) => i.type === 'request' && i.number === number && i.status === 'open')) out.push('breakup');
+  return out;
+}
+
+/** A move's row and pill, in the words the pills had. */
+export const MOVE_LABELS: Record<MoveKind, string> = {
+  merge: 'project:topic.thread.move.mergeInto',
+  split: 'project:topic.thread.move.splitOut',
+  breakup: 'project:topic.thread.move.breakUp',
+};
 
 async function post(path: string, body: unknown): Promise<{ ok: boolean; data: any }> {
   try {
@@ -39,29 +69,49 @@ async function post(path: string, body: unknown): Promise<{ ok: boolean; data: a
   }
 }
 
-export function ThreadMoves({ slug, data, onChanged }: {
+export function ThreadMoves({ slug, data, onChanged, open: chosen, onOpen, pills = true }: {
   slug: string;
   data: ThreadPayload;
   /** Read the thread again: a move changed it. */
   onChanged: () => void;
+  /** The form open, when the page's ⋯ chose it (./thread-items.tsx); this keeps its own otherwise. */
+  open?: MoveKind | null;
+  onOpen?: (next: MoveKind | null) => void;
+  /** Draw the moves as pills: a page with no ⋯ to list them in. */
+  pills?: boolean;
 }): ReactNode {
   const t = useMessages('project');
   const say = (p: Phrase) => t(p.id, p.values);
-  const [open, setOpen] = useState<'merge' | 'split' | 'breakup' | null>(null);
+  const [own, setOwn] = useState<MoveKind | null>(null);
+  const open = chosen !== undefined ? chosen : own;
+  const setOpen = (next: MoveKind | null) => { if (onOpen) onOpen(next); else setOwn(next); };
   const [into, setInto] = useState('');
   const [item, setItem] = useState('');
   const [parts, setParts] = useState<Array<{ title: string; doneWhen: string }>>([{ title: '', doneWhen: '' }, { title: '', doneWhen: '' }]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Opened from the ⋯, which can be far from where the form is drawn: the
+  // form comes into view with its first field ready.
+  const form = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (pills || !open) return;
+    const el = form.current;
+    el?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+    el?.querySelector<HTMLElement>('input, select')?.focus({ preventScroll: true });
+  }, [open, pills]);
   const number = data.thread.number;
   if (!number || data.thread.kind === 'decision' || data.thread.state !== 'open') return null;
   const moves = data.moves || [];
   const candidates = splittable(data);
   const app = encodeURIComponent(slug);
-  // A thread led by an open request can break it up.
-  const breakable = data.thread.lead === 'request'
-    && data.items.some((i) => i.type === 'request' && i.number === number && i.status === 'open');
+  const choices = moveChoices(data);
   const filledParts = parts.filter((p) => p.title.trim());
+  // Opened from the ⋯, a form says how to put it away again.
+  const cancel = pills ? null : (
+    <Button type="button" variant="pillNeutral" size="sm" ink="neutral" onClick={() => { setOpen(null); setError(null); }}>
+      {t('core:common.cancel')}
+    </Button>
+  );
 
   const act = async (path: string, body: unknown) => {
     if (busy) return;
@@ -110,28 +160,18 @@ export function ThreadMoves({ slug, data, onChanged }: {
           </div>
         );
       })}
-      {moves.length ? null : (
+      {pills && choices.length ? (
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" variant="pillNeutral" size="sm" ink="neutral" aria-pressed={open === 'merge'} data-thread-move-open="merge"
-            onClick={() => { setOpen(open === 'merge' ? null : 'merge'); setError(null); }}>
-            {t('project:topic.thread.move.mergeInto')}
-          </Button>
-          {candidates.length > 0 && candidates.length < data.items.length ? (
-            <Button type="button" variant="pillNeutral" size="sm" ink="neutral" aria-pressed={open === 'split'} data-thread-move-open="split"
-              onClick={() => { setOpen(open === 'split' ? null : 'split'); setError(null); }}>
-              {t('project:topic.thread.move.splitOut')}
+          {choices.map((kind) => (
+            <Button key={kind} type="button" variant="pillNeutral" size="sm" ink="neutral" aria-pressed={open === kind} data-thread-move-open={kind}
+              onClick={() => { setOpen(open === kind ? null : kind); setError(null); }}>
+              {t(MOVE_LABELS[kind])}
             </Button>
-          ) : null}
-          {breakable ? (
-            <Button type="button" variant="pillNeutral" size="sm" ink="neutral" aria-pressed={open === 'breakup'} data-thread-move-open="breakup"
-              onClick={() => { setOpen(open === 'breakup' ? null : 'breakup'); setError(null); }}>
-              {t('project:topic.thread.move.breakUp')}
-            </Button>
-          ) : null}
+          ))}
         </div>
-      )}
+      ) : null}
       {open === 'breakup' ? (
-        <form className="flex flex-col gap-2" onSubmit={propose} data-thread-move-form="breakup">
+        <form ref={form} className="flex flex-col gap-2" onSubmit={propose} data-thread-move-form="breakup">
           <p className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{t('project:topic.thread.move.breakUpAbout', { number: number ?? '' })}</p>
           {parts.map((part, i) => (
             <div key={i} className="flex flex-col gap-1" data-thread-move-part={i}>
@@ -150,11 +190,12 @@ export function ThreadMoves({ slug, data, onChanged }: {
               </Button>
             ) : null}
             <Button type="submit" size="sm" disabled={busy || filledParts.length < 2}>{t('project:topic.thread.move.propose')}</Button>
+            {cancel}
           </div>
         </form>
       ) : null}
       {open === 'merge' || open === 'split' ? (
-        <form className="flex flex-wrap items-center gap-2" onSubmit={propose} data-thread-move-form={open}>
+        <form ref={form} className="flex flex-wrap items-center gap-2" onSubmit={propose} data-thread-move-form={open}>
           {open === 'merge' ? (
             <Input aria-label={t('project:topic.thread.move.number')} placeholder={t('project:topic.thread.move.number')} inputMode="numeric"
               value={into} onChange={(e) => setInto(e.currentTarget.value.replace(/[^0-9]/g, ''))} required />
@@ -169,6 +210,7 @@ export function ThreadMoves({ slug, data, onChanged }: {
             </Select>
           )}
           <Button type="submit" size="sm" disabled={busy || (open === 'merge' ? !into : !item)}>{t('project:topic.thread.move.propose')}</Button>
+          {cancel}
         </form>
       ) : null}
       {error ? <p role="alert" className="text-[0.8125rem] text-zinc-600 dark:text-zinc-300">{error}</p> : null}
