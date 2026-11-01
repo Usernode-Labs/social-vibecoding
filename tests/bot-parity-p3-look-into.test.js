@@ -36,14 +36,14 @@ test('the scout\'s prompt carries the question, an investigation\'s notes and wh
   });
   assert.match(later, /NOTES SO FAR[\s\S]*the date test fails near midnight/);
   assert.match(later, /git log --since="2026-11-01T06:00:00.000Z"/);
-  assert.ok(!/—/.test(plain + later), 'no em dash in the prompt');
+  assert.ok(!/\u2014/.test(plain + later), 'no em dash in the prompt');
 });
 
 test('a reply\'s findings: its block read, its words when it wrote none, secrets left out, no em dash', () => {
   const found = look.parseFindings([
     'I read the streak code.',
     '```json',
-    JSON.stringify({ summary: 'The streak resets because it counts days in UTC — not your time zone.', answered: true, worth_acting: true, line: 'It counts days in UTC.', files: ['src/streak.js', '.env', 'keys/server.pem'], checks: ['npm test'] }),
+    JSON.stringify({ summary: 'The streak resets because it counts days in UTC \u2014 not your time zone.', answered: true, worth_acting: true, line: 'It counts days in UTC.', files: ['src/streak.js', '.env', 'keys/server.pem'], checks: ['npm test'] }),
     '```',
   ].join('\n'));
   assert.equal(found.answered, true);
@@ -51,7 +51,7 @@ test('a reply\'s findings: its block read, its words when it wrote none, secrets
   assert.equal(found.line, 'It counts days in UTC.');
   assert.deepEqual(found.files, ['src/streak.js']);
   assert.deepEqual(found.checks, ['npm test']);
-  assert.ok(!found.summary.includes('—'));
+  assert.ok(!found.summary.includes('\u2014'));
   const bare = look.parseFindings('It looks fine. The streak code handles time zones.');
   assert.equal(bare.answered, false);
   assert.match(bare.summary, /It looks fine/);
@@ -97,7 +97,7 @@ test('the tool is offered, and said in the prompt, only while the bot is on', ()
   assert.deepEqual(look.tools({ user, settings: { mode: 'off' } }), []);
   assert.ok(look.promptLines({ user, settings: { mode: 'live' } }).join(' ').includes('look_into'));
   assert.deepEqual(look.promptLines({ user, settings: { mode: 'off' } }), []);
-  assert.ok(!/—/.test(look.promptLines({ user, settings: { mode: 'live' } }).join('\n') + JSON.stringify(look.LOOK_TOOL)));
+  assert.ok(!/\u2014/.test(look.promptLines({ user, settings: { mode: 'live' } }).join('\n') + JSON.stringify(look.LOOK_TOOL)));
 });
 
 test('the working card says "Looking into it in <project>": the kind the typing event carries', () => {

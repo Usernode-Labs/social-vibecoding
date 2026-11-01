@@ -31,7 +31,7 @@ test('what may be asked: the defaults, and each limit refused in words', () => {
   for (const bad of [{ everyHours: 0 }, { everyHours: 25 }, { everyHours: 1.5 }, { days: 15 }, { days: 0 }, { budgetDollars: 11 }, { budgetDollars: 0 }, { budgetDollars: 'lots' }]) {
     const out = rules.investigationSpec({ project: 'gym', goal: 'Watch the sign-up errors.', ...bad });
     assert.equal(out.ok, false, JSON.stringify(bad));
-    assert.ok(out.error.length > 10 && !/—/.test(out.error));
+    assert.ok(out.error.length > 10 && !/\u2014/.test(out.error));
   }
   assert.equal(rules.investigationSpec({ goal: 'Watch the sign-up errors.' }).ok, false);
 });
@@ -101,7 +101,7 @@ test('the bot\'s own parts: the model\'s name, the proposed card, the card\'s ro
   assert.match(inv.updateText({ n: 2, line: 'The check failed again at 3am.', ok: true }), /^Check-in 2 of your investigation: The check failed again at 3am\./);
   const words = [inv.endedText('budget', 'x'), inv.endedText('days', 'x'), inv.endedText('paused', 'x'), JSON.stringify(inv.INVESTIGATION_TOOL),
     inv.promptLines({ user: { id: 1 }, settings: { mode: 'live' } }).join('\n')].join('\n');
-  assert.ok(!/—/.test(words), 'no em dash in what the bot says');
+  assert.ok(!/\u2014/.test(words), 'no em dash in what the bot says');
   assert.doesNotMatch(inv.promptLines({ user: { id: 1 }, settings: { mode: 'live' } }).join(' '), /\$\d/, 'its prompt names no money');
   assert.deepEqual(inv.tools({ user: { id: 1 }, settings: { mode: 'off' } }), []);
 });
@@ -188,7 +188,7 @@ test('the card, ended: why it ended, its spend in grey, Notes and File what it f
 test('the card\'s source keeps the shell\'s rules: catalog words, the palette, whole class literals', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', ENTRY), 'utf8');
   assert.doesNotMatch(src, /\b(?:gray|indigo)-\d/);
-  assert.ok(!src.includes('—'));
+  assert.ok(!src.includes('\u2014'));
   assert.match(src, /messages:botCards\.investigation\.fileWords/);
   assert.match(src, /sayAsMe\(message, t\('messages:botCards\.investigation\.fileWords'\)\)/);
   for (const action of ['start', 'not_now', 'stop']) assert.ok(src.includes(`tap('${action}')`), action);
