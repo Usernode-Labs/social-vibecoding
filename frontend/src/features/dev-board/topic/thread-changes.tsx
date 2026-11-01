@@ -354,19 +354,19 @@ function FoldedChange({ item, i, view, plan, open, onToggle }: {
   return (
     <div className="dev-thread-fold" data-thread-change={item.id} data-thread-change-state={item.state || ''} data-thread-fold={open ? 'open' : 'shut'}>
       <div className="flex min-w-0 items-center gap-2" data-thread-change-line={item.id}>
-        <button type="button" className="dev-thread-fold-head min-w-0 flex-1 text-left" aria-expanded={open} data-thread-fold-toggle={item.id} onClick={onToggle}>
+        <button type="button" className="dev-thread-fold-head min-w-0 flex-1 text-start" aria-expanded={open} data-thread-fold-toggle={item.id} onClick={onToggle}>
           <span className="flex min-w-0 items-center gap-1.5">
             <ChevronDownIcon className="dev-ws-reveal-chev h-4 w-4 shrink-0" aria-hidden="true" style={open ? { transform: 'rotate(180deg)' } : undefined} />
             <span className={`${KICKER} min-w-0 truncate`}>{kicker}</span>
           </span>
-          <span className="mt-0.5 block min-w-0 pl-[22px] text-[15px] font-[650] leading-snug text-zinc-900 dark:text-zinc-100" data-thread-change-title={item.id}>
+          <span className="mt-0.5 block min-w-0 ps-[22px] text-[15px] font-[650] leading-snug text-zinc-900 dark:text-zinc-100" data-thread-change-title={item.id}>
             {item.title || t('project:topic.thread.item.changeUnnumbered')}
           </span>
         </button>
         {status ? <span className="shrink-0" data-thread-change-status={status.key}><StatusPill s={status} inline /></span> : null}
         <ChangeMenu item={item} view={view} />
       </div>
-      {open ? <div className="pl-[22px]"><ChangeBody item={item} view={view} plan={plan} ballot /></div> : null}
+      {open ? <div className="ps-[22px]"><ChangeBody item={item} view={view} plan={plan} ballot /></div> : null}
     </div>
   );
 }

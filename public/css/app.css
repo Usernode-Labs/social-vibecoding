@@ -16991,7 +16991,7 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   background: var(--messages-surface); outline: 1px solid var(--app-sheet-line); outline-offset: -1px; }
 .dev-thread-shot img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top center; }
 .dev-thread-shot-none { display: block; width: 100%; height: 100%; }
-.dev-thread-shot-label { position: absolute; left: 4px; bottom: 4px; padding: 1px 6px; border-radius: 9999px;
+.dev-thread-shot-label { position: absolute; inset-inline-start: 4px; bottom: 4px; padding: 1px 6px; border-radius: 9999px;
   font-size: 11px; font-weight: 600; line-height: 16px; color: #fff; background: rgba(0, 0, 0, 0.55); }
 .dev-thread-shots-expand { padding: 4px 10px; border: 0; border-radius: 9999px; font-size: 13px; font-weight: 600;
   color: var(--text-primary); background: var(--state-neutral-bg); }
@@ -17005,7 +17005,7 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-thread-fold-head { display: block; padding: 2px 0; border: 0; background: none; border-radius: 8px; }
 .dev-thread-fold-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* A reply written on one of the request's changes says which, after its time. */
-.gc-msg-on-change { margin-left: 6px; font-size: 12px; color: var(--text-muted); }
+.gc-msg-on-change { margin-inline-start: 6px; font-size: 12px; color: var(--text-muted); }
 /* #5007: a change built for a request points its replies at the request
    where its conversation lives. The `p` variant sits above the "N replies"
    row; the `div` one replaces the "No replies yet" row and keeps that
@@ -18282,7 +18282,7 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
 #ai-screen .ai-preview-pane {
   position: fixed;
   z-index: 21;
-  right: 0;
+  inset-inline-end: 0;
   bottom: 0;
   top: calc(var(--platform-header-h) + var(--platform-safe-top, 0px) - .5rem);
   width: var(--ai-preview-w);
@@ -18291,14 +18291,14 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
   overflow: hidden;
   background: var(--dc-sheet-solid, #fff);
   border-top: 1px solid var(--app-sheet-line);
-  border-left: 1px solid var(--app-sheet-line);
+  border-inline-start: 1px solid var(--app-sheet-line);
 }
 #ai-screen .ai-preview-pane > .messages-design-pane { border-radius: 0; box-shadow: none; padding-top: 4px; }
 #ai-screen[data-ai-preview] .ai-main-pane > .side-panel-divider { display: none; }
 #ai-screen[data-ai-preview="three"] {
   --ai-col-w: min(var(--ai-main-w), 440px);
   --ai-preview-w: max(360px, calc(100vw - var(--platform-rail-w, 0px) - 480px - var(--ai-col-w)));
-  padding-right: calc(var(--ai-col-w) + var(--ai-preview-w));
+  padding-inline-end: calc(var(--ai-col-w) + var(--ai-preview-w));
 }
 #ai-screen[data-ai-preview="halves"] {
   --ai-col-w: calc((100vw - var(--platform-rail-w, 0px)) / 2);
@@ -18307,7 +18307,7 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
 #ai-screen[data-ai-preview="halves"] .ai-screen-body { display: none; }
 #ai-screen:is([data-ai-preview="three"], [data-ai-preview="halves"]) .ai-main-pane {
   width: var(--ai-col-w);
-  right: var(--ai-preview-w);
+  inset-inline-end: var(--ai-preview-w);
 }
 /* A phone: the whole of the page, over the drawer, its arrow back to the thread. */
 #ai-screen[data-ai-preview="full"] .ai-preview-pane {
