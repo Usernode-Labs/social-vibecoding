@@ -8,10 +8,19 @@
 import type { Tx } from '../kernel/index.ts';
 import { BOT_USERNAME } from '../rules/bot-notes.ts';
 import {
-  BATCH_RAISES_SQL, BUILD_CANDIDATES_SQL, LANE_SETTING_KEYS, NEXT_ELIGIBLE_SQL, READ_CANDIDATES_SQL, SLOTS_IN_USE_SQL,
+  BUILD_CANDIDATES_SQL, LANE_SETTING_KEYS, NEXT_ELIGIBLE_SQL, READ_CANDIDATES_SQL, SLOTS_IN_USE_SQL,
   botOn, laneSettings, raisedOf,
 } from '../rules/bot-loop.ts';
 import type { LaneSettings, Raised, Slot } from '../rules/bot-loop.ts';
+
+// Homeroom bot parity (P4): a running batch's raise, per request its Build
+// started (services/homeroom-bot-batches.js raiseFor): the picks read it
+// as rules/bot-loop.ts raisedOf shapes it. Only batches still running.
+export const BATCH_RAISES_SQL = `
+  SELECT b.app_id, n.issue_number, MAX(b.per_person)::int AS per_person
+    FROM homeroom_bot_batches b CROSS JOIN LATERAL unnest(b.started_numbers) AS n(issue_number)
+   WHERE b.state = 'running' AND b.ends_at > NOW() AND b.per_person IS NOT NULL
+   GROUP BY b.app_id, n.issue_number`;
 
 export interface ReadCandidate {
   app_id: number; issue_number: number; priority: number; reason: string;
@@ -27,7 +36,7 @@ export interface Facts {
   builds: BuildCandidate[];
   nextEligible: string | null;
   // Homeroom bot parity (P4): a running batch's raised per-person number,
-  // for each request its Build started (rules/bot-loop.ts BATCH_RAISES_SQL).
+  // for each request its Build started (BATCH_RAISES_SQL above).
   raised?: Raised;
 }
 

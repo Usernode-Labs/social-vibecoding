@@ -30,7 +30,7 @@
 // BATCH_PROPOSALS_PER_APP (10) open: raiseFor decides it at Build, the batch
 // row keeps it, and the two places those holds are decided read it back for
 // the batch's started requests only (the lane's picks, rules/bot-loop.ts
-// BATCH_RAISES_SQL; the proposal hold, homeroom-bot.js simulateCaps through
+// bot-lane/facts.ts BATCH_RAISES_SQL; the proposal hold, homeroom-bot.js simulateCaps through
 // proposalsPerAppFor). A batch ends at the latest RUN_DAYS after Build.
 
 const log = require('./logger');

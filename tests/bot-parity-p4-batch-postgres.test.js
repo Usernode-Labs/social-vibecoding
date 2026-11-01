@@ -47,6 +47,7 @@ test('a batch against the full PostgreSQL schema', { timeout: 120000 }, async (t
   const batches = require('../src/services/homeroom-bot-batches');
   const homeroomBot = require('../src/services/homeroom-bot');
   const loop = require('../src/workflow/rules/bot-loop.ts');
+  const laneFacts = require('../src/workflow/bot-lane/facts.ts');
   const conversations = require('../src/services/conversations');
 
   const asKernel = async (fn) => {
@@ -210,7 +211,7 @@ test('a batch against the full PostgreSQL schema', { timeout: 120000 }, async (t
   assert.equal(starts.length, 2);
 
   // ── The lane's raise: the batch's started requests, while it runs ──
-  const raised = loop.raisedOf((await pool.query(loop.BATCH_RAISES_SQL)).rows);
+  const raised = loop.raisedOf((await pool.query(laneFacts.BATCH_RAISES_SQL)).rows);
   assert.deepEqual(raised, { [`${app.id}:1`]: 6 });
 
   // ── The proposal hold: five of the bot's changes open on the project ──
@@ -264,7 +265,7 @@ test('a batch against the full PostgreSQL schema', { timeout: 120000 }, async (t
   assert.ok(ended.ended_at);
   const { rows: [endedMsg] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [msg.id]);
   assert.equal(endedMsg.metadata.homeroomBot.card.state, 'done');
-  assert.deepEqual(loop.raisedOf((await pool.query(loop.BATCH_RAISES_SQL)).rows), {});
+  assert.deepEqual(loop.raisedOf((await pool.query(laneFacts.BATCH_RAISES_SQL)).rows), {});
   assert.equal(await batches.proposalsPerAppFor(pool, app.id, 1, 5), 5);
   assert.equal(await batches.sweep(pool, { ws }), null, 'nothing left running');
 

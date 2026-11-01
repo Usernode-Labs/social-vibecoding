@@ -362,16 +362,12 @@ export function personKeyOf(row: { person_id?: unknown; app_id?: unknown } | nul
 export interface Slot { kind: string; appId: number; person: string }
 
 // Homeroom bot parity (P4): a running batch's raise, for each request its
-// Build started (`${appId}:${issueNumber}` → the batch's per-person number).
-// The project's owner working through its requests may have up to
-// MAX_PER_PERSON of them going at once, and as many building on the project
-// (services/homeroom-bot-batches.js raiseFor). Only those requests, only
-// while the batch runs: every other candidate keeps the settings' numbers.
-export const BATCH_RAISES_SQL = `
-  SELECT b.app_id, n.issue_number, MAX(b.per_person)::int AS per_person
-    FROM homeroom_bot_batches b CROSS JOIN LATERAL unnest(b.started_numbers) AS n(issue_number)
-   WHERE b.state = 'running' AND b.ends_at > NOW() AND b.per_person IS NOT NULL
-   GROUP BY b.app_id, n.issue_number`;
+// Build started (`${appId}:${issueNumber}` → the batch's per-person number,
+// read by bot-lane/facts.ts BATCH_RAISES_SQL). The project's owner working
+// through its requests may have up to MAX_PER_PERSON of them going at once,
+// and as many building on the project (services/homeroom-bot-batches.js
+// raiseFor). Only those requests, only while the batch runs: every other
+// candidate keeps the settings' numbers.
 export type Raised = Readonly<Record<string, number>>;
 export const raisedKey = (appId: unknown, issueNumber: unknown) => `${Number(appId)}:${Number(issueNumber)}`;
 // The raise rows as the picks read them, never past MAX_PER_PERSON. Pure.

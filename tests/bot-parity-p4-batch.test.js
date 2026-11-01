@@ -8,7 +8,7 @@
 // the card is a roll-up of their tracks (rollupOf). A project's owner (or an
 // admin) working through its requests raises two holds for the batch's own
 // requests only: the per-person limit, read by the lane's picks
-// (rules/bot-loop.ts BATCH_RAISES_SQL), and the bot's open changes on the
+// (bot-lane/facts.ts BATCH_RAISES_SQL), and the bot's open changes on the
 // project (homeroom-bot.js simulateCaps). These pin the pure parts; the
 // lifecycle against the schema is tests/bot-parity-p4-batch-postgres.test.js.
 
@@ -20,6 +20,7 @@ const tool = require('../src/services/homeroom-bot-thread-tools/batch');
 const cardHandler = require('../src/services/homeroom-bot-cards/batch');
 const threadTools = require('../src/services/homeroom-bot-thread-tools');
 const loop = require('../src/workflow/rules/bot-loop.ts');
+const laneFacts = require('../src/workflow/bot-lane/facts.ts');
 
 const DAY = 24 * 3600 * 1000;
 const NOW = Date.parse('2026-11-01T12:00:00Z');
@@ -119,8 +120,8 @@ test('the lane: a running batch\'s request may go past the per-person limit and 
   assert.deepEqual(loop.pickLive(reads, { inUse: inUse.map((s) => ({ ...s, kind: 'followUp' })), slots: 5, perPerson: 3, raised }).map((p) => p.issue_number), [11]);
   assert.deepEqual(loop.pickLive(reads, { inUse: six, slots: 5, perPerson: 3, raised }), []);
   // The raise is read where the lane reads its facts, from running batches only.
-  assert.match(loop.BATCH_RAISES_SQL, /b\.state = 'running' AND b\.ends_at > NOW\(\)/);
-  assert.match(loop.BATCH_RAISES_SQL, /unnest\(b\.started_numbers\)/);
+  assert.match(laneFacts.BATCH_RAISES_SQL, /b\.state = 'running' AND b\.ends_at > NOW\(\)/);
+  assert.match(laneFacts.BATCH_RAISES_SQL, /unnest\(b\.started_numbers\)/);
 });
 
 test('work_through is offered in a private chat with the bot, never in a project\'s chat, with its prompt lines', () => {
