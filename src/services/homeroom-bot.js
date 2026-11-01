@@ -2493,6 +2493,8 @@ async function ensureBotSession(pool, config, bot, app) {
       WHERE cs.user_id = $1 AND cs.app_id = $2 AND cs.status IN ('active', 'paused')
         AND cs.branch_name = 'main'
         AND NOT EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.build_session_id = cs.id)
+        -- Nor a person's look session (homeroom-bot-thread-tools/look-into.js).
+        AND NOT EXISTS (SELECT 1 FROM homeroom_bot_look_sessions l WHERE l.session_id = cs.id)
       ORDER BY cs.id DESC LIMIT 1`,
     [bot.id, app.id],
   );

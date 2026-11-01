@@ -1531,9 +1531,21 @@ const CLAIMS = Object.freeze([
     // "I'll look into it", "I'll follow up", "let me sort that out", "I'll
     // get back to you": nothing brings the bot back to it later.
     re: /\b(?:I(?:'ll| will|'m going to| am going to)|let me|we(?:'ll| will))\s+(?:(?:now|also|then|definitely|personally|quickly|go and|try to|make sure to|be sure to)\s+)*(?:follow(?:ing)?[ -]up|look(?:ing)? into|sort(?:ing)? (?:\w+ ){0,2}out|investigate|dig into|get back to|check into|chase (?:\w+ ){0,2}up|escalate)\b/i,
-    backed: (ctx) => !!(ctx.revised || ctx.commented || ctx.started || ctx.withdrew || ctx.reported),
+    // Homeroom bot parity (P3): a look this turn started that is still
+    // running does come back (look_into posts what it finds here).
+    backed: (ctx) => !!(ctx.revised || ctx.commented || ctx.started || ctx.withdrew || ctx.reported || ctx.lookRunning),
     said: 'promises to come back to something later',
     instead: CANT_LOOK_TEXT,
+  },
+  {
+    kind: 'report_back',
+    // Homeroom bot parity (P3): "I'll post what I find here", "I'll let you
+    // know what it turns up", "I'll report back": only a look this turn
+    // started, still running, posts anything here later.
+    re: /\b(?:I(?:'ll| will|'m going to| am going to)|we(?:'ll| will))\s+(?:(?:then|also|soon|just)\s+)?(?:post|share|send|report|tell you|let you know|come back|update you|write)\b[^.!?\n]{0,60}?(?:\bwhat (?:I|it|they|we|the helper) (?:finds?|turns? up|comes? up)\b|\b(?:the |my |its )?findings\b|\b(?:the |its )?results?\b|\bback\b|\bwhen (?:it|I|the look|the helper)(?:'s| is|'m| am)? (?:done|finished|back)\b)/i,
+    backed: (ctx) => !!ctx.lookRunning,
+    said: 'says it will post findings here later',
+    instead: 'Nothing I started is still looking into it, so nothing will be posted here later.',
   },
 ]);
 
@@ -1769,6 +1781,9 @@ function doingFor(name, args = {}, { project = null } = {}) {
     case 'list_source':
     case 'read_source':
       return project ? { kind: 'code', project: String(project) } : { kind: 'code' };
+    // Homeroom bot parity (P3): "Looking into it in <project>".
+    case 'look_into':
+      return project ? { kind: 'looking', project: String(project) } : { kind: 'looking' };
     case 'draw_screen':
     case 'write_screen':
       return { kind: 'drawing' };
@@ -1795,7 +1810,7 @@ function sayDoing(pool, ctx, name, args = {}) {
   if (typeof doing !== 'function') return Promise.resolve();
   const say = async () => {
     let project = null;
-    if ((name === 'list_source' || name === 'read_source') && typeof args?.project === 'string' && args.project.trim()) {
+    if ((name === 'list_source' || name === 'read_source' || name === 'look_into') && typeof args?.project === 'string' && args.project.trim()) {
       ctx.projectNames ||= new Map();
       const asked = args.project.trim();
       if (!ctx.projectNames.has(asked)) {

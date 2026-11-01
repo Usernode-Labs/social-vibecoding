@@ -761,7 +761,8 @@ const typingSends = new Map();
 // (frontend/locales/en/messages.json `thread.botWorking.*`), as the agent
 // session's activity line does from a tool's name. No `doing` is "Thinking".
 // A person's typing event (routes/conversations.js) never carries one.
-const DOING_KINDS = Object.freeze(['progress', 'request', 'code', 'drawing', 'designing', 'drafting']);
+// 'looking': a helper sent to look into a project's code (P3, look_into).
+const DOING_KINDS = Object.freeze(['progress', 'request', 'code', 'drawing', 'designing', 'drafting', 'looking']);
 const MAX_DOING_PROJECT = 60;
 
 /** Pure: `what` as a typing event carries it ({ kind, number?, project? }), or null for "thinking". */
@@ -771,9 +772,9 @@ function typingDoing(what) {
     const number = Number(what.number);
     return Number.isSafeInteger(number) && number > 0 ? { kind: 'request', number } : null;
   }
-  if (what.kind === 'code') {
+  if (what.kind === 'code' || what.kind === 'looking') {
     const project = typeof what.project === 'string' ? clip(what.project.replace(/\s+/g, ' ').trim(), MAX_DOING_PROJECT) : '';
-    return project ? { kind: 'code', project } : { kind: 'code' };
+    return project ? { kind: what.kind, project } : { kind: what.kind };
   }
   return { kind: what.kind };
 }
@@ -1108,8 +1109,12 @@ async function requestStart(pool, { userId, appId, issueNumber }) {
  * platform does (limits.weekStartUtc) and as weekKey reads it.
  */
 async function weeklySpentCents(pool, userId) {
+  // Homeroom bot parity (P3, P9): and the looks into code they asked for,
+  // an investigation's check-ins among them (homeroom_bot_looks).
   const { rows } = await pool.query(
-    `SELECT COALESCE(SUM(COALESCE(r.cost_usd, 0) + COALESCE(r.build_cost_usd, 0)), 0) AS usd
+    `SELECT COALESCE(SUM(COALESCE(r.cost_usd, 0) + COALESCE(r.build_cost_usd, 0)), 0)
+            + (SELECT COALESCE(SUM(l.cost_usd), 0) FROM homeroom_bot_looks l
+                WHERE l.charged AND l.user_id = $1 AND l.created_at >= $2) AS usd
        FROM homeroom_bot_runs r
        LEFT JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
       WHERE r.charged AND COALESCE(r.payer_user_id, q.user_id) = $1 AND r.created_at >= $2`,

@@ -269,6 +269,7 @@ export const READ_CANDIDATES_SQL = `
        WHERE cs.user_id = $1 AND cs.app_id = q.app_id AND cs.status IN ('active', 'paused')
          AND cs.branch_name = 'main'
          AND NOT EXISTS (SELECT 1 FROM homeroom_bot_runs br WHERE br.build_session_id = cs.id)
+         AND NOT EXISTS (SELECT 1 FROM homeroom_bot_look_sessions ls WHERE ls.session_id = cs.id)
        ORDER BY cs.id DESC LIMIT 1
     ) bs ON fu.id IS NULL
    WHERE q.started_at IS NULL
