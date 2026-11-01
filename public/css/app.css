@@ -18135,11 +18135,22 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    is the rest of the window, 400px to 720px. With the panel's own default
    (36vw, at most 560px) a wide window left the slack as margins around the
    list, between it and Main. A width dragged on Main's edge or beside an
-   app (`--side-panel-chosen-w`, features/side-panel/resize.ts) wins. */
+   app (`--side-panel-chosen-w`, features/side-panel/resize.ts) wins.
+   THE ROOM IS BESIDE THE DUO'S COLUMN (1 Nov 2026). `--ai-room` is the
+   window less the rail and iPhone Duo's column of system chrome
+   (`--platform-strip-w`, THE SIDE STRIP; 0 everywhere else). Unfolded and
+   held sideways the Duo is 951px with an 84px column the body pads out, so
+   sums taken from 100vw counted the column twice: Main came out 379px and
+   the list's card 220px. The columns pinned to the right edge also stop at
+   the column (`--ai-edge`), as every other surface there does. */
 body:has(#ai-screen:not(.hidden)) {
+  --ai-room: calc(100vw - var(--platform-rail-w, 0px) - var(--platform-strip-w, 0px));
   --ai-list-min: 480px;
-  --ai-main-auto: clamp(400px, calc(100vw - var(--platform-rail-w, 0px) - 720px), 720px);
-  --ai-main-w: max(320px, min(var(--side-panel-chosen-w, var(--ai-main-auto)), calc(100vw - var(--platform-rail-w, 0px) - var(--ai-list-min))));
+  --ai-main-auto: clamp(400px, calc(var(--ai-room) - 720px), 720px);
+  --ai-main-w: max(320px, min(var(--side-panel-chosen-w, var(--ai-main-auto)), calc(var(--ai-room) - var(--ai-list-min))));
+}
+html[data-side-strip="right"] body:has(#ai-screen:not(.hidden)) {
+  --ai-edge: var(--platform-strip-w, 0px);
 }
 /* 1 Nov 2026: between 768 and 1024px the list keeps 360px, not 480: its
    rows are one line (their numbers left out, as a phone's are), and the
@@ -18148,10 +18159,17 @@ body:has(#ai-screen:not(.hidden)) {
   body:has(#ai-screen:not(.hidden)) { --ai-list-min: 360px; }
 }
 #ai-screen[data-ai-docked] { padding-right: var(--ai-main-w); }
+/* NO GUTTER AFTER THE RAIL WHILE MAIN IS DOCKED (1 Nov 2026). Every screen
+   beside the rail pads a gutter after it and mirrors it on the far edge, so
+   a column inside centres. Here Main is the far edge, with no gutter, so the
+   list's cards sat 40px after the rail (the gutter and their own 16px) and
+   16px from Main. Without it they sit 16px from both, and the list centres
+   between them. */
+#ai-screen[data-ai-docked] { padding-left: var(--platform-rail-w, 0px); }
 #ai-screen .ai-main-pane {
   position: fixed;
   z-index: 20;
-  right: 0;
+  right: var(--ai-edge, 0px);
   bottom: 0;
   top: calc(var(--platform-header-h) + var(--platform-safe-top, 0px) - .5rem);
   width: var(--ai-main-w);
@@ -18215,6 +18233,7 @@ html[data-side-panel] #ai-screen .ai-main-pane { display: none; }
 }
 body:has(#ai-screen:not(.hidden)) .side-panel {
   width: var(--ai-main-w);
+  right: var(--ai-edge, 0px);
   border-top-right-radius: 0;
   border-top-left-radius: 1.75rem;
 }
@@ -18247,7 +18266,7 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
 #ai-screen .ai-preview-pane {
   position: fixed;
   z-index: 21;
-  right: 0;
+  right: var(--ai-edge, 0px);
   bottom: 0;
   top: calc(var(--platform-header-h) + var(--platform-safe-top, 0px) - .5rem);
   width: var(--ai-preview-w);
@@ -18262,17 +18281,17 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
 #ai-screen[data-ai-preview] .ai-main-pane > .side-panel-divider { display: none; }
 #ai-screen[data-ai-preview="three"] {
   --ai-col-w: min(var(--ai-main-w), 440px);
-  --ai-preview-w: max(360px, calc(100vw - var(--platform-rail-w, 0px) - 480px - var(--ai-col-w)));
+  --ai-preview-w: max(360px, calc(var(--ai-room) - 480px - var(--ai-col-w)));
   padding-right: calc(var(--ai-col-w) + var(--ai-preview-w));
 }
 #ai-screen[data-ai-preview="halves"] {
-  --ai-col-w: calc((100vw - var(--platform-rail-w, 0px)) / 2);
+  --ai-col-w: calc(var(--ai-room) / 2);
   --ai-preview-w: var(--ai-col-w);
 }
 #ai-screen[data-ai-preview="halves"] .ai-screen-body { display: none; }
 #ai-screen:is([data-ai-preview="three"], [data-ai-preview="halves"]) .ai-main-pane {
   width: var(--ai-col-w);
-  right: var(--ai-preview-w);
+  right: calc(var(--ai-preview-w) + var(--ai-edge, 0px));
 }
 /* A phone: the whole of the page, over the drawer, its arrow back to the thread. */
 #ai-screen[data-ai-preview="full"] .ai-preview-pane {
