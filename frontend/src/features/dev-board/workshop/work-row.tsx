@@ -62,7 +62,7 @@ import {
 import { useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
 import { CategoryChip, ChatCount, ChecksBar, MenuTrigger, VoteButton } from '../card/dev-card';
-import { callAppView, itemHooks, openHref, RowBand, StatePill, voteSpecs } from '../card/fold';
+import { callAppView, itemHooks, LiveTally, openHref, RowBand, StatePill, voteSpecs } from '../card/fold';
 import type { ActionSpec, DevCardModel, ListRow, RowBrief, RowTag } from '../card/model';
 
 export type CardRow = Extract<ListRow, { t: 'card' }>;
@@ -287,7 +287,9 @@ export function WorkRow({
     // A narrow card wraps the title and moves the pill and Vote to the
     // row's end, under the tags, as a phone has them today (app.css
     // `.dev-ws-lrow`).
-    const end = votes || (live && pill ? <StatePill s={pill} className="dev-ws-wrow-live" /> : null);
+    const end = votes || (live && pill
+      ? <><StatePill s={pill} className="dev-ws-wrow-live" /><LiveTally s={pill} /></>
+      : null);
     // Live work's bar is on the first line, so its tags drop the one that
     // restates it; who made it goes after the status tags (lineTags).
     const request = b.kind === 'request';
@@ -362,6 +364,7 @@ export function WorkRow({
         {status ? (
           <span className="dev-ws-wrow-status">
             {live && pill ? <StatePill s={pill} className="dev-ws-wrow-live" /> : null}
+            {live ? <LiveTally s={pill} /> : null}
             {chip}
             {chat}
             {tags.map((t) => <Tag key={`${t.label}:${t.tone}`} t={t} />)}
