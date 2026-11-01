@@ -226,6 +226,21 @@ test('the transport streams only for a caller that asks, and folds the stream in
   assert.equal(atomic[0].stream, false);
 });
 
+test('a provider that repeats a call\'s name and id, or leaves its index out, still makes whole calls', async () => {
+  const base = { apiKey: 'sk', baseUrl: 'https://openrouter.test/api/v1', model: 'm/x', reasoning: 'low', messages: [], tools: [], onDelta: () => {} };
+  const events = [
+    { choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'reply', arguments: '{"text":' } }] } }] },
+    { choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'reply', arguments: '"Hi."}' } }] } }] },
+    { choices: [{ delta: { tool_calls: [{ id: 'c2', function: { name: 'my_work', arguments: '{' } }] } }] },
+    { choices: [{ delta: { tool_calls: [{ function: { arguments: '}' } }] }, finish_reason: 'tool_calls' }] },
+  ];
+  const res = await openrouter.streamChat({ ...base, fetchImpl: fakeFetch(sseBody(events, { splitAt: 5 }), []) });
+  assert.deepEqual(res.toolCalls.map((c) => [c.id, c.function.name, c.function.arguments]), [
+    ['c1', 'reply', '{"text":"Hi."}'],
+    ['c2', 'my_work', '{}'],
+  ]);
+});
+
 test('a stream that is cut off, ends at its limit or reports an error fails as an atomic answer would', async () => {
   const base = { apiKey: 'sk', baseUrl: 'https://openrouter.test/api/v1', model: 'm/x', reasoning: 'low', messages: [], tools: [], onDelta: () => { throw new Error('a broken screen never fails the request'); } };
   const ask = (events) => openrouter.streamChat({ ...base, fetchImpl: fakeFetch(sseBody(events), []) }).then(() => null, (err) => err.code);

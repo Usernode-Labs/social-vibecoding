@@ -358,7 +358,20 @@ async function readEventStream(body, { startedAt, state, onDelta }) {
       content += piece;
       if (content.length > MAX_CONTENT_CHARS) throw tooLarge();
     }
-    for (const call of Array.isArray(delta.tool_calls) ? delta.tool_calls : []) appendToolCall(toolCalls, call);
+    for (const call of Array.isArray(delta.tool_calls) ? delta.tool_calls : []) {
+      // A provider that repeats a call's id or name on every delta (rather
+      // than sending it once) must not have them joined: "replyreply".
+      // One with no index continues the call before it, unless it names a new id.
+      if (!call || typeof call !== 'object') continue;
+      const last = toolCalls.size ? Math.max(...toolCalls.keys()) : null;
+      const at = Number.isInteger(call.index) && call.index >= 0 ? call.index
+        : last === null ? 0
+          : (typeof call.id === 'string' && call.id && toolCalls.get(last).id && call.id !== toolCalls.get(last).id ? last + 1 : last);
+      const before = toolCalls.get(at);
+      const fn = call.function && typeof call.function === 'object' ? { ...call.function } : call.function;
+      if (before && fn && before.function.name && fn.name === before.function.name) delete fn.name;
+      appendToolCall(toolCalls, { ...call, index: at, ...(before && before.id && call.id === before.id ? { id: undefined } : {}), function: fn });
+    }
     if (choice.finish_reason) out.finish = choice.finish_reason;
   };
   for await (const chunk of body) {
