@@ -82,8 +82,10 @@ const NOT_DRAWN_TEXT = 'I couldn\'t draw that just now. Ask me again and I\'ll h
 // not (DRAWING_CLAIM, DESIGN_DONE), a question asking leave to start, and,
 // when Main Chat handed it a screen to draw, anything but a real question.
 
-// "I've changed the header", "I made it blue", "here's the new version".
-const DESIGN_DONE = /\bI(?:'ve| have)?\s+(?:just\s+|now\s+)?(?:changed|updated|made|moved|added|removed|swapped|replaced|redrew|drew|drawn|redesigned|reworked)\b|\bhere(?:'s| is) (?:the|your) (?:new |next |updated )?(?:version|screen|design)\b/i;
+// "I've changed the header", "I just made it blue", "here's the new version":
+// done now. Not "In version 2 I made the header blue", which tells of a
+// version before.
+const DESIGN_DONE = /\bI(?:'ve| have)\s+(?:just\s+|now\s+)?(?:changed|updated|made|moved|added|removed|swapped|replaced|redrawn|drawn|redesigned|reworked)\b|\bI\s+(?:just|now)\s+(?:changed|updated|made|moved|added|removed|swapped|replaced|redrew|drew|redesigned|reworked)\b|\bhere(?:'s| is) (?:the|your) (?:new |next |updated )?(?:version|screen|design)\b/i;
 // "Want me to start?", "Shall I draw it?", "Should I go ahead?"
 const ASKS_LEAVE = /\b(?:want me to|do you want me to|would you like me to|shall I|should I|ok(?:ay)? if I|can I go ahead|ready for me to|shall we start|should we start|want to start|go ahead)\b[^?]*\?/i;
 const DRAW_NOTE = '[Homeroom check, not from them: you have not drawn anything yet. Call write_screen (or edit_design) '
@@ -92,15 +94,18 @@ const DRAW_NOTE = '[Homeroom check, not from them: you have not drawn anything y
 /**
  * Pure: why words that end a design turn are not its end yet, or null.
  * `changed` the turn made a version, `offered` it offered a card,
- * `handoff` Main Chat handed it a screen to draw.
+ * `handoff` Main Chat handed it a screen to draw, `drawnBefore` the thread
+ * holds a version already.
  */
-function notDrawnYet(text, { changed = false, offered = false, handoff = false, mayor } = {}) {
+function notDrawnYet(text, { changed = false, offered = false, handoff = false, drawnBefore = false, mayor } = {}) {
   const said = String(text || '').trim();
   if (changed || offered) return null;
   // Said to be drawn or drawing first: it is told to draw, not to go on.
   if (mayor.DRAWING_CLAIM.test(said) || DESIGN_DONE.test(said)) return 'claimed';
   if (mayor.announcesOnly(said)) return 'preamble';
-  if (ASKS_LEAVE.test(said)) return 'asked';
+  // Leave to start drawing, with nothing drawn yet. Once there is a screen,
+  // "Want me to make the title bigger?" is a suggestion of its own.
+  if ((handoff || !drawnBefore) && ASKS_LEAVE.test(said)) return 'asked';
   // A real question back (which project, what goes on it) ends the turn.
   if (handoff && !said.includes('?')) return 'handoff';
   return null;
@@ -731,7 +736,7 @@ async function answer(pool, config, {
     const holdEnd = (said) => {
       if (nudges >= mayor.MAX_PREAMBLE_NUDGES || rounds + 1 >= MAX_ROUNDS) return null;
       const changedNow = !!html && html !== (current?.html || '');
-      const why = notDrawnYet(said, { changed: changedNow, offered: !!offered, handoff, mayor });
+      const why = notDrawnYet(said, { changed: changedNow, offered: !!offered, handoff, drawnBefore: !!current, mayor });
       if (!why) return null;
       nudges += 1;
       t.failures.push(`d${rounds}:${why}`);

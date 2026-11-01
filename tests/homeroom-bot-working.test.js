@@ -310,6 +310,11 @@ test('why words do not end a design turn yet', () => {
   assert.equal(why(EVANS_SECOND, { changed: true }), null, 'it did draw');
   assert.equal(why('Want me to post it?', { offered: true }), null, 'an offer is under it');
   assert.equal(why('The header uses the kit\'s title style.'), null);
+  // A thread with a screen already: talk about it is not a claim or a stall.
+  assert.equal(why('I just changed the header to blue.'), 'claimed');
+  assert.equal(why('In version 2 I made the header blue. Want it darker?', { drawnBefore: true }), null, 'a version before');
+  assert.equal(why('Want me to make the title bigger?', { drawnBefore: true }), null, 'a suggestion, once there is a screen');
+  assert.equal(why('Want me to start that now?', { drawnBefore: true, handoff: true }), 'asked', 'handed a screen to draw');
 });
 
 // ── 4. What it is doing, by tool ─────────────────────────────────────────
