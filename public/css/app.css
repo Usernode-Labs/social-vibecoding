@@ -595,11 +595,19 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    (`.platform-safe-bar`: Send, the request awaiting acceptance, "you can't
    send here") follows the history in its pane, the reply thread's
    included. Where none does (an invitation before it is accepted), the
-   history reaches the foot of the screen and keeps the band. 0 rather
-   than the 6px below: `.platform-safe-scroll` already made it 0 wherever
-   the bar is down, so a desktop is exactly as it was. */
+   history reaches the foot of the screen and keeps the band.
+
+   12px, THE TRANSCRIPT'S OWN END (iPhone Duo, 1 November 2026). The air
+   under the last message was a band OUTSIDE the scroller: the empty typing
+   line (18px) and the composer's top padding (6px). Scrolled up, the
+   messages were cut off 24px above the reply box with bare page under
+   them. Both are gone (`.messages-typing:empty`, `.messages-composer`), so
+   the history runs to the box's edge, and the air at the end is padding
+   INSIDE the scroller, there at the newest line and scrolled away with the
+   rest. The same at rest and with the keyboard up: this outranks both
+   `.platform-safe-scroll` rules. */
 .messages-thread-scroll.platform-safe-scroll:has(~ .platform-safe-bar) {
-  padding-bottom: 0 !important;
+  padding-bottom: 12px !important;
 }
 /* THE BOT'S CHAT, OPENING (features/messages/open-hold.ts). Its rows are
    laid out, so the transcript can tell whether they fill the screen, and
@@ -1707,18 +1715,38 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   color: var(--text-muted);
   font-size: 13px;
 }
+/* NO ROOM UNTIL SOMEBODY TYPES (1 November 2026). The line held 18px open
+   between the transcript and the reply box whether or not it said anything,
+   so the messages stopped short of the box above an empty band. Empty, it
+   is 0 tall and still in the page, so its live region announces the first
+   name. When it fills, the transcript gets shorter by a line and, if the
+   reader is at the newest message, stays there (stick-to-bottom.ts watches
+   the scroller's own size). The group chat's status lines take the same
+   rule; `h-5` is a Tailwind class, so their ids outrank it. */
+.messages-typing:empty {
+  min-height: 0;
+  padding-block: 0;
+}
+#gc-typing:empty,
+#gc-thread-typing:empty {
+  height: 0;
+}
 
 /* ── The composer ────────────────────────────────────────────────────────
    One white card at the foot of the sheet: bare glyphs, a borderless field
    at reading size, and the round accent send disc the dev chat draws. The
    BAR around the card is what carries the home-indicator inset
    (`platform-safe-bar`), so on a notched phone the gap under the card
-   grows and the card itself does not. */
+   grows and the card itself does not.
+
+   No padding over the card (1 November 2026): the transcript runs to the
+   card's top edge rather than stopping 6px short of it. The air under the
+   newest message is the scroller's own end now. */
 .messages-composer,
 .messages-composer-disabled {
   position: relative;
   flex: 0 0 auto;
-  padding: 6px 12px 8px;
+  padding: 0 12px 8px;
 }
 .messages-composer-card {
   border-radius: 22px;
@@ -1743,7 +1771,7 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
    Before the opening message, one muted line over the card says what it will
    be; after it, the card itself gives way to the invitation banner's tinted
    panel, which names who the thread is waiting for. */
-.messages-composer-hint { margin: 0 4px 6px; color: var(--text-muted); font-size: 13px; line-height: 1.35; }
+.messages-composer-hint { margin: 6px 4px 6px; color: var(--text-muted); font-size: 13px; line-height: 1.35; }
 .messages-awaiting {
   padding: 12px 16px;
   border-radius: 16px;
@@ -21956,9 +21984,17 @@ html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):
    `hidden` class because the class has an owner (the island) and this is a
    presentation rule, not a route fact — the bar comes back with no state to
    restore the moment the keyboard drops. The reservation above is already
-   off, because its selector excludes this state. */
-html.un-kb #platform-tabs {
-  display: none;
+   off, because its selector excludes this state.
+
+   ON A PHONE ONLY (iPhone Duo, 1 November 2026). From 768px the bar is the
+   sidebar down the left of the window, beside the page and not at its foot:
+   the keys cover its lower end and nothing rides on them. Hidden there, the
+   page took the sidebar's width back the moment a field was focused, slid
+   212px left under the reader, and slid back when the keyboard dropped. */
+@media (max-width: 767px) {
+  html.un-kb #platform-tabs {
+    display: none;
+  }
 }
 
 /* KEYBOARD UP IN THE HOMEROOM APP, BAR AND STRIP GONE THERE TOO (first-session
@@ -23598,7 +23634,7 @@ html.un-kb #platform-parked {
 }
 @media (min-width: 768px) {
   /* …unless the toggle is in it, which needs both a rail and the width. */
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header
+  body:has(#platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) #platform-header
     .platform-header-left:has(> #back-btn.hidden) {
     display: flex;
   }
@@ -23626,7 +23662,7 @@ html.un-kb #platform-parked {
      tab-bar.tsx), so the toggle stays out of the app layer and the peek
      still works. A rail the viewer FOLDED is still the route's, so its
      toggle stays — it is how the fold comes undone. */
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) .platform-sidebar-toggle {
+  body:has(#platform-tabs:not(.hidden):not(.platform-tabs-route-hidden)) .platform-sidebar-toggle {
     display: inline-flex;
     transition: background-color 140ms ease, color 140ms ease,
                 border-color 140ms ease;
@@ -23651,8 +23687,15 @@ html.un-kb #platform-parked {
   /* THE BAND AT THE FOOT GOES AWAY ENTIRELY. What a screen has to clear
      below it is the home-indicator inset and nothing else — on a desktop
      that is 0, and the expression keeps it correct on a tablet that has one.
-     The rail's width takes its place, as padding rather than as a band. */
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) {
+     The rail's width takes its place, as padding rather than as a band.
+
+     WITH THE KEYBOARD UP AS WELL (1 November 2026). The rail stays while a
+     field has the keys (the bar's own display rule says why), so the rules
+     in this block that give it its column, and move the page over, no
+     longer stand aside under `un-kb`. The two band-token rules below keep
+     `html:not(.un-kb)`: the home-indicator strip they reserve is behind the
+     keys, and they must match the phone rule's selector exactly. */
+  body:has(#platform-tabs:not(.hidden)) {
     --platform-rail-w: var(--platform-rail-full);
     /* The air between the rail and the content, spent again on the right —
        see the padding rule below. 1.5rem is the shell's own outer gutter
@@ -23700,7 +23743,7 @@ html.un-kb #platform-parked {
      INSIDE THE MEDIA QUERY AND NOWHERE ELSE. Below 768px the bar is the
      phone's bottom bar and the only navigation there is; the class is still
      on the element after a resize, and this is what keeps it inert there. */
-  html:not(.un-kb) body:has(#platform-tabs.platform-tabs-folded) {
+  body:has(#platform-tabs.platform-tabs-folded) {
     --platform-rail-w: 0px;
   }
 
@@ -23723,7 +23766,7 @@ html.un-kb #platform-parked {
      is not there, so the corner keeps its curve; a folded rail PEEKING is an
      overlay with the page still underneath, and the curve is right there for
      the same reason it is right over an app. */
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-folded)) #platform-header {
+  body:has(#platform-tabs:not(.hidden):not(.platform-tabs-folded)) #platform-header {
     border-bottom-left-radius: 0;
   }
   .platform-tabs:not(.platform-tabs-folded) {
@@ -23773,7 +23816,7 @@ html.un-kb #platform-parked {
      peeking and folded cases are excluded for the reason they always are: a
      rail that claimed 224px on the way in would reflow the page under the
      pointer that revealed it. */
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #app-view {
+  body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #app-view {
     padding-left: calc(var(--platform-rail-w, 0px) + var(--platform-gutter));
     padding-right: var(--platform-gutter);
   }
@@ -23788,7 +23831,7 @@ html.un-kb #platform-parked {
      edge in what is left. One class more than the rule above, so it wins.
      Inside this block only — a phone never gets the class, and a window
      narrowed past 768px with it set keeps the full-screen app. */
-  html:not(.un-kb) body.rail-pinned:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #app-view {
+  body.rail-pinned:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #app-view {
     padding-left: var(--platform-rail-w, 0px);
     padding-right: 0;
   }
@@ -24665,7 +24708,7 @@ section + .workshop-search {
   /* The places are in the sidebar, so the place bar's button to the tray has
      nothing to open beside it. Folded, the sidebar is away and the button
      is the way to the places again. */
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) .dev-ws-places-btn {
+  body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) .dev-ws-places-btn {
     display: none;
   }
 

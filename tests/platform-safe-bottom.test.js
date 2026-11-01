@@ -270,7 +270,10 @@ test('the Messages history reserves no band above a composer that clears the bar
   // the history reaches the foot of the screen and keeps it.
   const rule = /\.messages-thread-scroll\.platform-safe-scroll:has\(~ \.platform-safe-bar\) \{([^}]*)\}/.exec(APP_CSS);
   assert.ok(rule, 'the history-above-a-composer rule is missing');
-  assert.match(rule[1], /padding-bottom:\s*0 !important/,
+  // 12px is the transcript's own end, not the bar's band (1 November 2026:
+  // the air under the newest message moved inside the scroller, see
+  // tests/transcript-meets-composer.test.js).
+  assert.match(rule[1], /padding-bottom:\s*12px !important/,
     'it must beat `.platform-safe-scroll`, which is !important itself');
   const composer = read('frontend/src/features/messages/composer.tsx');
   // Every composer the history can have below it is a `.platform-safe-bar`.
