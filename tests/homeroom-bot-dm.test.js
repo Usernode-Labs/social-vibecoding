@@ -907,7 +907,7 @@ test('the typing moves to the thread the answer goes on in, with what it was doi
 });
 
 test('a typing event carries only the kinds of work the screen words, and what they name', () => {
-  assert.deepEqual([...dm.DOING_KINDS], ['progress', 'request', 'code', 'drawing', 'designing', 'drafting']);
+  assert.deepEqual([...dm.DOING_KINDS], ['progress', 'request', 'code', 'drawing', 'designing', 'drafting', 'writing']);
   assert.deepEqual(dm.typingDoing({ kind: 'drawing', extra: 'x' }), { kind: 'drawing' });
   assert.deepEqual(dm.typingDoing({ kind: 'request', number: '7' }), { kind: 'request', number: 7 });
   assert.equal(dm.typingDoing({ kind: 'request' }), null, 'a request is named by its number');

@@ -1551,6 +1551,142 @@
     "text": "No longer needed.",
     "description": "Line under Homeroom bot's questions once they no longer apply."
   },
+  "botCards.failed": {
+    "text": "That did not go through. Try again.",
+    "description": "Line on a card under a reply from Homeroom bot (options, questions) when a tap could not be sent."
+  },
+  "botCards.options.label": {
+    "text": "Options",
+    "description": "Small label at the top of a card of options Homeroom bot offers to pick from (shown in capitals)."
+  },
+  "botCards.options.show": {
+    "text": "Show",
+    "description": "Button under one option on Homeroom bot's options card: asks the bot to show or explain that option. A verb."
+  },
+  "botCards.options.pick": {
+    "text": "Pick",
+    "description": "Button under one option on Homeroom bot's options card: chooses that option and tells the bot. A verb."
+  },
+  "botCards.options.showNamed": {
+    "text": "Show option {{key}}: {{title}}",
+    "description": "Accessible name of the Show button under one option on Homeroom bot's options card. {{key}} is the option's letter (A to D), {{title}} its title."
+  },
+  "botCards.options.pickNamed": {
+    "text": "Pick option {{key}}: {{title}}",
+    "description": "Accessible name of the Pick button under one option on Homeroom bot's options card. {{key}} is the option's letter (A to D), {{title}} its title."
+  },
+  "botCards.options.picked": {
+    "text": "Picked",
+    "description": "Shown, with a check, under the option the person picked on Homeroom bot's options card."
+  },
+  "botCards.options.showSay": {
+    "text": "Show me option {{key}}: {{title}}",
+    "description": "Sent as the person's own message to Homeroom bot when they tap Show under an option. {{key}} is the option's letter (A to D), {{title}} its title."
+  },
+  "botCards.options.pickSay": {
+    "text": "{{key}}: {{title}}",
+    "description": "Sent as the person's own message to Homeroom bot when they tap Pick under an option: their choice. {{key}} is the option's letter (A to D), {{title}} its title."
+  },
+  "botCards.questions.label": {
+    "text": "Questions",
+    "description": "Small label at the top of a card of questions Homeroom bot asks, answered together (shown in capitals)."
+  },
+  "botCards.questions.other": {
+    "text": "Other…",
+    "description": "Placeholder of the field under one of Homeroom bot's questions, for an answer of the person's own instead of a suggested one."
+  },
+  "botCards.questions.otherNamed": {
+    "text": "Your own answer to question {{number}}",
+    "description": "Accessible name of the field for an answer of one's own under one of Homeroom bot's questions. {{number}} is the question's number on the card."
+  },
+  "botCards.questions.send": {
+    "text": "Send answers",
+    "description": "Button on Homeroom bot's questions card: sends the chosen answers to the bot. \"Send\" is a verb."
+  },
+  "botCards.questions.youDecide": {
+    "text": "You decide",
+    "description": "Button on Homeroom bot's questions card: leaves the answers to the bot."
+  },
+  "botCards.questions.youDecideSay": {
+    "text": "You decide.",
+    "description": "Sent as the person's own message to Homeroom bot when they tap You decide on its questions card: the bot picks the answers."
+  },
+  "botCards.questions.answerLine": {
+    "text": "{{number}}. {{answer}}",
+    "description": "One line of the message sent as the person when they send their answers to Homeroom bot's questions, one line per question. {{number}} is the question's number, {{answer}} their answer."
+  },
+  "botCards.questions.skipped": {
+    "text": "You left these to Homeroom bot.",
+    "description": "Shown, with a check, on Homeroom bot's questions card once the person tapped You decide."
+  },
+  "botCards.table.tag.ready": {
+    "text": "Ready",
+    "description": "Small label on a row of a table Homeroom bot shows: the request is ready to build or to try."
+  },
+  "botCards.table.tag.question": {
+    "text": "Question",
+    "description": "Small label on a row of a table Homeroom bot shows: the request waits on a question."
+  },
+  "botCards.table.tag.done": {
+    "text": "Done",
+    "description": "Small label on a row of a table Homeroom bot shows: the request is done."
+  },
+  "botCards.table.tag.stopped": {
+    "text": "Stopped",
+    "description": "Small label on a row of a table Homeroom bot shows: work on the request stopped."
+  },
+  "botCards.table.tagHeading": {
+    "text": "Where it stands",
+    "description": "Accessible name of the last column of a table Homeroom bot shows, the column of small labels such as Ready or Done. Read by screen readers only."
+  },
+  "botCards.table.openRequest": {
+    "text": "Open {{project}} request #{{number}}",
+    "description": "Tooltip of a row of a table Homeroom bot shows, when the row is about a request: opens the request's page. {{project}} is the project's name, {{number}} the request's number."
+  },
+  "botCards.table.more_one": {
+    "text": "And {{count}} more",
+    "description": "Under a table Homeroom bot shows, when it left rows out. {{count}} is how many."
+  },
+  "botCards.table.more_other": {
+    "text": "And {{count}} more",
+    "description": "Under a table Homeroom bot shows, when it left rows out. {{count}} is how many."
+  },
+  "botCards.looked.summary_one": {
+    "text": "Looked at {{count}} thing · {{time}}",
+    "description": "Quiet line above a reply from Homeroom bot that opens to the list of what it read to answer. {{count}} is how many things; {{time}} is how long the answer took, such as \"40 s\"."
+  },
+  "botCards.looked.summary_other": {
+    "text": "Looked at {{count}} things · {{time}}",
+    "description": "Quiet line above a reply from Homeroom bot that opens to the list of what it read to answer. {{count}} is how many things; {{time}} is how long the answer took, such as \"40 s\"."
+  },
+  "botCards.looked.summaryNoTime_one": {
+    "text": "Looked at {{count}} thing",
+    "description": "Quiet line above a reply from Homeroom bot that opens to the list of what it read to answer, when how long it took is not known. {{count}} is how many things."
+  },
+  "botCards.looked.summaryNoTime_other": {
+    "text": "Looked at {{count}} things",
+    "description": "Quiet line above a reply from Homeroom bot that opens to the list of what it read to answer, when how long it took is not known. {{count}} is how many things."
+  },
+  "botCards.looked.seconds_one": {
+    "text": "{{count}} s",
+    "description": "How long Homeroom bot took to answer, in seconds, in the line \"Looked at 5 things · 40 s\". Short: an abbreviation of seconds."
+  },
+  "botCards.looked.seconds_other": {
+    "text": "{{count}} s",
+    "description": "How long Homeroom bot took to answer, in seconds, in the line \"Looked at 5 things · 40 s\". Short: an abbreviation of seconds."
+  },
+  "botCards.looked.minutes_one": {
+    "text": "{{count}} min",
+    "description": "How long Homeroom bot took to answer, in minutes, in the line \"Looked at 5 things · 2 min\". Short: an abbreviation of minutes."
+  },
+  "botCards.looked.minutes_other": {
+    "text": "{{count}} min",
+    "description": "How long Homeroom bot took to answer, in minutes, in the line \"Looked at 5 things · 2 min\". Short: an abbreviation of minutes."
+  },
+  "botCards.looked.list": {
+    "text": "What Homeroom bot looked at",
+    "description": "Accessible name of the list under the line \"Looked at 5 things\", of what Homeroom bot read to answer."
+  },
   "bot.question.fileRequest": {
     "text": "File this request?",
     "description": "Accessible name of the buttons under Homeroom bot's offer to file a request on the person's behalf, when the bot gave no question of its own. \"File\" is a verb: to submit the request."
@@ -3414,6 +3550,10 @@
   "thread.botWorking.drafting": {
     "text": "Drafting the request",
     "description": "On the card at the end of the chat while Homeroom bot drafts a request for the reader to file. Three animated dots follow it, as an ellipsis."
+  },
+  "thread.botWorking.writing": {
+    "text": "Writing",
+    "description": "On the card at the end of the chat while Homeroom bot writes its answer; the answer so far is shown under it as it grows. Three animated dots follow it, as an ellipsis."
   },
   "thread.activityTimeRange": {
     "text": "{{start}} – {{end}}",

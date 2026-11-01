@@ -737,7 +737,9 @@ async function sendDm(pool, {
 // handling is still doing, so the bot is never left typing forever: once
 // nothing renews it, every reader clears the line on its own.
 const TYPING_RENEW_MS = 4000;
-const TYPING_MAX_MS = 3 * 60 * 1000;
+// Homeroom bot parity, P1: a turn of sixteen rounds can run for minutes (it
+// was three, when a turn had six).
+const TYPING_MAX_MS = 8 * 60 * 1000;
 
 // Where the bot types: a conversation's main chat, or one thread in it
 // (31 Oct 2026: an answer to a message written in a thread lands in that
@@ -761,8 +763,33 @@ const typingSends = new Map();
 // (frontend/locales/en/messages.json `thread.botWorking.*`), as the agent
 // session's activity line does from a tool's name. No `doing` is "Thinking".
 // A person's typing event (routes/conversations.js) never carries one.
-const DOING_KINDS = Object.freeze(['progress', 'request', 'code', 'drawing', 'designing', 'drafting']);
+// Homeroom bot parity, P1: 'writing' carries the answer as it is written
+// (homeroom-bot-mayor.js draftWriter), its own words and the only `text`
+// a typing event has: the newest MAX_DRAFT_CHARS of it, so the event fits
+// the bus between servers (ws-bus.js: 8000 bytes, or it becomes a nudge to
+// reload) and the card stays a card. The message sent takes its place.
+const DOING_KINDS = Object.freeze(['progress', 'request', 'code', 'drawing', 'designing', 'drafting', 'writing']);
 const MAX_DOING_PROJECT = 60;
+const MAX_DRAFT_CHARS = 1800;
+const MAX_DRAFT_BYTES = 5600;
+
+/** Pure: the end of an answer being written, as a typing event carries it: '…' and the newest words, when it is long. */
+function draftTail(text) {
+  let out = String(text || '').replace(/\r/g, '').trim();
+  if (!out) return '';
+  const fits = (value) => Buffer.byteLength(JSON.stringify(value), 'utf8') <= MAX_DRAFT_BYTES;
+  if (out.length <= MAX_DRAFT_CHARS && fits(out)) return out;
+  let keep = MAX_DRAFT_CHARS;
+  let tail = out.slice(-keep);
+  while (keep > 100 && !fits(`… ${tail}`)) {
+    keep = Math.floor(keep * 0.8);
+    tail = out.slice(-keep);
+  }
+  // From a word, not the middle of one.
+  const space = tail.search(/\s/);
+  if (space > 0 && space < 40) tail = tail.slice(space + 1);
+  return `… ${tail.trimStart()}`;
+}
 
 /** Pure: `what` as a typing event carries it ({ kind, number?, project? }), or null for "thinking". */
 function typingDoing(what) {
@@ -774,6 +801,10 @@ function typingDoing(what) {
   if (what.kind === 'code') {
     const project = typeof what.project === 'string' ? clip(what.project.replace(/\s+/g, ' ').trim(), MAX_DOING_PROJECT) : '';
     return project ? { kind: 'code', project } : { kind: 'code' };
+  }
+  if (what.kind === 'writing') {
+    const text = typeof what.text === 'string' ? draftTail(what.text) : '';
+    return text ? { kind: 'writing', text } : null;
   }
   return { kind: what.kind };
 }
@@ -6131,6 +6162,9 @@ module.exports = {
   startTyping,
   whileTyping,
   typingDoing,
+  draftTail,
+  MAX_DRAFT_CHARS,
+  MAX_DRAFT_BYTES,
   DOING_KINDS,
   recordRequester,
   requesterOf,

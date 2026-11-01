@@ -1,7 +1,7 @@
 import { WorkingDots } from '@/components/ui/chat';
 
 import { useMessages } from '../../lib/i18n/react';
-import { UserAvatar } from './format';
+import { MessageMarkdown, UserAvatar } from './format';
 import type { BotDoing, Typist } from './store';
 
 /*
@@ -29,6 +29,13 @@ import type { BotDoing, Typist } from './store';
  * with one hairline, rows 15 over 13 (ListRow's pair). It renders nothing
  * of its own until the store says the bot is typing, so a first render is
  * the empty transcript it always was.
+ *
+ * Homeroom bot parity, P1: AS IT WRITES. While the model writes its answer,
+ * the typing event's `doing` is { kind: 'writing', text } (the newest part
+ * of the answer so far, services/homeroom-bot-mayor.js draftWriter), and the
+ * card shows those words under "Writing", growing, drawn as the message's
+ * own words are. It is a preview: the message the bot sends, checked, takes
+ * the card's place as before.
  */
 
 type Translate = (id: string, values?: Record<string, unknown>) => string;
@@ -49,7 +56,13 @@ const DOING_WORDS: Record<string, string> = {
   drawing: 'messages:thread.botWorking.drawing',
   designing: 'messages:thread.botWorking.designing',
   drafting: 'messages:thread.botWorking.drafting',
+  writing: 'messages:thread.botWorking.writing',
 };
+
+/** Homeroom bot parity, P1: the answer so far, while the bot writes it, or ''. */
+export function botDraftText(doing: BotDoing | null | undefined): string {
+  return doing?.kind === 'writing' && typeof doing.text === 'string' ? doing.text.trim() : '';
+}
 
 /** What the card says the bot is doing: "Reading request #12", or "Thinking" for nothing (or a kind it does not know). */
 export function botDoingLine(t: Translate, doing: BotDoing | null | undefined): string {
@@ -62,6 +75,7 @@ export function botDoingLine(t: Translate, doing: BotDoing | null | undefined): 
 
 export function BotWorkingCard({ typist }: { typist: Typist }) {
   const t = useMessages('messages');
+  const draft = botDraftText(typist.doing);
   return (
     <div className="flex items-start gap-3 px-4 py-1" data-bot-working={typist.doing?.kind || 'thinking'}>
       <UserAvatar user={{ id: 0, username: typist.name, bot: true }} size="md" shape="square" />
@@ -71,6 +85,11 @@ export function BotWorkingCard({ typist }: { typist: Typist }) {
           <span className="min-w-0 truncate" data-bot-working-doing="">{botDoingLine(t, typist.doing)}</span>
           <WorkingDots />
         </div>
+        {draft ? (
+          <div className="mt-1.5 min-w-0 break-words text-[0.9375rem] leading-[1.375rem] text-zinc-900 dark:text-zinc-100" data-bot-working-draft="" aria-live="off">
+            <MessageMarkdown content={draft} />
+          </div>
+        ) : null}
       </div>
     </div>
   );

@@ -89,12 +89,17 @@ const repoRef = require('./repo-ref');
 const { labelledAsPullRequest } = require('./request-mentions');
 
 const MAX_HISTORY = 24;
-const MAX_ROUNDS = 6;
-const MAX_OUTPUT_TOKENS = 900;
+// Homeroom bot parity, P1 (room to answer): a conversation with the bot gets
+// the room a coding agent's chat has, on the same cheap model. Sixteen
+// rounds of lookups (the transport's limit on messages is kept by compacting
+// the turn's oldest lookups, compactRounds), and room for a long, structured
+// answer when they ask for one. It was 6 rounds and 900 tokens.
+const MAX_ROUNDS = 16;
+const MAX_OUTPUT_TOKENS = 4000;
 // A round cut off at its output limit is asked again with this much room: a
 // reasoning model spends its thinking from the same allowance, and a long
 // answer about their work is where it ran out.
-const RETRY_OUTPUT_TOKENS = 1800;
+const RETRY_OUTPUT_TOKENS = 8000;
 // #3733: a failed model request is asked again on a fresh route (a new
 // provider session), up to MAX_ATTEMPTS times in all, while the turn is
 // RETRY_WITHIN_MS young (retryPlan). These are the failures of a provider
@@ -105,11 +110,13 @@ const RETRYABLE_MODEL_ERRORS = new Set([
   'rate_limited', 'response_too_large', 'empty_answer',
 ]);
 const MAX_ATTEMPTS = 3;
-const RETRY_WITHIN_MS = 90_000;
-// #3772: one model request's clock. The DM's requests are not streamed, so
-// the transport's default 25 seconds timed a whole reasoning answer out on
-// 2 October.
-const REQUEST_TIMEOUT_MS = 45_000;
+// P1: a turn of sixteen rounds runs for minutes, and its later requests are
+// worth asking again too (it was 90 seconds, when a turn had six).
+const RETRY_WITHIN_MS = 240_000;
+// #3772: one model request's clock. The transport's default 25 seconds timed
+// a whole reasoning answer out on 2 October. P1: a long answer of 4000
+// tokens, streamed or not, takes this long at worst.
+const REQUEST_TIMEOUT_MS = 90_000;
 // The longest a provider's Retry-After is waited for within a turn.
 const MAX_RETRY_AFTER_WAIT_MS = 20_000;
 // #3772: a turn no model request could answer is asked again on its own,
@@ -131,7 +138,7 @@ const RETRY_WAITS_MS = [0, 1_500];
 const KEY_ERRORS = new Set(['no_key', 'authentication', 'billing']);
 // When the rounds could not answer, one plain request (plainAnswer) while the
 // turn is this young, from this many of the conversation's newest messages.
-const PLAIN_WITHIN_MS = 150_000;
+const PLAIN_WITHIN_MS = 300_000;
 const PLAIN_HISTORY = 8;
 // A round answers at most this many of the model's calls, so a turn always
 // fits the transport's limit on messages.
@@ -152,7 +159,8 @@ const MAX_CARDS = 3;
 // label (the client keeps 60 characters of one).
 const MAX_SUGGESTIONS = 3;
 const MAX_SUGGESTION_CHARS = 60;
-const MAX_REPLY_CHARS = 2500;
+// P1: a long answer fits (a message holds 8000, conversations.js).
+const MAX_REPLY_CHARS = 8000;
 const MAX_TOOL_RESULT_CHARS = 12_000;
 const MAX_TITLE_CHARS = 200;
 const MAX_DETAILS_CHARS = 3000;
@@ -565,7 +573,7 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  anyone can read; the last few messages of this chat go only to the team, privately. Say so.',
     // Homeroom bot parity (P1-P9): what the thread tools add this turn (homeroom-bot-thread-tools/).
     ...extra,
-    'Finish every turn by calling reply exactly once: short plain text, cards for up to 3 requests,',
+    'Finish every turn by calling reply exactly once: plain text (short unless they asked for more), cards for up to 3 requests,',
     'changes or projects you mention, and up to 3 suggestions: short things they might say next, in their own',
     'words ("How long will it take?"), each something you can do or answer from this chat. Offer at least one',
     'unless the conversation has plainly ended.',
@@ -611,7 +619,10 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  to tell. English only when you cannot tell.',
     '- When something they ask for already exists, say where they find it, in the words they see on screen: the',
     '  screen or tab and the button to tap. Only when the tools or the code you read show it.',
-    '- Keep a reply under 120 words unless they ask for detail.',
+    // P1: room for a real answer when they ask for one, still short for small talk.
+    '- Keep small talk and quick answers short: a few sentences. When they ask for analysis, options, a plan, a',
+    '  comparison or detail, take the room it needs: a longer answer laid out with short headings, lists or a',
+    '  table (Markdown), still in plain words, and lead with the answer itself.',
     '- Never write an em dash. Use a comma, a colon or a full stop instead.',
     '- From this chat you cannot build, merge, vote, close requests yourself or change settings, or change anybody else\'s',
     '  change. Changes come from requests, and your own changes are updated through',
@@ -910,7 +921,7 @@ const TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          text: { type: 'string', description: 'Your reply, plain and short.' },
+          text: { type: 'string', description: 'Your reply in plain words: short for small talk, longer and laid out when they ask for analysis, options or detail.' },
           cards: {
             type: 'array',
             maxItems: MAX_CARDS,
@@ -1813,6 +1824,300 @@ function sayDoing(pool, ctx, name, args = {}) {
   return ctx.saying;
 }
 
+// ── The answer as it is written (Homeroom bot parity, P1) ──────────────────
+//
+// While the model writes its answer, the person sees it appear: the working
+// card (homeroom-bot-dm.js typingDoing, kind 'writing') shows the words so
+// far. The answer almost always arrives as the reply tool's `text`, so the
+// round's request is streamed (openrouter.js streamChat's onDelta) and that
+// argument is read as it grows (partialTextField); words with no tool call
+// are shown once they are longer than a preamble can be (announcesOnly), so
+// "Let me look at the code." never flashes up and goes. At most one update
+// every DRAFT_EVERY_MS, the newest words each time, in order with what the
+// card says the bot is doing (ctx.saying). What is shown is only a preview:
+// the message sent at the end (checked, and cut where it claimed too much)
+// takes the card's place, as it always has.
+
+const DRAFT_EVERY_MS = 250;
+
+/**
+ * Pure: the value of `key` in a JSON object that has only partly arrived,
+ * as far as it has, or null when that key's string has not started. Only a
+ * top-level key is found; an escape cut off at the end is left for the next
+ * read.
+ */
+function partialTextField(json, key = 'text') {
+  const raw = String(json || '');
+  const re = new RegExp(`(?:^|[{,])\\s*"${key}"\\s*:\\s*"`, 'g');
+  const found = re.exec(raw);
+  if (!found) return null;
+  let out = '';
+  for (let i = found.index + found[0].length; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (ch === '"') return out;
+    if (ch !== '\\') { out += ch; continue; }
+    const next = raw[i + 1];
+    if (next === undefined) return out;
+    if (next === 'u') {
+      const hex = raw.slice(i + 2, i + 6);
+      if (!/^[0-9a-fA-F]{4}$/.test(hex)) return out;
+      out += String.fromCharCode(parseInt(hex, 16));
+      i += 5;
+      continue;
+    }
+    out += { n: '\n', t: '\t', r: '', b: '', f: '', '"': '"', '\\': '\\', '/': '/' }[next] ?? next;
+    i += 1;
+  }
+  return out;
+}
+
+/**
+ * Pure: the words of the answer in a round's response so far, from what the
+ * transport has received ({ content, toolCalls }): the reply tool's text
+ * when it is being called, '' when another tool is (no answer this round),
+ * the words themselves once they are longer than a preamble, else null
+ * (nothing to show yet).
+ */
+function draftOf({ content = '', toolCalls = [] } = {}) {
+  const calls = Array.isArray(toolCalls) ? toolCalls : [];
+  const reply = calls.find((c) => c?.function?.name === 'reply');
+  if (reply) {
+    const text = partialTextField(reply.function.arguments, 'text');
+    return text == null ? null : cleanReply(text);
+  }
+  if (calls.some((c) => c?.function?.name)) return '';
+  const text = String(content || '');
+  return text.trim().length > MAX_PREAMBLE_CHARS ? cleanReply(text) : null;
+}
+
+/**
+ * What shows the answer as it is written, for one turn: `onDelta` for the
+ * transport, `clear()` before a pass that writes it again, `close()` once
+ * the turn's own message is on its way. Null when nothing can show it (no
+ * working card: deps.doing). Never rejects.
+ */
+function draftWriter(ctx, { every = DRAFT_EVERY_MS, wait = (ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref?.(); }) } = {}) {
+  const doing = ctx?.deps?.doing;
+  if (typeof doing !== 'function') return null;
+  let latest = '';
+  let shown = '';
+  let queued = false;
+  let closed = false;
+  let lastAt = 0;
+  const run = async () => {
+    const gap = lastAt + every - Date.now();
+    if (gap > 0) await wait(gap);
+    queued = false;
+    if (closed || latest === shown) return;
+    shown = latest;
+    lastAt = Date.now();
+    await doing(shown ? { kind: 'writing', text: shown } : null);
+  };
+  const set = (text) => {
+    if (closed) return;
+    latest = text;
+    if (queued || latest === shown) return;
+    queued = true;
+    ctx.saying = (ctx.saying || Promise.resolve()).then(run).catch((err) => {
+      log.warn('homeroom-bot-mayor', 'Could not show the answer as it was written', { err: clip(err?.message, 200) });
+    });
+  };
+  return {
+    onDelta(state) {
+      const text = draftOf(state);
+      if (text !== null) set(text);
+    },
+    clear() { set(''); },
+    // `clear`: what was shown goes too (the turn found no answer to send).
+    close({ clear = false } = {}) {
+      if (closed) return;
+      closed = true;
+      if (clear && shown) {
+        shown = '';
+        ctx.saying = (ctx.saying || Promise.resolve()).then(() => doing(null)).catch(() => {});
+      }
+    },
+  };
+}
+
+// ── What the turn looked at (Homeroom bot parity, P1) ─────────────────────
+//
+// Above the reply's words, one quiet line: "Looked at 5 things · 40 s",
+// which opens to the list (frontend features/messages/bot-looked.tsx). The
+// list is the turn's own lookups that answered (noteLookup), in plain words,
+// then whatever the thread tools added (ctx.looked: { what }), and the time
+// is how long the turn took to answer (or, when a thread tool says it spent
+// longer, ctx.lookedMs). Sent as the reply's metadata `looked`. No money,
+// no ids; a turn that looked at nothing says nothing.
+
+const MAX_LOOKED_ITEMS = 20;
+const MAX_LOOKED_CHARS = 120;
+// The tools whose lookups are listed (what the bot itself read), by name.
+const LOOKUP_TOOLS = new Set([
+  'progress', 'my_work', 'my_projects', 'request_detail', 'list_source', 'read_source', ...PLATFORM_TOOLS,
+]);
+
+/** Note one tool call of this turn that read something, when it answered (not an error). */
+function noteLookup(ctx, name, args = {}, result = null) {
+  if (!ctx || !LOOKUP_TOOLS.has(name)) return;
+  if (!result || typeof result !== 'object' || result.error || result.ok === false) return;
+  const a = args && typeof args === 'object' ? args : {};
+  const number = Number(a.number ?? a.ref ?? a.prNumber);
+  ctx.lookups ||= [];
+  ctx.lookups.push({
+    tool: name,
+    project: typeof result.project === 'string' ? result.project
+      : (typeof a.slug === 'string' ? a.slug.trim().toLowerCase() : (typeof a.project === 'string' ? a.project.trim() : null)),
+    ...(typeof result.projectName === 'string' ? { projectName: result.projectName } : {}),
+    ...(Number.isSafeInteger(number) && number > 0 ? { number } : {}),
+    ...(typeof result.path === 'string' ? { path: result.path } : {}),
+    ...(name === 'get_discussion' && typeof a.threadType === 'string' ? { threadType: a.threadType } : {}),
+  });
+}
+
+/**
+ * Pure: the turn's lookups (noteLookup) and the thread tools' own entries
+ * (`extra`, ctx.looked) as the line's list: [{ what }], in the order first
+ * done, each said once, a project's code reads as one ("Read 3 files in Gym
+ * Tracker"). `names` maps a project's slug to its name.
+ */
+function lookedItems(lookups = [], { names = new Map(), extra = [] } = {}) {
+  const named = (slug) => (slug && names.get(slug)) || slug || 'a project';
+  const order = [];
+  const code = new Map();
+  for (const l of Array.isArray(lookups) ? lookups : []) {
+    const where = l.projectName || named(l.project);
+    const request = l.number ? `${where} request #${l.number}` : null;
+    switch (l.tool) {
+      case 'progress': order.push('Checked how your work is going'); break;
+      case 'my_work': order.push('Read your list of requests'); break;
+      case 'my_projects': order.push('Read your list of projects'); break;
+      case 'request_detail': if (request) order.push(`Read my notes on ${request}`); break;
+      case 'get_request': if (request) order.push(`Read ${request}`); break;
+      case 'get_discussion':
+        order.push(request && (!l.threadType || l.threadType === 'issue') ? `Read the discussion on ${request}` : `Read a discussion in ${where}`);
+        break;
+      case 'get_proposal': order.push(l.project ? `Read a proposed change in ${where}` : 'Read a proposed change'); break;
+      case 'get_change': order.push(l.project ? `Read a change in ${where}` : 'Read a change'); break;
+      case 'list_my_proposals': order.push('Read your proposed changes'); break;
+      case 'list_apps': order.push('Looked through the projects on Homeroom'); break;
+      case 'get_app': order.push(`Read about ${where}`); break;
+      case 'list_requests': order.push(`Looked through the requests of ${where}`); break;
+      case 'get_message': order.push('Read a message'); break;
+      case 'get_platform_conventions': order.push('Read how apps are built on Homeroom'); break;
+      case 'list_source':
+      case 'read_source': {
+        const key = l.project || '';
+        if (!code.has(key)) { code.set(key, { where, files: new Set() }); order.push({ code: key }); }
+        if (l.tool === 'read_source' && l.path) code.get(key).files.add(l.path);
+        break;
+      }
+      default: break;
+    }
+  }
+  const out = [];
+  const seen = new Set();
+  const add = (words) => {
+    const what = clip(withoutEmDashes(String(words || '').replace(/\s+/g, ' ')), MAX_LOOKED_CHARS);
+    if (!what || seen.has(what) || out.length >= MAX_LOOKED_ITEMS) return;
+    seen.add(what);
+    out.push({ what });
+  };
+  for (const entry of order) {
+    if (typeof entry === 'string') { add(entry); continue; }
+    const { where, files } = code.get(entry.code);
+    add(files.size ? `Read ${files.size} ${files.size === 1 ? 'file' : 'files'} in ${where}` : `Looked through the files of ${where}`);
+  }
+  for (const entry of Array.isArray(extra) ? extra : []) add(entry && typeof entry === 'object' ? entry.what : entry);
+  return out;
+}
+
+/**
+ * The reply's `looked` metadata ({ items, ms }), or null when the turn
+ * looked at nothing. Projects are named by their names (one read, of the
+ * projects whose lookups answered, so the person could see them). Never throws.
+ */
+async function lookedMeta(pool, ctx, ms) {
+  try {
+    const lookups = Array.isArray(ctx?.lookups) ? ctx.lookups : [];
+    const extra = Array.isArray(ctx?.looked) ? ctx.looked : [];
+    if (!lookups.length && !extra.length) return null;
+    const slugs = [...new Set(lookups.filter((l) => !l.projectName && l.project).map((l) => l.project))].slice(0, 20);
+    const names = new Map();
+    if (slugs.length) {
+      try {
+        const { rows } = await pool.query('SELECT slug, name FROM apps WHERE slug = ANY($1::text[])', [slugs]);
+        for (const row of rows || []) if (row?.slug && row.name) names.set(String(row.slug), String(row.name));
+      } catch {
+        // Named by their short names instead.
+      }
+    }
+    const items = lookedItems(lookups, { names, extra });
+    if (!items.length) return null;
+    const spent = Math.max(Number(ms) || 0, Number(ctx?.lookedMs) || 0);
+    return { items, ms: Math.max(0, Math.round(spent)) };
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not say what a turn looked at', { err: clip(err?.message, 200) });
+    return null;
+  }
+}
+
+// ── Room in one turn (Homeroom bot parity, P1) ────────────────────────────
+//
+// The transport takes at most MAX_MESSAGES messages (openrouter.js), and
+// sixteen rounds of up to MAX_CALLS_PER_ROUND calls would pass it; a turn
+// that read many files grows long too. Before a round that would not fit,
+// or once the turn's own lookups pass MAX_TURN_CHARS, its oldest rounds
+// (each a call and its results, whole) are folded into one note of what
+// they returned, shortened, and the newest KEEP_ROUNDS stay as they were.
+// When even that does not make room, the round is the last: it replies.
+
+const MAX_TURN_CHARS = 240_000;
+const COMPACT_RESULT_CHARS = 700;
+const COMPACT_NOTE_CHARS = 24_000;
+const KEEP_ROUNDS = 2;
+const COMPACT_LEAD = '[Homeroom, not from them: what your earlier lookups in this turn returned, shortened to fit. Look one up again if you need it in full.]';
+
+function messageChars(m) {
+  if (!m) return 0;
+  const content = Array.isArray(m.content)
+    ? m.content.reduce((n, part) => n + (part?.type === 'text' ? String(part.text || '').length : 1000), 0)
+    : String(m.content || '').length;
+  return content + (Array.isArray(m.tool_calls) ? JSON.stringify(m.tool_calls).length : 0);
+}
+
+/**
+ * Fold the oldest rounds of a turn's messages (from index `from`, where the
+ * turn's own rounds begin) into one note, in place, when the next round
+ * (`room` more messages) would not fit or the rounds are too long. Returns
+ * whether it folded anything.
+ */
+function compactRounds(messages, { from, room = MAX_CALLS_PER_ROUND + 2, maxMessages = MAX_MESSAGES, maxChars = MAX_TURN_CHARS } = {}) {
+  if (!Array.isArray(messages) || !(from >= 0) || from >= messages.length) return false;
+  const chars = messages.slice(from).reduce((n, m) => n + messageChars(m), 0);
+  if (messages.length + room <= maxMessages && chars <= maxChars) return false;
+  const starts = [];
+  for (let i = from; i < messages.length; i += 1) if (messages[i]?.role === 'assistant') starts.push(i);
+  if (starts.length <= KEEP_ROUNDS) return false;
+  const cut = starts[starts.length - KEEP_ROUNDS];
+  const calls = new Map();
+  const lines = [];
+  for (const m of messages.slice(from, cut)) {
+    if (m?.role === 'user' && typeof m.content === 'string' && m.content.startsWith(COMPACT_LEAD)) {
+      lines.push(...m.content.slice(COMPACT_LEAD.length).split('\n').filter(Boolean));
+    } else if (m?.role === 'assistant') {
+      for (const call of m.tool_calls || []) calls.set(call.id, call.function);
+    } else if (m?.role === 'tool') {
+      const fn = calls.get(m.tool_call_id);
+      const args = fn ? clip(String(fn.arguments || '{}'), 200) : '{}';
+      lines.push(`- ${fn?.name || 'a lookup'} ${args}: ${clip(String(m.content || '').replace(/\s+/g, ' '), COMPACT_RESULT_CHARS)}`);
+    }
+  }
+  const note = { role: 'user', content: clip(`${COMPACT_LEAD}\n${lines.join('\n')}`, COMPACT_NOTE_CHARS) };
+  messages.splice(from, cut - from, note);
+  return true;
+}
+
 // 31 Oct 2026: their earlier messages whose answer this turn took over (the
 // bot-dm machine's `also`, deps.alsoUnanswered): a promised answer used to be
 // dropped when they wrote again, and never came. Each is quoted to the
@@ -1978,8 +2283,14 @@ async function historyMessages(pool, {
     });
     const card = fromBot && kind === 'activity' ? cardNow.get(Number(m.id)) : null;
     if (card) lines.push(`[Homeroom: this activity card now reads "${card}".]`);
+    // Homeroom bot parity (P1-P9): a card it put under this reply, as the
+    // model reads it back (homeroom-bot-cards/ historyLine): what it offered,
+    // and what they picked or answered.
+    const richCard = fromBot ? require('./homeroom-bot-cards').historyLine(meta?.card) : null;
+    if (richCard) lines.push(richCard);
     if (!fromBot && !m.moderation_hidden_at) lines.push(...(sharedLines.get(Number(m.id)) || []));
-    const text = [`${about}${clip(m.content, 2000)}`, ...lines].filter(Boolean).join('\n') || '(attachment)';
+    // P1: its own long answers are read back whole.
+    const text = [`${about}${clip(m.content, fromBot ? MAX_REPLY_CHARS : 2000)}`, ...lines].filter(Boolean).join('\n') || '(attachment)';
     const role = fromBot ? 'assistant' : 'user';
     return parts.length ? { role, content: [{ type: 'text', text }, ...parts] } : { role, content: text };
   });
@@ -2559,6 +2870,8 @@ async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_
         // person's, and a retry moves to a fresh one.
         sessionId: `hrbot-dm-${t.user.id}-${t.message.id}${t.route > 1 ? `-r${t.route}` : ''}`,
         ...(Array.isArray(t.avoid) && t.avoid.length ? { ignoreProviders: t.avoid } : {}),
+        // P1: streamed, so the answer shows as it is written (draftWriter).
+        ...(typeof t.onDelta === 'function' ? { onDelta: t.onDelta } : {}),
         ...rest,
         ...overrides,
       });
@@ -2841,6 +3154,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     // (avoidProviders); null once a request was refused as it was built.
     avoid: [],
   };
+  // P1: the answer, shown on the working card as the model writes it.
+  const draft = deps.streamDraft === false ? null : draftWriter(ctx);
+  if (draft) t.onDelta = draft.onDelta;
   // 31 Oct 2026: earlier messages of theirs this answer owes too (owedNote).
   ctx.owed = await owedNote(pool, { conversationId, userId: user.id, ids: deps.alsoUnanswered });
   const toolsUsed = [];
@@ -2947,11 +3263,16 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       const ids = new Set();
       let limit = MAX_ROUNDS;
       let preambles = 0;
+      // P1: where the turn's own rounds begin, for compactRounds.
+      const turnFrom = messages.length;
       const runRounds = async () => {
         while (rounds < limit && !ctx.reply && !ctx.drawScreen) {
           rounds += 1;
           state.rounds = rounds;
-          const last = rounds === limit;
+          // P1: room for this round's calls and the next request, or this
+          // round replies (the transport's limit on messages).
+          compactRounds(messages, { from: turnFrom });
+          const last = rounds === limit || messages.length + MAX_CALLS_PER_ROUND + 2 > MAX_MESSAGES;
           // #3685: one failed request used to end the turn with "I couldn't
           // answer just now", whatever the round had already read.
           const res = await askModel(t, {
@@ -2984,6 +3305,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
               ? await platformCall(platform, name, args, pictures)
               : await runTool(pool, ctx, name, args);
             if (!(platform && PLATFORM_TOOLS.includes(name))) noteRequests(ctx, result);
+            // P1: what it read, for the reply's "Looked at" line.
+            noteLookup(ctx, name, args, result);
             messages.push({ role: 'tool', tool_call_id: call.id, content: clip(JSON.stringify(result), MAX_TOOL_RESULT_CHARS) });
           }
           const shown = picturesMessage(takeImages({ images: pictures }));
@@ -3005,6 +3328,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         });
         const first = ctx.reply ? { ...ctx.reply } : { text: finalText, cards: [] };
         messages.push({ role: 'user', content: checkNote(problems) });
+        // P1: the answer shown as it was written goes; the next pass writes it again.
+        draft?.clear();
         ctx.reply = null;
         finalText = '';
         // One round for a tool (offer_request, say) and one for the reply,
@@ -3030,6 +3355,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     }
   }
   let text = clip(cleanReply(ctx.reply?.text || finalText), MAX_REPLY_CHARS);
+  // P1: nothing more is shown as it is written; the message takes the card's place.
+  draft?.close({ clear: !text });
   // Whatever the second pass still claimed with nothing behind it is cut.
   if (text && ctx.checkedProblems?.length) {
     log.info('homeroom-bot-mayor', 'Cut what a DM reply still claimed', {
@@ -3098,11 +3425,14 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   const prompts = next.length ? require('./homeroom-bot-dm').promptActions(next) : [];
   const actions = prompts.slice(0, 3);
   const project = named.project ? { appSlug: named.project } : {};
+  // P1: what the turn looked at, as one line above the words (lookedMeta).
+  const looked = await lookedMeta(pool, ctx, Date.now() - t.startedMs);
   return say(text, {
     objects: unique,
     metadata: {
       kind: 'chat', ...project,
       ...(actions.length ? { actions, status: 'open' } : {}),
+      ...(looked ? { looked } : {}),
       // Homeroom bot parity (P1-P9): a card a thread tool put under the reply
       // (homeroom-bot-cards/, frontend features/messages/bot-cards/).
       ...(ctx.card && typeof ctx.card === 'object' && typeof ctx.card.type === 'string' ? { card: ctx.card } : {}),
@@ -5281,6 +5611,21 @@ module.exports = {
   MAX_PREAMBLE_NUDGES,
   doingFor,
   sayDoing,
+  // Homeroom bot parity, P1
+  MAX_OUTPUT_TOKENS,
+  MAX_REPLY_CHARS,
+  MAX_MESSAGES,
+  RETRY_WITHIN_MS,
+  DRAFT_EVERY_MS,
+  partialTextField,
+  draftOf,
+  draftWriter,
+  noteLookup,
+  lookedItems,
+  lookedMeta,
+  compactRounds,
+  COMPACT_LEAD,
+  KEEP_ROUNDS,
   commentText,
   commentOnRequest,
   startRequest,

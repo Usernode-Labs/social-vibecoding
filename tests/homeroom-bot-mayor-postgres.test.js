@@ -1101,7 +1101,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     };
     const sent = await turn('how far along are you?', chat);
     assert.equal((await read(sent)).content, 'Ear trainer is still being set up.');
-    assert.deepEqual(asks.map((a) => a.max), [900, mayor.RETRY_OUTPUT_TOKENS]);
+    assert.deepEqual(asks.map((a) => a.max), [mayor.MAX_OUTPUT_TOKENS, mayor.RETRY_OUTPUT_TOKENS]);
     assert.match(asks[0].session, new RegExp(`^hrbot-dm-${ada.id}-\\d+$`), 'a provider route of this turn, not of every turn of hers');
     assert.equal(asks[1].session, `${asks[0].session}-r2`);
     const { rows: [row] } = await pool.query('SELECT error FROM homeroom_bot_dm_turns ORDER BY id DESC LIMIT 1');

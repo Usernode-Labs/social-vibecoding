@@ -49,10 +49,22 @@ export interface HomeroomBotCard {
   [field: string]: unknown;
 }
 
+/**
+ * Homeroom bot parity, P1: what a reply looked at, as one line above its
+ * words (./bot-looked.tsx): each thing in plain words, and how long the
+ * answer took, in milliseconds.
+ */
+export interface HomeroomBotLooked {
+  items: Array<{ what: string }>;
+  ms: number | null;
+}
+
 export interface HomeroomBotMeta {
   kind: string;
   /** Homeroom bot parity (P1-P9): the reply's card, drawn by ./bot-cards/. */
   card?: HomeroomBotCard;
+  /** Homeroom bot parity, P1: what the reply looked at (./bot-looked.tsx). */
+  looked?: HomeroomBotLooked;
   /** #6071: a design thread's version this message says (kind 'design_version'). */
   designVersion?: number;
   /** #6071: the screen a design thread is of (kind 'opened_design', and 1 Nov 2026 a version's and a drawn thread's line). */

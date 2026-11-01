@@ -130,4 +130,26 @@ async function decide(pool, config, { user, messageId, action, value = null, dep
   }
 }
 
-module.exports = { decide, setCardState, cardOf, boundedValue, HANDLERS };
+const MAX_HISTORY_LINE_CHARS = 1500;
+
+/**
+ * Pure: how a card reads in the model's history, under the reply it was put
+ * under ("[Homeroom: under this reply you offered ...]"), from its type's
+ * handler (`historyLine(card)`, optional), or null. The model never sees a
+ * card otherwise: its tool call is not kept. Never throws.
+ */
+function historyLine(card) {
+  try {
+    if (!card || typeof card !== 'object' || typeof card.type !== 'string') return null;
+    if (!Object.prototype.hasOwnProperty.call(HANDLERS, card.type)) return null;
+    const handler = HANDLERS[card.type]();
+    const line = typeof handler?.historyLine === 'function' ? handler.historyLine(card) : null;
+    if (typeof line !== 'string' || !line.trim()) return null;
+    return line.length > MAX_HISTORY_LINE_CHARS ? `${line.slice(0, MAX_HISTORY_LINE_CHARS - 2)}…]` : line;
+  } catch (err) {
+    log.warn('homeroom-bot-cards', 'Could not read a card back for the history', { type: String(card?.type).slice(0, 40), err: err.message });
+    return null;
+  }
+}
+
+module.exports = { decide, setCardState, cardOf, boundedValue, historyLine, HANDLERS };
