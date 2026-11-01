@@ -259,7 +259,7 @@ test('a batch against the full PostgreSQL schema', { timeout: 120000 }, async (t
   // ── Its time is up: it ends, and so does its raise ──
   await pool.query("UPDATE homeroom_bot_batches SET ends_at = NOW() - INTERVAL '1 minute' WHERE id = $1", [row.id]);
   const swept = await batches.sweep(pool, { ws });
-  assert.deepEqual(swept, { refreshed: 1, ended: 1 });
+  assert.deepEqual(swept, { refreshed: 1, ended: 1, patched: 1 });
   const { rows: [ended] } = await pool.query('SELECT state, ended_at FROM homeroom_bot_batches WHERE id = $1', [row.id]);
   assert.equal(ended.state, 'done');
   assert.ok(ended.ended_at);
@@ -268,6 +268,25 @@ test('a batch against the full PostgreSQL schema', { timeout: 120000 }, async (t
   assert.deepEqual(loop.raisedOf((await pool.query(laneFacts.BATCH_RAISES_SQL)).rows), {});
   assert.equal(await batches.proposalsPerAppFor(pool, app.id, 1, 5), 5);
   assert.equal(await batches.sweep(pool, { ws }), null, 'nothing left running');
+
+  // ── A table not built yet: a row being read says what its read found ──
+  const reading = await batches.propose(pool, { app, user: ada, numbers: [5], settings, conversationId, deps });
+  assert.equal(reading.card.requests[0].read, 'reading');
+  await asKernel((c) => c.query("INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason) VALUES ($1, 5, 0, 'batch_read')", [app.id]));
+  const { rows: [readingMsg] } = await pool.query(
+    `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata) VALUES ($1, $2, 'Reading.', $3) RETURNING id`,
+    [conversationId, bot.id, JSON.stringify({ homeroomBot: { kind: 'chat', card: reading.card } })],
+  );
+  assert.deepEqual(await batches.refreshBatch(pool, reading.batchId, { deps: { ws } }), { ended: false, patched: false }, 'still being read');
+  assert.equal((await batches.batchRow(pool, reading.batchId)).message_id, readingMsg.id, 'its card was found, and kept');
+  await asKernel((c) => c.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 5', [app.id]));
+  await run(5, 'person', { reason: 'The group should pick the search engine.' });
+  assert.deepEqual(await batches.refreshBatch(pool, reading.batchId, { deps: { ws } }), { ended: false, patched: true });
+  const { rows: [readMsg] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [readingMsg.id]);
+  assert.deepEqual(readMsg.metadata.homeroomBot.card.requests.map((r) => [r.number, r.read, r.note]),
+    [[5, 'person', 'The group should pick the search engine.']]);
+  assert.equal(readMsg.metadata.homeroomBot.card.label, '1 request · 1 for the group');
+  assert.equal(readMsg.metadata.homeroomBot.card.state, 'proposed');
 
   // ── A request nobody can start is a refusal of the whole tap ──
   const none = await batches.propose(pool, { app, user: ada, numbers: [2, 3], settings, deps });

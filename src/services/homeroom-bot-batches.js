@@ -542,6 +542,7 @@ async function start(pool, config, { batch, user, message, deps = {} }) {
 async function refreshBatch(pool, id, { deps = {}, now = Date.now() } = {}) {
   try {
     const batch = await batchRow(pool, id);
+    if (batch?.state === 'proposed') return await refreshProposed(pool, batch, { deps });
     if (!batch || batch.state !== 'running') return null;
     const roll = await rollupFor(pool, batch, deps);
     const over = roll.active === 0 || (batch.ends_at && toMs(batch.ends_at) <= now);
@@ -567,23 +568,78 @@ async function refreshBatch(pool, id, { deps = {}, now = Date.now() } = {}) {
   }
 }
 
-/** Every running batch on `appId` (all of them, when null), refreshed. Never throws. */
+// The reply a batch's card is under, kept on the row once found: the card is
+// sent with the reply after work_through returns, and the row is made first.
+async function cardMessageOf(pool, batch) {
+  if (batch.message_id) return Number(batch.message_id);
+  if (!batch.conversation_id) return null;
+  const { rows } = await pool.query(
+    `SELECT id FROM conversation_messages
+      WHERE conversation_id = $1 AND deleted_at IS NULL
+        AND metadata->'homeroomBot'->'card'->>'type' = 'batch'
+        AND metadata->'homeroomBot'->'card'->>'batchId' = $2
+      ORDER BY id DESC LIMIT 1`,
+    [Number(batch.conversation_id), String(batch.id)],
+  );
+  const id = Number(rows[0]?.id) || null;
+  if (id) await pool.query('UPDATE homeroom_bot_batches SET message_id = $2 WHERE id = $1 AND message_id IS NULL', [batch.id, id]);
+  return id;
+}
+
+/**
+ * A batch not built yet, whose table has rows being read: those rows say
+ * what the reads found once they have, read from the records again. Nothing
+ * is queued from here. Resolves what it did. Never throws.
+ */
+async function refreshProposed(pool, batch, { deps = {} } = {}) {
+  try {
+    const messageId = await cardMessageOf(pool, batch);
+    if (!messageId) return { ended: false, patched: false };
+    const { rows: [msg] = [] } = await pool.query(
+      "SELECT metadata->'homeroomBot'->'card' AS card FROM conversation_messages WHERE id = $1", [messageId]);
+    const card = msg?.card || null;
+    const before = Array.isArray(card?.requests) ? card.requests : [];
+    if (card?.state !== 'proposed' || !before.some((r) => r?.read === 'reading')) return { ended: false, patched: false };
+    const app = await appById(pool, batch.app_id, deps);
+    if (!app) return { ended: false, patched: false };
+    const rows = (await classify(pool, { app, numbers: batch.numbers, deps })).filter((r) => !r.closed);
+    const requests = rows.map(cardRow);
+    if (sameRollup(before, requests)) return { ended: false, patched: false };
+    const counts = countsOf(rows);
+    const patched = await cardsModule(deps).setCardState(pool, messageId, { requests, counts, label: summaryOf(counts) },
+      { userId: Number(batch.user_id), ws: deps.ws || null });
+    return { ended: false, patched };
+  } catch (err) {
+    log.warn('homeroom-bot-batches', 'Could not refresh a batch\'s table', { batchId: batch?.id, err: err.message });
+    return null;
+  }
+}
+
+/**
+ * Every running batch on `appId` (all of them, when null), refreshed, and
+ * the tables of the last day's batches not built yet. Never throws.
+ */
 async function refreshApp(pool, appId = null, { deps = {} } = {}) {
   try {
     const res = await pool.query(
-      `SELECT id FROM homeroom_bot_batches WHERE state = 'running' AND ($1::int IS NULL OR app_id = $1) ORDER BY id`,
+      `SELECT id FROM homeroom_bot_batches
+        WHERE (state = 'running' OR (state = 'proposed' AND created_at > NOW() - INTERVAL '1 day'))
+          AND ($1::int IS NULL OR app_id = $1)
+        ORDER BY id`,
       [appId == null ? null : Number(appId)],
     );
     const ids = Array.isArray(res?.rows) ? res.rows.map((r) => Number(r.id)) : [];
     let ended = 0;
+    let patched = 0;
     for (const id of ids) {
       const out = await refreshBatch(pool, id, { deps });
       if (out?.ended) ended += 1;
+      if (out?.patched) patched += 1;
     }
-    return { refreshed: ids.length, ended };
+    return { refreshed: ids.length, ended, patched };
   } catch (err) {
     log.warn('homeroom-bot-batches', 'Could not refresh the running batches', { appId, err: err.message });
-    return { refreshed: 0, ended: 0 };
+    return { refreshed: 0, ended: 0, patched: 0 };
   }
 }
 
@@ -614,7 +670,7 @@ function noteRequestChanged(pool, appId, _issueNumber = null) {
 /** The five-minute sweep's part (homeroom-bot.js sweep): every running batch, refreshed or ended. */
 async function sweep(pool, deps = {}) {
   const out = await refreshApp(pool, null, { deps });
-  return out.refreshed || out.ended ? out : null;
+  return out.ended || out.patched ? out : null;
 }
 
 /**

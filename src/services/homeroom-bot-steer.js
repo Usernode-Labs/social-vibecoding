@@ -183,18 +183,20 @@ async function takeNotes(pool, sessionId, { deps = {} } = {}) {
 }
 
 // Waiting notes whose build ended before it asked for them: the run built,
-// failed, was replaced or let go, or its session is no longer open.
+// failed, was replaced or let go, or its session is no longer open. A note
+// carried to a request's next build (no run yet) waits a week for one.
 const ENDED_SQL = `
   UPDATE homeroom_bot_build_notes n SET state = 'missed', settled_at = NOW()
     FROM homeroom_bot_build_notes w
     LEFT JOIN homeroom_bot_runs r ON r.id = w.run_id
     LEFT JOIN chat_sessions bs ON bs.id = COALESCE(w.session_id, r.build_session_id)
-   WHERE n.id = w.id AND w.state = 'waiting' AND w.run_id IS NOT NULL
+   WHERE n.id = w.id AND w.state = 'waiting'
      AND ($1::int IS NULL OR w.app_id = $1)
-     AND (r.id IS NULL OR r.build_ok IS NOT NULL OR r.proposal_session_id IS NOT NULL OR r.build_error IS NOT NULL
-          OR (bs.id IS NOT NULL AND bs.status <> 'active')
-          OR (r.build_session_id IS NULL AND r.live_build_waiting_at IS NULL)
-          OR w.created_at < NOW() - INTERVAL '7 days')
+     AND (w.created_at < NOW() - INTERVAL '7 days'
+          OR (w.run_id IS NOT NULL
+              AND (r.id IS NULL OR r.build_ok IS NOT NULL OR r.proposal_session_id IS NOT NULL OR r.build_error IS NOT NULL
+                   OR (bs.id IS NOT NULL AND bs.status <> 'active')
+                   OR (r.build_session_id IS NULL AND r.live_build_waiting_at IS NULL))))
   RETURNING n.*, r.proposal_session_id AS change_id`;
 
 // Settled notes whose card was not found when they settled (it had not been
