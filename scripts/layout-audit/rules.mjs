@@ -11,6 +11,8 @@
 //   target-under-system    a control under the clock, the camera or the home
 //                          indicator (the Duo's top band cleared 84px of a
 //                          130px clock pill, 1 Nov 2026)
+//   content-under-system   fixed text or an icon under the clock, the camera
+//                          or the island, where it cannot be read
 //   small-target           a control smaller than a fingertip, on touch
 //   keyboard-shift         raising the keyboard moves the page sideways (the
 //                          sidebar vanished and the page slid 212px left on
@@ -58,6 +60,19 @@ export function checkSnapshot(snap, profile) {
     }
     if (profile.touch && !t.inline && (t.rect.w < MIN_TARGET - 0.5 || t.rect.h < MIN_TARGET - 0.5)) {
       out.push({ rule: 'small-target', severity: 'warn', message: `${t.desc} is ${Math.round(t.rect.w)}x${Math.round(t.rect.h)}px, under ${MIN_TARGET}x${MIN_TARGET} for a finger.`, rect: t.rect });
+    }
+  }
+
+  // Where a control is aimed is judged above; what is drawn is judged here,
+  // so a wide row whose label starts under the island is caught though its
+  // middle is clear. Once per mark and zone; scrolling content is left out.
+  for (const m of snap.marks || []) {
+    for (const zone of (profile.system || []).filter((z) => z.severity === 'error')) {
+      const ow = Math.min(right(m.rect), right(zone)) - Math.max(m.rect.x, zone.x);
+      const oh = Math.min(bottom(m.rect), bottom(zone)) - Math.max(m.rect.y, zone.y);
+      if (ow >= 6 && oh >= 6) {
+        out.push({ rule: 'content-under-system', severity: 'warn', message: `${m.desc} is drawn under the ${zone.name}.`, rect: m.rect });
+      }
     }
   }
 

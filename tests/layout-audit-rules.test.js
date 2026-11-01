@@ -178,3 +178,12 @@ test('comparing two runs: what moved, what appeared, what went', async () => {
   // Under a pixel is rounding, not a move.
   assert.deepEqual(compareSnapshots(a, snap({ landmarks: [{ ...main, rect: { ...main.rect, x: 396.6 } }], targets: [send], chats: [chat] })), []);
 });
+
+test('fixed text or an icon under the clock or the island cannot be read', async () => {
+  const { checkSnapshot } = await load('rules.mjs');
+  const SIDEWAYS = { id: 'phone-sideways', width: 852, height: 393, touch: true, keyboard: 209, system: [{ name: 'camera island', x: 0, y: 120, w: 40, h: 153, severity: 'error' }] };
+  // A sidebar row's label starts under the island though the row's middle is clear.
+  const label = { desc: 'span "Discover"', rect: { x: 30, y: 180, w: 70, h: 20 } };
+  assert.deepEqual(rules(checkSnapshot(snap({ viewport: { w: 852, h: 393, visibleH: 393, scrollW: 852 }, marks: [label] }), SIDEWAYS)), ['warn content-under-system']);
+  assert.deepEqual(checkSnapshot(snap({ marks: [{ ...label, rect: { ...label.rect, x: 60 } }] }), SIDEWAYS), []);
+});

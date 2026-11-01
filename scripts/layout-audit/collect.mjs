@@ -119,6 +119,19 @@ export function collect(offset = { x: 0, y: 0 }) {
     targets.push({ desc: describe(el), rect: box(el), reachable: reachable(el), clipped: clippedInside(el), scrolls: scrolls(el), inline: getComputedStyle(el).display === 'inline' });
   }
 
+  // What the page draws to be read or seen, in its fixed chrome: a label, an
+  // icon, a picture. Text that scrolls is left out, as above.
+  const marks = [];
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+  for (let el = walker.nextNode(); el && marks.length < 600; el = walker.nextNode()) {
+    const tag = el.tagName.toLowerCase();
+    const ownText = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+    if (!ownText && tag !== 'svg' && tag !== 'img') continue;
+    if (!shown(el) || el.closest('[aria-hidden="true"]') && tag !== 'svg') continue;
+    if (scrolls(el)) continue;
+    marks.push({ desc: describe(el), rect: box(el) });
+  }
+
   // Each transcript and the reply box under it: the scroller, the status
   // line between them (and whether it says anything), and the card.
   const chats = [];
@@ -152,10 +165,11 @@ export function collect(offset = { x: 0, y: 0 }) {
     if (!sub) continue;
     for (const l of sub.landmarks) landmarks.push({ ...l, key: `frame:${l.key}` });
     targets.push(...sub.targets);
+    marks.push(...(sub.marks || []));
     chats.push(...sub.chats.map((c) => ({ ...c, inFrame: true })));
   }
 
-  return { facts, viewport, landmarks, targets, chats };
+  return { facts, viewport, landmarks, targets, chats, marks };
 }
 
 /** The expression a driver evaluates to take a snapshot. */
