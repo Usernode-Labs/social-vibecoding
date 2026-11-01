@@ -3643,6 +3643,158 @@
     "text": "Posted as a plan on request #{{number}}",
     "description": "Link in the design pane once the design was posted as a plan on a request (a filed issue): opens that request. The design can be posted again as the plan's next version."
   },
+  "botCards.gallery.groupLabel": {
+    "text": "Pictures Homeroom bot made",
+    "description": "Accessible name of the grid of pictures under a Homeroom bot reply, made on an outside picture model."
+  },
+  "botCards.gallery.open": {
+    "text": "Open picture {{label}}",
+    "description": "Accessible name of one picture in the bot's picture grid: tapping it opens the picture full screen. {{label}} is its letter, and light or dark."
+  },
+  "botCards.gallery.captionLight": {
+    "text": "{{letter}} · light",
+    "description": "Caption under a picture in the bot's picture grid when it comes in a light and a dark version: this is the light one. {{letter}} is A to D."
+  },
+  "botCards.gallery.captionDark": {
+    "text": "{{letter}} · dark",
+    "description": "Caption under a picture in the bot's picture grid when it comes in a light and a dark version: this is the dark one. {{letter}} is A to D."
+  },
+  "botCards.gallery.pickGroup": {
+    "text": "Which picture",
+    "description": "Accessible name of the row of letters (A, B, C, D) under the bot's picture grid that chooses which picture the buttons below act on."
+  },
+  "botCards.gallery.pick": {
+    "text": "Picture {{letter}}",
+    "description": "Accessible name of one letter button under the bot's picture grid: chooses picture {{letter}} for the buttons below."
+  },
+  "botCards.gallery.actions": {
+    "text": "What to do with it",
+    "description": "Accessible name of the row of buttons under the bot's picture grid (propose it, use it, more like it)."
+  },
+  "botCards.gallery.feature": {
+    "text": "Propose {{letter}} as the featured picture",
+    "description": "Button under the bot's picture grid, for a person who may change the project's card picture: opens a vote in the project's group on picture {{letter}} as the picture on its card in Discover."
+  },
+  "botCards.gallery.featured": {
+    "text": "Proposed {{letter}} as the featured picture",
+    "description": "Shown in place of the propose button once picture {{letter}} was proposed as the project's card picture: the group votes on it."
+  },
+  "botCards.gallery.seeVote": {
+    "text": "See the vote",
+    "description": "Link under the bot's picture grid once a picture was proposed as the project's card picture: opens that vote."
+  },
+  "botCards.gallery.use": {
+    "text": "Use {{letter}} in the app",
+    "description": "Button under the bot's picture grid: asks Homeroom bot to put picture {{letter}} in the project's app (it offers a request carrying the picture)."
+  },
+  "botCards.gallery.used": {
+    "text": "Asked to use {{letter}} in the app",
+    "description": "The use button once tapped, grey with a check: the person asked the bot to use picture {{letter}} in the app."
+  },
+  "botCards.gallery.design": {
+    "text": "Add {{letter}} to the design",
+    "description": "Button under the bot's picture grid in a design thread: adds picture {{letter}} to the design, for its next version."
+  },
+  "botCards.gallery.designed": {
+    "text": "Added {{letter}} to the design",
+    "description": "The add-to-design button once tapped, grey with a check: picture {{letter}} was added to the design thread's pictures."
+  },
+  "botCards.gallery.more": {
+    "text": "More like {{letter}}",
+    "description": "Button under the bot's picture grid: asks Homeroom bot for more pictures like picture {{letter}}."
+  },
+  "botCards.gallery.useWords": {
+    "text": "Use picture {{letter}} in {{project}}: {{url}}",
+    "description": "Words sent to Homeroom bot as the person's own message when they tap Use it in the app under its pictures. {{project}} is the project's name and {{url}} the picture's link, which the request it offers carries."
+  },
+  "botCards.gallery.useWordsNoProject": {
+    "text": "Use picture {{letter}} in the app: {{url}}",
+    "description": "Words sent to Homeroom bot as the person's own message when they tap Use it in the app under pictures made for no project yet. {{url}} is the picture's link."
+  },
+  "botCards.gallery.designWords": {
+    "text": "Add picture {{letter}} to the design.",
+    "description": "Words sent to Homeroom bot as the person's own message in a design thread when they tap Add to the design under its pictures."
+  },
+  "botCards.gallery.moreWords": {
+    "text": "More like picture {{letter}}, please.",
+    "description": "Words sent to Homeroom bot as the person's own message when they tap More like under its pictures."
+  },
+  "botCards.gallery.paid": {
+    "text": "Paid from your weekly building time.",
+    "description": "Quiet line under the pictures Homeroom bot made: they counted toward the person's own weekly building time with the bot."
+  },
+  "botCards.gallery.failed": {
+    "text": "That didn't work just now. Try again in a minute.",
+    "description": "Shown under the bot's picture grid when a tap on one of its buttons failed and the server said nothing more."
+  },
+  "botCards.compare.heading": {
+    "text": "Side by side",
+    "description": "Small label over the card that shows versions of a design side by side, under Homeroom bot's reply in a design thread."
+  },
+  "botCards.compare.groupLabel": {
+    "text": "Versions side by side",
+    "description": "Accessible name of the row of small previews in the card that compares versions of a design."
+  },
+  "botCards.compare.sizeGroup": {
+    "text": "Preview size",
+    "description": "Accessible name of the Phone and Desktop switch on the card that compares versions of a design."
+  },
+  "botCards.compare.phone": {
+    "text": "Phone",
+    "description": "Switch on the card that compares versions of a design: draws each version at a phone's width."
+  },
+  "botCards.compare.desktop": {
+    "text": "Desktop",
+    "description": "Switch on the card that compares versions of a design: draws each version at a desktop's width."
+  },
+  "botCards.compare.now": {
+    "text": "Now",
+    "description": "Label of the screen as it is today, beside its new versions, on the card that compares versions of a design."
+  },
+  "botCards.compare.version": {
+    "text": "Version {{version}}",
+    "description": "Label of one version on the card that compares versions of a design, when the bot gave it no name of its own."
+  },
+  "botCards.compare.frameTitle": {
+    "text": "{{label}}, small",
+    "description": "Title of the small preview of one version on the card that compares versions of a design. {{label}} is the version's name."
+  },
+  "botCards.compare.open": {
+    "text": "Open {{label}} beside the chat",
+    "description": "Accessible name of a small preview on the card that compares versions of a design: opens that version in the design preview."
+  },
+  "botCards.compare.pick": {
+    "text": "Pick",
+    "description": "Button under one version on the card that compares versions of a design: picks it, and tells Homeroom bot."
+  },
+  "botCards.compare.pickLabel": {
+    "text": "Pick {{label}}",
+    "description": "Accessible name of the Pick button under one version on the card that compares versions of a design."
+  },
+  "botCards.compare.picked": {
+    "text": "Picked",
+    "description": "The Pick button once tapped, grey with a check, under the version picked on the card that compares versions of a design."
+  },
+  "botCards.compare.pickedLabel": {
+    "text": "{{label}} picked",
+    "description": "Accessible name of the Picked button under the version picked on the card that compares versions of a design."
+  },
+  "botCards.compare.pickWords": {
+    "text": "Pick version {{version}}",
+    "description": "Words sent to Homeroom bot as the person's own message when they pick a version on the card that compares versions of a design."
+  },
+  "botCards.compare.keepNowWords": {
+    "text": "Keep it as it is now",
+    "description": "Words sent to Homeroom bot as the person's own message when they pick the screen as it is today on the card that compares versions of a design."
+  },
+  "botCards.compare.propose": {
+    "text": "Propose version {{version}}",
+    "description": "Button on the card that compares versions of a design, once a version was picked: opens the design's Propose it card for that version."
+  },
+  "botCards.compare.failed": {
+    "text": "That didn't work just now. Try again in a minute.",
+    "description": "Shown on the card that compares versions of a design when picking a version failed and the server said nothing more."
+  },
   "replies.close": {
     "text": "Close thread",
     "description": "Accessible name and tooltip of the X button on the thread side pane: closes the thread and returns to the conversation."
