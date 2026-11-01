@@ -781,8 +781,10 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   const css = read('public/css/app.css');
   // A width chosen beside an app on a wide monitor must not run Main under
   // the rail; with none chosen, Main takes the room the list does not need
-  // (30 Oct 2026), 400px to 720px.
-  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-room: calc\(100vw - var\(--platform-rail-w, 0px\) - var\(--platform-strip-w, 0px\)\);\s+--ai-list-min: 480px;\s+--ai-main-auto: clamp\(400px, calc\(var\(--ai-room\) - 720px\), 720px\);\s+--ai-main-w: max\(320px, min\(var\(--side-panel-chosen-w, var\(--ai-main-auto\)\), calc\(var\(--ai-room\) - var\(--ai-list-min\)\)\)\);\s+\}/);
+  // (30 Oct 2026), 400px to 720px. The room is the page's usable box, the
+  // window less the rail and the Duo's column, declared once on body
+  // (1 Nov 2026; tests/usable-box.test.js pins how it is made).
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-room: var\(--platform-usable-w\);\s+--ai-list-min: 480px;\s+--ai-main-auto: clamp\(400px, calc\(var\(--ai-room\) - 720px\), 720px\);\s+--ai-main-w: max\(320px, min\(var\(--side-panel-chosen-w, var\(--ai-main-auto\)\), calc\(var\(--ai-room\) - var\(--ai-list-min\)\)\)\);\s+\}/);
   assert.match(css, /#ai-screen\[data-ai-docked\] \{ padding-right: var\(--ai-main-w\); \}/);
   // 1 Nov 2026, iPhone Duo held sideways (951px, an 84px column of system
   // chrome on the right that the body pads out): the room is beside the
@@ -808,8 +810,8 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   assert.match(css, /#ai-screen:is\(\[data-ai-preview="three"\], \[data-ai-preview="halves"\]\) \.ai-main-pane \{\s+width: var\(--ai-col-w\);\s+right: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);/);
   assert.match(css, /#ai-screen\[data-ai-preview="halves"\] \{\s+--ai-col-w: calc\(var\(--ai-room\) \/ 2\);/);
   const page = css.slice(css.indexOf('body:has(#ai-screen:not(.hidden)) {'), css.indexOf('/* A phone: the whole of the page, over the drawer'));
-  assert.equal((page.match(/100vw/g) || []).length, 1,
-    'the room is the one width taken from the whole window; every other is taken from the room');
+  assert.equal((page.match(/100vw/g) || []).length, 0,
+    'no width here is taken from the window: the room is the page\'s usable box, and every other is taken from the room');
   // With Main docked it is the far edge and has no gutter, so the rail's is
   // dropped too: the list's cards sit 16px (their own margin) from both.
   assert.match(css, /#ai-screen\[data-ai-docked\] \{ padding-left: var\(--platform-rail-w, 0px\); \}/);
