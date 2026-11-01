@@ -18170,11 +18170,22 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    is the rest of the window, 400px to 720px. With the panel's own default
    (36vw, at most 560px) a wide window left the slack as margins around the
    list, between it and Main. A width dragged on Main's edge or beside an
-   app (`--side-panel-chosen-w`, features/side-panel/resize.ts) wins. */
+   app (`--side-panel-chosen-w`, features/side-panel/resize.ts) wins.
+   THE ROOM IS BESIDE THE DUO'S COLUMN (1 Nov 2026). `--ai-room` is the
+   window less the rail and iPhone Duo's column of system chrome
+   (`--platform-strip-w`, THE SIDE STRIP; 0 everywhere else). Unfolded and
+   held sideways the Duo is 951px with an 84px column the body pads out, so
+   sums taken from 100vw counted the column twice: Main came out 379px and
+   the list's card 220px. The columns pinned to the right edge also stop at
+   the column (`--ai-edge`), as every other surface there does. */
 body:has(#ai-screen:not(.hidden)) {
+  --ai-room: calc(100vw - var(--platform-rail-w, 0px) - var(--platform-strip-w, 0px));
   --ai-list-min: 480px;
-  --ai-main-auto: clamp(400px, calc(100vw - var(--platform-rail-w, 0px) - 720px), 720px);
-  --ai-main-w: max(320px, min(var(--side-panel-chosen-w, var(--ai-main-auto)), calc(100vw - var(--platform-rail-w, 0px) - var(--ai-list-min))));
+  --ai-main-auto: clamp(400px, calc(var(--ai-room) - 720px), 720px);
+  --ai-main-w: max(320px, min(var(--side-panel-chosen-w, var(--ai-main-auto)), calc(var(--ai-room) - var(--ai-list-min))));
+}
+html[data-side-strip="right"] body:has(#ai-screen:not(.hidden)) {
+  --ai-edge: var(--platform-strip-w, 0px);
 }
 /* 1 Nov 2026: between 768 and 1024px the list keeps 360px, not 480: its
    rows are one line (their numbers left out, as a phone's are), and the
@@ -18183,10 +18194,17 @@ body:has(#ai-screen:not(.hidden)) {
   body:has(#ai-screen:not(.hidden)) { --ai-list-min: 360px; }
 }
 #ai-screen[data-ai-docked] { padding-inline-end: var(--ai-main-w); }
+/* NO GUTTER AFTER THE RAIL WHILE MAIN IS DOCKED (1 Nov 2026). Every screen
+   beside the rail pads a gutter after it and mirrors it on the far edge, so
+   a column inside centres. Here Main is the far edge, with no gutter, so the
+   list's cards sat 40px after the rail (the gutter and their own 16px) and
+   16px from Main. Without it they sit 16px from both, and the list centres
+   between them. */
+#ai-screen[data-ai-docked] { padding-inline-start: var(--platform-rail-w, 0px); }
 #ai-screen .ai-main-pane {
   position: fixed;
   z-index: 20;
-  inset-inline-end: 0;
+  inset-inline-end: var(--ai-edge, 0px);
   bottom: 0;
   top: calc(var(--platform-header-h) + var(--platform-safe-top, 0px) - .5rem);
   width: var(--ai-main-w);
@@ -18250,6 +18268,7 @@ html[data-side-panel] #ai-screen .ai-main-pane { display: none; }
 }
 body:has(#ai-screen:not(.hidden)) .side-panel {
   width: var(--ai-main-w);
+  inset-inline-end: var(--ai-edge, 0px);
   border-start-end-radius: 0;
   border-start-start-radius: 1.75rem;
 }
@@ -18282,7 +18301,7 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
 #ai-screen .ai-preview-pane {
   position: fixed;
   z-index: 21;
-  inset-inline-end: 0;
+  inset-inline-end: var(--ai-edge, 0px);
   bottom: 0;
   top: calc(var(--platform-header-h) + var(--platform-safe-top, 0px) - .5rem);
   width: var(--ai-preview-w);
@@ -18297,17 +18316,17 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
 #ai-screen[data-ai-preview] .ai-main-pane > .side-panel-divider { display: none; }
 #ai-screen[data-ai-preview="three"] {
   --ai-col-w: min(var(--ai-main-w), 440px);
-  --ai-preview-w: max(360px, calc(100vw - var(--platform-rail-w, 0px) - 480px - var(--ai-col-w)));
+  --ai-preview-w: max(360px, calc(var(--ai-room) - 480px - var(--ai-col-w)));
   padding-inline-end: calc(var(--ai-col-w) + var(--ai-preview-w));
 }
 #ai-screen[data-ai-preview="halves"] {
-  --ai-col-w: calc((100vw - var(--platform-rail-w, 0px)) / 2);
+  --ai-col-w: calc(var(--ai-room) / 2);
   --ai-preview-w: var(--ai-col-w);
 }
 #ai-screen[data-ai-preview="halves"] .ai-screen-body { display: none; }
 #ai-screen:is([data-ai-preview="three"], [data-ai-preview="halves"]) .ai-main-pane {
   width: var(--ai-col-w);
-  inset-inline-end: var(--ai-preview-w);
+  inset-inline-end: calc(var(--ai-preview-w) + var(--ai-edge, 0px));
 }
 /* A phone: the whole of the page, over the drawer, its arrow back to the thread. */
 #ai-screen[data-ai-preview="full"] .ai-preview-pane {
@@ -18364,6 +18383,13 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
 #ai-screen .ai-drawer-list .ai-askbar-gap { display: none; }
 @media (prefers-reduced-motion: reduce) { .ai-drawer-back { transition: none; } }
 .ai-drawer[data-panning] { user-select: none; -webkit-user-select: none; }
+/* Until a thread has been opened the list is the whole screen and the
+   column waits off its right edge, with no peek (phone-drawer.tsx, FULL_AT;
+   Evan, 1 Nov 2026). Its shadow would show at the list's edge, so it comes
+   only with the slide. */
+.ai-drawer:not([data-peek]) .ai-drawer-list { width: 100%; }
+.ai-drawer:not([data-peek]) .ai-drawer-thread { left: 100%; }
+.ai-drawer:not([data-peek])[data-level="0"]:not([data-panning]) .ai-drawer-thread { box-shadow: none; border-left-color: transparent; }
 /* Where the window has the room, the feed takes a project's stage width
    (720px) out of the screen's 672px column, as far as that column's own
    margins go. */
@@ -23229,11 +23255,12 @@ html[data-side-strip="left"] #platform-header {
 
    and this is the layout. The header's row moves UP into the band beside
    the system controls, as the header already runs into the folded Duo's
-   column above: the inset leaves its padding-top, its foot falls on the
-   band's foot, and its right group keeps clear of the clock and camera's
-   corner. `--platform-header-h` loses what the band now covers, so the bar
-   plus the safe inset is still max(52px, band) under the bar and under
-   every screen and sheet below it.
+   column above: the inset leaves its padding-top, the row sits on the
+   clock's line, its foot falls on the band's foot, and its right group
+   keeps clear of the clock and camera's corner.
+   `--platform-header-h` loses what the band now covers, so the bar plus the
+   safe inset is still max(52px, band) under the bar and under every screen
+   and sheet below it.
 
    Nothing here applies without the attribute, and only on a phone: ordinary
    phones reserve 47 to 62px, landscape reports 0, and a browser tab never
@@ -23247,18 +23274,25 @@ html[data-side-strip="left"] #platform-header {
        #2305 rule above is `!important`, hence the `!important` here). The
        second selector repeats the community tint's app-view rule with
        `html[data-top-band]` added, so it outranks that rule too. The bar
-       keeps its 8px pad and drops the inset; its bottom padding is the 16px
-       foot plus whatever the band leaves over the row, so its foot meets the
-       band's foot and the -mb-2 notch is unchanged. `align-items` keeps the
-       row at the top of that taller box, and the right padding keeps the
-       bell and the account button clear of the 84px corner the clock and
-       camera use — the same width as the folded Duo's column. */
+       drops the inset and puts its 28px row on the clock's line: the
+       clock's digits are centred 34px above the band's foot (measured on the
+       Duo simulator, iOS 27.1: digits from y 42 to 54 of an 82px band), so
+       the row keeps a 20px foot under it and the band's rest over it, and
+       the bar's foot still meets the band's foot with the -mb-2 notch
+       unchanged. Pinned to the top of the band the row sat about 25px above
+       the clock's line, and centred in the band about 7px above it
+       (1 Nov 2026). The 8px floor over the row is the ordinary bar's, for a
+       band under 56px. The right padding keeps the bell and the account
+       button clear of the corner the clock and Wi-Fi ring use, with an 8px
+       gap. That corner is a pill about 130px wide across the band's top right
+       (measured on the Duo simulator, iOS 27.1: from x 540 to the edge of the
+       669px screen), not the folded Duo's 84px column: at 84px the account
+       button's chevron sat under the clock. */
     html[data-top-band] :is(#platform-header, #landing-header).un-safe-top-extend,
     html[data-top-band][data-community-tint] body:has(#app-view:not(.hidden)) #platform-header.un-safe-top-extend {
-      padding-top: 0.5rem !important;
-      padding-bottom: max(1rem, calc(var(--platform-band-h) - 2.25rem));
-      align-items: flex-start;
-      padding-right: calc(1rem + 84px);
+      padding-top: max(0.5rem, calc(var(--platform-band-h) - 3rem)) !important;
+      padding-bottom: 1.25rem;
+      padding-right: calc(0.5rem + 130px);
     }
   }
 }
@@ -23289,8 +23323,9 @@ html[data-side-strip="left"] #platform-header {
    this attribute: the two facts are never set together, and an ordinary
    phone or a browser tab renders exactly as it did.
 
-   The 84px the header's controls keep clear of the corner is the same
-   number the top band spends on the clock and camera's corner (6070). */
+   The header's controls keep 84px clear of that corner, the width of the
+   folded Duo's column. (The unfolded top band clears a wider pill, 130px:
+   THE TOP BAND above.) */
 @media (max-width: 767px) {
   html[data-side-corner="right"] body,
   html[data-side-corner="right"] #auth-landing-screen {

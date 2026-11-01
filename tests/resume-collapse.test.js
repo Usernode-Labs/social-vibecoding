@@ -291,6 +291,76 @@ test('the kit zooms keep the homescreen timing unless a duration is asked for', 
   assert.deepEqual(plain.timers, [480]);
 });
 
+// 1 Nov 2026: the frame that reveals a screen is a long one, and a zoom set
+// up in the same task ran its clock through it. On the iPhone Duo simulator
+// the first frame anyone saw had the card 60 to 77% of the way there. Each
+// zoom now holds its start pose for one painted frame before it moves.
+function runPaintedZoom(type) {
+  const frames = [];
+  const timers = [];
+  const styles = { cssText: '', transition: '', transform: '' };
+  const el = {
+    style: styles,
+    getBoundingClientRect: () => ({ top: 56, left: 0, width: 1280, height: 744, bottom: 800 }),
+    addEventListener() {},
+    removeEventListener() {},
+    get offsetHeight() { return 0; },
+  };
+  const { physics } = require('../public/usernode-native/v1/native.js');
+  const context = vm.createContext({
+    document: { scrollingElement: { scrollTop: 0, scrollLeft: 0 } }, window: { innerHeight: 800 },
+    prefersReducedMotion: false, vtActive: false, zoomCleanup: null,
+    ZOOM_EASE: 'ease', ZOOM_RADIUS: '16px',
+    zoomPose: physics.zoomPose, zoomRectUsable: physics.zoomRectUsable,
+    requestAnimationFrame: (fn) => frames.push(fn),
+    setTimeout: (fn, ms) => timers.push({ fn, ms }),
+  });
+  const start = KIT.indexOf('  function zoomPin(');
+  const end = KIT.indexOf('  // Has the document painted', start);
+  vm.runInContext(KIT.slice(start, end), context);
+  const source = type === 'zoom-in'
+    ? { fromRect: PILL }
+    : { fromEl: () => ({ getBoundingClientRect: () => PILL }) };
+  context.zoomTransition(() => {}, type, { el, duration: 250, ...source });
+  return { styles, frames, timers, context };
+}
+
+test('a zoom moves only once its start pose has been painted', () => {
+  for (const type of ['zoom-in', 'zoom-out']) {
+    const { styles, frames, timers } = runPaintedZoom(type);
+    const pose = styles.transform;
+    assert.equal(styles.transition, 'none', `${type}: nothing moves in the task that set it up`);
+    assert.deepEqual(timers.map((t) => t.ms), [120], `${type}: only the cap is waiting`);
+    frames.shift()(); // runs before the long frame paints the start pose
+    assert.equal(styles.transition, 'none', `${type}: still the start pose`);
+    frames.shift()(); // the next frame: the start pose is on screen
+    assert.match(styles.transition, /^transform 250ms ease, opacity /, `${type}: now it moves`);
+    assert.notEqual(styles.transform, pose);
+    assert.deepEqual(timers.map((t) => t.ms), [120, type === 'zoom-in' ? 370 : 390],
+      `${type}: the safety finish counts from the move`);
+    const moving = styles.transition;
+    timers[0].fn(); // the cap, late
+    assert.equal(styles.transition, moving);
+    assert.equal(timers.length, 2, `${type}: the move starts once`);
+  }
+});
+
+test('a zoom whose frames never come is started by the cap, and one finished first never moves', () => {
+  const stalled = runPaintedZoom('zoom-in');
+  stalled.timers[0].fn();
+  assert.match(stalled.styles.transition, /^transform 250ms ease/, 'a hidden tab still settles');
+  stalled.frames.shift()();
+  stalled.frames.shift()();
+  assert.equal(stalled.timers.length, 2, 'the frames, late, start nothing twice');
+
+  const cut = runPaintedZoom('zoom-out');
+  cut.context.zoomCleanup(); // the next navigation finishes this one at once
+  cut.frames.shift()();
+  cut.frames.shift()();
+  assert.equal(cut.styles.transition, 'none', 'a finished zoom is never started');
+  assert.equal(cut.timers.length, 1);
+});
+
 test('a declared check pins a kept app\'s still-open App row in the sidebar (folded into the kept-apps check)', () => {
   const manifest = JSON.parse(read('dapp.json'));
   const check = manifest.tests.find((t) => t.id === 'kept-apps.home-dot');

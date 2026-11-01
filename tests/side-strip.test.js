@@ -529,8 +529,12 @@ test('the apps section: the app on screen lit, the app you left with its ✕', (
   const app = read('public/js/app.js');
   assert.match(app, /if \(typeof bridge\.running === 'function'\) bridge\.running\(running\);/);
   assert.match(app, /if \(typeof bridge\.running === 'function'\) bridge\.running\(null\);/);
-  // The resume motion lands on the section's tile.
+  // The resume motion lands on the section's tile, and the reopen grows out
+  // of that same tile, not the whole 64x54 row around it.
   assert.match(read('frontend/src/features/nav/resume-motion.ts'), /#platform-tabs \.platform-side-app\[data-side-app\]/);
+  assert.match(tsx, /noteResumeOrigin\(left\.slug, event\.currentTarget\.querySelector\('\.platform-side-app-tile'\) \|\| event\.currentTarget\);\s*window\.App\?\.openAppTab\?\.\(left\.slug, 'app'\);/);
+  // The strip is always on screen, so its icon is never left to lazy loading.
+  assert.match(tsx, /<AppIconContent app=\{record\(app\)\} eager \/>/);
   const core = JSON.parse(read('frontend/locales/en/core.json'));
   assert.equal(core['tabs.stripApps'].text, 'Apps');
   assert.equal(core['tabs.stripResume'].text, 'Resume {{app}}');
@@ -597,11 +601,17 @@ test('the top band gives the header the band and its foot to the screens below',
   assert.ok(bars, 'one rule lays both bars into the band');
   assert.match(bars[0], /html\[data-top-band\]\[data-community-tint\] body:has\(#app-view:not\(\.hidden\)\) #platform-header\.un-safe-top-extend/,
     'and repeats the community tint\'s app-view rule so it outranks it');
-  assert.match(bars[1], /padding-top: 0\.5rem !important;/, 'the inset leaves the padding; the 8px pad stays');
-  assert.match(bars[1], /padding-bottom: max\(1rem, calc\(var\(--platform-band-h\) - 2\.25rem\)\);/,
-    'the row keeps its 16px floor, and the bar\'s foot meets the band\'s foot');
-  assert.match(bars[1], /align-items: flex-start;/, 'the row sits at the top of the taller box');
-  assert.match(bars[1], /padding-right: calc\(1rem \+ 84px\);/, 'the right group clears the clock and camera');
+  // The row sits on the clock's line, the digits' middle 34px above the
+  // band's foot: pinned to the top it sat about 25px above that line, and
+  // centred in the band about 7px above it.
+  assert.match(bars[1], /padding-top: max\(0\.5rem, calc\(var\(--platform-band-h\) - 3rem\)\) !important;/,
+    'the inset leaves the padding; the band less row and foot over the row, the 8px pad the floor');
+  assert.match(bars[1], /padding-bottom: 1\.25rem;/,
+    'a 20px foot under the row, and the bar\'s foot meets the band\'s foot');
+  assert.doesNotMatch(bars[1], /align-items: flex-start;/, 'the row is on the clock\'s line, not pinned to the band\'s top');
+  // The unfolded Duo's clock and Wi-Fi ring sit in a pill about 130px wide
+  // (x 540 to 669 on the simulator); at 84px the account chevron sat under it.
+  assert.match(bars[1], /padding-right: calc\(0\.5rem \+ 130px\);/, 'the right group clears the clock and Wi-Fi pill');
 });
 
 // ── app.css: THE SIDE CORNER (6072) ─────────────────────────────────────

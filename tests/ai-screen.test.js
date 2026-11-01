@@ -702,7 +702,7 @@ test('on a phone the list and Main Chat are one drawer, as Messages\' are; a req
   // Messages' own strip, slide and landing rule.
   assert.match(drawer, /import \{ isPan, landingIn, MESSAGES_AT, SLIDE_EASE, SLIDE_MS \} from '\.\.\/nav-drawer\/drawer-math';/);
   assert.match(drawer, /transition: still \? 'none' : `transform \$\{SLIDE_MS\}ms \$\{SLIDE_EASE\}`/);
-  assert.match(drawer, /const still = drag != null \|\| reducedMotion\(\);/, 'none under Reduce Motion');
+  assert.match(drawer, /const still = drag != null \|\| snap \|\| reducedMotion\(\);/, 'none under Reduce Motion');
   // The level not in view is out of reach, not only out of sight.
   assert.match(drawer, /<div className="ai-drawer-list" inert=\{level === 1\} aria-hidden=\{level === 1 \? true : undefined\}>\{list\}<\/div>/);
   assert.match(drawer, /<div className="ai-drawer-pane" inert=\{level === 0\} aria-hidden=\{level === 0 \? true : undefined\}>\{pane\}<\/div>/);
@@ -722,6 +722,24 @@ test('on a phone the list and Main Chat are one drawer, as Messages\' are; a req
   assert.match(css, /\.ai-drawer-back::after \{ content: ""; position: absolute; inset: -6px; \}/, 'its arrow is pressed as a 44px target');
   assert.match(css, /\.ai-drawer\[data-level="0"\] :is\(\.ai-drawer-back, \.messages-thread-back\) \{ opacity: 0;/, 'neither arrow shows in the peek');
   assert.equal(message('messages:ai.drawer.peek', { title: message('messages:store.header.main') }), 'Open Main Chat');
+});
+
+test('on a phone the list is the whole screen until a thread has been opened, then the drawer peeks (Evan, 1 Nov 2026)', () => {
+  const drawer = read('frontend/src/features/ai/phone-drawer.tsx');
+  assert.match(drawer, /export const FULL_AT: readonly \[number, number\] = \[0, 1\];/, 'with no peek the column rests a whole screen to the right');
+  assert.match(drawer, /const OPENED_KEY = 'homeroom:botDrawer:threadOpened';/, 'remembered per device');
+  assert.match(drawer, /const at = opened \? MESSAGES_AT : FULL_AT;/);
+  assert.match(drawer, /const offset = drag \?\? at\[level\];/, 'rest, drag and landing all read the one table');
+  assert.match(drawer, /onLevel\(landingIn\(at, p\.from, now, e\.clientX - p\.x\) as 0 \| 1\);/);
+  assert.match(drawer, /\{opened && level === 0 && drag == null \? \(/, 'no peek button before a thread was opened');
+  assert.match(drawer, /data-peek=\{opened \? '' : undefined\}/);
+  // Laid out once the slide has landed, and switched with no slide.
+  assert.match(drawer, /if \(opened \|\| level !== 1\) return undefined;\s+rememberThreadOpened\(\);\s+const id = window\.setTimeout\(\(\) => \{ setSnap\(true\); setOpened\(true\); \}, SLIDE_MS \+ 50\);/);
+  assert.match(drawer, /const still = drag != null \|\| snap \|\| reducedMotion\(\);/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.ai-drawer:not\(\[data-peek\]\) \.ai-drawer-list \{ width: 100%; \}/);
+  assert.match(css, /\.ai-drawer:not\(\[data-peek\]\) \.ai-drawer-thread \{ left: 100%; \}/);
+  assert.match(css, /\.ai-drawer:not\(\[data-peek\]\)\[data-level="0"\]:not\(\[data-panning\]\) \.ai-drawer-thread \{ box-shadow: none; border-left-color: transparent; \}/, 'no shadow at the list\'s edge');
 });
 
 test('what a row opens rides along in Main Chat\'s composer, and only there', () => {
@@ -764,8 +782,24 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   // A width chosen beside an app on a wide monitor must not run Main under
   // the rail; with none chosen, Main takes the room the list does not need
   // (30 Oct 2026), 400px to 720px.
-  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-list-min: 480px;\s+--ai-main-auto: clamp\(400px, calc\(100vw - var\(--platform-rail-w, 0px\) - 720px\), 720px\);\s+--ai-main-w: max\(320px, min\(var\(--side-panel-chosen-w, var\(--ai-main-auto\)\), calc\(100vw - var\(--platform-rail-w, 0px\) - var\(--ai-list-min\)\)\)\);\s+\}/);
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-room: calc\(100vw - var\(--platform-rail-w, 0px\) - var\(--platform-strip-w, 0px\)\);\s+--ai-list-min: 480px;\s+--ai-main-auto: clamp\(400px, calc\(var\(--ai-room\) - 720px\), 720px\);\s+--ai-main-w: max\(320px, min\(var\(--side-panel-chosen-w, var\(--ai-main-auto\)\), calc\(var\(--ai-room\) - var\(--ai-list-min\)\)\)\);\s+\}/);
   assert.match(css, /#ai-screen\[data-ai-docked\] \{ padding-inline-end: var\(--ai-main-w\); \}/);
+  // 1 Nov 2026, iPhone Duo held sideways (951px, an 84px column of system
+  // chrome on the right that the body pads out): the room is beside the
+  // column, so its width is not counted twice, and the columns pinned to the
+  // right edge stop at it. Off the Duo both are 0.
+  assert.match(css, /html\[data-side-strip="right"\] body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-edge: var\(--platform-strip-w, 0px\);\s+\}/);
+  assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*inset-inline-end: var\(--ai-edge, 0px\);/);
+  assert.match(css, /#ai-screen \.ai-preview-pane \{[^}]*inset-inline-end: var\(--ai-edge, 0px\);/);
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{\s+width: var\(--ai-main-w\);\s+inset-inline-end: var\(--ai-edge, 0px\);/);
+  assert.match(css, /#ai-screen:is\(\[data-ai-preview="three"\], \[data-ai-preview="halves"\]\) \.ai-main-pane \{\s+width: var\(--ai-col-w\);\s+inset-inline-end: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);/);
+  assert.match(css, /#ai-screen\[data-ai-preview="halves"\] \{\s+--ai-col-w: calc\(var\(--ai-room\) \/ 2\);/);
+  const page = css.slice(css.indexOf('body:has(#ai-screen:not(.hidden)) {'), css.indexOf('/* A phone: the whole of the page, over the drawer'));
+  assert.equal((page.match(/100vw/g) || []).length, 1,
+    'the room is the one width taken from the whole window; every other is taken from the room');
+  // With Main docked it is the far edge and has no gutter, so the rail's is
+  // dropped too: the list's cards sit 16px (their own margin) from both.
+  assert.match(css, /#ai-screen\[data-ai-docked\] \{ padding-inline-start: var\(--platform-rail-w, 0px\); \}/);
   assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*width: var\(--ai-main-w\);/);
   assert.match(css, /#ai-screen \.ai-main-pane > \.messages-layout \{ flex: 1 1 auto; height: auto; min-height: 0; \}/);
   assert.match(css, /html\[data-side-panel\] #ai-screen \.ai-main-pane \{ display: none; \}/);

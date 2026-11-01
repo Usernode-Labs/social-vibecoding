@@ -103,7 +103,7 @@ test('the zoom sites keep their split mutation intact under the gate', () => {
     'the conceal half of the mutation must survive');
   const home = appJs.slice(appJs.indexOf('navigateHome(opts) {'));
   assert.match(home.slice(0, home.indexOf('App.updateHash()')),
-    /App\._entryTransition\('zoom-out', av, viaTab\)/);
+    /App\._entryTransition\('zoom-out', av, viaTab && !\(leavingSlug && App\._stripShowsRunning\(leavingSlug\)\)\)/);
 });
 
 // ── The two native sheets ──────────────────────────────────────────────
