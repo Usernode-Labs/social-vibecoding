@@ -342,6 +342,74 @@ function internalRoutes(_config) {
       }
     });
 
+  // Homeroom bot parity, P8: a build's pictures (worker/usernode-image), on
+  // the build's own token (WORKER_JWT: build mode only, never a scout's).
+  //
+  //   POST /api/internal/sessions/:sessionId/pictures  { prompt, aspect?, variant? }
+  //        → the image's bytes, made on the bot's picture model and billed
+  //          to whoever pays for this build (services/bot-pictures.js)
+  //   GET  /api/internal/sessions/:sessionId/request-pictures/:id
+  //        → a picture a request links (/issue-images/:id), to save into the app
+  const picturesLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 6,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: (req) => `pictures:${req.workerSession?.sessionId || 'anon'}`,
+  });
+  const ownSession = (req, res) => {
+    const sessionId = Number(req.params.sessionId);
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
+      res.status(400).json({ ok: false, code: 'bad_session_id', message: 'Invalid session id.' });
+      return null;
+    }
+    if (Number(req.workerSession.sessionId) !== sessionId) {
+      res.status(403).json({ ok: false, code: 'session_mismatch', message: 'The worker token does not own this session.' });
+      return null;
+    }
+    return sessionId;
+  };
+  router.post('/api/internal/sessions/:sessionId/pictures', visibleChangesAuth, picturesLimiter, async (req, res) => {
+    const sessionId = ownSession(req, res);
+    if (!sessionId) return undefined;
+    try {
+      const body = req.body || {};
+      const out = await require('../services/bot-pictures').generateForSession(pool, _config, {
+        sessionId,
+        prompt: typeof body.prompt === 'string' ? body.prompt : '',
+        aspect: typeof body.aspect === 'string' && body.aspect ? body.aspect : 'square',
+        variant: body.variant === 'light' || body.variant === 'dark' ? body.variant : null,
+      });
+      if (!out.ok) return res.status(out.status || 400).json({ ok: false, code: 'refused', message: out.error });
+      res.set('Content-Type', out.image.contentType);
+      res.set('X-Content-Type-Options', 'nosniff');
+      if (out.image.width) res.set('X-Picture-Width', String(out.image.width));
+      if (out.image.height) res.set('X-Picture-Height', String(out.image.height));
+      res.set('X-Pictures-Left', String(out.left));
+      return res.send(out.image.data);
+    } catch (err) {
+      log.error('internal-api', 'A build\'s picture failed', { sessionId, err: err.message });
+      return res.status(500).json({ ok: false, code: 'internal_error', message: 'The picture could not be made just now.' });
+    }
+  });
+  router.get('/api/internal/sessions/:sessionId/request-pictures/:id', visibleChangesAuth, picturesLimiter, async (req, res) => {
+    const sessionId = ownSession(req, res);
+    if (!sessionId) return undefined;
+    const id = String(req.params.id || '');
+    if (!/^[a-f0-9]{32}$/.test(id)) return res.status(404).json({ ok: false, code: 'not_found', message: 'No such picture.' });
+    try {
+      // The same picture /issue-images/:id serves anyone with its link.
+      const { rows: [row] } = await pool.query('SELECT content_type, data FROM issue_screenshots WHERE id = $1', [id]);
+      if (!row || !row.data) return res.status(404).json({ ok: false, code: 'not_found', message: 'No such picture.' });
+      res.set('Content-Type', row.content_type || 'application/octet-stream');
+      res.set('X-Content-Type-Options', 'nosniff');
+      return res.send(row.data);
+    } catch (err) {
+      log.error('internal-api', 'A request\'s picture read failed', { sessionId, err: err.message });
+      return res.status(500).json({ ok: false, code: 'internal_error', message: 'The picture could not be read just now.' });
+    }
+  });
+
   // The app-host gate (services/edge-gate.js): Caddy's forward_auth and the
   // Kubernetes gate proxy (scripts/app-gate.js) both ask here.
   router.get('/__caddy/access', async (req, res) => {

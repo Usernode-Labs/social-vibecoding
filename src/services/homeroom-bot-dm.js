@@ -1141,14 +1141,18 @@ async function requestStart(pool, { userId, appId, issueNumber }) {
  */
 async function weeklySpentCents(pool, userId) {
   // Homeroom bot parity (P3, P9): and the looks into code they asked for,
-  // an investigation's check-ins among them (homeroom_bot_looks).
+  // an investigation's check-ins among them (homeroom_bot_looks). P8: and the
+  // pictures it made for them (services/bot-pictures.js), in the chat or for a
+  // build they pay for.
   const { rows } = await pool.query(
-    `SELECT COALESCE(SUM(COALESCE(r.cost_usd, 0) + COALESCE(r.build_cost_usd, 0)), 0)
-            + (SELECT COALESCE(SUM(l.cost_usd), 0) FROM homeroom_bot_looks l
-                WHERE l.charged AND l.user_id = $1 AND l.created_at >= $2) AS usd
+    `SELECT COALESCE((SELECT SUM(COALESCE(r.cost_usd, 0) + COALESCE(r.build_cost_usd, 0))
        FROM homeroom_bot_runs r
        LEFT JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
-      WHERE r.charged AND COALESCE(r.payer_user_id, q.user_id) = $1 AND r.created_at >= $2`,
+      WHERE r.charged AND COALESCE(r.payer_user_id, q.user_id) = $1 AND r.created_at >= $2), 0)
+      + COALESCE((SELECT SUM(l.cost_usd) FROM homeroom_bot_looks l
+      WHERE l.charged AND l.user_id = $1 AND l.created_at >= $2), 0)
+      + COALESCE((SELECT SUM(p.cost_usd) FROM homeroom_bot_pictures p
+      WHERE p.payer_user_id = $1 AND p.created_at >= $2), 0) AS usd`,
     [userId, require('./limits').weekStartUtc()],
   );
   return Math.round((Number(rows[0]?.usd) || 0) * 100);
