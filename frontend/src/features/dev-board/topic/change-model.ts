@@ -129,3 +129,19 @@ export function changeStream(rows: TranscriptMessage[]): TranscriptMessage[] {
 export function changeReplyCount(rows: TranscriptMessage[]): number {
   return rows.filter((m) => m.kind === 'message' && !m.deleted).length;
 }
+
+/**
+ * 1 Nov 2026 (one page per thread): which of a change's rows its request's
+ * page keeps, in the thread's one discussion: every person's reply, and of
+ * what happened to the change only a plan posted, the ask for approval, the
+ * preview being ready (with Try it), a vote with a written reason, and its
+ * going live. A vote with no reason is the Votes card's to count, and a
+ * notice is its cards' to say.
+ */
+export function keptOnRequest(msg: TranscriptMessage): boolean {
+  if (msg.kind === 'message') return true;
+  const line = changeLine(msg);
+  if (!line || line.kind === 'notice') return false;
+  if (line.kind === 'vote') return !!(msg.event && msg.event.reason);
+  return true;
+}

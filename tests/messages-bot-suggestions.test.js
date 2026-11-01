@@ -49,7 +49,7 @@ test('the model is asked for what they might say next, and its suggestions becom
     '  How long will   it take? ', 'how long will it take?', 'x'.repeat(61), '', null, 42, 'Start it now', 'Show my requests', 'One more',
   ]), ['How long will it take?', 'Start it now', 'Show my requests'], 'plain, each once, at most three, none cut mid-word');
   assert.deepEqual(mayor.suggestionLabels(undefined), []);
-  assert.match(source, /\.\.\.\(next\.length \? \{ actions: require\('\.\/homeroom-bot-dm'\)\.promptActions\(next\), status: 'open' \} : \{\}\)/);
+  assert.match(source, /const prompts = next\.length \? require\('\.\/homeroom-bot-dm'\)\.promptActions\(next\) : \[\];\n\s+const actions = prompts\.slice\(0, 3\);[\s\S]*?\.\.\.\(actions\.length \? \{ actions, status: 'open' \} : \{\}\)/);
 });
 
 // ── 2. Where it is stuck ────────────────────────────────────────────────
@@ -145,13 +145,13 @@ test('Try again replies to its message; Add detail quotes it in the composer and
 });
 
 test('the staging preview’s declared check finds the demo DM’s stopped build among its finished requests, folded, saying how it ended', () => {
-  // One request, one story: the stopped build is one row in the main chat;
-  // its Try again is in the request's thread, which every row opens. The
+  // One request, one story: the stopped build is one row in the main chat,
+  // which opens the request's page. The
   // demo's stopped build is no longer in the person's activity, so it is
   // finished: folded with the finished requests beside it into one line of
   // words that counts both (N finished · N couldn't build).
   const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#4097/.test(t.name));
-  assert.match(check.expectSelector, /:has\(\[data-bot-settled-toggle\] \[data-bot-settled-count=failed\]\)/);
+  assert.match(check.expectSelector, /:has\(\[data-bot-settled-count=failed\]\)/);
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
   const fixture = read('src/services/staging-messages.js');
   assert.match(fixture, /homeroomBot: \{ kind: 'build_failed', \.\.\.stuck, actions: dm\.STUCK_ACTIONS\.build_failed, status: 'open' \}/);

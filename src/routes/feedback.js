@@ -1070,6 +1070,9 @@ function feedbackRoutes(config) {
         return res.json({
           url: issue.html_url, title, titleFallback,
           edit: await filedEditInfo(pool, report, req.user?.id),
+          // 1 Nov 2026: the request just filed, for the confirmation's
+          // "Work on it with Homeroom bot" (a private thread about it).
+          filed: { appSlug: appContext.slug, issueNumber: issue.number },
           ...(bounty ? { bounty } : {}),
           ...(firstFeedback ? { firstFeedback } : {}),
           ...(homeroomBot ? { homeroomBot } : {}),
@@ -1157,6 +1160,7 @@ function feedbackRoutes(config) {
       res.json({
         url: issue.html_url, title, titleFallback,
         edit: await filedEditInfo(pool, report, req.user?.id),
+        ...(platformApp ? { filed: { appSlug: platformApp.slug, issueNumber: issue.number } } : {}),
         ...(bounty ? { bounty } : {}),
         ...(firstFeedback ? { firstFeedback } : {}),
         ...(homeroomBot ? { homeroomBot } : {}),

@@ -126,10 +126,12 @@ test('every other outcome also yields exactly one primary', () => {
     assert.equal(primaryCount(model), 1, `outcome ${outcome}: one primary`);
     assert.ok(hasAction(model, 'startFromAutoSession', 90));
   }
-  // …and so does a never-started issue.
+  // …and so does a never-started issue: 1 Nov 2026, Work on this with
+  // Homeroom bot, with Build it now its ⋯'s first row.
   const fresh = AppView._issueCardModel(issue(null));
   assert.equal(primaryCount(fresh), 1);
-  assert.ok(hasAction(fresh, 'chooseIssueWork', 5));
+  assert.ok(hasAction(fresh, 'workOnIssueWithBot', 5));
+  assert.equal(menuLabels(AppView, fresh)[0], 'Build it in an agent session');
 });
 
 // #17: the Homeroom bot building the request is the same shape as a run in

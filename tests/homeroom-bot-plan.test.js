@@ -256,7 +256,12 @@ test('B6: the words of a plan, two questions and the setup message', () => {
   const elsewhere = dm.firstVersionStartedText({ name: 'Plant Pal' });
   assert.equal(elsewhere, '**Plant Pal**\n\nThanks! I\'m setting up Plant Pal now. '
     + 'Once it\'s ready I\'ll send you my plan here first, then build its first version and tell you here when it\'s live.');
-  for (const said of [early, elsewhere]) assert.doesNotMatch(said, /for you to try/, 'nothing waits on a vote');
+  // 1 Nov 2026: made from a design, its screens are drawn already.
+  const designed = dm.firstVersionStartedText({ name: 'Plant Pal', earlyPlan: true, fromDesign: true });
+  assert.equal(designed, '**Plant Pal**\n\nThanks! I\'m setting up Plant Pal now. '
+    + 'Your design is its plan: I\'ll build the first version from it and tell you here when it\'s live.');
+  assert.match(read('src/routes/apps.js'), /fromDesign: !!fromDesign,/);
+  for (const said of [early, elsewhere, designed]) assert.doesNotMatch(said, /for you to try/, 'nothing waits on a vote');
   assert.doesNotMatch(early, /plan/, 'the plan is asked about on the made screen, not here');
   const start = read('src/services/homeroom-bot-dm.js');
   assert.ok(!/I'll build its first version from your/.test(start));
@@ -795,7 +800,8 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
 
 test('B6: where the waiting state is read, and where it ends', () => {
   const src = read('src/services/homeroom-bot.js');
-  assert.match(src, /\} else if \(firstVersion\) \{\s*acted = PLAN_ACTED\[await awaitGo\(pool, \{ runId, app, issueNumber, parsed, bot, deps \}\)\];/);
+  // 1 Nov 2026 (C2.3): with the person's plan it builds from, when it has one.
+  assert.match(src, /\} else if \(firstVersion\) \{[\s\S]{0,300}?acted = PLAN_ACTED\[await awaitGo\(pool, \{\s+runId, app, issueNumber, parsed, bot, deps, fromPlan: own\?\.use === 'build' \? own\.fromPlan : null,\s+\}\)\];/);
   // #4175: a plan that could not be sent is sent again on the sweep's
   // cadence (the bot lane's bot.sweep work), and a week-old one is stopped
   // there.

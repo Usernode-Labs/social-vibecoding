@@ -47,7 +47,7 @@ function demoWork() {
     ],
     waiting: [
       { threadId: -9203, number: 9203, kind: 'work', title: 'Staging demo: search the board', app, change: { id: -9203, number: 9204 }, href: issue(app, 9203), group: 'waiting', what: 'vote', at: at(20), myVote: 'yes' },
-      { threadId: -9212, number: null, kind: 'decision', title: 'Staging demo: a new card picture', app, change: null, href: `#app/${app.slug}/workshop`, group: 'waiting', what: 'decision', at: at(8), myVote: null },
+      { threadId: -9212, number: null, kind: 'decision', title: 'Staging demo: a new card picture', app, change: null, href: `#app/${app.slug}/dev/governance/9212`, group: 'waiting', what: 'decision', at: at(8), myVote: null },
       { threadId: -9211, number: 9211, kind: 'work', title: 'Staging demo: export to a spreadsheet', app, change: null, href: issue(app, 9211), group: 'waiting', what: 'held', heldBy: 'approvals', at: at(6) },
       { threadId: -9217, number: 9217, kind: 'work', title: 'Staging demo: two-player mode', app: game, change: null, href: issue(game, 9217), group: 'waiting', what: 'build_queued', at: at(2) },
       { threadId: -9205, number: 9205, kind: 'work', title: 'Staging demo: print view', app, change: null, href: issue(app, 9205), group: 'waiting', what: 'not_picked_up', at: at(240), quietDays: 10 },

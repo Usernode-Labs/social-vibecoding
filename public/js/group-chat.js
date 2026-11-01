@@ -726,6 +726,8 @@ const GroupChat = {
           : GroupChat._isChannel(null);
         if (msg.thread && msg.thread.type && !ownStream) {
           GroupChat._handleThreadIncoming(msg);
+          // 1 Nov 2026: a change's row is its request's page's too.
+          GroupChat._intoRequestThreads(msg);
           // #4417: a reply under a message of one of the project's TOPIC
           // channels is that channel's (its root says where it is), so it
           // is drawn there, never in the general stream.
@@ -834,6 +836,35 @@ const GroupChat = {
         }, 3000);
         break;
       }
+    }
+  },
+
+  // 1 Nov 2026 (one page per thread): a request's page reads its whole
+  // thread, its changes' rows among them (routes/chat.js selectStream), so a
+  // live row of one of those changes lands there as well as in its own
+  // thread. The page names its changes (request-head.tsx), by the key its
+  // own thread is kept under; they stay named after it closes, so its kept
+  // copy stays current as every thread's does.
+  _threadMembers: new Map(),
+  setThreadMembers(type, ref, sessionIds) {
+    const key = GroupChat.threadKey(type, ref);
+    const ids = new Set((Array.isArray(sessionIds) ? sessionIds : [])
+      .map(Number).filter((n) => Number.isSafeInteger(n) && n > 0));
+    if (ids.size) GroupChat._threadMembers.set(key, ids);
+    else GroupChat._threadMembers.delete(key);
+  },
+  _intoRequestThreads(msg) {
+    if (!msg || !msg.thread || msg.thread.type !== 'session') return;
+    const ref = Number(msg.thread.ref);
+    for (const [key, ids] of GroupChat._threadMembers) {
+      if (!ids.has(ref)) continue;
+      const at = key.indexOf(':');
+      // The copy says where it was written (`thread_type`/`thread_ref`, as a
+      // loaded row does) and which page holds it (`thread`).
+      GroupChat._handleThreadIncoming({
+        ...msg, thread_type: 'session', thread_ref: ref,
+        thread: { type: key.slice(0, at), ref: Number(key.slice(at + 1)) },
+      });
     }
   },
 
@@ -1100,9 +1131,15 @@ const GroupChat = {
     const q = meta.quote;
     const atts = meta.attachments;
     const stamp = GroupChat._stamp(msg.createdAt || msg.created_at);
+    // 1 Nov 2026 (one page per thread): on a request's page, a row of one of
+    // its changes (the thread's one discussion, routes/chat.js selectStream)
+    // reads as it did on that change's page: each notice an event of that
+    // change, and the change it is on (`changeOf`).
+    const scopeType = msg.thread_type || (msg.thread && msg.thread.type) || null;
+    const changeRow = !!(opts && opts.language === 'request') && scopeType === 'session';
     // The general chat's two proposal events, or null — see _proposalEvent;
     // on a change page's Discussion, every notice as one (_threadEvent).
-    const event = chat ? GroupChat._threadEvent(msg, kind) : GroupChat._proposalEvent(msg, kind);
+    const event = (chat || changeRow) ? GroupChat._threadEvent(msg, kind) : GroupChat._proposalEvent(msg, kind);
     // Resolved ONCE for the vote facts below — the row's tint, its phase and
     // the event's link all read the same live PR out of AppView.voteState.
     // #1688: the Friday card names several proposals in its text, so the
@@ -1114,9 +1151,10 @@ const GroupChat = {
     // words, files, quote and reactions (the server sends it that way; a live
     // `chat_delete` patches the same fields).
     const deleted = !!msg.deleted;
-    const threadType = msg.thread_type || (msg.thread && msg.thread.type) || null;
+    const threadType = scopeType;
     return {
       id: msg.id == null ? null : Number(msg.id),
+      ...(changeRow ? { changeOf: { sessionId: Number(msg.thread_type ? msg.thread_ref : msg.thread.ref) || null } } : {}),
       senderId: Number(msg.userId ?? msg.user_id) || null,
       kind,
       username,

@@ -437,6 +437,20 @@
       "preview": "`SELECT UNNEST(cs.linked_issues) AS n, cs.id, cs.user_id, cs.status, cs.shared_at, cs.last_activity_at, cs.created_at, u.username, ${workedOnSql()} AS worked_on"
     },
     {
+      "source": "src/routes/issues.js",
+      "kind": "structural-template",
+      "fingerprint": "5ffb4acc0d1788916b3d",
+      "count": 1,
+      "preview": "`SELECT (COUNT(*) FILTER (WHERE msg_type = 'message'))::int AS cnt, MAX(created_at) AS last_at FROM (SELECT msg_type, created_at FROM chat_messages WHERE app_id"
+    },
+    {
+      "source": "src/routes/issues.js",
+      "kind": "structural-template",
+      "fingerprint": "890834a46a89a5e0099b",
+      "count": 1,
+      "preview": "`SELECT thread_ref AS n, (COUNT(*) FILTER (WHERE msg_type = 'message'))::int AS cnt, MAX(created_at) AS last_at FROM (SELECT thread_ref, msg_type, created_at FR"
+    },
+    {
       "source": "src/routes/kudos.js",
       "kind": "structural-template",
       "fingerprint": "23e047220a859a119a96",
@@ -1321,6 +1335,13 @@
     {
       "source": "src/services/homeroom-bot-progress.js",
       "kind": "structural-template",
+      "fingerprint": "78c2595a6c02401a3e85",
+      "count": 1,
+      "preview": "`SELECT p.app_id, p.about_number FROM private_threads p WHERE p.user_id = $1 AND ${planHoldActiveSql('p')}`"
+    },
+    {
+      "source": "src/services/homeroom-bot-progress.js",
+      "kind": "structural-template",
       "fingerprint": "eee0d0058ae8c27e0b96",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, a.slug, CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status, cs.check_state, cs.check_ph"
@@ -1338,6 +1359,13 @@
       "fingerprint": "f5edec0605c15fed7729",
       "count": 1,
       "preview": "`SELECT ${workedOnSql()} AS busy FROM chat_sessions cs WHERE cs.id = $1`"
+    },
+    {
+      "source": "src/services/homeroom-bot.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "d538ceffe7eeac6a1532",
+      "count": 1,
+      "preview": "QUEUE_SNAPSHOT_SQL"
     },
     {
       "source": "src/services/http-stream-access.js",
@@ -1571,6 +1599,13 @@
       "preview": "`UPDATE chat_sessions SET pr_body = $1, ${summaryFreshness.INVALIDATE_SQL} WHERE id = $2`"
     },
     {
+      "source": "src/services/private-threads.js",
+      "kind": "structural-template",
+      "fingerprint": "eec20ca6db6e76c3ef52",
+      "count": 1,
+      "preview": "`SELECT p.about_number, p.root_message_id FROM private_threads p WHERE p.app_id = $1 AND p.user_id = $2 AND p.about_number = ANY($3::int[]) AND ${loopRules().pl"
+    },
+    {
       "source": "src/services/proposal-commit-operation.js",
       "kind": "structural-template",
       "fingerprint": "c1c902c7f2bcea1a7a3d",
@@ -1730,6 +1765,20 @@
       "fingerprint": "e2db6940c7a91408d251",
       "count": 1,
       "preview": "`SELECT ${workedOnSql({ turns: false, sync: false })} AS busy FROM chat_sessions cs WHERE cs.id = $1`"
+    },
+    {
+      "source": "src/services/threads.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "3e276e9485da30387b4b",
+      "count": 1,
+      "preview": "ELSEWHERE_SQL"
+    },
+    {
+      "source": "src/services/threads.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "d664a2029343883317f2",
+      "count": 1,
+      "preview": "ITEMS_SQL"
     },
     {
       "source": "src/services/topochain/challenge-onboarding.js",

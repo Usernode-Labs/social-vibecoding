@@ -372,8 +372,6 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
-  // ── #6071: design threads ───────────────────────────────────────────
-  'improve-row-design': 'Design this screen, a row of the Homeroom menu\'s list before About (features/app-context/app-context-sheet.tsx): once the menu has gone, captures the screen on view into a private design thread with Homeroom bot (features/design/start.ts).',
   // ── #6000: propose reopening a closed request ───────────────────────
   'reopen-issue-modal': 'The Propose reopening dialog (features/dialogs/reopen-issue.tsx), the mirror of #close-issue-modal, opened from a closed request\'s status card or its ⋯ menu. Ships hidden.',
   'reopen-issue-number': 'The dialog title\'s #N span, filled from the issue the dialog was opened for.',
@@ -437,6 +435,9 @@ const ADDED_IDS = {
   'feedback-sent-line': 'B8: the line under the filed-request confirmation\'s heading, worded by the controller: "Your idea is on the board now.", or, where Homeroom bot builds it, "Homeroom bot is building it now, usually about 8 minutes…" (#3971).',
   'feedback-sent-chat': 'B8: Open chat, the secondary button under Done when Homeroom bot builds the request: the chat where its card is.',
   'feedback-sent-fix': 'B8: the confirmation\'s small "Build it now with a coding agent" link, for somebody who could start a change there.',
+  // ── 1 Nov 2026 (threads, one loop: phase B): plan it with the bot ───────
+  'feedback-sent-work': 'Work on it with Homeroom bot, the quiet button under Done on the filed-request confirmation: a thread only the person can see, about the request just filed, on the Homeroom bot tab (lib/thread-about.ts); the bot waits for their plan. Ships hidden; the controller shows it when the post says where the request went (`filed`).',
+  'feedback-first-work': 'The same Work on it with Homeroom bot on the first-request confirmation, above Done. Ships hidden; shown where the request has a board.',
   // ── #3971: a first request Homeroom bot builds is a first request ───────
   'feedback-sent-first': '#3971: "Your first request!" inside the bot\'s confirmation. B8 skipped the first-request moment whenever the bot built the request; it comes back here, beside Open chat rather than in place of it. Hidden unless the post was the person\'s first request and the bot builds it.',
   'feedback-sent-first-line': '#3971: that block\'s "You just helped shape <app>." line, named by the controller after the app the request was filed to.',

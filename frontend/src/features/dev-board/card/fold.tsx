@@ -58,6 +58,7 @@ import type { ReactNode } from 'react';
 import { FoldMarkIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
+import { t } from '../../../lib/i18n/runtime';
 
 import { Badge, CardIcon, DevCard, edgeFor, metaLineNodes, VoteButton } from './dev-card';
 import { FeedThread } from './feed-thread';
@@ -178,6 +179,34 @@ export function StatePill({ s, className }: { s: StatusPillState; className?: st
   return (
     <span className={`dev-ws-row-state dev-ws-row-state-${s.tone}${className ? ` ${className}` : ''}`} title={s.title}>{s.label}</span>
   );
+}
+
+/**
+ * The final counted vote of a change that is live (#6075): "3/3 yes · 1 no",
+ * read beside its "✓ Live" pill. The yes count is compared with the
+ * threshold snapshotted at merge time (`StatusPillState.majority`, which
+ * `statusPillState` already falls back to the live majority for legacy
+ * rows); the no votes are shown only when there were some. A row with no
+ * counted votes (an imported pull request) has no tally — it never reads
+ * "0/1". History only: nothing here is a vote the viewer can cast again.
+ */
+export function liveTally(s: StatusPillState | null): { text: string; title: string } | null {
+  if (!s || s.tier !== 0 || (s.key !== 'deployed' && s.key !== 'merged')) return null;
+  const yes = Math.max(0, s.yes || 0);
+  const no = Math.max(0, s.no || 0);
+  if (yes + no <= 0) return null;
+  const needed = s.majority > 0 ? s.majority : 1;
+  const text = no > 0
+    ? t('project:card.tally.yesNo', { yes, needed, no })
+    : t('project:card.tally.yes', { yes, needed });
+  return { text, title: t('project:card.tally.title', { yes, no, needed }) };
+}
+
+/** The live tally beside a "✓ Live" pill, or nothing. */
+export function LiveTally({ s }: { s: StatusPillState | null }): ReactNode {
+  const tally = liveTally(s);
+  if (!tally) return null;
+  return <span className="dev-ws-wrow-tally" title={tally.title}>{tally.text}</span>;
 }
 
 export function RowBand({ card, trailing, chips: withChips = true }: {

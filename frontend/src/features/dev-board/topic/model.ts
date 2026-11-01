@@ -598,6 +598,11 @@ export interface RequestStatusView {
    * offers "Build it with your own Claude Code" under the card.
    */
   ownAgent?: boolean;
+  /**
+   * 1 Nov 2026: the one action is "Work on this with Homeroom bot", so the
+   * page's ⋯ offers "Build it in an agent session" (what Build it now was).
+   */
+  agentSession?: boolean;
 }
 
 /** #4455: one part of a Votes or Testing card's bar. */
@@ -700,7 +705,15 @@ export interface ChangeThreadView {
   votes: ChangeGateView;
   testing: ChangeGateView;
   /** The Before and after card, or null when there is nothing to show. */
-  shots: { state: string; html: string; line: string | null; waiting?: boolean } | null;
+  shots: {
+    state: string; html: string; line: string | null; waiting?: boolean;
+    /**
+     * 1 Nov 2026 (one page per thread): a verified run's first screen,
+     * before and after, for the small pair a change shows on its request's
+     * page, and the id of the viewer (`html`) its Expand opens.
+     */
+    thumbs?: { before: string | null; after: string | null; viewer: string } | null;
+  } | null;
   /** Whether the Addresses row carries "👏 Thank <author>". */
   thanks: boolean;
   /**

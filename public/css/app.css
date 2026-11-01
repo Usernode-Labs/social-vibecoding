@@ -16933,6 +16933,44 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-change-shots-line { margin: 8px 0 0; display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-muted); }
 .dev-change-shots-tiles { margin-top: 8px; }
 .dev-change-closed-note { margin: 0; padding: 6px 16px 12px; font-size: 15px; color: var(--text-muted); }
+/* 1 Nov 2026 (one page per thread): a change on its request's page carries
+   what only its own page had. Its ⋯ is the header's disc, smaller, at the
+   end of its line beside its status pill. */
+.dev-thread-change-menu {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  width: 32px; height: 32px; border-radius: 9999px; color: var(--text-primary);
+  background: var(--messages-surface); box-shadow: var(--messages-disc-shadow); transition: background 150ms;
+}
+.dev-thread-change-menu:hover { background: var(--messages-surface-2); }
+.dev-thread-change-menu svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.dev-thread-change-menu:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dev-thread-change-summary { margin-top: 6px; }
+.dev-thread-change-summary .dev-request-ask-text { font-size: 14px; }
+/* Its before and after, small: two stills side by side, then Expand. The
+   viewer they open is its page's, kept here as a closed popover: shut it
+   takes no room, open it is drawn over the page (.shots-viewer:popover-open). */
+.dev-thread-shots { margin-top: 8px; display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.dev-thread-shots-pair { display: flex; gap: 6px; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: 10px; }
+.dev-thread-shots-pair:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dev-thread-shot { position: relative; display: block; width: 112px; height: 70px; border-radius: 10px; overflow: hidden;
+  background: var(--messages-surface); outline: 1px solid var(--app-sheet-line); outline-offset: -1px; }
+.dev-thread-shot img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top center; }
+.dev-thread-shot-none { display: block; width: 100%; height: 100%; }
+.dev-thread-shot-label { position: absolute; left: 4px; bottom: 4px; padding: 1px 6px; border-radius: 9999px;
+  font-size: 11px; font-weight: 600; line-height: 16px; color: #fff; background: rgba(0, 0, 0, 0.55); }
+.dev-thread-shots-expand { padding: 4px 10px; border: 0; border-radius: 9999px; font-size: 13px; font-weight: 600;
+  color: var(--text-primary); background: var(--state-neutral-bg); }
+.dev-thread-shots-expand:hover { text-decoration: underline; }
+.dev-thread-shots-viewer { flex-basis: 100%; height: 0; }
+.dev-thread-shots-viewer > .dev-change-shots-body > :not(.shots-viewer),
+.dev-thread-shots-viewer .shots-viewer:not(:popover-open) { display: none; }
+/* Competing changes fold under their ballot: a line each, which opens. */
+.dev-thread-fold { padding: 8px 0; border-top: 1px solid var(--app-sheet-line); }
+.dev-thread-fold:first-child { border-top: 0; }
+.dev-thread-fold-head { display: block; padding: 2px 0; border: 0; background: none; border-radius: 8px; }
+.dev-thread-fold-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* A reply written on one of the request's changes says which, after its time. */
+.gc-msg-on-change { margin-left: 6px; font-size: 12px; color: var(--text-muted); }
 /* #5007: a change built for a request points its replies at the request
    where its conversation lives. The `p` variant sits above the "N replies"
    row; the `div` one replaces the "No replies yet" row and keeps that
@@ -18051,9 +18089,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 /* ── The AI tab's main view (#6019 follow-up, features/ai/) ──────────────
    A page like Communities: the list on the wallpaper (the screen lists in
    this file name #ai-screen beside #workshop-screen). Its Ask Homeroom bot
-   bar sits over the tab bar like a composer, on a phone and a narrow window;
-   a wide one docks Main, the chat with the bot, beside the list instead
-   (data-ai-docked), the way the prototype drew it. */
+   bar sits over the tab bar like a composer, on a phone; from 768px (1 Nov
+   2026; it was 1024px) the column docks beside the list instead
+   (data-ai-docked), with Main, the chat with the bot, or one thread of it. */
 #ai-screen .ai-askbar {
   position: fixed;
   /* Where the page's own content is (the rail and its gutter, mirrored on
@@ -18099,8 +18137,15 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    list, between it and Main. A width dragged on Main's edge or beside an
    app (`--side-panel-chosen-w`, features/side-panel/resize.ts) wins. */
 body:has(#ai-screen:not(.hidden)) {
+  --ai-list-min: 480px;
   --ai-main-auto: clamp(400px, calc(100vw - var(--platform-rail-w, 0px) - 720px), 720px);
-  --ai-main-w: max(320px, min(var(--side-panel-chosen-w, var(--ai-main-auto)), calc(100vw - var(--platform-rail-w, 0px) - 480px)));
+  --ai-main-w: max(320px, min(var(--side-panel-chosen-w, var(--ai-main-auto)), calc(100vw - var(--platform-rail-w, 0px) - var(--ai-list-min))));
+}
+/* 1 Nov 2026: between 768 and 1024px the list keeps 360px, not 480: its
+   rows are one line (their numbers left out, as a phone's are), and the
+   column is 320px at the least. */
+@media (max-width: 1023.98px) {
+  body:has(#ai-screen:not(.hidden)) { --ai-list-min: 360px; }
 }
 #ai-screen[data-ai-docked] { padding-right: var(--ai-main-w); }
 #ai-screen .ai-main-pane {
@@ -18140,6 +18185,24 @@ body:has(#ai-screen:not(.hidden)) {
   border-top: 0;
   box-shadow: none;
 }
+/* A THREAD IN MAIN CHAT (31 Oct 2026). Main Chat is a column of 400 to
+   720px, too narrow for the chat and a thread side by side: Messages draws
+   them so from a 768px window, and here that made two panes of about 200px,
+   a word a line. The thread covers the chat, as it does on a phone, and
+   lies flat as the chat does. 1 Nov 2026: it is alone in the column, under
+   its own head (ReplyThreadPanel `inMain`), with no bar of Main Chat's over
+   it and no way back to it: Main Chat is a row of the list. The phone's
+   drawer holds the column the same way. */
+.messages-layout[data-main-chat].messages-has-reply-thread > .messages-thread-pane { display: none; }
+.messages-layout[data-main-chat] > .messages-reply-pane {
+  flex: 1 1 auto;
+  width: 100%;
+  margin: 0;
+  border-radius: 0;
+  border-top: 0;
+  box-shadow: none;
+}
+.messages-layout[data-main-chat] > .messages-reply-pane > .messages-reply-resizer { display: none; }
 /* A request or a change opened from the list: the side panel in Main's
    place, and Main back when the panel closes. It is drawn as this page's
    own column, not as a panel of its own (29 Oct 2026): Main's width, edge
@@ -18147,7 +18210,7 @@ body:has(#ai-screen:not(.hidden)) {
    of the panel's own controls (side-panel.tsx) but its left edge: that is
    the handle Main's own edge is (30 Oct 2026), and both set one width. */
 html[data-side-panel] #ai-screen .ai-main-pane { display: none; }
-@media (min-width: 1024px) {
+@media (min-width: 768px) {
   html[data-side-panel] #ai-screen { padding-right: var(--ai-main-w); }
 }
 body:has(#ai-screen:not(.hidden)) .side-panel {
@@ -18173,6 +18236,55 @@ html.in-side-panel.side-panel-beside-ai :is(.dev-topic-backs, .dev-topic-back) {
 html.in-side-panel.side-panel-beside-ai .dc-lift { border-radius: 0; border-top: 0; box-shadow: none; }
 html.in-side-panel.side-panel-beside-ai .dev-request-bar :is([data-request-kicker], .dev-request-bar-title) { display: none; }
 html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu-btn, [data-request-status], [data-request-category])) { display: none; }
+/* A DESIGN'S PREVIEW, A COLUMN OF ITS OWN (1 Nov 2026, threads, one loop
+   C1; features/ai/preview.ts). Opened from a version in a thread, the design
+   pane stands beside the thread: list | thread | preview where the three fit
+   (1500px and up: the list keeps 480px, the thread 440px at most, the
+   preview the rest), the thread and the preview in halves where they do not
+   (the list steps aside), and the whole screen on a phone. The thread's
+   width is the preview's to decide while it is open, so its edge is no
+   handle then. */
+#ai-screen .ai-preview-pane {
+  position: fixed;
+  z-index: 21;
+  right: 0;
+  bottom: 0;
+  top: calc(var(--platform-header-h) + var(--platform-safe-top, 0px) - .5rem);
+  width: var(--ai-preview-w);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--dc-sheet-solid, #fff);
+  border-top: 1px solid var(--app-sheet-line);
+  border-left: 1px solid var(--app-sheet-line);
+}
+#ai-screen .ai-preview-pane > .messages-design-pane { border-radius: 0; box-shadow: none; padding-top: 4px; }
+#ai-screen[data-ai-preview] .ai-main-pane > .side-panel-divider { display: none; }
+#ai-screen[data-ai-preview="three"] {
+  --ai-col-w: min(var(--ai-main-w), 440px);
+  --ai-preview-w: max(360px, calc(100vw - var(--platform-rail-w, 0px) - 480px - var(--ai-col-w)));
+  padding-right: calc(var(--ai-col-w) + var(--ai-preview-w));
+}
+#ai-screen[data-ai-preview="halves"] {
+  --ai-col-w: calc((100vw - var(--platform-rail-w, 0px)) / 2);
+  --ai-preview-w: var(--ai-col-w);
+}
+#ai-screen[data-ai-preview="halves"] .ai-screen-body { display: none; }
+#ai-screen:is([data-ai-preview="three"], [data-ai-preview="halves"]) .ai-main-pane {
+  width: var(--ai-col-w);
+  right: var(--ai-preview-w);
+}
+/* A phone: the whole of the page, over the drawer, its arrow back to the thread. */
+#ai-screen[data-ai-preview="full"] .ai-preview-pane {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  width: auto;
+  border: 0;
+}
+/* A thread's Preview, in its head: a word, not a glyph, on the disc. */
+.messages-thread-action.messages-thread-preview { width: auto; padding: 0 14px; }
+
 /* ── The AI tab on a phone, as a drawer (features/ai/phone-drawer.tsx) ──
    The Messages drawer's strip: the list at 85% of the screen, the thread
    beside it, peeking at the list's right until it is opened, then the whole
@@ -18208,8 +18320,9 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
 }
 /* A 32px disc, pressed as the shell's 44px tap target. */
 .ai-drawer-back::after { content: ""; position: absolute; inset: -6px; }
-/* On the list the arrow has nowhere to go: it arrives as the thread opens. */
-.ai-drawer[data-level="0"] .ai-drawer-back { opacity: 0; transform: translateX(8px); pointer-events: none; }
+/* On the list the arrow has nowhere to go: it arrives as the thread opens.
+   A thread alone in the column has its own (1 Nov 2026), the same way. */
+.ai-drawer[data-level="0"] :is(.ai-drawer-back, .messages-thread-back) { opacity: 0; transform: translateX(8px); pointer-events: none; }
 .ai-drawer-thread > .ai-drawer-peek { z-index: 5; }
 /* The Ask bar sits at the list's foot, in its column, not over the screen. */
 #ai-screen .ai-drawer-list .ai-askbar { position: sticky; left: auto; right: auto; bottom: 0; }
@@ -20022,6 +20135,12 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 @media (min-width: 768px) {
   .messages-layout-embedded > .messages-reply-pane { margin-left: 8px; }
 }
+/* #6071 follow-up: a new thread from Homeroom bot's "+" in the Homeroom bot
+   tab's Main Chat (features/messages/new-thread.tsx) takes the chat's place,
+   docked beside the lists or not: it is a fresh start, and its ✕ brings Main
+   back. In Messages it opens beside the chat, as a thread does. */
+.messages-layout-embedded.messages-has-blank-thread > .messages-thread-pane { display: none; }
+.messages-layout-embedded.messages-has-blank-thread > .messages-reply-pane { flex: 1 1 auto; margin-left: 0; }
 /* A PROJECT'S OWN CHANNEL'S REPLY THREAD, IN PLACE TOO (#3653). The pane
    Messages opens beside an app channel (AppReplyThreadPane) opens beside the
    group chat's pane here: to its right on a desktop, over it on a phone,
@@ -25086,7 +25205,14 @@ body:has(#ai-screen:not(.hidden)) .side-panel-head {
 
 @media (max-width: 1023.98px) {
   /* Below the breakpoint the panel is not drawn at all, and the rules below
-     do not apply, so the app has the whole window back. */
+     do not apply, so the app has the whole window back. 1 Nov 2026: beside
+     the Homeroom bot tab's page it is the column Main Chat docks in, drawn
+     from 768px (the controller's BESIDE_AI_QUERY). */
+  body:not(:has(#ai-screen:not(.hidden))) #platform-side-panel {
+    display: none;
+  }
+}
+@media (max-width: 767.98px) {
   #platform-side-panel {
     display: none;
   }
@@ -25493,6 +25619,13 @@ html.in-side-panel body {
 .dev-ws-wrow-status > .dev-badge { height: 22px; font-size: 12px; margin: 0; }
 .dev-ws-wrow-status > button.dev-badge { position: relative; z-index: 1; }
 .dev-ws-wrow-status > .dev-ws-wrow-live { flex: none; }
+/* #6075: the final counted vote beside a live row's "✓ Live", in the muted
+   13px of the row's own subtitle line. Read-only history, so it is text,
+   never a second pill. */
+.dev-ws-wrow-tally {
+  flex: none; font-size: 13px; line-height: 1.35; color: var(--text-muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
 .dev-ws-wrow-menu { position: relative; z-index: 1; flex: none; display: inline-flex; margin: -3px -6px 0 -2px; }
 .dev-ws-wrow-menu > .gc-vote-btn.dev-card-menu-btn {
   width: 28px; height: 28px; padding: 0; border-color: transparent;

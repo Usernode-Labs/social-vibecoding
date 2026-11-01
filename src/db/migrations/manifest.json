@@ -10,6 +10,21 @@
       "id": "0002-design-threads",
       "sha256": "2929c4396044ac1a13a820f84022b94c4a573ce62a94dd390d8501f3bea5f2bc",
       "schemaSha256": "56e7f2fb72948b3eb63e19b7eda6fe823add2b22a298c17a746d663d902b8d65"
+    },
+    {
+      "id": "0003-private-thread-about",
+      "sha256": "93dda473c873d63858484a25ad7bd5386608b0efd94d76925d0d52a45012ee87",
+      "schemaSha256": "8e8ce976e10d6834d3a3b2d8e401d807538499900f64c7dade9d0fea43ea06f0"
+    },
+    {
+      "id": "0004-design-anywhere",
+      "sha256": "73b0b8a16d116790cd50ecb90d057a4c77fbb06bf58b57f21e1d760ad0e8314e",
+      "schemaSha256": "7c998cf63f5734b178606527bea31125f6426395b62beb95b048320ba9948c3f"
+    },
+    {
+      "id": "0005-plans-and-projects",
+      "sha256": "bed75be38b098152793af4a4c779681fc61377d944d5201703bf2ede9d50de64",
+      "schemaSha256": "c55ee267d38b88af61c46c07fbf1a4fe2807ae1c8d6195183d29a8674d55fa84"
     }
   ]
 }

@@ -47,6 +47,12 @@ export interface ThreadItem {
   target?: number | null;
   /** A change: the requests it closes when it merges (its linked_issues). */
   closes?: number[];
+  /**
+   * 1 Nov 2026 (C2.3), a change: the plan it was built from, by that plan's
+   * session and version (a person's plan on the request, or the bot's own
+   * its requester approved: src/services/threads.js builtFrom).
+   */
+  builtFrom?: { sessionId: number; version: number | null } | null;
 }
 
 export interface ThreadFollow {
@@ -68,6 +74,27 @@ export interface ThreadPayload {
   follow: ThreadFollow | null;
   /** Stage 6: a merge or split waiting on this thread (services/thread-moves.js). */
   moves?: ThreadMove[];
+  /**
+   * 1 Nov 2026 (one page per thread, D4): changes for one of this thread's
+   * requests that live on another request's page (services/threads.js
+   * changesElsewhere): `request` is the one of ours it closes, `on` the
+   * request whose page it is on.
+   */
+  elsewhere?: ThreadElsewhere[];
+}
+
+export interface ThreadElsewhere {
+  id: number;
+  number: number | null;
+  title: string | null;
+  on: number;
+  request: number;
+}
+
+/** D4: the changes for request `number` that live on another request's page. Pure. */
+export function elsewhereFor(payload: ThreadPayload | null, number: number): ThreadElsewhere[] {
+  const list = payload && Array.isArray(payload.elsewhere) ? payload.elsewhere : [];
+  return list.filter((e) => Number(e.request) === Number(number) && Number(e.on) !== Number(number));
 }
 
 export interface ThreadMove {
