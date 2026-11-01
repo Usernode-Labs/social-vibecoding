@@ -3424,9 +3424,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   const next = suggestionLabels(ctx.reply?.suggestions);
   const prompts = next.length ? require('./homeroom-bot-dm').promptActions(next) : [];
   const actions = prompts.slice(0, 3);
-  const project = named.project ? { appSlug: named.project } : {};
   // P1: what the turn looked at, as one line above the words (lookedMeta).
   const looked = await lookedMeta(pool, ctx, Date.now() - t.startedMs);
+  const project = named.project ? { appSlug: named.project } : {};
   return say(text, {
     objects: unique,
     metadata: {

@@ -41,12 +41,17 @@ const MAX_COLUMNS = 4;
 const MAX_ROWS = 12;
 const MAX_ACTIONS = 3;
 
-/** Each tag's label, as a whole literal per tag (Tailwind reads them from here). */
-export const TAG_CLASSES: Record<TableTag, string> = {
-  ready: 'inline-flex items-center rounded-md bg-violet-50 px-1.5 py-0.5 text-[0.6875rem] font-bold leading-4 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300',
-  question: 'inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[0.6875rem] font-bold leading-4 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300',
-  done: 'inline-flex items-center rounded-md bg-zinc-100 px-1.5 py-0.5 text-[0.6875rem] font-bold leading-4 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300',
-  stopped: 'inline-flex items-center rounded-md bg-zinc-100 px-1.5 py-0.5 text-[0.6875rem] font-bold leading-4 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300',
+/**
+ * A tag's shape, and each tag's tint: the project cards' pill spelling
+ * (features/apps/app-card.js), shape and tone apart. Whole literals
+ * (Tailwind reads them from here).
+ */
+export const TAG_BASE = 'inline-flex items-center whitespace-nowrap rounded-full px-1.5 py-0.5 text-[0.6875rem] font-semibold leading-4';
+export const TAG_TONES: Record<TableTag, string> = {
+  ready: 'bg-violet-500/10 text-violet-700 dark:text-violet-400',
+  question: 'bg-amber-500/10 text-amber-800 dark:text-amber-400',
+  done: 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400',
+  stopped: 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400',
 };
 
 const TAG_WORDS: Record<TableTag, string> = {
@@ -155,7 +160,7 @@ export function TableCard({ message, conversationId, card }: BotCardProps) {
                 ))}
                 {tagged ? (
                   <td className="whitespace-nowrap py-2 text-right">
-                    {row.tag ? <span className={TAG_CLASSES[row.tag]} data-bot-table-tag={row.tag}>{t(TAG_WORDS[row.tag])}</span> : null}
+                    {row.tag ? <span className={`${TAG_BASE} ${TAG_TONES[row.tag]}`} data-bot-table-tag={row.tag}>{t(TAG_WORDS[row.tag])}</span> : null}
                   </td>
                 ) : null}
               </tr>

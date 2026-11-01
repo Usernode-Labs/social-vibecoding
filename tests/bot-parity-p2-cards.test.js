@@ -408,9 +408,9 @@ test('the table card: headings, rows 15 over 13, one tag a row, a request\'s row
   assert.match(html, /<a href="#app\/gym-3f2a1c\/dev\/issues\/12"[^>]*data-bot-table-request="gym-3f2a1c#12"[^>]*>Dark mode<\/a>/);
   assert.match(html, /title="Open Gym Tracker request #12"/);
   assert.match(html, /<th scope="row" class="py-2 pr-3 text-\[0\.9375rem\] font-\[650\][^"]*">Streaks<\/th><td class="py-2 pr-3 text-\[0\.8125rem\][^"]*text-zinc-500/);
-  assert.match(html, /bg-violet-50[^"]*text-violet-700[^"]*" data-bot-table-tag="ready">Ready</, 'ready in the blue accent');
-  assert.match(html, /bg-amber-50[^"]*" data-bot-table-tag="question">Question</);
-  assert.match(html, /bg-zinc-100[^"]*" data-bot-table-tag="done">Done</);
+  assert.match(html, /rounded-full px-1\.5 py-0\.5[^"]* bg-violet-500\/10 text-violet-700[^"]*" data-bot-table-tag="ready">Ready</, 'ready in the blue accent');
+  assert.match(html, /bg-amber-500\/10 text-amber-800[^"]*" data-bot-table-tag="question">Question</);
+  assert.match(html, /bg-zinc-500\/10 text-zinc-600[^"]*" data-bot-table-tag="done">Done</);
   assert.match(html, /data-bot-table-tag="stopped">Stopped</);
   assert.equal((html.match(/data-bot-table-tag=/g) || []).length, 4, 'one tag a row');
   assert.match(html, /&lt;script&gt;x&lt;\/script&gt;/);
