@@ -163,7 +163,7 @@ test('looks into code and investigations, against the full PostgreSQL schema', {
 
   await t.test('a look the chat waits for comes back inline, with what it looked at, and counts as building time', async () => {
     const messageId = await said(ada, 'How does the sync work?');
-    const ctx = ctxFor(ada, messageId, { lookPollMs: 1, sleep: () => settle() });
+    const ctx = ctxFor(ada, messageId, { lookPollMs: 1, lookSleep: () => settle() });
     const out = await look.run(pool, ctx, 'look_into', { project: 'Gym Tracker', question: 'How does the sync decide which save wins?' });
     assert.equal(out.ok, true, JSON.stringify(out));
     assert.equal(out.summary, 'The sync check fails when two saves land in the same second.');
@@ -178,7 +178,7 @@ test('looks into code and investigations, against the full PostgreSQL schema', {
     assert.equal((await pool.query(`SELECT state FROM wf_instances WHERE machine = $1`, [LOOK_MACHINE])).rows[0].state, 'done');
     assert.equal(await require('../src/services/homeroom-bot-dm').weeklySpentCents(pool, ada.id), 12, 'its cost is their building time');
     // Asked again by a retry of the same answer: the same look, not a second.
-    const again = await look.run(pool, ctxFor(ada, messageId, { lookPollMs: 1, sleep: () => settle() }), 'look_into', { project: 'gym-tracker', question: 'How does the sync decide which save wins?' });
+    const again = await look.run(pool, ctxFor(ada, messageId, { lookPollMs: 1, lookSleep: () => settle() }), 'look_into', { project: 'gym-tracker', question: 'How does the sync decide which save wins?' });
     assert.equal(again.ok, true);
     assert.equal(looks.length, 1);
   });

@@ -677,7 +677,8 @@ async function runTool(pool, ctx, args) {
   let row = await waitForLook(pool, started.id, {
     waitMs: Number.isFinite(deps.lookWaitMs) ? deps.lookWaitMs : INLINE_WAIT_MS,
     pollMs: Number.isFinite(deps.lookPollMs) ? deps.lookPollMs : POLL_MS,
-    sleep: deps.sleep || null,
+    // Its own key: a test's no-op `sleep` for the model's retries would make this a busy loop.
+    sleep: deps.lookSleep || null,
   });
   if (row && row.state === 'running') {
     // Still going: it finishes on its own and is posted here, unless it ended just now.
