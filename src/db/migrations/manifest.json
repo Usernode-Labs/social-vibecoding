@@ -25,6 +25,11 @@
       "id": "0005-plans-and-projects",
       "sha256": "bed75be38b098152793af4a4c779681fc61377d944d5201703bf2ede9d50de64",
       "schemaSha256": "c55ee267d38b88af61c46c07fbf1a4fe2807ae1c8d6195183d29a8674d55fa84"
+    },
+    {
+      "id": "0006-bot-parity-batch-steer",
+      "sha256": "bf61d7fc67fa84f67a27dd597e061043a9640f76e6d81f1e35a5480dc6deb2ed",
+      "schemaSha256": "f59b49eede0b5c690ad2a9a6120c13d6051d5cfa138185a45b884bfb9641db76"
     }
   ]
 }
