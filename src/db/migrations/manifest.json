@@ -25,6 +25,11 @@
       "id": "0005-plans-and-projects",
       "sha256": "bed75be38b098152793af4a4c779681fc61377d944d5201703bf2ede9d50de64",
       "schemaSha256": "c55ee267d38b88af61c46c07fbf1a4fe2807ae1c8d6195183d29a8674d55fa84"
+    },
+    {
+      "id": "0006-bot-parity-p6-p7",
+      "sha256": "af1a6b5a153dc41b1dd5714c90a1d763cb4f039a628163e727bd2678820d937d",
+      "schemaSha256": "9c7f7902de8e538a7b91873044712c340063488e90c78b6562039260eb895091"
     }
   ]
 }
