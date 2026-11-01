@@ -660,7 +660,7 @@ test('the column from 768px: Main, or one thread alone under its own head; a pag
   assert.match(controller, /return window\.matchMedia\(besideApp \? DESKTOP_QUERY : BESIDE_AI_QUERY\)\.matches;/);
   const css = read('public/css/app.css');
   assert.match(css, /@media \(max-width: 1023\.98px\) \{[^}]*?\*\/\s+body:not\(:has\(#ai-screen:not\(\.hidden\)\)\) #platform-side-panel \{\s+display: none;\s+\}\s+\}\s+@media \(max-width: 767\.98px\) \{\s+#platform-side-panel \{\s+display: none;\s+\}\s+\}/);
-  assert.match(css, /@media \(max-width: 1023\.98px\) \{\s+body:has\(#ai-screen:not\(\.hidden\)\) \{ --ai-list-min: 360px; \}\s+\}/);
+  assert.match(css, /@media \(max-width: 1023\.98px\) \{\s+body:has\(#ai-screen:not\(\.hidden\)\) \{ --ai-list-min: 280px; \}\s+\}/);
 });
 
 test('a thread opens on this page: beside the list in Main\'s place, or on its page with a way back here', () => {
