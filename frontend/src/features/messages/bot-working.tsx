@@ -70,6 +70,10 @@ export function botDoingLine(t: Translate, doing: BotDoing | null | undefined): 
   if (doing?.kind === 'code') {
     return doing.project ? t('messages:thread.botWorking.code', { project: doing.project }) : t('messages:thread.botWorking.codeUnnamed');
   }
+  // Homeroom bot parity (P3): a helper sent to look into a project's code (look_into).
+  if (doing?.kind === 'looking') {
+    return doing.project ? t('messages:thread.botWorking.looking', { project: doing.project }) : t('messages:thread.botWorking.lookingUnnamed');
+  }
   return t((doing && DOING_WORDS[doing.kind]) || 'messages:thread.botWorking.thinking');
 }
 
