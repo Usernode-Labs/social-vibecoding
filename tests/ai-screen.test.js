@@ -702,7 +702,7 @@ test('on a phone the list and Main Chat are one drawer, as Messages\' are; a req
   // Messages' own strip, slide and landing rule.
   assert.match(drawer, /import \{ isPan, landingIn, MESSAGES_AT, SLIDE_EASE, SLIDE_MS \} from '\.\.\/nav-drawer\/drawer-math';/);
   assert.match(drawer, /transition: still \? 'none' : `transform \$\{SLIDE_MS\}ms \$\{SLIDE_EASE\}`/);
-  assert.match(drawer, /const still = drag != null \|\| reducedMotion\(\);/, 'none under Reduce Motion');
+  assert.match(drawer, /const still = drag != null \|\| snap \|\| reducedMotion\(\);/, 'none under Reduce Motion');
   // The level not in view is out of reach, not only out of sight.
   assert.match(drawer, /<div className="ai-drawer-list" inert=\{level === 1\} aria-hidden=\{level === 1 \? true : undefined\}>\{list\}<\/div>/);
   assert.match(drawer, /<div className="ai-drawer-pane" inert=\{level === 0\} aria-hidden=\{level === 0 \? true : undefined\}>\{pane\}<\/div>/);
@@ -722,6 +722,24 @@ test('on a phone the list and Main Chat are one drawer, as Messages\' are; a req
   assert.match(css, /\.ai-drawer-back::after \{ content: ""; position: absolute; inset: -6px; \}/, 'its arrow is pressed as a 44px target');
   assert.match(css, /\.ai-drawer\[data-level="0"\] :is\(\.ai-drawer-back, \.messages-thread-back\) \{ opacity: 0;/, 'neither arrow shows in the peek');
   assert.equal(message('messages:ai.drawer.peek', { title: message('messages:store.header.main') }), 'Open Main Chat');
+});
+
+test('on a phone the list is the whole screen until a thread has been opened, then the drawer peeks (Evan, 1 Nov 2026)', () => {
+  const drawer = read('frontend/src/features/ai/phone-drawer.tsx');
+  assert.match(drawer, /export const FULL_AT: readonly \[number, number\] = \[0, 1\];/, 'with no peek the column rests a whole screen to the right');
+  assert.match(drawer, /const OPENED_KEY = 'homeroom:botDrawer:threadOpened';/, 'remembered per device');
+  assert.match(drawer, /const at = opened \? MESSAGES_AT : FULL_AT;/);
+  assert.match(drawer, /const offset = drag \?\? at\[level\];/, 'rest, drag and landing all read the one table');
+  assert.match(drawer, /onLevel\(landingIn\(at, p\.from, now, e\.clientX - p\.x\) as 0 \| 1\);/);
+  assert.match(drawer, /\{opened && level === 0 && drag == null \? \(/, 'no peek button before a thread was opened');
+  assert.match(drawer, /data-peek=\{opened \? '' : undefined\}/);
+  // Laid out once the slide has landed, and switched with no slide.
+  assert.match(drawer, /if \(opened \|\| level !== 1\) return undefined;\s+rememberThreadOpened\(\);\s+const id = window\.setTimeout\(\(\) => \{ setSnap\(true\); setOpened\(true\); \}, SLIDE_MS \+ 50\);/);
+  assert.match(drawer, /const still = drag != null \|\| snap \|\| reducedMotion\(\);/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.ai-drawer:not\(\[data-peek\]\) \.ai-drawer-list \{ width: 100%; \}/);
+  assert.match(css, /\.ai-drawer:not\(\[data-peek\]\) \.ai-drawer-thread \{ left: 100%; \}/);
+  assert.match(css, /\.ai-drawer:not\(\[data-peek\]\)\[data-level="0"\]:not\(\[data-panning\]\) \.ai-drawer-thread \{ box-shadow: none; border-left-color: transparent; \}/, 'no shadow at the list\'s edge');
 });
 
 test('what a row opens rides along in Main Chat\'s composer, and only there', () => {
