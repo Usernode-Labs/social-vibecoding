@@ -169,12 +169,14 @@ test('runChecksFix asks the ladder where a not_change hand-off was, and the slot
   assert.ok(carry > fix.indexOf('const handOff = async') && carry < fix.indexOf('followup.runFollowUpTurn('));
   // The infra skip stands first, untouched.
   assert.ok(fix.indexOf('if (followup.checksLookLikeInfra(checks)) {') < fix.indexOf('flakyChecks('));
-  const caps = src.slice(src.indexOf('async function simulateCaps('), src.indexOf('async function simulateCaps(') + 900);
+  const caps = src.slice(src.indexOf('async function simulateCaps('), src.indexOf('async function simulateCaps(') + 1600);
   assert.match(caps, /flakyChecks\(\)\.exemptFromAppCap\(pool, appId, issueNumber\)/);
-  assert.match(caps, /if \(!exempt && await openBotProposalCount\(pool, bot, appId\) >= PROPOSALS_PER_APP_CAP\) return 'proposals_per_app';/);
+  // (Merged with P4: a batch may raise the number its own requests are held at, perApp.)
+  assert.match(caps, /if \(!exempt && await openBotProposalCount\(pool, bot, appId\) >= perApp\) return 'proposals_per_app';/);
   assert.match(caps, /if \(await openBotProposalTotal\(pool, bot\) >= botProposalCeiling\(settings\)\) return 'proposals_total';/,
     'the bot-wide ceiling still holds');
-  assert.equal((src.match(/simulateCaps\(pool, bot, app\.id, [^)]*, settings, issueNumber\)/g) || []).length, 2, 'a read and a reused verdict pass the request');
+  assert.equal((src.match(/simulateCaps\(pool, bot, app\.id, [^)]*, settings, \{ issueNumber \}\)/g) || []).length, 3,
+    'a read, a reused verdict and a plan from an early look pass the request');
   assert.match(src, /await each\('flakyChecks', \(\) => flakyChecks\(deps\)\.sweep\(pool, config, \{ deps \}\)\);/);
   assert.match(src, /await flakyChecks\(deps\)\.fixMerged\(pool, null, \{ appId, issues, sessionId: Number\(merged\.id\), deps \}\);/);
   assert.match(read('src/services/homeroom-bot-dm.js'), /require\('\.\/homeroom-bot-flaky-checks'\)\.noteGreen\(pool, id, \{ deps \}\);/);
@@ -196,8 +198,8 @@ test('a flaky check\'s fix is not held by its project\'s five slots; anything el
     },
   };
   const BOT = { id: 77, username: 'homeroom_bot' };
-  assert.equal(await bot.simulateCaps(pool, BOT, 1, 'ready', {}, 60), 'proposals_per_app');
-  assert.equal(await bot.simulateCaps(pool, BOT, 1, 'ready', {}, 61), null, 'the fix is built');
+  assert.equal(await bot.simulateCaps(pool, BOT, 1, 'ready', {}, { issueNumber: 60 }), 'proposals_per_app');
+  assert.equal(await bot.simulateCaps(pool, BOT, 1, 'ready', {}, { issueNumber: 61 }), null, 'the fix is built');
   assert.equal(await bot.simulateCaps(pool, BOT, 1, 'ready', {}), 'proposals_per_app', 'no request named, no exemption');
 });
 
