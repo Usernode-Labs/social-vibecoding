@@ -95,7 +95,8 @@ test('"See progress" opens Main Chat at the request, never inside a thread of it
   const store = read(STORE);
   const fn = store.slice(store.indexOf('export async function openBotRequest('), store.indexOf('/** What the composer\'s box asks'));
   assert.match(fn, /const ask = track\?\.askId && !known\?\.threadRootId \? track\.askId : null;/);
-  assert.match(fn, /if \(at\) openThreadAt\(null, at\);/);
+  // 1 Nov 2026: on the Homeroom bot tab, Main Chat at that message.
+  assert.match(fn, /if \(at\) openBotTab\(\{ threadRootId: null, focusMessageId: at \}\);/);
   assert.doesNotMatch(fn, /openThreadAt\(track\.rootId/);
 });
 

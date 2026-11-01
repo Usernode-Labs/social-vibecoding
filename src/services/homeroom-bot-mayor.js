@@ -179,8 +179,6 @@ const PLATFORM_TOOLS = Object.freeze([
 const PLATFORM_GRANT_SECONDS = 300;
 
 const FILE_IT = 'File it';
-// #6071 follow-up: offer_design's button (a `design` action: the screen picker, on the device).
-const PICK_SCREEN = 'Pick the screen';
 const NOT_NOW = 'Not now';
 // #11 (WP3): the answers under an offer to withdraw one of its proposals.
 const WITHDRAW_IT = 'Withdraw it';
@@ -198,6 +196,13 @@ const KEEP_OPEN = 'Keep it open';
 // without Post it.
 const POST_IT = 'Post it';
 const KEEP_PRIVATE = 'Keep it private';
+// 1 Nov 2026 (threads, one loop: C2.2): the answers under a design to post
+// as a plan: on the request its thread is about, or a new request / an
+// existing one, which the person names next.
+const POST_PLAN = 'Post it as a plan';
+const NOT_YET = 'Not yet';
+const NEW_REQUEST = 'New request';
+const ADD_TO_EXISTING = 'Add to an existing request…';
 // The answers under each kind of offer (homeroom_bot_dm_actions.kind), the
 // one that does it first.
 const OFFER_ANSWERS = Object.freeze({
@@ -206,6 +211,10 @@ const OFFER_ANSWERS = Object.freeze({
   move_request: Object.freeze([MOVE_IT, KEEP_HERE]),
   close_request: Object.freeze([PROPOSE_CLOSE, KEEP_OPEN]),
   post_reply: Object.freeze([POST_IT, KEEP_PRIVATE]),
+  // 1 Nov 2026 (threads, one loop: C2.2): a design posted as a plan. Its
+  // card's own words name the request (designPlanAnswers); these are what a
+  // client that knows no better reads.
+  post_design: Object.freeze([POST_PLAN, NOT_YET]),
 });
 
 /**
@@ -221,6 +230,39 @@ function offerActions(kind) {
     { id: 'yes', label: yes, style: 'primary', type: 'server' },
     { id: 'no', label: no, style: 'secondary', type: 'server' },
   ];
+}
+
+/**
+ * Pure (C2.2): the two answers under a design to post as a plan, by the
+ * request it would go on (`issueNumber`, the server's), or none: a new
+ * request, or one they name next.
+ */
+function designPlanAnswers(issueNumber) {
+  const n = Number(issueNumber);
+  return Number.isSafeInteger(n) && n > 0 ? [`Post as a plan on #${n}`, NOT_YET] : [NEW_REQUEST, ADD_TO_EXISTING];
+}
+
+/**
+ * Pure (C2.2): its buttons. On a request: Post as a plan on #N and Not
+ * yet, both decided on the server. With none: New request (decided there)
+ * and Add to an existing request…, a prompt that quotes the card, so the
+ * bot asks which request and offers a new card for it. The number is never
+ * a button's: it is the thread's request, or the person's own words.
+ */
+function designPlanActions(issueNumber) {
+  const [yes, other] = designPlanAnswers(issueNumber);
+  const on = Number(issueNumber) > 0;
+  return [
+    { id: 'yes', label: yes, style: 'primary', type: 'server' },
+    on ? { id: 'no', label: other, style: 'secondary', type: 'server' }
+      : { id: 'existing', label: other, style: 'secondary', type: 'prompt', quote: true },
+  ];
+}
+
+/** The answers an offer's buttons carry: its kind's, or a design plan's own. */
+function answersFor(action) {
+  if (action?.kind === 'post_design') return designPlanAnswers(action.source_issue_number);
+  return OFFER_ANSWERS[action?.kind] || OFFER_ANSWERS.file_request;
 }
 // #11: what a reply that promised to come back to something later says
 // instead, when nothing it did this turn will.
@@ -353,13 +395,29 @@ function otherThreadLines(thread) {
     '  message here, in this thread.',
   ];
   const d = thread.draft;
-  if (d?.kind === 'ask') {
+  if (d?.kind === 'ask' && d.about) {
+    // 1 Nov 2026: opened from a request's or a change's page, about it; what
+    // it is about follows this prompt (private-threads.js aboutContext).
+    const what = d.about.kind === 'change' ? `change #${Number(d.about.number)}` : `request #${Number(d.about.number)}`;
+    lines.push(
+      `- They opened this thread from ${what} on ${d.appName || d.appSlug} (project "${d.appSlug}") to work on it with`,
+      '  you. What it is about is below. Answer about it, here, and never ask which request or change they mean.',
+    );
+  } else if (d?.kind === 'ask' && d.changeKind === 'project') {
+    // 1 Nov 2026 (C2.4): opened for a new project (start_project_thread).
+    lines.push(
+      '- It is the private thread you opened for a NEW project, which does not exist yet. Help them shape what it is',
+      '  for, then draw its first screen with draw_screen and design it with them here; from a design they like, you',
+      '  offer to make the project. Nothing is made, filed or posted until they tap.',
+    );
+  } else if (d?.kind === 'ask') {
     // #6071 follow-up: started from your "+", with what its welcome block picked.
     const what = { fix: 'to fix something broken', add: 'to add something new', design: 'to change how a screen looks' }[d.changeKind] || 'to make a change';
+    // 1 Nov 2026: a screen is drawn here, in this thread (draw_screen).
     lines.push(
       `- They started this thread with your "+", ${what}${d.appSlug ? ` on ${d.appName || d.appSlug} (project "${d.appSlug}")` : ', on any project'}.`,
-      '  Help them say what they want, then offer it as a request with offer_request. When it is about how a screen',
-      '  looks, call offer_design: a Pick the screen button takes them to the screen, and you design it with them.',
+      '  Help them say what they want, then offer it as a request with offer_request. When they want to see how a',
+      '  screen could look, call draw_screen: it is drawn here, in this thread, and changed at their word.',
     );
   } else if (d?.appSlug) {
     const name = d.appName || d.appSlug;
@@ -467,6 +525,11 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  project\'s owner, asks you to (withdraw_proposal). It is withdrawn only once they tap Withdraw it under your',
     '  message, so ask them to. The one exception: a second change for a request that already has one approved',
     '  or up for a vote is withdrawn straight away, and you say so.',
+    // 1 Nov 2026 (threads, one loop): a screen is drawn, not picked.
+    '- Draw a screen with them when they want to see how something could look, or to change how a screen looks or is',
+    '  laid out (draw_screen): your designer draws it from their words, the project\'s code and any picture they sent, in',
+    '  a private thread (from Main Chat, a new one, which it says), and changes it at their word there. Call it alone,',
+    '  and do not reply: the designer answers them.',
     '- Read the code of a project they can build on, as it is on main, when they ask how something works or what',
     '  the code does (list_source to find files by path or name, then read_source). Answer from what the code says,',
     '  in plain words, and say which file you read. Never quote secrets, and say plainly when the code you read does',
@@ -763,11 +826,16 @@ const TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'offer_design',
-      description: 'Offer to work on how a screen looks, as a design (#6071): a "Pick the screen" button goes under your reply. It takes them to the project, where they go to the screen they mean and tap Use this screen; a private design thread opens with that screen, and you edit it with them there. Use it when they want to change how something looks or is laid out, rather than describing it in a request. Say in your reply what the button does. `project`: the project, by name or slug, when you know it.',
+      name: 'draw_screen',
+      description: 'Draw a screen with them, as a design: hands this turn to your designer, which draws it from their words, the project\'s code and any picture they sent, shows it small in a private thread with Open preview, and changes it at their word there. In a private thread it draws there; in Main Chat it first opens a new private thread for it and says so. Use it when they want to see how something could look, or to change how a screen looks or is laid out. Call it alone, and do not reply: the designer answers them.',
       parameters: {
         type: 'object',
-        properties: { project: { type: 'string', description: 'The project the screen is in, by name or slug. Leave it out when they have not said.' } },
+        properties: {
+          what: { type: 'string', description: 'What to draw, in their words, with what you know of it.' },
+          title: { type: 'string', description: 'The screen\'s name, in a few words ("Settings", "A seed calendar").' },
+          project: { type: 'string', description: 'The project it is for, by name or slug, when they named one. Leave it out for a new project, or when they have not said.' },
+        },
+        required: ['what', 'title'],
         additionalProperties: false,
       },
     },
@@ -786,6 +854,22 @@ const TOOLS = [
           number: { type: 'integer', description: 'With project: the request it is about, if one.' },
         },
         required: ['summary', 'details'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'start_project_thread',
+      description: 'They want to make a NEW project (an app that does not exist yet) and you are in the main chat: open a '
+        + 'private thread for it, with only them, and carry on there. Main gets one line that links to it, and your reply '
+        + 'goes in the thread. There you shape the idea with them and draw its first screen; from a design they like, '
+        + 'the project is made. Not for a change to a project that exists. One per turn.',
+      parameters: {
+        type: 'object',
+        properties: { idea: { type: 'string', description: 'What the project is for, in a few of their own words.' } },
+        required: ['idea'],
         additionalProperties: false,
       },
     },
@@ -1938,11 +2022,15 @@ async function resolveCards(pool, user, cards) {
 }
 
 /**
- * #6071 follow-up: offer_design. A Pick the screen button goes under the
- * turn's reply (answer(): metadata.actions, type 'design'), for `project`
- * when it names one they may see. Nothing is made until they pick a screen.
+ * 1 Nov 2026 (threads, one loop): draw_screen, in offer_design's place. The
+ * turn ends here and the designer takes it over (answer(): design-bot.js
+ * draw), for `project` when it names one they may see: it draws in this
+ * private thread, or opens one from Main Chat.
  */
-async function offerDesign(pool, ctx, args = {}) {
+async function drawScreen(pool, ctx, args = {}) {
+  const what = clip(String(args.what || '').trim(), 600);
+  const title = clip(String(args.title || '').replace(/\s+/g, ' ').trim(), 120);
+  if (!what || !title) return { ok: false, error: 'Say what to draw (what) and name the screen (title).' };
   let app = null;
   if (typeof args.project === 'string' && args.project.trim()) {
     app = await findApp(pool, args.project);
@@ -1950,10 +2038,54 @@ async function offerDesign(pool, ctx, args = {}) {
       return { ok: false, error: `There is no project called ${clip(args.project, 80)} that they can see. Ask which one, or leave project out.` };
     }
   }
-  ctx.designOffer = app ? { appSlug: app.slug, appName: app.name || app.slug } : { appSlug: null, appName: null };
+  ctx.drawScreen = { app, title, brief: what };
+  return { ok: true, note: 'Your designer draws it now and answers them itself. Call nothing else, and do not reply.' };
+}
+
+// 1 Nov 2026 (threads, one loop: C2.4): a new project's private thread.
+const MAX_PROJECT_IDEA = 160;
+
+/** Pure: Main's one line that a new project's thread hangs off. */
+function projectThreadLine(idea) {
+  const said = clip(String(idea || '').replace(/\s+/g, ' '), MAX_PROJECT_IDEA).replace(/[.!?…]+$/, '');
+  return said ? `New thread, for a new project: ${said}. Only you can see it.` : 'New thread, for a new project. Only you can see it.';
+}
+
+/**
+ * start_project_thread (C2.4): from Main, a "+"-style private thread with no
+ * project, for a new one: the bot's line in Main (metadata kind
+ * 'opened_thread', changeKind 'project', quoting what they said), its row
+ * (kind 'ask', no project), and this turn's reply goes in it (answer()).
+ * The conversation goes on there, where the first screen is drawn and the
+ * project made from it (design-bot.js offer_project). Never throws.
+ */
+async function startProjectThread(pool, ctx, args = {}) {
+  if (ctx.projectThread) return { ok: true, note: 'The thread is open: your reply goes there.' };
+  if (ctx.deps.threadRequest || ctx.deps.threadRootId) {
+    return { ok: false, error: 'You are in a thread already: carry on here.' };
+  }
+  const idea = clip(String(args.idea || '').replace(/\s+/g, ' '), MAX_PROJECT_IDEA);
+  if (!idea) return { ok: false, error: 'Say in a few of their words what the project is for.' };
+  const dm = dmModule(ctx.deps);
+  const said = await dm.sendDm(pool, {
+    bot: ctx.bot, userId: ctx.user.id, content: projectThreadLine(idea),
+    idempotencyKey: `hrbot-mayor-project-${ctx.messageId}`, replyToId: ctx.messageId, threadRootId: false, moment: null,
+    metadata: { kind: 'opened_thread', changeKind: 'project', projectIdea: idea },
+  }).catch((err) => {
+    log.warn('homeroom-bot-mayor', 'Could not open a new project\'s thread', { err: err.message });
+    return null;
+  });
+  if (!said?.messageId) return { ok: false, error: 'The thread could not be opened just now. Carry on here.' };
+  await pool.query(
+    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
+     VALUES ($1, $2, $3, NULL, 'ask', 'open') ON CONFLICT (root_message_id) DO NOTHING`,
+    [ctx.user.id, said.conversationId || ctx.conversationId, said.messageId],
+  ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not record a new project\'s thread', { err: err.message }));
+  ctx.projectThread = { rootId: Number(said.messageId) };
   return {
     ok: true,
-    note: 'A Pick the screen button goes under your reply. Tell them it takes them to the screen, where they tap Use this screen, and that you will design it with them in a private thread.',
+    note: 'A private thread for the new project is open, linked from the main chat, and your reply goes in it: answer there, '
+      + 'and ask what its first screen should show, or draw it.',
   };
 }
 
@@ -1985,8 +2117,9 @@ async function runTool(pool, ctx, name, args) {
         return detail;
       }
       case 'comment_on_request': return await commentOnRequest(pool, ctx, args);
-      case 'offer_design': return await offerDesign(pool, ctx, args);
+      case 'draw_screen': return await drawScreen(pool, ctx, args);
       case 'start_request': return await startRequest(pool, ctx, args);
+      case 'start_project_thread': return await startProjectThread(pool, ctx, args);
       case 'my_projects': return await myProjects(pool, { user, settings, deps });
       case 'list_source': return await listSource(pool, { user, project: args.project, dir: args.dir, match: args.match, deps });
       case 'read_source': return await readSource(pool, { user, project: args.project, path: args.path, fromLine: args.fromLine, deps });
@@ -2551,6 +2684,16 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           userId: user.id, code: codeOf(err), err: clip(err?.message, 200),
         });
       }
+      // 1 Nov 2026: a thread about a request or a change reads what it is
+      // about on every turn (private-threads.js aboutContext).
+      let about = null;
+      if (!deps.threadRequest && deps.threadRootId && deps.threadDraft?.about) {
+        try {
+          about = await (deps.privateThreads || require('./private-threads')).aboutContext(pool, { user, draft: deps.threadDraft });
+        } catch (err) {
+          t.failures.push(`context:about:${codeOf(err)}`);
+        }
+      }
       const messages = [
         {
           role: 'system',
@@ -2560,6 +2703,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
             thread: !deps.threadRequest && deps.threadRootId ? { draft: deps.threadDraft || null } : null,
           }),
         },
+        ...(about ? [{ role: 'system', content: about }] : []),
         ...history,
       ];
       // #3772: a message that reads as a decision on a draft that is not
@@ -2572,7 +2716,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       const ids = new Set();
       let limit = MAX_ROUNDS;
       const runRounds = async () => {
-        while (rounds < limit && !ctx.reply) {
+        while (rounds < limit && !ctx.reply && !ctx.drawScreen) {
           rounds += 1;
           state.rounds = rounds;
           const last = rounds === limit;
@@ -2606,7 +2750,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // requests that exist. One more pass to put it right; whatever is still
       // claimed with nothing behind it is cut before it is sent (answer()).
       const said = ctx.reply?.text ?? finalText;
-      const problems = said ? await claimProblems(pool, ctx, said) : [];
+      // A screen handed to the designer is answered by it, not checked here.
+      const problems = said && !ctx.drawScreen ? await claimProblems(pool, ctx, said) : [];
       if (problems.length) {
         t.failures.push(`claims:${problems.map((p) => p.kind).join('+')}`.slice(0, 80));
         log.info('homeroom-bot-mayor', 'A DM reply claimed what this turn did not do; asking again', {
@@ -2649,7 +2794,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   let cards = [];
   let fallback = null;
   let defer = false;
-  if (!text && !ctx.offer) {
+  if (!text && !ctx.offer && !ctx.drawScreen) {
     // The model gave no answer. Why is recorded; what can still be said is.
     if (!error) error = rounds >= MAX_ROUNDS && !ctx.reply ? 'no_reply' : 'empty_answer';
     ({ text, cards, fallback, defer } = await fallbackAnswer(pool, t, { error, errorStatus, history }));
@@ -2680,6 +2825,13 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     if (deps.deferAttempt) return null;
   }
   if (fallback === 'key' || fallback === 'broken' || fallback === 'deferred') return say(text);
+  // 1 Nov 2026: draw_screen. The designer draws it and answers, in this
+  // private thread or one it opens from Main Chat (design-bot.js draw).
+  if (ctx.drawScreen) {
+    return (deps.designBot || require('./design-bot')).draw(pool, config, {
+      bot, user, settings, conversationId, message, ask: ctx.drawScreen, deps,
+    });
+  }
   if (fallback) return say(text, { objects: cards, metadata: { kind: 'chat' } });
   if (ctx.offer) return offer(pool, { bot, user, conversationId, message, text, offer: ctx.offer, deps });
   // A card that cannot be read never costs the answer. #4097: the model's
@@ -2697,18 +2849,17 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   // What they might say next, as buttons to tap (dm.retireSuggestions
   // closes them once the bot says something newer).
   const next = suggestionLabels(ctx.reply?.suggestions);
-  // #6071 follow-up: offer_design's Pick the screen leads the buttons.
-  const pick = ctx.designOffer ? [{ id: 'design', label: PICK_SCREEN, style: 'primary', type: 'design' }] : [];
   const prompts = next.length ? require('./homeroom-bot-dm').promptActions(next) : [];
-  const actions = [...pick, ...prompts].slice(0, 3);
-  const project = ctx.designOffer?.appSlug ? { appSlug: ctx.designOffer.appSlug, appName: ctx.designOffer.appName }
-    : named.project ? { appSlug: named.project } : {};
+  const actions = prompts.slice(0, 3);
+  const project = named.project ? { appSlug: named.project } : {};
   return say(text, {
     objects: unique,
     metadata: {
       kind: 'chat', ...project,
       ...(actions.length ? { actions, status: 'open' } : {}),
     },
+    // C2.4: a new project's thread opened this turn: the answer is its first reply.
+    ...(ctx.projectThread ? { replyToId: null, threadRootId: ctx.projectThread.rootId } : {}),
   });
 }
 
@@ -2926,6 +3077,194 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
   return sent;
 }
 
+// ── A design's offers (threads, one loop: C2.2 and C2.4) ─────────────────
+//
+// 1 Nov 2026: in a private thread with a design, "looks good" is answered
+// with a card (design-bot.js offer_plan, offer_project), never by the bot
+// posting anything itself. A plan's card is an offer (kind 'post_design'):
+// its tap posts the design as a plan through settleOffer. A new project's
+// card has one client button, Make the project ('make', bot-question.tsx),
+// which opens the make sheet; homeroom_bot_dm_actions needs a project, and
+// this one is not made yet.
+
+const MAKE_PROJECT = 'Make the project';
+const MAX_PROJECT_NAME = 60;
+
+/**
+ * Whether the design in thread `design` (design-threads.js designFor) may
+ * be offered as a plan, and on which request: `issueNumber` when they named
+ * one (their own words, checked here), else the request the thread is about
+ * or the design posted on, unless `target` is 'new'. Resolves { ok, offer,
+ * note } for the turn's card (sendDesignOffer), or { ok: false, error }
+ * for the model.
+ */
+async function checkPlanOffer(pool, { user, design, args = {}, deps = {} }) {
+  if (!design?.app) {
+    return { ok: false, error: 'This design has no project yet, so it cannot be a plan on a request. When it is for a new project and they like it, offer to make the project with offer_project.' };
+  }
+  const app = await findApp(pool, design.app.slug);
+  if (!app || !(await canView(pool, app, user))) return { ok: false, error: 'Its project is not one they can see.' };
+  const name = app.name || app.slug;
+  if (!(await canFile(pool, app, user))) {
+    return { ok: false, error: `They need to join ${name} before a plan can go on it. Tell them they can join it from its page.` };
+  }
+  const target = args.target === 'new' ? 'new' : args.target === 'request' ? 'request' : null;
+  const named = Number(args.issueNumber);
+  let n = null;
+  if (target !== 'new') {
+    n = Number.isSafeInteger(named) && named > 0 && named <= 2147483647 ? named
+      : await (deps.designThreads || require('./design-threads')).planTargetOf(pool, design);
+    if (target === 'request' && !n) {
+      return { ok: false, error: 'Which request? Ask them for its number, then offer it again with that issueNumber.' };
+    }
+  }
+  if (n) {
+    const open = await (deps.requestSpecs || require('./request-specs')).openRequest(app, n, deps);
+    if (!open.ok) {
+      return { ok: false, error: open.status === 404 ? `${name} has no open request #${n}. Ask them which request they mean.` : open.error };
+    }
+  }
+  const version = design.latest;
+  return {
+    ok: true,
+    offer: { kind: 'plan', app, issueNumber: n || null, version },
+    note: n
+      ? `A card with "Post as a plan on #${n}" and "Not yet" goes under your reply. Say in a sentence that tapping it posts version ${version} on request #${n} as their plan, publicly, under their name.`
+      : `A card with "New request" and "Add to an existing request…" goes under your reply. Say in a sentence that New request files a request on ${name} with version ${version} as its plan, publicly, under their name, and that they can put it on a request they name instead.`,
+  };
+}
+
+/** Pure-ish (C2.4): whether a design may be offered as a new project, named `name`. */
+function checkProjectOffer({ design, args = {} }) {
+  if (design?.app) {
+    return { ok: false, error: `This design is a screen of ${design.app.name || design.app.slug}. To post it there, offer it with offer_plan.` };
+  }
+  const name = clip(String(args.name || '').replace(/\s+/g, ' '), MAX_PROJECT_NAME);
+  if (name.length < 2) return { ok: false, error: 'Give the project a short name.' };
+  return {
+    ok: true,
+    offer: { kind: 'project', name, version: design?.latest || null },
+    note: `A card with "${MAKE_PROJECT}" goes under your reply. Say in a sentence that it opens a short form, with the name filled in, where they choose who it is for and make it; you build its first version from this design.`,
+  };
+}
+
+/**
+ * The turn's answer when it offered a design (design-bot.js): its words
+ * with the card under them, in the thread, under `key`. `version` is the
+ * version the card offers: the newest, after any edit of the same turn.
+ * Resolves what was sent.
+ */
+async function sendDesignOffer(pool, { bot, user, conversationId, message, design, offer: o, text = '', key, version = null, deps = {} }) {
+  const dm = dmModule(deps);
+  const v = Number(version) || Number(o.version) || design.latest;
+  if (o.kind === 'project') {
+    return dm.sendDm(pool, {
+      bot, userId: user.id, idempotencyKey: key, replyToId: message.id, moment: 'reply',
+      content: [
+        text || `Want to make ${o.name} from this design?`,
+        '',
+        `**${o.name}** · a new project, from version ${v} of ${design.title}`,
+      ].join('\n'),
+      metadata: {
+        kind: 'make_offer', question: `Make ${o.name}?`,
+        makeProject: { name: o.name, rootId: Number(design.rootId), version: v },
+        actions: [{ id: 'make', label: MAKE_PROJECT, style: 'primary', type: 'make' }],
+        status: 'open', mirrors: false,
+      },
+    });
+  }
+  const app = o.app;
+  const name = app.name || app.slug;
+  const n = Number(o.issueNumber) > 0 ? Number(o.issueNumber) : null;
+  const { rows: [action] } = await pool.query(
+    `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title, source_issue_number,
+                                          private_thread_id, design_version)
+     VALUES ($1, $2, $3, 'post_design', $4, $5, $6, $7) RETURNING id`,
+    [user.id, conversationId, app.id, clip(design.title, MAX_TITLE_CHARS) || 'Design', n, design.threadId, v],
+  );
+  const sent = await dm.sendDm(pool, {
+    bot, userId: user.id, idempotencyKey: key, replyToId: message.id, moment: 'reply',
+    content: [
+      text || (n ? `Want me to post this as your plan on request #${n}?` : `Want me to post this as a plan on ${name}?`),
+      '',
+      n ? `**${name}** · a plan on request #${n}: version ${v} of ${design.title}` : `**${name}** · a plan: version ${v} of ${design.title}`,
+    ].join('\n'),
+    metadata: {
+      kind: 'confirm', appSlug: app.slug, appName: name, actionId: action.id,
+      question: n ? `Post version ${v} as a plan on #${n}?` : `Post version ${v} as a plan on ${name}?`,
+      answers: designPlanAnswers(n), actions: designPlanActions(n), status: 'open', mirrors: false,
+    },
+  });
+  if (sent?.messageId && sent.duplicate) {
+    // Offered already, by an attempt a restart cut short: that card stands.
+    await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE id = $1 AND message_id IS NULL', [action.id]);
+  } else if (sent?.messageId) {
+    await pool.query('UPDATE homeroom_bot_dm_actions SET message_id = $2 WHERE id = $1', [action.id, sent.messageId]);
+  }
+  return sent;
+}
+
+/**
+ * The tap under a design's plan card (settleOffer): its design posted as a
+ * plan (design-threads.js postDesignPlan), which says so in the thread.
+ * "Not yet" typed or quoted is answered; tapped, the card's line says it.
+ */
+async function decidePostDesign(pool, config, { user, action, yes, ack, key = null, deps = {} }) {
+  if (!yes) return ack('OK, not yet. Tell me when it looks right and I\'ll offer it again.');
+  const failed = async (error, text) => {
+    await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
+    return ack(text);
+  };
+  const { rows: [thread] } = await pool.query(
+    'SELECT root_message_id FROM private_threads WHERE id = $1 AND user_id = $2', [action.private_thread_id, user.id]);
+  if (!thread) return failed('gone', 'I couldn\'t post it: that design is gone. Nothing was posted.');
+  let posted;
+  try {
+    posted = await (deps.designThreads || require('./design-threads')).postDesignPlan(pool, config, {
+      user, rootId: Number(thread.root_message_id), version: Number(action.design_version) || null,
+      issueNumber: Number(action.source_issue_number) > 0 ? Number(action.source_issue_number) : null, deps,
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not post a design as a plan', { actionId: action.id, err: err.message });
+    if (retryAct(err, key)) throw err;
+    return failed(err.message, 'I couldn\'t post it just now. Try again in a minute.');
+  }
+  if (!posted.ok) {
+    const why = posted.code === 'join_required'
+      ? `you need to be a member of ${posted.app?.name || 'that project'} first. You can join it from its page`
+      : String(posted.error || 'it was refused').replace(/[.!]+$/, '');
+    return failed(posted.code || posted.error || 'refused', `I couldn't post it: ${why}. Nothing was posted.`);
+  }
+  await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, posted.number]);
+  return { posted: true, number: posted.number, state: posted.state };
+}
+
+/**
+ * C2.4: a project made from a design's card (POST /api/apps `design`): the
+ * card's Make the project gives way to what it made, on every device.
+ * Never throws.
+ */
+async function noteProjectMade(pool, { userId, rootId, app }) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT m.id, m.conversation_id FROM conversation_messages m
+        WHERE m.thread_root_id = $1 AND m.deleted_at IS NULL
+          AND m.metadata->'homeroomBot'->>'kind' = 'make_offer'
+          AND COALESCE(m.metadata->'homeroomBot'->>'status', 'open') = 'open'
+          AND EXISTS (SELECT 1 FROM private_threads p WHERE p.root_message_id = $1 AND p.user_id = $2)
+        ORDER BY m.id`,
+      [Number(rootId), Number(userId)],
+    );
+    for (const row of rows) {
+      await dmModule({}).setQuestionState(pool, Number(row.id), {
+        status: 'answered', answer: MAKE_PROJECT, chosen: 'make', madeSlug: app.slug, madeName: app.name || app.slug,
+      }, { conversationId: row.conversation_id, userId });
+    }
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not mark a project card answered', { rootId, err: err.message });
+  }
+}
+
 function said(content, word) {
   const text = String(content || '').trim().toLowerCase().replace(/[.!]+$/, '');
   return text === word.toLowerCase();
@@ -3029,7 +3368,7 @@ async function decideOffer(pool, config, { bot, user, settings, message, deps = 
   }
   // B6: a reply to a plan is the plan's (homeroom-bot-dm.js changePlan).
   if (!action || action.kind === 'build_plan') return null;
-  const [yesWord, noWord] = OFFER_ANSWERS[action.kind] || OFFER_ANSWERS.file_request;
+  const [yesWord, noWord] = answersFor(action);
   const yes = typed ? typed.yes : said(message.content, yesWord);
   const no = typed ? !typed.yes : said(message.content, noWord);
   if (!yes && !no) return null;
@@ -3066,7 +3405,7 @@ async function decideOfferTap(pool, config, { user, actionId, choice, answers = 
   });
   if (!out.ok) return { ok: false, status: out.status || 409, error: out.error || 'already_decided' };
   if (plan) return { ok: true, choice: 'build', label: 'Build it' };
-  const [yesWord, noWord] = OFFER_ANSWERS[action.kind];
+  const [yesWord, noWord] = answersFor(action);
   return { ok: true, choice, label: choice === 'yes' ? yesWord : noWord };
 }
 
@@ -3152,7 +3491,7 @@ async function settleOffer(pool, config, {
 }) {
   const dm = dmModule(deps);
   const no = !yes;
-  const [yesWord, noWord] = OFFER_ANSWERS[action.kind] || OFFER_ANSWERS.file_request;
+  const [yesWord, noWord] = answersFor(action);
   // A tap is answered where its offer is: in its request's thread, when the
   // offer was said there (homeroom-bot-dm.js threadRootFor reads the thread
   // off the message; the bot's own message is never quoted).
@@ -3195,6 +3534,8 @@ async function settleOffer(pool, config, {
   }
   if (action.kind === 'close_request') return decideClose(pool, { user, action, yes, ack, deps: actDeps });
   if (action.kind === 'post_reply') return decidePost(pool, { bot, user, settings, action, yes, ack, deps: actDeps });
+  // 1 Nov 2026 (C2.2): a design posted as a plan, at the person's tap.
+  if (action.kind === 'post_design') return decidePostDesign(pool, config, { user, action, yes, ack, key, deps: actDeps });
   if (no) return ack('OK, I won\'t file it.');
   const { rows: apps } = await pool.query(
     `SELECT ${require('./app-access').nonSecretAppColumnList()} FROM apps WHERE id = $1`, [action.app_id],
@@ -4579,11 +4920,21 @@ module.exports = {
   MAX_CARDS,
   FILE_IT,
   NOT_NOW,
-  PICK_SCREEN,
-  offerDesign,
+  drawScreen,
   WITHDRAW_IT,
   KEEP_IT,
   OFFER_ANSWERS,
+  designPlanAnswers,
+  designPlanActions,
+  answersFor,
+  checkPlanOffer,
+  startProjectThread,
+  projectThreadLine,
+  checkProjectOffer,
+  sendDesignOffer,
+  decidePostDesign,
+  noteProjectMade,
+  MAKE_PROJECT,
   MOVE_IT,
   KEEP_HERE,
   CANT_LOOK_TEXT,
@@ -4624,6 +4975,8 @@ module.exports = {
   SOURCE_CHUNK_CHARS,
   SOURCE_MAX_PATHS,
   sourcePath,
+  // 1 Nov 2026: the designer reads a project's stylesheets behind the same check.
+  sourceRepo,
   listSource,
   readSource,
   historyMessages,

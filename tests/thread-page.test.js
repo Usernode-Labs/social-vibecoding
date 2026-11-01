@@ -268,7 +268,8 @@ test('the request\'s changes are drawn from their own pages\' reads, and the bal
   const src = read('frontend/src/features/dev-board/topic/thread-changes.tsx');
   assert.match(src, /readChangeDetail\(\{ id: item\.id, status: item\.status \}, false, abort\.signal\)/, 'read as its own page reads it');
   assert.match(src, /const built = av\._topicViewFor\('proposal', row\);/);
-  assert.match(src, /<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} \/>/, 'its own page\'s two cards');
+  // 1 Nov 2026: folded under a ballot, without its own Vote (thread-one-page.test.js).
+  assert.match(src, /<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} \/>/, 'its own page\'s two cards');
   assert.match(src, /changeDetailAsk\(\(event as CustomEvent\)\.detail, item\.id\)/, 'and it moves when its page would');
   assert.match(src, /av\.castIssueVote\?\.\(v\.issueId, 'up', \{ reason: null \}\)/, 'a close is voted the platform\'s way');
   const head = read('frontend/src/features/dev-board/topic/change-head.tsx');

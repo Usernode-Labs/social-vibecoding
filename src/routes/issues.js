@@ -122,6 +122,7 @@ const {
 // #2431: which proposal closed an issue, or is working on it. One query for
 // the whole list, so the board pays for it once and not per card.
 const { resolveIssueProposalRefs } = require('../services/issue-proposal-ref');
+const threadsService = require('../services/threads');
 const { botWorkByIssue } = require('../services/homeroom-bot-progress');
 const MAX_CLOSE_REASON_LENGTH = 2000;
 // #556: cap for author-edited issue titles (rename route below). Matches
@@ -1287,6 +1288,31 @@ function issueRoutes(config) {
       }
     });
 
+  // 1 Nov 2026 (threads, one loop: phase B): "Let the bot build it now"
+  // under "Homeroom bot is waiting for your plan." on a request's page: the
+  // viewer's own private thread about their request no longer holds the
+  // bot (services/private-threads.js liftHold, by 'go'), and the lane looks
+  // again. Their own tap only: same-origin, on no connector's list.
+  //
+  //   POST /api/apps/:slug/issues/:number/bot-go → { ok, lifted }
+  router.post('/api/apps/:slug/issues/:number/bot-go', issueKindLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Unauthorized' });
+      const n = Number(req.params.number);
+      if (!Number.isInteger(n) || n <= 0) return res.status(400).json({ error: 'Invalid request number' });
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const out = await require('../services/private-threads').liftHold(pool, {
+        appId: app.id, issueNumber: n, by: 'go', userId: req.user.id,
+      });
+      return res.json({ ok: true, lifted: out.lifted });
+    } catch (err) {
+      log.error('issues', 'Letting Homeroom bot build failed', { message: err.message, slug: req.params.slug });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.post('/api/apps/:slug/issues', issueKindLimiter, communities.requireAppMembership(pool), async (req, res) => {
     let { title, description, kind = 'general', payload = {} } = req.body || {};
 
@@ -2086,15 +2112,25 @@ function issueRoutes(config) {
       // thread_type='issue'). The badge count covers human messages only
       // (msg_type='message') so dual-posted lifecycle system rows don't
       // inflate it; last_at stays over all rows so system activity still
-      // freshens the feed sort.
+      // freshens the feed sort. 1 Nov 2026 (one page per thread): a
+      // request that leads its thread counts its changes' replies too,
+      // since its page is where they are read now.
       const { rows: chatRows } = await pool.query(
-        `SELECT thread_ref AS n,
-                (COUNT(*) FILTER (WHERE msg_type = 'message'))::int AS cnt,
+        `SELECT thread_ref AS n, (COUNT(*) FILTER (WHERE msg_type = 'message'))::int AS cnt,
                 MAX(created_at) AS last_at
-           FROM chat_messages
-          WHERE app_id = $1 AND thread_type = 'issue'
+           FROM (SELECT thread_ref, msg_type, created_at
+                   FROM chat_messages
+                  WHERE app_id = $1 AND thread_type = 'issue'
+                 UNION ALL
+                 SELECT t.number, m.msg_type, m.created_at
+                   FROM chat_messages m
+                   JOIN chat_sessions s ON s.id = m.thread_ref AND s.thread_id = m.thread_id
+                   JOIN threads t ON t.id = m.thread_id AND t.number IS NOT NULL
+                  WHERE m.app_id = $1 AND m.thread_type = 'session' AND s.is_headless = FALSE
+                    AND ${threadsService.visibleChangeSql('s', '$2')}
+                    AND EXISTS (SELECT 1 FROM requests r WHERE r.thread_id = t.id AND r.number = t.number)) said
           GROUP BY thread_ref`,
-        [app.id]
+        [app.id, req.user.id]
       );
       const chatByNumber = new Map(chatRows.map((r) => [r.n, r]));
 
@@ -2271,6 +2307,13 @@ function issueRoutes(config) {
       const botWaiting = botDoor && !botDoor.demo
         ? await botDm.botWaitingByIssue(pool, app.id, (result.issues || []).filter((i) => !botByNumber.has(i.number)))
         : new Map();
+      // 1 Nov 2026: the open requests the viewer's own private thread holds
+      // the bot on (services/private-threads.js holdsFor): "Homeroom bot is
+      // waiting for your plan." with Let the bot build it now.
+      const planHolds = await require('../services/private-threads').holdsFor(pool, {
+        appId: app.id, userId: req.user.id,
+        numbers: (result.issues || []).filter((i) => i.state !== 'closed').map((i) => i.number),
+      }).catch(() => new Map());
 
       const issues = (result.issues || []).map((issue) => {
         const b = byNumber.get(issue.number);
@@ -2301,6 +2344,7 @@ function issueRoutes(config) {
           // #4530: the bot's note there that nobody has answered yet
           // ({ kind: 'question' | 'person' | 'empty', messageId }), or null.
           botAwaits: botWaiting.get(issue.number) || null,
+          botHold: planHolds.get(issue.number) || null,
           // #287: per-viewer proposal session id, or null. Drives the
           // "Create proposal" → "Create new proposal" swap on the issue row.
           myPrSessionId: myPrSessionByNumber.get(issue.number) || null,
@@ -2708,12 +2752,21 @@ function issueRoutes(config) {
           LIMIT 1`,
         [app.id, number, parsed?.owner || null, parsed?.repo || null]
       );
+      // 1 Nov 2026: with its changes' replies, as the board's count (above).
       const { rows: chatRows } = await pool.query(
         `SELECT (COUNT(*) FILTER (WHERE msg_type = 'message'))::int AS cnt,
                 MAX(created_at) AS last_at
-           FROM chat_messages
-          WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2`,
-        [app.id, number]
+           FROM (SELECT msg_type, created_at FROM chat_messages
+                  WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2
+                 UNION ALL
+                 SELECT m.msg_type, m.created_at
+                   FROM chat_messages m
+                   JOIN chat_sessions s ON s.id = m.thread_ref AND s.thread_id = m.thread_id
+                   JOIN threads t ON t.id = m.thread_id AND t.number = $2
+                  WHERE m.app_id = $1 AND m.thread_type = 'session' AND s.is_headless = FALSE
+                    AND ${threadsService.visibleChangeSql('s', '$3')}
+                    AND EXISTS (SELECT 1 FROM requests r WHERE r.thread_id = t.id AND r.number = t.number)) said`,
+        [app.id, number, req.user.id]
       );
       const b = bountyRows[0];
       const chat = chatRows[0];
@@ -2757,6 +2810,12 @@ function issueRoutes(config) {
       const botAwaits = issue.state !== 'closed' && !bot && issue !== mock
         ? (await require('../services/homeroom-bot-dm').botWaitingByIssue(pool, app.id, [issue])).get(number) || null
         : null;
+      // 1 Nov 2026: and whether the viewer's own private thread about it
+      // holds the bot, as the list says it.
+      const botHold = issue.state !== 'closed' && req.user?.id
+        ? (await require('../services/private-threads').holdsFor(pool, { appId: app.id, userId: req.user.id, numbers: [number] })
+          .catch(() => new Map())).get(number) || null
+        : null;
       // #4244: a closed issue no merged change closed was closed by a
       // close_issue vote, or an admin forcing one through. The applied row's
       // audit payload says which, so the page's status band can too.
@@ -2796,6 +2855,7 @@ function issueRoutes(config) {
           in_progress: null,
           bot,
           botAwaits,
+          botHold,
           track,
           myPrSessionId: null,
           addressed_by: addressed,

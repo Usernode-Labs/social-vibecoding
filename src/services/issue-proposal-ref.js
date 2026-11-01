@@ -73,6 +73,9 @@ async function resolveIssueProposalRefs(pool, appId, numbers, viewerId) {
                      NULLIF(cs.branch_name, '')) AS title
        FROM chat_sessions cs
       WHERE cs.app_id = $1 AND cs.is_headless = FALSE
+        -- 1 Nov 2026: a person's posted plan (request-specs.js) is no
+        -- change: it has no branch, and Homeroom bot builds from it.
+        AND NOT (cs.source IS NOT DISTINCT FROM 'request_spec' AND cs.branch_name IS NULL)
         AND (cs.linked_issues && $2::int[]
              OR cs.created_from_issue_number = ANY($2::int[]))
         AND (cs.status IN ('active', 'promoted', 'merging', 'merged')

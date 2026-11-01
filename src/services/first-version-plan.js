@@ -468,6 +468,28 @@ async function runEarlyPlan(pool, { appId, steps = null }, deps = {}) {
   return { planned: !!made.plan };
 }
 
+/**
+ * Pure (threads, one loop: C2.4, 1 Nov 2026): the early plan of a project
+ * made from a design, written with the project instead of asked of the
+ * model: build the design's screen, as its plan (the first request's, the
+ * design) draws it. It asks nothing, so the bot builds it at once.
+ */
+function designPlan(design, version) {
+  const title = String(design?.title || 'its first screen').replace(/\s+/g, ' ').trim().slice(0, 120);
+  return {
+    bullets: [
+      `Build "${title}" as the project's first screen, as its design draws it`,
+      'Keep the design\'s words, layout and colours',
+      'Make what it shows work for real, with nothing left as a mockup',
+    ],
+    questions: [],
+    buildNote: `The first version is the screen its maker designed with Homeroom bot: "${title}", version ${Number(version) || 1}, `
+      + 'posted as this request\'s plan. Build the plan\'s screens as drawn, in the project\'s own code, and make them work.',
+    model: null,
+    fromDesign: true,
+  };
+}
+
 /** A first version's row, with its plan and answers, or null. */
 async function readEarlyPlan(pool, appId) {
   const { rows } = await pool.query(
@@ -590,6 +612,7 @@ async function noteDecided(pool, { appId, issueNumber, answers = [] }) {
 }
 
 module.exports = {
+  designPlan,
   PLAN_MODEL,
   PLAN_WAIT_MS,
   READ_WAIT_MS,

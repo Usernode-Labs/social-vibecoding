@@ -5,12 +5,12 @@ import { InfoCircleIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { InviteSheet } from '../first-session/made';
+import { MakeSheet } from './bot-make';
 import type { Made } from '../first-session/make';
 import { AnsweredChoices } from './bot-plan-view';
 import { useTrackOf } from './bot-track';
 import { answerBotQuestion, quoteInComposer, tapBotAction } from './store';
 import type { ConversationMessage, HomeroomBotAction, HomeroomBotMeta } from './types';
-import { startScreenPick } from '../design/pick';
 
 /*
  * #3624: what hangs under a message from the Homeroom bot.
@@ -193,6 +193,8 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
   const [pressed, setPressed] = useState<HomeroomBotAction | null>(null);
   // #4231: the invite sheet, opened in place by Invite people.
   const [inviting, setInviting] = useState(false);
+  // 1 Nov 2026 (C2.4): the make sheet, opened in place by Make the project.
+  const [making, setMaking] = useState(false);
   // 16 Oct 2026 (C6): a step its request has moved past retires its button.
   // "Read the plan" under the plan stopped meaning the next step once the
   // build began, yet it was the last button in the thread and read as one;
@@ -230,15 +232,15 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
       void tapBotAction(message, action).catch(() => {});
       return;
     }
-    // #6071 follow-up: Pick the screen: the picker opens on the device, for
-    // the message's project, and the buttons stay.
-    if (action.type === 'design') {
-      startScreenPick({ appSlug: meta.appSlug || null, appName: meta.appName || null });
-      return;
-    }
     // #4231: decided here, on the device, and the buttons stay.
     if (action.type === 'invite') {
       if (invite) setInviting(true);
+      return;
+    }
+    // C2.4: Make the project, decided on the device: the sheet makes it,
+    // and the server settles the card on every device.
+    if (action.type === 'make') {
+      if (meta.makeProject) setMaking(true);
       return;
     }
     // A reply to write: the message quoted in the composer. Nothing is
@@ -283,6 +285,18 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
       {meta.status === 'closed' && !chosen ? <p className="messages-bot-answered" data-bot-closed-why={closedWhy ? '' : undefined}>{closedWhy || t('messages:bot.actions.closed')}</p> : null}
       {inviting && invite ? (
         <InviteSheet made={invite} me={inviterName()} onClose={() => setInviting(false)} onSent={() => {}} />
+      ) : null}
+      {making && meta.makeProject ? (
+        <MakeSheet
+          project={meta.makeProject}
+          onClose={() => setMaking(false)}
+          onMade={() => { setMaking(false); setPressed(actions.find((action) => action.type === 'make') || null); }}
+        />
+      ) : null}
+      {meta.madeSlug ? (
+        <p className="messages-bot-answered" data-bot-made="">
+          <a className="font-semibold text-violet-700 dark:text-violet-300" href={`#app/${encodeURIComponent(meta.madeSlug)}`}>{t('messages:bot.make.open', { project: meta.madeName || meta.madeSlug })}</a>
+        </p>
       ) : null}
     </div>
   );

@@ -56,16 +56,11 @@ function requestSpecRoutes(config) {
 
       // Only a request that is open now, the same positive confirmation the
       // claim route asks for: a degraded GitHub read changes nothing.
-      const repo = parseOwnerRepo(app.repo_url);
-      if (!github.isEnabled() || !repo) {
-        return res.status(422).json({ error: 'Cannot verify the request right now: GitHub is unavailable for this app.' });
-      }
-      const open = await github.fetchPublicIssues(repo.owner, repo.repo);
-      if (open.note) {
-        return res.status(422).json({ error: "Couldn't confirm this request is open right now. Try again in a moment." });
-      }
-      const issue = (open.issues || []).find((i) => i.number === issueNumber);
-      if (!issue) return res.status(404).json({ error: `Request #${issueNumber} isn't open on this app.` });
+      // 1 Nov 2026: the check is the service's, shared with a design posted
+      // as a plan (design-threads.js postDesignPlan).
+      const open = await requestSpecs.openRequest(app, issueNumber, { github });
+      if (!open.ok) return res.status(open.status).json({ error: open.error });
+      const { repo, issue } = open;
 
       // The same host the screenshot embeds name (routes/feedback.js).
       const domain = require('../services/caddy').USERNODE_DOMAIN;

@@ -12,6 +12,7 @@ const attachmentsSvc = require('../services/attachments');
 const messageBookmarks = require('../services/message-bookmarks');
 const appChat = require('../services/app-chat');
 const { parkedSystemLineSql } = require('../services/kudos-parked');
+const threadsService = require('../services/threads');
 const groupChannelNotify = require('../services/group-channel-notify');
 const conversationsSvc = require('../services/conversations');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -626,12 +627,24 @@ function chatRoutes(config) {
       params.push(thread.type, thread.ref);
       // #6019: a request's page reads its whole thread: what was said on
       // every request in it (a thread holds more than one once two were
-      // merged), oldest first. A change's and a decision's own replies stay
-      // folded under their rows on the page, so they are not read here.
-      where += thread.type === 'issue'
-        ? ` AND m.thread_type = $2 AND (m.thread_ref = $3 OR (m.thread_id IS NOT NULL AND m.thread_id = (
-              SELECT r.thread_id FROM requests r WHERE r.app_id = $1 AND r.number = $3)))`
-        : ' AND m.thread_type = $2 AND m.thread_ref = $3';
+      // merged), oldest first. 1 Nov 2026 (one page per thread): and what
+      // was said and done on its changes, which have no page of their own
+      // now, for every change this viewer may read (threads.js
+      // visibleChangeSql). A decision's own replies stay folded under its
+      // row on the page, so they are not read here.
+      if (thread.type === 'issue') {
+        params.push(viewerId);
+        const reader = params.length;
+        const own = '(SELECT r.thread_id FROM requests r WHERE r.app_id = $1 AND r.number = $3)';
+        where += ` AND ((m.thread_type = $2 AND (m.thread_ref = $3 OR (m.thread_id IS NOT NULL AND m.thread_id = ${own})))
+            OR (m.thread_type = 'session' AND m.thread_id IS NOT NULL AND m.thread_id = ${own}
+              AND EXISTS (SELECT 1 FROM chat_sessions s
+                           WHERE s.id = m.thread_ref AND s.app_id = $1 AND s.thread_id = m.thread_id
+                             AND s.is_headless = FALSE
+                             AND ${threadsService.visibleChangeSql('s', `$${reader}`)})))`;
+      } else {
+        where += ' AND m.thread_type = $2 AND m.thread_ref = $3';
+      }
       // #5249: a request's or a proposal's thread does not draw the system
       // lines a kudos bounty wrote there ("… placed a bounty (kudos) on
       // issue #n", "Bounty on issue #n (k kudos) awarded to …") while kudos

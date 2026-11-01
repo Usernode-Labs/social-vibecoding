@@ -2287,20 +2287,25 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal((await read(sent)).metadata.homeroomBot.status, 'closed', 'the earlier ones went when it answered again');
   });
 
-  await t.test('#6071 follow-up: offer_design puts Pick the screen first under the reply, for the project it names', async () => {
+  await t.test('1 Nov 2026: draw_screen ends the turn and hands it to the designer, for the project it names', async () => {
     await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
-    const sent = await turn('the note cards look cramped', scripted([
-      [['offer_design', { project: 'note-board' }]],
-      [['reply', { text: 'Pick the screen and we can redo it together.', suggestions: ['Show my requests'] }]],
-    ]));
-    const meta = (await read(sent)).metadata.homeroomBot;
-    assert.deepEqual(meta.actions.map((a) => [a.label, a.type, a.style]), [[mayor.PICK_SCREEN, 'design', 'primary'], ['Show my requests', 'prompt', 'secondary']]);
-    assert.equal(meta.appSlug, 'note-board');
-    assert.equal(meta.appName, 'Note board', 'the picker names the project');
+    const handed = [];
+    const seen = [];
+    const designBot = { async draw(_pool, _config, args) { handed.push(args); return { messageId: 4242 }; } };
+    const sent = await turn('the note cards look cramped, can you show me something roomier?', scripted([
+      [['draw_screen', { what: 'Roomier note cards', title: 'Note cards', project: 'note-board' }]],
+      [['reply', { text: 'never sent' }]],
+    ], seen), { deps: { designBot } });
+    assert.deepEqual(sent, { messageId: 4242 }, 'the designer answers');
+    assert.equal(seen.length, 1, 'no round after it, and no reply of its own');
+    assert.equal(handed.length, 1);
+    assert.deepEqual([handed[0].ask.app.slug, handed[0].ask.title, handed[0].ask.brief], ['note-board', 'Note cards', 'Roomier note cards']);
+    assert.equal(handed[0].message.content, 'the note cards look cramped, can you show me something roomier?');
     const ctx = { user: ada };
-    assert.equal((await mayor.offerDesign(pool, ctx, { project: 'no-such-project' })).ok, false, 'a project she cannot see is no offer');
-    assert.equal(ctx.designOffer, undefined);
-    assert.equal((await mayor.offerDesign(pool, ctx, {})).ok, true);
-    assert.deepEqual(ctx.designOffer, { appSlug: null, appName: null }, 'or any project');
+    assert.equal((await mayor.drawScreen(pool, ctx, { what: 'x', title: 'X', project: 'no-such-project' })).ok, false, 'a project she cannot see is no draw');
+    assert.equal(ctx.drawScreen, undefined);
+    assert.equal((await mayor.drawScreen(pool, ctx, { what: '', title: 'X' })).ok, false, 'it says what to draw');
+    assert.equal((await mayor.drawScreen(pool, ctx, { what: 'A seed calendar', title: 'Calendar' })).ok, true);
+    assert.deepEqual(ctx.drawScreen, { app: null, title: 'Calendar', brief: 'A seed calendar' }, 'or a new project\'s');
   });
 });

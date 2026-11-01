@@ -1,11 +1,10 @@
 'use strict';
 
 // #6071 follow-up: a new thread with Homeroom bot, from its "+"
-// (frontend/src/features/messages/new-thread.tsx), and picking the screen to
-// design (frontend/src/features/design/pick.tsx), without a database (the
+// (frontend/src/features/messages/new-thread.tsx), without a database (the
 // thread itself is made against PostgreSQL in
-// private-threads-postgres.test.js, the bot's Pick the screen in
-// homeroom-bot-mayor-postgres.test.js).
+// private-threads-postgres.test.js; 1 Nov 2026, a screen drawn in it in
+// design-threads-postgres.test.js).
 //
 // What this pins:
 //   1. The "+" is in the Homeroom bot tab's header and in the bot chat's
@@ -16,7 +15,8 @@
 //   3. The thread is made on the first send, through a same-origin door.
 //   4. A started thread is headed by its kind of change and its project, and
 //      in the Homeroom bot tab the blank thread takes Main Chat's place.
-//   5. Picking a screen starts on the project's App tab, or Homeroom's Home.
+//   5. 1 Nov 2026: Design a screen says to describe it, and Homeroom bot
+//      draws it: no screen to pick.
 //
 // Run with: node --test tests/bot-new-thread.test.js
 
@@ -39,7 +39,6 @@ function load() {
     stubs: {
       './api': api,
       './store': { closeThread: () => calls.push(['closeThread']), openThread: () => {} },
-      '../design/pick': { startScreenPick: () => calls.push(['startScreenPick']) },
     },
   });
   return { mod, calls };
@@ -69,7 +68,7 @@ test('the blank thread reads nothing and saves nothing in its first render, and 
   for (const kind of ['fix', 'add', 'design']) assert.match(html, new RegExp(`<option value="${kind}">`));
   assert.equal(message('messages:newThread.hint'), 'Start a change here, or just type what you want into the chat.');
   assert.match(html, new RegExp(message('messages:newThread.hint').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  assert.doesNotMatch(html, /data-bot-new-thread-pick/, 'Pick the screen only once Design a screen is picked');
+  assert.doesNotMatch(html, /data-bot-new-thread-draws/, 'the drawing hint only once Design a screen is picked');
   assert.deepEqual([...mod.CHANGE_KINDS], ['any', 'fix', 'add', 'design']);
   const server = require('../src/services/private-threads');
   assert.deepEqual(Object.keys(server.CHANGE_KINDS), [...mod.CHANGE_KINDS], 'the kinds the server knows');
@@ -98,11 +97,10 @@ test('a started thread is headed by what it is for, never as a request, and take
   assert.match(read(NEW_THREAD), /<form className="messages-composer messages-composer-thread platform-safe-bar"/);
 });
 
-test('picking a screen starts on the project\'s App tab, or on Home', () => {
-  const { pickStart, PICK_HOST_ID } = loadTsx('frontend/src/features/design/pick.tsx');
-  assert.equal(pickStart('seed-swap', 'usernode-2d5619'), '#app/seed-swap/app');
-  assert.equal(pickStart('usernode-2d5619', 'usernode-2d5619'), '#home', 'Homeroom itself is its own pages');
-  assert.equal(pickStart(null, 'usernode-2d5619'), '#home');
-  assert.equal(PICK_HOST_ID, 'design-pick-host');
-  assert.equal(message('messages:design.pick.use'), 'Use this screen');
+test('Design a screen says to describe it, and Homeroom bot draws it: no screen to pick', () => {
+  assert.equal(message('messages:newThread.draws'), 'Describe the screen and Homeroom bot draws it.');
+  const src = read(NEW_THREAD);
+  assert.match(src, /\{kind === 'design' \? \(\n\s+<p className="text-\[13px\] text-zinc-600 dark:text-zinc-300" data-bot-new-thread-draws="">\n\s+\{t\('messages:newThread\.draws'\)\}/);
+  assert.doesNotMatch(src, /startScreenPick|pickScreen|<Button/, 'the screen picker retired');
+  assert.throws(() => message('messages:newThread.pickScreen'));
 });

@@ -410,6 +410,24 @@ async function placeMessages(pool, { app, place, limit = MAX_TRANSCRIPT }) {
         ORDER BY m.id DESC LIMIT $3`,
       [app.id, place.ref, limit],
     ));
+  } else if (place.type === 'issue') {
+    // 1 Nov 2026 (one page per thread): a request's page is its thread's one
+    // discussion, so what was said on its changes everybody can read is part
+    // of what the bot hears there (routes/chat.js selectStream).
+    ({ rows } = await pool.query(
+      `SELECT m.id, m.user_id, m.content, m.msg_type, m.metadata, m.created_at, m.posted_via, u.username, u.is_synthetic
+         FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id
+        WHERE m.app_id = $1 AND m.deleted_at IS NULL AND m.moderation_hidden_at IS NULL
+          AND ((m.thread_type = 'issue' AND m.thread_ref = $2)
+            OR (m.thread_type = 'session' AND m.thread_id IS NOT NULL
+              AND m.thread_id = (SELECT r.thread_id FROM requests r WHERE r.app_id = $1 AND r.number = $2)
+              AND EXISTS (SELECT 1 FROM chat_sessions s
+                           WHERE s.id = m.thread_ref AND s.app_id = $1 AND s.thread_id = m.thread_id
+                             AND s.is_headless = FALSE
+                             AND (s.status IN ('promoted', 'merging', 'merged') OR s.shared_at IS NOT NULL))))
+        ORDER BY m.id DESC LIMIT $3`,
+      [app.id, place.ref, limit],
+    ));
   } else {
     ({ rows } = await pool.query(
       `SELECT m.id, m.user_id, m.content, m.msg_type, m.metadata, m.created_at, m.posted_via, u.username, u.is_synthetic

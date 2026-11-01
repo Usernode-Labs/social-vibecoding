@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 
 import { t } from '../../lib/i18n/runtime';
+import { botTabAddress, botTabFromMessages, goBotAddress, knownBotConversation, noteBotConversation, openBotTab } from '../ai/door';
 import { navStore } from '../nav/nav-store.js';
 import { messagesDrawerApplies } from '../nav-drawer/messages-drawer';
 import * as api from './api';
@@ -416,6 +417,39 @@ function channelToHub(): boolean {
   return true;
 }
 
+/**
+ * The person's chat with Homeroom bot, when anything has said which it is:
+ * the list, the conversation on screen, or the bot tab that opened it.
+ */
+function botConversationId(): number | null {
+  return state.conversations.find((item) => item.homeroomBot && item.kind !== 'channel')?.id
+    || (state.active?.homeroomBot && state.active.kind !== 'channel' ? state.active.id : null)
+    || knownBotConversation();
+}
+
+/**
+ * 1 Nov 2026: the conversation on this screen turned out to be the chat with
+ * Homeroom bot (its detail or the list landed), which is its tab's alone
+ * (../ai/door.ts): take the reader there, at the thread or the message the
+ * address named, replacing the address. The router does the same at once
+ * when it already knows; this is a cold link's half, as channelToHub is.
+ */
+function botToTab(): boolean {
+  if (typeof window === 'undefined' || !state.route.open || state.route.embedded) return false;
+  const conversationId = state.route.conversationId;
+  if (!conversationId || conversationId !== botConversationId()) return false;
+  if (!new RegExp(`^#messages/${conversationId}(?:/|$)`).test(window.location.hash)) return false;
+  const href = botTabAddress({ threadRootId: state.route.threadRootId, focusMessageId: state.route.focusMessageId });
+  try {
+    history.replaceState(null, '', `${window.location.pathname}${window.location.search}${href}`);
+  } catch {
+    window.location.replace(href);
+    return true;
+  }
+  (window as { App?: { restoreFromHash?: () => void } }).App?.restoreFromHash?.();
+  return true;
+}
+
 function resolvePendingChannel(): void {
   if (!pendingChannel || typeof window === 'undefined') return;
   const found = channels().find((item) => item.handle === pendingChannel);
@@ -475,8 +509,10 @@ export async function loadConversations(force = false): Promise<void> {
       listLoaded: true,
       online: true,
     });
+    noteBotConversation(conversations.find((item) => item.homeroomBot && item.kind !== 'channel')?.id);
     resolvePendingChannel();
     channelToHub();
+    botToTab();
   } catch (error) {
     if (request !== listRequest) return;
     publish({
@@ -620,6 +656,14 @@ export async function loadThread(conversationId: number, force = false, offlineC
     if (active.kind === 'channel' && state.route.open && !state.route.embedded) {
       publish({ active });
       if (channelToHub()) return;
+    }
+    // 1 Nov 2026: and the chat with Homeroom bot to its tab, the same way.
+    if (active.homeroomBot && active.kind !== 'channel') {
+      noteBotConversation(active.id);
+      if (state.route.open && !state.route.embedded) {
+        publish({ active });
+        if (botToTab()) return;
+      }
     }
     const member = active.membershipStatus === 'member';
     const anchor = focus || reading;
@@ -1288,6 +1332,8 @@ function turnsPageInPlace(href: string): boolean {
 
 export function open(conversationId?: number | null): void {
   if (typeof window === 'undefined') return;
+  // 1 Nov 2026: the chat with Homeroom bot opens on its tab, as Main Chat.
+  if (validId(conversationId) && conversationId === botConversationId()) { openBotTab(null); return; }
   const target = validId(conversationId) ? `#messages/${conversationId}` : '#messages';
   if (sidePanelTakes(target)) return;
   if (window.location.hash === target) route(conversationId || null);
@@ -1296,13 +1342,14 @@ export function open(conversationId?: number | null): void {
 
 /**
  * B8: open the signed-in person's chat with Homeroom bot, from any door that
- * says "ask Homeroom bot". It is made the first time; until the server
- * answers, Messages opens on its list.
+ * says "ask Homeroom bot". It is made the first time. 1 Nov 2026: it opens
+ * on the bot's tab, as Main Chat (../ai/door.ts), never on this screen.
  */
 export async function openBot(reference?: StagedObject | null): Promise<void> {
-  let id: number | null = state.conversations.find((item) => item.homeroomBot)?.id || null;
+  let id: number | null = botConversationId();
   if (!id) {
     try { id = await api.openBotConversation(); } catch { id = null; }
+    noteBotConversation(id);
   }
   // B8: a change to write about ("Ask for changes"). One that names its
   // project and itself is attached on the composer as it is, with the caret
@@ -1313,7 +1360,7 @@ export async function openBot(reference?: StagedObject | null): Promise<void> {
   if (attach && id && reference) pendingAttach = { conversationId: id, object: reference, placeholder: t(ASK_FOR_CHANGES_PLACEHOLDER) };
   else if (reference) pendingShare = reference;
   const already = !!id && state.route.conversationId === id;
-  open(id);
+  openBotTab(null);
   if (reference && already && typeof window !== 'undefined') {
     if (attach) window.dispatchEvent(new CustomEvent('usernode:messages-attach'));
     else window.dispatchEvent(new CustomEvent('usernode:messages-share', { detail: pendingShare }));
@@ -1340,7 +1387,7 @@ export async function openBotRequest(slug: string, number: number): Promise<void
       && item.metadata?.homeroomBot?.appSlug === slug && Number(item.metadata?.homeroomBot?.issueNumber) === Number(number);
     const last = [...state.messages].reverse().find(about);
     const at = ask || last?.id || null;
-    if (at) openThreadAt(null, at);
+    if (at) openBotTab({ threadRootId: null, focusMessageId: at });
   } catch { /* the chat itself, then */ }
 }
 
@@ -1380,12 +1427,15 @@ let pendingQuote: { conversationId: number; messageId: number } | null = null;
  */
 export async function quoteBotMessage(conversationId?: number | null, messageId?: number | null): Promise<void> {
   let id: number | null = validId(conversationId) ? Number(conversationId) : null;
-  if (!id) id = state.conversations.find((item) => item.homeroomBot)?.id || null;
+  if (!id) id = botConversationId();
   if (!id) {
     try { id = await api.openBotConversation(); } catch { id = null; }
   }
+  noteBotConversation(id);
   pendingQuote = id && validId(messageId) ? { conversationId: id, messageId: Number(messageId) } : null;
-  open(id);
+  // 1 Nov 2026: on the bot's tab, as Main Chat (open() sends it there).
+  if (id) openBotTab(null);
+  else open(id);
   applyPendingQuote();
 }
 
@@ -1416,7 +1466,12 @@ let revealedAppFocus: string | null = null;
  * is already current, the router runs on it again instead.
  */
 export function openAddress(href: string): void {
-  if (typeof window === 'undefined' || !/^#messages(?:\/|$)/.test(href)) return;
+  if (typeof window === 'undefined') return;
+  // 1 Nov 2026: the chat with Homeroom bot is its tab's, by either address.
+  if (/^#homeroom-bot(?:\/|$)/.test(href)) { goBotAddress(href); return; }
+  if (!/^#messages(?:\/|$)/.test(href)) return;
+  const botTab = botTabFromMessages(href, botConversationId());
+  if (botTab) { goBotAddress(botTab); return; }
   if (turnsPageInPlace(href)) return;
   if (sidePanelTakes(href)) return;
   if (window.location.hash !== href) { window.location.hash = href; return; }
@@ -2607,8 +2662,8 @@ export const messagesController = {
   openBot: (reference?: StagedObject | null) => { void openBot(reference); },
   // 16 Oct 2026: a request's page's See progress, at the request's own thread.
   openBotRequest: (slug: string, number: number) => { void openBotRequest(slug, number); },
-  // #6019: `#homeroom-bot/thread/<id>`, one of the bot chat's threads (app.js).
-  openBotThread: (rootId: number) => { void openBot().then(() => openThreadAt(rootId, null)); },
+  // #6019: one of the bot chat's threads, on the bot's tab (1 Nov 2026: ../ai/door.ts).
+  openBotThread: (rootId: number) => { openBotTab({ threadRootId: rootId, focusMessageId: null }); },
   // B6: the App tab's Change something, under a first version's plan.
   quoteBotMessage: (conversationId?: number | null, messageId?: number | null) => { void quoteBotMessage(conversationId, messageId); },
   openAddress,

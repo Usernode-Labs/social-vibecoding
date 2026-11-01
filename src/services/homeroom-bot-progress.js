@@ -1039,6 +1039,29 @@ async function waitingHolds(pool, staged) {
   }
 }
 
+// 1 Nov 2026: a request whose requester works on it with the bot in a
+// private thread waits for their plan (rules/bot-loop.ts planHoldSql).
+const PLAN_WAIT = 'waiting for your plan: you are working on it with me in a private thread; I\'ll start once a plan is posted on it, or once you tap Let the bot build it now on its page';
+
+/**
+ * The requests `userId`'s own private threads hold the bot on now, as
+ * `appId:issueNumber` keys. Best-effort: a read that fails holds nothing
+ * here, and the loop's own read decides.
+ */
+async function planHolds(pool, userId) {
+  try {
+    const { planHoldActiveSql } = require('../workflow/rules/bot-loop.ts');
+    const { rows } = await pool.query(
+      `SELECT p.app_id, p.about_number FROM private_threads p
+        WHERE p.user_id = $1 AND ${planHoldActiveSql('p')}`,
+      [userId],
+    );
+    return new Set(rows.map((r) => `${Number(r.app_id)}:${Number(r.about_number)}`));
+  } catch {
+    return new Set();
+  }
+}
+
 /**
  * Pure (#3771): what a request in the queue waits for, as the `queued`
  * stage's words and `waitingFor`. Its project reading another request (a
@@ -1279,7 +1302,14 @@ async function requestStates(pool, { userId, settings = null, now = new Date(), 
     ? await projectsBusy(pool, rows) : new Map();
   const perPerson = Number(settings?.perPerson) || 2;
   const holds = await waitingHolds(pool, staged);
+  const plans = staged.some((s) => s.state?.stage === 'queued' || s.state?.stage === 'build_queued')
+    ? await planHolds(pool, userId) : new Set();
   return staged.map((s) => {
+    // Their plan comes first, whatever else it would wait for.
+    if ((s.state?.stage === 'queued' || s.state?.stage === 'build_queued') && !s.row.first_version
+      && plans.has(`${Number(s.row.app_id)}:${Number(s.row.issue_number)}`)) {
+      return { row: s.row, state: { ...s.state, doing: PLAN_WAIT, waitingOn: 'them', waitingFor: { reason: 'awaiting_plan' } } };
+    }
     if (s.state?.stage === 'queued') {
       return {
         row: s.row,
@@ -1417,6 +1447,7 @@ module.exports = {
   queuedWait,
   buildWait,
   FIRST_VERSION_WAIT,
+  PLAN_WAIT,
   FIRST_VERSION_BUILD_WAIT,
   firstVersionWait,
   projectsBusy,

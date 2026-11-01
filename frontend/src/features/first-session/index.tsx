@@ -166,7 +166,8 @@ export function enterScreen(screen: TourScreen, slug: string, conversationId?: n
   else if (screen === 'app') App.navigateToApp?.(slug, 'app');
   else if (screen === 'hub') { AppView?._landOnHub?.(slug); App.navigateToApp?.(slug, 'dev'); }
   else if (screen === 'discussion') App.openDiscussionInHub?.(slug);
-  else if (screen === 'bot' && conversationId) window.location.hash = `#messages/${conversationId}`;
+  // 1 Nov 2026: the chat with the bot is its tab's, as Main Chat.
+  else if (screen === 'bot' && conversationId) window.location.hash = '#homeroom-bot/main';
 }
 
 /** The longest the held frame waits on a private member's app (appDrawn). */

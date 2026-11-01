@@ -390,6 +390,12 @@ export interface TranscriptMessage {
    * `ready` ("The preview is ready · Try it"). Absent on every other row.
    */
   stagingBuild?: 'started' | 'ready';
+  /**
+   * 1 Nov 2026 (one page per thread): on a request's page, a row written on
+   * one of its changes (GroupChat._messageView), which the stream tags with
+   * that change. Absent on every other row.
+   */
+  changeOf?: { sessionId: number | null };
   /** Spec-share rows only — see SpecShareView. Null on every other kind. */
   specShare: SpecShareView | null;
   /**

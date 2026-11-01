@@ -973,6 +973,7 @@ export function IssueAssociations({
   editable,
   onSaved,
   thread,
+  editorOnly = false,
 }: {
   proposalId: number;
   issues: IssueLink[];
@@ -980,6 +981,12 @@ export function IssueAssociations({
   linkedIssues: number[];
   editable: boolean;
   onSaved: (issues: number[]) => void;
+  /**
+   * 1 Nov 2026 (one page per thread): on its request's page, a change's
+   * requests are the page itself, so only the editor ⋯ "Edit requests"
+   * opens is drawn, and nothing while it is shut.
+   */
+  editorOnly?: boolean;
   /**
    * #4455: a change's page draws the line as one row under the summary:
    * "Addresses", the first request, "+N more" (which opens the rest, one to a
@@ -1169,6 +1176,13 @@ export function IssueAssociations({
     ><b>{`#${issue.n}`}</b><span>{issue.title}</span></a>
   );
   const [first, ...rest] = issues;
+  if (editorOnly) {
+    return editing || notice ? (
+      <aside className="dev-change-addresses" aria-label={t('project:topic.requests.region')}>
+        {editing ? editorForm() : <p role="status" className="dev-topic-note">{notice}</p>}
+      </aside>
+    ) : null;
+  }
   return (
     <aside className="dev-change-addresses" aria-label={t('project:topic.requests.region')}>
       {!editing && (first || thread.thanks) ? (
@@ -1563,7 +1577,7 @@ let detailsFromUrl = typeof window !== 'undefined'
  * shut, so the steps it carries are on the page for whoever reads them by
  * selector.
  */
-function DetailsSheet({ id, prRef, steps, help, html, shotsHtml = '' }: {
+export function DetailsSheet({ id, prRef, steps, help, html, shotsHtml = '' }: {
   id: number;
   prRef: HeroView['ref'];
   steps: StepsView | null | undefined;
@@ -1624,6 +1638,50 @@ function DetailsSheet({ id, prRef, steps, help, html, shotsHtml = '' }: {
       </div>
     </div>,
     document.body,
+  );
+}
+
+/**
+ * 1 Nov 2026 (one page per thread): the sheets a change's ⋯ rows and its
+ * Testing card open (Details, Shot details, See what failed; Edit
+ * description), for a change drawn on its request's page
+ * (./thread-changes.tsx). Its own page mounts the same two in ChangeDetail.
+ * The description saved is cached the way its page caches it, which tells
+ * every reader of the change (`change-detail-refresh` with a patch).
+ */
+export function ChangeSheets({ id, row, body }: { id: number; row: any; body: TopicBody }): ReactNode {
+  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+  return (
+    <>
+      <DetailsSheet
+        id={id}
+        prRef={body.hero?.ref || null}
+        steps={body.steps}
+        help={!!(body.details && body.details.help)}
+        html={body.proposalBody?.html || ''}
+        shotsHtml={av && row?.shots ? av.shotsHtml(row.shots, { sessionId: id, details: true }) : ''}
+      />
+      {av?._canEditDescription?.(row) ? (
+        <DescriptionEditor key={id} id={id} onSaved={(data) => av._cacheDescription(id, data)} />
+      ) : null}
+      {body.canEditIssues ? (
+        <IssueAssociations
+          proposalId={id}
+          issues={body.issues || []}
+          issueOptions={body.issueOptions || []}
+          linkedIssues={Array.isArray(row?.linked_issues) ? row.linked_issues : []}
+          editable
+          editorOnly
+          thread={{ thanks: null }}
+          onSaved={() => {
+            // The change is read again, and the thread with it: a change
+            // whose requests moved may now be on another request's page.
+            if (typeof av?._loadDevData === 'function') Promise.resolve(av._loadDevData()).catch(() => {});
+            window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: Number(id) }));
+          }}
+        />
+      ) : null}
+    </>
   );
 }
 

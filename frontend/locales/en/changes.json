@@ -4859,13 +4859,21 @@
     "text": "Start another agent session on this request",
     "description": "Tooltip of the \"Start more work\" button on a request's card. An agent session is a working conversation with an AI coding agent."
   },
-  "issue.action.buildNow": {
-    "text": "Build it now",
-    "description": "Main button on a request's card (a request is a filed issue): starts a session where the viewer builds the request with an AI coding agent, instead of asking Homeroom bot. \"Build\" is a verb."
+  "issue.action.workWithBot": {
+    "text": "Work on this with Homeroom bot",
+    "description": "Main button on a request's card and page (a request is a filed issue), where nobody is building it yet: opens a thread only the viewer can see, in their chat with Homeroom bot (the platform's assistant), about this request, to talk it through and plan it. \"Work on\" is a verb."
   },
-  "issue.action.buildNowTitle": {
-    "text": "Start an agent session on this request",
-    "description": "Tooltip of the \"Build it now\" button on a request's card. An agent session is a working conversation with an AI coding agent."
+  "issue.action.workWithBotTitle": {
+    "text": "Talk it through and plan it with Homeroom bot, in a thread only you can see",
+    "description": "Tooltip of the \"Work on this with Homeroom bot\" button on a request's card and page. Homeroom bot is the platform's assistant."
+  },
+  "issue.action.letBotBuild": {
+    "text": "Let the bot build it now",
+    "description": "Main button on a request's card and page while Homeroom bot (the platform's assistant) waits for the viewer's plan, because they are working on their own request with it in a private thread: tells the bot to go ahead without a plan. \"Build\" is a verb."
+  },
+  "issue.action.letBotBuildTitle": {
+    "text": "Homeroom bot starts on it without waiting for your plan",
+    "description": "Tooltip of the \"Let the bot build it now\" button on a request's card and page. Homeroom bot is the platform's assistant."
   },
   "issue.action.stopWorking": {
     "text": "Stop working on this",
@@ -4899,6 +4907,18 @@
     "text": "Couldn't ask Homeroom bot just now: {{error}}",
     "description": "Toast shown when asking Homeroom bot to build a request failed. \"Homeroom bot\" is the bot's name. {{error}} is the error's own message."
   },
+  "issue.bot.threadFailed": {
+    "text": "The thread with Homeroom bot could not be started just now. Try again in a minute.",
+    "description": "Toast when \"Work on this with Homeroom bot\" on a request could not open its private thread with Homeroom bot, the platform's assistant."
+  },
+  "issue.bot.letBuildDone": {
+    "text": "Homeroom bot no longer waits for your plan.",
+    "description": "Toast after \"Let the bot build it now\" on a request: Homeroom bot, the platform's assistant, may now pick the request up without a plan."
+  },
+  "issue.bot.letBuildFailed": {
+    "text": "That did not go through. Try again in a minute.",
+    "description": "Toast when \"Let the bot build it now\" on a request failed."
+  },
   "issue.bot.onItMine": {
     "text": "Homeroom bot is on it. Its card is in your chat with it.",
     "description": "Toast shown after the viewer asked Homeroom bot to build a request for them. \"is on it\" means it has taken the job; \"Its card\" is the request's card, and \"it\" at the end is the bot."
@@ -4914,6 +4934,10 @@
   "issue.menu.buildNow": {
     "text": "Build it now",
     "description": "Row in the ⋯ menu of a request's card: starts a session where the viewer builds the request with an AI coding agent, instead of asking Homeroom bot. \"Build\" is a verb."
+  },
+  "issue.menu.buildInSession": {
+    "text": "Build it in an agent session",
+    "description": "Row in the ⋯ menu of a request's card: starts a session where the viewer builds the request with an AI coding agent, instead of working on it with Homeroom bot. An agent session is a working conversation with an AI coding agent. \"Build\" is a verb."
   },
   "issue.menu.alreadyBountied": {
     "text": "You already placed a bounty on this issue",
@@ -8194,6 +8218,10 @@
   "request.status.lead.botQueued": {
     "text": "Homeroom bot will build this next.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; the request is next in its queue. \"Build\" is a verb."
+  },
+  "request.status.lead.botWaitsPlan": {
+    "text": "Homeroom bot is waiting for your plan.",
+    "description": "The one sentence on the status card of a request's page while the viewer, who asked for it, works on it with Homeroom bot (the platform's assistant) in a private thread: the bot builds nothing until they post a plan on it or let it go ahead."
   },
   "request.status.lead.botReading": {
     "text": "Homeroom bot is reading this.",

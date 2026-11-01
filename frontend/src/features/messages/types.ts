@@ -40,10 +40,14 @@ export interface HomeroomBotMeta {
   kind: string;
   /** #6071: a design thread's version this message says (kind 'design_version'). */
   designVersion?: number;
-  /** #6071: the screen a design thread is of (kind 'opened_design'). */
+  /** #6071: the screen a design thread is of (kind 'opened_design', and 1 Nov 2026 a version's and a drawn thread's line). */
   designTitle?: string;
-  /** #6071 follow-up: what a thread from the bot's "+" is for (kind 'opened_thread'); none is any kind of change. */
-  changeKind?: 'fix' | 'add' | 'design';
+  /** #6071 follow-up: what a thread from the bot's "+" is for (kind 'opened_thread'); none is any kind of change. 1 Nov 2026: 'project', a new project's thread. */
+  changeKind?: 'fix' | 'add' | 'design' | 'project';
+  /** 1 Nov 2026: what a thread opened from a request's or change's page is about (kind 'opened_about'): never `issueNumber`, which would make it the request's story. */
+  aboutKind?: 'request' | 'change';
+  aboutNumber?: number;
+  aboutTitle?: string;
   appSlug?: string;
   appName?: string;
   issueNumber?: number;
@@ -132,6 +136,14 @@ export interface HomeroomBotMeta {
   count?: number;
   /** A moment in a request's thread the main chat also lists, under its "↳ in …" label. */
   alsoInChat?: boolean;
+  /**
+   * 1 Nov 2026 (C2.4): the new project a design's card offers to make (kind
+   * `make_offer`): its name, the design's thread and version. Once made, the
+   * project it made (`madeSlug`, `madeName`).
+   */
+  makeProject?: { name: string; rootId: number; version: number | null };
+  madeSlug?: string;
+  madeName?: string;
 }
 
 export interface HomeroomBotReady {
@@ -203,10 +215,11 @@ export interface HomeroomBotAction {
    * #4231: `invite` opens the invite sheet for the message's project (`appSlug`), in place.
    * #5506: `withdraw` has the bot withdraw the change (`sessionId`), drawn by
    * the ready card itself when its reader may (HomeroomBotReadyNow.canWithdraw).
-   * #6071 follow-up: `design` opens the screen picker for the message's
-   * project (`appSlug`, or any), on the device (../design/pick.tsx).
+   * 1 Nov 2026: `design` (the screen picker) retired: the bot draws a screen from words.
+   * `make` opens the sheet that makes the project a design's card offers
+   * (`makeProject`), in place (./bot-make.tsx).
    */
-  type: 'server' | 'open' | 'prompt' | 'preview' | 'vote' | 'reply' | 'invite' | 'withdraw' | 'design';
+  type: 'server' | 'open' | 'prompt' | 'preview' | 'vote' | 'reply' | 'invite' | 'withdraw' | 'make';
   target?: string;
   sessionId?: number;
   epoch?: number;

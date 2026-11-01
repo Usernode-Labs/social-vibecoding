@@ -12,21 +12,19 @@
  * can be started here or just typed into the chat. The two picks ride with
  * the first message, so the bot knows what the thread is for.
  *
- * Design a screen is not a message: it offers Pick the screen
- * (../design/pick.tsx), which goes to the project with a Use this screen bar
- * and opens a design thread for the screen they pick.
+ * Design a screen is a message like the others (1 Nov 2026: the screen
+ * picker retired): the block says to describe the screen, and Homeroom bot
+ * draws it in the thread (services/design-bot.js write_screen).
  */
 
 import { useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 
-import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
 import { PlusIcon, XIcon } from '@/components/ui/icons';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { communityScopeStore, warmCommunities } from '../workshop/community-scope';
-import { startScreenPick } from '../design/pick';
 import * as api from './api';
 import { closeThread, openThread } from './store';
 import { projectChoices } from './private-thread-bar';
@@ -115,7 +113,6 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   const scroller = useRef<HTMLDivElement>(null);
   useComposerKeyboard(scroller);
   const projects = projectChoices(scope);
-  const projectName = projects.find((p) => p.slug === project)?.name || null;
 
   const send = async (event?: FormEvent) => {
     event?.preventDefault();
@@ -176,21 +173,9 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
             </Select>
           </label>
           {kind === 'design' ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="min-w-[12rem] flex-1 text-[13px] text-zinc-600 dark:text-zinc-300">
-                {projectName ? t('messages:newThread.designHintProject', { project: projectName }) : t('messages:newThread.designHint')}
-              </p>
-              <Button
-                type="button"
-                variant="pillAccent"
-                size="sm"
-                ink="solid"
-                onClick={() => { closeNewThread(); startScreenPick({ appSlug: project || null, appName: projectName }); }}
-                data-bot-new-thread-pick=""
-              >
-                {t('messages:newThread.pickScreen')}
-              </Button>
-            </div>
+            <p className="text-[13px] text-zinc-600 dark:text-zinc-300" data-bot-new-thread-draws="">
+              {t('messages:newThread.draws')}
+            </p>
           ) : null}
           <p className="text-[12px] text-zinc-500 dark:text-zinc-400">{t('messages:newThread.hint')}</p>
         </div>

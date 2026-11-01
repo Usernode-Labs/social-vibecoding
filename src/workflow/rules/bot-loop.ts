@@ -181,6 +181,36 @@ export const FIRST_VERSION_PENDING_SQL = `(
                                     AND fvl.proposal_session_id IS NULL)))))))
        )`;
 
+// ── The bot waits for your plan (threads, one loop: phase B) ────────────
+//
+// 1 Nov 2026: while the person who asked for a request works on it with
+// the bot in a private thread about it (private_threads, about_kind
+// 'request', opened by them: `holds_bot`), the bot neither reads nor
+// builds it. The hold lifts when a plan is posted on the request, when they
+// tap Let the bot build it now (`hold_lifted_at`), or by itself once the
+// thread has been quiet for PLAN_HOLD_DAYS. Somebody else's private thread
+// never holds a request: only the requester's (`person`). A follow-up on
+// the bot's change already up for a vote, and an admin's Run now, are not
+// held, as the first version's hold leaves them. `appId`, `issueNumber` and
+// `person` are SQL expressions of the caller's query.
+export const PLAN_HOLD_DAYS = 7;
+export const PLAN_HOLD_REASON = 'awaiting_plan';
+// A private_threads row (alias `p`) that holds the bot now, whoever asked:
+// its requester's, not lifted, still open, and written in within the week.
+export const planHoldActiveSql = (p: string) => `${p}.about_kind = 'request' AND ${p}.holds_bot
+          AND ${p}.hold_lifted_at IS NULL AND ${p}.state = 'open'
+          AND GREATEST(${p}.created_at, COALESCE((SELECT MAX(phm.created_at) FROM conversation_messages phm
+                                                   WHERE phm.thread_root_id = ${p}.root_message_id
+                                                     AND phm.deleted_at IS NULL), ${p}.created_at))
+              > NOW() - make_interval(days => ${PLAN_HOLD_DAYS})`;
+// `holds_bot` was set because the thread's person asked for the request;
+// `person` (who asks for it now) keeps it so if that ever changes.
+export const planHoldSql = (appId: string, issueNumber: string, person: string) => `EXISTS (
+       SELECT 1 FROM private_threads ph
+        WHERE ph.app_id = ${appId} AND ph.about_number = ${issueNumber}
+          AND (${person} IS NULL OR ph.user_id = ${person})
+          AND ${planHoldActiveSql('ph')})`;
+
 // ── The lane's candidates ───────────────────────────────────────────────
 
 // A Granted message on its way to a request (not applied yet): the lane
@@ -209,7 +239,8 @@ export const SLOTS_IN_USE_SQL = `
 // who it is for ($1: the bot's user id, for its changes). Only the apps
 // the bot acts on ($2: every app but these paused slugs), only what is not
 // held for its payer's week or backed off, not a request whose live build
-// waits or runs, not one its project's first version holds, and settled.
+// waits or runs, not one its project's first version holds, not one its
+// requester is working on with the bot (planHoldSql), and settled.
 export const READ_CANDIDATES_SQL = `
   SELECT q.app_id, q.issue_number, q.priority, q.reason,
          COALESCE(r.user_id, i.created_by) AS person_id,
@@ -266,12 +297,15 @@ export const READ_CANDIDATES_SQL = `
             OR (fu.id IS NOT NULL AND m.thread_type = 'session' AND m.thread_ref = fu.id))
           AND m.created_at > NOW() - make_interval(secs => ${SETTLE_MS / 1000})
      )
+     AND (fu.id IS NOT NULL OR q.reason = '${ADMIN_REASON}'
+          OR NOT ${planHoldSql('q.app_id', 'q.issue_number', 'COALESCE(r.user_id, i.created_by)')})
    ORDER BY (q.priority = 0) DESC, (fu.id IS NOT NULL) DESC, q.priority, q.enqueued_at
    LIMIT 200`;
 
 // The live builds waiting for a slot, oldest first: requests in
 // `building` whose build was not granted yet, on apps the bot acts on
-// ($1: paused slugs), not held by their project's first version.
+// ($1: paused slugs), not held by their project's first version nor by
+// their requester's plan (planHoldSql).
 export const BUILD_CANDIDATES_SQL = `
   SELECT w.app_id, (w.data->>'issueNumber')::int AS issue_number, (w.data->'build'->>'runId')::int AS run_id,
          COALESCE(rq.user_id, i.created_by) AS person_id
@@ -292,6 +326,7 @@ export const BUILD_CANDIDATES_SQL = `
         WHERE fv.app_id = w.app_id AND fv.bot_builds AND fv.issue_number IS DISTINCT FROM (w.data->>'issueNumber')::int
           AND ${FIRST_VERSION_PENDING_SQL}
      )
+     AND NOT ${planHoldSql('w.app_id', "(w.data->>'issueNumber')::int", 'COALESCE(rq.user_id, i.created_by)')}
    ORDER BY w.data->'build'->>'since', w.key
    LIMIT 50`;
 

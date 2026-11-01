@@ -144,6 +144,8 @@ test('the query is bounded by app, excludes headless runs, and ages paused rows 
   assert.match(sql, /cs\.is_headless = FALSE/);
   assert.match(sql, /cs\.linked_issues && \$2::int\[\]/);
   assert.match(sql, /cs\.created_from_issue_number = ANY\(\$2::int\[\]\)/);
+  // 1 Nov 2026: a posted plan (no branch) is no change underway.
+  assert.match(sql, /AND NOT \(cs\.source IS NOT DISTINCT FROM 'request_spec' AND cs\.branch_name IS NULL\)/);
   assert.deepEqual(params[1], [142, 143]);
   assert.equal(params[2], IN_PROGRESS_PAUSED_WINDOW_DAYS,
     'the same window the in-progress rules use — one definition of an abandoned chat');

@@ -107,7 +107,11 @@ test('private threads against the full schema', { timeout: 120000 }, async (t) =
       assert.equal(out.status, 404, why);
     }
     // 31 Oct 2026: an open thread with no row yet is an idea in no project, answering nothing.
-    assert.deepEqual(await privateThreads.stateOf(pool, { user: ada, rootId: theirs.id }), { state: 'open', kind: 'idea', app: null, target: null });
+    assert.deepEqual(await privateThreads.stateOf(pool, { user: ada, rootId: theirs.id }), { state: 'open', kind: 'idea', app: null, target: null, mine: true });
+    // 1 Nov 2026: and only hers is said to be hers: the bot's line with no row
+    // of hers, or her root read by somebody else, is no private thread of theirs.
+    assert.equal((await privateThreads.stateOf(pool, { user: ada, rootId: botSaid })).mine, false, 'the bot\'s own line');
+    assert.equal((await privateThreads.stateOf(pool, { user: sam, rootId: theirs.id })).mine, false, 'somebody else\'s');
   });
 
   await t.test('File it files her words as a request on the project she picks, says so in the thread, once', async () => {
@@ -163,7 +167,7 @@ test('private threads against the full schema', { timeout: 120000 }, async (t) =
     const posted = await privateThreads.postIt(pool, { user: sam, rootId: root.id, project: app.slug, number: 41, deps: {} });
     assert.equal(posted.code, 'join_required');
     assert.equal(nextIssue, 41);
-    assert.deepEqual(await privateThreads.stateOf(pool, { user: sam, rootId: root.id }), { state: 'open', kind: 'idea', app: null, target: null });
+    assert.deepEqual(await privateThreads.stateOf(pool, { user: sam, rootId: root.id }), { state: 'open', kind: 'idea', app: null, target: null, mine: true });
   });
 
   await t.test('a new thread from the bot\'s "+" hangs off its line in Main, and the bot reads what it is for', async () => {
@@ -193,6 +197,18 @@ test('private threads against the full schema', { timeout: 120000 }, async (t) =
     const listed = rows.find((r) => Number(r.root_id) === made.rootId);
     assert.equal(listed.kind, 'ask');
     assert.equal(listed.first_own, 'The swap button does nothing on my phone');
+    // Posted, a draft is a public thread now, listed there; one holding a
+    // design stays private and is still worked on, so it stays listed here.
+    const listedNow = async () => (await pool.query(aiWork.PRIVATE_SQL, [ada.id, bot.id, aiWork.PRIVATE_MAX])).rows
+      .some((r) => Number(r.root_id) === made.rootId);
+    await pool.query(`UPDATE private_threads SET state = 'posted', result_ref = 41 WHERE root_message_id = $1`, [made.rootId]);
+    assert.equal(await listedNow(), false, 'a posted draft');
+    await pool.query(
+      `INSERT INTO design_threads (private_thread_id, title, surface, width, height)
+       SELECT id, 'Swap button', 'app', 390, 844 FROM private_threads WHERE root_message_id = $1`, [made.rootId]);
+    assert.equal(await listedNow(), true, 'a posted design');
+    await pool.query('DELETE FROM design_threads WHERE private_thread_id = (SELECT id FROM private_threads WHERE root_message_id = $1)', [made.rootId]);
+    await pool.query(`UPDATE private_threads SET state = 'open', result_ref = NULL WHERE root_message_id = $1`, [made.rootId]);
 
     // Any project, any kind; a project she cannot see is no project; nobody synthetic starts one.
     const any = await privateThreads.startThread(pool, { user: sam, project: null, kind: 'whatever' });
@@ -205,5 +221,44 @@ test('private threads against the full schema', { timeout: 120000 }, async (t) =
     assert.equal((await privateThreads.startThread(pool, { user: { ...bot, isSynthetic: true }, project: null })).status, 403);
     assert.equal(privateThreads.startLine({ kind: 'design', appName: null }), 'New thread, to change how a screen looks.');
     assert.equal(privateThreads.startLine({ kind: 'any', appName: 'Seed swap' }), 'New thread, about Seed swap.');
+  });
+
+  await t.test('a thread off the bot\'s line is hers too: it says so, and File it takes her first words in it', async () => {
+    // 1 Nov 2026: a "+" thread, a draft the bot opened and a design thread
+    // hang off a line of the bot's. Her row makes them hers: the doors work
+    // on them, and the words to take public are her first message there.
+    const made = await privateThreads.startThread(pool, { user: ada, project: app.slug, kind: 'add' });
+    const where = await privateThreads.stateOf(pool, { user: ada, rootId: made.rootId });
+    assert.deepEqual({ state: where.state, kind: where.kind, mine: where.mine, app: where.app },
+      { state: 'open', kind: 'ask', mine: true, app: { slug: app.slug, name: 'Seed swap' } });
+    assert.equal((await privateThreads.stateOf(pool, { user: sam, rootId: made.rootId })).mine, false, 'never somebody else\'s');
+    assert.equal((await privateThreads.fileIt(pool, {}, { user: sam, rootId: made.rootId, project: app.slug, deps })).status, 404, 'nor theirs to file');
+    const empty = await privateThreads.fileIt(pool, {}, { user: ada, rootId: made.rootId, project: app.slug, deps });
+    assert.equal(empty.status, 422, 'nothing of hers in it yet: nothing to file');
+    await say(ada, 'A seed calendar\nWhen to sow what, month by month.', { thread_root_id: made.rootId });
+    await say(ada, 'and a reminder', { thread_root_id: made.rootId });
+    const out = await privateThreads.fileIt(pool, {}, { user: ada, rootId: made.rootId, project: app.slug, deps });
+    assert.equal(out.ok, true, out.error);
+    const { rows: [issue] } = await pool.query(
+      'SELECT title, created_by FROM issues WHERE app_id = $1 AND github_issue_number = $2', [app.id, out.number],
+    );
+    assert.deepEqual(issue, { title: 'A seed calendar', created_by: ada.id }, 'her first words, not the bot\'s line');
+    const { rows: [row] } = await pool.query('SELECT kind, state FROM private_threads WHERE root_message_id = $1', [made.rootId]);
+    assert.deepEqual(row, { kind: 'draft_request', state: 'filed' });
+
+    // A design thread stays one once filed.
+    const { rows: [line] } = await pool.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content) VALUES ($1, $2, 'I opened a design thread') RETURNING id`,
+      [opened.conversationId, bot.id],
+    );
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state) VALUES ($1, $2, $3, $4, 'design', 'open')`,
+      [ada.id, opened.conversationId, line.id, app.id],
+    );
+    await say(ada, 'Make the header green', { thread_root_id: line.id });
+    const posted = await privateThreads.postIt(pool, { user: ada, rootId: line.id, project: app.slug, number: 41, deps: {} });
+    assert.equal(posted.ok, true, posted.error);
+    const { rows: [design] } = await pool.query('SELECT kind, state FROM private_threads WHERE root_message_id = $1', [line.id]);
+    assert.deepEqual(design, { kind: 'design', state: 'posted' });
   });
 });

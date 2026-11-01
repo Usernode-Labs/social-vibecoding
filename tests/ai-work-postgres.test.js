@@ -77,8 +77,12 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
      VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9) RETURNING id`,
     [a.id, by.id, pr, [issue], status, extra.promotedAt || null, extra.mergedAt || null, extra.liveAt || null, extra.checkState || null]);
 
-  // Hers: asked for, nothing in flight.
+  // Hers: asked for, nothing in flight. 1 Nov 2026: her posted plan for it
+  // (request-specs.js, no branch) is no change in flight.
   await request(app, 1, ada, 'Print view');
+  await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, source, created_from_issue_number, linked_issues, issue_link_seeded, session_title)
+     VALUES ($1, $2, NULL, 'paused', 'request_spec', 1, '{1}', TRUE, 'Plan for #1 Print view')`, [app.id, ada.id]);
   // Hers, with Bob's change up for a vote she has not voted on: Needs you's.
   await request(app, 2, ada, 'Dark mode');
   await change(app, 3, bob, 2, 'promoted', { promotedAt: new Date(), checkState: 'passing' });
@@ -135,6 +139,7 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const titles = (list) => list.map((r) => `${r.title}:${r.what}`);
   assert.deepEqual(titles(work.next), ['Digest:going_live', 'Calendar:building'], 'hers only, being worked on, soonest first');
   assert.equal(work.next.find((r) => r.title === 'Calendar').by, 'bot', 'Homeroom bot is building it');
+  assert.ok(!work.next.some((r) => r.title === 'Print view'), 'a posted plan is not a change being built');
   // Up next: hers waiting on other people's votes first, then the requests nobody has picked up.
   assert.equal(titles(work.waiting)[0], 'Filters:vote');
   assert.equal(work.waiting[0].myVote, 'yes');
@@ -164,12 +169,15 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   await pool.query(`INSERT INTO issue_votes (issue_id, user_id, vote) VALUES ($1, $2, 'no')`, [votedOn.id, ada.id]);
   await pool.query('INSERT INTO thread_followers (thread_id, user_id) VALUES ($1, $3), ($2, $3)',
     [owed.thread_id, votedOn.thread_id, ada.id]);
-  const decided = (await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } })).waiting
-    .filter((r) => r.kind === 'decision').map((r) => [r.title, r.what, r.myVote, r.number]);
+  const decisions = (await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } })).waiting
+    .filter((r) => r.kind === 'decision');
+  const decided = decisions.map((r) => [r.title, r.what, r.myVote, r.number]);
   assert.deepEqual(decided.sort(), [
     ['Rename to Seed Box', 'decision', null, null],
     ['Rename to Seeds', 'decision', 'no', null],
   ], 'they wait for votes, not for somebody to build them; the one she owes is Needs you\'s');
+  // 1 Nov 2026: a decision's row opens the decision's own page, not the Workshop.
+  assert.equal(decisions.find((r) => r.title === 'Rename to Seeds').href, `#app/aw-seeds/dev/governance/${votedOn.id}`);
 
   // 30 Oct 2026: somebody who votes on everything. A week of changes going
   // live and of requests she only wrote in no longer push her own request off

@@ -179,6 +179,15 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   router.post('/api/conversations/homeroom-bot', conversationMessageLimiter, sameOriginBrowserOnly, async (req, res) => {
     try {
       if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+      // 1 Nov 2026: the staging demo's chat, with its fixture in it before the
+      // Homeroom bot tab, which opens the chat here, reads it (as the list does above).
+      if (isDemo(req)) {
+        const demo = await stagingMessages.ensureBotDmFixture(pool, req.user).catch((err) => {
+          log.warn('conversations', 'Staging bot DM fixture failed', { err: err.message });
+          return null;
+        });
+        if (demo) return res.json({ conversationId: Number(demo) });
+      }
       const bot = await require('../services/homeroom-bot-dm').botAccount(pool);
       if (!bot) return res.status(404).json({ error: 'Homeroom bot is not available' });
       const opened = await conversations.ensureAdmittedDirect(pool, bot.id, req.user.id);
@@ -259,7 +268,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   // connector's list. A project they have not joined answers 403
   // join_required, which the client offers Join for.
   //
-  //   GET  /api/conversations/homeroom-bot/threads/:rootId       → { state, kind?, number?, app?, target?, href? }
+  //   GET  /api/conversations/homeroom-bot/threads/:rootId       → { state, kind?, number?, app?, target?, href?, mine }
   //   POST /api/conversations/homeroom-bot/threads/:rootId/file  { project, title?, text? }
   //   POST /api/conversations/homeroom-bot/threads/:rootId/post  { project, number, text? }
   const privateThreads = () => require('../services/private-threads');
@@ -376,7 +385,10 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       const design = await designThreads().designFor(pool, { userId: req.user.id, rootId });
       if (!design) return res.status(404).json({ error: 'No such design' });
       const { threadId: _threadId, ...shown } = design;
-      return res.json(shown);
+      // 1 Nov 2026 (C2.2): the request Propose it posts the plan on, when
+      // the thread has one; null files a new request.
+      const planOn = await designThreads().planTargetOf(pool, design).catch(() => null);
+      return res.json({ ...shown, planOn });
     } catch (err) {
       log.error('conversations', 'design thread read failed', { err: err.message, userId: req.user?.id });
       return res.status(500).json({ error: 'Internal server error' });
