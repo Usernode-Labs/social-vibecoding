@@ -4131,14 +4131,6 @@
     "text": "Only you can see this thread.",
     "description": "Line at the top of a thread the person started in their private chat with Homeroom bot (the AI tab): nothing in it is public until they file it or post it."
   },
-  "privateThread.fileIt": {
-    "text": "File it",
-    "description": "Button at the top of a thread the person started in their private chat with Homeroom bot (the AI tab): files what they wrote as a new request on a project they pick."
-  },
-  "privateThread.postIt": {
-    "text": "Post it",
-    "description": "Button at the top of a thread the person started in their private chat with Homeroom bot (the AI tab): posts what they wrote in an existing request's or change's discussion, as their own message."
-  },
   "privateThread.newProject": {
     "text": "New project",
     "description": "The head of a private thread in the person's chat with Homeroom bot (the AI tab): only they can see it until they file it, post it, or start a project from it. Button: asks who a project made from the thread's idea would be for."
@@ -4159,38 +4151,6 @@
     "text": "A community",
     "description": "The head of a private thread in the person's chat with Homeroom bot (the AI tab): only they can see it until they file it, post it, or start a project from it. Choice under \"Who is it for?\": a public project anyone can join."
   },
-  "privateThread.project": {
-    "text": "Project",
-    "description": "Label of the project picker in the File it / Post it form of a private thread with Homeroom bot."
-  },
-  "privateThread.chooseProject": {
-    "text": "Choose a project",
-    "description": "First, empty choice of the project picker in the File it / Post it form of a private thread with Homeroom bot."
-  },
-  "privateThread.title": {
-    "text": "Title",
-    "description": "Label of the request's title box in the File it form of a private thread with Homeroom bot."
-  },
-  "privateThread.number": {
-    "text": "Request or change number",
-    "description": "Label of the number box in the Post it form of a private thread with Homeroom bot: the number of the request or change to post in."
-  },
-  "privateThread.words": {
-    "text": "What goes public",
-    "description": "Label of the box with the words that will be filed or posted, in the File it / Post it form of a private thread with Homeroom bot. They can change them first."
-  },
-  "privateThread.sendFile": {
-    "text": "File it as a request",
-    "description": "Send button of the File it form of a private thread with Homeroom bot."
-  },
-  "privateThread.sendPost": {
-    "text": "Post it as you",
-    "description": "Send button of the Post it form of a private thread with Homeroom bot: the words are posted under the person's own name."
-  },
-  "privateThread.cancel": {
-    "text": "Cancel",
-    "description": "Button that closes the File it / Post it form of a private thread with Homeroom bot without doing anything."
-  },
   "privateThread.filed": {
     "text": "Filed as request #{{number}} on {{project}}.",
     "description": "Line at the top of a thread the person started in their private chat with Homeroom bot (the AI tab) once it was filed. {{number}} is the new request's number, {{project}} the project's name."
@@ -4202,10 +4162,6 @@
   "privateThread.open": {
     "text": "Open",
     "description": "Link after the filed or posted line at the top of a private thread with Homeroom bot: opens the request or change."
-  },
-  "privateThread.failed": {
-    "text": "That didn't work. Try again.",
-    "description": "Error under the File it / Post it form of a private thread with Homeroom bot when it could not be done."
   },
   "ai.hero.name": {
     "text": "Homeroom bot",

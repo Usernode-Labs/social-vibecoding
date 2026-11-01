@@ -2632,8 +2632,8 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
     writeReplyWidth(commitReplyWidth(base + (event.key === 'ArrowLeft' ? REPLY_WIDTH_STEP : -REPLY_WIDTH_STEP)));
   };
   // #6019: a private thread in their chat with the bot is theirs alone
-  // until they File it or Post it: its head says so, its foot has the doors
-  // that apply (./private-thread-bar.tsx). 1 Nov 2026: every one, not only
+  // until they File it or Post it under the bot's offer: its head says so,
+  // its foot has the door that applies (./private-thread-bar.tsx). 1 Nov 2026: every one, not only
   // those off a message of theirs: a "+" thread, a draft the bot opened and
   // a design thread hang off a line of the bot's, and the server says
   // whether it is theirs (`mine`). Read before the early return, so the hook
@@ -2643,7 +2643,7 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
   const privateRoot = rootId && snap.active?.kind === 'direct' && threadsAllowed(snap.active) && snap.active.homeroomBot
     && privateRootMessage && !requestPageOf(privateRootMessage)
     ? rootId : null;
-  const [privateWhere, setPrivateWhere] = usePrivateThread(privateRoot);
+  const [privateWhere] = usePrivateThread(privateRoot);
   // 1 Nov 2026 (C1): whether this thread's design is open beside it.
   const preview = usePreview();
   const privateMine = !!privateRoot && isOwnPrivateThread(privateWhere, privateRootMessage, meId);
@@ -2832,7 +2832,6 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
             rootId={privateRoot}
             text={privateThreadWords(root, replies, meId)}
             where={privateWhere}
-            onWhere={setPrivateWhere}
             botReplied={replies.some((message) => message.sender.bot)}
           />
         ) : null}
