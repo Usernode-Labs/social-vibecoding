@@ -320,6 +320,23 @@ export function JumpToLatestButton({
  */
 
 /**
+ * Three dots that breathe in turn: the ellipsis after what someone is doing
+ * while their reply is on its way (1 November 2026, the Homeroom bot's
+ * working card). Opacity only, on one slow clock offset per dot, so it is
+ * calm and stays on the compositor; under reduced motion they stand still.
+ * Decoration: the words before it are what is read out.
+ */
+export function WorkingDots({ className }: { className?: string }) {
+  return (
+    <span className={cn('inline-flex shrink-0 items-center gap-[3px] pl-[3px]', className)} aria-hidden="true" data-working-dots="">
+      <span className="block h-[3px] w-[3px] rounded-full bg-current motion-safe:animate-pulse" />
+      <span className="block h-[3px] w-[3px] rounded-full bg-current motion-safe:animate-pulse motion-safe:[animation-delay:300ms]" />
+      <span className="block h-[3px] w-[3px] rounded-full bg-current motion-safe:animate-pulse motion-safe:[animation-delay:600ms]" />
+    </span>
+  );
+}
+
+/**
  * Who is typing, between the transcript and the composer. Always rendered,
  * empty when nobody is: app.css gives it no height then, and a live region
  * that is already in the page is the one a screen reader announces.
