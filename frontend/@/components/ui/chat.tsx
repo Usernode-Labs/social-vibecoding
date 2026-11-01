@@ -200,14 +200,15 @@ const FLOAT_MOTION = 'transition-[opacity,transform] duration-200 ease-out motio
  * string, and nothing is drawn inside it. The box passes taps through; the
  * control inside takes its own.
  *
- * The banner is centred over the top. Jump to latest sits at the RIGHT edge
- * of the foot, low, just above the composer, as iMessage puts it (run six,
- * 14 Oct 2026): centred, it sat in the middle of the conversation on top of
- * a message's words, where a line of text is widest.
+ * The banner is centred over the top, and Jump to latest over the foot,
+ * low, just above the composer (1 Nov 2026, Evan's call). From run six
+ * (14 Oct 2026) it sat at the right edge, so as not to cover the middle of
+ * a message's words; it is up only while the reader is up the transcript,
+ * and centred it is the same control in a chat and on a change's page.
  */
 const OVERLAY_EDGE = {
   top: 'top-2 justify-center px-4',
-  foot: 'bottom-2 justify-end px-3',
+  foot: 'bottom-2 justify-center px-3',
 } as const;
 
 export function TranscriptOverlay({ edge, children }: { edge: 'top' | 'foot'; children?: React.ReactNode }) {
@@ -246,9 +247,8 @@ export function NewMessagesBanner({
 
 /**
  * Jump to latest: a round disc with a down chevron at the transcript's
- * foot, up whenever the reader is not at the bottom. Floating, it sits at
- * the right edge (above); in a docked strip it is centred (#5702). The
- * disc is the language's floating control, white on the sheet; `dot` is the
+ * foot, up whenever the reader is not at the bottom, centred over it
+ * (TranscriptOverlay, above). The disc is the language's floating control, white on the sheet; `dot` is the
  * accent, for messages that arrived while the reader was up the
  * transcript, and the button's name says how many.
  */
