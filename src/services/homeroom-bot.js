@@ -2650,9 +2650,13 @@ function botProposalCeiling(settings) {
  * proposal caps before anything is built: a hold costs nothing, and the
  * cap_freed refresh brings the issue back when there is room.
  */
-async function simulateCaps(pool, bot, appId, verdict, settings = null) {
+async function simulateCaps(pool, bot, appId, verdict, settings = null, { issueNumber = null } = {}) {
   if (verdict === 'ready') {
-    if (await openBotProposalCount(pool, bot, appId) >= PROPOSALS_PER_APP_CAP) return 'proposals_per_app';
+    // Homeroom bot parity (P4): a request a running batch of its project's
+    // owner started may have up to that batch's number open (homeroom-bot-batches.js).
+    const perApp = issueNumber == null ? PROPOSALS_PER_APP_CAP
+      : await require('./homeroom-bot-batches').proposalsPerAppFor(pool, appId, issueNumber, PROPOSALS_PER_APP_CAP);
+    if (await openBotProposalCount(pool, bot, appId) >= perApp) return 'proposals_per_app';
     if (await openBotProposalTotal(pool, bot) >= botProposalCeiling(settings)) return 'proposals_total';
   }
   if (TRIPWIRE_VERDICTS.includes(verdict)) {
@@ -3192,7 +3196,7 @@ async function reuseHeldVerdict(pool, config, {
     if (!v.complicated && await plannedWithRequester(pool, { appId: app.id, issueNumber })) {
       v = { ...v, complicated: true };
     }
-    const caps = await simulateCaps(pool, bot, app.id, 'ready', settings)
+    const caps = await simulateCaps(pool, bot, app.id, 'ready', settings, { issueNumber })
       || (v.complicated ? await planTripwire(pool, app.id) : null);
     return JSON.parse(JSON.stringify({
       held: { id: Number(held.id), model: held.model || null }, personAt, seedReadAt: new Date().toISOString(),
@@ -3303,7 +3307,7 @@ async function planFromEarly(pool, config, {
       // Its timeline has the plan from Make it already (first-version-timeline.js).
       fromMakeIt: true,
     };
-    const caps = await simulateCaps(pool, bot, app.id, 'ready', settings);
+    const caps = await simulateCaps(pool, bot, app.id, 'ready', settings, { issueNumber });
     return JSON.parse(JSON.stringify({
       plan: { model: p.model || null, questions: p.questions }, personAt, seedReadAt: new Date().toISOString(),
       fingerprint, decidedNow, parsed: v, capSuppressed: caps ?? null,
@@ -4170,7 +4174,7 @@ async function runTriage(pool, config, {
     }
     // #4488: a complicated change's plan asks its requester before it is
     // built, so it counts against the daily questions and notes as well.
-    const caps = await simulateCaps(pool, bot, app.id, v.verdict, settings)
+    const caps = await simulateCaps(pool, bot, app.id, v.verdict, settings, { issueNumber })
       || (v.complicated ? await planTripwire(pool, app.id) : null);
     // #4239: about Homeroom itself means nothing on Homeroom's own board.
     if (v.platform && (await platformAppSlugs(pool)).includes(app.slug)) v = { ...v, platform: false };
@@ -4541,6 +4545,9 @@ async function recordLostLiveBuild({ pool, config, id, error = null }) {
   );
   if (!run) return 'recorded_already';
   if (run.build_session_id) await putAwayRecoveredSession(pool, { id: run.build_session_id }, { archive: true });
+  // Homeroom bot parity (P5): stopped to be redone with its requester's
+  // note (homeroom-bot-steer.js redo): the new read says what comes next.
+  if (await require('./homeroom-bot-steer').redoAsked(pool, run.id)) return 'redo';
   const settings = await readSettings(pool);
   const said = await sayBuildLost(pool, settings, run, { reason: why }).catch((err) => {
     log.warn('homeroom-bot', 'Could not say a lost build failed', { runId: run.id, err: err.message });
@@ -9620,6 +9627,9 @@ async function sweep(config, pool, { deps = {} } = {}) {
   await each('unproposedLooked', () => (deps.dm || require('./homeroom-bot-dm')).sweepUnproposedBuilds?.(pool, { ws: deps.ws || null }));
   await each('strandedAsks', () => sweepStrandedAsks(pool, bot, settings, deps));
   await each('buildsOwed', () => sweepWaitingBuilds(pool, deps));
+  // Homeroom bot parity (P4, P5): batches' roll-ups, and notes whose build ended first.
+  await each('batches', () => require('./homeroom-bot-batches').sweep(pool, deps));
+  await each('buildNotes', () => require('./homeroom-bot-steer').sweep(pool, deps));
   return out;
 }
 

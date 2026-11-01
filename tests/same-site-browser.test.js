@@ -246,6 +246,7 @@ const EXEMPT = new Map([
   ['internal.js POST /api/internal/shots/:runId/condition', TOKEN],
   ['internal.js POST /api/internal/sessions/:sessionId/visible-changes', TOKEN],
   ['internal.js POST /api/internal/sessions/:sessionId/diagram', TOKEN],
+  ['internal.js POST /api/internal/sessions/:sessionId/build-notes/take', TOKEN],
   ['internal.js POST /api/internal/sessions/:sessionId/push', 'retired callback: constant 410 response with no mutation or credential access'],
   ['internal.js POST /api/internal/sessions/:sessionId/pr', 'retired callback: constant 410 response with no mutation or credential access'],
   ['internal.js POST /api/internal/sessions/:sessionId/platform-issue', TOKEN],
