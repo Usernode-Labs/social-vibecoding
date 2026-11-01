@@ -669,6 +669,16 @@ async function runTool(pool, ctx, args) {
     });
   if (started.busy) return { ok: false, error: 'Another look of theirs is still running. It has to finish before the next one starts.' };
   ctx.lookStarted = { id: started.id, appId: Number(app.id) };
+  // A retry of this same answer, after an earlier try stopped waiting: the
+  // look posts its findings itself, so this one does not wait again.
+  const before = started.existing ? await loadLook(pool, started.id) : null;
+  if (before && before.deliver === 'post') {
+    if (before.state === 'running') {
+      ctx.lookRunning = true;
+      return { ok: true, running: true, project: name, note: 'The look is still running; its findings will be posted in this chat. Say so in one short line.' };
+    }
+    return { ...compactResult(before, name), note: 'Its findings were posted in this chat already.' };
+  }
   if (!started.existing || started.state === 'running') {
     await (deps.requestLook || requestLook)(pool, { id: started.id, appId: Number(app.id), userId: Number(ctx.user.id) });
   }

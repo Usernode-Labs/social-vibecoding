@@ -200,6 +200,11 @@ test('looks into code and investigations, against the full PostgreSQL schema', {
     assert.equal(post.idempotencyKey, `hrbot-look:${(await pool.query('SELECT id FROM homeroom_bot_looks WHERE message_id = $1', [messageId])).rows[0].id}`);
     assert.deepEqual(post.metadata.looked.items, [{ what: 'Read 3 files in Gym Tracker' }]);
     assert.ok(Number((await pool.query('SELECT posted_message_id FROM homeroom_bot_looks WHERE message_id = $1', [messageId])).rows[0].posted_message_id) > 0);
+    // A retry of that same answer neither waits again nor looks again.
+    const retried = await look.run(pool, ctxFor(ada, messageId), 'look_into', { project: 'gym-tracker', question: 'Why does the sync check fail now and then?' });
+    assert.equal(retried.ok, true);
+    assert.match(retried.note, /posted in this chat already/);
+    assert.equal(posts.length, before + 1);
   });
 
   await t.test('a look is refused: someone else\'s private project, a paused one, the bot off, one already running', async () => {
