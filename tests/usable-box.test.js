@@ -91,7 +91,8 @@ test('the box is declared once, on body, beside the rail\'s tokens', () => {
     assert.equal(writes.length, 1, `${prop} is declared once`);
   }
   const sides = cssCode(CSS).match(/--platform-float-(left|right)\s*:/g) || [];
-  assert.equal(sides.length, 6, 'the two sides: their 0px default, then the strip and the corner on each side');
+  assert.equal(sides.length, 8, 'the two sides: their 0px default, the strip and the corner on each side, and a notch on both (THE NOTCH)');
+  assert.match(CSS, /@media \(min-width: 768px\) \{\n  html:not\(\[data-side-strip\]\):not\(\[data-side-corner\]\) body \{\n    --platform-notch-left: var\(--un-safe-inset-left, env\(safe-area-inset-left, 0px\)\);\n    --platform-notch-right: var\(--un-safe-inset-right, env\(safe-area-inset-right, 0px\)\);[^}]*--platform-float-left: var\(--platform-notch-left\);\n    --platform-float-right: var\(--platform-notch-right\);/);
 });
 
 test('the bot tab\'s room is the page\'s box, the value it always had', () => {

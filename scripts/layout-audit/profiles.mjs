@@ -41,7 +41,10 @@ export const PROFILES = [
     width: 852, height: 393, scale: 3, touch: true, userAgent: IOS_UA, native: false,
     insets: { top: 0, right: 59, bottom: 21, left: 59 },
     system: [
+      // The island is on whichever side the phone was turned towards, so a
+      // layout has to clear both.
       { name: 'camera island', x: 0, y: 120, w: 40, h: 153, severity: 'error' },
+      { name: 'camera island', x: 812, y: 120, w: 40, h: 153, severity: 'error' },
       { name: 'home indicator', x: 0, y: 372, w: 852, h: 21, severity: 'warn' },
     ],
     keyboard: 209,
