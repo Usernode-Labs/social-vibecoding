@@ -141,7 +141,7 @@ async function recordCheckin(pool, id, { n, seq, at, line, summary = null, ok = 
   await pool.query(
     `UPDATE homeroom_bot_investigations
         SET checkins = checkins || jsonb_build_array($3::jsonb),
-            notes = RIGHT(LTRIM(notes || $4), $5)
+            notes = RIGHT(LTRIM(notes || $4, E'\n '), $5)
       WHERE id = $1
         AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(checkins) e WHERE (e->>'seq')::int = $2)`,
     [Number(id), Number(seq), JSON.stringify(entry), text, MAX_NOTES_CHARS],
@@ -313,8 +313,8 @@ async function runTool(pool, ctx, args) {
   const { app } = found;
   if (ctx.appIds && typeof ctx.appIds.add === 'function') ctx.appIds.add(Number(app.id));
   const bot = ctx.bot || await (deps.botSvc || require('../homeroom-bot')).ensureBotUser(pool, ctx.config || {});
-  const refused = await L.gate(pool, { user: ctx.user, app, settings: ctx.settings, bot, deps });
-  if (refused) return { ok: false, error: refused.error.replace('cannot look into code', 'cannot run an investigation').replace('nothing more can be looked into', 'no investigation can run') };
+  const refused = await L.gate(pool, { user: ctx.user, app, settings: ctx.settings, bot, deps, doing: 'investigation' });
+  if (refused) return { ok: false, error: refused.error };
   if (await runningCount(pool, ctx.user.id) >= rules.MAX_RUNNING) {
     return { ok: false, error: `They already have ${rules.MAX_RUNNING} investigations running. One has to end, or be stopped from its card, first.` };
   }

@@ -8,7 +8,8 @@ import { legacy } from '../legacy.ts';
 import type { WorkHandler } from '../kernel/index.ts';
 import { WORK } from './machine.ts';
 
-interface Deps { config: any; pool: any }
+// `deps`: what the module reaches for instead of its own (a test's fakes).
+interface Deps { config: any; pool: any; deps?: any }
 
 export function botLookServices(deps: Deps): Record<string, WorkHandler> {
   const look = () => legacy('services/homeroom-bot-thread-tools/look-into');

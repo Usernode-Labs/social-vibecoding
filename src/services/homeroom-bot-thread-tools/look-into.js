@@ -256,20 +256,24 @@ async function projectFor(pool, user, project) {
  * on `app`: null when it may, else { code, error } in words the chat model
  * passes on. Reads only; never throws for a refusal.
  */
-async function gate(pool, { user, app, settings, bot = null, deps = {} }) {
+// What a refusal says it cannot do, by what was asked.
+const GATE_DOING = Object.freeze({ look: 'look into its code', investigation: 'run an investigation on it' });
+
+async function gate(pool, { user, app, settings, bot = null, deps = {}, doing = 'look' }) {
   const live = deps.live || require('../homeroom-bot-live');
-  if (!settings || settings.mode === 'off') return { code: 'bot_off', error: 'Homeroom bot is turned off just now, so it cannot look into code.' };
+  const what = GATE_DOING[doing] || GATE_DOING.look;
+  if (!settings || settings.mode === 'off') return { code: 'bot_off', error: `Homeroom bot is turned off just now, so it cannot ${what}.` };
   if ((settings.pausedApps || []).includes(app.slug) || !live.isLiveFor(settings, app)) {
-    return { code: 'paused', error: 'Homeroom bot is not working on that project just now, so it cannot look into its code.' };
+    return { code: 'paused', error: `Homeroom bot is not working on that project just now, so it cannot ${what}.` };
   }
   const dm = deps.dm || require('../homeroom-bot-dm');
   if (await dm.overWeeklyAllowance(pool, settings, user.id)) {
-    return { code: 'allowance', error: 'Their building time for this week is used up, so nothing more can be looked into until it resets.' };
+    return { code: 'allowance', error: `Their building time for this week is used up, so Homeroom bot cannot ${what} until it resets.` };
   }
   if (bot?.id) {
     const limits = deps.limits || require('../limits');
     const budget = await limits.checkBudget(pool, bot.id).catch(() => ({ error: 'unreadable' }));
-    if (budget?.error) return { code: 'bot_budget', error: 'Homeroom bot has used its own time for this week, so it cannot look into code just now.' };
+    if (budget?.error) return { code: 'bot_budget', error: `Homeroom bot has used its own time for this week, so it cannot ${what} just now.` };
   }
   return null;
 }
@@ -293,12 +297,10 @@ async function startLookRow(pool, {
 }) {
   await clearStale(pool, user.id);
   const key = messageId ? 'message_id' : 'investigation_id';
-  const { rows: found } = await pool.query(
-    messageId
-      ? 'SELECT id, state FROM homeroom_bot_looks WHERE message_id = $1'
-      : 'SELECT id, state FROM homeroom_bot_looks WHERE investigation_id = $1 AND checkin = $2',
-    messageId ? [Number(messageId)] : [Number(investigationId), Number(checkin)],
-  );
+  const mine = () => (messageId
+    ? pool.query('SELECT id, state FROM homeroom_bot_looks WHERE message_id = $1', [Number(messageId)])
+    : pool.query('SELECT id, state FROM homeroom_bot_looks WHERE investigation_id = $1 AND checkin = $2', [Number(investigationId), Number(checkin)]));
+  const { rows: found } = await mine();
   if (found[0]) return { id: Number(found[0].id), existing: true, state: found[0].state };
   try {
     const { rows } = await pool.query(
@@ -313,12 +315,7 @@ async function startLookRow(pool, {
   } catch (err) {
     if (err?.code !== '23505') throw err;
     // Its own row, written meanwhile by a retry of the same answer, or another look of theirs running.
-    const { rows: again } = await pool.query(
-      messageId
-        ? 'SELECT id, state FROM homeroom_bot_looks WHERE message_id = $1'
-        : 'SELECT id, state FROM homeroom_bot_looks WHERE investigation_id = $1 AND checkin = $2',
-      messageId ? [Number(messageId)] : [Number(investigationId), Number(checkin)],
-    );
+    const { rows: again } = await mine();
     if (again[0]) return { id: Number(again[0].id), existing: true, state: again[0].state };
     log.info('homeroom-bot-look', 'A look was refused: another of theirs is running', { userId: user.id, by: key });
     return { busy: true };
@@ -722,6 +719,7 @@ module.exports = {
   gate,
   projectFor,
   startLookRow,
+  lookSession,
   finishLook,
   loadLook,
   personOf,

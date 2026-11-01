@@ -38,8 +38,8 @@ async function decide(pool, config, { user, card, action, message, deps = {} }) 
       const settings = deps.settings || await (deps.botSvc || require('../homeroom-bot')).readSettings(pool);
       const found = app ? await look.projectFor(pool, user, app.slug) : { error: 'gone' };
       if (found.error) return refuse(403, 'You can no longer build on that project.');
-      const refused = await look.gate(pool, { user, app, settings, deps });
-      if (refused) return refuse(409, refused.error.replace('cannot look into code', 'cannot run an investigation').replace('nothing more can be looked into', 'no investigation can run'));
+      const refused = await look.gate(pool, { user, app, settings, deps, doing: 'investigation' });
+      if (refused) return refuse(409, refused.error.replace('Their building time', 'Your building time'));
       // Where it reports: the card's own message and thread.
       await pool.query(
         `UPDATE homeroom_bot_investigations
