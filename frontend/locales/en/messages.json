@@ -3415,6 +3415,158 @@
     "text": "Drafting the request",
     "description": "On the card at the end of the chat while Homeroom bot drafts a request for the reader to file. Three animated dots follow it, as an ellipsis."
   },
+  "thread.botWorking.looking": {
+    "text": "Looking into it in {{project}}",
+    "description": "On the card at the end of the chat while a helper of Homeroom bot reads a project's code to answer the reader, which can take a few minutes. {{project}} is the project's name. Three animated dots follow it, as an ellipsis."
+  },
+  "thread.botWorking.lookingUnnamed": {
+    "text": "Looking into the code",
+    "description": "On the card at the end of the chat while a helper of Homeroom bot reads a project's code, when the project's name is not known. Three animated dots follow it, as an ellipsis."
+  },
+  "botCards.investigation.label": {
+    "text": "Investigation · day {{day}} of up to {{days}}",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: its small label, shown in capitals. {{day}} is which day of the investigation it is, {{days}} the most days it may run."
+  },
+  "botCards.investigation.labelProposed_one": {
+    "text": "Investigation · up to a day",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: its small label before it is started, shown in capitals, when it may run for one day."
+  },
+  "botCards.investigation.labelProposed_other": {
+    "text": "Investigation · up to {{count}} days",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: its small label before it is started, shown in capitals. {{count}} is the most days it may run."
+  },
+  "botCards.investigation.labelDeclined": {
+    "text": "Investigation",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: its small label once the reader chose not to start it, shown in capitals."
+  },
+  "botCards.investigation.cadence_one": {
+    "text": "Checks in every hour",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: how often it looks at the project again."
+  },
+  "botCards.investigation.cadence_other": {
+    "text": "Checks in every {{count}} hours",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: how often it looks at the project again. {{count}} is a number of hours."
+  },
+  "botCards.investigation.cadenceModel_one": {
+    "text": "Checks in every hour, on {{model}}",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: how often it looks at the project again, and the AI model that does it. {{model}} is the model's name, for example DeepSeek V4.1 Flash."
+  },
+  "botCards.investigation.cadenceModel_other": {
+    "text": "Checks in every {{count}} hours, on {{model}}",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: how often it looks at the project again, and the AI model that does it. {{count}} is a number of hours; {{model}} is the model's name, for example DeepSeek V4.1 Flash."
+  },
+  "botCards.investigation.cadenceProject_one": {
+    "text": "Checks in on {{project}} every hour",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: how often it looks at the project again. {{project}} is the project's name."
+  },
+  "botCards.investigation.cadenceProject_other": {
+    "text": "Checks in on {{project}} every {{count}} hours",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: how often it looks at the project again. {{project}} is the project's name; {{count}} is a number of hours."
+  },
+  "botCards.investigation.cadenceProjectModel_one": {
+    "text": "Checks in on {{project}} every hour, on {{model}}",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: how often it looks at the project again, and the AI model that does it. {{project}} is the project's name; {{model}} is the model's name, for example DeepSeek V4.1 Flash."
+  },
+  "botCards.investigation.cadenceProjectModel_other": {
+    "text": "Checks in on {{project}} every {{count}} hours, on {{model}}",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: how often it looks at the project again, and the AI model that does it. {{project}} is the project's name; {{count}} is a number of hours; {{model}} is the model's name, for example DeepSeek V4.1 Flash."
+  },
+  "botCards.investigation.spent": {
+    "text": "{{spent}} of {{budget}} spent",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: how much of its own budget it has used so far, over a thin bar. {{spent}} and {{budget}} are amounts of money, for example $0.38 and $3.00."
+  },
+  "botCards.investigation.budget": {
+    "text": "Budget {{budget}}",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: its own budget, before it has spent anything. {{budget}} is an amount of money, for example $3.00."
+  },
+  "botCards.investigation.next": {
+    "text": "Next check-in at {{time}}",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: when it looks at the project again. {{time}} is a time of day, with the day of the week when it is not today."
+  },
+  "botCards.investigation.checkingNow": {
+    "text": "Checking in now",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: it is looking at the project right now."
+  },
+  "botCards.investigation.timeline": {
+    "text": "Last check-ins",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: the name, for screen readers, of the list of its last three check-ins, each a time and one line of what it found."
+  },
+  "botCards.investigation.declined": {
+    "text": "Not started",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: the reader chose Not now, so it never ran."
+  },
+  "botCards.investigation.ended.answered": {
+    "text": "Ended: it found the answer",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: why it ended."
+  },
+  "botCards.investigation.ended.budget": {
+    "text": "Ended: it used all of its budget",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: why it ended."
+  },
+  "botCards.investigation.ended.days": {
+    "text": "Ended: it ran for all of its days",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: why it ended."
+  },
+  "botCards.investigation.ended.stopped": {
+    "text": "Stopped by you",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: the reader stopped it."
+  },
+  "botCards.investigation.ended.botOff": {
+    "text": "Ended: Homeroom bot was turned off",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: why it ended."
+  },
+  "botCards.investigation.ended.paused": {
+    "text": "Ended: Homeroom bot stopped working on this project",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: why it ended."
+  },
+  "botCards.investigation.ended.gone": {
+    "text": "Ended: you can no longer build on this project",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: why it ended."
+  },
+  "botCards.investigation.ended.failed": {
+    "text": "Ended: its check-ins kept failing",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: why it ended."
+  },
+  "botCards.investigation.ended.other": {
+    "text": "Ended",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: it ended, for a reason this screen does not know."
+  },
+  "botCards.investigation.choices": {
+    "text": "Investigation choices",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: the name, for screen readers, of its row of buttons."
+  },
+  "botCards.investigation.start": {
+    "text": "Start",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: button that starts it. Nothing runs or costs anything until it is pressed."
+  },
+  "botCards.investigation.notNow": {
+    "text": "Not now",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: button that sets it aside without starting it."
+  },
+  "botCards.investigation.stop": {
+    "text": "Stop",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: button that ends it now."
+  },
+  "botCards.investigation.notes": {
+    "text": "Notes",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: button that opens, on the card, everything it has found so far."
+  },
+  "botCards.investigation.hideNotes": {
+    "text": "Hide notes",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: button that closes its notes again."
+  },
+  "botCards.investigation.file": {
+    "text": "File what it found",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: button that asks Homeroom bot to draft requests from what it found."
+  },
+  "botCards.investigation.fileWords": {
+    "text": "File what the investigation found",
+    "description": "Sent as the reader's own message to Homeroom bot when they press \"File what it found\" on an investigation's card; the bot then drafts requests from what it found."
+  },
+  "botCards.investigation.failed": {
+    "text": "That did not work. Try again.",
+    "description": "On the card Homeroom bot puts under its reply about an investigation it runs on one of the reader's projects over several days: shown when a press of one of its buttons did not go through."
+  },
   "thread.activityTimeRange": {
     "text": "{{start}} – {{end}}",
     "description": "Time shown on the card of replies made in a thread when they span more than one minute: the time of the first reply and of the last. {{start}} and {{end}} are clock times."
