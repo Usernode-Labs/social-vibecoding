@@ -798,6 +798,10 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   assert.match(css, /html\[data-side-strip="right"\] body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-edge: var\(--platform-strip-w, 0px\);\s+\}/);
   assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*right: 0;[^}]*width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
   assert.match(css, /#ai-screen \.ai-main-head \{[^}]*padding: 12px calc\(18px \+ var\(--ai-edge, 0px\)\) 12px 18px;/, 'its name stops beside the column, its hairline runs under it');
+  // A thread in Main Chat's place has its own head, which pads by the column too (1 Nov 2026).
+  assert.match(css, /#ai-screen \.ai-main-pane \.messages-thread-header\[data-reply-head="main"\] \{\s+padding-right: calc\(16px \+ var\(--ai-edge, 0px\)\);\s+\}/,
+    'a thread\'s title stops beside the column, not under the clock');
+  assert.match(read('frontend/src/features/messages/index.tsx'), /<header className="messages-thread-header" data-reply-head=\{inMain \? 'main' : undefined\}>/);
   assert.doesNotMatch(css, /\.messages-layout \{[^}]*padding-right: var\(--ai-edge/, 'the chat runs under the column, below its head');
   assert.match(css, /#ai-screen \.ai-preview-pane \{[^}]*right: 0;[^}]*width: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\s+padding-right: var\(--ai-edge, 0px\);/);
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{\s+width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
