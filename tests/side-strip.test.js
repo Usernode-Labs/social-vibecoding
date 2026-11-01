@@ -474,7 +474,7 @@ test('Messages\' drawer runs under the strip the same way', () => {
   assert.match(block, /html\[data-side-strip="right"\] \.messages-layout\.messages-drawer > \.messages-thread-pane \{\s*padding-right: var\(--platform-strip-w, 0px\);/);
   // Its floating discs are positioned off the sheet's edge, which padding
   // does not move: they come in by the strip too, from their own 12px.
-  assert.match(APP_CSS, /\.messages-layout\.messages-drawer > \.messages-thread-pane > \.messages-thread-header \{\s*position: absolute; top: 4px; right: 12px;/);
+  assert.match(APP_CSS, /\.messages-layout\.messages-drawer > \.messages-thread-pane > \.messages-thread-header \{\s*position: absolute; top: 4px; inset-inline-end: 12px;/);
   assert.match(block, /html\[data-side-strip="right"\] \.messages-layout\.messages-drawer > \.messages-thread-pane > \.messages-thread-header \{\s*right: calc\(12px \+ var\(--platform-strip-w, 0px\)\);/);
   // Its own sheet runs under the strip, so the strip's ground is not drawn.
   assert.match(block, /\.dc-lift-strip:not\(\.messages-drawer\)\) \.platform-side-strip-ground \{/);

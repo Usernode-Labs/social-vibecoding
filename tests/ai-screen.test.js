@@ -509,7 +509,7 @@ test('a page drawn before sign-in is confirmed asks again once it is, and its As
     'the confirmation it waits for');
   // A wide window whose Main is not docked (yet, or at all) keeps the bar
   // on the page, clear of the sidebar.
-  assert.match(read('public/css/app.css'), /#ai-screen \.ai-askbar \{\s+position: fixed;\s+(\/\*[^*]*\*+([^/*][^*]*\*+)*\/\s+)?left: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter, 0px\)\);\s+right: var\(--platform-gutter, 0px\);/);
+  assert.match(read('public/css/app.css'), /#ai-screen \.ai-askbar \{\s+position: fixed;\s+(\/\*[^*]*\*+([^/*][^*]*\*+)*\/\s+)?inset-inline-start: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter, 0px\)\);\s+inset-inline-end: var\(--platform-gutter, 0px\);/);
 });
 
 test('#homeroom-bot is the page; /main and /thread/<id> are Main, on the Messages screen; #ai lands there', () => {
@@ -587,7 +587,7 @@ test('on a phone the list and Main Chat are one drawer, as Messages\' are; a req
   assert.match(src, /data-ai-drawer=\{phone \? level : undefined\}/);
   assert.match(drawer, /const PHONE_QUERY = '\(max-width: 767\.98px\)';/);
   const css = read('public/css/app.css');
-  assert.match(css, /\.ai-drawer-list \{\s+position: absolute; top: 0; bottom: 0; left: 0; width: 85%;/);
+  assert.match(css, /\.ai-drawer-list \{\s+position: absolute; top: 0; bottom: 0; inset-inline-start: 0; width: 85%;/);
   assert.match(css, /\.ai-drawer-back::after \{ content: ""; position: absolute; inset: -6px; \}/, 'its arrow is pressed as a 44px target');
   assert.equal(message('messages:ai.drawer.peek', { title: message('messages:store.header.main') }), 'Open Main Chat');
 });
@@ -633,11 +633,11 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   // the rail; with none chosen, Main takes the room the list does not need
   // (30 Oct 2026), 400px to 720px.
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-main-auto: clamp\(400px, calc\(100vw - var\(--platform-rail-w, 0px\) - 720px\), 720px\);\s+--ai-main-w: max\(320px, min\(var\(--side-panel-chosen-w, var\(--ai-main-auto\)\), calc\(100vw - var\(--platform-rail-w, 0px\) - 480px\)\)\);\s+\}/);
-  assert.match(css, /#ai-screen\[data-ai-docked\] \{ padding-right: var\(--ai-main-w\); \}/);
+  assert.match(css, /#ai-screen\[data-ai-docked\] \{ padding-inline-end: var\(--ai-main-w\); \}/);
   assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*width: var\(--ai-main-w\);/);
   assert.match(css, /#ai-screen \.ai-main-pane > \.messages-layout \{ flex: 1 1 auto; height: auto; min-height: 0; \}/);
   assert.match(css, /html\[data-side-panel\] #ai-screen \.ai-main-pane \{ display: none; \}/);
-  assert.match(css, /@media \(min-width: 1024px\) \{\s+html\[data-side-panel\] #ai-screen \{ padding-right: var\(--ai-main-w\); \}\s+\}/);
+  assert.match(css, /@media \(min-width: 1024px\) \{\s+html\[data-side-panel\] #ai-screen \{ padding-inline-end: var\(--ai-main-w\); \}\s+\}/);
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{\s+width: var\(--ai-main-w\);/, 'so the list does not move');
   // 30 Oct 2026: Main's left edge is the side panel's handle, and sets the same width.
   const src = read('frontend/src/features/ai/index.tsx');

@@ -1192,7 +1192,7 @@ test('embedded mode needs panel=1 AND a same-origin parent, including inside Pre
 
 test('the layout: the app narrows by a margin, above the breakpoint, while the panel is up', () => {
   const desk = CSS.slice(CSS.indexOf('@media (min-width: 1024px) {\n  html[data-side-panel] #app-view {'));
-  assert.match(desk, /html\[data-side-panel\] #app-view \{\s*margin-right: var\(--side-panel-w\);\s*min-width: 480px;/);
+  assert.match(desk, /html\[data-side-panel\] #app-view \{\s*margin-inline-end: var\(--side-panel-w\);\s*min-width: 480px;/);
   assert.match(CSS, /--side-panel-w: clamp\(360px, 36vw, 560px\);/);
   assert.match(CSS, /@media \(max-width: 1023\.98px\) \{[\s\S]{0,300}#platform-side-panel \{\s*display: none;/);
   // Never display:none, never re-parented: nothing in the panel's CSS touches the frame.
@@ -1353,7 +1353,7 @@ test('the width\'s rules: 320px of panel and 480px of app at the least, whatever
   const { bounds, clampWidth, MIN_PANEL_W, MIN_APP_W } = api.resize;
   assert.equal(MIN_PANEL_W, 320);
   assert.equal(MIN_APP_W, 480, 'the floor app.css already holds #app-view to beside the panel');
-  assert.match(CSS, /html\[data-side-panel\] #app-view \{\s*margin-right: var\(--side-panel-w\);\s*min-width: 480px;/);
+  assert.match(CSS, /html\[data-side-panel\] #app-view \{\s*margin-inline-end: var\(--side-panel-w\);\s*min-width: 480px;/);
   // A 1440px window with the app flush left: up to 960px of panel.
   assert.deepEqual({ ...bounds({ innerWidth: 1440, appLeft: 0 }) }, { min: 320, max: 960 });
   // A rail to the left of the app comes out of the panel's room, not the app's.

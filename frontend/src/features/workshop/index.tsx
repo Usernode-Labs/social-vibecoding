@@ -229,7 +229,10 @@ export function AudienceChips({ tallies, pressed, onPress, scope }: {
   useEffect(() => {
     const el = railRef.current;
     if (!el) return;
-    const measure = () => setMore(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    // `Math.abs`: a right-to-left scroller counts its offset from the inline
+    // start as a negative `scrollLeft`, and the fade it drives is the same
+    // far edge either way.
+    const measure = () => setMore(Math.abs(el.scrollLeft) + el.clientWidth < el.scrollWidth - 1);
     measure();
     el.addEventListener('scroll', measure, { passive: true });
     // A hidden zero chip changes the row's width without a scroll event.

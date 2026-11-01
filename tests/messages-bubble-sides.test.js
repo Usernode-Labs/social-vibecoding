@@ -71,7 +71,7 @@ test('a DM and a group give their rows a side; a channel does not', () => {
     const theirs = row({ message: message(ADA, 1, { content: 'Hello there' }), kind });
     assert.match(theirs, /class="messages-message group messages-message-bubble /, `${kind}: their row has a side`);
     assert.match(theirs, /<div class="min-w-0 flex-1 messages-bubble-wrap">/, `${kind}: the words are in the wrap`);
-    assert.match(theirs, /<div class="messages-bubble">/, `${kind}: in a bubble`);
+    assert.match(theirs, /<div class="messages-bubble" dir="auto">/, `${kind}: in a bubble`);
     assert.match(theirs, /Hello there/);
   }
   // #2783: a channel keeps its named rows, whatever the viewer's own.
@@ -98,14 +98,14 @@ test('the row that is not something a person said keeps its full-width named row
   // on the left, with its avatar — its cards are what stay full width.
   const bot = row({ message: message(BOT, 6, { content: 'How is it going?' }), kind: 'direct', botChat: true });
   assert.match(bot, /class="messages-message group messages-message-bubble /);
-  assert.match(bot, /<div class="messages-bubble">/);
+  assert.match(bot, /<div class="messages-bubble" dir="auto">/);
 });
 
 test('a grouped continuation keeps its side and its bubble, with the time in the gutter', () => {
   const html = row({ message: message(ME, 7, { content: 'Second thought' }), kind: 'direct', grouped: true });
   assert.match(html, /messages-message-bubble messages-message-grouped/);
   assert.match(html, /<time class="messages-message-gutter"/);
-  assert.match(html, /<div class="messages-bubble">/);
+  assert.match(html, /<div class="messages-bubble" dir="auto">/);
 });
 
 // ── 2. The markup ─────────────────────────────────────────────────────────
@@ -114,20 +114,20 @@ test('your own message carries no avatar, and its head sits before its bubble', 
   const html = row({ message: message(ME, 8, { content: 'Looking now' }), kind: 'direct' });
   assert.match(html, /messages-message-self/);
   assert.doesNotMatch(html, /w-9 h-9/, 'no avatar on your own row');
-  assert.match(html, /<div class="messages-message-head"><span class="messages-message-author text-violet-700[^"]*">me<\/span><time[\s\S]*?<\/time><\/div><div class="messages-bubble"><div class="messages-markdown gc-msg-content">Looking now<\/div><\/div>/);
+  assert.match(html, /<div class="messages-message-head"><span dir="auto" class="messages-message-author text-violet-700[^"]*">me<\/span><time[\s\S]*?<\/time><\/div><div class="messages-bubble" dir="auto"><div class="messages-markdown gc-msg-content">Looking now<\/div><\/div>/);
 });
 
 test('the other person keeps the avatar, the name and the time above their bubble', () => {
   const html = row({ message: message(ADA, 9, { content: 'Thanks!' }), kind: 'direct' });
   assert.doesNotMatch(html, /messages-message-self/);
   assert.match(html, /<span aria-hidden="true" class="w-9 h-9/, 'the avatar, as before');
-  assert.match(html, /<div class="messages-message-head"><span class="messages-message-author ">ada<\/span><time[\s\S]*?<\/time><\/div><div class="messages-bubble"><div class="messages-markdown gc-msg-content">Thanks!<\/div><\/div>/);
+  assert.match(html, /<div class="messages-message-head"><span dir="auto" class="messages-message-author ">ada<\/span><time[\s\S]*?<\/time><\/div><div class="messages-bubble" dir="auto"><div class="messages-markdown gc-msg-content">Thanks!<\/div><\/div>/);
 });
 
 test('a deleted message keeps its bubble, and the id, data and classes the checks select on', () => {
   const html = row({ message: message(ADA, 10, { content: '', deleted: true }), kind: 'group' });
   assert.match(html, /<article id="messages-message-10" data-message-id="10" class="messages-message group messages-message-bubble /);
-  assert.match(html, /<div class="messages-bubble"><p class="messages-deleted">/);
+  assert.match(html, /<div class="messages-bubble" dir="auto"><p class="messages-deleted">/);
 });
 
 // ── 3. The stylesheet ─────────────────────────────────────────────────────

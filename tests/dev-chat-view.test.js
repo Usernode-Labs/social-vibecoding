@@ -300,7 +300,7 @@ test('the strip and the session sheet each lift off the layer above (three-layer
     path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
   const lift = CSS.slice(CSS.indexOf('\n.dc-lift {'));
   const frame = CSS.slice(CSS.indexOf('\n#app-frame-host {'));
-  const radius = (block) => (block.match(/border-radius: ([^;]+);/) || [])[1];
+  const radius = (block) => (block.match(/border-start-start-radius: ([^;]+);/) || [])[1];
   assert.equal(radius(lift), radius(frame),
     'the two layers take the running app\'s radius, not one of their own');
   // Neither layer may clip: a sheet's shoulder is the area INSIDE its border

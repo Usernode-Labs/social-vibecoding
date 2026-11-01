@@ -437,7 +437,7 @@ test(`a live link's landing is "Made for you"; the pitch stays in the document, 
   for (const hidden of [
     "hiddenLast(pitchHidden, 'grow')",
     "hiddenLast(pitchHidden, 'mx-auto mt-6 block h-auto w-[272px] xl:w-[320px] max-w-full')",
-    "hiddenLast(pitchHidden, 'mt-3 overflow-hidden pt-2 pb-1 pl-4')",
+    "hiddenLast(pitchHidden, 'mt-3 overflow-hidden pt-2 pb-1 ps-4')",
     "hiddenLast(pitchHidden, 'px-4 flex grow flex-col text-center')",
   ]) assert.ok(landing.includes(hidden), hidden);
   const card = read('frontend/src/features/auth/invite-card.tsx');

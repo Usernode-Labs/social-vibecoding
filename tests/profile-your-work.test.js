@@ -763,7 +763,7 @@ test('#3498: on a desktop the screen moves over for the rail like its siblings',
   const rule = desktop.slice(at, desktop.indexOf('}', at));
   const roots = rule.slice(0, rule.indexOf('{'));
   assert.match(roots, /#profile-proposals-screen/, 'Your changes, requests and votes clear the rail');
-  assert.match(rule, /padding-left: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter\)\);/);
+  assert.match(rule, /padding-inline-start: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter\)\);/);
 });
 
 test('#3498: the column is Profile\'s, gutter and all, so its mx-0 lists keep a margin', () => {

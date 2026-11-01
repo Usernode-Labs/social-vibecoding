@@ -23,8 +23,8 @@ function rule(selectorLine) {
 test('the composer bar and typing line share the thread column', () => {
   const body = rule('#dev-topic-thread > .dev-thread > #gc-thread-typing,\n#dev-topic-thread > .dev-thread > .platform-safe-bar {');
   assert.match(body, /max-width: 900px;/);
-  assert.match(body, /margin-left: auto;/);
-  assert.match(body, /margin-right: auto;/);
+  assert.match(body, /margin-inline-start: auto;/);
+  assert.match(body, /margin-inline-end: auto;/);
   assert.match(body, /width: 100%;/);
 });
 

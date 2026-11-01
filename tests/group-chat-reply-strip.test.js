@@ -22,11 +22,11 @@ const rule = (sel) => {
 
 test('the strip is the Messages reply draft: full width, accent tint, open rounded edge', () => {
   const strip = rule('.gc-reply-preview-inner');
-  assert.match(strip, /border-left: 3px solid var\(--accent\);/);
-  assert.match(strip, /border-radius: 0 12px 12px 0;/);
+  assert.match(strip, /border-inline-start: 3px solid var\(--accent\);/);
+  assert.match(strip, /border-start-start-radius: 0; border-start-end-radius: 12px; border-end-end-radius: 12px; border-end-start-radius: 0;/);
   assert.match(strip, /background: var\(--accent-tint\);/);
   assert.doesNotMatch(strip, /max-width/, 'spans the composer, not capped at 560px');
-  assert.match(css, /\.messages-reply-draft \{[^}]*border-radius: 0 12px 12px 0;[^}]*background: var\(--accent-tint\);/,
+  assert.match(css, /\.messages-reply-draft \{[^}]*border-start-start-radius: 0; border-start-end-radius: 12px; border-end-end-radius: 12px; border-end-start-radius: 0;[^}]*background: var\(--accent-tint\);/,
     'the Messages screen draws its draft the same way');
 });
 

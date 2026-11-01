@@ -17,6 +17,7 @@ import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { useCommunityColor } from '../../lib/community-color';
+import { dirSign } from '../../lib/i18n/direction';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -2598,8 +2599,9 @@ function ReplyThreadPanel({ backToMain = false }: {
     // drag runs.
     const frames = Array.from(paneRef.current?.querySelectorAll<HTMLIFrameElement>('iframe') || []);
     frames.forEach((frame) => { frame.style.pointerEvents = 'none'; });
-    // Dragging left widens the thread: its left edge is the divider.
-    const onMove = (move: PointerEvent) => { latest = commitReplyWidth(startWidth - (move.clientX - startX)); };
+    // Dragging toward the thread's own edge widens it: the divider is its
+    // inline-start edge, the left in English and the right in Arabic.
+    const onMove = (move: PointerEvent) => { latest = commitReplyWidth(startWidth - dirSign() * (move.clientX - startX)); };
     const onUp = () => {
       handle.removeEventListener('pointermove', onMove);
       handle.removeEventListener('pointerup', onUp);
@@ -2618,7 +2620,9 @@ function ReplyThreadPanel({ backToMain = false }: {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
     const base = replyWidth ?? Math.round(paneRef.current?.getBoundingClientRect().width || REPLY_MIN_WIDTH);
-    writeReplyWidth(commitReplyWidth(base + (event.key === 'ArrowLeft' ? REPLY_WIDTH_STEP : -REPLY_WIDTH_STEP)));
+    // An arrow toward the divider widens the thread, as the drag does.
+    const toward = event.key === 'ArrowLeft' ? 1 : -1;
+    writeReplyWidth(commitReplyWidth(base + toward * dirSign() * REPLY_WIDTH_STEP));
   };
   // #6019: a thread the viewer started in their chat with the bot is private
   // until they File it or Post it: its head says so, its foot has the doors

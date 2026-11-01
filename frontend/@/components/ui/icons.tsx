@@ -124,8 +124,11 @@ function filled(name: string, d: string) {
  * not about direction (bell, check, people, search) never take this.
  */
 function directional(name: string, Icon: (props: IconProps) => React.ReactElement) {
+  // The caller's class string comes FIRST, unchanged: markup tests across the
+  // shell pin `<svg class="…chev"` by its opening, and a prefix here rewrote
+  // every one of them. The mirroring utility rides at the end.
   const Directional = ({ className, ...rest }: IconProps) => (
-    <Icon {...rest} className={className ? `rtl:-scale-x-100 ${className}` : 'rtl:-scale-x-100'} />
+    <Icon {...rest} className={className ? `${className} rtl:-scale-x-100` : 'rtl:-scale-x-100'} />
   );
   Directional.displayName = name;
   return Directional;

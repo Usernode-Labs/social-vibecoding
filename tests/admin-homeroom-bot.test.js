@@ -487,7 +487,7 @@ test('the ledger, the dashboard and the filter agree on every verdict, follow-up
   }
   const admin = read('src/routes/admin.js');
   assert.match(admin, /\['question', 'ready', 'person', 'empty', 'failed', 'answer', 'revise'\]\.includes\(q\.verdict\)/);
-  assert.match(tsx, /isFollowUp\(run\) \? <span className=\{`\$\{AdminUI\.badge\.outline\} ml-1`\}>follow-up<\/span>/);
+  assert.match(tsx, /isFollowUp\(run\) \? <span className=\{`\$\{AdminUI\.badge\.outline\} ms-1`\}>follow-up<\/span>/);
 });
 
 test('a saved live app has a "Triage again" button that queues its open issues (#3480)', () => {

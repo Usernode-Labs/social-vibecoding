@@ -36,8 +36,8 @@ test('#3016: the panel cannot outgrow the screen, and the bar\'s pill row cannot
   assert.doesNotMatch(bar, /VenuePicker/);
   assert.match(bar, /<div className="flex min-w-0 flex-nowrap [^"]*" data-agent-session-pills>/,
     'the row may shrink below its content, so a long name cannot make the conversation wider than a phone');
-  assert.match(bar, /data-agent-session-changes-button\s+className="ml-auto [^"]*whitespace-nowrap[^"]*"/,
-    'Changes ends the pills and starts the controls at the row\'s right');
+  assert.match(bar, /data-agent-session-changes-button\s+className="ms-auto [^"]*whitespace-nowrap[^"]*"/,
+    'Changes ends the pills and starts the controls at the row\'s end');
 
   assert.match(panel, /<div ref=\{root\} className=\{`relative flex min-h-0 min-w-0 flex-1 /,
     'the panel shrinks below its content, so nothing inside can widen the screen');

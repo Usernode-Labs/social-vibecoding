@@ -365,8 +365,8 @@ test('#5393: a group row shows its members\' faces and names the person who spok
   // The pair keeps the row's own geometry: a 44px box on the 74px inset.
   const css = read('public/css/app.css');
   assert.match(css, /\.messages-group-faces \{ position: relative; flex: 0 0 44px; width: 44px; height: 44px; \}/);
-  assert.match(css, /\.messages-conversation-row::after \{[^}]*left: 74px;/);
-  assert.match(css, /\.messages-group-faces > :last-child \{ right: 0; bottom: 0; box-shadow: 0 0 0 2px var\(--dc-sheet-solid, var\(--app-bg\)\); \}/);
+  assert.match(css, /\.messages-conversation-row::after \{[^}]*inset-inline-start: 74px;/);
+  assert.match(css, /\.messages-group-faces > :last-child \{ inset-inline-end: 0; bottom: 0; box-shadow: 0 0 0 2px var\(--dc-sheet-solid, var\(--app-bg\)\); \}/);
   // v3: the desktop's sidebar nests the latest conversations, with room for
   // one face: the first member who is not the viewer, at 18px.
   const rail = SCREEN.slice(SCREEN.indexOf('function railRow('), SCREEN.indexOf('function inboxRow('));

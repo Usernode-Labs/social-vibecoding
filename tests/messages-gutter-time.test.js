@@ -34,8 +34,8 @@ test('the continuation gutter is wide enough for a time and never wraps it', () 
   assert.match(body, /white-space: nowrap;/, 'the time breaks into two lines without this');
   assert.match(body, /flex: 0 0 48px;/, '48px holds "12:45 PM" at 11px');
   assert.match(body, /width: 48px;/);
-  assert.match(body, /margin-left: -12px;/, 'the 12px it borrows from the row\'s 16px padding');
-  assert.match(body, /text-align: right;/, 'it still lines up at the avatar column\'s right edge');
+  assert.match(body, /margin-inline-start: -12px;/, 'the 12px it borrows from the row\'s start padding');
+  assert.match(body, /text-align: end;/, 'it still lines up at the avatar column\'s end edge');
 });
 
 test('the wider column does not move the message body', () => {
@@ -48,7 +48,7 @@ test('the wider column does not move the message body', () => {
 
 test('your own continuation row borrows the right edge instead', () => {
   const body = rule('.messages-message-bubble.messages-message-self > .messages-message-gutter');
-  assert.match(body, /margin-left: 0;/, 'the left borrow would leave the right edge unchecked');
-  assert.match(body, /margin-right: -12px;/);
+  assert.match(body, /margin-inline-start: 0;/, 'the start borrow would leave the end edge unchecked');
+  assert.match(body, /margin-inline-end: -12px;/);
   assert.match(rule('.messages-message-bubble.messages-message-self'), /flex-direction: row-reverse;/, 'the row it applies to runs right to left');
 });

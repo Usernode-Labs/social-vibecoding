@@ -41,8 +41,17 @@ test('app.css has no physical left/right layout declarations left', () => {
   const offenders = [];
   const lines = CSS.split('\n');
   let inComment = false;
+  // One block is physical on purpose and says so: the device's side strip,
+  // corner and top band are sides of the HARDWARE (iPhone Duo's column of
+  // system chrome), so the native insets that set them are the screen's
+  // left/right and the rules that clear them must not mirror in Arabic.
+  // app.css marks the block with `direction: physical` / `direction: logical`.
+  let hardware = false;
   lines.forEach((line, index) => {
     const text = line.trim();
+    if (text.startsWith('/* direction: physical')) hardware = true;
+    if (text.startsWith('/* direction: logical')) hardware = false;
+    if (hardware) return;
     if (inComment) { if (text.includes('*/')) inComment = false; return; }
     if (text.startsWith('/*')) { if (!text.includes('*/')) inComment = true; return; }
     if (!text || text.startsWith('*') || text.startsWith('//')) return;

@@ -213,10 +213,10 @@ test('the pages: one pane at a time in the inbox, All communities one page, and 
 
 test('the look: one indent a level, one unbroken line, the parent unfilled; AI a sparkle', () => {
   const css = block1024();
-  assert.match(css, /\.platform-rail-nest-in::before \{\n    content: "";\n    position: absolute;\n    top: 2px;\n    bottom: 6px;\n    left: 18px;\n    width: 1px;/, 'one line, under the parent\'s tile, past the sub-headers');
-  assert.match(css, /\.platform-rail-nest :is\(\.dev-ws-place, \.platform-rail-sub\) \{[^}]*margin-left: 24px;[^}]*\}/);
-  assert.match(css, /\.platform-rail-nest :is\(\.dev-ws-places-group \.dev-ws-place, \.platform-rail-group\[data-rail-headed\] \.platform-rail-sub\) \{\n    margin-left: 36px;\n  \}/, 'a headed group is a step in');
-  assert.match(css, /padding: 8px 8px 3px 30px;[^}]*text-transform: none;/, 'sub-headers where the rows above start, in sentence case');
+  assert.match(css, /\.platform-rail-nest-in::before \{\n    content: "";\n    position: absolute;\n    top: 2px;\n    bottom: 6px;\n    inset-inline-start: 18px;\n    width: 1px;/, 'one line under the parent\'s tile, past the sub-headers, at the start edge');
+  assert.match(css, /\.platform-rail-nest :is\(\.dev-ws-place, \.platform-rail-sub\) \{[^}]*margin-inline-start: 24px;[^}]*\}/);
+  assert.match(css, /\.platform-rail-nest :is\(\.dev-ws-places-group \.dev-ws-place, \.platform-rail-group\[data-rail-headed\] \.platform-rail-sub\) \{\n    margin-inline-start: 36px;\n  \}/, 'a headed group is a step in');
+  assert.match(css, /padding-block: 8px 3px; padding-inline: 30px 8px;[^}]*text-transform: none;/, 'sub-headers where the rows above start, in sentence case');
   assert.match(css, /\.platform-rail-community\[data-rail-open\]\[aria-current="page"\],\n  \.platform-tabs:has\(#platform-rail-conversations > \[data-nest="open"\] \[aria-current="page"\]\) #platform-tab-messages\[aria-current="page"\] \{\n    background: transparent;/);
   assert.match(css, /--platform-rail-full: 212px;/, 'the deeper rows need 212px');
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
