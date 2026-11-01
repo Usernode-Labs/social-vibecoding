@@ -18144,10 +18144,14 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    the list's card 220px.
    THE PINNED COLUMNS RUN UNDER IT (1 Nov 2026), as the header does: Main,
    the side panel in its place and a design's preview reach the screen's
-   edge, and pad what is in them by the column (`--ai-edge`), so their
-   contents stop beside it while their ground runs under the clock. Stopped
-   at the column instead, Main ended in a hard edge with bare wallpaper
-   beside it. */
+   edge. Stopped at the column instead, Main ended in a hard edge with bare
+   wallpaper beside it. The clock, the camera and the Wi-Fi ring sit at the
+   column's top, within the height of each column's head, so the heads pad
+   their contents by the column (`--ai-edge`). Below that the column is
+   plain screen (taps reach the page there, measured on the Duo simulator),
+   so Main's chat and the page in the side panel run under it: padded too,
+   they left a band of the column's own colour beside a chat that stopped
+   short. A design's preview pads the column, as its ✕ is at its top. */
 body:has(#ai-screen:not(.hidden)) {
   --ai-room: calc(100vw - var(--platform-rail-w, 0px) - var(--platform-strip-w, 0px));
   --ai-list-min: 480px;
@@ -18198,7 +18202,6 @@ html[data-side-strip="right"] body:has(#ai-screen:not(.hidden)) {
   background-color: var(--dc-sheet-fill);
 }
 #ai-screen .ai-main-pane > .messages-layout { flex: 1 1 auto; height: auto; min-height: 0; }
-#ai-screen .ai-main-pane > .messages-layout { padding-right: var(--ai-edge, 0px); }
 /* ONE SHEET (30 Oct 2026). The chat is the Messages screen's, which lifts
    itself off the page as a sheet of its own: a rounded corner, a hairline
    and a shadow. Inside this column that drew a card under a band, its
@@ -25179,9 +25182,6 @@ body:has(#ai-screen:not(.hidden)) .side-panel-head {
   padding: 12px calc(18px + var(--ai-edge, 0px)) 12px 18px;
   background-color: var(--dc-sheet-fill);
 }
-/* Its page stops beside the Duo's column, as Main's chat does (`--ai-edge`,
-   the bot tab's section). */
-body:has(#ai-screen:not(.hidden)) .side-panel-body { margin-right: var(--ai-edge, 0px); }
 /* AND ITS FOOT CLEARS THE KEYBOARD (1 Nov 2026). In the Homeroom app beside
    this page (side-panel controller canTake), a reply typed in the panel's
    own document had the keyboard over its box: the page's composers lift
