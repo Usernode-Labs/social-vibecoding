@@ -424,6 +424,77 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   padding-bottom: 0;
 }
 
+/* ── A chat's foot ────────────────────────────────────────
+   Under every transcript with a reply box, four siblings in one flex column:
+   the transcript's scroller (`.chat-transcript`), Jump to latest hung from
+   its foot, the status line (`.chat-status`), and the bar the composer's
+   card sits in (`.chat-composer-bar`, with `.platform-safe-bar`).
+   @/components/ui/chat draws them ("A chat's foot" there) for Messages (a
+   conversation, its reply threads, a blank thread with Homeroom bot) and
+   for the group chat (a project's channel, a topic's thread, a request's
+   page and a change's) alike. They were two sets of rules, `.messages-*`
+   here and Tailwind on the `#gc-*` elements, and each spacing fix landed in
+   one set and missed the other (1 November 2026). These are the one set.
+
+   THE TRANSCRIPT ENDS 12px INSIDE ITS SCROLLER, and the scroller's bottom
+   edge is the composer card's top edge (iPhone Duo, 1 November 2026).
+   Scrolled up a chat, the messages were cut off 24px above the reply box
+   with bare page between them: the band was OUTSIDE the scroller, made of
+   the empty typing line held open and the bar's padding over its card. Now
+   the air under the newest message is padding inside the scroller, there
+   at the newest line and scrolled away with the rest, at rest and with the
+   keyboard up alike.
+
+   Only where a bar follows (`~ .platform-safe-bar`: Send, the request
+   awaiting acceptance, "you can't send here", a read-only notice). Messages'
+   scrollers carry `.platform-safe-scroll` as well, which keeps the tab
+   bar's band at their foot, and that class won once (iPhone app, 19 October
+   2026): on a phone the history held the bar's full height (56px in a
+   browser, about 90 in the app) empty above a composer that clears the bar
+   again itself. Where no composer follows (an invitation before it is
+   accepted), the history reaches the foot of the screen and keeps the band.
+
+   The second selector is the first said again for those scrollers: the two
+   keyboard-up `.platform-safe-scroll` rules are (0,2,1) and `!important`,
+   so the end needs (0,3,0) to stay 12px with the keys up. `!important` for
+   everything else a scroller brings: its own utilities (`pt-3`), the topic
+   page's `#gc-thread-scroll` padding, and the kit's `.un-kb-avoid`, whose
+   inset the column reserves instead (`.platform-kb-column`, above). */
+.chat-transcript:has(~ .platform-safe-bar),
+.chat-transcript.platform-safe-scroll:has(~ .platform-safe-bar) {
+  padding-bottom: 12px !important;
+}
+/* WHO IS TYPING TAKES NO ROOM UNTIL SOMEBODY TYPES (1 November 2026). The
+   line held 18px open between the transcript and the reply box whether or
+   not it said anything (20px in the group chat, whose lines were Tailwind
+   `h-5`), so the messages stopped short of the box above an empty band.
+   Empty, it is 0 tall and still in the page, so its live region announces
+   the first name. When it fills, the transcript gets a line shorter and, if
+   the reader is at the newest message, stays there: Messages'
+   stick-to-bottom.ts and group-chat.js's ResizeObservers both watch the
+   scroller's own size. 13 over 18, muted, the size of a row's second line,
+   and inset 16px, where a message row starts. */
+.chat-status {
+  flex: 0 0 auto;
+  padding: 2px 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 18px;
+}
+.chat-status:empty {
+  padding-block: 0;
+}
+/* THE BAR HAS NO PADDING OVER ITS CARD (1 November 2026): the transcript
+   runs to the card's top edge, where Messages' bar stopped it 6px short and
+   the group chat's 4px (`pt-1`). 12px each side and 8px under the card, to
+   which `.platform-safe-bar` (above) adds the home-indicator strip or the
+   tab bar, whichever is taller, so on a notched phone the gap under the
+   card grows and the card itself does not. */
+.chat-composer-bar {
+  flex: 0 0 auto;
+  padding: 0 12px 8px;
+}
+
 /* ── Platform Messages screen ─────────────────────────────
    Fully React-owned (frontend/src/features/messages). Every rule is scoped
    to messages-* so the app group chat keeps its own contract.
@@ -586,29 +657,9 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-list-scroll {
   padding-bottom: var(--platform-tabs-h, 0px);
 }
-/* THE HISTORY ABOVE A COMPOSER RESERVES NOTHING AT ITS FOOT (iPhone app,
-   19 October 2026). The note above is the rule, but the scroller carries
-   `.platform-safe-scroll` too, and that class won: on a phone the history
-   kept a band of the tab bar's full height (56px in a browser, about 90 in
-   the app, with the home-indicator strip) empty above the composer, which
-   clears the bar again itself. So the band goes wherever a composer
-   (`.platform-safe-bar`: Send, the request awaiting acceptance, "you can't
-   send here") follows the history in its pane, the reply thread's
-   included. Where none does (an invitation before it is accepted), the
-   history reaches the foot of the screen and keeps the band.
-
-   12px, THE TRANSCRIPT'S OWN END (iPhone Duo, 1 November 2026). The air
-   under the last message was a band OUTSIDE the scroller: the empty typing
-   line (18px) and the composer's top padding (6px). Scrolled up, the
-   messages were cut off 24px above the reply box with bare page under
-   them. Both are gone (`.messages-typing:empty`, `.messages-composer`), so
-   the history runs to the box's edge, and the air at the end is padding
-   INSIDE the scroller, there at the newest line and scrolled away with the
-   rest. The same at rest and with the keyboard up: this outranks both
-   `.platform-safe-scroll` rules. */
-.messages-thread-scroll.platform-safe-scroll:has(~ .platform-safe-bar) {
-  padding-bottom: 12px !important;
-}
+/* THE HISTORY ABOVE A COMPOSER reserves no band at its foot, only the
+   transcript's own 12px end: `.chat-transcript`, under "A chat's foot"
+   above, which every chat's scroller wears (1 November 2026). */
 /* THE BOT'S CHAT, OPENING (features/messages/open-hold.ts). Its rows are
    laid out, so the transcript can tell whether they fill the screen, and
    not seen until they are what it will stay as; the spinner stays at the
@@ -1708,45 +1759,27 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
    writes in (16px inset + 36px avatar + 12px gap). */
 .messages-card-run { padding: 0 16px 6px 64px; }
 
-.messages-typing {
-  flex: 0 0 auto;
-  min-height: 18px;
-  padding: 2px 20px;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-/* NO ROOM UNTIL SOMEBODY TYPES (1 November 2026). The line held 18px open
-   between the transcript and the reply box whether or not it said anything,
-   so the messages stopped short of the box above an empty band. Empty, it
-   is 0 tall and still in the page, so its live region announces the first
-   name. When it fills, the transcript gets shorter by a line and, if the
-   reader is at the newest message, stays there (stick-to-bottom.ts watches
-   the scroller's own size). The group chat's status lines take the same
-   rule; `h-5` is a Tailwind class, so their ids outrank it. */
-.messages-typing:empty {
-  min-height: 0;
-  padding-block: 0;
-}
-#gc-typing:empty,
-#gc-thread-typing:empty {
-  height: 0;
-}
+/* The typing line (`.messages-typing`) is the chat foot's status line,
+   `.chat-status`, under "A chat's foot" near the top of this file. */
 
 /* ── The composer ────────────────────────────────────────────────────────
    One white card at the foot of the sheet: bare glyphs, a borderless field
    at reading size, and the round accent send disc the dev chat draws. The
-   BAR around the card is what carries the home-indicator inset
-   (`platform-safe-bar`), so on a notched phone the gap under the card
-   grows and the card itself does not.
+   BAR around the card is the chat foot's (`.chat-composer-bar`, near the
+   top of this file): no padding over the card, 12px each side and 8px
+   under it, and the home-indicator inset (`platform-safe-bar`) under that,
+   so on a notched phone the gap under the card grows and the card itself
+   does not. Positioned, for the @ and # menus and the drop overlay that
+   hang from it.
 
-   No padding over the card (1 November 2026): the transcript runs to the
-   card's top edge rather than stopping 6px short of it. The air under the
-   newest message is the scroller's own end now. */
-.messages-composer,
+   "You can't send here" is not a bar round a card but a line in its place:
+   it keeps its own padding (below), and the foot's flex. */
+.messages-composer {
+  position: relative;
+}
 .messages-composer-disabled {
   position: relative;
   flex: 0 0 auto;
-  padding: 0 12px 8px;
 }
 .messages-composer-card {
   border-radius: 22px;
@@ -16653,11 +16686,15 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-request-read:disabled { opacity: .6; cursor: default; }
 
 /* The stream: no sheet of its own (the sheet is the thread's), Messages'
-   row metrics, and the viewer's own replies not set apart. */
+   row metrics, and the viewer's own replies not set apart. No padding under
+   it either: the transcript's end is its scroller's 12px, as in every chat
+   (`.chat-transcript`, "A chat's foot", 1 November 2026). Its 8px, stacked
+   on the scroller's 6px, put 14px under the last reply; on the scroller's
+   12px it would have put 20. */
 #dev-topic-thread #gc-thread-messages:is([data-language="request"], [data-language="change"]) {
   margin: 0;
   max-width: none;
-  padding: 0 0 8px;
+  padding: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;

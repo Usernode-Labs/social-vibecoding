@@ -276,6 +276,69 @@ export function JumpToLatestButton({
   );
 }
 
+/*
+ * ── A chat's foot ─────────────────────────────────────────────────────
+ *
+ * Under every transcript with a reply box (a conversation and its reply
+ * threads in Messages, a project's channel, a topic's thread, a request's
+ * page and a change's), the same four things, in this order, as siblings
+ * in one flex column:
+ *
+ *   1. the transcript's scroller, wearing the class `chat-transcript`;
+ *   2. Jump to latest, hung from that scroller's foot (TranscriptOverlay
+ *      edge="foot", above);
+ *   3. the status line, `ChatStatusLine`: who is typing, or the group
+ *      chat's "Reconnecting…";
+ *   4. the composer bar, `ChatComposerBar`, around the composer's card.
+ *
+ * Two implementations drew them (features/messages and features/group-chat),
+ * and each spacing fix landed in one and missed the other (1 November 2026).
+ * So the measurements are app.css's, written once against these three
+ * classes (its own "A chat's foot" section):
+ *
+ *   * the transcript ends 12px inside its scroller, and the scroller's
+ *     bottom edge is the composer card's top edge: the air under the newest
+ *     message scrolls away with it, rather than being a band of bare page
+ *     the messages are cut off above;
+ *   * the status line is 13px and muted, and takes no room while it is
+ *     empty. It stays in the page at zero height, so its live region is
+ *     there to announce the first name;
+ *   * the bar is padded 0 12px 8px, with the home-indicator and tab-bar
+ *     clearance (`platform-safe-bar`) added under it;
+ *   * Jump to latest floats 8px above the scroller's foot, centred. Hung
+ *     there rather than over the status line, it rises with the transcript
+ *     when a name appears and never covers it.
+ *
+ * A class and two thin components, not one wrapper round the four, because
+ * they have to stay siblings: the keyboard reservation is the column's
+ * (`platform-kb-column`), app.css finds the bar after the scroller with
+ * `~`, and two of the scrollers are hosts public/js/group-chat.js renders
+ * into, which React must not put a node of its own around. The scroller's
+ * class is written into its className as a literal: the kit adds
+ * `un-kb-avoid` to that node at runtime, and a className that is plainly
+ * the same on every render is one React never rewrites over it.
+ */
+
+/**
+ * Who is typing, between the transcript and the composer. Always rendered,
+ * empty when nobody is: app.css gives it no height then, and a live region
+ * that is already in the page is the one a screen reader announces.
+ */
+export function ChatStatusLine({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+  return <div {...props} className={cn(className, 'chat-status')} aria-live="polite" />;
+}
+
+/**
+ * The bar the composer's card sits in, at the foot of the column. `as`
+ * is for a composer that is its own form (a blank thread with Homeroom
+ * bot); every other one is a div around its form.
+ */
+export function ChatComposerBar({
+  as: Tag = 'div', className, ...props
+}: { as?: 'div' | 'form' } & React.FormHTMLAttributes<HTMLElement>) {
+  return <Tag {...props} className={cn(className, 'chat-composer-bar platform-safe-bar')} />;
+}
+
 /**
  * "◆◆◆ 6 replies · Today at 7:58 AM" — the affordance that opens a thread.
  *

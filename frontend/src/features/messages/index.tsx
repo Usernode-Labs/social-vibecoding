@@ -6,7 +6,7 @@ import {
 import { createPortal } from 'react-dom';
 
 import {
-  JumpToLatestButton, NewMessagesBanner, NewMessagesDivider, TranscriptOverlay, groupsWithPrevious,
+  ChatStatusLine, JumpToLatestButton, NewMessagesBanner, NewMessagesDivider, TranscriptOverlay, groupsWithPrevious,
 } from '@/components/ui/chat';
 import {
   ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronDownIcon, ChevronLeftIcon, EllipsisHorizontalIcon, LockIcon, PencilSparklesIcon,
@@ -2332,8 +2332,11 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
           once useComposerKeyboard attaches (#3571), as it does to
           `#gc-messages`, and app.css's `.platform-kb-column .un-kb-avoid`
           keeps it from padding this scroller with the inset a second time.
-          So this className stays constant: React never strips the kit's. */}
-      <div ref={scroller} className="messages-thread-scroll platform-safe-scroll" aria-live="polite">
+          So this className stays constant: React never strips the kit's.
+          `chat-transcript` is what ends the transcript 12px inside this
+          scroller, at the composer card's edge, as every chat's does
+          (@/components/ui/chat, "A chat's foot", 1 November 2026). */}
+      <div ref={scroller} className="messages-thread-scroll platform-safe-scroll chat-transcript" aria-live="polite">
         {/* Only a thread with nothing to show yet says it is loading (#2907).
             A refresh of the visible thread — the realtime echo of every send
             is one — re-reads it silently: this row drawn above the messages
@@ -2372,14 +2375,16 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
           </div>
         ) : null}
       </div>
-      <div className="messages-typing" aria-live="polite">{typingLine(t, typing)}</div>
       {/* Jump to latest whenever the reader is not at the bottom, with a dot
-          for what arrived while they were up: centred, hung just above the
-          composer, below the typing line (@/components/ui/chat
-          TranscriptOverlay). */}
+          for what arrived while they were up: centred, hung from the
+          transcript's foot, just above the composer (@/components/ui/chat
+          TranscriptOverlay). Above the typing line since 1 November 2026,
+          as in every chat: it rises with the transcript when a name
+          appears rather than covering it. */}
       <TranscriptOverlay edge="foot">
         <JumpToLatestButton shown={unread.jump} dot={unread.arrived > 0} aria-label={jumpLabel(unread.arrived)} title={t('messages:thread.jumpToLatest')} onClick={jumpToLatest} />
       </TranscriptOverlay>
+      <ChatStatusLine className="messages-typing">{typingLine(t, typing)}</ChatStatusLine>
       <MessageComposer />
     </section>
   );
@@ -2785,7 +2790,7 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
       {/* Its head says it is theirs alone in Main Chat's column; under it,
           where it went once it was filed or posted. */}
       {privateMine && !(inMain && privateWhere?.state === 'open') ? <PrivateThreadNote where={privateWhere} /> : null}
-      <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll" aria-live="polite">
+      <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll chat-transcript" aria-live="polite">
         {/* The root's Reply quotes it into THIS thread's composer (#2387): its
             own threadRootId is null, being the main stream's message. */}
         {root ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} /> : null}
@@ -2832,12 +2837,13 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
           />
         ) : null}
       </div>
+      <JumpToLatest scroller={scroller} />
       {/* 31 Oct 2026: who is typing in this thread (the bot answering a
           message written here among them), as the conversation's own line
           says it. It was drawn beside the conversation alone, which a phone
-          hides while a thread is open. */}
-      <div className="messages-typing" aria-live="polite">{typingLine(t, threadTyping)}</div>
-      <JumpToLatest scroller={scroller} />
+          hides while a thread is open. Under Jump to latest, as in every
+          chat (1 Nov 2026). */}
+      <ChatStatusLine className="messages-typing">{typingLine(t, threadTyping)}</ChatStatusLine>
       <MessageComposer threadRootId={rootId} />
     </aside>
   );
