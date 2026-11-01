@@ -56,11 +56,13 @@ export function collect(offset = { x: 0, y: 0 }) {
   const scrolls = (el) => {
     // Walking up: a fixed or sticky box first means it stays put (a sticky
     // header inside a list included); a box that scrolls first means it moves.
+    // A box that scrolls is checked before its own position: a fixed sidebar
+    // that scrolls still moves the rows inside it.
     for (let p = el; p && p !== document.documentElement; p = p.parentElement) {
       const cs = getComputedStyle(p);
-      if (cs.position === 'fixed' || cs.position === 'sticky') return false;
       if (p !== el && /(auto|scroll)/.test(cs.overflowY) && p.scrollHeight > p.clientHeight + 1) return true;
       if (p !== el && /(auto|scroll)/.test(cs.overflowX) && p.scrollWidth > p.clientWidth + 1) return true;
+      if (cs.position === 'fixed' || cs.position === 'sticky') return false;
     }
     const se = document.scrollingElement;
     return !!se && se.scrollHeight > se.clientHeight + 1;
@@ -116,7 +118,17 @@ export function collect(offset = { x: 0, y: 0 }) {
   for (const el of document.querySelectorAll(TARGETS)) {
     if (!shown(el) || el.closest('[aria-hidden="true"], [inert]')) continue;
     if (el.disabled) continue;
-    targets.push({ desc: describe(el), rect: box(el), reachable: reachable(el), clipped: clippedInside(el), scrolls: scrolls(el), inline: getComputedStyle(el).display === 'inline' });
+    // What a finger can hit, which an invisible layer can make larger than
+    // what is drawn: the kit's `un-touch-target` is a 44px ::after.
+    const hit = box(el);
+    const after = getComputedStyle(el, '::after');
+    if (after.content !== 'none' && after.position === 'absolute') {
+      const w = parseFloat(after.width);
+      const h = parseFloat(after.height);
+      if (Number.isFinite(w) && w > hit.w) { hit.x -= (w - hit.w) / 2; hit.w = w; }
+      if (Number.isFinite(h) && h > hit.h) { hit.y -= (h - hit.h) / 2; hit.h = h; }
+    }
+    targets.push({ desc: describe(el), rect: box(el), hit, reachable: reachable(el), clipped: clippedInside(el), scrolls: scrolls(el), inline: getComputedStyle(el).display === 'inline' });
   }
 
   // What the page draws to be read or seen, in its fixed chrome: a label, an

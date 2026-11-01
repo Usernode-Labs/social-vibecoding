@@ -58,8 +58,10 @@ export function checkSnapshot(snap, profile) {
         out.push({ rule: 'target-under-system', severity: zone.severity, message: `${t.desc} is under the ${zone.name}.`, rect: t.rect });
       }
     }
-    if (profile.touch && !t.inline && (t.rect.w < MIN_TARGET - 0.5 || t.rect.h < MIN_TARGET - 0.5)) {
-      out.push({ rule: 'small-target', severity: 'warn', message: `${t.desc} is ${Math.round(t.rect.w)}x${Math.round(t.rect.h)}px, under ${MIN_TARGET}x${MIN_TARGET} for a finger.`, rect: t.rect });
+    // Sized by what a finger can hit, which may be larger than what is drawn.
+    const hit = t.hit || t.rect;
+    if (profile.touch && !t.inline && (hit.w < MIN_TARGET - 0.5 || hit.h < MIN_TARGET - 0.5)) {
+      out.push({ rule: 'small-target', severity: 'warn', message: `${t.desc} is ${Math.round(hit.w)}x${Math.round(hit.h)}px, under ${MIN_TARGET}x${MIN_TARGET} for a finger.`, rect: t.rect });
     }
   }
 
@@ -109,6 +111,9 @@ export function checkKeyboard(rest, up, profile) {
     if (!now) {
       // On a phone the tab bar at the foot goes with the keys, by design.
       if (before.key === 'sidebar' && rest.viewport.w < 768) continue;
+      // A header may fold away while the keys take the room of a short screen;
+      // what must not go is what stands beside the page.
+      if (/head|title/.test(before.key)) continue;
       if (rest.viewport.w >= 768) {
         out.push({ rule: 'keyboard-shift', severity: 'error', message: `${before.desc} disappears when the keyboard comes up.`, rect: before.rect });
       }

@@ -187,3 +187,20 @@ test('fixed text or an icon under the clock or the island cannot be read', async
   assert.deepEqual(rules(checkSnapshot(snap({ viewport: { w: 852, h: 393, visibleH: 393, scrollW: 852 }, marks: [label] }), SIDEWAYS)), ['warn content-under-system']);
   assert.deepEqual(checkSnapshot(snap({ marks: [{ ...label, rect: { ...label.rect, x: 60 } }] }), SIDEWAYS), []);
 });
+
+test('a control is sized by what a finger can hit, which an invisible layer can enlarge', async () => {
+  const { checkSnapshot } = await load('rules.mjs');
+  // Home's Edit is drawn 26x18; the kit's un-touch-target makes it 44x44.
+  const edit = target('button "Edit"', { x: 790, y: 123, w: 26, h: 18 }, { hit: { x: 781, y: 110, w: 44, h: 44 } });
+  assert.deepEqual(checkSnapshot(snap({ targets: [edit] }), DUO), []);
+  assert.deepEqual(rules(checkSnapshot(snap({ targets: [{ ...edit, hit: undefined }] }), DUO)), ['warn small-target']);
+});
+
+test('a header may fold away with the keys up; a column beside the page may not', async () => {
+  const { checkKeyboard } = await load('rules.mjs');
+  const head = { key: 'bot-main-head', desc: 'header.ai-main-head', rect: { x: 474, y: 45, w: 378, h: 63 } };
+  const main = { key: 'bot-main', desc: 'aside#ai-main-pane', rect: { x: 473, y: 44, w: 379, h: 349 } };
+  const rest = snap({ viewport: { w: 852, h: 393, visibleH: 393, scrollW: 852 }, landmarks: [head, main] });
+  assert.deepEqual(checkKeyboard(rest, snap({ viewport: { w: 852, h: 393, visibleH: 184, scrollW: 852 }, landmarks: [main] }), DUO), []);
+  assert.deepEqual(rules(checkKeyboard(rest, snap({ viewport: { w: 852, h: 393, visibleH: 184, scrollW: 852 }, landmarks: [head] }), DUO)), ['error keyboard-shift']);
+});

@@ -867,6 +867,19 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   gap: 12px;
   padding: 14px 16px 8px;
 }
+/* TYPING ON A SHORT SCREEN, THE CONVERSATION'S HEADER FOLDS AWAY (layout
+   audit, 1 November 2026). An iPhone held sideways is 393px tall and its
+   keys leave about 184: the platform's header, this one (66px) and the
+   reply box came to more than that, so the box ended behind the keys and
+   the transcript above it had no height at all. Main Chat's head on the
+   bot tab folds the same way. While a field has the keys
+   on a screen that short, the transcript and the box take the room; the
+   header comes back the moment the keyboard drops. */
+@media (max-height: 500px) {
+  html:is(.un-kb, .platform-kb-open) :is(.messages-thread-header, #ai-screen .ai-main-head) {
+    display: none;
+  }
+}
 .messages-thread-name,
 .messages-thread-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .messages-thread-name { color: var(--text-primary); font-size: 17px; font-weight: 700; }
@@ -18264,6 +18277,17 @@ body:has(#ai-screen:not(.hidden)) {
 html[data-side-strip="right"] body:has(#ai-screen:not(.hidden)) {
   --ai-edge: var(--platform-strip-w, 0px);
 }
+/* A NOTCH ON THE RIGHT (an iPhone held sideways, THE NOTCH below) is an
+   edge the same way, for the columns' width and their heads. Unlike the
+   Duo's column it is the camera island halfway down, not plain screen, so
+   Main's chat and the page in its place keep clear of it too. */
+html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hidden)) {
+  --ai-edge: var(--platform-notch-right, 0px);
+}
+html:not([data-side-strip]):not([data-side-corner]) #ai-screen .ai-main-pane > .messages-layout,
+html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hidden)) .side-panel-body {
+  padding-right: var(--ai-edge, 0px);
+}
 /* 1 Nov 2026: between 768 and 1024px the list keeps 280px, not 480: its
    rows are one line (their numbers left out, as a phone's are), and the
    column is 320px at the least. 280 rather than the 360 first chosen, so
@@ -22828,6 +22852,50 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
   object-fit: cover;
 }
 
+/* ── THE NOTCH: insets on the sides that are not the Duo's column ─────────
+   (iPhone held sideways in Safari, 1 November 2026.) A phone on its side
+   reports the camera island's inset on BOTH sides (59px on an iPhone),
+   which side-strip.ts deliberately does not call a column. Nothing kept
+   clear of it: the layout audit (scripts/layout-audit) found the sidebar's
+   icons and labels under the island, and with the phone turned the other
+   way the page's right edge goes under it instead. From 768px, where the
+   wide layout runs, the page keeps clear of both sides the way it keeps
+   clear of the Duo's column (THE CONTENT STOPS AT THE STRIP, above): the
+   body pads, the header spans the screen and pads its controls, and the
+   fixed pieces (the sidebar, the bot tab's columns) clear it one by one.
+   Only where no column or corner is set, so the Duo's own inset is never
+   counted twice; 0 on every device without side insets. */
+body {
+  --platform-notch-left: 0px;
+  --platform-notch-right: 0px;
+}
+@media (min-width: 768px) {
+  html:not([data-side-strip]):not([data-side-corner]) body {
+    --platform-notch-left: var(--un-safe-inset-left, env(safe-area-inset-left, 0px));
+    --platform-notch-right: var(--un-safe-inset-right, env(safe-area-inset-right, 0px));
+    /* THE USABLE BOX's sides, so a menu or a popover clears it too, and the
+       bot tab's room (`--ai-room`) leaves it out. */
+    --platform-float-left: var(--platform-notch-left);
+    --platform-float-right: var(--platform-notch-right);
+    padding-left: var(--platform-notch-left);
+    padding-right: var(--platform-notch-right);
+  }
+  html:not([data-side-strip]):not([data-side-corner]) #platform-header {
+    margin-left: calc(-1 * var(--platform-notch-left));
+    margin-right: calc(-1 * var(--platform-notch-right));
+    padding-left: calc(1rem + var(--platform-notch-left));
+    padding-right: calc(1rem + var(--platform-notch-right));
+  }
+  /* The sidebar is fixed to the screen's left edge: its ground runs under
+     the island and its rows start after it. The screens beside it already
+     start after the notch (the body's padding), so what they reserve for
+     it, `--platform-rail-w`, stays its own width. */
+  html:not([data-side-strip]):not([data-side-corner]) .platform-tabs {
+    width: calc(var(--platform-rail-full) + var(--platform-notch-left));
+    padding-left: calc(6px + var(--platform-notch-left));
+  }
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    THE SIDE STRIP — iPhone Duo's column of system chrome (24 Oct 2026)
    ═══════════════════════════════════════════════════════════════════
@@ -24043,6 +24111,19 @@ html.un-kb #platform-parked {
 
     border-top: 0;
     border-right: 1px solid var(--app-sheet-line);
+
+    /* IT SCROLLS WHEN IT IS TALLER THAN THE SCREEN (layout audit, 1 November
+       2026). On an iPhone held sideways (393px) its last communities and
+       You ran off the bottom with no way to reach them, and on the iPhone
+       Duo held sideways a project's places pushed You into the home
+       indicator's strip. Me's auto margin still pins it to the foot when
+       there is room; when there is not, it follows the rest and scrolls,
+       and the padding above keeps it clear of the home indicator at the
+       end. Sideways it never scrolls: nothing in it is wider than it. */
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
   }
 
   /* ── ME SITS AT THE FOOT (#2718 review) ──────────────────────────────
@@ -24583,13 +24664,22 @@ section + .workshop-search {
   #platform-tab-me {
     padding-right: 46px;
   }
+  /* IN THE FLOW, AT THE END OF YOUR ROW (1 November 2026). It was pinned to
+     the sidebar's bottom edge; once the sidebar scrolls when it is taller
+     than the screen, that edge is the bottom of what shows, and the cog
+     stayed there over other rows while You scrolled away. It takes no
+     height of its own: its line (36px, and the 1px gap) comes back as a
+     negative margin, so You, next in `order`, sits on the same line, under
+     it, and both scroll together. */
   .platform-rail-settings {
-    position: absolute;
-    right: 6px;
-    bottom: calc(10px + var(--platform-safe-bottom, 0px));
+    position: relative;
+    align-self: flex-end;
+    /* Never squeezed: in a sidebar that holds more than fits, a flex child
+       of no fixed basis shrank to its 20px glyph. */
+    flex: none;
     width: 36px;
     height: 36px;
-    margin: 0;
+    margin: 0 0 -37px;
     border-radius: 10px;
   }
   .platform-rail-settings-glyph {

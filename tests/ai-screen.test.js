@@ -806,7 +806,11 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   assert.match(css, /#ai-screen \.ai-preview-pane \{[^}]*right: 0;[^}]*width: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\s+padding-right: var\(--ai-edge, 0px\);/);
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{\s+width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel-head \{[^}]*padding: 12px calc\(18px \+ var\(--ai-edge, 0px\)\) 12px 18px;/);
-  assert.doesNotMatch(css, /\.side-panel-body \{[^}]*var\(--ai-edge/, 'and so does the page in the side panel');
+  // Only a notch (an iPhone held sideways, THE NOTCH) pads the chat and the
+  // panel's page: its island is halfway down, not plain screen.
+  const unNotched = css.replace(/html:not\(\[data-side-strip\]\):not\(\[data-side-corner\]\)[^{]*\{[^}]*\}/g, '');
+  assert.doesNotMatch(unNotched, /\.side-panel-body \{[^}]*var\(--ai-edge/, 'and so does the page in the side panel');
+  assert.match(css, /html:not\(\[data-side-strip\]\):not\(\[data-side-corner\]\) #ai-screen \.ai-main-pane > \.messages-layout,\nhtml:not\(\[data-side-strip\]\):not\(\[data-side-corner\]\) body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel-body \{\n  padding-right: var\(--ai-edge, 0px\);/);
   // In the Homeroom app the panel stands here too (canTake), and a reply
   // typed in its own document had the keyboard over its box: it ends above
   // the keyboard the kit measures from the screen.
