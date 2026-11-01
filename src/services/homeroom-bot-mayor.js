@@ -356,6 +356,7 @@ function dmModule(deps) { return deps.dmSvc || require('./homeroom-bot-dm'); }
 function activityModule(deps) { return deps.activitySvc || require('./homeroom-bot-activity'); }
 function botModule(deps) { return deps.botSvc || require('./homeroom-bot'); }
 function liveModule(deps) { return deps.liveSvc || require('./homeroom-bot-live'); }
+function threadToolsOf(deps) { return deps?.threadTools || require('./homeroom-bot-thread-tools'); }
 
 // ── One person's turns, one after another ─────────────────────────────────
 //
@@ -484,7 +485,7 @@ function threadLines(request) {
   ];
 }
 
-function systemPrompt({ username, perPerson = 2, today = new Date(), platform = true, request = null, thread = null }) {
+function systemPrompt({ username, perPerson = 2, today = new Date(), platform = true, request = null, thread = null, extra = [] }) {
   return [
     `You are Homeroom bot, talking with @${username} in a direct message on Homeroom. Homeroom is a platform where`,
     'people build small web apps together. Every change to a project is voted on by the project\'s group.',
@@ -562,6 +563,8 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- Tell the Homeroom team about a problem they hit that nothing above fixes, when they ask you to or say yes',
     '  when you offer (report_problem). It is filed as a report from them where the team tracks problems, which',
     '  anyone can read; the last few messages of this chat go only to the team, privately. Say so.',
+    // Homeroom bot parity (P1-P9): what the thread tools add this turn (homeroom-bot-thread-tools/).
+    ...extra,
     'Finish every turn by calling reply exactly once: short plain text, cards for up to 3 requests,',
     'changes or projects you mention, and up to 3 suggestions: short things they might say next, in their own',
     'words ("How long will it take?"), each something you can do or answer from this chat. Offer at least one',
@@ -2409,7 +2412,11 @@ async function runTool(pool, ctx, name, args) {
         ctx.reply = { text: clip(args.text, MAX_REPLY_CHARS), cards: args.cards, suggestions: args.suggestions };
         return { ok: true };
       }
-      default: return { error: `Unknown tool ${name}` };
+      default: {
+        // Homeroom bot parity (P1-P9): a tool of one of the thread tool modules.
+        const out = await threadToolsOf(deps).run(pool, ctx, name, args);
+        return out === undefined ? { error: `Unknown tool ${name}` } : out;
+      }
     }
   } catch (err) {
     log.warn('homeroom-bot-mayor', 'A DM tool failed', { tool: name, userId: user.id, err: err.message });
@@ -2885,7 +2892,12 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           (platform.modelTools || []).filter((tool) => PLATFORM_TOOLS.includes(tool.name)),
         )
         : [];
-      const tools = [...TOOLS, ...platformTools];
+      // Homeroom bot parity (P1-P9): the thread tools this turn has
+      // (homeroom-bot-thread-tools/), between its own and the platform's.
+      ctx.platformTools = platformTools.length > 0;
+      const threadTools = threadToolsOf(deps);
+      const extraTools = threadTools.toolsFor(ctx);
+      const tools = [...TOOLS, ...extraTools, ...platformTools];
       // #3733: the conversation could not be read: their message alone is
       // still answered.
       try {
@@ -2919,6 +2931,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
             username: user.username, perPerson: settings.perPerson, platform: platformTools.length > 0,
             request: deps.threadRequest || null,
             thread: !deps.threadRequest && deps.threadRootId ? { draft: deps.threadDraft || null } : null,
+            extra: threadTools.promptLines(ctx),
           }),
         },
         ...(about ? [{ role: 'system', content: about }] : []),
@@ -3090,6 +3103,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     metadata: {
       kind: 'chat', ...project,
       ...(actions.length ? { actions, status: 'open' } : {}),
+      // Homeroom bot parity (P1-P9): a card a thread tool put under the reply
+      // (homeroom-bot-cards/, frontend features/messages/bot-cards/).
+      ...(ctx.card && typeof ctx.card === 'object' && typeof ctx.card.type === 'string' ? { card: ctx.card } : {}),
     },
     // C2.4: a new project's thread opened this turn: the answer is its first reply.
     ...(ctx.projectThread ? { replyToId: null, threadRootId: ctx.projectThread.rootId } : {}),
