@@ -437,7 +437,10 @@ test('issue: the full demoted set, and Open on GitHub last', () => {
   const AppView = makeAppView();
   const labels = menuLabels(AppView, issueCardHtml(AppView, 
     ISSUE({ htmlUrl: 'https://github.com/o/r/issues/5' })));
-  assert.equal(labels[0], 'Pledge kudos');
+  // 1 Nov 2026: Build it now left the face for Work on this with Homeroom
+  // bot, and leads the ⋯ as an agent session.
+  assert.equal(labels[0], 'Build it in an agent session');
+  assert.equal(labels[1], 'Pledge kudos');
   assert.ok(labels.some((l) => /Pledge kudos/.test(l)));
   // The claim toggle is PROMOTED to the action band, so it left the menu.
   assert.ok(!labels.some((l) => /Claim it/.test(l)), 'promoted onto the face');

@@ -2133,12 +2133,13 @@ function conversationNotificationHref(n) {
   // "One story": one of Homeroom bot's moments opens its request's thread in
   // the chat with the bot: the thread its message is in, or the card the
   // detail names (services/homeroom-bot-notify-copy.js); else the message
-  // itself, whose permalink lands inside its thread.
+  // itself, whose permalink lands inside its thread. 1 Nov 2026: on the bot's
+  // tab, the chat's only place (features/ai/door.ts botTabAddress).
   if (BUILD_KIND_MOMENTS[n.kind] || isBotMomentDetail(n.detail)) {
     const root = valid(rootId) ? rootId : (parseBotDetail(n.detail) || {}).threadRootId;
-    if (valid(root)) return `#messages/${conversationId}/thread/${root}`;
-    if (valid(messageId)) return `#messages/${conversationId}/m/${messageId}`;
-    return `#messages/${conversationId}`;
+    if (valid(root)) return `#homeroom-bot/thread/${root}`;
+    if (valid(messageId)) return `#homeroom-bot/main/m/${messageId}`;
+    return '#homeroom-bot/main';
   }
   if (['conversation_mention', 'conversation_reply', 'conversation_reaction'].includes(n.kind)
       && valid(messageId)) {

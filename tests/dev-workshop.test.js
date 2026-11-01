@@ -1400,9 +1400,10 @@ test('New for you: of what moved since your last visit, the requests filed since
   assert.ok(!fresh.includes('data-ws-since-clear=""'), 'What happened\'s button still selects exactly one element');
   const rows = [...fresh.matchAll(/data-ws-row="([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(rows, ['since:issue:12'], 'a request filed before the visit is not new for you, and the vote is Needs you\'s');
-  // The request: what it is, who filed it, and Build it — the request
-  // card's own act, worded short, its own words the tooltip.
-  assert.match(fresh, /<span class="dev-ws-wrow-sub">New request · #12 · alice · 2d ago<\/span><\/span><span class="dev-ws-arow-act"><button type="button" data-act="chooseIssueWork" title="Start an agent session on this request" class="[^"]*\brounded-full\b[^"]*">Build it<\/button><\/span>/);
+  // The request: what it is, who filed it, and its card's own act, worded
+  // short, its own words the tooltip. 1 Nov 2026: Work on it, where the card
+  // says Work on this with Homeroom bot (Build it now is its ⋯'s now).
+  assert.match(fresh, /<span class="dev-ws-wrow-sub">New request · #12 · alice · 2d ago<\/span><\/span><span class="dev-ws-arow-act"><button type="button" data-act="workOnIssueWithBot" title="Talk it through and plan it with Homeroom bot, in a thread only you can see" class="[^"]*\brounded-full\b[^"]*">Work on it<\/button><\/span>/);
   // #4716: the vote waiting on you is not here a second time. It is in
   // Needs you, where it is voted on.
   assert.ok(!fresh.includes('since:proposal:34') && !fresh.includes('data-ws-fresh-vote') && !fresh.includes('Waiting on your vote'));
@@ -1411,6 +1412,7 @@ test('New for you: of what moved since your last visit, the requests filed since
   // A Build it is offered only when the act builds: asking Homeroom bot, or
   // building it yourself.
   assert.match(WORKSHOP, /if \(a && a\.act && \(a\.act\.fn === 'askBotToBuild' \|\| a\.act\.fn === 'chooseIssueWork'\)\) \{\s*return <ActButton a=\{a\} label=\{t\('project:workshop\.fresh\.buildIt'\)\} \/>;/);
+  assert.match(WORKSHOP, /if \(a && a\.act && a\.act\.fn === 'workOnIssueWithBot'\) \{\s*return <ActButton a=\{a\} label=\{t\('project:workshop\.fresh\.workOnIt'\)\} \/>;/);
   // Not on a first visit, and not when nothing asks anything of you.
   const first = makeAppView();
   seed(first);
@@ -1424,8 +1426,8 @@ test('New for you: of what moved since your last visit, the requests filed since
   mine._proposals[0].username = 'me';
   mine._proposals[0].user_id = 1;
   assert.ok(!workshopHtml(mine, 'workshop').slice(0, workshopHtml(mine, 'workshop').indexOf('data-ws-happened-head')).includes('since:proposal:34'));
-  assert.deepEqual(['workshop.fresh.title', 'workshop.fresh.buildIt', 'workshop.fresh.markAllSeen'].map((k) => message(`project:${k}`)),
-    ['New for you', 'Build it', 'Mark all seen']);
+  assert.deepEqual(['workshop.fresh.title', 'workshop.fresh.buildIt', 'workshop.fresh.workOnIt', 'workshop.fresh.markAllSeen'].map((k) => message(`project:${k}`)),
+    ['New for you', 'Build it', 'Work on it', 'Mark all seen']);
 });
 
 test('the vote deck is its own tab; the unclaimed suggestion stays with the status', () => {

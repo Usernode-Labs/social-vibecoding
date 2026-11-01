@@ -24,6 +24,7 @@ import { BotReadyCard, isReadyMessage } from './bot-ready';
 import { alsoInChat, botRequestNames, botThreadLabel, threadsAllowed, type ChangeBlock } from './bot-shared';
 import { openRequestPage, requestPageOf } from './request-page';
 import { BotHeadWords, botHead, isHeadCard } from './bot-head-card';
+import { DesignVersionCard, designVersionOf } from './design-card';
 import { LinkEmbeds } from './link-cards';
 import { plainText } from './plain-text';
 import { confirmAction } from '../../lib/confirm';
@@ -383,8 +384,14 @@ export const MessageRow = memo(function MessageRow({
 
   // Everything a message carries besides its text: files, shared items,
   // reactions, the thread under it and the status line.
+  // 1 Nov 2026: a version of the thread's design, said by the bot, drawn
+  // small under its words with Open preview (./design-card.tsx).
+  const designVersion = inThread && message.threadRootId && !message.deleted ? designVersionOf(message) : null;
   const extras = (
     <>
+      {designVersion && message.threadRootId ? (
+        <DesignVersionCard conversationId={conversationId} rootId={message.threadRootId} version={designVersion} title={message.metadata?.homeroomBot?.designTitle || null} />
+      ) : null}
       {message.sender.bot && (message.metadata?.homeroomBot?.question || message.metadata?.homeroomBot?.actions?.length)
         && !isTwoQuestions(message) && !isReadyMessage(message)
         ? <BotQuestion message={message} conversationId={conversationId} hidePrompts={hidePrompts} /> : null}

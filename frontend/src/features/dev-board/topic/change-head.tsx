@@ -58,6 +58,7 @@ import { RequestWords, SpecCard, sentences } from './request-head';
 import { ThreadItems, pageSlug } from './thread-items';
 import { changeMenuKey } from './thread-menu';
 import { TopicBack } from './topic-back';
+import { WorkWithBotButton } from './work-with-bot';
 import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view';
 import { IncludedIn, IssueAssociations, ProposalBody, SummaryMore } from './topic-head';
 
@@ -386,13 +387,16 @@ function gateActions(card: DevCardModel, v: ChangeThreadView) {
  * A change's Votes and Testing cards, one above the other, with their
  * buttons: its own page draws them under its summary, and #6019's request
  * page under each change in the request's thread (./thread-changes.tsx).
+ * 1 Nov 2026: `ballot`, a change folded under the ballot that decides
+ * between it and its rivals keeps its Votes card without its own Vote
+ * button, so there is one way to vote.
  */
-export const ChangeGates = forwardRef<HTMLDivElement, { id: number | null; card: DevCardModel; v: ChangeThreadView }>(
-  function ChangeGates({ id, card, v }, ref) {
+export const ChangeGates = forwardRef<HTMLDivElement, { id: number | null; card: DevCardModel; v: ChangeThreadView; ballot?: boolean }>(
+  function ChangeGates({ id, card, v, ballot = false }, ref) {
     const { voteAction, testAction, withFix, testingActions } = gateActions(card, v);
     return (
       <div ref={ref} className="dev-change-pair">
-        <GateCard which="votes" g={v.votes} action={voteAction} id={id} />
+        <GateCard which="votes" g={v.votes} action={ballot ? null : voteAction} id={id} />
         <GateCard which="testing" g={v.testing} action={testAction} rerun={withFix ? testingActions : null} id={id} />
       </div>
     );
@@ -565,6 +569,8 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           <ChangeGates ref={pair} id={id} card={card} v={v} />
           {v.upstream ? <UpstreamDecline u={v.upstream} id={id} /> : null}
           {v.shots ? <ShotsCard s={v.shots} /> : null}
+          {/* 1 Nov 2026: ask about it, or sketch a revision, privately. */}
+          <WorkWithBotButton slug={pageSlug()} number={v.number} />
         </div>
       </article>
     </>

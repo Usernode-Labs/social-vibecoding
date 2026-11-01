@@ -3,10 +3,12 @@
  * Messages and Communities"; ../nav-drawer/messages-drawer.ts is the model).
  *
  * Under 768px the list is the drawer's first level, 85% of the screen, with
- * Main Chat, the chat with Homeroom bot, peeking in at its right. Main is
- * the second level, the whole screen. A private thread's row, the peek and
- * the Ask bar slide the strip in; Main's arrow and a swipe right slide it
- * back. A pan follows the finger and, let go past a quarter of the way,
+ * the column, Main Chat or one thread of it, peeking in at its right. The
+ * column is the second level, the whole screen. Main Chat's row, a private
+ * thread's row, the peek and the Ask bar slide the strip in; the column's
+ * arrow and a swipe right slide it back. 1 Nov 2026: a thread is alone in
+ * it, under its own head, whose arrow goes back to the list (Main Chat is a
+ * row of it). A pan follows the finger and, let go past a quarter of the way,
  * lands on the next level, as the Messages drawer's does: the same strip
  * (MESSAGES_AT), the same slide (SLIDE_MS, SLIDE_EASE) and the same landing
  * rule (landingIn). The drawer holds only Main and its threads: a request,
@@ -17,9 +19,9 @@
  * screen reader never lands in the 15% of the list left showing, or in the
  * peek's thread behind its button.
  *
- * From 768px nothing here is drawn: the list is its own column, beside Main
- * from 1024px. The list is never folded into the platform's sidebar (Evan,
- * 30 Oct).
+ * From 768px nothing here is drawn: the list is its own column, beside the
+ * column Main Chat docks in (1 Nov 2026: from 768px, not 1024px). The list
+ * is never folded into the platform's sidebar (Evan, 30 Oct).
  */
 import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
@@ -49,17 +51,21 @@ export function usePhone(): boolean {
   return phone;
 }
 
-/** The second level: Main Chat's header and the chat. */
-export function MainPane({ botId, active, at, onBack }: {
+/**
+ * The second level: Main Chat's header and the chat, or a thread of it
+ * alone (`threadUp`), whose own head has the arrow back to the list.
+ */
+export function MainPane({ botId, active, at, onBack, threadUp = false }: {
   botId: number | null;
   active: boolean;
   at: { threadRootId: number | null; focusMessageId: number | null } | null;
   onBack: () => void;
+  threadUp?: boolean;
 }): ReactNode {
   const t = useMessages('messages');
   return (
     <>
-      <header className="ai-drawer-head" data-ai-drawer-head="">
+      {threadUp ? null : <header className="ai-drawer-head" data-ai-drawer-head="">
         <button type="button" className="ai-drawer-back" onClick={onBack} aria-label={t('messages:ai.drawer.back')}>
           <ChevronLeftIcon className="h-5 w-5" aria-hidden="true" />
         </button>
@@ -71,8 +77,8 @@ export function MainPane({ botId, active, at, onBack }: {
             <span className="truncate">{t('messages:ai.main.sub')}</span>
           </span>
         </span>
-      </header>
-      {botId ? <EmbeddedConversation conversationId={botId} active={active} at={at} mainChat /> : null}
+      </header>}
+      {botId ? <EmbeddedConversation conversationId={botId} active={active} at={at} mainChat onBack={onBack} /> : null}
     </>
   );
 }

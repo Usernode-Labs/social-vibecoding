@@ -97,28 +97,37 @@ test('a plan goes with the change built from it; the request lists only plans no
   assert.equal(plans.get(67).title, 'Plan A');
   assert.equal(plans.get(68).title, 'Plan B');
   assert.deepEqual(unbuilt.map((c) => c.title), ['Plan C', 'GitHub copy']);
+  // 1 Nov 2026 (C2.3): a change built from a plan on another session (a
+  // person's plan, or the bot's own its requester approved) names it.
+  const built = plansByChange([plan(90, 'Ada\'s plan'), plan(68, 'Plan B')], [{ id: 67, builtFrom: { sessionId: 90 } }, { id: 68, builtFrom: { sessionId: 90 } }]);
+  assert.equal(built.plans.get(67).title, 'Ada\'s plan', 'the first change built from it');
+  assert.equal(built.plans.get(68).title, 'Plan B', 'a change\'s own plan wins');
+  assert.deepEqual(built.unbuilt, []);
   const changes = read(`${TOPIC}/thread-changes.tsx`);
   assert.match(changes, /data-thread-change-plan=/);
   assert.equal(message('project:topic.thread.page.fromPlan', { title: 'Plan A' }), 'Built from the plan "Plan A"');
 });
 
-test('Main Chat\'s thread takes its whole column, with a way back to the chat', () => {
+test('Main Chat\'s thread takes its whole column, alone: Main Chat is a row of the list', () => {
   const css = read('public/css/app.css');
   assert.match(css, /\.messages-layout\[data-main-chat\]\.messages-has-reply-thread > \.messages-thread-pane \{ display: none; \}/);
   assert.match(css, /\.messages-layout\[data-main-chat\] > \.messages-reply-pane \{\n {2}flex: 1 1 auto;\n {2}width: 100%;/);
   assert.match(css, /\.messages-layout\[data-main-chat\] > \.messages-reply-pane > \.messages-reply-resizer \{ display: none; \}/);
+  // 1 Nov 2026: no Back to Main Chat on the thread; a phone's arrow goes to the list.
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /data-reply-close="" data-reply-back=""/);
-  assert.match(screen, /aria-label=\{t\('messages:replies\.backToMain'\)\}/);
-  assert.equal(message('messages:replies.backToMain'), 'Back to Main Chat');
+  assert.doesNotMatch(screen, /replies\.backToMain/);
+  assert.match(screen, /data-reply-back=""\s+aria-label=\{t\('messages:ai\.drawer\.back'\)\}/);
   assert.match(read('frontend/src/features/ai/index.tsx'), /<EmbeddedConversation [^>]*mainChat/);
-  assert.match(read('frontend/src/features/ai/phone-drawer.tsx'), /<EmbeddedConversation [^>]*mainChat/);
+  assert.match(read('frontend/src/features/ai/phone-drawer.tsx'), /<EmbeddedConversation [^>]*mainChat onBack=\{onBack\}/);
 });
 
 test('where a private thread stands says what it is and what a reply answers', () => {
   const svc = read('src/services/private-threads.js');
   const fn = svc.slice(svc.indexOf('async function stateOf('), svc.indexOf('async function record('));
   assert.match(fn, /LEFT JOIN threads t ON t\.id = p\.target_thread_id/);
-  assert.match(fn, /if \(!row\) return \{ state: 'open', kind: 'idea', app: null, target: null \};/);
+  assert.match(fn, /return \{ state: 'open', kind: 'idea', app: null, target: null, mine \};/);
   assert.match(fn, /kind: row\.kind/);
+  // 1 Nov 2026: and whether it is the viewer's private thread at all.
+  assert.match(fn, /const mine = !!\(await ownRoot\(pool, \{ user, bot: who, rootId \}\)\);/);
+  assert.match(fn, /mine: true,\n {2}\};/);
 });

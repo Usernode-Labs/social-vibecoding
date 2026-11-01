@@ -1331,6 +1331,23 @@ function approvedBuildHomeroomText({ requester = null } = {}) {
   return `${requester ? `@${requester}` : 'The person who asked for it'} said Build it. I'm building it now.`;
 }
 
+/**
+ * 1 Nov 2026 (threads, one loop: C2.3): a build from a plan a person posted
+ * on the request (homeroom-bot.js usePersonPlan): a short note, no plan of
+ * the bot's and no second card. On GitHub a platform username is never an
+ * @mention (#723), so it names them plainly. Pure.
+ */
+function fromPlanCommentText({ author = null, version = null } = {}) {
+  const whose = author ? `${author}'s plan` : 'the plan posted above';
+  return `Homeroom bot is building this request from ${whose}${Number(version) > 0 ? ` (version ${Number(version)})` : ''} now.`;
+}
+
+/** C2.3: the Homeroom copy: "Building from @ada's plan (version 2)." Named, never tagged. Pure. */
+function fromPlanHomeroomText({ author = null, version = null } = {}) {
+  const whose = author ? `@${author}'s plan` : 'the plan above';
+  return `Building from ${whose}${Number(version) > 0 ? ` (version ${Number(version)})` : ''}.`;
+}
+
 // #4488: how a complicated change's plan is answered where it is posted.
 const PLAN_REPLY_HINT = 'reply "build it" here when it looks right, or say what to change and it will plan it again.';
 
@@ -5195,6 +5212,8 @@ module.exports = {
   liveHomeroomText,
   announceLive,
   approvedBuildHomeroomText,
+  fromPlanCommentText,
+  fromPlanHomeroomText,
   buildFailedText,
   retryCommentText,
   heldText,

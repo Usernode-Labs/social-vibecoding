@@ -32,27 +32,51 @@
  * `change-detail-refresh` that names it. Nothing renders until the thread is
  * read (an effect in ./request-head.tsx), so the first paint is the page as
  * it was.
+ *
+ * 1 Nov 2026 (one page per thread): a change built for a request has no
+ * page of its own any more; its address lands here, at it (AppView
+ * _renderTopicSubView, ./votes-in-view.ts). So its section carries what
+ * only its page had: its status pill and its own ⋯ on its line (the rows
+ * its view registers, `detail:proposal:<id>`), its summary, a small before
+ * and after with Expand into its page's viewer, and the sheets its ⋯ and
+ * its Testing card open (topic-head.tsx ChangeSheets). Its replies are in
+ * the request's one discussion now (../../group-chat/transcript.tsx
+ * RequestRows), so the fold of its earlier replies is gone. Competing
+ * changes fold under their ballot, with no Vote button of their own; a
+ * change for this request that lives on another request's page is one
+ * line that says where (`elsewhere`).
+ *
+ *   CHANGE #6063 · DEWI                       [Up for a vote] [⋯]
+ *   Pin a message to the top of a channel
+ *   │ Admins can pin one message per channel…
+ *   [before] [after]  ⤢ Expand
+ *   [ Votes  1 of 2 yes   ▮▮▯ ] [Yes][No]
+ *   [ Testing  All checks passed ] [Try it]
  */
 
-import { Fragment, useEffect, useMemo, useState } from 'react';
-import type { ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode, RefObject } from 'react';
 
-import { useMessages } from '../../../lib/i18n/react';
-import { Avatar } from '@/components/ui/feed';
-import { CheckIcon, ChevronDownIcon, XIcon } from '@/components/ui/icons';
-import { swatchFor } from '../../group-chat/swatch';
-import { ActionButton } from '../card/dev-card';
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { CheckIcon, ChevronDownIcon, EllipsisHorizontalIcon, XIcon } from '@/components/ui/icons';
+import { Html } from '../../../lib/html';
+import { ActionButton, StatusPill } from '../card/dev-card';
 import type { DevCardModel } from '../card/model';
 import { ChangeGates } from './change-head';
 import { changeDetailAsk, mergeChangePatch } from './change-detail-refresh';
-import type { ChangeThreadView } from './model';
-import { readChangeDetail } from './topic-head';
+import type { ChangeThreadView, TopicBody } from './model';
+import { ChangeSheets, readChangeDetail } from './topic-head';
+import { RequestWords } from './request-head';
 import { openRequestSpec, type RequestSpecCard } from './request-model';
+import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view';
+import { pageSlug } from './thread-items';
+import { WorkWithBotButton } from './work-with-bot';
 import {
   ballotOf,
   ballotVotes,
+  elsewhereFor,
   type Ballot,
-  type FoldedReply,
+  type ThreadElsewhere,
   type ThreadItem,
   type ThreadPayload,
 } from './thread-model';
@@ -61,14 +85,10 @@ function appView(): any {
   return typeof window !== 'undefined' ? (window as any).AppView : null;
 }
 
-function openChange(id: number): void {
-  const av = appView();
-  if (av && typeof av.openTopic === 'function' && id > 0) av.openTopic('proposal', id);
-}
-
 interface ChangeView {
   row: any;
   card: DevCardModel;
+  body: TopicBody;
   v: ChangeThreadView;
 }
 
@@ -77,26 +97,26 @@ const hasCards = (item: ThreadItem) => item.state === 'review' || item.state ===
 
 /**
  * Each change's own page read, and the view its page builds from it, in the
- * order given. Null until it is read, and for a change still being built (it
- * has no cards before it is up for a vote). One hook for the list, so the
- * count of changes can move without moving the hooks.
+ * order given. Null until it is read. One hook for the list, so the count of
+ * changes can move without moving the hooks. 1 Nov 2026: a change still
+ * being built is read too, for its ⋯ (its page's rows, the Build door among
+ * them); it draws its cards once it is up for a vote.
  */
 function useChangeViews(items: ThreadItem[]): Array<ChangeView | null> {
   const [rows, setRows] = useState<Record<number, any>>({});
   const [revision, setRevision] = useState(0);
-  const key = items.filter(hasCards).map((i) => `${i.id}:${i.status}`).join(',');
+  const key = items.map((i) => `${i.id}:${i.status}`).join(',');
   useEffect(() => {
-    const read = items.filter(hasCards);
-    if (!read.length) return undefined;
+    if (!items.length) return undefined;
     const abort = new AbortController();
-    for (const item of read) {
+    for (const item of items) {
       readChangeDetail({ id: item.id, status: item.status }, false, abort.signal)
         .then((row) => { if (!abort.signal.aborted && row) setRows((was) => ({ ...was, [item.id]: row })); })
         .catch(() => {});
     }
     // Told the way its own page is (./change-detail-refresh.ts).
     const refresh = (event: Event) => {
-      for (const item of read) {
+      for (const item of items) {
         const ask = changeDetailAsk((event as CustomEvent).detail, item.id);
         if (!ask) continue;
         if ('row' in ask) setRows((was) => ({ ...was, [item.id]: ask.row }));
@@ -110,12 +130,12 @@ function useChangeViews(items: ThreadItem[]): Array<ChangeView | null> {
   return useMemo(() => items.map((item) => {
     const av = appView();
     const row = rows[item.id];
-    if (!row || !av || typeof av._topicViewFor !== 'function' || !hasCards(item)) return null;
+    if (!row || !av || typeof av._topicViewFor !== 'function') return null;
     // A vote still on its way stays on the button, as on its own page.
     if (typeof av._overlayPendingVote === 'function') av._overlayPendingVote(row);
     const built = av._topicViewFor('proposal', row);
     const v = built && built.body && built.body.thread;
-    return v ? { row, card: built.card, v } : null;
+    return v ? { row, card: built.card, body: built.body, v } : null;
   }), [items, rows]);
 }
 
@@ -141,28 +161,59 @@ function tally(row: any): { yes: number; need: number } {
   return { yes, need };
 }
 
+const letterOf = (i: number) => String.fromCharCode(65 + i);
+
 const KICKER = 'text-[12px] font-semibold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400';
 
-/** A change's name where its cards begin: who built it, and its number. */
-function ChangeLine({ item, letter = null }: { item: ThreadItem; letter?: string | null }): ReactNode {
+/** The words over a change: who built it, and its number or its letter on a ballot. */
+function useKicker(item: ThreadItem, letter: string | null): string {
   const t = useMessages('project');
   const by = item.by || t('project:topic.thread.page.someone');
-  const kicker = letter
+  return letter
     ? t('project:topic.thread.page.changeLettered', { letter, by })
     : item.number
       ? t('project:topic.thread.page.changeNumbered', { number: item.number, by })
       : t('project:topic.thread.page.change', { by });
+}
+
+/**
+ * 1 Nov 2026: a change's own ⋯, its page's rows (AppView._topicCard
+ * registers them under its view's key), which the document-level handler
+ * opens as any `data-card-menu` disc.
+ */
+function ChangeMenu({ item, view }: { item: ThreadItem; view: ChangeView | null }): ReactNode {
+  const t = useMessages('project');
+  const key = view?.card.rail?.menuKey || '';
+  if (!key) return null;
+  const label = item.number
+    ? t('project:topic.thread.page.moreNumbered', { number: item.number })
+    : t('project:topic.thread.page.more');
+  return (
+    <button type="button" className="dev-thread-change-menu" data-card-menu={key} aria-haspopup="true" aria-label={label} title={label}>
+      <EllipsisHorizontalIcon aria-hidden="true" />
+    </button>
+  );
+}
+
+/**
+ * A change's name where its section begins: who built it and its number,
+ * its status pill and its ⋯ on that line, then its title. The title is not
+ * a door any more: this is the change's page.
+ */
+function ChangeLine({ item, view, letter = null }: { item: ThreadItem; view: ChangeView | null; letter?: string | null }): ReactNode {
+  const t = useMessages('project');
+  const kicker = useKicker(item, letter);
+  const status = view?.v.status || null;
   return (
     <div className="min-w-0" data-thread-change-line={item.id}>
-      <div className={KICKER}>{kicker}</div>
-      <button
-        type="button"
-        className="mt-0.5 block min-w-0 text-start text-[15px] font-[650] leading-snug text-zinc-900 hover:underline dark:text-zinc-100"
-        data-thread-change-open={item.id}
-        onClick={() => openChange(item.id)}
-      >
+      <div className="flex min-w-0 items-center gap-2">
+        <div className={`${KICKER} min-w-0 flex-1 truncate`}>{kicker}</div>
+        {status ? <span className="shrink-0" data-thread-change-status={status.key}><StatusPill s={status} inline /></span> : null}
+        <ChangeMenu item={item} view={view} />
+      </div>
+      <h3 className="mt-0.5 min-w-0 text-[15px] font-[650] leading-snug text-zinc-900 dark:text-zinc-100" data-thread-change-title={item.id}>
         {item.title || t('project:topic.thread.item.changeUnnumbered')}
-      </button>
+      </h3>
     </div>
   );
 }
@@ -191,67 +242,184 @@ function PlanLine({ plan }: { plan: RequestSpecCard }): ReactNode {
   );
 }
 
-/** What was said on a change's own page, folded under it; new replies go on the request. */
-function EarlierReplies({ item }: { item: ThreadItem }): ReactNode {
+/**
+ * 1 Nov 2026: a verified run's first screen, before and after, small, with
+ * Expand: the change page's own viewer (AppView.shotsHtml's `thread`
+ * reading), kept in the section as a closed popover, opens over the page
+ * (app.css `.dev-thread-shots-viewer`).
+ */
+function ShotsPair({ id, s }: { id: number; s: NonNullable<ChangeThreadView['shots']> }): ReactNode {
   const t = useMessages('project');
-  const [open, setOpen] = useState(false);
-  const replies: FoldedReply[] = item.folded || [];
-  if (!item.replies || !replies.length) return null;
+  const thumbs = s.state === 'verified' ? s.thumbs : null;
+  if (!thumbs || !s.html) return null;
+  const expand = () => {
+    const viewer = typeof document !== 'undefined' ? document.getElementById(thumbs.viewer) as (HTMLElement & { showPopover?: () => void }) | null : null;
+    try { viewer?.showPopover?.(); } catch { /* already open */ }
+  };
   return (
-    <div className="mt-2" data-thread-earlier={item.id}>
-      <button type="button" className="dev-ws-reveal dev-ws-reveal-start touch-target-32" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" style={open ? { transform: 'rotate(180deg)' } : undefined} />
-        {open ? t('project:topic.thread.page.earlierHide') : t('project:topic.thread.page.earlier', { count: item.replies })}
+    <div className="dev-thread-shots" data-thread-change-shots={id}>
+      <button type="button" className="dev-thread-shots-pair" onClick={expand} aria-label={t('project:topic.thread.page.shotsOpen')}>
+        {(['before', 'after'] as const).map((side) => (
+          <span key={side} className="dev-thread-shot" data-thread-shot={side}>
+            {thumbs[side]
+              ? <img src={thumbs[side] as string} alt="" loading="lazy" decoding="async" />
+              : <span className="dev-thread-shot-none" aria-hidden="true" />}
+            <span className="dev-thread-shot-label">{side === 'before' ? t('project:topic.thread.page.shotBefore') : t('project:topic.thread.page.shotAfter')}</span>
+          </span>
+        ))}
       </button>
-      {open ? (
-        <div className="mt-1 flex flex-col gap-1 border-s-2 border-[color:var(--app-sheet-line)] ps-2">
-          {replies.map((reply) => (
-            <span key={reply.id} className="msgx-thread-line">
-              <span className="msgx-thread-face">
-                <Avatar shape="square" size="sm" color={swatchFor(reply.username)} aria-hidden="true">
-                  {reply.username.charAt(0).toUpperCase()}
-                </Avatar>
-              </span>
-              <strong className="msgx-thread-line-name">{reply.bot ? reply.username : `@${reply.username}`}</strong>
-              <span className="msgx-thread-line-text">{reply.text}</span>
-            </span>
-          ))}
-        </div>
-      ) : null}
+      <button type="button" className="dev-thread-shots-expand" data-thread-shots-expand={id} onClick={expand}>
+        {t('project:topic.thread.page.shotsExpand')}
+      </button>
+      {/* AppView.shotsHtml's `thread` reading, escaped where it is built. */}
+      <Html className="dev-thread-shots-viewer" html={s.html} />
     </div>
   );
 }
 
-/** One change, on its own: its name, its two cards, and its earlier replies. */
-function ChangeBlock({ item, plan = null }: { item: ThreadItem; plan?: RequestSpecCard | null }): ReactNode {
+/**
+ * The page a door asked for this change (./votes-in-view.ts): once its
+ * section is drawn, its Votes card (or, still being built, its section) is
+ * brought into view and held there while the page settles.
+ */
+function useInView(id: number, ready: boolean, box: RefObject<HTMLElement | null>, target = '[data-change-gate="votes"]'): void {
+  useEffect(() => {
+    if (!ready) return undefined;
+    let release: (() => void) | null = null;
+    const show = () => {
+      const el = box.current;
+      const card = el ? (el.querySelector<HTMLElement>(target) || el) : null;
+      if (!card || !takeVotesInView(id)) return;
+      release?.();
+      release = holdVotesInView(card);
+    };
+    show();
+    const off = onVotesAsked(show);
+    return () => { off(); release?.(); };
+  }, [id, ready, target]);
+}
+
+/**
+ * What a change's section draws under its line: its summary, the plan it
+ * was built from, its before and after, then its Votes and Testing cards
+ * (or, still being built, the line that says so), and the sheets its ⋯
+ * opens. `ballot`: folded under the ballot, which is where it is voted on.
+ */
+function ChangeBody({ item, view, plan = null, ballot = false }: {
+  item: ThreadItem; view: ChangeView | null; plan?: RequestSpecCard | null; ballot?: boolean;
+}): ReactNode {
   const t = useMessages('project');
-  const [view] = useChangeViews([item]);
+  const summary = view?.body.summaryHtml || '';
   return (
-    <div className="mt-3" data-thread-change={item.id} data-thread-change-state={item.state || ''}>
-      <ChangeLine item={item} />
+    <>
+      {summary ? <div className="dev-thread-change-summary" data-thread-change-summary={item.id}><RequestWords html={summary} /></div> : null}
       {plan ? <PlanLine plan={plan} /> : null}
-      {item.state === 'underway' ? (
+      {view?.v.shots ? <ShotsPair id={item.id} s={view.v.shots} /> : null}
+      {item.state === 'underway' || !hasCards(item) ? (
         <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{t('project:topic.thread.page.underway')}</p>
       ) : view ? (
-        <ChangeGates id={item.id} card={view.card} v={view.v} />
+        <ChangeGates id={item.id} card={view.card} v={view.v} ballot={ballot} />
       ) : null}
-      <EarlierReplies item={item} />
+      {view ? <ChangeSheets id={item.id} row={view.row} body={view.body} /> : null}
+    </>
+  );
+}
+
+/** One change, on its own: its line, then everything its page had. */
+function ChangeBlock({ item, plan = null }: { item: ThreadItem; plan?: RequestSpecCard | null }): ReactNode {
+  const [view] = useChangeViews([item]);
+  const box = useRef<HTMLDivElement>(null);
+  useInView(item.id, !!view || item.state === 'underway', box);
+  return (
+    <div ref={box} className="mt-3" data-thread-change={item.id} data-thread-change-state={item.state || ''}>
+      <ChangeLine item={item} view={view} />
+      <ChangeBody item={item} view={view} plan={plan} />
+      {/* 1 Nov 2026: ask about it, or sketch a revision, privately. */}
+      <WorkWithBotButton slug={pageSlug()} number={item.number} />
     </div>
   );
 }
 
-const letterOf = (i: number) => String.fromCharCode(65 + i);
+/**
+ * D5: a competing change, folded under the ballot: its line, which opens
+ * the rest of its section. `open` is the ballot's, so a tap on the change's
+ * row in the ballot opens it too.
+ */
+function FoldedChange({ item, i, view, plan, open, onToggle }: {
+  item: ThreadItem; i: number; view: ChangeView | null; plan: RequestSpecCard | null; open: boolean; onToggle: () => void;
+}): ReactNode {
+  const t = useMessages('project');
+  const kicker = useKicker(item, letterOf(i));
+  const status = view?.v.status || null;
+  return (
+    <div className="dev-thread-fold" data-thread-change={item.id} data-thread-change-state={item.state || ''} data-thread-fold={open ? 'open' : 'shut'}>
+      <div className="flex min-w-0 items-center gap-2" data-thread-change-line={item.id}>
+        <button type="button" className="dev-thread-fold-head min-w-0 flex-1 text-left" aria-expanded={open} data-thread-fold-toggle={item.id} onClick={onToggle}>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <ChevronDownIcon className="dev-ws-reveal-chev h-4 w-4 shrink-0" aria-hidden="true" style={open ? { transform: 'rotate(180deg)' } : undefined} />
+            <span className={`${KICKER} min-w-0 truncate`}>{kicker}</span>
+          </span>
+          <span className="mt-0.5 block min-w-0 pl-[22px] text-[15px] font-[650] leading-snug text-zinc-900 dark:text-zinc-100" data-thread-change-title={item.id}>
+            {item.title || t('project:topic.thread.item.changeUnnumbered')}
+          </span>
+        </button>
+        {status ? <span className="shrink-0" data-thread-change-status={status.key}><StatusPill s={status} inline /></span> : null}
+        <ChangeMenu item={item} view={view} />
+      </div>
+      {open ? <div className="pl-[22px]"><ChangeBody item={item} view={view} plan={plan} ballot /></div> : null}
+    </div>
+  );
+}
 
-/** One competing change's row, with its Testing in a word and its preview. */
-function CompetingRow({ item, i, view, plan = null }: { item: ThreadItem; i: number; view: ChangeView | null; plan?: RequestSpecCard | null }): ReactNode {
+/**
+ * D4: a change for this request that lives on another request's page (a
+ * change for several requests is on its first one's): one line that says
+ * where, whose number opens that page at the change.
+ */
+function Elsewhere({ list }: { list: ThreadElsewhere[] }): ReactNode {
+  const slug = appView()?.appData?.slug || '';
+  if (!list.length) return null;
+  return (
+    <div className="mt-3 flex flex-col gap-1" data-thread-elsewhere={list.length}>
+      {list.map((e) => (
+        <p key={e.id} className="text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-elsewhere-change={e.id}>
+          <RichMessage
+            id={e.number ? 'project:topic.thread.page.elsewhere' : 'project:topic.thread.page.elsewhereUnnumbered'}
+            values={e.number ? { number: e.number, on: e.on } : { on: e.on }}
+            components={[<a
+              key="on"
+              href={slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${e.on}` : `#${e.on}`}
+              className="font-semibold text-violet-700 hover:underline dark:text-violet-300"
+              data-thread-elsewhere-on={e.on}
+              onClick={(event) => {
+                if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                event.preventDefault();
+                appView()?._openChangeOnRequest?.(e.on, e.id);
+              }}
+            />]}
+          />
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * One competing change's row, with its Testing in a word and its preview.
+ * 1 Nov 2026: its title opens the change's section folded under the ballot
+ * (`onOpen`), the change's page now.
+ */
+function CompetingRow({ item, i, view, plan = null, onOpen }: {
+  item: ThreadItem; i: number; view: ChangeView | null; plan?: RequestSpecCard | null; onOpen: () => void;
+}): ReactNode {
   const t = useMessages('project');
   const preview = view ? (view.card.actions || []).find((a) => a.preview) : null;
   const testing = view ? view.v.testing : null;
   return (
-    <div role="listitem" className={`flex items-start gap-3 px-3.5 py-3${i ? ' border-t border-[color:var(--app-sheet-line)]' : ''}`} data-change-row={letterOf(i)} data-thread-change={item.id}>
+    <div role="listitem" className={`flex items-start gap-3 px-3.5 py-3${i ? ' border-t border-[color:var(--app-sheet-line)]' : ''}`} data-change-row={letterOf(i)} data-thread-change-row={item.id}>
       <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-zinc-200/80 text-[13px] font-bold text-zinc-700 dark:bg-zinc-700/80 dark:text-zinc-200" aria-hidden="true">{letterOf(i)}</span>
       <span className="min-w-0 flex-1">
-        <button type="button" className="block min-w-0 text-start text-[15px] font-[650] leading-snug text-zinc-900 hover:underline dark:text-zinc-100" onClick={() => openChange(item.id)}>
+        <button type="button" className="block min-w-0 text-start text-[15px] font-[650] leading-snug text-zinc-900 hover:underline dark:text-zinc-100" data-change-row-open={item.id} onClick={onOpen}>
           {item.title || t('project:topic.thread.item.changeUnnumbered')}
         </button>
         <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[13px] text-zinc-500 dark:text-zinc-400">
@@ -333,11 +501,30 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
   const t = useMessages('project');
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
+  // D5: which changes are open under the ballot; each starts folded.
+  const [open, setOpen] = useState<ReadonlySet<number>>(() => new Set());
+  const box = useRef<HTMLDivElement>(null);
   const views = useChangeViews(options);
   const closeRow = useCloseRow(slug, close, revision);
+  // A door to one of these changes (./votes-in-view.ts) lands on the ballot,
+  // where it is voted on.
+  useBallotInView(options, box);
   const counts = new Set(options.filter((o, i) => authorCounts(o, views[i]?.row)).map((o) => o.id));
   const ballot: Ballot | null = ballotOf(data, counts, anchor);
   if (!ballot) return null;
+  const toggle = (id: number) => setOpen((was) => {
+    const next = new Set(was);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const reveal = (id: number) => {
+    setOpen((was) => (was.has(id) ? was : new Set([...was, id])));
+    // Once it has opened: its line at the top of what the reader sees.
+    window.setTimeout(() => {
+      const fold = box.current?.querySelector<HTMLElement>(`[data-thread-fold][data-thread-change="${id}"]`);
+      if (fold && typeof fold.scrollIntoView === 'function') fold.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }, 50);
+  };
   const project = appView()?.appData?.name || '';
   const choose = async (pick: number | 'neither' | 'close') => {
     const av = appView();
@@ -365,10 +552,10 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
     ? (options.length === 1 ? t('project:topic.thread.ballot.headingClose') : t('project:topic.thread.ballot.headingCloseMany', { n: options.length }))
     : t('project:topic.thread.ballot.heading', { n: options.length, number: anchor[0] ?? data.thread.number ?? '' });
   return (
-    <div className="mt-3" data-thread-ballot={options.length} data-thread-ballot-close={close ? close.id : undefined} aria-busy={busy}>
+    <div ref={box} className="mt-3" data-thread-ballot={options.length} data-thread-ballot-close={close ? close.id : undefined} aria-busy={busy}>
       <div className={KICKER}>{heading}</div>
       <div className="mt-2 overflow-hidden rounded-2xl bg-[color:var(--messages-surface)]" role="list" aria-label={t('project:topic.thread.ballot.label')}>
-        {options.map((o, i) => <CompetingRow key={o.id} item={o} i={i} view={views[i]} plan={plans?.get(o.id) || null} />)}
+        {options.map((o, i) => <CompetingRow key={o.id} item={o} i={i} view={views[i]} plan={plans?.get(o.id) || null} onOpen={() => reveal(o.id)} />)}
         {close ? (
           <div role="listitem" className="flex items-start gap-3 border-t border-[color:var(--app-sheet-line)] px-3.5 py-3" data-change-row="close">
             <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-zinc-200/80 text-zinc-700 dark:bg-zinc-700/80 dark:text-zinc-200" aria-hidden="true"><XIcon className="h-4 w-4" /></span>
@@ -425,8 +612,33 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
             : t('project:topic.thread.ballot.about', { project })}</p>
         </div>
       </div>
+      {/* D5: each change folded under the ballot, its section one tap away. */}
+      <div className="mt-2 flex flex-col" data-thread-folds={options.length}>
+        {options.map((o, i) => (
+          <FoldedChange key={o.id} item={o} i={i} view={views[i]} plan={plans?.get(o.id) || null}
+            open={open.has(o.id)} onToggle={() => toggle(o.id)} />
+        ))}
+      </div>
     </div>
   );
+}
+
+/** A door asked for one of the ballot's changes: the ballot's Votes card comes into view. */
+function useBallotInView(options: ThreadItem[], box: RefObject<HTMLElement | null>): void {
+  const ids = options.map((o) => o.id).join(',');
+  useEffect(() => {
+    let release: (() => void) | null = null;
+    const show = () => {
+      const card = box.current?.querySelector<HTMLElement>('[data-change-gate="ballot"]') || box.current;
+      if (!card) return;
+      if (!options.some((o) => takeVotesInView(o.id))) return;
+      release?.();
+      release = holdVotesInView(card);
+    };
+    show();
+    const off = onVotesAsked(show);
+    return () => { off(); release?.(); };
+  }, [ids]);
 }
 
 /** A vote to close the request with no change competing: who proposed it and why, then its Votes card. */
@@ -511,7 +723,8 @@ export function ThreadChanges({ slug, data, number, changes, close, onChanged, p
   /** The plan each change was built from, by its id (./request-head.tsx plansByChange). */
   plans?: ReadonlyMap<number, RequestSpecCard> | null;
 }): ReactNode {
-  if (!changes.length && !close) return null;
+  const elsewhere = elsewhereFor(data, number);
+  if (!changes.length && !close && !elsewhere.length) return null;
   const anchor = [number];
   // Who counts as whose pick is settled inside the ballot, from each change's
   // own read; which changes compete is not, so ask without it.
@@ -527,6 +740,7 @@ export function ThreadChanges({ slug, data, number, changes, close, onChanged, p
       ) : null}
       {rest.map((item) => <Fragment key={item.id}><ChangeBlock item={item} plan={plans?.get(item.id) || null} /></Fragment>)}
       {closeAlone ? <CloseVote slug={slug} close={closeAlone} onChanged={onChanged} /> : null}
+      <Elsewhere list={elsewhere} />
     </section>
   );
 }

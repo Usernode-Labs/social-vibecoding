@@ -36,6 +36,8 @@ export interface AiPrivate {
   kind: string;
   app: AiApp | null;
   at: string | null;
+  /** 1 Nov 2026: what a thread opened from a request's or a change's page is about; its row carries the number. */
+  about?: { kind: 'request' | 'change'; number: number } | null;
 }
 
 export interface AiThread {
@@ -51,7 +53,7 @@ export interface AiThread {
     | 'plan' | 'decide' | 'build_stopped'
     | 'going_live' | 'merging' | 'fixing' | 'revising' | 'building' | 'reading'
     | 'vote' | 'checking' | 'decision' | 'fix_queued' | 'followup_queued' | 'build_queued' | 'held' | 'stalled' | 'queued' | 'on_hold'
-    | 'not_picked_up'
+    | 'not_picked_up' | 'awaiting_plan'
     | 'live';
   at: string | null;
   quietDays?: number;
@@ -316,14 +318,22 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
     });
   }
   for (const p of work?.private || []) {
+    // 1 Nov 2026: a thread about a request or a change is drawn by it, its
+    // number before its title as a request's row is ("#18 Dark mode").
+    const about = p.about && p.about.number > 0 && p.app ? p.about : null;
     rows.push({
       key: `private:${p.rootId}`,
       title: p.title,
       app: p.app,
       who: p.app ? 'me' : 'solo',
-      sub: p.app
-        ? { id: 'messages:ai.row.privateDraft', values: { project: p.app.name || p.app.slug } }
-        : { id: 'messages:ai.row.privateIdea' },
+      sub: about
+        ? {
+          id: about.kind === 'change' ? 'messages:ai.row.privateAboutChange' : 'messages:ai.row.privateAbout',
+          values: { project: p.app!.name || p.app!.slug, number: about.number },
+        }
+        : p.app
+          ? { id: 'messages:ai.row.privateDraft', values: { project: p.app.name || p.app.slug } }
+          : { id: 'messages:ai.row.privateIdea' },
       pill: null,
       href: null,
       rootId: p.rootId,
@@ -398,6 +408,8 @@ const THREAD_WORDS: Record<string, string> = {
   queued: 'messages:ai.up.queued',
   on_hold: 'messages:ai.up.onHold',
   not_picked_up: 'messages:ai.up.notPickedUp',
+  // 1 Nov 2026: their own request, which the bot waits to plan with them.
+  awaiting_plan: 'messages:ai.up.awaitingPlan',
 };
 
 /** Pure: one In progress or Waiting row's whole line (its tooltip): its project, and what it waits on. */
@@ -444,6 +456,7 @@ const SHORT_WORDS: Record<string, string> = {
   stalled: 'messages:ai.short.stalled',
   on_hold: 'messages:ai.short.monday',
   not_picked_up: 'messages:ai.short.nobody',
+  awaiting_plan: 'messages:ai.short.yourPlan',
 };
 
 /**

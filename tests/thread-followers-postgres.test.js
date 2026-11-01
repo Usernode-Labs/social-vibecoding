@@ -231,7 +231,9 @@ test('thread followers against the full schema', { timeout: 120000 }, async (t) 
     assert.equal(page.status, 200);
     assert.deepEqual(page.body.thread, { id: thread, number: 7, kind: 'work', lead: 'request', title: null, state: 'open' });
     const items = page.body.items.map((i) => `${i.type}:${i.number}:${i.replies}`);
-    assert.deepEqual(items, ['request:7:4', 'change:8:3'], 'oldest first, each with its people\'s replies');
+    // 1 Nov 2026 (one page per thread): the request that leads the thread
+    // counts its change's replies too, since its page is where they are read.
+    assert.deepEqual(items, ['request:7:7', 'change:8:3'], 'oldest first, each with its people\'s replies');
     const change = page.body.items.find((i) => i.type === 'change');
     assert.equal(change.state, 'review');
     assert.deepEqual(change.folded.map((r) => `${r.username}:${r.text}`),

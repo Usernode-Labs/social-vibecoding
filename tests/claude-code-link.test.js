@@ -135,7 +135,8 @@ test('the request page folds the link under the card, with what you need', () =>
 test('the request\'s ⋯ offers it only when the view does, and the page draws it once pressed', () => {
   const head = read('frontend/src/features/dev-board/topic/request-head.tsx');
   assert.match(head, /const ownAgent = !!\(r\.status\.ownAgent && !r\.status\.closed && agentSlug && r\.number\);/);
-  assert.match(head, /useThreadMenu\(menuKey, 'agent', ownAgent \? \[\{/);
+  // 1 Nov 2026: after the agent session row, where the view offers that.
+  assert.match(head, /useThreadMenu\(menuKey, 'agent', \[\s*\.\.\.\(agentSession \? \[\{[\s\S]*?\}\] : \[\]\),\s*\.\.\.\(ownAgent \? \[\{/);
   assert.match(head, /\{ownAgent && agentOpen \? <OwnAgentLink slug=\{agentSlug\} number=\{r\.number\} startOpen onClose=\{\(\) => setAgentOpen\(false\)\} \/> : null\}/);
   assert.doesNotMatch(head, /\{s\.ownAgent && !s\.closed && slug && number \? <OwnAgentLink/, 'not a fold under Build it now');
   // The status is read once it is opened, never on load (declared checks never click).

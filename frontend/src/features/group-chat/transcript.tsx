@@ -80,8 +80,8 @@ import { BOT_AVATAR } from '../messages/format';
 import { openAppTarget } from '../messages/bot-shared';
 import { setUserBlocked } from '../messages/store';
 import { firstUnreadId, transcriptRow } from '../messages/unread-anchor';
-import { displayName, BOT_NAME, openRequestSpec, replyCount, requestStream } from '../dev-board/topic/request-model';
-import { changeLine, changeReplyCount, changeStream } from '../dev-board/topic/change-model';
+import { displayName, BOT_NAME, openRequestSpec, replyCount, requestChangesStore, requestStream } from '../dev-board/topic/request-model';
+import { changeLine, changeReplyCount, changeStream, keptOnRequest } from '../dev-board/topic/change-model';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
 import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
 import { absoluteLink, copyToClipboard, toast } from '../message-actions/clipboard';
@@ -759,13 +759,15 @@ export function messageMenuItems(
  * from the controller here, and a memo()'d row would have kept the answer
  * from its last render.
  */
-export const MessageRow = memo(function MessageRow({ msg, grouped = false, surface = 'main', threadOpen = false }: {
+export const MessageRow = memo(function MessageRow({ msg, grouped = false, surface = 'main', threadOpen = false, tag = null }: {
   msg: TranscriptMessage;
   grouped?: boolean;
   /** #2387: `thread` inside a reply thread, where the row offers no thread of its own. */
   surface?: 'main' | 'thread';
   /** #2387: this row's reply thread is the one open beside the channel, which lights its chip. */
   threadOpen?: boolean;
+  /** 1 Nov 2026: on a request's page, the change a reply was written on ("on Change #6063"), after its time. */
+  tag?: string | null;
 }) {
   const t = useMessages('chat');
   const [sheet, setSheet] = useState(false);
@@ -819,6 +821,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       timestamp={(
         <>
           <span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>
+          {tag ? <span className="gc-msg-on-change" data-msg-on-change={msg.changeOf?.sessionId ?? ''}>{tag}</span> : null}
           {msg.editedTitle && !msg.deleted ? (
             <span className="gc-msg-edited" title={msg.editedTitle}>{t('chat:group.row.edited')}</span>
           ) : null}
@@ -1132,7 +1135,11 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
  */
 export function RequestRows({ view }: { view: TranscriptView }) {
   const t = useMessages('project');
-  const stream = useMemo(() => requestStream(foldRepeats(view.messages)), [view.messages]);
+  // 1 Nov 2026 (one page per thread): the thread's one discussion. Its
+  // changes' rows are in it (`changeOf`), each tagged with its change, and
+  // of what happened to a change only what keptOnRequest keeps.
+  const changes = useStoreState(requestChangesStore);
+  const stream = useMemo(() => requestStream(foldRepeats(view.messages).filter((m) => !m.changeOf || keptOnRequest(m))), [view.messages]);
   const specs = stream.specs;
   const count = replyCount(stream.rows);
   const loaded = !!view.lead.request?.loaded;
@@ -1142,16 +1149,27 @@ export function RequestRows({ view }: { view: TranscriptView }) {
   const images = useInlineImageViewer();
   const drawn: ReactNode[] = [];
   let previous: TranscriptMessage | null = null;
+  const tagOf = (msg: TranscriptMessage): string | null => {
+    const id = msg.changeOf ? Number(msg.changeOf.sessionId) : 0;
+    if (!id) return null;
+    const n = changes.numbers[id];
+    return n ? t('project:topic.request.stream.onChange', { number: n }) : t('project:topic.request.stream.onChangeUnnumbered');
+  };
   stream.rows.forEach((msg, i) => {
     const key = msg.id != null ? `m${msg.id}` : (msg.key ? `g${msg.key}` : `i${i}`);
-    if (msg.kind === 'message') {
+    if (msg.changeOf && msg.kind !== 'message') {
+      drawn.push(<ChangeEvent key={key} msg={msg} changeId={msg.changeOf.sessionId} tag={tagOf(msg)} />);
+    } else if (msg.kind === 'message') {
+      // A reply on a change is not run into one on the request: its tag is
+      // on its own head.
       const grouped = !!previous && previous.kind === 'message' && !msg.deleted && !previous.deleted
         && !!msg.at && !!previous.at
+        && (previous.changeOf?.sessionId ?? null) === (msg.changeOf?.sessionId ?? null)
         && groupsWithPrevious(
           { author: previous.username, at: previous.at },
           { author: msg.username, at: msg.at, reply: !!msg.quote },
         );
-      drawn.push(<MessageRow key={key} msg={msg} grouped={grouped} surface="thread" />);
+      drawn.push(<MessageRow key={key} msg={msg} grouped={grouped} surface="thread" tag={tagOf(msg)} />);
     } else if (msg.kind === 'github' && !msg.githubSpec) {
       drawn.push(<GitHubRow key={key} msg={msg} />);
     } else if (msg.kind === 'vote') {
@@ -1214,14 +1232,19 @@ export function RequestRows({ view }: { view: TranscriptView }) {
  * the request page's own line (`.dev-request-event`), so the two pages read
  * alike. `.gc-msg-system` keeps the module's row hooks.
  */
-const ChangeEvent = memo(function ChangeEvent({ msg }: { msg: TranscriptMessage }) {
+const ChangeEvent = memo(function ChangeEvent({ msg, changeId = null, tag = null }: {
+  msg: TranscriptMessage;
+  /** 1 Nov 2026: on a request's page, the change the line happened to, and its tag ("on Change #6063"). */
+  changeId?: number | null;
+  tag?: string | null;
+}) {
   const t = useMessages('project');
   const tChat = useMessages('chat');
   const line = changeLine(msg);
   if (!line) return null;
-  const sessionId = Number(msg.event?.sessionId || msg.voteRef?.sessionId || controller()?.activeThread?.ref || 0);
+  const sessionId = Number(changeId || msg.event?.sessionId || msg.voteRef?.sessionId || controller()?.activeThread?.ref || 0);
   return (
-    <div className="gc-msg-system dev-request-event" data-msg-id={msg.id ?? ''} data-change-event={line.kind}>
+    <div className="gc-msg-system dev-request-event" data-msg-id={msg.id ?? ''} data-change-event={line.kind} data-change-event-on={changeId || undefined}>
       <span className="dev-request-event-glyph" aria-hidden="true">{line.glyph}</span>
       <span className="dev-request-event-text">
         {/* A line the page words is one whole message: <0> is who did it,
@@ -1240,6 +1263,7 @@ const ChangeEvent = memo(function ChangeEvent({ msg }: { msg: TranscriptMessage 
           <>{' · '}<button type="button" className="dev-request-event-link" onClick={() => controller()?.openSharedSpec?.(msg.specShare?.sessionId, msg.specShare?.version, msg.specShare?.previewTitle)}>{t('project:topic.request.stream.read')}</button></>
         ) : null}
         {msg.time ? <span className="dev-request-event-time" title={msg.timeTitle}>{` · ${msg.time}`}</span> : null}
+        {tag ? <span className="dev-request-event-time" data-change-event-tag="">{` · ${tag}`}</span> : null}
       </span>
     </div>
   );

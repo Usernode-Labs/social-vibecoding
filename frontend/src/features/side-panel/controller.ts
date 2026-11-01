@@ -52,6 +52,7 @@
  */
 
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
+import { isBotChatRoute } from '../ai/door';
 import {
   embeddedAllows,
   expandRoute,
@@ -75,6 +76,24 @@ import { INITIAL, sidePanelRefs, sidePanelStore } from './store.js';
  * `(min-width: 1024px)` block in public/css/app.css.
  */
 export const DESKTOP_QUERY = '(min-width: 1024px)';
+
+/**
+ * 1 Nov 2026: beside the Homeroom bot tab's page the panel is the column
+ * Main Chat docks in, which the page draws from 768px (features/ai/), so it
+ * takes a page there from 768px too: there is no app beside it to keep
+ * 480px for. Keep in step with the `(max-width: 1023.98px)` rule for
+ * #platform-side-panel in public/css/app.css.
+ */
+export const BESIDE_AI_QUERY = '(min-width: 768px)';
+
+/**
+ * Whether a link to `route` opens in the panel: a panel page, and not the
+ * chat with Homeroom bot, which only its tab draws (features/ai/door.ts) and
+ * the router takes there.
+ */
+function panelTakes(route: string): boolean {
+  return isPanelRoute(route) && !isBotChatRoute(route);
+}
 
 /** A one-shot instruction that rides along with a navigation into the panel. */
 export interface PanelHint {
@@ -339,7 +358,7 @@ export function canTake(): boolean {
   if (!besideApp && !besideAi) return false;
   try {
     if (document.documentElement.classList.contains('in-native-webview')) return false;
-    return window.matchMedia(DESKTOP_QUERY).matches;
+    return window.matchMedia(besideApp ? DESKTOP_QUERY : BESIDE_AI_QUERY).matches;
   } catch {
     return false;
   }
@@ -351,7 +370,7 @@ export function canTake(): boolean {
  * navigation when it did not.
  */
 export function take(route: string, hint?: PanelHint | null): boolean {
-  if (!isPanelRoute(route) || !canTake()) return false;
+  if (!panelTakes(route) || !canTake()) return false;
   open(route, hint || null);
   return true;
 }
@@ -651,7 +670,7 @@ export function onClickCapture(e: MouseEvent): void {
   if (a.hasAttribute('download')) return;
   if (!isShellAddress(a.href, origin)) return;
   const route = routeFromUrl(a.href);
-  if (!isPanelRoute(route) || !canTake()) return;
+  if (!panelTakes(route) || !canTake()) return;
   e.preventDefault();
   open(route, null);
 }
@@ -679,7 +698,7 @@ export function onNavigate(e: NavigateEventLike): void {
   const url = e.destination && e.destination.url;
   if (!url) return;
   const route = routeFromUrl(url);
-  if (!isPanelRoute(route) || !canTake()) return;
+  if (!panelTakes(route) || !canTake()) return;
   e.preventDefault();
   open(route, null);
 }

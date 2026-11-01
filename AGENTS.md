@@ -239,15 +239,21 @@ is no replay plan to write and nothing to verify locally.
   App tab, Discover).
 - **The phone's bar is Home · Communities · AI · Messages · You; the
   desktop rail is Home, Discover, Messages, AI, Communities, then You**
-  (#6019). AI is the Homeroom bot's chat, which is not a row of Messages.
-  Its page (`frontend/src/features/ai/`) lists your work beside Main Chat,
-  the chat itself; on a phone the two are one drawer, Messages' own strip
-  (`phone-drawer.tsx`), and a request, a change or a decision opens on its
-  own page, never in the drawer. Main Chat keeps no thread of a request's:
+  (#6019). AI is the Homeroom bot's chat, which is not a row of Messages
+  and is never drawn on the Messages screen: its page
+  (`frontend/src/features/ai/`) is the list, Main Chat its first row, and
+  from 768px a column beside it holding Main Chat or one private thread,
+  alone under its own head; on a phone the two are one drawer, Messages'
+  own strip (`phone-drawer.tsx`). Every way into the chat (an address, a
+  bell row, a door that asks Homeroom bot) lands there through
+  `features/ai/door.ts`; `#messages/<the bot's chat>` is swapped for
+  `#homeroom-bot/main` or `/thread/<id>`. A request, a change or a decision
+  opens in the column through the side panel, or on its own page, never in
+  the drawer. Main Chat keeps no thread of a request's:
   the bot's news about one opens the request's page
   (`features/messages/request-page.ts`), what still asks something there is
-  drawn whole in the chat, and a thread in it is only a private one the
-  person started, which the page lists.
+  drawn whole in the chat, and a thread in it is only a private one, which
+  the page lists and which says "Only you can see this thread".
   Discover is a tab on the rail only: on a phone it is a page Home's
   Discover section opens, with Back to Home. The markup is the rail's
   order, and app.css orders the phone's five cells.
@@ -323,6 +329,25 @@ is no replay plan to write and nothing to verify locally.
   (`landKeepingPlace` in `place-store.ts`, `keepPlace` in the drawer). Back
   and Forward are not doors either: the page reopens on the place last
   shown, read fresh when it mounts.
+- **One page per thread (1 Nov 2026): a change built for a request lives on
+  the request's page.** When a request leads a change's thread
+  (`threads.lead = 'request'`), the change has no page of its own: its
+  addresses (`dev/changes/<N>`, `dev/proposals/<id>`, `dev/shared/<id>`)
+  land on the request's page, scrolled to its section with its Votes card in
+  view (`AppView._renderTopicSubView` and `openTopicInPanel` ask
+  `GET /api/apps/:slug/threads/change/:id`, `services/threads.js`
+  `requestHome`). Keep producing change addresses as they are
+  (notifications, bot messages, pull request bodies, agents' `webPath`):
+  the router is where they land. The change's section carries what its page
+  had: its status pill and ⋯ on its line, its summary, a small before and
+  after whose Expand opens its viewer, and the sheets its ⋯ opens
+  (`features/dev-board/topic/thread-changes.tsx`, `ChangeSheets`).
+  Competing changes fold under their ballot, which is the one way to vote
+  on them; a change for several requests is on the first one's page and the
+  others say where. The request's stream is the thread's one discussion:
+  its changes' replies and what happened to them are read with it
+  (`routes/chat.js` selectStream), each tagged with its change; a new reply
+  there goes to the request. A change with no request keeps its own page.
 - **Audience is derived, never stored.** `communities.audienceSql` reads it
   off the app's `view_visibility` and its member/invite count. A second
   stored copy is one the visibility reconcile would have to remember. So a
@@ -447,12 +472,12 @@ is no replay plan to write and nothing to verify locally.
   original order (`app.js` must stay last), and **converted markup is
   like-for-like** — same ids, class strings, `hidden` semantics and `data-*`
   attributes as the hand-written shell, because `public/js/**` looks those up
-  by `getElementById` and `dapp.json`'s 800+ declared checks (its `tests`
+  by `getElementById` and `dapp.json`'s 750+ declared checks (its `tests`
   array; count it rather than trusting this line) select on deep chains of
   them. Their ceiling is `MAX_DECLARED_TESTS` in
-  `src/services/app-manifest.js` (860), and the manifest keeps 20 slots
-  clear of it (`tests/lib/check-cap.js`). In October 2026 it stood exactly
-  at that floor, 840 of 860: fold a new check into an existing one first,
+  `src/services/app-manifest.js` (880; read it there too), and the manifest
+  keeps 20 slots clear of it (`tests/lib/check-cap.js`). On 1 Nov 2026 it
+  stood at 751 of 880: still fold a new check into an existing one first,
   as the guards' message in `check-cap.js` says. The structural baseline is
   `tests/baselines/shell-markup.json` (ids, `data-*` names, script order,
   stylesheet order), enforced by `tests/shell-id-inventory.test.js`,

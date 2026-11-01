@@ -9,7 +9,7 @@ import {
   JumpToLatestButton, NewMessagesBanner, NewMessagesDivider, TranscriptOverlay, groupsWithPrevious,
 } from '@/components/ui/chat';
 import {
-  ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronDownIcon, ChevronLeftIcon, EllipsisHorizontalIcon, PencilSparklesIcon,
+  ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronDownIcon, ChevronLeftIcon, EllipsisHorizontalIcon, LockIcon, PencilSparklesIcon,
   PlusIcon, SearchIcon, SparklesIcon, UserGroupIcon, XIcon,
 } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
@@ -39,7 +39,9 @@ import {
 } from './bot-shared';
 import { POLL_MS } from './bot-activity-store';
 import { BotWorkSync, loadBotWork, newestBotMessageId, useBotWork, WORK_CHANGED_EVENT } from './bot-work';
-import { PrivateThreadDoors, PrivateThreadNote, usePrivateThread } from './private-thread-bar';
+import {
+  PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, privateThreadTitle, privateThreadWords, usePrivateThread,
+} from './private-thread-bar';
 import { requestPageOf } from './request-page';
 import { BotStrip, RequestTag, stripGroups, summaryParts } from './bot-strip';
 import { useTrackOf } from './bot-track';
@@ -95,7 +97,8 @@ import {
   useMessagesSnapshot,
 } from './store';
 import { typingLine } from './typing-line';
-import { DesignPane, DesignViewSwitch, isDesignRoot, setDesignView, useDesignView } from './design-pane';
+import { DesignPane, DesignViewSwitch, isDesignRoot, isDesignThread, setDesignView, useDesignView } from './design-pane';
+import { openPreview, usePreview } from '../ai/preview';
 import { NewThreadButton, NewThreadPanel, startedThreadTitle, useNewThread } from './new-thread';
 import { issueRefHref } from './channels';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
@@ -2494,13 +2497,17 @@ function writeReplyWidth(px: number): void {
   try { window.localStorage.setItem(REPLY_WIDTH_KEY, String(Math.round(px))); } catch { /* the default next time */ }
 }
 
-function ReplyThreadPanel({ backToMain = false }: {
+function ReplyThreadPanel({ inMain = false, onBack = null }: {
   /**
-   * 31 Oct 2026: open in Main Chat, the AI tab's copy of the chat with the
-   * bot. The thread covers the chat there (app.css `[data-main-chat]`), so
-   * its way out is a back arrow to Main Chat, not a ✕ beside it.
+   * 31 Oct 2026: open in Main Chat's column on the Homeroom bot tab, the
+   * only place the chat with the bot is drawn. The thread covers the chat
+   * there (app.css `[data-main-chat]`). 1 Nov 2026: alone, under its own
+   * head: its title and "Only you can see this thread", with no ✕ and no way
+   * back to Main Chat, which is a row of the tab's list now.
    */
-  backToMain?: boolean;
+  inMain?: boolean;
+  /** A phone's drawer: the back arrow that leads the head, to the list. */
+  onBack?: (() => void) | null;
 } = {}) {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
@@ -2624,16 +2631,22 @@ function ReplyThreadPanel({ backToMain = false }: {
     const toward = event.key === 'ArrowLeft' ? 1 : -1;
     writeReplyWidth(commitReplyWidth(base + toward * dirSign() * REPLY_WIDTH_STEP));
   };
-  // #6019: a thread the viewer started in their chat with the bot is private
+  // #6019: a private thread in their chat with the bot is theirs alone
   // until they File it or Post it: its head says so, its foot has the doors
-  // that apply (./private-thread-bar.tsx). Read before the early return, so
-  // the hook holding where it stands always runs.
+  // that apply (./private-thread-bar.tsx). 1 Nov 2026: every one, not only
+  // those off a message of theirs: a "+" thread, a draft the bot opened and
+  // a design thread hang off a line of the bot's, and the server says
+  // whether it is theirs (`mine`). Read before the early return, so the hook
+  // holding where it stands always runs.
+  const meId = Number(typeof window !== 'undefined' ? (window as any).App?.user?.id : 0) || 0;
   const privateRootMessage = thread?.root || snap.messages.find((item) => item.id === rootId) || null;
   const privateRoot = rootId && snap.active?.kind === 'direct' && threadsAllowed(snap.active) && snap.active.homeroomBot
-    && privateRootMessage && !privateRootMessage.sender.bot
-    && Number(typeof window !== 'undefined' ? (window as any).App?.user?.id : 0) === privateRootMessage.sender.id
+    && privateRootMessage && !requestPageOf(privateRootMessage)
     ? rootId : null;
   const [privateWhere, setPrivateWhere] = usePrivateThread(privateRoot);
+  // 1 Nov 2026 (C1): whether this thread's design is open beside it.
+  const preview = usePreview();
+  const privateMine = !!privateRoot && isOwnPrivateThread(privateWhere, privateRootMessage, meId);
   if (!conversationId || !rootId) return null;
   const active = snap.active;
   const kind = active?.kind || 'group';
@@ -2652,6 +2665,11 @@ function ReplyThreadPanel({ backToMain = false }: {
   const where = started ? (started.appName || started.appSlug || t('messages:newThread.anyProject'))
     : request ? request.project : active ? (kind === 'channel' ? `#${active.channelKey || active.title}` : active.title) : '';
   const replies = thread?.messages || [];
+  // 1 Nov 2026: in Main Chat's column a thread is named as the tab's list
+  // names it (./private-thread-bar.tsx privateThreadTitle).
+  const mainTitle = inMain
+    ? privateThreadTitle(root, replies, meId) || (started ? startedThreadTitle(t, started.changeKind) : t('messages:replies.title'))
+    : null;
   // #5219: on a request's thread the request's public discussion rides
   // along, and the two read in one transcript, in the order they were said.
   // Ties keep the DM replies first (the sort is stable); a reply still in
@@ -2722,37 +2740,56 @@ function ReplyThreadPanel({ backToMain = false }: {
         onPointerDown={onReplyResizeStart}
         onKeyDown={onReplyResizeKey}
       />
-      <header className="messages-thread-header">
-        {backToMain ? (
-          <button type="button" className="messages-thread-action messages-thread-back" data-reply-close="" data-reply-back=""
-            aria-label={t('messages:replies.backToMain')} title={t('messages:replies.backToMain')} onClick={() => closeThread()}>
+      <header className="messages-thread-header" data-reply-head={inMain ? 'main' : undefined}>
+        {inMain && onBack ? (
+          <button type="button" className="messages-thread-action messages-thread-back" data-reply-back=""
+            aria-label={t('messages:ai.drawer.back')} title={t('messages:ai.drawer.back')} onClick={onBack}>
             <ChevronLeftIcon aria-hidden="true" />
           </button>
         ) : null}
-        <div className="min-w-0 flex-1">
-          <div className="messages-thread-name flex min-w-0 items-center gap-2">
-            {request && !request.firstVersion ? <RequestTag number={request.number} size="head" /> : null}
-            <span className="min-w-0 truncate">{started ? startedThreadTitle(t, started.changeKind) : request ? botThreadTitle(request) : t('messages:replies.title')}</span>
+        {inMain ? (
+          // 1 Nov 2026: the thread alone in Main Chat's place, under its own
+          // name and the line that says it is theirs alone.
+          <div className="min-w-0 flex-1">
+            <div className="messages-thread-name min-w-0 truncate" data-reply-title="">{mainTitle}</div>
+            <div className="messages-thread-sub flex min-w-0 items-center gap-1" data-private-thread-sub="">
+              <LockIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+              <span className="truncate">{t('messages:ai.thread.sub')}</span>
+            </div>
           </div>
-          {where ? <div className="messages-thread-sub">{where}</div> : null}
-        </div>
+        ) : (
+          <div className="min-w-0 flex-1">
+            <div className="messages-thread-name flex min-w-0 items-center gap-2">
+              {request && !request.firstVersion ? <RequestTag number={request.number} size="head" /> : null}
+              <span className="min-w-0 truncate">{started ? startedThreadTitle(t, started.changeKind) : request ? botThreadTitle(request) : t('messages:replies.title')}</span>
+            </div>
+            {where ? <div className="messages-thread-sub">{where}</div> : null}
+          </div>
+        )}
         {/* #6071: in a design thread, the way to its preview: on a phone the
-            switch back to it; in an embedded copy of the chat (the Homeroom
-            bot tab's Main Chat),
-            a link to it in Messages. */}
-        {isDesignRoot(root)
-          ? (snap.route.embedded ? <EmbeddedDesignLink conversationId={conversationId} rootId={rootId} /> : <DesignViewSwitch onView={setDesignView} />)
-          : null}
+            switch back to it. 1 Nov 2026 (C1): in Main Chat's column, any
+            thread holding a design (a version said anywhere in it) has
+            Preview, which opens the design as the tab's own column
+            (../ai/preview.ts), while it is not open already. */}
+        {isDesignRoot(root) && !snap.route.embedded ? <DesignViewSwitch onView={setDesignView} /> : null}
+        {inMain && preview?.rootId !== rootId && isDesignThread(root, replies) ? (
+          <button type="button" className="messages-thread-action messages-thread-preview" data-reply-preview=""
+            onClick={() => openPreview({ conversationId, rootId, version: null })}>
+            <span className="text-[13px] font-semibold">{t('messages:design.pane.showPreview')}</span>
+          </button>
+        ) : null}
         {/* On a phone the Messages screen's header bar has the way back
-            (app.css hides this one there, polish N16). In Main Chat the
-            back arrow leads the header instead. */}
-        {backToMain ? null : (
+            (app.css hides this one there, polish N16). In Main Chat's column
+            the thread is the column's: Main Chat is a row of the list. */}
+        {inMain ? null : (
           <button type="button" className="messages-thread-action" data-reply-close="" aria-label={t('messages:replies.close')} title={t('messages:replies.close')} onClick={() => closeThread()}>
             <XIcon aria-hidden="true" />
           </button>
         )}
       </header>
-      {privateRoot ? <PrivateThreadNote where={privateWhere} /> : null}
+      {/* Its head says it is theirs alone in Main Chat's column; under it,
+          where it went once it was filed or posted. */}
+      {privateMine && !(inMain && privateWhere?.state === 'open') ? <PrivateThreadNote where={privateWhere} /> : null}
       <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll" aria-live="polite">
         {/* The root's Reply quotes it into THIS thread's composer (#2387): its
             own threadRootId is null, being the main stream's message. */}
@@ -2790,10 +2827,10 @@ function ReplyThreadPanel({ backToMain = false }: {
           const row = <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped && !divider} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === message.id} planCardId={cardId && isPlanMessage(message) ? cardId : null} />;
           return divider ? <Fragment key={message.clientKey || message.id}>{divider}{row}</Fragment> : row;
         })}
-        {privateRoot && root ? (
+        {privateRoot && privateMine && root ? (
           <PrivateThreadDoors
             rootId={privateRoot}
-            text={root.content || ''}
+            text={privateThreadWords(root, replies, meId)}
             where={privateWhere}
             onWhere={setPrivateWhere}
             botReplied={replies.some((message) => message.sender.bot)}
@@ -2943,15 +2980,18 @@ export function ChannelLoading(): ReactNode {
   );
 }
 
-export function EmbeddedConversation({ conversationId, active, at = null, mainChat = false }: {
+export function EmbeddedConversation({ conversationId, active, at = null, mainChat = false, onBack = null }: {
   conversationId: number;
   active: boolean;
   /**
    * 31 Oct 2026: this copy is Main Chat on the AI tab, a column of 400 to
-   * 720px (or a phone's drawer): a thread opened in it covers the chat, with
-   * a back arrow to it, rather than squeezing in beside it.
+   * 720px (or a phone's drawer): a thread opened in it covers the chat
+   * rather than squeezing in beside it. 1 Nov 2026: alone, under its own
+   * head (ReplyThreadPanel `inMain`).
    */
   mainChat?: boolean;
+  /** A phone's drawer: the thread's back arrow, to the tab's list. */
+  onBack?: (() => void) | null;
   /**
    * #3653: where a door into the room asked to land — a reply thread, or a
    * message. Each one is taken ONCE, when the room is put in place or at
@@ -2986,19 +3026,9 @@ export function EmbeddedConversation({ conversationId, active, at = null, mainCh
   return (
     <div className={`messages-layout messages-layout-embedded${here && (snap.route.threadRootId || blank) ? ' messages-has-reply-thread' : ''}${blank ? ' messages-has-blank-thread' : ''}`} data-main-chat={mainChat ? '' : undefined}>
       {here ? <ConversationThread embedded /> : <ChannelLoading />}
-      {here && snap.route.threadRootId ? <ReplyThreadPanel backToMain={mainChat} /> : null}
+      {here && snap.route.threadRootId ? <ReplyThreadPanel inMain={mainChat} onBack={onBack} /> : null}
       {blank ? <NewThreadPanel conversationId={conversationId} /> : null}
     </div>
-  );
-}
-
-/** #6071: a design thread opened in an embedded copy of the chat has its preview in Messages, linked from the thread. */
-function EmbeddedDesignLink({ conversationId, rootId }: { conversationId: number; rootId: number }) {
-  const t = useMessages('messages');
-  return (
-    <a className="messages-thread-action px-2 text-[13px] font-semibold" href={`#messages/${conversationId}/thread/${rootId}`} data-design-open="">
-      {t('messages:design.pane.openInMessages')}
-    </a>
   );
 }
 

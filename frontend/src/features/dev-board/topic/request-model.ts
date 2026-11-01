@@ -184,3 +184,25 @@ export function publishRequestThread(number: number, rows: TranscriptMessage[]):
       && s.ended === specs[i].ended);
   if (!same) requestThreadStore.set({ number, specs });
 }
+
+/**
+ * 1 Nov 2026 (one page per thread): the changes in the open request's
+ * thread, by session id, with their numbers: what a row written on one of
+ * them is tagged with in the request's one discussion (RequestRows).
+ * Published by the request's head (./request-head.tsx) once its thread is
+ * read.
+ */
+export interface RequestChangesState {
+  number: number | null;
+  numbers: Record<number, number | null>;
+}
+
+export const requestChangesStore = createStore<RequestChangesState>({ number: null, numbers: {} });
+
+export function publishRequestChanges(number: number, changes: readonly { id: number; number: number | null }[]): void {
+  const numbers: Record<number, number | null> = {};
+  for (const c of changes) numbers[Number(c.id)] = c.number == null ? null : Number(c.number);
+  const prev = requestChangesStore.get();
+  if (prev.number === number && JSON.stringify(prev.numbers) === JSON.stringify(numbers)) return;
+  requestChangesStore.set({ number, numbers });
+}

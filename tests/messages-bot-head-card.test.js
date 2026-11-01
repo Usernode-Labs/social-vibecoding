@@ -367,7 +367,9 @@ test('the staging preview’s declared check finds the demo DM’s news as one r
   // one line of words (N finished · N couldn't build).
   const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#4097/.test(t.name));
   assert.ok(check, 'declared');
-  assert.equal(check.path, '/?demo=1#messages/910005');
+  // 1 Nov 2026: the chat with the bot is the Homeroom bot tab's alone, in its column.
+  assert.equal(check.path, '/?demo=1#homeroom-bot/main');
+  assert.match(check.expectSelector, /^#ai-main-pane \.messages-thread-scroll:has/);
   assert.match(check.expectSelector, /:has\(\[data-bot-settled-count=finished\]\)/, 'a first version that went live is folded with the finished');
   // 31 Oct 2026: the request still waiting is a row that counts its updates,
   // and its question is drawn whole in the chat, its answers under it: the
@@ -405,5 +407,5 @@ test('a chat reply carries a card for each request its words name that its tools
   assert.deepEqual(mayor.namedCards('Proposal #6011 is up.', ctx), { cards: [], project: null }, 'a proposal’s number is no request');
   mayor.noteRequests(ctx, { project: 'seed-swap', number: 14 });
   assert.deepEqual(mayor.namedCards('#14 is building.', ctx).cards, [], 'a number on two projects is no one card');
-  assert.match(read('src/services/homeroom-bot-mayor.js'), /: named\.project \? \{ appSlug: named\.project \} : \{\};\n\s+return say\(text, \{\n\s+objects: unique,\n\s+metadata: \{\n\s+kind: 'chat', \.\.\.project,/);
+  assert.match(read('src/services/homeroom-bot-mayor.js'), /const project = named\.project \? \{ appSlug: named\.project \} : \{\};\n\s+return say\(text, \{\n\s+objects: unique,\n\s+metadata: \{\n\s+kind: 'chat', \.\.\.project,/);
 });
