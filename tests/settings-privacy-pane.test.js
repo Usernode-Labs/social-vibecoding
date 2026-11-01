@@ -80,8 +80,9 @@ test('finding your profile is its own section, not part of messaging (#5926 item
   assert.deepEqual(headings, [
     escape(message('settings:privacy.whoCanMessage.title')),
     escape(message('settings:privacy.discoverable.title')),
+    escape(message('settings:privacy.contact.title')),
     escape(message('settings:privacy.usageAnalytics.title')),
-  ], 'three sections: messaging, finding, analytics');
+  ], 'four sections: messaging, finding, email & texts (#6044), analytics');
   assert.equal(message('settings:privacy.discoverable.title'), 'Who can find me');
   // The switch sits under its own heading, after the messaging radios.
   const findAt = html.indexOf(escape(message('settings:privacy.discoverable.title')));
@@ -128,13 +129,14 @@ test('helper text is 13px in rem and lighter in the dark theme (#5926)', () => {
   // lifted. Every other small line wears the shared helper style.
   assert.doesNotMatch(html, /class="(?![^"]*\bmb-3\b)[^"]*\btext-xs text-zinc-500/, 'no helper line keeps the 12px size');
   const count = html.split(HELP).length - 1;
-  assert.equal(count, 4, `both choices and both switches wear the helper style, found ${count}`);
+  // #6044 adds two: the Email & texts block's two switches' lines.
+  assert.equal(count, 6, `both choices and the four switches wear the helper style, found ${count}`);
 });
 
 test('both switches are announced as switches and say Off before the account is read (#5926)', () => {
   const { PrivacySection } = loadTsx('frontend/src/features/settings/sections/privacy.tsx');
   const html = renderToHtml(createElement(PrivacySection, {}));
-  for (const id of ['settings-profile-discoverable', 'settings-usage-analytics']) {
+  for (const id of ['settings-profile-discoverable', 'settings-contact-marketing-email', 'settings-contact-activity-email', 'settings-usage-analytics']) {
     const input = html.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`));
     assert.ok(input, `#${id} is rendered`);
     assert.match(input[0], /role="switch"/, `#${id} is announced as a switch`);
@@ -142,7 +144,7 @@ test('both switches are announced as switches and say Off before the account is 
     assert.doesNotMatch(input[0], /checked/);
   }
   const off = `<span aria-hidden="true" class="ml-2 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">${message('settings:privacy.state.off')}</span>`;
-  assert.equal(html.split(off).length - 1, 2);
+  assert.equal(html.split(off).length - 1, 4, 'every switch, the two Email & texts ones (#6044) too');
   assert.ok(!html.includes(`>${message('settings:privacy.state.on')}</span>`));
   // The analytics switch is still described by its explanation.
   assert.match(html, /id="settings-usage-analytics"[^>]*aria-describedby="settings-usage-analytics-description"|aria-describedby="settings-usage-analytics-description"[^>]*id="settings-usage-analytics"/);

@@ -91,7 +91,7 @@ async function connectPool() {
       id TEXT PRIMARY KEY, run_id TEXT NOT NULL, story_id TEXT NOT NULL, viewport TEXT,
       side TEXT NOT NULL, variant TEXT NOT NULL, media TEXT NOT NULL,
       theme TEXT NOT NULL DEFAULT 'light', public_safe BOOLEAN,
-      content_type TEXT NOT NULL, data BYTEA NOT NULL, sha256 TEXT NOT NULL,
+      content_type TEXT NOT NULL, data BYTEA NOT NULL, sha256 TEXT NOT NULL, object_key TEXT, bytes INTEGER,
       width INTEGER, height INTEGER);
     CREATE TABLE app_illustrations (app_id INTEGER PRIMARY KEY, id TEXT NOT NULL, dark_id TEXT);
     CREATE TABLE community_members (

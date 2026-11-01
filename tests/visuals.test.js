@@ -6,6 +6,7 @@
 // Run with: node --test tests/visuals.test.js
 
 const test = require('node:test');
+require('./lib/media-store').useMemoryMedia(test);
 const assert = require('node:assert/strict');
 const visuals = require('../src/services/visuals');
 const { parseCookie, resolveTargets } = require('../capture/capture');

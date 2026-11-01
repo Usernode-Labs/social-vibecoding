@@ -33,7 +33,7 @@
  * There the panel is in Main's place, the chat docked beside the list, and
  * is drawn as that column rather than as a panel of its own (Evan: "not in
  * a new side panel that can be maximized and has its own Workshop back
- * button"): ‹ Main, which gives Main its place back, and the project the
+ * button"): ‹ Main Chat, which gives Main its place back, and the project the
  * page is in, which opens it; no title, Expand, Close, Back or divider, and
  * the page in it leaves out its own "‹ Workshop" (controller BESIDE_AI_CLASS).
  * Both rows are always rendered and app.css shows the one that applies
@@ -60,14 +60,14 @@ import {
 } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ChevronLeftIcon, ChevronRightIcon, ExpandIcon, XIcon } from '@/components/ui/icons';
+import { ChevronLeftIcon, ExpandIcon, XIcon } from '@/components/ui/icons';
 
-import { useMessages } from '../../lib/i18n/react';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { SidePanel as controller } from './controller';
-import { panelPage } from './routes';
+import { panelPage, titleFor } from './routes';
 import {
   KEY_STEP,
   applyWidth,
@@ -172,9 +172,10 @@ export function SidePanel(): ReactNode {
         >
           <XIcon className="w-4 h-4" aria-hidden="true" />
         </Button>
-        {/* Beside the AI tab's page only (app.css): ‹ Main, which gives
-            Main its place back, and the project the page is in. The chip is
-            the topic's own back chip, so the two read as one control. */}
+        {/* Beside the AI tab's page only (app.css): ‹ Main Chat, which gives
+            Main its place back, and the column's heading as Main's own reads,
+            the project's tile, what is open, and its project and number
+            (30 Oct 2026). The chip is the topic's own back chip. */}
         <button
           type="button"
           className="side-panel-main dev-topic-back un-touch-target"
@@ -184,7 +185,7 @@ export function SidePanel(): ReactNode {
           <ChevronLeftIcon className="dev-topic-back-icon" aria-hidden="true" />
           <span>{t('agent:sidePanel.main')}</span>
         </button>
-        <PanelPlace route={s.route} place={s.place} reported={s.reported} />
+        <PanelHeading route={s.route} place={s.place} reported={s.reported} label={s.label} />
       </div>
       <div id="side-panel-body" className="side-panel-body">
         {/* data-un-keyboard-relay: a tap in the panel that closes the
@@ -216,39 +217,65 @@ export function SidePanel(): ReactNode {
 
 type Place = { slug: string; name: string; icon_url?: string | null; icon_emoji?: string | null };
 
+/** Which "Project · …" line a page's route reads as, and its number. */
+function whereOf(route: string): { id: string; number: number | null } {
+  const m = route.match(/\/dev\/(issues|changes|proposals|sessions|shared|governance)\/(\d+)/);
+  if (!m) return { id: 'agent:sidePanel.where.project', number: null };
+  if (m[1] === 'issues') return { id: 'agent:sidePanel.where.request', number: Number(m[2]) };
+  if (m[1] === 'governance') return { id: 'agent:sidePanel.where.decision', number: null };
+  return { id: 'agent:sidePanel.where.change', number: Number(m[2]) };
+}
+
 /**
- * The project the panel's page is in, as a link to its page (its Hub), for
- * the header row beside the AI tab's page. Its tile and name are the ones
- * the door that opened the page named, while the page is still in that
- * project; after a link inside the panel to another one, the name its page
- * reported. Nothing on a page that is in no project.
+ * The column's heading beside the AI tab's page, as Main's own header reads
+ * (30 Oct 2026): the project's tile, then what is open, over its project and
+ * its number. The title is the door's (the row that opened it) while the
+ * panel is still on that page; after a link inside the panel, the page's own
+ * (its kind, for a piece of work). The project's name is a link to its page
+ * (its Hub). Its tile and name are the ones the door named, while the page is
+ * still in that project; after a link to another one, the name its page
+ * reported. Only the title on a page that is in no project.
  */
-function PanelPlace({ route, place, reported }: {
-  route: string | null; place: Place | null; reported: string;
+function PanelHeading({ route, place, reported, label }: {
+  route: string | null; place: Place | null; reported: string; label: { route: string; text: string } | null;
 }): ReactNode {
   const t = useMessages('agent');
-  const slug = route ? panelPage(route)?.slug || null : null;
-  if (!slug) return null;
+  if (!route) return null;
+  const slug = panelPage(route)?.slug || null;
   const same = !!place && place.slug === slug;
-  const name = (same ? place!.name : '') || String(reported || '').trim() || slug;
+  const project = slug ? ((same ? place!.name : '') || String(reported || '').trim() || slug) : '';
+  const title = (label && label.route === route && label.text) || titleFor(route, reported);
+  const where = whereOf(route);
   return (
-    <a
-      className="side-panel-place"
-      href={`#app/${encodeURIComponent(slug)}/workshop`}
-      aria-label={t('agent:sidePanel.openProject', { project: name })}
-      onClick={() => {
-        // A door to the project: its Hub, not the tab its page was last on.
-        try { (window as any).AppView?._landOnHub?.(slug); } catch { /* the page as it opens */ }
-      }}
-    >
+    <div className="side-panel-place">
       {same ? (
-        <span className="app-icon-tile w-7 h-7 shrink-0 rounded-lg overflow-hidden flex items-center justify-center font-bold text-sm" data-icon={appIconKind(place as any)} aria-hidden="true">
+        <span className="app-icon-tile w-8 h-8 shrink-0 rounded-[10px] overflow-hidden flex items-center justify-center font-bold text-sm" data-icon={appIconKind(place as any)} aria-hidden="true">
           <AppIconContent app={place as any} />
         </span>
       ) : null}
-      <span className="min-w-0 truncate">{name}</span>
-      <ChevronRightIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-    </a>
+      <span className="min-w-0 flex flex-col">
+        <span className="side-panel-place-title truncate">{title}</span>
+        {slug ? (
+          <span className="side-panel-place-where truncate">
+            <RichMessage
+              id={where.id}
+              values={{ project, number: where.number }}
+              components={[
+                <a
+                  className="side-panel-place-link"
+                  href={`#app/${encodeURIComponent(slug)}/workshop`}
+                  aria-label={t('agent:sidePanel.openProject', { project })}
+                  onClick={() => {
+                    // A door to the project: its Hub, not the tab its page was last on.
+                    try { (window as any).AppView?._landOnHub?.(slug); } catch { /* the page as it opens */ }
+                  }}
+                />,
+              ]}
+            />
+          </span>
+        ) : null}
+      </span>
+    </div>
   );
 }
 
@@ -266,13 +293,21 @@ interface WidthRange {
  *
  * The value is published only once it is known — after mount, while the panel
  * is on screen — so the prerender and the first client render carry none.
+ *
+ * The Homeroom bot page's Main is the same column (features/ai, 30 Oct
+ * 2026): its left edge is this handle too, with its own `id` and the pane it
+ * controls, and it sets the same width.
  */
-function SidePanelDivider({
+export function SidePanelDivider({
   panelRef,
   shown,
+  id = 'side-panel-divider',
+  controls = 'platform-side-panel',
 }: {
   panelRef: RefObject<HTMLElement | null>;
   shown: boolean;
+  id?: string;
+  controls?: string;
 }): ReactNode {
   const t = useMessages('agent');
   const [range, setRange] = useState<WidthRange | null>(null);
@@ -368,11 +403,11 @@ function SidePanelDivider({
 
   return (
     <div
-      id="side-panel-divider"
+      id={id}
       className="side-panel-divider"
       role="separator"
       aria-orientation="vertical"
-      aria-controls="platform-side-panel"
+      aria-controls={controls}
       aria-label={t('agent:sidePanel.resize')}
       aria-valuenow={range ? range.now : undefined}
       aria-valuemin={range ? range.min : undefined}

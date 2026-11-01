@@ -11,6 +11,7 @@
 // The verdict's writers: the preview machine's own (its transitions run them).
 const rowStore = require('../src/workflow/preview/check-store.ts');
 const test = require('node:test');
+require('./lib/media-store').useMemoryMedia(test);
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');

@@ -14,6 +14,9 @@
 //      without asking anything of them, so it is not listed (29 Oct 2026).
 //   3. Private threads are their own threads in the chat with the bot that
 //      have gone nowhere yet, and the bot's drafts for them.
+//   4. A request somebody pressed Claim on is being built, by who has it
+//      (30 Oct 2026), and Homeroom bot's status answer reads the lists the
+//      page draws (pageLists): the Needs you feed for her threads, then these.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/ai-work-postgres.test.js
 
@@ -70,23 +73,32 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
     `INSERT INTO requests (app_id, number, title, created_by, state) VALUES ($1, $2, $3, $4, $5) RETURNING id, thread_id`,
     [a.id, number, title, by.id, state]);
   const change = (a, pr, by, issue, status, extra = {}) => one(
-    `INSERT INTO chat_sessions (app_id, user_id, pr_number, linked_issues, status, shared_at, promoted_at, merged_at, live_at)
-     VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8) RETURNING id`,
-    [a.id, by.id, pr, [issue], status, extra.promotedAt || null, extra.mergedAt || null, extra.liveAt || null]);
+    `INSERT INTO chat_sessions (app_id, user_id, pr_number, linked_issues, status, shared_at, promoted_at, merged_at, live_at, check_state)
+     VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9) RETURNING id`,
+    [a.id, by.id, pr, [issue], status, extra.promotedAt || null, extra.mergedAt || null, extra.liveAt || null, extra.checkState || null]);
 
-  // Hers: asked for, nothing in flight.
+  // Hers: asked for, nothing in flight. 1 Nov 2026: her posted plan for it
+  // (request-specs.js, no branch) is no change in flight.
   await request(app, 1, ada, 'Print view');
+  await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, source, created_from_issue_number, linked_issues, issue_link_seeded, session_title)
+     VALUES ($1, $2, NULL, 'paused', 'request_spec', 1, '{1}', TRUE, 'Plan for #1 Print view')`, [app.id, ada.id]);
   // Hers, with Bob's change up for a vote she has not voted on: Needs you's.
   await request(app, 2, ada, 'Dark mode');
-  await change(app, 3, bob, 2, 'promoted', { promotedAt: new Date() });
+  await change(app, 3, bob, 2, 'promoted', { promotedAt: new Date(), checkState: 'passing' });
   // Bob's, which she only voted on: nothing left for her, so not listed.
   await request(app, 4, bob, 'Search');
-  const searched = await change(app, 5, bob, 4, 'promoted', { promotedAt: new Date(Date.now() - 3600000) });
+  const searched = await change(app, 5, bob, 4, 'promoted', { promotedAt: new Date(Date.now() - 3600000), checkState: 'passing' });
   await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [searched.id, ada.id]);
   // Hers, with Bob's change she voted Yes on: In progress, saying so.
   await request(app, 12, ada, 'Filters');
-  const filters = await change(app, 13, bob, 12, 'promoted', { promotedAt: new Date(Date.now() - 2 * 3600000) });
+  const filters = await change(app, 13, bob, 12, 'promoted', { promotedAt: new Date(Date.now() - 2 * 3600000), checkState: 'passing' });
   await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [filters.id, ada.id]);
+  // Hers, with Bob's change she voted Yes on whose checks have not passed yet:
+  // it waits for its checks, not for votes (#6060).
+  await request(app, 21, ada, 'Check pending');
+  const pending = await change(app, 22, bob, 21, 'promoted', { promotedAt: new Date(Date.now() - 3600000), checkState: 'pending' });
+  await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [pending.id, ada.id]);
   // Hers, which Homeroom bot is building; and Bob's, being built, where she
   // only wrote.
   await request(app, 14, ada, 'Calendar');
@@ -127,10 +139,12 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const titles = (list) => list.map((r) => `${r.title}:${r.what}`);
   assert.deepEqual(titles(work.next), ['Digest:going_live', 'Calendar:building'], 'hers only, being worked on, soonest first');
   assert.equal(work.next.find((r) => r.title === 'Calendar').by, 'bot', 'Homeroom bot is building it');
+  assert.ok(!work.next.some((r) => r.title === 'Print view'), 'a posted plan is not a change being built');
   // Up next: hers waiting on other people's votes first, then the requests nobody has picked up.
   assert.equal(titles(work.waiting)[0], 'Filters:vote');
   assert.equal(work.waiting[0].myVote, 'yes');
-  assert.deepEqual(titles(work.waiting).slice(1).sort(), ['Print view:not_picked_up', 'Tags:not_picked_up'].sort());
+  assert.equal(titles(work.waiting)[1], 'Check pending:checking', 'its checks have not passed: it says checks, not votes');
+  assert.deepEqual(titles(work.waiting).slice(2).sort(), ['Print view:not_picked_up', 'Tags:not_picked_up'].sort());
   assert.deepEqual(work.needs, [], 'no plan of the bot\'s waits for her');
   assert.deepEqual(titles(work.live), ['Badges:live']);
   const all = [...work.needs, ...work.next, ...work.waiting, ...work.live];
@@ -155,12 +169,15 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   await pool.query(`INSERT INTO issue_votes (issue_id, user_id, vote) VALUES ($1, $2, 'no')`, [votedOn.id, ada.id]);
   await pool.query('INSERT INTO thread_followers (thread_id, user_id) VALUES ($1, $3), ($2, $3)',
     [owed.thread_id, votedOn.thread_id, ada.id]);
-  const decided = (await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } })).waiting
-    .filter((r) => r.kind === 'decision').map((r) => [r.title, r.what, r.myVote, r.number]);
+  const decisions = (await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } })).waiting
+    .filter((r) => r.kind === 'decision');
+  const decided = decisions.map((r) => [r.title, r.what, r.myVote, r.number]);
   assert.deepEqual(decided.sort(), [
     ['Rename to Seed Box', 'decision', null, null],
     ['Rename to Seeds', 'decision', 'no', null],
   ], 'they wait for votes, not for somebody to build them; the one she owes is Needs you\'s');
+  // 1 Nov 2026: a decision's row opens the decision's own page, not the Workshop.
+  assert.equal(decisions.find((r) => r.title === 'Rename to Seeds').href, `#app/aw-seeds/dev/governance/${votedOn.id}`);
 
   // 30 Oct 2026: somebody who votes on everything. A week of changes going
   // live and of requests she only wrote in no longer push her own request off
@@ -202,6 +219,36 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const busyWork = await aiWork.workFor(pool, { user: { id: cara.id }, deps: { bot, ...planned } });
   assert.deepEqual(busyWork.needs.map((r) => `${r.title}:${r.what}`), ['Her old plan:plan'], 'the bot\'s plan waits for her Build it');
   assert.equal(busyWork.live.length, aiWork.THREADS_MAX, 'Live this week reads its own most rows');
+
+  // 30 Oct 2026: claimed, with no change yet. Bob's claim on hers is In
+  // progress, named for him; her own claim is hers; a claim older than the
+  // week the bot gives one is no claim.
+  await request(app, 18, ada, 'Sound toggle');
+  await request(app, 19, ada, 'Pause button');
+  await request(app, 20, ada, 'Old claim');
+  await pool.query(
+    `INSERT INTO issue_claims (app_id, github_issue_number, user_id, claimed_at)
+     VALUES ($1, 18, $2, NOW()), ($1, 19, $3, NOW()), ($1, 20, $2, NOW() - interval '8 days')`,
+    [app.id, bob.id, ada.id]);
+  const claimed = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } });
+  const of = (title) => [...claimed.next, ...claimed.waiting].find((r) => r.title === title);
+  assert.deepEqual([of('Sound toggle').what, of('Sound toggle').by, of('Sound toggle').claimedBy], ['building', 'someone', 'aw_bob']);
+  assert.deepEqual([of('Pause button').what, of('Pause button').by], ['building', 'you']);
+  assert.equal(of('Old claim').what, 'not_picked_up', 'a claim past its week');
+
+  // Homeroom bot's answer: the page's lists. The votes she owes (Bob's change
+  // for her Dark mode, the rename) are Needs you's, from the feed (a
+  // member's, so she joins); the rest are the lists above.
+  await pool.query(
+    `INSERT INTO community_members (community_id, user_id) SELECT community_id, $2 FROM apps WHERE id = $1 ON CONFLICT DO NOTHING`,
+    [app.id, ada.id]);
+  const page = await aiWork.pageLists(pool, { user: { id: ada.id }, deps: { bot } });
+  assert.ok(page.needsYou.some((r) => r.number === 2 && r.says === 'waits for their vote'), 'Bob\'s change, by her request\'s number');
+  assert.ok(page.needsYou.some((r) => r.title === 'Rename to Seed Shop' && r.says === 'waits for their vote'), 'and the decision she owes');
+  assert.ok(page.inProgress.some((r) => r.title === 'Sound toggle' && r.says === 'aw_bob is building it'));
+  assert.ok(page.waiting.some((r) => r.title === 'Filters' && r.says === 'waiting for votes; they voted Yes'));
+  assert.deepEqual(page.liveThisWeek.map((r) => r.title), ['Badges']);
+  assert.equal(page.counts.inProgress, page.inProgress.length);
 
   // Private threads: her own message with replies, and the bot's draft for her.
   const convo = await one(`INSERT INTO conversations (kind) VALUES ('direct') RETURNING id`);
@@ -252,4 +299,17 @@ test('the demo rows are obviously fake, and staging-only', () => {
   for (const row of [...demo.private, ...demo.needs, ...demo.next, ...demo.waiting, ...demo.live]) {
     assert.match(row.title, /^Staging demo/, row.title);
   }
+  // One story with the Needs you feed's demo cards: their projects, so the
+  // page groups the two, and every kind of row. Four more projects only wait
+  // or went live, so the filter has more projects than its three chips and
+  // shows its More.
+  const { DEMO_NEEDS_FEED } = require('../src/routes/workshop-overview');
+  const feedSlugs = new Set(DEMO_NEEDS_FEED.map((it) => it.app.slug));
+  const rows = [...demo.needs, ...demo.next, ...demo.waiting, ...demo.live];
+  assert.ok([...demo.needs, ...demo.next].every((r) => feedSlugs.has(r.app.slug)), 'what needs you and what is under way is on the feed\'s demo projects');
+  assert.equal(new Set(rows.filter((r) => feedSlugs.has(r.app.slug)).map((r) => r.app.slug)).size, 2);
+  assert.equal(new Set(rows.map((r) => r.app.slug)).size, 6, 'three chips and "3 more"');
+  assert.ok(rows.every((r) => /^staging-demo-/.test(r.app.slug)), 'on demo projects only');
+  assert.deepEqual(demo.needs.map((r) => r.what), ['plan', 'decide', 'build_stopped']);
+  assert.ok(demo.next.some((r) => r.claimedBy === 'staging-demo-partner'), 'a claim');
 });

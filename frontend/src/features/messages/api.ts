@@ -1,4 +1,5 @@
 import type {
+  DesignPin,
   ConversationDetail,
   ConversationMember,
   ConversationMessage,
@@ -120,7 +121,10 @@ const BOT_QUESTION_STATES = new Set(['open', 'answered', 'closed']);
 // B7: a change's ready card adds three: its preview (Try it), the person's
 // own Yes (Approve) and a reply quoting the card (Change something).
 // #4231: and `invite`, under a new project's first version going live.
-const BOT_ACTION_TYPES = new Set(['server', 'open', 'prompt', 'preview', 'vote', 'reply', 'invite']);
+// 1 Nov 2026: `design` (the screen picker) retired: the bot draws a screen
+// from words now, and an old Pick the screen button is no longer drawn.
+// `make` opens the sheet that makes a project from a design (./bot-make.tsx).
+const BOT_ACTION_TYPES = new Set(['server', 'open', 'prompt', 'preview', 'vote', 'reply', 'invite', 'make']);
 const MAX_BOT_ACTIONS = 3;
 
 /** B3: a bot message's buttons, as types.ts HomeroomBotAction: at most three, one primary. */
@@ -243,11 +247,25 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
     ...(broken.length ? { broken } : {}),
   } : null;
   const goesLive = normalizeGoesLive(pick(bot, 'goesLive'));
+  // C2.4: the project a design's card offers to make, and what it made.
+  const makeRow = record(pick(bot, 'makeProject'));
+  const makeRoot = strictId(pick(makeRow, 'rootId'));
+  const makeName = text(pick(makeRow, 'name')).slice(0, 60);
+  const makeProject = makeRoot && makeName
+    ? { name: makeName, rootId: makeRoot, version: strictId(pick(makeRow, 'version')) } : null;
   return {
     homeroomBot: {
       kind,
       appSlug: optional('appSlug'),
       appName: optional('appName'),
+      ...(strictId(pick(bot, 'designVersion')) ? { designVersion: strictId(pick(bot, 'designVersion'))! } : {}),
+      designTitle: optional('designTitle'),
+      // 1 Nov 2026: a thread about a request or a change is named by it.
+      ...(['request', 'change'].includes(String(pick(bot, 'aboutKind'))) && strictId(pick(bot, 'aboutNumber'))
+        ? { aboutKind: String(pick(bot, 'aboutKind')) as 'request' | 'change', aboutNumber: strictId(pick(bot, 'aboutNumber'))! }
+        : {}),
+      aboutTitle: optional('aboutTitle'),
+      ...(['fix', 'add', 'design', 'project'].includes(String(pick(bot, 'changeKind'))) ? { changeKind: String(pick(bot, 'changeKind')) as HomeroomBotMeta['changeKind'] } : {}),
       ...(issueNumber ? { issueNumber } : {}),
       issueTitle: optional('issueTitle'),
       ...(pick(bot, 'firstVersion') === true ? { firstVersion: true } : {}),
@@ -291,6 +309,9 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       waiting: optional('waiting'),
       ...(countOf(pick(bot, 'count')) !== null ? { count: countOf(pick(bot, 'count'))! } : {}),
       ...(pick(bot, 'alsoInChat') === true ? { alsoInChat: true } : {}),
+      ...(makeProject ? { makeProject } : {}),
+      madeSlug: optional('madeSlug'),
+      madeName: optional('madeName'),
     },
   };
 }
@@ -413,6 +434,7 @@ export function normalizeMessage(input: unknown, fallbackConversationId = 0): Co
   const replyRow = record(pick(row, 'reply', 'replyTo', 'reply_to'));
   const replyId = strictId(pick(replyRow, 'id', 'messageId', 'message_id'));
   const botMeta = normalizeBotMeta(pick(row, 'metadata'));
+  const designPin = normalizeDesignPin(pick(record(pick(row, 'metadata')), 'designPin'));
   return {
     id: strictId(pick(row, 'id', 'messageId', 'message_id')) || 0,
     conversationId,
@@ -439,8 +461,21 @@ export function normalizeMessage(input: unknown, fallbackConversationId = 0): Co
     // the star rendered empty, and nothing anywhere errored.
     saved: pick(row, 'saved', 'bookmarked') === true,
     // #3624: the Homeroom bot's question and its answers, when it has one.
-    ...(botMeta ? { metadata: botMeta } : {}),
+    // #6071: a person's comment pinned on a design carries its point.
+    ...(botMeta || designPin ? { metadata: { ...(botMeta || {}), ...(designPin ? { designPin } : {}) } } : {}),
   };
+}
+
+/** #6071: a design pin as the server sends it, or null. */
+export function normalizeDesignPin(input: unknown): DesignPin | null {
+  const row = record(input);
+  const version = strictId(pick(row, 'version'));
+  const x = Number(pick(row, 'x'));
+  const y = Number(pick(row, 'y'));
+  if (!version || !(x >= 0 && x <= 1) || !(y >= 0 && y <= 1)) return null;
+  const el = record(pick(row, 'element'));
+  const element = { tag: text(pick(el, 'tag')).slice(0, 30), id: text(pick(el, 'id')).slice(0, 60), text: text(pick(el, 'text')).slice(0, 80) };
+  return { version, x, y, ...(element.tag || element.text ? { element } : {}) };
 }
 
 export function normalizeConversation(input: unknown): ConversationDetail {
@@ -620,14 +655,108 @@ export async function listMessages(id: number, before?: number | null, options?:
   };
 }
 
-export async function sendMessage(id: number, input: { content: string; replyToId?: number; threadRootId?: number; attachmentIds?: string[]; object?: SharedObjectReference; idempotencyKey: string }): Promise<ConversationMessage> {
+export async function sendMessage(id: number, input: { content: string; replyToId?: number; threadRootId?: number; attachmentIds?: string[]; object?: SharedObjectReference; idempotencyKey: string; designPin?: DesignPin }): Promise<ConversationMessage> {
   const payload: JsonRecord = { content: input.content, idempotency_key: input.idempotencyKey };
+  if (input.designPin) payload.design_pin = input.designPin as unknown as JsonRecord;
   if (input.replyToId) payload.reply_to_id = input.replyToId;
   if (input.threadRootId) payload.thread_root_id = input.threadRootId;
   if (input.attachmentIds?.length) payload.attachment_ids = input.attachmentIds;
   if (input.object) payload.object = input.object;
   const data = record(await request<unknown>(`/api/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify(payload) }));
   return normalizeMessage(pick(data, 'message') ?? data, id);
+}
+
+// ── #6071: design threads ─────────────────────────────────────────────────
+
+/** A design thread as its pane reads it (routes/conversations.js). */
+export interface DesignThread {
+  rootId: number;
+  conversationId: number;
+  state: string;
+  number: number | null;
+  app: { slug: string; name: string } | null;
+  title: string;
+  /** 1 Nov 2026: 'new', a screen of a project not made yet, drawn with the native kit. */
+  surface: 'platform' | 'app' | 'new';
+  route: string | null;
+  width: number;
+  height: number;
+  latest: number;
+  versions: Array<{ version: number; author: string; note: string | null; messageId: number | null }>;
+  /** 1 Nov 2026 (C2.2): the open request Propose it posts the plan on (the thread's), or null for a new one. */
+  planOn?: number | null;
+}
+
+export interface DesignCapture {
+  html: string;
+  surface: 'platform' | 'app';
+  title: string;
+  route: string | null;
+  appSlug: string | null;
+  width: number;
+  height: number;
+}
+
+const DESIGNS = '/api/conversations/homeroom-bot/designs';
+
+/**
+ * #6071 follow-up: make the thread a blank one from Homeroom bot's "+" is
+ * about to be, with what its welcome block picked (the project, by slug, or
+ * any; the kind of change). Its first message is then sent into it.
+ */
+export async function startBotThread(input: { project: string | null; kind: string }): Promise<{ conversationId: number; rootId: number }> {
+  const data = record(await request<unknown>('/api/conversations/homeroom-bot/new-thread', { method: 'POST', body: JSON.stringify(input) }));
+  const rootId = strictId(pick(data, 'rootId'));
+  if (!rootId) throw new Error(text(pick(data, 'error')) || 'The thread could not be started');
+  return { conversationId: strictId(pick(data, 'conversationId')) || 0, rootId };
+}
+
+/** Open a design thread for a captured screen: where it is, to open it. */
+export async function startDesign(capture: DesignCapture): Promise<{ conversationId: number; rootId: number; href: string }> {
+  const data = record(await request<unknown>(DESIGNS, { method: 'POST', body: JSON.stringify(capture) }));
+  return {
+    conversationId: strictId(pick(data, 'conversationId')) || 0,
+    rootId: strictId(pick(data, 'rootId')) || 0,
+    href: text(pick(data, 'href')),
+  };
+}
+
+export async function getDesign(rootId: number): Promise<DesignThread> {
+  const data = record(await request<unknown>(`${DESIGNS}/${rootId}`));
+  const app = record(pick(data, 'app'));
+  return {
+    rootId: strictId(pick(data, 'rootId')) || rootId,
+    conversationId: strictId(pick(data, 'conversationId')) || 0,
+    state: text(pick(data, 'state')) || 'open',
+    number: strictId(pick(data, 'number')),
+    app: text(pick(app, 'slug')) ? { slug: text(pick(app, 'slug')), name: text(pick(app, 'name')) || text(pick(app, 'slug')) } : null,
+    title: text(pick(data, 'title')),
+    surface: pick(data, 'surface') === 'app' ? 'app' : pick(data, 'surface') === 'new' ? 'new' : 'platform',
+    route: text(pick(data, 'route')) || null,
+    width: Number(pick(data, 'width')) || 1280,
+    height: Number(pick(data, 'height')) || 800,
+    latest: Number(pick(data, 'latest')) || 0,
+    planOn: strictId(pick(data, 'planOn')),
+    versions: array(pick(data, 'versions')).map((v) => {
+      const row = record(v);
+      return {
+        version: Number(pick(row, 'version')) || 0,
+        author: text(pick(row, 'author')),
+        note: text(pick(row, 'note')) || null,
+        messageId: strictId(pick(row, 'messageId')),
+      };
+    }).filter((v) => v.version > 0),
+  };
+}
+
+export async function getDesignVersion(rootId: number, version: number): Promise<{ version: number; html: string }> {
+  const data = record(await request<unknown>(`${DESIGNS}/${rootId}/versions/${version}`));
+  return { version: Number(pick(data, 'version')) || version, html: typeof pick(data, 'html') === 'string' ? String(pick(data, 'html')) : '' };
+}
+
+export async function proposeDesign(rootId: number, input: { version: number; title: string; notes: string }): Promise<{ number: number | null; href: string; plan: boolean }> {
+  const data = record(await request<unknown>(`${DESIGNS}/${rootId}/propose`, { method: 'POST', body: JSON.stringify(input) }));
+  return { number: strictId(pick(data, 'number')), href: text(pick(data, 'href')), plan: pick(data, 'plan') !== false };
 }
 
 /**
@@ -746,9 +875,9 @@ export async function markRead(conversationId: number, messageId: number): Promi
   await request<unknown>(`/api/conversations/${conversationId}/read`, { method: 'POST', body: JSON.stringify({ message_id: messageId }) });
 }
 
-export async function setTyping(conversationId: number, typing: boolean): Promise<void> {
+export async function setTyping(conversationId: number, typing: boolean, threadRootId: number | null = null): Promise<void> {
   await request<unknown>(`/api/conversations/${conversationId}/typing`, {
-    method: 'POST', body: JSON.stringify({ typing }),
+    method: 'POST', body: JSON.stringify({ typing, ...(threadRootId ? { thread_root_id: threadRootId } : {}) }),
   });
 }
 

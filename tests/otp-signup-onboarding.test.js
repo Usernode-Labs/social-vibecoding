@@ -94,10 +94,11 @@ test('the set-password step asks for no password, and says how they sign in (#48
     assert.doesNotMatch(message(`auth:login.signup.${intro}`), /password/i, intro);
   }
   assert.doesNotMatch(message('auth:login.signup.submit'), /password/i);
-  // The request carries the handle and nothing else.
+  // The request carries the handle and, only when ticked, the sign-up
+  // form's "Homeroom news by email" box (#6044); never a password.
   const handler = LOGIN.slice(LOGIN.indexOf('const onOtpSetPassword = useCallback'), LOGIN.indexOf('// ── Wallet sign-in'));
   assert.match(handler, /useCallback\(async \(\) => \{/);
-  assert.match(handler, /body: JSON\.stringify\(\{\s*\.\.\.\(handle \? \{ username: handle \} : \{\}\),\s*\}\),/);
+  assert.match(handler, /body: JSON\.stringify\(\{\s*\.\.\.\(handle \? \{ username: handle \} : \{\}\),\s*\/\/[^\n]*\n\s*\.\.\.\(otpSignup\?\.needsUsername && otpNewsByEmail \? \{ marketingEmail: true \} : \{\}\),\s*\}\),/);
   assert.doesNotMatch(handler, /password:|passwordConfirmation/);
   // In the password's place, how they sign in and where a password is added.
   assert.match(step, /<p className="text-sm text-zinc-500 dark:text-zinc-400">\s*\{t\('auth:login\.signup\.codeNote'\)\}\s*<\/p>/);

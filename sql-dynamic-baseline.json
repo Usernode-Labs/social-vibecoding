@@ -3,18 +3,25 @@
   "description": "Runtime-built .query() calls reviewed outside the static PostgreSQL validator.",
   "queries": [
     {
+      "source": "src/db/connection-census.js",
+      "kind": "runtime-expression",
+      "fingerprint": "c08ac50f84653d8af134",
+      "count": 1,
+      "preview": "split ? `SELECT current_setting('max_connections')::int AS max, COALESCE(sum(used), 0)::int AS used, COALESCE(sum(idle), 0)::int AS idle FROM public.homeroom_co"
+    },
+    {
+      "source": "src/db/connection-census.js",
+      "kind": "runtime-expression",
+      "fingerprint": "cd9746769424be50f55d",
+      "count": 1,
+      "preview": "split ? `SELECT datname, used::int AS count FROM public.homeroom_connection_counts() WHERE datname IS NOT NULL ORDER BY used DESC LIMIT $1` : `SELECT datname, c"
+    },
+    {
       "source": "src/db/migrate.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
       "count": 1,
       "preview": "sql"
-    },
-    {
-      "source": "src/db/migrate.js",
-      "kind": "runtime-built-identifier",
-      "fingerprint": "df0ad6e43880f09c90eb",
-      "count": 1,
-      "preview": "schema"
     },
     {
       "source": "src/db/migrate.js",
@@ -71,6 +78,13 @@
       "fingerprint": "fc7626a63bf5115a5be2",
       "count": 1,
       "preview": "`REINDEX TABLE ${quoteIdent(table.name)}`"
+    },
+    {
+      "source": "src/db/schema-migrations.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "45386419554fcf68896b",
+      "count": 1,
+      "preview": "migration.sql"
     },
     {
       "source": "src/db/session-locks.js",
@@ -423,6 +437,20 @@
       "preview": "`SELECT UNNEST(cs.linked_issues) AS n, cs.id, cs.user_id, cs.status, cs.shared_at, cs.last_activity_at, cs.created_at, u.username, ${workedOnSql()} AS worked_on"
     },
     {
+      "source": "src/routes/issues.js",
+      "kind": "structural-template",
+      "fingerprint": "5ffb4acc0d1788916b3d",
+      "count": 1,
+      "preview": "`SELECT (COUNT(*) FILTER (WHERE msg_type = 'message'))::int AS cnt, MAX(created_at) AS last_at FROM (SELECT msg_type, created_at FROM chat_messages WHERE app_id"
+    },
+    {
+      "source": "src/routes/issues.js",
+      "kind": "structural-template",
+      "fingerprint": "890834a46a89a5e0099b",
+      "count": 1,
+      "preview": "`SELECT thread_ref AS n, (COUNT(*) FILTER (WHERE msg_type = 'message'))::int AS cnt, MAX(created_at) AS last_at FROM (SELECT thread_ref, msg_type, created_at FR"
+    },
+    {
       "source": "src/routes/kudos.js",
       "kind": "structural-template",
       "fingerprint": "23e047220a859a119a96",
@@ -516,13 +544,6 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
-      "fingerprint": "0882e61966e68334f071",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.status, cs.linked_issues, cs.shared_at, cs.transcript_shar"
-    },
-    {
-      "source": "src/routes/sessions.js",
-      "kind": "structural-template",
       "fingerprint": "1c821d7ef624ede242e9",
       "count": 1,
       "preview": "`SELECT version, built_at, commit_sha, pr_number, shared_to_group_at, LENGTH(content) AS char_count, content, content_html FROM chat_session_specs s WHERE s.ses"
@@ -533,6 +554,13 @@
       "fingerprint": "42c89c7dc3cd0cb79eb0",
       "count": 1,
       "preview": "`SELECT DISTINCT ON (s.session_id) s.session_id, s.version, s.built_at FROM chat_session_specs s JOIN chat_sessions owner_session ON owner_session.id = s.sessio"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
+      "fingerprint": "828c54db9a579ee9fdcb",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.status, cs.linked_issues, cs.shared_at, cs.transcript_shar"
     },
     {
       "source": "src/routes/sessions.js",
@@ -929,9 +957,9 @@
     {
       "source": "src/routes/workshop-overview.js",
       "kind": "runtime-expression",
-      "fingerprint": "66e0ecdfdfb67c8fc4d2",
+      "fingerprint": "2c97f61d5d93920a4851",
       "count": 1,
-      "preview": "req.query.in === 'threads' ? NEEDS_FEED_IN_THREADS_SQL : NEEDS_FEED_SQL"
+      "preview": "inThreads ? NEEDS_FEED_IN_THREADS_SQL : NEEDS_FEED_SQL"
     },
     {
       "source": "src/services/account-deletion.js",
@@ -1086,6 +1114,41 @@
       "fingerprint": "f2f69da3d22877da7289",
       "count": 1,
       "preview": "`INSERT INTO credentials.user_ai_credentials (user_id, provider, purpose, secret_enc, secret_last4, secret_fingerprint, status, verified_at, revision) VALUES ($"
+    },
+    {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
+      "fingerprint": "83622e5a5ef7d176420d",
+      "count": 1,
+      "preview": "`GRANT ${privileges} ON ${kind} ${item.name} TO ${runtime}`"
+    },
+    {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
+      "fingerprint": "85af22e27498525bb8b4",
+      "count": 1,
+      "preview": "`GRANT SELECT ON TABLE public.schema_migrations TO ${runtime}, ${reader}; REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE public.schema_mi"
+    },
+    {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
+      "fingerprint": "8dfce378dabb4eacb36e",
+      "count": 1,
+      "preview": "`REVOKE CREATE ON SCHEMA ${schema} FROM PUBLIC; GRANT USAGE ON SCHEMA ${schema} TO ${runtime}, ${reader}; ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA $"
+    },
+    {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
+      "fingerprint": "9f766fdb6eafbeca0016",
+      "count": 1,
+      "preview": "`GRANT SELECT ON ${kind} ${item.name} TO ${reader}`"
+    },
+    {
+      "source": "src/services/database-role-grants.js",
+      "kind": "structural-template",
+      "fingerprint": "bcac2736e4c8905c37f8",
+      "count": 1,
+      "preview": "`GRANT EXECUTE ON ROUTINE ${item.name} TO ${runtime}`"
     },
     {
       "source": "src/services/db-manager.js",
@@ -1251,6 +1314,13 @@
     {
       "source": "src/services/homeroom-bot-progress.js",
       "kind": "structural-template",
+      "fingerprint": "78c2595a6c02401a3e85",
+      "count": 1,
+      "preview": "`SELECT p.app_id, p.about_number FROM private_threads p WHERE p.user_id = $1 AND ${planHoldActiveSql('p')}`"
+    },
+    {
+      "source": "src/services/homeroom-bot-progress.js",
+      "kind": "structural-template",
       "fingerprint": "eee0d0058ae8c27e0b96",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, a.slug, CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status, cs.check_state, cs.check_ph"
@@ -1268,6 +1338,13 @@
       "fingerprint": "f5edec0605c15fed7729",
       "count": 1,
       "preview": "`SELECT ${workedOnSql()} AS busy FROM chat_sessions cs WHERE cs.id = $1`"
+    },
+    {
+      "source": "src/services/homeroom-bot.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "d538ceffe7eeac6a1532",
+      "count": 1,
+      "preview": "QUEUE_SNAPSHOT_SQL"
     },
     {
       "source": "src/services/http-stream-access.js",
@@ -1501,6 +1578,13 @@
       "preview": "`UPDATE chat_sessions SET pr_body = $1, ${summaryFreshness.INVALIDATE_SQL} WHERE id = $2`"
     },
     {
+      "source": "src/services/private-threads.js",
+      "kind": "structural-template",
+      "fingerprint": "eec20ca6db6e76c3ef52",
+      "count": 1,
+      "preview": "`SELECT p.about_number, p.root_message_id FROM private_threads p WHERE p.app_id = $1 AND p.user_id = $2 AND p.about_number = ANY($3::int[]) AND ${loopRules().pl"
+    },
+    {
       "source": "src/services/proposal-commit-operation.js",
       "kind": "structural-template",
       "fingerprint": "c1c902c7f2bcea1a7a3d",
@@ -1587,9 +1671,9 @@
     {
       "source": "src/services/shots-control.js",
       "kind": "structural-template",
-      "fingerprint": "ed6515c11d2b8c24cb99",
+      "fingerprint": "d6f860ff0554e7f6405d",
       "count": 1,
-      "preview": "`SELECT slot, story_id, viewport, side, variant, media, theme, content_type, data, width, height, bytes, sha256, density, part, scale, focus_rect FROM shot_run_"
+      "preview": "`SELECT slot, story_id, viewport, side, variant, media, theme, content_type, data, width, height, bytes, sha256, density, part, scale, focus_rect, object_key FR"
     },
     {
       "source": "src/services/shots-demo-states.js",
@@ -1662,6 +1746,20 @@
       "preview": "`SELECT cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'ru"
     },
     {
+      "source": "src/services/threads.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "3e276e9485da30387b4b",
+      "count": 1,
+      "preview": "ELSEWHERE_SQL"
+    },
+    {
+      "source": "src/services/threads.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "d664a2029343883317f2",
+      "count": 1,
+      "preview": "ITEMS_SQL"
+    },
+    {
       "source": "src/services/topochain/challenge-onboarding.js",
       "kind": "structural-template",
       "fingerprint": "0d73f67849537e7007aa",
@@ -1674,6 +1772,13 @@
       "fingerprint": "35f1322f2f4f01e6afff",
       "count": 1,
       "preview": "stmt"
+    },
+    {
+      "source": "src/services/topochain/db-console-role.js",
+      "kind": "structural-template",
+      "fingerprint": "4c6c90277104f2f11c38",
+      "count": 1,
+      "preview": "`GRANT ${ROLE} TO ${quoteIdent(user)} WITH INHERIT FALSE, SET TRUE`"
     },
     {
       "source": "src/services/topochain/db-console-role.js",

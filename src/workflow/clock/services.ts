@@ -143,6 +143,31 @@ export const JOBS: readonly Job[] = Object.freeze([
   },
   // ── Retention ───────────────────────────────────────────────────────
   {
+    // All held and published legacy check visuals, including merged ones.
+    // Stable artifact ids and response validators survive the byte move.
+    name: 'media-check-visuals-backfill', everyMs: MIN, leaseMs: 5 * MIN, newestOnly: true,
+    run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/media-check-visuals-backfill').run(
+      pool, legacy('services/media-store').createMediaStore(config), { shouldStop: stopped(ctx) }),
+  },
+  {
+    // Resumable migration: each row's committed key is its checkpoint.
+    // Continues checking for byte rows an older process wrote in a rollout.
+    name: 'media-shots-backfill', everyMs: MIN, leaseMs: 5 * MIN, newestOnly: true,
+    run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/media-shots-backfill').run(
+      pool, legacy('services/media-store').createMediaStore(config), { shouldStop: stopped(ctx) }),
+  },
+  {
+    // Immutable media no row references, including rolled-back uploads,
+    // once a day old. The clock persists its bucket-listing cursor.
+    name: 'media-gc', everyMs: 5 * MIN, leaseMs: 5 * MIN, newestOnly: true,
+    run: (ctx: WorkContext, { pool, config }: JobDeps) => {
+      const media = legacy('services/media-store');
+      return media.sweep(pool, media.createMediaStore(config), {
+        after: (ctx.input.previous as any)?.after || '', shouldStop: stopped(ctx),
+      });
+    },
+  },
+  {
     // CLI device codes and sessions past their audit window.
     name: 'cli-auth-cleanup', everyMs: 6 * HOUR,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/cli-auth').cleanupCliAuth(pool),

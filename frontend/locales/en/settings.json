@@ -4254,5 +4254,49 @@
   "password.status.set": {
     "text": "Password set. You can now sign in with it.",
     "description": "Status under the password form in Settings > Password after an account that signed in only with an email code set its first password."
+  },
+  "privacy.contact.title": {
+    "text": "Email & texts",
+    "description": "Heading of the block in Settings > Privacy where a person chooses what Homeroom may send them by email and by text message."
+  },
+  "privacy.contact.intro": {
+    "text": "Choose what Homeroom may send you. Sign-in codes and security messages always arrive.",
+    "description": "Line under the \"Email & texts\" heading in Settings > Privacy: the switches below are choices, but sign-in codes and security messages are always sent."
+  },
+  "privacy.contact.marketingEmail.label": {
+    "text": "Homeroom news by email",
+    "description": "Switch in Settings > Privacy > Email & texts: whether Homeroom may email product news. Off until the person turns it on."
+  },
+  "privacy.contact.marketingEmail.help": {
+    "text": "Product news and tips, now and then. Turn it off anytime, or use the unsubscribe link in any of these emails.",
+    "description": "Small line under the \"Homeroom news by email\" switch in Settings > Privacy: what it sends and how to stop it."
+  },
+  "privacy.contact.marketingEmail.noEmail": {
+    "text": "Add and confirm an email address in Settings > Account to get Homeroom news by email.",
+    "description": "Small line under the \"Homeroom news by email\" switch in Settings > Privacy when the account has no confirmed email address, which is why the switch cannot be turned on."
+  },
+  "privacy.contact.activityEmail.label": {
+    "text": "Activity emails",
+    "description": "Switch in Settings > Privacy > Email & texts: whether Homeroom emails the person about their own activity when no phone of theirs can get the notification. On by default."
+  },
+  "privacy.contact.activityEmail.help": {
+    "text": "When something you asked for is ready, news about people you invited, and projects you joined opening, if no phone of yours gets the notification.",
+    "description": "Small line under the \"Activity emails\" switch in Settings > Privacy: which emails it covers."
+  },
+  "privacy.contact.marketingSms.label": {
+    "text": "Homeroom news by text",
+    "description": "Switch in Settings > Privacy > Email & texts: whether Homeroom may send product news by text message to the account's verified phone number. Off until the person turns it on."
+  },
+  "privacy.contact.marketingSms.help": {
+    "text": "To {{phone}}. Message frequency varies. Message and data rates may apply. Reply STOP to unsubscribe.",
+    "description": "Small line under the \"Homeroom news by text\" switch in Settings > Privacy. {{phone}} is the end of the person's verified phone number, for example \"•••• 1234\"."
+  },
+  "privacy.contact.marketingSms.noPhone": {
+    "text": "Texts need a verified phone number on your account.",
+    "description": "Line in Settings > Privacy > Email & texts, in place of the \"Homeroom news by text\" switch, when the account has no verified phone number."
+  },
+  "privacy.contact.saveFailed": {
+    "text": "Your choice could not be saved. Try again.",
+    "description": "Error under the Email & texts switches in Settings > Privacy when saving a change failed; the switch goes back to what it was."
   }
 }

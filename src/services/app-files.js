@@ -173,7 +173,7 @@ function fileUrl(id) {
 // `storage_unavailable` error instead of crashing. Bucket creation is
 // lazy and retried per call so a MinIO that comes up after the platform
 // (depends_on is service_started, not service_healthy) heals itself.
-function createObjectStore(config) {
+function createObjectStore(config, { client: injectedClient } = {}) {
   const endpoint = config?.storageEndpoint;
   const accessKey = config?.storageAccessKey;
   const secretKey = config?.storageSecretKey;
@@ -188,7 +188,7 @@ function createObjectStore(config) {
     return null;
   }
   const Minio = require('minio');
-  const client = new Minio.Client({
+  const client = injectedClient || new Minio.Client({
     endPoint: url.hostname,
     port: url.port ? parseInt(url.port, 10) : (url.protocol === 'https:' ? 443 : 80),
     useSSL: url.protocol === 'https:',
@@ -213,6 +213,36 @@ function createObjectStore(config) {
 
   return {
     bucket,
+    // Raw keys for the platform media store. Unlike app uploads, its bucket
+    // is provisioned by the operator (including versioning and lifecycle),
+    // so these methods never silently create a missing bucket.
+    async putObject(key, buffer, contentType) {
+      await client.putObject(bucket, key, buffer, buffer.length, { 'Content-Type': contentType });
+    },
+    async statObject(key) {
+      try {
+        return await client.statObject(bucket, key);
+      } catch (err) {
+        if (err.code === 'NoSuchKey' || err.code === 'NotFound') return null;
+        throw err;
+      }
+    },
+    async getObjectStream(key, range = null) {
+      return range
+        ? client.getPartialObject(bucket, key, range.start, range.end - range.start + 1)
+        : client.getObject(bucket, key);
+    },
+    async removeObject(key) {
+      await client.removeObject(bucket, key);
+    },
+    async *objects(prefix, after = '') {
+      const stream = client.listObjectsV2(bucket, prefix, true, after);
+      try {
+        for await (const object of stream) yield object;
+      } finally {
+        stream.destroy();
+      }
+    },
     async putFile(appId, fileId, buffer, contentType) {
       await ensureBucket();
       await client.putObject(bucket, objectKey(appId, fileId), buffer, buffer.length, {

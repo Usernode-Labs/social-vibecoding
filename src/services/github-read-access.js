@@ -95,6 +95,16 @@ function installed() {
   return matches(cached, config) && cached.installed === true
     && checked <= Date.now() && Date.now() - checked < RECHECK_MS + 60_000;
 }
+function knownMissing() {
+  // The same kept snapshot installed() reads, but a missing or late reading
+  // is unknown, not a hold: only a fresh record that says the App is gone
+  // means nothing can act. (canActOn in services/github.js.)
+  load().catch(() => {});
+  if (!configured()) return true;
+  const checked = Date.parse(cached?.checkedAt);
+  return matches(cached, config) && checked <= Date.now()
+    && Date.now() - checked < RECHECK_MS + 60_000 && cached.installed !== true;
+}
 async function token(owner) {
   const acting = repoRef.parse(repoRef.platformRepoUrl(config));
   if (!acting || String(owner).toLowerCase() !== acting.owner.toLowerCase()) {
@@ -117,4 +127,4 @@ async function actionsSecrets(owner, repo) {
     ? access.actionsSecrets : { ok: false, code: 'no_token', message: 'GitHub read access is unavailable.' };
 }
 
-module.exports = { JOB, refresh, init, configured, installed, token, actionsSecrets };
+module.exports = { JOB, refresh, init, configured, installed, knownMissing, token, actionsSecrets };

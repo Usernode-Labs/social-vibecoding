@@ -121,7 +121,7 @@ test('a live first version whose build turn failed proposes the work it pushed o
     review: { reviewer: REVIEWER, owner: { botRunId: 900 } },
   });
   assert.equal(out.ok, true, out.error);
-  assert.deepEqual(h.calls.kept, [{ sessionId: 5001, branchName: 'b5001', commitMsg: 'Homeroom bot: #1 Plant log' }],
+  assert.deepEqual(h.calls.kept, [{ sessionId: 5001, branchName: 'b5001', commitMsg: 'Homeroom bot: Plant log (request 1)' }],
     'the session\'s own branch, committed as the build would have been');
   assert.ok(h.calls.captures >= 1, 'the kept work was captured');
   assert.equal(out.review.round0.sha, 'part1', 'the review starts from the kept commit');

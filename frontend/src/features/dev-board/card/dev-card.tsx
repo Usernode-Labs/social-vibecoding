@@ -62,6 +62,7 @@ import { linkAttrs } from '../../../lib/repo-link.js';
 import { cardTintClass } from '../../home/panels/ui';
 import type { NoChoice } from '../../review-flow/vote-sheet';
 import { aiEnabledStore, cardNowStore, voteSendingStore } from './cards-store';
+import { liveTally } from './fold';
 import type {
   ActionRef,
   ActionSpec,
@@ -233,6 +234,10 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
       ? t('project:card.pill.reasonAndMore', { reason: titleParts[0] ?? '', count: extra })
       : t('project:card.pill.moreReasons', { count: extra }))
     : (titleParts.length ? titleParts.join(' · ') : undefined);
+  // #6075: a live pill keeps its final counted vote beside its words, the
+  // same phrase the Workshop's rows draw (fold.tsx `liveTally`). Read-only
+  // history: a settled change has no vote to cast again.
+  const tally = liveTally(s);
   const cd = s.countdown ? (s.reject ? ' gc-reject-countdown' : ' gc-merge-countdown') : '';
   // An OPEN vote is the bar's own tone on a board card — accent blue, with an
   // accent fill — where the tier's `progress` violet is kept for the merge
@@ -258,6 +263,9 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
             className="gc-vote-count-suffix"
             title={t('project:card.pill.advisoryVotes', { count: s.advisory })}
           >{`+${s.advisory}`}</span>
+        ) : null}
+        {tally ? (
+          <span className="gc-vote-count-suffix" title={tally.title}>{` · ${tally.text}`}</span>
         ) : null}
         {s.lock ? (
           <span

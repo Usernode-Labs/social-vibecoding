@@ -171,6 +171,18 @@ previewPostgresql:
   database: postgres
   username: ""
 
+# Separate PostgreSQL 16+ identities on externally managed database servers.
+# The bootstrap Job runs before the schema migrator and serving workloads.
+databaseRoles:
+  enabled: false
+  web: homeroom_web
+  conductor: homeroom_conductor
+  migrator: homeroom_migrator
+  provisioner: homeroom_provisioner
+  existingConductorSecret: ""
+  existingMigrationSecret: ""
+  existingBootstrapSecret: ""
+
 migration:
   enabled: true
   # The migration Job's pool (DB_POOL_MAX); it also opens one administrative
@@ -308,6 +320,12 @@ secrets:
   databasePassword: ""
   # The preview database server's credential (previewPostgresql above).
   previewDatabasePassword: ""
+  webDatabasePassword: ""
+  conductorDatabasePassword: ""
+  migratorDatabasePassword: ""
+  provisionerDatabasePassword: ""
+  previewReadDatabasePassword: ""
+  previewProvisionerDatabasePassword: ""
   adminUsername: ""
   adminPassword: ""
   sessionSecret: ""

@@ -80,8 +80,13 @@ test('the spinner is gated on the busy state alone', () => {
   const body = stateOfBody();
   assert.equal((body.match(/spinner: true/g) || []).length, 1,
     'exactly one branch spins');
-  assert.equal((body.match(/spinner: false/g) || []).length, 2,
-    'and the other two say so explicitly rather than leaving it undefined');
+  // #6042 grew the table from three states to the change's whole lifecycle
+  // (Waiting for approval, Going live, Live, the two failing shapes, Testing
+  // and Ready), and every non-busy branch says `spinner: false` explicitly —
+  // on this row the arc means an AI turn, and no lifecycle state may borrow
+  // it.
+  assert.equal((body.match(/spinner: false/g) || []).length, 9,
+    'and every other branch says so explicitly rather than leaving it undefined');
 
   // The `spinner: true` must be the branch guarded by session.busy — the
   // first one — not whichever branch happens to be listed first.

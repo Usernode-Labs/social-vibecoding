@@ -1400,9 +1400,10 @@ test('New for you: of what moved since your last visit, the requests filed since
   assert.ok(!fresh.includes('data-ws-since-clear=""'), 'What happened\'s button still selects exactly one element');
   const rows = [...fresh.matchAll(/data-ws-row="([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(rows, ['since:issue:12'], 'a request filed before the visit is not new for you, and the vote is Needs you\'s');
-  // The request: what it is, who filed it, and Build it — the request
-  // card's own act, worded short, its own words the tooltip.
-  assert.match(fresh, /<span class="dev-ws-wrow-sub">New request · #12 · alice · 2d ago<\/span><\/span><span class="dev-ws-arow-act"><button type="button" data-act="chooseIssueWork" title="Start an agent session on this request" class="[^"]*\brounded-full\b[^"]*">Build it<\/button><\/span>/);
+  // The request: what it is, who filed it, and its card's own act, worded
+  // short, its own words the tooltip. 1 Nov 2026: Work on it, where the card
+  // says Work on this with Homeroom bot (Build it now is its ⋯'s now).
+  assert.match(fresh, /<span class="dev-ws-wrow-sub">New request · #12 · alice · 2d ago<\/span><\/span><span class="dev-ws-arow-act"><button type="button" data-act="workOnIssueWithBot" title="Talk it through and plan it with Homeroom bot, in a thread only you can see" class="[^"]*\brounded-full\b[^"]*">Work on it<\/button><\/span>/);
   // #4716: the vote waiting on you is not here a second time. It is in
   // Needs you, where it is voted on.
   assert.ok(!fresh.includes('since:proposal:34') && !fresh.includes('data-ws-fresh-vote') && !fresh.includes('Waiting on your vote'));
@@ -1411,6 +1412,7 @@ test('New for you: of what moved since your last visit, the requests filed since
   // A Build it is offered only when the act builds: asking Homeroom bot, or
   // building it yourself.
   assert.match(WORKSHOP, /if \(a && a\.act && \(a\.act\.fn === 'askBotToBuild' \|\| a\.act\.fn === 'chooseIssueWork'\)\) \{\s*return <ActButton a=\{a\} label=\{t\('project:workshop\.fresh\.buildIt'\)\} \/>;/);
+  assert.match(WORKSHOP, /if \(a && a\.act && a\.act\.fn === 'workOnIssueWithBot'\) \{\s*return <ActButton a=\{a\} label=\{t\('project:workshop\.fresh\.workOnIt'\)\} \/>;/);
   // Not on a first visit, and not when nothing asks anything of you.
   const first = makeAppView();
   seed(first);
@@ -1424,8 +1426,8 @@ test('New for you: of what moved since your last visit, the requests filed since
   mine._proposals[0].username = 'me';
   mine._proposals[0].user_id = 1;
   assert.ok(!workshopHtml(mine, 'workshop').slice(0, workshopHtml(mine, 'workshop').indexOf('data-ws-happened-head')).includes('since:proposal:34'));
-  assert.deepEqual(['workshop.fresh.title', 'workshop.fresh.buildIt', 'workshop.fresh.markAllSeen'].map((k) => message(`project:${k}`)),
-    ['New for you', 'Build it', 'Mark all seen']);
+  assert.deepEqual(['workshop.fresh.title', 'workshop.fresh.buildIt', 'workshop.fresh.workOnIt', 'workshop.fresh.markAllSeen'].map((k) => message(`project:${k}`)),
+    ['New for you', 'Build it', 'Work on it', 'Mark all seen']);
 });
 
 test('the vote deck is its own tab; the unclaimed suggestion stays with the status', () => {
@@ -5695,7 +5697,7 @@ test('#4457: the weeks before this one open on two rows, and Earlier weeks adds 
   const stripped = CSS.replace(/\/\*[\s\S]*?\*\//g, ' ');
   for (const cls of ['dev-ws-wlist', 'dev-ws-wrow', 'dev-ws-wrow-tile', 'dev-ws-wrow-main', 'dev-ws-wrow-link', 'dev-ws-wrow-sub',
     'dev-ws-wrow-status', 'dev-ws-wrow-votes', 'dev-ws-wrow-chev', 'dev-ws-tag', 'dev-ws-wvote', 'dev-ws-wvote-state', 'dev-ws-wvote-btn',
-    'dev-ws-wrow-menu', 'dev-ws-wrow-live', 'dev-ws-brow', 'dev-ws-lrow', 'dev-ws-lrow-line', 'dev-ws-arow', 'dev-ws-arow-act', 'dev-ws-head-sub',
+    'dev-ws-wrow-menu', 'dev-ws-wrow-live', 'dev-ws-wrow-tally', 'dev-ws-brow', 'dev-ws-lrow', 'dev-ws-lrow-line', 'dev-ws-arow', 'dev-ws-arow-act', 'dev-ws-head-sub',
     'dev-ws-week', 'dev-ws-week-main', 'dev-ws-week-head', 'dev-ws-week-fresh', 'dev-ws-week-n',
     'dev-ws-weekpage', 'dev-ws-week-meta', 'dev-ws-week-lead', 'dev-ws-none', 'dev-ws-since-clear', 'dev-ws-parthead',
     'dev-ws-hweek', 'dev-ws-hweek-head', 'dev-ws-hlist', 'dev-ws-hrow', 'dev-ws-hrow-dot', 'dev-ws-hrow-glyph', 'dev-ws-hrow-main',
@@ -7040,4 +7042,40 @@ test('#5385: a request of yours Homeroom bot has in hand is a Your work row, in 
   // The bot row's click goes to the chat, not the side panel (week-pages.tsx).
   assert.match(read('frontend/src/features/dev-board/workshop/week-pages.tsx'),
     /callAppView\('openBotChatFromRequest', b\.n\)/);
+});
+
+test('#6075: a live row keeps its final counted vote beside ✓ Live', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  const { WorkRow } = loadTsx('frontend/src/features/dev-board/workshop/work-row.tsx');
+  const render = (over) => {
+    const item = {
+      id: 78, pr_number: 40, pr_title: 'Landed thing', status: 'merged', username: 'alice',
+      created_at: at(2), merged_at: at(2), last_message_at: at(2), row_type: 'pr', ...over,
+    };
+    const card = AppView._mergedRowModel(item);
+    return renderToHtml(createElement(WorkRow, {
+      row: { t: 'card', key: card.key, card, brief: AppView._workshopBrief('merged', item, card) },
+      slug: 'demo-app', variant: 'board',
+    }));
+  };
+
+  // The yes votes counted against the threshold snapshotted at merge time,
+  // then the no votes.
+  const withNo = render({ yes_count: 3, no_count: 1, votes_required: 3 });
+  assert.match(withNo, /<span class="dev-ws-wrow-tally" title="3 yes and 1 no\. It needed 3 yes to pass\.">3\/3 yes · 1 no<\/span>/);
+
+  // A change nobody voted against names no votes.
+  const yesOnly = render({ yes_count: 2, no_count: 0, votes_required: 2 });
+  assert.match(yesOnly, /<span class="dev-ws-wrow-tally"[^>]*>2\/2 yes<\/span>/,
+    'no votes are named only when there were some');
+
+  // An imported PR has no counted votes: no tally, never "0/1".
+  const imported = render({ yes_count: 0, no_count: 0, votes_required: 3 });
+  assert.ok(!imported.includes('dev-ws-wrow-tally'));
+
+  // Only once the pill says Live: still going live draws no tally.
+  const deploying = render({ yes_count: 3, no_count: 1, votes_required: 3, deployment_state: 'deploying' });
+  assert.match(deploying, />Going live…<\/span>/);
+  assert.ok(!deploying.includes('dev-ws-wrow-tally'));
 });

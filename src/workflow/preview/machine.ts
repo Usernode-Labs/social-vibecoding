@@ -1870,9 +1870,10 @@ async function publishMedia(tx: Tx, sessionId: number, runId: string) {
   await tx.query(
     `INSERT INTO session_visuals (id, session_id, commit_hash, kind, media, content_type, data, captured_path,
                                   capture_index, captured_viewport, shot_status, before_fell_back, scenario_id,
-                                  scenario_fingerprint)
+                                  scenario_fingerprint, object_key, sha256, bytes, legacy_etag)
      SELECT id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index,
-            captured_viewport, shot_status, before_fell_back, scenario_id, scenario_fingerprint
+            captured_viewport, shot_status, before_fell_back, scenario_id, scenario_fingerprint,
+            object_key, sha256, bytes, legacy_etag
        FROM check_run_media WHERE run_id = $1 AND session_id = $2`, [runId, sessionId]);
   await dropMedia(tx, sessionId);
 }

@@ -40,8 +40,6 @@
 // `db-allowlist.js` already keeps for exactly this reason.
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
 const log = require('../logger');
 const {
   QUERYABLE_TABLES,
@@ -49,7 +47,7 @@ const {
   TABLES_WITHOUT_SERIAL_ID,
 } = require('./db-allowlist');
 
-const SCHEMA_PATH = path.join(__dirname, '..', '..', 'db', 'schema.sql');
+const { schemaSql } = require('../../db/schema-source');
 
 // ─── DDL extraction from schema.sql ─────────────────────────────────────
 
@@ -199,7 +197,7 @@ function write(res, text) {
 // unambiguous "this is not a clean, complete dump" marker instead of a
 // silently truncated one.
 async function streamTopochainExport(pool, res) {
-  const schemaText = fs.readFileSync(SCHEMA_PATH, 'utf8');
+  const schemaText = schemaSql();
   const client = await pool.connect();
 
   write(

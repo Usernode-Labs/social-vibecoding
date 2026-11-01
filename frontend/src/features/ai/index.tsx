@@ -8,136 +8,171 @@
  * 29 Oct 2026 (Evan): the first list is Needs you, since it holds other
  * people's threads too, and only what waits on you; In progress is what is
  * being worked on; what waits on someone else (other people's votes, a free
- * builder, somebody to pick it up) is Up next. A thread opens on this page:
+ * builder or slot) is Waiting. 30 Oct 2026, from his Task Assistant
+ * prototype: one line a row, grouped by project, on three sheets, with a
+ * chip for each project (./lists.tsx draws them):
  *
- *   Homeroom bot                  Needs you: 2 · In progress: 1
+ *   [bot] Homeroom bot             Needs you: 2 · In progress: 1
+ *   ( All ) ( Garden club ) ( Bread bot )
+ *
  *   NEEDS YOU · 2
- *   [tile] Dark mode          Garden club · #403              [Vote]
- *   [tile] A reminder email   Garden club · #410          [Build it]
- *   [lock] A calendar idea    Only you · Not in a community yet
- *   IN PROGRESS                                        Soonest first
- *   [tile] Weekly digest      Garden club · #401 · Going live
- *   UP NEXT
- *   [tile] Search the board   Garden club · #403 · Waiting for votes · you voted Yes
- *   [tile] Print view         Garden club · #388 · Nobody is building it yet
- *   ▸ LIVE THIS WEEK · 1
- *   ( Ask Homeroom bot )                 ← a phone: opens Main
+ *   [tile] Garden club
+ *     ☑ #403  Dark mode                                     Vote
+ *     ▶ #410  A reminder email                          Build it
+ *   ─────────
+ *   IN PROGRESS · 1
+ *   ─────────
+ *   WAITING · 2
  *
- * Main, the private conversation with the bot, is the Messages screen's
- * chat with it (`#homeroom-bot/main`, ../messages). On a phone the Ask bar
- * opens it and a private thread opens as `#homeroom-bot/thread/<id>`; on a
- * desktop it is docked beside this list (EmbeddedConversation), and a
- * private thread opens in it.
+ *   LIVE THIS WEEK · 1
+ *   ( Ask Homeroom bot )                  ← a phone: Main
+ *
+ * THE LIST AND ONE THREAD (1 Nov 2026). Main Chat, the private conversation
+ * with the bot, is the list's first row, and this page is the only place it
+ * is drawn: every way into it lands here (./door.ts), never on the Messages
+ * screen. From 768px the column beside the list holds one thing at a time:
+ * Main Chat, or one private thread, alone under its own head (its name and
+ * "Only you can see this thread"; ReplyThreadPanel `inMain`), and the row
+ * of whichever it is is drawn lit. Main Chat is a row, so a thread has no
+ * way back to it of its own. On a phone the list and the column are one
+ * drawer, as Messages' list and a conversation are (./phone-drawer.tsx):
+ * the column peeks at the list's right, a row or the Ask bar slides it in,
+ * and a thread's back arrow slides the list back.
  *
  * A REQUEST, A CHANGE OR A DECISION OPENS HERE TOO. On a wide window in the
  * column beside the list, in Main's place: the side panel, drawn as this
- * page's own column (‹ Main and the project's name over the page, no
- * Expand, no Close; ../side-panel/side-panel.tsx). Anywhere else on its
- * page, whose back chip says ‹ Homeroom bot and comes back here, with the
+ * page's own column (‹ Main Chat and the page's own name over it, no
+ * Expand, no Close; ../side-panel/side-panel.tsx), and Main's composer
+ * takes it as the item a question is about. Anywhere else on its page,
+ * whose back chip says ‹ Homeroom bot and comes back here, with the
  * project's Workshop beside it (Improve.enterTopicFrom), and the tab bar
- * keeps Homeroom bot lit (App._isBotTopic).
+ * keeps Homeroom bot lit (App._isBotTopic). The phone's drawer holds only
+ * Main and its threads (Evan, 30 Oct: "the Messages approach").
+ *
+ * A DESIGN'S PREVIEW IS A COLUMN OF ITS OWN (1 Nov 2026, threads, one loop
+ * C1). Any private thread can hold a design; a version said in it shows
+ * small with Open preview (../messages/design-card.tsx), and the preview
+ * (the design pane) opens beside the thread (./preview.ts): list | thread |
+ * preview where the three fit, the thread and the preview in halves where
+ * they do not (the list steps aside; the tab, or the preview's ×, brings it
+ * back), the whole screen on a phone, with a back arrow to the thread. It
+ * goes when the column shows anything else.
  *
  * THE FIRST RENDER IS THE PRERENDER: the screen hidden, the bot's name and
  * no rows. The lists load in effects once the screen is shown to somebody
- * signed in, and the docked pane exists only after mount on a wide window.
+ * signed in, and the docked pane and the drawer exist only after mount.
+ * While the screen is up they are read again whenever a thread they list
+ * moves (./live.ts), not only when it is shown again.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
-import { ChevronDownIcon, LockIcon, MicrophoneIcon, UserGroupIcon } from '@/components/ui/icons';
+import { LockIcon, MicrophoneIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
+import { FRESH } from '../../lib/live-reads';
+import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
-import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { EmbeddedConversation } from '../messages';
+import { DesignPane } from '../messages/design-pane';
+import { closeNewThread, NewThreadButton, useNewThread } from '../messages/new-thread';
 import { openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
+import { closeThread, useMessagesSnapshot } from '../messages/store';
+import { SidePanelDivider } from '../side-panel/side-panel';
+import { sidePanelStore } from '../side-panel/store.js';
+import { BOT_TAB, botTabAddress, noteBotConversation, useBotTabAsk, type BotAt } from './door';
+import { useLiveLists } from './live';
+import { AiLists } from './lists';
+import { AiDrawer, MainPane, usePhone } from './phone-drawer';
+import { closePreview, previewLayout, THREE_COLUMNS, usePreview } from './preview';
 import {
-  NEXT_FIRST, foldWork, heroWords, inProgress, isTopicHref, needsYou, nextWords, owedCount, upNext,
-  type AiApp, type AiThread, type AiWork, type NeedItem, type Phrase, type Who, type WorkRow,
+  heroWords, inProgress, isTopicHref, needsYou, owedCount, rankProjects, upNext,
+  type AiApp, type AiThread, type AiWork, type NeedItem, type Phrase, type WorkRow,
 } from './model';
 
-const WIDE = '(min-width: 1024px)';
+// 1 Nov 2026: the column is docked from 768px, where a phone's drawer ends.
+const WIDE = '(min-width: 768px)';
 /** This page's address: where a thread opened from it comes back to. */
-const BOT_PAGE = '#homeroom-bot';
+const BOT_PAGE = BOT_TAB;
 
 function demoQuery(): string {
   if (typeof window === 'undefined') return '';
   return new URLSearchParams(window.location.search).get('demo') === '1' ? '?demo=1' : '';
 }
 
-async function readJson<T>(path: string): Promise<T | null> {
+async function readJson<T>(path: string, init?: RequestInit): Promise<T | null> {
   try {
-    const res = await fetch(path, { credentials: 'same-origin' });
+    const res = await fetch(path, { ...init, credentials: 'same-origin' });
     return res.ok ? ((await res.json()) as T) : null;
   } catch {
     return null;
   }
 }
 
-function useWide(): boolean {
+function useWide(at: string = WIDE): boolean {
   const [wide, setWide] = useState(false);
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return undefined;
-    const query = window.matchMedia(WIDE);
+    const query = window.matchMedia(at);
     const sync = () => setWide(query.matches);
     sync();
     query.addEventListener?.('change', sync);
     return () => query.removeEventListener?.('change', sync);
-  }, []);
+  }, [at]);
   return wide;
-}
-
-/** A project's tile, badged with who is in the thread: people for everyone in it, a lock for only you. */
-// Complete literals: Tailwind's extractor reads source text.
-const BADGE_ALL = 'absolute -right-1 -bottom-1 flex h-5 w-5 items-center justify-center rounded-full '
-  + 'bg-[color:var(--dc-sheet-solid)] text-zinc-500 shadow-[0_0_0_1.5px_var(--app-sheet-line)] '
-  + 'dark:text-zinc-400 [&>svg]:h-3 [&>svg]:w-3';
-const BADGE_ONLY_YOU = 'absolute -right-1 -bottom-1 flex h-5 w-5 items-center justify-center rounded-full '
-  + 'bg-zinc-900 text-white shadow-[0_0_0_2px_var(--dc-sheet-solid)] dark:bg-zinc-100 dark:text-zinc-900 '
-  + '[&>svg]:h-3 [&>svg]:w-3';
-const PILL = 'inline-flex shrink-0 items-center rounded-full bg-violet-50 px-2.5 py-0.5 text-[13px] font-semibold '
-  + 'text-violet-700 dark:bg-violet-500/15 dark:text-violet-300';
-
-function WhoTile({ app, who }: { app: AiApp | null; who: Who }): ReactNode {
-  const Badge = who === 'all' ? UserGroupIcon : LockIcon;
-  return (
-    <span className="relative inline-flex shrink-0" data-who={who} aria-hidden="true">
-      {app ? (
-        <span className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg" data-icon={appIconKind(app as any)}>
-          <AppIconContent app={app as any} />
-        </span>
-      ) : (
-        <span className="w-11 h-11 shrink-0 rounded-xl flex items-center justify-center bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-200">
-          <LockIcon className="w-5 h-5" />
-        </span>
-      )}
-      <span className={who === 'all' ? BADGE_ALL : BADGE_ONLY_YOU}><Badge /></span>
-    </span>
-  );
-}
-
-function SecHead({ children, end }: { children: ReactNode; end?: ReactNode }): ReactNode {
-  return (
-    <div className="flex items-end justify-between gap-2 pr-4">
-      <SectionHeader className="min-w-0 truncate">{children}</SectionHeader>
-      {end}
-    </div>
-  );
 }
 
 function go(href: string | null): void {
   if (href && typeof window !== 'undefined') window.location.hash = href.replace(/^#/, '');
 }
 
+/**
+ * The address says what the column shows, in place: a row pressed here is
+ * no step for Back to take (as it was not before), but a reload reopens it.
+ * Only while the address is this page's.
+ */
+function showAddress(href: string): void {
+  if (typeof window === 'undefined' || !/^#(homeroom-bot|ai)(\/|$)/.test(window.location.hash)) return;
+  if (window.location.hash === href) return;
+  try {
+    history.replaceState(history.state, '', `${window.location.pathname}${window.location.search}${href}`);
+  } catch { /* the column still shows it */ }
+}
+
 /** The side panel's controller (features/side-panel/), when the shell has one. */
 function sidePanel(): {
-  take?: (route: string, hint?: { place?: AiApp | null } | null) => boolean;
+  take?: (route: string, hint?: { place?: AiApp | null; label?: string | null } | null) => boolean;
   close?: () => void;
 } | null {
   return typeof window === 'undefined' ? null : (window as any).UsernodeReact?.sidePanel || null;
+}
+
+/**
+ * What a row opens, as the item Main's composer can carry (the ◆ chip a
+ * shared item gets): a request by its number, a change by its session, a
+ * decision by its id. Null for a page that is none of those (a Workshop).
+ */
+export interface AboutItem {
+  type: 'issue' | 'proposal' | 'governance';
+  appSlug: string;
+  issueNumber?: number;
+  sessionId?: number;
+  proposalId?: number;
+  title: string | null;
+}
+export function aboutRow(row: { key?: string; href: string | null; title?: string | null; app: AiApp | null; change?: { id: number } | null }): AboutItem | null {
+  const slug = row.app?.slug;
+  if (!slug) return null;
+  const title = row.title || null;
+  const issue = String(row.href || '').match(/^#?app\/[^/]+\/dev\/issues\/(\d+)$/);
+  if (issue) return { type: 'issue', appSlug: slug, issueNumber: Number(issue[1]), title };
+  const need = String(row.key || '').match(/^need:(proposal|governance):(\d+)$/);
+  if (need?.[1] === 'proposal') return { type: 'proposal', appSlug: slug, sessionId: Number(need[2]), title };
+  if (need?.[1] === 'governance') return { type: 'governance', appSlug: slug, proposalId: Number(need[2]), title };
+  if (row.change?.id) return { type: 'proposal', appSlug: slug, sessionId: row.change.id, title };
+  return null;
 }
 
 /** The Improve controller, which records where a topic page was opened from. */
@@ -148,75 +183,48 @@ function improve(): { enterTopicFrom?: (href: string) => void } | null {
 /**
  * A request, a change or a decision, opened from the list. On a wide
  * window in the column beside the list, in Main's place (the side panel,
- * drawn as this page's column: ‹ Main and its project over it); anywhere
- * else, and whenever the panel does not take it, its page, which goes back
- * here.
+ * drawn as this page's column: ‹ Main Chat and the page's name over it);
+ * anywhere else, and whenever the panel does not take it, its page, which
+ * goes back here.
  */
-function openPublic(href: string | null, app: AiApp | null): void {
-  if (!href) return;
+function openPublic(href: string | null, app: AiApp | null, label: string | null, about: AboutItem | null, botId: number | null): boolean {
+  if (!href) return false;
   try {
-    if (sidePanel()?.take?.(href.replace(/^#/, ''), { place: app })) return;
+    if (sidePanel()?.take?.(href.replace(/^#/, ''), { place: app, label })) {
+      // Main stays mounted under the panel (only hidden), so its composer
+      // takes what was opened now, and ‹ Main Chat comes back to it
+      // attached: a question about it needs no number (30 Oct 2026, from
+      // Evan's Task Assistant prototype). × on the chip takes it off. It is
+      // addressed to Main alone: the Messages screen's composer, mounted
+      // under its hidden screen, keeps whatever it had.
+      if (about && botId) {
+        window.dispatchEvent(new CustomEvent('usernode:messages-object-selected', { detail: { ...about, conversationId: botId } }));
+      }
+      return true;
+    }
   } catch {
     /* the page instead */
   }
   if (isTopicHref(href)) improve()?.enterTopicFrom?.(BOT_PAGE);
   go(href);
-}
-
-/** In progress or Up next: rows that each say what they wait on, the first few and Show more. */
-function ThreadSection({ list, title, end, rows }: {
-  list: 'next' | 'up'; title: ReactNode; end?: ReactNode; rows: AiThread[];
-}): ReactNode {
-  const t = useMessages('messages');
-  const say = (p: Phrase) => t(p.id, p.values);
-  const [all, setAll] = useState(false);
-  if (!rows.length) return null;
-  return (
-    <>
-      <SecHead end={end}>{title}</SecHead>
-      <GroupedList tone="plane" data-ai-list={list}>
-        {(all ? rows : rows.slice(0, NEXT_FIRST)).map((row) => (
-          <ListRow
-            key={row.threadId}
-            as="button"
-            chevron={false}
-            onClick={() => openPublic(row.href, row.app)}
-            data-ai-next={list === 'next' ? row.what : undefined}
-            data-ai-up={list === 'up' ? row.what : undefined}
-            leading={<WhoTile app={row.app} who="all" />}
-            title={row.title || ''}
-            titleClassName="whitespace-normal line-clamp-2"
-            subtitle={say(nextWords(row))}
-          />
-        ))}
-        {rows.length > NEXT_FIRST ? (
-          <ListRow
-            as="button"
-            chevron={false}
-            onClick={() => setAll(!all)}
-            aria-expanded={all}
-            title={<span className="text-violet-700 dark:text-violet-300">{all ? t('messages:ai.work.showLess') : t('messages:ai.work.showMore', { count: rows.length - NEXT_FIRST })}</span>}
-            titleClassName="font-semibold"
-          />
-        ) : null}
-      </GroupedList>
-    </>
-  );
+  return false;
 }
 
 export function AiScreen(): ReactNode {
   const t = useMessages('messages');
   const say = (p: Phrase) => t(p.id, p.values);
   const screenRef = useRef<HTMLElement | null>(null);
+  const mainRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'ai-screen', false);
   const visible = useVisibility('ai-screen', false);
   const wide = useWide();
   const [work, setWork] = useState<AiWork | null>(null);
   const [needs, setNeeds] = useState<NeedItem[] | null>(null);
-  const [allWork, setAllWork] = useState(false);
-  const [liveOpen, setLiveOpen] = useState(false);
   const [botId, setBotId] = useState<number | null>(null);
   const [at, setAt] = useState<{ threadRootId: number | null; focusMessageId: number | null } | null>(null);
+  // A phone: the list and Main are one drawer (./phone-drawer.tsx); level 1 is Main.
+  const phone = usePhone();
+  const [level, setLevel] = useState<0 | 1>(0);
   // A boot from the saved session draws this page before the server has
   // confirmed who you are, and a read made in that window can come back
   // with nothing; so could the chat docked beside it. `sv:session` (app.js)
@@ -230,42 +238,205 @@ export function AiScreen(): ReactNode {
   }, []);
 
   // Read on every showing: what is yours changes while you are elsewhere.
+  // And again while the page is up, each time a thread it lists moves
+  // (./live.ts counts those in `moved`). Every read after the first asks
+  // past the service worker's saved copy, since it is for what changed
+  // since; one that fails keeps the lists as they were.
+  const [moved, setMoved] = useState(0);
+  const readBefore = useRef(false);
   useEffect(() => {
     if (!visible || typeof window === 'undefined' || !(window as any).App?.user) return undefined;
     let live = true;
     const qs = demoQuery();
-    void readJson<AiWork>(`/api/ai/work${qs}`).then((data) => { if (live && data) setWork(data); });
-    void readJson<{ items?: NeedItem[] }>(`/api/workshop/needs-feed?in=threads${qs ? '&demo=1' : ''}`)
-      .then((data) => { if (live) setNeeds(Array.isArray(data?.items) ? data!.items : []); });
+    const again = readBefore.current;
+    readBefore.current = true;
+    const init = again ? FRESH : undefined;
+    void readJson<AiWork>(`/api/ai/work${qs}`, init).then((data) => { if (live && data) setWork(data); });
+    void readJson<{ items?: NeedItem[] }>(`/api/workshop/needs-feed?in=threads${qs ? '&demo=1' : ''}`, init)
+      .then((data) => {
+        if (live && (data || !again)) setNeeds(Array.isArray(data?.items) ? data!.items : []);
+      });
     return () => { live = false; };
-  }, [visible, session]);
+  }, [visible, session, moved]);
 
-  // Main beside the list, on a desktop: the chat with the bot, opened once.
+  // Main beside the list, on a desktop, or peeking beside it in a phone's
+  // drawer: the chat with the bot, opened once.
   useEffect(() => {
-    if (!visible || !wide || botId || typeof window === 'undefined' || !(window as any).App?.user) return;
-    void openBotConversation().then((id) => { if (id) setBotId(id); }).catch(() => {});
-  }, [visible, wide, botId, session]);
+    if (!visible || !(wide || phone) || botId || typeof window === 'undefined' || !(window as any).App?.user) return;
+    void openBotConversation().then((id) => {
+      if (!id) return;
+      noteBotConversation(id);
+      setBotId(id);
+    }).catch(() => {});
+  }, [visible, wide, phone, botId, session]);
+
+  // What the column shows (1 Nov 2026): Main Chat, a thread of it, a blank
+  // thread from "+", or a page the side panel holds in Main's place. Read
+  // after mount: the first render is the prerender's.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  const snap = useMessagesSnapshot();
+  const blank = useNewThread(botId);
+  const panel = useStoreState(sidePanelStore);
+  const docked = wide && !!botId;
+  const inMain = !!botId && snap.route.embedded && snap.route.conversationId === botId;
+  const openRoot = inMain ? snap.route.threadRootId : null;
+  const threadUp = !!openRoot || blank;
+  const columnShows = mounted && (phone ? !!botId : docked && !panel.open);
+  const lit = !columnShows || blank ? null : openRoot ? `private:${openRoot}` : 'main';
+  // 1 Nov 2026 (C1): a design's preview beside the thread it is in, while
+  // that thread is the column's (./preview.ts).
+  const preview = usePreview();
+  const three = useWide(THREE_COLUMNS);
+  const layout = previewLayout({ phone, three });
+  const previewUp = mounted && !!preview && !!botId && preview.conversationId === botId && openRoot === preview.rootId
+    && (phone ? level === 1 : docked && !panel.open);
+  // The column shows another thread: its preview goes.
+  useEffect(() => {
+    if (preview && openRoot && openRoot !== preview.rootId) closePreview();
+  }, [preview, openRoot]);
+  // The tab pressed (the page's own address, from a thread's): the list
+  // comes back, and the preview goes.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const back = () => { if (window.location.hash === BOT_TAB) closePreview(); };
+    window.addEventListener('hashchange', back);
+    return () => window.removeEventListener('hashchange', back);
+  }, []);
+  const botRow = mounted ? snap.conversations.find((item) => item.homeroomBot && item.kind !== 'channel') : null;
+  const unread = Math.max(0, Number(botRow?.unreadCount) || 0);
 
   const rows = useMemo(() => needsYou(needs, work), [needs, work]);
-  const folded = useMemo(() => foldWork(rows), [rows]);
   const progress = useMemo(() => inProgress(needs, work), [needs, work]);
   const waiting = useMemo(() => upNext(needs, work), [needs, work]);
-  const live: AiThread[] = work?.live || [];
+  const live: AiThread[] = useMemo(() => work?.live || [], [work]);
   const owed = owedCount(rows);
-  const docked = wide && !!botId;
+  const projects = useMemo(
+    () => new Set(rankProjects(rows, progress, waiting, live).map((p) => p.app.slug)),
+    [rows, progress, waiting, live],
+  );
+  useLiveLists(() => setMoved((n) => n + 1), visible, { projects, botId });
 
+  // A place in the chat, in the column (Main, or a thread of it, at a
+  // message): a page the panel holds there gives Main its place back, and a
+  // thread or a blank one open there gives way. On a phone the drawer slides
+  // to it.
+  const showAt = (next: BotAt) => {
+    sidePanel()?.close?.();
+    closeNewThread();
+    if (!next.threadRootId || next.threadRootId !== preview?.rootId) closePreview();
+    if (!next.threadRootId && openRoot) closeThread();
+    setAt({ ...next });
+    if (phone) setLevel(1);
+  };
+  // The router's ask (./door.ts): `#homeroom-bot/main`, `/thread/<id>`, a
+  // message in either, from any door into the chat. Each once, once the page
+  // knows whether it is a phone's.
+  const ask = useBotTabAsk();
+  const askTaken = useRef(0);
+  useEffect(() => {
+    if (!ask || ask.seq === askTaken.current || !visible || !(wide || phone)) return;
+    askTaken.current = ask.seq;
+    showAt(ask.at);
+  }, [ask, visible, wide, phone]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const openMain = () => {
+    if (!(wide || phone)) { go(botTabAddress(null)); return; }
+    showAt({ threadRootId: null, focusMessageId: null });
+    showAddress(botTabAddress(null));
+  };
+  // A page the panel took is in the column, in Main's place, and its
+  // ‹ Main Chat gives the column back to Main: a thread that was open there
+  // gives way (1 Nov 2026), and the address is the page's.
+  const underPanel = () => {
+    closeNewThread();
+    if (openRoot) closeThread();
+    showAddress(BOT_TAB);
+  };
   const openRow = (row: WorkRow) => {
     if (row.rootId) {
-      if (docked) {
-        // A private thread is Main's: the panel, if a page is up in it, gives
-        // Main its place back.
-        sidePanel()?.close?.();
-        setAt({ threadRootId: row.rootId, focusMessageId: null });
-      } else go(`#homeroom-bot/thread/${row.rootId}`);
+      // A private thread is the column's, alone, in Main's place.
+      const next = { threadRootId: row.rootId, focusMessageId: null };
+      if (!(wide || phone)) { go(botTabAddress(next)); return; }
+      showAt(next);
+      showAddress(botTabAddress(next));
       return;
     }
-    openPublic(row.href, row.app);
+    if (openPublic(row.href, row.app, row.title, aboutRow(row), botId)) underPanel();
   };
+  const openThread = (th: AiThread) => {
+    if (openPublic(th.href, th.app, th.title, aboutRow(th), botId)) underPanel();
+  };
+  // A page the side panel takes is the column's: no preview beside it.
+  useEffect(() => { if (panel.open) closePreview(); }, [panel.open]);
+  // On a phone the column slides back to the list; the address is the page's.
+  const toList = () => {
+    setLevel(0);
+    showAddress(BOT_TAB);
+  };
+
+  // #6071 follow-up: "+" starts a new blank thread with the bot, in the
+  // column (../messages/new-thread.tsx), slid in on a phone.
+  const openBlank = () => {
+    sidePanel()?.close?.();
+    closePreview();
+    if (phone) setLevel(1);
+    showAddress(BOT_TAB);
+  };
+  const hero = (
+    <section className="flex items-center gap-3 px-4 pt-3" data-ai-hero="">
+      <img src={BOT_AVATAR} alt="" className="w-12 h-12 rounded-2xl object-cover shrink-0" />
+      <span className="min-w-0 flex-1 flex flex-col">
+        <h1 className="text-[1.375rem] font-bold leading-tight">{t('messages:ai.hero.name')}</h1>
+        {work ? (
+          <span className="text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-hero-sub="">
+            {say(heroWords(owed, progress.length))}
+          </span>
+        ) : null}
+      </span>
+      <NewThreadButton
+        conversationId={botId || null}
+        onOpen={openBlank}
+        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-zinc-700 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800 [&>svg]:h-5 [&>svg]:w-5"
+      />
+    </section>
+  );
+
+  const listContent = (
+    <>
+      <div className="ai-screen-body max-w-2xl mx-auto pb-8">
+        <AiLists
+          hero={hero}
+          main={{ lit: lit === 'main', unread, open: openMain }}
+          lit={lit}
+          ready={!!work && !!needs}
+          rows={rows}
+          owed={owed}
+          progress={progress}
+          waiting={waiting}
+          live={live}
+          openRow={openRow}
+          openThread={openThread}
+        />
+        <div className="ai-askbar-gap" aria-hidden="true" />
+      </div>
+
+      {/* Ask Homeroom bot: Main. A bar over the tab bar; on a desktop Main
+          is docked beside the list and this is not drawn. */}
+      <div className="ai-askbar messages-composer" data-ai-askbar="">
+        <a
+          href="#homeroom-bot/main"
+          className="messages-composer-card ai-askbar-card"
+          aria-label={t('messages:ai.ask.label')}
+          // On a phone's drawer Main is beside the list: in, not away.
+          onClick={(e) => { if (phone) { e.preventDefault(); openMain(); } }}
+        >
+          <span className="ai-askbar-text">{t('messages:ai.ask.label')}</span>
+          <span className="messages-composer-action" aria-hidden="true"><MicrophoneIcon className="h-5 w-5" /></span>
+        </a>
+      </div>
+    </>
+  );
 
   return (
     <main
@@ -274,119 +445,72 @@ export function AiScreen(): ReactNode {
       className="hidden flex-1 overflow-y-auto platform-safe-scroll"
       data-page-bounce=""
       data-ai-docked={docked ? '' : undefined}
+      data-ai-drawer={phone ? level : undefined}
+      data-ai-preview={previewUp ? layout : undefined}
       style={{ position: 'relative' }}
     >
-      <div className="ai-screen-body max-w-2xl mx-auto pb-8">
-        <section className="flex items-center gap-3 px-4 pt-5 pb-1" data-ai-hero="">
-          <img src={BOT_AVATAR} alt="" className="w-12 h-12 rounded-2xl object-cover shrink-0" />
-          <span className="min-w-0 flex flex-col">
-            <h1 className="text-[1.375rem] font-bold leading-tight">{t('messages:ai.hero.name')}</h1>
-            {work ? (
-              <span className="text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-hero-sub="">
-                {say(heroWords(owed, progress.length))}
-              </span>
-            ) : null}
-          </span>
-        </section>
-
-        {/* Needs you, counted in the label's own ink: a count is not a link. */}
-        <SecHead>
-          {owed ? t('messages:ai.work.titleCount', { count: owed }) : t('messages:ai.work.title')}
-        </SecHead>
-        <GroupedList tone="plane" data-ai-list="work">
-          {work && needs && !rows.length ? (
-            <p className="px-4 py-3 text-[0.9375rem] text-zinc-500 dark:text-zinc-400" data-ai-empty="">{t('messages:ai.work.empty')}</p>
-          ) : null}
-          {(allWork ? rows : folded).map((row) => (
-            <ListRow
-              key={row.key}
-              as="button"
-              chevron={false}
-              onClick={() => openRow(row)}
-              data-ai-row={row.key.split(':')[0]}
-              data-who={row.who}
-              leading={<WhoTile app={row.app} who={row.who} />}
-              title={row.title}
-              titleClassName="whitespace-normal line-clamp-2"
-              subtitle={say(row.sub)}
-              trailing={row.pill ? <span className={PILL}>{say(row.pill)}</span> : undefined}
-            />
-          ))}
-          {rows.length > folded.length ? (
-            <ListRow
-              as="button"
-              chevron={false}
-              onClick={() => setAllWork(!allWork)}
-              aria-expanded={allWork}
-              title={<span className="text-violet-700 dark:text-violet-300">{allWork ? t('messages:ai.work.showLess') : t('messages:ai.work.showMore', { count: rows.length - folded.length })}</span>}
-              titleClassName="font-semibold"
-            />
-          ) : null}
-        </GroupedList>
-
-        <ThreadSection
-          list="next"
-          title={t('messages:ai.next.title')}
-          end={<span className="mb-1 text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:ai.next.soonest')}</span>}
-          rows={progress}
+      {phone ? (
+        <AiDrawer
+          level={level}
+          onLevel={setLevel}
+          list={listContent}
+          peekLabel={t('messages:ai.drawer.peek', {
+            title: openRoot
+              ? work?.private.find((p) => p.rootId === openRoot)?.title || t('messages:replies.title')
+              : t('messages:store.header.main'),
+          })}
+          pane={<MainPane botId={botId} active={visible} at={at} onBack={toList} threadUp={threadUp} />}
         />
-        <ThreadSection list="up" title={t('messages:ai.up.title')} rows={waiting} />
+      ) : listContent}
 
-        {live.length ? (
-          <>
-            <button
-              type="button"
-              className="flex w-full items-center gap-1 px-4 pb-2 pt-6 text-left"
-              aria-expanded={liveOpen}
-              data-ai-live-toggle=""
-              onClick={() => setLiveOpen(!liveOpen)}
-            >
-              <ChevronDownIcon className={`h-4 w-4 text-zinc-500 dark:text-zinc-400 transition-transform${liveOpen ? '' : ' -rotate-90'}`} aria-hidden="true" />
-              <span className="text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">
-                {t('messages:ai.live.title', { count: live.length })}
-              </span>
-            </button>
-            {liveOpen ? (
-              <GroupedList tone="plane" data-ai-list="live">
-                {live.map((row) => (
-                  <ListRow
-                    key={row.threadId}
-                    as="button"
-                    chevron={false}
-                    onClick={() => openPublic(row.href, row.app)}
-                    leading={<WhoTile app={row.app} who="all" />}
-                    title={row.title || ''}
-                    subtitle={t('messages:ai.live.row', { project: row.app?.name || '', number: row.number || '' })}
-                  />
-                ))}
-              </GroupedList>
-            ) : null}
-          </>
-        ) : null}
-        <div className="ai-askbar-gap" aria-hidden="true" />
-      </div>
-
-      {/* Ask Homeroom bot: Main. On a phone a bar over the tab bar; on a
-          desktop Main is docked beside the list and this is not drawn. */}
-      <div className="ai-askbar messages-composer" data-ai-askbar="">
-        <a href="#homeroom-bot/main" className="messages-composer-card ai-askbar-card" aria-label={t('messages:ai.ask.label')}>
-          <span className="ai-askbar-text">{t('messages:ai.ask.label')}</span>
-          <span className="messages-composer-action" aria-hidden="true"><MicrophoneIcon className="h-5 w-5" /></span>
-        </a>
-      </div>
-
+      {/* Main's left edge is the side panel's handle (30 Oct 2026): drag it,
+          or use the arrow keys, to share the window between the list and
+          Main; a page opened in Main's place keeps the width. */}
       {docked ? (
-        <aside className="ai-main-pane" aria-labelledby="ai-main-title" data-ai-main="">
-          <header className="ai-main-head" data-ai-main-head="">
-            <img src={BOT_AVATAR} alt="" className="w-8 h-8 rounded-[10px] object-cover shrink-0" />
-            <span className="min-w-0 flex flex-col">
-              <span id="ai-main-title" className="truncate text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">
-                {t('messages:store.header.main')}
+        <aside
+          id="ai-main-pane"
+          ref={mainRef}
+          className="ai-main-pane"
+          aria-labelledby={threadUp ? undefined : 'ai-main-title'}
+          data-ai-main=""
+          data-ai-column={threadUp ? 'thread' : 'main'}
+        >
+          <SidePanelDivider panelRef={mainRef} shown={docked} id="ai-main-divider" controls="ai-main-pane" />
+          {/* Main Chat's name over it. 1 Nov 2026: a thread in its place is
+              alone under its own (ReplyThreadPanel `inMain`), with no bar of
+              Main Chat's over it. */}
+          {threadUp ? null : (
+            <header className="ai-main-head" data-ai-main-head="">
+              <img src={BOT_AVATAR} alt="" className="w-8 h-8 rounded-[10px] object-cover shrink-0" />
+              <span className="min-w-0 flex flex-col">
+                <span id="ai-main-title" className="truncate text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">
+                  {t('messages:store.header.main')}
+                </span>
+                <span className="flex min-w-0 items-center gap-1 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">
+                  <LockIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+                  <span className="truncate">{t('messages:ai.main.sub')}</span>
+                </span>
               </span>
-              <span className="truncate text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{t('messages:ai.main.sub')}</span>
-            </span>
-          </header>
-          <EmbeddedConversation conversationId={botId!} active={visible} at={at} />
+            </header>
+          )}
+          <EmbeddedConversation conversationId={botId!} active={visible} at={at} mainChat />
+        </aside>
+      ) : null}
+
+      {/* The design's preview, the tab's own column (./preview.ts): beside
+          the thread, or the whole screen on a phone. */}
+      {previewUp && preview ? (
+        <aside className="ai-preview-pane" data-ai-preview-pane={layout} aria-label={t('messages:design.pane.label')}>
+          <DesignPane
+            conversationId={preview.conversationId}
+            rootId={preview.rootId}
+            view="preview"
+            onView={() => {}}
+            version={preview.version}
+            seq={preview.seq}
+            onClose={closePreview}
+            closeAs={layout === 'full' ? 'back' : 'close'}
+          />
         </aside>
       ) : null}
     </main>

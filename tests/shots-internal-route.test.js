@@ -1,4 +1,5 @@
 'use strict';
+require('./lib/media-store').useMemoryMedia(require('node:test'));
 
 // The shots agent's only way into the platform: run-scoped internal routes
 // (src/routes/internal.js) behind a purpose-bound shots JWT that names both

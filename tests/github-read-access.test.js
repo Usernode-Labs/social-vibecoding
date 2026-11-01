@@ -111,12 +111,21 @@ test('web reads with published access while conductor admission stays configured
 });
 
 test('web with no publication remains configured and refuses unavailable reads', async (t) => {
-  const { web, state } = await setup(t); const before = state.calls.length;
+  const { web, state, pool, advance } = await setup(t); const before = state.calls.length;
   await web();
   assert.equal(github.isEnabled(), true);
-  assert.equal(github.canActOn('Usernode-Labs'), false);
+  assert.equal(github.canActOn('Usernode-Labs'), true,
+    'nothing published yet is unknown, not a hold');
   await assert.rejects(github.getReadOctokit('Usernode-Labs'), { code: 'github_read_unavailable' });
   assert.equal(state.calls.length, before, 'no fallback to the App on web');
+  state.record = {
+    scope: `${CONFIG.githubAppId}:usernode-labs/social-vibecoding`, installed: true,
+    checkedAt: new Date(Date.now()).toISOString(),
+  };
+  await reads.init(CONFIG, pool);
+  advance(7 * 60_000);
+  assert.equal(github.canActOn('Usernode-Labs'), true,
+    'a late refresh leaves the reading unknown, so it does not hold the notice');
 });
 
 test('read access expires even when a failed refresh leaves the prior clock result', async (t) => {

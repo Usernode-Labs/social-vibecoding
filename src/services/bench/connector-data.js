@@ -693,7 +693,7 @@ async function shotImages(pool, sessionId) {
     return { ok: true, sessionId: Number(s.id), state: s.shots_state || null, images: [], note: 'This proposal has no verified before/after shots.' };
   }
   const { rows } = await pool.query(
-    `SELECT id, story_id, viewport, side, variant, content_type, data, width, height
+    `SELECT id, story_id, viewport, side, variant, content_type, data, object_key, bytes, width, height
        FROM shot_artifacts
       WHERE run_id = $1 AND media = 'png' AND variant IN ('focus', 'context')
       ORDER BY CASE variant WHEN 'focus' THEN 0 ELSE 1 END, story_id, viewport, CASE side WHEN 'base' THEN 0 ELSE 1 END
@@ -703,10 +703,12 @@ async function shotImages(pool, sessionId) {
   const images = [];
   let total = 0;
   let leftOut = 0;
+  const store = require('../media-store').getStore();
   for (const r of rows) {
-    const data = Buffer.isBuffer(r.data) ? r.data : Buffer.from(r.data || '');
-    if (!data.length) continue;
-    if (images.length >= MAX_SHOT_IMAGES || total + data.length > MAX_SHOT_IMAGE_BYTES) { leftOut += 1; continue; }
+    const size = r.object_key ? Number(r.bytes) : Buffer.byteLength(r.data || '');
+    if (!size) continue;
+    if (images.length >= MAX_SHOT_IMAGES || total + size > MAX_SHOT_IMAGE_BYTES) { leftOut += 1; continue; }
+    const data = await require('../media-store').bytes(store, r);
     total += data.length;
     images.push({
       caption: `${String(r.story_id).slice(0, 96)} · ${r.viewport} · ${r.side === 'base' ? 'before' : 'after'} · ${r.variant}`,

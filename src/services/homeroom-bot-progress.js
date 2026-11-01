@@ -583,6 +583,25 @@ function firstVersionStopped(row) {
   return !/^(?:skipped|blocked):/.test(String(row.build_error || ''));
 }
 
+/**
+ * Pure (30 Oct 2026): a request Homeroom bot looked at and handed back to
+ * the person, from its row (requestRows) while nothing about it is in
+ * progress (stageOf answered null), or null. 'decide' when its newest look
+ * left it for a person to decide (verdict 'person', the Go ahead its DM
+ * offers); 'build_stopped' when the build came to nothing as
+ * firstVersionStopped tells it, which reads no first-version field (the Try
+ * again its DM offers). Only on a request still open with no change of it
+ * up or merged. Nothing moves on either until somebody does something, so
+ * the Homeroom bot tab lists them under Needs you (services/ai-work.js
+ * botStages), where they read "Nobody is building it yet" before.
+ */
+function handedBack(row) {
+  if (!row || row.mode !== 'live' || row.request_closed === true) return null;
+  if (['promoted', 'merging', 'merged'].includes(row.proposal_status)) return null;
+  if (row.verdict === 'person') return 'decide';
+  return firstVersionStopped(row) ? 'build_stopped' : null;
+}
+
 /** Pure: what a request that is not in progress came to, or null. */
 function outcomeOf(row) {
   if (row.proposal_status === 'merged') return 'approved and live';
@@ -1020,6 +1039,29 @@ async function waitingHolds(pool, staged) {
   }
 }
 
+// 1 Nov 2026: a request whose requester works on it with the bot in a
+// private thread waits for their plan (rules/bot-loop.ts planHoldSql).
+const PLAN_WAIT = 'waiting for your plan: you are working on it with me in a private thread; I\'ll start once a plan is posted on it, or once you tap Let the bot build it now on its page';
+
+/**
+ * The requests `userId`'s own private threads hold the bot on now, as
+ * `appId:issueNumber` keys. Best-effort: a read that fails holds nothing
+ * here, and the loop's own read decides.
+ */
+async function planHolds(pool, userId) {
+  try {
+    const { planHoldActiveSql } = require('../workflow/rules/bot-loop.ts');
+    const { rows } = await pool.query(
+      `SELECT p.app_id, p.about_number FROM private_threads p
+        WHERE p.user_id = $1 AND ${planHoldActiveSql('p')}`,
+      [userId],
+    );
+    return new Set(rows.map((r) => `${Number(r.app_id)}:${Number(r.about_number)}`));
+  } catch {
+    return new Set();
+  }
+}
+
 /**
  * Pure (#3771): what a request in the queue waits for, as the `queued`
  * stage's words and `waitingFor`. Its project reading another request (a
@@ -1260,7 +1302,14 @@ async function requestStates(pool, { userId, settings = null, now = new Date(), 
     ? await projectsBusy(pool, rows) : new Map();
   const perPerson = Number(settings?.perPerson) || 2;
   const holds = await waitingHolds(pool, staged);
+  const plans = staged.some((s) => s.state?.stage === 'queued' || s.state?.stage === 'build_queued')
+    ? await planHolds(pool, userId) : new Set();
   return staged.map((s) => {
+    // Their plan comes first, whatever else it would wait for.
+    if ((s.state?.stage === 'queued' || s.state?.stage === 'build_queued') && !s.row.first_version
+      && plans.has(`${Number(s.row.app_id)}:${Number(s.row.issue_number)}`)) {
+      return { row: s.row, state: { ...s.state, doing: PLAN_WAIT, waitingOn: 'them', waitingFor: { reason: 'awaiting_plan' } } };
+    }
     if (s.state?.stage === 'queued') {
       return {
         row: s.row,
@@ -1391,12 +1440,14 @@ module.exports = {
   checksOnHead,
   firstVersionStage,
   firstVersionStopped,
+  handedBack,
   buildUnderWay,
   attemptOutcome,
   attachAttempts,
   queuedWait,
   buildWait,
   FIRST_VERSION_WAIT,
+  PLAN_WAIT,
   FIRST_VERSION_BUILD_WAIT,
   firstVersionWait,
   projectsBusy,

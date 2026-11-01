@@ -620,3 +620,15 @@ Incomplete rollouts, controller failures, paused rollouts, and unavailable API
 reads remain distinct. This reports Argo-applied rollout state; image build and
 chart publication progress remain in the `Build Kubernetes images` workflow.
 Kubernetes self-app merges do not write the standalone host-deployer nudge.
+
+
+### Separate database identities
+
+`databaseRoles.enabled` adds separate web, conductor, migrator and provisioner
+logins on external PostgreSQL 16+. It requires the conductor, the migration
+Job and four independent primary passwords; preview mode also requires its
+own provisioner and maintenance-reader passwords. Store these values in SOPS.
+Only a bounded bootstrap Sync hook receives the legacy administrator URLs;
+it runs before the ordinary migration Job. Serving Secrets explicitly clear
+legacy administrator fields. See [database identities](../../../docs/security/database-roles.md)
+for authority, rollout, external Secret requirements, verification and rollback.

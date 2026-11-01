@@ -269,3 +269,16 @@ test('the Mayor golden runs when any prompt changes, and every declared path exi
   assert.match(out, new RegExp(`^  ${declared.replace(/[.]/g, '\\.')} → \\d+ suites \\(incl\\. .*${golden.replace(/[.]/g, '\\.')}.*, which declares? it\\)$`, 'm'));
   assert.match(out, /^Running \d+ of \d+ suites:\n  node .* tests\/mayor-turn-golden\.test\.js/m);
 });
+
+test('canonical schema inputs select guards that read the ignored generated schema.sql', () => {
+  const suites = new Map([
+    ['tests/schema-reader.test.js', "read('src/db/schema.sql')"],
+    ['tests/other.test.js', "read('frontend/screen.tsx')"],
+  ]);
+  for (const file of ['src/db/migrations/0002-change.sql', 'src/db/migrations/manifest.json',
+    'src/db/reference-data.js', 'src/db/schema-source.js', 'scripts/build-schema.js', 'scripts/record-schema-migration.js']) {
+    const selection = tc.selectSuites([file], suites);
+    assert.deepEqual(selection.suites, ['tests/schema-reader.test.js'], file);
+    assert.deepEqual(selection.byFile.get('src/db/schema.sql').via, [file]);
+  }
+});

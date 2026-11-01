@@ -1315,13 +1315,27 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         }
       }
 
+      // 1 Nov 2026 (threads, one loop: C2.4): a project made from a design
+      // in one of the person's private threads with Homeroom bot (the
+      // design bot's Make the project card): their own design, with no
+      // project yet. Its brief is the design's title and notes, its first
+      // request's plan is the design (homeroom-bot-dm.js fileFirstRequest),
+      // and its early plan is written from it, asking nothing.
+      const homeroomBotDm = require('../services/homeroom-bot-dm');
+      let fromDesign = null;
+      if (req.body.design != null) {
+        fromDesign = await homeroomBotDm.designForProject(pool, { user: req.user, design: req.body.design, brief: req.body.brief });
+        if (!fromDesign.ok) return res.status(fromDesign.status).json({ error: fromDesign.error });
+        if (template !== appTemplates.DEFAULT_TEMPLATE) return res.status(400).json({ error: 'A project made from a design starts from no template.' });
+        req.body = { ...req.body, brief: fromDesign.brief };
+      }
+
       // Everything the project is made from is written in ONE transaction:
       // its row's insert starts its making (the app-creation machine,
       // src/workflow/app-creation/, through the apps_wf_enrol_creation
       // trigger), and its setup reads the rule, the description, the starter
       // and the card owed from the row once this commits.
       const readyMade = appTemplates.isReadyMade(template);
-      const homeroomBotDm = require('../services/homeroom-bot-dm');
       const owesFirstVersion = !readyMade && !!homeroomBotDm.normalizeBrief(req.body.brief);
       // A ready-made app whose starter directory has an original is a
       // version of it (docs/plans/versions.md, services/originals.js
@@ -1462,7 +1476,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         // device's, so the card's "today" is theirs (an unknown or invalid
         // zone reads as UTC there). A ready-made app has its own icon and
         // nothing to sketch.
-        if (MAKE_ORIGINS.has(req.body.from) && !readyMade
+        if ((MAKE_ORIGINS.has(req.body.from) || fromDesign) && !readyMade
             && homeroomBotDm.normalizeBrief(req.body.brief)) {
           await optional('sketch', 'Sketch not owed', () => require('../services/app-sketch').startSketch(db, {
             app: appRow, user: req.user, brief: req.body.brief,
@@ -1480,7 +1494,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         // create fails.
         if (owesFirstVersion) {
           await optional('first_version', 'Homeroom bot first version not owed',
-            () => homeroomBotDm.recordFirstVersion(db, pool, config, { app: appRow, user: req.user, brief: req.body.brief }));
+            () => homeroomBotDm.recordFirstVersion(db, pool, config, {
+              app: appRow, user: req.user, brief: req.body.brief, design: fromDesign,
+            }));
         }
         await db.query('COMMIT');
       } catch (err) {
@@ -1535,6 +1551,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           // firstSession, counts only these) or the Create button's, which
           // opens the same screen and its More options (MAKE_ORIGINS).
           ...(MAKE_ORIGINS.has(req.body.from) ? { from: req.body.from } : {}),
+          ...(fromDesign ? { fromDesign: true } : {}),
         },
       });
 
@@ -1556,10 +1573,18 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
             app: appRow, user: req.user, brief: req.body.brief,
             // Its plan is written now, for the made screen to ask its
             // questions while the project is set up (first-version-plan.js).
-            earlyPlan: MAKE_ORIGINS.has(req.body.from),
+            // A design's was written with the project, from the design.
+            earlyPlan: MAKE_ORIGINS.has(req.body.from) || !!fromDesign,
+            fromDesign: !!fromDesign,
           });
         } catch (err) {
           log.warn('apps', 'Homeroom bot first version not started', { appId: appRow.id, err: err.message });
+        }
+        // The design's card gives way to what it made.
+        if (fromDesign) {
+          await require('../services/homeroom-bot-mayor').noteProjectMade(pool, {
+            userId: req.user.id, rootId: fromDesign.design.rootId, app: appRow,
+          });
         }
       } else {
         try {
@@ -3213,7 +3238,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // sheet warns that if both pass the later one may overwrite the
       // earlier. The community read still returns the open one
       // (findWhoDecidesPr) so the sheet can link to it.
-      const result = await proposeManifest(res, app, req.user, 'who-decides', diff);
+      // The rules as they are today ride along so the description can say
+      // what is added or removed (services/who-decides-pr.js).
+      const args = diff.governance
+        ? { ...diff, was: { rules: gov.rules || null, approverPolicy: gov.approverPolicy, approvalsRequired: gov.approvalsRequired } }
+        : diff;
+      const result = await proposeManifest(res, app, req.user, 'who-decides', args);
       if (!result) return;
       res.status(201).json({
         ok: true,

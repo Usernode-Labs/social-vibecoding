@@ -69,3 +69,6 @@ public/locales/
 frontend/src/lib/i18n/catalogs.generated.json
 
 /security-reports/
+
+# Generated from the migration history and reference seeds.
+src/db/schema.sql

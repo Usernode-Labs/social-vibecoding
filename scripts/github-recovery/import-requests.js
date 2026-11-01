@@ -114,7 +114,7 @@ for (const f of fs.existsSync(condDir) ? fs.readdirSync(condDir).filter((f) => f
 
 // ── The SQL ───────────────────────────────────────────────────────────
 
-const schema = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'db', 'schema.sql'), 'utf8');
+const schema = require('../../src/db/schema-source').schemaSql();
 const marker = '-- ── Off GitHub (docs/plans/github-independence-build.md)';
 const ddl = schema.slice(schema.indexOf(marker));
 if (schema.indexOf(marker) === -1) throw new Error('schema.sql has no "Off GitHub" block');

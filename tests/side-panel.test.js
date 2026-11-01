@@ -313,7 +313,7 @@ function topWindow({ width = 1280, app = 'notes-ab12', tab = 'app', chromeless =
       pushState: (s, t, url) => pushed.push(url),
       replaceState: (s, t, url) => { win.location = new URL(url, win.location.href); },
     },
-    matchMedia: (q) => ({ matches: q === '(min-width: 1024px)' ? width >= 1024 : false }),
+    matchMedia: (q) => ({ matches: q === '(min-width: 1024px)' ? width >= 1024 : q === '(min-width: 768px)' ? width >= 768 : false }),
     setTimeout: (fn) => { timers.push(fn); return timers.length; },
     App: {
       user, chromeless, currentApp: app, currentTab: tab,
@@ -349,7 +349,9 @@ test('the panel takes a navigation only beside a running app or the AI tab\'s pa
   const cases = [
     [{}, true, 'an app on its App tab, 1280 wide'],
     [ai, true, 'the AI tab\'s page, where it takes the place of the chat docked beside the list'],
-    [{ ...ai, width: 1023 }, false, 'the AI tab below the breakpoint, where nothing is docked'],
+    // 1 Nov 2026: the AI tab docks its column from 768px, so the panel takes its place there too.
+    [{ ...ai, width: 1023 }, true, 'the AI tab from 768px, where its column is docked'],
+    [{ ...ai, width: 767 }, false, 'the AI tab on a phone, where nothing is docked'],
     [{ ...ai, chromeless: true }, false, 'the AI tab, chromeless'],
     [{ app: null, visible: false, screen: 'messages-screen' }, false, 'any other platform screen'],
     [{ width: 1023 }, false, 'below the breakpoint'],
@@ -1194,7 +1196,9 @@ test('the layout: the app narrows by a margin, above the breakpoint, while the p
   const desk = CSS.slice(CSS.indexOf('@media (min-width: 1024px) {\n  html[data-side-panel] #app-view {'));
   assert.match(desk, /html\[data-side-panel\] #app-view \{\s*margin-right: var\(--side-panel-w\);\s*min-width: 480px;/);
   assert.match(CSS, /--side-panel-w: clamp\(360px, 36vw, 560px\);/);
-  assert.match(CSS, /@media \(max-width: 1023\.98px\) \{[\s\S]{0,300}#platform-side-panel \{\s*display: none;/);
+  // 1 Nov 2026: beside the AI tab's page it is drawn from 768px (its column).
+  assert.match(CSS, /@media \(max-width: 1023\.98px\) \{[\s\S]{0,400}body:not\(:has\(#ai-screen:not\(\.hidden\)\)\) #platform-side-panel \{\s*display: none;/);
+  assert.match(CSS, /@media \(max-width: 767\.98px\) \{\s*#platform-side-panel \{\s*display: none;/);
   // Never display:none, never re-parented: nothing in the panel's CSS touches the frame.
   const panelCss = CSS.slice(CSS.indexOf('/* ── #platform-side-panel'));
   assert.doesNotMatch(panelCss, /#app-iframe|#app-frame-host \{[^}]*display/);
@@ -1405,8 +1409,10 @@ test('a width is the layout\'s own knob on <html>, and none hands it back to the
   } };
   applyWidth(544.2, root);
   assert.equal(props.get('--side-panel-w'), '544px');
+  assert.equal(props.get('--side-panel-chosen-w'), '544px', 'and says it was chosen, for the bot page\'s Main');
   applyWidth(null, root);
   assert.equal(props.has('--side-panel-w'), false);
+  assert.equal(props.has('--side-panel-chosen-w'), false);
 });
 
 test('the divider drags, takes the keys, resets on a double-click, and lets the frames stand aside while held', () => {

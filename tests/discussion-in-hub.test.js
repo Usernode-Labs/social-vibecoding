@@ -526,6 +526,7 @@ test('the group chat opens a reply thread in the page it is on, not in Messages'
 
 test('the bell still uses the room\'s address, which the page takes; the store turns a page already open', () => {
   assert.match(NOTIFICATIONS, /messages\.openDiscussion\(slug\)/);
-  assert.match(STORE, /export function openAddress\(href: string\): void \{\s*if \([^\n]*\) return;\s*if \(turnsPageInPlace\(href\)\) return;\s*if \(sidePanelTakes\(href\)\) return;/);
+  // 1 Nov 2026: after the chat with Homeroom bot, which is its tab's by either address.
+  assert.match(STORE, /export function openAddress\(href: string\): void \{\s*if \([^\n]*\) return;[\s\S]{0,420}if \(botTab\) \{ goBotAddress\(botTab\); return; \}\s*if \(turnsPageInPlace\(href\)\) return;\s*if \(sidePanelTakes\(href\)\) return;/);
   assert.match(STORE, /const target = `#messages\/app\/\$\{encodeURIComponent\(safe\)\}`;\s*if \(turnsPageInPlace\(target\)\) return;/);
 });

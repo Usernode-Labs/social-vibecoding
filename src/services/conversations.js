@@ -484,7 +484,10 @@ async function hydrateMessages(db, user, rows, { cards = null } = {}) {
     const system = row.msg_type === 'system';
     // #3624: the Homeroom bot's structured part (its question and suggested
     // answers), on the bot's own live messages only.
-    const metadata = deleted || moderated || system || !row.sender_is_synthetic ? null : publicMetadata(row.metadata);
+    // #6071: a person's message shows its design pin alone (a comment pinned
+    // on a design's preview, routes/conversations.js), never anything else.
+    const metadata = deleted || moderated || system ? null
+      : row.sender_is_synthetic ? publicMetadata(row.metadata) : personMetadata(row.metadata);
     return {
       id: row.id,
       conversationId: row.conversation_id,
@@ -1483,6 +1486,12 @@ async function setMessageMetadata(db, messageId, metadata) {
 function publicMetadata(raw) {
   const value = raw && typeof raw === 'object' ? raw[BOT_METADATA_KEY] : null;
   return value && typeof value === 'object' && !Array.isArray(value) ? { [BOT_METADATA_KEY]: value } : null;
+}
+
+/** #6071: what of a person's message's metadata a reader is shown: its design pin, or nothing. */
+function personMetadata(raw) {
+  const pin = raw && typeof raw === 'object' ? raw.designPin : null;
+  return pin && typeof pin === 'object' && !Array.isArray(pin) ? { designPin: pin } : null;
 }
 
 async function updateTitle(pool, user, conversationId, title) {

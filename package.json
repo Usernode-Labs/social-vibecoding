@@ -8,15 +8,15 @@
     "social-vibecoding": "tools/social-vibecoding"
   },
   "scripts": {
-    "prestart": "node scripts/ensure-shell-artifacts.js --runtime",
+    "prestart": "node scripts/build-schema.js && node scripts/ensure-shell-artifacts.js --runtime",
     "start": "node server.js",
-    "predev": "node scripts/ensure-shell-artifacts.js --runtime",
+    "predev": "node scripts/build-schema.js && node scripts/ensure-shell-artifacts.js --runtime",
     "dev": "node --watch server.js",
-    "pretest": "node scripts/ensure-shell-artifacts.js --html-only",
+    "pretest": "node scripts/build-schema.js && node scripts/ensure-shell-artifacts.js --html-only",
     "test": "node --require ./tests/lib/test-net.js --test --test-force-exit --test-timeout=180000 tests/*.test.js",
     "test:shard": "node scripts/test-shard.js",
     "test:durations": "node scripts/test-durations.js",
-    "pretest:changed": "node scripts/ensure-shell-artifacts.js --html-only",
+    "pretest:changed": "node scripts/build-schema.js && node scripts/ensure-shell-artifacts.js --html-only",
     "test:changed": "node scripts/test-changed.js",
     "shots:dry-run": "node scripts/shots-dry-run.js",
     "shots:pair": "node scripts/shots-dry-run-pair.js",
@@ -29,7 +29,8 @@
     "vendor:assets": "node scripts/vendor-assets.js",
     "build:shell": "node frontend/scripts/build-shell.mjs",
     "lint:sql": "node scripts/check-sql.js",
-    "check:types": "tsc -p tsconfig.server.json"
+    "check:types": "tsc -p tsconfig.server.json",
+    "build:schema": "node scripts/build-schema.js"
   },
   "devDependencies": {
     "@types/node": "26.1.2",

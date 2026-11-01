@@ -114,7 +114,7 @@ test('the list folds for an agent thread too; a reply thread still belongs to a 
   assert.match(SCREEN, /const chatOpen = !!\(snap\.route\.conversationId \|\| snap\.route\.appSlug\);\s*const discussionOpen = chatOpen \|\| !!snap\.route\.agent;/);
   assert.match(SCREEN, /\$\{\(snap\.listCollapsed && discussionOpen\) \|\| channelOpen \? ' messages-list-collapsed' : ''\}/,
     'a toggle that does nothing on half the panes is worse than none; a channel has no list beside it');
-  assert.match(SCREEN, /\$\{chatOpen && snap\.route\.threadRootId \? ' messages-has-reply-thread' : ''\}/);
+  assert.match(SCREEN, /\$\{chatOpen && \(snap\.route\.threadRootId \|\| blankThread\) \? ' messages-has-reply-thread' : ''\}/);
 });
 
 test('app.css: a desktop control that keeps its ink, and stays under the pointer', () => {

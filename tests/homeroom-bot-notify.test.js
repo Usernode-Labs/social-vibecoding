@@ -156,17 +156,20 @@ test('16 Oct 2026: a bot row names its request by title, else by number, with th
 test('one story: a bell row or push tap opens the request\'s thread in the chat with the bot', () => {
   const N = loadBell();
   const row = (extra) => ({ id: 1, createdAt: AT, conversationId: 9, conversationKind: 'direct', ...extra });
+  // 1 Nov 2026: on the bot's tab, the chat's only place (features/ai/door.ts).
   // The thread its message is in.
   assert.equal(N._conversationHref(row({ kind: 'build_ready', conversationMessageId: 80, conversationThreadRootId: 77, detail: D({ moment: 'ready' }) })),
-    '#messages/9/thread/77');
+    '#homeroom-bot/thread/77');
   // Or the card the detail names.
   assert.equal(N._conversationHref(row({ kind: 'build_needs_you', conversationMessageId: 80, detail: D({ moment: 'needs_you', threadRootId: 76 }) })),
-    '#messages/9/thread/76');
+    '#homeroom-bot/thread/76');
   // Or the message itself (the chat opens its thread from it).
-  assert.equal(N._conversationHref(row({ kind: 'build_live', conversationMessageId: 80, detail: 'hrbot:live:Plant Pal' })), '#messages/9/m/80');
-  assert.equal(N._conversationHref(row({ kind: 'build_live', detail: null })), '#messages/9');
-  // A moment that rang as a message (an older row) lands the same way; a person's message still opens the chat.
-  assert.equal(N._conversationHref(row({ kind: 'conversation_message', conversationMessageId: 80, detail: 'hrbot:question:Plant Pal' })), '#messages/9/m/80');
+  assert.equal(N._conversationHref(row({ kind: 'build_live', conversationMessageId: 80, detail: 'hrbot:live:Plant Pal' })), '#homeroom-bot/main/m/80');
+  assert.equal(N._conversationHref(row({ kind: 'build_live', detail: null })), '#homeroom-bot/main');
+  // A moment that rang as a message (an older row) lands the same way; a
+  // person's message still opens the chat (the Messages store and the router
+  // take a Messages address of the bot's chat to its tab).
+  assert.equal(N._conversationHref(row({ kind: 'conversation_message', conversationMessageId: 80, detail: 'hrbot:question:Plant Pal' })), '#homeroom-bot/main/m/80');
   assert.equal(N._conversationHref(row({ kind: 'conversation_message', conversationMessageId: 80, detail: null })), '#messages/9');
 });
 

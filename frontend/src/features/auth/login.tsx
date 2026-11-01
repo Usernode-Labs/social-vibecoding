@@ -76,6 +76,7 @@ import { AuthBackButton, backToLanding } from './back-button';
 import { CodeBoxes } from './code-boxes';
 import { NativeLoginDetailsLink } from './native-login-details';
 import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
+import { SignupOptIn } from './signup-opt-in';
 import { TermsNotice } from './waitlist-shared';
 import {
   AUTH_SCREEN_IDS,
@@ -505,6 +506,8 @@ export function LoginScreen() {
   const [otpDigits, setOtpDigits] = useState('');
   const [otpSignup, setOtpSignup] = useState<OtpSignup | null>(null);
   const [otpUsernameError, setOtpUsernameError] = useState<string | null>(null);
+  // The sign-up form's "Homeroom news by email" box (#6044), unticked until ticked.
+  const [otpNewsByEmail, setOtpNewsByEmail] = useState(false);
   // The address a waitlist-release link carried, and the moment the resend
   // buttons come back. Both start empty, so the first render is still exactly
   // the markup the hand-written shell shipped.
@@ -995,6 +998,8 @@ export function LoginScreen() {
         credentials: 'same-origin',
         body: JSON.stringify({
           ...(handle ? { username: handle } : {}),
+          // The "Homeroom news by email" box (#6044), only when ticked.
+          ...(otpSignup?.needsUsername && otpNewsByEmail ? { marketingEmail: true } : {}),
         }),
       });
       const data = await res.json();
@@ -1017,7 +1022,7 @@ export function LoginScreen() {
       setOtpError(sessionMintFailureMessage(error));
       setOtpDetails(error instanceof NativeLoginPreparationError ? error.details : null);
     }
-  }, [clearConfirmation, finishLogin, otpSignup, st]);
+  }, [clearConfirmation, finishLogin, otpSignup, otpNewsByEmail, st]);
 
   // ── Wallet sign-in ───────────────────────────────────────────────────
 
@@ -1802,6 +1807,9 @@ export function LoginScreen() {
                   <p id="otp-username-hint" className={otpUsernameError ? FIELD_HINT_ERROR : FIELD_HINT}>
                     {otpUsernameError || t('auth:login.signup.usernameRule')}
                   </p>
+                  <div className="mt-3">
+                    <SignupOptIn id="otp-news-email" kind="email" checked={otpNewsByEmail} onChange={setOtpNewsByEmail} />
+                  </div>
                 </div>
               ) : null}
               {/* No password here (#4891): how they sign in, and where a password is added. */}

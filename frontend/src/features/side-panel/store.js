@@ -41,6 +41,10 @@ import { createStore } from '../../lib/plain-store.js';
  *   The project of the page it was opened on, as the door that opened it
  *   named it (the AI tab's list: its row's tile), or null. Beside the AI
  *   tab's page the header row draws it as the way to that project.
+ * @property {{ route: string, text: string }|null} label
+ *   The door's name for the page it opened (the AI tab's row's title), with
+ *   the route it named: the header's title beside the AI tab's page while the
+ *   panel is still on that route.
  */
 
 /** @type {SidePanelState} */
@@ -54,6 +58,7 @@ export const INITIAL = {
   loading: false,
   reported: '',
   place: null,
+  label: null,
 };
 
 export const sidePanelStore = createStore(INITIAL);

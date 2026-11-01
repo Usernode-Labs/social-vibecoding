@@ -435,6 +435,9 @@ const ADDED_IDS = {
   'feedback-sent-line': 'B8: the line under the filed-request confirmation\'s heading, worded by the controller: "Your idea is on the board now.", or, where Homeroom bot builds it, "Homeroom bot is building it now, usually about 8 minutes…" (#3971).',
   'feedback-sent-chat': 'B8: Open chat, the secondary button under Done when Homeroom bot builds the request: the chat where its card is.',
   'feedback-sent-fix': 'B8: the confirmation\'s small "Build it now with a coding agent" link, for somebody who could start a change there.',
+  // ── 1 Nov 2026 (threads, one loop: phase B): plan it with the bot ───────
+  'feedback-sent-work': 'Work on it with Homeroom bot, the quiet button under Done on the filed-request confirmation: a thread only the person can see, about the request just filed, on the Homeroom bot tab (lib/thread-about.ts); the bot waits for their plan. Ships hidden; the controller shows it when the post says where the request went (`filed`).',
+  'feedback-first-work': 'The same Work on it with Homeroom bot on the first-request confirmation, above Done. Ships hidden; shown where the request has a board.',
   // ── #3971: a first request Homeroom bot builds is a first request ───────
   'feedback-sent-first': '#3971: "Your first request!" inside the bot\'s confirmation. B8 skipped the first-request moment whenever the bot built the request; it comes back here, beside Open chat rather than in place of it. Hidden unless the post was the person\'s first request and the bot builds it.',
   'feedback-sent-first-line': '#3971: that block\'s "You just helped shape <app>." line, named by the controller after the app the request was filed to.',
@@ -689,6 +692,12 @@ const ADDED_IDS = {
   // ── #6043: the other two legal pages the terms name ──────────────────
   'settings-about-child-safety': 'Its Child safety standards row (#6043): a new-tab link to child_safety_link from GET /api/public/waitlist/options (src/services/marketing-links.js), the page the terms cite for child safety. Opened like the privacy row.',
   'settings-about-account-deletion': 'Its "Delete your account and data" row (#6043): a new-tab link to account_deletion_link from the same options, the page the terms and the app stores name for deleting an account. Opened like the privacy row.',
+  // ── #6044: Settings › Privacy › Email & texts ─────────────────────────
+  'settings-contact-preferences-section': 'Settings › Privacy\'s Email & texts block (#6044), before Share usage analytics: what Homeroom may send you. Its own state and GET/PUT /api/me/contact-preferences (src/services/contact-preferences.js).',
+  'settings-contact-marketing-email': 'Its "Homeroom news by email" switch: marketing email, off until switched on, disabled without a confirmed address. Every change is recorded as proof of consent.',
+  'settings-contact-marketing-email-help': 'The line under it: what it sends and how to stop, or why it cannot be switched on (no confirmed address).',
+  'settings-contact-activity-email': 'Its "Activity emails" switch: users.activity_email, on by default, the same choice as the unsubscribe link in those emails.',
+  'settings-contact-activity-email-help': 'The line under it: which emails it covers.',
   // ── Andrea's 27 Aug 2026 waitlist review: "Follow along" ────────
   'more-follow-row': 'Holds the "Follow on X / LinkedIn / Instagram" links on the stage-2 form. Empty in this document by design: each link renders only when WAITLIST_FOLLOW_<NETWORK>_URL is set, so an unconfigured network shows nothing rather than a dead profile link.',
   'more-followed': 'The "I followed along" checkbox, stored as `answers.followed_claim`. It is a SELF-REPORT and is deliberately kept out of `answers.verified`: LinkedIn returns aggregate follower statistics with no identity, Instagram exposes a count and no relationship lookup, and X retired its boolean friendship endpoint, so no network will confirm a follow for us. Hidden here because its label is shown only once at least one follow URL is configured.',

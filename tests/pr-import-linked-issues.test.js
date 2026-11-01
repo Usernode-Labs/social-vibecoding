@@ -105,7 +105,8 @@ test('the connector carries the task’s request number into the import', () => 
     'the same import envelope may also carry the declared visible changes');
   // And the closing keyword on the body, from pr-metadata's own builder so
   // the two closing blocks in the codebase cannot disagree.
-  assert.match(tasks, /buildClosingBlock\(linkedIssuesFor\(task\)\)/);
+  assert.match(tasks, /buildClosingBlock\(linkedIssuesFor\(task\), \{ repoUrl: task\?\.repo_url/,
+    'with the app\'s repository, which decides how the line names the request');
 
   for (const [label, file] of [
     ['the connector', '../src/services/mcp-tools.js'],

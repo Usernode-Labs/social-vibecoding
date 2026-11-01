@@ -61,7 +61,7 @@
 // stays exactly one implementation of "put a change up for a vote".
 
 const { firstPerson } = require('./homeroom-bot-words');
-const { FIX_COMMIT_MESSAGES } = require('./homeroom-commits');
+const { FIX_COMMIT_MESSAGES, buildCommitMessage } = require('./homeroom-commits');
 const log = require('./logger');
 const { stripSpecWrapperFence } = require('./spec-format');
 const { agentApiFailure, finalAnswerText } = require('./agent-result-text');
@@ -1329,6 +1329,23 @@ function specCommentText(spec, { approved = false } = {}) {
  */
 function approvedBuildHomeroomText({ requester = null } = {}) {
   return `${requester ? `@${requester}` : 'The person who asked for it'} said Build it. I'm building it now.`;
+}
+
+/**
+ * 1 Nov 2026 (threads, one loop: C2.3): a build from a plan a person posted
+ * on the request (homeroom-bot.js usePersonPlan): a short note, no plan of
+ * the bot's and no second card. On GitHub a platform username is never an
+ * @mention (#723), so it names them plainly. Pure.
+ */
+function fromPlanCommentText({ author = null, version = null } = {}) {
+  const whose = author ? `${author}'s plan` : 'the plan posted above';
+  return `Homeroom bot is building this request from ${whose}${Number(version) > 0 ? ` (version ${Number(version)})` : ''} now.`;
+}
+
+/** C2.3: the Homeroom copy: "Building from @ada's plan (version 2)." Named, never tagged. Pure. */
+function fromPlanHomeroomText({ author = null, version = null } = {}) {
+  const whose = author ? `@${author}'s plan` : 'the plan above';
+  return `Building from ${whose}${Number(version) > 0 ? ` (version ${Number(version)})` : ''}.`;
 }
 
 // #4488: how a complicated change's plan is answered where it is posted.
@@ -4622,7 +4639,7 @@ async function buildAndPropose({
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
   // time-outs, most of them cheap, with nothing recorded about why.
   const progress = lastActivity();
-  const commitMsg = `Homeroom bot: #${issueNumber} ${title}`.slice(0, 120);
+  const commitMsg = buildCommitMessage(issueNumber, title);
   // #4449: Live watches the build turn, beside it, from its start to its end.
   let liveTurn = null;
   if (onBuildTurn) {
@@ -5195,6 +5212,8 @@ module.exports = {
   liveHomeroomText,
   announceLive,
   approvedBuildHomeroomText,
+  fromPlanCommentText,
+  fromPlanHomeroomText,
   buildFailedText,
   retryCommentText,
   heldText,

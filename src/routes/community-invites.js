@@ -230,18 +230,20 @@ function communityInviteRoutes(config) {
         ? await invites.pictureBytes(pool, req.params.token)
         : null;
       if (!picture) return res.status(404).json({ error: 'No picture' });
-      const data = Buffer.isBuffer(picture.data) ? picture.data : Buffer.from(picture.data || '');
+      const media = require('../services/media-store');
+      const size = picture.objectKey ? picture.sizeBytes : Buffer.byteLength(picture.data || '');
       res.set({
         'Content-Type': picture.contentType,
-        'Content-Length': String(data.length),
+        'Content-Length': String(size),
         'Cache-Control': 'private, max-age=300',
         ETag: `"${picture.sha256}"`,
         'X-Content-Type-Options': 'nosniff',
         'Content-Disposition': 'inline',
       });
-      return res.end(data);
+      return await media.respond(res, media.getStore(), { object_key: picture.objectKey, data: picture.data });
     } catch (err) {
       log.error('invites', 'Invite picture failed', { err: err.message });
+      if (res.headersSent || res.destroyed) return res.destroy();
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

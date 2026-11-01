@@ -155,6 +155,7 @@ administrative connection and a psql).
 {{- end -}}
 
 {{- define "social-vibecoding-platform.validate" -}}
+{{- include "social-vibecoding-platform.databaseRoleValidate" . -}}
 {{- if .Values.enabled -}}
   {{- if and .Values.platform.web.serviceAccountName (not .Values.platform.conductor.enabled) -}}
     {{- fail "platform.web.serviceAccountName needs platform.conductor.enabled: with the conductor off the platform Pods do its work, as social-platform-runtime" -}}

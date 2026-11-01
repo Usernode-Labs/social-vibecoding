@@ -135,6 +135,9 @@ import './lib/visual-viewport';
 // …and whether the screen has a column of system chrome down one side
 // (iPhone Duo): the tab bar and the back button move into it (app.css).
 import './lib/side-strip';
+// …and, folded, a tap at the very top of that cover is finished by the page:
+// iOS turns no touch in its top band into a tap there.
+import './lib/top-band-taps';
 // …and whether the keyboard is open on a phone at all, including in the
 // Homeroom app, whose web view is resized for it so the kit never sees it
 // covered: the tab bar and the Resume strip step aside (app.css).

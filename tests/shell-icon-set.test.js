@@ -268,6 +268,8 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // LockIcon and UserGroupIcon LEFT this list with communities, stage 3:
     // the create dialog's first step (who it is for) draws them on its
     // "A group" and "A community" rows, and the dialog prerenders every step.
+    // DraftEditIcon is back on this list: the Homeroom menu's Design this
+    // screen row (#6071) left the menu for Homeroom bot's new thread.
     'M12 20h9',
     // DownloadIcon (#4055): the image viewer's Download and a message's
     // "Download image", both drawn only after a tap.

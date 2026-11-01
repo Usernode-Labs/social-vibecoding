@@ -1,4 +1,5 @@
 'use strict';
+require('./lib/media-store').useMemoryMedia(require('node:test'));
 
 // Before & after shots evals against the REAL schema in a throwaway
 // PostgreSQL database (services/shots-eval.js, the shots-eval machine in

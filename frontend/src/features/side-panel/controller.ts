@@ -52,6 +52,7 @@
  */
 
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
+import { isBotChatRoute } from '../ai/door';
 import {
   embeddedAllows,
   expandRoute,
@@ -76,6 +77,24 @@ import { INITIAL, sidePanelRefs, sidePanelStore } from './store.js';
  */
 export const DESKTOP_QUERY = '(min-width: 1024px)';
 
+/**
+ * 1 Nov 2026: beside the Homeroom bot tab's page the panel is the column
+ * Main Chat docks in, which the page draws from 768px (features/ai/), so it
+ * takes a page there from 768px too: there is no app beside it to keep
+ * 480px for. Keep in step with the `(max-width: 1023.98px)` rule for
+ * #platform-side-panel in public/css/app.css.
+ */
+export const BESIDE_AI_QUERY = '(min-width: 768px)';
+
+/**
+ * Whether a link to `route` opens in the panel: a panel page, and not the
+ * chat with Homeroom bot, which only its tab draws (features/ai/door.ts) and
+ * the router takes there.
+ */
+function panelTakes(route: string): boolean {
+  return isPanelRoute(route) && !isBotChatRoute(route);
+}
+
 /** A one-shot instruction that rides along with a navigation into the panel. */
 export interface PanelHint {
   /** Show the "what a proposal is" hint on the unsent change (New change). */
@@ -98,12 +117,19 @@ export interface PanelHint {
    * document's alone: the panel's document is not told.
    */
   place?: { slug: string; name: string; icon_url?: string | null; icon_emoji?: string | null } | null;
+  /**
+   * What the page being opened is called, as the door names it (the AI
+   * tab's row: a request's or a change's title). Beside that page the header
+   * row titles the column with it while the panel is still on that page. The
+   * top document's alone, as `place` is.
+   */
+  label?: string | null;
 }
 
 /**
  * The class on the panel DOCUMENT's <html> while the panel stands beside
  * the AI tab's page rather than an app. That page draws the panel as its
- * own column, with ‹ Main and the project over it (./side-panel.tsx), so
+ * own column, with ‹ Main Chat and the project over it (./side-panel.tsx), so
  * the page in it leaves out its own way back (app.css: the topic's
  * "‹ Workshop" chip), which would be a second one to somewhere else.
  */
@@ -332,7 +358,7 @@ export function canTake(): boolean {
   if (!besideApp && !besideAi) return false;
   try {
     if (document.documentElement.classList.contains('in-native-webview')) return false;
-    return window.matchMedia(DESKTOP_QUERY).matches;
+    return window.matchMedia(besideApp ? DESKTOP_QUERY : BESIDE_AI_QUERY).matches;
   } catch {
     return false;
   }
@@ -344,7 +370,7 @@ export function canTake(): boolean {
  * navigation when it did not.
  */
 export function take(route: string, hint?: PanelHint | null): boolean {
-  if (!isPanelRoute(route) || !canTake()) return false;
+  if (!panelTakes(route) || !canTake()) return false;
   open(route, hint || null);
   return true;
 }
@@ -353,7 +379,7 @@ export function take(route: string, hint?: PanelHint | null): boolean {
 export function open(route: string, given?: PanelHint | null): void {
   const s = sidePanelStore.get();
   // The project is this document's to draw; the rest is the page's.
-  const { place = null, ...rest } = given || {};
+  const { place = null, label = null, ...rest } = given || {};
   const hint: PanelHint | null = given ? rest : null;
   if (!s.frameSrc) {
     stack = [];
@@ -370,7 +396,7 @@ export function open(route: string, given?: PanelHint | null): void {
       frameKey: s.frameKey + 1,
       loading: true,
     });
-    publish(route, { place });
+    publish(route, { place, label: label ? { route, text: label } : null });
     return;
   }
   // A panel the viewer had closed starts a fresh history; an open one keeps
@@ -381,7 +407,7 @@ export function open(route: string, given?: PanelHint | null): void {
   desired = route;
   desiredHint = hint;
   sidePanelStore.set({ open: true });
-  publish(route, { place });
+  publish(route, { place, label: label ? { route, text: label } : null });
   markBeside();
   if (ready) {
     desiredHint = null;
@@ -644,7 +670,7 @@ export function onClickCapture(e: MouseEvent): void {
   if (a.hasAttribute('download')) return;
   if (!isShellAddress(a.href, origin)) return;
   const route = routeFromUrl(a.href);
-  if (!isPanelRoute(route) || !canTake()) return;
+  if (!panelTakes(route) || !canTake()) return;
   e.preventDefault();
   open(route, null);
 }
@@ -672,7 +698,7 @@ export function onNavigate(e: NavigateEventLike): void {
   const url = e.destination && e.destination.url;
   if (!url) return;
   const route = routeFromUrl(url);
-  if (!isPanelRoute(route) || !canTake()) return;
+  if (!panelTakes(route) || !canTake()) return;
   e.preventDefault();
   open(route, null);
 }

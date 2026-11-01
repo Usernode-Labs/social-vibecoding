@@ -363,10 +363,10 @@ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 // NOTE: this runs exactly once per boot and `_available` is latched by it,
 // so a permanent failure here disables prod-debug until the next deploy.
 // That is why the retry above exists.
-async function ensureRole(config) {
+async function ensureRole(config, { admin = null } = {}) {
   for (let attempt = 1; attempt <= BOOTSTRAP_ATTEMPTS; attempt++) {
     try {
-      await bootstrapRole(config);
+      await bootstrapRole(config, admin);
       await recordBootstrap(config, { ok: true, password: _roPassword });
       return;
     } catch (err) {
@@ -466,25 +466,29 @@ async function loadShared(config, { force = false } = {}) {
 
 // One bootstrap attempt. Throws on any failure so ensureRole can retry;
 // sets `_available` only on the success path.
-async function bootstrapRole(config) {
+async function bootstrapRole(config, admin = null) {
   const pool = getPool(config);
+  const roleAdmin = admin || pool;
   // 48 hex chars — no SQL/URL-special characters, safe to inline.
   _roPassword = crypto.randomBytes(24).toString('hex');
 
-  await pool.query(`DO $$ BEGIN
+  await roleAdmin.query(`DO $$ BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${ROLE}') THEN
       CREATE ROLE ${ROLE} LOGIN PASSWORD '${_roPassword}';
     ELSE
       ALTER ROLE ${ROLE} WITH LOGIN PASSWORD '${_roPassword}';
     END IF;
   END $$;`);
-  await pool.query(
-    `ALTER ROLE ${ROLE} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`
-  );
+  if (admin) {
+    await require('./database-role-access').assertReadonlyRole(roleAdmin, ROLE);
+    await roleAdmin.query(`ALTER ROLE ${ROLE} NOCREATEDB NOCREATEROLE NOINHERIT`);
+  } else {
+    await pool.query(`ALTER ROLE ${ROLE} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`);
+  }
   // Role-level read-only: even a COMMIT-smuggling or multi-statement
   // query starts read-only, and the role has no write grants anyway.
-  await pool.query(`ALTER ROLE ${ROLE} SET default_transaction_read_only = on`);
-  await pool.query(`ALTER ROLE ${ROLE} SET statement_timeout = '${QUERY_TIMEOUT_MS}ms'`);
+  await roleAdmin.query(`ALTER ROLE ${ROLE} SET default_transaction_read_only = on`);
+  await roleAdmin.query(`ALTER ROLE ${ROLE} SET statement_timeout = '${QUERY_TIMEOUT_MS}ms'`);
 
   const { rows: dbRows } = await pool.query('SELECT current_database() AS db');
   const dbName = dbRows[0].db;

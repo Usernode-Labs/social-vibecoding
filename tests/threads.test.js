@@ -121,7 +121,7 @@ test('changes and messages go in id ranges that cover every row', async () => {
 test('the boot runs the backfill after the schema and the move off GitHub, before the seeds', () => {
   const backfill = MIGRATE_SRC.indexOf("require('../services/threads').backfill(pool)");
   assert.ok(backfill > 0);
-  assert.ok(backfill > MIGRATE_SRC.indexOf('await applySchemaWithLockRetry(pool, schema);'));
+  assert.ok(backfill > MIGRATE_SRC.indexOf('await applySchemaWithLockRetry(pool);'));
   assert.ok(backfill > MIGRATE_SRC.indexOf("require('../services/github-move').migrate(pool)"));
   assert.ok(backfill < MIGRATE_SRC.indexOf('await seedAdmin(pool, config);'));
 });

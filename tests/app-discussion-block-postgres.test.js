@@ -55,8 +55,11 @@ test('app discussion history and inbox preview skip blocked authors', async (t) 
       -- #2387's unread count read. Empty here: this test is about blocks.
       CREATE TABLE app_favorites (app_id int, user_id int, hidden boolean NOT NULL DEFAULT false);
       CREATE TABLE message_reactions (message_id int, user_id int, emoji text);
+      -- 1 Nov 2026: a request's stream reads its changes' replies too, by
+      -- their thread and whether they may be read (routes/chat.js).
       CREATE TABLE chat_sessions (id int PRIMARY KEY, app_id int, user_id int,
-        is_headless boolean NOT NULL DEFAULT false, promoted_at timestamptz, status text);
+        is_headless boolean NOT NULL DEFAULT false, promoted_at timestamptz, status text,
+        thread_id bigint, shared_at timestamptz);
       CREATE TABLE pr_votes (session_id int, user_id int);
       CREATE TABLE issues (id int PRIMARY KEY, app_id int, created_by int);
       CREATE TABLE issue_votes (issue_id int, user_id int);

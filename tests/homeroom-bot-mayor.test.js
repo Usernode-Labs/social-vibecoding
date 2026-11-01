@@ -80,11 +80,11 @@ test('it reads the platform with the agent-session Mayor\'s connector reads, nev
   assert.match(read('src/services/mayor/mcp-shim.js'), /subject: String\(rateSubject \?\? agentSessionId\),/);
 });
 
-test('the tools: fifteen lookups and actions and a reply, every one closed to extra arguments', () => {
+test('the tools: sixteen lookups and actions and a reply, every one closed to extra arguments', () => {
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
     ['progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'answer_question', 'revise_proposal',
       'comment_on_request', 'start_request', 'offer_request', 'offer_move_request', 'offer_close_request', 'withdraw_proposal',
-      'report_problem', 'reply']);
+      'draw_screen', 'report_problem', 'start_project_thread', 'reply']);
   for (const t of mayor.TOOLS) {
     assert.equal(t.type, 'function');
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
@@ -220,12 +220,14 @@ test('#3707: everything the DM model sends answers one of her messages, and quot
   const sends = src.match(/dm\.sendDm\(pool, \{[\s\S]*?\}\);/g) || [];
   // #6019 follow-up: and a draft's line in Main, which opens its private
   // thread and quotes what asked for it (the offer itself is in the thread).
-  assert.equal(sends.length, 5, 'a turn\'s answer, a draft\'s line, its offer, the answer to a tap, and a tap whose act failed for good');
+  // 1 Nov 2026 (C2.2, C2.4): and a design's two cards, and a new project's
+  // thread's line in Main, which quotes what asked for it.
+  assert.equal(sends.length, 8, 'a turn\'s answer, a draft\'s line, its offer, the answer to a tap, a tap whose act failed for good, a design\'s plan and project cards, and a new project\'s line');
   // B3: the answer to a tap (settleOffer) quotes what was typed or quoted
   // when there was one; a button's tap has no message of hers to quote.
   // One story: a tap with nothing typed is answered where its offer is (the
   // offer's own message, never quoted, names its thread).
-  for (const send of sends) assert.match(send, /replyToId: message\.id|replyToId: opened \? null : message\.id|replyToId, \.\.\.extra|replyToId: replyToId \|\| action\.message_id \|\| null, \.\.\.extra|replyToId: action\.message_id \|\| null,/);
+  for (const send of sends) assert.match(send, /replyToId: message\.id|replyToId: opened \? null : message\.id|replyToId, \.\.\.extra|replyToId: replyToId \|\| action\.message_id \|\| null, \.\.\.extra|replyToId: action\.message_id \|\| null,|replyToId: ctx\.messageId, threadRootId: false/);
   assert.match(src, /settleOffer\(pool, config, \{\s*bot, user, settings, action, yes, deps, replyToId: message\.id,/);
 });
 
@@ -338,6 +340,7 @@ test('#3772: what a typed message decides about a draft', () => {
 
 test('#3772: the request numbers a reply names, less a proposal\'s or a pull request\'s', () => {
   assert.deepEqual(mayor.requestNumbers('Filed #14, see request #3 and proposal #6011, PR #12, pr#13, &#39; x#9'), [14, 3]);
+  assert.deepEqual(mayor.requestNumbers('Change #6002 closes #5997'), [5997], 'a change is named by its pull request number');
   assert.deepEqual(mayor.requestNumbers('nothing here'), []);
 });
 
@@ -483,7 +486,12 @@ test('#11 (WP3): withdrawing a proposal and telling the team are tools, describe
     close_request: ['Propose to close', 'Keep it open'],
     // #6019: words from this private chat, waiting to go public as theirs.
     post_reply: ['Post it', 'Keep it private'],
+    // 1 Nov 2026 (C2.2): a design as a plan; its card names the request (designPlanAnswers).
+    post_design: ['Post it as a plan', 'Not yet'],
   });
+  assert.deepEqual(mayor.designPlanAnswers(18), ['Post as a plan on #18', 'Not yet']);
+  assert.deepEqual(mayor.designPlanAnswers(null), ['New request', 'Add to an existing request…']);
+  assert.deepEqual(mayor.answersFor({ kind: 'post_design', source_issue_number: 18 }), ['Post as a plan on #18', 'Not yet']);
   assert.equal(mayor.REPORT_SOURCE, 'homeroom_bot');
 });
 

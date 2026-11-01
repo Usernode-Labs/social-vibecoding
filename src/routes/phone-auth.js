@@ -58,6 +58,7 @@ const communityInvites = require('../services/community-invites');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
 const events = require('../services/events');
+const contactPreferences = require('../services/contact-preferences');
 const { signUpMetadata } = require('../services/sign-up-from');
 const {
   otpVerifyLimiter,
@@ -243,6 +244,11 @@ function phoneAuthRoutes(config) {
         // account recorded none before, so the landing's phone way in went
         // uncounted.
         events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId: result.userId, metadata: signUpMetadata(req, { via: 'phone' }) });
+        // The phone step's "Homeroom news by text" box (#6044), for the
+        // number just verified. Only an account this sign-in CREATED: an
+        // existing one signing in is never asked. Never fails the sign-up.
+        await contactPreferences.recordSignupChoices(pool, result.userId,
+          contactPreferences.signupChoicesFrom(req.body), log);
       }
 
       // A new account whose sheet sent its name (an invite's Join): finished
@@ -320,6 +326,10 @@ function phoneAuthRoutes(config) {
       clearPrivateCookie(res, 'hr_phone_signup');
       createSessionCookie(res, done.session.token, done.session.expiresAt);
       log.info('phone-auth', 'Phone sign-up chose a username', { userId: done.user.id });
+      // The username step's "Text me Homeroom news" box (#6044), for the
+      // number this sign-up verified. Never fails the sign-up.
+      await contactPreferences.recordSignupChoices(pool, done.user.id,
+        contactPreferences.signupChoicesFrom(req.body), log);
       return res.json({
         ok: true,
         user: {

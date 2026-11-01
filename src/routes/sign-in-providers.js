@@ -40,6 +40,7 @@ const express = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const events = require('../services/events');
+const contactPreferences = require('../services/contact-preferences');
 const { signUpMetadata } = require('../services/sign-up-from');
 const providers = require('../services/sign-in-providers');
 const communityInvites = require('../services/community-invites');
@@ -357,6 +358,10 @@ function signInProviderRoutes(config) {
       });
       clearPrivateCookie(res, SIGNUP_COOKIE);
       createSessionCookie(res, done.session.token, done.session.expiresAt);
+      // The username step's "Homeroom news by email" box (#6044), for the
+      // address Apple or Google confirmed. Never fails the sign-up.
+      await contactPreferences.recordSignupChoices(pool, done.user.id,
+        contactPreferences.signupChoicesFrom(req.body), log);
       return res.json({
         user: {
           id: done.user.id,

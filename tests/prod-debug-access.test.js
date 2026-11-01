@@ -396,8 +396,8 @@ test('#891: the two role bootstraps are awaited in sequence, once per release wi
   // compose's boot migration under its lock): one runner, the new build's
   // deny lists over the new tables.
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/db-roles.js'), 'utf8');
-  const a = src.indexOf("await require('./debug-access').ensureRole(config)");
-  const b = src.indexOf("await require('./topochain/db-console-role').ensureConsoleRole(config)");
+  const a = src.indexOf("await require('./debug-access').ensureRole(config, { admin })");
+  const b = src.indexOf("await require('./topochain/db-console-role').ensureConsoleRole(config, { admin })");
   assert.ok(a !== -1 && b !== -1 && a < b, 'prod-debug first, the console role second: they must not overlap');
   assert.match(src, /if \(!runsClusterMaintenance\(\)\) return \{ skipped: 'staging' \};/, 'never on a staging preview');
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
@@ -413,7 +413,7 @@ test('#891: ensureRole retries a bounded number of times', () => {
   );
   assert.match(src, /const BOOTSTRAP_ATTEMPTS = 3/, 'attempts must be a named bound');
   assert.match(src, /const BOOTSTRAP_RETRY_MS = 250/, 'the backoff must be a named constant');
-  assert.match(src, /async function bootstrapRole\(config\)/,
+  assert.match(src, /async function bootstrapRole\(config, admin = null\)/,
     'one attempt must be extracted so the caller can retry it');
   assert.match(src, /for \(let attempt = 1; attempt <= BOOTSTRAP_ATTEMPTS; attempt\+\+\)/,
     'ensureRole must loop over bounded attempts');

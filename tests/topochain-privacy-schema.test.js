@@ -19,6 +19,7 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const schema = fs.readFileSync(path.join(root, 'src/db/schema.sql'), 'utf8');
 const debugAccess = require('../src/services/debug-access');
+const { REFERENCE_STATEMENTS } = require('../src/db/reference-data');
 
 // Isolate the Task 2 block so column/index assertions can't accidentally
 // match unrelated platform tables (e.g. the platform's own `users` table
@@ -123,11 +124,11 @@ test('platform_settings gains a description column, idempotently', () => {
 });
 
 test('the seven topochain_* settings keys are seeded with exact values and ON CONFLICT DO NOTHING', () => {
-  const insertStart = block.indexOf('INSERT INTO platform_settings');
-  assert.ok(insertStart > 0, 'the settings seed INSERT exists');
-  const insertEnd = block.indexOf('ON CONFLICT (key) DO NOTHING;', insertStart);
-  assert.ok(insertEnd > insertStart, 'the seed INSERT is guarded by ON CONFLICT DO NOTHING');
-  const seed = block.slice(insertStart, insertEnd);
+  const statement = REFERENCE_STATEMENTS.find(sql => sql.includes("'topochain_first_block_points'"));
+  assert.ok(statement, 'the shared reference seed INSERT exists');
+  const insertEnd = statement.indexOf('ON CONFLICT (key) DO NOTHING;');
+  assert.ok(insertEnd > 0, 'the seed INSERT is guarded by ON CONFLICT DO NOTHING');
+  const seed = statement.slice(0, insertEnd);
 
   const expected = {
     topochain_first_block_points: '250',
@@ -163,7 +164,9 @@ test('bug_report_points and community_contribution_points are NOT settings keys'
   // on leaderboard_snapshots (Task 1), not flat configured point values,
   // so they must not appear as topochain_* settings keys here.
   assert.ok(!/topochain_bug_report_points/.test(block));
+  assert.ok(!/topochain_bug_report_points/.test(REFERENCE_STATEMENTS.join('\n')));
   assert.ok(!/topochain_community_contribution_points/.test(block));
+  assert.ok(!/topochain_community_contribution_points/.test(REFERENCE_STATEMENTS.join('\n')));
 });
 
 // ─── Staging privacy: table-level ───────────────────────────────────

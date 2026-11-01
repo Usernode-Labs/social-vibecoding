@@ -1,3 +1,6 @@
+-- Frozen baseline at the tracked-migration cutover.
+-- Required boot reference inserts live only in reference-data.js.
+
 -- Users & auth
 CREATE TABLE IF NOT EXISTS users (
   id              SERIAL PRIMARY KEY,
@@ -2753,13 +2756,7 @@ CREATE TABLE IF NOT EXISTS platform_settings (
 -- src/routes/sessions.js (USER_DAILY_LIMIT_CENTS=2500, GLOBAL=20000)
 -- so a fresh deploy preserves the prior behavior. ON CONFLICT DO
 -- NOTHING means existing operator-set values survive every boot.
-INSERT INTO platform_settings (key, value) VALUES
-  ('user_daily_limit_cents',   '2500'),
-  ('global_daily_limit_cents', '20000'),
-  -- #361: separate "system tokens" budget that funds platform-driven
-  -- merge-conflict / sync-with-main resolution turns. Defaults to $25/day.
-  ('system_tokens_daily_limit_cents', '2500')
-ON CONFLICT (key) DO NOTHING;
+
 
 -- #1788: the platform-default per-user WEEKLY cap. #2571 makes it the ONLY
 -- per-user cap (the daily one is switched off in src/services/limits.js) and
@@ -2768,9 +2765,7 @@ ON CONFLICT (key) DO NOTHING;
 -- only statement that writes this key on boot: an operator-set value — which
 -- is what production runs on, set from the admin Limits page — survives every
 -- deploy untouched. No migration rewrites it.
-INSERT INTO platform_settings (key, value) VALUES
-  ('user_weekly_limit_cents', '5000')
-ON CONFLICT (key) DO NOTHING;
+
 
 -- One-shot backfill of users.weekly_limit_cents for everyone who already
 -- holds a DAILY override. Without it, a raised daily cap would collide with
@@ -3384,9 +3379,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_events_app_down_minute
   WHERE event_type IN ('app_unavailable', 'app_restarted') AND metadata ? 'minute';
 -- When those rows began: an open from before it had no way to be seen
 -- failing, so "App opens that worked" counts only the opens since.
-INSERT INTO platform_settings (key, value) VALUES
-  ('app_outages_tracked_since', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
-ON CONFLICT (key) DO NOTHING;
+
 
 -- Tagged staging:private so the analytics log (which is derived from
 -- chat_sessions / pr_kudos, both already private) is TRUNCATEd in staging
@@ -6307,22 +6300,7 @@ CREATE INDEX IF NOT EXISTS idx_users_username_lower_pattern ON users (LOWER(user
 -- per-row columns already on `leaderboard_snapshots` (Task 1), scored
 -- per activity rather than configured as a flat point value.
 ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS description TEXT;
-INSERT INTO platform_settings (key, value, description) VALUES
-  ('topochain_first_block_points',              '250',
-    'Points awarded for producing a season event''s first block.'),
-  ('topochain_produced_half_blocks_points',     '0',
-    'Points awarded for producing at least half of the expected blocks.'),
-  ('topochain_top_1_points',                    '1500',
-    'Points awarded for finishing rank 1 on the leaderboard.'),
-  ('topochain_top_2_points',                    '1000',
-    'Points awarded for finishing rank 2 on the leaderboard.'),
-  ('topochain_top_3_points',                    '500',
-    'Points awarded for finishing rank 3 on the leaderboard.'),
-  ('topochain_success_50_percent_points',       '1000',
-    'Points awarded for a block-production success rate of at least 50%.'),
-  ('topochain_inviting_new_participant_points', '0',
-    'Points awarded for inviting a new participant into the competition.')
-ON CONFLICT (key) DO NOTHING;
+
 
 -- Staging privacy (SPEC §6), table-level: every row of these tables is
 -- sensitive in its entirety in a staging clone (truncated by
@@ -7126,10 +7104,7 @@ ON CONFLICT (key) DO NOTHING;
 -- filter it replaces. Deleting this row does not "reset" anything useful:
 -- the next boot re-stamps it at NOW() and throws away every clean change
 -- recorded so far.
-INSERT INTO platform_settings (key, value, description) VALUES
-  ('model_cost_observed_since', NOW()::text,
-    'Marker: the instant the platform began recording coding-agent spend per model (#2592). The Model costs console counts only changes created at or after it. Do not delete — deleting re-stamps it at the next boot and discards every clean change recorded so far.')
-ON CONFLICT (key) DO NOTHING;
+
 
 -- ── Hosted MCP connector: OAuth 2.1 authorization server ────────────────
 --
@@ -8940,9 +8915,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_channel_key
 -- The room itself, in production and staging alike: it is the platform's,
 -- not demo data. `conversations` is staging:private, so a fresh staging
 -- clone starts without it and this line puts it back.
-INSERT INTO conversations (kind, title, channel_key)
-VALUES ('channel', 'general', 'general')
-ON CONFLICT (channel_key) WHERE channel_key IS NOT NULL DO NOTHING;
+-- Required reference rows are supplied by reference-data.js after migrations.
 
 CREATE INDEX IF NOT EXISTS idx_notifications_user_conversation_unread
   ON notifications (user_id, conversation_id, created_at DESC)
@@ -10195,6 +10168,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_shot_runs_current_head
   ON shot_runs(session_id, head_sha)
   WHERE state NOT IN ('stale', 'cancelled');
 COMMENT ON TABLE shot_runs IS 'staging:private';
+
+-- Shared immutable platform media. Key columns reference this registry so
+-- cleanup cannot delete an object that ANY migrated table still owns.
+-- No bytes live here. A rolled-back upload may leave an object without a
+-- registry row: the media-gc clock discovers it in the bucket listing.
+CREATE TABLE IF NOT EXISTS media_objects (
+  object_key TEXT PRIMARY KEY CHECK (object_key ~ '^media/sha256/[a-f0-9]{64}$')
+);
+COMMENT ON TABLE media_objects IS 'staging:private';
 
 CREATE TABLE IF NOT EXISTS shot_artifacts (
   id                 VARCHAR(32) PRIMARY KEY
@@ -11901,23 +11883,7 @@ END $$;
 -- for real on every app but the paused ones, for everyone with platform
 -- access (`live` is still refused by the settings route). Ships `off` so the
 -- change that adds the bot is itself inert.
-INSERT INTO platform_settings (key, value) VALUES
-  ('homeroom_bot_mode', 'off'),
-  ('homeroom_bot_concurrency', '1'),
-  ('homeroom_bot_batch_size', '10'),
-  ('homeroom_bot_paused_apps', '[]'),
-  ('homeroom_bot_shadow_builds', 'off'),
-  ('homeroom_bot_build_concurrency', '2'),
-  ('homeroom_bot_shadow_build_platform', 'off'),
-  -- #3624: $50 a week for each person's requests.
-  ('homeroom_bot_user_weekly_cents', '5000'),
-  -- And $100 for an admin's, in place of it.
-  ('homeroom_bot_admin_weekly_cents', '10000'),
-  -- Live work 12 at once, 3 per person; a DM is read.
-  ('homeroom_bot_live_at_once', '12'),
-  ('homeroom_bot_per_person', '3'),
-  ('homeroom_bot_dm_chat', 'on')
-ON CONFLICT (key) DO NOTHING;
+
 -- Live work went from 6 at once, 2 per person, to 12 and 3 when every
 -- project went live. A database still on the old seed (no admin ever saved
 -- these: updated_by is unset) moves up once; an admin's own number stays,
@@ -11936,9 +11902,7 @@ UPDATE platform_settings SET value = '3', updated_at = NOW()
 -- already wrote stands.
 DELETE FROM platform_settings
  WHERE key IN ('homeroom_bot_live_apps', 'homeroom_bot_dm_users', 'homeroom_bot_audience', 'homeroom_bot_live_platform');
-INSERT INTO platform_settings (key, value)
-VALUES ('homeroom_bot_audience_since', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
-ON CONFLICT (key) DO NOTHING;
+
 
 -- #2721. Private, durable moderation records; target IDs intentionally have
 -- no cascading FK: removing a target must not remove evidence or the audit.
@@ -13375,6 +13339,34 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_ask_answered_at TIMESTAMPTZ;
 -- server drops those events on arrival and the shell does not send them.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS usage_analytics BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- "Homeroom news by email" (#6044): marketing email, off for everyone until
+-- they tick it at sign-up or switch it on in Settings > Privacy
+-- (services/contact-preferences.js). Nothing sends marketing email yet; this
+-- is the consent it will need. Marketing texts keep their own per-number
+-- record, sms_marketing_consents.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS marketing_email BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Every answer to the contact opt-ins (#6044), as proof of consent: who, for
+-- which channel, yes or no, where it was given (the sign-up form or
+-- Settings), which wording they saw, and the address or number it was about
+-- at that moment. Append-only; the current choice lives on users and
+-- sms_marketing_consents. user_id is kept NULL after a deletion so the record
+-- of a withdrawal outlives the account, as sms_marketing_consents does.
+CREATE TABLE IF NOT EXISTS contact_consent_events (
+  id              BIGSERIAL PRIMARY KEY,
+  user_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  channel         TEXT NOT NULL CHECK (channel IN ('marketing_email', 'marketing_sms', 'activity_email')),
+  granted         BOOLEAN NOT NULL,
+  source          TEXT NOT NULL CHECK (source IN ('signup', 'settings')),
+  wording_version TEXT NOT NULL,
+  email           VARCHAR(255),
+  phone_e164      VARCHAR(16),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_contact_consent_events_user
+  ON contact_consent_events (user_id, created_at DESC);
+COMMENT ON TABLE contact_consent_events IS 'staging:private';
+
 -- "Are you 18 or older?" (#5095, compliance A-02): when the account said
 -- yes, asked the first time it opens a wallet, staking, node or passport
 -- feature. NULL until then, including "I'm under 18", which records
@@ -14738,6 +14730,33 @@ CREATE INDEX IF NOT EXISTS check_run_media_run_idx ON check_run_media (run_id);
 CREATE INDEX IF NOT EXISTS check_run_media_session_idx ON check_run_media (session_id);
 COMMENT ON TABLE check_run_media IS 'staging:private';
 
+-- The media registry is defined above with shots. Legacy byte rows remain
+-- readable until the workflow backfill commits each key and its metadata.
+ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS object_key TEXT REFERENCES media_objects(object_key);
+ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS sha256 VARCHAR(64);
+ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS bytes INTEGER;
+ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS legacy_etag TEXT;
+ALTER TABLE session_visuals ALTER COLUMN data DROP NOT NULL;
+ALTER TABLE check_run_media ADD COLUMN IF NOT EXISTS object_key TEXT REFERENCES media_objects(object_key);
+ALTER TABLE check_run_media ADD COLUMN IF NOT EXISTS sha256 VARCHAR(64);
+ALTER TABLE check_run_media ADD COLUMN IF NOT EXISTS bytes INTEGER;
+ALTER TABLE check_run_media ADD COLUMN IF NOT EXISTS legacy_etag TEXT;
+ALTER TABLE check_run_media ALTER COLUMN data DROP NOT NULL;
+CREATE INDEX IF NOT EXISTS session_visuals_object_key_idx ON session_visuals(object_key) WHERE object_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS check_run_media_object_key_idx ON check_run_media(object_key) WHERE object_key IS NOT NULL;
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['session_visuals', 'check_run_media'] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = t::regclass AND conname = t || '_media_check') THEN
+      EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I CHECK (
+        (object_key IS NULL AND data IS NOT NULL) OR
+        (object_key IS NOT NULL AND data IS NULL AND sha256 IS NOT NULL AND sha256 ~ ''^[a-f0-9]{64}$''
+          AND bytes IS NOT NULL AND bytes >= 0 AND legacy_etag IS NOT NULL))', t, t || '_media_check');
+    END IF;
+  END LOOP;
+END $$;
+
 -- platform_live_at: a merge into Homeroom itself, when a production build
 -- that carries it first started serving. Homeroom ships in a release cut
 -- after the merge, so live_at (the merge, on the legacy paths) cannot say.
@@ -14748,9 +14767,7 @@ COMMENT ON TABLE check_run_media IS 'staging:private';
 -- the marker below is when tracking began, so a first boot does not stamp
 -- all of history with that boot's time.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS platform_live_at TIMESTAMPTZ;
-INSERT INTO platform_settings (key, value) VALUES
-  ('platform_live_tracked_since', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
-ON CONFLICT (key) DO NOTHING;
+
 
 -- #4083: every account without access has a spot on the waitlist, however it
 -- was made. Signups now get one as they are made (waitlist.ensureAccountSignup);
@@ -15289,6 +15306,46 @@ CREATE TABLE IF NOT EXISTS shots_eval_artifacts (
   UNIQUE (trial_id, story_id, viewport, side, variant, media)
 );
 COMMENT ON TABLE shots_eval_artifacts IS 'staging:private';
+
+-- Platform media moves one row at a time. The workflow backfill uploads
+-- before setting its key and clearing bytes in one transaction. Readers
+-- use that row's key, with the byte column only for rows not backfilled yet.
+ALTER TABLE shot_run_files ADD COLUMN IF NOT EXISTS object_key TEXT REFERENCES media_objects(object_key);
+ALTER TABLE shot_run_files ADD COLUMN IF NOT EXISTS dense_object_key TEXT REFERENCES media_objects(object_key);
+ALTER TABLE shot_run_files ALTER COLUMN data DROP NOT NULL;
+ALTER TABLE shot_artifacts ADD COLUMN IF NOT EXISTS object_key TEXT REFERENCES media_objects(object_key);
+ALTER TABLE shot_artifacts ADD COLUMN IF NOT EXISTS dense_object_key TEXT REFERENCES media_objects(object_key);
+ALTER TABLE shot_artifacts ALTER COLUMN data DROP NOT NULL;
+ALTER TABLE shots_eval_artifacts ADD COLUMN IF NOT EXISTS object_key TEXT REFERENCES media_objects(object_key);
+ALTER TABLE shots_eval_artifacts ALTER COLUMN data DROP NOT NULL;
+ALTER TABLE shot_diagnostic_artifacts ADD COLUMN IF NOT EXISTS object_key TEXT REFERENCES media_objects(object_key);
+ALTER TABLE shot_diagnostic_artifacts ALTER COLUMN data DROP NOT NULL;
+CREATE INDEX IF NOT EXISTS shot_run_files_object_key_idx ON shot_run_files(object_key) WHERE object_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS shot_run_files_dense_object_key_idx ON shot_run_files(dense_object_key) WHERE dense_object_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS shot_artifacts_object_key_idx ON shot_artifacts(object_key) WHERE object_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS shot_artifacts_dense_object_key_idx ON shot_artifacts(dense_object_key) WHERE dense_object_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS shots_eval_artifacts_object_key_idx ON shots_eval_artifacts(object_key) WHERE object_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS shot_diagnostic_artifacts_object_key_idx ON shot_diagnostic_artifacts(object_key) WHERE object_key IS NOT NULL;
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['shot_run_files', 'shot_artifacts', 'shots_eval_artifacts', 'shot_diagnostic_artifacts'] LOOP
+    -- PostgreSQL already uses <table>_media_check for the media enum.
+    -- A separate name must enforce exactly one storage representation.
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = t::regclass AND conname = t || '_storage_check') THEN
+      EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I CHECK ((object_key IS NOT NULL) <> (data IS NOT NULL))', t, t || '_storage_check');
+    END IF;
+  END LOOP;
+  FOREACH t IN ARRAY ARRAY['shot_run_files', 'shot_artifacts'] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = t::regclass AND conname = t || '_density_check'
+                    AND pg_get_constraintdef(oid) LIKE '%dense_object_key%') THEN
+      EXECUTE format('ALTER TABLE %I DROP CONSTRAINT IF EXISTS %I', t, t || '_density_check');
+      EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I CHECK (density BETWEEN 1 AND 4
+        AND ((density = 1) = (dense_data IS NULL AND dense_object_key IS NULL))
+        AND NOT (dense_data IS NOT NULL AND dense_object_key IS NOT NULL))', t, t || '_density_check');
+    END IF;
+  END LOOP;
+END $$;
 
 -- A blind PAIR: the control's trial and one configuration's, of the same
 -- proposal and repetition, for an admin's pick through the connector (left,
@@ -16806,3 +16863,13 @@ BEGIN
 END $$;
 ALTER TABLE requests ADD COLUMN IF NOT EXISTS part_of INTEGER CHECK (part_of IS NULL OR part_of > 0);
 CREATE INDEX IF NOT EXISTS requests_part_of_idx ON requests (app_id, part_of) WHERE part_of IS NOT NULL;
+
+-- Applied schema changes, committed atomically with their DDL. Preview copies
+-- keep the structure but start their own migration history.
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id TEXT PRIMARY KEY,
+  checksum TEXT NOT NULL CHECK (checksum ~ '^[a-f0-9]{64}$'),
+  schema_sha256 TEXT NOT NULL CHECK (schema_sha256 ~ '^[a-f0-9]{64}$'),
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE schema_migrations IS 'staging:private';

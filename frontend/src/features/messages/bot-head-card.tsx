@@ -89,6 +89,13 @@ function lineOf(paragraph: string, meta: HomeroomBotMeta): Parsed | null {
   if (meta.kind === 'confirm') {
     const offer = OFFER_LINE.exec(text);
     if (!offer || offer[1] !== meta.appName) return null;
+    // 31 Oct 2026: a draft that File it filed carries its number
+    // (homeroom-bot-mayor.js settleOffer), and is drawn as the request it
+    // became. It kept saying "not filed yet" after it was filed as #6071.
+    const filed = Number(meta.issueNumber);
+    if (offer[2] === 'new request' && Number.isInteger(filed) && filed > 0) {
+      return { kind: 'request', appName: offer[1], issueNumber: filed, title: meta.issueTitle || offer[3] };
+    }
     return { kind: offer[2] === 'proposal' ? 'change' : 'draft', appName: offer[1], issueNumber: null, title: offer[3] };
   }
   const request = REQUEST_LINE.exec(text);

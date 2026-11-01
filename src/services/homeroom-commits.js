@@ -47,15 +47,27 @@ function isHomeroomCommitter(email, env = process.env) {
   return !!e && (HOMEROOM_COMMITTERS.includes(e) || commitIdentity.homeroomCommitterEmails(env).includes(e));
 }
 
+// The bot's commits name a request as "request N", never `#N`. On GitHub `#N`
+// is GitHub's own number, and its pull requests take the numbers Homeroom's
+// requests hold (pr-metadata.js closingLine), so "Homeroom bot: #6050 …"
+// linked an unrelated pull request from main's history (30 Oct 2026).
+
+/** The bot's build commit, at most 120 characters: the change, then its request. */
+function buildCommitMessage(issueNumber, title) {
+  const tail = ` (request ${issueNumber})`;
+  return `Homeroom bot: ${String(title || '').trim()}`.slice(0, 120 - tail.length).trimEnd() + tail;
+}
+
 /** The messages the bot's fix rounds commit with. */
 const FIX_COMMIT_MESSAGES = Object.freeze({
-  checks: (issueNumber) => `Homeroom bot: fix the failing checks on #${issueNumber}`,
-  broken: (issueNumber) => `Homeroom bot: fix what did not work on #${issueNumber}`,
-  shots: (issueNumber) => `Homeroom bot: seed what the before and after shots of #${issueNumber} need`,
+  checks: (issueNumber) => `Homeroom bot: fix the failing checks on request ${issueNumber}`,
+  broken: (issueNumber) => `Homeroom bot: fix what did not work on request ${issueNumber}`,
+  shots: (issueNumber) => `Homeroom bot: seed what the before and after shots of request ${issueNumber} need`,
   review: (round) => `Homeroom bot: review fixes, round ${round}`,
 });
 
-const FIX_SUBJECT = /^Homeroom bot: (?:fix the failing checks on #\d+|fix what did not work on #\d+|seed what the before and after shots of #\d+ need|review fixes, round \d+)$/;
+// A fix round committed before 30 Oct 2026 said `#N`, and is still one.
+const FIX_SUBJECT = /^Homeroom bot: (?:fix the failing checks on (?:#|request )\d+|fix what did not work on (?:#|request )\d+|seed what the before and after shots of (?:#|request )\d+ need|review fixes, round \d+)$/;
 
 /**
  * What the commits a move added say about it: `madeByHomeroom` when Homeroom
@@ -70,4 +82,4 @@ function classify(commits) {
   return { madeByHomeroom, fixOnly };
 }
 
-module.exports = { HOMEROOM_COMMITTERS, FIX_COMMIT_MESSAGES, FIX_SUBJECT, isHomeroomCommitter, classify };
+module.exports = { HOMEROOM_COMMITTERS, FIX_COMMIT_MESSAGES, FIX_SUBJECT, buildCommitMessage, isHomeroomCommitter, classify };

@@ -133,11 +133,16 @@ spec:
       ports: [{protocol: TCP, port: 443}]
 {{- end }}
 {{- if .Values.migration.enabled }}
+{{- $root := . }}
+{{- $components := list "migration" }}
+{{- if .Values.databaseRoles.enabled }}{{- $components = append $components "database-bootstrap" }}{{- end }}
+{{- range $component := $components }}
+{{- with $root }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "social-vibecoding-platform.fullname" . }}-migration
+  name: {{ include "social-vibecoding-platform.fullname" . }}-{{ $component }}
   labels:
     {{- include "social-vibecoding-platform.labels" . | nindent 4 }}
   annotations:
@@ -146,7 +151,7 @@ spec:
   podSelector:
     matchLabels:
       {{- include "social-vibecoding-platform.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: migration
+      app.kubernetes.io/component: {{ $component }}
   policyTypes: [Egress]
   egress:
     - to:
@@ -163,7 +168,19 @@ spec:
               {{- include "social-vibecoding-platform.postgresqlPodSelector" . | nindent 14 }}
           {{- end }}
       ports: [{protocol: TCP, port: {{ .Values.postgresql.port }}}]
+    {{- if and (eq $component "database-bootstrap") .Values.previewPostgresql.enabled }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ default .Release.Namespace .Values.previewPostgresql.namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.previewPostgresql.podSelector | nindent 14 }}
+      ports: [{protocol: TCP, port: {{ .Values.previewPostgresql.port }}}]
+    {{- end }}
     - ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+{{- end }}
+{{- end }}
 {{- end }}
 {{- if .Values.postgresql.enabled }}
 ---

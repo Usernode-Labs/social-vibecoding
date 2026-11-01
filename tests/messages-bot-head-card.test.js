@@ -318,6 +318,20 @@ test('an offer draws the change it carries in its line’s place, or the request
   assert.match(draft, /data-bot-head-card="draft"><div class="messages-object-card">/, 'nothing to open yet');
   assert.match(draft, />Add a search box</);
   assert.match(draft, />Plant pal · not filed yet</);
+
+  // 31 Oct 2026: filed by File it, the same offer carries its number and is
+  // drawn as the request it became, linked, never "not filed yet" again.
+  asked.length = 0;
+  const filed = botHead('Want me to file this?\n\n**Plant pal** · new request: Add a search box\n\nSearch notes by their text.',
+    { ...offer, issueNumber: 14, issueTitle: 'Add a search box', status: 'answered', chosen: 'yes' });
+  assert.deepEqual([filed.kind, filed.issueNumber, filed.title], ['request', 14, 'Add a search box']);
+  assert.equal(filed.link.href, '#app/plant-pal/dev/issues/14');
+  const filedHtml = draw(filed);
+  assert.match(filedHtml, /data-bot-head-card="request" data-bot-request-card="14"/);
+  assert.match(filedHtml, /<a href="#app\/plant-pal\/dev\/issues\/14"/);
+  assert.doesNotMatch(filedHtml, /not filed yet/);
+  // A change offered for withdrawal never takes a number for a request.
+  assert.equal(botHead('Want me to withdraw it?\n\n**Plant pal** · proposal: Plant photos', { ...offer, issueNumber: 14 }).kind, 'change');
 });
 
 test('a line with nothing after it is the card alone', () => {
@@ -353,15 +367,23 @@ test('the staging preview’s declared check finds the demo DM’s news as one r
   // one line of words (N finished · N couldn't build).
   const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#4097/.test(t.name));
   assert.ok(check, 'declared');
-  assert.equal(check.path, '/?demo=1#messages/910005');
-  assert.match(check.expectSelector, /:has\(\[data-bot-settled-toggle\] \[data-bot-settled-count=finished\]\)/, 'a first version that went live is folded with the finished');
-  assert.match(check.expectSelector, /\[data-bot-news=question\] \[data-bot-news-state=needs\] \[data-bot-thread-link\]$/, 'the question still waiting counts its updates');
+  // 1 Nov 2026: the chat with the bot is the Homeroom bot tab's alone, in its column.
+  assert.equal(check.path, '/?demo=1#homeroom-bot/main');
+  assert.match(check.expectSelector, /^#ai-main-pane \.messages-thread-scroll:has/);
+  assert.match(check.expectSelector, /:has\(\[data-bot-settled-count=finished\]\)/, 'a first version that went live is folded with the finished');
+  // 31 Oct 2026: the request still waiting is a row that counts its updates,
+  // and its question is drawn whole in the chat, its answers under it: the
+  // thread that drew it whole is gone (./bot-request-page.test.js).
+  assert.match(check.expectSelector, /:has\(\[data-bot-news-state=needs\] \[data-bot-thread-link\]\)/, 'the request still waiting counts its updates');
+  assert.match(check.expectSelector, /article:has\(\[data-bot-thread-label\]\) \[data-bot-question=open\] \[data-bot-answer\]$/, 'its question, whole, with its answers');
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
-  assert.equal(check.expectText, 'Ready for your yes', 'the change ready to try, where it stands now');
-  // The fixture it reads (services/staging-messages.js ensureBotDmFixture):
-  // the change ready to try, a request of its own.
+  assert.equal(check.expectText, 'Which night should the rota start on?', 'the question still waiting, in its own words');
+  // The fixture it reads (services/staging-messages.js ensureBotDmStory):
+  // request #18's question, open, in the story the bot told before Main
+  // Chat was one conversation.
   const fixture = read('src/services/staging-messages.js');
-  assert.match(fixture, /kind: 'proposal', \.\.\.ready,/);
+  assert.match(fixture, /const question = 'Which night should the rota start on\?';/);
+  assert.match(fixture, /kind: 'question', \.\.\.about, mirrors: true, status: 'open',/);
 });
 
 // ── Chat replies (homeroom-bot-mayor.js) ────────────────────────────────
@@ -385,5 +407,5 @@ test('a chat reply carries a card for each request its words name that its tools
   assert.deepEqual(mayor.namedCards('Proposal #6011 is up.', ctx), { cards: [], project: null }, 'a proposal’s number is no request');
   mayor.noteRequests(ctx, { project: 'seed-swap', number: 14 });
   assert.deepEqual(mayor.namedCards('#14 is building.', ctx).cards, [], 'a number on two projects is no one card');
-  assert.match(read('src/services/homeroom-bot-mayor.js'), /kind: 'chat', \.\.\.\(named\.project \? \{ appSlug: named\.project \} : \{\}\),/);
+  assert.match(read('src/services/homeroom-bot-mayor.js'), /const project = named\.project \? \{ appSlug: named\.project \} : \{\};\n\s+return say\(text, \{\n\s+objects: unique,\n\s+metadata: \{\n\s+kind: 'chat', \.\.\.project,/);
 });

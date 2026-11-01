@@ -51,6 +51,7 @@ import { t } from '../../lib/i18n/runtime';
 import { isRepoAddress } from '../../lib/repo-link.js';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import { publishVisibility } from '../../lib/visibility-store';
+import { openThreadAbout } from '../../lib/thread-about';
 
 // The shell globals this block reaches for. Resolved in `init()` rather than
 // at module scope because the SSG prerender pass evaluates this module in
@@ -337,6 +338,9 @@ export function init() {
       const hasBoard = typeof moment.appSlug === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(moment.appSlug);
       firstFix.disabled = !hasBoard || !moment.canFix || !Number.isSafeInteger(moment.issueNumber) || moment.issueNumber <= 0;
       firstBoard.disabled = !hasBoard;
+      // 1 Nov 2026: Work on it with Homeroom bot, where it has a board.
+      document.getElementById('feedback-first-work')?.classList.toggle('hidden',
+        !hasBoard || !Number.isSafeInteger(moment.issueNumber) || moment.issueNumber <= 0);
       firstFixNote.textContent = firstFix.disabled
         ? (hasBoard ? t('dialogs:feedback.first.fixNote.needAccess') : t('dialogs:feedback.first.fixNote.noBoard'))
         : t('dialogs:feedback.first.fixNote.default');
@@ -395,6 +399,10 @@ export function init() {
     // ({ botWillBuild, typicalMinutes, canFix, appSlug, issueNumber }).
     const sentLine = document.getElementById('feedback-sent-line');
     const sentChat = document.getElementById('feedback-sent-chat');
+    // 1 Nov 2026: "Work on it with Homeroom bot", under Done, for the
+    // request just filed (the post's `filed`: { appSlug, issueNumber }).
+    const sentWork = document.getElementById('feedback-sent-work');
+    let sentFiled = null;
     const sentFix = document.getElementById('feedback-sent-fix');
     const sentMine = document.getElementById('feedback-sent-mine');
     // #3971: a first request the bot builds; see showSent's `firstApp`.
@@ -415,9 +423,12 @@ export function init() {
     // `firstApp`: `{ name }`, the app's name ('' when it has none), when this is the person's first request ever
     // and the bot builds it. The first-request moment used to be skipped for
     // the bot (B8), so the bot's confirmation carries it instead.
-    const showSent = (title, notice = '', bot = null, firstApp = null, edited = false) => {
+    const showSent = (title, notice = '', bot = null, firstApp = null, edited = false, filed = null) => {
       const building = !!bot?.botWillBuild;
       sentBot = building ? bot : null;
+      sentFiled = filed && typeof filed.appSlug === 'string' && Number.isSafeInteger(Number(filed.issueNumber))
+        && Number(filed.issueNumber) > 0 ? { appSlug: filed.appSlug, issueNumber: Number(filed.issueNumber) } : null;
+      sentWork?.classList.toggle('hidden', !sentFiled);
       if (sentTitle) sentTitle.textContent = building ? botTitle() : title;
       if (sentLine) {
         const minutes = Number(bot?.typicalMinutes) > 0 ? Number(bot.typicalMinutes) : 8;
@@ -445,13 +456,43 @@ export function init() {
       // Off the composer, as the first-feedback moment's focus() is: the
       // keyboard comes down once, now, rather than whenever the viewer closes.
       sentSection.focus();
-      offerEdit({ cancel: () => showSent(title, notice, bot, firstApp, edited),
-        saved: () => showSent(title, notice, bot, firstApp, true) });
+      offerEdit({ cancel: () => showSent(title, notice, bot, firstApp, edited, filed),
+        saved: () => showSent(title, notice, bot, firstApp, true, filed) });
     };
     const hideSent = () => {
       sentSection?.classList.add('hidden');
       window.UsernodeReact?.notifyAsk?.hideSuggestion?.();
     };
+    // 1 Nov 2026: a thread only they can see, about the request just filed
+    // (../../lib/thread-about.ts), opened on the Homeroom bot tab. It is
+    // their own request, so the bot waits for their plan before it builds.
+    sentWork?.addEventListener('click', async () => {
+      const filed = sentFiled;
+      if (!filed || sentWork.disabled) return;
+      sentWork.disabled = true;
+      try {
+        await openThreadAbout(filed.appSlug, filed.issueNumber, 'request', {
+          failed: t('dialogs:feedback.sent.workWithBotFailed'),
+          after: closeFeedback,
+        });
+      } finally {
+        sentWork.disabled = false;
+      }
+    });
+    const firstWork = document.getElementById('feedback-first-work');
+    firstWork?.addEventListener('click', async () => {
+      const moment = firstFeedback;
+      if (!moment || firstWork.disabled || Number(moment.userId) !== Number(App.user?.id)) return;
+      firstWork.disabled = true;
+      try {
+        await openThreadAbout(moment.appSlug, moment.issueNumber, 'request', {
+          failed: t('dialogs:feedback.sent.workWithBotFailed'),
+          after: closeFeedback,
+        });
+      } finally {
+        firstWork.disabled = false;
+      }
+    });
     // B8: Open chat is the chat with Homeroom bot, where the request's card is.
     sentChat?.addEventListener('click', () => {
       closeFeedback();
@@ -2418,7 +2459,7 @@ export function init() {
             // A request sent to Homeroom names Homeroom, not the app that
             // happened to be open.
             showSent(postedTo, joinSentences([bountyNotice, stateNotice]), data.homeroomBot,
-              first ? { name: target === 'platform' ? 'Homeroom' : appName } : null);
+              first ? { name: target === 'platform' ? 'Homeroom' : appName } : null, false, data.filed || null);
             return;
           }
           // B8: the bot is theirs but does not build here: it went to the group.
@@ -2431,7 +2472,7 @@ export function init() {
           // instead of closing itself (see showSent above). #3971: "Thanks!"
           // leads it again, as it did before #3400.
           if (!showFirstFeedback(data.firstFeedback, feedbackStatus.textContent)) {
-            showSent(thanks, joinSentences([bountyNotice, stateNotice]));
+            showSent(thanks, joinSentences([bountyNotice, stateNotice]), null, null, false, data.filed || null);
           }
           return;
         }

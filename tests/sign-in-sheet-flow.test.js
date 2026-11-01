@@ -315,10 +315,12 @@ test('the account step asks for no password, and says how they sign in (#4891)',
   // The request is `saveAccount`, which the full-page Welcome sends too
   // (frontend/src/features/auth/welcome-page.tsx).
   const finishAccount = src.slice(src.indexOf('const finishAccount = useCallback'), src.indexOf('const signInWithPassword = useCallback'));
-  assert.match(finishAccount, /const saved = await saveAccount\(handle\);/);
+  // With the sign-up form's "Homeroom news by email" box (#6044), sent only
+  // for an account still being made.
+  assert.match(finishAccount, /const saved = await saveAccount\(handle, \{ marketingEmail: needsUsername && newsByEmail \}\);/);
   const saveAccount = src.slice(src.indexOf('export async function saveAccount('), src.indexOf('export function linkSigningIn('));
   assert.match(saveAccount, /fetchSessionMint\('\/api\/auth\/otp\/set-password', \{/);
-  assert.match(saveAccount, /body: JSON\.stringify\(\{\s*\.\.\.\(handle \? \{ username: handle \} : \{\}\),\s*\}\),/);
+  assert.match(saveAccount, /body: JSON\.stringify\(\{\s*\.\.\.\(handle \? \{ username: handle \} : \{\}\),\s*\/\/[^\n]*\n\s*\.\.\.\(optIns\.marketingEmail \? \{ marketingEmail: true \} : \{\}\),\s*\}\),/);
   for (const body of [finishAccount, saveAccount]) {
     assert.doesNotMatch(body, /\{ password \}|\bpassword:|passwordConfirmation|passwordField/);
   }

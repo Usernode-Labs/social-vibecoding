@@ -1012,8 +1012,10 @@ test('review 4: a fresh roster read asked for during the first load follows it (
 test('opening a governance topic marks its cached roster for a re-read', () => {
   const src = read('public/js/app-view.js');
   const open = src.slice(src.indexOf('  async _renderTopicSubView(content, ref) {'));
-  assert.match(open.slice(0, 2500), /if \(ref\.kind === 'gov'\) AppView\._invalidateGovVoteRoster\(ref\.id\);/);
-  assert.match(open.slice(0, 2500), /AppView\._watchTopicLiveReads\(\);/);
+  // Before the page paints (1 Nov 2026: past the look for a change's request).
+  const head = open.slice(0, open.indexOf('// ── Fast open (#4524)'));
+  assert.match(head, /if \(ref\.kind === 'gov'\) AppView\._invalidateGovVoteRoster\(ref\.id\);/);
+  assert.match(head, /AppView\._watchTopicLiveReads\(\);/);
 });
 
 // ── The adversarial review of f7523842, and the one-rule rewrite ──────

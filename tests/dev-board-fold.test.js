@@ -175,7 +175,7 @@ test('?cards=open draws every card at full size, hooks intact: the board as it w
     'and it sits inside the action band');
   assert.ok(!/dev-card-status-end"[^>]*>(?:(?!<\/span>)[\s\S])*?dev-ws-open-btn/.test(html), 'not on the facts line');
   assert.ok(!/dev-ws-open-btn"[^>]*aria-expanded/.test(html), 'and never the in-place toggle here');
-  assert.match(html, /class="gc-card-actions"><button class="gc-vote-btn"(?=[^>]*data-fold="1")[^>]*data-act="chooseIssueWork">Build it now<\/button><button class="gc-vote-btn"(?=[^>]*data-fold="2")[^>]*data-act="markIssueInProgress">[^<]*<\/button><a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Open card<\/a><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=/,
+  assert.match(html, /class="gc-card-actions"><button class="gc-vote-btn"(?=[^>]*data-fold="1")[^>]*data-act="workOnIssueWithBot">Work on this with Homeroom bot<\/button><button class="gc-vote-btn"(?=[^>]*data-fold="2")[^>]*data-act="markIssueInProgress">[^<]*<\/button><a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Open card<\/a><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=/,
     'the card\u2019s own pills come first, each marked foldable, then the link, then the hamburger');
   // A card with nothing in its status band still drops the band (#1139):
   // the toggle is not in it.
@@ -1711,9 +1711,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // and the reason on its page (the ?demo=1 release-blocked mock).
   // 748 → 749: +1 (#6035) a channel's message box wears the formatting
   // row, Bold through Bulleted list. 749 leaves 131 slots.
-  // 749 → 750: +1 (#6000) a closed request offers Propose reopening on its
-  // status card, opening the group vote. 750 leaves 130 slots.
-  checkCap.assertPinned(DAPP.tests.length, 750);
+  // 749 → 750: +1 (#6044) Settings' Privacy page has the Email & texts
+  // block, before Share usage analytics; no check covered that page, so
+  // nothing to fold it into.
+  // 750 → 751: +1 (#6000) a closed request offers Propose reopening on its
+  // status card, opening the group vote. 751 leaves 129 slots.
+  checkCap.assertPinned(DAPP.tests.length, 751);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
@@ -1881,7 +1884,7 @@ test('every pill is foldable: the band shows as many as fit its line and the men
   assert.ok(!CARD.includes('ACTION_PRIMARY_MAX'), 'no count cap: the line is the cap');
   assert.ok(!/i > 0 && a\.kudos == null/.test(CARD));
   const html = kanbanHtml(makeAppView({ search: '?cards=open&demo=1' }));
-  assert.match(html, /data-fold="1"[^>]*data-act="chooseIssueWork"/, 'the first pill carries a fold index');
+  assert.match(html, /data-fold="1"[^>]*data-act="workOnIssueWithBot"/, 'the first pill carries a fold index');
 });
 
 test('the tags ride the meta line beside the number, on the open card and the folded row alike', () => {

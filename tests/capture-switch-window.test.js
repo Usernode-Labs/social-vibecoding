@@ -567,7 +567,10 @@ test('Homeroom declares its boot parameters and its routing boundary, and no che
   // when the page loads (frontend/src/lib/side-strip.ts), like `?shot=`.
   assert.deepEqual(dapp.bootParams, ['shot', 'details', 'side-strip'],
     '`?flow=` is not one: #5280 made it work on a conversation already open');
-  assert.deepEqual(dapp.routingBoundaries.map((b) => b.route), ['#app/*', '#app/*/app', '#homeroom-bot']);
+  // 1 Nov 2026: the Homeroom bot tab's page is its chat's too: Main Chat and a
+  // thread in its column, and the demo chat's Messages address, which lands there.
+  assert.deepEqual(dapp.routingBoundaries.map((b) => b.route),
+    ['#app/*', '#app/*/app', '#homeroom-bot', '#homeroom-bot/main', '#homeroom-bot/thread/*', '#messages/910005']);
   const marked = dapp.tests.filter((t) => Object.prototype.hasOwnProperty.call(t, 'coldLoad'));
   assert.deepEqual(marked.map((t) => t.name), [],
     'per-check "coldLoad" is retired and ignored: declare the app\'s "bootParams" or "routingBoundaries" (src/prompts/app-conventions.md)');
@@ -619,7 +622,9 @@ test('a running app never hands its page to the next check: the side panel takes
   assert.equal(R.isPanelRoute('app/staging-demo-forkable'), false, 'the App tab: the app itself');
   assert.equal(R.isPanelRoute('messages/agent/990801'), true, 'a conversation opens beside a running app');
   const controller = require('node:fs').readFileSync(require.resolve('../frontend/src/features/side-panel/controller.ts'), 'utf8');
-  assert.match(controller, /export function onNavigate\(e: NavigateEventLike\): void \{[\s\S]*?if \(!isPanelRoute\(route\) \|\| !canTake\(\)\) return;\s+e\.preventDefault\(\);\s+open\(route, null\);/);
+  assert.match(controller, /export function onNavigate\(e: NavigateEventLike\): void \{[\s\S]*?if \(!panelTakes\(route\) \|\| !canTake\(\)\) return;\s+e\.preventDefault\(\);\s+open\(route, null\);/);
+  // 1 Nov 2026: a panel page, but never the chat with Homeroom bot, which only its tab draws.
+  assert.match(controller, /function panelTakes\(route: string\): boolean \{\s+return isPanelRoute\(route\) && !isBotChatRoute\(route\);\s+\}/);
   assert.match(controller, /const besideApp = !!A\.currentApp && A\.currentTab === 'app' && seen\('app-view'\);/, 'on the App tab');
   // …and beside the AI tab's page, where the panel takes the docked chat's place.
   assert.match(controller, /const besideAi = typeof A\._isScreenVisible === 'function' && A\._isScreenVisible\('ai-screen'\);/);
@@ -641,11 +646,15 @@ test('a running app never hands its page to the next check: the side panel takes
   assert.ok(appTab('https://s/#app/future-running?path=/x'));
   assert.ok(!appTab(`https://s/#app/${SELF}`), 'Homeroom\'s own App tab');
   assert.ok(appTab(`https://s/#app/${SELF}-fork`), 'the own slug, by exact match only');
-  // The Homeroom bot tab's page takes the same addresses on a desktop
-  // (`#homeroom-bot`, not `#homeroom-bot/main`, which is Messages).
-  const aiPage = (url) => R.routeFromUrl(url) === 'homeroom-bot';
+  // The Homeroom bot tab's page takes the same addresses on a desktop, with
+  // Main Chat or a thread in its column (1 Nov 2026: `#homeroom-bot/main` is
+  // no longer the Messages screen's), and the demo chat's Messages address
+  // lands there.
+  const aiPage = (url) => /^(homeroom-bot(\/main|\/thread\/\d+)?|messages\/910005)$/.test(R.routeFromUrl(url));
   assert.ok(aiPage('https://s/?demo=1#homeroom-bot'));
-  assert.ok(!aiPage('https://s/#homeroom-bot/main'));
+  assert.ok(aiPage('https://s/#homeroom-bot/main'));
+  assert.ok(aiPage('https://s/?demo=1#messages/910005'));
+  assert.ok(!aiPage('https://s/#messages/910003'), 'any other chat is the Messages screen\'s');
   for (const tests of [homeroomTests(), homeroomTests([future])]) {
     // In a fragment it ends its group. A clean `/app/<slug>` path is a
     // document of its own, and the loop below still holds it to the rule.
