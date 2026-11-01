@@ -8,10 +8,10 @@
 import type { Tx } from '../kernel/index.ts';
 import { BOT_USERNAME } from '../rules/bot-notes.ts';
 import {
-  BUILD_CANDIDATES_SQL, LANE_SETTING_KEYS, NEXT_ELIGIBLE_SQL, READ_CANDIDATES_SQL, SLOTS_IN_USE_SQL,
-  botOn, laneSettings,
+  BATCH_RAISES_SQL, BUILD_CANDIDATES_SQL, LANE_SETTING_KEYS, NEXT_ELIGIBLE_SQL, READ_CANDIDATES_SQL, SLOTS_IN_USE_SQL,
+  botOn, laneSettings, raisedOf,
 } from '../rules/bot-loop.ts';
-import type { LaneSettings, Slot } from '../rules/bot-loop.ts';
+import type { LaneSettings, Raised, Slot } from '../rules/bot-loop.ts';
 
 export interface ReadCandidate {
   app_id: number; issue_number: number; priority: number; reason: string;
@@ -26,6 +26,9 @@ export interface Facts {
   reads: ReadCandidate[];
   builds: BuildCandidate[];
   nextEligible: string | null;
+  // Homeroom bot parity (P4): a running batch's raised per-person number,
+  // for each request its Build started (rules/bot-loop.ts BATCH_RAISES_SQL).
+  raised?: Raised;
 }
 
 export const NO_FACTS: Facts = {
@@ -48,8 +51,10 @@ export async function readFacts(tx: Tx, deps: { staging: boolean }): Promise<Fac
   const { rows: reads } = await tx.query(READ_CANDIDATES_SQL, [bot.id, settings.pausedApps]);
   const { rows: builds } = await tx.query(BUILD_CANDIDATES_SQL, [settings.pausedApps]);
   const { rows: [next] } = await tx.query(NEXT_ELIGIBLE_SQL);
+  const { rows: raisedRows } = await tx.query(BATCH_RAISES_SQL);
   return {
     settings, acting, inUse, reads: reads as ReadCandidate[], builds: builds as BuildCandidate[],
     nextEligible: next?.at ? new Date(next.at).toISOString() : null,
+    raised: raisedOf(raisedRows),
   };
 }
