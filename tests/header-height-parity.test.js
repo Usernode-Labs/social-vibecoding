@@ -436,12 +436,15 @@ test('#6070: the Duo\'s top band lays both bars into the band, in parity', () =>
   // the parity break this file exists for.
   const bars = block.match(/html\[data-top-band\] :is\(#platform-header, #landing-header\)\.un-safe-top-extend,[^{]*\{([^}]*)\}/);
   assert.ok(bars, 'both bars take the band override from one rule');
-  assert.match(bars[1], /padding-top: 0\.5rem !important;/,
-    'the inset leaves the top padding and the 8px pad stays (the #2305 rule is !important)');
-  assert.match(bars[1], /padding-bottom: max\(1rem, calc\(var\(--platform-band-h\) - 2\.25rem\)\);/,
-    'the 16px foot is the floor, and the bar\'s foot meets the band\'s foot');
-  assert.match(bars[1], /align-items: flex-start;/,
-    'the 28px row sits at the top of the taller box, not centred in it');
+  // The band left over the 28px row is split evenly above and below it, so
+  // the row sits on the band's middle, level with the clock (1 Nov 2026), and
+  // the bar is still exactly the band's height.
+  assert.match(bars[1], /padding-top: max\(0\.5rem, calc\(\(var\(--platform-band-h\) - 1\.75rem\) \/ 2\)\) !important;/,
+    'the inset leaves the top padding, half the band over the row, the 8px pad the floor (the #2305 rule is !important)');
+  assert.match(bars[1], /padding-bottom: max\(1rem, calc\(\(var\(--platform-band-h\) - 1\.75rem\) \/ 2\)\);/,
+    'the other half under the row, the 16px foot the floor, so the bar\'s foot meets the band\'s foot');
+  assert.doesNotMatch(bars[1], /align-items: flex-start;/,
+    'the row is centred in the band, not pinned to its top');
   assert.match(bars[1], /padding-right: calc\(0\.5rem \+ 130px\);/,
     'the right group keeps clear of the clock and Wi-Fi pill, about 130px across the band\'s corner');
   assert.doesNotMatch(bars[1], /\bheight:/, 'the row still sets the height; no fixed box');
