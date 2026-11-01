@@ -1107,6 +1107,114 @@
     "text": "No progress to show for this one.",
     "description": "Shown on a Homeroom bot activity card when there is no progress record for that piece of work."
   },
+  "botCards.checksGreen.label": {
+    "text": "Getting a change past a check that is not its own",
+    "description": "What screen readers call the card in the chat with Homeroom bot that follows one of its changes past a failing check that is not the change's."
+  },
+  "botCards.checksGreen.title": {
+    "text": "A failing check that isn't this change's",
+    "description": "The title of the card in the chat with Homeroom bot that follows one of its changes past a failing check that fails without the change too."
+  },
+  "botCards.checksGreen.eyebrowWorking": {
+    "text": "Working on its checks",
+    "description": "The small label over that card while Homeroom bot is still getting the failing check fixed."
+  },
+  "botCards.checksGreen.eyebrowGreen": {
+    "text": "Checks pass",
+    "description": "The small label over that card once the change's checks pass again."
+  },
+  "botCards.checksGreen.eyebrowPerson": {
+    "text": "Needs a person",
+    "description": "The small label over that card once Homeroom bot could not get the check fixed and a person has to look."
+  },
+  "botCards.checksGreen.stepDone": {
+    "text": "Done",
+    "description": "What screen readers say for a step on that card that is finished."
+  },
+  "botCards.checksGreen.stepNow": {
+    "text": "Under way",
+    "description": "What screen readers say for the step on that card that is happening now."
+  },
+  "botCards.checksGreen.stepTodo": {
+    "text": "Next",
+    "description": "What screen readers say for a step on that card that has not started."
+  },
+  "botCards.checksGreen.stepFailed": {
+    "text": "Did not work",
+    "description": "What screen readers say for a step on that card that did not work."
+  },
+  "botCards.checksGreen.fixActions": {
+    "text": "The fix",
+    "description": "What screen readers call the buttons on that card that open the fix for the failing check."
+  },
+  "botCards.checksGreen.voteOn": {
+    "text": "Vote on #{{number}}",
+    "description": "Button on that card that opens the fix for the failing check, a change of its own, where people vote on it. {{number}} is the fix's number."
+  },
+  "botCards.checksGreen.seeFix": {
+    "text": "See the fix",
+    "description": "Button on that card that opens the request on Homeroom's board for fixing the failing check."
+  },
+  "botCards.confirm.label": {
+    "text": "Confirm: {{title}}",
+    "description": "What screen readers call a card in an admin's chat with Homeroom bot that waits for them to confirm a change. {{title}} is what it would do, such as \"Launch a bench run\"."
+  },
+  "botCards.confirm.untitled": {
+    "text": "An admin action",
+    "description": "The title of that confirm card when it does not say what it does."
+  },
+  "botCards.confirm.eyebrowPending": {
+    "text": "Waits for your Confirm",
+    "description": "The small label over that confirm card while nothing has run yet."
+  },
+  "botCards.confirm.eyebrowDone": {
+    "text": "Done",
+    "description": "The small label over that confirm card once what it showed ran."
+  },
+  "botCards.confirm.eyebrowFailed": {
+    "text": "Did not go through",
+    "description": "The small label over that confirm card when what it showed ran and was refused or failed."
+  },
+  "botCards.confirm.eyebrowCancelled": {
+    "text": "Cancelled",
+    "description": "The small label over that confirm card once the admin tapped Cancel."
+  },
+  "botCards.confirm.eyebrowExpired": {
+    "text": "Expired",
+    "description": "The small label over that confirm card once its 15 minutes passed with no tap."
+  },
+  "botCards.confirm.hint": {
+    "text": "Nothing runs until you tap Confirm. It expires in 15 minutes.",
+    "description": "The line on that confirm card above its buttons, while it waits."
+  },
+  "botCards.confirm.confirm": {
+    "text": "Confirm",
+    "description": "Button on that confirm card that runs exactly what it shows, once, as the admin."
+  },
+  "botCards.confirm.running": {
+    "text": "Running it",
+    "description": "What the Confirm button on that confirm card says while what it shows is running."
+  },
+  "botCards.confirm.cancel": {
+    "text": "Cancel",
+    "description": "Button on that confirm card that drops it: nothing runs."
+  },
+  "botCards.confirm.expiredLine": {
+    "text": "This card expired, so nothing ran. Ask Homeroom bot again for a new one.",
+    "description": "The line on that confirm card once its 15 minutes passed with no tap."
+  },
+  "botCards.confirm.secretLabel": {
+    "text": "Shown once",
+    "description": "The small label over a secret an admin action returned on that confirm card, such as a test account's one-time password, when the action did not name it."
+  },
+  "botCards.confirm.secretNote": {
+    "text": "Shown here once, on this screen. It is not kept anywhere: copy it now.",
+    "description": "The line under a secret an admin action returned on that confirm card, such as a test account's one-time password."
+  },
+  "botCards.confirm.failedTap": {
+    "text": "That didn't work just now. Try again.",
+    "description": "The line on that confirm card when tapping Confirm or Cancel could not reach Homeroom."
+  },
   "bot.activity.openChange": {
     "text": "Open change",
     "description": "Link on a Homeroom bot activity card: opens the page of the change the bot built. \"Open\" is a verb; \"change\" is a noun, the proposed change to the project."

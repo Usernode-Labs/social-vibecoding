@@ -40,6 +40,11 @@
       "id": "0008-bot-parity-batch-steer",
       "sha256": "bf61d7fc67fa84f67a27dd597e061043a9640f76e6d81f1e35a5480dc6deb2ed",
       "schemaSha256": "b6dd6396d1541b2c7ece43938a1b645bc28535693e36071a7c02fb30e10b4b52"
+    },
+    {
+      "id": "0009-bot-parity-p6-p7",
+      "sha256": "af1a6b5a153dc41b1dd5714c90a1d763cb4f039a628163e727bd2678820d937d",
+      "schemaSha256": "04b7ada04242e1d8281a673a40ec1a38b2894262b91970b2fd2772ad160043af"
     }
   ]
 }

@@ -2898,6 +2898,9 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
   await require('./homeroom-bot-chat').noteRequestStatus(pool, {
     appId: run.id, issueNumber: Number(run.issue_number), status: 'ready', sessionId: id, deps: { strict: true },
   });
+  // Homeroom bot parity P6: a change that was working past a check that is
+  // not its own passes now; its card says so (never throws).
+  await require('./homeroom-bot-flaky-checks').noteGreen(pool, id, { deps });
   return told;
 }
 
@@ -6106,6 +6109,8 @@ module.exports = {
   messageThread,
   threadDeps,
   noteStep,
+  // Homeroom bot parity P6: a request's card in a person's chat with the bot.
+  cardShown,
   waitingPhrase,
   BUILT_TESTING_TEXT,
   PREVIEW_RETRY_TEXT,

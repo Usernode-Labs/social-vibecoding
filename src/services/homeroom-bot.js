@@ -120,6 +120,9 @@ function firstVersionEarlyLook() { return require('./first-version-early-look');
 function botReview() { return require('./bot-review'); }
 // #4210: interrupted builds, kept for admins.
 function incidents() { return require('./platform-incidents'); }
+// Homeroom bot parity P6: red checks that are not the change's, worked past
+// as a person would (homeroom-bot-flaky-checks.js).
+function flakyChecks(deps) { return deps?.flakyChecks || require('./homeroom-bot-flaky-checks'); }
 // #4530: whether the new words on a request the bot already answered were
 // for the bot, so a repeat note is held back when they were not.
 function addressedMod() { return require('./homeroom-bot-addressed'); }
@@ -2687,9 +2690,13 @@ async function simulateCaps(pool, bot, appId, verdict, settings = null, { issueN
   if (verdict === 'ready') {
     // Homeroom bot parity (P4): a request a running batch of its project's
     // owner started may have up to that batch's number open (homeroom-bot-batches.js).
+    // P6: the fix for a flaky check other changes wait on is not held by its
+    // project's slots at all (homeroom-bot-flaky-checks.js exemptFromAppCap).
+    const exempt = issueNumber != null
+      && await flakyChecks().exemptFromAppCap(pool, appId, issueNumber).catch(() => false);
     const perApp = issueNumber == null ? PROPOSALS_PER_APP_CAP
       : await require('./homeroom-bot-batches').proposalsPerAppFor(pool, appId, issueNumber, PROPOSALS_PER_APP_CAP);
-    if (await openBotProposalCount(pool, bot, appId) >= perApp) return 'proposals_per_app';
+    if (!exempt && await openBotProposalCount(pool, bot, appId) >= perApp) return 'proposals_per_app';
     if (await openBotProposalTotal(pool, bot) >= botProposalCeiling(settings)) return 'proposals_total';
   }
   if (TRIPWIRE_VERDICTS.includes(verdict)) {
@@ -3608,6 +3615,8 @@ async function runTriage(pool, config, {
           deps: {
             github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
             activeWorkers, votes: deps.votes || null, dm: deps.dm || null, fixedCheckSync: deps.fixedCheckSync || null, ...liveD,
+            // P6 (homeroom-bot-flaky-checks.js), stubbed in tests.
+            ...(deps.flakyChecks ? { flakyChecks: deps.flakyChecks } : {}),
             ...(deps.voice ? { voice: deps.voice } : {}), ...(deps.voiceDeps ? { voiceDeps: deps.voiceDeps } : {}),
           },
         });
@@ -5613,6 +5622,8 @@ async function runChecksFix(pool, config, {
     }
   }
   const handOff = async ({ why, verdict, extra = {}, notChange = false, cause = null }) => {
+    // P6: why the sync below did not happen, for the card's first step.
+    let syncWhy = null;
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
       readReason: readReasonOf(item),
@@ -5641,6 +5652,11 @@ async function runChecksFix(pool, config, {
         await pool.query('UPDATE homeroom_bot_runs SET build_note = $2 WHERE id = $1',
           [runId, 'Brought up to date with main before handing it over; its checks run again.']).catch(() => {});
         await note('checks_synced', { runId, text: followup.checksSyncedText({ failingCount: failing.length }) });
+        // P6: step 1 of working past a check that is not the change's, on its card.
+        if (notChange) {
+          await look.once('flakySynced', () => flakyChecks(deps).onSynced(pool, { app, session, head, failing, runId, deps })
+            .then(() => true));
+        }
         log.info('homeroom-bot', 'Synced its proposal with main before handing its failing checks to a person', {
           app: app.slug, issueNumber, sessionId: session.id, head, sha: synced.sha || null, runId,
         });
@@ -5651,6 +5667,7 @@ async function runChecksFix(pool, config, {
       // connector's run ledger show), and logs it. Before, the reason was
       // dropped, and #5193 sat red with nothing to say why.
       const fcs = deps.fixedCheckSync || require('./fixed-check-sync');
+      syncWhy = synced?.why || null;
       const words = typeof fcs.declinedWords === 'function' ? fcs.declinedWords(synced?.why) : null;
       if (words) {
         await pool.query('UPDATE homeroom_bot_runs SET build_note = $2 WHERE id = $1',
@@ -5670,6 +5687,22 @@ async function runChecksFix(pool, config, {
       });
       return { ran: true, verdict, runId, acted: 'checks_shots_left' };
     }
+    // P6: a failure that is not the change's is worked past as a person would
+    // (homeroom-bot-flaky-checks.js): its flaky check found or filed, fixed by
+    // the bot, and the change's checks run again once that is in. Only what
+    // that cannot carry on is handed over below, with what was tried.
+    let ladder = null;
+    if (notChange) {
+      ladder = await look.once('flaky', () => flakyChecks(deps).onNotChange(pool, config, {
+        app, session, head, failing, runId, syncWhy, deps,
+      }));
+      if (ladder?.carriedOn) {
+        log.info('homeroom-bot', 'Its proposal\'s failing check is not its doing; getting the check fixed', {
+          app: app.slug, issueNumber, sessionId: session.id, head, runId, acted: ladder.acted,
+        });
+        return { ran: true, verdict, runId, acted: ladder.acted };
+      }
+    }
     if (notChange) {
       // Not the change's doing: the platform's to look at. Admins are told
       // (the Unexpected events list and its digest), the group voting on the
@@ -5685,7 +5718,7 @@ async function runChecksFix(pool, config, {
         });
         return true;
       });
-      await note('checks_not_change', { runId, text: followup.checksNotChangeText({ failingCount: failing.length }) });
+      await note('checks_not_change', { runId, text: ladder?.text || followup.checksNotChangeText({ failingCount: failing.length }) });
       log.info('homeroom-bot', 'Its proposal\'s failing checks are not its doing; told admins', {
         app: app.slug, issueNumber, sessionId: session.id, head, runId,
       });
@@ -5722,6 +5755,15 @@ async function runChecksFix(pool, config, {
     // what does not work (the change machine decides on the request's answer).
     return { ran: true, verdict, runId, acted: 'checks_person' };
   };
+
+  // P6: a change already past step 1 of a check that is not its own (synced
+  // with main, or its fix just in), failing the same checks again, needs no
+  // paid turn to say so: it goes on to the next step (homeroom-bot-flaky-checks.js).
+  const carried = await look.once('flakyCarry', () => flakyChecks(deps)
+    .carriesOn(pool, { app, sessionId: session.id, failing, broken }));
+  if (carried) {
+    return handOff({ why: carried.why, verdict: 'person', notChange: true, cause: 'not_change' });
+  }
 
   // Out of revisions: no turn, one note.
   if (!canRevise) {
@@ -8370,6 +8412,9 @@ async function noteRequestMerged(pool, session, deps = {}) {
       refresh = true;
     }
     if (refresh) await (deps.platform || platform()).botRefresh(appId).catch(() => {});
+    // P6: a fix of a flaky check is in: the changes that waited on it run
+    // their checks again (homeroom-bot-flaky-checks.js; never throws).
+    await flakyChecks(deps).fixMerged(pool, null, { appId, issues, sessionId: Number(merged.id), deps });
     return out;
   } catch (err) {
     if (deps.strict) throw err;
@@ -9663,6 +9708,8 @@ async function sweep(config, pool, { deps = {} } = {}) {
   // Homeroom bot parity (P4, P5): batches' roll-ups, and notes whose build ended first.
   await each('batches', () => require('./homeroom-bot-batches').sweep(pool, deps));
   await each('buildNotes', () => require('./homeroom-bot-steer').sweep(pool, deps));
+  // P6: fixes of flaky checks merged or ended, and the changes waiting on them.
+  await each('flakyChecks', () => flakyChecks(deps).sweep(pool, config, { deps }));
   return out;
 }
 
