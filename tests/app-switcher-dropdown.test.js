@@ -151,7 +151,7 @@ test('the desktop presentation is anchored under the mark, not centred on the pa
   assert.match(closed,
     /top:\s*var\(--menu-anchor-top,\s*calc\(var\(--platform-header-h\)\s*\+\s*var\(--platform-safe-top\)\)\)/,
     'placed from the measured anchor, falling back to the underside of the bar');
-  assert.match(closed, /inset-inline-start:\s*var\(--menu-anchor-start,/,
+  assert.match(closed, /inset-inline-start:\s*var\(--menu-anchor-left,/,
     'and from the measured inline start, which aligns it with the mark in either direction');
   assert.doesNotMatch(closed, /inset-inline-start:\s*50%/,
     'no longer centred on the viewport under a title chip that is not the trigger');
@@ -220,7 +220,7 @@ test('the island measures the mark with the vote popover\'s arithmetic', () => {
   // Custom properties, not top/left: the root's inline style is the one
   // channel that does not touch the constant class string the kit writes to.
   assert.match(ISLAND, /setProperty\('--menu-anchor-top'/);
-  assert.match(ISLAND, /setProperty\('--menu-anchor-start'/);
+  assert.match(ISLAND, /setProperty\('--menu-anchor-left'/);
   // `placeUnderAnchor` measures a physical left; the rule places from the
   // inline start, so the offset is flipped once, in Arabic.
   assert.match(ISLAND, /currentDirection\(\) === 'rtl'\s*\n\s*\? window\.innerWidth - left - sheet\.offsetWidth/,

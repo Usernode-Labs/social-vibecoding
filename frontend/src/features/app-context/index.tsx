@@ -53,6 +53,10 @@ const SHEET_ROWS = 'a[href], button:not([disabled])';
  * the sheet from its inline start, which is the RIGHT edge in Arabic. The
  * offset is flipped here, once, so the CSS stays logical and the menu still
  * opens over the column under the mark in either direction.
+ *
+ * The property keeps its `--menu-anchor-left` name: a declared check selects
+ * on that string in the sheet's style attribute, and it is the inline-start
+ * inset the rule reads, wherever the reading starts.
  */
 function anchorUnderMark(sheet: HTMLElement): void {
   const mark = document.getElementById(MARK_ID);
@@ -69,7 +73,7 @@ function anchorUnderMark(sheet: HTMLElement): void {
     ? window.innerWidth - left - sheet.offsetWidth
     : left;
   sheet.style.setProperty('--menu-anchor-top', `${top}px`);
-  sheet.style.setProperty('--menu-anchor-start', `${start}px`);
+  sheet.style.setProperty('--menu-anchor-left', `${start}px`);
 }
 
 export function AppContextIsland() {

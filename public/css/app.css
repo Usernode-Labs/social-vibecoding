@@ -9,10 +9,11 @@
    WORD: `mask-image` has no logical side, so the fade a sideways scroller
    wears at its far edge reads this instead of `to right`, and fades the left
    edge in Arabic. */
-:root { --rtl-sign: 1; --fade-to-inline-end: right; }
-html[dir="rtl"] { --rtl-sign: -1; --fade-to-inline-end: left; }
-
 :root {
+  /* The reading direction's own knobs. `:root` first, then the RTL rule
+     below, so the base is the left-to-right one. */
+  --rtl-sign: 1;
+  --fade-to-inline-end: right;
   --bg-primary: #ffffff;
   --bg-secondary: #f5f5f7;
   --bg-tertiary: #e3e3e6;
@@ -287,6 +288,11 @@ html[dir="rtl"] { --rtl-sign: -1; --fade-to-inline-end: left; }
   --state-admin: #b45309;
   --state-admin-bg: rgba(245, 158, 11, 0.10);
 }
+
+/* Arabic, or any other right-to-left language on screen: mirror the two
+   direction knobs above. Selector specificity beats `:root`, so this wins
+   whatever their order in the file. */
+html[dir="rtl"] { --rtl-sign: -1; --fade-to-inline-end: left; }
 
 /* ── Safe-area utilities ─────────────────────────────────
    The platform's half of "backgrounds extend into the bottom inset,
@@ -12758,7 +12764,7 @@ a.drawer-ver--fork:hover {
 @media (min-width: 640px) {
   #apps-switcher-sheet {
     top: var(--menu-anchor-top, calc(var(--platform-header-h) + var(--platform-safe-top)));
-    inset-inline-start: var(--menu-anchor-start, calc(100vw - 25rem));
+    inset-inline-start: var(--menu-anchor-left, calc(100vw - 25rem));
     inset-inline-end: auto;
     bottom: auto;
     /* 24rem, NARROWER than the 26rem notifications rail, on purpose. It was

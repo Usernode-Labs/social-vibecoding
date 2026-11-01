@@ -293,7 +293,7 @@ test('at a desk an unread row carries its ×, beside the row and never inside it
   // card's edge it read as a rendering glitch), saying what it does to a
   // pointer as well as to a screen reader.
   assert.match(plain,
-    /<\/button><button type="button" data-notification-clear="10" aria-label="Clear notification" title="Mark as read" class="absolute left-1\.5 top-1\.5 z-\[2\] /);
+    /<\/button><button type="button" data-notification-clear="10" aria-label="Clear notification" title="Mark as read" class="absolute start-1\.5 top-1\.5 z-\[2\] /);
   assert.equal((plain.match(/data-notification-clear/g) || []).length, 1);
   // Hidden and untouchable until the slot is hovered or holds keyboard focus.
   assert.match(plain, /pointer-events-none opacity-0 transition-opacity /);
