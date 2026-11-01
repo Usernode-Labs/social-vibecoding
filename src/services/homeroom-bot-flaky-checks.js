@@ -595,14 +595,25 @@ async function inFlight(pool) {
   return Number(r?.n) || 0;
 }
 
-/** Ask the bot to build a fix (its request owed a look), as building now. */
+/**
+ * Ask the bot to build a fix (its request owed a look). Building first, so
+ * the look that reads it is already outside its project's slots; back to
+ * waiting if the ask could not be made.
+ */
 async function startBuilding(pool, flake, { deps = {} } = {}) {
-  const owe = deps.enqueue || ((args) => botModule(deps).enqueueFront(pool, args));
-  await owe({ appId: Number(flake.app_id), issueNumber: Number(flake.issue_number), reason: FIX_REASON, db: pool, key: `flaky-fix:${Number(flake.id)}` });
   const { rows: [row] } = await pool.query(
     `UPDATE homeroom_bot_flake_fixes SET state = 'building', updated_at = NOW()
       WHERE id = $1 AND ended_at IS NULL RETURNING *`, [Number(flake.id)]);
-  return row || flake;
+  if (!row) return flake;
+  const owe = deps.enqueue || ((args) => botModule(deps).enqueueFront(pool, args));
+  try {
+    await owe({ appId: Number(flake.app_id), issueNumber: Number(flake.issue_number), reason: FIX_REASON, db: pool, key: `flaky-fix:${Number(flake.id)}` });
+  } catch (err) {
+    await pool.query(
+      "UPDATE homeroom_bot_flake_fixes SET state = 'waiting', updated_at = NOW() WHERE id = $1 AND ended_at IS NULL", [Number(flake.id)]);
+    throw err;
+  }
+  return row;
 }
 
 /** One open fix for `test` on `board`: the one there is, else a new one (found or filed). */
@@ -963,7 +974,9 @@ async function sweep(pool, config, { deps = {} } = {}) {
               EXISTS (SELECT 1 FROM homeroom_bot_flake_fixes f
                        WHERE f.id = ANY(w.flake_ids) AND f.state IN ('failed', 'closed', 'expired')) AS fix_ended_badly,
               (SELECT f.state FROM homeroom_bot_flake_fixes f
-                WHERE f.id = ANY(w.flake_ids) AND f.state IN ('failed', 'closed', 'expired') ORDER BY f.id LIMIT 1) AS bad_state
+                WHERE f.id = ANY(w.flake_ids) AND f.state IN ('failed', 'closed', 'expired') ORDER BY f.id LIMIT 1) AS bad_state,
+              cardinality(w.flake_ids) > 0 AND NOT EXISTS (SELECT 1 FROM homeroom_bot_flake_fixes f
+                WHERE f.id = ANY(w.flake_ids) AND f.state <> 'merged') AS all_merged
          FROM homeroom_bot_flake_waits w JOIN chat_sessions cs ON cs.id = w.session_id
         WHERE w.ended_at IS NULL`,
       [WAIT_DAYS],
@@ -980,6 +993,13 @@ async function sweep(pool, config, { deps = {} } = {}) {
         if (onHead && ['passing', 'skipped'].includes(w.check_state)) {
           // eslint-disable-next-line no-await-in-loop
           if (await noteGreen(pool, w.session_id, { deps })) out.green += 1;
+          continue;
+        }
+        if (w.stage === 'fixing' && w.all_merged) {
+          // Its fixes are in and nothing ran its checks again (a recheck
+          // that failed before): it runs them now.
+          // eslint-disable-next-line no-await-in-loop
+          await recheck(pool, config, { wait: w, deps });
           continue;
         }
         let why = null;
