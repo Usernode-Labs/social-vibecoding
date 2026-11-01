@@ -191,6 +191,26 @@ test('pictures and the compare card against the full schema', { timeout: 120000 
     assert.equal((await pictures.imageBytes(config, row0, { store })).readUInt32BE(16), 1024);
   });
 
+  await t.test('a picture is served from the media store to the chat\'s members, and to nobody else', async (tt) => {
+    tt.mock.method(require('../src/services/media-store'), 'getStore', () => store);
+    const express = require('express');
+    const { conversationRoutes } = require('../src/routes/conversations');
+    const server = express();
+    server.use((req, _res, next) => { req.user = req.headers['x-test-user'] === 'sam' ? sam : ada; next(); });
+    server.use(conversationRoutes(config, { pool }));
+    const listening = await new Promise((resolve) => { const s = server.listen(0, '127.0.0.1', () => resolve(s)); });
+    tt.after(() => new Promise((resolve) => listening.close(resolve)));
+    const at = `http://127.0.0.1:${listening.address().port}${card.images[0].url}`;
+    const mine = await fetch(at);
+    assert.equal(mine.status, 200);
+    assert.equal(mine.headers.get('content-type'), 'image/png');
+    assert.equal(mine.headers.get('x-content-type-options'), 'nosniff');
+    assert.match(mine.headers.get('cache-control'), /^private/);
+    assert.equal(Buffer.from(await mine.arrayBuffer()).readUInt32BE(16), 1024);
+    assert.equal((await fetch(at, { headers: { 'x-test-user': 'sam' } })).status, 404, 'not in the chat');
+    assert.equal((await fetch(`http://127.0.0.1:${listening.address().port}/api/conversations/homeroom-bot/pictures/nope`)).status, 404);
+  });
+
   await t.test('the weekly picture cap and a used-up week refuse before the model is called', async () => {
     const before = asked.length;
     const ctx = { user: ada, settings, config, conversationId, deps: { pictures: pictureDeps } };
