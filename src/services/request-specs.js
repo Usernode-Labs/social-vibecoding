@@ -288,6 +288,14 @@ async function postRequestSpec(pool, { app, repo, issueNumber, issueTitle = null
   log.info('request-specs', 'Spec posted on request', {
     appId: app.id, issueNumber, sessionId, version, format: prepared.format, by: user.username,
   });
+  // 1 Nov 2026: a plan on the request is what Homeroom bot waits for while
+  // its requester works on it in a private thread (private-threads.js):
+  // posted, the bot may build it.
+  try {
+    await (deps.privateThreads || require('./private-threads')).liftHold(pool, { appId: app.id, issueNumber, by: 'plan' });
+  } catch (err) {
+    log.warn('request-specs', 'Could not lift the bot\'s wait for a plan', { appId: app.id, issueNumber, err: err.message });
+  }
   return {
     sessionId: Number(sessionId),
     version: Number(version),
@@ -297,6 +305,76 @@ async function postRequestSpec(pool, { app, repo, issueNumber, issueTitle = null
     markdownChars: prepared.markdown.length,
     htmlChars: html ? html.length : 0,
     commentPosted,
+  };
+}
+
+/**
+ * Whether request `issueNumber` of `app` (with its repo_url) is open now,
+ * the positive confirmation a post needs: a degraded read changes nothing.
+ * Resolves { ok, repo, issue } or a refusal { ok: false, status, error }.
+ * 1 Nov 2026: the post route's own check, shared with a design posted as a
+ * plan from a private thread (design-threads.js postDesignPlan). A request
+ * past the board's list (requests.js LIST_MAX) is read on its own.
+ */
+async function openRequest(app, issueNumber, deps = {}) {
+  const github = deps.github || require('./github');
+  const repo = require('./repo-ref').ownerRepo(app?.repo_url);
+  if (!github.isEnabled() || !repo) {
+    return { ok: false, status: 422, error: 'Cannot verify the request right now: GitHub is unavailable for this app.' };
+  }
+  const open = await github.fetchPublicIssues(repo.owner, repo.repo);
+  if (open.note) {
+    return { ok: false, status: 422, error: "Couldn't confirm this request is open right now. Try again in a moment." };
+  }
+  let issue = (open.issues || []).find((i) => i.number === issueNumber) || null;
+  if (!issue && open.truncatedList && typeof github.fetchPublicIssue === 'function') {
+    const one = await github.fetchPublicIssue(repo.owner, repo.repo, issueNumber);
+    issue = one?.issue && (!one.issue.state || one.issue.state === 'open') ? one.issue : null;
+  }
+  if (!issue) return { ok: false, status: 404, error: `Request #${issueNumber} isn't open on this app.` };
+  return { ok: true, repo, issue };
+}
+
+// 1 Nov 2026 (threads, one loop: C2.3): what a person's plan needs before
+// Homeroom bot builds from it without writing its own: at least one screen
+// in its HTML, and this much of its words.
+const MIN_PERSON_PLAN_CHARS = 160;
+
+/**
+ * The plan a person posted on request `issueNumber` of `appId` that the
+ * bot would build from: the newest version shared with the group on any
+ * person's planning record for it (SPEC_SOURCE), as { sessionId, version,
+ * markdown, html, author, authorId, screens, enough }, or null. `enough`
+ * when it has a screen and is reasonably long (MIN_PERSON_PLAN_CHARS).
+ */
+async function personPlanOf(pool, { appId, issueNumber }) {
+  const n = Number(issueNumber);
+  if (!appId || !Number.isSafeInteger(n) || n <= 0) return null;
+  const { rows: [row] } = await pool.query(
+    `SELECT s.session_id, s.version, s.content, s.content_html, cs.user_id, u.username
+       FROM chat_session_specs s
+       JOIN chat_sessions cs ON cs.id = s.session_id
+       LEFT JOIN users u ON u.id = cs.user_id
+      WHERE cs.app_id = $1 AND cs.source = $3 AND cs.status <> 'archived'
+        AND (cs.created_from_issue_number = $2 OR $2 = ANY(cs.linked_issues))
+        AND s.shared_to_group_at IS NOT NULL
+      ORDER BY s.shared_to_group_at DESC, s.id DESC
+      LIMIT 1`,
+    [Number(appId), n, SPEC_SOURCE]
+  );
+  if (!row) return null;
+  const markdown = String(row.content || '');
+  const html = row.content_html || null;
+  const screens = html ? specHtml.screenStats(html).length : 0;
+  return {
+    sessionId: Number(row.session_id),
+    version: Number(row.version),
+    markdown,
+    html,
+    author: row.username || null,
+    authorId: row.user_id == null ? null : Number(row.user_id),
+    screens,
+    enough: screens > 0 && markdown.trim().length >= MIN_PERSON_PLAN_CHARS,
   };
 }
 
@@ -352,4 +430,7 @@ module.exports = {
   specCommentText,
   postRequestSpec,
   listRequestSpecs,
+  openRequest,
+  MIN_PERSON_PLAN_CHARS,
+  personPlanOf,
 };

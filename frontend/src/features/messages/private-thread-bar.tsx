@@ -34,6 +34,7 @@ import { useEffect, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,7 +45,13 @@ import { communityScopeStore, warmCommunities } from '../workshop/community-scop
 export interface PrivateThreadState {
   state: 'open' | 'filed' | 'posted' | 'dropped';
   /** What it is (open only): absent from an older server, which reads as an idea. */
-  kind?: 'draft_request' | 'draft_reply' | 'idea' | 'ask';
+  kind?: 'draft_request' | 'draft_reply' | 'idea' | 'ask' | 'design';
+  /**
+   * 1 Nov 2026: whether it is the viewer's private thread at all: a row of
+   * theirs, or a root that is their own message (services/private-threads.js
+   * stateOf). Absent from an older server (isOwnPrivateThread).
+   */
+  mine?: boolean;
   number?: number | null;
   app?: { slug: string; name: string } | null;
   /** A drafted reply: the number of the thread it answers. */
@@ -60,13 +67,86 @@ export type Door = 'file' | 'post' | 'new';
  * once it went somewhere.
  */
 export function doorsFor(where: PrivateThreadState | null, botReplied: boolean): Door[] {
-  if (!where || where.state !== 'open' || !botReplied) return [];
+  if (!where || where.state !== 'open' || !botReplied || where.mine === false) return [];
   switch (where.kind) {
     case 'draft_request': return ['file'];
     case 'draft_reply': return ['post'];
-    case 'ask': return [];
+    // 1 Nov 2026: a thread from the bot's "+" (and a design thread) is an
+    // idea until it is something more: filed, or a project of its own.
     default: return where.app ? ['file'] : ['file', 'new'];
   }
+}
+
+interface ThreadMessage {
+  content?: string | null;
+  sender: { id: number; bot?: boolean };
+  metadata?: {
+    homeroomBot?: {
+      kind?: string; designTitle?: string;
+      aboutKind?: 'request' | 'change'; aboutNumber?: number; aboutTitle?: string;
+    } | null;
+  } | null;
+}
+
+/**
+ * Pure: whether a thread is the viewer's private thread, by the server's
+ * word (`mine`); an older server, which does not say, by the old rule: the
+ * root is their own message.
+ */
+export function isOwnPrivateThread(where: PrivateThreadState | null, root: ThreadMessage | null | undefined, meId: number): boolean {
+  if (typeof where?.mine === 'boolean') return where.mine;
+  return !!root && !root.sender.bot && !!meId && root.sender.id === meId;
+}
+
+function firstLine(text: string | null | undefined, max = 90): string {
+  const line = String(text || '').split('\n').map((part) => part.trim()).find(Boolean) || '';
+  return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
+}
+
+/** Pure: the viewer's first message in the thread, its root aside. */
+function firstOwn(replies: readonly ThreadMessage[], meId: number): ThreadMessage | null {
+  return replies.find((message) => !message.sender.bot && !!meId && message.sender.id === meId) || null;
+}
+
+/** Pure: "#18 Dark mode", "Change #19 Night theme": what a thread opened from a request's or a change's page is about. */
+export function aboutThreadTitle(kind: 'request' | 'change', number: number, title: string | null | undefined): string {
+  const named = firstLine(title);
+  if (kind === 'change') {
+    return named ? translate('messages:ai.thread.aboutChange', { number: String(number), title: named })
+      : translate('messages:ai.thread.aboutChangeUntitled', { number: String(number) });
+  }
+  return named ? translate('messages:ai.thread.aboutRequest', { number: String(number), title: named })
+    : translate('messages:ai.thread.aboutRequestUntitled', { number: String(number) });
+}
+
+/**
+ * Pure: a private thread's name over it in Main Chat's column, as the
+ * Homeroom bot tab's list names it (services/ai-work.js shapePrivate): a
+ * design thread by its screen; a thread off the bot's "+" by the viewer's
+ * first words in it (1 Nov 2026: one the bot opened to draw a screen, by
+ * the screen); a thread about a request or a change by it ("#18 Dark
+ * mode"); anything else by its root's first line. Null while none of them
+ * says anything (a "+" thread nobody has written in yet).
+ */
+export function privateThreadTitle(root: ThreadMessage | null | undefined, replies: readonly ThreadMessage[], meId: number): string | null {
+  if (!root) return null;
+  const meta = root.sender.bot ? root.metadata?.homeroomBot || null : null;
+  if (meta?.kind === 'opened_design' && meta.designTitle) return firstLine(meta.designTitle);
+  if (meta?.kind === 'opened_about' && (meta.aboutKind === 'request' || meta.aboutKind === 'change') && meta.aboutNumber) {
+    return aboutThreadTitle(meta.aboutKind, meta.aboutNumber, meta.aboutTitle);
+  }
+  if (meta?.kind === 'opened_thread') return firstLine(firstOwn(replies, meId)?.content) || firstLine(meta.designTitle) || null;
+  return firstLine(root.content) || null;
+}
+
+/**
+ * Pure: the words File it and Post it start from: the root's, when it is
+ * the viewer's own message; else (1 Nov 2026: a thread off a line of the
+ * bot's) their first message in it, as the server takes them.
+ */
+export function privateThreadWords(root: ThreadMessage | null | undefined, replies: readonly ThreadMessage[], meId: number): string {
+  if (root && !root.sender.bot && root.sender.id === meId) return root.content || '';
+  return firstOwn(replies, meId)?.content || '';
 }
 
 /** Where a private thread stands, read when it opens; null for no thread, or until it is read. */

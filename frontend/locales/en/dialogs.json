@@ -1783,6 +1783,14 @@
     "text": "Open chat",
     "description": "Main button of the confirmation when the assistant is building the request: opens the chat with Homeroom bot. \"Open\" is a verb."
   },
+  "feedback.sent.workWithBot": {
+    "text": "Work on it with Homeroom bot",
+    "description": "Quiet button under Done on the confirmation after a request is posted: opens a thread only the person can see, in their chat with Homeroom bot (the platform's assistant), about the request they just posted, to plan it together. Homeroom bot then waits for their plan. \"Work on\" is a verb."
+  },
+  "feedback.sent.workWithBotFailed": {
+    "text": "The thread with Homeroom bot could not be started just now. Try again in a minute.",
+    "description": "Toast when \"Work on it with Homeroom bot\" on the confirmation after posting a request could not open its thread with Homeroom bot, the platform's assistant."
+  },
   "feedback.sent.mine": {
     "text": "See your requests",
     "description": "Small link under the buttons of the confirmation after a request was posted: opens the list of this person's own requests on their profile. It can sit beside an \"Edit\" link, with a dot between them."

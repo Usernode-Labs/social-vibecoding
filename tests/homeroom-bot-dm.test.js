@@ -509,7 +509,8 @@ test('the short description is suggested for everyone making a project, and ever
   // Owed with the project, in the route's transaction (its making files it),
   // then said (startFirstVersion: the bot's DM, the early plan).
   assert.match(create, /const owesFirstVersion = !readyMade && !!homeroomBotDm\.normalizeBrief\(req\.body\.brief\);/);
-  assert.match(create, /homeroomBotDm\.recordFirstVersion\(db, pool, config, \{ app: appRow, user: req\.user, brief: req\.body\.brief \}\)/);
+  // 1 Nov 2026 (C2.4): with the design it is made from, when it is.
+  assert.match(create, /homeroomBotDm\.recordFirstVersion\(db, pool, config, \{\s+app: appRow, user: req\.user, brief: req\.body\.brief, design: fromDesign,\s+\}\)/);
   assert.match(create, /if \(owesFirstVersion\) \{[\s\S]{0,200}startFirstVersion\(pool, config, \{/);
   // #3624: a ready-made app or a project with no description is recorded for
   // the bot instead, and so is a fork (an import was, before importing from

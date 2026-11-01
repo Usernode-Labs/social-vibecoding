@@ -6,6 +6,9 @@
  *          Needs you: 15 · …           chips to see only some projects' work
  *   ( All ) ( Homeroom ) ( Game Corner ) ( Run Club )    ( 28 more ⌄ )
  *
+ *   [bot] Main Chat          2 new   ← 1 Nov 2026: the list's first row, the
+ *                                      chat with the bot itself (./index.tsx)
+ *
  *   NEEDS YOU · 15                   ← a band, the sheet's width
  *   [tile] Homeroom
  *     ☑ #6038  Spell out the approval rules…      Vote
@@ -42,6 +45,9 @@
  *
  * Rows here are 14px over one line, not the shell's 15 over 13 (AGENTS.md,
  * "Type and colour"): this page's exception, recorded there.
+ *
+ * The row whose chat is in the column beside the list (Main Chat, or a
+ * private thread) is drawn lit, where you are (`--lit-tint`, `--lit-ink`).
  */
 import { useEffect, useRef, useState } from 'react';
 import type * as React from 'react';
@@ -55,6 +61,7 @@ import {
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
+import { BOT_AVATAR } from '../messages/format';
 import {
   GROUP_FIRST, byProject, nextWords, railProjects, rankProjects, shortWords, threadWhy, whyOf,
   type AiApp, type AiThread, type Phrase, type WorkRow,
@@ -83,6 +90,8 @@ interface Line {
   why: string | null;
   /** Yours to do: the glyph and the word in the accent. */
   owe: boolean;
+  /** Its chat is the one in the column beside the list: where you are. */
+  lit?: boolean;
   open: () => void;
 }
 
@@ -113,21 +122,35 @@ const ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 
 const LIVE_ROW = 'flex w-full min-h-[40px] md:min-h-[32px] items-center gap-3 py-1 text-left rounded-md hover:bg-zinc-900/[0.03] dark:hover:bg-white/[0.04]';
 const GLYPH_OWE = 'flex shrink-0 text-violet-600 dark:text-violet-300';
 const GLYPH = 'flex shrink-0 text-zinc-400 dark:text-zinc-500';
+// Where you are: the row whose chat is in the column, on the lit tint.
+const LIT_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-left rounded-md bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)]';
 
 function LineRow({ line, quiet = false }: { line: Line; quiet?: boolean }): ReactNode {
   const t = useMessages('messages');
   return (
-    <button type="button" className={quiet ? LIVE_ROW : ROW} onClick={line.open} title={line.tooltip} data-ai-line={line.kind}>
+    <button
+      type="button"
+      className={line.lit ? LIT_ROW : quiet ? LIVE_ROW : ROW}
+      onClick={line.open}
+      title={line.tooltip}
+      data-ai-line={line.kind}
+      data-ai-lit={line.lit ? '' : undefined}
+      aria-current={line.lit ? 'true' : undefined}
+    >
       <span className={line.owe ? GLYPH_OWE : GLYPH} aria-hidden="true">{line.glyph}</span>
       {/* Not on a phone, where the drawer's list is 85% of the screen: the
-          title needs the room more, and the tooltip still says the number. */}
-      <span className="hidden md:block w-12 shrink-0 font-mono text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
+          title needs the room more, and the tooltip still says the number.
+          1 Nov 2026: nor under 1024px, where the column beside the list
+          leaves it about as narrow. */}
+      <span className="hidden lg:block w-12 shrink-0 font-mono text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
         {line.number ? t('messages:ai.live.number', { number: line.number }) : ''}
       </span>
       <span className="min-w-0 flex-1">
-        <span className={quiet
-          ? 'block truncate text-[13px] leading-5 text-zinc-600 dark:text-zinc-400'
-          : 'block truncate text-sm leading-5 font-medium text-zinc-900 dark:text-zinc-100'}
+        <span className={line.lit
+          ? 'block truncate text-sm leading-5 font-medium'
+          : quiet
+            ? 'block truncate text-[13px] leading-5 text-zinc-600 dark:text-zinc-400'
+            : 'block truncate text-sm leading-5 font-medium text-zinc-900 dark:text-zinc-100'}
         >
           {line.title}
         </span>
@@ -143,6 +166,40 @@ function LineRow({ line, quiet = false }: { line: Line; quiet?: boolean }): Reac
       </span>
       <span className="sr-only">{line.tooltip}</span>
     </button>
+  );
+}
+
+/**
+ * 1 Nov 2026: Main Chat, the chat with the bot itself, as the list's first
+ * row: the bot's mark, its name and, on the right, what is new in it, in
+ * words ("2 new"), or nothing. Pressed, it is the column's (./index.tsx).
+ */
+function MainChatRow({ lit, unread, open }: { lit: boolean; unread: number; open: () => void }): ReactNode {
+  const t = useMessages('messages');
+  return (
+    <div className={`${PLANE} px-2 py-1.5`} data-ai-sheet="main">
+      <button
+        type="button"
+        className={`${lit ? LIT_ROW : ROW} px-2`}
+        onClick={open}
+        data-ai-main-row=""
+        data-ai-lit={lit ? '' : undefined}
+        aria-current={lit ? 'true' : undefined}
+      >
+        <img src={BOT_AVATAR} alt="" className="h-6 w-6 shrink-0 rounded-[8px] object-cover" />
+        <span className={lit
+          ? 'min-w-0 flex-1 truncate text-sm leading-5 font-semibold'
+          : 'min-w-0 flex-1 truncate text-sm leading-5 font-semibold text-zinc-900 dark:text-zinc-100'}
+        >
+          {t('messages:store.header.main')}
+        </span>
+        {unread > 0 ? (
+          <span className="shrink-0 text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-main-unread="">
+            {t('messages:ai.main.new', { count: unread })}
+          </span>
+        ) : null}
+      </button>
+    </div>
   );
 }
 
@@ -235,7 +292,14 @@ function Section({ list, head, owe = false, lines, quiet = false, empty = null, 
       {byProject(lines).map((g) => {
         const key = g.app?.slug || 'none';
         const open = !!opened[key];
-        const hidden = Math.max(0, g.items.length - first);
+        // The row whose chat is in the column is never folded away: past
+        // the first rows, it joins them, so where you are is always shown.
+        const litAt = g.items.findIndex((l) => l.lit);
+        const items = litAt >= first
+          ? [...g.items.slice(0, first), g.items[litAt], ...g.items.slice(first).filter((l) => !l.lit)]
+          : g.items;
+        const shown = litAt >= first ? first + 1 : first;
+        const hidden = Math.max(0, items.length - shown);
         return (
           <div key={key} data-ai-group={key}>
             {heads ? (
@@ -247,7 +311,7 @@ function Section({ list, head, owe = false, lines, quiet = false, empty = null, 
             ) : null}
             {/* The rows sit in a little under their project's name. */}
             <div className={heads ? 'ml-3' : undefined}>
-              {(hidden ? g.items.slice(0, first) : g.items).map((line) => <LineRow key={line.key} line={line} quiet={quiet} />)}
+              {(hidden ? items.slice(0, shown) : items).map((line) => <LineRow key={line.key} line={line} quiet={quiet} />)}
               {/* The rest, folded: a grid row that grows from 0fr to 1fr, so
                   it opens to its own height without measuring it. */}
               {hidden ? (
@@ -258,7 +322,7 @@ function Section({ list, head, owe = false, lines, quiet = false, empty = null, 
                   data-ai-group-rest=""
                 >
                   <div className="min-h-0 overflow-hidden">
-                    {g.items.slice(first).map((line) => <LineRow key={line.key} line={line} quiet={quiet} />)}
+                    {items.slice(shown).map((line) => <LineRow key={line.key} line={line} quiet={quiet} />)}
                   </div>
                 </div>
               ) : null}
@@ -299,9 +363,13 @@ function dayOf(at: string | null, t: (id: string, values?: Record<string, string
   return d.toLocaleDateString(undefined, { weekday: 'short' });
 }
 
-export function AiLists({ hero, ready, rows, owed, progress, waiting, live, openRow, openThread }: {
+export function AiLists({ hero, main, lit = null, ready, rows, owed, progress, waiting, live, openRow, openThread }: {
   /** The page's title, drawn in the sheet the chips are in. */
   hero: ReactNode;
+  /** Main Chat's row: whether it is the one in the column, what is new in it, and its press. */
+  main: { lit: boolean; unread: number; open: () => void };
+  /** The key of the row whose chat is in the column (`private:<root>`), lit. */
+  lit?: string | null;
   /** The lists have been read: until then Needs you says nothing, not "nothing needs you". */
   ready: boolean;
   rows: WorkRow[];
@@ -337,6 +405,7 @@ export function AiLists({ hero, ready, rows, owed, progress, waiting, live, open
     tooltip: say(row.sub)!,
     why: say(whyOf(row)),
     owe: !!row.pill,
+    lit: !!lit && row.key === lit,
     open: () => openRow(row),
   }));
   const threadLine = (glyph: (th: AiThread) => ReactNode) => (th: AiThread): Line => ({
@@ -400,6 +469,7 @@ export function AiLists({ hero, ready, rows, owed, progress, waiting, live, open
           </div>
         ) : <div className="pb-3" />}
       </div>
+      <MainChatRow lit={main.lit} unread={main.unread} open={main.open} />
       {more ? (
         <ProjectPicker
           sheet={phone}

@@ -4996,11 +4996,15 @@ export function DevWorkshop(): ReactNode {
     return !!sideKey && !!ref && sideKey === `${ref.kind}:${ref.id}`;
   };
   // New for you's: Build it, the request card's own act when that act is
-  // building it (asking Homeroom bot, or yourself).
+  // building it (asking Homeroom bot, or yourself). 1 Nov 2026: or Work on
+  // it, where the card's act is Work on this with Homeroom bot.
   const freshAct = (r: WorkCardRow): ReactNode => {
     const a = primaryAct(r.card);
     if (a && a.act && (a.act.fn === 'askBotToBuild' || a.act.fn === 'chooseIssueWork')) {
       return <ActButton a={a} label={t('project:workshop.fresh.buildIt')} />;
+    }
+    if (a && a.act && a.act.fn === 'workOnIssueWithBot') {
+      return <ActButton a={a} label={t('project:workshop.fresh.workOnIt')} />;
     }
     return null;
   };

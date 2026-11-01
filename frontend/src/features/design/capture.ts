@@ -2,6 +2,10 @@
  * #6071: capture the screen the person is looking at into a design thread
  * (../messages/design-pane.tsx, src/services/design-threads.js).
  *
+ * 1 Nov 2026: nothing opens a capture just now. The screen picker that did
+ * (pick.tsx, start.ts) retired when the bot began drawing screens from
+ * words; this stays, with the server's capture route, for a later door.
+ *
  * ── Two kinds of screen ───────────────────────────────────────────────
  *
  * A HOMEROOM PAGE is this document: it is copied as it stands (a detached
@@ -31,7 +35,7 @@ export const MAX_CAPTURE_BYTES = 900 * 1024;
 const DROP = [
   'script', 'noscript', 'template', 'object', 'embed', 'base',
   'link:not([rel~="stylesheet"])', 'meta[http-equiv]', '[hidden]',
-  '#comment-pin-host', '#platform-side-panel', '#design-pick-host',
+  '#comment-pin-host', '#platform-side-panel',
 ].join(',');
 
 // The page's top three levels, where the screens the router is not showing

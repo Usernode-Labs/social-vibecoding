@@ -3730,7 +3730,8 @@ async function messageThread(pool, { userId, conversationId, message }) {
   }
   if (!rootId) return null;
   const { rows: [p] = [] } = await pool.query(
-    `SELECT p.kind, p.state, p.result_ref, a.slug, a.name,
+    `SELECT p.kind, p.state, p.result_ref, a.slug, a.name, p.about_kind, p.about_number,
+            (p.holds_bot AND p.hold_lifted_at IS NULL) AS holding,
             (SELECT r.metadata->'homeroomBot'->>'changeKind' FROM conversation_messages r
               WHERE r.id = p.root_message_id) AS change_kind,
             (SELECT d.title FROM homeroom_bot_dm_actions d
@@ -3760,7 +3761,15 @@ async function messageThread(pool, { userId, conversationId, message }) {
       state: p.state,
       appSlug: p.slug || null,
       appName: p.slug ? p.name || p.slug : null,
-      changeKind: ['fix', 'add', 'design'].includes(p.change_kind) ? p.change_kind : 'any',
+      // 1 Nov 2026 (C2.4): 'project', a thread for a new project (homeroom-bot-mayor.js start_project_thread).
+      changeKind: ['fix', 'add', 'design', 'project'].includes(p.change_kind) ? p.change_kind : 'any',
+      // 1 Nov 2026: a thread about a request or a change (private-threads.js
+      // startAbout), which the turn reads (aboutContext); `holds` while the
+      // bot waits for their plan on their own request.
+      ...(p.about_kind && p.about_number ? {
+        about: { kind: p.about_kind, number: Number(p.about_number) },
+        holds: p.holding === true,
+      } : {}),
     }
     : null;
   return { rootId, draft: draft || started };
@@ -4367,7 +4376,10 @@ async function answerUserMessage(pool, config, { bot, user, settings, conversati
   // request it is about. What the bot says back goes in the same thread
   // (sendDm's threadRootFor, from the message it answers).
   // #6071: written in one of their design threads, it is about the design:
-  // the bot edits it (design-bot.js), and nothing else answers there.
+  // the bot edits it (design-bot.js), and nothing else answers there. 1 Nov
+  // 2026: any private thread that holds a design is one ("+", an idea, a
+  // thread about a request or a change, a draft); one that holds none yet
+  // goes to the turn below, whose draw_screen hands the design bot version 1.
   const design = await (deps.designThreads || require('./design-threads')).threadOf(pool, { userId: user.id, conversationId, message });
   if (design) {
     return (deps.designBot || require('./design-bot')).answer(pool, config, { bot, user, settings, conversationId, message, design, deps });
@@ -5109,11 +5121,15 @@ function normalizeBrief(raw) {
  * from here, and that it tells them here once it is live. Made anywhere else
  * (a connector's create), the plan still comes here as a card with Build it.
  */
-function firstVersionStartedText({ name, hello = false, earlyPlan = false, off = false }) {
+function firstVersionStartedText({ name, hello = false, earlyPlan = false, fromDesign = false, off = false }) {
   const head = hello
     ? `${MAKER_HELLO}\n\n**${name}**\n\nI'm setting up ${name} now.`
     : `**${name}**\n\nThanks! I'm setting up ${name} now.`;
-  const next = earlyPlan
+  // 1 Nov 2026: made from a design (the design bot's Make the project), its
+  // screens are drawn already: the first version is built from them.
+  const next = fromDesign
+    ? 'Your design is its plan: I\'ll build the first version from it and tell you here when it\'s live.'
+    : earlyPlan
     ? 'I\'ll draw its screens, build the first version and tell you here when it\'s live.'
     : 'Once it\'s ready I\'ll send you my plan here first, then build its first version and tell you here when it\'s live.';
   const paused = off ? '\n\nI\'m switched off right now, so this waits until I\'m back on.' : '';
@@ -5137,7 +5153,7 @@ function firstVersionStartedText({ name, hello = false, earlyPlan = false, off =
 // The first request owed, written in the route's transaction (`db`) with
 // the project, so its making (src/workflow/app-creation/) finds it once its
 // setup ends. startFirstVersion, after the commit, says so.
-async function recordFirstVersion(db, pool, config, { app, user, brief }) {
+async function recordFirstVersion(db, pool, config, { app, user, brief, design = null }) {
   const text = normalizeBrief(brief);
   if (!text || !app?.id || !user?.id) return false;
   // Read on the caller's transaction connection, never another from the pool
@@ -5151,10 +5167,113 @@ async function recordFirstVersion(db, pool, config, { app, user, brief }) {
      RETURNING app_id`,
     [app.id, user.id, text, botBuilds],
   );
+  if (rows.length && design?.design) await recordDesignFirstVersion(db, { app, design, botBuilds });
   return rows.length > 0;
 }
 
-async function startFirstVersion(pool, config, { app, user, brief, earlyPlan = false }) {
+// ── A project from a design (threads, one loop: C2.4) ─────────────────────
+//
+// 1 Nov 2026: a design drawn in one of the person's private threads with
+// Homeroom bot, for a project that does not exist yet, is made into one
+// (the design bot's Make the project card, POST /api/apps `design`). Its
+// first request is filed with the design as its plan, as its maker
+// (fileFirstRequest's design_plan), and the bot builds its first version
+// from that plan (homeroom-bot.js usePersonPlan): its early plan is
+// written from the design, asking nothing, so it is built at once.
+
+/** Pure: a design-made project's brief: their words (or the design's title) and what the design came to. */
+function designBrief(design, version, said = null) {
+  const own = typeof said === 'string' ? said.replace(/\r\n?/g, '\n').trim() : '';
+  const notes = (design.versions || [])
+    .filter((v) => v.version <= version && v.note && v.author !== 'capture')
+    .map((v) => `- ${clip(v.note, 200)}`);
+  return [
+    own || design.title,
+    `Its first screen is "${design.title}", designed with Homeroom bot in a private thread (version ${version}). `
+      + 'The first request\'s plan draws it.',
+    notes.length ? `How the design came to be, version by version:\n${notes.join('\n')}` : null,
+  ].filter(Boolean).join('\n\n').slice(0, MAX_BRIEF_CHARS);
+}
+
+/**
+ * The design POST /api/apps is asked to make a project from ({ rootId,
+ * version? }): one of the person's own private threads with a design and no
+ * project yet, that made none before. Resolves { ok, design, version, brief }
+ * or a refusal { ok: false, status, error }.
+ */
+async function designForProject(pool, { user, design: ref, brief = null, deps = {} }) {
+  if (!ref || typeof ref !== 'object' || Array.isArray(ref)) return { ok: false, status: 400, error: 'design must be { rootId, version }' };
+  const rootId = Number(ref.rootId);
+  const asked = ref.version == null ? null : Number(ref.version);
+  if (!Number.isSafeInteger(rootId) || rootId <= 0 || (asked != null && !(Number.isSafeInteger(asked) && asked > 0))) {
+    return { ok: false, status: 400, error: 'design must be { rootId, version }' };
+  }
+  if (!user?.id || user.isSynthetic) return { ok: false, status: 403, error: 'Not available for this account' };
+  const design = await (deps.designThreads || require('./design-threads')).designFor(pool, { userId: user.id, rootId });
+  if (!design || !design.latest) return { ok: false, status: 404, error: 'No such design' };
+  if (design.app) return { ok: false, status: 409, error: `This design is a screen of ${design.app.name || design.app.slug}.` };
+  const version = asked || design.latest;
+  if (!design.versions.some((v) => v.version === version)) return { ok: false, status: 404, error: 'No such version' };
+  const { rows: [made] } = await pool.query(
+    `SELECT a.slug, a.name FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
+      WHERE f.design_thread_id = $1 LIMIT 1`,
+    [design.threadId],
+  );
+  if (made) return { ok: false, status: 409, error: `This design already made ${made.name || made.slug}.` };
+  return { ok: true, design, version, brief: designBrief(design, version, brief) };
+}
+
+// In the create's transaction (`db`): the first version is the design's,
+// its plan is ready, and the design's thread is the new project's.
+async function recordDesignFirstVersion(db, { app, design, botBuilds }) {
+  const plan = botBuilds ? require('./first-version-plan').designPlan(design.design, design.version) : null;
+  await db.query(
+    `UPDATE homeroom_bot_first_versions
+        SET design_thread_id = $2, design_version = $3,
+            early_plan = COALESCE($4::jsonb, early_plan),
+            early_plan_status = CASE WHEN $4::jsonb IS NULL THEN early_plan_status ELSE 'ready' END,
+            early_plan_at = CASE WHEN $4::jsonb IS NULL THEN early_plan_at ELSE NOW() END
+      WHERE app_id = $1`,
+    [app.id, design.design.threadId, design.version, plan ? JSON.stringify(plan) : null],
+  );
+  await db.query(
+    `UPDATE private_threads SET app_id = $2, state = 'filed', updated_at = NOW() WHERE id = $1`,
+    [design.design.threadId, app.id],
+  );
+  // Drawn for no project, it is a screen of this one now.
+  await db.query(`UPDATE design_threads SET surface = 'app' WHERE private_thread_id = $1 AND surface <> 'app'`, [design.design.threadId]);
+}
+
+/**
+ * fileFirstRequest's `design_plan`: the design a project was made from,
+ * posted as its first request's plan, as its maker (design-threads.js
+ * postDesignPlan, one screen). Never throws: the request stands without it,
+ * and the bot reads it as any first version.
+ */
+async function postFirstDesignPlan(pool, config, { row, issueNumber, deps = {} }) {
+  try {
+    const { rows: [thread] } = await pool.query(
+      'SELECT root_message_id FROM private_threads WHERE id = $1 AND user_id = $2', [row.design_thread_id, row.user_id]);
+    if (!thread) return { posted: false, why: 'gone' };
+    await pool.query('UPDATE private_threads SET result_ref = $2, updated_at = NOW() WHERE id = $1', [row.design_thread_id, issueNumber]);
+    const { rows: [u] } = await pool.query('SELECT id, username, is_admin FROM users WHERE id = $1', [row.user_id]);
+    if (!u) return { posted: false, why: 'gone' };
+    const posted = await (deps.designThreads || require('./design-threads')).postDesignPlan(pool, config, {
+      user: { id: Number(u.id), username: u.username, isAdmin: !!u.is_admin },
+      rootId: Number(thread.root_message_id), version: Number(row.design_version) || null, issueNumber, deps,
+    });
+    if (!posted.ok) {
+      log.warn('homeroom-bot-dm', 'A first version\'s design was not posted as its plan', { app: row.slug, issueNumber, error: posted.error });
+      return { posted: false, why: clip(String(posted.error || 'refused'), 200) };
+    }
+    return { posted: true, version: posted.planVersion || null };
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not post a first version\'s design as its plan', { app: row?.slug, issueNumber, err: err.message });
+    return { posted: false, why: clip(err.message, 200) };
+  }
+}
+
+async function startFirstVersion(pool, config, { app, user, brief, earlyPlan = false, fromDesign = false }) {
   const text = normalizeBrief(brief);
   if (!text || !app?.id || !user?.id) return null;
   const settings = await settingsModule().readSettings(pool);
@@ -5178,11 +5297,11 @@ async function startFirstVersion(pool, config, { app, user, brief, earlyPlan = f
     bot,
     userId: user.id,
     idempotencyKey: `hrbot-create-${app.id}`,
-    content: firstVersionStartedText({ name, hello: false, earlyPlan, off: settings.mode === 'off' }),
+    content: firstVersionStartedText({ name, hello: false, earlyPlan, fromDesign, off: settings.mode === 'off' }),
     metadata: plain,
     hello: {
       kind: 'maker',
-      content: firstVersionStartedText({ name, hello: true, earlyPlan, off: settings.mode === 'off' }),
+      content: firstVersionStartedText({ name, hello: true, earlyPlan, fromDesign, off: settings.mode === 'off' }),
       metadata: { ...plain, hello: MAKER_HELLO, actions: promptActions(MAKER_PROMPTS), status: 'open' },
     },
   });
@@ -5306,7 +5425,8 @@ const CLAIM_SQL = `UPDATE homeroom_bot_first_versions f SET status = 'filing', a
 async function fileFirstRequest(pool, config, appId, { steps, last = false, deps = {} } = {}) {
   if (isStaging() && !deps.allowStaging) return { skipped: 'staging' };
   const { rows: [row] } = await pool.query(
-    `SELECT f.app_id, f.user_id, f.brief, f.bot_builds, f.status, a.slug, a.name, a.repo_url
+    `SELECT f.app_id, f.user_id, f.brief, f.bot_builds, f.status, f.design_thread_id, f.design_version,
+            a.slug, a.name, a.repo_url
        FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
       WHERE f.app_id = $1`,
     [appId],
@@ -5350,6 +5470,12 @@ async function fileFirstRequest(pool, config, appId, { steps, last = false, deps
       if (!Number.isInteger(number) || number <= 0) throw new Error('invalid issue number');
       return number;
     });
+    // 1 Nov 2026 (C2.4): a project made from a design: the design is its
+    // first request's plan, posted before the request is recorded as the
+    // bot's to build, so the bot never reads it without it.
+    if (row.design_thread_id) {
+      await steps.once('design_plan', () => postFirstDesignPlan(pool, config, { row, issueNumber, deps }));
+    }
     const issueId = await steps.once('record', async () => {
       const client = await pool.connect();
       try {
@@ -5911,6 +6037,9 @@ module.exports = {
   noteNeedsLook,
   sweepUnproposedBuilds,
   MAX_BRIEF_CHARS,
+  designBrief,
+  designForProject,
+  postFirstDesignPlan,
   MIN_BRIEF_CHARS,
   HELP_TEXT,
   NOT_ENABLED_TEXT,

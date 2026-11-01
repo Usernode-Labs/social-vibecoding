@@ -109,9 +109,15 @@ SELECT t.id, mine.own, t.number, t.kind, t.title AS thread_title, t.state, t.cre
        ch.id AS change_id, ch.pr_number, ch.status AS change_status, ch.user_id AS change_user,
        ch.title AS change_title, ch.promoted_at, ch.merged_at, ch.live_at, ch.last_activity_at,
        ch.voted, ch.my_vote, ch.by_agent, ch.check_state,
-       dec.status AS decision_status, dec.mine AS decision_mine, dec.my_vote AS decision_vote,
+       dec.id AS decision_id, dec.status AS decision_status, dec.mine AS decision_mine, dec.my_vote AS decision_vote,
        cl.username AS claimed_by, cl.mine AS claimed_mine,
        COALESCE(ch.live_at, ch.merged_at, ch.promoted_at, ch.last_activity_at, req.updated_at, t.created_at) AS sort_at,
+       -- 1 Nov 2026: their own private thread about its request holds the
+       -- bot: it waits for their plan (rules/bot-loop.ts planHoldActiveSql).
+       (t.number IS NOT NULL AND EXISTS (
+          SELECT 1 FROM private_threads p
+           WHERE p.app_id = t.app_id AND p.about_number = t.number AND p.user_id = $1
+             AND ${require('../workflow/rules/bot-loop.ts').planHoldActiveSql('p')})) AS awaiting_plan,
        ROW_NUMBER() OVER (
          PARTITION BY COALESCE(ch.status = 'merged', FALSE)
          ORDER BY mine.own DESC,
@@ -141,6 +147,8 @@ SELECT t.id, mine.own, t.number, t.kind, t.title AS thread_title, t.state, t.cre
            (cs.external_agent IS NOT NULL) AS by_agent
       FROM chat_sessions cs
      WHERE cs.thread_id = t.id AND cs.is_headless = FALSE
+       -- A posted plan is no change (threads.js ITEMS_SQL says the same).
+       AND NOT (cs.source IS NOT DISTINCT FROM 'request_spec' AND cs.branch_name IS NULL)
        AND cs.status IN ('active', 'paused', 'promoted', 'merging', 'merged')
        AND (cs.status NOT IN ('active', 'paused') OR cs.shared_at IS NOT NULL OR cs.user_id = $1)
      ORDER BY CASE cs.status WHEN 'merged' THEN 0 WHEN 'merging' THEN 1 WHEN 'promoted' THEN 2 ELSE 3 END,
@@ -150,9 +158,10 @@ SELECT t.id, mine.own, t.number, t.kind, t.title AS thread_title, t.state, t.cre
   -- A decision's group vote (a rename, a card picture, ...): whether it is
   -- still open, and whether the viewer filed it or has voted on it, so the
   -- row says it waits for votes, or leaves it to the Needs you feed when the
-  -- viewer's own vote is owed (OWED_GOVERNANCE_WHERE).
+  -- viewer's own vote is owed (OWED_GOVERNANCE_WHERE). Its id is the
+  -- address of its page (hrefOf).
   LEFT JOIN LATERAL (
-    SELECT i.status, (i.created_by = $1) AS mine,
+    SELECT i.id, i.status, (i.created_by = $1) AS mine,
            (SELECT v.vote FROM issue_votes v WHERE v.issue_id = i.id AND v.user_id = $1 LIMIT 1) AS my_vote
       FROM issues i
      WHERE t.kind = 'decision' AND i.thread_id = t.id
@@ -192,7 +201,9 @@ SELECT t.id, mine.own, t.number, t.kind, t.title AS thread_title, t.state, t.cre
 // $1 viewer, $2 the bot, $3 the most rows. A thread they started is one of
 // their own messages in the chat with the bot that has replies; a draft the
 // bot opened is a row of private_threads. Only those still open: a filed or
-// posted one is a public thread now, and listed there.
+// posted one is a public thread now, and listed there. 1 Nov 2026: except
+// one holding a design, which stays private and is still worked on (its
+// next post is the plan's next version): it stays listed.
 const PRIVATE_SQL = `
 SELECT m.id AS root_id, m.content, m.created_at, p.kind, a.slug, a.name,
        a.icon_emoji, a.icon_image_id,
@@ -200,6 +211,13 @@ SELECT m.id AS root_id, m.content, m.created_at, p.kind, a.slug, a.name,
        (SELECT f.content FROM conversation_messages f
          WHERE f.thread_root_id = m.id AND f.sender_id = $1 AND f.deleted_at IS NULL
          ORDER BY f.id LIMIT 1) AS first_own,
+       -- 1 Nov 2026 (C1): a thread about a request or a change is named by
+       -- it ("#18 Dark mode"), and one holding a design by its screen.
+       p.about_kind, p.about_number,
+       COALESCE((SELECT rq.title FROM requests rq
+                  WHERE p.about_kind = 'request' AND rq.app_id = p.app_id AND rq.number = p.about_number),
+                m.metadata->'homeroomBot'->>'aboutTitle') AS about_title,
+       (SELECT d.title FROM design_threads d WHERE d.private_thread_id = p.id) AS design_title,
        (SELECT MAX(r.created_at) FROM conversation_messages r
          WHERE r.thread_root_id = m.id AND r.deleted_at IS NULL) AS last_at
   FROM conversations c
@@ -212,7 +230,9 @@ SELECT m.id AS root_id, m.content, m.created_at, p.kind, a.slug, a.name,
    AND (p.id IS NOT NULL
         OR (m.sender_id = $1 AND EXISTS (SELECT 1 FROM conversation_messages r
                                           WHERE r.thread_root_id = m.id AND r.deleted_at IS NULL)))
-   AND COALESCE(p.state, 'open') = 'open'
+   AND (COALESCE(p.state, 'open') = 'open'
+        OR (p.state IN ('posted', 'filed')
+            AND EXISTS (SELECT 1 FROM design_threads d WHERE d.private_thread_id = p.id)))
  ORDER BY COALESCE((SELECT MAX(r.created_at) FROM conversation_messages r
                      WHERE r.thread_root_id = m.id AND r.deleted_at IS NULL), m.created_at) DESC
  LIMIT $3`;
@@ -229,12 +249,14 @@ function appOf(row) {
   };
 }
 
-// The page a thread opens on: its request's, else its change's, else the
-// project's Workshop (a decision filed as a governance row has no number).
+// The page a thread opens on: its request's, else its change's, else a
+// decision's own page (1 Nov 2026: a Waiting row for a decision went to the
+// project's Workshop, where the person had to find it), else the Workshop.
 function hrefOf(row) {
   const slug = encodeURIComponent(row.slug);
   if (row.number != null && row.request_title != null) return `#app/${slug}/dev/issues/${Number(row.number)}`;
   if (row.pr_number != null) return `#app/${slug}/dev/changes/${Number(row.pr_number)}`;
+  if (row.kind === 'decision' && row.decision_id != null) return `#app/${slug}/dev/governance/${Number(row.decision_id)}`;
   return `#app/${slug}/workshop`;
 }
 
@@ -302,6 +324,11 @@ function standing(row, viewerId, now = new Date(), botId = null, bot = null) {
   }
   if (row.state !== 'open') return null;
   let said = bot && Object.prototype.hasOwnProperty.call(BOT_STANDING, bot.stage) ? BOT_STANDING[bot.stage] : undefined;
+  // 1 Nov 2026: Homeroom bot waits for their plan, which nothing it is
+  // queued for overtakes: Waiting for your plan, until a change is up.
+  if (row.awaiting_plan === true && !status && row.request_state === 'open' && (!said || said.group === 'waiting')) {
+    return { group: 'waiting', what: 'awaiting_plan', at: iso(row.request_at || row.created_at) };
+  }
   if (said === null) return null;
   // Handed back, and somebody has taken it up since (a change of theirs, or
   // a claim): that is where it stands now.
@@ -367,7 +394,7 @@ const NEXT_ORDER = { going_live: 0, merging: 1, fixing: 2, revising: 2, building
 // build waiting its turn or held back, a request waiting to be read, then one
 // nobody has picked up.
 const WAITING_ORDER = {
-  vote: 0, checking: 0, decision: 0, fix_queued: 1, followup_queued: 1, build_queued: 2, held: 3, stalled: 3, queued: 4, on_hold: 5, not_picked_up: 6,
+  awaiting_plan: 0, vote: 0, checking: 0, decision: 0, fix_queued: 1, followup_queued: 1, build_queued: 2, held: 3, stalled: 3, queued: 4, on_hold: 5, not_picked_up: 6,
 };
 
 /** The key a thread's request is matched to the bot's stage by. */
@@ -447,12 +474,21 @@ async function botStages(pool, user, deps = {}) {
 }
 
 function shapePrivate(row) {
+  // 1 Nov 2026 (C1): a thread about a request or a change by its title (its
+  // number rides in `about`, and the tab draws it as a request's row is
+  // drawn); a "+" thread by their first words; a design by its screen.
+  const about = row.about_kind && Number(row.about_number) > 0
+    ? { kind: row.about_kind, number: Number(row.about_number) } : null;
+  const named = about && row.about_title ? row.about_title
+    : row.kind === 'ask' && row.first_own ? row.first_own
+      : row.design_title || row.content;
   return {
     rootId: Number(row.root_id),
-    title: firstLine(row.kind === 'ask' && row.first_own ? row.first_own : row.content),
+    title: firstLine(named),
     kind: row.kind || 'idea',
     app: appOf(row),
     at: iso(row.last_at || row.created_at),
+    ...(about ? { about } : {}),
   };
 }
 
@@ -516,6 +552,7 @@ const THREAD_SAYS = Object.freeze({
   queued: 'waiting for a free builder',
   on_hold: 'on hold until Monday',
   not_picked_up: 'nobody is building it yet',
+  awaiting_plan: 'waiting for their plan: they are working on it with Homeroom bot in a private thread',
 });
 
 /** Pure: one In progress or Waiting row's words. `slotVotes` counts the votes they owe that free a held one's slot. */
@@ -610,6 +647,7 @@ module.exports = {
   BOT_STANDING,
   standing,
   arrange,
+  shapePrivate,
   botStages,
   workFor,
   threadSays,

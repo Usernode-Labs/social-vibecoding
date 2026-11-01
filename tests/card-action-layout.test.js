@@ -282,9 +282,11 @@ test('issue card: the state-driven primary + the in-progress toggle; kudos / clo
   const model = AppView._issueCardModel(baseIssue());
   const html = cardHtml(model);
   assert.match(html, /gc-card-actions/, 'shared action row present');
-  // The state-driven primary for a never-started issue.
-  assert.ok(hasAction(model, 'chooseIssueWork', 5), 'the primary is wired');
-  assert.match(html, />Build it now</);
+  // The state-driven primary for a never-started issue. 1 Nov 2026: work on
+  // it with Homeroom bot; Build it now is the ⋯'s first row, as an agent session.
+  assert.ok(hasAction(model, 'workOnIssueWithBot', 5), 'the primary is wired');
+  assert.match(html, />Work on this with Homeroom bot</);
+  assert.equal(menuLabels(AppView, html)[0], 'Build it in an agent session');
   // …plus the promoted claim toggle. The card reserves an action band on
   // every row now, and this issue card had one button to put in it; claiming
   // is what a reader does with an issue before writing any code, and the
@@ -773,11 +775,13 @@ test('B8: where Homeroom bot builds, asking it is the card\'s act, and building 
   assert.ok(!menuHas(AppView, theirsHtml, /^Build it now$/), 'never built twice');
   const note = AppView._issueWorkState(baseIssue({ bot: { what: 'queued', since: null, askedBy: 'maya', mine: false } })).note;
   assert.match(note, /^maya asked Homeroom bot to build this\. It starts as soon as a builder is free/);
-  // Where it does not build, building it yourself is the card's act, as Start work was.
+  // Where it does not build, working on it with the bot is the card's act
+  // (1 Nov 2026), and building it yourself the ≡'s first row.
   const plain = makeAppView(ME);
   const plainModel = plain._issueCardModel(baseIssue());
-  assert.ok(hasAction(plainModel, 'chooseIssueWork', 5));
-  assert.match(cardHtml(plainModel), />Build it now</);
+  assert.ok(hasAction(plainModel, 'workOnIssueWithBot', 5));
+  assert.match(cardHtml(plainModel), />Work on this with Homeroom bot</);
+  assert.equal(menuLabels(plain, cardHtml(plainModel))[0], 'Build it in an agent session');
 });
 
 // #4530: Ask Homeroom bot to build this, pressed after its question, read
@@ -814,7 +818,7 @@ test('#4530: while Homeroom bot waits on an answer, the card answers it instead 
   assert.ok(!hasAction(on, 'answerBotOnRequest', 5, 41, 0));
   assert.match(cardHtml(on), /Homeroom bot is reading/);
   // Where it does not build for this viewer, nothing changes.
-  assert.ok(hasAction(makeAppView(ME)._issueCardModel(waiting), 'chooseIssueWork', 5));
+  assert.ok(hasAction(makeAppView(ME)._issueCardModel(waiting), 'workOnIssueWithBot', 5));
 });
 
 // #4663: the bot built this request, and its change now waits for approval —

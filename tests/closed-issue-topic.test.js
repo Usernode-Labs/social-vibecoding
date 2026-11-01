@@ -186,7 +186,8 @@ test('a closed issue page offers no claim, kudos, close or start-work actions', 
   const openKeys = AppView._detailActionsView('issue', open).pills.map((p) => p.key);
   for (const key of ['claim', 'bounty', 'close']) assert.ok(openKeys.includes(key), `open issue keeps ${key}`);
   const openCard = AppView._issueCardModel(open, { noNav: true });
-  assert.ok(openCard.actions.some((a) => a.label === 'Build it now'), 'open issue keeps Build it now (B8)');
+  // 1 Nov 2026: its one action is Work on this with Homeroom bot, where Build it now was.
+  assert.ok(openCard.actions.some((a) => a.label === 'Work on this with Homeroom bot'), 'open issue keeps its start-work action');
   assert.ok(!openCard.badges.some((b) => b.label === 'Closed'));
 });
 

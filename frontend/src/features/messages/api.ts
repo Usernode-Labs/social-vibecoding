@@ -121,8 +121,10 @@ const BOT_QUESTION_STATES = new Set(['open', 'answered', 'closed']);
 // B7: a change's ready card adds three: its preview (Try it), the person's
 // own Yes (Approve) and a reply quoting the card (Change something).
 // #4231: and `invite`, under a new project's first version going live.
-// #6071 follow-up: `design` opens the screen picker for the message's project (../design/pick.tsx).
-const BOT_ACTION_TYPES = new Set(['server', 'open', 'prompt', 'preview', 'vote', 'reply', 'invite', 'design']);
+// 1 Nov 2026: `design` (the screen picker) retired: the bot draws a screen
+// from words now, and an old Pick the screen button is no longer drawn.
+// `make` opens the sheet that makes a project from a design (./bot-make.tsx).
+const BOT_ACTION_TYPES = new Set(['server', 'open', 'prompt', 'preview', 'vote', 'reply', 'invite', 'make']);
 const MAX_BOT_ACTIONS = 3;
 
 /** B3: a bot message's buttons, as types.ts HomeroomBotAction: at most three, one primary. */
@@ -245,6 +247,12 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
     ...(broken.length ? { broken } : {}),
   } : null;
   const goesLive = normalizeGoesLive(pick(bot, 'goesLive'));
+  // C2.4: the project a design's card offers to make, and what it made.
+  const makeRow = record(pick(bot, 'makeProject'));
+  const makeRoot = strictId(pick(makeRow, 'rootId'));
+  const makeName = text(pick(makeRow, 'name')).slice(0, 60);
+  const makeProject = makeRoot && makeName
+    ? { name: makeName, rootId: makeRoot, version: strictId(pick(makeRow, 'version')) } : null;
   return {
     homeroomBot: {
       kind,
@@ -252,7 +260,12 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       appName: optional('appName'),
       ...(strictId(pick(bot, 'designVersion')) ? { designVersion: strictId(pick(bot, 'designVersion'))! } : {}),
       designTitle: optional('designTitle'),
-      ...(['fix', 'add', 'design'].includes(String(pick(bot, 'changeKind'))) ? { changeKind: String(pick(bot, 'changeKind')) as HomeroomBotMeta['changeKind'] } : {}),
+      // 1 Nov 2026: a thread about a request or a change is named by it.
+      ...(['request', 'change'].includes(String(pick(bot, 'aboutKind'))) && strictId(pick(bot, 'aboutNumber'))
+        ? { aboutKind: String(pick(bot, 'aboutKind')) as 'request' | 'change', aboutNumber: strictId(pick(bot, 'aboutNumber'))! }
+        : {}),
+      aboutTitle: optional('aboutTitle'),
+      ...(['fix', 'add', 'design', 'project'].includes(String(pick(bot, 'changeKind'))) ? { changeKind: String(pick(bot, 'changeKind')) as HomeroomBotMeta['changeKind'] } : {}),
       ...(issueNumber ? { issueNumber } : {}),
       issueTitle: optional('issueTitle'),
       ...(pick(bot, 'firstVersion') === true ? { firstVersion: true } : {}),
@@ -296,6 +309,9 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       waiting: optional('waiting'),
       ...(countOf(pick(bot, 'count')) !== null ? { count: countOf(pick(bot, 'count'))! } : {}),
       ...(pick(bot, 'alsoInChat') === true ? { alsoInChat: true } : {}),
+      ...(makeProject ? { makeProject } : {}),
+      madeSlug: optional('madeSlug'),
+      madeName: optional('madeName'),
     },
   };
 }
@@ -660,12 +676,15 @@ export interface DesignThread {
   number: number | null;
   app: { slug: string; name: string } | null;
   title: string;
-  surface: 'platform' | 'app';
+  /** 1 Nov 2026: 'new', a screen of a project not made yet, drawn with the native kit. */
+  surface: 'platform' | 'app' | 'new';
   route: string | null;
   width: number;
   height: number;
   latest: number;
   versions: Array<{ version: number; author: string; note: string | null; messageId: number | null }>;
+  /** 1 Nov 2026 (C2.2): the open request Propose it posts the plan on (the thread's), or null for a new one. */
+  planOn?: number | null;
 }
 
 export interface DesignCapture {
@@ -712,11 +731,12 @@ export async function getDesign(rootId: number): Promise<DesignThread> {
     number: strictId(pick(data, 'number')),
     app: text(pick(app, 'slug')) ? { slug: text(pick(app, 'slug')), name: text(pick(app, 'name')) || text(pick(app, 'slug')) } : null,
     title: text(pick(data, 'title')),
-    surface: pick(data, 'surface') === 'app' ? 'app' : 'platform',
+    surface: pick(data, 'surface') === 'app' ? 'app' : pick(data, 'surface') === 'new' ? 'new' : 'platform',
     route: text(pick(data, 'route')) || null,
     width: Number(pick(data, 'width')) || 1280,
     height: Number(pick(data, 'height')) || 800,
     latest: Number(pick(data, 'latest')) || 0,
+    planOn: strictId(pick(data, 'planOn')),
     versions: array(pick(data, 'versions')).map((v) => {
       const row = record(v);
       return {

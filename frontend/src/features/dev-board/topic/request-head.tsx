@@ -50,6 +50,7 @@ import {
   STAGES,
   newestSpecVersion,
   openRequestSpec,
+  publishRequestChanges,
   requestStage,
   requestThreadStore,
   type RequestSpecCard,
@@ -395,19 +396,32 @@ export function SpecCard({ card }: { card: RequestSpecCard }): ReactNode {
  * session (a plan is posted on a session, and the session that carries it
  * out is the change), and the plans no change was built from yet, in
  * order. Every version of a built plan goes with its change; the newest is
- * the one shown.
+ * the one shown. 1 Nov 2026 (C2.3): a change built from a plan posted on
+ * another session (a person's plan, or the bot's own plan its requester
+ * approved) names it (`builtFrom`), and goes with it too. The map is by
+ * the change's id.
  */
-export function plansByChange(specs: readonly RequestSpecCard[], changes: readonly { id: number }[]): {
+export function plansByChange(
+  specs: readonly RequestSpecCard[],
+  changes: readonly { id: number; builtFrom?: { sessionId: number } | null }[],
+): {
   plans: Map<number, RequestSpecCard>;
   unbuilt: RequestSpecCard[];
 } {
-  const ids = new Set(changes.map((c) => c.id));
+  const changeOf = new Map<number, number>();
+  for (const c of changes) {
+    const from = c.builtFrom?.sessionId;
+    if (from != null && !changeOf.has(from)) changeOf.set(from, c.id);
+  }
+  // A change's own session wins over a change built from it.
+  for (const c of changes) changeOf.set(c.id, c.id);
   const plans = new Map<number, RequestSpecCard>();
   const unbuilt: RequestSpecCard[] = [];
   for (const card of specs) {
     const session = card.read.kind === 'shared' ? card.read.sessionId : null;
-    if (session != null && ids.has(session)) {
-      if (!plans.has(session)) plans.set(session, card);
+    const change = session != null ? changeOf.get(session) : undefined;
+    if (change != null) {
+      if (!plans.has(change)) plans.set(change, card);
     } else unbuilt.push(card);
   }
   return { plans, unbuilt };
@@ -444,18 +458,37 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   const pill = requestPill(layout, r.status.closed ? 'closed' : track ? track.state : null, (id) => translate(id));
   // A plan a change in the thread was built from goes with that change.
   const { plans, unbuilt } = useMemo(() => plansByChange(specs, layout.changes), [specs, layout.changes]);
+  // 1 Nov 2026 (one page per thread): its changes' replies are in its one
+  // discussion. The stream tags each with its change, and the chat hears
+  // their live rows for this page too (GroupChat.setThreadMembers).
+  const changeKey = layout.changes.map((c) => `${c.id}:${c.number ?? ''}`).join(',');
+  useEffect(() => {
+    if (!threadRead.data) return;
+    publishRequestChanges(r.number, layout.changes);
+    (window as any).GroupChat?.setThreadMembers?.('issue', r.number, layout.changes.map((c) => c.id));
+  }, [r.number, changeKey, !!threadRead.data]);
   // #5987, 31 Oct 2026: Build it with your own Claude Code is a ⋯ row; it
   // opens its panel under the request.
   const agentSlug = r.slug || '';
   const ownAgent = !!(r.status.ownAgent && !r.status.closed && agentSlug && r.number);
   const [agentOpen, setAgentOpen] = useState(false);
   const menuKey = requestMenuKey(r.menuKey, r.number);
-  useThreadMenu(menuKey, 'agent', ownAgent ? [{
-    label: translate('project:topic.request.ownAgent.summary'),
-    icon: 'generate',
-    act: () => setAgentOpen(true),
-  }] : []);
-  const threadMenu = ownAgent || !!threadRead.data?.follow;
+  // 1 Nov 2026: Build it now left the face for Work on this with Homeroom
+  // bot, and is the row beside it here, as an agent session.
+  const agentSession = !!(r.status.agentSession && !r.status.closed && r.number);
+  useThreadMenu(menuKey, 'agent', [
+    ...(agentSession ? [{
+      label: translate('project:topic.request.agentSession.summary'),
+      icon: 'generate',
+      act: () => call('chooseIssueWork', [r.number]),
+    }] : []),
+    ...(ownAgent ? [{
+      label: translate('project:topic.request.ownAgent.summary'),
+      icon: 'generate',
+      act: () => setAgentOpen(true),
+    }] : []),
+  ]);
+  const threadMenu = ownAgent || agentSession || !!threadRead.data?.follow;
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}

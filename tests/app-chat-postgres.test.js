@@ -724,7 +724,7 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
 
   // ── The read cursor ──────────────────────────────────────────────────
 
-  await t.test('#6019: a request\'s stream reads its whole thread, not a change\'s replies', async () => {
+  await t.test('#6019: a request\'s stream reads its whole thread, its changes\' replies included (1 Nov 2026)', async () => {
     const merged = await makeApp('ta-merged', { owner: alice, name: 'Merged' });
     await member(merged, alice);
     await pool.query(`INSERT INTO requests (app_id, number, title) VALUES ($1, 61, 'Lead'), ($1, 62, 'Merged in')`, [merged.id]);
@@ -748,9 +748,28 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     await pool.query(
       `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref) VALUES ($1, $2, 'on the change', 'session', $3)`,
       [merged.id, alice.id, session.id]);
+    // One page per thread: a change built for the request has no page of
+    // its own, so what was said on it is in the request's one discussion,
+    // in time order, saying where it was written. A live chat nobody else
+    // may see yet is its owner's alone, as its page is.
+    const { rows: [draft] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues) VALUES ($1, $2, 'active', '{61}') RETURNING id`,
+      [merged.id, bob.id]);
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref) VALUES ($1, $2, 'on a draft', 'session', $3)`,
+      [merged.id, bob.id, draft.id]);
+    await at(61, 'after the change');
     const page = (await call('GET', '/api/apps/ta-merged/messages?thread_type=issue&thread_ref=61', alice)).body;
-    assert.deepEqual(page.messages.map((m) => m.content), ['on the lead', 'on the merged-in request'],
-      'both requests\' replies; the change\'s stay folded under its row');
+    assert.deepEqual(page.messages.map((m) => m.content), ['on the lead', 'on the merged-in request', 'on the change', 'after the change'],
+      'both requests\' replies and the change\'s, in time order');
+    const onChange = page.messages.find((m) => m.content === 'on the change');
+    assert.equal(onChange.thread_type, 'session');
+    assert.equal(Number(onChange.thread_ref), Number(session.id), 'a change\'s row says which change it was written on');
+    const bobs = (await call('GET', '/api/apps/ta-merged/messages?thread_type=issue&thread_ref=61', bob)).body;
+    assert.ok(bobs.messages.some((m) => m.content === 'on a draft'), 'the draft\'s owner reads its replies');
+    assert.ok(!page.messages.some((m) => m.content === 'on a draft'), 'nobody else does');
+    const newer = (await call('GET', `/api/apps/ta-merged/messages?thread_type=issue&thread_ref=61&after=${onOther.id}`, alice)).body;
+    assert.deepEqual(newer.messages.map((m) => m.content), ['on the change', 'after the change'], 'a catch-up reads them too');
     const alone = (await call('GET', '/api/apps/ta-merged/messages?thread_type=issue&thread_ref=63', alice)).body;
     assert.deepEqual(alone.messages, [], 'a number with no request reads only its own anchor');
   });

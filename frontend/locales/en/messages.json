@@ -1603,6 +1603,66 @@
     "text": "No longer needed.",
     "description": "Line under a message from Homeroom bot whose buttons no longer apply."
   },
+  "bot.make.title": {
+    "text": "Make the project",
+    "description": "Heading of the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card. \"Make\" is a verb."
+  },
+  "bot.make.close": {
+    "text": "Close",
+    "description": "Accessible name of the X button of the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card: closes it without making anything."
+  },
+  "bot.make.nameLabel": {
+    "text": "Name",
+    "description": "Label of the project's name field in the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card; it starts with the name the bot suggested."
+  },
+  "bot.make.audienceLabel": {
+    "text": "Who it is for",
+    "description": "Label over the three choices of who the new project is for, in the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card."
+  },
+  "bot.make.audience.solo": {
+    "text": "Just you",
+    "description": "One of the three choices of who the new project is for, in the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card: only the person."
+  },
+  "bot.make.audience.invited": {
+    "text": "Private community",
+    "description": "One of the three choices of who the new project is for, in the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card: the person and the people they invite."
+  },
+  "bot.make.audience.open": {
+    "text": "Public community",
+    "description": "One of the three choices of who the new project is for, in the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card: anyone on Homeroom."
+  },
+  "bot.make.audienceHint.solo": {
+    "text": "Only you can see it and change it.",
+    "description": "The line under \"Just you\" in the sheet that makes a new project from a design."
+  },
+  "bot.make.audienceHint.invited": {
+    "text": "You and the people you invite.",
+    "description": "The line under \"Private community\" in the sheet that makes a new project from a design."
+  },
+  "bot.make.audienceHint.open": {
+    "text": "Anyone on Homeroom can see it and join.",
+    "description": "The line under \"Public community\" in the sheet that makes a new project from a design."
+  },
+  "bot.make.note": {
+    "text": "Homeroom bot builds its first version from this design and tells you here when it's live.",
+    "description": "The line above the button of the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card: what happens after it is made."
+  },
+  "bot.make.submit": {
+    "text": "Make it",
+    "description": "The button of the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card: makes the project. \"Make\" is a verb."
+  },
+  "bot.make.making": {
+    "text": "Making it…",
+    "description": "The button of the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card while the project is being made."
+  },
+  "bot.make.error": {
+    "text": "The project could not be made just now. Try again in a minute.",
+    "description": "Shown in the sheet that makes a new project from a design Homeroom bot (the platform's assistant) drew with the person in a private thread, opened by \"Make the project\" under the bot's card when making the project failed for a reason that was not said."
+  },
+  "bot.make.open": {
+    "text": "Open {{project}}",
+    "description": "Link under Homeroom bot's card once the person made a new project from a design: opens the project they made, by its name."
+  },
   "bot.posted.answer.firstVersion": {
     "text": "Your answer is posted on {{project}}’s first-version request’s public discussion, where the group can see it.",
     "description": "Note under a question from Homeroom bot, before and after the person answers: their answer is copied to the public discussion of the request it is about. The request is the one for the project's first version; {{project}} is the project's name."
@@ -2033,7 +2093,7 @@
   },
   "store.header.main": {
     "text": "Main Chat",
-    "description": "Title over Main Chat, the person's private chat with Homeroom bot: in the app header when it is opened from the AI tab, over it where it is docked beside the AI tab's list, and over it in the AI tab's drawer on a phone. A name, like a channel's."
+    "description": "Title over Main Chat, the person's private chat with Homeroom bot: the first row of the AI tab's list, which opens it, and over it in the column beside that list and in the AI tab's drawer on a phone. A name, like a channel's."
   },
   "store.askForChangesPlaceholder": {
     "text": "What should change?",
@@ -3335,22 +3395,6 @@
     "text": "Thread",
     "description": "Title at the top of the side pane showing a thread of replies under one message. A noun."
   },
-  "design.start.opening": {
-    "text": "Opening a design thread for this screen…",
-    "description": "Toast while the screen just captured is sent to open a private design thread in the chat with Homeroom bot."
-  },
-  "design.start.tooBig": {
-    "text": "This screen is too big to capture. Try a smaller window, or a simpler screen.",
-    "description": "Toast when the Homeroom page on view is too large to copy into a design thread."
-  },
-  "design.start.appUnanswered": {
-    "text": "This app didn't send its screen, so it couldn't be captured. Try again in a moment.",
-    "description": "Toast when the app on its App tab did not answer the request for a copy of its screen (an old bridge, or it was busy)."
-  },
-  "design.start.failed": {
-    "text": "The design thread couldn't be opened just now. Try again in a minute.",
-    "description": "Toast when opening a design thread failed for a reason that was not said."
-  },
   "design.pane.label": {
     "text": "Design preview",
     "description": "Accessible name of the pane beside a design thread that draws the design's current version."
@@ -3423,9 +3467,33 @@
     "text": "Chat",
     "description": "On a phone: switches from the design's preview to its thread."
   },
-  "design.pane.openInMessages": {
-    "text": "Open the design",
-    "description": "In a design thread opened in the Homeroom bot tab's Main Chat, where its preview is not drawn: opens the thread in Messages, with the preview beside it."
+  "design.pane.back": {
+    "text": "Back to the thread",
+    "description": "On a phone, the arrow at the top left of a design's preview, which covers the screen: goes back to the private thread the design is in. Its accessible name and tooltip."
+  },
+  "design.pane.close": {
+    "text": "Close the preview",
+    "description": "The × at the right of a design's preview, the column beside a private thread on the Homeroom bot tab: closes the preview. Its accessible name and tooltip."
+  },
+  "design.card.open": {
+    "text": "Open preview",
+    "description": "Button under the small picture of a design's version, in a private thread with Homeroom bot: opens the design's preview beside the thread, at that version."
+  },
+  "design.card.openVersion": {
+    "text": "Open version {{version}} in the preview",
+    "description": "Accessible name of the small picture of a design's version in a private thread with Homeroom bot, which opens the preview as the Open preview button does. {{version}} is the version's number."
+  },
+  "design.card.label": {
+    "text": "{{title}} · version {{version}}",
+    "description": "The line beside Open preview under the small picture of a design's version in a private thread: the screen's name and the version's number."
+  },
+  "design.card.frameTitle": {
+    "text": "Version {{version}} of the design, small",
+    "description": "Title of the frame that draws a design's version small in a private thread with Homeroom bot (read by assistive technology). {{version}} is the version's number."
+  },
+  "design.card.failed": {
+    "text": "This version couldn't be drawn just now.",
+    "description": "In place of the small picture of a design's version in a private thread, when it could not be read."
   },
   "newThread.start": {
     "text": "New thread",
@@ -3471,17 +3539,9 @@
     "text": "Design a screen",
     "description": "A choice in the change menu of a new thread with Homeroom bot: work on how a screen looks, in a design thread with a live preview."
   },
-  "newThread.designHint": {
-    "text": "Go to the screen you want to change and tap Use this screen. You and Homeroom bot design it in a private thread.",
-    "description": "Shown in a new thread when Design a screen is chosen and no project is: what Pick the screen does next."
-  },
-  "newThread.designHintProject": {
-    "text": "Go to the screen of {{project}} you want to change and tap Use this screen. You and Homeroom bot design it in a private thread.",
-    "description": "Shown in a new thread when Design a screen and a project are chosen: what Pick the screen does next."
-  },
-  "newThread.pickScreen": {
-    "text": "Pick the screen",
-    "description": "Button in a new thread when Design a screen is chosen: takes the person to the project with a floating Use this screen bar."
+  "newThread.draws": {
+    "text": "Describe the screen and Homeroom bot draws it.",
+    "description": "In a new thread with Homeroom bot, under the kind of change once \"Design a screen\" is picked: the person says what the screen should be in the message box, and the bot draws it in the thread."
   },
   "newThread.hint": {
     "text": "Start a change here, or just type what you want into the chat.",
@@ -3498,26 +3558,6 @@
   "newThread.failed": {
     "text": "The thread couldn't be started just now. Try again in a minute.",
     "description": "Shown in a new thread when starting it failed for a reason that was not said."
-  },
-  "design.pick.label": {
-    "text": "Pick a screen to design",
-    "description": "Accessible name of the floating bar shown while the person picks the screen to design."
-  },
-  "design.pick.hint": {
-    "text": "Go to the screen you want to design, then tap Use this screen.",
-    "description": "The floating bar shown while picking a screen to design, when no project was chosen."
-  },
-  "design.pick.hintProject": {
-    "text": "Go to the screen of {{project}} you want to design, then tap Use this screen.",
-    "description": "The floating bar shown while picking a screen to design, for a chosen project."
-  },
-  "design.pick.use": {
-    "text": "Use this screen",
-    "description": "The floating bar's button: copies the screen on view into a design thread with Homeroom bot."
-  },
-  "design.pick.cancel": {
-    "text": "Cancel",
-    "description": "The floating bar's button that stops picking a screen, saving nothing."
   },
   "design.pane.showPreview": {
     "text": "Preview",
@@ -3555,13 +3595,25 @@
     "text": "It couldn't be filed just now. Try again in a minute.",
     "description": "Shown in the Propose it card when filing failed for a reason that was not said."
   },
+  "design.propose.headingOn": {
+    "text": "Post this design as a plan",
+    "description": "Heading of the design pane's Propose it card when the design's thread is about a request (a filed issue): it posts the design on that request as the person's plan."
+  },
+  "design.propose.warningOn": {
+    "text": "This posts version {{version}} as your plan on request #{{number}} on {{project}}, under your name, where anyone who can see the project can see it. Check it shows nothing private, such as names, messages or numbers. This thread stays private.",
+    "description": "Warning in the design pane's Propose it card when the thread is about a request (a filed issue), before anything is posted: what becomes public."
+  },
+  "design.propose.sendOn": {
+    "text": "Post it as a plan",
+    "description": "Submit button of the design pane's Propose it card when the thread is about a request: posts the design on it as the person's plan."
+  },
+  "design.pane.postedOn": {
+    "text": "Posted as a plan on request #{{number}}",
+    "description": "Link in the design pane once the design was posted as a plan on a request (a filed issue): opens that request. The design can be posted again as the plan's next version."
+  },
   "replies.close": {
     "text": "Close thread",
     "description": "Accessible name and tooltip of the X button on the thread side pane: closes the thread and returns to the conversation."
-  },
-  "replies.backToMain": {
-    "text": "Back to Main Chat",
-    "description": "Accessible name and tooltip of the back arrow on a thread opened in Main Chat (the person's private chat with Homeroom bot, on the AI tab): closes the thread and shows Main Chat again. \"Main Chat\" is that chat's name; keep it the same as its title."
   },
   "replies.resize": {
     "text": "Resize the thread",
@@ -4223,6 +4275,14 @@
     "text": "Only you · Not in a community yet",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a private thread's row (its whole line; read by a screen reader too) with an idea that is for no project yet: only the person can see it."
   },
+  "ai.row.privateAbout": {
+    "text": "Only you · {{project}} · About #{{number}}",
+    "description": "Tooltip (and phone second line) of a row in the Homeroom bot tab's Needs you list for a private thread opened from a request's page: only the person sees it, the project, and the request it is about."
+  },
+  "ai.row.privateAboutChange": {
+    "text": "Only you · {{project}} · About change #{{number}}",
+    "description": "Tooltip (and phone second line) of a row in the Homeroom bot tab's Needs you list for a private thread opened from a change's page: only the person sees it, the project, and the change it is about."
+  },
   "ai.pill.vote": {
     "text": "Vote",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row: the person owes a vote on it."
@@ -4375,6 +4435,10 @@
     "text": "{{project}} · #{{number}} · Nobody is building it yet",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): a request in a thread the person is in that nobody has started a change for, and that Homeroom bot is not working on."
   },
+  "ai.up.awaitingPlan": {
+    "text": "{{project}} · #{{number}} · Waiting for your plan",
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too): their own request, which Homeroom bot does not build while they work on it with it in a private thread, until they post a plan or let it go ahead."
+  },
   "ai.up.notPickedUpBare": {
     "text": "{{project}} · Nobody is building it yet",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Tooltip of a Waiting row (its whole line; read by a screen reader too) with no number (a decision): nobody has started a change for it. {{project}} is the project's name."
@@ -4401,7 +4465,7 @@
   },
   "ai.drawer.back": {
     "text": "Back to the list",
-    "description": "The AI tab on a phone: the back arrow over an open thread (the chat with Homeroom bot, or a request), which slides the list back in."
+    "description": "The AI tab on a phone: the back arrow over what is open beside the list (Main Chat, the chat with Homeroom bot, or one of its threads), which slides the list back in. Its accessible name and tooltip."
   },
   "ai.drawer.peek": {
     "text": "Open {{title}}",
@@ -4559,6 +4623,10 @@
     "text": "Nobody yet",
     "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: nobody is building it yet."
   },
+  "ai.short.yourPlan": {
+    "text": "Your plan",
+    "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting: Homeroom bot waits for the person's plan for their own request before it builds it."
+  },
   "ai.short.waiting": {
     "text": "Waiting",
     "description": "The AI tab's main view: the one word at the right end of a one-line row in Waiting, when nothing more specific applies."
@@ -4602,5 +4670,33 @@
   "ai.main.sub": {
     "text": "Only you can see this chat",
     "description": "The AI tab on a wide window: the line under the title \"Main\" over the person's private chat with Homeroom bot, docked beside their list of work, after a lock glyph. Says that nobody else can read it."
+  },
+  "ai.main.new_one": {
+    "text": "{{count}} new",
+    "description": "The AI tab's list: on the right of its first row, Main Chat (the person's private chat with Homeroom bot), how many of its messages they have not read yet. Shown only when there is any."
+  },
+  "ai.main.new_other": {
+    "text": "{{count}} new",
+    "description": "The AI tab's list: on the right of its first row, Main Chat (the person's private chat with Homeroom bot), how many of its messages they have not read yet. Shown only when there is any."
+  },
+  "ai.thread.sub": {
+    "text": "Only you can see this thread",
+    "description": "The AI tab: the line under the name of one of the person's private threads with Homeroom bot, shown alone in the column where Main Chat goes (or a phone's drawer), after a lock glyph. Nothing in it is public until they file it or post it."
+  },
+  "ai.thread.aboutRequest": {
+    "text": "#{{number}} {{title}}",
+    "description": "The name over a private thread with Homeroom bot that was opened from a request's page, and of its row in the list: the request's number and title, for example \"#18 Dark mode\"."
+  },
+  "ai.thread.aboutRequestUntitled": {
+    "text": "Request #{{number}}",
+    "description": "The name over a private thread with Homeroom bot that was opened from a request's page, when the request's title is not known."
+  },
+  "ai.thread.aboutChange": {
+    "text": "Change #{{number}} {{title}}",
+    "description": "The name over a private thread with Homeroom bot that was opened from a change's page: the change's number and title."
+  },
+  "ai.thread.aboutChangeUntitled": {
+    "text": "Change #{{number}}",
+    "description": "The name over a private thread with Homeroom bot that was opened from a change's page, when the change's title is not known."
   }
 }

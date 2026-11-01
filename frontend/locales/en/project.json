@@ -799,6 +799,10 @@
     "text": "Build it",
     "description": "Button on a new request's row in the \"New for you\" card on the Workshop tab of a project's page: starts building it, by asking Homeroom bot or with the viewer's own coding agent, whichever the request's own page offers."
   },
+  "workshop.fresh.workOnIt": {
+    "text": "Work on it",
+    "description": "Button on a new request's row in the \"New for you\" card on the Workshop tab of a project's page: opens a thread only the viewer can see, in their chat with Homeroom bot (the platform's assistant), about this request, as the request's own \"Work on this with Homeroom bot\" does. \"Work on\" is a verb."
+  },
   "workshop.private.title": {
     "text": "Private requests",
     "description": "Small-caps label over the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
@@ -3399,6 +3403,26 @@
     "text": "Build it with your own Claude Code",
     "description": "Folded line under the status card on a request's page; opening it shows a link that hands this request to Claude Code on the web, on the person's own Claude plan. \"Claude Code\" is a product name."
   },
+  "topic.request.agentSession.summary": {
+    "text": "Build it in an agent session",
+    "description": "Row in the ⋯ menu of a request's page, next to \"Build it with your own Claude Code\": starts a session where the viewer builds the request with an AI coding agent. An agent session is a working conversation with an AI coding agent. \"Build\" is a verb."
+  },
+  "topic.workWithBot.button": {
+    "text": "Work on this with Homeroom bot",
+    "description": "Quiet button under a change on a request's page and on a change's own page: opens a thread only the viewer can see, in their chat with Homeroom bot (the platform's assistant), about this change, to ask about it or sketch a revision. \"Work on\" is a verb."
+  },
+  "topic.workWithBot.title": {
+    "text": "Ask Homeroom bot about this change, or sketch a revision, in a thread only you can see",
+    "description": "Tooltip of the \"Work on this with Homeroom bot\" button under a change. Homeroom bot is the platform's assistant."
+  },
+  "topic.workWithBot.opening": {
+    "text": "Opening…",
+    "description": "The \"Work on this with Homeroom bot\" button's words while its private thread with Homeroom bot opens."
+  },
+  "topic.workWithBot.failed": {
+    "text": "The thread with Homeroom bot could not be started just now. Try again in a minute.",
+    "description": "Toast when \"Work on this with Homeroom bot\" could not open its private thread with Homeroom bot, the platform's assistant."
+  },
   "topic.request.ownAgent.lead": {
     "text": "Claude Code opens with a prompt to build this request already typed. Check it and press send. It runs on your own Claude plan.",
     "description": "Explains, on a request's page, what the \"Open in Claude Code\" link below it does."
@@ -3522,6 +3546,14 @@
   "topic.request.stream.replies_other": {
     "text": "{{count}} replies",
     "description": "Line under a request, over the replies to it, on the request's page: how many replies people have written. {{count}} is that number. Reply is a noun."
+  },
+  "topic.request.stream.onChange": {
+    "text": "on Change #{{number}}",
+    "description": "Small words after the time of a reply or a line in a request's discussion that was written on one of the request's changes, which has no page of its own: the request's page holds the discussion of the whole piece of work. {{number}} is the change's number."
+  },
+  "topic.request.stream.onChangeUnnumbered": {
+    "text": "on a change",
+    "description": "Small words after the time of a reply or a line in a request's discussion that was written on one of the request's changes that has no number yet: the request's page holds the discussion of the whole piece of work."
   },
   "topic.request.stream.noReplies": {
     "text": "No replies yet",
@@ -5871,21 +5903,41 @@
     "text": "Being built. Its votes open once it is up for a vote.",
     "description": "Line under a change on a request's page, under the request: its changes and its vote to close that is still being built, where its Votes and Testing cards will be."
   },
-  "topic.thread.page.earlier_one": {
-    "text": "{{count}} earlier reply on this change",
-    "description": "Button under a change on a request's page, under the request: its changes and its vote to close: opens the replies people wrote on the change's own page before. {{count}} is how many."
-  },
-  "topic.thread.page.earlier_other": {
-    "text": "{{count}} earlier replies on this change",
-    "description": "Button under a change on a request's page, under the request: its changes and its vote to close: opens the replies people wrote on the change's own page before. {{count}} is how many."
-  },
-  "topic.thread.page.earlierHide": {
-    "text": "Hide the earlier replies",
-    "description": "Button under a change on a request's page, under the request: its changes and its vote to close, while its earlier replies are open: folds them away again."
-  },
   "topic.thread.page.rowBy": {
     "text": "{{by}} · #{{number}}",
     "description": "Second line of one competing change's row on a request's page, under the request: its changes and its vote to close: who built it and the change's number."
+  },
+  "topic.thread.page.more": {
+    "text": "More for this change",
+    "description": "Accessible name and tooltip of the ⋯ button on the line of a change that has no number yet, on its request's page (where a change built for a request is shown, in place of a page of its own): opens the menu with everything else that can be done with the change, such as Details or Edit description."
+  },
+  "topic.thread.page.moreNumbered": {
+    "text": "More for Change #{{number}}",
+    "description": "Accessible name and tooltip of the ⋯ button on a change's line, on its request's page (where a change built for a request is shown, in place of a page of its own): opens the menu with everything else that can be done with the change, such as Details or Edit description. {{number}} is the change's number."
+  },
+  "topic.thread.page.shotBefore": {
+    "text": "Before",
+    "description": "Label on the small picture of how the project looked before a change, beside the one of how it looks after, on the change's section of its request's page. Tapping either opens the before and after viewer."
+  },
+  "topic.thread.page.shotAfter": {
+    "text": "After",
+    "description": "Label on the small picture of how the project looks with a change, beside the one of how it looked before, on the change's section of its request's page. Tapping either opens the before and after viewer."
+  },
+  "topic.thread.page.shotsOpen": {
+    "text": "See the before and after",
+    "description": "Accessible name of the pair of small before and after pictures on a change's section of its request's page: opens the before and after viewer over the page."
+  },
+  "topic.thread.page.shotsExpand": {
+    "text": "Expand",
+    "description": "Button beside the small before and after pictures on a change's section of its request's page: opens the before and after viewer over the page, at nearly the window's size. The same word the viewer's own Expand button uses."
+  },
+  "topic.thread.page.elsewhere": {
+    "text": "Change #{{number}} for this request is on <0>#{{on}}</0>",
+    "description": "Line on a request's page when a change that would close it lives on another request's page (a change for several requests is shown on the first one's). {{number}} is the change's number; {{on}} is the other request's number, and <0></0> links to that request's page, at the change."
+  },
+  "topic.thread.page.elsewhereUnnumbered": {
+    "text": "A change for this request is on <0>#{{on}}</0>",
+    "description": "Line on a request's page when a change that would close it, and has no number yet, lives on another request's page (a change for several requests is shown on the first one's). {{on}} is the other request's number, and <0></0> links to that request's page, at the change."
   },
   "topic.thread.ballot.close": {
     "text": "Close it",
