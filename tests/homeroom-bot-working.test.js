@@ -240,6 +240,47 @@ function designTurn(steps, { handoff = true, design = null, current = null } = {
 
 const SCREEN = { title: 'Main screen', size: 'phone', html: '<main class="keys">Keys</main>', note: 'The main screen' };
 
+// 1 Nov 2026: drawn from Main Chat, in the thread it opens, the bot's typing
+// (its working card) goes to that thread; asked in a thread, it is there.
+test('a screen asked for in Main Chat moves the working card into the thread the designer opens', async () => {
+  const run = async ({ threadRootId = null } = {}) => {
+    const moved = [];
+    const doings = [];
+    const opened = [];
+    const threads = {
+      async draftingThread() { return { rootId: 500, threadId: 7, app: null }; },
+      async openDrawThread(_pool, args) { opened.push(args.title); return { rootId: 640, threadId: 8, app: null }; },
+      async designFor() { return null; },
+    };
+    await designBot.draw({ async query() { return { rows: [] }; } }, {}, {
+      bot: { id: 2, username: 'homeroom_bot' },
+      user: { id: 9, username: 'evan' },
+      settings: { mode: 'off' },
+      conversationId: 41,
+      message: { id: 72, content: 'Draw the main screen of Ear Trainer' },
+      ask: { app: null, title: 'Main screen', brief: 'The main screen' },
+      deps: {
+        threadRootId,
+        designThreads: threads,
+        dm: { async sendDm() { return { messageId: 901 }; } },
+        mayor: Object.assign(Object.create(mayor), { async turnsLastHour() { return 0; } }),
+        moveTyping: async (rootId) => { moved.push(rootId); },
+        doing: async (what) => { doings.push(what); },
+      },
+    });
+    return { moved, doings, opened };
+  };
+  const fromMain = await run();
+  assert.deepEqual(fromMain.opened, ['Main screen']);
+  assert.deepEqual(fromMain.moved, [640], 'to the thread it opened');
+  assert.deepEqual(fromMain.doings, [{ kind: 'drawing' }], 'saying it draws there');
+  const inThread = await run({ threadRootId: 500 });
+  assert.deepEqual([inThread.opened, inThread.moved], [[], []], 'asked in a thread, the typing is there already');
+  // A move that fails costs no drawing.
+  const src = read('src/services/design-bot.js');
+  assert.match(src, /if \(!inThread && typeof deps\.moveTyping === 'function'\) \{\n\s+try \{\n\s+await deps\.moveTyping\(room\.rootId\);/);
+});
+
 test('the designer goes on after Evan\'s "Drawing it now…" with nothing drawn, and draws', async () => {
   const turn = designTurn([
     EVANS_SECOND,

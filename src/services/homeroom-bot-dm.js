@@ -874,11 +874,16 @@ const TYPING_FIRST_WAIT_MS = 2000;
 
 /**
  * Run `work` with the bot typing in the conversation, and stop when it
- * settles. `work` is handed { doing }, which says what it is doing now
- * (startTyping's stop.doing).
+ * settles. `work` is handed { doing, moveTo }: `doing` says what it is
+ * doing now (startTyping's stop.doing); `moveTo(threadRootId)` carries the
+ * typing, and what it last said it was doing, to another thread of the
+ * same conversation where the answer goes on (null: the main chat).
  */
 async function whileTyping(pool, { botId, conversationId, threadRootId = null, ws = null }, work) {
-  const stop = startTyping(pool, { botId, conversationId, threadRootId, ws });
+  let stop = startTyping(pool, { botId, conversationId, threadRootId, ws });
+  let here = Number(threadRootId) || null;
+  // What it last said it is doing, for the place it moves to.
+  let said = null;
   // "typing" goes out before anything the answer does: a quick answer's own
   // events (its quote answered, its message) used to reach the reader first
   // when the typing event's audience lookup was slower than the answer.
@@ -888,8 +893,25 @@ async function whileTyping(pool, { botId, conversationId, threadRootId = null, w
     new Promise((resolve) => { waited = setTimeout(resolve, TYPING_FIRST_WAIT_MS); waited.unref?.(); }),
   ]);
   clearTimeout(waited);
+  const typing = {
+    doing: (what) => { said = what; return stop.doing(what); },
+    // 1 Nov 2026: a screen asked for in Main Chat is drawn in a thread the
+    // designer opens (design-bot.js draw), so the working card waited in
+    // Main Chat while the new thread looked idle. The typing goes there:
+    // started in the thread first, saying what it was doing, then stopped
+    // here, so the card is never gone from both.
+    moveTo: async (rootId) => {
+      const there = Number(rootId) || null;
+      if (there === here) return;
+      const was = stop;
+      stop = startTyping(pool, { botId, conversationId, threadRootId: there, ws });
+      here = there;
+      if (said) await stop.doing(said);
+      await was();
+    },
+  };
   try {
-    return await work({ doing: stop.doing });
+    return await work(typing);
   } finally {
     await stop();
   }
@@ -4302,7 +4324,7 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
   // stop.doing), for the working card the screen draws in its place.
   return whileTyping(pool, { botId: bot.id, conversationId, threadRootId, ws: deps.ws },
     (typing) => answerUserMessage(pool, config, {
-      bot, user, settings, conversationId, message, deps: { ...deps, doing: typing.doing },
+      bot, user, settings, conversationId, message, deps: { ...deps, doing: typing.doing, moveTyping: typing.moveTo },
     }));
 }
 

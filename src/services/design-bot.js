@@ -923,6 +923,17 @@ async function draw(pool, config, { bot, user, settings, conversationId, message
       bot, userId: user.id, content: NO_THREAD_TEXT, idempotencyKey: mayor.answerKey(message.id), replyToId: message.id, moment: 'reply',
     });
   }
+  // 1 Nov 2026: a thread opened for it from Main Chat is where it draws, so
+  // the bot's typing, and its working card, go there too (homeroom-bot-dm.js
+  // whileTyping moveTo). Best-effort: a card left behind costs no drawing.
+  if (!inThread && typeof deps.moveTyping === 'function') {
+    try {
+      await deps.moveTyping(room.rootId);
+      if (typeof deps.doing === 'function') await deps.doing({ kind: 'drawing' });
+    } catch (err) {
+      log.warn('design-bot', 'Could not move the bot\'s typing to the new thread', { err: clip(err?.message, 200) });
+    }
+  }
   const design = await threads.designFor(pool, { userId: user.id, rootId: room.rootId });
   return answer(pool, config, {
     bot, user, settings, conversationId, message, design, thread: room, app: ask.app || null, brief: ask.brief || null,
