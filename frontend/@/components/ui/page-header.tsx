@@ -126,7 +126,7 @@ export function PillTitle({
     <button
       type="button"
       className={cn(
-        'flex min-w-0 max-w-full items-center gap-2.5 rounded-full bg-zinc-200/60 py-1.5 pl-1.5 pr-4 text-left transition-colors hover:bg-zinc-200 dark:bg-zinc-800/60 dark:hover:bg-zinc-800',
+        'flex min-w-0 max-w-full items-center gap-2.5 rounded-full bg-zinc-200/60 py-1.5 ps-1.5 pe-4 text-start transition-colors hover:bg-zinc-200 dark:bg-zinc-800/60 dark:hover:bg-zinc-800',
         className,
       )}
       {...props}

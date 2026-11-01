@@ -31,6 +31,7 @@ import { EmbeddedConversation } from '../messages';
 import { BOT_AVATAR } from '../messages/format';
 import { isPan, landingIn, MESSAGES_AT, SLIDE_EASE, SLIDE_MS } from '../nav-drawer/drawer-math';
 import { reducedMotion } from '../nav-drawer/drawer-store';
+import { dirSign } from '../../lib/i18n/direction';
 
 const PHONE_QUERY = '(max-width: 767.98px)';
 
@@ -146,7 +147,7 @@ export function AiDrawer({ level, onLevel, list, pane, peekLabel }: {
       <div
         className="ai-drawer-strip"
         style={{
-          transform: `translateX(${-offset * width}px)`,
+          transform: `translateX(${-offset * width * dirSign()}px)`,
           transition: still ? 'none' : `transform ${SLIDE_MS}ms ${SLIDE_EASE}`,
         }}
       >

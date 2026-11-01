@@ -726,7 +726,7 @@ export function CardHistory({ view, open }: { view: StoryRowView; open: boolean 
     <div ref={boxRef} data-notif-history-list={view.id} className="col-start-1 row-start-2">
       {/* The padding is the inner box's, so the outer one is exactly as
           tall as the card grows by. */}
-      <div className="pl-[4.75rem] pr-4 pb-2">
+      <div className="ps-[4.75rem] pe-4 pb-2">
       {on ? (
         <div className="py-1.5 border-t border-black/[.06] dark:border-white/[.08]">
           <span className="block text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">
@@ -755,7 +755,7 @@ export function CardHistory({ view, open }: { view: StoryRowView; open: boolean 
           <>
             {line.notification && line.notification.unread ? (
               <span
-                className="absolute -left-3 top-3 w-1.5 h-1.5 rounded-full bg-zinc-900 dark:bg-zinc-100"
+                className="absolute -start-3 top-3 w-1.5 h-1.5 rounded-full bg-zinc-900 dark:bg-zinc-100"
                 aria-label={t('notifications:row.unreadDot')}
               >
               </span>
@@ -771,17 +771,17 @@ export function CardHistory({ view, open }: { view: StoryRowView; open: boolean 
             ) : null}
           </>
         );
-        const cls = 'relative block w-full text-left py-1.5 border-t border-black/[.06] dark:border-white/[.08]';
+        const cls = 'relative block w-full text-start py-1.5 border-t border-black/[.06] dark:border-white/[.08]';
         // #5775: a notification listed here can be saved on its own. The
         // bookmark is a SIBLING of the line's open button, never inside it (a
         // button in a button is neither focusable nor clickable), so the line
-        // gives the time room on its right (pr-8) for it to sit in.
+        // gives the time room on its right (pe-8) for it to sit in.
         return line.notification ? (
           <div key={line.key} className="relative">
             <button
               type="button"
               data-notif-history-row={line.notification.id}
-              className={cls + ' pr-8 hover:text-violet-700 dark:hover:text-violet-400'}
+              className={cls + ' pe-8 hover:text-violet-700 dark:hover:text-violet-400'}
               onClick={(event) => {
                 // Stopped like every click in this sheet: the list re-renders
                 // under it, and an outside-click listener would close the sheet.
@@ -797,7 +797,7 @@ export function CardHistory({ view, open }: { view: StoryRowView; open: boolean 
               aria-pressed={line.notification.saved ? 'true' : 'false'}
               aria-label={t(line.notification.saved ? 'notifications:row.unsave' : 'notifications:row.save')}
               title={t(line.notification.saved ? 'notifications:row.unsave' : 'notifications:row.save')}
-              className={'absolute right-0 top-1 flex h-7 w-7 items-center justify-center rounded-full '
+              className={'absolute end-0 top-1 flex h-7 w-7 items-center justify-center rounded-full '
                 + 'transition-colors hover:bg-black/[.04] dark:hover:bg-white/[.06] '
                 + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'}
               onClick={(event) => {

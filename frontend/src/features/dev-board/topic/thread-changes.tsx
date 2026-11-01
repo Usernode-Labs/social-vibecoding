@@ -157,7 +157,7 @@ function ChangeLine({ item, letter = null }: { item: ThreadItem; letter?: string
       <div className={KICKER}>{kicker}</div>
       <button
         type="button"
-        className="mt-0.5 block min-w-0 text-left text-[15px] font-[650] leading-snug text-zinc-900 hover:underline dark:text-zinc-100"
+        className="mt-0.5 block min-w-0 text-start text-[15px] font-[650] leading-snug text-zinc-900 hover:underline dark:text-zinc-100"
         data-thread-change-open={item.id}
         onClick={() => openChange(item.id)}
       >
@@ -204,7 +204,7 @@ function EarlierReplies({ item }: { item: ThreadItem }): ReactNode {
         {open ? t('project:topic.thread.page.earlierHide') : t('project:topic.thread.page.earlier', { count: item.replies })}
       </button>
       {open ? (
-        <div className="mt-1 flex flex-col gap-1 border-l-2 border-[color:var(--app-sheet-line)] pl-2">
+        <div className="mt-1 flex flex-col gap-1 border-s-2 border-[color:var(--app-sheet-line)] ps-2">
           {replies.map((reply) => (
             <span key={reply.id} className="msgx-thread-line">
               <span className="msgx-thread-face">
@@ -251,7 +251,7 @@ function CompetingRow({ item, i, view, plan = null }: { item: ThreadItem; i: num
     <div role="listitem" className={`flex items-start gap-3 px-3.5 py-3${i ? ' border-t border-[color:var(--app-sheet-line)]' : ''}`} data-change-row={letterOf(i)} data-thread-change={item.id}>
       <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-zinc-200/80 text-[13px] font-bold text-zinc-700 dark:bg-zinc-700/80 dark:text-zinc-200" aria-hidden="true">{letterOf(i)}</span>
       <span className="min-w-0 flex-1">
-        <button type="button" className="block min-w-0 text-left text-[15px] font-[650] leading-snug text-zinc-900 hover:underline dark:text-zinc-100" onClick={() => openChange(item.id)}>
+        <button type="button" className="block min-w-0 text-start text-[15px] font-[650] leading-snug text-zinc-900 hover:underline dark:text-zinc-100" onClick={() => openChange(item.id)}>
           {item.title || t('project:topic.thread.item.changeUnnumbered')}
         </button>
         <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[13px] text-zinc-500 dark:text-zinc-400">
@@ -395,7 +395,7 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
                 <div key={c.key} className="grid grid-cols-[66px_minmax(0,1fr)_18px] items-center gap-2.5 text-[13px]" data-ballot-tally={c.key}>
                   <span className="truncate font-semibold text-zinc-700 dark:text-zinc-200">{c.label}</span>
                   <Bar yes={c.yes} need={c.need} label={t('project:topic.thread.ballot.tally', { choice: c.label, yes: c.yes, need: c.need })} />
-                  <span className="text-right tabular-nums text-zinc-500 dark:text-zinc-400">{c.yes}</span>
+                  <span className="text-end tabular-nums text-zinc-500 dark:text-zinc-400">{c.yes}</span>
                 </div>
               ))}
             </div>
@@ -451,7 +451,7 @@ function CloseVote({ slug, close, onChanged }: { slug: string | null; close: Thr
   return (
     <div className="mt-3" data-close-proposal={close.id}>
       <div className={KICKER}>{t('project:topic.thread.close.kicker', { by: close.by || t('project:topic.thread.page.someone') })}</div>
-      <button type="button" className="mt-0.5 block min-w-0 text-left text-[15px] font-[650] leading-snug text-zinc-900 hover:underline dark:text-zinc-100" onClick={() => appView()?.openTopic?.('gov', close.id)}>
+      <button type="button" className="mt-0.5 block min-w-0 text-start text-[15px] font-[650] leading-snug text-zinc-900 hover:underline dark:text-zinc-100" onClick={() => appView()?.openTopic?.('gov', close.id)}>
         {close.reason || close.title || t('project:topic.thread.item.close')}
       </button>
       <div className="dev-change-pair mt-2">

@@ -257,7 +257,7 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
     ];
     return (
       <div ref={storyRef} data-landing-story="" data-landing-story-compact="" className="px-4 pt-5 md:pt-8 flex items-center gap-10">
-        <div className="flex min-w-0 flex-1 flex-col items-start text-left">
+        <div className="flex min-w-0 flex-1 flex-col items-start text-start">
           <div className={SMALL_CAPS}>{t('auth:story.welcome')}</div>
           {welcomeEmail ? (
             <div data-landing-story-email="" className="mt-1 max-w-full text-[15px] leading-5 font-semibold text-zinc-700 dark:text-zinc-300 [overflow-wrap:anywhere]">{welcomeEmail}</div>
@@ -326,7 +326,7 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
         <h1 className={`mt-2 ${s.headline} font-extrabold text-balance`}>
           {t('auth:story.headline')}
         </h1>
-        <div className={`${s.examples} flex w-full max-w-sm md:max-w-lg flex-col gap-2 text-left`}>
+        <div className={`${s.examples} flex w-full max-w-sm md:max-w-lg flex-col gap-2 text-start`}>
           <div className={`px-1 ${SMALL_CAPS}`}>{t('auth:story.examples')}</div>
           <ul className="w-full overflow-hidden rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]">
             {FRONT.slice(0, s.count).map((e) => (

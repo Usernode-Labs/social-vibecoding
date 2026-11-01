@@ -81,7 +81,7 @@ function AppVersionRow() {
       </span>
       <span
         id="about-app-version-slot"
-        className="drawer-ver drawer-ver-value ml-auto min-w-0 justify-end font-mono truncate"
+        className="drawer-ver drawer-ver-value ms-auto min-w-0 justify-end font-mono truncate"
       >{deploying ? t('settings:about.appVersion.deploying') : version || t('settings:about.appVersion.unknown')}</span>
     </div>
   );
@@ -119,7 +119,7 @@ function PlatformVersionRow() {
       </span>
       <span
         id="platform-version-pill-slot"
-        className="drawer-ver-value ml-auto inline-flex min-w-0 justify-end"
+        className="drawer-ver-value ms-auto inline-flex min-w-0 justify-end"
       >
       </span>
     </div>

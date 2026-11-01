@@ -121,9 +121,9 @@ const controller = () => (window as any).TopochainLeaderboard;
 
 /** Every column's alignment, so the head and the body cannot disagree. */
 const ALIGN: Record<ColumnKey, string> = {
-  rank: 'text-left',
-  user: 'text-left',
-  points: 'text-right whitespace-nowrap',
+  rank: 'text-start',
+  user: 'text-start',
+  points: 'text-end whitespace-nowrap',
 };
 
 const HINT = 'text-sm text-zinc-500 py-8 text-center dark:text-zinc-400';
@@ -141,7 +141,7 @@ const CARD = 'rounded-2xl bg-white dark:bg-zinc-900';
 const RULE = 'border-t border-zinc-100 dark:border-zinc-800';
 
 /** Figures line up by digit, the way Your standing's rank does, not in mono. */
-const FIGURE = 'px-4 py-3 text-[0.9375rem] tabular-nums text-right';
+const FIGURE = 'px-4 py-3 text-[0.9375rem] tabular-nums text-end';
 
 function Disclaimer({ text }: { text: string | null }): ReactNode {
   if (!text) return null;
@@ -265,7 +265,7 @@ function YouLine({ you }: { you: YouView | null | undefined }): ReactNode {
     <button
       type="button"
       id="tc-lb-you"
-      className={`${CARD} mb-3 block w-full px-4 py-3 text-left text-[0.9375rem] font-[650] tabular-nums text-zinc-900 dark:text-zinc-100 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500`}
+      className={`${CARD} mb-3 block w-full px-4 py-3 text-start text-[0.9375rem] font-[650] tabular-nums text-zinc-900 dark:text-zinc-100 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500`}
       onClick={() => controller()?._openViewerRow()}
     >
       {t('leaderboard:standings.you', { rank: you.rank, points: you.points, count: you.count })}
@@ -390,7 +390,7 @@ function StandingsSkeleton(): ReactNode {
       <div className="px-4 pt-3 pb-2 flex items-center gap-3">
         <Skeleton shape="muted" className="w-8" />
         <Skeleton shape="muted" className="w-20" />
-        <Skeleton shape="muted" className="ml-auto w-12" />
+        <Skeleton shape="muted" className="ms-auto w-12" />
         <Skeleton shape="muted" className="w-12" />
       </div>
       {Array.from({ length: 6 }, (_, i) => (
@@ -400,7 +400,7 @@ function StandingsSkeleton(): ReactNode {
         >
           <Skeleton shape="muted" className="w-4" />
           <Skeleton className={i % 2 ? 'w-28' : 'w-36'} />
-          <Skeleton shape="muted" className="ml-auto w-10" />
+          <Skeleton shape="muted" className="ms-auto w-10" />
           <Skeleton shape="muted" className="w-14" />
         </div>
       ))}
@@ -495,19 +495,19 @@ function EpochBreakdown({ view }: { view: DrillView['epoch'] }): ReactNode {
       <table className="w-full text-xs">
         <thead className="text-zinc-500 dark:text-zinc-400">
           <tr>
-            <th className="text-left py-1">{t('leaderboard:drill.epoch.column.epoch')}</th>
-            <th className="text-right py-1">{t('leaderboard:drill.epoch.column.wonSlots')}</th>
-            <th className="text-right py-1">{t('leaderboard:drill.epoch.column.produced')}</th>
-            <th className="text-right py-1">{t('leaderboard:drill.epoch.column.successRate')}</th>
+            <th className="text-start py-1">{t('leaderboard:drill.epoch.column.epoch')}</th>
+            <th className="text-end py-1">{t('leaderboard:drill.epoch.column.wonSlots')}</th>
+            <th className="text-end py-1">{t('leaderboard:drill.epoch.column.produced')}</th>
+            <th className="text-end py-1">{t('leaderboard:drill.epoch.column.successRate')}</th>
           </tr>
         </thead>
         <tbody>
           {view.rows.map((e, i) => (
             <tr key={i} className="border-t border-zinc-100 dark:border-zinc-800">
               <td className="py-1 font-mono">{e.epoch}</td>
-              <td className="py-1 font-mono text-right">{e.wonSlots}</td>
-              <td className="py-1 font-mono text-right">{e.produced}</td>
-              <td className="py-1 font-mono text-right">{`${e.successRate}%`}</td>
+              <td className="py-1 font-mono text-end">{e.wonSlots}</td>
+              <td className="py-1 font-mono text-end">{e.produced}</td>
+              <td className="py-1 font-mono text-end">{`${e.successRate}%`}</td>
             </tr>
           ))}
         </tbody>

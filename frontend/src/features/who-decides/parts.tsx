@@ -56,7 +56,7 @@ export function Picked({ on }: { on: boolean }) {
     : <span className="h-5 w-5 shrink-0" aria-hidden="true" />;
 }
 
-const TILE = 'relative flex min-h-[44px] flex-col items-start gap-2 rounded-2xl bg-white p-3 text-left dark:bg-zinc-900';
+const TILE = 'relative flex min-h-[44px] flex-col items-start gap-2 rounded-2xl bg-white p-3 text-start dark:bg-zinc-900';
 const TILE_ON = 'shadow-[inset_0_0_0_2px_var(--accent)]';
 const TILE_OFF = 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
 
@@ -85,7 +85,7 @@ export function PresetTiles({ picked, now, viewer, onPick, labelId }: {
           className={`${TILE} ${picked === key ? TILE_ON : TILE_OFF}`}
         >
           {now === key ? (
-            <span className="absolute right-3 top-3 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+            <span className="absolute end-3 top-3 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
               {t('dialogs:whoDecides.now')}
             </span>
           ) : null}

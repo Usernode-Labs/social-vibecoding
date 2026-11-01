@@ -265,22 +265,22 @@ export function AppDomainDialog() {
             </p>
             <table id="app-domain-records" className="w-full text-xs border-collapse">
               <thead>
-                <tr className="text-left text-zinc-500 dark:text-zinc-400">
-                  <th className="py-1 pr-2 font-semibold">{t('dialogs:appDomain.records.type')}</th>
-                  <th className="py-1 pr-2 font-semibold">{t('dialogs:appDomain.records.name')}</th>
+                <tr className="text-start text-zinc-500 dark:text-zinc-400">
+                  <th className="py-1 pe-2 font-semibold">{t('dialogs:appDomain.records.type')}</th>
+                  <th className="py-1 pe-2 font-semibold">{t('dialogs:appDomain.records.name')}</th>
                   <th className="py-1 font-semibold">{t('dialogs:appDomain.records.value')}</th>
                 </tr>
               </thead>
               <tbody>
                 {(data?.records || []).map((record) => (
                   <tr key={record.type} className="border-t border-zinc-200 dark:border-zinc-800 align-top">
-                    <td className="py-1.5 pr-2">{record.type}</td>
-                    <td className="py-1.5 pr-2 font-mono break-all">{recordName(record, domain.hostname)}</td>
+                    <td className="py-1.5 pe-2">{record.type}</td>
+                    <td className="py-1.5 pe-2 font-mono break-all">{recordName(record, domain.hostname)}</td>
                     <td className="py-1.5">
                       <span className="font-mono break-all">{record.value}</span>
                       <button
                         type="button"
-                        className="ml-1 text-violet-700 hover:text-violet-400 dark:text-violet-400 transition-colors"
+                        className="ms-1 text-violet-700 hover:text-violet-400 dark:text-violet-400 transition-colors"
                         onClick={() => void copy(record.value)}
                       >{copied === record.value ? t('dialogs:appDomain.records.copied') : t('dialogs:appDomain.records.copy')}</button>
                     </td>

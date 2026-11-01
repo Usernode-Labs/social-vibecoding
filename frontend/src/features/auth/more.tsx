@@ -654,7 +654,7 @@ export function MoreScreen() {
         <>
       <a
         href="#landing"
-        className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
+        className="fixed start-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
         style={{ top: 'calc(env(safe-area-inset-top, 0px) + 1rem)' }}
       >
         {t('auth:more.back')}

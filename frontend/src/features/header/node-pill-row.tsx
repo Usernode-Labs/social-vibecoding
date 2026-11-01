@@ -6,7 +6,7 @@
  *
  * The module built the status ink by SUBTRACTION:
  *
- *   statusEl.className = 'ml-auto text-xs font-medium ' +
+ *   statusEl.className = 'ms-auto text-xs font-medium ' +
  *     style.tone.split(' ').filter((c) => !c.startsWith('border')).join(' ');
  *
  * — a `tone` string carrying both a border colour and an ink, with the border
@@ -59,8 +59,8 @@ export function styleFor(status: string | null | undefined) {
 
 /** The row's own class run, in both states — the `hidden` is the model's. */
 const ROW
-  = 'flex items-center gap-3 px-4 min-h-[44px] w-full text-left relative'
-  + " after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px"
+  = 'flex items-center gap-3 px-4 min-h-[44px] w-full text-start relative'
+  + " after:absolute after:bottom-0 after:start-12 after:end-0 after:h-px"
   + " after:bg-zinc-100 dark:after:bg-zinc-800 after:content-['']"
   + ' text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800';
 
@@ -92,7 +92,7 @@ export function NodePillRow(): ReactNode {
       <span
         id="account-node-status"
         data-node-status={s.status}
-        className={s.visible ? `ml-auto text-xs font-medium ${style.ink}` : 'ml-auto text-xs font-medium text-zinc-500 dark:text-zinc-400'}
+        className={s.visible ? `ms-auto text-xs font-medium ${style.ink}` : 'ms-auto text-xs font-medium text-zinc-500 dark:text-zinc-400'}
       >{s.visible ? t(style.labelId) : ''}</span>
     </button>
   );

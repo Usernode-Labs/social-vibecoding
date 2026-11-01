@@ -277,7 +277,7 @@ function PublicPage({ controls, status, publishing, previewOpen }: {
           className={`${ROW_ACTION_CLASS} gap-3 text-zinc-900 dark:text-zinc-100`}
           onClick={() => Profile.togglePreview()}
         >
-          <span className="flex-1 text-left font-normal">{t('profile:edit.public.whatsOnIt')}</span>
+          <span className="flex-1 text-start font-normal">{t('profile:edit.public.whatsOnIt')}</span>
           <ChevronDownIcon
             aria-hidden="true"
             className={previewOpen
@@ -586,7 +586,7 @@ export function ProfileEditSheet({
             <div id="profile-edit-github" className="un-group-row flex items-center gap-3 px-4 min-h-[44px]">
               <span className={`${ROW_LABEL_CLASS} flex-1 min-w-0`}>GitHub</span>
               {links.github ? (
-                <span className="text-right min-w-0">
+                <span className="text-end min-w-0">
                   <span className="inline-flex rounded-full bg-emerald-500/10 px-2 py-0.5 text-[0.65rem] font-medium text-emerald-700 dark:text-emerald-400">
                     {t('profile:edit.social.verified')}
                   </span>
@@ -601,7 +601,7 @@ export function ProfileEditSheet({
             <div id="profile-edit-x" className="un-group-row flex items-center gap-3 px-4 min-h-[44px]">
               <span className={`${ROW_LABEL_CLASS} flex-1 min-w-0`}>X</span>
               {links.x ? (
-                <span className="text-right min-w-0">
+                <span className="text-end min-w-0">
                   <span className="inline-flex rounded-full bg-emerald-500/10 px-2 py-0.5 text-[0.65rem] font-medium text-emerald-700 dark:text-emerald-400">
                     {t('profile:edit.social.verified')}
                   </span>
@@ -649,7 +649,7 @@ export function ProfileEditSheet({
                 box="groupRow"
                 ring={false}
                 width="flex"
-                className="text-right text-zinc-500 dark:text-zinc-500 cursor-not-allowed"
+                className="text-end text-zinc-500 dark:text-zinc-500 cursor-not-allowed"
                 value={user.username ? `@${user.username}` : ''}
                 readOnly
                 disabled

@@ -200,7 +200,7 @@ function UpdateReadyRow({ id, onUpdate, children }: { id: string; onUpdate: () =
     <button
       id={id}
       type="button"
-      className={'flex w-full items-center gap-3 px-4 py-3 text-left '
+      className={'flex w-full items-center gap-3 px-4 py-3 text-start '
         + 'text-sm font-medium text-zinc-900 dark:text-zinc-100 '
         + 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60 un-touch-target'}
       onClick={onUpdate}

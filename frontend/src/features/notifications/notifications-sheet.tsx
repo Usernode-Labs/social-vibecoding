@@ -610,7 +610,7 @@ function RowActions({ view, actions }: {
       {a.key === 'still_yes' && busy ? t('notifications:row.sending') : a.label}
     </Button>
   ));
-  if (actions.length > 1) return <div className="flex items-center gap-2 pl-[3.75rem]">{buttons}</div>;
+  if (actions.length > 1) return <div className="flex items-center gap-2 ps-[3.75rem]">{buttons}</div>;
   return <>{buttons}</>;
 }
 
@@ -888,7 +888,7 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
       <span className="relative flex shrink-0">
         {view.unread ? (
           <span
-            className="absolute -left-3 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100"
+            className="absolute -start-3 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100"
             aria-label={t('notifications:row.unreadDot')}
           >
           </span>
@@ -1014,17 +1014,17 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
       data-notif-id={view.id}
       // #2386: two actions (a friend request's Accept and Decline) stack
       // under the text; see RowActions.
-      // #4769: the row's right padding is pr-16, not the px-4 it was, so the
+      // #4769: the row's right padding is pe-16, not the px-4 it was, so the
       // bookmark button (16px in from the slot's edge, N6) never sits over
       // the text.
       className={card
-        ? 'notifications-row col-start-1 row-start-1 w-full pl-5 pr-4 py-3 flex flex-col gap-2'
+        ? 'notifications-row col-start-1 row-start-1 w-full ps-5 pe-4 py-3 flex flex-col gap-2'
         : actions.length > 1
-          ? 'notifications-row w-full pl-4 pr-16 py-3.5 flex flex-col gap-2'
-          : 'notifications-row w-full pl-4 pr-16 py-3.5 flex items-center gap-3'}
+          ? 'notifications-row w-full ps-4 pe-16 py-3.5 flex flex-col gap-2'
+          : 'notifications-row w-full ps-4 pe-16 py-3.5 flex items-center gap-3'}
     >
       <button
-        className={card ? 'min-w-0 flex-1 w-full text-left flex items-start gap-3' : 'min-w-0 flex-1 text-left flex items-center gap-4'}
+        className={card ? 'min-w-0 flex-1 w-full text-start flex items-start gap-3' : 'min-w-0 flex-1 text-start flex items-center gap-4'}
         aria-expanded={closedTop ? 'false' : expands ? (historyOpen ? 'true' : 'false') : undefined}
         onClick={(event) => {
           event.stopPropagation();
@@ -1036,7 +1036,7 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
       </button>
       {/* #5580: on a card one action sits under the words too, as two do. */}
       {card && actions.length === 1 ? (
-        <div className="flex items-center gap-2 pl-[3.75rem]"><RowActions view={view} actions={actions} /></div>
+        <div className="flex items-center gap-2 ps-[3.75rem]"><RowActions view={view} actions={actions} /></div>
       ) : <RowActions view={view} actions={actions} />}
     </div>
   ) : (
@@ -1045,9 +1045,9 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
       data-notif-id={view.id}
       data-notif-group-size={groupIds ? groupIds.length : undefined}
       className={card
-        ? 'notifications-row col-start-1 row-start-1 w-full text-left pl-5 pr-4 py-3 rounded-[20px] '
+        ? 'notifications-row col-start-1 row-start-1 w-full text-start ps-5 pe-4 py-3 rounded-[20px] '
           + 'hover:bg-black/[.02] dark:hover:bg-white/[.03] transition-colors flex items-start gap-3'
-        : 'notifications-row w-full text-left pl-4 pr-16 py-3.5 '
+        : 'notifications-row w-full text-start ps-4 pe-16 py-3.5 '
           + 'hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4'}
       aria-expanded={closedTop ? 'false' : expands ? (historyOpen ? 'true' : 'false') : undefined}
       onClick={(event) => {
@@ -1084,13 +1084,13 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
       // bookmark said nothing about what it does.
       title={t(view.saved ? 'notifications:row.unsave' : 'notifications:row.save')}
       className={card
-        ? 'absolute right-2 top-1.5 flex h-8 w-8 items-center justify-center rounded-full '
+        ? 'absolute end-2 top-1.5 flex h-8 w-8 items-center justify-center rounded-full '
           + 'transition-opacity hover:bg-black/[.04] dark:hover:bg-white/[.06] '
           + 'pointer-events-none opacity-0 '
           + 'group-hover/notif:pointer-events-auto group-hover/notif:opacity-100 '
           + 'group-has-[:focus-visible]/notif:pointer-events-auto group-has-[:focus-visible]/notif:opacity-100 '
           + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'
-        : 'absolute right-4 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center '
+        : 'absolute end-4 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center '
           + 'rounded-full transition-colors hover:bg-black/[.04] dark:hover:bg-white/[.06] '
           + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'}
       onClick={(event) => {
@@ -1113,7 +1113,7 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
         data-notif-history={view.id}
         aria-expanded={historyOpen ? 'true' : 'false'}
         aria-label={t(historyOpen ? 'notifications:history.hide' : 'notifications:history.show')}
-        className={'relative z-[1] col-start-1 row-start-1 self-end justify-self-end mr-2.5 mb-2.5 '
+        className={'relative z-[1] col-start-1 row-start-1 self-end justify-self-end me-2.5 mb-2.5 '
           + 'flex h-6 w-6 items-center justify-center rounded-full text-zinc-500 dark:text-zinc-400 '
           + 'hover:bg-black/[.04] hover:text-zinc-900 dark:hover:bg-white/[.06] dark:hover:text-zinc-100 '
           + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 un-touch-target'}
@@ -1173,7 +1173,7 @@ function ScreenRow({ view, touch, removes, held = false, onRelease, card = null 
           // corner of the tile opens the row as it always did.
           // #5929: on a card it sits inside the corner of the card, not across
           // its edge, where it read as a rendering glitch.
-          className={(card ? 'absolute left-1.5 top-1.5 z-[2] flex h-5 w-5 items-center justify-center rounded-full ' : 'absolute left-1.5 top-2 flex h-5 w-5 items-center justify-center rounded-full ')
+          className={(card ? 'absolute start-1.5 top-1.5 z-[2] flex h-5 w-5 items-center justify-center rounded-full ' : 'absolute start-1.5 top-2 flex h-5 w-5 items-center justify-center rounded-full ')
             + 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/10 hover:bg-zinc-50 '
             + 'dark:bg-zinc-900 dark:text-zinc-100 dark:ring-white/15 dark:hover:bg-zinc-800 '
             + 'pointer-events-none opacity-0 transition-opacity '
@@ -1261,7 +1261,7 @@ function CardWords({ view, card, hasHistory, saveOnHover }: {
       <span className="relative flex shrink-0 self-start mt-0.5">
         {view.unread ? (
           <span
-            className="absolute -left-3 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100"
+            className="absolute -start-3 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100"
             aria-label={t('notifications:row.unreadDot')}
           >
           </span>
@@ -1278,7 +1278,7 @@ function CardWords({ view, card, hasHistory, saveOnHover }: {
             <time
               title={view.timeTitle}
               className={saveOnHover
-                ? 'shrink-0 group-hover/notif:mr-7 group-has-[:focus-visible]/notif:mr-7'
+                ? 'shrink-0 group-hover/notif:me-7 group-has-[:focus-visible]/notif:me-7'
                 : 'shrink-0'}
             >
               {view.time}
@@ -1293,7 +1293,7 @@ function CardWords({ view, card, hasHistory, saveOnHover }: {
             {view.note}
           </span>
         ) : null}
-        <span className={hasHistory ? 'block text-xs text-zinc-500 truncate pr-8' : 'block text-xs text-zinc-500 truncate'}>
+        <span className={hasHistory ? 'block text-xs text-zinc-500 truncate pe-8' : 'block text-xs text-zinc-500 truncate'}>
           {project && meta ? (
             <RichMessage id="notifications:story.projectMeta" values={{ project, meta }} components={[<span className={PROJECT_INK} />]} />
           ) : project ? <span className={PROJECT_INK}>{project}</span> : meta}
@@ -1730,7 +1730,7 @@ export function NotificationsSheetView() {
       <div id="notifications-search" className="px-4 pt-1 pb-2 shrink-0">
         <div className="relative">
           <SearchIcon
-            className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
+            className="w-4 h-4 absolute start-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
             aria-hidden="true"
           />
           <input
@@ -1750,7 +1750,7 @@ export function NotificationsSheetView() {
             autoComplete="off"
             spellCheck={false}
             enterKeyHint="search"
-            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-3 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
+            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 ps-9 pe-3 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
           />
         </div>
       </div>

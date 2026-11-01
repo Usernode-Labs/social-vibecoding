@@ -40,7 +40,7 @@ export function StakingRow() {
   if (!visible) return null;
   return <>
     <button type="button" data-staking-row
-      className="flex items-center gap-3 px-4 min-h-[44px] w-full text-left text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+      className="flex items-center gap-3 px-4 min-h-[44px] w-full text-start text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
       onClick={() => {
         // Staking is for adults (#5095): asked once before it opens. The
         // `?demo=staking-*` preview opens from its effect, without asking.
@@ -49,9 +49,9 @@ export function StakingRow() {
       }}>
       <StakingIcon aria-hidden="true" className="w-5 h-5 shrink-0" />
       <span className="text-sm font-medium">{t('profile:staking.title')}</span>
-      <span className={delegated ? 'ml-auto text-xs font-semibold text-violet-700 dark:text-violet-400'
-        : ready ? 'ml-auto text-xs font-semibold text-emerald-700 dark:text-emerald-400'
-          : 'ml-auto text-xs text-zinc-500 dark:text-zinc-400'}>{ready ? (delegated ? t('profile:staking.status.delegated') : t('profile:staking.status.active')) : t('profile:staking.status.checking')}</span>
+      <span className={delegated ? 'ms-auto text-xs font-semibold text-violet-700 dark:text-violet-400'
+        : ready ? 'ms-auto text-xs font-semibold text-emerald-700 dark:text-emerald-400'
+          : 'ms-auto text-xs text-zinc-500 dark:text-zinc-400'}>{ready ? (delegated ? t('profile:staking.status.delegated') : t('profile:staking.status.active')) : t('profile:staking.status.checking')}</span>
       <span aria-hidden="true">›</span>
     </button>
     {open ? <StakingSheet preview={preview} onClose={() => setOpen(false)} /> : null}

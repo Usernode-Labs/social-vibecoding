@@ -127,7 +127,7 @@ export const AdminUI = Object.freeze({
   // No fill on the head: the column labels are already uppercase and muted,
   // and a tinted band inside a floating card reads as a second surface.
   thead: 'border-b border-zinc-200 dark:border-zinc-800',
-  th: 'px-6 py-3 text-left align-middle text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400',
+  th: 'px-6 py-3 text-start align-middle text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400',
   td: 'px-6 py-4 align-middle',
   trHover: 'border-b border-zinc-100 dark:border-zinc-800/60 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50',
   // Buttons — topochain's canonical button strings. Each filled one carries
@@ -1005,7 +1005,7 @@ const AdminConsole = {
     const active = AdminConsole._section;
     const itemHtml = (s) => {
       const isActive = s.key === active;
-      const cls = 'admin-nav-item flex items-center gap-3 w-full text-left rounded-md px-3 py-2.5 text-sm font-medium transition-colors '
+      const cls = 'admin-nav-item flex items-center gap-3 w-full text-start rounded-md px-3 py-2.5 text-sm font-medium transition-colors '
         + (isActive
           ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100'
           : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800/60');
@@ -1026,7 +1026,7 @@ const AdminConsole = {
       return `
       <div class="${i === 0 ? '' : 'mt-6'}">
         ${AdminConsole._groupToggleHtml(g.name, domId, collapsed,
-          'flex items-center gap-1.5 w-full text-left px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors')}
+          'flex items-center gap-1.5 w-full text-start px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors')}
         <div id="${domId}" data-admin-group="${AdminConsole.esc(g.name)}"${collapsed ? ' class="hidden"' : ''}>
           ${g.items.map(itemHtml).join('')}
         </div>
@@ -1043,7 +1043,7 @@ const AdminConsole = {
     const chevron = `<svg class="w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>`;
     const rowHtml = (s) => `
       <button type="button" data-admin-section="${s.key}"
-              class="admin-menu-row flex items-center gap-3 w-full text-left min-h-[44px] px-4 py-2
+              class="admin-menu-row flex items-center gap-3 w-full text-start min-h-[44px] px-4 py-2
                      border-b border-zinc-100 dark:border-zinc-800
                      text-zinc-700 dark:text-zinc-200
                      hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors">
@@ -1059,7 +1059,7 @@ const AdminConsole = {
       return `
       <div class="mb-5">
         ${AdminConsole._groupToggleHtml(g.name, domId, collapsed,
-          'flex items-center gap-1.5 w-full text-left px-4 pb-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500')}
+          'flex items-center gap-1.5 w-full text-start px-4 pb-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500')}
         <div id="${domId}" data-admin-group="${AdminConsole.esc(g.name)}"
              class="${AdminUI.card} overflow-hidden
                     [&>button:last-child]:border-b-0${collapsed ? ' hidden' : ''}">

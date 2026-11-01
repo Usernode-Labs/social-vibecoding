@@ -211,7 +211,7 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
     );
   }
 
-  const SEG_ON = 'relative z-10 flex items-center gap-1 h-6 rounded-full py-1 pr-2.5 pl-1.5 '
+  const SEG_ON = 'relative z-10 flex items-center gap-1 h-6 rounded-full py-1 pe-2.5 ps-1.5 '
     + 'text-xs font-semibold un-touch-target';
   const SEG_OFF = 'relative z-10 flex items-center justify-center h-6 w-6 rounded-full '
     + 'text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100 un-touch-target';
@@ -229,7 +229,7 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
           first measurement lands, which is the same frame. */}
       <span
         aria-hidden="true"
-        className={'absolute top-0.5 bottom-0.5 left-0 rounded-full transition-[transform,width] '
+        className={'absolute top-0.5 bottom-0.5 start-0 rounded-full transition-[transform,width] '
           + 'duration-200 ease-out '
           + (thumb ? '' : 'opacity-0 ')
           + (seeing ? 'bg-amber-300' : 'bg-violet-600')}

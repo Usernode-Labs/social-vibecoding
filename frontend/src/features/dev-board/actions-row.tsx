@@ -130,7 +130,7 @@ export interface DevActionsRowProps {
  * text column) would have handed every sheet row the wrong label, or none.
  */
 const PLUS_ROW_CLS =
-  'w-full text-left flex items-start gap-3 px-5 py-2.5 min-h-[44px] '
+  'w-full text-start flex items-start gap-3 px-5 py-2.5 min-h-[44px] '
   + 'hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors';
 const PLUS_ROW_DIVIDER_CLS = ' border-t border-zinc-200 dark:border-zinc-800';
 const PLUS_ICON_CLS = 'shrink-0 mt-0.5 w-5 h-5 text-zinc-500 dark:text-zinc-400';
@@ -142,7 +142,7 @@ const PLUS_SUB_CLS = 'block text-xs text-zinc-500 dark:text-zinc-400';
 /** The menu's one lit row, Suggest an improvement (the owner, 8 Oct 2026):
     the accent's tint behind it and its title bold. Every other row stays plain. */
 const PLUS_ROW_LIT_CLS =
-  'w-full text-left flex items-start gap-3 px-5 py-2.5 min-h-[44px] '
+  'w-full text-start flex items-start gap-3 px-5 py-2.5 min-h-[44px] '
   + 'bg-violet-50 hover:bg-violet-100 dark:bg-violet-900/30 dark:hover:bg-violet-900/40 transition-colors';
 const PLUS_TITLE_LIT_CLS = 'block text-sm font-bold text-zinc-900 dark:text-zinc-100';
 
@@ -321,7 +321,7 @@ export function DevPlusMenu({
         <EllipsisHorizontalIcon className="dev-ws-plus-glyph" aria-hidden="true" />
       </button>
       {/*
-          The desktop dropdown. `right-0` hangs it off the right edge of the
+          The desktop dropdown. `end-0` hangs it off the right edge of the
           "+"'s circle (this wrapper, #2934), so it opens leftward into the
           column from the end of the strip, and `top-full mt-2` sets it 8px
           under that circle at either size of the strip. On touch
@@ -330,7 +330,7 @@ export function DevPlusMenu({
       */}
       <div
         id="dev-plus-menu"
-        className="hidden absolute right-0 top-full mt-2 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden"
+        className="hidden absolute end-0 top-full mt-2 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden"
       >
         {readOnly ? null : (
           <>
@@ -418,7 +418,7 @@ export function DevPlusMenu({
               type="button"
               data-plus-back=""
               aria-label={t('project:menu.settings.back')}
-              className="w-full text-left flex items-center gap-2 px-3 py-2.5 min-h-[44px] text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+              className="w-full text-start flex items-center gap-2 px-3 py-2.5 min-h-[44px] text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
             >
               <ChevronLeftIcon className="shrink-0 w-4 h-4" aria-hidden="true" />
               {t('project:menu.settings.heading')}

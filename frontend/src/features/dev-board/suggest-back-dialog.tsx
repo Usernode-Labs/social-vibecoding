@@ -240,7 +240,7 @@ export function SuggestBackDialog({ slug, copyName, original, onClose }: {
                   ))}
                 </ul>
               ) : lines.length ? (
-                <ul data-suggest-changes className="list-disc pl-5 space-y-1">
+                <ul data-suggest-changes className="list-disc ps-5 space-y-1">
                   {lines.map((line, i) => <li key={`${i}:${line}`} className="break-words">{line}</li>)}
                 </ul>
               ) : (

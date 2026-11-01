@@ -413,7 +413,7 @@ export function SessionBar({ session, about, embedded, action }: {
         <button
           type="button"
           data-agent-session-changes-button
-          className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+          className="ms-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
           onClick={() => setDrawerOpen(true)}
           disabled={!session}
           aria-haspopup="dialog"
@@ -822,7 +822,7 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
         {checks ? (
           <button
             type="button"
-            className={`ml-auto inline-flex items-center gap-1 rounded text-xs hover:underline ${CHECK_TONE[checks.key]}`}
+            className={`ms-auto inline-flex items-center gap-1 rounded text-xs hover:underline ${CHECK_TONE[checks.key]}`}
             data-agent-session-checks={checks.key}
             title={t('agent:session.preview.checksTitle')}
             onClick={() => { if (item.changeId != null) window.AppView?.openSessionChecks?.(item.changeId); }}
@@ -1528,7 +1528,7 @@ export function PreviewCapture({ change }: { change: AgentChange }) {
         size="xs"
         disabledStyle="dim"
         ink="neutral"
-        className="ml-auto shrink-0 text-xs"
+        className="ms-auto shrink-0 text-xs"
         disabled={stopping}
         onClick={() => void stop()}
       >
@@ -1720,14 +1720,14 @@ export function SavedDrafts({ drafts, busy, onSend, onEdit }: {
           components={[<span className="font-semibold uppercase tracking-wide" />, <span />]}
         />
         {busy
-          ? <span className="ml-auto">{t('agent:session.drafts.locked')}</span>
-          : <span className="ml-auto font-semibold text-violet-700 dark:text-violet-300" data-agent-session-drafts-ready>{t('agent:session.drafts.ready')}</span>}
+          ? <span className="ms-auto">{t('agent:session.drafts.locked')}</span>
+          : <span className="ms-auto font-semibold text-violet-700 dark:text-violet-300" data-agent-session-drafts-ready>{t('agent:session.drafts.ready')}</span>}
       </p>
       <ul className="flex flex-col gap-1">
         {drafts.map((draft) => (
           <li
             key={draft.id}
-            className="flex items-center gap-0.5 rounded-xl bg-white py-0.5 pl-3 pr-0.5 dark:bg-zinc-900"
+            className="flex items-center gap-0.5 rounded-xl bg-white py-0.5 ps-3 pe-0.5 dark:bg-zinc-900"
             data-agent-session-draft={draft.id}
           >
             <span className="min-w-0 flex-1 truncate text-sm text-zinc-700 dark:text-zinc-200" title={draft.text}>{draft.text}</span>

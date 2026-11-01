@@ -123,7 +123,7 @@ function Badge({ status }: { status?: string }) {
     || { label: status || '—', cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300', spin: false };
   return (
     <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${b.cls}`}>
-      {b.spin ? <span className="inline-block w-2 h-2 mr-1 rounded-full bg-current spin align-middle" /> : null}
+      {b.spin ? <span className="inline-block w-2 h-2 me-1 rounded-full bg-current spin align-middle" /> : null}
       {b.label}
     </span>
   );
@@ -229,7 +229,7 @@ function RunCard({ run }: { run: Run }) {
     <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-50 dark:bg-zinc-900 overflow-hidden">
       <button
         type="button"
-        className="run-head w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+        className="run-head w-full text-start px-4 py-3 flex items-center gap-3 hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
         aria-expanded={open}
         onClick={toggle}
       >
@@ -411,7 +411,7 @@ function MergesSection() {
             </label>
             <button id="admin-merges-apply" type="button"
               onClick={() => { setLive(false); loadFirstPage(); }}
-              className="ml-auto px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-700 text-white text-sm">Apply</button>
+              className="ms-auto px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-700 text-white text-sm">Apply</button>
             <button id="admin-merges-refresh" type="button" onClick={loadFirstPage}
               className="px-3 py-1.5 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Refresh</button>
             <label className="inline-flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 cursor-pointer select-none">

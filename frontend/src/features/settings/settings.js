@@ -1558,7 +1558,7 @@
         key: p.key,
         label: Settings.str(p.label),
         active: p.key === active,
-        className: 'settings-nav-item flex w-full items-center gap-2.5 text-left rounded-lg pl-3 pr-9 py-2 text-sm transition-colors '
+        className: 'settings-nav-item flex w-full items-center gap-2.5 text-start rounded-lg ps-3 pe-9 py-2 text-sm transition-colors '
           + (p.key === active
             ? 'font-semibold bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)] shadow-[inset_0_0_0_1px_var(--lit-line)]'
             : 'font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),

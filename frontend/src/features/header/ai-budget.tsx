@@ -114,7 +114,7 @@ export function AiBudgetRow(): ReactNode {
   return (
     <div id="drawer-row-ai-budget" className={hidden ? `${ROW} hidden` : ROW}>
       <span className="font-medium text-zinc-700 dark:text-zinc-300">{t('wallet:credit.row.label')}</span>
-      <span id="ai-budget-slot" className="ml-auto grow min-w-0 text-right">
+      <span id="ai-budget-slot" className="ms-auto grow min-w-0 text-end">
         <AiBudgetMeter view={view} />
       </span>
     </div>

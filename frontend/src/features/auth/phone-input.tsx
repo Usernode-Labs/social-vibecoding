@@ -71,7 +71,7 @@ export async function readPhone(el: HTMLInputElement | null | undefined): Promis
 
 const PLACEHOLDER: Record<string, string> = { US: '415 555 0123', CA: '415 555 0123', GB: '07700 900123' };
 
-const CHIP = 'relative mr-3 flex shrink-0 items-center gap-1 rounded-sm border-r border-[color:var(--app-sheet-line)] pr-3 text-[17px] text-zinc-900 dark:text-zinc-100 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-violet-500';
+const CHIP = 'relative me-3 flex shrink-0 items-center gap-1 rounded-sm border-e border-[color:var(--app-sheet-line)] pe-3 text-[17px] text-zinc-900 dark:text-zinc-100 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-violet-500';
 const SELECT = 'absolute inset-0 h-full w-full cursor-pointer appearance-none opacity-0';
 const INPUT = 'min-w-0 flex-1 border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
 

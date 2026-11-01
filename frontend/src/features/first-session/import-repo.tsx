@@ -250,7 +250,7 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
             data-import-state={state}
             className={state === 'error' || missing === 'repo' ? NEEDED : state === 'ok' ? 'pb-1 text-xs text-emerald-700 dark:text-emerald-400' : HINT}
           >
-            {state === 'checking' ? <SpinnerArcIcon className="mr-1.5 inline-block h-3.5 w-3.5 animate-spin align-[-2px]" aria-hidden="true" /> : null}
+            {state === 'checking' ? <SpinnerArcIcon className="me-1.5 inline-block h-3.5 w-3.5 animate-spin align-[-2px]" aria-hidden="true" /> : null}
             {missing === 'repo' && state !== 'error' ? t('onboarding:firstSession.import.needed.repo') : (status || t('onboarding:firstSession.import.inviteBot'))}
           </p>
         </div>

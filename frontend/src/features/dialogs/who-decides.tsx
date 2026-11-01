@@ -410,7 +410,7 @@ export function WhoDecidesDialog() {
             data-who-members=""
             onClick={() => { close(); window.AppView?.openMembersModal?.(); }}
             leading={(
-              <span className="flex -space-x-1.5">
+              <span className="flex -space-x-1.5 rtl:space-x-reverse">
                 {(community?.members || []).slice(0, 3).map((m) => <Face key={m.username} name={m.username} size={26} />)}
               </span>
             )}
@@ -515,7 +515,7 @@ export function WhoDecidesDialog() {
                   <span className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
                 </div>
               ) : null}
-              <div className="flex items-center pr-2">
+              <div className="flex items-center pe-2">
                 <ListRow
                   as="button"
                   inset="none"

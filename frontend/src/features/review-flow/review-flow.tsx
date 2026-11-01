@@ -66,6 +66,7 @@ import {
   type AreaKind, type BenefitKind, type DecisionKind, type GlyphBar, type Ink, type Placement, type ReviewItem, type SheetPlate,
 } from './model';
 import { VoteSheet, sheetOpen, type SheetState, type Vote } from './vote-sheet';
+import { dirSign } from '../../lib/i18n/direction';
 
 const EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
 const OPEN_MS = 380;
@@ -396,8 +397,9 @@ function ChangeBody({ item, width, pageH, arrive, still = null, onView, onMore }
     const end = () => { setSwitching(null); later(() => setDim(false), DIM_HOLD); };
     if (!arriving || rm) { end(); return; }
     const opts = { duration: OPEN_MS, easing: EASE };
-    const sliding = arriving.animate([{ transform: `translateX(${switching.dir * inner}px)` }, { transform: 'none' }], opts);
-    leaving?.animate([{ transform: 'none' }, { transform: `translateX(${-switching.dir * inner}px)` }], { ...opts, fill: 'forwards' });
+    const sign = dirSign();
+    const sliding = arriving.animate([{ transform: `translateX(${sign * switching.dir * inner}px)` }, { transform: 'none' }], opts);
+    leaving?.animate([{ transform: 'none' }, { transform: `translateX(${sign * -switching.dir * inner}px)` }], { ...opts, fill: 'forwards' });
     whenDone(sliding, end, OPEN_MS);
   }, [switching]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -606,8 +608,9 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     const arriving = stage.querySelector<HTMLElement>('[data-rf-arriving]');
     const gone = stage.querySelector<HTMLElement>('[data-rf-leaving]');
     const opts = { duration: PUSH_MS, easing: EASE };
-    const sliding = arriving?.animate([{ transform: `translateX(${w}px)`, boxShadow: '-12px 0 32px rgba(0,0,0,.4)' }, { transform: 'none', boxShadow: '-12px 0 32px rgba(0,0,0,0)' }], opts);
-    gone?.animate([{ transform: 'none', filter: 'none' }, { transform: `translateX(${-0.3 * w}px)`, filter: 'brightness(0.55)' }], { ...opts, fill: 'forwards' });
+    const sign = dirSign();
+    const sliding = arriving?.animate([{ transform: `translateX(${sign * w}px)`, boxShadow: '-12px 0 32px rgba(0,0,0,.4)' }, { transform: 'none', boxShadow: '-12px 0 32px rgba(0,0,0,0)' }], opts);
+    gone?.animate([{ transform: 'none', filter: 'none' }, { transform: `translateX(${sign * -0.3 * w}px)`, filter: 'brightness(0.55)' }], { ...opts, fill: 'forwards' });
     whenDone(sliding, settle, PUSH_MS);
   }, [from && from.index, index]); // eslint-disable-line react-hooks/exhaustive-deps
 

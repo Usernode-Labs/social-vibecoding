@@ -813,7 +813,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
         <>
           {msg.unread ? <span className="gc-unread-dot" aria-label={t('chat:group.row.unreadMention')} /> : null}
           <span className={msg.mine ? 'gc-msg-username-self' : undefined}>{displayName(msg.username)}</span>
-          <PostedViaChip via={msg.postedVia} className="ml-1.5" />
+          <PostedViaChip via={msg.postedVia} className="ms-1.5" />
         </>
       )}
       timestamp={(

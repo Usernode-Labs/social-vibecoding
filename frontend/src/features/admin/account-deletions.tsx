@@ -42,7 +42,7 @@ export function AccountDeletions() {
     <div className="flex flex-wrap items-center gap-2">
       <h2 className={AdminUI.cardTitle}>Deleted account cleanup</h2>
       {pending ? <span className={AdminUI.badge.warn}>{`${pending} pending`}</span> : null}
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ms-auto flex items-center gap-2">
         <button type="button" className={AdminUI.btn.outlineSm} onClick={() => void load()}>Refresh cleanup status</button>
         <button type="button" className={AdminUI.btn.outlineSm} aria-expanded={open}
           aria-controls="admin-account-deletions-body" onClick={() => setExpanded(!open)}>{open ? 'Hide' : 'Show'}</button>

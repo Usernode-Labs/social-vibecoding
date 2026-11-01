@@ -1095,7 +1095,7 @@ export function OnboardingTour() {
             >
               {t('onboarding:tour.skip')}
             </Button>
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ms-auto flex items-center gap-2">
               <Button
                 id="home-tour-back"
                 type="button"
