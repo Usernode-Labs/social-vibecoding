@@ -21,7 +21,7 @@ module.exports = {
     const actionId = typeof card?.confirmId === 'string' ? card.confirmId : '';
     const where = { user, actionId, conversationId: message.conversationId };
     if (action === 'confirm') {
-      const out = await admin.confirmAction(pool, config, { ...where, botId: message.botId, deps });
+      const out = await admin.confirmAction(pool, config, { ...where, botId: message.botId, threadRootId: message.threadRootId, deps });
       if (!out.ok) {
         // A card that ran out of time says so on every device.
         if (out.expired) await setCardState(pool, message.id, { state: 'expired' }, { userId: user.id, ws: deps.ws || null });

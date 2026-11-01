@@ -293,9 +293,10 @@ function fixingText({ flakes = [] } = {}) {
 
 /** Pure: the hand-off's line on the change, with what was tried. */
 function personText({ wait = null, flakes = [], why = null, failingCount = 0 } = {}) {
-  const lead = failingCount === 1
-    ? 'The failing check on this change isn\'t caused by it: it fails without it too.'
-    : 'The failing checks on this change aren\'t caused by them: they fail without it too.';
+  const names = (Array.isArray(wait?.tests) ? wait.tests : []).map((t) => `"${clip(t.name, 80)}"`).slice(0, 2);
+  const lead = failingCount === 1 || names.length === 1
+    ? `The failing check${names.length === 1 ? ` ${names[0]}` : ''} on this change isn't caused by it: it fails without it too.`
+    : `The failing checks${names.length ? ` ${names.join(' and ')}` : ''} on this change aren't caused by it: they fail without it too.`;
   const tried = [];
   if (wait?.synced) tried.push('brought it up to date with main');
   if (flakes.length) tried.push(`asked for the check to be fixed (${flakes.map((f) => `#${Number(f.issue_number)}`).join(', ')})`);
@@ -716,18 +717,26 @@ async function onNotChange(pool, config, { app, session, head, failing = [], run
       const text = await toPerson(pool, { change, wait: base, why: decided.why, runId, failingCount: failing.length, fromHandOff: true, deps });
       return { person: true, text, why: decided.why };
     }
-    // Step 2: a fix for each test, found or filed on Homeroom's board.
+    // Step 2: a fix for each test, found or filed on Homeroom's board, which
+    // the bot must be building on: else nobody would fix it, and a person
+    // takes it now, as before.
     const board = await platformBoard(pool, deps);
     const settings = await botModule(deps).readSettings(pool).catch(() => null);
     const notLive = !board || !settings || settings.mode === 'off' || !liveModule(deps).isLiveFor(settings, board);
+    if (notLive) {
+      const base = await saveWait(pool, {
+        sessionId: change.id, appId: change.app_id, issueNumber, stage: 'fixing', synced: !!live?.synced, flakeIds: [], tests, head,
+      });
+      const why = board ? 'not_live' : 'no_board';
+      const text = await toPerson(pool, { change, wait: base, why, runId, failingCount: failing.length, fromHandOff: true, deps });
+      return { person: true, text, why };
+    }
     const bot = deps.bot || await dmModule(deps).botAccount(pool);
     const fixes = [];
-    if (board) {
-      for (const test of decided.tests) {
-        // eslint-disable-next-line no-await-in-loop
-        const got = await fixFor(pool, { board, test, bot, deps });
-        if (got.flake) fixes.push({ ...got, test });
-      }
+    for (const test of decided.tests) {
+      // eslint-disable-next-line no-await-in-loop
+      const got = await fixFor(pool, { board, test, bot, deps });
+      if (got.flake) fixes.push({ ...got, test });
     }
     const saved = await saveWait(pool, {
       sessionId: change.id, appId: change.app_id, issueNumber, stage: 'fixing', synced: !!live?.synced,
@@ -739,12 +748,6 @@ async function onNotChange(pool, config, { app, session, head, failing = [], run
         appId: change.app_id, sessionId: change.id, outcome: f.fresh ? (f.flake.filed ? 'filed' : 'found') : 'joined',
         runId, issueNumber: f.flake.issue_number, test: f.test.name,
       });
-    }
-    if (!board || notLive) {
-      const text = await toPerson(pool, {
-        change, wait: saved, why: board ? 'not_live' : 'no_board', runId, failingCount: failing.length, fromHandOff: true, deps,
-      });
-      return { person: true, text, why: board ? 'not_live' : 'no_board' };
     }
     // Into the build lane while there is room, else waiting its turn.
     let room = MAX_IN_FLIGHT - await inFlight(pool);

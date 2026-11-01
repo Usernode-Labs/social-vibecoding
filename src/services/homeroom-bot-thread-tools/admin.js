@@ -487,7 +487,7 @@ async function appendToConversation(pool, { userId, botId, threadRootId, content
  *   { ok: false, status, error, expired? }                       refused, nothing ran
  * Never throws.
  */
-async function confirmAction(pool, config, { user, actionId, conversationId, botId = null, deps = {} }) {
+async function confirmAction(pool, config, { user, actionId, conversationId, botId = null, threadRootId = null, deps = {} }) {
   if (typeof actionId !== 'string' || !UUID_RE.test(actionId)) return { ok: false, status: 404, error: 'No such card' };
   if (!(await freshAdmin(pool, user?.id))) {
     return { ok: false, status: 403, error: 'Only a full platform admin can confirm this.' };
@@ -552,7 +552,8 @@ async function confirmAction(pool, config, { user, actionId, conversationId, bot
   ).catch((err) => log.warn('homeroom-bot-admin', 'Could not record an admin action\'s outcome', { actionId, err: err.message }));
   const label = tool?.title || name;
   await appendToConversation(pool, {
-    userId: user.id, botId, threadRootId: claimed.thread_root_id, actionId, tool: name, deps,
+    // Said where the card is: its message's thread, else where the turn was.
+    userId: user.id, botId, threadRootId: threadRootId || claimed.thread_root_id, actionId, tool: name, deps,
     content: stored.ok ? `Confirmed: ${label}. ${line}` : `${label}: ${line}`,
   });
   log.info('homeroom-bot-admin', 'Ran a confirmed admin action', { userId: user.id, tool: name, actionId, ok: stored.ok });
