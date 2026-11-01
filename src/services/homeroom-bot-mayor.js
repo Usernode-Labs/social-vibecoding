@@ -416,8 +416,16 @@ function otherThreadLines(thread) {
     // 1 Nov 2026: a screen is drawn here, in this thread (draw_screen).
     lines.push(
       `- They started this thread with your "+", ${what}${d.appSlug ? ` on ${d.appName || d.appSlug} (project "${d.appSlug}")` : ', on any project'}.`,
-      '  Help them say what they want, then offer it as a request with offer_request. When they want to see how a',
+      // 1 Nov 2026 (Evan): File it is under the bot's offer alone, not at
+      // the thread's foot, so the offer comes once it is ready, unasked.
+      '  Help them say what they want. Once it is clear enough to build, offer it as a request with offer_request:',
+      '  File it shows only under that offer, so make it then, without waiting to be asked. When they want to see how a',
       '  screen could look, call draw_screen: it is drawn here, in this thread, and changed at their word.',
+    );
+  } else if (!d) {
+    lines.push(
+      '- Nothing in this thread is filed until you offer it. Once what they want is clear enough to build, offer it as',
+      '  a request with offer_request: File it shows only under that offer.',
     );
   } else if (d?.appSlug) {
     const name = d.appName || d.appSlug;
