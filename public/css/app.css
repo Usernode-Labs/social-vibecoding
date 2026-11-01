@@ -18141,8 +18141,13 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    (`--platform-strip-w`, THE SIDE STRIP; 0 everywhere else). Unfolded and
    held sideways the Duo is 951px with an 84px column the body pads out, so
    sums taken from 100vw counted the column twice: Main came out 379px and
-   the list's card 220px. The columns pinned to the right edge also stop at
-   the column (`--ai-edge`), as every other surface there does. */
+   the list's card 220px.
+   THE PINNED COLUMNS RUN UNDER IT (1 Nov 2026), as the header does: Main,
+   the side panel in its place and a design's preview reach the screen's
+   edge, and pad what is in them by the column (`--ai-edge`), so their
+   contents stop beside it while their ground runs under the clock. Stopped
+   at the column instead, Main ended in a hard edge with bare wallpaper
+   beside it. */
 body:has(#ai-screen:not(.hidden)) {
   --ai-room: calc(100vw - var(--platform-rail-w, 0px) - var(--platform-strip-w, 0px));
   --ai-list-min: 480px;
@@ -18169,10 +18174,10 @@ html[data-side-strip="right"] body:has(#ai-screen:not(.hidden)) {
 #ai-screen .ai-main-pane {
   position: fixed;
   z-index: 20;
-  right: var(--ai-edge, 0px);
+  right: 0;
   bottom: 0;
   top: calc(var(--platform-header-h) + var(--platform-safe-top, 0px) - .5rem);
-  width: var(--ai-main-w);
+  width: calc(var(--ai-main-w) + var(--ai-edge, 0px));
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -18188,11 +18193,12 @@ html[data-side-strip="right"] body:has(#ai-screen:not(.hidden)) {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 18px;
+  padding: 12px calc(18px + var(--ai-edge, 0px)) 12px 18px;
   border-bottom: 1px solid var(--app-sheet-line);
   background-color: var(--dc-sheet-fill);
 }
 #ai-screen .ai-main-pane > .messages-layout { flex: 1 1 auto; height: auto; min-height: 0; }
+#ai-screen .ai-main-pane > .messages-layout { padding-right: var(--ai-edge, 0px); }
 /* ONE SHEET (30 Oct 2026). The chat is the Messages screen's, which lifts
    itself off the page as a sheet of its own: a rounded corner, a hairline
    and a shadow. Inside this column that drew a card under a band, its
@@ -18232,8 +18238,7 @@ html[data-side-panel] #ai-screen .ai-main-pane { display: none; }
   html[data-side-panel] #ai-screen { padding-right: var(--ai-main-w); }
 }
 body:has(#ai-screen:not(.hidden)) .side-panel {
-  width: var(--ai-main-w);
-  right: var(--ai-edge, 0px);
+  width: calc(var(--ai-main-w) + var(--ai-edge, 0px));
   border-top-right-radius: 0;
   border-top-left-radius: 1.75rem;
 }
@@ -18266,10 +18271,11 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
 #ai-screen .ai-preview-pane {
   position: fixed;
   z-index: 21;
-  right: var(--ai-edge, 0px);
+  right: 0;
   bottom: 0;
   top: calc(var(--platform-header-h) + var(--platform-safe-top, 0px) - .5rem);
-  width: var(--ai-preview-w);
+  width: calc(var(--ai-preview-w) + var(--ai-edge, 0px));
+  padding-right: var(--ai-edge, 0px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -25170,9 +25176,19 @@ body:has(#ai-screen:not(.hidden)) .side-panel-head {
   height: auto;
   min-height: 63px;
   gap: 10px;
-  padding: 12px 18px;
+  padding: 12px calc(18px + var(--ai-edge, 0px)) 12px 18px;
   background-color: var(--dc-sheet-fill);
 }
+/* Its page stops beside the Duo's column, as Main's chat does (`--ai-edge`,
+   the bot tab's section). */
+body:has(#ai-screen:not(.hidden)) .side-panel-body { margin-right: var(--ai-edge, 0px); }
+/* AND ITS FOOT CLEARS THE KEYBOARD (1 Nov 2026). In the Homeroom app beside
+   this page (side-panel controller canTake), a reply typed in the panel's
+   own document had the keyboard over its box: the page's composers lift
+   themselves, the frame does not know the keyboard is there. The kit
+   measures it from the screen whichever document has the focus
+   (`un-kb`, `--un-kb-inset`), so the panel ends above it. */
+html.un-kb body:has(#ai-screen:not(.hidden)) .side-panel { bottom: var(--un-kb-inset, 0px); }
 /* The topic's back chip, centred in the row rather than at its top. */
 .side-panel-head > .side-panel-main { margin: 0; align-self: center; }
 /* The column's heading, as Main's header reads (30 Oct 2026): the project's

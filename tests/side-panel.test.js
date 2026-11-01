@@ -361,7 +361,11 @@ test('the panel takes a navigation only beside a running app or the AI tab\'s pa
     [{ chromeless: true }, false, 'chromeless'],
     [{ visible: false }, false, 'the app view is not on screen'],
     [{ user: null }, false, 'signed out'],
-    [{ native: true }, false, 'the native app\'s WebView'],
+    [{ native: true }, false, 'the native app\'s WebView, beside an app'],
+    // 1 Nov 2026: iPhone Duo unfolded and held sideways docks the AI tab's
+    // column, and a request from its list belongs in Main's place there too.
+    [{ ...ai, native: true, width: 951 }, true, 'the native app\'s WebView, beside the AI tab\'s page'],
+    [{ ...ai, native: true, width: 669 }, false, 'the native app on a phone-width screen, where nothing is docked'],
     [{ embedded: true }, false, 'inside the panel itself'],
   ];
   for (const [opts, expected, why] of cases) {

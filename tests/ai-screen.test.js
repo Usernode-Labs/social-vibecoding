@@ -786,12 +786,22 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   assert.match(css, /#ai-screen\[data-ai-docked\] \{ padding-right: var\(--ai-main-w\); \}/);
   // 1 Nov 2026, iPhone Duo held sideways (951px, an 84px column of system
   // chrome on the right that the body pads out): the room is beside the
-  // column, so its width is not counted twice, and the columns pinned to the
-  // right edge stop at it. Off the Duo both are 0.
+  // column, so its width is not counted twice. The columns pinned to the
+  // right edge run their ground under the column to the screen's edge, as
+  // the header does, and pad what is in them by it: stopped at the column,
+  // Main ended in a hard edge beside bare wallpaper. Off the Duo both are 0.
   assert.match(css, /html\[data-side-strip="right"\] body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-edge: var\(--platform-strip-w, 0px\);\s+\}/);
-  assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*right: var\(--ai-edge, 0px\);/);
-  assert.match(css, /#ai-screen \.ai-preview-pane \{[^}]*right: var\(--ai-edge, 0px\);/);
-  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{\s+width: var\(--ai-main-w\);\s+right: var\(--ai-edge, 0px\);/);
+  assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*right: 0;[^}]*width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
+  assert.match(css, /#ai-screen \.ai-main-head \{[^}]*padding: 12px calc\(18px \+ var\(--ai-edge, 0px\)\) 12px 18px;/, 'its name stops beside the column, its hairline runs under it');
+  assert.match(css, /#ai-screen \.ai-main-pane > \.messages-layout \{[^}]*padding-right: var\(--ai-edge, 0px\);/, 'and so does the chat');
+  assert.match(css, /#ai-screen \.ai-preview-pane \{[^}]*right: 0;[^}]*width: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\s+padding-right: var\(--ai-edge, 0px\);/);
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{\s+width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel-head \{[^}]*padding: 12px calc\(18px \+ var\(--ai-edge, 0px\)\) 12px 18px;/);
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel-body \{ margin-right: var\(--ai-edge, 0px\); \}/);
+  // In the Homeroom app the panel stands here too (canTake), and a reply
+  // typed in its own document had the keyboard over its box: it ends above
+  // the keyboard the kit measures from the screen.
+  assert.match(css, /html\.un-kb body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{ bottom: var\(--un-kb-inset, 0px\); \}/);
   assert.match(css, /#ai-screen:is\(\[data-ai-preview="three"\], \[data-ai-preview="halves"\]\) \.ai-main-pane \{\s+width: var\(--ai-col-w\);\s+right: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);/);
   assert.match(css, /#ai-screen\[data-ai-preview="halves"\] \{\s+--ai-col-w: calc\(var\(--ai-room\) \/ 2\);/);
   const page = css.slice(css.indexOf('body:has(#ai-screen:not(.hidden)) {'), css.indexOf('/* A phone: the whole of the page, over the drawer'));
@@ -800,11 +810,11 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   // With Main docked it is the far edge and has no gutter, so the rail's is
   // dropped too: the list's cards sit 16px (their own margin) from both.
   assert.match(css, /#ai-screen\[data-ai-docked\] \{ padding-left: var\(--platform-rail-w, 0px\); \}/);
-  assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*width: var\(--ai-main-w\);/);
+  assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
   assert.match(css, /#ai-screen \.ai-main-pane > \.messages-layout \{ flex: 1 1 auto; height: auto; min-height: 0; \}/);
   assert.match(css, /html\[data-side-panel\] #ai-screen \.ai-main-pane \{ display: none; \}/);
   assert.match(css, /@media \(min-width: 768px\) \{\s+html\[data-side-panel\] #ai-screen \{ padding-right: var\(--ai-main-w\); \}\s+\}/);
-  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{\s+width: var\(--ai-main-w\);/, 'so the list does not move');
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{\s+width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/, 'so the list does not move');
   // 30 Oct 2026: Main's left edge is the side panel's handle, and sets the same width.
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /import \{ SidePanelDivider \} from '\.\.\/side-panel\/side-panel';/);
