@@ -18329,6 +18329,13 @@ html.in-side-panel.side-panel-beside-ai .dev-request-bar:not(:has(.dev-card-menu
 #ai-screen .ai-drawer-list .ai-askbar-gap { display: none; }
 @media (prefers-reduced-motion: reduce) { .ai-drawer-back { transition: none; } }
 .ai-drawer[data-panning] { user-select: none; -webkit-user-select: none; }
+/* Until a thread has been opened the list is the whole screen and the
+   column waits off its right edge, with no peek (phone-drawer.tsx, FULL_AT;
+   Evan, 1 Nov 2026). Its shadow would show at the list's edge, so it comes
+   only with the slide. */
+.ai-drawer:not([data-peek]) .ai-drawer-list { width: 100%; }
+.ai-drawer:not([data-peek]) .ai-drawer-thread { left: 100%; }
+.ai-drawer:not([data-peek])[data-level="0"]:not([data-panning]) .ai-drawer-thread { box-shadow: none; border-left-color: transparent; }
 /* Where the window has the room, the feed takes a project's stage width
    (720px) out of the screen's 672px column, as far as that column's own
    margins go. */
