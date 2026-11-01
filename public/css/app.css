@@ -25210,7 +25210,7 @@ body:has(#ai-screen:not(.hidden)) :is(#side-panel-divider, #ai-main-divider) {
 }
 /* Under a pointer that hovers only: a finger's tap leaves iOS holding
    :hover on the handle, which kept the bar lit after the drag (iPhone Duo,
-   1 November 2026). A touch shows it while held. */
+   1 November 2026). */
 @media (hover: hover) {
   .side-panel-divider:hover::after { opacity: .45; }
 }
@@ -25223,9 +25223,13 @@ html.side-panel-resizing .side-panel-divider::after {
    hovers over, and 10px is narrower than a fingertip, so the edge read as
    no handle at all. With a coarse pointer the handle is 24px across the
    line, reaching 4px into Main past the gutter (its rows and the reply box
-   begin 12 to 18px in), and a short grip on the line is drawn at rest. */
+   begin 12 to 18px in), and a short grip on the line is drawn at rest.
+   THE GRIP IS THE WHOLE MARK. The full-height bar is a pointer's hover
+   cue; under a finger it ran the screen's height beside the grip, held or
+   focused, and read as a second divider. The grip darkens while held. */
 @media (pointer: coarse) {
   .side-panel-divider { --divider-w: 24px; }
+  .side-panel-divider::after { display: none; }
   .side-panel-divider::before {
     content: "";
     position: absolute;

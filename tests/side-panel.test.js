@@ -1525,6 +1525,10 @@ test('on a touch screen the divider is a handle you can see and hit', () => {
   const block = CSS.slice(at, CSS.indexOf('\n}\n', at));
   assert.match(block, /\.side-panel-divider::before \{[^}]*content: "";[^}]*left: calc\(50% - 2px\);[^}]*height: 40px;[^}]*border-radius: 999px;[^}]*opacity: \.5;/,
     'a grip drawn at rest, on the line');
+  // The grip is the whole mark under a finger: the full-height bar is a
+  // pointer's hover cue, and beside the grip it read as a second divider.
+  assert.match(block, /\.side-panel-divider::after \{ display: none; \}/);
+  assert.match(block, /html\.side-panel-resizing \.side-panel-divider::before \{ opacity: \.85; \}/, 'the grip darkens while held');
   // A tap leaves iOS holding :hover, so the bar lights on hover only where
   // the pointer can hover.
   assert.match(CSS, /@media \(hover: hover\) \{\n  \.side-panel-divider:hover::after \{ opacity: \.45; \}\n\}/);
