@@ -18189,11 +18189,15 @@ body:has(#ai-screen:not(.hidden)) {
 html[data-side-strip="right"] body:has(#ai-screen:not(.hidden)) {
   --ai-edge: var(--platform-strip-w, 0px);
 }
-/* 1 Nov 2026: between 768 and 1024px the list keeps 360px, not 480: its
+/* 1 Nov 2026: between 768 and 1024px the list keeps 280px, not 480: its
    rows are one line (their numbers left out, as a phone's are), and the
-   column is 320px at the least. */
+   column is 320px at the least. 280 rather than the 360 first chosen, so
+   Main's divider can give the chat most of an iPhone Duo held sideways;
+   at its floor the list's title wraps to two lines and its rows shorten,
+   which is the reader's choice to make. The divider reads this figure
+   (features/side-panel/resize.ts probeLayout). */
 @media (max-width: 1023.98px) {
-  body:has(#ai-screen:not(.hidden)) { --ai-list-min: 360px; }
+  body:has(#ai-screen:not(.hidden)) { --ai-list-min: 280px; }
 }
 #ai-screen[data-ai-docked] { padding-right: var(--ai-main-w); }
 /* NO GUTTER AFTER THE RAIL WHILE MAIN IS DOCKED (1 Nov 2026). Every screen
@@ -25186,6 +25190,28 @@ html.dark .messages-inbox-change-tile {
 .side-panel-divider:focus-visible::after,
 html.side-panel-resizing .side-panel-divider::after {
   opacity: .45;
+}
+/* ON A TOUCH SCREEN, A HANDLE YOU CAN SEE AND HIT (iPhone Duo, 1 November
+   2026). The bar above shows only under a pointer, which a finger never
+   hovers over, and 10px is narrower than a fingertip, so the edge read as
+   no handle at all. With a coarse pointer the handle is 20px, still within
+   the column's own padding (its rows and the reply box begin 12 to 18px
+   in), and a short grip at its middle is drawn at rest. */
+@media (pointer: coarse) {
+  .side-panel-divider { width: 20px; }
+  .side-panel-divider::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 6px;
+    width: 4px;
+    height: 40px;
+    margin-top: -20px;
+    border-radius: 999px;
+    background: var(--text-faint);
+    opacity: .5;
+  }
+  html.side-panel-resizing .side-panel-divider::before { opacity: .85; }
 }
 /* WHILE HELD: the two frames would take the pointer the moment it crossed
    them and the drag would stall, so they stand aside; and nothing under the
