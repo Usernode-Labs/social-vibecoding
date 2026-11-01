@@ -601,7 +601,9 @@ test('the top band gives the header the band and its foot to the screens below',
   assert.match(bars[1], /padding-bottom: max\(1rem, calc\(var\(--platform-band-h\) - 2\.25rem\)\);/,
     'the row keeps its 16px floor, and the bar\'s foot meets the band\'s foot');
   assert.match(bars[1], /align-items: flex-start;/, 'the row sits at the top of the taller box');
-  assert.match(bars[1], /padding-right: calc\(1rem \+ 84px\);/, 'the right group clears the clock and camera');
+  // The unfolded Duo's clock and Wi-Fi ring sit in a pill about 130px wide
+  // (x 540 to 669 on the simulator); at 84px the account chevron sat under it.
+  assert.match(bars[1], /padding-right: calc\(0\.5rem \+ 130px\);/, 'the right group clears the clock and Wi-Fi pill');
 });
 
 // ── app.css: THE SIDE CORNER (6072) ─────────────────────────────────────

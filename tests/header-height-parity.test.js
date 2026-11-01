@@ -442,8 +442,8 @@ test('#6070: the Duo\'s top band lays both bars into the band, in parity', () =>
     'the 16px foot is the floor, and the bar\'s foot meets the band\'s foot');
   assert.match(bars[1], /align-items: flex-start;/,
     'the 28px row sits at the top of the taller box, not centred in it');
-  assert.match(bars[1], /padding-right: calc\(1rem \+ 84px\);/,
-    'the right group keeps clear of the clock and camera, the band\'s 84px corner');
+  assert.match(bars[1], /padding-right: calc\(0\.5rem \+ 130px\);/,
+    'the right group keeps clear of the clock and Wi-Fi pill, about 130px across the band\'s corner');
   assert.doesNotMatch(bars[1], /\bheight:/, 'the row still sets the height; no fixed box');
 
   // Everything below is placed by this token, so it loses exactly what the
