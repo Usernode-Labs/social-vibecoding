@@ -303,6 +303,15 @@ test('looks into code and investigations, against the full PostgreSQL schema', {
     assert.deepEqual([card.state, card.endedReason, card.nextAt], ['ended', 'stopped', null]);
     assert.equal(posts.length, before, 'a Stop is theirs: no message');
     assert.equal((await tap(ada, first.reply, 'stop')).status, 409);
+    // What it found, for the chat to answer "File what it found" from.
+    const read = await inv.run(pool, ctxFor(ada, await said(ada, 'File what the investigation found')), 'read_investigation', {});
+    assert.equal(read.ok, true);
+    const mine = read.investigations.find((i) => i.goal === 'Find out why the sync check fails now and then.' && i.checkIns === 2);
+    assert.ok(mine, JSON.stringify(read));
+    assert.equal(mine.state, 'ended (stopped)');
+    assert.match(mine.found, /Check-in 1[\s\S]*Check-in 2/);
+    const theirs = await inv.run(pool, ctxFor(sam, await said(sam, 'what did it find?')), 'read_investigation', {});
+    assert.deepEqual(theirs.investigations, [], 'only their own');
   });
 
   await t.test('a check-in that failed after its look carries on from its checkpoint: one look, one note, one update', async () => {

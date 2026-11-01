@@ -31,6 +31,7 @@ const { withoutEmDashes } = require('../em-dashes');
 const rules = require('../../workflow/rules/investigation.ts');
 
 const TOOL = 'start_investigation';
+const READ = 'read_investigation';
 const MACHINE = 'bot-investigation';
 const MAX_NOTES_CHARS = 16000;
 const CARD_NOTES_CHARS = 3000;
@@ -253,10 +254,12 @@ async function sayEnded(ctx, { pool, config, deps = {} }) {
   if (!inv) return { said: false };
   await drawCard(ctx, { pool, deps });
   const { rows: cut } = await pool.query(
-    `UPDATE homeroom_bot_looks l SET state = 'failed', error = 'the investigation ended', ended_at = NOW()
-       FROM homeroom_bot_look_sessions s
-      WHERE l.investigation_id = $1 AND l.state = 'running' AND s.app_id = l.app_id AND s.user_id = l.user_id
-      RETURNING s.session_id`,
+    `WITH ended AS (
+       UPDATE homeroom_bot_looks SET state = 'failed', error = 'the investigation ended', ended_at = NOW()
+        WHERE investigation_id = $1 AND state = 'running'
+        RETURNING app_id, user_id
+     )
+     SELECT s.session_id FROM ended e JOIN homeroom_bot_look_sessions s ON s.app_id = e.app_id AND s.user_id = e.user_id`,
     [id],
   );
   for (const r of cut) {
@@ -303,6 +306,45 @@ const INVESTIGATION_TOOL = Object.freeze({
   },
 });
 
+// What their investigations found, for the chat to answer from (its notes are
+// on the card, which the chat model does not see): "File what it found".
+const READ_TOOL = Object.freeze({
+  type: 'function',
+  function: {
+    name: READ,
+    description: 'Read their investigations in this chat, newest first: each one\'s goal, project, whether it runs, '
+      + 'its check-ins and everything its notes say it found. Use it before you answer about an investigation, and when '
+      + 'they ask to file what one found (then offer_request for the most important thing it found).',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+});
+const READ_LIMIT = 3;
+const READ_NOTES_CHARS = 5000;
+
+async function readTool(pool, ctx) {
+  const { rows } = await pool.query(
+    `SELECT i.id, i.goal, i.state, i.ended_reason, i.every_hours, i.days, i.notes, i.checkins, i.started_at, i.next_at,
+            a.slug, a.name
+       FROM homeroom_bot_investigations i JOIN apps a ON a.id = i.app_id
+      WHERE i.user_id = $1 AND ($2::int IS NULL OR i.conversation_id = $2) AND i.state IN ('running', 'ended')
+      ORDER BY i.id DESC LIMIT $3`,
+    [ctx.user.id, Number(ctx.conversationId) || null, READ_LIMIT],
+  );
+  if (!rows.length) return { ok: true, investigations: [], note: 'They have no investigation that has run in this chat.' };
+  return {
+    ok: true,
+    investigations: rows.map((r) => {
+      const notes = String(r.notes || '').trim();
+      return {
+        goal: r.goal, project: r.name || r.slug, state: r.state === 'ended' ? `ended (${r.ended_reason || 'ended'})` : 'running',
+        checkIns: (Array.isArray(r.checkins) ? r.checkins : []).filter((c) => !c.skipped).length,
+        ...(r.state === 'running' && r.next_at ? { nextCheckIn: new Date(r.next_at).toISOString() } : {}),
+        found: notes.length > READ_NOTES_CHARS ? `…${notes.slice(-READ_NOTES_CHARS)}` : (notes || 'Nothing yet.'),
+      };
+    }),
+  };
+}
+
 async function runTool(pool, ctx, args) {
   const spec = rules.investigationSpec(args);
   if (!spec.ok) return { ok: false, error: spec.error };
@@ -345,13 +387,18 @@ async function runTool(pool, ctx, args) {
 }
 
 module.exports = {
-  tools: (ctx) => (ctx && ctx.user && ctx.settings && ctx.settings.mode !== 'off' ? [INVESTIGATION_TOOL] : []),
-  run: async (pool, ctx, name, args) => (name === TOOL ? runTool(pool, ctx, args) : undefined),
+  tools: (ctx) => (ctx && ctx.user && ctx.settings && ctx.settings.mode !== 'off' ? [INVESTIGATION_TOOL, READ_TOOL] : []),
+  run: async (pool, ctx, name, args) => {
+    if (name === TOOL) return runTool(pool, ctx, args);
+    if (name === READ) return readTool(pool, ctx);
+    return undefined;
+  },
   promptLines: (ctx) => (ctx && ctx.user && ctx.settings && ctx.settings.mode !== 'off' ? [
     '- Offer an investigation that runs for days (start_investigation) when a question about a project they can build',
     '  on is answered by watching over time: a check that fails now and then, whether a change helped. Every few hours',
     '  a helper looks again and you post a short update here. It puts a card under your reply; nothing runs until they',
-    '  tap Start, so never say it has started.',
+    '  tap Start, so never say it has started. What one found is in read_investigation: read it before you answer',
+    '  about one, and when they ask to file what it found, offer the most important thing as a request.',
   ] : []),
   // The machine's work.
   checkIn,
@@ -368,6 +415,7 @@ module.exports = {
   endedText,
   updateText,
   TOOL,
+  READ,
   INVESTIGATION_TOOL,
   MAX_NOTES_CHARS,
 };
