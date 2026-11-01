@@ -2744,7 +2744,11 @@ async function answerLater(pool, config, { bot, user, conversationId, message, d
   // 1 Nov 2026: and says what it is doing as it goes (sayDoing).
   const run = (typing) => runDmTurn(pool, config, {
     bot, user, settings, conversationId, message,
-    deps: { ...deps, ...where, deferAttempt: attempt, ...(typing?.doing ? { doing: typing.doing } : {}) },
+    deps: {
+      ...deps, ...where, deferAttempt: attempt,
+      ...(typing?.doing ? { doing: typing.doing } : {}),
+      ...(typing?.moveTo ? { moveTyping: typing.moveTo } : {}),
+    },
   });
   return typeof dm.whileTyping === 'function'
     ? dm.whileTyping(pool, {

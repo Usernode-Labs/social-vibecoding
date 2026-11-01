@@ -872,6 +872,40 @@ test('what the bot is doing goes out on its typing event at once, and on every r
   assert.deepEqual(doings().at(-1), [false, null], 'and nothing is said once it has stopped');
 });
 
+// 1 Nov 2026: a screen asked for in Main Chat is drawn in a thread the
+// designer opens; the typing, and so the working card, goes there with it.
+test('the typing moves to the thread the answer goes on in, with what it was doing, and ends there', async (t) => {
+  const { events, ws } = typingHarness(t);
+  const typed = () => events.filter((e) => e.payload.type === 'conversation_typing')
+    .map((e) => [e.payload.threadRootId || null, e.payload.typing, e.payload.doing || null]);
+  let finish;
+  let handed;
+  const answering = dm.whileTyping({}, { botId: 2, conversationId: 41, ws }, (typing) => {
+    handed = typing;
+    return new Promise((resolve) => { finish = resolve; });
+  });
+  await settle();
+  assert.equal(typeof handed.moveTo, 'function', 'the work is handed what moves it');
+  await handed.doing({ kind: 'drawing' });
+  await handed.moveTo(13010);
+  await settle();
+  assert.deepEqual(typed(), [
+    [null, true, null],
+    [null, true, { kind: 'drawing' }],
+    [13010, true, null],
+    [13010, true, { kind: 'drawing' }],
+    [null, false, null],
+  ], 'typing in the thread first, with what it was doing, then stopped in the main chat');
+  await handed.moveTo(13010);
+  assert.equal(typed().length, 5, 'moving to where it already is changes nothing');
+  await handed.doing({ kind: 'designing' });
+  assert.deepEqual(typed().at(-1), [13010, true, { kind: 'designing' }], 'and it says what it does there');
+  finish('drawn');
+  assert.equal(await answering, 'drawn');
+  assert.deepEqual(typed().at(-1), [13010, false, null], 'it stops where it is when the answer is out');
+  assert.equal(typed().filter(([root, typing]) => root === null && !typing).length, 1, 'the main chat stopped once');
+});
+
 test('a typing event carries only the kinds of work the screen words, and what they name', () => {
   assert.deepEqual([...dm.DOING_KINDS], ['progress', 'request', 'code', 'drawing', 'designing', 'drafting']);
   assert.deepEqual(dm.typingDoing({ kind: 'drawing', extra: 'x' }), { kind: 'drawing' });
@@ -903,8 +937,9 @@ test('a message from somebody let in is answered while the bot types; anybody el
     async runDmTurn(_pool, _config, args) {
       await settle();
       seen.push(typing().slice());
-      // 1 Nov 2026: and is handed what says what it is doing.
+      // 1 Nov 2026: and is handed what says what it is doing, and what moves it.
       assert.equal(typeof args.deps.doing, 'function');
+      assert.equal(typeof args.deps.moveTyping, 'function');
       return { turn: args.message.id };
     },
   };
@@ -985,8 +1020,8 @@ test('#4239: a request about Homeroom itself says so, and offers the move instea
 test('"typing" goes out before the answer starts, bounded', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
   const fn = src.slice(src.indexOf('async function whileTyping('), src.indexOf('// ── Who a request is for'));
-  // 1 Nov 2026: the work is handed what says what it is doing.
-  assert.ok(fn.indexOf('stop.ready') < fn.indexOf('await work({ doing: stop.doing })'), 'the answer waits for its typing event');
+  // 1 Nov 2026: the work is handed what says what it is doing, and what moves it.
+  assert.ok(fn.indexOf('stop.ready') < fn.indexOf('return await work(typing);'), 'the answer waits for its typing event');
   assert.match(fn, /setTimeout\(resolve, TYPING_FIRST_WAIT_MS\)/, 'but never long');
   assert.match(src, /created\.first = sendTyping\(pool, botId, id, true, io, root\);/);
   assert.match(src, /stop\.ready = entry\.first \|\| Promise\.resolve\(\);/);
