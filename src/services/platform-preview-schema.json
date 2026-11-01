@@ -1,5 +1,5 @@
 {
-  "fingerprint": "33a74988e5e25cea5a24b8fc454f522c0cb1b986d05696912ce64c8ac2bf463f",
+  "fingerprint": "c5f9afb46deef97decc78ac561f341cf65ad768687e672e15d305b9df6e75e1c",
   "optionalTables": {
     "public.game_results": "360911e519c5374ef67abf103c9b9445062aabc967f3b082e8cd308459200b3e",
     "public.game_room_players": "d9bd3b3167922921201a373ab97d9a625ec8aec78c8fc056aff362cc00816b57",

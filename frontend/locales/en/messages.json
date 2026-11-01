@@ -5130,5 +5130,401 @@
   "ai.thread.aboutChangeUntitled": {
     "text": "Change #{{number}}",
     "description": "The name over a private thread with Homeroom bot that was opened from a change's page, when the change's title is not known."
+  },
+  "botCards.batch.title": {
+    "text": "Requests on {{project}}",
+    "description": "Title of the card Homeroom bot puts under its reply when it works through several of a person's requests at once. {{project}} is the project's name."
+  },
+  "botCards.batch.titleRunning": {
+    "text": "Building on {{project}}",
+    "description": "Title of that card once the person tapped Build: Homeroom bot is building the ready requests. {{project}} is the project's name."
+  },
+  "botCards.batch.titleDone": {
+    "text": "Built on {{project}}",
+    "description": "Title of that card once nothing of the batch is being built any more (each is live, waiting for a yes, or stopped). {{project}} is the project's name."
+  },
+  "botCards.batch.count.total_one": {
+    "text": "{{count}} request",
+    "description": "First part of the summary under the batch card's title, joined to the next parts with a dot: how many requests the card lists."
+  },
+  "botCards.batch.count.total_other": {
+    "text": "{{count}} requests",
+    "description": "First part of the summary under the batch card's title, joined to the next parts with a dot: how many requests the card lists."
+  },
+  "botCards.batch.count.ready_one": {
+    "text": "{{count}} ready",
+    "description": "Part of the summary under the batch card's title: how many requests Homeroom bot found ready to build."
+  },
+  "botCards.batch.count.ready_other": {
+    "text": "{{count}} ready",
+    "description": "Part of the summary under the batch card's title: how many requests Homeroom bot found ready to build."
+  },
+  "botCards.batch.count.question_one": {
+    "text": "{{count}} question",
+    "description": "Part of the summary under the batch card's title: how many requests have a question from Homeroom bot waiting for an answer."
+  },
+  "botCards.batch.count.question_other": {
+    "text": "{{count}} questions",
+    "description": "Part of the summary under the batch card's title: how many requests have a question from Homeroom bot waiting for an answer."
+  },
+  "botCards.batch.count.person_one": {
+    "text": "{{count}} for the group",
+    "description": "Part of the summary under the batch card's title: how many requests Homeroom bot left for the project's group to decide."
+  },
+  "botCards.batch.count.person_other": {
+    "text": "{{count}} for the group",
+    "description": "Part of the summary under the batch card's title: how many requests Homeroom bot left for the project's group to decide."
+  },
+  "botCards.batch.count.done_one": {
+    "text": "{{count}} done",
+    "description": "Part of the summary under the batch card's title: how many requests are already live, or need nothing built."
+  },
+  "botCards.batch.count.done_other": {
+    "text": "{{count}} done",
+    "description": "Part of the summary under the batch card's title: how many requests are already live, or need nothing built."
+  },
+  "botCards.batch.count.reading_one": {
+    "text": "{{count}} being read",
+    "description": "Part of the summary under the batch card's title: how many requests Homeroom bot is reading again now."
+  },
+  "botCards.batch.count.reading_other": {
+    "text": "{{count}} being read",
+    "description": "Part of the summary under the batch card's title: how many requests Homeroom bot is reading again now."
+  },
+  "botCards.batch.count.underway_one": {
+    "text": "{{count}} under way",
+    "description": "Part of the summary under the batch card's title: how many requests are already being built, checked or voted on."
+  },
+  "botCards.batch.count.underway_other": {
+    "text": "{{count}} under way",
+    "description": "Part of the summary under the batch card's title: how many requests are already being built, checked or voted on."
+  },
+  "botCards.batch.count.unread_one": {
+    "text": "{{count}} not read",
+    "description": "Part of the summary under the batch card's title: how many requests Homeroom bot could not read from here."
+  },
+  "botCards.batch.count.unread_other": {
+    "text": "{{count}} not read",
+    "description": "Part of the summary under the batch card's title: how many requests Homeroom bot could not read from here."
+  },
+  "botCards.batch.read.ready": {
+    "text": "Ready",
+    "description": "Small tag at the end of a request's row on the batch card: Homeroom bot found it ready to build."
+  },
+  "botCards.batch.read.question": {
+    "text": "Question",
+    "description": "Small tag at the end of a request's row on the batch card: Homeroom bot asked a question about it that waits for an answer."
+  },
+  "botCards.batch.read.person": {
+    "text": "For the group",
+    "description": "Small tag at the end of a request's row on the batch card: Homeroom bot left it for the project's group to decide."
+  },
+  "botCards.batch.read.done": {
+    "text": "Done",
+    "description": "Small tag at the end of a request's row on the batch card: what it asks is live, or there was nothing to build."
+  },
+  "botCards.batch.read.reading": {
+    "text": "Reading",
+    "description": "Small tag at the end of a request's row on the batch card: Homeroom bot is reading it again now."
+  },
+  "botCards.batch.read.underway": {
+    "text": "Under way",
+    "description": "Small tag at the end of a request's row on the batch card: it is already being built, checked or voted on."
+  },
+  "botCards.batch.read.unread": {
+    "text": "Not read",
+    "description": "Small tag at the end of a request's row on the batch card: Homeroom bot could not read it from here."
+  },
+  "botCards.batch.why.plan": {
+    "text": "Its plan is ready: Build goes ahead with it.",
+    "description": "Line under a request's title on the batch card: Homeroom bot wrote its plan, and Build goes ahead with that plan."
+  },
+  "botCards.batch.why.held": {
+    "text": "Ready, and waiting for a free slot.",
+    "description": "Line under a request's title on the batch card: it is ready, but a limit on how much Homeroom bot builds at once held it."
+  },
+  "botCards.batch.why.allowance": {
+    "text": "Its building time for this week is used up.",
+    "description": "Line under a request's title on the batch card: whoever pays for it has no building time left this week."
+  },
+  "botCards.batch.why.notBuiltHere": {
+    "text": "Homeroom bot does not build on this project.",
+    "description": "Line under a request's title on the batch card, when it could not be read because Homeroom bot is not switched on for the project."
+  },
+  "botCards.batch.why.notMember": {
+    "text": "Only the project's members can ask for it to be read.",
+    "description": "Line under a request's title on the batch card, when the person is not a member of the project and did not file it."
+  },
+  "botCards.batch.why.empty": {
+    "text": "Nothing to build.",
+    "description": "Line under a request's title on the batch card: Homeroom bot found nothing to build for it."
+  },
+  "botCards.batch.why.live": {
+    "text": "It is live.",
+    "description": "Line under a request's title on the batch card: what it asks for is live."
+  },
+  "botCards.batch.why.vote": {
+    "text": "Its change waits for a yes.",
+    "description": "Line under a request's title on the batch card: its change is built and up for approval."
+  },
+  "botCards.batch.why.checks": {
+    "text": "Its change is in checks.",
+    "description": "Line under a request's title on the batch card: its change is built and its automated checks are running."
+  },
+  "botCards.batch.why.building": {
+    "text": "Being built now.",
+    "description": "Line under a request's title on the batch card: Homeroom bot is building it now."
+  },
+  "botCards.batch.why.goingLive": {
+    "text": "Approved, and going live.",
+    "description": "Line under a request's title on the batch card: its change was approved and is going live."
+  },
+  "botCards.batch.why.buildQueued": {
+    "text": "Waiting its turn to be built.",
+    "description": "Line under a request's title on the batch card: it is ready and its build waits its turn."
+  },
+  "botCards.batch.untitled": {
+    "text": "Request #{{number}}",
+    "description": "A request's name on the batch card when its title is not known. {{number}} is the request's number."
+  },
+  "botCards.batch.more_one": {
+    "text": "Show {{count}} more",
+    "description": "Button under the batch card's first rows: shows the rest of the requests."
+  },
+  "botCards.batch.more_other": {
+    "text": "Show {{count}} more",
+    "description": "Button under the batch card's first rows: shows the rest of the requests."
+  },
+  "botCards.batch.fewer": {
+    "text": "Show fewer",
+    "description": "Button under the batch card's rows once all are shown: shows only the first few again."
+  },
+  "botCards.batch.rollup.live_one": {
+    "text": "{{count}} live",
+    "description": "Part of the line under a running batch card's title and its bar's name, joined with dots: how many of its requests are live."
+  },
+  "botCards.batch.rollup.live_other": {
+    "text": "{{count}} live",
+    "description": "Part of the line under a running batch card's title and its bar's name, joined with dots: how many of its requests are live."
+  },
+  "botCards.batch.rollup.ready_one": {
+    "text": "{{count}} ready for your yes",
+    "description": "Part of the line under a running batch card's title: how many of its changes are built and wait for approval."
+  },
+  "botCards.batch.rollup.ready_other": {
+    "text": "{{count}} ready for your yes",
+    "description": "Part of the line under a running batch card's title: how many of its changes are built and wait for approval."
+  },
+  "botCards.batch.rollup.checks_one": {
+    "text": "{{count}} in checks",
+    "description": "Part of the line under a running batch card's title: how many of its changes are having their automated checks run."
+  },
+  "botCards.batch.rollup.checks_other": {
+    "text": "{{count}} in checks",
+    "description": "Part of the line under a running batch card's title: how many of its changes are having their automated checks run."
+  },
+  "botCards.batch.rollup.building_one": {
+    "text": "{{count}} building",
+    "description": "Part of the line under a running batch card's title: how many of its requests are being planned or built."
+  },
+  "botCards.batch.rollup.building_other": {
+    "text": "{{count}} building",
+    "description": "Part of the line under a running batch card's title: how many of its requests are being planned or built."
+  },
+  "botCards.batch.rollup.waiting_one": {
+    "text": "{{count}} waiting",
+    "description": "Part of the line under a running batch card's title: how many of its requests wait their turn, a limit, or an answer."
+  },
+  "botCards.batch.rollup.waiting_other": {
+    "text": "{{count}} waiting",
+    "description": "Part of the line under a running batch card's title: how many of its requests wait their turn, a limit, or an answer."
+  },
+  "botCards.batch.rollup.stopped_one": {
+    "text": "{{count}} stopped",
+    "description": "Part of the line under a running batch card's title: how many of its builds stopped without a change."
+  },
+  "botCards.batch.rollup.stopped_other": {
+    "text": "{{count}} stopped",
+    "description": "Part of the line under a running batch card's title: how many of its builds stopped without a change."
+  },
+  "botCards.batch.state.live": {
+    "text": "Live",
+    "description": "Where one request of a running batch is, at the end of its row: live."
+  },
+  "botCards.batch.state.ready": {
+    "text": "Ready for your yes",
+    "description": "Where one request of a running batch is, at the end of its row: its change is built and waits for approval."
+  },
+  "botCards.batch.state.checks": {
+    "text": "In checks",
+    "description": "Where one request of a running batch is, at the end of its row: its change's automated checks are running."
+  },
+  "botCards.batch.state.building": {
+    "text": "Building",
+    "description": "Where one request of a running batch is, at the end of its row: it is being planned or built."
+  },
+  "botCards.batch.state.waiting": {
+    "text": "Waiting",
+    "description": "Where one request of a running batch is, at the end of its row: it waits its turn, a limit, or an answer."
+  },
+  "botCards.batch.state.stopped": {
+    "text": "Stopped",
+    "description": "Where one request of a running batch is, at the end of its row: its build stopped without a change."
+  },
+  "botCards.batch.raise.offerOwner_one": {
+    "text": "As the project's owner, Build runs up to {{count}} of these at once for this batch.",
+    "description": "Line on the batch card before Build is tapped: the project's owner may have more of Homeroom bot's work going at once for this batch than the usual limit. {{count}} is that number."
+  },
+  "botCards.batch.raise.offerOwner_other": {
+    "text": "As the project's owner, Build runs up to {{count}} of these at once for this batch.",
+    "description": "Line on the batch card before Build is tapped: the project's owner may have more of Homeroom bot's work going at once for this batch than the usual limit. {{count}} is that number."
+  },
+  "botCards.batch.raise.offerAdmin_one": {
+    "text": "As one of the project's admins, Build runs up to {{count}} of these at once for this batch.",
+    "description": "Line on the batch card before Build is tapped, for an admin of the project: more of Homeroom bot's work may go at once for this batch than the usual limit. {{count}} is that number."
+  },
+  "botCards.batch.raise.offerAdmin_other": {
+    "text": "As one of the project's admins, Build runs up to {{count}} of these at once for this batch.",
+    "description": "Line on the batch card before Build is tapped, for an admin of the project: more of Homeroom bot's work may go at once for this batch than the usual limit. {{count}} is that number."
+  },
+  "botCards.batch.raise.runningOwner_one": {
+    "text": "{{count}} at once: your limit for this batch, as the project's owner.",
+    "description": "Line on a running batch card: how many of its requests Homeroom bot works on at once, raised for this batch because the person owns the project."
+  },
+  "botCards.batch.raise.runningOwner_other": {
+    "text": "{{count}} at once: your limit for this batch, as the project's owner.",
+    "description": "Line on a running batch card: how many of its requests Homeroom bot works on at once, raised for this batch because the person owns the project."
+  },
+  "botCards.batch.raise.runningAdmin_one": {
+    "text": "{{count}} at once: your limit for this batch, as one of the project's admins.",
+    "description": "Line on a running batch card: how many of its requests Homeroom bot works on at once, raised for this batch because the person is one of the project's admins."
+  },
+  "botCards.batch.raise.runningAdmin_other": {
+    "text": "{{count}} at once: your limit for this batch, as one of the project's admins.",
+    "description": "Line on a running batch card: how many of its requests Homeroom bot works on at once, raised for this batch because the person is one of the project's admins."
+  },
+  "botCards.batch.refused_one": {
+    "text": "Could not start {{numbers}}.",
+    "description": "Line on a running batch card: a request it found ready could not be started (its building time, or who may ask). {{numbers}} is the request, for example #4."
+  },
+  "botCards.batch.refused_other": {
+    "text": "Could not start {{numbers}}.",
+    "description": "Line on a running batch card: requests it found ready could not be started (building time, or who may ask). {{numbers}} lists them, for example #4 and #9."
+  },
+  "botCards.batch.choices": {
+    "text": "What to do with these requests",
+    "description": "Accessible name of the row of buttons under the batch card."
+  },
+  "botCards.batch.build_one": {
+    "text": "Build it",
+    "description": "Button on the batch card: Homeroom bot starts building the one ready request."
+  },
+  "botCards.batch.build_other": {
+    "text": "Build the {{count}}",
+    "description": "Button on the batch card: Homeroom bot starts building every ready request at once. {{count}} is how many."
+  },
+  "botCards.batch.answer_one": {
+    "text": "Answer the question",
+    "description": "Button on the batch card: Homeroom bot asks its open question about one of the requests, in the chat."
+  },
+  "botCards.batch.answer_other": {
+    "text": "Answer the questions",
+    "description": "Button on the batch card: Homeroom bot asks its open questions about the requests, in the chat."
+  },
+  "botCards.batch.close": {
+    "text": "Close #{{number}}",
+    "description": "Button on the batch card for a request that is done: Homeroom bot offers a vote on closing it. {{number}} is the request's number."
+  },
+  "botCards.batch.say.answer_one": {
+    "text": "Ask me your question about {{numbers}}.",
+    "description": "What the person says to Homeroom bot in the chat, as their own message, when they tap Answer the question on the batch card. {{numbers}} is the request, for example #3."
+  },
+  "botCards.batch.say.answer_other": {
+    "text": "Ask me your questions about {{numbers}}.",
+    "description": "What the person says to Homeroom bot in the chat, as their own message, when they tap Answer the questions on the batch card. {{numbers}} lists the requests, for example #3 and #7."
+  },
+  "botCards.batch.say.close": {
+    "text": "#{{number}} is done. Can you propose closing it?",
+    "description": "What the person says to Homeroom bot in the chat, as their own message, when they tap Close on the batch card. {{number}} is the request's number."
+  },
+  "botCards.batch.failed": {
+    "text": "That did not work just now. Try again.",
+    "description": "Error under the batch card's buttons when a tap could not be done and the server gave no reason."
+  },
+  "botCards.buildNote.title.waiting": {
+    "text": "Sent to the build of #{{number}}",
+    "description": "Title of the card under Homeroom bot's reply when the person added a note to a request it is building right now. {{number}} is the request's number."
+  },
+  "botCards.buildNote.title.delivered": {
+    "text": "The build of #{{number}} has your note",
+    "description": "Title of that card once the build has read the note. {{number}} is the request's number."
+  },
+  "botCards.buildNote.title.missed": {
+    "text": "The build of #{{number}} finished first",
+    "description": "Title of that card when the build ended before it read the note. {{number}} is the request's number."
+  },
+  "botCards.buildNote.title.forwarded": {
+    "text": "Your note goes into the next update",
+    "description": "Title of that card once the person put the note in the change's next update."
+  },
+  "botCards.buildNote.title.offerRedo": {
+    "text": "Stop the build of #{{number}} and start again?",
+    "description": "Title of the card Homeroom bot puts under its reply when the person wants a running build stopped and done again with their note. {{number}} is the request's number."
+  },
+  "botCards.buildNote.title.redone": {
+    "text": "Starting #{{number}} again with your note",
+    "description": "Title of that card once the person tapped Stop and redo: the build was stopped and the request is done again. {{number}} is the request's number."
+  },
+  "botCards.buildNote.title.gone": {
+    "text": "That build of #{{number}} already finished",
+    "description": "Title of that card when the build ended before the person decided, so there is nothing to stop. {{number}} is the request's number."
+  },
+  "botCards.buildNote.line.waiting": {
+    "text": "It reads it at its next step, before it finishes.",
+    "description": "Line on the build note card while the note waits for the running build to read it."
+  },
+  "botCards.buildNote.line.missedChange": {
+    "text": "Its change is up for a vote. Put your note in its next update?",
+    "description": "Line on the build note card when the build finished before reading the note and its change is up for approval: the button under it puts the note in the change's next update."
+  },
+  "botCards.buildNote.line.missed": {
+    "text": "It ended before it read your note.",
+    "description": "Line on the build note card when the build ended before reading the note and there is no change to update."
+  },
+  "botCards.buildNote.line.forwarded": {
+    "text": "It goes into the next update instead. Your note is on the change's discussion.",
+    "description": "Line on the build note card once the note was put in the change's next update: it is posted on the change's discussion under the person's name."
+  },
+  "botCards.buildNote.line.offerRedo": {
+    "text": "Stop and redo stops it now. Your note goes on the request's discussion, under your name, and Homeroom bot reads the request again first. Keep going sends the note into this build instead.",
+    "description": "Line on the Stop and redo card, before anything is tapped: what each button does."
+  },
+  "botCards.buildNote.line.redone": {
+    "text": "It stopped. Your note is on the request's discussion, and Homeroom bot reads the request again first.",
+    "description": "Line on the build note card once Stop and redo was tapped and the note was posted on the request."
+  },
+  "botCards.buildNote.line.redoneCarried": {
+    "text": "It stopped. Homeroom bot reads the request again, and its next build gets your note.",
+    "description": "Line on the build note card once Stop and redo was tapped, when the note could not be posted on the request: the next build is handed it instead."
+  },
+  "botCards.buildNote.redo": {
+    "text": "Stop and redo",
+    "description": "Button on the Stop and redo card: stops Homeroom bot's running build and does the request again with the person's note."
+  },
+  "botCards.buildNote.keep": {
+    "text": "Keep going",
+    "description": "Button on the Stop and redo card: nothing stops, and the person's note is sent into the running build instead."
+  },
+  "botCards.buildNote.forward": {
+    "text": "Put it in the next update",
+    "description": "Button on the build note card when the build finished first: posts the note on the change's discussion so Homeroom bot puts it in the change's next update."
+  },
+  "botCards.buildNote.choices": {
+    "text": "What to do with the build",
+    "description": "Accessible name of the row of buttons on the build note card."
+  },
+  "botCards.buildNote.failed": {
+    "text": "That did not work just now. Try again.",
+    "description": "Error under the build note card's buttons when a tap could not be done and the server gave no reason."
   }
 }

@@ -466,6 +466,30 @@ function internalRoutes(_config) {
       message: 'The conductor publishes completed turns.' });
   });
 
+  // Homeroom bot parity (P5): the notes a person sent into one of the bot's
+  // builds while it runs (services/homeroom-bot-steer.js), handed to the
+  // build's Stop hook (worker/build-stop-hook.js) when its agent tries to
+  // end the turn, each once: taking them marks them delivered. A build turn's
+  // own token only (Claude on Anthropic holds worker:session, over OpenRouter
+  // the declaration token), for its own session.
+  const buildNotesAuth = internalAuthPurpose([platformJwt.PUR_WORKER, platformJwt.PUR_VISIBLE_CHANGES]);
+  router.post('/api/internal/sessions/:sessionId/build-notes/take', buildNotesAuth, sessionLimiter, async (req, res) => {
+    const sessionId = Number(req.params.sessionId);
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
+      return res.status(400).json({ ok: false, code: 'bad_session_id', message: 'Invalid session id.' });
+    }
+    if (Number(req.workerSession.sessionId) !== sessionId) {
+      return res.status(403).json({ ok: false, code: 'session_mismatch', message: 'The worker token does not own this session.' });
+    }
+    try {
+      const notes = await require('../services/homeroom-bot-steer').takeNotes(pool, sessionId);
+      return res.json({ ok: true, notes: notes.map((n) => ({ note: n.note, by: n.username || null })) });
+    } catch (err) {
+      log.warn('internal-api', 'Could not hand a build its notes', { sessionId, err: err.message });
+      return res.status(500).json({ ok: false, code: 'internal_error', message: 'Could not read the notes.' });
+    }
+  });
+
   router.get(
     '/api/internal/sessions/:sessionId/issues',
     internalAuthPurpose([platformJwt.PUR_ISSUES_READ, platformJwt.PUR_WORKER]),

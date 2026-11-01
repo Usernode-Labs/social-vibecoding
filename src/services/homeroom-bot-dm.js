@@ -2842,6 +2842,8 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
   );
   if (!rows[0]) return null;
   const run = rows[0];
+  // Homeroom bot parity (P4): ready for its yes; a batch's roll-up says so.
+  require('./homeroom-bot-batches').noteRequestChanged(pool, run.id, Number(run.issue_number));
   const broken = brokenWords(brokenClaims);
   const bot = deps.bot || await botAccount(pool);
   if (!bot) return null;

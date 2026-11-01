@@ -1475,14 +1475,16 @@ const CLAIMS = Object.freeze([
     kind: 'posted',
     re: /\bI(?:'ve| have)?(?: just| now)? (?:posted|added|put|passed|left|sent|shared)\b[^.!?\n]{0,80}\b(?:discussion|comment|request|proposal|board|issue|thread)\b/i,
     // P8: pictures make_pictures put under this reply ("I've put them in this thread").
-    backed: (ctx) => !!(ctx.posted || ctx.revised || ctx.commented || ctx.pictures),
+    // Homeroom bot parity (P5): a note sent to a running build (add_to_build).
+    backed: (ctx) => !!(ctx.posted || ctx.revised || ctx.commented || ctx.pictures || ctx.steered),
     said: 'says something was posted',
     instead: 'I haven\'t posted that anywhere yet.',
   },
   {
     kind: 'started',
     re: /\bI(?:'m| am)\s+(?:now\s+)?(?:starting|working on (?:it|that|this|#\d+)|building (?:it|that|this|#\d+)|on it)\b|\bI(?:'ve| have)\s+started\b|\bI(?:'ll| will) (?:start(?: on)?|look at|pick up) (?:it|that|this|#\d+) (?:now|right away|right now)\b/i,
-    backed: (ctx) => !!(ctx.started || ctx.posted || ctx.revised || ctx.commented || ctx.workBusy),
+    // Homeroom bot parity (P4): reads a batch queued this turn (work_through).
+    backed: (ctx) => !!(ctx.started || ctx.posted || ctx.revised || ctx.commented || ctx.workBusy || ctx.batchQueued),
     said: 'says you started work on something',
     instead: 'I haven\'t started on it yet.',
   },
@@ -1544,8 +1546,10 @@ const CLAIMS = Object.freeze([
     // get back to you": nothing brings the bot back to it later.
     re: /\b(?:I(?:'ll| will|'m going to| am going to)|let me|we(?:'ll| will))\s+(?:(?:now|also|then|definitely|personally|quickly|go and|try to|make sure to|be sure to)\s+)*(?:follow(?:ing)?[ -]up|look(?:ing)? into|sort(?:ing)? (?:\w+ ){0,2}out|investigate|dig into|get back to|check into|chase (?:\w+ ){0,2}up|escalate)\b/i,
     // Homeroom bot parity (P3): a look this turn started that is still
-    // running does come back (look_into posts what it finds here).
-    backed: (ctx) => !!(ctx.revised || ctx.commented || ctx.started || ctx.withdrew || ctx.reported || ctx.lookRunning),
+    // running does come back (look_into posts what it finds here). P4, P5: a
+    // batch's reads, a note sent to a build.
+    backed: (ctx) => !!(ctx.revised || ctx.commented || ctx.started || ctx.withdrew || ctx.reported || ctx.lookRunning
+      || ctx.batchQueued || ctx.steered),
     said: 'promises to come back to something later',
     instead: CANT_LOOK_TEXT,
   },
