@@ -159,6 +159,10 @@
      reader can see it. */
   --ws-gap: 8px;
   --platform-safe-top: var(--un-safe-inset-top, env(safe-area-inset-top, 0px));
+  /* THE SIDES have no token here (1 November 2026). Their insets are read
+     by frontend/src/lib/side-strip.ts, which publishes the Duo's column,
+     and what the page keeps clear of is THE USABLE BOX, declared on body
+     beside the rail's tokens (`--platform-usable-*`, `--platform-float-*`). */
 
   /* Content-row height of the mobile install strip (#1372). Declared here,
      unconditionally, rather than on either element that reads it: `body`
@@ -1280,7 +1284,8 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   flex-direction: column;
   gap: 8px;
   width: 344px;
-  max-width: calc(100vw - 24px);
+  /* Off the Duo's column as well as the window's edge (THE USABLE BOX). */
+  max-width: calc(var(--platform-float-w) - 24px);
   padding: 10px;
   box-sizing: border-box;
 }
@@ -2928,14 +2933,21 @@ html.dark[data-contrast="more"] .dark\:border-zinc-800 { border-color: #48484a; 
    away with Home on a phone, and the sign-in screens are `fixed inset-0`
    over anything in flow. Above those screens (z-40) and below the drawer and
    panels (z-50), like the install strip. `--language-notice-inset` is the
-   island's own measurement when a composer sits above the tab bar. */
+   island's own measurement when a composer sits above the tab bar.
+   CENTRED ON THE PAGE, NOT THE WINDOW (iPhone Duo, 1 November 2026). It was
+   `left: 50%` and at most `100vw - 24px`: on the folded Duo that ran its
+   right end under the column of system chrome, and from 768px it straddled
+   the sidebar on a narrow window. It speaks for the page, so it sits in the
+   page's box (THE USABLE BOX): beside the rail and the column, centred
+   between them. With the rail docked at 1280px that moves its centre from
+   640px to 746px, the centre of the page's own column. */
 #language-notice {
   position: fixed;
-  left: 50%;
+  left: calc(var(--platform-usable-left) + var(--platform-usable-w) / 2);
   bottom: calc(16px + max(var(--language-notice-inset, var(--platform-tabs-h, 0px)), var(--platform-safe-bottom, 0px)));
   z-index: 45;
   width: max-content;
-  max-width: min(calc(100vw - 24px), 480px);
+  max-width: min(calc(var(--platform-usable-w) - 24px), 480px);
   transform: translateX(-50%);
 }
 
@@ -11296,12 +11308,19 @@ html.un-kb .un-modal {
 /* Wide viewports: side panel beside the chat. The width is set
    inline by JS (persisted from the previous drag) but clamped here
    so any stale localStorage value can't strand the chat at < 320px
-   wide. */
+   wide.
+   320px LESS THAN THE ROW, NOT THE WINDOW (1 November 2026). The chat
+   and this pane share `.dc-session-body`, and the row is narrower than
+   the window by the sidebar, its gutters and the Duo's column: at
+   1280px with the rail docked the row is at most 1020px, so
+   `100vw - 320px` (960px) let a stale width leave the chat under 60px.
+   A percentage of the row is the drag's own ceiling
+   (DevChat._initSpecResizer: the row's width less 320). */
 .dc-spec-viewer.dc-spec-viewer-open {
   display: flex;
   width: 480px;
   min-width: 280px;
-  max-width: calc(100vw - 320px);
+  max-width: calc(100% - 320px);
   flex-shrink: 0;
 }
 
@@ -11360,11 +11379,12 @@ html.un-kb .un-modal {
 .dc-staging-panel { display: none; }
 
 @media (min-width: 1024px) {
+  /* 320px less than the row, as the spec viewer above. */
   .dc-staging-panel.dc-staging-panel-open {
     display: block;
     width: 480px;
     min-width: 320px;
-    max-width: calc(100vw - 320px);
+    max-width: calc(100% - 320px);
     flex-shrink: 0;
   }
 }
@@ -11857,12 +11877,15 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
 
 /* Wide viewports: side panel beside the chat. Width can be inline-
    styled by the drag handler (persisted to localStorage); CSS clamps
-   so a stale value can't strand the chat too narrow. */
+   so a stale value can't strand the chat too narrow: 320px less than
+   the `.gc-tab-body` row it shares with the chat (the drag's own
+   ceiling), not less than the window (1 November 2026; see
+   `.dc-spec-viewer-open`). */
 .gc-spec-side-panel.gc-spec-side-panel-open {
   display: flex;
   width: min(560px, 50vw);
   min-width: 280px;
-  max-width: calc(100vw - 320px);
+  max-width: calc(100% - 320px);
   flex-shrink: 0;
   border-left: 1px solid var(--border, rgba(255,255,255,0.12));
 }
@@ -12772,7 +12795,11 @@ a.drawer-ver--fork:hover {
 @media (min-width: 640px) {
   #apps-switcher-sheet {
     top: var(--menu-anchor-top, calc(var(--platform-header-h) + var(--platform-safe-top)));
-    left: var(--menu-anchor-left, calc(100vw - 25rem));
+    /* The fallback's right edge is the header's right content edge, which
+       is beside the Duo's column (1 November 2026): the float box's right
+       edge, less the header's 1rem. It was `100vw - 25rem`, under the
+       column on the unfolded Duo held sideways. */
+    left: var(--menu-anchor-left, calc(var(--platform-float-left) + var(--platform-float-w) - 25rem));
     right: auto;
     bottom: auto;
     /* 24rem, NARROWER than the 26rem notifications rail, on purpose. It was
@@ -12783,9 +12810,9 @@ a.drawer-ver--fork:hover {
        menu's width, a little wider than the vote popover's 312px because the
        rows carry longer labels ("Go to app discussion").
        max-width keeps it inside a narrow window with the 8px the placement
-       clamps to on either side. */
+       clamps to on either side, and off the Duo's column (THE USABLE BOX). */
     width: 24rem;
-    max-width: calc(100vw - 1rem);
+    max-width: calc(var(--platform-float-w) - 1rem);
     max-height: calc(100dvh - var(--menu-anchor-top, calc(var(--platform-header-h) + var(--platform-safe-top))) - 0.75rem);
     border-width: 1px;
     border-color: var(--brand-line);
@@ -13336,7 +13363,9 @@ button.attr-chip { cursor: pointer; }
   z-index: 2000;
   box-sizing: border-box;
   width: 320px;
-  max-width: calc(100vw - 16px);
+  /* Off the Duo's column too (THE USABLE BOX). The width and the left edge
+     are _openVotingHelpPopover's, from window.innerWidth. */
+  max-width: calc(var(--platform-float-w) - 16px);
   /* max-height is set inline by _openVotingHelpPopover to exactly the room
      available above/below the anchor, so the body scrolls internally rather
      than spilling off the viewport. This 70vh is only a fallback. */
@@ -15756,14 +15785,20 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    boxes are neutralised); open it is drawn in the top layer at nearly the
    window's size, over a dim on the page. It must be a popover rather than
    position: fixed, because the reply pane and the app sheet it sits in
-   carry a backdrop-filter, which would trap a fixed viewer in the pane. */
+   carry a backdrop-filter, which would trap a fixed viewer in the pane.
+   BESIDE THE DUO'S COLUMN (1 November 2026). Centred on the window at
+   `100vw - 48px`, the folded Duo's viewer ran its right end, and the close
+   button at the end of its bar, under the clock. It floats over the rail,
+   so it takes the float box (THE USABLE BOX): its inset stops at the
+   column and it is centred in what is left. Off the Duo both are the
+   window, exactly as before. */
 .shots-viewer[popover] { display: block; position: relative; inset: auto; margin: 0; padding: 0; border: 0; width: auto; height: auto;
   overflow: hidden; color: inherit; background: transparent; }
-.shots-viewer:popover-open { position: fixed; inset: 0; margin: auto; height: fit-content; overflow: auto; overscroll-behavior: contain;
-  width: min(calc(100vw - 48px), calc((100vh - 200px) * 1.6)); max-height: calc(100vh - 48px); background: #fff; }
+.shots-viewer:popover-open { position: fixed; inset: 0 var(--platform-float-right) 0 var(--platform-float-left); margin: auto; height: fit-content; overflow: auto; overscroll-behavior: contain;
+  width: min(calc(var(--platform-float-w) - 48px), calc((100vh - 200px) * 1.6)); max-height: calc(100vh - 48px); background: #fff; }
 .dark .shots-viewer:popover-open { background: #1c1c1e; }
 @supports (height: 100dvh) {
-  .shots-viewer:popover-open { width: min(calc(100vw - 48px), calc((100dvh - 200px) * 1.6)); max-height: calc(100dvh - 48px); }
+  .shots-viewer:popover-open { width: min(calc(var(--platform-float-w) - 48px), calc((100dvh - 200px) * 1.6)); max-height: calc(100dvh - 48px); }
 }
 .shots-viewer::backdrop { background: rgba(0, 0, 0, 0.55); }
 .shots-viewer:has(.shots-theme-dark:checked) .shots-theme-to-dark,
@@ -18169,7 +18204,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    (`--platform-strip-w`, THE SIDE STRIP; 0 everywhere else). Unfolded and
    held sideways the Duo is 951px with an 84px column the body pads out, so
    sums taken from 100vw counted the column twice: Main came out 379px and
-   the list's card 220px.
+   the list's card 220px. Since the same day the room is the page's usable
+   box (`--platform-usable-w`, THE USABLE BOX beside the rail's tokens),
+   which takes the rail and the column off once for every reader: the same
+   value, decided in one place.
    THE PINNED COLUMNS RUN UNDER IT (1 Nov 2026), as the header does: Main,
    the side panel in its place and a design's preview reach the screen's
    edge. Stopped at the column instead, Main ended in a hard edge with bare
@@ -18181,7 +18219,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    they left a band of the column's own colour beside a chat that stopped
    short. A design's preview pads the column, as its ✕ is at its top. */
 body:has(#ai-screen:not(.hidden)) {
-  --ai-room: calc(100vw - var(--platform-rail-w, 0px) - var(--platform-strip-w, 0px));
+  --ai-room: var(--platform-usable-w);
   --ai-list-min: 480px;
   --ai-main-auto: clamp(400px, calc(var(--ai-room) - 720px), 720px);
   --ai-main-w: max(320px, min(var(--side-panel-chosen-w, var(--ai-main-auto)), calc(var(--ai-room) - var(--ai-list-min))));
@@ -19192,11 +19230,12 @@ button.dev-ws-recent-card {
 
    Right-aligned to the button, which ends the card's first row, with the
    arrow over the button's middle. The width stops short of the viewport on
-   a phone, so the popover never meets the screen edge. */
+   a phone, so the popover never meets the screen edge, nor the Duo's
+   column (the float box, THE USABLE BOX; 1 November 2026). */
 .dev-ws-join-anchor { position: relative; margin-left: auto; flex: none; }
 .dev-ws-join-pop {
   position: absolute; top: calc(100% + 12px); right: -6px; z-index: 7;
-  width: min(300px, calc(100vw - 56px));
+  width: min(300px, calc(var(--platform-float-w) - 56px));
   display: flex; flex-direction: column; gap: 8px;
   padding: 16px 16px 10px; box-sizing: border-box;
   border-radius: 18px; border: 1px solid var(--app-sheet-line);
@@ -19679,7 +19718,9 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
    scrim, on a phone. #5384: it opens UNDER the header, which stays as it
    is, undimmed and pressable, its bottom edge the offset the other layers
    under it use; it reaches down over the tab bar (z 60), under a dialog.
-   The header covers the status bar, so the list keeps only its own 16px. */
+   The header covers the status bar, so the list keeps only its own 16px.
+   At most the float box less 56px of scrim beside it (THE USABLE BOX; 1
+   November 2026), so the tray leaves a strip to tap away on the Duo too. */
 .dev-ws-tray-root {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
   top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px));
@@ -19687,7 +19728,7 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
 .dev-ws-tray-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.45); animation: dev-ws-tray-fade 160ms ease-out; }
 .dev-ws-tray {
   position: absolute; top: 0; bottom: 0; left: 0;
-  width: min(296px, calc(100vw - 56px));
+  width: min(296px, calc(var(--platform-float-w) - 56px));
   padding: 16px 12px calc(16px + var(--platform-safe-bottom, 0px));
   overflow-y: auto; overscroll-behavior: contain;
   background: var(--dc-sheet-solid, var(--bg-primary));
@@ -21956,6 +21997,71 @@ body {
      peeking, where the content takes the width back. */
   --platform-rail-w: 0px;
   --platform-gutter: 0px;
+}
+/* THE USABLE BOX: WHERE CONTENT CAN GO, DECIDED ONCE (iPhone Duo,
+   1 November 2026). Widths summed from 100vw at each site did not know
+   about the Duo's column of system chrome: Main's room counted the column
+   twice, and a notice capped at `100vw - 24px` and centred on the window
+   ran under the clock. Every width a surface takes from the window is
+   taken from one of the two boxes below instead, and
+   tests/usable-box.test.js fails on a `100vw` anywhere else in this file,
+   and on one in a class string or an inline style under frontend/ or
+   public/js/.
+
+   WHAT IS TAKEN OFF, AND ON WHICH SIDE:
+   - the RAIL'S RESERVED WIDTH, on the left: `--platform-rail-w` above, the
+     sidebar's 212px from 768px, and 0 on a phone, folded or peeking;
+   - the DUO'S COLUMN on the side it is on (THE SIDE STRIP:
+     `data-side-strip`, `--platform-strip-w`), or the folded Duo's narrow
+     corner (THE SIDE CORNER: `data-side-corner`, `--platform-corner-w`).
+     These are the side safe-area insets as the shell honours them:
+     frontend/src/lib/side-strip.ts reads env(safe-area-inset-left/right)
+     once and publishes only what the body pads out. A phone's two-sided
+     landscape notch and a narrow camera cutout are kept clear nowhere in
+     the shell, so not here either, and the side panel's own document
+     drops the column it does not touch.
+
+   TWO BOXES, because a surface either belongs to the page or floats over
+   it:
+   - `--platform-usable-left`, `-right` and `-w`, THE PAGE'S BOX, beside
+     the rail and the column. A width for content (`--ai-room`, Main's
+     column) and a surface fixed to the window on the page's behalf (the
+     language notice) take it.
+   - `--platform-float-left`, `-right` and `-w`, A FLOATING SURFACE'S BOX:
+     a menu, a popover, a lightbox, a dialog (what `--dc-float-fill`
+     paints). It floats over the rail, so only the column is taken off.
+   Off the Duo the float box is the window; on a phone the two are one.
+
+   WHY 100vw HERE, AND NOWHERE ELSE. A custom property's `100%` would
+   resolve against each reader's own containing block, so only a viewport
+   unit names the window for every reader alike. `100vw` would count a
+   classic scrollbar on the root, and the root never draws one: `html,
+   body` are `overflow: hidden` (the bounded shell), and the one mode in
+   which the document scrolls, `html[data-browser-scroller]`, is a touch
+   browser's, whose scrollbars overlay the page and take no width. A box
+   inside a scroller that does draw one sizes against that scroller (a
+   percentage, or plain flow) instead, as the Workshop's stage pane does
+   above ("The stage pane runs edge to edge").
+
+   On body for the reason the band tokens are (the head of this section):
+   these read `--platform-rail-w` as body sets it. The column's side is
+   the attribute rules after this one, on body too. */
+body {
+  --platform-float-left: 0px;
+  --platform-float-right: 0px;
+  --platform-float-w: calc(100vw - var(--platform-float-left) - var(--platform-float-right));
+  --platform-usable-left: calc(var(--platform-float-left) + var(--platform-rail-w, 0px));
+  --platform-usable-right: var(--platform-float-right);
+  --platform-usable-w: calc(var(--platform-float-w) - var(--platform-rail-w, 0px));
+}
+/* The column, on the side the body pads it out: at every width for the
+   strip, and on a phone for the corner, exactly as THE SIDE STRIP and THE
+   SIDE CORNER pad the body. The two are never set together (side-strip.ts). */
+html[data-side-strip="left"] body { --platform-float-left: var(--platform-strip-w, 0px); }
+html[data-side-strip="right"] body { --platform-float-right: var(--platform-strip-w, 0px); }
+@media (max-width: 767px) {
+  html[data-side-corner="left"] body { --platform-float-left: var(--platform-corner-w, 0px); }
+  html[data-side-corner="right"] body { --platform-float-right: var(--platform-corner-w, 0px); }
 }
 /* `:not(.platform-tabs-peek)` because a PEEKING bar reserves nothing: the
    router still says the bar is hidden (see features/nav/tab-bar.tsx), the app
