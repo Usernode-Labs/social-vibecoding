@@ -3383,6 +3383,38 @@
     "text": "{{first}}, unknown are typing…",
     "description": "Line above the message box while two or more other people are typing. Used when the second person's username is not known; \"unknown\" is written as it has always been shown. {{first}} is the other person's name."
   },
+  "thread.botWorking.thinking": {
+    "text": "Thinking",
+    "description": "On the card at the end of the chat while Homeroom bot is working on an answer and has not said what it is doing. Three animated dots follow it, as an ellipsis."
+  },
+  "thread.botWorking.progress": {
+    "text": "Checking how your work is going",
+    "description": "On the card at the end of the chat while Homeroom bot reads how the reader's requests are going. Three animated dots follow it, as an ellipsis."
+  },
+  "thread.botWorking.request": {
+    "text": "Reading request #{{number}}",
+    "description": "On the card at the end of the chat while Homeroom bot reads one request. {{number}} is the request's number. Three animated dots follow it, as an ellipsis."
+  },
+  "thread.botWorking.code": {
+    "text": "Reading {{project}}'s code",
+    "description": "On the card at the end of the chat while Homeroom bot reads a project's code. {{project}} is the project's name. Three animated dots follow it, as an ellipsis."
+  },
+  "thread.botWorking.codeUnnamed": {
+    "text": "Reading the code",
+    "description": "On the card at the end of the chat while Homeroom bot reads a project's code, when the project's name is not known. Three animated dots follow it, as an ellipsis."
+  },
+  "thread.botWorking.drawing": {
+    "text": "Drawing the screen",
+    "description": "On the card at the end of the chat while Homeroom bot draws a design of a screen. Three animated dots follow it, as an ellipsis."
+  },
+  "thread.botWorking.designing": {
+    "text": "Changing the design",
+    "description": "On the card at the end of the chat while Homeroom bot changes a design it drew. Three animated dots follow it, as an ellipsis."
+  },
+  "thread.botWorking.drafting": {
+    "text": "Drafting the request",
+    "description": "On the card at the end of the chat while Homeroom bot drafts a request for the reader to file. Three animated dots follow it, as an ellipsis."
+  },
   "thread.activityTimeRange": {
     "text": "{{start}} – {{end}}",
     "description": "Time shown on the card of replies made in a thread when they span more than one minute: the time of the first reply and of the last. {{start}} and {{end}} are clock times."

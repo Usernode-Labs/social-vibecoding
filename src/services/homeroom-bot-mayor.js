@@ -380,6 +380,15 @@ function platformRules() {
     .join('\n\n');
 }
 
+// 1 Nov 2026: in a thread, a status question is about that thread. The
+// general rule (systemPrompt: "status?" is answered from my_work's
+// onYourPage) is for the main chat.
+const THREAD_STATUS_LINES = Object.freeze([
+  '- Here, "status?", "how is it going?" or "where are we?" means what they asked for in this thread: say what you',
+  '  are doing for it right now, or that nothing is under way yet and what happens next. Do not list the rest of',
+  '  their page (my_work) unless they ask about everything.',
+]);
+
 /**
  * Pure (31 Oct 2026): what a turn written in a thread that is no request's
  * is told: that the conversation below is that thread, and for a draft's
@@ -393,6 +402,9 @@ function otherThreadLines(thread) {
     'THIS CONVERSATION',
     '- They are writing in a thread of this chat, and the conversation below is that thread. Answer their newest',
     '  message here, in this thread.',
+    // 1 Nov 2026: "Status? How is it going?" in a "+" design thread was
+    // answered with their whole page (my_work), and none of it this thread.
+    ...THREAD_STATUS_LINES,
   ];
   const d = thread.draft;
   if (d?.kind === 'ask' && d.about) {
@@ -457,6 +469,9 @@ function threadLines(request) {
     `- They are writing in the thread of ${what}. Everything they say here is about it: answer about it, in this`,
     `  thread, and never ask which request they mean. For your records of it, call request_detail with project`,
     `  "${request.appSlug}" and number ${Number(request.issueNumber)}.`,
+    '- Here, "status?", "how is it going?" or "where are we?" means this request: say where it stands right now,',
+    '  from request_detail or progress, and what happens next. Do not list the rest of their page (my_work) unless',
+    '  they ask about everything.',
     '',
   ];
 }
@@ -529,7 +544,9 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- Draw a screen with them when they want to see how something could look, or to change how a screen looks or is',
     '  laid out (draw_screen): your designer draws it from their words, the project\'s code and any picture they sent, in',
     '  a private thread (from Main Chat, a new one, which it says), and changes it at their word there. Call it alone,',
-    '  and do not reply: the designer answers them.',
+    '  and do not reply: the designer answers them. When they have asked you to draw, render, show or mock up a',
+    '  screen, call draw_screen in that turn: never answer with what you are about to do, and never ask whether to',
+    '  start it.',
     '- Read the code of a project they can build on, as it is on main, when they ask how something works or what',
     '  the code does (list_source to find files by path or name, then read_source). Answer from what the code says,',
     '  in plain words, and say which file you read. Never quote secrets, and say plainly when the code you read does',
@@ -1392,6 +1409,19 @@ async function canFile(pool, app, user) {
 // withdrawal, a report), and "the team has been told" or "I withdrew it" only
 // when report_problem or withdraw_proposal did it.
 
+// 1 Nov 2026: says a screen is being drawn: the `drawing` claim below, and
+// what design-bot.js reads as a design it says it made and did not.
+const DRAWING_CLAIM = new RegExp(
+  '\\bI(?:\'m| am)\\s+(?:now\\s+|just\\s+)?(?:drawing|sketching|designing|rendering|mocking (?:it |this |that )?up|laying (?:it |this |that )?out)\\b'
+  + '|\\b(?:I(?:\'ll| will)|let me)\\s+(?:now\\s+|just\\s+|go ahead and\\s+)?(?:draw|sketch|design|render|mock(?: it| this| that)? up|lay (?:it |this |that )?out)\\b'
+  + '(?![^.!?\\n]*\\b(?:if|when|once|after|as soon as) you\\b)'
+  // "Drawing it now…", "Drawing the main screen next"; not "Rendering the list as cards would fit".
+  + '|(?:^|[.!\\n]\\s*)(?:drawing|rendering|sketching|designing|mocking up)\\s+'
+  + '(?:it|this|that|them|(?:the|your|a|an)\\s+(?:[\\w\'-]+\\s+){0,2}(?:screens?|designs?|pages?|versions?|mock-?ups?|layouts?))\\b'
+  + '|\\b(?:drawing|rendering|sketching) (?:it|this|that|them) (?:now|up)\\b',
+  'i',
+);
+
 const CLAIMS = Object.freeze([
   {
     kind: 'filed',
@@ -1473,6 +1503,17 @@ const CLAIMS = Object.freeze([
     backed: (ctx) => !!ctx.reported,
     said: 'says the team was told',
     instead: 'I haven\'t told the team yet.',
+  },
+  {
+    kind: 'drawing',
+    // 1 Nov 2026: "Drawing it now from the app's own markup and styles." was
+    // the whole answer, and nothing was drawn: only draw_screen hands a
+    // screen to the designer. "I'm drawing", "I'll draw it", "rendering it
+    // now"; not "I can draw it" or "I'll draw it once you say which".
+    re: DRAWING_CLAIM,
+    backed: (ctx) => !!ctx.drawScreen,
+    said: 'says you are drawing a screen',
+    instead: 'I haven\'t drawn it yet. Ask me to draw it and I\'ll start on it.',
   },
   {
     kind: 'promised',
@@ -1562,6 +1603,10 @@ function checkNote(problems) {
   const drafted = problems.some((p) => p.kind === 'drafted')
     ? ' Your reply says a draft with File it and Not now is under it, but you did not call offer_request in this turn, so nothing is under it. Call offer_request now with the project, title and details, then reply. If offer_request is refused, say why plainly and do not mention File it.'
     : '';
+  // 1 Nov 2026: a screen said to be drawing with no draw_screen behind it.
+  const drawing = problems.some((p) => p.kind === 'drawing')
+    ? ' Your reply says you are drawing a screen, but you did not call draw_screen in this turn, so nothing is being drawn. If they asked for a screen, call draw_screen now with what to draw and its title, and do not reply. If you cannot, say so plainly.'
+    : '';
   return [
     `[Homeroom check, not from them: your reply ${list}.`,
     'No tool you called in this turn did that.',
@@ -1569,7 +1614,7 @@ function checkNote(problems) {
     'offer_request drafts a request for them to file, comment_on_request posts on a request, start_request starts',
     'one, revise_proposal changes your proposal, withdraw_proposal withdraws one of your proposals, report_problem',
     'tells the Homeroom team. Otherwise say plainly that it has not been done.',
-    `${promised}${drafted}${unknown} Then call reply again.]`,
+    `${promised}${drafted}${drawing}${unknown} Then call reply again.]`,
   ].join(' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -1597,6 +1642,165 @@ function stripClaims(text, problems) {
 const NO_OFFER_NOTE = '[Homeroom: their newest message reads like a decision on a draft request, but no draft is '
   + 'waiting for them, so nothing has been filed. If they want something filed, call offer_request so they can tap '
   + 'File it under it, and never say it was filed.]';
+
+// ── A turn that stopped on what it would do next (1 Nov 2026) ──────────────
+//
+// In a private design thread Evan asked for a screen, and the whole answer
+// was "Let me look at how the app builds its main screen so the design
+// matches it.": the model wrote what it would do next and called no tool,
+// and both loops (this one and design-bot.js) take words with no tool call
+// as the answer, so the turn ended there and nothing came after. Unlike
+// `promised` above (coming back to something LATER, which no tool keeps),
+// this is work it can do NOW. So while rounds remain, words that only
+// announce the next step go back as its own, with PREAMBLE_NOTE, and the
+// loop goes on. Narrow on purpose: a real answer, however short, is sent.
+
+// What it says it will do: look, read, check, draw... Not "let me know",
+// "I'll let you know", "I'll make sure", "I'll update you".
+const PREAMBLE_VERBS = 'look|have a look|take a look|check|read|open|pull up|find|search|see|review|go through|dig|'
+  + 'explore|inspect|scan|examine|fetch|grab|draw|sketch|design|mock|put together|work out|figure out|start|draft|'
+  + 'write|build|make(?! sure)|edit|change|update(?! you)|fix|try|compare|render|lay out';
+const PREAMBLE_DOING = 'looking|checking|reading|opening|pulling up|searching|reviewing|going through|digging|'
+  + 'exploring|drawing|sketching|designing|drafting|rendering|mocking up|laying out|working on|starting on';
+const PREAMBLE_ACK = '(?:(?:ok(?:ay)?|sure|great|alright|all right|got it|right|perfect|good idea|good question|nice|'
+  + 'sounds good|yes|yep|will do)[,.!]*\\s+)?';
+// "Sure, let me …", "First, I'll …", "Now I'm going to …", "I'm reading …".
+const PREAMBLE_SENTENCE = new RegExp(
+  `^${PREAMBLE_ACK}`
+  + '(?:(?:first|next|now|then|so|ok(?:ay)?)[,]?\\s+)?'
+  + '(?:'
+  + '(?:let me|let\'s|I\'ll|I will|I\'m going to|I am going to|I\'m gonna)\\s+'
+  + '(?:(?:now|first|just|quickly|also|then|go ahead and|go and|start by|begin by)\\s+)*'
+  + `(?:${PREAMBLE_VERBS})\\b`
+  + '|'
+  + `I(?:'m| am)\\s+(?:(?:now|just|currently|first)\\s+)?(?:${PREAMBLE_DOING})\\b`
+  + ')',
+  'i',
+);
+// With no "I": "Drawing it now from the app's own markup and styles.",
+// "Reading the code…", "Looking at how it is built.", "On it.", "Starting on
+// that now". Not "Looking good!", and not a sentence that goes on to say a
+// fact ("Reading request #12, it's waiting for your vote."): PREAMBLE_FACT.
+const PREAMBLE_BARE = new RegExp(
+  `^${PREAMBLE_ACK}(?:(?:now|first)[,]?\\s+)?`
+  + '(?:(?:drawing|sketching|designing|rendering|mocking up|laying out|reading|checking|opening|pulling up|searching|'
+  + 'reviewing|going through|digging|exploring|drafting|working on|starting on|getting started)\\b'
+  + '|looking (?:at|into|through|over|for)\\b|on it\\b)',
+  'i',
+);
+const PREAMBLE_FACT = /\b(?:is|are|was|were|has|have|had|isn't|aren't|wasn't|it's|there's|that's|you're|they're|can|could|will|won't|would|needs?|waits?|shows?|says?|takes?|took|means?|seems?|done|ready|live)\b/i;
+// Waiting on them, or for later: a promise or a condition, not a next step.
+const PREAMBLE_NOT = /\b(?:later|tomorrow|tonight|soon|next week|get back to|let you know|keep you posted|keep an eye|(?:if|when|once|as soon as|after) you)\b/i;
+const MAX_PREAMBLE_CHARS = 300;
+
+/**
+ * Pure: whether `text` (a model's words with no tool call) only announces
+ * what it will do next ("Let me look at how the app builds its main screen
+ * so the design matches it."), rather than answering. Every sentence is a
+ * next step or a short acknowledgement ("Good idea."), the last a next step;
+ * no question, nothing for later, and short.
+ */
+function announcesOnly(text) {
+  const body = String(text || '').replace(/[*_`#>]+/g, '').replace(/\s+\n/g, '\n').trim();
+  if (!body || body.length > MAX_PREAMBLE_CHARS || body.includes('?') || PREAMBLE_NOT.test(body)) return false;
+  const sentences = body.split(/(?<=[.!…:])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
+  if (!sentences.length || sentences.length > 3) return false;
+  // A bare one says a fact after a comma: "Looking at your page, nothing is being built."
+  const step = (s) => PREAMBLE_SENTENCE.test(s)
+    || (PREAMBLE_BARE.test(s) && !PREAMBLE_FACT.test(s.split(/[,;]/).slice(1).join(',')));
+  const ack = (s) => s.split(/\s+/).length <= 6 && !/[\d#]/.test(s);
+  return step(sentences[sentences.length - 1]) && sentences.slice(0, -1).every((s) => step(s) || ack(s));
+}
+
+/** What a turn that stopped on its next step is told (role user, as checkNote is). */
+const PREAMBLE_NOTE = '[Homeroom check, not from them: you said what you would do next but did not do it. '
+  + 'Do it now with your tools, or give your answer with reply.]';
+// The most times one turn is told so, inside its rounds.
+const MAX_PREAMBLE_NUDGES = 2;
+
+/**
+ * Pure: whether a loop that just got `text` and no tool call goes on rather
+ * than ending its turn on it: words that only announce the next step, a
+ * round left (`rounds` of `limit`), fewer than MAX_PREAMBLE_NUDGES already,
+ * and room in the transport's message limit for the round.
+ */
+function goesOnAfter(text, { rounds, limit, nudged = 0, messages = 0 }) {
+  return rounds < limit && nudged < MAX_PREAMBLE_NUDGES
+    && messages + 2 + MAX_CALLS_PER_ROUND <= MAX_MESSAGES && announcesOnly(text);
+}
+
+// ── What the bot says it is doing (1 Nov 2026) ─────────────────────────────
+//
+// While a turn runs, the bot's typing event says what it is doing
+// (homeroom-bot-dm.js typingDoing), for the working card the Messages
+// screen draws: a kind and what it names, worded on the screen. Each tool
+// call sets it, and it stays until the next one does: the round after a
+// read is spent reading what came back. A tool with no kind here sets none
+// ("Thinking"). Shared with the design bot's tools.
+
+/**
+ * Pure: what the bot is doing while it runs tool `name` with `args`
+ * ({ kind, number?, project? }), or null for "thinking", or undefined for
+ * a call that changes nothing (reply ends the turn). `project` is the
+ * project's name when the caller knows it.
+ */
+function doingFor(name, args = {}, { project = null } = {}) {
+  switch (name) {
+    case 'progress':
+    case 'my_work':
+      return { kind: 'progress' };
+    case 'request_detail':
+    case 'get_request':
+    case 'get_discussion': {
+      const number = Number(name === 'get_discussion' ? args?.ref : args?.number);
+      return Number.isSafeInteger(number) && number > 0 ? { kind: 'request', number } : null;
+    }
+    case 'list_source':
+    case 'read_source':
+      return project ? { kind: 'code', project: String(project) } : { kind: 'code' };
+    case 'draw_screen':
+    case 'write_screen':
+      return { kind: 'drawing' };
+    case 'edit_design':
+      return { kind: 'designing' };
+    case 'offer_request':
+      return { kind: 'drafting' };
+    case 'reply':
+      return undefined;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Says what this turn does now (deps.doing: the typing's stop.doing, from
+ * homeroom-bot-dm.js whileTyping), for tool `name`. A project is named by
+ * its name when this person can see it. Best-effort and in the background:
+ * the tool never waits for it, and each says goes after the one before
+ * (ctx.saying). Never rejects; resolves once it is said.
+ */
+function sayDoing(pool, ctx, name, args = {}) {
+  const doing = ctx?.deps?.doing;
+  if (typeof doing !== 'function') return Promise.resolve();
+  const say = async () => {
+    let project = null;
+    if ((name === 'list_source' || name === 'read_source') && typeof args?.project === 'string' && args.project.trim()) {
+      ctx.projectNames ||= new Map();
+      const asked = args.project.trim();
+      if (!ctx.projectNames.has(asked)) {
+        const app = await findApp(pool, asked).catch(() => null);
+        ctx.projectNames.set(asked, app && await canView(pool, app, ctx.user) ? app.name || app.slug : null);
+      }
+      project = ctx.projectNames.get(asked);
+    }
+    const what = doingFor(name, args, { project });
+    if (what !== undefined) await doing(what);
+  };
+  ctx.saying = (ctx.saying || Promise.resolve()).then(say).catch((err) => {
+    log.warn('homeroom-bot-mayor', 'Could not say what the bot is doing', { tool: clip(name, 40), err: clip(err?.message, 200) });
+  });
+  return ctx.saying;
+}
 
 // 31 Oct 2026: their earlier messages whose answer this turn took over (the
 // bot-dm machine's `also`, deps.alsoUnanswered): a promised answer used to be
@@ -2529,8 +2733,10 @@ async function answerLater(pool, config, { bot, user, conversationId, message, d
   const where = typeof dm.threadDeps === 'function'
     ? await dm.threadDeps(pool, { userId: user.id, conversationId, message }).catch(() => ({}))
     : {};
-  const run = () => runDmTurn(pool, config, {
-    bot, user, settings, conversationId, message, deps: { ...deps, ...where, deferAttempt: attempt },
+  // 1 Nov 2026: and says what it is doing as it goes (sayDoing).
+  const run = (typing) => runDmTurn(pool, config, {
+    bot, user, settings, conversationId, message,
+    deps: { ...deps, ...where, deferAttempt: attempt, ...(typing?.doing ? { doing: typing.doing } : {}) },
   });
   return typeof dm.whileTyping === 'function'
     ? dm.whileTyping(pool, {
@@ -2715,6 +2921,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       if (ctx.owed) messages.push({ role: 'system', content: ctx.owed });
       const ids = new Set();
       let limit = MAX_ROUNDS;
+      let preambles = 0;
       const runRounds = async () => {
         while (rounds < limit && !ctx.reply && !ctx.drawScreen) {
           rounds += 1;
@@ -2727,13 +2934,27 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
             toolChoice: last ? { type: 'function', function: { name: 'reply' } } : 'auto',
           });
           const calls = normalizeCalls(res.toolCalls, rounds, ids);
-          if (!calls.length) { finalText = res.content || ''; break; }
+          if (!calls.length) {
+            // 1 Nov 2026: words that only say what it will do next are not
+            // the answer while it can still do it (announcesOnly).
+            if (goesOnAfter(cleanReply(res.content), { rounds, limit, nudged: preambles, messages: messages.length })) {
+              preambles += 1;
+              t.failures.push(`r${rounds}:preamble`);
+              messages.push({ role: 'assistant', content: String(res.content) });
+              messages.push({ role: 'user', content: PREAMBLE_NOTE });
+              continue;
+            }
+            finalText = res.content || '';
+            break;
+          }
           messages.push({ role: 'assistant', content: res.content || null, tool_calls: calls });
           const pictures = [];
           for (const call of calls) {
             const name = call.function.name;
             toolsUsed.push(name.slice(0, 40));
             const args = parseArgs(call.function.arguments);
+            // 1 Nov 2026: the working card's words, as the call starts.
+            sayDoing(pool, ctx, name, args);
             const result = platform && PLATFORM_TOOLS.includes(name)
               ? await platformCall(platform, name, args, pictures)
               : await runTool(pool, ctx, name, args);
@@ -5025,6 +5246,13 @@ module.exports = {
   claimProblems,
   checkNote,
   stripClaims,
+  DRAWING_CLAIM,
+  announcesOnly,
+  goesOnAfter,
+  PREAMBLE_NOTE,
+  MAX_PREAMBLE_NUDGES,
+  doingFor,
+  sayDoing,
   commentText,
   commentOnRequest,
   startRequest,

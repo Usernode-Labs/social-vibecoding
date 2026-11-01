@@ -68,6 +68,60 @@ const TOO_BIG_TEXT = 'This screen is too big for me to edit in one piece. Captur
 const CLOSED_TEXT = 'This thread was put away, so I won\'t change its design here. Start a new thread to draw it again.';
 const NO_THREAD_TEXT = 'I couldn\'t open a thread for the design just now. Try again in a minute.';
 const FULL_TEXT = 'I couldn\'t keep that change: this design has as many versions as it can hold, or it grew too big.';
+// 1 Nov 2026: what is said in place of words that claim a drawing that was not made.
+const NOT_DRAWN_TEXT = 'I couldn\'t draw that just now. Ask me again and I\'ll have another go.';
+
+// ── A turn that ends before it drew (1 Nov 2026) ─────────────────────────
+//
+// In Evan's design thread "yep, can you do that? In the current thread?"
+// was answered "Drawing it now from the app's own markup and styles." and
+// nothing else: a round of words with no write_screen, which ended the turn
+// with the design as it was. While a round with tools is left, such an end
+// goes back to the model: words that only announce the next step (the
+// mayor's announcesOnly), words that say it drew or is drawing what it did
+// not (DRAWING_CLAIM, DESIGN_DONE), a question asking leave to start, and,
+// when Main Chat handed it a screen to draw, anything but a real question.
+
+// "I've changed the header", "I made it blue", "here's the new version".
+const DESIGN_DONE = /\bI(?:'ve| have)?\s+(?:just\s+|now\s+)?(?:changed|updated|made|moved|added|removed|swapped|replaced|redrew|drew|drawn|redesigned|reworked)\b|\bhere(?:'s| is) (?:the|your) (?:new |next |updated )?(?:version|screen|design)\b/i;
+// "Want me to start?", "Shall I draw it?", "Should I go ahead?"
+const ASKS_LEAVE = /\b(?:want me to|do you want me to|would you like me to|shall I|should I|ok(?:ay)? if I|can I go ahead|ready for me to|shall we start|should we start|want to start|go ahead)\b[^?]*\?/i;
+const DRAW_NOTE = '[Homeroom check, not from them: you have not drawn anything yet. Call write_screen (or edit_design) '
+  + 'now, then reply.]';
+
+/**
+ * Pure: why words that end a design turn are not its end yet, or null.
+ * `changed` the turn made a version, `offered` it offered a card,
+ * `handoff` Main Chat handed it a screen to draw.
+ */
+function notDrawnYet(text, { changed = false, offered = false, handoff = false, mayor } = {}) {
+  const said = String(text || '').trim();
+  if (changed || offered) return null;
+  // Said to be drawn or drawing first: it is told to draw, not to go on.
+  if (mayor.DRAWING_CLAIM.test(said) || DESIGN_DONE.test(said)) return 'claimed';
+  if (mayor.announcesOnly(said)) return 'preamble';
+  if (ASKS_LEAVE.test(said)) return 'asked';
+  // A real question back (which project, what goes on it) ends the turn.
+  if (handoff && !said.includes('?')) return 'handoff';
+  return null;
+}
+
+/**
+ * Says what the turn does now, for the working card (homeroom-bot-mayor.js
+ * doingFor), in the background: the tool never waits for it. Never throws.
+ */
+function sayDoing(deps, mayor, name, args, project) {
+  if (typeof deps.doing !== 'function' || typeof mayor.doingFor !== 'function') return;
+  const failed = (err) => log.warn('design-bot', 'Could not say what the bot is doing', { err: clip(err?.message, 200) });
+  try {
+    // The design's own project by its name; another the model names, unnamed.
+    const own = !args?.project || [project?.slug, project?.name].includes(args.project);
+    const what = mayor.doingFor(name, args, { project: own ? project?.name || project?.slug || null : null });
+    if (what !== undefined) Promise.resolve(deps.doing(what)).catch(failed);
+  } catch (err) {
+    failed(err);
+  }
+}
 
 const TOOLS = Object.freeze([
   {
@@ -670,6 +724,19 @@ async function answer(pool, config, {
       ...history,
     ];
     const seenIds = new Set();
+    // 1 Nov 2026: words that end the turn before it drew go back once or
+    // twice (notDrawnYet), while the next round still has its tools: the
+    // last one only replies.
+    let nudges = 0;
+    const holdEnd = (said) => {
+      if (nudges >= mayor.MAX_PREAMBLE_NUDGES || rounds + 1 >= MAX_ROUNDS) return null;
+      const changedNow = !!html && html !== (current?.html || '');
+      const why = notDrawnYet(said, { changed: changedNow, offered: !!offered, handoff, mayor });
+      if (!why) return null;
+      nudges += 1;
+      t.failures.push(`d${rounds}:${why}`);
+      return why === 'preamble' ? mayor.PREAMBLE_NOTE : DRAW_NOTE;
+    };
     while (rounds < MAX_ROUNDS && !replyText) {
       rounds += 1;
       const last = rounds === MAX_ROUNDS;
@@ -678,12 +745,24 @@ async function answer(pool, config, {
         toolChoice: last ? { type: 'function', function: { name: 'reply' } } : 'auto',
       });
       const calls = mayor.normalizeCalls(res.toolCalls, rounds, seenIds);
-      if (!calls.length) { replyText = String(res.content || '').trim(); break; }
+      if (!calls.length) {
+        const said = String(res.content || '').trim();
+        const note = holdEnd(said);
+        if (note) {
+          messages.push({ role: 'assistant', content: said });
+          messages.push({ role: 'user', content: note });
+          continue;
+        }
+        replyText = said;
+        break;
+      }
       messages.push({ role: 'assistant', content: res.content || null, tool_calls: calls });
       for (const call of calls) {
         const name = call.function.name;
         tools.push(name.slice(0, 40));
         const args = mayor.parseArgs(call.function.arguments);
+        // 1 Nov 2026: the working card's words, as the call starts.
+        sayDoing(deps, mayor, name, args, project);
         let result;
         if (name === 'write_screen') {
           const screen = screenArgs(args);
@@ -748,6 +827,14 @@ async function answer(pool, config, {
         }
         messages.push({ role: 'tool', tool_call_id: call.id, content: clip(JSON.stringify(result), mayor.MAX_TOOL_RESULT_CHARS) });
       }
+      // A reply that says it drew, or asks leave to, with nothing drawn.
+      if (replyText) {
+        const note = holdEnd(replyText);
+        if (note) {
+          messages.push({ role: 'user', content: note });
+          replyText = '';
+        }
+      }
     }
   } catch (err) {
     error = mayor.codeOf(err);
@@ -775,7 +862,10 @@ async function answer(pool, config, {
   }
   if (!changed) {
     if (error === 'no_key') return say(mayor.KEY_TEXT);
-    return say(clip(replyText, MAX_REPLY_CHARS) || BROKEN_TEXT);
+    // 1 Nov 2026: words that still say it drew, or is about to, with
+    // nothing drawn are not sent as if it had.
+    const unkept = ['preamble', 'claimed'].includes(notDrawnYet(replyText, { mayor }));
+    return say(unkept ? NOT_DRAWN_TEXT : clip(replyText, MAX_REPLY_CHARS) || BROKEN_TEXT);
   }
   // The thread's design, made by its first screen (its rows, its size).
   const held = drawn || !design
@@ -854,6 +944,9 @@ module.exports = {
   collapseSheets,
   fillSheets,
   screenArgs,
+  notDrawnYet,
+  NOT_DRAWN_TEXT,
+  DRAW_NOTE,
   picturesOf,
   describePictures,
   withPictures,
