@@ -258,6 +258,12 @@ test('make_pictures: offered to a person while the bot is on, its words in the p
   assert.equal(ctx.card.images.length, 2);
   assert.deepEqual(ctx.looked, [{ what: 'Made 2 pictures with the picture model' }]);
   assert.equal(ctx.lookedMs, 1200);
+  // The claims check (homeroom-bot-mayor.js CLAIMS): pictures put under this
+  // reply back "I've put them in this thread"; with none made they do not.
+  const mayor = require('../src/services/homeroom-bot-mayor');
+  const said = 'I have put two pictures of a pear in this thread.';
+  assert.deepEqual(await mayor.claimProblems(null, { ...ctx, appIds: new Set() }, said), []);
+  assert.deepEqual((await mayor.claimProblems(null, { ...on, appIds: new Set() }, said)).map((p) => p.kind), ['posted']);
 });
 
 test('gallery taps: feature only where the card allows it, use and add to the design, an unknown picture', async () => {

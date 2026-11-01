@@ -1463,7 +1463,8 @@ const CLAIMS = Object.freeze([
   {
     kind: 'posted',
     re: /\bI(?:'ve| have)?(?: just| now)? (?:posted|added|put|passed|left|sent|shared)\b[^.!?\n]{0,80}\b(?:discussion|comment|request|proposal|board|issue|thread)\b/i,
-    backed: (ctx) => !!(ctx.posted || ctx.revised || ctx.commented),
+    // P8: pictures make_pictures put under this reply ("I've put them in this thread").
+    backed: (ctx) => !!(ctx.posted || ctx.revised || ctx.commented || ctx.pictures),
     said: 'says something was posted',
     instead: 'I haven\'t posted that anywhere yet.',
   },
