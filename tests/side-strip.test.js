@@ -529,8 +529,12 @@ test('the apps section: the app on screen lit, the app you left with its ✕', (
   const app = read('public/js/app.js');
   assert.match(app, /if \(typeof bridge\.running === 'function'\) bridge\.running\(running\);/);
   assert.match(app, /if \(typeof bridge\.running === 'function'\) bridge\.running\(null\);/);
-  // The resume motion lands on the section's tile.
+  // The resume motion lands on the section's tile, and the reopen grows out
+  // of that same tile, not the whole 64x54 row around it.
   assert.match(read('frontend/src/features/nav/resume-motion.ts'), /#platform-tabs \.platform-side-app\[data-side-app\]/);
+  assert.match(tsx, /noteResumeOrigin\(left\.slug, event\.currentTarget\.querySelector\('\.platform-side-app-tile'\) \|\| event\.currentTarget\);\s*window\.App\?\.openAppTab\?\.\(left\.slug, 'app'\);/);
+  // The strip is always on screen, so its icon is never left to lazy loading.
+  assert.match(tsx, /<AppIconContent app=\{record\(app\)\} eager \/>/);
   const core = JSON.parse(read('frontend/locales/en/core.json'));
   assert.equal(core['tabs.stripApps'].text, 'Apps');
   assert.equal(core['tabs.stripResume'].text, 'Resume {{app}}');
