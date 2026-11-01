@@ -642,7 +642,7 @@ test('the server says where the viewer\'s reading stopped, beside the count, and
 // ── 9. The conversation wires it, in that order ─────────────────────────
 
 test('the conversation opens at the line, draws it once, and measures after its own scroll', () => {
-  assert.match(THREAD, /import \{\s*JumpToLatestButton, NewMessagesBanner, NewMessagesDivider, TranscriptOverlay, groupsWithPrevious,\s*\} from '@\/components\/ui\/chat';/);
+  assert.match(THREAD, /import \{\s*ChatStatusLine, JumpToLatestButton, NewMessagesBanner, NewMessagesDivider, TranscriptOverlay, groupsWithPrevious,\s*\} from '@\/components\/ui\/chat';/);
   // The opening comes after a message link's landing and before the follow.
   const focus = THREAD.indexOf('if (focusId && shownFocus.current === focusId && snap.nextAfter)');
   const opening = THREAD.indexOf('if (previousLast.current === null && line && !snap.nextAfter) {');
@@ -664,10 +664,12 @@ test('the conversation opens at the line, draws it once, and measures after its 
   assert.equal(message('messages:thread.jumpToLatest'), 'Jump to latest');
   assert.match(THREAD, /<JumpToLatestButton shown=\{unread\.jump\} dot=\{unread\.arrived > 0\} aria-label=\{jumpLabel\(unread\.arrived\)\} title=\{t\('messages:thread\.jumpToLatest'\)\} onClick=\{jumpToLatest\} \/>/);
   // Both boxes sit beside the scroller, which keeps its class string.
-  assert.match(THREAD, /<\/TranscriptOverlay>\s*\) : null\}\s*\{\/\*[\s\S]*?\*\/\}\s*<div ref=\{scroller\} className="messages-thread-scroll platform-safe-scroll" aria-live="polite">/);
-  // Over the overlay's foot, hung just above the composer, below the typing line.
-  assert.match(THREAD, /<div className="messages-typing" aria-live="polite">\{typingLine\(t, typing\)\}<\/div>\s*\{\/\*[\s\S]*?\*\/\}\s*<TranscriptOverlay edge="foot">\s*<JumpToLatestButton shown=\{unread\.jump\}[^\n]*\/>\s*<\/TranscriptOverlay>\s*<MessageComposer \/>/,
-    'the button hangs between the typing line and the composer');
+  assert.match(THREAD, /<\/TranscriptOverlay>\s*\) : null\}\s*\{\/\*[\s\S]*?\*\/\}\s*<div ref=\{scroller\} className="messages-thread-scroll platform-safe-scroll chat-transcript" aria-live="polite">/);
+  // Hung from the transcript's foot, just above the composer, and above the
+  // typing line, as in every chat (1 November 2026, "A chat's foot" in
+  // @/components/ui/chat): it rises with the transcript when a name appears.
+  assert.match(THREAD, /<\/div>\s*\{\/\*[\s\S]*?\*\/\}\s*<TranscriptOverlay edge="foot">\s*<JumpToLatestButton shown=\{unread\.jump\}[^\n]*\/>\s*<\/TranscriptOverlay>\s*<ChatStatusLine className="messages-typing">\{typingLine\(t, typing\)\}<\/ChatStatusLine>\s*<MessageComposer \/>/,
+    'the button hangs between the transcript and the typing line');
   // A linked window's latest is not drawn: the button goes to the present.
   assert.match(THREAD, /if \(snap\.nextAfter\) \{ pinned\.current = true; jumpToPresent\(\); return; \}\s*toLatest\(\);/);
 });
@@ -735,7 +737,7 @@ test('Jump to latest alone: hidden until the reader is up the transcript, and a 
   assert.doesNotMatch(SOURCE, /data-transcript-strip/);
   assert.doesNotMatch(SOURCE, /docked = false|docked\?: boolean/, 'and no prop to ask for one');
 
-  assert.match(THREAD, /<\/div>\s*<JumpToLatest scroller=\{scroller\} \/>\s*<MessageComposer threadRootId=\{rootId\} \/>/, 'a reply thread beside a conversation');
+  assert.match(THREAD, /<\/div>\s*<JumpToLatest scroller=\{scroller\} \/>\s*\{\/\*[\s\S]*?\*\/\}\s*<ChatStatusLine className="messages-typing">\{typingLine\(t, threadTyping\)\}<\/ChatStatusLine>\s*<MessageComposer threadRootId=\{rootId\} \/>/, 'a reply thread beside a conversation');
 });
 
 test('the group chat\'s channel and threads get it beside their scrollers, at their own allowances', () => {
@@ -747,7 +749,7 @@ test('the group chat\'s channel and threads get it beside their scrollers, at th
     'the channel follows within 50px');
   const chat = renderComponent('frontend/src/features/group-chat/general-chat.tsx', 'GeneralChat',
     { introAppName: null, readOnly: false, notice: null, maxLength: 4000 });
-  assert.match(chat, /<div id="gc-messages" class="flex-1 overflow-y-auto py-2 space-y-0\.5"><\/div><div class="relative z-10 h-0 shrink-0" data-transcript-overlay="foot">[\s\S]*?data-jump-latest=""[\s\S]*?<\/div><\/div><div id="gc-typing"/,
+  assert.match(chat, /<div id="gc-messages" class="flex-1 overflow-y-auto pt-2 space-y-0\.5 chat-transcript"><\/div><div class="relative z-10 h-0 shrink-0" data-transcript-overlay="foot">[\s\S]*?data-jump-latest=""[\s\S]*?<\/div><\/div><div id="gc-typing"/,
     'between the stream and its typing line, and nothing inside the stream');
 
   const shell = loadTsx('frontend/src/features/group-chat/thread-shell.tsx');
@@ -759,7 +761,7 @@ test('the group chat\'s channel and threads get it beside their scrollers, at th
   // 1 Nov 2026: the button floats over the foot of the thread's scroller, as
   // in a chat, with nothing behind it. It docked in a strip of its own here
   // (#4553), which cut the transcript off above it and read as a solid box.
-  assert.match(fill, /<div id="gc-thread-messages" class="py-2 space-y-0\.5"><\/div><\/div><div class="relative z-10 h-0 shrink-0" data-transcript-overlay="foot"><div class="pointer-events-none absolute inset-x-0 flex bottom-2 justify-center px-3"><button type="button" inert="" data-jump-latest=""/,
+  assert.match(fill, /<div id="gc-thread-messages" class="pt-2 space-y-0\.5"><\/div><\/div><div class="relative z-10 h-0 shrink-0" data-transcript-overlay="foot"><div class="pointer-events-none absolute inset-x-0 flex bottom-2 justify-center px-3"><button type="button" inert="" data-jump-latest=""/,
     'after the thread\'s scroller, floating over its foot, centred');
   assert.doesNotMatch(fill, /data-transcript-strip/, 'no strip of its own');
   for (const kind of ['change', 'request']) {
