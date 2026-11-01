@@ -8648,6 +8648,8 @@ function registerTools(server, ctx) {
       shadowBuilds: botSwitch, shadowBuildPlatform: botSwitch, dmChat: botSwitch,
       voiceSession: botSwitch, voiceIssue: botSwitch, voiceChat: botSwitch,
       continueReads: botSwitch, liveBuildStream: botSwitch,
+      // Homeroom bot parity, P8: the image model (blank: the default) and pictures a person may have made a week.
+      imageModel: botModel, pictureWeeklyCap: botCount,
     };
     server.registerTool('set_homeroom_bot_settings', {
       title: 'Homeroom bot: change its settings',

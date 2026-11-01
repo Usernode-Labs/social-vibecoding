@@ -238,6 +238,14 @@ const KEY_PROPOSAL_CEILING = 'homeroom_bot_proposal_ceiling';
 // cache). On unless switched off: off, no watcher starts and no App tab
 // offers it.
 const KEY_LIVE_BUILD_STREAM = 'live_build_stream';
+// Homeroom bot parity, P8: the outside image model its pictures are made on
+// (services/bot-pictures.js: make_pictures in the chat, usernode-image in a
+// build), and how many pictures one person may have made in a week. Blank
+// is the default model; a cap of 0 makes none.
+const KEY_IMAGE_MODEL = 'homeroom_bot_model_image';
+const KEY_PICTURE_WEEKLY_CAP = 'homeroom_bot_picture_weekly_cap';
+const DEFAULT_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
+const MAX_PICTURE_WEEKLY_CAP = 1000;
 const SETTING_KEYS = Object.freeze([
   KEY_MODE, KEY_CONCURRENCY, KEY_BATCH_SIZE, KEY_PAUSED_APPS,
   KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS,
@@ -246,6 +254,7 @@ const SETTING_KEYS = Object.freeze([
   KEY_VOICE_SESSION, KEY_VOICE_ISSUE, KEY_VOICE_CHAT,
   KEY_CONTINUE_READS, KEY_EVERYONE_SINCE, KEY_PROPOSAL_CEILING,
   KEY_LIVE_BUILD_STREAM, KEY_DEFAULT_MODEL, KEY_HELPER_MODEL,
+  KEY_IMAGE_MODEL, KEY_PICTURE_WEEKLY_CAP,
   ...Object.values(KEY_MODELS),
 ]);
 const MAX_USER_WEEKLY_CENTS = 10_000_000;
@@ -285,6 +294,9 @@ const DEFAULTS = Object.freeze({
   everyoneSince: null,
   proposalCeiling: 0,
   liveBuildStream: true,
+  // P8: pictures (services/bot-pictures.js).
+  imageModel: DEFAULT_IMAGE_MODEL,
+  pictureWeeklyCap: 24,
 });
 const MAX_CONCURRENCY = 4;
 const MAX_BUILD_CONCURRENCY = 4;
@@ -653,11 +665,15 @@ function parseSettings(rows) {
   const everyoneSince = Number.isFinite(sinceMs) ? new Date(sinceMs).toISOString() : null;
   const proposalCeiling = clampInt(map.get(KEY_PROPOSAL_CEILING), DEFAULTS.proposalCeiling, 0, MAX_PROPOSAL_CEILING);
   const liveBuildStream = map.get(KEY_LIVE_BUILD_STREAM) !== 'off';
+  const storedImageModel = String(map.get(KEY_IMAGE_MODEL) || '').trim();
+  const imageModel = MODEL_ID_RE.test(storedImageModel) ? storedImageModel : DEFAULTS.imageModel;
+  const pictureWeeklyCap = clampInt(map.get(KEY_PICTURE_WEEKLY_CAP), DEFAULTS.pictureWeeklyCap, 0, MAX_PICTURE_WEEKLY_CAP);
   return {
     mode, concurrency, batchSize, pausedApps, turnSeconds, turnInputTokens,
     shadowBuilds, buildConcurrency, shadowBuildPlatform, userWeeklyCents, adminWeeklyCents,
     liveAtOnce, perPerson, dmChat, voiceSession, voiceIssue, voiceChat, continueReads, models,
     defaultModel, helperModel, everyoneSince, proposalCeiling, liveBuildStream,
+    imageModel, pictureWeeklyCap,
   };
 }
 
@@ -925,6 +941,21 @@ function validateSettingsPatch(patch) {
       return { ok: false, error: 'helperModel must be an OpenRouter model id such as deepseek/deepseek-v4.1-flash-1017, or blank for GLM 5.3 Flash' };
     }
     updates.push([KEY_HELPER_MODEL, id]);
+  }
+  // P8: the image model (blank is the default) and the weekly picture cap.
+  if (body.imageModel !== undefined) {
+    const id = body.imageModel == null ? '' : String(body.imageModel).trim();
+    if (id && !MODEL_ID_RE.test(id)) {
+      return { ok: false, error: `imageModel must be an OpenRouter model id such as ${DEFAULT_IMAGE_MODEL}, or blank for the default` };
+    }
+    updates.push([KEY_IMAGE_MODEL, id]);
+  }
+  if (body.pictureWeeklyCap !== undefined) {
+    const n = Number(body.pictureWeeklyCap);
+    if (!Number.isInteger(n) || n < 0 || n > MAX_PICTURE_WEEKLY_CAP) {
+      return { ok: false, error: `pictureWeeklyCap must be an integer from 0 (no pictures) to ${MAX_PICTURE_WEEKLY_CAP}` };
+    }
+    updates.push([KEY_PICTURE_WEEKLY_CAP, String(n)]);
   }
   let weeklyLimitCents;
   if (body.weeklyLimitCents !== undefined) {
@@ -9708,6 +9739,9 @@ module.exports = {
   KEY_MODELS,
   KEY_DEFAULT_MODEL,
   KEY_HELPER_MODEL,
+  KEY_IMAGE_MODEL,
+  KEY_PICTURE_WEEKLY_CAP,
+  DEFAULT_IMAGE_MODEL,
   MODEL_ID_RE,
   triagePromptFor,
   signalNote,

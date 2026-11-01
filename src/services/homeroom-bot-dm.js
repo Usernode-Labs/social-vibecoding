@@ -1108,11 +1108,15 @@ async function requestStart(pool, { userId, appId, issueNumber }) {
  * platform does (limits.weekStartUtc) and as weekKey reads it.
  */
 async function weeklySpentCents(pool, userId) {
+  // Homeroom bot parity, P8: and the pictures it made for them
+  // (services/bot-pictures.js), in the chat or for a build they pay for.
   const { rows } = await pool.query(
-    `SELECT COALESCE(SUM(COALESCE(r.cost_usd, 0) + COALESCE(r.build_cost_usd, 0)), 0) AS usd
+    `SELECT COALESCE((SELECT SUM(COALESCE(r.cost_usd, 0) + COALESCE(r.build_cost_usd, 0))
        FROM homeroom_bot_runs r
        LEFT JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
-      WHERE r.charged AND COALESCE(r.payer_user_id, q.user_id) = $1 AND r.created_at >= $2`,
+      WHERE r.charged AND COALESCE(r.payer_user_id, q.user_id) = $1 AND r.created_at >= $2), 0)
+      + COALESCE((SELECT SUM(p.cost_usd) FROM homeroom_bot_pictures p
+      WHERE p.payer_user_id = $1 AND p.created_at >= $2), 0) AS usd`,
     [userId, require('./limits').weekStartUtc()],
   );
   return Math.round((Number(rows[0]?.usd) || 0) * 100);

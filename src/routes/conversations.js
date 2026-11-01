@@ -258,6 +258,32 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // Homeroom bot parity, P8: a picture Homeroom bot made in a chat
+  // (services/bot-pictures.js), from the media store, for that chat's
+  // members only. A gallery card's thumbnails and the image viewer read it.
+  //
+  //   GET /api/conversations/homeroom-bot/pictures/:id  → the image
+  let pictureStore;
+  router.get('/api/conversations/homeroom-bot/pictures/:id', async (req, res) => {
+    try {
+      if (!req.user?.id) return res.status(401).end();
+      const row = await require('../services/bot-pictures').imageForMember(pool, { userId: req.user.id, id: req.params.id });
+      if (!row) return res.status(404).end();
+      const media = require('../services/media-store');
+      if (pictureStore === undefined) pictureStore = media.getStore(config);
+      res.set('Content-Type', row.content_type);
+      res.set('X-Content-Type-Options', 'nosniff');
+      res.set('Cache-Control', 'private, max-age=31536000, immutable');
+      res.set('Content-Length', String(row.bytes));
+      if (req.method === 'HEAD') return res.end();
+      return await media.respond(res, pictureStore, row);
+    } catch (err) {
+      log.error('conversations', 'homeroom bot picture read failed', { err: err.message, userId: req.user?.id });
+      if (res.headersSent) return res.destroy();
+      return res.status(500).end();
+    }
+  });
+
   // #5506: Withdraw it, from a ready card in the person's DM with the bot
   // (frontend/src/features/messages/bot-ready.tsx): one of the bot's own
   // proposals, still up for a vote, that they asked for or whose project
