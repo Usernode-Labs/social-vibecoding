@@ -18337,6 +18337,13 @@ html[data-side-strip="right"] body:has(#ai-screen:not(.hidden)) {
   box-shadow: none;
 }
 .messages-layout[data-main-chat] > .messages-reply-pane > .messages-reply-resizer { display: none; }
+/* Its head is the column's head then, Main Chat's own not being drawn, so
+   it pads its contents by iPhone Duo's column of system chrome as Main
+   Chat's does (`--ai-edge`, 0 everywhere else): unpadded, a thread's long
+   title ran under the clock and the Wi-Fi ring (1 Nov 2026). */
+#ai-screen .ai-main-pane .messages-thread-header[data-reply-head="main"] {
+  padding-right: calc(16px + var(--ai-edge, 0px));
+}
 /* A request or a change opened from the list: the side panel in Main's
    place, and Main back when the panel closes. It is drawn as this page's
    own column, not as a panel of its own (29 Oct 2026): Main's width, edge
