@@ -25158,35 +25158,62 @@ html.dark .messages-inbox-change-tile {
   overflow: hidden;
 }
 
-/* THE DIVIDER (#2886) — the panel's left edge, as a handle. It sits over the
-   panel's own hairline (the border-left above), inside the panel because the
-   panel clips its corner, and shows itself only under the pointer, on focus
-   and while held: a brand-coloured bar where the hairline is. The width it
+/* THE DIVIDER (#2886) — the panel's left edge, as a handle. It is the
+   panel's child and is drawn on the line between the panel and what is beside
+   it (below), and shows itself only under the pointer, on focus and while
+   held: a brand-coloured bar on that line. The width it
    sets is `--side-panel-w` on <html> (features/side-panel/resize.ts), so the
    app beside it follows through the margin rule below. */
 .side-panel-divider {
-  position: absolute;
-  top: 0;
+  /* ON THE LINE BETWEEN THE TWO HALVES (iPhone Duo, 1 November 2026), not
+     just inside the panel. Fixed, so the panel's clipping (overflow: hidden,
+     for its corner) does not reach it while it stays the panel's child, and
+     hides and shows with it; centred on `--divider-at`, the line's distance
+     from the window's right edge. Beside an app that is the panel's own edge,
+     where the two sheets meet; beside the Homeroom bot's list it is the
+     middle of the gutter between the list and Main (below). Inside the panel
+     the bar and the grip sat on the panel's side of the gap. Nothing between
+     it and the window may take a transform or a filter, which would make
+     that ancestor its frame instead. */
+  --divider-w: 10px;
+  position: fixed;
+  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h)
+    + var(--platform-safe-top, 0px) - .5rem);
   bottom: 0;
-  left: 0;
-  width: 10px;
-  z-index: 2;
+  right: calc(var(--divider-at, var(--side-panel-w)) - var(--divider-w) / 2);
+  width: var(--divider-w);
+  z-index: 21;
   cursor: col-resize;
   touch-action: none;
   outline: none;
+}
+/* Beside the bot's list: Main (and a page in Main's place) is
+   `--ai-main-w` wide plus the Duo's column it runs under, and the list's
+   16px padding is the gutter before it. Main's own handle starts where Main
+   does, which is not under the banner the side panel clears. */
+body:has(#ai-screen:not(.hidden)) :is(#side-panel-divider, #ai-main-divider) {
+  --divider-at: calc(var(--ai-main-w) + var(--ai-edge, 0px) + 8px);
+}
+#ai-main-divider {
+  top: calc(var(--platform-header-h) + var(--platform-safe-top, 0px) - .5rem);
 }
 .side-panel-divider::after {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 0;
+  left: calc(50% - 1.5px);
   width: 3px;
   background: var(--brand-ink);
   opacity: 0;
   transition: opacity 120ms ease;
 }
-.side-panel-divider:hover::after,
+/* Under a pointer that hovers only: a finger's tap leaves iOS holding
+   :hover on the handle, which kept the bar lit after the drag (iPhone Duo,
+   1 November 2026). A touch shows it while held. */
+@media (hover: hover) {
+  .side-panel-divider:hover::after { opacity: .45; }
+}
 .side-panel-divider:focus-visible::after,
 html.side-panel-resizing .side-panel-divider::after {
   opacity: .45;
@@ -25194,16 +25221,16 @@ html.side-panel-resizing .side-panel-divider::after {
 /* ON A TOUCH SCREEN, A HANDLE YOU CAN SEE AND HIT (iPhone Duo, 1 November
    2026). The bar above shows only under a pointer, which a finger never
    hovers over, and 10px is narrower than a fingertip, so the edge read as
-   no handle at all. With a coarse pointer the handle is 20px, still within
-   the column's own padding (its rows and the reply box begin 12 to 18px
-   in), and a short grip at its middle is drawn at rest. */
+   no handle at all. With a coarse pointer the handle is 24px across the
+   line, reaching 4px into Main past the gutter (its rows and the reply box
+   begin 12 to 18px in), and a short grip on the line is drawn at rest. */
 @media (pointer: coarse) {
-  .side-panel-divider { width: 20px; }
+  .side-panel-divider { --divider-w: 24px; }
   .side-panel-divider::before {
     content: "";
     position: absolute;
     top: 50%;
-    left: 6px;
+    left: calc(50% - 2px);
     width: 4px;
     height: 40px;
     margin-top: -20px;

@@ -1520,10 +1520,27 @@ test('pend plants ?side= for a page the app is about to open beside, and drop ta
 test('on a touch screen the divider is a handle you can see and hit', () => {
   // iPhone Duo, 1 Nov 2026: the bar shows only under a pointer, which a
   // finger never hovers over, and 10px is narrower than a fingertip.
-  const at = CSS.indexOf('@media (pointer: coarse) {\n  .side-panel-divider { width: 20px; }');
-  assert.ok(at > 0, 'a 20px handle with a coarse pointer');
+  const at = CSS.indexOf('@media (pointer: coarse) {\n  .side-panel-divider { --divider-w: 24px; }');
+  assert.ok(at > 0, 'a 24px handle with a coarse pointer');
   const block = CSS.slice(at, CSS.indexOf('\n}\n', at));
-  assert.match(block, /\.side-panel-divider::before \{[^}]*content: "";[^}]*height: 40px;[^}]*border-radius: 999px;[^}]*opacity: \.5;/,
-    'a grip drawn at rest');
-  assert.match(CSS, /\.side-panel-divider \{\s*position: absolute;[^}]*width: 10px;/, 'a mouse keeps the 10px edge');
+  assert.match(block, /\.side-panel-divider::before \{[^}]*content: "";[^}]*left: calc\(50% - 2px\);[^}]*height: 40px;[^}]*border-radius: 999px;[^}]*opacity: \.5;/,
+    'a grip drawn at rest, on the line');
+  // A tap leaves iOS holding :hover, so the bar lights on hover only where
+  // the pointer can hover.
+  assert.match(CSS, /@media \(hover: hover\) \{\n  \.side-panel-divider:hover::after \{ opacity: \.45; \}\n\}/);
+  assert.doesNotMatch(CSS, /\n\.side-panel-divider:hover::after,/);
+});
+
+test('the divider is drawn on the line between the two halves, not inside the panel', () => {
+  // iPhone Duo, 1 Nov 2026: inside the panel, which clips its corner, the
+  // handle sat on the panel's side of the gutter beside the bot's list.
+  // Fixed, it escapes that clip while staying the panel's child.
+  const rule = CSS.slice(CSS.indexOf('.side-panel-divider {\n'), CSS.indexOf('\n}\n', CSS.indexOf('.side-panel-divider {\n')));
+  assert.match(rule, /--divider-w: 10px;/, 'a mouse keeps the 10px edge');
+  assert.match(rule, /position: fixed;/);
+  assert.match(rule, /right: calc\(var\(--divider-at, var\(--side-panel-w\)\) - var\(--divider-w\) \/ 2\);/,
+    'centred on the line; beside an app the line is the panel\'s own edge');
+  assert.match(CSS, /body:has\(#ai-screen:not\(\.hidden\)\) :is\(#side-panel-divider, #ai-main-divider\) \{\s*--divider-at: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\) \+ 8px\);/,
+    'beside the bot\'s list, the middle of the 16px gutter before Main');
+  assert.match(CSS, /\.side-panel-divider::after \{[^}]*left: calc\(50% - 1\.5px\);/, 'the bar on the line too');
 });
