@@ -126,3 +126,18 @@ test('the claims check lets "I\'ll post what I find here" through only while thi
   const cut = mayor.stripClaims(said, none);
   assert.doesNotMatch(cut, /I'll post what I find/);
 });
+
+test('the thread tools registry offers the look and the investigation tools and routes their calls', async () => {
+  const registry = require('../src/services/homeroom-bot-thread-tools');
+  const ctx = { user: { id: 1, username: 'ada' }, settings: { mode: 'live' }, deps: {} };
+  const names = registry.toolsFor(ctx).map((t) => t.function.name);
+  for (const name of ['look_into', 'start_investigation', 'read_investigation']) assert.ok(names.includes(name), name);
+  assert.ok(registry.promptLines(ctx).some((line) => line.includes('look_into')));
+  assert.ok(registry.promptLines(ctx).some((line) => line.includes('start_investigation')));
+  // A call is its module's: bad arguments are refused before anything is read.
+  const pool = { query: async () => { throw new Error('nothing to read'); } };
+  assert.deepEqual(await registry.run(pool, ctx, 'look_into', { project: 'gym' }), { ok: false, error: 'Say what to find out, in a sentence.' });
+  assert.equal((await registry.run(pool, ctx, 'start_investigation', { project: 'gym', goal: 'x' })).ok, false);
+  const off = { ...ctx, settings: { mode: 'off' } };
+  assert.ok(!registry.toolsFor(off).some((t) => ['look_into', 'start_investigation'].includes(t.function.name)));
+});
