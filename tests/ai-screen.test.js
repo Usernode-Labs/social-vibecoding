@@ -788,16 +788,19 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   // chrome on the right that the body pads out): the room is beside the
   // column, so its width is not counted twice. The columns pinned to the
   // right edge run their ground under the column to the screen's edge, as
-  // the header does, and pad what is in them by it: stopped at the column,
-  // Main ended in a hard edge beside bare wallpaper. Off the Duo both are 0.
+  // the header does: stopped at the column, Main ended in a hard edge beside
+  // bare wallpaper. Their heads pad their contents by the column, where the
+  // clock, camera and Wi-Fi sit; below them the chat and the panel's page
+  // run under it (padded, they left a band of another colour). A design's
+  // preview pads it, its ✕ at its top. Off the Duo both are 0.
   assert.match(css, /html\[data-side-strip="right"\] body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-edge: var\(--platform-strip-w, 0px\);\s+\}/);
   assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*right: 0;[^}]*width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
   assert.match(css, /#ai-screen \.ai-main-head \{[^}]*padding: 12px calc\(18px \+ var\(--ai-edge, 0px\)\) 12px 18px;/, 'its name stops beside the column, its hairline runs under it');
-  assert.match(css, /#ai-screen \.ai-main-pane > \.messages-layout \{[^}]*padding-right: var\(--ai-edge, 0px\);/, 'and so does the chat');
+  assert.doesNotMatch(css, /\.messages-layout \{[^}]*padding-right: var\(--ai-edge/, 'the chat runs under the column, below its head');
   assert.match(css, /#ai-screen \.ai-preview-pane \{[^}]*right: 0;[^}]*width: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\s+padding-right: var\(--ai-edge, 0px\);/);
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{\s+width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel-head \{[^}]*padding: 12px calc\(18px \+ var\(--ai-edge, 0px\)\) 12px 18px;/);
-  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel-body \{ margin-right: var\(--ai-edge, 0px\); \}/);
+  assert.doesNotMatch(css, /\.side-panel-body \{[^}]*var\(--ai-edge/, 'and so does the page in the side panel');
   // In the Homeroom app the panel stands here too (canTake), and a reply
   // typed in its own document had the keyboard over its box: it ends above
   // the keyboard the kit measures from the screen.
