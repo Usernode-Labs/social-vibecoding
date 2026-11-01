@@ -60,7 +60,7 @@ function harness({ wide = true, railHidden = false } = {}) {
   });
   context.window = context;
   vm.runInContext(read('public/js/app.js'), context);
-  return { App: context.App, AppView, element };
+  return { App: context.App, AppView, element, context };
 }
 
 // ── #2797: a rail press swaps in place ───────────────────────────────────
@@ -252,10 +252,41 @@ test('navigateHome is a tab press only when the Home tab says so — never from 
   const src = read('public/js/app.js');
   const body = src.slice(src.indexOf('  navigateHome(opts) {'), src.indexOf('\n  },', src.indexOf('  navigateHome(opts) {')));
   assert.match(body, /const viaTab = !!\(opts && opts\.viaTab === true\);/);
-  assert.match(body, /type: App\._entryTransition\('zoom-out', av, viaTab\)/);
+  assert.match(body, /type: App\._entryTransition\('zoom-out', av, viaTab && !\(leavingSlug && App\._stripShowsRunning\(leavingSlug\)\)\)/);
   const tabBar = read('frontend/src/features/nav/tab-bar.tsx');
   const home = tabBar.slice(tabBar.indexOf('function onHomeClick('), tabBar.indexOf('\n}\n', tabBar.indexOf('function onHomeClick(')));
   assert.match(home, /\.navigateHome\?\.\(\{ viaTab: true \}\)/, 'the Home tab is the caller that says so');
+});
+
+// 1 Nov 2026: iPhone Duo's strip keeps the tabs up over a running app, with
+// the app among them, and every other tab pressed there carries the app into
+// its tile (the stand-in card). Home's press cut: the card leaves the shrink
+// to navigateHome's zoom-out, which the press turned off. There, and only
+// there, Home keeps its zoom-out, into the strip's tile.
+test('Home pressed on the Duo\'s strip out of a running app keeps its zoom into the app\'s tile', () => {
+  const src = read('public/js/app.js');
+  const body = src.slice(src.indexOf('  navigateHome(opts) {'), src.indexOf('\n  },', src.indexOf('  navigateHome(opts) {')));
+  assert.match(body, /type: App\._entryTransition\('zoom-out', av, viaTab && !\(leavingSlug && App\._stripShowsRunning\(leavingSlug\)\)\)/);
+
+  const { App, context } = harness({ wide: false });
+  let rows = [];
+  context.document.querySelectorAll = (sel) => {
+    assert.equal(sel, '#platform-tabs .platform-side-app[aria-current="page"]', 'the lit row, the app on screen');
+    return rows;
+  };
+  const row = (slug, drawn) => ({
+    getAttribute: (name) => (name === 'data-side-app' ? slug : null),
+    getClientRects: () => ({ length: drawn ? 1 : 0 }),
+  });
+  rows = [row('notes-ab12', true)];
+  assert.equal(App._stripShowsRunning('notes-ab12'), true);
+  assert.equal(App._stripShowsRunning('chess-cd34'), false, 'another app');
+  rows = [row('notes-ab12', false)];
+  assert.equal(App._stripShowsRunning('notes-ab12'), false, 'off the strip the row is never drawn');
+  rows = [];
+  assert.equal(App._stripShowsRunning('notes-ab12'), false, 'the app\'s Workshop: no running app in the strip');
+  delete context.document.querySelectorAll;
+  assert.equal(App._stripShowsRunning('notes-ab12'), false, 'unreadable answers no');
 });
 
 test('a tab press into an app\'s Workshop reveals it when its record lands, not empty before', async () => {
