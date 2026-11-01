@@ -1664,7 +1664,7 @@
     "description": "Second card of the walk on Home, pointing at the AI tab: Homeroom bot is the assistant that builds changes to apps. A name, keep it as it is."
   },
   "firstSession.walk.bot.text": {
-    "text": "It's in AI. Ask it to make any changes to {{app}}.",
+    "text": "It's in the Homeroom bot tab. Ask it to make any changes to {{app}}.",
     "description": "Line on the walk's Homeroom bot card, for an app with no example change to offer (one Homeroom bot built, or a game): where to find the bot (the AI tab, the chat with Homeroom bot) and what to ask it for (any change to the app). {{app}} is the project's name, as its tile on Home shows it."
   },
   "firstSession.walk.bot.textExample": {
@@ -1708,7 +1708,7 @@
     "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first: text about the Communities tab. \"Each one\" is a community; its hub is its main page."
   },
   "firstSession.tour.look.bot.title": {
-    "text": "Homeroom bot is in AI",
+    "text": "Homeroom bot has its own tab",
     "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first, title of the last card: points at the AI tab, the chat with Homeroom bot. \"AI\" is the tab's name. Homeroom bot is the name of the assistant and Messages the name of the tab."
   },
   "firstSession.tour.look.bot.text": {

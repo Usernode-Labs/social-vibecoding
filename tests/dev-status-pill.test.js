@@ -120,8 +120,11 @@ test('tier 0 — a merged row is settled and reads ✓ Live, in green', () => {
   assert.equal(s.label, '✓ Live');
   assert.equal(s.tone, 'ok');
   assert.match(pillHtml(AppView, PR({ status: 'merged', yes_count: 5 })),
-    /class="gc-vote-count gc-vote-count-ok dev-status-pill dev-status-pill-block"[^>]*><span class="gc-vote-count-label">✓ Live<\/span>/,
-    'the block pill takes the green wash (app.css `.dev-status-pill-block.gc-vote-count-ok`)');
+    /class="gc-vote-count gc-vote-count-ok dev-status-pill dev-status-pill-block"[^>]*><span class="gc-vote-count-label">✓ Live<span class="gc-vote-count-suffix" title="5 yes and 0 no\. It needed 3 yes to pass\."> · 5\/3 yes<\/span><\/span>/,
+    'the block pill takes the green wash (app.css `.dev-status-pill-block.gc-vote-count-ok`) and keeps its final tally');
+  // No counted votes: nothing follows the word, never "0/3".
+  assert.match(pillHtml(AppView, PR({ status: 'merged' })),
+    /<span class="gc-vote-count-label">✓ Live<\/span>/);
   // The card's spine, and the folded row's, follow the tone (edgeFor).
   const { edgeFor } = loadTsx('frontend/src/features/dev-board/card/dev-card.tsx');
   assert.equal(edgeFor({ key: 'session:1', pill: { state: s } }), 'ok');
@@ -180,7 +183,7 @@ test('a live card wears the green pill and the green edge; one going live stays 
     deployment_state: 'deployed',
   }), 3);
   assert.match(live, /^<div class="gc-vote-item[^"]*"[^>]*data-edge="ok"[^>]*data-proposal-row="9100027"/);
-  assert.match(live, /<span class="gc-vote-count gc-vote-count-ok dev-status-pill dev-status-pill-block"[^>]*><span class="gc-vote-count-label">✓ Live<\/span>/);
+  assert.match(live, /<span class="gc-vote-count gc-vote-count-ok dev-status-pill dev-status-pill-block"[^>]*><span class="gc-vote-count-label">✓ Live<span class="gc-vote-count-suffix" title="3 yes and 0 no\. It needed 3 yes to pass\."> · 3\/3 yes<\/span><\/span>/);
 
   const going = mergedCardHtml(AppView, PR({
     id: 9100000, status: 'merged', merged_at: '2026-06-01T00:00:00Z', yes_count: 3,

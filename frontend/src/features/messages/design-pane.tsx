@@ -20,9 +20,18 @@
  *
  * Nothing loads in the first render: the design is read in an effect, so
  * the server's markup and the first client render agree.
+ *
+ * 1 Nov 2026 (threads, one loop C1): the chat with Homeroom bot is its tab's
+ * alone, and so is this pane: any private thread there can hold a design, a
+ * version said in it shows small with Open preview (./design-card.tsx), and
+ * the pane opens as the tab's own column beside the thread
+ * (../ai/preview.ts), at that version, with a way to close it (`onClose`):
+ * × beside the thread, a back arrow where it is the whole screen.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+
+import { ChevronLeftIcon, XIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { designFrameDoc, currentSheets, DESIGN_SANDBOX, type FramePin } from '../design/frame';
@@ -38,6 +47,8 @@ interface Draft { x: number; y: number; element?: DesignPin['element'] }
 const BUTTON = 'inline-flex items-center justify-center h-8 px-3 rounded-full text-[13px] font-semibold transition-colors disabled:opacity-50';
 const QUIET = `${BUTTON} text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800`;
 const FILLED = `${BUTTON} bg-violet-600 text-white hover:bg-violet-500`;
+// 1 Nov 2026: the column's × and back arrow, a disc of their own.
+const ICON = 'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800';
 
 // On a phone the preview and the thread take turns: which one is up, shared
 // by the Messages screen (its layout's class) and the thread's header (the
@@ -61,22 +72,41 @@ function key(): string {
   return `design-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+type DesignMessage = { sender?: { bot?: boolean }; metadata?: { homeroomBot?: { kind?: string; designVersion?: number } | null } | null };
+
 /** Whether a thread's first message is the bot's line that opened a design thread. */
-export function isDesignRoot(root: { sender?: { bot?: boolean }; metadata?: { homeroomBot?: { kind?: string } } | null } | null | undefined): boolean {
+export function isDesignRoot(root: DesignMessage | null | undefined): boolean {
   return !!root?.sender?.bot && root.metadata?.homeroomBot?.kind === 'opened_design';
 }
 
-export function DesignPane({ conversationId, rootId, view, onView }: {
+/**
+ * Pure (1 Nov 2026): whether a thread holds a design: its root opened one
+ * from a capture, or the bot said a version anywhere in it (a "+" thread,
+ * an idea, a thread about a request: any private thread can hold one).
+ */
+export function isDesignThread(root: DesignMessage | null | undefined, replies: readonly DesignMessage[] = []): boolean {
+  return isDesignRoot(root) || replies.some((m) => !!m?.sender?.bot && Number(m.metadata?.homeroomBot?.designVersion) > 0);
+}
+
+export function DesignPane({ conversationId, rootId, view, onView, version = null, seq = 0, onClose, closeAs = 'close' }: {
   conversationId: number;
   rootId: number;
   view: View;
   onView: (view: View) => void;
+  /** The version to show first (a card's Open preview); the newest when none. */
+  version?: number | null;
+  /** Each open's count, so the same version asked for again is shown again. */
+  seq?: number;
+  /** On the Homeroom bot tab: the pane is its own column, and this closes it. */
+  onClose?: () => void;
+  /** × beside the thread; a back arrow to it where the pane is the whole screen. */
+  closeAs?: 'close' | 'back';
 }): ReactNode {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   const [design, setDesign] = useState<DesignThread | null>(null);
   const [failed, setFailed] = useState(false);
-  const [chosen, setChosen] = useState<number | null>(null);
+  const [chosen, setChosen] = useState<number | null>(version || null);
   const [html, setHtml] = useState<{ version: number; doc: string } | null>(null);
   const [commenting, setCommenting] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -105,7 +135,16 @@ export function DesignPane({ conversationId, rootId, view, onView }: {
 
   const shown = chosen && design && chosen <= design.latest ? chosen : design?.latest || 0;
   // A new version follows the newest, unless the person picked an older one.
-  useEffect(() => { setChosen(null); }, [design?.latest]);
+  // 1 Nov 2026: a newer one than the pane last knew, not the first read, so
+  // the version it was opened at stays shown.
+  const knownLatest = useRef(0);
+  useEffect(() => {
+    const latest = design?.latest || 0;
+    if (knownLatest.current && latest > knownLatest.current) setChosen(null);
+    knownLatest.current = latest;
+  }, [design?.latest]);
+  // Opened again at a version (a card's Open preview): that one.
+  useEffect(() => { if (version) setChosen(version); }, [version, seq]);
 
   useEffect(() => {
     if (!design || !shown) return;
@@ -200,15 +239,31 @@ export function DesignPane({ conversationId, rootId, view, onView }: {
     return (
       <section className="messages-design-pane" data-design-pane={rootId} aria-label={t('messages:design.pane.label')}>
         <p className="p-4 text-[13px] text-zinc-500">{t('messages:design.pane.failed')}</p>
+        {onClose ? (
+          <div className="px-4">
+            <button type="button" className={QUIET} onClick={onClose} data-design-close={closeAs}>
+              {closeAs === 'back' ? t('messages:design.pane.back') : t('messages:design.pane.close')}
+            </button>
+          </div>
+        ) : null}
       </section>
     );
   }
   const open = design?.state === 'open';
+  // 1 Nov 2026 (C2.2): a design posted as a plan may post again: the plan's next version.
+  // A design for a project not made yet has nowhere to post: the bot's
+  // Make the project card is its way out (bot-make.tsx).
+  const postable = !!design?.app && (open || design?.state === 'posted' || design?.state === 'filed');
   const latest = design?.latest || 0;
   const what = draft?.element?.text || draft?.element?.tag || '';
   return (
     <section className="messages-design-pane" data-design-pane={rootId} data-design-view={view} aria-label={t('messages:design.pane.label')}>
       <header className="flex flex-wrap items-center gap-2 px-4 pt-3 pb-2">
+        {onClose && closeAs === 'back' ? (
+          <button type="button" className={ICON} onClick={onClose} aria-label={t('messages:design.pane.back')} title={t('messages:design.pane.back')} data-design-close="back">
+            <ChevronLeftIcon className="h-5 w-5 shrink-0" aria-hidden="true" />
+          </button>
+        ) : null}
         {/* At least 12rem wide, so on a phone the buttons wrap under it
             rather than squeezing it until the picker runs into them. */}
         <div className="min-w-[12rem] flex-1">
@@ -232,18 +287,23 @@ export function DesignPane({ conversationId, rootId, view, onView }: {
             </label>
           ) : null}
         </div>
-        <button type="button" className={`${QUIET} messages-design-view-switch`} onClick={() => onView('chat')}>{t('messages:design.pane.showChat')}</button>
+        {onClose ? null : <button type="button" className={`${QUIET} messages-design-view-switch`} onClick={() => onView('chat')}>{t('messages:design.pane.showChat')}</button>}
         {open ? (
           <button type="button" className={commenting ? FILLED : QUIET} aria-pressed={commenting} onClick={() => { setCommenting((on) => !on); setDraft(null); }} data-design-comment="">
             {commenting ? t('messages:design.pane.commentDone') : t('messages:design.pane.comment')}
           </button>
         ) : null}
-        {open ? <button type="button" className={FILLED} onClick={() => setProposing(true)} disabled={!latest} data-design-propose="">{t('messages:design.pane.propose')}</button> : null}
+        {postable ? <button type="button" className={FILLED} onClick={() => setProposing(true)} disabled={!latest} data-design-propose="">{t('messages:design.pane.propose')}</button> : null}
+        {onClose && closeAs === 'close' ? (
+          <button type="button" className={ICON} onClick={onClose} aria-label={t('messages:design.pane.close')} title={t('messages:design.pane.close')} data-design-close="close">
+            <XIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+          </button>
+        ) : null}
       </header>
       {design && !open && design.number && design.app ? (
         <p className="px-4 pb-2 text-[13px] text-zinc-600 dark:text-zinc-300">
           <a className="font-semibold text-violet-700 dark:text-violet-300" href={`#app/${encodeURIComponent(design.app.slug)}/dev/issues/${design.number}`}>
-            {t('messages:design.pane.proposed', { number: design.number })}
+            {design.state === 'posted' ? t('messages:design.pane.postedOn', { number: design.number }) : t('messages:design.pane.proposed', { number: design.number })}
           </a>
         </p>
       ) : null}
@@ -303,6 +363,8 @@ function ProposeCard({ design, version, onClose, onDone }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const project = design.app?.name || design.app?.slug || '';
+  // C2.2: on the request the thread is about, it posts there as a plan.
+  const on = design.planOn || null;
   const submit = async () => {
     if (busy || !title.trim()) return;
     setBusy(true);
@@ -323,9 +385,9 @@ function ProposeCard({ design, version, onClose, onDone }: {
       onSubmit={(event) => { event.preventDefault(); void submit(); }}
       data-design-propose-card=""
     >
-      <div className="text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t('messages:design.propose.heading')}</div>
+      <div className="text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{on ? t('messages:design.propose.headingOn') : t('messages:design.propose.heading')}</div>
       <p className="text-[13px] text-zinc-600 dark:text-zinc-300" role="note">
-        {t('messages:design.propose.warning', { version, project })}
+        {on ? t('messages:design.propose.warningOn', { version, number: on, project }) : t('messages:design.propose.warning', { version, project })}
       </p>
       <label className="flex flex-col gap-1 text-[13px] text-zinc-500">
         {t('messages:design.propose.titleLabel')}
@@ -338,7 +400,7 @@ function ProposeCard({ design, version, onClose, onDone }: {
       {error ? <p className="text-[13px] text-red-600" role="alert">{error}</p> : null}
       <div className="flex justify-end gap-2">
         <button type="button" className={QUIET} onClick={onClose}>{t('messages:design.propose.cancel')}</button>
-        <button type="submit" className={FILLED} disabled={busy || !title.trim()}>{t('messages:design.propose.send')}</button>
+        <button type="submit" className={FILLED} disabled={busy || !title.trim()}>{on ? t('messages:design.propose.sendOn') : t('messages:design.propose.send')}</button>
       </div>
     </form>
   );

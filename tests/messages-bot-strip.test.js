@@ -158,7 +158,12 @@ test('a Needs you row opens on a tap and has ONE action; a Ready row Try it and,
   const source = read(STRIP);
   assert.match(source, /import \{ tryChange \} from '\.\/bot-ready';/);
   assert.match(source, /api\.approveChange\(sessionId, ready\?\.epoch \?\? null\)/);
-  assert.match(source, /const rootId = row\.rootId \|\| storyRootIn\(loadedMessages\(\), requestKey\(row\.job\)\);\s*if \(rootId \|\| row\.focusId\) \{ openThreadAt\(rootId, row\.focusId\); return; \}/, 'its story, as the chat\'s row opens it');
+  // 31 Oct 2026: its request's page, as the chat's row opens it; what waits
+  // on them in the chat opens there; a request no page is named for (the
+  // staging demo's) opens where its story is told.
+  assert.match(source, /if \(row\.focusId && !asked\?\.threadRootId && !row\.rootId\) \{ openThreadAt\(null, row\.focusId\); return; \}/);
+  assert.match(source, /if \(page\) \{ openRequestPage\(page, loadedMessages\(\)\[0\]\?\.conversationId \|\| null\); return; \}/, 'its request\'s page');
+  assert.match(source, /const rootId = row\.rootId \|\| storyRootIn\(loadedMessages\(\), requestKey\(row\.job\)\);\s*if \(rootId \|\| row\.focusId\) \{ openThreadAt\(rootId, row\.focusId\); return; \}/, 'else its story');
   // Opening a request closes the drawer; Try it and Approve leave it open.
   assert.match(source, /const onOpen = \(row: StripRow\) => \{ choose\(false\); openRow\(row\); \};/);
   assert.match(source, /data-bot-strip-act="try" onClick=\{tryIt\}/);
@@ -366,12 +371,12 @@ test('one request, one row: a request\'s earlier news folds into its newest, whi
   assert.match(html, new RegExp(`<span id="messages-message-${a1.id}" aria-hidden="true"></span>`));
   assert.match(html, /<span class="text-zinc-400 dark:text-zinc-500" data-bot-thread-link="\d+"> · 5 updates<\/span>/, 'grey: the row\'s chevron says it opens');
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /const newsFold = botDm \? foldBotNews\(snap\.messages, \(message\) => isMovedActivity\(message\) \|\| plans\.hidden\.has\(message\.id\)\) : null;/);
+  assert.match(screen, /const newsFold = botDm \? foldBotNews\(snap\.messages, \(message\) => isMovedActivity\(message\) \|\| plans\.hidden\.has\(message\.id\) \|\| asking\(message\)\) : null;/);
   assert.match(screen, /const updates = root\?\.thread\?\.replyCount \|\| \(earlier\.length \? earlier\.length \+ 1 : 0\);/);
   assert.match(screen, /const focused = flashId === message\.id \|\| earlier\.some\(\(item\) => item\.id === flashId\);/);
 });
 
-test('every line opens its request\'s story the same way: its thread, or a request from before threads on its oldest piece', () => {
+test('every line opens its request\'s page the same way; news naming no page, its thread or its oldest piece', () => {
   const { newsThread, newsTitle } = loadTsx(NEWS);
   const moment = botMessage({ kind: 'question', requestTitle: 'Dinner rota', alsoInChat: true, threadRootId: 31 }, { threadRootId: 31 });
   const html = line(moment);
@@ -391,8 +396,10 @@ test('every line opens its request\'s story the same way: its thread, or a reque
   assert.match(line(old), /data-bot-news-open="thread"/);
   assert.doesNotMatch(line(old), /data-bot-news-open="inline"/);
   const source = read(NEWS);
+  // 31 Oct 2026: the request's own page (./bot-request-page.test.js).
+  assert.match(source, /if \(page\) openRequestPage\(page, message\.conversationId\);/);
   assert.match(source, /const rootId = newsThread\(message\) \?\? \(earlier\[0\]\?\.id \|\| message\.id\);/);
-  assert.match(source, /openThreadAt\(rootId, rootId === message\.id \? null : message\.id\);/);
+  assert.match(source, /else openThreadAt\(rootId, rootId === message\.id \? null : message\.id\);/);
   assert.doesNotMatch(source, /else setOpen\(true\)|full\(\)/, 'nothing opens in place');
   assert.equal(newsTitle({ kind: 'merged', appName: 'Plant Pal', issueNumber: 1, firstVersion: true }), 'Plant Pal, first version');
   assert.equal(newsTitle({ kind: 'merged', appName: 'Plant Pal', issueNumber: 9 }), 'Request #9');
@@ -414,7 +421,8 @@ test('a story from before threads: its oldest piece, then the pieces after it in
   assert.equal(storyRootIn([first], null), null);
   // The pane draws the pieces after its root, whole, before the replies.
   const screen = read('frontend/src/features/messages/index.tsx');
-  const pane = screen.slice(screen.indexOf('function ReplyThreadPanel()'), screen.indexOf('function AppReplyThreadPanel('));
+  const pane = screen.slice(screen.indexOf('function ReplyThreadPanel('), screen.indexOf('function AppReplyThreadPanel('));
+  assert.ok(pane.length > 1000);
   assert.match(pane, /const storyKey = botChat && root && !cardId && isBotNews\(root\) \? requestKey\(root\.metadata\?\.homeroomBot \|\| \{\}\) : null;/);
   assert.match(pane, /item\.id > root\.id && !item\.threadRootId && !item\.thread && isBotNews\(item\) && requestKey\(item\.metadata\?\.homeroomBot \|\| \{\}\) === storyKey/);
   assert.match(pane, /\{pieces\.map\(\(item\) => <MessageRow key=\{item\.clientKey \|\| item\.id\} message=\{\{ \.\.\.item, thread: null, threadRootId: rootId \}\}/);
@@ -451,7 +459,7 @@ test('the bot\'s replies, offers, hellos and words about no request stay message
   assert.equal(isBotNews(botMessage({ kind: 'question' }, { deleted: true })), false);
   // The transcript asks for the line in the bot's chat alone, before any other row.
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /if \(botDm && isBotNews\(message\)\) \{[\s\S]{0,700}?rows\.push\(<BotNewsLine/);
+  assert.match(screen, /if \(botDm && isBotNews\(message\) && !asks\) \{[\s\S]{0,700}?rows\.push\(<BotNewsLine/);
 });
 
 test('the thread pane opens at the message a Needs you button names, and flashes it', () => {
@@ -459,7 +467,8 @@ test('the thread pane opens at the message a Needs you button names, and flashes
   assert.match(store, /export function openThreadAt\(rootId: number \| null \| undefined, focusId: number \| null \| undefined = null\): void \{/);
   assert.match(store, /publish\(\{ threadFocusId: validId\(focusId\) && focusId !== rootId \? focusId : null \}\);\s*openThread\(rootId\);/);
   const screen = read('frontend/src/features/messages/index.tsx');
-  const pane = screen.slice(screen.indexOf('function ReplyThreadPanel()'), screen.indexOf('function AppReplyThreadPanel('));
+  const pane = screen.slice(screen.indexOf('function ReplyThreadPanel('), screen.indexOf('function AppReplyThreadPanel('));
+  assert.ok(pane.length > 1000);
   assert.match(pane, /const wanted = snap\.threadFocusId \|\| snap\.route\.focusMessageId \|\| null;/);
   assert.match(pane, /el\.querySelector<HTMLElement>\(`\[id="messages-message-\$\{wanted\}"\]`\)/, 'its own row, not the line in the chat beside it');
   assert.match(pane, /focused=\{flashId === message\.id\}/);
@@ -579,7 +588,7 @@ test('finished requests in a row fold into words, "N finished · N couldn\'t bui
   assert.match(source, /useEffect\(\(\) => \{ if \(focused\) setOpen\(true\); \}, \[focused\]\);/, 'a link into it opens it');
   // The transcript collects finished rows and draws two or more as one run.
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /const settled = botDm && isBotNews\(message\) && !!newsStatusOf\(message, botWork\)\?\.settled;/);
+  assert.match(screen, /const settled = botDm && isBotNews\(message\) && !asks && !!newsStatusOf\(message, botWork\)\?\.settled;/);
   assert.match(screen, /if \(!settled \|\| \(day && day !== previousDay\) \|\| \(lineAt !== null && message\.id >= lineAt && !lineDrawn\)\) flushRun\(\);/, 'an open row, a new day or the "New" line ends a run');
   assert.match(screen, /if \(settledRun\.length === 1\) \{[\s\S]*?rows\.push\(<BotNewsLine[\s\S]*?\} else if \(settledRun\.length\) \{\s*rows\.push\(<SettledRun /, 'one alone stays a row');
   assert.match(screen, /if \(settled\) \{ settledRun\.push\(\{ message, earlier, updates, focused \}\); continue; \}/);

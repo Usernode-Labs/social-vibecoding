@@ -156,7 +156,8 @@ test('Go to chat leaves the first session for the chat with Homeroom bot', () =>
   const index = read(`${DIR}/index.tsx`);
   // (From Create, its back press is handed back on the way: tests/create-front-door.test.js.)
   assert.match(index, /onOpenChat=\{\(conversationId\) => \{\s+markSeen\(made\.slug\);\s+rememberCommunity\(made\.slug\);\s+setMode\(\{ kind: 'none' \}\);\s+if \(fromCreate\) leaveDoor\(true\);\s+enterScreen\('bot', made\.slug, conversationId\);/);
-  assert.match(index, /else if \(screen === 'bot' && conversationId\) window\.location\.hash = `#messages\/\$\{conversationId\}`;/);
+  // 1 Nov 2026: on the Homeroom bot tab, as Main Chat.
+  assert.match(index, /else if \(screen === 'bot' && conversationId\) window\.location\.hash = '#homeroom-bot\/main';/);
   assert.doesNotMatch(index, /changePlanInChat/);
 });
 

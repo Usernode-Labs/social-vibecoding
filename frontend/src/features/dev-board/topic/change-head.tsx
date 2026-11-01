@@ -56,7 +56,9 @@ import type { ChangeGateView, ChangeThreadView, ChangeUpstreamView, FixChecksVie
 import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
 import { ThreadItems, pageSlug } from './thread-items';
+import { changeMenuKey } from './thread-menu';
 import { TopicBack } from './topic-back';
+import { WorkWithBotButton } from './work-with-bot';
 import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view';
 import { IncludedIn, IssueAssociations, ProposalBody, SummaryMore } from './topic-head';
 
@@ -385,13 +387,16 @@ function gateActions(card: DevCardModel, v: ChangeThreadView) {
  * A change's Votes and Testing cards, one above the other, with their
  * buttons: its own page draws them under its summary, and #6019's request
  * page under each change in the request's thread (./thread-changes.tsx).
+ * 1 Nov 2026: `ballot`, a change folded under the ballot that decides
+ * between it and its rivals keeps its Votes card without its own Vote
+ * button, so there is one way to vote.
  */
-export const ChangeGates = forwardRef<HTMLDivElement, { id: number | null; card: DevCardModel; v: ChangeThreadView }>(
-  function ChangeGates({ id, card, v }, ref) {
+export const ChangeGates = forwardRef<HTMLDivElement, { id: number | null; card: DevCardModel; v: ChangeThreadView; ballot?: boolean }>(
+  function ChangeGates({ id, card, v, ballot = false }, ref) {
     const { voteAction, testAction, withFix, testingActions } = gateActions(card, v);
     return (
       <div ref={ref} className="dev-change-pair">
-        <GateCard which="votes" g={v.votes} action={voteAction} id={id} />
+        <GateCard which="votes" g={v.votes} action={ballot ? null : voteAction} id={id} />
         <GateCard which="testing" g={v.testing} action={testAction} rerun={withFix ? testingActions : null} id={id} />
       </div>
     );
@@ -418,6 +423,10 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   const issues = body.issues || [];
   const back = host('gc-thread-back');
   const bar = host('gc-thread-bar');
+  // 31 Oct 2026: the ⋯ lists the thread's Notify me / Mute and moves
+  // (./thread-items.tsx), so a signed-in viewer always has one.
+  const signedIn = typeof window !== 'undefined' && !!(window as any).App?.user;
+  const menuKey = card.rail?.menuKey || (signedIn ? changeMenuKey(null, id ?? null) : '');
   // Run four (13 Oct 2026): a door that sends someone to vote on this change
   // ("See the change", a vote's notification) opens it at the Votes card,
   // below the header, rather than at its title (./votes-in-view.ts).
@@ -504,7 +513,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
-      {bar ? createPortal(<ChangeBar v={v} menuKey={card.rail?.menuKey || ''} detailsId={id && body.changeId ? id : null} />, bar) : null}
+      {bar ? createPortal(<ChangeBar v={v} menuKey={menuKey} detailsId={id && body.changeId ? id : null} />, bar) : null}
       {pin ? createPortal(
         <div className="dev-change-gate-repeat" hidden={topInView}>
           <GateCard which="votes" g={v.votes} action={voteAction} id={id} repeat />
@@ -553,13 +562,15 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
             />
           ) : null}
           {/* #6019: the requests, other changes and votes in its thread. */}
-          {id ? <ThreadItems slug={pageSlug()} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} /> : null}
+          {id ? <ThreadItems slug={pageSlug()} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} menuKey={menuKey || null} /> : null}
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
           {v.codeMissing ? <CodeMissingNotice /> : null}
           {v.waitsFor || v.baseNotMain ? <StackNotice v={v} /> : null}
           <ChangeGates ref={pair} id={id} card={card} v={v} />
           {v.upstream ? <UpstreamDecline u={v.upstream} id={id} /> : null}
           {v.shots ? <ShotsCard s={v.shots} /> : null}
+          {/* 1 Nov 2026: ask about it, or sketch a revision, privately. */}
+          <WorkWithBotButton slug={pageSlug()} number={v.number} />
         </div>
       </article>
     </>

@@ -617,6 +617,8 @@ export function FeedbackDialog() {
             {/* #3186: the Me screen's list, where this report now is. */}
             <Button id="feedback-first-mine" variant="neutral" ink="neutral" className="min-h-[44px]">{t('dialogs:feedback.first.mine')}</Button>
             <Button id="feedback-first-edit" variant="neutral" ink="neutral" className="hidden min-h-[44px]">{t('dialogs:feedback.edit.button')}</Button>
+            {/* 1 Nov 2026: as on the other confirmation (#feedback-sent-work). */}
+            <Button id="feedback-first-work" variant="neutral" ink="neutral" className="hidden min-h-[44px]">{t('dialogs:feedback.sent.workWithBot')}</Button>
             <Button id="feedback-first-done" variant="unstyled" ink="muted" className="min-h-[44px]">{t('core:common.done')}</Button>
           </div>
         </section>
@@ -677,6 +679,10 @@ export function FeedbackDialog() {
               shows, so no empty row keeps a gap. */}
           <div className="flex flex-col gap-3">
             <Button id="feedback-sent-done" className="min-h-[44px]">{t('core:common.done')}</Button>
+            {/* 1 Nov 2026: plan the request just posted with Homeroom bot,
+                in a thread only you can see; the bot waits for the plan.
+                Shown by the controller when the post says where it went. */}
+            <Button id="feedback-sent-work" variant="neutral" ink="neutral" className="hidden min-h-[44px]">{t('dialogs:feedback.sent.workWithBot')}</Button>
             <Button id="feedback-sent-chat" variant="neutral" ink="neutral" className="hidden min-h-[44px]">{t('dialogs:feedback.sent.chat')}</Button>
             <div className="flex items-center justify-center [&:not(:has(>:not(.hidden)))]:hidden">
               <Button id="feedback-sent-mine" type="button" variant="unstyled" size="inline" ink="none" className="min-h-[44px] px-2 text-zinc-500 underline underline-offset-2 dark:text-zinc-400">{t('dialogs:feedback.sent.mine')}</Button>

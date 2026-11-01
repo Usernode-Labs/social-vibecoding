@@ -18,7 +18,16 @@
 //      with the element under it.
 //   4. Propose it files a request with the before and after screens as its
 //      plan, scripts left out, once; a project they have not joined answers
-//      join_required.
+//      join_required. 1 Nov 2026: the design stays the thread's after it:
+//      the bot changes it on (a plan may be posted again, phase C2).
+//   5. 1 Nov 2026 (threads, one loop C1): any private thread can hold a
+//      design. Main Chat's draw_screen hands the turn to the design bot: in
+//      a "+" thread it draws version 1 there (write_screen, the project's
+//      own stylesheets put in from main, its code read with list_source and
+//      read_source); in Main Chat it opens a "+"-style thread first, says so
+//      in Main in one line, and draws there; a thread off their own message
+//      gets its private_threads row with its first version. A picture they
+//      sent is described for a model that reads text only.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/design-threads-postgres.test.js
 
@@ -112,6 +121,8 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
       safeMention: (s) => s,
       async createIssue() { nextIssue += 1; return { number: nextIssue }; },
       async createIssueComment(owner, repo, number, body) { comments.push({ number, body }); return { id: 1 }; },
+      // 1 Nov 2026 (C2.1): a design posts again on the request it filed.
+      async fetchPublicIssues() { return { issues: [{ number: nextIssue, title: 'Green save button', state: 'open' }] }; },
     },
     ws: {
       sendSystemMessage: async () => null, sendBotMessage: async () => ({ id: 1 }), pushIssueUpdate: () => {},
@@ -126,7 +137,7 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
       width: 1280, height: 800, deps,
     });
     assert.equal(opened.ok, true, JSON.stringify(opened));
-    assert.match(opened.href, new RegExp(`^#messages/${opened.conversationId}/thread/${opened.rootId}$`));
+    assert.match(opened.href, new RegExp(`^#homeroom-bot/thread/${opened.rootId}$`), 'on the bot\'s tab');
     const { rows: [line] } = await pool.query('SELECT sender_id, content, thread_root_id, metadata FROM conversation_messages WHERE id = $1', [opened.rootId]);
     assert.equal(line.sender_id, bot.id);
     assert.equal(line.thread_root_id, null, 'in Main');
@@ -233,16 +244,32 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     const said = (await pool.query(
       'SELECT content FROM conversation_messages WHERE thread_root_id = $1 ORDER BY id DESC LIMIT 1', [design.rootId])).rows[0].content;
     assert.equal(said, `Filed it as request #${filed.number} on Plant pal, under your name, with version 1 and version 2 side by side as its plan.`);
+    // 1 Nov 2026 (C2.1): proposed again, it is the plan's next version on
+    // the request it filed, and the bot keeps working on it meanwhile.
     const twice = await designs.proposeDesign(pool, config, { user: ada, rootId: design.rootId, deps });
-    assert.deepEqual([twice.status, twice.error, twice.number], [409, 'already_done', filed.number]);
-    // Once proposed, the bot changes it no more.
+    assert.deepEqual([twice.ok, twice.number, twice.planVersion], [true, filed.number, 2]);
     const late = (await conversations.sendMessage(pool, ada, design.conversationId, { content: 'one more change', thread_root_id: design.rootId })).message;
-    const closed = await designBot.answer(pool, config, {
+    const after = await designBot.answer(pool, config, {
       bot, user: ada, settings: { mode: 'on' }, conversationId: design.conversationId, message: late,
+      design: await designs.designFor(pool, { userId: ada.id, rootId: design.rootId }),
+      deps: {
+        ...deps, apiKey: 'sk-test',
+        chat: scripted([
+          [['edit_design', { edits: [{ find: 'Plant list</h1>', replace: 'My plants</h1>' }], note: 'A new heading' }]],
+          [['reply', { text: 'Renamed it.' }]],
+        ]),
+      },
+    });
+    assert.match((await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [after.messageId])).rows[0].content, /^Version 3: A new heading\./);
+    // Put away, the bot changes it no more.
+    await pool.query(`UPDATE private_threads SET state = 'dropped' WHERE root_message_id = $1`, [design.rootId]);
+    const gone = (await conversations.sendMessage(pool, ada, design.conversationId, { content: 'and another', thread_root_id: design.rootId })).message;
+    const closed = await designBot.answer(pool, config, {
+      bot, user: ada, settings: { mode: 'on' }, conversationId: design.conversationId, message: gone,
       design: await designs.designFor(pool, { userId: ada.id, rootId: design.rootId }),
       deps: { ...deps, apiKey: 'sk-test', chat: async () => { throw new Error('not called'); } },
     });
-    assert.match((await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [closed.messageId])).rows[0].content, /was proposed/);
+    assert.match((await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [closed.messageId])).rows[0].content, /was put away/);
 
     // Sam's own design of a project he has not joined is filed nowhere.
     const samDesign = await designs.startDesign(pool, config, {
@@ -250,6 +277,179 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     });
     const notJoined = await designs.proposeDesign(pool, config, { user: sam, rootId: samDesign.rootId, deps });
     assert.deepEqual([notJoined.status, notJoined.code], [403, 'join_required']);
+  });
+
+  // ── 1 Nov 2026: a design in any private thread (C1) ──────────────────
+  const mayor = require('../src/services/homeroom-bot-mayor');
+  const privateThreads = require('../src/services/private-threads');
+  const { rows: [seedRow] } = await pool.query(
+    `INSERT INTO apps (name, slug, status, created_by, repo_url, view_visibility, collab_visibility)
+     VALUES ('Seed swap', 'dt-seed-swap', 'running', $1, 'https://github.com/usernode-bot/dt-seed-swap', 'public', 'public')
+     RETURNING id`,
+    [ada.id],
+  );
+  // The community is made by a trigger after the insert.
+  const { rows: [seedApp] } = await pool.query('SELECT community_id FROM apps WHERE id = $1', [seedRow.id]);
+  await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [seedApp.community_id, ada.id]);
+  const read = [];
+  const repoFiles = {
+    'public/index.html': '<!doctype html><html><head><link rel="stylesheet" href="/usernode-native/v1/native.css"><link rel="stylesheet" href="styles.css?v=2"><link rel="stylesheet" href="https://cdn.test/x.css"></head><body><main class="seeds"></main></body></html>',
+    'public/styles.css': '.seeds { color: #166534; } .card { border-radius: 12px; }',
+    'public/app.js': 'render();',
+    '.env': 'SECRET=1',
+  };
+  const drawDeps = {
+    ...deps,
+    github: {
+      ...deps.github,
+      async getFileContent(owner, repo, filePath) { read.push(`${repo}:${filePath}`); return repoFiles[filePath] ?? null; },
+      async listRepoFiles() { return { files: Object.keys(repoFiles).map((path) => ({ path, size: repoFiles[path].length })), truncated: false }; },
+    },
+    openMcp: async () => null,
+    seesImages: false,
+  };
+  const settingsOn = { mode: 'on', perPerson: 2 };
+  const SCREEN = '<main class="seeds"><h1>Swap seeds</h1><div class="card">Tomatoes</div></main>';
+
+  await t.test('a "+" thread holds a design: Main Chat\'s draw_screen hands version 1 to the design bot', async () => {
+    const started = await privateThreads.startThread(pool, { user: ada, project: 'dt-seed-swap', kind: 'design', deps });
+    assert.equal(started.ok, true, JSON.stringify(started));
+    const asked = (await conversations.sendMessage(pool, ada, started.conversationId, {
+      content: 'a screen to list the seeds I can swap', thread_root_id: started.rootId,
+    })).message;
+    assert.equal(await designs.threadOf(pool, { userId: ada.id, conversationId: started.conversationId, message: asked }), null, 'no design yet');
+    const seen = [];
+    read.length = 0;
+    const sent = await mayor.runDmTurn(pool, config, {
+      bot, user: ada, settings: settingsOn, conversationId: started.conversationId, message: asked,
+      deps: {
+        ...drawDeps, apiKey: 'sk-test', threadRootId: started.rootId,
+        threadDraft: { kind: 'ask', appSlug: 'dt-seed-swap', appName: 'Seed swap', changeKind: 'design' },
+        chat: scripted([
+          [['draw_screen', { what: 'The seeds they can swap, as cards', title: 'Swap list', project: 'dt-seed-swap' }]],
+          [['list_source', {}], ['read_source', { path: 'public/styles.css' }], ['read_source', { path: '.env' }]],
+          [['write_screen', { title: 'Swap list', size: 'phone', html: SCREEN, note: 'The swap list' }]],
+          [['reply', { text: 'Here is a first go.' }]],
+        ], seen),
+      },
+    });
+    // The Mayor's round, then the design bot's own prompt.
+    assert.equal(seen[0][0].role, 'system');
+    assert.match(seen[1][0].content, /This thread has no screen yet\. It is for a screen of the app Seed swap\./);
+    assert.match(seen[1][0].content, /WHAT MAIN CHAT ASKED YOU TO DRAW\nThe seeds they can swap, as cards/);
+    assert.match(seen[1][0].content, /THERE IS NO SCREEN YET: draw it with write_screen\.$/);
+    const results = seen[2].filter((m) => m.role === 'tool').map((m) => JSON.parse(m.content));
+    assert.deepEqual(results[0].files.map((f) => f.path), ['public/index.html', 'public/styles.css', 'public/app.js'], 'secret paths are never listed');
+    assert.match(results[1].text, /1: \.seeds \{ color: #166534; \}/);
+    assert.match(results[2].error, /holds secrets/);
+    const { rows: [answer] } = await pool.query('SELECT content, thread_root_id, metadata FROM conversation_messages WHERE id = $1', [sent.messageId]);
+    assert.equal(answer.thread_root_id, started.rootId, 'drawn in the thread');
+    assert.equal(answer.content, 'Version 1: The swap list.\n\nHere is a first go.');
+    assert.equal(answer.metadata.homeroomBot.designVersion, 1);
+    assert.equal(answer.metadata.homeroomBot.designTitle, 'Swap list');
+    const drawn = await designs.designFor(pool, { userId: ada.id, rootId: started.rootId });
+    assert.deepEqual([drawn.kind, drawn.surface, drawn.title, drawn.width, drawn.height, drawn.latest, drawn.app.slug],
+      ['ask', 'app', 'Swap list', 390, 844, 1, 'dt-seed-swap'], 'a "+" thread\'s design: its own kind, the project\'s app');
+    assert.equal(drawn.versions[0].author, 'bot');
+    const v1 = await designs.versionOf(pool, { userId: ada.id, rootId: started.rootId });
+    assert.match(v1.html, /^<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="\/usernode-native\/v1\/native\.css"><style data-design-sheet="public\/styles\.css">\.seeds \{ color: #166534; \}/,
+      'the stylesheets the app\'s entry page links on main, put in by the server');
+    assert.doesNotMatch(v1.html, /cdn\.test/, 'never another site\'s');
+    assert.match(v1.html, /<body><main class="seeds"><h1>Swap seeds<\/h1>/);
+
+    // Now the thread holds a design: its next message is the design bot's,
+    // which reads the version with the stylesheet left empty, and keeps it.
+    const next = (await conversations.sendMessage(pool, ada, started.conversationId, { content: 'add a swap button', thread_root_id: started.rootId })).message;
+    const held = await designs.threadOf(pool, { userId: ada.id, conversationId: started.conversationId, message: next });
+    assert.equal(held.rootId, started.rootId);
+    const seen2 = [];
+    await designBot.answer(pool, config, {
+      bot, user: ada, settings: settingsOn, conversationId: started.conversationId, message: next, design: held,
+      deps: {
+        ...drawDeps, apiKey: 'sk-test',
+        chat: scripted([
+          [['edit_design', { edits: [{ find: 'Tomatoes</div>', replace: 'Tomatoes <button class="swap">Swap</button></div>' }], note: 'A Swap button' }]],
+          [['reply', { text: 'Added.' }]],
+        ], seen2),
+      },
+    });
+    assert.match(seen2[0][0].content, /<style data-design-sheet="public\/styles\.css"><\/style>/, 'the model reads the stylesheet as one empty block');
+    assert.doesNotMatch(seen2[0][0].content, /#166534/);
+    const v2 = await designs.versionOf(pool, { userId: ada.id, rootId: started.rootId });
+    assert.equal(v2.version, 2);
+    assert.match(v2.html, /<style data-design-sheet="public\/styles\.css">\.seeds \{ color: #166534; \}/, 'and the version keeps it');
+    assert.match(v2.html, /Tomatoes <button class="swap">Swap<\/button>/);
+  });
+
+  await t.test('Main Chat holds no design: draw_screen opens a thread, says so in Main in one line, and draws there', async () => {
+    const opened = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
+    const asked = (await conversations.sendMessage(pool, ada, opened.conversationId, { content: 'show me what a seed calendar could look like' })).message;
+    const sent = await mayor.runDmTurn(pool, config, {
+      bot, user: ada, settings: settingsOn, conversationId: opened.conversationId, message: asked,
+      deps: {
+        ...drawDeps, apiKey: 'sk-test',
+        chat: scripted([
+          [['draw_screen', { what: 'A calendar of when to sow each seed', title: 'Seed calendar' }]],
+          [['write_screen', { title: 'Seed calendar', size: 'desktop', html: '<h1>Sow in March</h1>', note: 'A calendar' }]],
+          [['reply', { text: 'A first calendar.' }]],
+        ]),
+      },
+    });
+    const { rows: [answer] } = await pool.query('SELECT thread_root_id, idempotency_key FROM conversation_messages WHERE id = $1', [sent.messageId]);
+    assert.ok(answer.thread_root_id, 'answered in a thread');
+    assert.equal(answer.idempotency_key, mayor.answerKey(asked.id), 'under the key the DM\'s answers use');
+    const { rows: [line] } = await pool.query('SELECT id, sender_id, content, thread_root_id, reply_to_id, metadata FROM conversation_messages WHERE id = $1', [answer.thread_root_id]);
+    assert.equal(line.sender_id, bot.id);
+    assert.equal(line.thread_root_id, null, 'the thread hangs off a line in Main');
+    assert.equal(line.reply_to_id, asked.id, 'which quotes what they asked');
+    assert.equal(line.content, 'I\'m drawing "Seed calendar" in a new thread. Only you can see it.');
+    assert.deepEqual([line.metadata.homeroomBot.kind, line.metadata.homeroomBot.changeKind, line.metadata.homeroomBot.designTitle], ['opened_thread', 'design', 'Seed calendar']);
+    const { rows: mainLines } = await pool.query(
+      'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND thread_root_id IS NULL AND sender_id = $2 AND id > $3',
+      [opened.conversationId, bot.id, asked.id],
+    );
+    assert.equal(mainLines.length, 1, 'one line in Main');
+    const drawn = await designs.designFor(pool, { userId: ada.id, rootId: line.id });
+    assert.deepEqual([drawn.kind, drawn.surface, drawn.app, drawn.width, drawn.latest], ['ask', 'new', null, 1280, 1], 'a new project\'s screen, at the desktop size');
+    const v1 = await designs.versionOf(pool, { userId: ada.id, rootId: line.id });
+    assert.match(v1.html, /<link rel="stylesheet" href="\/usernode-native\/v1\/native\.css">/, 'drawn with the native kit');
+  });
+
+  await t.test('a thread off their own message gets its row with its first version; a picture is described for a text-only model', async () => {
+    const opened = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
+    const root = (await conversations.sendMessage(pool, ada, opened.conversationId, { content: 'an idea: a seed map' })).message;
+    const asked = (await conversations.sendMessage(pool, ada, opened.conversationId, { content: 'like this sketch', thread_root_id: root.id })).message;
+    await pool.query(
+      `INSERT INTO conversation_message_attachments (id, conversation_id, message_id, user_id, kind, filename, content_type, size_bytes, data)
+       VALUES ('dtpic1', $1, $2, $3, 'image', 'sketch.png', 'image/png', 4, '\\x89504e47'::bytea)`,
+      [opened.conversationId, asked.id, ada.id],
+    );
+    assert.equal((await pool.query('SELECT 1 FROM private_threads WHERE root_message_id = $1', [root.id])).rows.length, 0);
+    const room = await designs.draftingThread(pool, { userId: ada.id, botId: bot.id, rootId: root.id });
+    assert.deepEqual([room.threadId, room.kind, room.app], [null, 'idea', null]);
+    assert.equal(await designs.draftingThread(pool, { userId: sam.id, botId: bot.id, rootId: root.id }), null, 'nobody else\'s');
+    const seen = [];
+    await designBot.draw(pool, config, {
+      bot, user: ada, settings: settingsOn, conversationId: opened.conversationId, message: asked,
+      ask: { app: null, title: 'Seed map', brief: 'A map of who has which seeds' },
+      deps: {
+        ...drawDeps, apiKey: 'sk-test', threadRootId: root.id, pictureModelSeesImages: true,
+        chat: scripted([
+          (req) => {
+            assert.equal(req.model, mayor.DEFAULT_MODEL, 'the cheap model that reads pictures');
+            assert.match(JSON.stringify(req.messages), /data:image\/png;base64,iVBORw==/);
+            return [['describe_pictures', { pictures: ['A hand-drawn map with three pins and a list under it.'] }]];
+          },
+          [['write_screen', { title: 'Seed map', size: 'phone', html: '<h1>Seed map</h1>', note: 'A first map' }]],
+          [['reply', { text: 'Drawn from your sketch.' }]],
+        ], seen),
+      },
+    });
+    assert.match(JSON.stringify(seen[1]), /they attached the picture sketch\.png, which you cannot see\. A model that reads pictures says it shows: A hand-drawn map with three pins and a list under it\./);
+    assert.doesNotMatch(JSON.stringify(seen[1]), /base64/, 'the text-only model gets words, not the picture');
+    const { rows: [row] } = await pool.query('SELECT kind, state, user_id FROM private_threads WHERE root_message_id = $1', [root.id]);
+    assert.deepEqual(row, { kind: 'idea', state: 'open', user_id: ada.id }, 'its row, made with its first version');
+    assert.equal((await designs.designFor(pool, { userId: ada.id, rootId: root.id })).latest, 1);
   });
 
   await t.test('pure: a plan\'s screens are script-free, and sized by the capture', () => {

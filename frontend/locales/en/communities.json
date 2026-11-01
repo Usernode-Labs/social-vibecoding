@@ -652,12 +652,12 @@
     "description": "Line at the top of Ask privately in the vote sheet."
   },
   "review.ask.inAi": {
-    "text": "Ask in AI",
+    "text": "Ask Homeroom bot",
     "description": "Button in the Ask privately sheet of a change waiting for the person's vote: opens their private chat with Homeroom bot (the AI tab) with this change attached, to ask about it there. \"AI\" is the tab's name."
   },
   "review.ask.inAiNote": {
-    "text": "Ask Homeroom bot about this change in AI, your private chat with it. The change comes with you, and only you see it.",
-    "description": "Line at the top of the Ask privately sheet of a change waiting for the person's vote, above the Ask in AI button: questions about the change are asked in the person's private chat with Homeroom bot (the AI tab) now. \"AI\" is the tab's name."
+    "text": "Ask Homeroom bot about this change in your private chat with it. The change comes with you, and only you see it.",
+    "description": "Line at the top of the Ask privately sheet of a change waiting for the person's vote, above the Ask Homeroom bot button: questions about the change are asked in the person's private chat with Homeroom bot (the AI tab) now. \"AI\" is the tab's name."
   },
   "review.ask.earlier": {
     "text": "What you asked here before",

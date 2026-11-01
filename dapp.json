@@ -790,6 +790,18 @@
     {
       "route": "#homeroom-bot",
       "reason": "The Homeroom bot tab's page (#ai, its old address, lands here): on a desktop the side panel opens a request, a change or a conversation beside it, in the place of the docked chat (frontend/src/features/side-panel/controller.ts canTake), so the next address change is not drawn in the page."
+    },
+    {
+      "route": "#homeroom-bot/main",
+      "reason": "The same page with Main Chat in its column (frontend/src/features/ai/door.ts): the side panel takes the next address change the same way."
+    },
+    {
+      "route": "#homeroom-bot/thread/*",
+      "reason": "The same page with one of its chat's threads in the column (frontend/src/features/ai/door.ts): the side panel takes the next address change the same way."
+    },
+    {
+      "route": "#messages/910005",
+      "reason": "The staging demo's chat with Homeroom bot by its Messages address, which lands on the Homeroom bot tab's page with Main Chat in its column (frontend/src/features/ai/door.ts): the side panel takes the next address change the same way."
     }
   ],
   "tests": [
@@ -1063,7 +1075,7 @@
       "name": "Dev board: one composite status pill and a menu trigger per card (card-as-pointer)",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban .gc-vote-item .dev-card-meta > .dev-chat-badge, #dev-kanban .gc-vote-item [data-card-menu]",
-      "expectText": "Build it now"
+      "expectText": "Work on this with Homeroom bot"
     },
     {
       "name": "Dev board: a card's type icon sits on its title row, not halfway down the card",
@@ -1645,8 +1657,8 @@
     {
       "name": "Issue cards show every action that fits the band, each foldable; the rest fold into the menu behind the hamburger",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectText": "Build it now",
-      "expectSelector": "#dev-kanban-col-issues .gc-vote-item .gc-card-actions > [data-act=\"chooseIssueWork\"][data-fold=\"1\"] ~ [data-card-menu]"
+      "expectText": "Work on this with Homeroom bot",
+      "expectSelector": "#dev-kanban-col-issues .gc-vote-item .gc-card-actions > [data-act=\"workOnIssueWithBot\"][data-fold=\"1\"] ~ [data-card-menu]"
     },
     {
       "name": "Session/proposal cards render reverse #N issue chips",
@@ -5037,9 +5049,9 @@
       "expectText": "Invitation pending"
     },
     {
-      "name": "The chat with Homeroom bot draws each request as one row: its project's tile, a badge saying where it stands, its number in its own colour and its title, so the question waiting on you wears the amber badge (its answers are in the request's thread); beside it, a request the bot offers to file stays a message with File it and Not now, and no Write my own (#3624), and quotes the message it answers (#3707)",
-      "path": "/?demo=1#messages/910005",
-      "expectSelector": "#messages-screen:not(.hidden):has(.messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)) .messages-bot-news[data-bot-news=\"question\"]:has([data-request-tag]) [data-bot-news-state=needs] [data-bot-badge=needs]",
+      "name": "The chat with Homeroom bot draws each request as one row: its project's tile, a badge saying where it stands, its number in its own colour and its title, so the request waiting on you wears the amber badge, and its question is drawn whole in the chat with its answers (31 Oct 2026); beside it, a request the bot offers to file stays a message with File it and Not now, and no Write my own (#3624), and quotes the message it answers (#3707)",
+      "path": "/?demo=1#homeroom-bot/main",
+      "expectSelector": "#ai-main-pane:has(.messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)) .messages-bot-news[data-bot-news=\"activity\"]:has([data-request-tag]) [data-bot-news-state=needs] [data-bot-badge=needs]",
       "expectText": "Which night should the rota start on?",
       "id": "homeroom-bot-dm-question",
       "visual": true,
@@ -5050,26 +5062,24 @@
       ]
     },
     {
-      "name": "The chat with Homeroom bot says under its name what it is for, and puts an Activity bar under its header (one request, one story): closed, it says what needs you, with that request's number in its own colour, what is ready to try and what is in progress; pressed, it opens a drawer over the chat with a row for each, one button that opens the request's thread at the question, and Try it and Approve (#3692, #3770; #5392: a change waiting for their yes counts here too, so two need you and one is ready to try)",
+      "name": "The Homeroom bot tab's list starts with Main Chat, the chat with the bot itself, drawn lit while it is the chat in the column beside the list, under its own name and that only you can see it (1 Nov 2026: the chat is the tab's alone; its Messages address lands here)",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-header + [data-bot-strip=closed] [data-bot-strip-toggle][aria-expanded=false]:has([data-bot-strip-count=needs]):has([data-bot-strip-count=ready]):has([data-bot-strip-count=progress]) [data-request-tag]",
-      "expectText": "2 need you",
-      "id": "homeroom-bot-dm-activity-tray",
+      "expectSelector": "#ai-screen:not(.hidden):has(#ai-main-pane[data-ai-column=main] > [data-ai-main-head] + .messages-layout[data-main-chat] [data-bot-news-state=needs]) [data-ai-sheet=main] > [data-ai-main-row][data-ai-lit][aria-current=true]",
+      "expectText": "Main Chat",
+      "id": "homeroom-bot-main-chat-row",
       "visual": true,
       "impact": [
+        "frontend/src/features/ai/**",
         "frontend/src/features/messages/**",
-        "src/services/homeroom-bot-tray.js",
-        "src/services/homeroom-bot-activity.js",
         "src/services/staging-messages.js",
-        "src/services/conversations.js",
         "src/routes/conversations.js"
       ]
     },
     {
-      "name": "#4097, #5392, one request, one story: in the chat with Homeroom bot each request is one row that opens its story, its earlier news folded into its newest row, which counts the updates; finished requests fold into one line of words (N finished · N couldn't build) that opens the rows saying how each ended, and a change ready for your yes says so",
-      "path": "/?demo=1#messages/910005",
-      "expectSelector": ".messages-thread-scroll:has([data-bot-settled-toggle] [data-bot-settled-count=failed]):has([data-bot-settled-toggle] [data-bot-settled-count=finished]) [data-bot-news=question] [data-bot-news-state=needs] [data-bot-thread-link]",
-      "expectText": "Ready for your yes"
+      "name": "#4097, #5392, one request, one story: in the chat with Homeroom bot each request is one row that opens its page, its earlier news folded into its newest row, which counts the updates; finished requests fold into one line of words (N finished · N couldn't build) that opens the rows saying how each ended; a question still waiting on you is drawn whole in the chat, its answers under it (31 Oct 2026)",
+      "path": "/?demo=1#homeroom-bot/main",
+      "expectSelector": "#ai-main-pane .messages-thread-scroll:has([data-bot-settled-count=failed]):has([data-bot-settled-count=finished]):has([data-bot-news-state=needs] [data-bot-thread-link]) article:has([data-bot-thread-label]) [data-bot-question=open] [data-bot-answer]",
+      "expectText": "Which night should the rota start on?"
     },
     {
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",
@@ -5160,9 +5170,9 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "#6019: a request's changes follow it under a rule, each with its own line and a door to its page (staging fixture: the changes built for #900001)",
+      "name": "#6019: a request's changes follow it under a rule, each with its own line; a change built for a request has no page of its own now, so its title names it and is no door (one page per thread, 1 Nov 2026; staging fixture: the changes built for #900001)",
       "path": "/#app/usernode-2d5619/dev/issues/900001",
-      "expectSelector": "#gc-thread-head .dev-request-root > .min-w-0 > [data-thread-changes] [data-thread-change-line] > button[data-thread-change-open]"
+      "expectSelector": "#gc-thread-head .dev-request-root > .min-w-0 > [data-thread-changes] [data-thread-change-line] > h3[data-thread-change-title]"
     },
     {
       "name": "#6019: the AI tab opens on its own page: Needs you, grouped by project, with a plan waiting for your Build it and a request Homeroom bot handed back for a person to decide, another project's build that stopped (Try again), and a private idea under Only you; over it, the project chips end in a More for the projects past the first three",

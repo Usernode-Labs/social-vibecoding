@@ -5090,6 +5090,22 @@ const AppView = {
       }
       ref = { kind: 'proposal', id, pr: ref.pr };
     }
+    // 1 Nov 2026 (one page per thread): a change built for a request has no
+    // page of its own. Its addresses (`dev/changes/<N>`, `dev/proposals/<id>`,
+    // `dev/shared/<id>`) open the request's page at it, in place of this one
+    // (no Back entry), with its Votes card in view. Every producer of a
+    // change's address stays as it is: this is where they all land.
+    if ((ref.kind === 'proposal' || ref.kind === 'session') && ref.id) {
+      const asked = ref.pr ? { kind: ref.kind, id: ref.id, pr: ref.pr } : { kind: ref.kind, id: ref.id };
+      AppView._devTopic = asked;
+      AppView._reactDevBoard()?.mountTopicSubView(content);
+      const home = await AppView._requestHomeOf(ref.id);
+      if (AppView._devTopic !== asked) return;
+      if (home) {
+        AppView._openChangeOnRequest(home, ref.id, { replaceRoute: true });
+        return;
+      }
+    }
     AppView._devTopic = ref.pr
       ? { kind: ref.kind, id: ref.id, pr: ref.pr }
       : { kind: ref.kind, id: ref.id };
@@ -5364,6 +5380,47 @@ const AppView = {
       return true;
     }
     return false;
+  },
+
+  // 1 Nov 2026 (one page per thread): the request whose page change `id`
+  // lives on, or null when it keeps its own page (routes/threads.js, the
+  // change's home). Asked once per change and app; a read that fails or
+  // takes too long is "its own page", so the page still opens.
+  _changeHomes: new Map(),
+  CHANGE_HOME_WAIT_MS: 4000,
+  async _requestHomeOf(id) {
+    const slug = App.currentApp || AppView.appData?.slug;
+    const n = Number(id);
+    if (!slug || !Number.isInteger(n) || n <= 0) return null;
+    const key = `${slug}:${n}`;
+    if (!AppView._changeHomes.has(key)) {
+      const read = fetch(`/api/apps/${encodeURIComponent(slug)}/threads/change/${n}${AppView._demoQS()}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          const home = Number(data && data.request);
+          return Number.isInteger(home) && home > 0 ? home : null;
+        })
+        .catch(() => null);
+      AppView._changeHomes.set(key, read);
+      // A failed read is asked again next time.
+      read.then((home) => { if (home == null) AppView._changeHomes.delete(key); });
+    }
+    let timer = null;
+    const late = new Promise((resolve) => { timer = setTimeout(() => resolve(null), AppView.CHANGE_HOME_WAIT_MS); });
+    try {
+      return await Promise.race([AppView._changeHomes.get(key), late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+
+  // Open request `number`'s page at change `sessionId`: its section, with
+  // its Votes card held in view (features/dev-board/topic/votes-in-view.ts,
+  // taken by the change's block in thread-changes.tsx).
+  _openChangeOnRequest(number, sessionId, options = {}) {
+    window.UsernodeReact?.devBoard?.showVotes?.(sessionId);
+    if (options.panel) return AppView.openTopicInPanel('issue', Number(number));
+    return AppView.openTopic('issue', Number(number), options.replaceRoute ? { replaceRoute: true } : undefined);
   },
 
   // #4367: the session a change's pull request number names on this app, or
@@ -6052,9 +6109,12 @@ const AppView = {
     const bot = issue.bot || null;
     const waitingOnBot = AppView._botWaiting(issue);
     const upForVote = !st && ref && ref.state === 'review';
+    // 1 Nov 2026: the bot waits for their plan (_planHeld).
+    const planHeld = !merged && !closed && !ref && AppView._planHeld(issue);
     let lead;
     if (merged) lead = PlatformI18n.t('changes:request.status.lead.live');
     else if (waitingOnBot && waitingOnBot.kind === 'question') lead = PlatformI18n.t('changes:request.status.lead.botQuestion');
+    else if (planHeld) lead = PlatformI18n.t('changes:request.status.lead.botWaitsPlan');
     else if (upForVote) lead = AppView._requestUpForVoteLead(ref);
     else if (!st) lead = PlatformI18n.t('changes:request.status.lead.nobody');
     else if (st.key === 'in_review') {
@@ -6093,6 +6153,7 @@ const AppView = {
     }
 
     let action = null;
+    let agentSession = false;
     const toChange = ref ? { label: PlatformI18n.t('changes:request.status.action.seeChange'), href: ref.href } : null;
     if (closed) {
       action = toChange;
@@ -6126,6 +6187,8 @@ const AppView = {
       action = primary
         ? { label: primary.label, title: primary.title, disabled: !!primary.disabled, act: primary.act }
         : toChange;
+      // 1 Nov 2026: Build it now moved into the ⋯, as an agent session.
+      agentSession = !!(primary && primary.act && primary.act.fn === 'workOnIssueWithBot');
     } else {
       action = toChange;
     }
@@ -6144,7 +6207,10 @@ const AppView = {
       closed: closed && !merged ? (when ? PlatformI18n.t(closedIds.when, { when }) : PlatformI18n.t(closedIds.alone)) : null,
       // The sentence is Homeroom bot's state, plan included: no "Plan v1 is
       // ready for comments." after it (request-head.tsx).
-      botSays: !merged && (!!(waitingOnBot && waitingOnBot.kind === 'question') || !!upForVote || !!(st && st.key === 'bot')),
+      botSays: !merged && (!!(waitingOnBot && waitingOnBot.kind === 'question') || !!upForVote || !!(st && st.key === 'bot') || planHeld),
+      // 1 Nov 2026: "Build it in an agent session" is a row of the page's ⋯,
+      // where its one action is Work on this with Homeroom bot.
+      agentSession,
       // #5987: offer "Build it with your own Claude Code" under the card only
       // where starting work on it is still open to this viewer: an open
       // request with no change built for it, nobody's bot on it, and no
@@ -7765,7 +7831,13 @@ const AppView = {
     if (!view || view.state === 'not_required') return null;
     if (view.verified) {
       const html = AppView.shotsHtml(shots, { sessionId: item.id, thread: true });
-      return html ? { state: 'verified', html, line: null } : null;
+      // 1 Nov 2026 (one page per thread): a change on its request's page
+      // shows its first screen's before and after small, as the Workshop's
+      // picture does, with Expand into this viewer.
+      const pic = html ? AppView._workshopVisuals(null, shots) : null;
+      const thumbs = pic && (pic.before || pic.after)
+        ? { before: pic.before || null, after: pic.after || null, viewer: `shots-${Number(item.id)}-viewer` } : null;
+      return html ? { state: 'verified', html, line: null, thumbs } : null;
     }
     const running = !view.notStarted && (['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(view.state) || view.retrying);
     if (running) return { state: view.state, html: '', line: PlatformI18n.t('changes:page.shots.taking'), waiting: true };
@@ -8167,6 +8239,31 @@ const AppView = {
     const open = AppView._openCardMenu;
     if (open && open.key === key && open.el) AppView._fillCardMenu(open.el, AppView._cardMenuItems(key, open.own));
   },
+  // A thread's own rows on its page's ⋯ (31 Oct 2026, #6019 follow-up):
+  // Notify me or Mute, the moves (merge, split, break up) and, on a request,
+  // Build it with your own Claude Code, which sat on the page as pills and a
+  // fold. The page's React head publishes them under the ⋯'s key
+  // (features/dev-board/topic/thread-menu.ts), one list per `source`, as
+  // descriptors whose `act` is the head's own closure. _cardMenuItems lists
+  // them AFTER the card's own rows, sources in name order.
+  _threadCardActions: Object.create(null),
+  _setThreadCardActions(key, source, items) {
+    if (!key || !source) return;
+    const list = Array.isArray(items) ? items.filter((it) => it && it.label && typeof it.act === 'function') : [];
+    const by = AppView._threadCardActions[key] || Object.create(null);
+    if (list.length) by[source] = list;
+    else delete by[source];
+    if (Object.keys(by).length) AppView._threadCardActions[key] = by;
+    else delete AppView._threadCardActions[key];
+    // A menu already open on this page lists them too (see _setFoldedCardActions).
+    const open = AppView._openCardMenu;
+    if (open && open.key === key && open.el) AppView._fillCardMenu(open.el, AppView._cardMenuItems(key, open.own));
+  },
+  _threadMenuRows(key) {
+    const by = AppView._threadCardActions[key];
+    if (!by) return [];
+    return Object.keys(by).sort().reduce((rows, source) => rows.concat(by[source]), []);
+  },
   // The kudos slot, folded off the band (useFoldedActions: not even its clap
   // fit beside Open card, Preview and ⋯): the slot's current face as a ⋯ row
   // — "Thank <author> for putting this up", or "Give kudos" once it is the
@@ -8229,7 +8326,8 @@ const AppView = {
   _cardMenuItems(key, own) {
     const list = AppView._cardMenus[key] || [];
     const folded = AppView._foldedCardActions[key] || [];
-    const rows = folded.length ? folded.map((a) => AppView._foldedMenuItem(a)).concat(list) : list;
+    const thread = AppView._threadMenuRows(key);
+    const rows = (folded.length ? folded.map((a) => AppView._foldedMenuItem(a)).concat(list) : list).concat(thread);
     if (!own) return rows;
     return [{
       label: PlatformI18n.t('changes:card.menu.openCard'),
@@ -8307,6 +8405,9 @@ const AppView = {
     details: '≡',          // ≡ the technical half, as a sheet
     edit: '✎',             // edit the reader-facing description
     share: '↑',            // ↑ into Messages, distinct from ↗ leaving the platform
+    notify: '🔔',          // 🔔 a thread's Notify me, and Unmute
+    mute: '🔕',            // 🔕 a thread's Mute
+    move: '⇄',             // ⇄ a thread's merge, split or break up
     // Nothing should reach this, but a descriptor added later without an
     // icon must still line up with its neighbours rather than losing the
     // leading column and shifting its own label left.
@@ -8951,7 +9052,9 @@ const AppView = {
   // Returns switchTab's promise so callers that must not act until the
   // destination has painted (e.g. submitImportPr, which closes its dialog
   // afterwards) can await it. Fire-and-forget callers are unaffected.
-  openTopic(kind, id) {
+  // `options.replaceRoute`: the page takes the place of the one on screen
+  // (1 Nov 2026: a change's address landing on its request's page).
+  openTopic(kind, id, options) {
     if (!kind || !id) return;
     // Drop any on-demand proposal cached for a previous topic so its row
     // can never be mistaken for the one being opened now.
@@ -8966,7 +9069,9 @@ const AppView = {
     if (typeof App !== 'undefined' && App.switchTab) {
       // #4367: a change with a pull request opens at `dev/changes/<N>`.
       const pr = kind === 'proposal' ? Number(AppView._findItem('proposal', id)?.pr_number) : 0;
-      return App.switchTab('dev', Number.isInteger(pr) && pr > 0 ? { kind, id, pr } : { kind, id }, 'topic');
+      const ref = Number.isInteger(pr) && pr > 0 ? { kind, id, pr } : { kind, id };
+      if (options && options.replaceRoute) return App.switchTab('dev', ref, 'topic', { replaceRoute: true });
+      return App.switchTab('dev', ref, 'topic');
     }
   },
 
@@ -8984,6 +9089,18 @@ const AppView = {
   _devTopicInPanel: false,
   async openTopicInPanel(kind, id) {
     if (!kind || !id) return;
+    // 1 Nov 2026 (one page per thread): a change built for a request opens
+    // as its request's page, at it, as its address does (_renderTopicSubView).
+    if (kind === 'proposal' || kind === 'session') {
+      const asked = { kind, id };
+      AppView._devTopicAsked = asked;
+      const home = await AppView._requestHomeOf(id);
+      if (AppView._devTopicAsked !== asked) return;
+      AppView._devTopicAsked = null;
+      if (home) return AppView._openChangeOnRequest(home, id, { panel: true });
+    } else {
+      AppView._devTopicAsked = null;
+    }
     AppView._topicProposal = null;
     AppView._topicGov = null;
     AppView._topicIssue = null;
@@ -22162,6 +22279,16 @@ const AppView = {
     const noNav = !!(opts && opts.noNav);
     const n = issue.number;
     const h = issue.headless;
+    // 1 Nov 2026: their own private thread about it holds Homeroom bot,
+    // which waits for their plan (services/private-threads.js): letting it
+    // go ahead is the one thing to do here.
+    if (AppView._planHeld(issue)) {
+      return {
+        key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.letBotBuild'),
+        title: PlatformI18n.t('changes:issue.action.letBotBuildTitle'),
+        act: { fn: 'letBotBuildNow', args: [n] },
+      };
+    }
     // The Homeroom bot is on this request. Like a run in flight there is
     // nothing to start, and a second session would build it twice.
     if (issue.bot) {
@@ -22301,11 +22428,87 @@ const AppView = {
         act: { fn: 'chooseIssueWork', args: [n] },
       }
       : {
-        // B8: building it yourself, with a coding agent, beside asking the bot.
-        key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.buildNow'),
-        title: PlatformI18n.t('changes:issue.action.buildNowTitle'),
-        act: { fn: 'chooseIssueWork', args: [n] },
+        // 1 Nov 2026: working on it with Homeroom bot, in a thread only they
+        // can see, where Build it now was. Building it in an agent session
+        // is a row of the ⋯ now (_issueMenuItems, and the request page's
+        // own beside Build it with your own Claude Code).
+        key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.workWithBot'),
+        title: PlatformI18n.t('changes:issue.action.workWithBotTitle'),
+        act: { fn: 'workOnIssueWithBot', args: [n] },
       };
+  },
+
+  /**
+   * 1 Nov 2026: whether the viewer's own private thread about this request
+   * holds Homeroom bot (`issue.botHold`, routes/issues.js), while the bot
+   * is at most waiting in its queue for it: an open request it is not
+   * reading or building yet.
+   */
+  _planHeld(issue) {
+    if (!issue || !issue.botHold || issue.state === 'closed' || AppView.readOnly) return false;
+    return !issue.bot || (issue.bot.what === 'queued' && !issue.bot.plan && !issue.bot.held);
+  },
+
+  /** Whether the card's one action is "Work on this with Homeroom bot" (its ⋯ then offers the agent session). */
+  _worksWithBot(issue, opts) {
+    const primary = issue && !AppView.readOnly ? AppView._issuePrimaryActionSpec(issue, opts) : null;
+    return !!(primary && primary.act && primary.act.fn === 'workOnIssueWithBot');
+  },
+
+  /**
+   * 1 Nov 2026: "Work on this with Homeroom bot": a thread only the viewer
+   * can see, in their chat with the bot, about this request
+   * (POST /api/apps/:slug/threads/:number/private), opened on the bot tab.
+   * Opened by whoever asked for it, the bot waits for their plan. A second
+   * tap opens the same thread.
+   */
+  async workOnIssueWithBot(issueNumber) {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug || AppView.readOnly || AppView._openingBotThread) return;
+    AppView._openingBotThread = true;
+    try {
+      const resp = await fetch(`/api/apps/${encodeURIComponent(slug)}/threads/${Number(issueNumber)}/private`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'request' }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || typeof data.href !== 'string' || !data.href.startsWith('#homeroom-bot/thread/')) {
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.bot.threadFailed'));
+        return;
+      }
+      // The page says the bot waits for their plan when they are back.
+      if (data.holds) AppView.refreshDevData('issue');
+      location.hash = data.href;
+    } catch (err) {
+      PlatformUI.toast(PlatformI18n.t('changes:issue.bot.threadFailed'));
+    } finally {
+      AppView._openingBotThread = false;
+    }
+  },
+
+  /** 1 Nov 2026: "Let the bot build it now": the bot waits for their plan no longer (POST …/issues/:number/bot-go). */
+  async letBotBuildNow(issueNumber) {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug || AppView.readOnly || AppView._lettingBotBuild) return;
+    AppView._lettingBotBuild = true;
+    try {
+      const resp = await fetch(`/api/apps/${encodeURIComponent(slug)}/issues/${Number(issueNumber)}/bot-go`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      if (!resp.ok) {
+        PlatformUI.toast(PlatformI18n.t('changes:issue.bot.letBuildFailed'));
+        return;
+      }
+      PlatformUI.toast(PlatformI18n.t('changes:issue.bot.letBuildDone'));
+      AppView.refreshDevData('issue');
+    } catch (err) {
+      PlatformUI.toast(PlatformI18n.t('changes:issue.bot.letBuildFailed'));
+    } finally {
+      AppView._lettingBotBuild = false;
+    }
   },
 
   /**
@@ -22525,6 +22728,13 @@ const AppView = {
       // it, as Start work is, so it is never built twice.
       else if (AppView._botDoor() && !issue.bot && !AppView._issueAwaitingApproval(issue)) items.unshift({
         label: PlatformI18n.t('changes:issue.menu.buildNow'), work: 'build', icon: 'generate', act: () => AppView.chooseIssueWork(n),
+      });
+      // 1 Nov 2026: where its face is Work on this with Homeroom bot, Build
+      // it now is the ⋯'s first row, as an agent session. The request page
+      // lists it itself, beside Build it with your own Claude Code
+      // (topic/request-head.tsx), so not from here.
+      else if (!st.noNav && AppView._worksWithBot(issue, { noNav: false })) items.unshift({
+        label: PlatformI18n.t('changes:issue.menu.buildInSession'), work: 'build', icon: 'generate', act: () => AppView.chooseIssueWork(n),
       });
       // "Pledge kudos" disables once the viewer has an open bounty here or
       // has spent their shared weekly allowance.

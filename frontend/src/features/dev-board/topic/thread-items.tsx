@@ -14,6 +14,11 @@
  * opens its page. The button is the viewer's Notify me / Mute for the whole
  * thread (routes/threads.js).
  *
+ * 31 Oct 2026: on a page whose head has a ⋯ (`menuKey`), Notify me / Mute
+ * and the moves are rows of that ⋯ (./thread-menu.ts), Unmute once muted,
+ * and nothing of them sits under the list but a move's form, once its row
+ * opened it. A page with no ⋯ keeps the button and the pills.
+ *
  * Its first render is nothing: the thread is read in an effect, so the
  * markup the page first paints is the markup it painted before.
  */
@@ -34,8 +39,9 @@ import {
   type ThreadHere,
   type ThreadPayload,
 } from './thread-model';
-import { ThreadMoves } from './thread-moves';
+import { MOVE_LABELS, ThreadMoves, moveChoices, type MoveKind } from './thread-moves';
 import { ThreadBallot } from './thread-ballot';
+import { useThreadMenu, type ThreadMenuRow } from './thread-menu';
 
 function openTopic(open: { kind: string; id: number }): void {
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -76,7 +82,7 @@ export function useThreadPayload(slug: string | null, number: number | null, thr
   return { data, setData, reread: () => setRevision((n) => n + 1) };
 }
 
-export function ThreadItems({ slug, number = null, asChange = false, threadId = null, here, payload, items, onChanged }: {
+export function ThreadItems({ slug, number = null, asChange = false, threadId = null, here, payload, items, onChanged, menuKey }: {
   slug: string | null;
   /** Any number in the thread: the request's, or the change's own. */
   number?: number | null;
@@ -93,6 +99,8 @@ export function ThreadItems({ slug, number = null, asChange = false, threadId = 
   /** The items the list names, when the page draws the rest itself. */
   items?: ThreadPayload['items'];
   onChanged?: () => void;
+  /** The key of the page's ⋯, which lists Notify me / Mute and the moves. Without one, they are drawn here. */
+  menuKey?: string | null;
 }): ReactNode {
   const t = useMessages('project');
   const controlled = payload !== undefined;
@@ -107,11 +115,27 @@ export function ThreadItems({ slug, number = null, asChange = false, threadId = 
   const rows = useMemo(() => threadRows(shown, here), [shown, here.type, here.id]);
   const followNow = follow === undefined ? (data ? data.follow : null) : follow;
   const button = followButton(followNow);
-  if (!data || (!rows.length && !button)) return null;
+  const [moveOpen, setMoveOpen] = useState<MoveKind | null>(null);
+  useEffect(() => { setMoveOpen(null); }, [data?.thread.id]);
+  const inMenu = !!menuKey;
+  const moves = slug && data && data.follow ? moveChoices(data) : [];
+  const menuRows: ThreadMenuRow[] = inMenu ? [
+    ...(button ? [{
+      // Muted, the row says what it does: Unmute.
+      label: t(button.pressed ? 'project:topic.thread.follow.unmute' : button.label),
+      title: t(button.hint),
+      icon: followNow?.state === 'following' ? 'mute' : 'notify',
+      act: () => { void press(); },
+    }] : []),
+    ...moves.map((kind) => ({ label: t(MOVE_LABELS[kind]), icon: 'move', act: () => setMoveOpen(kind) })),
+  ] : [];
+  useThreadMenu(menuKey, 'thread', menuRows);
+  const pending = !!data && (data.moves || []).length > 0;
+  if (!data || (!rows.length && !(inMenu ? (pending || moveOpen) : button))) return null;
   const say = (p: Phrase | string) => (typeof p === 'string' ? p : t(p.id, p.values));
 
-  const press = async () => {
-    if (busy || !button) return;
+  async function press() {
+    if (busy || !button || !data) return;
     setBusy(true);
     try {
       const res = await fetch(`/api/threads/${data.thread.id}/follow`, {
@@ -130,15 +154,15 @@ export function ThreadItems({ slug, number = null, asChange = false, threadId = 
     } finally {
       setBusy(false);
     }
-  };
+  }
 
   return (
     <section className="mt-3" data-thread={data.thread.id} aria-label={t('project:topic.thread.label')}>
-      <div className="flex items-center justify-between gap-2">
+      {rows.length || (button && !inMenu) ? <div className="flex items-center justify-between gap-2">
         {rows.length
           ? <SectionHeader className="px-0 pb-2 pt-2">{t('project:topic.thread.label')}</SectionHeader>
           : <span />}
-        {button ? (
+        {button && !inMenu ? (
           <Button
             type="button"
             variant="pillNeutral"
@@ -156,7 +180,7 @@ export function ThreadItems({ slug, number = null, asChange = false, threadId = 
             {t(button.label)}
           </Button>
         ) : null}
-      </div>
+      </div> : null}
       {rows.length ? (
         <GroupedList data-thread-items={data.thread.id}>
           {rows.map((row) => (
@@ -191,7 +215,11 @@ export function ThreadItems({ slug, number = null, asChange = false, threadId = 
           it with its changes (./thread-changes.tsx). */}
       {data.follow && here.type !== 'request' ? <ThreadBallot slug={slug} data={data} here={here} onChanged={changed} /> : null}
       {/* Stage 6: merging and splitting, for a signed-in viewer. */}
-      {slug && data.follow ? <ThreadMoves slug={slug} data={data} onChanged={changed} /> : null}
+      {slug && data.follow ? (
+        inMenu
+          ? <ThreadMoves slug={slug} data={data} onChanged={changed} open={moveOpen} onOpen={setMoveOpen} pills={false} />
+          : <ThreadMoves slug={slug} data={data} onChanged={changed} />
+      ) : null}
     </section>
   );
 }

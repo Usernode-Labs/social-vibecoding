@@ -2,7 +2,9 @@
 
 // #6071: a design thread's pane and the frame it draws a version in
 // (frontend/src/features/messages/design-pane.tsx, frontend/src/features/
-// design/frame.ts), and the way in from the Homeroom mark's menu.
+// design/frame.ts), and the way in. 1 Nov 2026 (C1): the screen picker
+// retired; the bot draws a screen from words in any private thread
+// (tests/design-anywhere.test.js pins the drawing and the preview column).
 //
 // What this pins:
 //   1. A version is drawn under a policy that loads nothing from anywhere but
@@ -14,7 +16,7 @@
 //   3. The pane's first render reads nothing (the design loads in an
 //      effect), and its words come from the catalog.
 //   4. A design thread is a thread whose first message is the bot's
-//      opened_design line, and the Messages screen draws the pane for it.
+//      opened_design line, or (1 Nov 2026) one the bot said a version in.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -78,20 +80,37 @@ test('the pane reads nothing in its first render, and says it is drawing', () =>
   assert.equal(isDesignRoot({ sender: { bot: true }, metadata: { homeroomBot: { kind: 'opened_design' } } }), true);
   assert.equal(isDesignRoot({ sender: { bot: false }, metadata: { homeroomBot: { kind: 'opened_design' } } }), false);
   assert.equal(isDesignRoot({ sender: { bot: true }, metadata: { homeroomBot: { kind: 'opened_draft' } } }), false);
+  const { isDesignThread } = loadTsx('frontend/src/features/messages/design-pane.tsx', {
+    stubs: { './api': api, './store': { loadReplyThread: () => Promise.resolve(), useMessagesSnapshot: () => ({ thread: null }) } },
+  });
+  const plus = { sender: { bot: true }, metadata: { homeroomBot: { kind: 'opened_thread' } } };
+  assert.equal(isDesignThread(plus, []), false, 'a "+" thread with no version said in it');
+  assert.equal(isDesignThread(plus, [{ sender: { bot: true }, metadata: { homeroomBot: { kind: 'design_version', designVersion: 1 } } }]), true, 'any thread the bot said a version in');
+  assert.equal(isDesignThread(plus, [{ sender: { bot: false }, metadata: { homeroomBot: { designVersion: 1 } } }]), false, 'only the bot says one');
 });
 
-test('Messages draws the pane for a design thread, and the mark\'s menu opens one', () => {
+test('Messages draws the pane for a design thread, and the bot\'s new thread opens one', () => {
   const index = read('frontend/src/features/messages/index.tsx');
   assert.match(index, /const designOpen = !!designRootId && isDesignRoot\(designRoot\);/);
   assert.match(index, /<DesignPane conversationId=\{snap\.route\.conversationId\} rootId=\{designRootId\} view=\{designView\} onView=\{setDesignView\} \/>/);
   const css = read('public/css/app.css');
   assert.match(css, /\.messages-layout\.messages-has-design > \.messages-thread-pane \{ display: none; \}/);
-  // A row of the mark's menu, run once the menu has gone, so the capture is
-  // of the screen and not of the menu over it.
+  // Not the mark's menu any more, and (1 Nov 2026) no screen picker either:
+  // the bot draws a screen from words, so nothing goes to a screen to pick.
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /id="improve-row-design"[\s\S]*?void AppContext\.dismissForNav\(\)\.then\(\(\) => designThisScreen\(\)\);/);
-  assert.doesNotMatch(read('frontend/src/features/improve/actions.tsx'), /improve-row-design/, 'never beside the one filled action');
-  assert.equal(message('agent:menu.designScreen'), 'Design this screen');
+  assert.doesNotMatch(sheet, /improve-row-design|designThisScreen|agent:menu\.designScreen/);
+  assert.doesNotMatch(read('frontend/src/features/improve/actions.tsx'), /improve-row-design/);
+  assert.throws(() => message('agent:menu.designScreen'));
+  for (const gone of ['frontend/src/features/design/pick.tsx', 'frontend/src/features/design/start.ts']) {
+    assert.equal(fs.existsSync(path.join(ROOT, gone)), false, `${gone} retired`);
+  }
+  assert.throws(() => message('messages:design.pick.use'));
+  assert.doesNotMatch(read('frontend/src/features/messages/new-thread.tsx'), /startScreenPick|data-bot-new-thread-pick/);
+  assert.doesNotMatch(read('frontend/src/features/messages/bot-question.tsx'), /action\.type === 'design'|startScreenPick/);
+  // No 'design': an old Pick the screen button is no longer drawn ('make' is
+  // Make the project's sheet, bot-make.tsx).
+  assert.match(read('frontend/src/features/messages/api.ts'), /const BOT_ACTION_TYPES = new Set\(\['server', 'open', 'prompt', 'preview', 'vote', 'reply', 'invite', 'make'\]\);/,
+    'an old Pick the screen button is no longer drawn');
 });
 
 test('the bridge answers a capture only to Homeroom, and its mirror is the same file', () => {

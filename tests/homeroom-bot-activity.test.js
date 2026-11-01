@@ -712,22 +712,21 @@ test('only the bot\'s DM keeps the cards current, beside its tray', () => {
   assert.match(screen, /\{botDm \? <BotWorkSync [^\n]*\n[^\n]*\n\s*\{botDm \? <BotActivitySync conversationId=\{conversationId\} newsKey=\{newestBotMessageId\(snap\.messages\)\} \/> : null\}/);
 });
 
-test('the staging preview\'s declared check finds the Activity bar under the demo DM\'s header, with what waits', () => {
-  const check = JSON.parse(read('dapp.json')).tests.find((t) => t.id === 'homeroom-bot-dm-activity-tray');
-  assert.equal(check.path, '/?demo=1#messages/910005');
-  // One request, one story: the cards in the transcript are one row per
-  // request now, and the Activity disc and the pinned strip are gone. The
-  // check reads the Activity bar that opens the drawer (./bot-strip.tsx),
-  // closed as a page loads: what needs you with that request's number, what
-  // is ready to try and what is in progress.
-  assert.match(check.expectSelector, /\.messages-thread-header \+ \[data-bot-strip=closed\] \[data-bot-strip-toggle\]\[aria-expanded=false\]/);
-  assert.match(check.expectSelector, /:has\(\[data-bot-strip-count=needs\]\):has\(\[data-bot-strip-count=ready\]\):has\(\[data-bot-strip-count=progress\]\)/);
-  assert.match(check.expectSelector, /\[data-request-tag\]$/, 'the number of what needs you');
+test('the staging preview\'s declared check follows the demo DM to the Homeroom bot tab, Main Chat its list\'s first row', () => {
+  // 1 Nov 2026: the chat with the bot is the Homeroom bot tab's alone. Its
+  // Activity bar was drawn over it on the Messages screen only, where it is
+  // no longer drawn: the tab's own lists say what needs you and what is in
+  // progress. Its check now follows the demo DM's Messages address to the
+  // tab: Main Chat, lit, first, with the demo chat in the column beside it.
+  const tests = JSON.parse(read('dapp.json')).tests;
+  assert.ok(!tests.some((t) => t.id === 'homeroom-bot-dm-activity-tray'), 'the bar\'s check is retired');
+  const check = tests.find((t) => t.id === 'homeroom-bot-main-chat-row');
+  assert.equal(check.path, '/?demo=1#messages/910005', 'its old address, which lands on the tab');
+  assert.match(check.expectSelector, /^#ai-screen:not\(\.hidden\):has\(#ai-main-pane\[data-ai-column=main\] > \[data-ai-main-head\] \+ \.messages-layout\[data-main-chat\] \[data-bot-news-state=needs\]\)/);
+  assert.match(check.expectSelector, /\[data-ai-sheet=main\] > \[data-ai-main-row\]\[data-ai-lit\]\[aria-current=true\]$/);
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
-  // #5392: a change waiting for their yes is a needs-you request now, so the
-  // demo bar says two need you (the question and the change's yes), not one.
-  assert.equal(check.expectText, '2 need you', 'the demo bar\'s summary');
-  for (const file of ['src/services/homeroom-bot-activity.js', 'src/services/staging-messages.js', 'src/routes/conversations.js']) {
+  assert.equal(check.expectText, 'Main Chat');
+  for (const file of ['frontend/src/features/ai/**', 'src/services/staging-messages.js', 'src/routes/conversations.js']) {
     assert.ok(check.impact.includes(file), file);
   }
 });
