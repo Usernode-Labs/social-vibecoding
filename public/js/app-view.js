@@ -12078,6 +12078,26 @@ const AppView = {
    * (the header's ⌄ menu, a row of All communities): it keeps the place you
    * were on (landKeepingPlace, features/dev-board/workshop/place-store.ts).
    */
+  /**
+   * THE PLACE IS DECIDED. A door or a switch says which place the page opens
+   * on before it navigates (_landOnTab), and the Communities tab's resume
+   * keeps the one remembered. The router asks (_takePlaceDecision) when a
+   * route arrives at a project's /workshop address, which otherwise opens
+   * the Workshop (App._linkOpensWorkshop). One decision, for one project,
+   * spent on the arrival it was made for, and only for a few seconds: a
+   * page already up that a switch turned in place navigates nowhere, and
+   * its decision must not be taken by a later link.
+   */
+  PLACE_DECISION_TTL_MS: 4000,
+  _placeDecided: null,
+  _notePlaceDecided(slug) {
+    AppView._placeDecided = slug ? { slug, at: Date.now() } : null;
+  },
+  _takePlaceDecision(slug) {
+    const d = AppView._placeDecided;
+    AppView._placeDecided = null;
+    return !!d && d.slug === slug && Date.now() - d.at <= AppView.PLACE_DECISION_TTL_MS;
+  },
   _landOnHub(slug) {
     AppView._landOnTab(slug, 'status');
   },
@@ -12209,6 +12229,7 @@ const AppView = {
    */
   _landOnTab(slug, tab) {
     const key = AppView._isWorkshopPlace(tab) ? tab : 'status';
+    AppView._notePlaceDecided(slug);
     AppView._setWorkshopTab(key);
     try {
       window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab: key } }));

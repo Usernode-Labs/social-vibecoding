@@ -5565,6 +5565,7 @@ const App = {
         let boardView = null;
         // `activity` is the retired Activity feed's address; the Workshop
         // replaced it as the lander, so the old links land there.
+        if (tab === 'workshop') App._linkOpensWorkshop(slug); // audit N03 follow-up
         if (tab === 'workshop' || tab === 'activity') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'workshop'; }
         // `board` is the retired Board view's address. Those columns are the
         // Workshop's "By stage" pane now, so an old link lands on the Workshop
@@ -6344,6 +6345,9 @@ const App = {
       }
     } catch (_) { /* no catalog to ask; the route answers for itself */ }
     App._resumingWorkshop = view.path;
+    // Reopening the page you left keeps the place you left it on: not a link
+    // to /workshop (_linkOpensWorkshop).
+    try { AppView?._notePlaceDecided?.(view.slug); } catch (_) { /* the page opens on the Workshop */ }
     try {
       history.pushState(null, '', `${view.path}${App._routeSearch(null)}`);
     } catch (_) {
@@ -6715,6 +6719,36 @@ const App = {
     }
     parts.length = 3;
     parts[2] = 'workshop';
+    return true;
+  },
+
+  /**
+   * A LINK TO A PROJECT'S /workshop OPENS ITS WORKSHOP (2 Nov 2026, the
+   * owner's call after audit N03). The address is the one every place on the
+   * project page shares, so it used to reopen the place last left, the Hub on
+   * a first visit, and a link that said "workshop" showed the Hub. Now a
+   * bare arrival there (a cold load, a pasted or followed link) opens the
+   * Workshop place. What keeps its own answer:
+   *   - a door or a switch: it says its place first (AppView._landOnTab,
+   *     which _landOnHub and landKeepingPlace go through), and the router
+   *     takes that decision (AppView._takePlaceDecision);
+   *   - the Communities tab reopening the page you left (resumeWorkshopView);
+   *   - Back, Forward and a reload: the entry names its place
+   *     (AppView._historyWorkshopTab);
+   *   - `?ws=<place>`, which names one outright.
+   */
+  _linkOpensWorkshop(slug) {
+    if (typeof AppView === 'undefined' || !AppView._landOnTab) return false;
+    const decided = AppView._takePlaceDecision ? AppView._takePlaceDecision(slug) : false;
+    if (decided) return false;
+    try {
+      if (new URLSearchParams(location.search).has('ws')) return false;
+      const hashQuery = String(location.hash || '').split('?')[1] || '';
+      if (new URLSearchParams(hashQuery).has('ws')) return false;
+    } catch (_) { /* no query to read */ }
+    if (AppView._historyWorkshopTab && AppView._historyWorkshopTab()) return false;
+    AppView._landOnTab(slug, 'workshop');
+    AppView._takePlaceDecision?.(slug);
     return true;
   },
 
@@ -7676,6 +7710,13 @@ const App = {
   // further down the stack, a browser without the Navigation API) keeps the
   // push it always made. True when it went back.
   _stepBackTo(href) {
+    if (!App._canStepBackTo(href)) return false;
+    try { history.back(); return true; } catch (_) { return false; }
+  },
+
+  // Whether the entry below this one is `href` (_stepBackTo's test, without
+  // going): the topic chip names what its press will show (audit N05).
+  _canStepBackTo(href) {
     const nav = App._navigationApi();
     if (!nav || typeof href !== 'string') return false;
     let below = null;
@@ -7700,8 +7741,7 @@ const App = {
         wanted.push(new URL(href, location.origin).href);
       }
     } catch (_) { return false; }
-    if (wanted.indexOf(below.url) === -1) return false;
-    try { history.back(); return true; } catch (_) { return false; }
+    return wanted.indexOf(below.url) !== -1;
   },
 
   // Where the ✕ goes, and how: { how, url, key }.

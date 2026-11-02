@@ -102,13 +102,16 @@ const CHIP_TEXT: Record<ChipKey, { label: string; name: string }> = {
 };
 
 /**
- * THE CHIP NAMES THE PLACE IT OPENS (audit N05, 1 Nov 2026). Its href is the
- * project's page, which reopens on the place it was last left on
- * (AppView._workshopTab): the Hub, Needs you, the Workshop, All items or a
- * channel. The chip said "Workshop" whatever that was, so a request opened
- * from the Hub read "‹ Workshop" under a header that said "Hub", and the
- * chip took you to the Hub. The page's place, the phone header's line and
- * the sidebar's lit row all read the same remembered place.
+ * THE CHIP NAMES THE PLACE IT OPENS (audit N05, 1 Nov 2026; its follow-up,
+ * 2 Nov). Its href is the project's /workshop address, and a press does one
+ * of two things (onBackClick): when the entry below is that page, it steps
+ * Back to it, which shows the place that entry was left on, the one the page
+ * remembers (AppView._workshopTab: the Hub, Needs you, the Workshop, All
+ * items or a channel); otherwise it follows the link, and a link to
+ * /workshop opens the Workshop (App._linkOpensWorkshop). So the chip names
+ * the place for a step Back and "Workshop" for a link, and the phone
+ * header's line and the sidebar's lit row read the same answer
+ * (../workshop/place-store.ts itemReturnPlace).
  */
 export function placeChip(workshopTab: string | null): { to: ChipKey; handle?: string } {
   if (workshopTab === 'all') return { to: 'allItems' };
@@ -128,10 +131,16 @@ export function placeChip(workshopTab: string | null): { to: ChipKey; handle?: s
  * back to the Workshop. Read as state, so the chip never compares its own
  * words.
  */
-export function chipFor(href: string, workshopTab: string | null): { to: ChipKey; handle?: string } {
+export function chipFor(href: string, workshopTab: string | null, stepsBack = false): { to: ChipKey; handle?: string } {
   if (href.startsWith('#messages')) return { to: 'messages' };
   if (backsToBot(href)) return { to: 'bot' };
-  return /\/workshop$/.test(href) ? placeChip(workshopTab) : { to: 'workshop' };
+  return /\/workshop$/.test(href) && stepsBack ? placeChip(workshopTab) : { to: 'workshop' };
+}
+
+/** Whether a press on a chip to `href` steps Back (App._canStepBackTo). */
+function stepsBackTo(href: string): boolean {
+  const app = (window as unknown as { App?: { _canStepBackTo?: (h: string) => boolean } }).App;
+  try { return !!app?._canStepBackTo?.(href); } catch { return false; }
 }
 
 /** One chip: the destination's name behind the chevron. */
@@ -161,7 +170,7 @@ export function TopicBack(): ReactNode {
   // the item was opened from.
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
   const workshopTab = av && typeof av._workshopTab === 'function' ? av._workshopTab() : null;
-  const back = <TopicChip href={href} {...chipFor(href, workshopTab)} />;
+  const back = <TopicChip href={href} {...chipFor(href, workshopTab, stepsBackTo(href))} />;
   // #3691: and offers its project's Workshop beside that, styled the same
   // (a card opened from the Homeroom bot tab's page too).
   const workshop = topicWorkshopHref({ slug, tab, subTab, boardView, topicOrigin });
@@ -169,7 +178,7 @@ export function TopicBack(): ReactNode {
   return (
     <div className="dev-topic-backs">
       {back}
-      <TopicChip href={workshop} {...chipFor(workshop, workshopTab)} />
+      <TopicChip href={workshop} {...chipFor(workshop, workshopTab, stepsBackTo(workshop))} />
     </div>
   );
 }
