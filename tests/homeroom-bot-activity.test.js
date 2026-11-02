@@ -315,12 +315,114 @@ test('the live loop starts a card where it tells the request it is looking: neve
   // Its card key: a new request's goes on with the card its refresh started;
   // any other look has its own, by the look's number, the same across retries.
   assert.match(body.slice(looking, reading),
-    /if \(item\.reason !== RESTART_REASON && item\.reason !== APP_AGAIN_REASON && item\.reason !== READ_AGAIN_REASON\s+&& item\.reason !== BACKLOG_REASON\) \{\s*await activity\(\)\.startCard\(pool, \{[\s\S]*?app, issueNumber, requester, bot, settings, inDm: DM_REASONS\.has\(item\.reason\), reason: item\.reason,\s*jobKey: item\.reason === 'new' \? cardKeyOf\(app\.id, issueNumber\)\s*: \(look\.n \? loopRules\.lookCardKey\(app\.id, issueNumber, look\.n\) : item\.id\),\s*deps: \{ dm: deps\.dm \},\s*\}\);/);
+    /if \(item\.reason !== RESTART_REASON && item\.reason !== APP_AGAIN_REASON && item\.reason !== READ_AGAIN_REASON\s+&& item\.reason !== BACKLOG_REASON\) \{\s*await activity\(\)\.startCard\(pool, \{[\s\S]*?app, issueNumber, requester, bot, settings, inDm: DM_REASONS\.has\(item\.reason\), reason: item\.reason,[\s\S]*?payerUserId: billing\.charged \? payerId : null,[\s\S]*?jobKey: item\.reason === 'new' \? cardKeyOf\(app\.id, issueNumber\)\s*: \(look\.n \? loopRules\.lookCardKey\(app\.id, issueNumber, look\.n\) : item\.id\),\s*deps: \{ dm: deps\.dm \},\s*\}\);/);
   // Work asked for in the DM says so in its thread ("Filed from our chat.").
   assert.match(source, /const DM_REASONS = new Set\(\['dm_request', 'dm_start', 'dm_answer', 'dm_comment', 'dm_revise', 'plan_change'\]\);/);
   // Inside the live branch: shadow triage has no card.
   const live = body.lastIndexOf('if (liveMode) {', looking);
   assert.ok(live > -1 && body.indexOf('const open = await live.openBotProposal', live) < looking);
+});
+
+// ── #6133: the week is nearly spent, said before the work ──
+
+function allowanceDeps({ low = true, spent = false, existing = true, sendResult } = {}) {
+  const sent = [];
+  const steps = [];
+  const queries = [];
+  const pool = {
+    async query(sql, params) {
+      const text = String(sql);
+      queries.push([text, params]);
+      if (/FROM homeroom_bot_dm_messages d\s+JOIN conversation_messages m ON m\.id = d\.message_id AND m\.deleted_at IS NULL/.test(text)) {
+        return { rows: existing ? [{ message_id: 800, conversation_id: 5, look_at: null }] : [] };
+      }
+      return { rows: [] };
+    },
+  };
+  const dm = {
+    hasBot: dmSvc.hasBot,
+    requestLine: dmSvc.requestLine,
+    async requestStart() { return 77; },
+    async allowanceLow() { return low; },
+    async overWeeklyAllowance() { return spent; },
+    weekKey() { return '20261102'; },
+    async noteStep(_pool, args) { steps.push(args); return { messageId: 990 }; },
+    async sendDm(_pool, args) {
+      sent.push(args);
+      return sendResult === undefined ? { conversationId: 5, messageId: 900, duplicate: false } : sendResult;
+    },
+  };
+  return { pool, dm, sent, steps, queries, settings: { mode: 'shadow' } };
+}
+
+test('#6133: an existing card warns in its thread when the look starts and the week is nearly gone', async () => {
+  const { pool, dm, steps, settings } = allowanceDeps();
+  const out = await activity.startCard(pool, { app, issueNumber: 12, requester: ada, bot, jobKey: 345, settings, deps: { dm } });
+  assert.deepEqual(out, { messageId: 800, conversationId: 5, duplicate: true, continued: true });
+  const low = steps.filter((s) => s.step === 'allowance_low');
+  assert.equal(low.length, 1);
+  assert.equal(low[0].content, 'You\'re close to this week\'s building time.');
+  assert.equal(low[0].key, 'hrbot-step-low-11-12-20261102', 'once per request per week');
+  assert.equal(low[0].userId, 7);
+  // Said when the look starts, after "Reading it again." and before the card
+  // moves forward (continueCard): the warning leads the work it is about.
+  assert.equal(steps[0].step, 'reading');
+  assert.equal(steps[1].step, 'allowance_low');
+
+  // The same look started again in the same week: the key is the same, so
+  // the DM layer says it once (the fake records the call; noteStep dedupes).
+  const again = allowanceDeps();
+  again.dm.noteStep = async (_pool, args) => {
+    if (again.steps.some((s) => s.key && s.key === args.key)) return null;
+    again.steps.push(args);
+    return { messageId: 991 };
+  };
+  await activity.startCard(again.pool, { app, issueNumber: 12, requester: ada, bot, jobKey: 345, settings: again.settings, deps: { dm: again.dm } });
+  await activity.startCard(again.pool, { app, issueNumber: 12, requester: ada, bot, jobKey: 346, settings: again.settings, deps: { dm: again.dm } });
+  assert.equal(again.steps.filter((s) => s.step === 'allowance_low').length, 1);
+});
+
+test('#6133: no warning when the week is not low, is spent, nobody is charged, or somebody else pays', async () => {
+  for (const deps of [allowanceDeps({ low: false }), allowanceDeps({ spent: true })]) {
+    await activity.startCard(deps.pool, { app, issueNumber: 12, requester: ada, bot, jobKey: 345, settings: deps.settings, deps: { dm: deps.dm } });
+    assert.equal(deps.steps.filter((s) => s.step === 'allowance_low').length, 0);
+  }
+  // A look the bot started itself is charged to nobody.
+  const free = allowanceDeps();
+  await activity.startCard(free.pool, { app, issueNumber: 12, requester: ada, bot, jobKey: 345, payerUserId: null, settings: free.settings, deps: { dm: free.dm } });
+  assert.equal(free.steps.filter((s) => s.step === 'allowance_low').length, 0);
+  // Somebody else asked for it on their own week: not the requester's.
+  const other = allowanceDeps();
+  await activity.startCard(other.pool, { app, issueNumber: 12, requester: ada, bot, jobKey: 345, payerUserId: 99, settings: other.settings, deps: { dm: other.dm } });
+  assert.equal(other.steps.filter((s) => s.step === 'allowance_low').length, 0);
+  // Filing or queuing a request that already has a card starts no look.
+  const filed = allowanceDeps();
+  for (const flag of ['filed', 'queued']) {
+    await activity.startCard(filed.pool, { app, issueNumber: 12, requester: ada, bot, jobKey: 345, [flag]: true, settings: filed.settings, deps: { dm: filed.dm } });
+  }
+  assert.equal(filed.steps.length, 0);
+});
+
+test('#6133: a card made after the week is spent says so, not that it is close', async () => {
+  const spent = allowanceDeps({ existing: false, low: true, spent: true });
+  await activity.startCard(spent.pool, { app, issueNumber: 12, requester: ada, bot, jobKey: 345, settings: spent.settings, deps: { dm: spent.dm } });
+  assert.match(spent.sent[0].content, /Your building time for this week is used up\.$/);
+  assert.ok(!/close to this week's building time/.test(spent.sent[0].content));
+
+  const close = allowanceDeps({ existing: false, low: true, spent: false });
+  await activity.startCard(close.pool, { app, issueNumber: 12, requester: ada, bot, jobKey: 345, settings: close.settings, deps: { dm: close.dm } });
+  assert.match(close.sent[0].content, /You're close to this week's building time\.$/);
+});
+
+test('#6133: a look and a build both check the week, the look at startCard and the build before buildOne', () => {
+  const source = read('src/services/homeroom-bot.js');
+  const start = source.indexOf('async function startBuild(');
+  const body = source.slice(start, source.indexOf('async function refresh(config', start));
+  const hold = body.indexOf("return { outcome: 'held'");
+  const note = body.indexOf('await activity().noteLowAllowance(pool, {');
+  const one = body.indexOf('const r = await buildOne(');
+  assert.ok(hold > -1 && note > hold && one > note, 'after the allowance hold, before the build runs');
+  assert.match(body.slice(note, one), /payerUserId: payerId, settings, deps: \{ dm \}/);
 });
 
 // ── Work already under way without a card ──

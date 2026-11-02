@@ -132,6 +132,12 @@ function proposalHref(slug, sessionId, prNumber = null) {
 // live says it waits for (cardText).
 const FIRST_VERSION_WAIT_WORDS = 'Waiting for the first version to go live. I\'ll start on this as soon as it does.';
 
+// #6133: the week's building time is nearly gone. Said quietly in a
+// request's thread when a look or a build starts (noteLowAllowance), and on
+// a card made after the week is spent (cardText).
+const LOW_ALLOWANCE_WORDS = 'You\'re close to this week\'s building time.';
+const USED_UP_ALLOWANCE_WORDS = 'Your building time for this week is used up.';
+
 /** #4392: what the bot says once its creator has answered a plan (one story: no thanks, what is next). */
 function thanksText() {
   return 'Building it now. I\'ll tell you when it\'s ready to try.';
@@ -150,13 +156,16 @@ function thanksText() {
  * inbox's preview as they are.
  */
 function cardText({ appName, issueNumber, issueTitle, firstVersion }, dm, {
-  joined = false, filed = false, queued = false, lowAllowance = false, waitsForFirstVersion = false, go = false,
+  joined = false, filed = false, queued = false, lowAllowance = false, allowanceUsedUp = false,
+  waitsForFirstVersion = false, go = false,
 } = {}) {
   if (go) return thanksText(appName);
   const line = dm.requestLine({ appName, issueNumber, issueTitle, firstVersion });
-  // The one place the weekly limit is mentioned before it is reached: under
-  // a fifth of the week's building time left (dm.allowanceLow).
-  const low = lowAllowance ? '\n\nYou\'re close to this week\'s building time.' : '';
+  // The weekly limit is mentioned on a card made near its end: under a fifth
+  // of the week's building time left (dm.allowanceLow), or already spent
+  // (#6133: "close to" would understate that).
+  const low = lowAllowance
+    ? `\n\n${allowanceUsedUp ? USED_UP_ALLOWANCE_WORDS : LOW_ALLOWANCE_WORDS}` : '';
   // 2026-10-05: nothing else on a project starts while its first version is
   // not live (homeroom-bot.js FIRST_VERSION_PENDING_SQL), so a request filed
   // or queued then says what it waits for, once, here.
@@ -185,8 +194,8 @@ function jobCardKey(jobKey) {
  * is the look it is read from. Resolves what sendDm did, or null.
  */
 async function sendCard(pool, {
-  app, issueNumber, requester, bot, key, startedAt = null, filed = false, queued = false, lowAllowance = false, dm,
-  hello = null, lookAt = null, go = false, waitsForFirstVersion = false,
+  app, issueNumber, requester, bot, key, startedAt = null, filed = false, queued = false, lowAllowance = false,
+  allowanceUsedUp = false, dm, hello = null, lookAt = null, go = false, waitsForFirstVersion = false,
 }) {
   const context = {
     appName: app.name || app.slug,
@@ -194,7 +203,9 @@ async function sendCard(pool, {
     issueTitle: requester.issueTitle || null,
     firstVersion: !!requester.firstVersion,
   };
-  const words = cardText(context, dm, { joined: !!startedAt, filed, queued, lowAllowance, waitsForFirstVersion, go });
+  const words = cardText(context, dm, {
+    joined: !!startedAt, filed, queued, lowAllowance, allowanceUsedUp, waitsForFirstVersion, go,
+  });
   const metadata = {
     kind: KIND,
     appSlug: app.slug,
@@ -314,6 +325,9 @@ async function continueCard(pool, card, { userId, lookAt = null, dm }) {
  */
 async function startCard(pool, {
   app, issueNumber, requester, bot, jobKey, settings = null, filed = false, queued = false, inDm = false, reason = null, origin = null,
+  // #6133: whose week this look spends. Omitted: the requester's, as before.
+  // An explicit null is a look nobody is charged for (the bot's own read).
+  payerUserId,
   deps = {},
 }) {
   try {
@@ -322,6 +336,7 @@ async function startCard(pool, {
     const dm = dmModule(deps);
     const s = settings || await settingsModule(deps).readSettings(pool);
     if (!dm.hasBot(s, requester)) return null;
+    const payer = payerUserId === undefined ? requester.userId : payerUserId;
     const existing = await requestCard(pool, { userId: requester.userId, appId: app.id, issueNumber: n });
     // One story per request: every request gets a card, however it was
     // asked (the chat with the bot, Suggest an improvement, the request's
@@ -342,10 +357,19 @@ async function startCard(pool, {
         return { messageId: existing.messageId, conversationId: existing.conversationId, duplicate: true, continued: true };
       }
       if (reading) await noteReading(pool, { app, issueNumber: n, requester, bot, jobKey, card: existing, reason, dm });
+      // #6133: the card already exists, so its words cannot warn any more:
+      // the week is checked as the look starts, before it spends more of it.
+      if (reading) await noteLowAllowance(pool, { app, issueNumber: n, requester, bot, payerUserId: payer, settings: s, deps });
       return await continueCard(pool, existing, { userId: requester.userId, dm });
     }
-    const lowAllowance = typeof dm.allowanceLow === 'function'
+    // The card's words name the week only when the requester is paying for
+    // this look: a look somebody else asked for on their own time is not
+    // about the requester's week (#6133).
+    const chargesRequester = payer != null && Number(payer) === Number(requester.userId);
+    const lowAllowance = chargesRequester && typeof dm.allowanceLow === 'function'
       ? await dm.allowanceLow(pool, s, requester.userId).catch(() => false) : false;
+    const allowanceUsedUp = lowAllowance && typeof dm.overWeeklyAllowance === 'function'
+      ? await dm.overWeeklyAllowance(pool, s, requester.userId).catch(() => false) : false;
     // B5: somebody's first request on a project they did not make is where
     // the bot says hello to them, once.
     // B5: offered as their hello; sendDm says it only when it is theirs.
@@ -356,7 +380,7 @@ async function startCard(pool, {
     const waits = (filed || queued) && !requester.firstVersion
       ? await waitsForFirstVersion(pool, app, n, deps) : false;
     const sent = await sendCard(pool, {
-      app, issueNumber: n, requester, bot, key: jobCardKey(jobKey), filed, queued, lowAllowance, dm, hello,
+      app, issueNumber: n, requester, bot, key: jobCardKey(jobKey), filed, queued, lowAllowance, allowanceUsedUp, dm, hello,
       waitsForFirstVersion: waits,
     });
     if (!sent?.messageId || sent.duplicate) return sent || null;
@@ -424,6 +448,40 @@ async function noteReading(pool, { app, issueNumber, requester, bot, jobKey, car
     });
   } catch (err) {
     log.warn('homeroom-bot-activity', 'Could not say a look began', { app: app?.slug, issueNumber, err: err.message });
+    return null;
+  }
+}
+
+/**
+ * #6133: the person paying for a look or a build has under a fifth of this
+ * week's building time left, said quietly in the request's thread before
+ * the work spends more of it. Once per request per week (its key). Silent
+ * when nobody is charged, when somebody other than the requester pays (it is
+ * not their week), when the bot does not talk to them, and when the week is
+ * already spent (the hold's "used up" line says it). Never throws; resolves
+ * what noteStep did, or null.
+ */
+async function noteLowAllowance(pool, {
+  app, issueNumber, requester, bot, payerUserId = null, settings = null, deps = {},
+}) {
+  try {
+    const n = Number(issueNumber);
+    if (!app?.id || !requester?.userId || !Number.isInteger(n) || n <= 0) return null;
+    if (payerUserId == null || Number(payerUserId) !== Number(requester.userId)) return null;
+    const dm = dmModule(deps);
+    if (typeof dm.noteStep !== 'function') return null;
+    const s = settings || await settingsModule(deps).readSettings(pool);
+    if (!dm.hasBot(s, requester)) return null;
+    if (typeof dm.overWeeklyAllowance === 'function'
+        && await dm.overWeeklyAllowance(pool, s, requester.userId).catch(() => false)) return null;
+    if (typeof dm.allowanceLow !== 'function'
+        || !await dm.allowanceLow(pool, s, requester.userId).catch(() => false)) return null;
+    return await dm.noteStep(pool, {
+      bot, userId: requester.userId, app, issueNumber: n, step: 'allowance_low',
+      content: LOW_ALLOWANCE_WORDS, key: `hrbot-step-low-${app.id}-${n}-${dm.weekKey()}`,
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-activity', 'Could not say the week is nearly spent', { app: app?.slug, issueNumber, err: err.message });
     return null;
   }
 }
@@ -1270,6 +1328,7 @@ module.exports = {
   requestCard,
   continueCard,
   startCard,
+  noteLowAllowance,
   cardUnderPlan,
   thanksText,
   outcomeOf,
