@@ -7374,6 +7374,10 @@ const App = {
     if (App.REACT_SCREEN_IDS.includes(id)) { App.Visibility.publish(id, visible); return; }
     const el = document.getElementById(id);
     if (el) el.classList.toggle('hidden', !visible);
+    // #6145: the project page's visibility is published for READING too, so
+    // the Workshop's side panel (portalled to <body>) closes when the page
+    // goes. Its `hidden` class stays this half's: no island owns it.
+    if (id === 'app-view') App.Visibility.publish(id, visible);
   },
 
   // Is a screen root on screen? Reads the store for converted roots and

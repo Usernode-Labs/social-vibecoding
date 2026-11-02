@@ -71,6 +71,7 @@ import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { listText, t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
+import { useVisibility } from '../../../lib/visibility-store';
 import { Improve } from '../../improve/improve-controller.js';
 import { improveStore } from '../../improve/improve-store.js';
 import { swatchFor } from '../../messages/format';
@@ -4654,6 +4655,13 @@ export function DevWorkshop(): ReactNode {
   useEffect(() => {
     if (!sideWide) setSideItem(null);
   }, [sideWide]);
+  // #6145: the panel is portalled to <body>, so it stayed over the next
+  // screen (the bot's tab, Messages, Home). It goes when the project page is
+  // hidden (app.js publishes 'app-view'), and back to the Workshop shows none.
+  const pageShown = useVisibility('app-view', true);
+  useEffect(() => {
+    if (!pageShown) setSideItem(null);
+  }, [pageShown]);
   // #4486: ON ALL ITEMS THE BOARD KEEPS ITS PLACE beside the panel. With the
   // panel open its columns are 316px and it scrolls sideways (app.css), so
   // the column the row was tapped in is brought beside the panel, by the
