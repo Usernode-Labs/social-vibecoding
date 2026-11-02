@@ -459,7 +459,10 @@ async function botStages(pool, user, deps = {}) {
     if (!settings || settings.mode === 'off') return stages;
     const progress = deps.progress || require('./homeroom-bot-progress');
     for (const { row, state } of await progress.requestStates(pool, { userId: user.id, settings })) {
-      if (row.first_version || !row.slug || row.issue_number == null) continue;
+      // B03 (audit 2 Nov 2026): a project's first version is a request of
+      // its creator's like any other here. Left out, one being built read
+      // "Waiting · Nobody yet" while Main and its page said "Building it".
+      if (!row.slug || row.issue_number == null) continue;
       // Not in progress, but handed back to them: Needs you's (handedBack).
       const stage = state ? state.stage : progress.handedBack(row);
       if (!stage) continue;

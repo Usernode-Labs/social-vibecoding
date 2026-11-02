@@ -419,6 +419,28 @@ test('a request the bot handed back is one its records say it left for a person,
   assert.deepEqual([...stages], [['garden#6010', { stage: 'decide', since: '2026-10-29T10:00:00Z', capSuppressed: null }]]);
 });
 
+test('B03: a first version being built is In progress, never Waiting · Nobody yet', async () => {
+  const aiWork = require('../src/services/ai-work');
+  const stages = await aiWork.botStages(null, { id: 5 }, {
+    liveSvc: { isStaging: () => false },
+    settings: { mode: 'live' },
+    progress: {
+      handedBack: () => null,
+      requestStates: async () => [
+        { row: { slug: 'flat-chores', issue_number: 1, first_version: true }, state: { stage: 'building', since: '2026-11-01T22:00:00Z' } },
+      ],
+    },
+  });
+  assert.deepEqual([...stages], [['flat-chores#1', { stage: 'building', since: '2026-11-01T22:00:00Z', capSuppressed: null }]]);
+  const row = {
+    id: 60, kind: 'request', slug: 'flat-chores', name: 'Flat Chores', number: 1, request_title: 'First version of Flat Chores',
+    state: 'open', request_state: 'open', own: true, created_at: '2026-11-01T21:50:00Z',
+  };
+  const lists = aiWork.arrange([row], 5, new Date('2026-11-01T22:08:00Z'), null, stages);
+  assert.deepEqual(lists.next.map((t) => [t.number, t.what, t.by]), [[1, 'building', 'bot']]);
+  assert.equal(lists.waiting.length, 0, 'not Waiting · Nobody yet');
+});
+
 test('Homeroom bot answers "where do things stand?" from the lists this page draws', () => {
   const aiWork = require('../src/services/ai-work');
   const games = { slug: 'games', name: 'Game corner' };
