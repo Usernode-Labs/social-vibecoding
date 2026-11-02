@@ -2247,6 +2247,10 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
     // (homeroom-bot.js planFromEarly) rings nothing: it is built at once.
     ...(quiet ? { moment: null } : {}),
     replyToId: await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
+    // B02 (audit 2 Nov 2026): in Main, where a plan waiting on them is drawn
+    // whole and Review the plan opens. Quoting a message in its card's
+    // thread put a first version's plan there, which only opens its hub.
+    threadRootId: false,
   });
   if (!sent?.messageId) {
     await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, 'not_sent']);
@@ -3736,7 +3740,9 @@ async function noteProposalMerged(pool, session, { deps = {} } = {}) {
     bot,
     userId: requester.userId,
     replyToId: card ? null : await requestStart(pool, { userId: requester.userId, appId: run.app_id, issueNumber: run.issue_number }),
-    ...(card ? { threadRootId: card.messageId } : {}),
+    // B23 (audit 2 Nov 2026): said in Main either way, beside its card. With
+    // no card, quoting a message in a thread put "it's live" in the thread.
+    threadRootId: card ? card.messageId : false,
     idempotencyKey: `hrbot-merged-${session.id}`,
     content: mergedText({
       line: card ? null : requestLine(context), appName: context.appName, live, platform, card: !!open, change: !context.firstVersion,

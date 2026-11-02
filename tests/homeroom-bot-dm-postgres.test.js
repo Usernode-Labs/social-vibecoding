@@ -1216,6 +1216,25 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.equal(await dm.threadRootFor(pool, { conversationId, userId: ada.id, replyToId: reply.message.id }), card.messageId,
       'what the bot says back goes in the same thread');
 
+    // B02 (audit 2 Nov 2026): a plan that waits on her is said in Main, where
+    // it is drawn whole, even when the message it quotes sits under the card.
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, awaiting_go_at) VALUES ($1, 5001, 'live', 'ready', NOW()) RETURNING id`,
+      [app.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, issue_number, kind, title, status, message_id)
+       VALUES ($1, $2, $3, 5001, 'file_request', 'Plant photos', 'done', $4)`,
+      [ada.id, conversationId, app.id, reply.message.id],
+    );
+    await pool.query('UPDATE conversation_messages SET reply_to_id = $2 WHERE id = $1', [reply.message.id, reply.message.id]);
+    const plan = await dm.sendPlanCard(pool, { app, issueNumber: 5001, runId: run.id, plan: { bullets: ['A photo per plant'] }, bot });
+    assert.ok(plan?.messageId, 'the plan was sent');
+    const planned = await conversations.getMessage(pool, viewer, conversationId, plan.messageId);
+    assert.equal(planned.threadRootId, null, 'the plan is in Main, not under the card');
+    assert.equal(planned.metadata.homeroomBot.kind, 'plan');
+    await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE user_id = $1 AND issue_number = 5001', [ada.id]);
+
     // A request from before threads has no card: the chat opens its story on
     // its oldest message, and a reply written there is about it all the same.
     await pool.query(
