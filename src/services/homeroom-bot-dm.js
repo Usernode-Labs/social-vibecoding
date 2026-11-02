@@ -737,7 +737,9 @@ async function sendDm(pool, {
 // handling is still doing, so the bot is never left typing forever: once
 // nothing renews it, every reader clears the line on its own.
 const TYPING_RENEW_MS = 4000;
-const TYPING_MAX_MS = 3 * 60 * 1000;
+// Homeroom bot parity, P1: a turn of sixteen rounds can run for minutes (it
+// was three, when a turn had six).
+const TYPING_MAX_MS = 8 * 60 * 1000;
 
 // Where the bot types: a conversation's main chat, or one thread in it
 // (31 Oct 2026: an answer to a message written in a thread lands in that
@@ -761,8 +763,34 @@ const typingSends = new Map();
 // (frontend/locales/en/messages.json `thread.botWorking.*`), as the agent
 // session's activity line does from a tool's name. No `doing` is "Thinking".
 // A person's typing event (routes/conversations.js) never carries one.
-const DOING_KINDS = Object.freeze(['progress', 'request', 'code', 'drawing', 'designing', 'drafting']);
+// Homeroom bot parity, P1: 'writing' carries the answer as it is written
+// (homeroom-bot-mayor.js draftWriter), its own words and the only `text`
+// a typing event has: the newest MAX_DRAFT_CHARS of it, so the event fits
+// the bus between servers (ws-bus.js: 8000 bytes, or it becomes a nudge to
+// reload) and the card stays a card. The message sent takes its place.
+// 'looking': a helper sent to look into a project's code (P3, look_into).
+const DOING_KINDS = Object.freeze(['progress', 'request', 'code', 'drawing', 'designing', 'drafting', 'writing', 'looking']);
 const MAX_DOING_PROJECT = 60;
+const MAX_DRAFT_CHARS = 1800;
+const MAX_DRAFT_BYTES = 5600;
+
+/** Pure: the end of an answer being written, as a typing event carries it: '…' and the newest words, when it is long. */
+function draftTail(text) {
+  let out = String(text || '').replace(/\r/g, '').trim();
+  if (!out) return '';
+  const fits = (value) => Buffer.byteLength(JSON.stringify(value), 'utf8') <= MAX_DRAFT_BYTES;
+  if (out.length <= MAX_DRAFT_CHARS && fits(out)) return out;
+  let keep = MAX_DRAFT_CHARS;
+  let tail = out.slice(-keep);
+  while (keep > 100 && !fits(`… ${tail}`)) {
+    keep = Math.floor(keep * 0.8);
+    tail = out.slice(-keep);
+  }
+  // From a word, not the middle of one.
+  const space = tail.search(/\s/);
+  if (space > 0 && space < 40) tail = tail.slice(space + 1);
+  return `… ${tail.trimStart()}`;
+}
 
 /** Pure: `what` as a typing event carries it ({ kind, number?, project? }), or null for "thinking". */
 function typingDoing(what) {
@@ -771,9 +799,13 @@ function typingDoing(what) {
     const number = Number(what.number);
     return Number.isSafeInteger(number) && number > 0 ? { kind: 'request', number } : null;
   }
-  if (what.kind === 'code') {
+  if (what.kind === 'code' || what.kind === 'looking') {
     const project = typeof what.project === 'string' ? clip(what.project.replace(/\s+/g, ' ').trim(), MAX_DOING_PROJECT) : '';
-    return project ? { kind: 'code', project } : { kind: 'code' };
+    return project ? { kind: what.kind, project } : { kind: what.kind };
+  }
+  if (what.kind === 'writing') {
+    const text = typeof what.text === 'string' ? draftTail(what.text) : '';
+    return text ? { kind: 'writing', text } : null;
   }
   return { kind: what.kind };
 }
@@ -1108,11 +1140,19 @@ async function requestStart(pool, { userId, appId, issueNumber }) {
  * platform does (limits.weekStartUtc) and as weekKey reads it.
  */
 async function weeklySpentCents(pool, userId) {
+  // Homeroom bot parity (P3, P9): and the looks into code they asked for,
+  // an investigation's check-ins among them (homeroom_bot_looks). P8: and the
+  // pictures it made for them (services/bot-pictures.js), in the chat or for a
+  // build they pay for.
   const { rows } = await pool.query(
-    `SELECT COALESCE(SUM(COALESCE(r.cost_usd, 0) + COALESCE(r.build_cost_usd, 0)), 0) AS usd
+    `SELECT COALESCE((SELECT SUM(COALESCE(r.cost_usd, 0) + COALESCE(r.build_cost_usd, 0))
        FROM homeroom_bot_runs r
        LEFT JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
-      WHERE r.charged AND COALESCE(r.payer_user_id, q.user_id) = $1 AND r.created_at >= $2`,
+      WHERE r.charged AND COALESCE(r.payer_user_id, q.user_id) = $1 AND r.created_at >= $2), 0)
+      + COALESCE((SELECT SUM(l.cost_usd) FROM homeroom_bot_looks l
+      WHERE l.charged AND l.user_id = $1 AND l.created_at >= $2), 0)
+      + COALESCE((SELECT SUM(p.cost_usd) FROM homeroom_bot_pictures p
+      WHERE p.payer_user_id = $1 AND p.created_at >= $2), 0) AS usd`,
     [userId, require('./limits').weekStartUtc()],
   );
   return Math.round((Number(rows[0]?.usd) || 0) * 100);
@@ -2802,6 +2842,8 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
   );
   if (!rows[0]) return null;
   const run = rows[0];
+  // Homeroom bot parity (P4): ready for its yes; a batch's roll-up says so.
+  require('./homeroom-bot-batches').noteRequestChanged(pool, run.id, Number(run.issue_number));
   const broken = brokenWords(brokenClaims);
   const bot = deps.bot || await botAccount(pool);
   if (!bot) return null;
@@ -2856,6 +2898,9 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
   await require('./homeroom-bot-chat').noteRequestStatus(pool, {
     appId: run.id, issueNumber: Number(run.issue_number), status: 'ready', sessionId: id, deps: { strict: true },
   });
+  // Homeroom bot parity P6: a change that was working past a check that is
+  // not its own passes now; its card says so (never throws).
+  await require('./homeroom-bot-flaky-checks').noteGreen(pool, id, { deps });
   return told;
 }
 
@@ -6064,6 +6109,8 @@ module.exports = {
   messageThread,
   threadDeps,
   noteStep,
+  // Homeroom bot parity P6: a request's card in a person's chat with the bot.
+  cardShown,
   waitingPhrase,
   BUILT_TESTING_TEXT,
   PREVIEW_RETRY_TEXT,
@@ -6131,6 +6178,9 @@ module.exports = {
   startTyping,
   whileTyping,
   typingDoing,
+  draftTail,
+  MAX_DRAFT_CHARS,
+  MAX_DRAFT_BYTES,
   DOING_KINDS,
   recordRequester,
   requesterOf,

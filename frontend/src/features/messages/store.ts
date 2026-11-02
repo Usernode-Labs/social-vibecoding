@@ -61,9 +61,18 @@ export interface Typist {
  * event carries it (services/homeroom-bot-dm.js typingDoing): a kind and
  * what it names. The words are this screen's (./bot-working.tsx).
  */
-export interface BotDoing { kind: string; number?: number; project?: string }
+export interface BotDoing {
+  kind: string;
+  number?: number;
+  project?: string;
+  /** Homeroom bot parity, P1: the answer so far, while it is written (kind 'writing'). */
+  text?: string;
+}
 
-/** The `doing` of a typing event, or null: only a kind word, a request number and a short name. */
+/** The longest answer-so-far a working card shows (the server sends its newest 1800 characters). */
+export const MAX_BOT_DRAFT_CHARS = 2000;
+
+/** The `doing` of a typing event, or null: only a kind word, a request number, a short name, and the answer being written. */
 export function botDoingOf(raw: unknown): BotDoing | null {
   if (!raw || typeof raw !== 'object') return null;
   const value = raw as Record<string, unknown>;
@@ -71,10 +80,12 @@ export function botDoingOf(raw: unknown): BotDoing | null {
   if (!kind) return null;
   const number = Number(value.number);
   const project = typeof value.project === 'string' ? value.project.replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+  const text = kind === 'writing' && typeof value.text === 'string' ? value.text.trim().slice(-MAX_BOT_DRAFT_CHARS) : '';
   return {
     kind,
     ...(Number.isSafeInteger(number) && number > 0 ? { number } : {}),
     ...(project ? { project } : {}),
+    ...(text ? { text } : {}),
   };
 }
 
