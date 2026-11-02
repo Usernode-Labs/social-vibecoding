@@ -895,6 +895,78 @@
     "text": "a change",
     "description": "Second line of a notification about a change the viewer was asked to approve, when the change has no title. Lower case: it stands where the title would."
   },
+  "row.changeClosed.label": {
+    "text": "Closed",
+    "description": "First line of a notification telling the viewer that their own change was closed without going live. An adjective. The change's title is on the line below, followed by the reason."
+  },
+  "row.changeClosed.aChange": {
+    "text": "a change",
+    "description": "Second line of a notification that the viewer's change was closed, when the change has no title. Lower case: it stands where the title would."
+  },
+  "row.closedWhy.autoRejected": {
+    "text": "It was set aside for now: more No than Yes, and not enough support to carry it.",
+    "description": "One sentence after the title of a change in a notification row, saying why the change was closed. The change's name is not repeated."
+  },
+  "row.closedWhy.adminNo": {
+    "text": "It was set aside: an admin voted No and nobody voted Yes within a week.",
+    "description": "One sentence after the title of a change in a notification row, saying why the change was closed. The change's name is not repeated."
+  },
+  "row.closedWhy.approverNo": {
+    "text": "It was set aside: an approver voted No and nobody voted Yes in time.",
+    "description": "One sentence after the title of a change in a notification row, saying why the change was closed. The change's name is not repeated."
+  },
+  "row.closedWhy.replaced": {
+    "text": "It was replaced by a new one.",
+    "description": "One sentence after the title of a change in a notification row, saying why the change was closed. The change's name is not repeated."
+  },
+  "row.closedWhy.superseded": {
+    "text": "It was withdrawn: another change for the same request covers it.",
+    "description": "One sentence after the title of a change in a notification row, saying why the change was closed. The change's name is not repeated."
+  },
+  "row.closedWhy.requestClosed": {
+    "text": "It was withdrawn: the request it was built for is closed.",
+    "description": "One sentence after the title of a change in a notification row, saying why the change was closed. The change's name is not repeated."
+  },
+  "row.closedWhy.redChecks": {
+    "text": "It was withdrawn: its checks failed and nobody changed it for a few days.",
+    "description": "One sentence after the title of a change in a notification row, saying why the change was closed. The change's name is not repeated."
+  },
+  "row.closedWhy.stale": {
+    "text": "It went quiet and was set aside.",
+    "description": "One sentence after the title of a change in a notification row, saying why the change was closed. The change's name is not repeated."
+  },
+  "row.closedWhy.campaignRefused": {
+    "text": "It could not be put up for a vote. The maintenance campaign can make it again.",
+    "description": "One sentence after the title of a change in a notification row, saying why the change was closed. The change's name is not repeated."
+  },
+  "row.closedWhy.prClosed": {
+    "text": "It was closed on GitHub, so it is closed here too.",
+    "description": "One sentence after the title of a change in a notification row, saying why the change was closed. The change's name is not repeated."
+  },
+  "row.closedWhy.prMerged": {
+    "text": "It was merged on GitHub before it went up for a vote.",
+    "description": "One sentence after the title of a change in a notification row, saying why the change was closed. The change's name is not repeated."
+  },
+  "row.closedWhy.updateSkipped": {
+    "text": "It was skipped. Its original won't offer these changes again.",
+    "description": "One sentence after the title of a change in a notification row, saying why the change was closed. The change's name is not repeated."
+  },
+  "row.closedWhy.updateReplaced": {
+    "text": "The original changed again, and the newer update needs fitting to this version.",
+    "description": "One sentence after the title of a change in a notification row, saying why the change was closed. The change's name is not repeated."
+  },
+  "row.closedWhy.updateRefused": {
+    "text": "It could not be put up for a vote. It will be offered again when the original changes.",
+    "description": "One sentence after the title of a change in a notification row, saying why the change was closed. The change's name is not repeated."
+  },
+  "row.closedWhy.mergedElsewhere": {
+    "text": "It was merged on GitHub into another branch, not into main.",
+    "description": "One sentence after the title of a change in a notification row, saying why the change was closed. The change's name is not repeated."
+  },
+  "row.closedWhy.withdrawn": {
+    "text": "It was withdrawn.",
+    "description": "One sentence after the title of a change in a notification row, saying why the change was closed. The change's name is not repeated."
+  },
   "row.merged.forced": {
     "text": "Made live by an admin",
     "description": "First line of a notification: an administrator put the viewer's change into the running project without waiting for the vote. The change's title is on the line below."

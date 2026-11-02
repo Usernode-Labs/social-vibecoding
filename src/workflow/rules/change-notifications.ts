@@ -146,6 +146,37 @@ export async function createVotedChangeMergedNotifications(
   return rows;
 }
 
+// #6100: the author's "your change was closed", with the reason the close
+// recorded (public/js/app-view.js and frontend/src/features/notifications/
+// notifications.js word it from their catalogs). System-generated like
+// pr_merged: the group's or the platform's decision arriving, not a person
+// doing something to you, so source_user_id stays null. Nobody is told about
+// a close they made themselves (`byOwner`), a synthetic account (Homeroom
+// bot's own changes) gets nothing, and a retried event is stopped by the NOT
+// EXISTS on (user, session, kind, detail), its detail naming the event.
+export async function createChangeClosedNotification(
+  pool: Queryable,
+  { userId, appId, sessionId, eventId, byOwner = false }:
+    { userId: number | null; appId: number; sessionId: number; eventId: number | string; byOwner?: boolean },
+  allows: (db: Queryable, q: { userId: number | null; appId?: number | null; kind: string }) => Promise<boolean> = kindAllowed,
+): Promise<any[]> {
+  if (!userId || byOwner || !sessionId) return [];
+  if (!await allows(pool, { userId, appId, kind: 'change_closed' })) return [];
+  const detail = `event:${eventId}`;
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
+     SELECT $1, $2, $3, NULL, 'change_closed', $4
+      WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.id = $1 AND u.is_synthetic = TRUE)
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications n
+          WHERE n.user_id = $1 AND n.session_id = $3 AND n.kind = 'change_closed' AND n.detail = $4
+        )
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+    [userId, appId, sessionId, detail]
+  );
+  return rows;
+}
+
 // "One story": who asked Homeroom bot for the change `$1` it built (its
 // requester). The bot tells them about it itself, in their chat with it, so
 // the platform does not ping them a second time.

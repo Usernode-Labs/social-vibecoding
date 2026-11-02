@@ -13694,6 +13694,45 @@ async function seedStagingArchiveProposalFixtures(pool, config) {
     );
   }
 
+  // #6100: the shots' own member (usernode-capture) owns a closed change, so
+  // a fresh staging copy can show why a change was closed on its page and in
+  // the bell. Obviously fake, and only ever written here, in staging: the
+  // close is not run through the proposal machine (its row is the state a
+  // real close leaves). Idempotent on the branch name.
+  const whyBranch = 'staging-fixture/change-closed-reason';
+  const { rows: [member] } = await pool.query(
+    `SELECT id FROM users WHERE username = 'usernode-capture'`
+  );
+  if (member) {
+    if (config.selfAppSlug) {
+      await pool.query(
+        `INSERT INTO community_members (community_id, user_id)
+         SELECT a.community_id, $2 FROM apps a WHERE a.id = $1 AND a.community_id IS NOT NULL
+         ON CONFLICT DO NOTHING`,
+        [appId, member.id]
+      );
+    }
+    const { rows: [whyClosed] } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_title, status, close_reason,
+          created_at, promoted_at, archived_at)
+       SELECT $1, $2, $3, 9302,
+              '[Mock] Closed change — why it closed is on its page',
+              'archived', 'auto-rejected',
+              NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE app_id = $1 AND branch_name = $3)
+       RETURNING id`,
+      [appId, member.id, whyBranch]
+    );
+    if (whyClosed) {
+      await pool.query(
+        `INSERT INTO notifications (user_id, app_id, session_id, kind, detail)
+         VALUES ($1, $2, $3, 'change_closed', $4)`,
+        [member.id, appId, whyClosed.id, `event:${whyClosed.id}`]
+      );
+    }
+  }
+
   // Active, non-promoted session — surfaces as a chip in the viewer's
   // "Your dev session" strip with the new inline Archive button. No
   // promoted_at so it stays a live in-progress session (not a proposal
