@@ -23811,7 +23811,10 @@ html[data-side-strip="left"] #platform-header {
    row underneath.
 
    frontend/src/lib/side-strip.ts turns a top inset of 64px or more, with NO
-   side column, into one fact on <html>:
+   side column, on a screen at least 600px wide (#6161: an ordinary iPhone's
+   inset reaches 64px in the app too, and its clock runs across the top-left,
+   so the width is what tells the Duo's band from a plain phone's status
+   bar), into one fact on <html>:
 
      data-top-band        the band is there
      --platform-band-h    its height, in px (84 in `?side-strip=up`)
