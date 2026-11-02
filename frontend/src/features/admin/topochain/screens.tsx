@@ -11,6 +11,7 @@ import { SeasonEventsScreen } from './season-events.tsx';
 import { SeasonsScreen } from './seasons.tsx';
 import { SettingsScreen } from './settings.tsx';
 import { SqlConsoleScreen } from './sql-console.tsx';
+import { TextTranslationsScreen } from './text-translations.tsx';
 import { UserActivitiesScreen } from './user-activities.tsx';
 import { WaitlistScreen } from './waitlist.tsx';
 
@@ -39,6 +40,7 @@ import { WaitlistScreen } from './waitlist.tsx';
 export const TOPO_REACT_SCREENS: Record<string, { mount(host: Element): void }> = {
   'api-tester': { mount(host) { mountLegacyPortal(host, <ApiTesterScreen />); } },
   'app-version': { mount(host) { mountLegacyPortal(host, <AppVersionScreen />); } },
+  'text-translations': { mount(host) { mountLegacyPortal(host, <TextTranslationsScreen />); } },
   'challenge-scoring': { mount(host) { mountLegacyPortal(host, <ChallengeScoringScreen />); } },
   'challenge-templates': { mount(host) { mountLegacyPortal(host, <ChallengeTemplatesScreen />); } },
   delegations: { mount(host) { mountLegacyPortal(host, <DelegationsScreen />); } },
