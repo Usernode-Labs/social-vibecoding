@@ -1208,6 +1208,12 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-message:hover .messages-message-actions,
 .messages-message:focus-within .messages-message-actions,
 .messages-message-actions.msgx-bar-open { display: flex; }
+/* Audit D13: on somebody else's bubble the bar is a child of its name line
+   (message-row.tsx `barBesideHead`), which is as wide as the name and the
+   time, so it hangs just past the time, centred on that line, beside the
+   message it acts on. */
+.messages-message-head:has(> .messages-message-actions) { position: relative; }
+.messages-message-head > .messages-message-actions { top: -10px; right: auto; left: calc(100% + 8px); }
 
 /* The tray of a message still in flight keeps its place but draws nothing
    (#2907) — on touch it is a line of the row, and growing it only once the
@@ -2028,6 +2034,11 @@ form.agent-session-composer:focus-within {
 .messages-send svg { width: 20px; height: 20px; stroke-width: 2.4; }
 .messages-send:hover { background: var(--accent-light); }
 .messages-send:disabled { opacity: .35; }
+/* Audit C06: a request's or a channel's reply box (features/group-chat/
+   composer.tsx) is filled by its module, not React, so its Send is never
+   disabled; with an empty field and no file staged it reads as the same
+   faded disc Messages' own Send is. */
+.messages-composer-card:not([data-gc-files]):has(textarea:placeholder-shown) .messages-send { opacity: .35; }
 /* #3735: ONE COMPACT LINE ON A PHONE. Below 768px the card is the "+", the
    field and the send disc on a single 44px row, and it grows only with what
    is typed, up to the field's 140px ceiling as everywhere. It was about 75px:
@@ -10754,6 +10765,7 @@ html.un-kb #settings-content-col > .settings-sheet {
 }
 .gc-send:hover { background: var(--accent-light); }
 .gc-send:disabled { opacity: .35; }
+.gc-composer-card:not([data-gc-files]):has(textarea:placeholder-shown) .gc-send { opacity: .35; }
 /* #3735: the same compact line on a phone as the Messages composer (the
    phone block after `.messages-send` above): a 44px pill, 4px of padding
    round a 36px row, with the paperclip and the send disc drawn at 36px and
@@ -20118,12 +20130,13 @@ html[data-nav-drawer] #app-view { touch-action: pan-y; }
     position: static; width: 28px; height: 28px; border-radius: 8px; font-size: 11px;
   }
   .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > .messages-group-faces > :last-child { display: none; }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-row-time,
+  /* AUDIT C03 (2 Nov 2026): the column keeps the rows' own type, 15 over
+     13 at the house weight, and their time: a 400-weight title and a 12px
+     line with no time made the same list two designs, upright and
+     sideways. Only the members chip goes, for the narrower column. */
   .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-group-tag { display: none; }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-row-name { font-size: 15px; font-weight: 400; }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-row-preview { font-size: 12px; line-height: 16px; }
   .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-active { background: var(--lit-tint); color: var(--lit-ink); }
-  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-active .messages-row-name { color: inherit; font-weight: 600; }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-active .messages-row-name { color: inherit; }
   /* The peek: a picture of the conversation, pressed as one. */
   .messages-thread-peek { overflow: hidden; }
   .messages-thread-peek > .messages-peek-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
@@ -20136,12 +20149,20 @@ html[data-nav-drawer] #app-view { touch-action: pan-y; }
   }
   :is(.dark) .messages-peek-open { background: rgba(0, 0, 0, 0.22); }
   .messages-peek-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; }
-  /* In a conversation the header names it, so its sheet keeps only its discs,
-     and they take no row of their own (polish N15: a 48px row held the ⋯
-     alone). They float at the conversation's top-right corner, over the
-     Homeroom bot's Activity strip, which leaves them its right end. */
+  /* In a conversation the header names it, so its sheet keeps only its discs.
+     Over the Homeroom bot's Activity strip they float at the top-right
+     corner, on the strip's right end, which it leaves them (polish N15: a
+     48px row held the ⋯ alone). */
   .messages-layout.messages-drawer > .messages-thread-pane > .messages-thread-header {
     position: absolute; top: 4px; right: 12px; z-index: 25; padding: 0; gap: 8px;
+  }
+  /* WITH NO STRIP UNDER THEM THEY TAKE A SLIM ROW (audit C01, 2 Nov 2026).
+     Floating over a group's or a DM's transcript, the members and ⋯ discs
+     sat on the top bubble's words and sender line, and a tap meant for the
+     bubble opened the menu. A 40px band, the discs at its right end, keeps
+     the transcript below them. */
+  .messages-layout.messages-drawer > .messages-thread-pane > .messages-thread-header:not(:has(+ [data-bot-strip])) {
+    position: static; padding: 4px 12px; justify-content: flex-end;
   }
   .messages-layout.messages-drawer > .messages-thread-pane > .messages-thread-header .messages-thread-action { width: 32px; height: 32px; }
   .messages-layout.messages-drawer > .messages-thread-pane > .messages-thread-header .messages-thread-action svg { width: 18px; height: 18px; }
@@ -25118,6 +25139,13 @@ section + .workshop-search {
   }
   .messages-layout.messages-list-in-rail > .messages-thread-pane {
     margin-left: 0;
+  }
+  /* AUDIT C04 (2 Nov 2026): a conversation with nothing beside it keeps a
+     reading width, as All messages keeps its column, rather than running
+     about 1500px wide at 1920, its bubbles a screen apart. */
+  .messages-layout.messages-list-in-rail > .messages-thread-pane:last-child {
+    max-width: 960px;
+    margin-inline: auto;
   }
   .messages-layout.messages-list-page > .messages-thread-pane {
     display: none;

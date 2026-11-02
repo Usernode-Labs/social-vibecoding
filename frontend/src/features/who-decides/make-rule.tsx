@@ -98,10 +98,19 @@ function PresetsSheet({ now, viewer, onPick, onGone }: {
   };
   const closeRef = useRef(close);
   closeRef.current = close;
+  // AUDIT D02 (2 Nov 2026): Escape closes this sheet and nothing under it.
+  // The make screen listens for Escape on the document too, and was there
+  // first, so one press closed both layers. Heard in the capture phase, it
+  // is this sheet's before anyone's, and goes no further.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeRef.current(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      closeRef.current();
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
   }, []);
   const changed = picked !== now;
   return (

@@ -2415,26 +2415,6 @@
     "text": "Couldn’t unblock this user.",
     "description": "Error in the \"New message\" dialog when unblocking a person failed and the server gave no reason."
   },
-  "create.error.block": {
-    "text": "Couldn’t block this person.",
-    "description": "Error in the \"New message\" dialog when blocking a person failed and the server gave no reason."
-  },
-  "create.block.title": {
-    "text": "Block @{{username}}?",
-    "description": "Title of the confirmation before blocking a person, so they can no longer message you. \"Block\" is a verb. {{username}} is that person; keep the @."
-  },
-  "create.block.titleUnknown": {
-    "text": "Block @unknown?",
-    "description": "Title of the confirmation before blocking a person, so they can no longer message you. \"Block\" is a verb. Used when the username is not known; \"@unknown\" is written as it has always been shown."
-  },
-  "create.block.message": {
-    "text": "Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.",
-    "description": "Body of the confirmation before blocking a person: what blocking does."
-  },
-  "create.block.confirm": {
-    "text": "Block",
-    "description": "Confirm button of the confirmation before blocking a person. A verb: stop this person from messaging you."
-  },
   "create.title": {
     "text": "New message",
     "description": "Title of the dialog for starting a conversation with a person or creating a group chat."
@@ -2490,18 +2470,6 @@
   "create.result.message": {
     "text": "Message",
     "description": "Action shown on a person in the search results of the \"New message\" dialog: pressing the row opens a direct conversation with them. A verb."
-  },
-  "create.result.blockNamed": {
-    "text": "Block @{{username}}",
-    "description": "Accessible name of the \"Block\" button beside a person in the search results. \"Block\" is a verb: stop this person from messaging you. {{username}} is that person; keep the @."
-  },
-  "create.result.blockUnknown": {
-    "text": "Block @unknown",
-    "description": "Accessible name of the \"Block\" button beside a person in the search results. \"Block\" is a verb: stop this person from messaging you. Used when the username is not known; \"@unknown\" is written as it has always been shown."
-  },
-  "create.result.block": {
-    "text": "Block",
-    "description": "Button beside a person in the search results of the \"New message\" dialog. A verb: stop this person from messaging you."
   },
   "create.blockedPeople": {
     "text": "Blocked people",
@@ -3180,8 +3148,8 @@
     "description": "Small-caps heading over the Messages list section that holds the viewer's conversations with AI agents and their changes in flight. It is a button that folds the section away and opens it again."
   },
   "inbox.section.people": {
-    "text": "Direct messages",
-    "description": "Small-caps heading over the last section of the Messages list, under Agents: the viewer's direct messages and group chats with people. It does not fold."
+    "text": "People",
+    "description": "Small-caps heading over the last section of the Messages list, under Agents, and over the same rows in the sidebar: the viewer's direct messages and group chats with people. It does not fold."
   },
   "inbox.section.working_one": {
     "text": "{{count}} working",
