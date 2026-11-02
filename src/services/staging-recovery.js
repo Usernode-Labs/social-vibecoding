@@ -203,8 +203,14 @@ async function stagingNeedsRebuild(session, { config = null, headSha = null, env
   // because the heal sweep and the reap pass both act on this verdict.
   if (!state) return false;
   // Covers 'not_found' (shape 2 — the container is gone) as well as
-  // exited/dead/created.
-  if (state.status !== 'running') return true;
+  // exited/dead/created. A preview its row records asleep (#6157,
+  // services/preview-sleep.js) has no pod on purpose, or one still waking:
+  // it is not gone, and waking it is what opens it. Its commit, database and
+  // environment are still judged below, from its labels, so a sleeping
+  // preview that is out of date is rebuilt rather than woken.
+  const asleep = !!session.staging_asleep_at && session.staging_runtime_kind === 'kubernetes'
+    && state.status !== 'not_found';
+  if (state.status !== 'running' && !asleep) return true;
   if (previewIsOfAnotherCommit(session, headSha)) return true;
   if (await previewDatabaseNeedsRebuild(session, state)) return true;
   if (!config || !envCheck) return false;
@@ -223,7 +229,8 @@ async function stagingNeedsRebuild(session, { config = null, headSha = null, env
 // The preview-runtimes clock's run (src/workflow/clock/services.ts): every
 // preview that backs a vote and that the preview machine says serves is
 // looked at, every run, and one whose runtime or database is gone is
-// reported lost, so the machine builds it again (PreviewLost). One the
+// reported lost, so the machine builds it again (PreviewLost). A sleeping
+// one (#6157) is not gone: stagingNeedsRebuild reads its row's sleep. One the
 // machine is building, retiring or retrying is its own already
 // (preview-workflow.working). The leader's heal looked only at the 50
 // oldest. `signal` ends the look early (the run's lease is gone).
@@ -231,7 +238,7 @@ async function lookForLostPreviews(config, { signal = null } = {}) {
   const pool = require('../db/pool').getPool(config);
   const { rows } = await pool.query(
     `SELECT cs.id, cs.app_id, cs.staging_url, cs.staging_runtime_kind, cs.staging_runtime_name,
-            cs.staging_container_id, cs.staging_commit_sha
+            cs.staging_container_id, cs.staging_commit_sha, cs.staging_asleep_at
        FROM wf_instances w JOIN chat_sessions cs ON w.key = 'session:' || cs.id
       WHERE w.machine = 'preview' AND w.state IN ('settled', 'deferred')
         AND NOT (w.state = 'settled' AND w.data->>'verdict' = 'error')

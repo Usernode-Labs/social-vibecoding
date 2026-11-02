@@ -2179,6 +2179,26 @@ async function databaseExists(dbName, { strict = false } = {}) {
   return false;
 }
 
+// What a database weighs on disk, in bytes, on the server that holds it
+// (pg_database_size, read from the catalog: no connection to the database
+// itself). Null when it is on none of them, or none could be read. Never
+// throws: the sleep pass logs it and the admin console totals it
+// (services/preview-sleep.js), and neither decides anything by it.
+async function databaseSize(dbName) {
+  if (!SAFE_IDENT.test(String(dbName || '')) || OVERLONG_IDENT.test(String(dbName))) return null;
+  for (const server of serversHolding(dbName)) {
+    try {
+      const stdout = await adminExecutor(server)(
+        `SELECT pg_database_size(datname) FROM pg_database WHERE datname = '${dbName}'`,
+        { tuplesOnly: true }
+      );
+      const raw = String(stdout || '').trim();
+      if (/^\d+$/.test(raw) && Number.isSafeInteger(Number(raw))) return Number(raw);
+    } catch (_) { /* the next server, or null */ }
+  }
+  return null;
+}
+
 async function roleExists(roleName) {
   if (!SAFE_IDENT.test(roleName)) return false;
   try {
@@ -3993,6 +4013,7 @@ module.exports = {
   adoptExistingDatabase,
   ensureRoleExists,
   databaseExists,
+  databaseSize,
   roleExists,
   truncatePrivateTables,
   scrubPrivateColumns,
