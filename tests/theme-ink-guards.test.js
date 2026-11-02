@@ -389,6 +389,11 @@ test('the light and dark palettes declare the same variables', () => {
     // out of `.dev-ws`; the bar is back in flow (#2767) and the token stayed
     // where every reader can see it. A `.dark` copy could only restate it.
     '--ws-gap',
+    // The reading direction's two knobs (lib/i18n/direction.ts): a sign and a
+    // gradient side, not colours. They change with the language through
+    // `html[dir="rtl"]`, never with the theme, so a `.dark` counterpart would
+    // be the wrong axis and could only restate the light value.
+    '--rtl-sign', '--fade-to-inline-end',
   ]);
   const missing = [...light].filter((n) => !dark.has(n) && !THEME_INVARIANT.has(n)).sort();
   assert.deepEqual(missing, [],

@@ -105,7 +105,7 @@ const POINT_EMOJI = { make: '\u2728', ask: '\u{1F4AC}', decide: '\u{1F5F3}\uFE0F
 // the page fits a 390x844 phone above Continue with each line on one line
 // (a narrower phone wraps them rather than cutting them off). The hairline
 // starts where the words do, as the primitive's own insets do for its tile.
-const POINT_ROW = 'gap-3 py-2 [&:not(:last-child)]:after:left-[4.25rem] [@media(max-height:799px)]:py-0.5';
+const POINT_ROW = 'gap-3 py-2 [&:not(:last-child)]:after:start-[4.25rem] [@media(max-height:799px)]:py-0.5';
 // The make screen's idea tile (../first-session/make.tsx), a little smaller:
 // the app tile's face and hairline, the emoji at 22px.
 const POINT_TILE = 'app-icon-tile flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[22px] leading-none';

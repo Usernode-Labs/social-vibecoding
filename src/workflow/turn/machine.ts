@@ -214,6 +214,8 @@ export function turnMachine() {
     version: 4,
     events: { Asked: decodeAsked, StopRequested: decodeStop, Tick: decodeTick },
     create: ['Asked'],
+    // What web appends: a person's turn, and Stop.
+    web: ['Asked', 'StopRequested'],
     decode: (row) => ({ name: row.state, data: row.data as Data }),
     facts: (tx, _s, e, ctx) => readFacts(tx, e, ctx.key),
     authorize: {

@@ -81,11 +81,30 @@ const px = (value) => {
 
 /** [top, right, bottom, left] from a 1-4 value padding shorthand. */
 function padding(value) {
-  const v = value.split(/\s+/).map(px);
+  const v = String(value).split(/\s+/).map(px);
   if (v.length === 1) return [v[0], v[0], v[0], v[0]];
   if (v.length === 2) return [v[0], v[1], v[0], v[1]];
   if (v.length === 3) return [v[0], v[1], v[2], v[1]];
   return v;
+}
+
+/**
+ * [top, right, bottom, left] for a rule's declarations, written EITHER as the
+ * physical shorthand or as the logical `padding-block` / `padding-inline`
+ * pair the cards use now (they mirror in Arabic, so they cannot be one
+ * shorthand). The four numbers are the geometry in English, which is what
+ * must still add up to the 44px line and the 56px desktop card.
+ */
+function cardPadding(declaration) {
+  if (declaration.padding) return padding(declaration.padding);
+  const block = String(declaration['padding-block'] || '').split(/\s+/).filter(Boolean).map(px);
+  const inline = String(declaration['padding-inline'] || '').split(/\s+/).filter(Boolean).map(px);
+  assert.ok(block.length && inline.length, 'the card pads in logical block and inline pairs');
+  const top = block[0];
+  const bottom = block.length > 1 ? block[1] : block[0];
+  const left = inline[0]; // inline-start, the left in English
+  const right = inline.length > 1 ? inline[1] : inline[0]; // inline-end, the right
+  return [top, right, bottom, left];
 }
 
 const MESSAGES = phoneBlock('#3735: ONE COMPACT LINE ON A PHONE');
@@ -94,7 +113,7 @@ const GC = phoneBlock('#3735: the same compact line on a phone as the Messages c
 // ── 1. The geometry ────────────────────────────────────────────────────
 
 test('the Messages card is one 44px line on a phone: 4px round a 36px row', () => {
-  const [top, right, bottom, left] = padding(decls(MESSAGES, '.messages-composer-card').padding);
+  const [top, right, bottom, left] = cardPadding(decls(MESSAGES, '.messages-composer-card'));
   const field = decls(MESSAGES, '.messages-composer-input');
   const [fieldTop, , fieldBottom] = padding(field.padding);
   // The field's own height is its padding round one line of its 22px leading,
@@ -138,7 +157,7 @@ test('the "+", the field and the send disc are one row', () => {
 });
 
 test('the group chat\'s card is the same 44px line on a phone', () => {
-  const [top, right, bottom] = padding(decls(GC, '.gc-composer-card').padding);
+  const [top, right, bottom] = cardPadding(decls(GC, '.gc-composer-card'));
   const field = decls(GC, '.gc-composer-card .gc-composer-input');
   // The field's leading and inline padding come from the Textarea's
   // `composerCard` box (leading-[22px], px-1); the phone block sets the
@@ -175,7 +194,7 @@ test('the smaller buttons are still 44px tap targets, and their overhang stays o
     assert.ok(overhang < ROW_GAP, 'the overhang ends inside the row gap, short of the field');
   }
   // And within the card: the overhang never reaches past its padding.
-  assert.ok(Math.min(...padding(decls(MESSAGES, '.messages-composer-card').padding)) >= 4);
+  assert.ok(Math.min(...cardPadding(decls(MESSAGES, '.messages-composer-card'))) >= 4);
 });
 
 // ── 3. The count's line ────────────────────────────────────────────────
@@ -235,17 +254,21 @@ test('the rendered microphone stays between the editable field and Send in the c
 // ── 4. What the phone block leaves alone ───────────────────────────────
 
 test('desktop keeps the card\'s padding and row, and is the app channel\'s height', () => {
-  assert.match(rule('.messages-composer-card'), /padding: 8px 8px 8px 12px;/);
+  assert.match(rule('.messages-composer-card'), /padding-block: 8px 8px; padding-inline: 12px 8px;/);
   assert.match(rule('.messages-composer-input'), /min-height: 40px;/);
   assert.match(rule('.messages-composer-input'), /padding: 9px 4px;/);
   assert.match(rule('.messages-send'), /width: 40px;\s*\n\s*height: 40px;/);
-  assert.match(rule('.gc-composer-card'), /padding: 8px 8px 8px 12px;/);
+  assert.match(rule('.gc-composer-card'), /padding-block: 8px 8px; padding-inline: 12px 8px;/);
   assert.match(rule('.gc-composer-card .gc-composer-input'), /min-height: 40px;/);
   assert.match(rule('.gc-send'), /width: 40px;\s*\n\s*height: 40px;/);
   // #4202: with the count's line gone, padding + row + padding is the whole
   // card, and the same sum for both composers.
   const height = (card, field) => {
-    const [top, , bottom] = padding(/padding: ([^;]+);/.exec(rule(card))[1]);
+    const text = rule(card);
+    const [top, , bottom] = cardPadding({
+      'padding-block': /padding-block: ([^;]+);/.exec(text)[1],
+      'padding-inline': /padding-inline: ([^;]+);/.exec(text)[1],
+    });
     return top + px(/min-height: (\d+px);/.exec(rule(field))[1]) + bottom;
   };
   assert.equal(height('.messages-composer-card', '.messages-composer-input'), 56);

@@ -872,6 +872,9 @@ export function shots(deps: Deps): Machine<SState, Facts> {
     version: 1,
     events: EVENTS,
     create: CREATE,
+    // What web appends: a worker's or a hand-off's declared changes and head, and
+    // a person's rerun, Stop and waiver.
+    web: ['Declared', 'HeadMoved', 'RetryRequested', 'StopRequested', 'WaiveRequested'],
     decode: (row) => ({ name: row.state, data: row.data } as SState),
     facts: (tx, state, event) => {
       const id = state.name === NONE ? Number((event.payload as any)?.sessionId) : (state.data as Data).sessionId;
@@ -1016,12 +1019,12 @@ const WRITES = {
   published: async (tx: Tx, w: any, ctx: any) => {
     await tx.query(
       `INSERT INTO shot_artifacts (id, run_id, story_id, viewport, side, variant, media, theme, content_type,
-                                   data, width, height, bytes, sha256,
-                                   density, dense_data, dense_width, dense_height, dense_bytes, dense_sha256,
+                                   width, height, bytes, sha256,
+                                   density, dense_width, dense_height, dense_bytes, dense_sha256,
                                    part, scale, focus_rect, public_safe, object_key, dense_object_key)
        SELECT md5(f.run_id || ':' || f.slot), f.run_id, f.story_id, f.viewport, f.side, f.variant, f.media, f.theme,
-              f.content_type, f.data, f.width, f.height, f.bytes, f.sha256,
-              f.density, f.dense_data, f.dense_width, f.dense_height, f.dense_bytes, f.dense_sha256,
+              f.content_type, f.width, f.height, f.bytes, f.sha256,
+              f.density, f.dense_width, f.dense_height, f.dense_bytes, f.dense_sha256,
               f.part, f.scale, f.focus_rect, f.public_safe, f.object_key, f.dense_object_key
          FROM shot_run_files f WHERE f.run_id = $1 AND f.slot = ANY($2::text[])
        ON CONFLICT DO NOTHING`, [w.runId, w.slots]);

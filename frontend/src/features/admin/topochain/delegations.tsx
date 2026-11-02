@@ -84,7 +84,7 @@ function PartyChip(
   { party, avatar, title, sub }: { party: string; avatar: ReactNode; title: ReactNode; sub?: ReactNode },
 ) {
   return (
-    <span className="inline-flex items-start gap-2 text-left" data-dlg-party={party}>
+    <span className="inline-flex items-start gap-2 text-start" data-dlg-party={party}>
       {avatar}
       <span className="inline-flex min-w-0 flex-col">
         <span className="text-sm font-medium leading-5">{title}</span>
@@ -353,8 +353,8 @@ function DelegationsScreen() {
     {
       label: 'Periods',
       cell: (d) => d.period_count,
-      tdClass: 'tabular-nums text-right text-xs text-zinc-500 dark:text-zinc-400',
-      thClass: 'text-right',
+      tdClass: 'tabular-nums text-end text-xs text-zinc-500 dark:text-zinc-400',
+      thClass: 'text-end',
     },
   ];
 

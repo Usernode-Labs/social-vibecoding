@@ -354,19 +354,19 @@ function FoldedChange({ item, i, view, plan, open, onToggle }: {
   return (
     <div className="dev-thread-fold" data-thread-change={item.id} data-thread-change-state={item.state || ''} data-thread-fold={open ? 'open' : 'shut'}>
       <div className="flex min-w-0 items-center gap-2" data-thread-change-line={item.id}>
-        <button type="button" className="dev-thread-fold-head min-w-0 flex-1 text-left" aria-expanded={open} data-thread-fold-toggle={item.id} onClick={onToggle}>
+        <button type="button" className="dev-thread-fold-head min-w-0 flex-1 text-start" aria-expanded={open} data-thread-fold-toggle={item.id} onClick={onToggle}>
           <span className="flex min-w-0 items-center gap-1.5">
             <ChevronDownIcon className="dev-ws-reveal-chev h-4 w-4 shrink-0" aria-hidden="true" style={open ? { transform: 'rotate(180deg)' } : undefined} />
             <span className={`${KICKER} min-w-0 truncate`}>{kicker}</span>
           </span>
-          <span className="mt-0.5 block min-w-0 pl-[22px] text-[15px] font-[650] leading-snug text-zinc-900 dark:text-zinc-100" data-thread-change-title={item.id}>
+          <span className="mt-0.5 block min-w-0 ps-[22px] text-[15px] font-[650] leading-snug text-zinc-900 dark:text-zinc-100" data-thread-change-title={item.id}>
             {item.title || t('project:topic.thread.item.changeUnnumbered')}
           </span>
         </button>
         {status ? <span className="shrink-0" data-thread-change-status={status.key}><StatusPill s={status} inline /></span> : null}
         <ChangeMenu item={item} view={view} />
       </div>
-      {open ? <div className="pl-[22px]"><ChangeBody item={item} view={view} plan={plan} ballot /></div> : null}
+      {open ? <div className="ps-[22px]"><ChangeBody item={item} view={view} plan={plan} ballot /></div> : null}
     </div>
   );
 }
@@ -419,7 +419,7 @@ function CompetingRow({ item, i, view, plan = null, onOpen }: {
     <div role="listitem" className={`flex items-start gap-3 px-3.5 py-3${i ? ' border-t border-[color:var(--app-sheet-line)]' : ''}`} data-change-row={letterOf(i)} data-thread-change-row={item.id}>
       <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-zinc-200/80 text-[13px] font-bold text-zinc-700 dark:bg-zinc-700/80 dark:text-zinc-200" aria-hidden="true">{letterOf(i)}</span>
       <span className="min-w-0 flex-1">
-        <button type="button" className="block min-w-0 text-left text-[15px] font-[650] leading-snug text-zinc-900 hover:underline dark:text-zinc-100" data-change-row-open={item.id} onClick={onOpen}>
+        <button type="button" className="block min-w-0 text-start text-[15px] font-[650] leading-snug text-zinc-900 hover:underline dark:text-zinc-100" data-change-row-open={item.id} onClick={onOpen}>
           {item.title || t('project:topic.thread.item.changeUnnumbered')}
         </button>
         <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[13px] text-zinc-500 dark:text-zinc-400">
@@ -582,7 +582,7 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
                 <div key={c.key} className="grid grid-cols-[66px_minmax(0,1fr)_18px] items-center gap-2.5 text-[13px]" data-ballot-tally={c.key}>
                   <span className="truncate font-semibold text-zinc-700 dark:text-zinc-200">{c.label}</span>
                   <Bar yes={c.yes} need={c.need} label={t('project:topic.thread.ballot.tally', { choice: c.label, yes: c.yes, need: c.need })} />
-                  <span className="text-right tabular-nums text-zinc-500 dark:text-zinc-400">{c.yes}</span>
+                  <span className="text-end tabular-nums text-zinc-500 dark:text-zinc-400">{c.yes}</span>
                 </div>
               ))}
             </div>
@@ -663,7 +663,7 @@ function CloseVote({ slug, close, onChanged }: { slug: string | null; close: Thr
   return (
     <div className="mt-3" data-close-proposal={close.id}>
       <div className={KICKER}>{t('project:topic.thread.close.kicker', { by: close.by || t('project:topic.thread.page.someone') })}</div>
-      <button type="button" className="mt-0.5 block min-w-0 text-left text-[15px] font-[650] leading-snug text-zinc-900 hover:underline dark:text-zinc-100" onClick={() => appView()?.openTopic?.('gov', close.id)}>
+      <button type="button" className="mt-0.5 block min-w-0 text-start text-[15px] font-[650] leading-snug text-zinc-900 hover:underline dark:text-zinc-100" onClick={() => appView()?.openTopic?.('gov', close.id)}>
         {close.reason || close.title || t('project:topic.thread.item.close')}
       </button>
       <div className="dev-change-pair mt-2">

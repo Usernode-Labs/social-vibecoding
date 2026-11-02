@@ -1564,7 +1564,7 @@
         key: p.key,
         label: Settings.str(p.label),
         active: p.key === active,
-        className: 'settings-nav-item flex w-full items-center gap-2.5 text-left rounded-lg pl-3 pr-9 py-2 text-sm transition-colors '
+        className: 'settings-nav-item flex w-full items-center gap-2.5 text-start rounded-lg ps-3 pe-9 py-2 text-sm transition-colors '
           + (p.key === active
             ? 'font-semibold bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)] shadow-[inset_0_0_0_1px_var(--lit-line)]'
             : 'font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
@@ -5507,9 +5507,25 @@
     // precisely "tapping it does nothing". The row must still offer the
     // ask. `ios-denied` renders the other dead end (determined-denied,
     // where iOS presents no prompt however often it is asked).
+    // `foreground-only` renders an Android build that produces blocks only
+    // while it is open: no permission rows, and the note saying so.
     _unDemoMode() {
       const v = this._demoParam('usernodedemo');
-      return (v === 'ios' || v === 'ios-denied') ? v : null;
+      return (v === 'ios' || v === 'ios-denied' || v === 'foreground-only') ? v : null;
+    },
+
+    DEMO_FOREGROUND_ONLY_STATE: {
+      buildInfo: { appVersion: '0.0.0-demo', buildNumber: '0' },
+      debugMode: false,
+      facematchStrict: true,
+      authStatus: 'authenticated',
+      permissions: {
+        platform: 'android',
+        exactAlarmGranted: false,
+        batteryOptDisabled: false,
+        deviceManufacturer: null,
+        backgroundProduction: false,
+      },
     },
 
     DEMO_USERNODE_STATE: {
@@ -5751,7 +5767,9 @@
       if (demo) {
         // Fixed snapshot, no bridge call: this link exists to make the
         // notification row reachable from a browser.
-        this._usernodeState = this.DEMO_USERNODE_STATE;
+        this._usernodeState = demo === 'foreground-only'
+          ? this.DEMO_FOREGROUND_ONLY_STATE
+          : this.DEMO_USERNODE_STATE;
         this._unPushStatus = demo === 'ios-denied' ? 'denied' : 'undetermined';
         this._unPushProbed = true;
         this._unCanOpenNotifSettings = true;
@@ -6427,6 +6445,7 @@
         belowDemoCut: !demo,
         socialPush: this._socialPushView(),
         blockProduction: this._bpView(),
+        foregroundOnly: this._unForegroundOnly(),
         privacy: s ? {
           facematch: {
             label: tr('settings:usernode.privacy.strictFacematch'),
@@ -6558,6 +6577,12 @@
       dialog.open({ userId });
     },
 
+    // Older builds omit the field and still produce in the background.
+    _unForegroundOnly() {
+      const perms = this._usernodeState && this._usernodeState.permissions;
+      return !!perms && perms.backgroundProduction === false;
+    },
+
     _usernodeBodyView() {
       const s = this._usernodeState;
       if (!s) {
@@ -6573,6 +6598,10 @@
       }
       const perms = s.permissions || {};
       const isAndroid = perms.platform === 'android';
+      // Android's rows here are the exact-alarm and battery permissions, and a
+      // build that produces only while open has neither. iOS keeps its
+      // notification row.
+      if (isAndroid && this._unForegroundOnly()) return null;
       // iOS row truth: `exactAlarmGranted` is a lagging proxy for the
       // notification permission (there are no exact alarms on iOS), so once a
       // request has settled through NativeChrome.settleIosPushGrant that
@@ -6676,6 +6705,10 @@
     },
 
     _bpView() {
+      // The demo link reads no account, and must not offer a live ask.
+      if (this._unDemoMode() === 'foreground-only') {
+        return { kind: 'note', text: tr('settings:usernode.blockProduction.released') };
+      }
       const state = this._bpState;
       if (state === undefined) return { kind: 'checking' };
       if (!state) return { kind: 'note', text: tr('settings:usernode.blockProduction.checkFailed') };

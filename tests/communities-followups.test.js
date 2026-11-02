@@ -86,7 +86,7 @@ test('#3488: one feed for both Needs you screens, addressed per row', () => {
   // in #3516 (the phone's comes from the screen's clearance, the desktop's
   // from its own rule) — see the #3516 test below.
   assert.match(css, /\.workshop-needs-feed \{[^}]*min-height: 360px;[^}]*display: flex; flex-direction: column;/);
-  assert.match(css, /\.workshop-needs-feed \.dev-ws-keys \{ right: 102px; \}/, 'the legend clears the rail');
+  assert.match(css, /\.workshop-needs-feed \.dev-ws-keys \{ inset-inline-end: 102px; \}/, 'the legend clears the rail');
   assert.doesNotMatch(css, /\.workshop-reel-card|\.workshop-reel-yes|\.workshop-reel-decide/, 'the old cards\' rules went with them');
 });
 

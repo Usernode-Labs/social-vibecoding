@@ -146,7 +146,7 @@ const SKELETON_TILES = 8;
 
 /*
  * THE ERRORED TILE'S RETRY (QA 2026-09-24 Q9). It used to be a text button
- * pinned to the tile's top-right corner (`absolute top-2 right-2`): on a phone
+ * pinned to the tile's top-right corner (`absolute top-2 end-2`): on a phone
  * the 56px icon, painted later with no z-index, covered it, so a tap landed on
  * the icon and did nothing; on desktop it sat about 90px from the icon, and the
  * whole tile was `grayscale` and `cursor-not-allowed`, so the one working
@@ -303,7 +303,7 @@ function AppCardTile({ app, style, yours, live, editing }: {
               el.addEventListener('pointerdown', (e) => e.stopPropagation());
             }}
             type="button"
-            className="app-card-remove absolute -top-1.5 -left-1.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-700 text-white shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-500"
+            className="app-card-remove absolute -top-1.5 -start-1.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-700 text-white shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-500"
             aria-label={t('home:edit.removeNamed', { app: app.name })}
             onClick={(e) => {
               e.stopPropagation();
@@ -345,7 +345,7 @@ function AppCardTile({ app, style, yours, live, editing }: {
         */}
         {app.forkName ? (
           <span
-            className="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-white text-zinc-600 shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-800 dark:text-zinc-300"
+            className="fork-tag absolute -bottom-1 -start-1 w-5 h-5 flex items-center justify-center rounded-full bg-white text-zinc-600 shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-800 dark:text-zinc-300"
             title={app.forkDeleted ? t('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : t('home:grid.tile.remixedFrom', { app: app.forkName })}
             aria-label={app.forkDeleted ? t('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : t('home:grid.tile.remixedFrom', { app: app.forkName })}
           >
@@ -363,7 +363,7 @@ function AppCardTile({ app, style, yours, live, editing }: {
         */}
         {app.audience !== 'open' ? (
           <span
-            className="app-card-stage absolute -bottom-1 -right-1 w-5 h-5 flex items-center justify-center rounded-full bg-white text-zinc-600 shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-800 dark:text-zinc-300"
+            className="app-card-stage absolute -bottom-1 -end-1 w-5 h-5 flex items-center justify-center rounded-full bg-white text-zinc-600 shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-800 dark:text-zinc-300"
             data-stage={app.audience}
             title={app.audience === 'invited' ? t('home:grid.tile.audience.invited') : t('home:grid.tile.audience.solo')}
             aria-label={app.audience === 'invited' ? t('home:grid.tile.audience.invited') : t('home:grid.tile.audience.solo')}

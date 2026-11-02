@@ -17,6 +17,7 @@ import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { useCommunityColor } from '../../lib/community-color';
+import { dirSign, ownDirection } from '../../lib/i18n/direction';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -255,8 +256,8 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
     : null;
   const groupPreview = groupSender?.id && conversation.latestSummary
     ? (Number(groupSender.id) === Number(window.App?.user?.id)
-      ? t('messages:inbox.previewYou', { message: conversation.latestSummary })
-      : t('messages:inbox.previewBy', { username: groupSender.username, message: conversation.latestSummary }))
+      ? t('messages:inbox.previewYou', { message: ownDirection(conversation.latestSummary) })
+      : t('messages:inbox.previewBy', { username: groupSender.username, message: ownDirection(conversation.latestSummary) }))
     : null;
   return (
     <a
@@ -285,7 +286,7 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
           <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
         </div>
         <div className="messages-row-line">
-          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{invited ? (conversation.kind === 'direct' ? t('messages:inbox.requestReview') : t('messages:inbox.invitationReview')) : groupPreview ?? (preview || conversation.latestSummary || t('messages:inbox.noMessages'))}</span>
+          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{invited ? (conversation.kind === 'direct' ? t('messages:inbox.requestReview') : t('messages:inbox.invitationReview')) : groupPreview ?? (ownDirection(preview || conversation.latestSummary || '') || t('messages:inbox.noMessages'))}</span>
           {conversation.unreadCount > 0 ? <span className="messages-unread">{t('messages:inbox.newCount', { count: conversation.unreadCount })}</span> : null}
         </div>
       </div>
@@ -329,7 +330,7 @@ const GeneralChannelRow = memo(function GeneralChannelRow({ conversation, active
         <div className="messages-row-line">
           <span className="messages-row-preview">
             {conversation.latestSummary
-              ? (by ? t('messages:inbox.previewBy', { username: by, message: conversation.latestSummary }) : conversation.latestSummary)
+              ? (by ? t('messages:inbox.previewBy', { username: by, message: ownDirection(conversation.latestSummary) }) : ownDirection(conversation.latestSummary))
               : t('messages:inbox.everyone')}
           </span>
           {unread ? <span className="messages-unread">{t('messages:inbox.newCount', { count: conversation.unreadCount })}</span> : null}
@@ -390,7 +391,7 @@ const AppChannelRow = memo(function AppChannelRow({ discussion, active }: { disc
         <div className="messages-row-line">
           <span className="messages-row-preview">
             {discussion.lastMessage
-              ? (discussion.lastBy ? t('messages:inbox.previewBy', { username: discussion.lastBy, message: plainText(discussion.lastMessage) }) : plainText(discussion.lastMessage))
+              ? (discussion.lastBy ? t('messages:inbox.previewBy', { username: discussion.lastBy, message: ownDirection(plainText(discussion.lastMessage)) }) : ownDirection(plainText(discussion.lastMessage)))
               : t('messages:inbox.noMessages')}
           </span>
           {unread ? <span className="messages-unread">{t('messages:inbox.newCount', { count: unread })}</span> : null}
@@ -690,7 +691,7 @@ function ConversationRowSkeleton() {
                 the real row's trailing <time>. */}
             <div className="flex items-center gap-2">
               <Skeleton className={i % 2 ? 'w-28' : 'w-36'} />
-              <Skeleton shape="muted" className="ml-auto w-8" />
+              <Skeleton shape="muted" className="ms-auto w-8" />
             </div>
             {/* The preview line under it. */}
             <Skeleton shape="muted" className={`mt-1.5 ${i % 3 ? 'w-3/5' : 'w-2/5'}`} />
@@ -1421,7 +1422,7 @@ function ThreadHeader() {
       {inDrawer ? <span className="flex-1" aria-hidden="true" /> : (
       <button
         type="button"
-        className="min-w-0 text-left flex-1"
+        className="min-w-0 text-start flex-1"
         onClick={() => { if (active.kind === 'group') openDialog('messagesMembers'); }}
       >
         <div className="messages-thread-name">{active.kind === 'direct' && person ? senderName(person, { bare: true }) : channel ? `#${active.channelKey || active.title}` : active.title}{active.kind === 'direct' && person?.bot ? <span className="messages-bot-badge">{t('messages:header.aiBadge')}</span> : null}</div>
@@ -1984,9 +1985,15 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const layout = useMemo(() => {
     if (!botDm) return { plans: NO_PLAN_LAYOUT, blocks: null as ReadonlyMap<number, ChangeBlock> | null };
     const plans = planLayout(snap.messages);
+    // B12: what the loop below draws as one news line, and what it folds
+    // into a newer one, read as the loop reads them.
+    const asks = (message: ConversationMessage) => asksInChat(message) && !newsStatusOf(message, botWork)?.settled;
+    const folded = foldBotNews(snap.messages, (message) => isMovedActivity(message) || plans.hidden.has(message.id) || asks(message)).hidden;
     const blocks = changeBlocks(snap.messages, {
       // The rows the loop skips: passed over without breaking a run.
-      hidden: (message) => isMovedActivity(message) || plans.hidden.has(message.id),
+      hidden: (message) => isMovedActivity(message) || plans.hidden.has(message.id) || folded.has(message.id),
+      // A news line draws no outline: it ends a block, in none itself (B12).
+      apart: (message) => isBotNews(message) && !asks(message),
       // The same stretch of transcript: same day, and no unread line between.
       together: (previous, next) => dayKey(previous) === dayKey(next)
         && !(lineAt !== null && previous.id < lineAt && next.id >= lineAt),
@@ -1996,7 +2003,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
         || readyNamesRequest(message),
     });
     return { plans, blocks };
-  }, [botDm, snap.messages, lineAt]);
+  }, [botDm, snap.messages, lineAt, botWork]);
 
   useIsomorphicLayoutEffect(() => {
     if (!conversationId) return;
@@ -2157,6 +2164,10 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const rows: ReactNode[] = [];
   let previousDay = '';
   let previous: ConversationMessage | null = null;
+  // B16: in the chat with Homeroom bot, the message its last drawn answer
+  // quoted, until somebody else says something or the day turns: a later
+  // answer to the same message does not quote it again.
+  let quoted: number | null = null;
   // The "New" line, drawn once: above the first unread message, or above
   // the first row drawn after it when that message is not drawn itself.
   let lineDrawn = false;
@@ -2213,11 +2224,15 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     const asks = asking(message);
     const settled = botDm && isBotNews(message) && !asks && !!newsStatusOf(message, botWork)?.settled;
     if (!settled || (day && day !== previousDay) || (lineAt !== null && message.id >= lineAt && !lineDrawn)) flushRun();
+    // B16: a new day starts a new exchange, its first answer quoting afresh.
+    if (day && day !== previousDay) quoted = null;
     if (day && day !== previousDay) {
       rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
       previousDay = day;
     }
     if (lineAt !== null && message.id >= lineAt) drawLine();
+    // B16: somebody other than the bot spoke; the next answer quotes afresh.
+    if (!message.sender.bot) quoted = null;
     // One request, one story: in the chat with Homeroom bot, the bot's news
     // about a request is ONE short line (./bot-news-line.tsx) whose tap opens
     // the request's own page, unless it still asks something here.
@@ -2273,6 +2288,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
         { author: previous.sender.id, at: previous.createdAt },
         { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
       );
+    const quoteAgain = botDm && !!message.sender.bot && !!message.reply && message.reply.id === quoted;
     rows.push(<MessageRow
       key={message.clientKey || message.id}
       message={message}
@@ -2287,7 +2303,9 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       // #4564: this row's part of its change's block, in the bot's DM alone.
       block={blocks?.get(message.id) ?? null}
       botChat={botDm}
+      quoteAgain={quoteAgain}
     />);
+    if (botDm && message.sender.bot && message.reply) quoted = message.reply.id;
     previous = moment ? null : message;
     const length = runs.get(index);
     const runKey = String(message.clientKey || message.id);
@@ -2464,7 +2482,7 @@ function ReplyRowSkeleton() {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <Skeleton className="w-24" />
-              <Skeleton shape="muted" className="ml-auto w-12" />
+              <Skeleton shape="muted" className="ms-auto w-12" />
             </div>
             <Skeleton shape="muted" className={`mt-2 ${i % 2 ? 'w-2/5' : 'w-3/5'}`} />
           </div>
@@ -2561,6 +2579,25 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
     if (el && n !== count.current && pinned.current) el.scrollTop = el.scrollHeight;
     count.current = n;
   }, [thread?.messages.length]);
+  // B19 follow-up (audit, 2 Nov 2026): a thread opens at the first reply
+  // the reader had not read, its "New" line a little below the top, as a
+  // conversation does (./unread-anchor.ts openingScrollTop); with nothing
+  // unread, at its newest reply. Once per open, after the rows are drawn,
+  // and never over a message the thread was opened at (below).
+  const unreadLine = useRef<HTMLDivElement>(null);
+  const openedAt = useRef<string | null>(null);
+  const firstUnread = thread && !thread.loading ? thread.firstUnreadId ?? null : null;
+  useIsomorphicLayoutEffect(() => {
+    const el = scroller.current;
+    const key = `${conversationId}:${rootId}`;
+    if (!el || !thread || thread.loading || openedAt.current === key) return;
+    openedAt.current = key;
+    const line = unreadLine.current;
+    if (!firstUnread || !line || snap.threadFocusId || snap.route.focusMessageId) return;
+    const opening = openingScrollTop({ lineTop: lineTopIn(el, line), scrollHeight: el.scrollHeight, clientHeight: el.clientHeight });
+    el.scrollTop = opening.top;
+    pinned.current = opening.pinned;
+  }, [conversationId, rootId, thread?.loading, thread?.messages.length]);
   // One request, one story: a thread opened at one of its messages (the
   // strip's Needs you button, store.openThreadAt; or a link to a reply)
   // shows it once it is drawn, centred and flashed, and stops following the
@@ -2618,8 +2655,9 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
     // drag runs.
     const frames = Array.from(paneRef.current?.querySelectorAll<HTMLIFrameElement>('iframe') || []);
     frames.forEach((frame) => { frame.style.pointerEvents = 'none'; });
-    // Dragging left widens the thread: its left edge is the divider.
-    const onMove = (move: PointerEvent) => { latest = commitReplyWidth(startWidth - (move.clientX - startX)); };
+    // Dragging toward the thread's own edge widens it: the divider is its
+    // inline-start edge, the left in English and the right in Arabic.
+    const onMove = (move: PointerEvent) => { latest = commitReplyWidth(startWidth - dirSign() * (move.clientX - startX)); };
     const onUp = () => {
       handle.removeEventListener('pointermove', onMove);
       handle.removeEventListener('pointerup', onUp);
@@ -2638,7 +2676,9 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
     const base = replyWidth ?? Math.round(paneRef.current?.getBoundingClientRect().width || REPLY_MIN_WIDTH);
-    writeReplyWidth(commitReplyWidth(base + (event.key === 'ArrowLeft' ? REPLY_WIDTH_STEP : -REPLY_WIDTH_STEP)));
+    // An arrow toward the divider widens the thread, as the drag does.
+    const toward = event.key === 'ArrowLeft' ? 1 : -1;
+    writeReplyWidth(commitReplyWidth(base + toward * dirSign() * REPLY_WIDTH_STEP));
   };
   // #6019: a private thread in their chat with the bot is theirs alone
   // until they File it or Post it under the bot's offer: its head says so,
@@ -2833,8 +2873,11 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
               { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
             );
           previous = entry;
+          // B19 follow-up: the "New" line above the first reply not read when it opened.
+          const line = firstUnread && message.id === firstUnread
+            ? <NewMessagesDivider key="unread-line" ref={unreadLine} /> : null;
           const row = <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped && !divider} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === message.id} planCardId={cardId && isPlanMessage(message) ? cardId : null} />;
-          return divider ? <Fragment key={message.clientKey || message.id}>{divider}{row}</Fragment> : row;
+          return divider || line ? <Fragment key={message.clientKey || message.id}>{divider}{line}{row}</Fragment> : row;
         })}
         {threadWorking ? <BotWorkingCard typist={threadWorking} /> : null}
         {privateRoot && privateMine && root ? (

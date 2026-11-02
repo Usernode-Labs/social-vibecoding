@@ -68,7 +68,7 @@ import { NotifyAsk } from '../notify-ask/notify-ask';
 
 export type { InviteLink, InviteState } from './invite-data';
 
-const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm w-full text-left '
+const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm w-full text-start '
   + 'text-zinc-700 dark:text-zinc-200';
 // The links' heading row: the small-caps label, and Change beside it.
 const SECTION_ROW = 'flex items-center justify-between gap-3 px-5 pt-4 pb-1';
@@ -185,7 +185,7 @@ export function InviteSkeleton({ label, unnamed = false, canShare }: { label: st
         </div>
         <div className={ROW}>
           <Skeleton className="w-2/5" />
-          <Skeleton className="ml-auto w-12" />
+          <Skeleton className="ms-auto w-12" />
         </div>
       </SkeletonGroup>
     </div>

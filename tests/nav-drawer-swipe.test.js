@@ -89,7 +89,10 @@ test('the lists and the page hand the sideways drag on while the drawer holds th
   assert.match(css, /\.nav-drawer-places-scroll \{[^}]*touch-action: pan-y;/);
   assert.match(css, /\.nav-drawer-outer-list \{[^}]*touch-action: pan-y;/);
   const island = read('frontend/src/features/nav-drawer/nav-drawer.tsx');
-  assert.match(island, /const sideways = touch\.clientX > EDGE_PX && startsOnSideways\(target, page, window\);/);
+  // The edge and the swipe direction are the inline-start one: the left in
+  // English, the right in Arabic.
+  assert.match(island, /const pastEdge = rtl \? touch\.clientX < window\.innerWidth - EDGE_PX : touch\.clientX > EDGE_PX;/);
+  assert.match(island, /const sideways = pastEdge && startsOnSideways\(target, page, window\);/);
   // In the iPhone app a swipe's moves come uncancelable (WebKit decided at
   // touchstart, before the drawer's listener was there), so standing down on
   // them left the swipe dead on most of a page and every plain message. The
@@ -110,7 +113,7 @@ test('the lists and the page hand the sideways drag on while the drawer holds th
 test('a finger pans the sidebars from touch events, as it does a page; the pointer handlers are a mouse\'s', () => {
   const island = read('frontend/src/features/nav-drawer/nav-drawer.tsx');
   assert.match(island, /if \(e\.pointerType !== 'mouse' \|\| !e\.isPrimary \|\| e\.button !== 0 \|\| s\.searching \|\| s\.level === 2\) return;/);
-  assert.match(island, /if \(isPan\(dx, dy\) && \(p\.from !== 2 \|\| dx > 0\)\) \{/, 'either way on the drawer\'s own levels, right on the page');
+  assert.match(island, /if \(isPan\(dx, dy\) && \(p\.from !== 2 \|\| dx \* dirSign\(\) > 0\)\) \{/, 'either way on the drawer\'s own levels, toward the page in Arabic too');
   assert.match(island, /if \(s\.searching \|\| !surface \|\| !surface\.contains\(target\) \|\| startsOnSideways\(target, surface, window\)\) return;/,
     'anywhere on the communities and the places but a field');
   assert.match(island, /p = \{ x0: touch\.clientX, y0: touch\.clientY, w: screenWidth\(\), from: s\.level, on: false, dx: 0 \};/);

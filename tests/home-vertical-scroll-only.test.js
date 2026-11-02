@@ -162,7 +162,7 @@ test('the rail bleeds on a phone and fades at the desktop gutter', () => {
   const block = CSS.slice(at, CSS.indexOf('\n}\n', CSS.indexOf('.home-discover-rail {', at)));
   assert.match(block, /@media \(min-width: 768px\)/);
   assert.match(block, /margin-inline: 0;/, 'the bleed is cancelled, not doubled');
-  assert.match(block, /mask-image: linear-gradient\(to right, #000 calc\(100% - 2rem\), transparent\);/);
+  assert.match(block, /mask-image: linear-gradient\(to var\(--fade-to-inline-end, right\), #000 calc\(100% - 2rem\), transparent\);/);
   assert.match(block, /-webkit-mask-image: linear-gradient/, 'and in Safari');
 });
 

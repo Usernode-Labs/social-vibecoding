@@ -99,7 +99,7 @@ test('a long label is cut with an ellipsis inside the tab, at both sizes', () =>
   // The sidebar's row: the label takes the row's room and clips there (a
   // flex item that clips has no minimum of its whole text).
   const desk = CSS.slice(CSS.indexOf('@media (min-width: 768px) {\n  /* THE ONE NUMBER THE REST FOLLOWS.'));
-  assert.match(desk, /\.platform-tab-label \{\s*flex: 1 1 auto;\s*text-align: left;\s*overflow: hidden;\s*text-overflow: ellipsis;\s*\}/,
+  assert.match(desk, /\.platform-tab-label \{\s*flex: 1 1 auto;\s*text-align: start;\s*overflow: hidden;\s*text-overflow: ellipsis;\s*\}/,
     'and on the sidebar\'s row it clips at the row');
 });
 

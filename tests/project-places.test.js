@@ -67,7 +67,7 @@ test('the list: the pages, a line, then Channels over #general and Topics over t
   // #general by its handle, a channel's glyph the #.
   assert.match(html, /data-place="discussion"[^>]*><svg[^>]*dev-ws-place-hash[\s\S]*?<span class="dev-ws-place-label">general<\/span>/);
   // Every entry is a link with an address of its own.
-  assert.match(html, /<a class="dev-ws-place" href="\/app\/homeroom\/workshop" data-place="status"/);
+  assert.match(html, /<a class="dev-ws-place" href="\/app\/homeroom\/dev\/hub" data-place="status"/);
   assert.match(html, /<a class="dev-ws-place" href="\/app\/homeroom\/dev\/discussion" data-place="discussion"/);
   assert.match(html, /<a class="dev-ws-place" href="\/app\/homeroom\/dev\/c\/onboarding" data-place="c:onboarding" title="Onboarding"/);
 });
@@ -220,7 +220,7 @@ test('the tray: rendered only while open, into the body; focus in and back; Esca
   assert.match(CSS, /\.dev-ws-tray-root\.is-closing \{ pointer-events: none; \}/);
   assert.match(CSS, /\.dev-ws-tray-root\.is-closing \.dev-ws-tray \{ animation: dev-ws-tray-out 200ms cubic-bezier\(\.2, \.8, \.2, 1\) forwards; \}/);
   assert.match(CSS, /\.dev-ws-tray-root\.is-closing \.dev-ws-tray-scrim \{ animation: dev-ws-tray-fade-out 160ms ease-out forwards; \}/);
-  assert.match(CSS, /@keyframes dev-ws-tray-out \{ from \{ transform: none; \} to \{ transform: translateX\(-100%\); \} \}/);
+  assert.match(CSS, /@keyframes dev-ws-tray-out \{ from \{ transform: none; \} to \{ transform: translateX\(calc\(-100% \* var\(--rtl-sign\)\)\); \} \}/);
   assert.match(CSS, /@keyframes dev-ws-tray-fade-out \{ from \{ opacity: 1; \} to \{ opacity: 0; \} \}/);
   assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.dev-ws-tray-root\.is-closing \.dev-ws-tray, \.dev-ws-tray-root\.is-closing \.dev-ws-tray-scrim \{ animation: none; \}/);
   // #5384: it opens under the header, which stays undimmed and pressable,
@@ -247,6 +247,7 @@ test('places: keys, handles, aliases and addresses', () => {
     { bot: 'homeroom-bot', onboarding: 'onboarding', 'homeroom-bot': 'homeroom-bot', signup: 'signup', infra: 'infra' });
   assert.equal(p.placeHref('notes', 'c:infra'), '/app/notes/dev/c/infra');
   assert.equal(p.placeHref('notes', 'needs'), '/app/notes/workshop?ws=needs');
+  assert.equal(p.placeHref('notes', 'status'), '/app/notes/dev/hub', 'the Hub\'s own address');
 });
 
 test('the ladder walks places: a channel, Needs you or the Workshop goes up to the Hub, then to All communities', () => {

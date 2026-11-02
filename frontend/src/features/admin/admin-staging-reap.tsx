@@ -125,7 +125,7 @@ const ReapUI = Object.freeze({
   row: 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800',
   rowMain: 'flex-1 min-w-0',
   rowSlug: 'font-mono text-sm',
-  rowSession: 'text-xs text-zinc-500 dark:text-zinc-400 ml-1',
+  rowSession: 'text-xs text-zinc-500 dark:text-zinc-400 ms-1',
   rowWhy: 'block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5',
   rowError: 'block text-xs text-red-700 mt-0.5 dark:text-red-400',
   rowRight: 'flex items-center gap-2 shrink-0',

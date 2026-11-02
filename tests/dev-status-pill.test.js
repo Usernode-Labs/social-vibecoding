@@ -672,10 +672,10 @@ test('the two bars face each other at full height, and meet rather than overlap'
   const base = css.slice(css.indexOf('.gc-vote-fill {'), css.indexOf('.gc-vote-fill-full-yes'));
   assert.match(base, /\.gc-vote-fill \{[^}]*height: 100%/, 'both bars are the pill\'s full height');
   assert.doesNotMatch(base, /height: 50%/, 'no half-height lanes left');
-  assert.match(base, /\.gc-vote-fill-yes \{ left: 0;/, 'Yes grows from the left');
-  assert.match(base, /\.gc-vote-fill-no \{ right: 0;/, 'and No from the right');
+  assert.match(base, /\.gc-vote-fill-yes \{ inset-inline-start: 0;/, 'Yes grows from the start edge');
+  assert.match(base, /\.gc-vote-fill-no \{ inset-inline-end: 0;/, 'and No from the end edge');
   // The solid fill has no side of its own, so it needs an anchor to sit on.
-  assert.match(css, /\.gc-vote-fill-full \{ left: 0; top: 0; width: 100%; height: 100%; \}/);
+  assert.match(css, /\.gc-vote-fill-full \{ inset-inline-start: 0; top: 0; width: 100%; height: 100%; \}/);
 });
 
 test('facing bars can meet but never overlap, and keep their ratio when they would', () => {

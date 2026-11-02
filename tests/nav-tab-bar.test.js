@@ -350,15 +350,15 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   // centred column inside then centred a gutter's width left of the window's
   // middle. Spending the same figure on both sides is what fixes that, and
   // 1.5rem is the shell's own outer gutter rather than a number for this edge.
-  assert.match(block, /padding-left: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter\)\);/,
+  assert.match(block, /padding-inline-start: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter\)\);/,
     'the screens move over by PADDING, so nothing about the flex chain moves');
-  assert.match(block, /padding-right: var\(--platform-gutter\);/,
+  assert.match(block, /padding-inline-end: var\(--platform-gutter\);/,
     'and the same figure is spent on the far edge');
   assert.match(block, /--platform-gutter: 1\.5rem;/);
   // …and the app view is NOT one of the roots in that list: an app covers the
   // rail, which is what "the app is the whole window" means. The prose above
   // the rule says so, so the check is on the selector itself.
-  const roots = block.slice(block.indexOf('  :is(#home-screen'), block.indexOf('padding-left: calc('));
+  const roots = block.slice(block.indexOf('  :is(#home-screen'), block.indexOf('padding-inline-start: calc('));
   assert.doesNotMatch(roots, /#app-view/, 'an app covers the rail');
   assert.match(roots, /#messages-screen/, 'every platform root does move over');
   // QA 2026-09-24 Q23: the agent session's own screen drew from the window's
@@ -371,7 +371,7 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   // rail. Keyed off the bar and not off the tab, because the bar is already
   // the answer to that question.
   assert.match(block,
-    /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\):not\(\.platform-tabs-folded\)\) #app-view \{\s*padding-left: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter\)\);/);
+    /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\):not\(\.platform-tabs-folded\)\) #app-view \{\s*padding-inline-start: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter\)\);/);
   // The parked strip is not drawn on the desktop: a running app keeps its
   // App row, with its dot, under its community in the sidebar.
   assert.match(block, /#platform-parked \{\s*display: none;\s*\}/);
@@ -664,7 +664,7 @@ test('the bar and the rail meet as one surface, squared and ruled', () => {
   const at = css.indexOf('WHERE THE BAR MEETS THE RAIL');
   assert.ok(at > 0, 'the rule states its reason');
   const block = css.slice(at, css.indexOf('\n  }\n', css.indexOf('.platform-tabs:not(.platform-tabs-folded)', at)));
-  assert.match(block, /#platform-header \{\s*\n\s*border-bottom-left-radius: 0;/,
+  assert.match(block, /#platform-header \{\s*\n\s*border-end-start-radius: 0;/,
     'square on the left');
   assert.doesNotMatch(block, /border-bottom-right-radius/,
     'and only on the left: the right corner still has page under it');
@@ -719,7 +719,7 @@ test('the Messages count is the quiet one: grey, on the glyph\'s corner on the p
   assert.match(phone[0], /background: var\(--text-faint, #8e8e93\);/,
     'a grey disc on the phone, one value in both themes');
   assert.doesNotMatch(phone[0], /--danger|#ef4444/, 'the red is the bell\'s alone');
-  assert.match(phone[0], /position: absolute;\s*top: -3px;\s*left: calc\(100% - 7px\);/,
+  assert.match(phone[0], /position: absolute;\s*top: -3px;\s*inset-inline-start: calc\(100% - 7px\);/,
     'and it keeps its place on the glyph\'s corner');
 
   // From 768px the sidebar of rows draws a row, and the count sits at its
@@ -775,7 +775,7 @@ test('an app\'s channel belongs to its community, and a change to Messages', () 
     'and the back slot agrees with the tab that lights');
   assert.match(appJs, /if \(App\._isChannelThread\(\)\) return \['arrow', App\._hubHref\(App\.currentApp\)\];/,
     'the channel\'s way up is its hub');
-  assert.match(appJs, /_hubHref\(slug\) \{\s*return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#communities';/,
+  assert.match(appJs, /_hubHref\(slug\) \{\s*return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub` : '#communities';/,
     'a hash, because the back button follows only a hash');
   const appView = read('public/js/app-view.js');
   const branch = appView.slice(appView.indexOf("if (subTab === 'chat') {"));
@@ -1348,7 +1348,8 @@ test('recent apps are remembered per account, and an app appears once, at the fr
     delete global.window;
   }
   const mount = read('frontend/src/features/nav/mount.ts');
-  assert.match(mount, /if \(app && app\.slug\) rememberRecentApp\(app, navStore\.get\(\)\.viewer\);/);
+  // Named first (./nav-app-names.test.js): a slug never replaces a name there.
+  assert.match(mount, /if \(parked\) rememberRecentApp\(parked, navStore\.get\(\)\.viewer\);/);
 });
 
 test('#2795, #2798: the peeked strip is the frosted one and fades; a blue hover on the tabs', () => {
@@ -1399,4 +1400,19 @@ test('the Communities ring overhangs instead of pushing its label down (audit N0
   // 28 - 2 * 3 = the 22px of every other tab's glyph.
   assert.match(ring, /margin-block: -3px;/);
   assert.match(css, /@media \(min-width: 768px\) \{\s*\.platform-tab-ring \{[^}]*margin-block: 0;/);
+});
+
+test('on a phone the Tab key moves through the bar in its drawn order (audit N01 follow-up)', () => {
+  const { nextPhoneTab } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
+  assert.equal(nextPhoneTab('platform-tab-home', false), 'platform-tab-workshop');
+  assert.equal(nextPhoneTab('platform-tab-workshop', false), 'platform-tab-ai');
+  assert.equal(nextPhoneTab('platform-tab-ai', false), 'platform-tab-messages');
+  assert.equal(nextPhoneTab('platform-tab-messages', false), 'platform-tab-me');
+  assert.equal(nextPhoneTab('platform-tab-me', false), null, 'out of You: the browser\'s, as before');
+  assert.equal(nextPhoneTab('platform-tab-workshop', true), 'platform-tab-home');
+  assert.equal(nextPhoneTab('platform-tab-home', true), null, 'back out of Home: the browser\'s');
+  assert.equal(nextPhoneTab('platform-tab-discover', false), null, 'the rail\'s alone');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/nav/tab-bar.tsx'), 'utf8');
+  assert.match(src, /bar\.addEventListener\('keydown', onKey\);/, 'from the effect, never in the prerender');
+  assert.doesNotMatch(src, /tabIndex=\{[^}]*phone/i, 'no tabindex rendered');
 });

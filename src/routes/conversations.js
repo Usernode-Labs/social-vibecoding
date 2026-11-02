@@ -841,7 +841,10 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     const messageId = conversations.strictId(req.params.messageId);
     if (!id || !messageId) return sendNotFound(res);
     try {
-      const result = await conversations.toggleReaction(pool, req.user, id, messageId, req.body?.emoji);
+      // `on` (optional): the state the reaction should end in, so a send
+      // repeated from the device's offline outbox changes nothing twice.
+      const want = typeof req.body?.on === 'boolean' ? req.body.on : null;
+      const result = await conversations.toggleReaction(pool, req.user, id, messageId, req.body?.emoji, want);
       if (result?.error) return sendMessageError(res, result.error);
       if (!result) return sendNotFound(res);
       await pushNotifications(pool, result.notifications);

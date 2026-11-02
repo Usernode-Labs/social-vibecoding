@@ -519,7 +519,7 @@ const Secrets = {
           <button id="app-secrets-declare-open"
             class="text-xs px-2.5 py-1.5 rounded bg-violet-600 hover:bg-violet-500 text-white font-medium">
             ${isPlatform ? htmlText('dialogs:secrets.declare.open.variable') : htmlText('dialogs:secrets.declare.open.secret')}</button>
-          <span class="ml-2 text-xs text-zinc-500 dark:text-zinc-400">${blocked
+          <span class="ms-2 text-xs text-zinc-500 dark:text-zinc-400">${blocked
     ? (data.declareDisabledReason ? escapeHtml(data.declareDisabledReason) : htmlText('dialogs:secrets.declare.unavailable'))
     : (canWrite
       ? htmlText('dialogs:secrets.declare.hint.direct')

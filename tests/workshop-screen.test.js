@@ -511,11 +511,11 @@ test('UX audit: the chip rail fades while more chips are past its edge', () => {
   assert.doesNotMatch(out, /data-more/, 'no fade until a measurement says there is more');
   const src = read('frontend/src/features/workshop/index.tsx');
   const fn = src.slice(src.indexOf('export function AudienceChips'));
-  assert.match(fn, /el\.scrollLeft \+ el\.clientWidth < el\.scrollWidth - 1/,
-    'more means a chip lies past the right edge');
+  assert.match(fn, /Math\.abs\(el\.scrollLeft\) \+ el\.clientWidth < el\.scrollWidth - 1/,
+    'more means a chip lies past the inline-end edge (abs: a right-to-left scroller counts negative)');
   assert.match(fn, /'data-more': ''/, 'and that is what turns the fade on');
   const css = read('public/css/app.css');
-  assert.match(css, /\.audience-chips\[data-more\] \{[\s\S]{0,300}mask-image: linear-gradient\(to right, #000 calc\(100% - 2rem\), transparent\)/,
+  assert.match(css, /\.audience-chips\[data-more\] \{[\s\S]{0,300}mask-image: linear-gradient\(to var\(--fade-to-inline-end, right\), #000 calc\(100% - 2rem\), transparent\)/,
     'the same 2rem fade Home\'s Discover lane uses');
 });
 
@@ -1006,7 +1006,7 @@ test('#communities is a route of its own, and #workshop still lands there', () =
   // in the study draws under a mini-app — as a plain "Go to workshop" row
   // (#2761). It spent a round as the App | Workshop strip's segment; the
   // owner asked for a row, not a toggle.
-  assert.match(sheetTsx, /communityRowHref\(slug: string \| null \| undefined, owed: number \| null\): string \{[\s\S]*?: `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop`;[\s\S]*?href=\{communityRowHref\(slug, owed\)\}/,
+  assert.match(sheetTsx, /communityRowHref\(slug: string \| null \| undefined, owed: number \| null\): string \{[\s\S]*?: `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub`;[\s\S]*?href=\{communityRowHref\(slug, owed\)\}/,
     "and the app's menu links out to it, scoped");
   assert.match(sheetTsx, /id="app-menu-row-workshop"/, 'as a row');
   assert.ok(!/AppViewTabs/.test(sheetTsx), 'and not as a toggle segment');
@@ -1446,10 +1446,10 @@ test('#4486: a row on All items opens its page beside the board on a wide window
   assert.match(workshopTsx, /useEffect\(\(\) => \{\s*if \(!sideWide\) setSideItem\(null\);\s*\}, \[sideWide\]\);/);
   // #6053: the list is centered in the room left of the panel rather than
   // pushed to the left edge, and below 1400px it keeps the 24px inset.
-  assert.match(appCss, /#dev-workshop:has\(> \.dev-ws\[data-ws-side-open\]\) \{\s*margin-left: max\(24px, calc\(\(100% - 1352px\) \/ 2\)\); margin-right: 0;\s*max-width: min\(760px, calc\(100% - 616px\)\);\s*\}/);
+  assert.match(appCss, /#dev-workshop:has\(> \.dev-ws\[data-ws-side-open\]\) \{\s*margin-inline-start: max\(24px, calc\(\(100% - 1352px\) \/ 2\)\); margin-inline-end: 0;\s*max-width: min\(760px, calc\(100% - 616px\)\);\s*\}/);
   // The board keeps its place beside it: 316px columns, scrolling sideways,
   // the tapped column brought beside the panel and the strip following.
-  assert.match(appCss, /#dev-workshop\.dev-ws-has-board:has\(> \.dev-ws\[data-ws-side-open\]\) \{ margin-left: 24px; max-width: calc\(100% - 616px\); \}/);
+  assert.match(appCss, /#dev-workshop\.dev-ws-has-board:has\(> \.dev-ws\[data-ws-side-open\]\) \{ margin-inline-start: 24px; max-width: calc\(100% - 616px\); \}/);
   assert.match(appCss, /\.dev-ws\[data-ws-side-open\] :is\(#dev-kanban, \.dev-kanban-stages\) \{ grid-template-columns: repeat\(4, 316px\); \}/);
   assert.match(workshopTsx, /if \(c\.right > b\.right\) board\.scrollLeft \+= Math\.ceil\(c\.right - b\.right\);\s*else if \(c\.left < b\.left\) board\.scrollLeft -= Math\.ceil\(b\.left - c\.left\);\s*syncStrip\(board\);/);
 });
@@ -1473,7 +1473,7 @@ test('#4486: the one-row head and the pipeline pin together under the project’
   // space beside the switch — they size to their icons and `margin-left:
   // auto` pushes them to the right edge, so the grouping stays left and the
   // filters read as the other group.
-  assert.match(appCss, /@media \(max-width: 639px\) \{[\s\S]*?\.dev-ws-allbar #dev-kanban-search \{ flex-basis: 100%; max-width: none; min-width: 0; \}[\s\S]*?\.dev-ws-allbar #dev-filter-chips \{ flex: 0 1 auto; margin-left: auto; min-width: 0; /);
+  assert.match(appCss, /@media \(max-width: 639px\) \{[\s\S]*?\.dev-ws-allbar #dev-kanban-search \{ flex-basis: 100%; max-width: none; min-width: 0; \}[\s\S]*?\.dev-ws-allbar #dev-filter-chips \{ flex: 0 1 auto; margin-inline-start: auto; min-width: 0; /);
 });
 
 // ── 4. #5463: a vote saved elsewhere marks the kept feed and the counts ─

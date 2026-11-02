@@ -147,7 +147,7 @@ test('a Needs you row opens on a tap and has ONE action; a Ready row Try it and,
   });
   const needs = html.slice(html.indexOf('data-bot-strip-group="needs"'), html.indexOf('data-bot-strip-group="ready"'));
   assert.equal((needs.match(/data-bot-strip-act=/g) || []).length, 1, 'one action on the row');
-  assert.match(needs, /<button type="button" class="flex min-w-0 flex-1 items-center gap-2 text-left" data-bot-strip-open="">/, 'the row itself opens it');
+  assert.match(needs, /<button type="button" class="flex min-w-0 flex-1 items-center gap-2 text-start" data-bot-strip-open="">/, 'the row itself opens it');
   assert.match(needs, /<button type="button" class="[^"]*bg-violet-600[^"]*" data-bot-strip-act="open">Answer<\/button>/);
   assert.match(needs, /Which night\?/);
   const ready = html.slice(html.indexOf('data-bot-strip-group="ready"'));
@@ -202,7 +202,7 @@ test('the Activity bar: zero parts left out, the need part in the need colour wi
   const asked = past({ outcome: 'question', issueNumber: 18 });
   const html = draw({ work: work({ needsYou: [asked], now: [working({})] }) });
   assert.match(html, /^<section class="relative z-20 shrink-0" aria-label="Your requests" data-bot-strip="closed"><button type="button" class="[^"]*" aria-expanded="false" data-bot-strip-toggle=""><span class="[^"]*">Activity<\/span>/);
-  assert.match(html, /<span class="text-amber-700 dark:text-amber-400" data-bot-strip-count="needs">1 needs you<\/span><span class="ml-1 inline-flex gap-1 align-\[1px\]"><span class="[^"]*" style="--req-h:265" data-request-tag="18">#18<\/span><\/span><\/span><span><span aria-hidden="true"> · <\/span><span data-bot-strip-count="progress">1 in progress<\/span>/);
+  assert.match(html, /<span class="text-amber-700 dark:text-amber-400" data-bot-strip-count="needs">1 needs you<\/span><span class="ms-1 inline-flex gap-1 align-\[1px\]"><span class="[^"]*" style="--req-h:265" data-request-tag="18">#18<\/span><\/span><\/span><span><span aria-hidden="true"> · <\/span><span data-bot-strip-count="progress">1 in progress<\/span>/);
   assert.match(html, /<svg [^>]*aria-hidden="true"[^>]*>/, 'the chevron, from the icon set');
   assert.doesNotMatch(html, /data-bot-strip-drawer/, 'closed: the bar alone');
   const open = draw({ work: work({ needsYou: [asked] }), remembered: true });
@@ -383,7 +383,7 @@ test('every line opens its request\'s page the same way; news naming no page, it
   assert.match(html, new RegExp(`^<article id="messages-message-${moment.id}" data-message-id="${moment.id}" class="messages-bot-news px-4 py-1" data-bot-news="question">`));
   assert.match(html, /data-bot-news-open="thread"/);
   assert.match(html, />Dinner rota<\/strong>/, 'the request\'s own title first');
-  assert.match(html, /<svg class="h-4 w-4 shrink-0 text-zinc-400 dark:text-zinc-500"[^>]*aria-hidden="true"><path [^>]*d="M9 5l7 7-7 7"><\/path><\/svg><\/button><\/article>$/, 'a chevron says it opens');
+  assert.match(html, /<svg class="h-4 w-4 shrink-0 text-zinc-400 dark:text-zinc-500[^"]*"[^>]*aria-hidden="true"><path [^>]*d="M9 5l7 7-7 7"><\/path><\/svg><\/button><\/article>$/, 'a chevron says it opens');
   assert.equal(newsThread(moment), 31);
   // A card with its thread opens that thread, and says how many updates it holds.
   const card = botMessage({ kind: 'activity' }, { thread: { replyCount: 5, lastReplyAt: null, participants: [], lastReply: null } });
@@ -532,7 +532,7 @@ test('a finished request is ONE line: the project\'s small tile, how it ended, i
   const worded = renderToHtml(createElement('div', null, createElement(SettledLine, {
     name: 'Plant Pal', slug: 'plant-pal', iconUrl: null, emoji: null, number: 4, title: 'Fix scrolling', outcome: 'taken', fallback: 'Taken', words: 'Somebody else took it on',
   })));
-  assert.match(worded, /<span class="min-w-0 flex-1 truncate[^"]*">Fix scrolling<\/span><span class="min-w-0 max-w-\[40%\] truncate text-right [^"]*" data-bot-settled-words="">Somebody else took it on<\/span>/);
+  assert.match(worded, /<span class="min-w-0 flex-1 truncate[^"]*">Fix scrolling<\/span><span class="min-w-0 max-w-\[40%\] truncate text-end [^"]*" data-bot-settled-words="">Somebody else took it on<\/span>/);
   const nested = renderToHtml(createElement('div', null, createElement(SettledLine, {
     name: 'Plant Pal', slug: 'plant-pal', iconUrl: null, emoji: null, number: 4, title: 'Dark mode', outcome: 'live', fallback: 'Live', nested: true,
   })));

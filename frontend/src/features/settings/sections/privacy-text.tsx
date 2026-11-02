@@ -45,7 +45,7 @@ export function PrivacySwitch({ id, label, checked, disabled, onChange, describe
       />
       <span className="text-sm text-zinc-800 dark:text-zinc-200">
         {label}
-        <span aria-hidden="true" className="ml-2 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">
+        <span aria-hidden="true" className="ms-2 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">
           {t(checked ? 'settings:privacy.state.on' : 'settings:privacy.state.off')}
         </span>
       </span>

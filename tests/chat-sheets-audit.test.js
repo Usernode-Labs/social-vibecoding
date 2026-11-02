@@ -48,7 +48,7 @@ test('D13: the hover bar on somebody else\'s bubble hangs off its name line, bes
   assert.match(row, /const barBesideHead = sided && !mine && !grouped;/);
   assert.match(row, /\{status\}\{barBesideHead \? actions : null\}<\/div>\}/);
   assert.match(row, /\{barBesideHead \? null : actions\}\n\s*<MessageActionSheet/);
-  assert.match(CSS, /\.messages-message-head > \.messages-message-actions \{ top: -10px; right: auto; left: calc\(100% \+ 8px\); \}/);
+  assert.match(CSS, /\.messages-message-head > \.messages-message-actions \{ top: -10px; inset-inline-end: auto; inset-inline-start: calc\(100% \+ 8px\); \}/);
 });
 
 test('D09: the new-message picker offers no Block beside each person', () => {

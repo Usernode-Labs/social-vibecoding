@@ -1100,7 +1100,7 @@ test('#4457: a week is one row that opens its own page, grouped, with the way ba
   const dashRule = CSS.slice(CSS.indexOf('.dev-ws-dash-cell {'));
   const dashBody = dashRule.slice(0, dashRule.indexOf('}'));
   assert.ok(!/box-shadow/.test(dashBody), 'the figures are not cards');
-  assert.match(dashBody, /border-left: 1px solid var\(--app-sheet-line\);/, 'a rule between them');
+  assert.match(dashBody, /border-inline-start: 1px solid var\(--app-sheet-line\);/, 'a rule between them');
   // FOUR ACROSS AT EVERY WIDTH (5 Oct 2026): one row on an iPhone 13 mini,
   // not the 2x2 grid it was under 420px. A phone draws them closer and a
   // size smaller instead, and a label wraps rather than being cut short.
@@ -1108,10 +1108,10 @@ test('#4457: a week is one row that opens its own page, grouped, with the way ba
   assert.ok(!/\.dev-ws-dash \{[^}]*repeat\(2,/.test(CSS), 'no two-up grid on a phone');
   assert.ok(!/\.dev-ws-dash-cell:nth-child/.test(CSS), 'and no second row to rule off');
   assert.match(dashBody, /padding: 2px 8px;/, 'closer on a phone');
-  assert.match(CSS, /@media \(min-width: 420px\) \{\n\s*\.dev-ws-dash-cell \{ padding-left: 14px; padding-right: 14px; \}\n\}/,
+  assert.match(CSS, /@media \(min-width: 420px\) \{\n\s*\.dev-ws-dash-cell \{ padding-inline-start: 14px; padding-inline-end: 14px; \}\n\}/,
     'the wider spacing from 420px');
-  assert.match(CSS, /\.dev-ws-dash-cell:first-child \{ border-left: 0; padding-left: 2px; \}/);
-  assert.match(CSS, /\.dev-ws-dash-cell:last-child \{ padding-right: 2px; \}/);
+  assert.match(CSS, /\.dev-ws-dash-cell:first-child \{ border-inline-start: 0; padding-inline-start: 2px; \}/);
+  assert.match(CSS, /\.dev-ws-dash-cell:last-child \{ padding-inline-end: 2px; \}/);
   assert.match(CSS, /\.dev-ws-dash-cell b \{[^}]*font-size: 20px;/, 'a size smaller on a phone');
   assert.match(CSS, /@media \(min-width: 420px\) \{\n\s*\.dev-ws-dash-cell b \{ font-size: 24px; \}\n\}/,
     'and the full size from 420px');
@@ -1985,7 +1985,7 @@ test('a lane row\'s last line carries the card\'s state, in the tone the pill al
   // a row that grew with its state would break the column's rhythm. The vote
   // button sits at its right end, where the card's bar puts it.
   assert.match(CSS, /\.dev-ws-row-band \{[^}]*flex-wrap: nowrap;[^}]*overflow: hidden;/);
-  assert.match(CSS, /\.dev-ws-row-band > \.dev-ws-row-trailing \{ margin-left: auto; \}/);
+  assert.match(CSS, /\.dev-ws-row-band > \.dev-ws-row-trailing \{ margin-inline-start: auto; \}/);
   assert.match(html, /<span class="dev-ws-row-band">[\s\S]*?<span class="dev-ws-row-trailing"><button [^>]*class="dev-vote-btn"/,
     'the vote rides the last line, not the row\'s middle-right');
   // It does NOT stand down when the row opens any more — see the open-state
@@ -2039,7 +2039,7 @@ test('a theme head counts its people AND how much is still open in it', () => {
     /<span class="dev-ws-stat"><b>\d+<\/b>(?:person|people)<\/span><span class="dev-ws-stat"><b>3<\/b>items<\/span>/,
     'people and items, side by side',
   );
-  assert.match(CSS, /\.dev-ws-stat \+ \.dev-ws-stat \{[^}]*border-left:/, 'divided by a hairline');
+  assert.match(CSS, /\.dev-ws-stat \+ \.dev-ws-stat \{[^}]*border-inline-start:/, 'divided by a hairline');
 });
 
 test('a theme wears the glyph the model chose, or its initial when there is none', () => {
@@ -2277,7 +2277,7 @@ test('the card\u2019s facts line keeps its chips instead of flattening them', ()
   // one line and tabbed in with the meta line; the one band with a break in
   // it, and the 60px it clipped at, are gone.
   assert.match(CSS, /\.dev-card-badges\.dev-card-facts \{[^}]*max-height: 22px;/);
-  assert.match(CSS, /\.dev-card-head:has\(> \.dev-card-icon\) ~ \.dev-card-facts \{ padding-left: 30px; \}/);
+  assert.match(CSS, /\.dev-card-head:has\(> \.dev-card-icon\) ~ \.dev-card-facts \{ padding-inline-start: 30px; \}/);
   assert.ok(!/max-height: 60px;/.test(CSS));
   assert.ok(!/dev-card-band-break|dev-card-status-end/.test(CSS));
 });
@@ -2913,7 +2913,7 @@ test('#4457, #4486, #4718: a change up for a vote keeps its vote on its own line
   assert.ok(!statusLine.includes('dev-ws-wvote'), 'the tags line holds no vote');
   assert.match(html, /<span class="dev-ws-tag" data-tone="plain"><svg[^>]*>.*?<\/svg>Preview ready<\/span><\/span><span class="dev-ws-wrow-votes">/, 'a tag without short words draws its label, and the tags line ends before the vote');
   assert.match(CSS, /\.dev-ws-wrow-votes \{ margin-top: 6px; display: flex; align-items: center; \}/);
-  assert.match(CSS, /\.dev-ws-wvote \{\s*position: relative; z-index: 1; margin-left: auto;/);
+  assert.match(CSS, /\.dev-ws-wvote \{\s*position: relative; z-index: 1; margin-inline-start: auto;/);
   const short = { ...brief, tags: [{ label: 'Taking before & after screenshots', short: 'Taking screenshots', tone: 'run' }, { label: 'Preview ready', short: 'Preview', tone: 'plain', glyph: 'eye' }] };
   const shortHtml = renderToHtml(createElement(WorkRow, { row: { ...row, brief: short }, slug: 'demo-app' }));
   assert.match(shortHtml, /<span class="dev-ws-tag" data-tone="run" title="Taking before &amp; after screenshots"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span aria-hidden="true">Taking screenshots<\/span><span class="sr-only">Taking before &amp; after screenshots<\/span><\/span>/);
@@ -3055,10 +3055,10 @@ test('#4716: What\'s happening echoes What happened: one card, This week\'s head
   assert.match(rule('.dev-ws-hrow'), /padding: 8px 2px; border-top: 1px solid var\(--app-sheet-line\); border-radius: 10px;/);
   assert.match(rule('.dev-ws-hrow-dot'), /width: 7px;/);
   assert.match(rule('.dev-ws-hrow'), /gap: 10px;/);
-  assert.match(rule('.dev-ws-lrow'), /gap: 10px; padding: 8px 2px 8px 19px; border-top: 1px solid var\(--app-sheet-line\); border-radius: 10px;/);
+  assert.match(rule('.dev-ws-lrow'), /gap: 10px; padding-block: 8px 8px; padding-inline: 19px 2px; border-top: 1px solid var\(--app-sheet-line\); border-radius: 10px;/);
   // A row lights in place, as This week's does: no bleed past the card,
   // and the hairline under it stays.
-  assert.match(stripped, /\.dev-ws-lrow:hover, \.dev-ws-lrow\[data-on\] \{ margin: 0; padding-left: 19px; padding-right: 2px; \}/);
+  assert.match(stripped, /\.dev-ws-lrow:hover, \.dev-ws-lrow\[data-on\] \{ margin: 0; padding-inline-start: 19px; padding-inline-end: 2px; \}/);
   assert.match(stripped, /\.dev-ws-lrow:hover \+ \.dev-ws-lrow, \.dev-ws-lrow\[data-on\] \+ \.dev-ws-lrow \{ border-top-color: var\(--app-sheet-line\); \}/);
   // The Overview's All items keeps its own head.
   assert.match(rule('.dev-ws-head-title'), /font-size: 14px; font-weight: 600;/);
@@ -3938,7 +3938,7 @@ test('the sheet CSS moved host with the entry, and the Workshop has its own', ()
   // the scroller (rail at its bottom edge, padding decides) or overflows it
   // (rail stuck, `bottom` decides). At 12 against 8 they differed by 4px
   // depending on the tab. The sides are unchanged.
-  assert.match(CSS, /#dev-body:has\(> #dev-workshop\) \{ padding: 8px 4px var\(--ws-gap, 8px\); \}/);
+  assert.match(CSS, /#dev-body:has\(> #dev-workshop\) \{ padding-block: 8px var\(--ws-gap, 8px\); padding-inline: 4px; \}/);
   assert.match(CSS, /\.dev-ws-theme-head \{/);
   assert.match(CSS, /\.dev-ws-row \{/);
 });
@@ -3965,7 +3965,7 @@ test('workshop replaced feed as a mode, and the retired names resolve onto it', 
 
 test('the Workshop is a menu row, and an anchor at its route (#2761)', () => {
   assert.match(SHEET_TSX, /id="app-menu-row-workshop"\s+dataContextRow="workshop"/);
-  assert.match(SHEET_TSX, /communityRowHref\(slug: string \| null \| undefined, owed: number \| null\): string \{[\s\S]*?: `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop`;[\s\S]*?href=\{communityRowHref\(slug, owed\)\}/);
+  assert.match(SHEET_TSX, /communityRowHref\(slug: string \| null \| undefined, owed: number \| null\): string \{[\s\S]*?: `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub`;[\s\S]*?href=\{communityRowHref\(slug, owed\)\}/);
   assert.ok(!SHEET_TSX.includes('data-context-row="activity"'), 'the Activity segment retired');
   assert.ok(!/data-context-row="board"|dataContextRow="board"/.test(SHEET_TSX),
     'and the Board segment after it — the Workshop and the kanban are one '
@@ -4567,7 +4567,7 @@ test('the stage pane runs edge to edge, and not by a 100vw full-bleed', () => {
   // the scroller (rail at its bottom edge, padding decides) or overflows it
   // (rail stuck, `bottom` decides). At 12 against 8 they differed by 4px
   // depending on the tab. The sides are unchanged.
-  assert.match(CSS, /#dev-body:has\(> #dev-workshop\) \{ padding: 8px 4px var\(--ws-gap, 8px\); \}/);
+  assert.match(CSS, /#dev-body:has\(> #dev-workshop\) \{ padding-block: 8px var\(--ws-gap, 8px\); padding-inline: 4px; \}/);
   assert.match(CSS, /\.dev-ws-board \{ padding: 2px 8px 0; \}/);
 });
 
@@ -5003,7 +5003,7 @@ test('the ⋯ is drawn as Invite’s pill, a circle, and its menu hangs over the
   assert.ok(!ACTIONS_ROW.includes('bg-violet-600'), 'no primary fill on the ⋯');
   // The dropdown hangs 8px under it, opening leftward from the row's end,
   // and the hero lifts over the cards under it while it is open.
-  assert.match(ACTIONS_ROW, /id="dev-plus-menu"\s+className="hidden absolute right-0 top-full mt-2 z-30 w-64 /);
+  assert.match(ACTIONS_ROW, /id="dev-plus-menu"\s+className="hidden absolute end-0 top-full mt-2 z-30 w-64 /);
   assert.match(decls, /\.dev-ws-hero:has\(#dev-plus-menu:not\(\.hidden\)\) \{ position: relative; z-index: 5; \}/);
   assert.match(decls, /\.dev-ws-plus \{ position: relative; flex: none; display: flex; \}/,
     "the dropdown's containing block, never squeezed");
@@ -5343,7 +5343,7 @@ test('the ask composer keeps a visible send, and opens with it in the bottom-rig
   // the auto margin still pins it right. Measured at 1280x900: the circle
   // rests 14px from the card's right edge and 12px from its bottom, which is
   // the card's own padding on both sides.
-  assert.match(CSS, /\.dev-ws-ask-row > \.dev-ws-ask-send \{ margin-left: auto; \}/);
+  assert.match(CSS, /\.dev-ws-ask-row > \.dev-ws-ask-send \{ margin-inline-start: auto; \}/);
 });
 
 test('the filter host asks to be filled, because the repaint that fills it runs too early', () => {
@@ -5581,7 +5581,7 @@ test('This week shows its new rows, then a few seen ones, then All of this week,
   assert.ok(!week.includes('dev-ws-hrow-you'), 'nobody else\'s row says You');
   // THE REST OF THE WEEK IS ITS PAGE: All of this week opens it, as an
   // earlier week's row opens its own.
-  assert.match(html, /<button type="button" class="dev-ws-reveal touch-target-32" data-ws-week="week:\d+" data-ws-week-all="">All of this week<svg class="dev-ws-reveal-chev"/,
+  assert.match(html, /<button type="button" class="dev-ws-reveal touch-target-32" data-ws-week="week:\d+" data-ws-week-all="">All of this week<svg class="dev-ws-reveal-chev[^"]*"/,
     'keyed as its row would be: by its Monday, with no digest');
   assert.match(WORKSHOP, /onAll=\{\(\) => openWeekPage\(sinceWeekStateKey\(thisWeek\)\)\}/);
   // A quiet visit says so, in one line, and counts nothing.
@@ -5729,7 +5729,7 @@ test('#4457: the weeks before this one open on two rows, and Earlier weeks adds 
     'dev-ws-side', 'dev-ws-side-bar', 'dev-ws-side-btn', 'dev-ws-side-page']) {
     assert.match(stripped, new RegExp(`\\.${cls} \\{`), `.${cls} has a rule`);
   }
-  assert.match(stripped, /\.dev-ws-since-clear \{[^}]*margin-left: auto;/, 'Mark all seen at the far end of the label\'s row');
+  assert.match(stripped, /\.dev-ws-since-clear \{[^}]*margin-inline-start: auto;/, 'Mark all seen at the far end of the label\'s row');
   // And what nothing draws any more has none.
   assert.doesNotMatch(stripped, /\.dev-ws-(rules|rule-step|rule-join|rule-tile|rule-text|since-sum|week-line|ov-topics|ov-lead|ov-chips|ov-chip) \{/);
   // The rule's two wordings: the wide card's, and the narrow card's.
@@ -6064,7 +6064,7 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   assert.match(WORKSHOP, /const prevItem = useCallback\(\(\) => goRef\.current\(-1\), \[\]\);/);
   // Held to the counter's line, so the title does not move between the
   // first item (no button) and the rest.
-  assert.match(CSS, /\.dev-ws-item-prev \{[^}]*width: 26px; height: 26px; margin: -3px -4px -3px auto;/);
+  assert.match(CSS, /\.dev-ws-item-prev \{[^}]*width: 26px; height: 26px; margin-block: -3px -3px; margin-inline: auto -4px;/);
   // THE KEYS, every one also a button on the rail, ignored while a field has
   // focus, and listed only where a keyboard is likely (app.css hides the
   // legend on a phone).
@@ -6673,7 +6673,7 @@ test('#3651: on All items one header pins, the tabs and the head, in the pane\'s
 
   // 5. SQUARE ON TOP, both corners, at every width (outside the wide block),
   //    once the head has left the top of its pane.
-  assert.match(CSS, /\n\.dev-ws\[data-ws-head-pinned\] \.dev-ws-pane-head \{ border-top-left-radius: 0; border-top-right-radius: 0; \}/);
+  assert.match(CSS, /\n\.dev-ws\[data-ws-head-pinned\] \.dev-ws-pane-head \{ border-start-start-radius: 0; border-start-end-radius: 0; \}/);
   assert.doesNotMatch(decls, /border-top-left-radius/, 'not the wide block\'s left corner alone');
   const hook = WORKSHOP.slice(WORKSHOP.indexOf('function usePinnedStrip('));
   const body = hook.slice(0, hook.indexOf('\n}\n'));
@@ -7122,4 +7122,66 @@ test('a link to the list of requests or changes opens All items by stage, not th
   view._overrideWorkshopGroup('stage');
   assert.equal([view._workshopTab(), view._getWorkshopGroup()].join('/'), 'all/stage',
     'over a remembered Hub');
+});
+
+test('a bare link to a project\'s /workshop opens the Workshop; a door, a switch, history and ?ws= keep theirs (audit N03 follow-up)', () => {
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public/js/app.js'), 'utf8');
+  const at = appSrc.indexOf('  _linkOpensWorkshop(slug) {');
+  assert.ok(at > 0);
+  const body = appSrc.slice(at + '  _linkOpensWorkshop(slug) {'.length, appSrc.indexOf('\n  },', at));
+  // The router calls it on the /workshop alias, before turning it into the page.
+  assert.match(appSrc, /if \(tab === 'workshop'\) App\._linkOpensWorkshop\(slug\);/);
+  const arrive = (AppView, location, slug = 'garden') => {
+    // eslint-disable-next-line no-new-func
+    const fn = new Function('AppView', 'location', 'URLSearchParams', 'App', `return (function (slug) {${body}\n})`);
+    return fn(AppView, location, URLSearchParams, {})(slug);
+  };
+  const loc = (search = '', hash = '#app/garden/workshop') => ({ search, hash, href: `http://localhost/${search}${hash}` });
+  // 1. A link, with the Hub remembered: the Workshop, remembered from now on.
+  const linked = makeAppView({ localStorage: { devWorkshopTab: 'status' } });
+  assert.equal(arrive(linked, loc()), true);
+  assert.equal(linked._workshopTab(), 'workshop');
+  // 2. A door: _landOnHub decides first, and the router takes it.
+  const door = makeAppView({ localStorage: { devWorkshopTab: 'workshop' } });
+  door._landOnHub('garden');
+  assert.equal(arrive(door, loc()), false);
+  assert.equal(door._workshopTab(), 'status');
+  assert.equal(door._takePlaceDecision('garden'), false, 'spent on the arrival it was made for');
+  // …for its own project only.
+  const other = makeAppView({ localStorage: {} });
+  other._landOnTab('elsewhere', 'needs');
+  assert.equal(arrive(other, loc()), true);
+  assert.equal(other._workshopTab(), 'workshop');
+  // …and not long after: a decision a page turned in place is not a later link's.
+  const stale = makeAppView({ localStorage: {} });
+  stale._landOnTab('garden', 'needs');
+  stale._placeDecided.at -= stale.PLACE_DECISION_TTL_MS + 1;
+  assert.equal(arrive(stale, loc()), true);
+  // 3. ?ws= names its place outright.
+  const named = makeAppView({ localStorage: {} });
+  assert.equal(arrive(named, loc('?ws=needs')), false);
+  // 4. Back, Forward or a reload: the entry names its place.
+  const traversed = makeAppView({ localStorage: { devWorkshopTab: 'status' } });
+  traversed._historyWorkshopTab = () => ({ slug: 'garden', tab: 'status' });
+  assert.equal(arrive(traversed, loc()), false);
+  assert.equal(traversed._workshopTab(), 'status');
+  // 5. The Communities tab reopening the page you left keeps its place.
+  assert.match(appSrc, /AppView\?\._notePlaceDecided\?\.\(view\.slug\);\s*\} catch[^\n]*\n\s*try \{\s*history\.pushState\(null, '', `\$\{view\.path\}/);
+});
+
+test('the Hub has its own address, #app/<slug>/dev/hub, for links that mean the front door (N03 follow-up)', () => {
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public/js/app.js'), 'utf8');
+  const at = appSrc.indexOf('  _placeAddress(parts) {');
+  const body = appSrc.slice(at + '  _placeAddress(parts) {'.length, appSrc.indexOf('\n  },', at));
+  const view = makeAppView({ localStorage: { devWorkshopTab: 'workshop' } });
+  // eslint-disable-next-line no-new-func
+  const placeAddress = new Function('AppView', `return (function (parts) {${body}\n})`)(view);
+  const parts = ['app', 'garden', 'dev', 'hub'];
+  assert.equal(placeAddress(parts), true);
+  assert.deepEqual(parts, ['app', 'garden', 'workshop'], 'rewritten to the page\'s own address');
+  assert.equal(view._workshopTab(), 'status', 'on its Hub');
+  assert.equal(view._takePlaceDecision('garden'), true, 'a decision the /workshop link rule then honours');
+  assert.match(appSrc, /_hubHref\(slug\) \{\s*return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub` : '#communities';/);
+  assert.match(read('src/services/homeroom-bot-dm.js'), /id: 'open_community'[^\n]*target: `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub`/);
+  assert.match(read('src/services/shared-objects.js'), /href: link\.type === 'hub' \? `#app\/\$\{slug\}\/dev\/hub`/);
 });

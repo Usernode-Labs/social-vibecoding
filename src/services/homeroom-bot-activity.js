@@ -213,6 +213,7 @@ async function sendCard(pool, {
     // project's icon, when it has one, is the row's tile.
     ...(go ? { thanks: true, ...(app.icon_emoji ? { appEmoji: String(app.icon_emoji) } : {}) } : {}),
   };
+  const started = await dm.requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber });
   return dm.sendDm(pool, {
     bot,
     userId: requester.userId,
@@ -228,8 +229,10 @@ async function sendCard(pool, {
       },
     } : {}),
     idempotencyKey: key,
-    // #3707: news about a request they started in the DM points back at it.
-    replyToId: await dm.requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
+    // #3707: news about a request they started in the DM points back at it,
+    // said in Main when that is under an earlier card (outsideCardThread).
+    replyToId: started,
+    ...(typeof dm.outsideCardThread === 'function' ? await dm.outsideCardThread(pool, started) : {}),
   });
 }
 

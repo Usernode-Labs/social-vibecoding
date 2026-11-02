@@ -7,7 +7,9 @@
  * events (and WS drops via `Offline.nudge()`) only trigger a re-probe of the
  * real /health endpoint; the banner follows the probe result. /health is
  * deliberately on the service worker's bypass list so the probe always
- * reflects real reachability, never a cached copy.
+ * reflects real reachability, never a cached copy. The one word taken
+ * without a probe is the native shell's that the phone has no network at
+ * all (NATIVE_CONNECTIVITY_EVENT, nativeConnectivity below).
  *
  * ── What moved, and what deliberately did not ──────────────────────────
  *
@@ -46,6 +48,28 @@ import { publishVisibility, readVisibility } from './visibility-store';
 
 /** The visibility-store key the banner island subscribes to. */
 export const OFFLINE_BANNER_ID = 'offline-banner';
+
+/**
+ * The native shell's word on the phone's network (flutter-mobile-app, from
+ * connectivity_plus): `detail` is `{ online, via }`, `via` the kinds of
+ * network the phone has (`wifi`, `mobile`, …, or `none`). Sent on every
+ * change and once after each page load; the last one also stays on
+ * `window.__usernodeNativeConnectivity`.
+ */
+export const NATIVE_CONNECTIVITY_EVENT = 'usernode:native-connectivity';
+
+/**
+ * Fired on `window` when the phone moved to another network while this
+ * page was online (Wi-Fi handing over to cellular): connections made on the
+ * old one can be dead with nothing to say so. App (public/js/app.js
+ * _networkHandedOver) asks its events socket and reads the screen again.
+ */
+export const NETWORK_CHANGED_EVENT = 'usernode:network-changed';
+
+interface NativeConnectivity {
+  online?: unknown;
+  via?: unknown;
+}
 
 export interface OfflineApi {
   isOffline(): boolean;
@@ -154,6 +178,42 @@ export function forceOffline(): void {
   syncRecheck();
 }
 
+// The kinds of network in the native shell's last word, or null before one.
+let nativeVia: string | null = null;
+
+/**
+ * The phone's own word on its network (NATIVE_CONNECTIVITY_EVENT), which a
+ * probe cannot give: the browser's `online` flag stays true on a phone with
+ * no network at all in some web views, and says nothing when one network
+ * hands over to another (offline test, 2 Nov 2026). No network is believed
+ * at once, with nothing to probe over; the probe's own loop watches for the
+ * way back. A network while offline, or another network while online, is a
+ * reason to probe now rather than on the next failed read, and the second is
+ * announced (NETWORK_CHANGED_EVENT). The same network again, online, says
+ * nothing new.
+ */
+export function nativeConnectivity(detail: NativeConnectivity | null | undefined): void {
+  if (!detail || typeof detail.online !== 'boolean') return;
+  const via = Array.isArray(detail.via) ? detail.via.filter((kind) => typeof kind === 'string').join(',') : '';
+  const moved = nativeVia !== null && via !== nativeVia;
+  nativeVia = via;
+  if (!detail.online) {
+    set(true);
+    return;
+  }
+  // Online and still on the same network (the word every page load gets):
+  // nothing to ask.
+  if (!offline && !moved) return;
+  const wasOffline = offline;
+  void probe();
+  if (wasOffline) return;
+  try {
+    window.dispatchEvent(new CustomEvent(NETWORK_CHANGED_EVENT, { detail: { via: via ? via.split(',') : [] } }));
+  } catch {
+    /* CustomEvent unavailable: the probe alone still runs */
+  }
+}
+
 let started = false;
 
 /** Install `window.Offline` and start listening. Idempotent. */
@@ -189,8 +249,14 @@ export function initOffline(): OfflineApi {
     e.preventDefault();
     void probe();
   });
+  window.addEventListener(NATIVE_CONNECTIVITY_EVENT, (e) => {
+    nativeConnectivity((e as CustomEvent<NativeConnectivity>).detail);
+  });
   // Trust the flag when it says offline at boot; otherwise stay quiet until
-  // something (an event, a WS drop) suggests trouble.
-  if (navigator.onLine === false) void probe();
+  // something (an event, a WS drop) suggests trouble. So too the native
+  // shell's last word, when one came before this ran.
+  const last = (window as unknown as { __usernodeNativeConnectivity?: NativeConnectivity }).__usernodeNativeConnectivity;
+  if (last) nativeConnectivity(last);
+  else if (navigator.onLine === false) void probe();
   return api;
 }

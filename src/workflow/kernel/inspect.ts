@@ -19,7 +19,7 @@ function instanceRow(r: any) {
 function eventRow(r: any) {
   return {
     id: Number(r.id), machine: r.machine, key: r.key, appId: r.app_id, type: r.type, payload: r.payload,
-    source: r.source, actor: r.actor, requestKey: r.request_key, causedBy: num(r.caused_by),
+    source: r.source, producer: r.producer, actor: r.actor, requestKey: r.request_key, causedBy: num(r.caused_by),
     status: r.status, attempts: r.attempts, retryAt: r.retry_at, result: r.result, reason: r.reason,
     error: r.error, machineVersion: r.machine_version, stateBefore: r.state_before,
     stateAfter: r.state_after, versionAfter: num(r.version_after), emitted: r.emitted,
@@ -249,7 +249,7 @@ export async function release(pool: Pool, machine: string, key: string, opts: {
     if (opts.authorizeEvent) {
       const tx = machineTx(client);
       const authority = await opts.authorizeEvent(tx, {
-        id: 0, type: '@Released', payload: { mode: opts.mode }, source: { kind: 'admin' }, actor: opts.actor,
+        id: 0, type: '@Released', payload: { mode: opts.mode }, source: { kind: 'admin' }, producer: 'platform', actor: opts.actor,
         requestKey: 'release', appId: inst.app_id, causedBy: null,
       }, { machine, key, appId: inst.app_id, version: Number(inst.version), now: new Date() });
       if (tx.poisoned) throw tx.poisoned;

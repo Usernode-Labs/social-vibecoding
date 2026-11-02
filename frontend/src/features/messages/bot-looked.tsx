@@ -62,7 +62,7 @@ export function BotLookedLine({ message }: { message: ConversationMessage }) {
         <ChevronDownIcon className={open ? 'h-3.5 w-3.5 shrink-0 rotate-180' : 'h-3.5 w-3.5 shrink-0'} aria-hidden="true" />
       </button>
       {open ? (
-        <ul id={listId} className="mb-1 mt-0.5 flex flex-col gap-0.5 pl-1 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" aria-label={t('messages:botCards.looked.list')}>
+        <ul id={listId} className="mb-1 mt-0.5 flex flex-col gap-0.5 ps-1 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" aria-label={t('messages:botCards.looked.list')}>
           {looked.items.map((item, i) => (
             <li key={i} className="flex items-start gap-1.5 [overflow-wrap:anywhere]">
               <span aria-hidden="true">·</span>

@@ -355,7 +355,7 @@ export function IllustrationGallery({ id, value, onChange }: {
                 {selected ? (
                   <span
                     aria-hidden="true"
-                    className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-violet-600 text-[11px] font-bold text-white"
+                    className="absolute end-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-violet-600 text-[11px] font-bold text-white"
                   >
                     ✓
                   </span>

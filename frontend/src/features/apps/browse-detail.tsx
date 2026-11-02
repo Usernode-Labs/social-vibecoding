@@ -108,10 +108,10 @@ const NOTE_CLASS = 'px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400';
 // already has one, and `mt-5` is the gap from whatever the card follows.
 const CARD_SPACING = 'mx-0 mt-5';
 
-// The row hairline runs at the card's text inset (left-4) now rather than the
-// hand-copy's left-3, so the heading's rule has to move with it or the two
+// The row hairline runs at the card's text inset (start-4) now rather than the
+// hand-copy's start-3, so the heading's rule has to move with it or the two
 // disagree by 4px down the same card edge.
-const HEAD_RULE = "after:absolute after:bottom-0 after:left-4 after:right-0 after:h-px "
+const HEAD_RULE = "after:absolute after:bottom-0 after:start-4 after:end-0 after:h-px "
   + "after:bg-zinc-200 dark:after:bg-zinc-800 after:content-['']";
 
 function ContributorRow({ row }: { row: ContributorRowView }): ReactNode {
@@ -185,7 +185,7 @@ function Contributors({ view }: { view: ContributorsView }): ReactNode {
           // "Show more" says it (./browse-list.tsx), #2991.
           aria-expanded={!!view.expanded}
           aria-controls="browse-contrib-list"
-          className="w-full px-4 py-3.5 text-sm font-medium text-violet-700 dark:text-violet-400 text-left transition-colors hover:bg-zinc-500/5 border-t border-zinc-200 dark:border-zinc-800"
+          className="w-full px-4 py-3.5 text-sm font-medium text-violet-700 dark:text-violet-400 text-start transition-colors hover:bg-zinc-500/5 border-t border-zinc-200 dark:border-zinc-800"
           onClick={() => controller()?.toggleContributors()}
         >{view.toggle}</button>
       ) : null}

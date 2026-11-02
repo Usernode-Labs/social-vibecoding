@@ -257,7 +257,7 @@ test('the strip is the pipeline (#4486): a step per stage, its icon, name and co
     assert.ok(!/violet|bg-zinc|border-b/.test(tab), 'its treatment is app.css\u2019s, by state, not a class string');
     assert.match(strip, new RegExp(`data-kind="${key}"[^>]*><svg[\\s\\S]*?</svg></span><span class="dev-kanban-step-name">${title}</span>`));
   }
-  assert.equal((strip.match(/class="dev-kanban-step-arrow"/g) || []).length, 3, 'arrows between the steps');
+  assert.equal((strip.match(/class="dev-kanban-step-arrow[^"]*"/g) || []).length, 3, 'arrows between the steps');
   // The lit tab on a phone wears the "where you are" tokens, as the tab
   // bars do; on a wide window nothing is lit, every column being up.
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');

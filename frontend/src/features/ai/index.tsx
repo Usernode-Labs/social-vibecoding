@@ -71,18 +71,19 @@ import type { ReactNode } from 'react';
 import { LockIcon, MicrophoneIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
+import { KEPT_DRAW_MS, keepCopy, keptCopy } from '../../lib/kept-copies';
 import { FRESH } from '../../lib/live-reads';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { EmbeddedConversation } from '../messages';
 import { DesignPane } from '../messages/design-pane';
 import { closeNewThread, NewThreadButton, useNewThread } from '../messages/new-thread';
-import { openBotConversation } from '../messages/api';
+import { keptConversations, openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
 import { closeThread, openBotRequest, useMessagesSnapshot } from '../messages/store';
 import { SidePanelDivider } from '../side-panel/side-panel';
 import { sidePanelStore } from '../side-panel/store.js';
-import { BOT_TAB, botTabAddress, noteBotConversation, useBotTabAsk, type BotAt } from './door';
+import { BOT_TAB, botTabAddress, knownBotConversation, noteBotConversation, useBotTabAsk, type BotAt } from './door';
 import { useLiveLists } from './live';
 import { AiLists } from './lists';
 import { AiDrawer, MainPane, usePhone } from './phone-drawer';
@@ -102,14 +103,27 @@ function demoQuery(): string {
   return new URLSearchParams(window.location.search).get('demo') === '1' ? '?demo=1' : '';
 }
 
-async function readJson<T>(path: string, init?: RequestInit): Promise<T | null> {
+/** A read of the lists: its answer when it was one, and whether the server answered at all. */
+interface ListRead<T> {
+  data: T | null;
+  reached: boolean;
+}
+
+async function readJson<T>(path: string, init?: RequestInit): Promise<ListRead<T>> {
   try {
     const res = await fetch(path, { ...init, credentials: 'same-origin' });
-    return res.ok ? ((await res.json()) as T) : null;
+    return { data: res.ok ? ((await res.json()) as T) : null, reached: true };
   } catch {
-    return null;
+    return { data: null, reached: false };
   }
 }
+
+/**
+ * Why the lists show less than they should: nothing read and nothing kept
+ * for one of them, with no answer from the server ('unreachable') or with
+ * an error ('failed'). Null when every list has something to draw.
+ */
+export type ListsFailure = 'unreachable' | 'failed' | null;
 
 function useWide(at: string = WIDE): boolean {
   const [wide, setWide] = useState(false);
@@ -242,8 +256,19 @@ export function AiScreen(): ReactNode {
   // (./live.ts counts those in `moved`). Every read after the first asks
   // past the service worker's saved copy, since it is for what changed
   // since; one that fails keeps the lists as they were.
+  //
+  // Offline (offline test, 2 Nov 2026), a list with nothing drawn yet draws
+  // the copy this device kept of it (../../lib/kept-copies.ts: GET
+  // /api/ai/work answers `no-store`, so the worker keeps none), and one with
+  // no copy either says so over Needs you, with Try again (`failed`),
+  // instead of leaving an empty card. A list with nothing drawn draws its
+  // copy once its read has gone KEPT_DRAW_MS unanswered too, the read still
+  // going: a network that carries nothing answers no read for 15 s.
   const [moved, setMoved] = useState(0);
+  const [failed, setFailed] = useState<ListsFailure>(null);
   const readBefore = useRef(false);
+  const drawn = useRef({ work, needs });
+  drawn.current = { work, needs };
   useEffect(() => {
     if (!visible || typeof window === 'undefined' || !(window as any).App?.user) return undefined;
     let live = true;
@@ -251,12 +276,46 @@ export function AiScreen(): ReactNode {
     const again = readBefore.current;
     readBefore.current = true;
     const init = again ? FRESH : undefined;
-    void readJson<AiWork>(`/api/ai/work${qs}`, init).then((data) => { if (live && data) setWork(data); });
-    void readJson<{ items?: NeedItem[] }>(`/api/workshop/needs-feed?in=threads${qs ? '&demo=1' : ''}`, init)
-      .then((data) => {
-        if (live && (data || !again)) setNeeds(Array.isArray(data?.items) ? data!.items : []);
-      });
-    return () => { live = false; };
+    const early = setTimeout(() => {
+      if (!live) return;
+      const keptWork = drawn.current.work ? null : keptCopy<AiWork>('ai:work');
+      const keptNeeds = drawn.current.needs ? null : keptCopy<NeedItem[]>('ai:needs');
+      if (keptWork) setWork(keptWork);
+      if (Array.isArray(keptNeeds)) setNeeds(keptNeeds);
+    }, KEPT_DRAW_MS);
+    // Each list as it lands; the read that left one with nothing to draw is handed on.
+    const workDone = readJson<AiWork>(`/api/ai/work${qs}`, init).then((read) => {
+      if (!live) return null;
+      if (read.data) {
+        setWork(read.data);
+        keepCopy('ai:work', read.data);
+        return null;
+      }
+      if (drawn.current.work) return null;
+      const kept = keptCopy<AiWork>('ai:work');
+      if (kept) setWork(kept);
+      return kept ? null : read;
+    });
+    const needsDone = readJson<{ items?: NeedItem[] }>(`/api/workshop/needs-feed?in=threads${qs ? '&demo=1' : ''}`, init).then((read) => {
+      if (!live) return null;
+      if (read.data) {
+        const items = Array.isArray(read.data.items) ? read.data.items : [];
+        setNeeds(items);
+        keepCopy('ai:needs', items);
+        return null;
+      }
+      if (drawn.current.needs) return null;
+      const kept = keptCopy<NeedItem[]>('ai:needs');
+      if (Array.isArray(kept)) setNeeds(kept);
+      return Array.isArray(kept) ? null : read;
+    });
+    void Promise.all([workDone, needsDone]).then((reads) => {
+      clearTimeout(early);
+      if (!live) return;
+      const missing = reads.flatMap((read) => (read ? [read] : []));
+      setFailed(!missing.length ? null : missing.some((read) => !read.reached) ? 'unreachable' : 'failed');
+    });
+    return () => { live = false; clearTimeout(early); };
   }, [visible, session, moved]);
 
   // Main beside the list, on a desktop, or peeking beside it in a phone's
@@ -267,7 +326,16 @@ export function AiScreen(): ReactNode {
       if (!id) return;
       noteBotConversation(id);
       setBotId(id);
-    }).catch(() => {});
+    }).catch(() => {
+      // Offline: the chat this device already knows, from Messages' list or
+      // the copy of it kept here, so Main opens on what was kept of it.
+      const known = knownBotConversation()
+        || keptConversations()?.find((item) => item.homeroomBot && item.kind !== 'channel')?.id
+        || null;
+      if (!known) return;
+      noteBotConversation(known);
+      setBotId(known);
+    });
   }, [visible, wide, phone, botId, session]);
 
   // What the column shows (1 Nov 2026): Main Chat, a thread of it, a blank
@@ -418,6 +486,8 @@ export function AiScreen(): ReactNode {
           main={{ lit: lit === 'main', unread, open: openMain }}
           lit={lit}
           ready={!!work && !!needs}
+          failed={failed}
+          onRetry={() => setMoved((n) => n + 1)}
           rows={rows}
           owed={owed}
           progress={progress}

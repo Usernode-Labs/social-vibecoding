@@ -92,7 +92,7 @@ export function MembersDialog() {
             {/* Typeahead dropdown (GET /api/users/search) */}
             <div
               id="members-invite-suggestions"
-              className="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"
+              className="hidden absolute start-0 end-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"
             >
             </div>
           </div>
@@ -121,7 +121,7 @@ export function MembersDialog() {
           <button
             type="button"
             data-members-who-decides=""
-            className="flex w-full min-h-[44px] items-center gap-3 text-left"
+            className="flex w-full min-h-[44px] items-center gap-3 text-start"
             onClick={() => {
               const slug = window.AppView?.appData?.slug;
               // Same hand-off as App settings: wait until this dialog's back
@@ -243,7 +243,7 @@ export function MembersDialog() {
               />
               <div
                 id="members-initial-approver-suggestions"
-                className="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"
+                className="hidden absolute start-0 end-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"
               >
               </div>
             </div>
@@ -302,7 +302,7 @@ export function MembersDialog() {
             />
             <div
               id="members-approver-suggestions"
-              className="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"
+              className="hidden absolute start-0 end-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"
             >
             </div>
           </div>
@@ -341,7 +341,7 @@ export function MembersDialog() {
               />
               <div
                 id="members-appadmins-suggestions"
-                className="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"
+                className="hidden absolute start-0 end-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"
               >
               </div>
             </div>

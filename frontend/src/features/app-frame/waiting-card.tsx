@@ -94,7 +94,7 @@ export function WaitingCard({ waiting, line }: { waiting: FirstVersionWaiting; l
   const [sheet, setSheet] = useState<Sheet>(null);
   const plan = waiting.plan && waiting.plan.bullets.length ? waiting.plan : null;
   return (
-    <div className="w-full max-w-[342px] pt-3 text-left" data-app-first-version-waiting="">
+    <div className="w-full max-w-[342px] pt-3 text-start" data-app-first-version-waiting="">
       <SectionHeader className="px-1 pb-2 pt-0">{t('agent:appFrame.waiting.title')}</SectionHeader>
       <GroupedList tone="plane" className="mx-0">
         <ListRow

@@ -312,7 +312,8 @@ function stepBackHarness({ current, below, sameDocument = true, navigationApi = 
     ${liftAppMethod('_routeSearch(innerPath)')},
     ${liftAppMethod('_rootUrl(hash)')},
     ${liftAppMethod('_navigationApi()')},
-    ${liftAppMethod('_stepBackTo(href)')} }; App`, ctx);
+    ${liftAppMethod('_stepBackTo(href)')},
+    ${liftAppMethod('_canStepBackTo(href)')} }; App`, ctx);
   return { App, backs };
 }
 
@@ -420,20 +421,28 @@ test('a Discover row binds its click once, however often the list renders', () =
   assert.match(BROWSE_LIST, /const latest = useRef<RowView>\(view\);\s*\n\s*latest\.current = view;/);
 });
 
-test('a topic\'s chip names the place the project page reopens on, which is where it goes (audit N05)', () => {
+test('a topic\'s chip names where its press goes: a step Back to the place left, else the Workshop its link opens (audit N05, N03 follow-up)', () => {
   const { chipFor, placeChip } = loadTsx('frontend/src/features/dev-board/topic/topic-back.tsx');
   const board = '#app/garden/workshop';
-  assert.deepEqual({ ...chipFor(board, 'status') }, { to: 'hub' }, 'a first visit reopens on the Hub');
-  assert.deepEqual({ ...chipFor(board, 'workshop') }, { to: 'workshop' });
-  assert.deepEqual({ ...chipFor(board, 'all') }, { to: 'allItems' });
-  assert.deepEqual({ ...chipFor(board, 'needs') }, { to: 'needs' });
-  assert.deepEqual({ ...chipFor(board, 'discussion') }, { to: 'channel', handle: 'general' });
-  assert.deepEqual({ ...chipFor(board, 'c:onboarding') }, { to: 'channel', handle: 'onboarding' });
+  // A step Back shows the place the page was left on.
+  assert.deepEqual({ ...chipFor(board, 'status', true) }, { to: 'hub' });
+  assert.deepEqual({ ...chipFor(board, 'workshop', true) }, { to: 'workshop' });
+  assert.deepEqual({ ...chipFor(board, 'all', true) }, { to: 'allItems' });
+  assert.deepEqual({ ...chipFor(board, 'needs', true) }, { to: 'needs' });
+  assert.deepEqual({ ...chipFor(board, 'discussion', true) }, { to: 'channel', handle: 'general' });
+  assert.deepEqual({ ...chipFor(board, 'c:onboarding', true) }, { to: 'channel', handle: 'onboarding' });
   assert.deepEqual({ ...placeChip('bot') }, { to: 'workshop' }, 'the bot\'s slots are under the Workshop');
-  assert.deepEqual({ ...chipFor('#messages/12', 'status') }, { to: 'messages' });
+  // Otherwise the press follows the link, and a link to /workshop opens the Workshop.
+  assert.deepEqual({ ...chipFor(board, 'status') }, { to: 'workshop' }, 'a cold load: "‹ Workshop"');
+  assert.deepEqual({ ...chipFor(board, 'needs', false) }, { to: 'workshop' });
+  assert.deepEqual({ ...chipFor('#messages/12', 'status', true) }, { to: 'messages' });
   assert.equal(message('project:topic.back.hub'), 'Hub');
-  assert.equal(message('project:topic.back.toHub'), 'Back to Hub');
-  // The sidebar lights the same place on a request's page.
+  assert.equal(message('project:topic.back.toWorkshop'), 'Back to Workshop');
+  // The press and the words read the same test.
+  assert.match(TOPIC_BACK, /chipFor\(href, workshopTab, stepsBackTo\(href\)\)/);
+  assert.match(read('public/js/app.js'), /_stepBackTo\(href\) \{\s*if \(!App\._canStepBackTo\(href\)\) return false;/);
+  // The sidebar and the phone header read the same answer on a request's page.
   const rail = read('frontend/src/features/nav/rail-communities.tsx');
-  assert.match(rail, /place=\{here \? place\.place : \(onItem \? reopenPlace\(slug\) as PlaceKey : null\)\}/);
+  assert.match(rail, /place=\{here \? place\.place : \(onItem \? itemReturnPlace\(slug\) as PlaceKey : null\)\}/);
+  assert.match(read('frontend/src/features/nav-drawer/nav-drawer.tsx'), /improve\.subTab === 'topic'\s*\? itemReturnPlace\(slug\)/);
 });

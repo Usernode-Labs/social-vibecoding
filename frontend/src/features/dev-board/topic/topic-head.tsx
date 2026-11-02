@@ -121,7 +121,7 @@ export function NoteBoxView({ box }: { box: NoteBox }): ReactNode {
       <div className="font-medium">{box.spinner ? <Spinner /> : null}{box.heading}</div>
       {box.rows.map((r, i) => (r.t === 'list'
         ? (
-          <ul key={i} className={r.cls || 'mt-1 ml-4 list-disc space-y-0.5'}>
+          <ul key={i} className={r.cls || 'mt-1 ms-4 list-disc space-y-0.5'}>
             {r.items.map((it, j) => (
               <li key={j} className={(it.kind || it.mono) ? 'font-mono text-[0.7rem] break-all' : undefined}>
                 {it.kind ? <span className="opacity-70">{`[${it.kind}] `}</span> : null}
@@ -336,7 +336,7 @@ export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
   const t = useMessages('project');
   const names = usePassNames(v.passesFor);
   const passList = v.passes.length || v.passesFor ? (
-    <ul className="mt-1 ml-1 space-y-0.5">
+    <ul className="mt-1 ms-1 space-y-0.5">
       {v.passes.map((r) => <CheckRowView key={r.key} r={r} />)}
       {v.passesFor ? <PassNamesPending state={names.state} /> : null}
     </ul>
@@ -346,7 +346,7 @@ export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
       <div className="font-medium">{v.heading}</div>
       <div className="mt-0.5 opacity-80">{v.summary}</div>
       {v.failures.length ? (
-        <ul className="mt-1 ml-1 space-y-0.5">
+        <ul className="mt-1 ms-1 space-y-0.5">
           {v.failures.map((r) => <CheckRowView key={r.key} r={r} />)}
         </ul>
       ) : null}
@@ -1111,7 +1111,7 @@ export function IssueAssociations({
               <IssueIdentity label={`#${issue.n}`} title={issue.title} />
               <button
                 type="button"
-                className="-mr-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-500 hover:bg-red-500/10 hover:text-red-700 dark:text-zinc-400 dark:hover:text-red-400"
+                className="-me-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-500 hover:bg-red-500/10 hover:text-red-700 dark:text-zinc-400 dark:hover:text-red-400"
                 aria-label={t('project:topic.requests.remove', { number: issue.n, title: issue.title })}
                 onClick={() => removeIssue(issue.n)}
               ><XIcon className="h-4 w-4" aria-hidden="true" /></button>
@@ -1123,10 +1123,10 @@ export function IssueAssociations({
             {t('project:topic.requests.addAnother')}
           </label>
           <div className="relative mt-1.5">
-            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+            <SearchIcon className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
             <Input
               id={`linked-issues-${proposalId}`}
-              className="pl-10"
+              className="ps-10"
               value={query}
               onChange={(event) => { setQuery(event.target.value); setError(''); }}
               onKeyDown={handleSearchKey}
@@ -1140,14 +1140,14 @@ export function IssueAssociations({
               <button
                 key={issue.n}
                 type="button"
-                className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-start hover:bg-zinc-200 dark:hover:bg-zinc-700"
                 aria-label={t('project:topic.requests.addNamed', { number: issue.n, title: issue.title })}
                 onClick={() => addIssue(issue.n)}
               ><IssueIdentity label={`#${issue.n}`} title={issue.title} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button>
             ))}
             {exactOption ? <button
               type="button"
-              className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-200 dark:hover:bg-zinc-700"
+              className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-start hover:bg-zinc-200 dark:hover:bg-zinc-700"
               aria-label={t('project:topic.requests.addNumbered', { number: exactOption.n })}
               onClick={() => addIssue(exactOption.n)}
             ><IssueIdentity label={`#${exactOption.n}`} title={exactOption.title} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button> : null}

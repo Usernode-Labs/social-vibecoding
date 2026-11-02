@@ -97,7 +97,9 @@ export function FeedbackPreview({ item, onClose }: { item: FeedbackPreviewItem; 
     // float box (app.css THE USABLE BOX), padded off the Duo's column, and
     // the image is at most that box wide.
     <div
-      className="fixed inset-0 z-[9993] flex items-center justify-center bg-black/90 pl-[var(--platform-float-left)] pr-[var(--platform-float-right)]"
+      className="fixed inset-0 z-[9993] flex items-center justify-center bg-black/90"
+      // Sides of the hardware (THE USABLE BOX), so they do not mirror in Arabic.
+      style={{ paddingLeft: 'var(--platform-float-left)', paddingRight: 'var(--platform-float-right)' }}
       role="dialog"
       aria-modal="true"
       aria-label={name}

@@ -294,7 +294,7 @@ test('the list sits above the field inside the composer, clear of the send disc'
   const feedRule = CSS.indexOf('.gc-mention-menu.dev-feed-mention-menu {');
   assert.ok(base > 0 && feedRule > base, 'the feed’s placement follows the chat menu’s box, and overrides it');
   assert.match(CSS,
-    /\.gc-mention-menu\.dev-feed-mention-menu \{\s*position: absolute;\s*left: 0;\s*right: 44px;\s*bottom: calc\(100% \+ 4px\);\s*\}/,
+    /\.gc-mention-menu\.dev-feed-mention-menu \{\s*position: absolute;\s*inset-inline-start: 0;\s*inset-inline-end: 44px;\s*bottom: calc\(100% \+ 4px\);\s*\}/,
     '44px = the 36px disc plus the form’s 8px gap');
   assert.match(CSS,
     /\.gc-mention-menu\.dev-feed-mention-menu-below \{\s*top: calc\(100% \+ 4px\);\s*bottom: auto;\s*\}/,

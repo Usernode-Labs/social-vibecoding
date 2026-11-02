@@ -163,8 +163,8 @@ export function DoneLine({ children, spinning = false }: { children: ReactNode; 
 
 // Complete literals only: Tailwind's extractor reads source text.
 const SURFACES = {
-  messages: 'mt-1 flex max-w-[480px] flex-col rounded-[20px] bg-[color:var(--messages-surface)] px-4 pb-3 pt-4 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line)]',
-  app: 'flex w-full max-w-sm flex-col rounded-[20px] bg-[color:var(--dc-sheet-solid)] px-4 pb-3 pt-4 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line)]',
+  messages: 'mt-1 flex max-w-[480px] flex-col rounded-[20px] bg-[color:var(--messages-surface)] px-4 pb-3 pt-4 text-start shadow-[inset_0_0_0_1px_var(--app-sheet-line)]',
+  app: 'flex w-full max-w-sm flex-col rounded-[20px] bg-[color:var(--dc-sheet-solid)] px-4 pb-3 pt-4 text-start shadow-[inset_0_0_0_1px_var(--app-sheet-line)]',
 } as const;
 
 // #4046 (owner, 7 October): in the chat each line of the plan is a row of

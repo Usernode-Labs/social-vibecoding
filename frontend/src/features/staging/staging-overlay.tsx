@@ -258,7 +258,7 @@ export function StagingOverlay(): ReactNode {
           <TerminalIcon className="w-5 h-5" />
           <span
             id="staging-dev-console-badge"
-            className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
+            className="hidden absolute -top-1 -end-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
           >
           </span>
         </button>
@@ -347,7 +347,7 @@ export function StagingOverlay(): ReactNode {
         <div
           id="staging-testing-panel"
           ref={panelRef}
-          className="hidden absolute top-2 left-2 right-2 sm:left-auto sm:w-96 z-10 rounded-lg border border-violet-500/30 bg-zinc-900/95 backdrop-blur shadow-xl"
+          className="hidden absolute top-2 start-2 end-2 sm:start-auto sm:w-96 z-10 rounded-lg border border-violet-500/30 bg-zinc-900/95 backdrop-blur shadow-xl"
         >
           <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800">
             <span className="text-xs font-semibold text-violet-300">

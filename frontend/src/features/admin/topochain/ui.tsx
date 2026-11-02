@@ -291,7 +291,7 @@ export function List<T>({
           <thead className="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
             <tr>
               {selection ? (
-                <th className="w-10 px-3 py-2 text-left font-medium">
+                <th className="w-10 px-3 py-2 text-start font-medium">
                   <input
                     type="checkbox"
                     aria-label="Select all rows on this page"
@@ -302,11 +302,11 @@ export function List<T>({
                 </th>
               ) : null}
               {columns.map((c) => (
-                <th key={c.label} className={`px-3 py-2 text-left font-medium ${c.thClass || ''}`}>
+                <th key={c.label} className={`px-3 py-2 text-start font-medium ${c.thClass || ''}`}>
                   {c.label}
                 </th>
               ))}
-              {anyActions ? <th className="px-3 py-2 text-right font-medium">Actions</th> : null}
+              {anyActions ? <th className="px-3 py-2 text-end font-medium">Actions</th> : null}
             </tr>
           </thead>
           <tbody>
@@ -373,7 +373,7 @@ export function List<T>({
                     <dt className="shrink-0 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                       {c.label}
                     </dt>
-                    <dd className="min-w-0 text-right text-sm break-words">{c.cell(it)}</dd>
+                    <dd className="min-w-0 text-end text-sm break-words">{c.cell(it)}</dd>
                   </div>
                 ))}
               </dl>

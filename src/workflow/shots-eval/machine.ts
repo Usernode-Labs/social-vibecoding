@@ -353,6 +353,8 @@ export function shotsEval(deps: Deps) {
     version: 1,
     events: EVENTS,
     create: ['Look', 'Tick', 'EvalCancelled'],
+    // What web appends: an admin's eval launched or cancelled.
+    web: ['Look', 'EvalCancelled'],
     decode: (r) => ({ name: r.state as 'open', data: r.data as Data }),
     facts: (tx, s, e) => readFacts(tx, {
       evalId: e.payload?.evalId ?? null, mine: s.name === NONE ? [] : Object.keys((s as Live).data.trials).map(Number),

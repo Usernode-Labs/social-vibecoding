@@ -207,9 +207,9 @@ test('Q19: chip and Save slops never cover a neighbour\'s own box', () => {
   assert.ok(chips.length < CSS.length, 'the chip rows are isolated');
   assert.match(chips, /button\.attr-chip::after \{[\s\S]*?z-index: -1;[\s\S]*?height: max\(100%, 32px\);/);
   // The Save mark follows a vote row's No button 4px away: it reaches back no
-  // further than that margin.
+  // further than that margin, at the row's start edge in either direction.
   const save = CSS.slice(CSS.indexOf('  .gc-msg-save::after {'));
-  assert.match(save, /^ {2}\.gc-msg-save::after \{[\s\S]*?left: -4px;[\s\S]*?height: max\(100%, 32px\);/);
+  assert.match(save, /^ {2}\.gc-msg-save::after \{[\s\S]*?inset-inline-start: -4px;[\s\S]*?height: max\(100%, 32px\);/);
 });
 
 // ── Q20: ARIA structure ─────────────────────────────────────────────────
@@ -221,9 +221,11 @@ test('Q20: form controls the audit found unnamed have names', () => {
     'the Country label points at its select');
   assert.equal(message('auth:waiting.about.country'), 'Country');
   assert.match(about, /id="waiting-about-country"/);
-  // Four text boxes that took focus announcing only "edit text".
+  // Four text boxes that took focus announcing only "edit text". The message
+  // box follows what is typed (`dir="auto"`), so an Arabic or English message
+  // keeps its own direction.
   assert.match(read('frontend/src/features/messages/message-row.tsx'),
-    /<textarea ref=\{editRef\} aria-label=\{t\('messages:row\.editLabel'\)\}/, 'the message edit box');
+    /<textarea ref=\{editRef\} dir="auto" aria-label=\{t\('messages:row\.editLabel'\)\}/, 'the message edit box');
   assert.equal(message('messages:row.editLabel'), 'Edit message');
   assert.match(read('frontend/src/features/dev-board/card/dev-card.tsx'),
     /id=\{`dev-\$\{kind\}-title-input`\}\n\s*aria-label=\{session \? msg\('project:card\.title\.proposalInput'\) : msg\('project:card\.title\.requestInput'\)\}/,

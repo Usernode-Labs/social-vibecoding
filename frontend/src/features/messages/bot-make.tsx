@@ -128,7 +128,7 @@ export function MakeSheet({ project, onClose, onMade }: {
                     aria-checked={on}
                     data-bot-make-audience={option}
                     onClick={() => setAudience(option)}
-                    className={`flex w-full items-center gap-3 px-3 py-2.5 text-left ${i ? 'shadow-[inset_0_1px_0_var(--app-sheet-line)]' : ''}`}
+                    className={`flex w-full items-center gap-3 px-3 py-2.5 text-start ${i ? 'shadow-[inset_0_1px_0_var(--app-sheet-line)]' : ''}`}
                   >
                     <span className="min-w-0 flex-1">
                       <span className="block text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t(AUDIENCE_LABELS[option])}</span>

@@ -234,7 +234,7 @@ function ModelCostsSection() {
                 <td className={AdminUI.td}>
                   {money(row.shownCents)}
                   {row.overrideCents != null ? (
-                    <span className={`${AdminUI.badge.secondary} ml-2`}>set by hand</span>
+                    <span className={`${AdminUI.badge.secondary} ms-2`}>set by hand</span>
                   ) : null}
                 </td>
                 <td className={AdminUI.td}>{money(row.observedAvgCents)}</td>

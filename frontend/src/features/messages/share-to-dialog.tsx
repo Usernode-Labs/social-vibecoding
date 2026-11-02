@@ -287,7 +287,7 @@ export function ShareToDialog() {
                 data-share-destination={row.kind}
                 disabled={sending}
                 onClick={() => { setChosen(row.key); setError(''); }}
-                className={`w-full flex items-center gap-3 rounded-lg px-2 py-2 text-left disabled:opacity-50 ${selected ? 'bg-violet-100 dark:bg-violet-950' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800'}`}
+                className={`w-full flex items-center gap-3 rounded-lg px-2 py-2 text-start disabled:opacity-50 ${selected ? 'bg-violet-100 dark:bg-violet-950' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800'}`}
               >
                 <DestinationTile row={row} />
                 <span className="min-w-0 flex-1">

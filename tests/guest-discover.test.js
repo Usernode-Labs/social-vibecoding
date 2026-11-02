@@ -128,7 +128,7 @@ test('Featured is what an admin featured that a visitor can try, and nothing els
   assert.deepEqual(featuredApps(APPS, () => false), [], 'nothing to try, no Featured');
   assert.deepEqual(featuredApps(APPS.map((a) => ({ ...a, featured: false })), here), [], 'nothing featured, no Featured');
   assert.equal(data.FEATURED_MIN, undefined, 'no minimum to fill to');
-  assert.equal(projectHash('game-corner'), '#app/game-corner/workshop');
+  assert.equal(projectHash('game-corner'), '#app/game-corner/dev/hub', 'the Hub\'s own address: a bare /workshop opens the Workshop');
   assert.equal(data.projectPath('game-corner'), '/app/game-corner');
   // A card's votes line opens the page at its Workshop, a signed-in
   // person's own address for it too.
@@ -236,7 +236,7 @@ test('Featured and All apps are one grid that reflows, two columns at least, and
   // and an arrow that only shows under a pointer or keyboard focus.
   const fresh = cardOf(html, 'fresh-one');
   assert.match(fresh, /bg-\[radial-gradient\(120%_90%_at_22%_12%,rgba\(255,255,255,0\.28\),rgba\(255,255,255,0\)_58%\)\]/);
-  assert.match(card, /<span aria-hidden="true" class="absolute bottom-2 right-2 [^"]*opacity-0[^"]*group-hover:opacity-100[^"]*group-has-\[a:focus-visible\]:opacity-100/);
+  assert.match(card, /<span aria-hidden="true" class="absolute bottom-2 end-2 [^"]*opacity-0[^"]*group-hover:opacity-100[^"]*group-has-\[a:focus-visible\]:opacity-100/);
 });
 
 test('no card carries a button: Try it is the project page\'s, and a waitlisted account still sees everything featured', () => {
@@ -566,9 +566,9 @@ test('the guest bar: the wordmark at the column\'s left, Sign in and Sign up at 
   // Its edges are the column's (max-w-6xl, px-4 blocks), with a hairline under it.
   assert.match(src, /const GUEST_BAR = 'md:px-\[max\(1rem,calc\(\(100%_-_72rem\)\/2_\+_1rem\)\)\] shadow-\[inset_0_-1px_0_var\(--app-sheet-line\)\] \[&\[data-guest-top\]>div:first-child\]:\[display:none\]';/);
   // The lead and trailing boxes give way on Discover, so the wordmark sits
-  // on the left edge; the title reads from the left there.
+  // on the start edge; the title reads from there.
   assert.match(header, /<div className="w-7 h-7 shrink-0 flex items-center justify-center">/);
-  assert.match(header, /\[\[data-guest-top\]_&\]:px-0 \[\[data-guest-top\]_&\]:text-left/);
+  assert.match(header, /\[\[data-guest-top\]_&\]:px-0 \[\[data-guest-top\]_&\]:text-start/);
   assert.match(header, /<div className="w-7 shrink-0 \[\[data-guest-top\]_&\]:hidden" aria-hidden="true" \/>/);
   // Sign in and Sign up, both DRAWN at the row's 28px with no padding of
   // their own: the landing bar is a 28px content row on every screen
@@ -577,7 +577,7 @@ test('the guest bar: the wordmark at the column\'s left, Sign in and Sign up at 
   // what the review of #5743's build asked for (both were 28px to the
   // finger).
   const actions = header.slice(header.indexOf('data-landing-actions'));
-  assert.match(actions.slice(0, 300), /hiddenLast\(session \|\| !guestPages, guestTop \? 'flex shrink-0 items-center gap-1\.5' : `absolute bottom-4 right-4 /);
+  assert.match(actions.slice(0, 300), /hiddenLast\(session \|\| !guestPages, guestTop \? 'flex shrink-0 items-center gap-1\.5' : `absolute bottom-4 end-4 /);
   assert.match(actions, /data-landing-sign-in=""\s+className=\{hiddenLast\(session \|\| !guestPages, 'un-touch-target -my-2 min-h-11 rounded-full px-2 /);
   assert.match(actions, /onClick=\{\(\) => \{ noteSignUpFrom\('header_sign_in'\); setSheet\('signin'\); \}\}/);
   assert.match(actions, /<Button\s+type="button"\s+variant="pillAccent"\s+size="none"\s+ink="solid"\s+data-landing-sign-up=""/);

@@ -9,6 +9,7 @@ import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { walletSheetStore, WALLET_EMPTY, type WalletSheetState } from '../header/wallet-sheet-store';
 import { createStakingHistory } from './staking-history.js';
 import { requireAdult } from '../auth/adult-gate';
+import { dirSign } from '../../lib/i18n/direction';
 
 const controller = () => (window as any).WalletSheet;
 
@@ -40,7 +41,7 @@ export function StakingRow() {
   if (!visible) return null;
   return <>
     <button type="button" data-staking-row
-      className="flex items-center gap-3 px-4 min-h-[44px] w-full text-left text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+      className="flex items-center gap-3 px-4 min-h-[44px] w-full text-start text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
       onClick={() => {
         // Staking is for adults (#5095): asked once before it opens. The
         // `?demo=staking-*` preview opens from its effect, without asking.
@@ -49,9 +50,9 @@ export function StakingRow() {
       }}>
       <StakingIcon aria-hidden="true" className="w-5 h-5 shrink-0" />
       <span className="text-sm font-medium">{t('profile:staking.title')}</span>
-      <span className={delegated ? 'ml-auto text-xs font-semibold text-violet-700 dark:text-violet-400'
-        : ready ? 'ml-auto text-xs font-semibold text-emerald-700 dark:text-emerald-400'
-          : 'ml-auto text-xs text-zinc-500 dark:text-zinc-400'}>{ready ? (delegated ? t('profile:staking.status.delegated') : t('profile:staking.status.active')) : t('profile:staking.status.checking')}</span>
+      <span className={delegated ? 'ms-auto text-xs font-semibold text-violet-700 dark:text-violet-400'
+        : ready ? 'ms-auto text-xs font-semibold text-emerald-700 dark:text-emerald-400'
+          : 'ms-auto text-xs text-zinc-500 dark:text-zinc-400'}>{ready ? (delegated ? t('profile:staking.status.delegated') : t('profile:staking.status.active')) : t('profile:staking.status.checking')}</span>
       <span aria-hidden="true">›</span>
     </button>
     {open ? <StakingSheet preview={preview} onClose={() => setOpen(false)} /> : null}
@@ -196,14 +197,15 @@ export function EpochCarousel({ state, select, retry }: any) {
     const el = rail.current;
     if (!el) return;
     centering.current = true;
-    el.scrollLeft = epochs.indexOf(epoch) * (el.clientWidth - 12);
+    // Negative from the start in a right-to-left scroller.
+    el.scrollLeft = epochs.indexOf(epoch) * (el.clientWidth - 12) * dirSign();
     const frame = requestAnimationFrame(() => { centering.current = false; });
     return () => { cancelAnimationFrame(frame); clearTimeout(settle.current); };
   }, [epoch, state.currentEpoch]);
   function finishScroll() {
     const el = rail.current;
     if (!el || centering.current || drag.current) return;
-    const index = Math.max(0, Math.min(epochs.length - 1, Math.round(el.scrollLeft / (el.clientWidth - 12))));
+    const index = Math.max(0, Math.min(epochs.length - 1, Math.round(Math.abs(el.scrollLeft) / (el.clientWidth - 12))));
     if (epochs[index] !== epoch) select(epochs[index]);
   }
   return <>

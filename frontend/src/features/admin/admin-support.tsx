@@ -229,7 +229,7 @@ function SupportSearch({ onOpen, initialQuery, onQuery }: {
               {results.map((r) => (
                 <li key={r.id}>
                   <button type="button" data-support-result={r.id}
-                    className="w-full text-left px-5 py-3 flex flex-wrap items-center gap-x-3 gap-y-1 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 focus-visible:bg-zinc-50 dark:focus-visible:bg-zinc-800/50"
+                    className="w-full text-start px-5 py-3 flex flex-wrap items-center gap-x-3 gap-y-1 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 focus-visible:bg-zinc-50 dark:focus-visible:bg-zinc-800/50"
                     onClick={() => onOpen(r.id)}>
                     <span className="font-medium text-zinc-900 dark:text-zinc-100 break-words">{r.username}</span>
                     {r.display_name ? <span className={MUTED}>{r.display_name}</span> : null}

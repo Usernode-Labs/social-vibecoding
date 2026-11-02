@@ -185,7 +185,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
     <h1
       ref={titleRef}
       id="header-title"
-      className={"flex-1 min-w-0 text-base font-semibold pointer-events-none truncate\n               text-left"}
+      className={"flex-1 min-w-0 text-base font-semibold pointer-events-none truncate\n               text-start"}
     >
       {drawerOn ? <DrawerTitles /> : (
       <span className="inline-flex items-center gap-2 max-w-full align-middle">
@@ -198,7 +198,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
             id="header-scope-switch"
             type="button"
             className="pointer-events-auto un-touch-target inline-flex items-center gap-2 min-w-0 max-w-full
-                       text-left font-semibold"
+                       text-start font-semibold"
             data-community-switch=""
             aria-haspopup="dialog"
             aria-expanded={switcherOpen ? 'true' : 'false'}
@@ -220,7 +220,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
               id="header-app-switch"
               type="button"
               className="pointer-events-auto un-touch-target inline-flex items-center gap-2 min-w-0 max-w-full
-                         text-left font-semibold"
+                         text-start font-semibold"
               data-community-switch=""
               aria-haspopup="dialog"
               aria-expanded={switcherOpen ? 'true' : 'false'}

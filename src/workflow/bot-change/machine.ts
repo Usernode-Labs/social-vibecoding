@@ -368,7 +368,9 @@ const fromMachine = (...names: string[]) => (e: Event<any>): Check =>
 const anyProducer = (e: Event<any>): Check =>
   (e.source.kind === 'message' || e.source.kind === 'system' || e.source.kind === 'service' ? ok() : reject('not_a_producer'));
 const timer = (e: Event<any>): Check => (e.source.kind === 'timer' ? ok() : reject('timer_only'));
-const admin = (e: Event<any>): Check => (e.source.kind === 'admin' || e.source.kind === 'system' ? ok() : reject('not_a_producer'));
+// Web's is the admin console's, admitted as an admin's.
+const admin = (e: Event<any>): Check => (e.source.kind === 'admin' || (e.source.kind === 'system' && e.producer === 'platform')
+  ? ok() : reject('not_a_producer'));
 
 export function botChange(): Machine<BState, Facts> {
   const works = { WorkSucceeded: workResult('done'), WorkFailed: workResult('failed'), WorkExhausted: workResult('exhausted') };
@@ -413,6 +415,8 @@ export function botChange(): Machine<BState, Facts> {
     version: 2,
     events: EVENTS,
     create: CREATE,
+    // What web appends: a vote on the change, and the admin console's Retry follow-up.
+    web: ['Voted', 'RetryFollowup'],
     terminal: [...FINAL],
     decode: (row) => ({ name: row.state, data: row.data } as BState),
     facts: (tx: Tx, state: BState, event: Event<any>) => {

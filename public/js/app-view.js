@@ -8217,7 +8217,7 @@ const AppView = {
   // A descriptor is { label, title?, icon?, disabled?, danger?, act? }:
   //   label    — the row text (same wording the pill had)
   //   title    — tooltip / the disabled reason
-  //   icon     — a MENU_ICONS key; the glyph is decorative, never the name
+  //   icon     — a MENU_ICONS key; the icon is decorative, never the name
   //   disabled — renders inert (kept, rather than hidden, so "Close proposed"
   //              still explains itself)
   //   danger   — red row (Archive, Withdraw, Undo)
@@ -8367,67 +8367,79 @@ const AppView = {
   // ── One icon vocabulary for every ⋯ menu ──────────────────────────────
   //
   // Keyed by MEANING, not by card type, so the same action wears the same
-  // glyph wherever it appears: "Admin merge" is ⚡ on a proposal card, a
+  // icon wherever it appears: "Admin merge" is the bolt on a proposal card, a
   // governance card and the topic head alike, and a reader who learns one
   // menu has learned all five. Because it is looked up from the descriptor
   // (never baked into the label), the anchored dropdown and the touch action
   // sheet render from ONE source — the whole point of descriptors over HTML.
   //
-  // The glyph is DECORATIVE: `aria-hidden` in the dropdown and never part of
-  // the accessible name, so a screen reader still hears "Withdraw", not
-  // "multiplication sign Withdraw". Danger rows deliberately use monochrome
-  // text glyphs rather than emoji, so they inherit the row's red instead of
-  // sitting in it as a coloured sticker.
-  MENU_ICONS: {
-    merge: '⚡',            // ⚡ admin bypass of the vote
-    session: '💻',    // 💻 the dev session behind a proposal
-    withdraw: '✕',         // ✕ danger
-    undo: '↩',             // ↩ danger
-    unpromote: '↶',        // ↶ back a column, from In review to Underway
-    kudos: '★',            // ★ matches the bounty badge on the meta line
-    explore: '✨',          // ✨ was inline in the label; now the icon
-    generate: '✧',         // ✧ sibling sparkle: the headless AI run
-    retry: '↻',            // ↻
-    checks: '✓',          // check results
-    visuals: '🖼',    // 🖼 before/after captures
-    github: '↗',           // ↗ leaves the platform, for GitHub
-    code: '‹›',            // ‹› the code, on Homeroom's own git host
-    priority: '⚑',         // ⚑ the same flag the priority chip uses
-    category: '🏷',   // 🏷
-    assignee: '@',              // the assignee chip renders "@name"
-    progress: '◐',         // ◐ half-filled: in progress
-    clear: '○',            // ○ the same circle, emptied
-    close: '⊘',            // ⊘ danger
-    visible: '👁',    // 👁
-    hide: '🔒',       // 🔒 private again
-    chat: '💬',       // 💬 matches the message-count badge
-    archive: '📦',    // 📦
-    campaign: '📊',   // 📊
-    open: '▢',             // ▢ the card on its own page
-    details: '≡',          // ≡ the technical half, as a sheet
-    edit: '✎',             // edit the reader-facing description
-    share: '↑',            // ↑ into Messages, distinct from ↗ leaving the platform
-    notify: '🔔',          // 🔔 a thread's Notify me, and Unmute
-    mute: '🔕',            // 🔕 a thread's Mute
-    move: '⇄',             // ⇄ a thread's merge, split or break up
+  // THESE ARE KEYS, NOT GLYPHS (overnight UI audit D08, the owner's decision
+  // of 2 Nov 2026). Each key used to be a text glyph or a colour emoji (✎ ⚑
+  // 🏷 🔕), so a request's ⋯ sheet mixed monochrome marks with coloured
+  // stickers whose colours meant nothing. The shell's line icons draw them
+  // now, from one table keyed by these names
+  // (frontend/src/features/dev-board/menu-icons.tsx, which a test holds to
+  // this list): the dropdown renders the icon, the touch sheet hands the kit
+  // the same svg element as `iconEl`, as the hub's ⋯ sheet does. The icon is
+  // DECORATIVE: `aria-hidden`, never part of the accessible name, and drawn in
+  // the row's ink, so a danger row's icon is red with its label.
+  MENU_ICONS: Object.freeze([
+    'merge',      // admin bypass of the vote
+    'session',    // the dev session behind a proposal
+    'withdraw',   // danger
+    'undo',       // danger
+    'unpromote',  // back a column, from In review to Underway
+    'kudos',      // matches the bounty badge on the meta line
+    'explore',    // was inline in the label; now the icon
+    'generate',   // the headless AI run
+    'retry',
+    'checks',     // check results
+    'visuals',    // before/after captures
+    'github',     // leaves the platform, for GitHub
+    'code',       // the code, on Homeroom's own git host
+    'priority',   // the same flag the priority chip uses
+    'category',
+    'assignee',
+    'progress',   // claim: in progress
+    'clear',      // let a claim go
+    'close',      // danger
+    'visible',
+    'hide',       // private again
+    'chat',       // matches the message-count badge
+    'archive',
+    'campaign',
+    'open',       // the card on its own page
+    'details',    // the technical half, as a sheet
+    'edit',       // edit the reader-facing description
+    'share',      // into Messages, distinct from leaving the platform
+    'notify',     // a thread's Notify me, and Unmute
+    'mute',       // a thread's Mute
+    'move',       // a thread's merge, split or break up
     // Nothing should reach this, but a descriptor added later without an
     // icon must still line up with its neighbours rather than losing the
     // leading column and shifting its own label left.
-    default: '•',          // •
-  },
+    'default',
+  ]),
 
-  // The glyph for one descriptor. Unknown / absent keys fall back to the
-  // neutral bullet so the fixed-width leading column is never empty.
-  _menuIconGlyph(it) {
+  // The icon key for one descriptor. Unknown / absent keys fall back to the
+  // neutral `default` so the fixed-width leading column is never empty.
+  _menuIconKey(it) {
     const key = it && it.icon;
-    return (key && AppView.MENU_ICONS[key]) || AppView.MENU_ICONS.default;
+    return key && AppView.MENU_ICONS.includes(key) ? key : 'default';
   },
 
-  // The touch action sheet takes a plain string per row (the native kit
-  // owns that markup), so the SAME glyph rides in as a label prefix there.
-  // Two spaces, not one: the sheet has no leading column to align against.
-  _menuSheetLabel(it) {
-    return `${AppView._menuIconGlyph(it)}  ${it.label}`;
+  // The touch action sheet's row: the kit owns that markup and takes the
+  // artwork as `iconEl`, an svg element the React side draws from the same table.
+  // Before the bundle is there (it always is by the time a ⋯ can be pressed)
+  // the row is its words alone.
+  _menuSheetAction(it) {
+    const icon = AppView._reactDevBoard()?.menuIconElement?.(AppView._menuIconKey(it)) || null;
+    return {
+      label: it.label,
+      ...(icon ? { iconEl: icon } : {}),
+      destructive: !!it.danger,
+      handler: () => { try { it.act(); } catch { /* handler owns its errors */ } },
+    };
   },
 
   // ── What a link is: GitHub's, a Homeroom page, or the git host's code ──
@@ -8668,11 +8680,7 @@ const AppView = {
     // "+" menu's behaviour rather than anchoring a dropdown under a finger.
     if (typeof PlatformUI !== 'undefined' && PlatformUI.isTouch && PlatformUI.isTouch()) {
       PlatformUI.actionSheet({
-        actions: items.filter((it) => !it.disabled && it.act).map((it) => ({
-          label: AppView._menuSheetLabel(it),
-          destructive: !!it.danger,
-          handler: () => { try { it.act(); } catch { /* handler owns its errors */ } },
-        })),
+        actions: items.filter((it) => !it.disabled && it.act).map((it) => AppView._menuSheetAction(it)),
       });
       return;
     }
@@ -8736,7 +8744,7 @@ const AppView = {
     AppView._reactDevBoard()?.publishCardMenu((items || []).map((it) => ({
       label: it.label,
       title: it.title || null,
-      glyph: AppView._menuIconGlyph(it),
+      icon: AppView._menuIconKey(it),
       row: it.icon || null,
       // A purely informational row ("Close proposed") has no `act` and is
       // rendered inert rather than hidden, so it can still explain itself.
@@ -12078,6 +12086,26 @@ const AppView = {
    * (the header's ⌄ menu, a row of All communities): it keeps the place you
    * were on (landKeepingPlace, features/dev-board/workshop/place-store.ts).
    */
+  /**
+   * THE PLACE IS DECIDED. A door or a switch says which place the page opens
+   * on before it navigates (_landOnTab), and the Communities tab's resume
+   * keeps the one remembered. The router asks (_takePlaceDecision) when a
+   * route arrives at a project's /workshop address, which otherwise opens
+   * the Workshop (App._linkOpensWorkshop). One decision, for one project,
+   * spent on the arrival it was made for, and only for a few seconds: a
+   * page already up that a switch turned in place navigates nowhere, and
+   * its decision must not be taken by a later link.
+   */
+  PLACE_DECISION_TTL_MS: 4000,
+  _placeDecided: null,
+  _notePlaceDecided(slug) {
+    AppView._placeDecided = slug ? { slug, at: Date.now() } : null;
+  },
+  _takePlaceDecision(slug) {
+    const d = AppView._placeDecided;
+    AppView._placeDecided = null;
+    return !!d && d.slug === slug && Date.now() - d.at <= AppView.PLACE_DECISION_TTL_MS;
+  },
   _landOnHub(slug) {
     AppView._landOnTab(slug, 'status');
   },
@@ -12209,6 +12237,7 @@ const AppView = {
    */
   _landOnTab(slug, tab) {
     const key = AppView._isWorkshopPlace(tab) ? tab : 'status';
+    AppView._notePlaceDecided(slug);
     AppView._setWorkshopTab(key);
     try {
       window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab: key } }));
@@ -27277,14 +27306,14 @@ const AppView = {
         if (restored) AppView._repaintAfterVote(sessionId);
       }
     };
+    const known = AppView._seenEpoch.get(sessionId);
+    const epoch = known === undefined ? expectedEpoch : known;
+    const body = { vote, expectedEpoch: epoch, ...(reason ? { reason } : {}) };
+    let answered = false;
+    let queued = false;
     try {
-      const known = AppView._seenEpoch.get(sessionId);
-      const epoch = known === undefined ? expectedEpoch : known;
-      const res = await fetch(`/api/sessions/${sessionId}/vote`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vote, expectedEpoch: epoch, ...(reason ? { reason } : {}) }),
-      });
+      const res = await AppView._sendVote(sessionId, body);
+      answered = true;
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         // #1924: the optimistic vote goes back before anything else — the
@@ -27305,6 +27334,8 @@ const AppView = {
         return false;
       }
       AppView._seenEpoch.delete(sessionId);
+      // A vote on this change kept from while offline is older than this one.
+      window.UsernodeReact?.actionOutbox?.drop?.(`vote:${sessionId}`);
       // Its code did not come across from GitHub (services/code-missing.js):
       // the vote is saved, and the voter hears it cannot go live yet. The
       // server says so when it knows; the row's own flag says it otherwise.
@@ -27350,6 +27381,18 @@ const AppView = {
       window.Leaderboard?.invalidateHistory?.();
       return true;
     } catch {
+      // Offline follow-up, 2 Nov 2026: a vote with no answer (offline, or a
+      // network that passes nothing, which _sendVote stops waiting on) is
+      // kept on the device and sent once the connection is back
+      // (frontend/src/lib/action-outbox.ts; _actionSent hears how it went).
+      // It stays on the card meanwhile, held as pending so no read paints
+      // it away. Sending it twice is safe: the server answers a repeat
+      // `unchanged`.
+      if (!answered && await AppView._queueVote(sessionId, body)) {
+        queued = true;
+        window.PlatformUI?.toast?.(PlatformI18n.t('changes:vote.toast.queued'));
+        return true;
+      }
       rollback();
       // QA 2026-09-24 Q3: a vote that never reached the server used to put
       // the card back without a word, which read as the button doing
@@ -27359,8 +27402,88 @@ const AppView = {
     }
     finally {
       AppView._voteInFlight.delete(key);
-      AppView._publishVoteSending(`castVote:${sessionId}`, null);
+      // A kept vote stays "Sending…" on every Vote button for this change
+      // until it is answered (_actionSent): with the mark gone, a card that
+      // draws the vote only from the server's rows (the change page's Votes
+      // card) offered Vote again for a vote that was waiting to go (offline
+      // rerun, 2 Nov 2026).
+      if (!queued) AppView._publishVoteSending(`castVote:${sessionId}`, null);
     }
+  },
+
+  // How long a vote waits for its answer before it counts as none. Writes
+  // have no limit of their own, and on a network that passes nothing the
+  // POST waited until the web view gave up, a minute or more, on
+  // "Sending…" (offline test, 2 Nov 2026).
+  VOTE_SEND_TIMEOUT_MS: 15000,
+
+  async _sendVote(sessionId, body) {
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), AppView.VOTE_SEND_TIMEOUT_MS) : null;
+    try {
+      return await fetch(`/api/sessions/${sessionId}/vote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        ...(ctrl ? { signal: ctrl.signal } : {}),
+      });
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  },
+
+  // Keep a vote that had no answer, to send when the connection is back.
+  // False when it could not be kept (no storage, nobody signed in): the
+  // caller says it was not sent, as before.
+  async _queueVote(sessionId, body) {
+    const outbox = window.UsernodeReact?.actionOutbox;
+    if (!outbox || typeof outbox.queue !== 'function') return false;
+    try {
+      return await outbox.queue({ key: `vote:${sessionId}`, kind: 'vote', url: `/api/sessions/${sessionId}/vote`, body });
+    } catch {
+      return false;
+    }
+  },
+
+  // A vote kept while offline was answered (frontend/src/lib/action-outbox.ts
+  // ACTION_OUTBOX_EVENT): what castVote does with an answer, late. Sent, it
+  // is saved everywhere a saved vote is heard of; refused (the change moved
+  // on to a new revision meanwhile, the voter left the project), the card
+  // asks again and the voter is told, in the server's words when it has
+  // them. Either way its "Sending…" mark goes and the rows are read again.
+  // `queued` is a vote still waiting, announced when a page starts (an app
+  // relaunched before the connection came back): its mark goes up again.
+  _actionSent(detail) {
+    const record = detail && detail.record;
+    if (!record || record.kind !== 'vote' || !record.body) return;
+    const sessionId = Number(String(record.key).slice('vote:'.length));
+    if (!Number.isSafeInteger(sessionId) || sessionId <= 0) return;
+    const vote = record.body.vote;
+    if (detail.outcome === 'queued') {
+      if (vote === 'yes' || vote === 'no') AppView._publishVoteSending(`castVote:${sessionId}`, vote);
+      return;
+    }
+    AppView._publishVoteSending(`castVote:${sessionId}`, null);
+    const held = AppView._pendingVotes.get(sessionId);
+    if (held && held.vote === vote) AppView._pendingVotes.delete(sessionId);
+    const data = detail.data || {};
+    if (detail.outcome === 'sent') {
+      AppView._seenEpoch.delete(sessionId);
+      AppView._seenEpoch.delete(String(sessionId));
+      AppView._noteOwnVote(sessionId, vote);
+      AppView._publishVoteSaved(sessionId, vote, record.body.expectedEpoch);
+      window.Notifications?.refresh?.();
+      window.UsernodeReact?.profileProposals?.voted?.();
+      window.Leaderboard?.invalidateHistory?.();
+      window.PlatformUI?.toast?.(PlatformI18n.t('changes:vote.toast.queuedSent'));
+    } else {
+      if (Number.isFinite(parseInt(data.approvalEpoch, 10))) {
+        AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
+      }
+      window.PlatformUI?.toast?.(data.error || PlatformI18n.t('changes:vote.toast.queuedRefused'));
+    }
+    AppView.refreshDevData('vote');
+    if (typeof GroupChat !== 'undefined' && GroupChat.appSlug) AppView.loadVoteState(GroupChat.appSlug);
   },
 
   // The review flow's Undo: take the viewer's vote on a change back
@@ -27440,6 +27563,8 @@ const AppView = {
         return false;
       }
       AppView._seenEpoch.delete(sessionId);
+      // Nor is a vote kept from while offline to be sent after its undo.
+      window.UsernodeReact?.actionOutbox?.drop?.(`vote:${sessionId}`);
       AppView._noteOwnVote(sessionId, null);
       AppView._publishVoteSaved(sessionId, null, epoch);
       const refresh = typeof App !== 'undefined' && App._liveRefresh
@@ -28962,7 +29087,7 @@ const AppView = {
   // What the open staging preview is showing (#4918): { sessionId, slug,
   // name, self_hosted } — the change and the app its frames show — set by
   // ensureStaging and cleared on close. Comment mode reads it to file a
-  // request on the previewed app and name the change in its where line.
+  // request on the previewed app and name the change in its description.
   _stagingPreview: null,
 
   // #127: show/hide + wire the overlay's "Test this change" button and the
@@ -30833,6 +30958,9 @@ const AppView = {
 // top-level listener; handleLlmBridgeMessage verifies the source is an
 // iframe this shell owns and ignores everything else.
 if (typeof window !== 'undefined') {
+  // A vote kept while offline was answered (AppView._actionSent).
+  window.addEventListener('usernode:action-outbox', (event) => AppView._actionSent(event.detail));
+
   // Snapshot identities are display-only and never own analytics. Once the
   // authoritative /api/auth/me answer arrives, arm the already-open App tab
   // without requiring a navigation or frame reload.

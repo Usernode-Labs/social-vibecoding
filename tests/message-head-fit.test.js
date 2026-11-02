@@ -67,5 +67,5 @@ test('the Messages time and its "edited" never wrap inside themselves', () => {
 });
 
 test('the Messages head names its author span, so the rule has something to hold', () => {
-  assert.match(ROW, /<div className="messages-message-head"><span className=\{`messages-message-author \$\{mine && sided \? 'sr-only' : ''\}`\}>/);
+  assert.match(ROW, /<div className="messages-message-head"><span dir="auto" className=\{`messages-message-author \$\{mine && sided \? 'sr-only' : ''\}`\}>/);
 });

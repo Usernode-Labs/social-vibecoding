@@ -422,7 +422,7 @@ function CampaignRow({
           account deletions), so the header opens from the keyboard and says
           whether it is open. Its children are spans: a button holds phrasing
           content only. */}
-      <button type="button" className="w-full text-left flex items-center justify-between gap-3 cursor-pointer"
+      <button type="button" className="w-full text-start flex items-center justify-between gap-3 cursor-pointer"
         data-campaign-toggle={c.id} aria-expanded={open} aria-controls={detailId}
         onClick={() => onToggle(c.id)}>
         <span className="block min-w-0">

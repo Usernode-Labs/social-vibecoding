@@ -80,6 +80,12 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
   ], '#390 is the question owed above, so its plan is not listed again; nothing waiting on others is here');
   assert.deepEqual(rows.map((r) => r.pill && message(r.pill.id)), ['Vote', 'Pick one', 'Answer', 'Vote', 'Build it', null, null]);
   assert.equal(owedCount(rows), 5, 'the heading counts what asks for you, not your private threads');
+  // B17: on a project that is just yours, your yes alone approves it, and
+  // the row says so as its card and the project's Needs you do.
+  const [solo] = needsYou([{ kind: 'proposal', id: 21, number: 5, title: 'Darker header', app, approve: true }], null);
+  assert.equal(message(solo.pill.id), 'Approve');
+  const [ruleOnly] = needsYou([{ kind: 'governance', id: 22, number: null, title: 'Rename it', app, approve: true }], null);
+  assert.equal(message(ruleOnly.pill.id), 'Vote', 'only a change is approved alone');
   assert.equal(rows[1].title, 'Night theme', 'a ballot is named for the request its changes compete for');
   assert.equal(words(rows[1].sub), 'Garden club · #401');
   assert.equal(rows[1].href, '#app/garden/dev/issues/401', 'and is decided on its page');
@@ -548,13 +554,13 @@ test('a page drawn before sign-in is confirmed asks again once it is, and its As
   // boot and again once the server confirms it; both reads and the docked
   // chat go again then, instead of staying empty until a reload.
   assert.match(src, /const again = \(\) => setSession\(\(n\) => n \+ 1\);\s+document\.addEventListener\('sv:session', again\);\s+return \(\) => document\.removeEventListener\('sv:session', again\);/);
-  assert.match(src, /return \(\) => \{ live = false; \};\s+\}, \[visible, session, moved\]\);/);
+  assert.match(src, /return \(\) => \{ live = false; clearTimeout\(early\); \};\s+\}, \[visible, session, moved\]\);/);
   assert.match(src, /\}, \[visible, wide, phone, botId, session\]\);/);
   assert.match(read('public/js/app.js'), /document\.dispatchEvent\(new CustomEvent\('sv:session', \{\s+detail: \{ user: App\.user, verifiedSession: true \},/,
     'the confirmation it waits for');
   // A wide window whose Main is not docked (yet, or at all) keeps the bar
   // on the page, clear of the sidebar.
-  assert.match(read('public/css/app.css'), /#ai-screen \.ai-askbar \{\s+position: fixed;\s+(\/\*[^*]*\*+([^/*][^*]*\*+)*\/\s+)?left: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter, 0px\)\);\s+right: var\(--platform-gutter, 0px\);/);
+  assert.match(read('public/css/app.css'), /#ai-screen \.ai-askbar \{\s+position: fixed;\s+(\/\*[^*]*\*+([^/*][^*]*\*+)*\/\s+)?inset-inline-start: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter, 0px\)\);\s+inset-inline-end: var\(--platform-gutter, 0px\);/);
 });
 
 test('#homeroom-bot is the page; /main and /thread/<id> are Main and a thread in its column; #ai lands there', () => {
@@ -751,7 +757,7 @@ test('on a phone the list and Main Chat are one drawer, as Messages\' are; a req
   assert.match(src, /data-ai-drawer=\{phone \? level : undefined\}/);
   assert.match(drawer, /const PHONE_QUERY = '\(max-width: 767\.98px\)';/);
   const css = read('public/css/app.css');
-  assert.match(css, /\.ai-drawer-list \{\s+position: absolute; top: 0; bottom: 0; left: 0; width: 85%;/);
+  assert.match(css, /\.ai-drawer-list \{\s+position: absolute; top: 0; bottom: 0; inset-inline-start: 0; width: 85%;/);
   assert.match(css, /\.ai-drawer-back::after \{ content: ""; position: absolute; inset: -6px; \}/, 'its arrow is pressed as a 44px target');
   assert.match(css, /\.ai-drawer\[data-level="0"\] :is\(\.ai-drawer-back, \.messages-thread-back\) \{ opacity: 0;/, 'neither arrow shows in the peek');
   assert.equal(message('messages:ai.drawer.peek', { title: message('messages:store.header.main') }), 'Open Main Chat');
@@ -763,7 +769,7 @@ test('on a phone the list is the whole screen until a thread has been opened, th
   assert.match(drawer, /const OPENED_KEY = 'homeroom:botDrawer:threadOpened';/, 'remembered per device');
   assert.match(drawer, /const at = opened \? MESSAGES_AT : FULL_AT;/);
   assert.match(drawer, /const offset = drag \?\? at\[level\];/, 'rest, drag and landing all read the one table');
-  assert.match(drawer, /onLevel\(landingIn\(at, p\.from, now, e\.clientX - p\.x\) as 0 \| 1\);/);
+  assert.match(drawer, /onLevel\(landingIn\(at, p\.from, now, \(e\.clientX - p\.x\) \* dirSign\(\)\) as 0 \| 1\);/);
   assert.match(drawer, /\{opened && level === 0 && drag == null \? \(/, 'no peek button before a thread was opened');
   assert.match(drawer, /data-peek=\{opened \? '' : undefined\}/);
   // Laid out once the slide has landed, and switched with no slide.
@@ -771,8 +777,8 @@ test('on a phone the list is the whole screen until a thread has been opened, th
   assert.match(drawer, /const still = drag != null \|\| snap \|\| reducedMotion\(\);/);
   const css = read('public/css/app.css');
   assert.match(css, /\.ai-drawer:not\(\[data-peek\]\) \.ai-drawer-list \{ width: 100%; \}/);
-  assert.match(css, /\.ai-drawer:not\(\[data-peek\]\) \.ai-drawer-thread \{ left: 100%; \}/);
-  assert.match(css, /\.ai-drawer:not\(\[data-peek\]\)\[data-level="0"\]:not\(\[data-panning\]\) \.ai-drawer-thread \{ box-shadow: none; border-left-color: transparent; \}/, 'no shadow at the list\'s edge');
+  assert.match(css, /\.ai-drawer:not\(\[data-peek\]\) \.ai-drawer-thread \{ inset-inline-start: 100%; \}/);
+  assert.match(css, /\.ai-drawer:not\(\[data-peek\]\)\[data-level="0"\]:not\(\[data-panning\]\) \.ai-drawer-thread \{ box-shadow: none; border-inline-start-color: transparent; \}/, 'no shadow at the list\'s edge');
 });
 
 test('what a row opens rides along in Main Chat\'s composer, and only there', () => {
@@ -818,7 +824,7 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   // window less the rail and the Duo's column, declared once on body
   // (1 Nov 2026; tests/usable-box.test.js pins how it is made).
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-room: var\(--platform-usable-w\);\s+--ai-list-min: 480px;\s+--ai-main-auto: clamp\(400px, calc\(var\(--ai-room\) - 720px\), 720px\);\s+--ai-main-w: max\(320px, min\(var\(--side-panel-chosen-w, var\(--ai-main-auto\)\), calc\(var\(--ai-room\) - var\(--ai-list-min\)\)\)\);\s+\}/);
-  assert.match(css, /#ai-screen\[data-ai-docked\] \{ padding-right: var\(--ai-main-w\); \}/);
+  assert.match(css, /#ai-screen\[data-ai-docked\] \{ padding-inline-end: var\(--ai-main-w\); \}/);
   // 1 Nov 2026, iPhone Duo held sideways (951px, an 84px column of system
   // chrome on the right that the body pads out): the room is beside the
   // column, so its width is not counted twice. The columns pinned to the
@@ -829,37 +835,37 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   // run under it (padded, they left a band of another colour). A design's
   // preview pads it, its ✕ at its top. Off the Duo both are 0.
   assert.match(css, /html\[data-side-strip="right"\] body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-edge: var\(--platform-strip-w, 0px\);\s+\}/);
-  assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*right: 0;[^}]*width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
-  assert.match(css, /#ai-screen \.ai-main-head \{[^}]*padding: 12px calc\(18px \+ var\(--ai-edge, 0px\)\) 12px 18px;/, 'its name stops beside the column, its hairline runs under it');
+  assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*inset-inline-end: 0;[^}]*width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
+  assert.match(css, /#ai-screen \.ai-main-head \{[^}]*padding-block: 12px; padding-inline: 18px calc\(18px \+ var\(--ai-edge, 0px\)\);/, 'its name stops beside the column, its hairline runs under it');
   // A thread in Main Chat's place has its own head, which pads by the column too (1 Nov 2026).
-  assert.match(css, /#ai-screen \.ai-main-pane \.messages-thread-header\[data-reply-head="main"\] \{\s+padding-right: calc\(16px \+ var\(--ai-edge, 0px\)\);\s+\}/,
+  assert.match(css, /#ai-screen \.ai-main-pane \.messages-thread-header\[data-reply-head="main"\] \{\s+padding-inline-end: calc\(16px \+ var\(--ai-edge, 0px\)\);\s+\}/,
     'a thread\'s title stops beside the column, not under the clock');
   assert.match(read('frontend/src/features/messages/index.tsx'), /<header className="messages-thread-header" data-reply-head=\{inMain \? 'main' : undefined\}>/);
-  assert.doesNotMatch(css, /\.messages-layout \{[^}]*padding-right: var\(--ai-edge/, 'the chat runs under the column, below its head');
-  assert.match(css, /#ai-screen \.ai-preview-pane \{[^}]*right: 0;[^}]*width: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\s+padding-right: var\(--ai-edge, 0px\);/);
+  assert.doesNotMatch(css, /\.messages-layout \{[^}]*padding-inline-end: var\(--ai-edge/, 'the chat runs under the column, below its head');
+  assert.match(css, /#ai-screen \.ai-preview-pane \{[^}]*inset-inline-end: 0;[^}]*width: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\s+padding-inline-end: var\(--ai-edge, 0px\);/);
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{\s+width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
-  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel-head \{[^}]*padding: 12px calc\(18px \+ var\(--ai-edge, 0px\)\) 12px 18px;/);
+  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel-head \{[^}]*padding-block: 12px; padding-inline: 18px calc\(18px \+ var\(--ai-edge, 0px\)\);/);
   // Only a notch (an iPhone held sideways, THE NOTCH) pads the chat and the
   // panel's page: its island is halfway down, not plain screen.
   const unNotched = css.replace(/html:not\(\[data-side-strip\]\):not\(\[data-side-corner\]\)[^{]*\{[^}]*\}/g, '');
   assert.doesNotMatch(unNotched, /\.side-panel-body \{[^}]*var\(--ai-edge/, 'and so does the page in the side panel');
-  assert.match(css, /html:not\(\[data-side-strip\]\):not\(\[data-side-corner\]\) #ai-screen \.ai-main-pane > \.messages-layout,\nhtml:not\(\[data-side-strip\]\):not\(\[data-side-corner\]\) body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel-body \{\n  padding-right: var\(--ai-edge, 0px\);/);
+  assert.match(css, /html:not\(\[data-side-strip\]\):not\(\[data-side-corner\]\) #ai-screen \.ai-main-pane > \.messages-layout,\nhtml:not\(\[data-side-strip\]\):not\(\[data-side-corner\]\) body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel-body \{\n  padding-inline-end: var\(--ai-edge, 0px\);/);
   // In the Homeroom app the panel stands here too (canTake), and a reply
   // typed in its own document had the keyboard over its box: it ends above
   // the keyboard the kit measures from the screen.
   assert.match(css, /html\.un-kb body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{ bottom: var\(--un-kb-inset, 0px\); \}/);
-  assert.match(css, /#ai-screen:is\(\[data-ai-preview="three"\], \[data-ai-preview="halves"\]\) \.ai-main-pane \{\s+width: var\(--ai-col-w\);\s+right: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);/);
+  assert.match(css, /#ai-screen:is\(\[data-ai-preview="three"\], \[data-ai-preview="halves"\]\) \.ai-main-pane \{\s+width: var\(--ai-col-w\);\s+inset-inline-end: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);/);
   assert.match(css, /#ai-screen\[data-ai-preview="halves"\] \{\s+--ai-col-w: calc\(var\(--ai-room\) \/ 2\);/);
   const page = css.slice(css.indexOf('body:has(#ai-screen:not(.hidden)) {'), css.indexOf('/* A phone: the whole of the page, over the drawer'));
   assert.equal((page.match(/100vw/g) || []).length, 0,
     'no width here is taken from the window: the room is the page\'s usable box, and every other is taken from the room');
   // With Main docked it is the far edge and has no gutter, so the rail's is
   // dropped too: the list's cards sit 16px (their own margin) from both.
-  assert.match(css, /#ai-screen\[data-ai-docked\] \{ padding-left: var\(--platform-rail-w, 0px\); \}/);
+  assert.match(css, /#ai-screen\[data-ai-docked\] \{ padding-inline-start: var\(--platform-rail-w, 0px\); \}/);
   assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
   assert.match(css, /#ai-screen \.ai-main-pane > \.messages-layout \{ flex: 1 1 auto; height: auto; min-height: 0; \}/);
   assert.match(css, /html\[data-side-panel\] #ai-screen \.ai-main-pane \{ display: none; \}/);
-  assert.match(css, /@media \(min-width: 768px\) \{\s+html\[data-side-panel\] #ai-screen \{ padding-right: var\(--ai-main-w\); \}\s+\}/);
+  assert.match(css, /@media \(min-width: 768px\) \{\s+html\[data-side-panel\] #ai-screen \{ padding-inline-end: var\(--ai-main-w\); \}\s+\}/);
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{\s+width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/, 'so the list does not move');
   // 30 Oct 2026: Main's left edge is the side panel's handle, and sets the same width.
   const src = read('frontend/src/features/ai/index.tsx');
@@ -871,10 +877,12 @@ test('Main\'s column is held inside the window, and the panel takes its place at
 test('the tab says Homeroom bot: a wide seat on a phone, two lines in the Duo column', () => {
   assert.equal(message('core:tabs.ai'), 'Homeroom bot');
   const css = read('public/css/app.css');
-  // Measured in the bar's font: 79px of label in an 83-87px seat at 375-390, 76 in 80 at 360.
-  assert.match(css, /#platform-tabs \{ grid-template-columns: 1fr 1\.3fr 1\.3fr 1fr 1fr; \}/,
+  // Measured in the bar's font: 77px of label in a 94px seat at 375, 70 in 88 at 360.
+  // Home and You give Messages and the bot room (overnight audit M01): a lit
+  // Messages pill clears the bot's name by about 10px.
+  assert.match(css, /#platform-tabs \{ grid-template-columns: \.85fr 1\.3fr 1\.4fr 1\.1fr \.85fr; \}/,
     'Communities, second, and Homeroom bot, third, take the wide seats');
-  assert.match(css, /#platform-tabs \{ grid-template-columns: 1fr 1\.2fr 1\.2fr 1fr 1fr; \}/, 'a little less on the smallest phones');
+  assert.match(css, /#platform-tabs \{ grid-template-columns: \.85fr 1\.25fr 1\.35fr 1\.1fr \.85fr; \}/, 'a little less on the smallest phones');
   assert.match(css, /:is\(#platform-tab-workshop, #platform-tab-ai\) \.platform-tab-label \{\s+letter-spacing: -\.02em;\s+overflow: visible;\s+text-overflow: clip;\s+\}/,
     'tightened and let out of the cell rather than cut');
   assert.match(css, /html\[data-side-strip\] #platform-tab-ai \.platform-tab-label \{\s+font-size: 9\.5px;\s+letter-spacing: -\.02em;\s+line-height: 1\.05;\s+white-space: normal;\s+text-align: center;\s+\}/,
@@ -991,5 +999,8 @@ test('the page listens while it is shown: the socket through app.js, the bot\'s 
   assert.match(src, /useLiveLists\(\(\) => setMoved\(\(n\) => n \+ 1\), visible, \{ projects, botId \}\);/);
   assert.match(src, /const init = again \? FRESH : undefined;/);
   assert.match(src, /readJson<AiWork>\(`\/api\/ai\/work\$\{qs\}`, init\)/);
-  assert.match(src, /if \(live && \(data \|\| !again\)\) setNeeds\(/);
+  // A failed read keeps what is drawn (offline test, 2 Nov 2026: and with
+  // nothing drawn, the kept copy or a word of why; tests/messages-offline-kept.test.js).
+  assert.match(src, /if \(drawn\.current\.work\) return null;/);
+  assert.match(src, /if \(drawn\.current\.needs\) return null;/);
 });

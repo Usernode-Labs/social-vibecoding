@@ -231,7 +231,7 @@ const BLANK_FIELD = 'mx-0.5 inline-block w-[9.5em] max-w-full rounded-md border-
 const WORDS_BOX = 'mt-1.5 block w-full resize-none rounded-xl border-0 bg-white px-3 py-2.5 text-[17px] leading-[22px] text-zinc-900 placeholder-zinc-500 focus:shadow-[inset_0_0_0_2px_var(--accent),0_0_0_4px_rgba(10,110,224,0.15)] focus:outline-none dark:bg-zinc-900 dark:text-zinc-100';
 const WORDS_EMPTY = 'shadow-[inset_0_0_0_2px_var(--accent),0_0_0_4px_rgba(10,110,224,0.15)]';
 const WORDS_FILLED = 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
-const TILE = 'relative flex items-center gap-2.5 rounded-2xl bg-white px-3 py-2.5 text-left dark:bg-zinc-900';
+const TILE = 'relative flex items-center gap-2.5 rounded-2xl bg-white px-3 py-2.5 text-start dark:bg-zinc-900';
 const TILE_ON = 'shadow-[inset_0_0_0_2px_var(--accent)]';
 const TILE_OFF = 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
 
@@ -763,7 +763,7 @@ export function MakeScreen({
             data-make-close=""
             onClick={leave}
             aria-label={t('core:common.close')}
-            className="absolute bottom-1 left-3 flex h-9 w-9 items-center justify-center rounded-full bg-white text-zinc-500 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-400"
+            className="absolute bottom-1 start-3 flex h-9 w-9 items-center justify-center rounded-full bg-white text-zinc-500 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-400"
           >
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>

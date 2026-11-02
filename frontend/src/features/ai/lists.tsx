@@ -55,6 +55,7 @@ import type { ReactNode } from 'react';
 
 import { Chip } from '@/components/ui/chip';
 import { SectionHeader } from '@/components/ui/grouped-list';
+import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
   ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, CodeIcon,
   CogIcon, EyeIcon, HandRaisedIcon, LockIcon, PlayIcon, ReplyArrowIcon,
@@ -118,12 +119,12 @@ function nextGlyph(t: AiThread): ReactNode {
 // Complete literals: Tailwind's extractor reads source text. 36px a row on a
 // desktop, so a project's rows sit closer than the groups do; 44px on a
 // phone, the shell's tap target.
-const ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-left rounded-md hover:bg-zinc-900/[0.03] dark:hover:bg-white/[0.04]';
-const LIVE_ROW = 'flex w-full min-h-[40px] md:min-h-[32px] items-center gap-3 py-1 text-left rounded-md hover:bg-zinc-900/[0.03] dark:hover:bg-white/[0.04]';
+const ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start rounded-md hover:bg-zinc-900/[0.03] dark:hover:bg-white/[0.04]';
+const LIVE_ROW = 'flex w-full min-h-[40px] md:min-h-[32px] items-center gap-3 py-1 text-start rounded-md hover:bg-zinc-900/[0.03] dark:hover:bg-white/[0.04]';
 const GLYPH_OWE = 'flex shrink-0 text-violet-600 dark:text-violet-300';
 const GLYPH = 'flex shrink-0 text-zinc-400 dark:text-zinc-500';
 // Where you are: the row whose chat is in the column, on the lit tint.
-const LIT_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-left rounded-md bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)]';
+const LIT_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start rounded-md bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)]';
 
 function LineRow({ line, quiet = false }: { line: Line; quiet?: boolean }): ReactNode {
   const t = useMessages('messages');
@@ -218,8 +219,10 @@ function FadeRail({ className = '', children, ...props }: React.ComponentProps<'
     const el = ref.current;
     if (!el) return undefined;
     const sync = () => {
-      const start = el.scrollLeft > 1;
-      const end = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+      // scrollLeft runs negative from the start in a right-to-left scroller.
+      const at = Math.abs(el.scrollLeft);
+      const start = at > 1;
+      const end = at + el.clientWidth < el.scrollWidth - 1;
       setEdges((e) => (e.start === start && e.end === end ? e : { start, end }));
     };
     sync();
@@ -265,9 +268,11 @@ function GroupMore({ hidden, open, onClick }: { hidden: number; open: boolean; o
   );
 }
 
-function Section({ list, head, owe = false, lines, quiet = false, empty = null, keep = false, first, heads, top }: {
+function Section({ list, head, owe = false, lines, quiet = false, empty = null, note = null, keep = false, first, heads, top }: {
   /** Which list, for the page's checks: work, next, up, live. */
   list: string;
+  /** Said over the rows, whatever they are: why the lists show less than they should. */
+  note?: ReactNode;
   /** Drawn with no rows too: Needs you's band is in the prerender. */
   keep?: boolean;
   head: ReactNode;
@@ -284,10 +289,11 @@ function Section({ list, head, owe = false, lines, quiet = false, empty = null, 
 }): ReactNode {
   const t = useMessages('messages');
   const [opened, setOpened] = useState<Record<string, boolean>>({});
-  if (!lines.length && !empty && !keep) return null;
+  if (!lines.length && !empty && !note && !keep) return null;
   const label = owe ? 'text-violet-700 dark:text-violet-300' : '';
   const body = (
     <>
+      {note}
       {!lines.length ? empty : null}
       {byProject(lines).map((g) => {
         const key = g.app?.slug || 'none';
@@ -310,7 +316,7 @@ function Section({ list, head, owe = false, lines, quiet = false, empty = null, 
               </div>
             ) : null}
             {/* The rows sit in a little under their project's name. */}
-            <div className={heads ? 'ml-3' : undefined}>
+            <div className={heads ? 'ms-3' : undefined}>
               {(hidden ? items.slice(0, shown) : items).map((line) => <LineRow key={line.key} line={line} quiet={quiet} />)}
               {/* The rest, folded: a grid row that grows from 0fr to 1fr, so
                   it opens to its own height without measuring it. */}
@@ -363,7 +369,31 @@ function dayOf(at: string | null, t: (id: string, values?: Record<string, string
   return d.toLocaleDateString(undefined, { weekday: 'short' });
 }
 
-export function AiLists({ hero, main, lit = null, ready, rows, owed, progress, waiting, live, openRow, openThread }: {
+/**
+ * Offline test, 2 Nov 2026: the lists could not be read and this device kept
+ * no copy of them, so Needs you says why it shows nothing, in words, with a
+ * way to read them again. Plain, not red: being offline is a state.
+ */
+function ListsFailed({ failed, onRetry }: { failed: 'unreachable' | 'failed'; onRetry: () => void }): ReactNode {
+  const t = useMessages('messages');
+  return (
+    <div className="py-3" data-ai-failed={failed} role="status">
+      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+        {failed === 'unreachable' ? t('messages:ai.work.unreachable') : t('messages:ai.work.failed')}
+      </p>
+      <button
+        type="button"
+        className="mt-1 inline-flex min-h-[44px] md:min-h-0 items-center py-1 text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
+        onClick={onRetry}
+        data-ai-retry=""
+      >
+        {t('core:common.tryAgain')}
+      </button>
+    </div>
+  );
+}
+
+export function AiLists({ hero, main, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread }: {
   /** The page's title, drawn in the sheet the chips are in. */
   hero: ReactNode;
   /** Main Chat's row: whether it is the one in the column, what is new in it, and its press. */
@@ -372,6 +402,10 @@ export function AiLists({ hero, main, lit = null, ready, rows, owed, progress, w
   lit?: string | null;
   /** The lists have been read: until then Needs you says nothing, not "nothing needs you". */
   ready: boolean;
+  /** A list could not be read and none was kept: Needs you says so (index.tsx ListsFailure). */
+  failed?: 'unreachable' | 'failed' | null;
+  /** Read the lists again: the note's Try again. */
+  onRetry?: () => void;
   rows: WorkRow[];
   owed: number;
   progress: AiThread[];
@@ -447,7 +481,7 @@ export function AiLists({ hero, main, lit = null, ready, rows, owed, progress, w
                 {t('messages:ai.filter.all')}
               </Chip>
               {rail.map((app) => (
-                <Chip key={app.slug} size="bar" className={`gap-2 pl-2.5 pr-4 ${CHIP_EDGE}`} selected={picked.includes(app.slug)} onClick={() => toggle(app.slug)} data-ai-chip={app.slug}>
+                <Chip key={app.slug} size="bar" className={`gap-2 ps-2.5 pe-4 ${CHIP_EDGE}`} selected={picked.includes(app.slug)} onClick={() => toggle(app.slug)} data-ai-chip={app.slug}>
                   <SmallTile app={app} />
                   {app.name || app.slug}
                 </Chip>
@@ -456,7 +490,7 @@ export function AiLists({ hero, main, lit = null, ready, rows, owed, progress, w
             {past > 0 ? (
               <Chip
                 size="bar"
-                className={`mb-4 mr-4 mt-3 gap-1 pl-4 pr-3 ${CHIP_EDGE}`}
+                className={`mb-4 me-4 mt-3 gap-1 ps-4 pe-3 ${CHIP_EDGE}`}
                 selected={false}
                 aria-pressed={undefined}
                 aria-haspopup="dialog"
@@ -491,7 +525,22 @@ export function AiLists({ hero, main, lit = null, ready, rows, owed, progress, w
           head={owedShown ? t('messages:ai.work.titleCount', { count: owedShown }) : t('messages:ai.work.title')}
           owe={owedShown > 0}
           lines={needLines}
-          empty={ready ? <p className="py-3 text-sm text-zinc-500 dark:text-zinc-400" data-ai-empty="">{t('messages:ai.work.empty')}</p> : null}
+          note={failed ? <ListsFailed failed={failed} onRetry={() => onRetry?.()} /> : null}
+          empty={ready ? <p className="py-3 text-sm text-zinc-500 dark:text-zinc-400" data-ai-empty="">{t('messages:ai.work.empty')}</p> : (
+            // L06 (overnight audit, 2 Nov 2026): until the lists are read the
+            // card said nothing at all, an empty card that read as final.
+            // Two rows' lines at the one-line row's spacing instead: two
+            // bars and no more, as the screen is in the prerendered document
+            // (tests/mount-on-reveal.test.js counts its elements). A read
+            // that failed says so in its note (ListsFailed) instead, with no
+            // skeleton under it: no rows are coming (offline test, 2 Nov 2026).
+            failed ? null : (
+              <SkeletonGroup label={t('messages:ai.work.loading')} className="flex flex-col gap-8 py-4" data-ai-loading="">
+                <Skeleton className="w-1/2" />
+                <Skeleton className="w-2/5" />
+              </SkeletonGroup>
+            )
+          )}
           first={GROUP_FIRST.needs}
           heads={heads}
         />

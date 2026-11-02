@@ -264,7 +264,7 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
               colour this card wears is not one of these".
           */}
           <div data-tint-picker role="radiogroup" aria-label={t('discover:illustration.cardColour')} className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-zinc-500 dark:text-zinc-400 mr-1">{t('discover:illustration.cardColour')}</span>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400 me-1">{t('discover:illustration.cardColour')}</span>
             {TONES.map(tone => {
               const chosen = art.tint === tone;
               return <button key={tone} type="button" role="radio" aria-checked={chosen}

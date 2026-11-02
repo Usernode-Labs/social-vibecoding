@@ -18,6 +18,7 @@ import {
   type SessionHeaderState,
 } from './session-header-store';
 import type { SessionAction } from './session-list-store';
+import { dirSign } from '../../lib/i18n/direction';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).DevChat : null) || null;
@@ -181,7 +182,10 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
     const measure = () => {
       const active = seeing ? eyeRef.current : penRef.current;
       if (!active) return;
-      setThumb({ x: active.offsetLeft, w: active.offsetWidth });
+      // The thumb sits at `start-0`, so in Arabic it moves from the right edge.
+      const parentW = (active.offsetParent as HTMLElement | null)?.clientWidth ?? 0;
+      const x = dirSign() === -1 ? active.offsetLeft + active.offsetWidth - parentW : active.offsetLeft;
+      setThumb({ x, w: active.offsetWidth });
     };
     measure();
     // The label is text, so a font swap or a width change under it moves the
@@ -211,7 +215,7 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
     );
   }
 
-  const SEG_ON = 'relative z-10 flex items-center gap-1 h-6 rounded-full py-1 pr-2.5 pl-1.5 '
+  const SEG_ON = 'relative z-10 flex items-center gap-1 h-6 rounded-full py-1 pe-2.5 ps-1.5 '
     + 'text-xs font-semibold un-touch-target';
   const SEG_OFF = 'relative z-10 flex items-center justify-center h-6 w-6 rounded-full '
     + 'text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100 un-touch-target';
@@ -229,7 +233,7 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
           first measurement lands, which is the same frame. */}
       <span
         aria-hidden="true"
-        className={'absolute top-0.5 bottom-0.5 left-0 rounded-full transition-[transform,width] '
+        className={'absolute top-0.5 bottom-0.5 start-0 rounded-full transition-[transform,width] '
           + 'duration-200 ease-out '
           + (thumb ? '' : 'opacity-0 ')
           + (seeing ? 'bg-amber-300' : 'bg-violet-600')}

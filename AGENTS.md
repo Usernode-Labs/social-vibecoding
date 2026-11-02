@@ -321,14 +321,21 @@ is no replay plan to write and nothing to verify locally.
   No screen draws them since the Workshop's "Lately in this project" panel
   was removed.
   `migrate.clearAutomatedChannelLines` clears the lines written before. A
-  door to a project's hub (a link that says so) calls
-  `AppView._landOnHub(slug)` first, so it opens on the hub rather than the
-  place the page was last left on. A switch is not a door: the header's ⌄
-  menu, a row of All communities and the phone drawer's list open the other
-  community on the place you were on when it has it, else its hub
-  (`landKeepingPlace` in `place-store.ts`, `keepPlace` in the drawer). Back
-  and Forward are not doors either: the page reopens on the place last
-  shown, read fresh when it mounts.
+  bare link to a project's page, `/app/<slug>/workshop` (a cold load, or
+  `#app/<slug>/workshop` followed), opens its **Workshop**
+  (`App._linkOpensWorkshop`); `?ws=<place>` names any other place. A door
+  to a project's hub (a link that says so) calls `AppView._landOnHub(slug)`
+  first, so it opens on the hub; every door or switch that names its place
+  goes through `AppView._landOnTab`, and the router takes that decision
+  over the link's (`_takePlaceDecision`). A switch is not a door: the
+  header's ⌄ menu, a row of All communities and the phone drawer's list
+  open the other community on the place you were on when it has it, else
+  its hub (`landKeepingPlace` in `place-store.ts`, `keepPlace` in the
+  drawer), and the Communities tab reopens the page you left on its place.
+  Back, Forward and a reload are not doors either: the page reopens on the
+  place its history entry names, read fresh when it mounts. A request's
+  "‹" chip names where its press goes: a step Back to the place the page
+  was left on, else the Workshop its link opens.
 - **One page per thread (1 Nov 2026): a change built for a request lives on
   the request's page.** When a request leads a change's thread
   (`threads.lead = 'request'`), the change has no page of its own: its

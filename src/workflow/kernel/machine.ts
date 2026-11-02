@@ -53,6 +53,7 @@ export interface Machine<S extends State = State, F = unknown> {
   readonly version: number;
   readonly states: ReadonlySet<string>;
   readonly create: ReadonlySet<string>;
+  readonly web: ReadonlySet<string>;
   readonly terminal: ReadonlySet<string>;
   readonly events: ReadonlyMap<string, Decoder>;
   readonly authorize: ReadonlyMap<string, Authorize<S, F>>;
@@ -83,6 +84,7 @@ export function defineMachine<S extends State, F>(def: MachineDefinition<S, F>):
   const authorize = toMap(def.authorize);
   const transitions = new Map(Object.entries(def.transitions).map(([state, row]) => [state, toMap(row)]));
   const create = new Set(def.create || []);
+  const web = new Set(def.web || []);
   const terminal = new Set(def.terminal || []);
   const states = new Set([...transitions.keys()].filter((s) => s !== NONE));
 
@@ -96,6 +98,8 @@ export function defineMachine<S extends State, F>(def: MachineDefinition<S, F>):
   if (!states.size) fail('declares no states');
   for (const t of terminal) if (!states.has(t)) fail(`terminal state ${t} is not declared`);
   for (const c of create) if (!own.has(c)) fail(`creating event ${c} is not declared`);
+  // A work result is the service's that ran the work, never web's.
+  for (const w of web) if (!own.has(w)) fail(`web event ${w} is not declared`);
 
   for (const [state, row] of transitions) {
     for (const [type, entry] of row) {
@@ -123,7 +127,7 @@ export function defineMachine<S extends State, F>(def: MachineDefinition<S, F>):
   return Object.freeze({
     name: def.name,
     version: def.version,
-    states, create, terminal, events, authorize, transitions,
+    states, create, web, terminal, events, authorize, transitions,
     writes: toMap(def.writes),
     attention,
     retainDays: def.retainDays ?? null,

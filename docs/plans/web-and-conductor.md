@@ -440,9 +440,14 @@ and credential selection. Conductors retain their writer for read-after-write.
 Missing web credentials never become a skipped checks verdict: recovery hands
 the revision to the preview machine; malformed repository metadata is refused.
 
-Separate database logins remain SEC-09 work. The event's source metadata also
-remains a convention among trusted processes; it does not authenticate a
-compromised producer.
+Web and the conductor log in to the database as different roles
+(docs/security/database-roles.md), and the database records which of them
+appended each workflow event (`wf_events.producer`, docs/workflows.md "Who
+produced it"). Once web's writes on the kernel's tables are taken away (the
+release after the stamp), web's login appends events and writes nothing else
+of them; each machine lists the events web may append, and a slot refuses
+any other. The source an event names is still the producer's word;
+the producer is not.
 
 ## Successors
 

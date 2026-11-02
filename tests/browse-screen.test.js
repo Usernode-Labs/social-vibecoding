@@ -1224,7 +1224,7 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   const css = read('public/css/app.css');
   assert.match(css, /\.browse-row \+ \.browse-row::before \{/,
     'phone: a hairline between consecutive rows');
-  assert.match(css, /\.browse-row \+ \.browse-row::before \{[\s\S]*?left: 4\.75rem/,
+  assert.match(css, /\.browse-row \+ \.browse-row::before \{[\s\S]*?inset-inline-start: 4\.75rem/,
     'and it is inset to the text column, not the card edge');
   // The md block re-states the sibling selector so the full box wins at
   // equal specificity instead of relying on source order alone.
@@ -1695,7 +1695,7 @@ test('a browse row tap opens the project hub; the home menu opens About and decl
   const tap = BROWSE_SRC.slice(BROWSE_SRC.indexOf('openRow(view) {'),
     BROWSE_SRC.indexOf('warmRow(view) {'));
   assert.doesNotMatch(tap, /noteDetailOrigin/);
-  assert.match(BROWSE_SRC, /rowHref\(view\) \{[\s\S]*?return `#app\/\$\{encodeURIComponent\(view\.slug\)\}\/workshop`;/);
+  assert.match(BROWSE_SRC, /rowHref\(view\) \{[\s\S]*?return `#app\/\$\{encodeURIComponent\(view\.slug\)\}\/dev\/hub`;/);
   // Home's menu still drills into About and notes the origin BEFORE writing
   // the hash — the hashchange lands in a later task.
   // And the #1036 modified-click href repeats openRow's guard, so a demo row
@@ -1804,8 +1804,37 @@ test('render: empty result explains itself, with the query when there is one', (
   Browse.render();
   assert.equal(state.empty, null, 'a populated grid hides the empty note');
   Browse._apps = [];
+  Browse._loaded = true;
   Browse.render();
   assert.match(state.empty, /No apps to show yet/, 'and a truly empty directory says so');
+  assert.equal(state.loading, false);
+});
+
+test('L06: before the directory answers, the list is loading, not empty', async () => {
+  // Overnight audit, 2 Nov 2026: a slow load on an iPhone Pro Max showed
+  // "No apps to show yet." while every other device listed eleven apps.
+  const { Browse, state } = makeBrowse({ apps: [app({ slug: 'chess', name: 'Chess' })] });
+  Browse.render();
+  assert.equal(state.loading, true, 'its rows\' place shows their skeleton');
+  assert.equal(state.empty, null, 'and nothing claims the directory is empty');
+  assert.equal(state.make, null);
+  Browse._query = 'plant swap';
+  Browse.render();
+  assert.equal(state.empty, null, 'a search waits for the directory too');
+  Browse._query = '';
+  await Browse._load();
+  assert.equal(state.loading, false);
+  assert.deepEqual(slugs(state), ['chess']);
+  // A directory that answers with nothing is empty, and says so.
+  const none = makeBrowse({ apps: [] });
+  await none.Browse._load();
+  assert.equal(none.state.loading, false);
+  assert.match(none.state.empty, /No apps to show yet/);
+  // A failed read is the error card, never the skeleton.
+  const failed = makeBrowse({ fetchOk: false });
+  await failed.Browse._load();
+  assert.equal(failed.state.loading, false);
+  assert.equal(failed.state.error, true);
 });
 
 test('#5928: a search no app answers offers to make it; a filtered-away match does not', () => {
@@ -1833,6 +1862,7 @@ test('#5928: a search no app answers offers to make it; a filtered-away match do
 
   // No search, no offer, even when the list is empty.
   Browse._apps = [];
+  Browse._loaded = true;
   Browse._query = '';
   Browse.render();
   assert.match(state.empty, /No apps to show yet/);

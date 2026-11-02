@@ -108,10 +108,10 @@ test('folded: the words fade and "Show more" sits in the faded line, taking no r
   assert.match(button[0], /type="button"/);
   assert.match(button[0], /aria-expanded="false"/);
   assert.match(button[0], /data-agent-session-user-more="true"/);
-  // Positioned inside the relative bubble, in its bottom corner: the bubble's
+  // Positioned inside the relative bubble, in its bottom inline-end corner: the bubble's
   // height is the clamp's, so the control appearing after the first render
   // cannot push the transcript off its bottom.
-  assert.match(button[0], /class="[^"]*\btouch-target-32 absolute bottom-2 right-1"/);
+  assert.match(button[0], /class="[^"]*\btouch-target-32 absolute bottom-2 end-1"/);
   assert.ok(html.startsWith(`<div class="${BUBBLE}">`), 'inside the bubble, not under it');
   assert.ok(html.indexOf('</p>') < html.indexOf('<button'), 'after the text, so it is tabbed to after it');
 });
@@ -124,7 +124,7 @@ test('open: nothing is clamped or faded, and "Show less" has a line of its own',
   assert.ok(button);
   assert.match(button[0], /aria-expanded="true"/);
   assert.match(button[0], /data-agent-session-user-more="true"/);
-  assert.match(button[0], /class="[^"]*\btouch-target-32 -mb-0\.5 -mr-3 ml-auto mt-1 block"/);
+  assert.match(button[0], /class="[^"]*\btouch-target-32 -mb-0\.5 -me-3 ms-auto mt-1 block"/);
   assert.doesNotMatch(button[0], /\babsolute\b/);
 });
 

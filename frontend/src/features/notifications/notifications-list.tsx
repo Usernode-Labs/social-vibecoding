@@ -227,7 +227,7 @@ function Saved({ view, touch }: { view: SavedMessageView; touch: boolean }): Rea
           {view.who.replace(/^@/, '').charAt(0).toUpperCase() || '?'}
         </span>
         <button
-          className="flex-1 min-w-0 text-left"
+          className="flex-1 min-w-0 text-start"
           onClick={(e) => {
             e.stopPropagation();
             controller()?._onSavedClick(view.messageId);
@@ -242,7 +242,7 @@ function Saved({ view, touch }: { view: SavedMessageView; touch: boolean }): Rea
                 here, because everything in this section is saved by
                 definition — so the two ends of the gesture read as one
                 feature. */}
-            <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3.5 h-3.5 align-[-2px] mr-1 text-violet-700 dark:text-violet-400" />
+            <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3.5 h-3.5 align-[-2px] me-1 text-violet-700 dark:text-violet-400" />
             <RichMessage
               id={view.line}
               values={{ username: view.author, place: view.appName, when: view.time }}
@@ -318,7 +318,7 @@ function SavedNotification({ view, touch }: { view: SavedNotificationView; touch
             : <BookmarkSolidIcon className="h-4 w-4" />}
         </span>
         <button
-          className="flex-1 min-w-0 text-left"
+          className="flex-1 min-w-0 text-start"
           onClick={(e) => {
             e.stopPropagation();
             controller()?._onItemClick(view.id);
@@ -327,7 +327,7 @@ function SavedNotification({ view, touch }: { view: SavedNotificationView; touch
           {/* First line: the KIND and the SAVE time, with the same mark the
               saved messages carry, so the section reads as one feature. */}
           <div className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
-            <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3.5 h-3.5 align-[-2px] mr-1 text-violet-700 dark:text-violet-400" />
+            <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3.5 h-3.5 align-[-2px] me-1 text-violet-700 dark:text-violet-400" />
             <RichMessage
               id="notifications:saved.notificationLine"
               values={{ kind: view.label, when: view.time }}

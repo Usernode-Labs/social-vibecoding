@@ -173,9 +173,9 @@ test('the band draws nothing on a phone, and keeps the box it is measured by', (
 });
 
 test('the header\'s merged controls are the bar\'s, sized to the header\'s row', () => {
-  assert.match(CSS, /#platform-header \.header-places-btn \{ width: 28px; height: 28px; margin-left: 0; \}/,
+  assert.match(CSS, /#platform-header \.header-places-btn \{ width: 28px; height: 28px; margin-inline-start: 0; \}/,
     'a 28px control, like the header\'s others');
-  assert.match(CSS, /#platform-header \.header-places-btn \.dev-ws-places-dot \{ top: 1px; right: 0; \}/,
+  assert.match(CSS, /#platform-header \.header-places-btn \.dev-ws-places-dot \{ top: 1px; inset-inline-end: 0; \}/,
     'the dot rides the smaller box');
   assert.match(CSS, /#platform-header \.header-place-name \{[^}]*flex-shrink: 0; min-width: 0; max-width: 45%;/,
     'the place name holds its ground');
@@ -233,6 +233,6 @@ test('a place is trusted while its community\'s record is unread, and never a ch
   // channel left behind by another community gives way to the Hub.
   assert.match(read(`${DIR}/place-bar.tsx`), /const shown = livePlace\(slug, place\);[\s\S]*\{handle \|\| placeName\(shown\)\}/);
   assert.match(read('frontend/src/features/nav-drawer/nav-drawer.tsx'),
-    /pageUp && slug\s*\? livePlace\(slug, placed\.place\)\s*: keepPlace\(rememberedPlace\(\), slug \? cachedTopics\(slug\) : null\)/,
+    /pageUp && slug\s*\? livePlace\(slug, placed\.place\)[\s\S]{0,240}: keepPlace\(rememberedPlace\(\), slug \? cachedTopics\(slug\) : null\)/,
     'the drawer checks the page\'s own place too, and its fallback keeps only what the community has');
 });

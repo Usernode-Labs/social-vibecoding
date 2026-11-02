@@ -718,7 +718,13 @@ export function evaluateRules(opts: EvalContext & { value: { rules: readonly Rul
     gate = opts.atLeastGate(owner.need || 1, owner.yes, owner.no, opts.openedAt, opts.now);
     if (owner.need == null) gate = { ...gate, thresholdMet: false, mergeable: false };
   }
-  const passedBy = results.find((r) => r.passed) || null;
+  // The rule that let it in: the owner's own when it passed, else the first
+  // that did. When the group's vote and the creator's yes both pass (You or
+  // the group: the creator's yes was the group's second), the group's is the
+  // one the vote was shown against ("0 of 2", "1/2"), and the merge
+  // snapshots its threshold; reporting the creator's rule first recorded
+  // votes_required = 1 under two yes votes ("2 of 1", audit 2 Nov 2026).
+  const passedBy = (owner.passed ? owner : null) || results.find((r) => r.passed) || null;
   const mergeable = !!passedBy;
   // Let in by another rule than the one that owns the clocks (the creator's
   // yes on You or the group): the owner's wait and threshold no longer apply,

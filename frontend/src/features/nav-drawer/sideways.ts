@@ -73,7 +73,10 @@ export function startsOnSideways(target: Element | null, stop: Element | null, v
  * Whether a touch at `x` may start the pan back: the edge when the page may
  * take it, and past the edge anywhere that is not sideways UI. Pure.
  */
-export function swipeBackMayStart(at: { x: number; takesEdge: boolean; sideways: boolean }): boolean {
-  if (at.x <= EDGE_PX) return at.takesEdge;
+export function swipeBackMayStart(at: { x: number; takesEdge: boolean; sideways: boolean; rtl?: boolean; width?: number }): boolean {
+  // The edge the back swipe starts from is the inline-start one: the left
+  // edge in English, the right edge in Arabic.
+  const atEdge = at.rtl ? at.x >= (at.width ?? Infinity) - EDGE_PX : at.x <= EDGE_PX;
+  if (atEdge) return at.takesEdge;
   return !at.sideways;
 }

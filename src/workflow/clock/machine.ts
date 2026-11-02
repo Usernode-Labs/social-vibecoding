@@ -252,6 +252,8 @@ export function clock() {
     retainDays: 7,
     events: EVENTS,
     create: ['Arm'],
+    // What web appends: an admin's Run now.
+    web: ['RunNow'],
     decode: (row) => (row.state === NONE ? { name: NONE, data: null } : { name: row.state as Name, data: row.data as Data }),
     // A run's result: its targets that still have an item outstanding.
     async facts(tx, state, event, ctx) {
