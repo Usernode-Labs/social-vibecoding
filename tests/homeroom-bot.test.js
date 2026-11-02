@@ -1384,14 +1384,14 @@ test('capRoomFor counts the same things the live check does', async () => {
   };
   // #6156: both of the project's rooms, its builds and its changes waiting for votes, each against its own cap.
   assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9),
-    { builds_per_app: bot.BUILDS_PER_APP - 1, proposals_per_app: bot.WAITING_PER_APP - 2, proposals_total: 493, question_tripwire: 0 },
+    { builds_per_app: bot.BUILDS_PER_APP - 1, proposals_per_app: bot.WAITING_PER_APP - 2, proposals_total: bot.EVERYONE_PROPOSAL_CEILING - 7, question_tripwire: 0 },
     '#3576: the automatic ceiling across every app');
   assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { proposalCeiling: 10 }),
     { builds_per_app: 4, proposals_per_app: 13, proposals_total: 3, question_tripwire: 0 }, 'an admin\'s ceiling, across them all');
   assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { proposalCeiling: 5 }),
     { builds_per_app: 4, proposals_per_app: 13, proposals_total: 0, question_tripwire: 0 }, 'never below nothing');
   assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { appCaps: { 9: { building: 1, waiting: 30 } } }),
-    { builds_per_app: 0, proposals_per_app: 28, proposals_total: 93, question_tripwire: 0 }, 'a project\'s own numbers');
+    { builds_per_app: 0, proposals_per_app: 28, proposals_total: bot.EVERYONE_PROPOSAL_CEILING - 7, question_tripwire: 0 }, 'a project\'s own numbers');
   // The cap_freed refresh brings back a held request by the name of the cap that held it.
   const refreshSrc = SRC.slice(SRC.indexOf('async function refreshApp('), SRC.indexOf('function cardKeyOf('));
   assert.match(refreshSrc, /if \(!\(room\[h\.cap\] > 0\)\) continue;/);
