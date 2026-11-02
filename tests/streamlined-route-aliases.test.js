@@ -37,7 +37,7 @@ test('restoreFromHash rewrites the aliases onto the dev vocabulary', () => {
   // Wide enough to reach the `board` branch, which sits last of the three and
   // grew when it became an alias rather than a layout of its own (and again
   // when /full learned to keep the header in an installed app).
-  const fn = body("if (parts[0] === 'app' && parts[1]) {", 4800);
+  const fn = body("if (parts[0] === 'app' && parts[1]) {", 5200);
   // Both aliases are the CARD AREA — `parts[3] = null`, the forum — and each
   // carries the layout the destination is named for.
   assert.match(fn, /tab === 'workshop' \|\| tab === 'activity'.*parts\[3\] = null; boardView = 'workshop'/s,
@@ -56,7 +56,7 @@ test('restoreFromHash rewrites the aliases onto the dev vocabulary', () => {
 });
 
 test('the route applies the layout, and re-renders when only the layout moved', () => {
-  const fn = body("if (parts[0] === 'app' && parts[1]) {", 10200);
+  const fn = body("if (parts[0] === 'app' && parts[1]) {", 10600); // the route grew a line (audit N03 follow-up)
   // Set BEFORE the dispatch, so a cold entry paints the named layout on the
   // board's first frame instead of flashing the stored one.
   assert.match(fn, /AppView\._setViewMode\(boardView\)/,

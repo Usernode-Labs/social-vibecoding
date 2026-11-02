@@ -20259,8 +20259,8 @@ html[data-nav-drawer] #app-view { touch-action: pan-y; }
 /* ── The hero's rows (community-card.tsx) ──
    Who is here: the faces, then "Public community · 23 members" as one
    phrase, the audience's glyph leading it. Then one row of what you can do:
-   Open app in the one accent, Invite, the ⋯, and Join at the far end.
-   Leave is a row of the ⋯ (#4045). */
+   Open app in the community's colour, Invite, the ⋯, and Join at the far
+   end. Leave is a row of the ⋯ (#4045). */
 /* The words sit on the line's own baseline, so "Public community" and
    " · 23 members" read as one line; only the glyph is centred. A
    `vertical-align` nudge here dropped the audience 3px below the count. */
@@ -20274,11 +20274,7 @@ html[data-nav-drawer] #app-view { touch-action: pan-y; }
   display: inline-flex; align-items: center; gap: 6px; flex: none;
   height: 32px; padding: 0 14px;
   border: 0; border-radius: 999px;
-  /* THE ACCENT, NOT THE COMMUNITY'S COLOUR (audit P01, 1 Nov 2026). The
-     header wears the community's colour to say where you are; a button in
-     it made that colour a second action colour beside the blue "Notify me"
-     and vote pills (AGENTS.md: one accent, its jobs kept apart). */
-  background: var(--accent); color: #fff;
+  background: var(--community-tint, var(--accent)); color: #fff;
   font: inherit; font-size: 14px; font-weight: 650; white-space: nowrap;
   cursor: pointer;
 }

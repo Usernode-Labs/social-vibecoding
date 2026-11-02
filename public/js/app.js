@@ -5753,6 +5753,7 @@ const App = {
         let boardView = null;
         // `activity` is the retired Activity feed's address; the Workshop
         // replaced it as the lander, so the old links land there.
+        if (tab === 'workshop') App._linkOpensWorkshop(slug); // audit N03 follow-up
         if (tab === 'workshop' || tab === 'activity') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'workshop'; }
         // `board` is the retired Board view's address. Those columns are the
         // Workshop's "By stage" pane now, so an old link lands on the Workshop
@@ -6552,6 +6553,9 @@ const App = {
       }
     } catch (_) { /* no catalog to ask; the route answers for itself */ }
     App._resumingWorkshop = view.path;
+    // Reopening the page you left keeps the place you left it on: not a link
+    // to /workshop (_linkOpensWorkshop).
+    try { AppView?._notePlaceDecided?.(view.slug); } catch (_) { /* the page opens on the Workshop */ }
     try {
       history.pushState(null, '', `${view.path}${App._routeSearch(null)}`);
     } catch (_) {
@@ -6901,7 +6905,8 @@ const App = {
 
   // The address of a project's hub, the page its channel hangs off. A HASH,
   // because the back button follows its href only when it is one (the
-  // #back-btn listener below); `#app/<slug>/workshop` is the same route.
+  // #back-btn listener below); `#app/<slug>/dev/hub` is the project page on
+  // its Hub (_placeAddress).
   /**
    * #4417: A CHANNEL'S OWN ADDRESS. `#app/<slug>/dev/discussion` is the
    * project's #general and `#app/<slug>/dev/c/<handle>` one of its topics (a
@@ -6911,13 +6916,20 @@ const App = {
    * already up for the project), and `parts` is rewritten in place to the
    * page's own address (`workshop`), which the route then takes as it takes
    * any other. Every older address is left as it is.
+   *
+   * THE HUB'S OWN ADDRESS (2 Nov 2026): `#app/<slug>/dev/hub`. A bare
+   * `/workshop` link opens the Workshop now (_linkOpensWorkshop), so a link
+   * that means the project's front door, one written as an href with no
+   * click of its own (a server's card, the back arrow's href, a new tab),
+   * names the Hub here and lands on it the same way.
    */
   _placeAddress(parts) {
     if (!parts || parts[0] !== 'app' || !parts[1] || parts[2] !== 'dev') return false;
-    if (parts[3] !== 'discussion' && !(parts[3] === 'c' && parts[4])) return false;
+    if (parts[3] !== 'discussion' && parts[3] !== 'hub' && !(parts[3] === 'c' && parts[4])) return false;
     let handle = '';
     try { handle = decodeURIComponent(parts[4] || '').toLowerCase(); } catch (_) { handle = ''; }
-    const place = parts[3] === 'discussion' || handle === 'general' ? 'discussion' : `c:${handle}`;
+    const place = parts[3] === 'hub' ? 'status'
+      : parts[3] === 'discussion' || handle === 'general' ? 'discussion' : `c:${handle}`;
     if (typeof AppView !== 'undefined' && AppView._isWorkshopPlace && AppView._isWorkshopPlace(place)) {
       AppView._landOnTab(parts[1], place);
     }
@@ -6926,8 +6938,38 @@ const App = {
     return true;
   },
 
+  /**
+   * A LINK TO A PROJECT'S /workshop OPENS ITS WORKSHOP (2 Nov 2026, the
+   * owner's call after audit N03). The address is the one every place on the
+   * project page shares, so it used to reopen the place last left, the Hub on
+   * a first visit, and a link that said "workshop" showed the Hub. Now a
+   * bare arrival there (a cold load, a pasted or followed link) opens the
+   * Workshop place. What keeps its own answer:
+   *   - a door or a switch: it says its place first (AppView._landOnTab,
+   *     which _landOnHub and landKeepingPlace go through), and the router
+   *     takes that decision (AppView._takePlaceDecision);
+   *   - the Communities tab reopening the page you left (resumeWorkshopView);
+   *   - Back, Forward and a reload: the entry names its place
+   *     (AppView._historyWorkshopTab);
+   *   - `?ws=<place>`, which names one outright.
+   */
+  _linkOpensWorkshop(slug) {
+    if (typeof AppView === 'undefined' || !AppView._landOnTab) return false;
+    const decided = AppView._takePlaceDecision ? AppView._takePlaceDecision(slug) : false;
+    if (decided) return false;
+    try {
+      if (new URLSearchParams(location.search).has('ws')) return false;
+      const hashQuery = String(location.hash || '').split('?')[1] || '';
+      if (new URLSearchParams(hashQuery).has('ws')) return false;
+    } catch (_) { /* no query to read */ }
+    if (AppView._historyWorkshopTab && AppView._historyWorkshopTab()) return false;
+    AppView._landOnTab(slug, 'workshop');
+    AppView._takePlaceDecision?.(slug);
+    return true;
+  },
+
   _hubHref(slug) {
-    return slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#communities';
+    return slug ? `#app/${encodeURIComponent(slug)}/dev/hub` : '#communities';
   },
 
   // ── A discussion is its project page's Discussion tab (#3653) ─────────
@@ -7884,6 +7926,13 @@ const App = {
   // further down the stack, a browser without the Navigation API) keeps the
   // push it always made. True when it went back.
   _stepBackTo(href) {
+    if (!App._canStepBackTo(href)) return false;
+    try { history.back(); return true; } catch (_) { return false; }
+  },
+
+  // Whether the entry below this one is `href` (_stepBackTo's test, without
+  // going): the topic chip names what its press will show (audit N05).
+  _canStepBackTo(href) {
     const nav = App._navigationApi();
     if (!nav || typeof href !== 'string') return false;
     let below = null;
@@ -7898,7 +7947,7 @@ const App = {
         const m = /^#(app\/[^/?]+)(\/[^?]*)?$/.exec(href);
         if (m) {
           const rest = m[2] || '';
-          const forms = /^\/(dev|board|workshop|activity)$/.test(rest)
+          const forms = /^\/(dev|board|workshop|activity|dev\/hub)$/.test(rest)
             ? ['/workshop', '/board'] : [rest];
           for (const form of forms) {
             wanted.push(new URL(`/${m[1]}${form}${App._routeSearch(null)}`, location.origin).href);
@@ -7908,8 +7957,7 @@ const App = {
         wanted.push(new URL(href, location.origin).href);
       }
     } catch (_) { return false; }
-    if (wanted.indexOf(below.url) === -1) return false;
-    try { history.back(); return true; } catch (_) { return false; }
+    return wanted.indexOf(below.url) !== -1;
   },
 
   // Where the ✕ goes, and how: { how, url, key }.

@@ -156,7 +156,7 @@ export function appTabSlug(target: string | null | undefined): string | null {
  * writes it), or null for any other address.
  */
 export function hubSlug(target: string | null | undefined): string | null {
-  const match = /^#app\/([^/?#]+)\/workshop$/.exec(String(target || ''));
+  const match = /^#app\/([^/?#]+)\/(?:workshop|dev\/hub)$/.exec(String(target || ''));
   if (!match) return null;
   try {
     return decodeURIComponent(match[1]) || null;

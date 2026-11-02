@@ -174,7 +174,7 @@ type ViewApi = {
   _workshopTab?: () => string | null;
   _landOnTab?: (slug: string, tab: string) => void;
 };
-type AppApi = { currentApp?: string | null; _hubHref?: (slug: string) => string };
+type AppApi = { currentApp?: string | null };
 
 function view(): ViewApi | null {
   return (window as unknown as { AppView?: ViewApi }).AppView || null;
@@ -197,9 +197,7 @@ export function upToCommunity(slug: string): void {
   let last: unknown = null;
   try { last = v?._workshopTab?.(); } catch { last = null; }
   try { v?._landOnTab?.(slug, tabToReturnTo(last)); } catch { /* the page opens on the tab it remembers */ }
-  let href = '';
-  try { href = app()?._hubHref?.(slug) || ''; } catch { href = ''; }
-  window.location.hash = href || `#app/${encodeURIComponent(slug)}/workshop`;
+  window.location.hash = `#app/${encodeURIComponent(slug)}/workshop`;
 }
 
 /**

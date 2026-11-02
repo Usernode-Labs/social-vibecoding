@@ -1695,7 +1695,7 @@ test('a browse row tap opens the project hub; the home menu opens About and decl
   const tap = BROWSE_SRC.slice(BROWSE_SRC.indexOf('openRow(view) {'),
     BROWSE_SRC.indexOf('warmRow(view) {'));
   assert.doesNotMatch(tap, /noteDetailOrigin/);
-  assert.match(BROWSE_SRC, /rowHref\(view\) \{[\s\S]*?return `#app\/\$\{encodeURIComponent\(view\.slug\)\}\/workshop`;/);
+  assert.match(BROWSE_SRC, /rowHref\(view\) \{[\s\S]*?return `#app\/\$\{encodeURIComponent\(view\.slug\)\}\/dev\/hub`;/);
   // Home's menu still drills into About and notes the origin BEFORE writing
   // the hash — the hashchange lands in a later task.
   // And the #1036 modified-click href repeats openRow's guard, so a demo row
