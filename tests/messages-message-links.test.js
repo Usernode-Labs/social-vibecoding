@@ -176,3 +176,136 @@ test('a message link anchors the first read; later refreshes keep the reader\'s 
     delete global.fetch;
   }
 });
+
+// #6148: the foot of a linked window reads its newer pages as the reader
+// scrolls down to it (index.tsx maybeLoadNewer), and the top of a thread's
+// replies its earlier ones (maybeLoadEarlierReplies). What the store promises
+// the scroll loaders: one page per call while one is on its way, `false`
+// only for a failed request (the button comes back as the retry), and
+// nothing read once there is nothing left to read.
+function pages(reads, fail) {
+  const base = global.fetch;
+  global.fetch = async (url, init = {}) => {
+    const path = String(url);
+    const json = (body) => ({ ok: true, status: 200, json: async () => body });
+    const params = new URLSearchParams(path.split('?')[1] || '');
+    if (path.startsWith(`/api/conversations/${CONVERSATION}/messages?`) && params.get('after')) {
+      const after = Number(params.get('after'));
+      reads.push(`after=${after}`);
+      if (fail.now) return { ok: false, status: 503, json: async () => ({ error: 'Try later' }) };
+      const ids = ALL.filter((id) => id > after).slice(0, 10);
+      return json({ messages: ids.map(row), next_after: ids.at(-1) < ALL.at(-1) ? ids.at(-1) : null });
+    }
+    if (path.startsWith(`/api/conversations/${CONVERSATION}/threads/10?`)) {
+      const before = Number(params.get('before')) || null;
+      reads.push(before ? `replies before=${before}` : 'replies');
+      if (before && fail.now) return { ok: false, status: 503, json: async () => ({ error: 'Try later' }) };
+      // Twenty replies to message 10: 11 to 30, the newest ten first.
+      const ids = before ? ALL.filter((id) => id > 10 && id < before).slice(-10) : ALL.slice(-10);
+      return json({
+        root: row(10),
+        messages: ids.map((id) => ({ ...row(id), thread_root_id: 10 })),
+        next_before: ids[0] > 11 ? ids[0] : null,
+      });
+    }
+    return base(url, init);
+  };
+}
+
+test('#6148: a linked window reads one newer page per scroll to its foot, says when one failed, and stops at the present', async () => {
+  const reads = install();
+  const fail = { now: false };
+  pages(reads, fail);
+  try {
+    const store = loadTsx('frontend/src/features/messages/store.ts');
+    let snap = null;
+    const read = () => {
+      renderToHtml(createElement(() => { snap = store.useMessagesSnapshot(); return null; }));
+      return snap;
+    };
+    store.route(CONVERSATION, null, null, { focusMessageId: 5 });
+    await settle();
+    assert.equal(read().nextAfter, 7);
+
+    reads.length = 0;
+    const first = store.loadNewer();
+    assert.equal(read().loadingOlder, true, 'the foot says "Loading…" while it reads');
+    const second = store.loadNewer(); // a second scroll while the page loads
+    assert.equal(await first, true);
+    assert.equal(await second, true, 'nothing failed: it read nothing');
+    assert.deepEqual(reads, ['after=7'], 'one page');
+    assert.deepEqual(read().messages.map((m) => m.id), [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
+    assert.equal(read().nextAfter, 17);
+    assert.equal(read().loadingOlder, false);
+
+    fail.now = true;
+    reads.length = 0;
+    assert.equal(await store.loadNewer(), false, 'a failed page says so: the retry button comes back');
+    assert.deepEqual(reads, ['after=17']);
+    assert.equal(read().nextAfter, 17, 'the window is as it was');
+    assert.equal(read().messages.length, 15);
+    assert.equal(read().loadingOlder, false);
+
+    fail.now = false;
+    reads.length = 0;
+    assert.equal(await store.loadNewer(), true, 'the retry reads the same page');
+    assert.equal(await store.loadNewer(), true);
+    assert.deepEqual(reads, ['after=17', 'after=27']);
+    assert.equal(read().nextAfter, null, 'the window has reached the present');
+    assert.equal(read().messages.at(-1).id, 30);
+
+    reads.length = 0;
+    assert.equal(await store.loadNewer(), true);
+    assert.deepEqual(reads, [], 'at the present nothing more is read');
+  } finally {
+    delete global.window;
+    delete global.localStorage;
+    delete global.fetch;
+  }
+});
+
+test('#6148: a thread reads one earlier page per scroll to its top, and a failed page leaves its replies drawn', async () => {
+  const reads = install();
+  const fail = { now: false };
+  pages(reads, fail);
+  try {
+    const store = loadTsx('frontend/src/features/messages/store.ts');
+    let snap = null;
+    const read = () => {
+      renderToHtml(createElement(() => { snap = store.useMessagesSnapshot(); return null; }));
+      return snap;
+    };
+    store.route(CONVERSATION, null, null, { threadRootId: 10 });
+    await settle();
+    assert.deepEqual(read().thread.messages.map((m) => m.id), [21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
+    assert.equal(read().thread.nextBefore, 21);
+
+    fail.now = true;
+    reads.length = 0;
+    assert.equal(await store.loadOlderReplies(), false, 'a failed page says so: the retry button comes back');
+    assert.deepEqual(reads, ['replies before=21']);
+    assert.equal(read().thread.error, null, 'no error stands in place of the replies already drawn');
+    assert.equal(read().thread.loading, false);
+    assert.equal(read().thread.messages.length, 10);
+    assert.equal(read().thread.nextBefore, 21);
+
+    fail.now = false;
+    reads.length = 0;
+    const first = store.loadOlderReplies();
+    assert.equal(read().thread.loading, true, 'the row says "Loading…" while it reads');
+    const second = store.loadOlderReplies(); // a second scroll while the page loads
+    assert.equal(await first, true);
+    assert.equal(await second, true);
+    assert.deepEqual(reads, ['replies before=21'], 'one page');
+    assert.deepEqual(read().thread.messages.map((m) => m.id), ALL.filter((id) => id > 10));
+    assert.equal(read().thread.nextBefore, null, 'the first reply is drawn');
+
+    reads.length = 0;
+    assert.equal(await store.loadOlderReplies(), true);
+    assert.deepEqual(reads, [], 'nothing earlier is left to read');
+  } finally {
+    delete global.window;
+    delete global.localStorage;
+    delete global.fetch;
+  }
+});

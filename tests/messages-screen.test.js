@@ -193,7 +193,7 @@ test('a group invitation names the group and carries the inviter\'s note', () =>
 // in, in place of the button that used to sit at its top. The button returns
 // only to retry a failed load.
 test('a conversation loads earlier messages on scroll, one page at a time', () => {
-  assert.match(screen, /import \{ centreInScroller, isNearTop, needsMoreHistory, useStickToBottom \} from '\.\/stick-to-bottom';/);
+  assert.match(screen, /import \{ centreInScroller, isNearBottom, isNearStart, isNearTop, LOAD_NEWER_SLACK_PX, needsMoreHistory, useStickToBottom \} from '\.\/stick-to-bottom';/);
   const thread = screen.slice(screen.indexOf('function ConversationThread('), screen.indexOf('function ThreadActivityRow('));
   assert.ok(thread.length > 0);
   assert.match(thread, /if \(!isNearTop\(el\)\) return;/,
@@ -225,6 +225,101 @@ test('a conversation loads earlier messages on scroll, one page at a time', () =
   assert.match(loadOlder, /return false;/, 'only the failed request says false');
   assert.match(screen, /const ok = await loadOlder\(\);/);
   assert.match(screen, /return ok;/);
+});
+
+// #6148: the other two ends read their next page in the same way. At the
+// foot of a window a message link opened part-way back (#2387), scrolling
+// down reads the newer page in, in place of "Load newer messages"; at the top
+// of a thread's replies, scrolling up reads the earlier page in, in place of
+// "Load earlier replies". Each button returns only to retry a failed load.
+test('#6148: a linked window loads newer messages as the reader scrolls to its foot, one page at a time', () => {
+  const thread = screen.slice(screen.indexOf('function ConversationThread('), screen.indexOf('function ThreadActivityRow('));
+  const loader = thread.slice(thread.indexOf('function maybeLoadNewer('), thread.indexOf('useIsomorphicLayoutEffect(', thread.indexOf('function maybeLoadNewer(')));
+  assert.ok(loader.length > 0, 'maybeLoadNewer sits beside maybeLoadOlder');
+  assert.ok(thread.indexOf('function maybeLoadOlder(') < thread.indexOf('function maybeLoadNewer('));
+  assert.match(thread, /newerGate\.current = \{ nextAfter: snap\.nextAfter, loadingOlder: snap\.loadingOlder, loadingThread: snap\.loadingThread, newerFailed \}/,
+    'the latest values reach the listener through a ref, as olderGate does');
+  // Scrolling to the bottom reads a page; a second scroll while it loads
+  // does not (the store's one flag for a page at either end), nor any after
+  // a failure, nor any once the window has reached the present.
+  assert.match(loader, /if \(!gate\.nextAfter \|\| gate\.loadingOlder \|\| gate\.loadingThread \|\| gate\.newerFailed\) return;/);
+  assert.match(loader, /if \(!isNearBottom\(el, LOAD_NEWER_SLACK_PX\)\) return;/, 'the scroll position decides, not a click');
+  assert.match(loader, /void loadNewer\(\)\.then\(\(ok\) => \{ if \(!ok\) setNewerFailed\(true\); \}\);/,
+    'a failed load restores the button as the manual retry');
+  // What is on screen stays: the page lands below it, and nothing here
+  // scrolls or pins. useStickToBottom's atPresent keeps the reader's own
+  // scrolls from pinning until nextAfter goes, and then it follows again.
+  assert.doesNotMatch(loader, /pinned\.current|scrollTop/);
+  assert.match(thread, /const pinned = useStickToBottom\(scroller, !snap\.nextAfter\);/);
+  // From the same listener as the top's, attached once per scroller.
+  assert.match(thread, /const onScroll = \(\) => \{ maybeLoadOlder\(\); maybeLoadNewer\(\); \};\s*el\.addEventListener\('scroll', onScroll, \{ passive: true \}\);\s*return \(\) => el\.removeEventListener\('scroll', onScroll\);/);
+  assert.match(thread, /useIsomorphicLayoutEffect\(\(\) => \{ setNewerFailed\(false\); \}, \[conversationId, snap\.nextAfter\]\);/,
+    'a new conversation, or a new cursor, clears the failure');
+  // A window too short to scroll reads its next page without being asked;
+  // a hidden one (no height, under a thread on a phone) is not short.
+  assert.match(thread, /if \(!el \|\| !el\.clientHeight\) return;\s*if \(needsMoreHistory\(el\)\) maybeLoadNewer\(\);\s*\/\/ eslint-disable-next-line react-hooks\/exhaustive-deps\s*\}, \[snap\.messages, snap\.nextAfter, snap\.loadingOlder\]\);/);
+  // The foot: "Loading…" while a page loads, the retry only after a
+  // failure, and Jump to present, quiet, always.
+  const foot = thread.slice(thread.indexOf('<div className="messages-newer" data-load-newer="">'), thread.indexOf('</div>', thread.indexOf('<div className="messages-newer" data-load-newer="">')));
+  assert.ok(foot.length > 0);
+  assert.match(foot, /\{snap\.loadingOlder\s*\? <span role="status" className="text-\[13px\] text-zinc-500 dark:text-zinc-400">\{t\('messages:thread\.loadingNewer'\)\}<\/span>\s*: newerFailed\s*\? <button type="button" onClick=\{\(\) => \{ setNewerFailed\(false\); void loadNewer\(\)\.then\(\(ok\) => \{ if \(!ok\) setNewerFailed\(true\); \}\); \}\} className="messages-load-older">\{t\('messages:thread\.loadNewer'\)\}<\/button>\s*: null\}/);
+  assert.match(foot, /<button type="button" className="messages-jump-present" onClick=\{\(\) => \{ pinned\.current = true; jumpToPresent\(\); \}\}>\{t\('messages:thread\.jumpToPresent'\)\}<\/button>/);
+  assert.doesNotMatch(thread, /disabled=\{snap\.loadingOlder\} onClick=\{\(\) => void loadNewer\(\)\}/,
+    'no button to press for every page');
+  assert.equal(message('messages:thread.loadingNewer'), 'Loading…');
+  assert.equal(message('messages:thread.loadNewer'), 'Load newer messages');
+  const css = read('public/css/app.css');
+  assert.match(css, /\.messages-newer \{ display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 8px 0; \}/,
+    'the row keeps its height whatever it holds');
+  assert.match(css, /\.messages-jump-present \{[^}]*color: var\(--text-muted\);[^}]*background: transparent;/, 'muted words on no fill');
+  // loadNewer says whether it read a page, as loadOlder does.
+  const loadNewer = store.slice(store.indexOf('export async function loadNewer('), store.indexOf('export function jumpToPresent('));
+  assert.match(loadNewer, /Promise<boolean>/);
+  assert.match(loadNewer, /if \(!conversationId \|\| !state\.nextAfter \|\| state\.loadingOlder\) return true;/);
+  assert.match(loadNewer, /return true;\s*\} catch \(error\) \{[\s\S]*?return false;\s*\}\s*\}/, 'only the failed request says false');
+});
+
+test('#6148: a thread loads earlier replies as the reader scrolls to their top, keeping what is on screen in place', () => {
+  const panel = screen.slice(screen.indexOf('function ReplyThreadPanel('), screen.indexOf('function AppReplyThreadPanel('));
+  assert.ok(panel.length > 1000);
+  const loader = panel.slice(panel.indexOf('function maybeLoadEarlierReplies('), panel.indexOf('useIsomorphicLayoutEffect(', panel.indexOf('function maybeLoadEarlierReplies(')));
+  assert.ok(loader.length > 0);
+  assert.match(panel, /earlierGate\.current = \{ nextBefore: thread\?\.nextBefore \|\| null, loading: !!thread\?\.loading, earlierFailed \}/);
+  assert.match(loader, /if \(!gate\.nextBefore \|\| gate\.loading \|\| gate\.earlierFailed\) return;/,
+    'one page at a time, and nothing while loading or after a failure');
+  // The top of the replies: their row under the message the thread hangs
+  // off, measured as the row, not as the scroller's own top.
+  assert.match(loader, /const start = earlierRow\.current;\s*if \(!\(start \? isNearStart\(el, start\) : isNearTop\(el\)\)\) return;/);
+  assert.match(loader, /void earlierReplies\(\)\.then\(\(ok\) => \{ if \(!ok\) setEarlierFailed\(true\); \}\);/);
+  // As older() keeps it: the height before the page, the difference after.
+  const keep = panel.slice(panel.indexOf('async function earlierReplies('), panel.indexOf('return ok;', panel.indexOf('async function earlierReplies(')));
+  assert.match(keep, /if \(el\) earlierScroll\.current = el\.scrollHeight;\s*const ok = await loadOlderReplies\(\);\s*requestAnimationFrame\(\(\) => \{\s*if \(el && earlierScroll\.current !== null\) el\.scrollTop \+= el\.scrollHeight - earlierScroll\.current;\s*earlierScroll\.current = null;\s*\}\);/);
+  assert.match(panel, /useIsomorphicLayoutEffect\(\(\) => \{ earlierScroll\.current = null; \}, \[conversationId, rootId\]\);/,
+    'another thread forgets a page still on its way');
+  assert.match(panel, /const onScroll = \(\) => maybeLoadEarlierReplies\(\);\s*el\.addEventListener\('scroll', onScroll, \{ passive: true \}\);\s*return \(\) => el\.removeEventListener\('scroll', onScroll\);\s*\/\/ eslint-disable-next-line react-hooks\/exhaustive-deps\s*\}, \[conversationId, rootId\]\);/);
+  assert.match(panel, /useIsomorphicLayoutEffect\(\(\) => \{ setEarlierFailed\(false\); \}, \[conversationId, rootId, thread\?\.nextBefore\]\);/);
+  assert.match(panel, /if \(!el \|\| !el\.clientHeight\) return;\s*if \(needsMoreHistory\(el\)\) maybeLoadEarlierReplies\(\);\s*\/\/ eslint-disable-next-line react-hooks\/exhaustive-deps\s*\}, \[thread\?\.messages\.length, thread\?\.nextBefore, thread\?\.loading\]\);/,
+    'a thread too short to scroll reads its earlier page without being asked');
+  // The hooks run before the pane's early returns (hook order).
+  assert.ok(panel.indexOf('function maybeLoadEarlierReplies(') < panel.indexOf('if (!conversationId || !rootId) return null;'));
+  // The row: its height held, "Loading…" while a page loads, the retry only
+  // after a failure; the discussion's own link beside it as before.
+  const row = panel.slice(panel.indexOf('<div ref={earlierRow}'), panel.indexOf('</div>', panel.indexOf('<div ref={earlierRow}')));
+  assert.match(row, /className="flex min-h-12 flex-wrap items-center justify-center gap-x-3 gap-y-1 py-2" data-load-earlier-replies=""/);
+  assert.match(row, /\? thread\.loading\s*\? <span role="status" className="text-\[13px\] text-zinc-500 dark:text-zinc-400">\{t\('messages:replies\.loadingEarlier'\)\}<\/span>\s*: earlierFailed\s*\? <button type="button" onClick=\{\(\) => \{ setEarlierFailed\(false\); void earlierReplies\(\)\.then\(\(ok\) => \{ if \(!ok\) setEarlierFailed\(true\); \}\); \}\} className="messages-load-older">\{t\('messages:replies\.loadEarlier'\)\}<\/button>\s*: null/);
+  assert.match(row, /discussion\?\.more \? <a className="messages-load-older" href=\{issueRefHref\(discussion\.appSlug, String\(discussion\.issueNumber\)\)\}>\{t\('messages:replies\.discussion\.more'\)\}<\/a> : null/);
+  assert.doesNotMatch(panel, /disabled=\{thread\.loading\} onClick=\{\(\) => void loadOlderReplies\(\)\}/,
+    'no button to press for every page');
+  assert.equal(message('messages:replies.loadingEarlier'), 'Loading…');
+  assert.equal(message('messages:replies.loadEarlier'), 'Load earlier replies');
+  // loadOlderReplies says whether it read a page; a failed page leaves the
+  // replies drawn, with no error standing in their place.
+  const loadOlderReplies = store.slice(store.indexOf('export async function loadOlderReplies('), store.indexOf('export function setListCollapsed('));
+  assert.match(loadOlderReplies, /Promise<boolean>/);
+  assert.match(loadOlderReplies, /if \(!thread \|\| !thread\.nextBefore \|\| thread\.loading\) return true;/);
+  const failed = loadOlderReplies.slice(loadOlderReplies.indexOf('} catch'));
+  assert.match(failed, /publish\(\{ thread: \{ \.\.\.now, loading: false \} \}\);\s*return false;/);
+  assert.doesNotMatch(failed, /error:/);
 });
 
 test('message creation realtime carries ids and refetches viewer-authorized REST data', () => {
