@@ -26834,8 +26834,16 @@ const AppView = {
     const revisionArg = voteEpoch === null ? '' : `, ${voteEpoch}`;
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'no');
-    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">${PlatformI18n.htmlText('changes:vote.row.yes', { tally: yesT.label })}</button>`;
-    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no'${revisionArg})">${PlatformI18n.htmlText('changes:vote.row.no', { tally: noT.label })}</button>`;
+    // V03 (audit, 2 Nov 2026): a side nobody has taken says no count. "Yes
+    // (0)" and "No (0)" spelled out two zeros on every new change's row.
+    const yesWords = yesT.label === '0'
+      ? PlatformI18n.htmlText('changes:vote.row.yesNone')
+      : PlatformI18n.htmlText('changes:vote.row.yes', { tally: yesT.label });
+    const noWords = noT.label === '0'
+      ? PlatformI18n.htmlText('changes:vote.row.noNone')
+      : PlatformI18n.htmlText('changes:vote.row.no', { tally: noT.label });
+    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">${yesWords}</button>`;
+    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no'${revisionArg})">${noWords}</button>`;
     return preview + retryPreview + yesBtn + noBtn + adminMerge + AppView._uncountedVoteNoteHtml(pr);
   },
 

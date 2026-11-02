@@ -8528,6 +8528,25 @@ span.gc-vote-btn-icon { cursor: default; }
   margin-top: 6px;
 }
 .gc-vote-inline.gc-vote-inline-block:empty { display: none; }
+/* V03 (audit, 2 Nov 2026): ONE ACCENT ON THE ROW. Under the bot's "It's up
+   for a vote" message the row was four hues: a purple tally outline, the
+   blue Preview, a green Yes and a red No. Yes and No are the shell's plain
+   filled pills here (the accent on hover, as every .gc-vote-btn), and a
+   tally still short of its threshold is outlined in the muted ink; green
+   stays for a tally that reached it, which is the good news. */
+.gc-vote-inline .gc-vote-btn-yes,
+.gc-vote-inline .gc-vote-btn-no {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border-color: transparent;
+}
+.gc-vote-inline .gc-vote-btn-yes:hover,
+.gc-vote-inline .gc-vote-btn-no:hover {
+  background: var(--accent-tint);
+  border-color: var(--accent-light);
+  color: var(--accent);
+}
+.gc-vote-inline .gc-vote-count-pending { color: var(--text-muted); }
 /* ── The status band, full width ───────────────────────────
    The state bar, the 💬 count, the Closes-#N pills and the metadata chips
    (priority / assignee / category). These used to ride on the title's own

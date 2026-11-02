@@ -122,3 +122,21 @@ test('the inline vote card says the tally in words; the board and the panel keep
   assert.match(av.voteCountPill({ ...pr, yes_count: 1, votes_required: 1 }, 1, { words: true }),
     /class="gc-vote-count-label">1 yes vote<\/span>/);
 });
+
+test('V03: the chat\'s vote row shows no zero counts and keeps to one accent', () => {
+  const av = appView();
+  av._rememberSessionTesting = () => {};
+  av._previewAffordanceHtml = () => '<button class="gc-vote-btn gc-vote-btn-preview">Preview</button>';
+  const pr = { id: 7, pr_number: 700, status: 'promoted', yes_count: 0, no_count: 0, votes_required: 2 };
+  const none = av.voteButtonsHtml(pr, { collapseVoted: true });
+  assert.match(none, /onclick="AppView\.castVote\(7, 'yes'\)">Yes<\/button>/, 'no "Yes (0)"');
+  assert.match(none, /onclick="AppView\.castVote\(7, 'no'\)">No<\/button>/, 'no "No (0)"');
+  const some = av.voteButtonsHtml({ ...pr, yes_count: 1 }, { collapseVoted: true });
+  assert.match(some, />Yes \(1\)<\/button>/, 'a count above zero is said');
+  assert.match(some, />No<\/button>/);
+  // The row's Yes and No are the plain pills, and a tally short of its
+  // threshold is outlined in the muted ink, not the purple progress tone.
+  const css = fs.readFileSync(path.join(__dirname, '../public/css/app.css'), 'utf8');
+  assert.match(css, /\.gc-vote-inline \.gc-vote-btn-yes,\n\.gc-vote-inline \.gc-vote-btn-no \{\n {2}color: var\(--text-primary\);\n {2}background: var\(--bg-tertiary\);/);
+  assert.match(css, /\.gc-vote-inline \.gc-vote-count-pending \{ color: var\(--text-muted\); \}/);
+});

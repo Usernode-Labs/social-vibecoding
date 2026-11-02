@@ -7555,6 +7555,14 @@
     "text": "No ({{tally}})",
     "description": "The No vote button on a proposal's row in a chat or in the activity panel. No is one of the two sides of a vote on a proposal. {{tally}} is the number of No votes so far, for example \"1\", or \"1✓ +2\" where votes from approvers and advisory votes are counted separately."
   },
+  "vote.row.yesNone": {
+    "text": "Yes",
+    "description": "The Yes vote button on a proposal's row in a chat or in the activity panel while nobody has voted Yes yet: no count is shown, because a zero says nothing. Yes is one of the two sides of a vote on a proposal."
+  },
+  "vote.row.noNone": {
+    "text": "No",
+    "description": "The No vote button on a proposal's row in a chat or in the activity panel while nobody has voted No yet: no count is shown, because a zero says nothing. No is one of the two sides of a vote on a proposal."
+  },
   "vote.row.uncounted": {
     "text": "Test account: this vote won’t count.",
     "description": "Note beside the vote buttons on a proposal when the viewer is signed in with a test account, whose vote is recorded but not counted."
