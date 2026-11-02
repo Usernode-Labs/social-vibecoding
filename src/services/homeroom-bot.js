@@ -405,9 +405,12 @@ const PAUSED_SESSION_WINDOW_DAYS = 7;
 // keeps a preview and a database clone up (staging-reap.js
 // VOTE_BACKED_STATUSES), and on a small project it paces the votes the bot
 // asks of people. An admin may set either for one project (KEY_APP_CAPS,
-// appCapsOf), between 1 and MAX_*.
+// appCapsOf), between 1 and MAX_*. 50 waiting since #6157: a preview nobody
+// opens for two hours sleeps (services/preview-sleep.js), so a change
+// waiting for votes holds little more than its database clone. Building
+// stays at 5: that is the bot's own work, and sleep does nothing for it.
 const BUILDS_PER_APP = 5;
-const WAITING_PER_APP = 15;
+const WAITING_PER_APP = 50;
 const MAX_BUILDS_PER_APP = 10;
 const MAX_WAITING_PER_APP = 100;
 // Questions and `empty` verdicts share this one allowance, so the bot

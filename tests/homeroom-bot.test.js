@@ -363,7 +363,7 @@ test('the everyone moment and the proposal ceiling parse, clamp and validate', (
 });
 
 test('#6156: a project\'s own numbers of builds and of changes waiting for votes parse, clamp, validate and merge', () => {
-  assert.deepEqual([bot.BUILDS_PER_APP, bot.WAITING_PER_APP, bot.MAX_BUILDS_PER_APP, bot.MAX_WAITING_PER_APP], [5, 15, 10, 100]);
+  assert.deepEqual([bot.BUILDS_PER_APP, bot.WAITING_PER_APP, bot.MAX_BUILDS_PER_APP, bot.MAX_WAITING_PER_APP], [5, 50, 10, 100]);
   const s = bot.parseSettings([{
     key: bot.KEY_APP_CAPS,
     value: JSON.stringify({ 9: { waiting: 30 }, 12: { building: 99, waiting: 0 }, 13: {}, x: { waiting: 4 }, 14: 'six' }),
@@ -1387,9 +1387,9 @@ test('capRoomFor counts the same things the live check does', async () => {
     { builds_per_app: bot.BUILDS_PER_APP - 1, proposals_per_app: bot.WAITING_PER_APP - 2, proposals_total: bot.EVERYONE_PROPOSAL_CEILING - 7, question_tripwire: 0 },
     '#3576: the automatic ceiling across every app');
   assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { proposalCeiling: 10 }),
-    { builds_per_app: 4, proposals_per_app: 13, proposals_total: 3, question_tripwire: 0 }, 'an admin\'s ceiling, across them all');
+    { builds_per_app: 4, proposals_per_app: bot.WAITING_PER_APP - 2, proposals_total: 3, question_tripwire: 0 }, 'an admin\'s ceiling, across them all');
   assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { proposalCeiling: 5 }),
-    { builds_per_app: 4, proposals_per_app: 13, proposals_total: 0, question_tripwire: 0 }, 'never below nothing');
+    { builds_per_app: 4, proposals_per_app: bot.WAITING_PER_APP - 2, proposals_total: 0, question_tripwire: 0 }, 'never below nothing');
   assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { appCaps: { 9: { building: 1, waiting: 30 } } }),
     { builds_per_app: 0, proposals_per_app: 28, proposals_total: bot.EVERYONE_PROPOSAL_CEILING - 7, question_tripwire: 0 }, 'a project\'s own numbers');
   // The cap_freed refresh brings back a held request by the name of the cap that held it.

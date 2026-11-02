@@ -1150,7 +1150,8 @@ test('a ready verdict is held before it is built when the bot is at its ceiling 
   // number replaces it. #6156: a project's own caps are its builds and its
   // changes waiting for votes.
   assert.equal(bot.BUILDS_PER_APP, 5);
-  assert.equal(bot.WAITING_PER_APP, 15);
+  // #6157: 50 waiting since a waiting proposal's preview sleeps.
+  assert.equal(bot.WAITING_PER_APP, 50);
   // #6157: 500 since a waiting proposal's preview sleeps.
   assert.equal(bot.botProposalCeiling({}), 500, 'the automatic ceiling');
   assert.equal(bot.botProposalCeiling(null), 500);
@@ -1217,25 +1218,32 @@ test('#6156: a project\'s builds and its changes waiting for votes are two caps,
   const caps = (settings = {}) => bot.simulateCaps(pool, BOT, 9, 'ready', settings);
   [builds, proposals] = [5, 0];
   assert.equal(await caps(), 'builds_per_app', '5 builds under way: it waits for the bot\'s turn');
-  [builds, proposals] = [0, 15];
-  assert.equal(await caps(), 'proposals_per_app', '15 changes up for a vote: it waits for votes');
-  [builds, proposals] = [4, 14];
+  // #6157: 50 changes may wait for votes (their previews sleep): the 50th is
+  // built, and the 51st waits.
+  [builds, proposals] = [0, 49];
+  assert.equal(await caps(), null, '49 waiting: the 50th is built');
+  [builds, proposals] = [0, 50];
+  assert.equal(await caps(), 'proposals_per_app', '50 changes up for a vote: the 51st waits for votes');
+  [builds, proposals] = [4, 49];
   assert.equal(await caps(), null, 'room in both: it is built');
-  [builds, proposals] = [5, 15];
+  [builds, proposals] = [5, 50];
   assert.equal(await caps(), 'proposals_per_app', 'both full: votes are what it waits for longest');
   // A project's own numbers (settings.appCaps, by app id), clamped as stored.
-  [builds, proposals] = [0, 15];
-  const own = bot.parseSettings([{ key: bot.KEY_APP_CAPS, value: JSON.stringify({ 9: { waiting: 30 } }) }]);
-  assert.deepEqual(bot.appCapsOf(own, 9), { building: bot.BUILDS_PER_APP, waiting: 30 });
-  assert.equal(await caps(own), null, 'waiting set to 30 lets the 16th through');
-  proposals = 30;
+  [builds, proposals] = [0, 50];
+  const own = bot.parseSettings([{ key: bot.KEY_APP_CAPS, value: JSON.stringify({ 9: { waiting: 80 } }) }]);
+  assert.deepEqual(bot.appCapsOf(own, 9), { building: bot.BUILDS_PER_APP, waiting: 80 });
+  assert.equal(await caps(own), null, 'waiting set to 80 lets the 51st through');
+  proposals = 80;
   assert.equal(await caps(own), 'proposals_per_app');
-  assert.equal(await caps(bot.parseSettings([{ key: bot.KEY_APP_CAPS, value: JSON.stringify({ 8: { waiting: 30 } }) }])), 'proposals_per_app',
+  assert.equal(await caps(bot.parseSettings([{ key: bot.KEY_APP_CAPS, value: JSON.stringify({ 8: { waiting: 80 } }) }])), 'proposals_per_app',
     'another project\'s number is not this one\'s');
+  [builds, proposals] = [0, 15];
+  assert.equal(await caps(bot.parseSettings([{ key: bot.KEY_APP_CAPS, value: JSON.stringify({ 9: { waiting: 15 } }) }])), 'proposals_per_app',
+    'a smaller project\'s own number, lower than the default');
   [builds, proposals] = [2, 0];
   assert.equal(await caps(bot.parseSettings([{ key: bot.KEY_APP_CAPS, value: JSON.stringify({ 9: { building: 2 } }) }])), 'builds_per_app');
   // Only a build is held by them.
-  [builds, proposals] = [5, 15];
+  [builds, proposals] = [5, 50];
   assert.equal(await bot.simulateCaps(pool, BOT, 9, 'question', {}), null);
 });
 
