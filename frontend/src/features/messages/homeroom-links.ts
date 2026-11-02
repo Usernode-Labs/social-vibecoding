@@ -126,6 +126,8 @@ export function pageOf(route: string): HomeroomLink | null {
   const ref = parts[4];
   if (!section) return page('hub', slug, `${base}/workshop`);
   if (section === 'chat') return page('discussion', slug, `${base}/dev/chat`);
+  // The Hub's own address (App._placeAddress).
+  if (section === 'hub' && !ref) return page('hub', slug, `${base}/dev/hub`);
   // A list with no id is the card list, which is the hub; an id that does
   // not parse is no card at all, not the list it would fall back to.
   if (!ref) return ['issues', 'proposals', 'changes', 'governance', 'sessions', 'shared'].includes(section)

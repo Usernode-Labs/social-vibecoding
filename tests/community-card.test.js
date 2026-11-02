@@ -117,10 +117,9 @@ test('before the read the hero draws only what needs none: Open app and the ⋯'
   const pending = renderToHtml(createElement(CommunityCard, { slug: 'notes', name: 'Notes', canOpenApp: true }));
   assert.match(pending, /class="dev-ws-hero" data-ws-community-pending=""/);
   assert.match(pending, /<button type="button" class="dev-ws-open-app" data-ws-community-open-app="">/);
-  // Open app is an action: the one accent, not the community's colour,
-  // which the header wears to say where you are (audit P01).
-  assert.match(read('public/css/app.css'), /\.dev-ws-open-app \{[^}]*background: var\(--accent\); color: #fff;/);
-  assert.doesNotMatch(read('public/css/app.css'), /\.dev-ws-open-app \{[^}]*--community-tint/);
+  // Open app wears the community's colour from the root, where the header
+  // sets it (features/header/community-tint.ts), not from a prop.
+  assert.match(read('public/css/app.css'), /\.dev-ws-open-app \{[^}]*background: var\(--community-tint, var\(--accent\)\)/);
   assert.doesNotMatch(pending, /dev-ws-hero-name|data-ws-community=""|Join|data-ws-community-rule/,
     'no name before the read says it, and nothing that depends on membership before it is known');
   const src = read(CARD);

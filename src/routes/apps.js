@@ -307,6 +307,15 @@ function hubFirstVersion(state, viewerId, { member = false } = {}) {
     creator: state.creator || null,
     waits_on: mine && !ready ? (state.plan ? 'plan' : state.question ? 'question' : null) : null,
     conversation_id: mine ? (Number(state.conversationId) || null) : null,
+    // Its plan, for its maker, when it was said in a private thread of theirs
+    // (homeroom-bot-dm.js waitingPlan): Review the plan opens it there.
+    ...(mine && state.plan && Number(state.plan.threadRootId) > 0 ? {
+      plan_at: {
+        conversationId: Number(state.plan.conversationId) || Number(state.conversationId) || null,
+        threadRootId: Number(state.plan.threadRootId),
+        messageId: Number(state.plan.messageId) || null,
+      },
+    } : {}),
     session_id: Number.isInteger(sessionId) && sessionId > 0 ? sessionId : null,
     plan: member && !mine && !ready && !state.stopped ? sharedPlan(state.plan || state.chosenPlan) : null,
     // 14 Oct 2026: its build stopped (line 'stopped'), and for its maker
@@ -4321,9 +4330,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         }
       }
       // AN INVITE LINK IS OUT (#4045, 8 Oct 2026): the viewer has a live one
-      // for a project that is still just theirs, so the hub draws their face
-      // with open seats beside it instead of "Just you". Asked only then;
-      // see hasLiveLink for what the records can and cannot say.
+      // for a project that is still just theirs, and it went out (copied,
+      // shared or used; audit D03), so the hub draws their face with open
+      // seats beside it instead of "Just you". Asked only then; see
+      // hasLiveLink.
       const inviteLink = membership?.is_member && membership.audience === 'solo' && req.user?.id
         ? await communityInvites.hasLiveLink(pool, app.id, req.user.id) : false;
       // WHAT INVITE IS OUT, for Share it's line (15 Oct 2026): "Invite link

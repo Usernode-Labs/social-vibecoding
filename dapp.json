@@ -2539,7 +2539,7 @@
     },
     {
       "name": "A project's hub leads with a hero that says what it is and who it is for (communities); opened from an invite link, who invited you and Join come first in it (#3700)",
-      "path": "/?shot=invite-join#app/usernode-2d5619/workshop",
+      "path": "/?shot=invite-join#app/usernode-2d5619/dev/hub",
       "expectSelector": "#dev-body #dev-workshop .dev-ws-hero[data-ws-community][data-audience=\"open\"]:has(> .dev-ws-invite:first-child [data-ws-invite-join]) > .dev-ws-hero-id [data-ws-community-name] + [data-ws-members-cell] > [data-ws-community-audience]",
       "expectText": "Public community"
     },
@@ -3034,9 +3034,9 @@
       "expectSelector": "#drawer-row-ai-budget #ai-budget-slot"
     },
     {
-      "name": "Theme selector ships its 3-segment track and caret",
+      "name": "Theme selector ships its 3-segment track",
       "path": "/#settings/theme",
-      "expectSelector": "#settings-theme-section #drawer-theme-track[role=\"radiogroup\"] [data-theme-mode=\"system\"] ~ #drawer-theme-caret-track #drawer-theme-caret"
+      "expectSelector": "#settings-theme-section #drawer-theme-track[role=\"radiogroup\"] [data-theme-mode=\"light\"] ~ [data-theme-mode=\"system\"]"
     },
     {
       "name": "A bare #settings opens the Account page, led by the Profile card",
@@ -3306,9 +3306,9 @@
       "expectText": "About"
     },
     {
-      "name": "The menu links out to the project's community, scoped to the app, as a Go to community row: its hub, or its Needs you while decisions wait on the viewer (#2718, #2761, #3287, #5927)",
+      "name": "The menu links out to the project's community, scoped to the app, as a Go to community row: its hub at the Hub's own address (#app/<slug>/dev/hub, so a new tab lands there too), or its Needs you while decisions wait on the viewer (#2718, #2761, #3287, #5927)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav a#app-menu-row-workshop:is([href=\"#app/usernode-2d5619/workshop\"], [href=\"/app/usernode-2d5619/workshop?ws=needs\"]:has(#app-menu-workshop-owed))",
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav a#app-menu-row-workshop:is([href=\"#app/usernode-2d5619/dev/hub\"], [href=\"/app/usernode-2d5619/workshop?ws=needs\"]:has(#app-menu-workshop-owed))",
       "expectText": "Go to community"
     },
     {
@@ -3523,6 +3523,12 @@
       "path": "/#settings/usernode?usernodedemo=ios-denied",
       "expectSelector": "#settings-usernode-section:not(.hidden) button#settings-notif-row",
       "expectText": "Not granted"
+    },
+    {
+      "name": "A build that produces only while open says so and asks for no alarm or battery access",
+      "path": "/#settings/usernode?usernodedemo=foreground-only",
+      "expectSelector": "#settings-usernode-section:not(.hidden)",
+      "expectText": "only while Homeroom is open"
     },
     {
       "name": "Widget icons: the diagnostics box separates \"couldn't say\" from \"no\"",
@@ -4322,9 +4328,9 @@
       "expectText": "We sent you a code. It expires in 10 minutes."
     },
     {
-      "name": "#2916: back from a request is the chip above its sheet, to the layout it was opened from, named for the place the project page reopens on (the Hub on a first visit, audit N05), and the header draws no arrow beside it (#4453)",
+      "name": "#2916: back from a request is the chip above its sheet, named for where its press goes: on a cold load its link, which opens the Workshop (audit N03 follow-up), and the header draws no arrow beside it (#4453)",
       "path": "/?demo=1&view=workshop#app/usernode-2d5619/dev/issues/900014",
-      "expectSelector": "body:has(#platform-header a#back-btn.hidden) #dev-topic-thread #gc-thread-back > a.dev-topic-back:first-child[aria-label=\"Back to Hub\"][href=\"#app/usernode-2d5619/workshop\"]"
+      "expectSelector": "body:has(#platform-header a#back-btn.hidden) #dev-topic-thread #gc-thread-back > a.dev-topic-back:first-child[aria-label=\"Back to Workshop\"][href=\"#app/usernode-2d5619/workshop\"]"
     },
     {
       "name": "…and from a request opened on it, the same chip to the same screen (#2916)",

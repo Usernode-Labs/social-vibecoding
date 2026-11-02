@@ -58,7 +58,14 @@ const read = (tile: FaqTileIds): FaqTile => ({
 
 /** The tiles in the language on screen. Called while <Faq/> renders, which is
  *  the component subscribed to the language. */
-export function faqTiles(isAndroid: boolean, deviceManufacturer?: string | null): FaqTile[] {
+export function faqTiles(
+  isAndroid: boolean,
+  deviceManufacturer?: string | null,
+  foregroundOnly = false,
+): FaqTile[] {
+  // The other two topics explain alarms and waking the device, which a build
+  // that produces only while open doesn't do.
+  if (foregroundOnly) return [read(ABOUT), read(VRF)];
   const platform = isAndroid
     ? [
       t('settings:usernode.faq.platform.androidHow'),

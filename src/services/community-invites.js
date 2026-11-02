@@ -281,21 +281,23 @@ async function listInvites(pool, { app, user }) {
 }
 
 /**
- * Whether `userId` has a live invite link for `app` (the same "live" as
- * listInvites: not turned off, not past its end, not used up). The hub reads
- * it to draw a project that is just theirs with open seats once a link is
- * out (#4045, 8 Oct 2026). It is the only trace a link leaves: copying or
- * sharing it happens on the person's device, and making the link is what
- * opening the invite pane does, so this says "a link was made", which is as
- * near to "went out" as the records get.
+ * Whether `userId` has a live invite link for `app` that went out (the same
+ * "live" as listInvites: not turned off, not past its end, not used up). The
+ * hub reads it to draw a project that is just theirs with open seats once a
+ * link is out (#4045, 8 Oct 2026). Opening the invite pane makes a link, so
+ * a link existing is not one sent: like linksOutFor and summarizeLinks
+ * (audit D03), it counts only a link the pane copied or shared (`shared_at`)
+ * or that somebody has come through.
  */
 async function hasLiveLink(pool, appId, userId) {
   if (!appId || !userId) return false;
   const { rows } = await pool.query(
-    `SELECT 1 FROM community_invites
-      WHERE app_id = $1 AND created_by = $2 AND revoked_at IS NULL
-        AND (expires_at IS NULL OR expires_at > NOW())
-        AND (max_uses IS NULL OR uses < max_uses)
+    `SELECT 1 FROM community_invites i
+      WHERE i.app_id = $1 AND i.created_by = $2 AND i.revoked_at IS NULL
+        AND (i.expires_at IS NULL OR i.expires_at > NOW())
+        AND (i.max_uses IS NULL OR i.uses < i.max_uses)
+        AND (i.shared_at IS NOT NULL OR EXISTS (
+          SELECT 1 FROM community_invite_redemptions y WHERE y.invite_id = i.id))
       LIMIT 1`,
     [appId, userId]
   );
@@ -621,11 +623,11 @@ async function pictureBytes(pool, token) {
   const picture = await pictureFor(pool, invite.app_id);
   if (!picture || picture.kind !== 'shot') return null;
   const { rows } = await pool.query(
-    'SELECT data, object_key, bytes, content_type, sha256 FROM shot_artifacts WHERE id = $1',
+    'SELECT object_key, bytes, content_type, sha256 FROM shot_artifacts WHERE id = $1',
     [picture.artifactId]
   );
   if (!rows[0]) return null;
-  return { data: rows[0].data, objectKey: rows[0].object_key, sizeBytes: rows[0].bytes,
+  return { objectKey: rows[0].object_key, sizeBytes: rows[0].bytes,
     contentType: rows[0].content_type, sha256: rows[0].sha256 };
 }
 

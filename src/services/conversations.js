@@ -819,6 +819,23 @@ async function listThread(pool, user, conversationId, rootId, { before = null, l
     hydrateMessages(pool, user, root.rows),
     hydrateMessages(pool, user, page),
   ]);
+  // B19 follow-up (audit, 2 Nov 2026): a thread opens at its first reply this
+  // reader has not read. A thread has no read cursor of its own; its read
+  // state is its alerts (#2387: reading a thread up to a reply clears them up
+  // to it, markRead). Read here, on the first page, before the open reads it.
+  // Null with nothing unread: the thread opens at its newest reply.
+  let read = null;
+  if (before == null) {
+    const { rows: [unread] } = await pool.query(
+      `SELECT MIN(m.id)::int AS first_unread_id, COUNT(*)::int AS unread_count
+         FROM notifications n
+         JOIN conversation_messages m ON m.id = n.conversation_message_id
+        WHERE n.user_id = $1 AND n.conversation_id = $2 AND n.read_at IS NULL
+          AND m.thread_root_id = $3 AND m.deleted_at IS NULL`,
+      [user.id, conversationId, rootId]
+    );
+    if (unread?.first_unread_id) read = { firstUnreadId: unread.first_unread_id, unreadCount: unread.unread_count };
+  }
   let discussion = null;
   // #5219: when the discussion came back, the page may still hold the bot's
   // quiet note about a reply it mirrored; the reply is shown in full here, so
@@ -840,6 +857,7 @@ async function listThread(pool, user, conversationId, rootId, { before = null, l
     messages: shown,
     nextBefore: rows.length > safeLimit && page.length ? page[0].id : null,
     discussion,
+    ...(read ? { read } : {}),
   };
 }
 
@@ -1746,6 +1764,10 @@ async function sendMessage(pool, user, conversationId, input, {
   // instead, or { refuse: true } to send nothing; `afterInsert(db, { messageId,
   // membership, memberIds })` after it.
   prepare = null, afterInsert = null,
+  // B09: the person a platform-written message's cards are for, whose view
+  // of the project the cards are checked against (shared-objects.js
+  // validateForShare `viewer`). Only the Homeroom bot's DM passes it.
+  cardsViewer = null,
 } = {}) {
   const attachmentIds = normalizeAttachmentIds(input.attachment_ids ?? input.attachmentIds);
   const refsRaw = input.objects ?? (input.object ? [input.object] : []);
@@ -1837,7 +1859,7 @@ async function sendMessage(pool, user, conversationId, input, {
     }
     const objectRefs = [];
     for (const raw of refsRaw) {
-      const validated = await sharedObjects.validateForShare(db, user, raw, { conversationId });
+      const validated = await sharedObjects.validateForShare(db, user, raw, { conversationId, viewer: cardsViewer });
       if (!validated) return null;
       objectRefs.push(validated);
     }
@@ -2075,7 +2097,12 @@ async function deleteMessage(pool, user, conversationId, messageId) {
   return { ...result, message: await getMessage(pool, user, conversationId, messageId) };
 }
 
-async function toggleReaction(pool, user, conversationId, messageId, rawEmoji) {
+// `want` names the state the reaction should end in (true: on, false: off)
+// rather than flipping it, so a request sent again is harmless: the device
+// keeps a reaction made offline and sends it when the connection is back,
+// and an answer lost on the way means it may be sent twice
+// (frontend/src/lib/action-outbox.ts). Without it, a tap flips it.
+async function toggleReaction(pool, user, conversationId, messageId, rawEmoji, want = null) {
   const emoji = normalizeEmoji(rawEmoji);
   if (!emoji) return null;
   const result = await transaction(pool, async (db) => {
@@ -2091,18 +2118,33 @@ async function toggleReaction(pool, user, conversationId, messageId, rawEmoji) {
     );
     if (!message.rows.length) return null;
     if (message.rows[0].deleted_at) return { error: 'message_deleted' };
-    const deleted = await db.query(
-      `DELETE FROM conversation_message_reactions
-        WHERE message_id = $1 AND user_id = $2 AND emoji = $3`,
-      [messageId, user.id, emoji]
-    );
+    let added = false;
+    let removed = false;
+    if (want === true) {
+      const inserted = await db.query(
+        `INSERT INTO conversation_message_reactions (message_id, user_id, emoji)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (message_id, user_id, emoji) DO NOTHING`, [messageId, user.id, emoji]
+      );
+      added = inserted.rowCount > 0;
+    } else {
+      const deleted = await db.query(
+        `DELETE FROM conversation_message_reactions
+          WHERE message_id = $1 AND user_id = $2 AND emoji = $3`,
+        [messageId, user.id, emoji]
+      );
+      removed = deleted.rowCount > 0;
+      if (!removed && want !== false) {
+        await db.query(
+          `INSERT INTO conversation_message_reactions (message_id, user_id, emoji)
+           VALUES ($1, $2, $3)`, [messageId, user.id, emoji]
+        );
+        added = true;
+      }
+    }
     const notifications = [];
     let clearedUserIds = [];
-    if (!deleted.rowCount) {
-      await db.query(
-        `INSERT INTO conversation_message_reactions (message_id, user_id, emoji)
-         VALUES ($1, $2, $3)`, [messageId, user.id, emoji]
-      );
+    if (added) {
       const authorId = message.rows[0].sender_id;
       // #3188: a channel rings only for an @mention, and a reaction is not one.
       if (authorId && authorId !== user.id && membership.kind !== 'channel') {
@@ -2111,17 +2153,17 @@ async function toggleReaction(pool, user, conversationId, messageId, rawEmoji) {
           sourceUserId: user.id, kind: 'conversation_reaction', detail: emoji,
         }));
       }
-    } else {
+    } else if (removed) {
       // #3050: name whose bell lost a row, so the route can refresh it and
       // re-badge their iPhone — un-reacting must lower the icon too.
-      const removed = await db.query(
+      const cleared = await db.query(
         `DELETE FROM notifications
           WHERE user_id = $1 AND conversation_id = $2 AND conversation_message_id = $3
             AND source_user_id = $4 AND kind = 'conversation_reaction' AND detail = $5
           RETURNING user_id`,
         [message.rows[0].sender_id, conversationId, messageId, user.id, emoji]
       );
-      clearedUserIds = [...new Set(removed.rows.map((row) => row.user_id))];
+      clearedUserIds = [...new Set(cleared.rows.map((row) => row.user_id))];
     }
     return { notifications, clearedUserIds, memberIds: await activeMemberIds(db, conversationId) };
   });

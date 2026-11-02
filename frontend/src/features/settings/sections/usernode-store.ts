@@ -138,6 +138,8 @@ export interface UsernodeSectionState {
   /** Everything below the demo cut — a browser link renders permissions only. */
   belowDemoCut: boolean;
   blockProduction: UnBlockProduction;
+  /** This build produces blocks only while the app is open. */
+  foregroundOnly: boolean;
   privacy: { facematch: UnToggle; open: UnAction | null; reset: UnAction } | null;
   widgetIcons: UnWidgetIcons | null;
   diagnostics: { debugMode: UnToggle | null; actions: UnAction[] } | null;
@@ -152,6 +154,7 @@ export const USERNODE_EMPTY: UsernodeSectionState = {
   socialPush: { kind: 'absent' },
   belowDemoCut: false,
   blockProduction: { kind: 'checking' },
+  foregroundOnly: false,
   privacy: null,
   widgetIcons: null,
   diagnostics: null,

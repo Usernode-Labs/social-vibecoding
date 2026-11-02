@@ -1235,6 +1235,71 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.equal(planned.metadata.homeroomBot.kind, 'plan');
     await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE user_id = $1 AND issue_number = 5001', [ada.id]);
 
+    // Every other piece of news that quotes where a request started does the
+    // same: a request with no card of its own, started from a message under
+    // another request's card, hears its news in Main, never in that card's
+    // thread, which opens a request page and shows none of it.
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 5004, $2, 'Plant labels')`,
+      [app.id, ada.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, issue_number, kind, title, status, message_id)
+       VALUES ($1, $2, $3, 5004, 'file_request', 'Plant labels', 'done', $4)`,
+      [ada.id, conversationId, app.id, reply.message.id],
+    );
+    assert.deepEqual(await dm.outsideCardThread(pool, reply.message.id), { threadRootId: false }, 'under a card: Main');
+    const relayed = await dm.relayIssuePost({
+      pool, app, issueNumber: 5004, kind: 'question', postId: 50041, bot,
+      dm: { question: 'Printed or handwritten?', answers: ['Printed', 'Handwritten'] },
+    });
+    const asked5004 = await conversations.getMessage(pool, viewer, conversationId, relayed.messageId);
+    assert.equal(asked5004.threadRootId, null, 'the question is in Main, not under another request\'s card');
+    // A thread of her own (a private one, no card) keeps what is said there.
+    const own = await dm.sendDm(pool, { bot, userId: ada.id, threadRootId: false, content: 'A thread of yours.', metadata: { kind: 'chat' } });
+    const inOwn = await conversations.sendMessage(pool, viewer, conversationId, { content: 'labels please', thread_root_id: own.messageId });
+    assert.deepEqual(await dm.outsideCardThread(pool, inOwn.message.id), {}, 'a thread that is no card\'s keeps it');
+    assert.deepEqual(await dm.outsideCardThread(pool, null), {});
+    await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE user_id = $1 AND issue_number = 5004', [ada.id]);
+
+    // A plan for a request she started in a thread of her own is said there,
+    // and its doors find it there (waitingPlan, the tray's ask); one started
+    // under a card is said in Main (above).
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 5005, $2, 'Plant tags')`,
+      [app.id, ada.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, issue_number, kind, title, status, message_id)
+       VALUES ($1, $2, $3, 5005, 'file_request', 'Plant tags', 'done', $4)`,
+      [ada.id, conversationId, app.id, inOwn.message.id],
+    );
+    await pool.query('UPDATE conversation_messages SET reply_to_id = $2 WHERE id = $1', [inOwn.message.id, inOwn.message.id]);
+    const { rows: [run5005] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, awaiting_go_at) VALUES ($1, 5005, 'live', 'ready', NOW()) RETURNING id`,
+      [app.id],
+    );
+    const ownPlan = await dm.sendPlanCard(pool, { app, issueNumber: 5005, runId: run5005.id, plan: { bullets: ['A tag per plant'] }, bot });
+    const ownPlanned = await conversations.getMessage(pool, viewer, conversationId, ownPlan.messageId);
+    assert.equal(ownPlanned.threadRootId, own.messageId, 'the plan is in the thread the request started in');
+    const waiting5005 = await dm.waitingPlan(pool, { userId: ada.id, appId: app.id, issueNumber: 5005 });
+    assert.deepEqual([waiting5005.messageId, waiting5005.threadRootId], [ownPlan.messageId, own.messageId],
+      'Review the plan opens it there');
+    const { rows: told } = await pool.query(
+      `SELECT d.message_id, d.kind, d.issue_number, d.question_status, d.answered_at, $2::text AS slug,
+              m.thread_root_id, m.metadata->'homeroomBot' AS meta,
+              (m.thread_root_id IS NOT NULL AND NOT EXISTS (
+                SELECT 1 FROM homeroom_bot_dm_messages c WHERE c.message_id = m.thread_root_id AND c.kind = 'activity'
+              )) AS in_own_thread
+         FROM homeroom_bot_dm_messages d JOIN conversation_messages m ON m.id = d.message_id
+        WHERE d.message_id = $1`,
+      [ownPlan.messageId, app.slug],
+    );
+    const tray = require('../src/services/homeroom-bot-tray');
+    const ask = [...tray.threadsOf(told).values()][0].ask;
+    assert.deepEqual([ask.messageId, ask.threadRootId], [ownPlan.messageId, own.messageId], 'and the tray\'s ask names its thread');
+    await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE user_id = $1 AND issue_number = 5005', [ada.id]);
+
     // A request from before threads has no card: the chat opens its story on
     // its oldest message, and a reply written there is about it all the same.
     await pool.query(

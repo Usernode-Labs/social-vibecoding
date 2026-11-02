@@ -7,9 +7,10 @@ const { loadTsx } = require('./lib/render-tsx');
 // Exercise the real connectivity engine with controlled network responses and
 // time. A connected browser can lose access to its Preview without ever firing
 // an online/offline event, or leave a health request pending across recovery.
-function setup(t, { onLine = true } = {}) {
+function setup(t, { onLine = true, native = null } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   const window = new EventTarget();
+  if (native) window.__usernodeNativeConnectivity = native;
   const document = new EventTarget();
   const bodyClasses = new Set();
   document.visibilityState = 'visible';
@@ -150,6 +151,61 @@ test('browser connectivity events still probe the server instead of trusting the
   requests[1].resolve({ ok: true });
   await flush();
   assert.equal(api.isOffline(), false);
+});
+
+test('the native shell\'s word: no network is believed at once; a network back, or another one, is probed now', async (t) => {
+  // Offline follow-up, 2 Nov 2026: the phone knows when it has no network,
+  // and when Wi-Fi hands over to cellular; a probe cannot tell either.
+  const { api, window, requests, changes } = setup(t);
+  const handed = [];
+  window.addEventListener('usernode:network-changed', (event) => handed.push(event.detail.via));
+  const say = (detail) => window.dispatchEvent(new CustomEvent('usernode:native-connectivity', { detail }));
+  say({ online: true, via: ['wifi'] });
+  await flush();
+  assert.equal(requests.length, 0, 'online and on a network, as every page load is told: nothing to ask');
+  assert.deepEqual(handed, [], 'and the first word is no change of network');
+
+  say({ online: false, via: ['none'] });
+  await flush();
+  assert.equal(api.isOffline(), true, 'no network: offline at once');
+  assert.equal(requests.length, 0, 'with nothing to probe over');
+
+  say({ online: true, via: ['mobile'] });
+  await flush();
+  assert.equal(requests.length, 1, 'a network back is probed now, not on the 15 s loop');
+  requests[0].resolve({ ok: true });
+  await flush();
+  assert.equal(api.isOffline(), false);
+  assert.deepEqual(handed, [], 'coming back is the probe\'s news (usernode:offline-change), not a handover');
+
+  say({ online: true, via: ['wifi', 'vpn'] });
+  await flush();
+  assert.deepEqual(handed, [['wifi', 'vpn']], 'online, onto another network: announced');
+  assert.equal(requests.length, 2, 'and probed');
+  requests[1].resolve({ ok: true });
+  await flush();
+  say({ online: true, via: ['wifi', 'vpn'] });
+  await flush();
+  assert.equal(handed.length, 1, 'the same word again is nothing new');
+  assert.equal(requests.length, 2);
+  say({ online: 'yes' });
+  say(null);
+  await flush();
+  assert.deepEqual(changes, [true, false]);
+});
+
+test('a native word that came before the engine started is read as it starts', (t) => {
+  const { api } = setup(t, { native: { online: false, via: ['none'] } });
+  assert.equal(api.isOffline(), true);
+});
+
+test('App hears a handover: the events socket is asked now and the screen read again', () => {
+  const app = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public/js/app.js'), 'utf8');
+  assert.match(app, /window\.addEventListener\('usernode:network-changed', \(\) => App\._networkHandedOver\(\)\);/);
+  const body = app.slice(app.indexOf('  _networkHandedOver() {'), app.indexOf('  _eventsNetworkChanged(offline) {'));
+  assert.match(body, /if \(App\._sessionFromSnapshot\) \{\s+App\._reconcileSession\(\)\.catch\(\(\) => \{\}\);\s+return;\s+\}/);
+  assert.match(body, /if \(socket\.readyState === 1 && !App\._eventsAwaiting\) App\._pingEvents\(socket\);/);
+  assert.match(body, /if \(Date\.now\(\) - App\._lastResyncAt < App\.RESYNC_SETTLE_MS\) return;\s+App\.resyncCurrentView\(\);/);
 });
 
 test('forced screenshot state survives a pending success and disables all retries', async (t) => {

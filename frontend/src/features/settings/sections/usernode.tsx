@@ -184,6 +184,7 @@ function BlockProduction({ s }: { s: UsernodeSectionState }): ReactNode {
       description={t('settings:usernode.blockProduction.intro')}
     >
       <div>
+        {s.foregroundOnly ? <UnP note={{ text: t('settings:usernode.blockProduction.foregroundOnly') }} /> : null}
         {bp.kind === 'checking' ? <UnP note={{ text: t('settings:usernode.blockProduction.checking') }} /> : null}
         {bp.kind === 'note' ? <UnP note={{ text: bp.text }} /> : null}
         {bp.kind === 'ask' ? (
@@ -291,7 +292,7 @@ function Faq({ s }: { s: UsernodeSectionState }): ReactNode {
   return (
     <div className="mt-3">
       <div className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">{t('settings:usernode.faq.heading')}</div>
-      {faqTiles(isAndroid, device).map((tile) => (
+      {faqTiles(isAndroid, device, s.foregroundOnly).map((tile) => (
         <details key={tile.title} className="rounded-lg border border-zinc-200 dark:border-zinc-800 px-3 py-2 mb-2">
           <summary className="text-sm font-medium cursor-pointer select-none">{tile.title}</summary>
           {tile.paragraphs.map((p, i) => (
@@ -313,6 +314,7 @@ export function UsernodeSectionBody({ s }: { s: UsernodeSectionState }): ReactNo
       {/* The demo link renders the permissions rows and stops: everything
           below reads the live bridge, which a browser does not have. */}
       {s.belowDemoCut ? <><SocialPush s={s} /><Tail s={s} /></> : null}
+      {!s.belowDemoCut && s.foregroundOnly ? <BlockProduction s={s} /> : null}
     </>
   );
 }

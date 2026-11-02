@@ -3965,7 +3965,7 @@ test('workshop replaced feed as a mode, and the retired names resolve onto it', 
 
 test('the Workshop is a menu row, and an anchor at its route (#2761)', () => {
   assert.match(SHEET_TSX, /id="app-menu-row-workshop"\s+dataContextRow="workshop"/);
-  assert.match(SHEET_TSX, /communityRowHref\(slug: string \| null \| undefined, owed: number \| null\): string \{[\s\S]*?: `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop`;[\s\S]*?href=\{communityRowHref\(slug, owed\)\}/);
+  assert.match(SHEET_TSX, /communityRowHref\(slug: string \| null \| undefined, owed: number \| null\): string \{[\s\S]*?: `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub`;[\s\S]*?href=\{communityRowHref\(slug, owed\)\}/);
   assert.ok(!SHEET_TSX.includes('data-context-row="activity"'), 'the Activity segment retired');
   assert.ok(!/data-context-row="board"|dataContextRow="board"/.test(SHEET_TSX),
     'and the Board segment after it — the Workshop and the kanban are one '
@@ -7122,4 +7122,66 @@ test('a link to the list of requests or changes opens All items by stage, not th
   view._overrideWorkshopGroup('stage');
   assert.equal([view._workshopTab(), view._getWorkshopGroup()].join('/'), 'all/stage',
     'over a remembered Hub');
+});
+
+test('a bare link to a project\'s /workshop opens the Workshop; a door, a switch, history and ?ws= keep theirs (audit N03 follow-up)', () => {
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public/js/app.js'), 'utf8');
+  const at = appSrc.indexOf('  _linkOpensWorkshop(slug) {');
+  assert.ok(at > 0);
+  const body = appSrc.slice(at + '  _linkOpensWorkshop(slug) {'.length, appSrc.indexOf('\n  },', at));
+  // The router calls it on the /workshop alias, before turning it into the page.
+  assert.match(appSrc, /if \(tab === 'workshop'\) App\._linkOpensWorkshop\(slug\);/);
+  const arrive = (AppView, location, slug = 'garden') => {
+    // eslint-disable-next-line no-new-func
+    const fn = new Function('AppView', 'location', 'URLSearchParams', 'App', `return (function (slug) {${body}\n})`);
+    return fn(AppView, location, URLSearchParams, {})(slug);
+  };
+  const loc = (search = '', hash = '#app/garden/workshop') => ({ search, hash, href: `http://localhost/${search}${hash}` });
+  // 1. A link, with the Hub remembered: the Workshop, remembered from now on.
+  const linked = makeAppView({ localStorage: { devWorkshopTab: 'status' } });
+  assert.equal(arrive(linked, loc()), true);
+  assert.equal(linked._workshopTab(), 'workshop');
+  // 2. A door: _landOnHub decides first, and the router takes it.
+  const door = makeAppView({ localStorage: { devWorkshopTab: 'workshop' } });
+  door._landOnHub('garden');
+  assert.equal(arrive(door, loc()), false);
+  assert.equal(door._workshopTab(), 'status');
+  assert.equal(door._takePlaceDecision('garden'), false, 'spent on the arrival it was made for');
+  // …for its own project only.
+  const other = makeAppView({ localStorage: {} });
+  other._landOnTab('elsewhere', 'needs');
+  assert.equal(arrive(other, loc()), true);
+  assert.equal(other._workshopTab(), 'workshop');
+  // …and not long after: a decision a page turned in place is not a later link's.
+  const stale = makeAppView({ localStorage: {} });
+  stale._landOnTab('garden', 'needs');
+  stale._placeDecided.at -= stale.PLACE_DECISION_TTL_MS + 1;
+  assert.equal(arrive(stale, loc()), true);
+  // 3. ?ws= names its place outright.
+  const named = makeAppView({ localStorage: {} });
+  assert.equal(arrive(named, loc('?ws=needs')), false);
+  // 4. Back, Forward or a reload: the entry names its place.
+  const traversed = makeAppView({ localStorage: { devWorkshopTab: 'status' } });
+  traversed._historyWorkshopTab = () => ({ slug: 'garden', tab: 'status' });
+  assert.equal(arrive(traversed, loc()), false);
+  assert.equal(traversed._workshopTab(), 'status');
+  // 5. The Communities tab reopening the page you left keeps its place.
+  assert.match(appSrc, /AppView\?\._notePlaceDecided\?\.\(view\.slug\);\s*\} catch[^\n]*\n\s*try \{\s*history\.pushState\(null, '', `\$\{view\.path\}/);
+});
+
+test('the Hub has its own address, #app/<slug>/dev/hub, for links that mean the front door (N03 follow-up)', () => {
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public/js/app.js'), 'utf8');
+  const at = appSrc.indexOf('  _placeAddress(parts) {');
+  const body = appSrc.slice(at + '  _placeAddress(parts) {'.length, appSrc.indexOf('\n  },', at));
+  const view = makeAppView({ localStorage: { devWorkshopTab: 'workshop' } });
+  // eslint-disable-next-line no-new-func
+  const placeAddress = new Function('AppView', `return (function (parts) {${body}\n})`)(view);
+  const parts = ['app', 'garden', 'dev', 'hub'];
+  assert.equal(placeAddress(parts), true);
+  assert.deepEqual(parts, ['app', 'garden', 'workshop'], 'rewritten to the page\'s own address');
+  assert.equal(view._workshopTab(), 'status', 'on its Hub');
+  assert.equal(view._takePlaceDecision('garden'), true, 'a decision the /workshop link rule then honours');
+  assert.match(appSrc, /_hubHref\(slug\) \{\s*return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub` : '#communities';/);
+  assert.match(read('src/services/homeroom-bot-dm.js'), /id: 'open_community'[^\n]*target: `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub`/);
+  assert.match(read('src/services/shared-objects.js'), /href: link\.type === 'hub' \? `#app\/\$\{slug\}\/dev\/hub`/);
 });

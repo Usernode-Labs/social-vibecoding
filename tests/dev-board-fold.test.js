@@ -1717,8 +1717,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 750 → 751: +1 (#6000) a closed request offers Propose reopening on its
   // status card, opening the group vote. 751 leaves 129 slots.
   // 751 → 752: +1 (#6068) a change left busy after its agent stopped says so
-  // on its page, with Clear status. 752 leaves 128 slots.
-  checkCap.assertPinned(DAPP.tests.length, 752);
+  // on its page, with Clear status.
+  // 752 → 753: +1 an app build that produces blocks only while open says so
+  // in Settings. It is a new demo route, so nothing to fold it into. 753
+  // leaves 127 slots.
+  checkCap.assertPinned(DAPP.tests.length, 753);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

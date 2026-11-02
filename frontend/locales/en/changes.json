@@ -7743,6 +7743,18 @@
     "text": "Your vote did not go through. Check your connection and try again.",
     "description": "Brief notice when a vote on a proposal could not reach the server."
   },
+  "vote.toast.queued": {
+    "text": "You're offline. Your vote will be sent when you're back online.",
+    "description": "Brief notice when a vote on a proposal could not reach the server and is kept on the device, to be sent once the connection is back."
+  },
+  "vote.toast.queuedSent": {
+    "text": "Your vote from while you were offline was sent.",
+    "description": "Brief notice when a vote kept on the device while offline reached the server."
+  },
+  "vote.toast.queuedRefused": {
+    "text": "Your vote from while you were offline wasn't counted. Vote again.",
+    "description": "Brief notice when a vote kept on the device while offline was refused once sent, for example because the change was updated meanwhile."
+  },
   "vote.toast.codeMissing": {
     "text": "Your vote is saved. This proposal can’t go live until its code is back.",
     "description": "Brief notice after a vote on a proposal whose code did not come across when Homeroom moved off GitHub: the vote was recorded, but nothing can be merged until the code (its branch) is restored or submitted again."
