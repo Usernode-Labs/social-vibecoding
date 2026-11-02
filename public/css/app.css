@@ -20050,12 +20050,20 @@ html[data-nav-drawer] #app-view { touch-action: pan-y; }
   }
   :is(.dark) .messages-peek-open { background: rgba(0, 0, 0, 0.22); }
   .messages-peek-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; }
-  /* In a conversation the header names it, so its sheet keeps only its discs,
-     and they take no row of their own (polish N15: a 48px row held the ⋯
-     alone). They float at the conversation's top-right corner, over the
-     Homeroom bot's Activity strip, which leaves them its right end. */
+  /* In a conversation the header names it, so its sheet keeps only its discs.
+     Over the Homeroom bot's Activity strip they float at the top-right
+     corner, on the strip's right end, which it leaves them (polish N15: a
+     48px row held the ⋯ alone). */
   .messages-layout.messages-drawer > .messages-thread-pane > .messages-thread-header {
     position: absolute; top: 4px; right: 12px; z-index: 25; padding: 0; gap: 8px;
+  }
+  /* WITH NO STRIP UNDER THEM THEY TAKE A SLIM ROW (audit C01, 2 Nov 2026).
+     Floating over a group's or a DM's transcript, the members and ⋯ discs
+     sat on the top bubble's words and sender line, and a tap meant for the
+     bubble opened the menu. A 40px band, the discs at its right end, keeps
+     the transcript below them. */
+  .messages-layout.messages-drawer > .messages-thread-pane > .messages-thread-header:not(:has(+ [data-bot-strip])) {
+    position: static; padding: 4px 12px; justify-content: flex-end;
   }
   .messages-layout.messages-drawer > .messages-thread-pane > .messages-thread-header .messages-thread-action { width: 32px; height: 32px; }
   .messages-layout.messages-drawer > .messages-thread-pane > .messages-thread-header .messages-thread-action svg { width: 18px; height: 18px; }
