@@ -92,7 +92,10 @@ references to byte columns, and both completed backfill modules/jobs. The
 workflow's normal release reconciliation retires clocks absent from JOBS;
 no manual workflow-row deletion or production command is needed. Staging
 fixtures upload fake media and commit its key in the same transaction as
-their reference; tests inject the in-memory store.
+their reference. Previews have no production bucket credentials: their
+small fake files use `staging-media-store.js` inside the preview container,
+recreated idempotently by those seeds on every boot. Production always
+uses the configured S3 store. Unit tests inject an in-memory store.
 
 **Column removal must be a subsequent release.** The migration hook runs
 at sync wave -1, before web/conductor replacement. The previous release

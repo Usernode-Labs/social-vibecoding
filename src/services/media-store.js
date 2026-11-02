@@ -58,6 +58,8 @@ function createMediaStore(config, { client } = {}) {
 // No cached disabled state: a caller supplies its own config/store. Routes
 // may construct one store at boot, while tests inject the in-memory store.
 function getStore(config) {
+  // Previews serve their own fake fixtures without production credentials.
+  if (process.env.USERNODE_ENV === 'staging') return require('./staging-media-store').createStagingMediaStore();
   return createMediaStore(config || {
     mediaStorageEndpoint: process.env.MEDIA_STORAGE_ENDPOINT,
     mediaStorageBucket: process.env.MEDIA_STORAGE_BUCKET,
