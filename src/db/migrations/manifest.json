@@ -55,6 +55,11 @@
       "id": "0011-workflow-producers",
       "sha256": "0a09c903b09debd6f01562e700f61300adaa965fa001827204271ea24e88a2c8",
       "schemaSha256": "368fe38042acf4c553b1c1e1fa71f23ad0e649264b4f9cda95bd796e657571da"
+    },
+    {
+      "id": "0012-connect-accounts-cta",
+      "sha256": "b3f112d8c98dc1580d47ca8a9d0bb9f7224899600934d05d426b690fe27119da",
+      "schemaSha256": "89df74e9a767e2ed98c5faae0f7e69d1cb079b86fb0618500c20b39ebf20c086"
     }
   ]
 }

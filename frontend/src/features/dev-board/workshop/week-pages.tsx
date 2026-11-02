@@ -32,7 +32,7 @@ import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { getLanguage, t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
 import { trackLine, trackShort } from '../../messages/bot-track';
-import { callAppView, openHref } from '../card/fold';
+import { openHref } from '../card/fold';
 import type { RowBrief, RowTag } from '../card/model';
 import { PageBack } from './page-back';
 import { TILE, WorkList, lineTags, topicRef, type CardRow, type TopicRef } from './work-row';
@@ -311,15 +311,10 @@ export function HappenedRow({ row, fresh, slug, on = false, onOpen, standing = f
   const botStep = bot && !first ? (bot.state === 'held' ? trackShort(bot) : trackLine(bot)) : null;
   const botStepTone = bot && (bot.state === 'waiting' || (bot.state === 'checks' && bot.why === 'handed_over'))
     ? 'warn' : 'run';
-  // A bot row opens the chat with Homeroom bot at the request's thread, the
-  // drawer row's destination — never the side panel (onOpen). A modified
-  // click keeps the request page's href. If the request has no thread yet,
-  // the chat opens (openBotChatFromRequest).
-  const onBotClick = (event: MouseEvent<HTMLAnchorElement>) => {
-    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
-    event.preventDefault();
-    callAppView('openBotChatFromRequest', b.n);
-  };
+  // #6145: a bot row opens like every row: in the side panel beside the
+  // Workshop (onOpen), else at its href, the request's page, which carries
+  // the bot's story itself. The step at the line's end still says where the
+  // bot is; the chat's door is the request card's See progress.
   return (
     <li
       className="dev-ws-hrow"
@@ -341,7 +336,7 @@ export function HappenedRow({ row, fresh, slug, on = false, onOpen, standing = f
             className="dev-ws-hrow-link"
             href={href}
             aria-current={on ? 'true' : undefined}
-            onClick={bot ? onBotClick : (ref && onOpen ? (e) => onOpen(e, ref) : undefined)}
+            onClick={ref && onOpen ? (e) => onOpen(e, ref) : undefined}
           >
             {card.title.text}
           </a>

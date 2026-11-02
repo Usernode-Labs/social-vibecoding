@@ -4764,6 +4764,9 @@ async function botWaitingOn(pool, app, n, deps = {}) {
   const repo = repoUrl && github.isEnabled?.() !== false ? repoRef.ownerRepo(repoUrl) : null;
   return require('./homeroom-bot-addressed').waitingOnRequest(pool, {
     appId: app.id, issueNumber: n, botId: bot.id, github, repo,
+    // #6146: the requester's or a named decider's reply answers "a person
+    // needs to decide": Ask is not refused after it.
+    answerersOf: async () => settingsModule().answerersOf(pool, app, await requesterOf(pool, app.id, n).catch(() => null)),
   });
 }
 
@@ -4835,7 +4838,18 @@ async function askBotToBuild(pool, { app, user, issueNumber, deps = {} }) {
 async function botWaitingByIssue(pool, appId, issues) {
   const bot = await botAccount(pool).catch(() => null);
   if (!bot) return new Map();
-  return require('./homeroom-bot-addressed').waitingByIssue(pool, { appId, botId: bot.id, issues });
+  // #6146: a "person needs to decide" note its requester or a named decider
+  // replied to is answered, so its card stops offering to reply to the bot.
+  // The app (whoDecides reads its slug) is read once, only when needed.
+  let app = null;
+  const answerersOf = async (n) => {
+    if (!app) {
+      const { rows } = await pool.query('SELECT id, slug FROM apps WHERE id = $1', [appId]);
+      app = rows[0] || { id: appId };
+    }
+    return settingsModule().answerersOf(pool, app, await requesterOf(pool, appId, n).catch(() => null));
+  };
+  return require('./homeroom-bot-addressed').waitingByIssue(pool, { appId, botId: bot.id, issues, answerersOf });
 }
 
 /**

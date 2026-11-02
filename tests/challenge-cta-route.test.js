@@ -105,6 +105,40 @@ test('a block-production challenge aimed at bare Settings lands on its section',
   assert.equal(cta('#settings', undefined).href, '#settings');
 });
 
+// #6080: Connectors is the MCP servers and AI tools page, so the "Connect X
+// and GitHub" challenge sent people where neither account can be linked.
+// Settings › Linked accounts is the page with the X and GitHub rows.
+const CONNECT = {
+  id: 9,
+  counted_by: { measure: 'CONNECT_ACCOUNTS', target: 2 },
+  card_preview: { goal: 'Connect X and GitHub' },
+};
+
+test('a connected-accounts challenge aimed at Connectors lands on Linked accounts', () => {
+  for (const link of [
+    '#settings/connectors',
+    '#settings/connectors/',
+    '/#settings/connectors',
+    `${ORIGIN}/#settings/connectors`,
+  ]) {
+    assert.deepEqual(cta(link, CONNECT),
+      { kind: 'route', href: '#settings/linked-accounts', label: 'Open linked accounts' },
+      `${link} opens Settings › Linked accounts`);
+  }
+  assert.equal(TC.LINKED_ACCOUNTS_ROUTE, '#settings/linked-accounts');
+  // Only Connectors is redirected: a section the organiser named is kept.
+  assert.deepEqual(cta('#settings/alerts', CONNECT),
+    { kind: 'route', href: '#settings/alerts', label: 'Open block production settings' });
+  // Another challenge's Connectors link, and a row with no scoring rule,
+  // keep their destination and their own label.
+  for (const other of [SHARE, BLOCKS, undefined]) {
+    assert.deepEqual(cta('#settings/connectors', other),
+      { kind: 'route', href: '#settings/connectors', label: 'Open block production settings' });
+  }
+  // An external destination on a connected-accounts challenge is not remapped.
+  assert.equal(cta('https://example.com/connect', CONNECT).kind, 'link');
+});
+
 test('everything else keeps the external-link and scheme-guard behaviour', () => {
   assert.deepEqual(cta('https://example.com/node', BLOCKS),
     { kind: 'link', href: 'https://example.com/node', label: 'Open block production settings' });

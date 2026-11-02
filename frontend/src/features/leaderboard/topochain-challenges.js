@@ -1189,6 +1189,19 @@ const TopochainChallenges = {
     if (!dm.cta_link) return null;
     const route = TopochainChallenges._inAppRoute(dm.cta_link);
     if (route) {
+      // #6080: the Connect X and GitHub challenge sent people to Connectors,
+      // which is where AI tools are set up and has no X or GitHub row. The
+      // accounts are linked on Settings › Linked accounts, so a challenge
+      // scored by connected accounts that points at Connectors goes there.
+      // Only that section is redirected: any other link the organiser wrote,
+      // for this challenge or another one, is left as it is.
+      if (route === TopochainChallenges.CONNECTORS_ROUTE && TopochainChallenges._isConnectAccounts(challenge)) {
+        return {
+          kind: 'route',
+          href: TopochainChallenges.LINKED_ACCOUNTS_ROUTE,
+          label: PlatformI18n.t('leaderboard:challenges.detail.openLinkedAccounts'),
+        };
+      }
       const href = route === '#settings' && TopochainChallenges._isBlockProduction(challenge)
         ? TopochainChallenges.BLOCK_PRODUCTION_ROUTE : route;
       return { kind: 'route', href, label };
@@ -1201,6 +1214,11 @@ const TopochainChallenges = {
   // Settings › Homeroom app, whose "Homeroom app: block production" group is
   // where block production is asked for (sections/usernode.tsx).
   BLOCK_PRODUCTION_ROUTE: '#settings/usernode',
+
+  // #6080: Settings › Connectors is the MCP servers and AI tools page; the X
+  // and GitHub accounts are linked on Settings › Linked accounts.
+  CONNECTORS_ROUTE: '#settings/connectors',
+  LINKED_ACCOUNTS_ROUTE: '#settings/linked-accounts',
 
   // A shell hash route: a screen word, optional path segments, an optional
   // query. Nothing that could leave the document or run anything.
@@ -1261,6 +1279,14 @@ const TopochainChallenges = {
   _isInvites(c) {
     const by = c && c.counted_by;
     return !!(by && by.measure === 'INVITES_JOINED');
+  },
+
+  // Whether a list row is scored by connected accounts ("Connect X and
+  // GitHub"): the server's `counted_by` names the rule's measure, the same
+  // key _isInvites keys on.
+  _isConnectAccounts(c) {
+    const by = c && c.counted_by;
+    return !!(by && by.measure === 'CONNECT_ACCOUNTS');
   },
 
   // ── The block-production step (#2493) ───────────────────────────────

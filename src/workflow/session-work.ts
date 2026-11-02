@@ -75,8 +75,27 @@ export function movingTurnSql(alias: string): string {
              AND COALESCE(${alias}.active_turn->>'mode', '') NOT IN (${NOT_MOVING_TURN_MODES.map((m) => `'${m}'`).join(', ')}))`;
 }
 
+// ── The turn machine's instances ────────────────────────────────────────
+// A running turn instance holds its change while its run item is outstanding.
+// An item that settled without ending its instance (a result the kernel
+// refused, or a transition that failed) leaves it `running` with nothing on
+// it: an orphan, which held the change for up to MAX_TURN_MS with no record.
+// A missing item (deleted by retention) is no work either.
+
+// True while the turn instance `alias` (an SQL alias of a wf_instances row)
+// has its run item outstanding: the `turn.run` item for the running turn's id,
+// not yet settled. Served by the wf_work_identity unique index.
+export function turnRunLiveSql(alias: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/.test(alias)) throw new Error(`bad alias ${alias}`);
+  return `EXISTS (SELECT 1 FROM wf_work tr
+                   WHERE tr.machine = 'turn' AND tr.key = ${alias}.key
+                     AND tr.kind = 'turn.run'
+                     AND tr.work_key = 'run:' || (${alias}.data->'running'->>'turnId')
+                     AND tr.status <> 'settled')`;
+}
+
 // True while an operation recorded on that instance is held by a live
-// process. `exceptParam`: an SQL value naming one operation not to count (a
+// process: `exceptParam`, an SQL value naming one operation not to count (a
 // caller's own record, read by a decision it asks for while it holds it);
 // `exceptKinds`: kinds not to count (constants of services/active-workers.js).
 // A process's holder (services/process-presence.js holder()) as an SQL
@@ -207,6 +226,7 @@ export const TURN_OWNER_SQL = `
     SELECT 6, 'turn', t.key FROM wf_instances t
      WHERE t.machine = 'turn' AND t.key = 'session:' || $1 AND t.state = 'running'
        AND t.data->'running'->>'kind' = 'classic'
+       AND ${turnRunLiveSql('t')}
   ) o WHERE rank = 1 OR ${NO_RECORD} ORDER BY rank LIMIT 1`;
 
 // True while anything above works on the session `sessionId` (an SQL
@@ -229,5 +249,6 @@ export function workedOnSql({ turns = true, exceptHolder = null }: { turns?: boo
            OR ${syncWorkingSql('cs.id')}
            OR ${botLookingSql('cs.id')}${turns ? `
            OR EXISTS (SELECT 1 FROM wf_instances tm
-                       WHERE tm.machine = 'turn' AND tm.key = 'session:' || cs.id AND tm.state = 'running')` : ''})`;
+                       WHERE tm.machine = 'turn' AND tm.key = 'session:' || cs.id AND tm.state = 'running'
+                         AND ${turnRunLiveSql('tm')})` : ''})`;
 }
