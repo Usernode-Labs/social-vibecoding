@@ -523,16 +523,16 @@
     {
       "source": "src/routes/proposal-handoff.js",
       "kind": "structural-template",
-      "fingerprint": "476bc6cbc89e56feb04a",
+      "fingerprint": "88f4499c338d7f3adb7a",
       "count": 1,
-      "preview": "`SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.collab_visibility, a.view_visibility, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN app"
+      "preview": "`SELECT cs.*, a.slug AS app_slug, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 AND cs.user_id = $2 AND cs.app_"
     },
     {
       "source": "src/routes/proposal-handoff.js",
       "kind": "structural-template",
-      "fingerprint": "88f4499c338d7f3adb7a",
+      "fingerprint": "b8cdda3a464d8ae27cce",
       "count": 1,
-      "preview": "`SELECT cs.*, a.slug AS app_slug, ${SESSION_WORK_COLUMNS} FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 AND cs.user_id = $2 AND cs.app_"
+      "preview": "`SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.collab_visibility, a.view_visibility, a.moderation_suspended_at, ${SESSION_WORK_COLUMNS} FRO"
     },
     {
       "source": "src/routes/proposal-handoff.js",
