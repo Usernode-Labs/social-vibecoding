@@ -1156,13 +1156,15 @@ export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number
   // JavaScript source.
   return (
     <button
-      className={a.cls || 'gc-vote-btn'}
+      className={`${a.cls || 'gc-vote-btn'}${a.busy ? ' gap-1.5' : ''}`}
       disabled={a.disabled}
+      aria-busy={a.busy ? 'true' : undefined}
       title={a.title}
       {...foldAttrs}
       data-act={a.act?.fn}
       onClick={a.act ? (e) => call(a.act, a.passNode ? e.currentTarget : undefined) : undefined}
     >
+      {a.busy ? <span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true" /> : null}
       {a.label}
     </button>
   );
