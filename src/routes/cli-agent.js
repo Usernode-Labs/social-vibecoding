@@ -30,6 +30,7 @@ const { AGENT_SCOPE } = require('../services/cli-auth-constants');
 const localAgent = require('../services/local-agent');
 const classicSessions = require('../services/classic-sessions');
 const github = require('../services/github');
+const appAccess = require('../services/app-access');
 const platformOperations = require('../services/platform-operations');
 const { drainGuard } = require('../services/lifecycle');
 const { openEnded } = require('../middleware/inflight-requests');
@@ -380,13 +381,20 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
       }
 
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.app_id, cs.branch_name, a.repo_url
+        `SELECT cs.id, cs.app_id, cs.branch_name, a.repo_url,
+                a.collab_visibility, a.view_visibility, a.moderation_suspended_at
            FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
           WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status = 'active'`,
         [turn.session_id, req.user.id]
       );
       const session = rows[0];
       if (!session) return res.status(409).json({ error: 'session_state_changed' });
+      // Building here is still the requester's to do: someone removed from
+      // the project since the turn began (or blocked from it, or the project
+      // suspended) uploads nothing, as with a hand-off's upload.
+      if (!(await appAccess.checkAppAccess(pool, { ...session, id: session.app_id }, req.user, 'collab'))) {
+        return res.status(404).json({ error: 'not_found' });
+      }
       const repo = repoRef.ownerRepo(session.repo_url);
       if (!github.isEnabled() || !repo || !session.branch_name) {
         return res.status(400).json({ error: 'repo_unavailable' });

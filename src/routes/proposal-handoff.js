@@ -579,6 +579,7 @@ function accessRow(session) {
     id: session.app_id,
     collab_visibility: session.collab_visibility,
     view_visibility: session.view_visibility,
+    moderation_suspended_at: session.moderation_suspended_at,
   };
 }
 
@@ -958,7 +959,7 @@ function sendUpdateRefusal(res, out) {
 async function loadOwnedHandoff(pool, sessionId, userId) {
   const { rows } = await pool.query(
     `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
-            a.collab_visibility, a.view_visibility, ${SESSION_WORK_COLUMNS}
+            a.collab_visibility, a.view_visibility, a.moderation_suspended_at, ${SESSION_WORK_COLUMNS}
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
       WHERE cs.id = $1 AND cs.user_id = $2 AND cs.source = $3`,
     [sessionId, userId, SOURCE]

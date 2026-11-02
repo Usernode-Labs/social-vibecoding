@@ -58,10 +58,13 @@ const db = {
       handoff_base_sha: null, checks_commit_sha: null, handoff_uploaded_sha: null,
       agent_session_id: null, is_headless: false, source: 'cli_handoff',
       app_id: 3, app_slug: 'demo-app', repo_url: 'https://github.com/o/r',
+      collab_visibility: 'invite', view_visibility: 'invite', moderation_suspended_at: null,
     };
     this.updated = null;
     // How many more reads of the lease find it (null: every one).
     this.leaseReads = null;
+    // How many more reads find the user still a collaborator (null: every one).
+    this.collabReads = null;
   },
 };
 
@@ -101,6 +104,13 @@ const pool = {
     }
     if (/FROM chat_sessions cs JOIN apps/.test(sql)) {
       return { rows: db.session ? [db.session] : [] };
+    }
+    if (/FROM app_collaborators WHERE app_id = \$1 AND user_id = \$2 AND status = 'member'/.test(sql)) {
+      if (db.collabReads !== null) {
+        if (db.collabReads <= 0) return { rows: [] };
+        db.collabReads -= 1;
+      }
+      return { rows: [{ '?column?': 1 }] };
     }
     if (/SELECT \* FROM local_agent_turns/.test(sql)) {
       return { rows: db.turn ? [db.turn] : [] };
@@ -572,6 +582,34 @@ test('a lease lost between the route and the conductor refuses the commit before
   const r = await call('POST', '/api/cli/agent/turns/11/commit', COMMIT_BODY);
   assert.equal(r.status, 409);
   assert.equal(r.json.error, 'lease_lost');
+  assert.equal(uploads.length, 0, 'nothing reached the code host');
+  assert.equal(db.updated, null, 'the turn row was not advanced');
+  assert.equal(inputs.size, 0, 'no files kept');
+});
+
+test('someone no longer building on the project uploads nothing', async (t) => {
+  const { uploads, inputs } = commitHarness(t);
+  const asked = t.mock.method(require('../src/services/platform-operations'), 'request');
+  db.turn.base_sha = 'a'.repeat(40);
+  db.collabReads = 0;
+  const r = await call('POST', '/api/cli/agent/turns/11/commit', COMMIT_BODY);
+  assert.equal(r.status, 404);
+  assert.equal(r.json.error, 'not_found');
+  assert.equal(asked.mock.callCount(), 0, 'the route refuses it without asking a conductor');
+  assert.equal(uploads.length, 0, 'nothing reached the code host');
+  assert.equal(db.updated, null, 'the turn row was not advanced');
+  assert.equal(inputs.size, 0, 'no files kept');
+});
+
+test('collab access lost between the route and the conductor refuses the commit before it is made', async (t) => {
+  const { uploads, inputs } = commitHarness(t);
+  db.turn.base_sha = 'a'.repeat(40);
+  // The route's own read finds it; the conductor's does not.
+  db.collabReads = 1;
+  const r = await call('POST', '/api/cli/agent/turns/11/commit', COMMIT_BODY);
+  assert.equal(r.status, 404);
+  assert.equal(r.json.error, 'not_found');
+  assert.equal(db.collabReads, 0, 'the conductor read it again');
   assert.equal(uploads.length, 0, 'nothing reached the code host');
   assert.equal(db.updated, null, 'the turn row was not advanced');
   assert.equal(inputs.size, 0, 'no files kept');
