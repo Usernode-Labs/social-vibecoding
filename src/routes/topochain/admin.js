@@ -32,6 +32,7 @@ const { challengeIllustrationsAdminRoutes } = require('./challenge-illustrations
 const { onchainAccountsAdminRoutes } = require('./admin/onchain-accounts');
 const { challengesAdminRoutes } = require('./admin/challenges');
 const { appVersionConfigsAdminRoutes } = require('./admin/app-version-configs');
+const { textTranslationsAdminRoutes } = require('./admin/text-translations');
 const { settingsAdminRoutes } = require('./admin/settings');
 const { dbToolsAdminRoutes } = require('./admin/db-tools');
 const { delegationsAdminRoutes } = require('./admin/delegations');
@@ -139,6 +140,7 @@ function topochainAdminRoutes(config) {
   // is a read: adminReadGate above is its whole gate.
   router.use(programmeExportAdminRoutes(config));
   router.use(appVersionConfigsAdminRoutes(config));
+  router.use(textTranslationsAdminRoutes(config));
   router.use(settingsAdminRoutes(config));
 
   // Read-only delegations list (#admin/delegations). Its `/delegations`
