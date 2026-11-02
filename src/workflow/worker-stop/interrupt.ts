@@ -48,7 +48,8 @@ export function workerInterrupt() {
   const start = { to: (_s: State, _e: any, f: Facts) => work({ target: f.target!, attempts: 1 }, 'signal') };
   const pending = { ignore: 'already_stopping' };
   return defineMachine<State, Facts>({
-    name: MACHINE, version: 1, retainDays: 1, create: ['Requested'], terminal: ['done'],
+    // An interrupt is the Stop route's (web's), or a dispatch backstop's (the conductor's).
+    name: MACHINE, version: 1, retainDays: 1, create: ['Requested'], web: ['Requested'], terminal: ['done'],
     decode: row => ({ name: row.state, data: row.data }) as State,
     events: {
       Requested: (p: any) => {
@@ -73,8 +74,9 @@ export function workerInterrupt() {
       Requested: (e, f) => {
         const p = e.payload;
         if (e.source.kind === 'system' && e.source.name === DISPATCH) {
-          // Internal cleanup is limited to this exact active, journalled turn.
-          if (e.actor !== null || p.userId !== null || p.strategy !== 'turn'
+          // Internal cleanup is limited to this exact active, journalled
+          // turn, and is the conductor's own (web asks as a person).
+          if (e.producer !== 'platform' || e.actor !== null || p.userId !== null || p.strategy !== 'turn'
               || !p.active || !p.turnId || !p.journal) return reject('not_a_producer');
         } else if (e.source.kind !== 'route' || e.source.name !== WORK || p.userId === null || e.actor !== `user:${p.userId}`) {
           return reject('not_a_producer');

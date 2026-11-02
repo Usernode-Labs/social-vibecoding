@@ -464,6 +464,9 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
     version: 7,
     events: EVENTS,
     create: ['Filed'],
+    // What web appends: a proposal filed, a vote, a withdrawal, an admin's apply, and
+    // the admin console's Re-check now and Retry follow-up.
+    web: ['Filed', 'VoteCast', 'Evaluate', 'AdminApply', 'Withdraw', 'RetryFollowup'],
     terminal: ['applied', 'refused', 'withdrawn', 'superseded'],
     decode: (row) => ({ name: row.state, data: row.data } as GovState),
     facts: (tx, state, event, ctx) => {

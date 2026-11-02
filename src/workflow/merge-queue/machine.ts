@@ -289,6 +289,9 @@ export function mergeQueue(): Machine<QState, Facts> {
     version: 1,
     events: EVENTS,
     create: ['MergeWanted'],
+    // What web appends: a vote or a demo that leaves a change ready to merge, and
+    // Check for updates.
+    web: ['MergeWanted'],
     terminal: [],
     decode: (row) => ({ name: row.state, data: row.data } as QState),
     facts: (tx: Tx, state: QState, event: Event<any>, ctx: TransitionContext) => {

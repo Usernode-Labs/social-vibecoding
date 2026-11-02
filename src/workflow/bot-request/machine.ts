@@ -623,6 +623,9 @@ export function botRequest(deps: Deps = { staging: false }) {
     version: 1,
     events: EVENTS,
     create: CREATE,
+    // What web appends: a request owed (an admin's run or retriage, a person asking
+    // the bot, a card tap), activity on it, its plan's Go ahead, and Stop.
+    web: ['Owed', 'Activity', 'BuildOwed', 'StopRequested'],
     decode: (r) => ({ name: r.state as Name, data: r.data as Data }),
     facts: async (tx, s, e, ctx) => {
       const key = parseRequestKey(ctx.key);

@@ -239,17 +239,14 @@ export class Signals {
 // row lock until it commits) and then finds it decided: either way the
 // outcome read afterwards is the one that holds. Refused, it writes no
 // receipt, as any rejection. A lock it cannot have within `lockTimeoutMs`
-// leaves the event pending, and the caller's answer with it.
+// leaves the event pending, and the caller's answer with it. Web may not
+// update the stream, so the database refuses it (wf_refuse_pending), and only
+// an event the same producer appended: a producer withdraws its own request.
 export async function refuseIfPending(pool: Pool, eventId: number, reason: string, lockTimeoutMs = 10000): Promise<EventOutcome | null> {
   const client = await pool.connect();
   try {
-    // The kernel's own write of an event, as the pipeline's: its marker.
-    await client.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'; SET LOCAL lock_timeout = '${Math.max(0, Math.floor(lockTimeoutMs))}ms'`);
-    await client.query(
-      `WITH refused AS (
-         UPDATE wf_events SET status = 'processed', result = 'rejected', reason = $2, processed_at = clock_timestamp()
-          WHERE id = $1 AND status = 'pending' RETURNING id)
-       SELECT pg_notify('wf_outcome', id::text) FROM refused`, [eventId, reason]);
+    await client.query(`BEGIN; SET LOCAL lock_timeout = '${Math.max(0, Math.floor(lockTimeoutMs))}ms'`);
+    await client.query('SELECT wf_refuse_pending($1, $2)', [eventId, reason]);
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
