@@ -1029,9 +1029,37 @@ export async function editMessage(conversationId: number, messageId: number, con
   return normalizeMessage(pick(data, 'message') ?? data, conversationId);
 }
 
-export async function toggleReaction(conversationId: number, messageId: number, emoji: string): Promise<MessageReaction[]> {
-  const data = record(await request<unknown>(`/api/conversations/${conversationId}/messages/${messageId}/reactions`, { method: 'POST', body: JSON.stringify({ emoji }) }));
-  return array(pick(data, 'reactions')).map(normalizeReaction);
+/** How long a reaction waits for its answer before it counts as none (store.ts react keeps it then). */
+export const REACTION_SEND_TIMEOUT_MS = 15_000;
+
+/** Where a reaction is sent; the offline outbox sends it there too. */
+export function reactionPath(conversationId: number, messageId: number): string {
+  return `/api/conversations/${conversationId}/messages/${messageId}/reactions`;
+}
+
+/**
+ * Set the viewer's reaction: `on` names the state it should end in, so the
+ * same request sent again (from the offline outbox, after an answer was
+ * lost) changes nothing twice. Without `on` it flips, as it always did.
+ */
+export async function toggleReaction(conversationId: number, messageId: number, emoji: string, on?: boolean): Promise<MessageReaction[]> {
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), REACTION_SEND_TIMEOUT_MS) : null;
+  try {
+    const data = record(await request<unknown>(reactionPath(conversationId, messageId), {
+      method: 'POST',
+      body: JSON.stringify(typeof on === 'boolean' ? { emoji, on } : { emoji }),
+      ...(controller ? { signal: controller.signal } : {}),
+    }));
+    return reactionsOf(data);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** The reactions in a reaction POST's answer, normalized. */
+export function reactionsOf(data: unknown): MessageReaction[] {
+  return array(pick(record(data), 'reactions')).map(normalizeReaction);
 }
 
 export async function markRead(conversationId: number, messageId: number): Promise<void> {

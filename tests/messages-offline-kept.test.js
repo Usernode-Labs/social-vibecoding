@@ -391,6 +391,69 @@ test('a conversation with no answer draws what this device kept of it, and nothi
   assert.equal(marked, 0, 'and nothing marked read from it');
 });
 
+test('a read still unanswered after KEPT_DRAW_MS draws the kept copy, and its answer replaces it', async (t) => {
+  // A network that carries nothing answers no read until the read limit
+  // gives up at 15 s (offline follow-up, 2 Nov 2026): the copy on the phone
+  // is drawn after two seconds instead, and the read goes on underneath.
+  const { KEPT_DRAW_MS } = loadTsx(KEPT);
+  assert.ok(KEPT_DRAW_MS > 1000 && KEPT_DRAW_MS < 15_000, 'past the worker\'s second (#4243), well inside the read limit');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const row = (id, content) => ({
+    id, conversationId: 42, sender: { id: 9, username: 'ana' }, content, createdAt: '2026-11-02T12:00:00Z',
+    reactions: [], attachments: [], objects: [],
+  });
+
+  // The inbox.
+  let answerList;
+  const list = storeHarness(t, { listConversations: () => new Promise((resolve) => { answerList = resolve; }) });
+  let probed = 0;
+  globalThis.fetch = async (url) => { if (url === '/health') probed += 1; return { ok: true, json: async () => null }; };
+  list.api.keptConversations = () => [{ ...list.dm, title: 'ana, as kept' }];
+  const loading = list.store.loadConversations(true);
+  await list.flush();
+  assert.deepEqual(list.state().conversations, [], 'nothing before the wait');
+  t.mock.timers.tick(KEPT_DRAW_MS);
+  assert.deepEqual(list.state().conversations.map((item) => item.title), ['ana, as kept']);
+  assert.equal(list.state().loadingList, false);
+  assert.equal(list.state().error, null);
+  await list.flush();
+  assert.equal(probed, 1, 'and the connectivity probe is asked now, not when the read gives up');
+  answerList([list.dm]);
+  await loading;
+  assert.deepEqual(list.state().conversations.map((item) => item.title), ['ana'], 'the answer replaces the copy');
+
+  // A conversation.
+  let answerThread;
+  const open = storeHarness(t, { getConversation: () => new Promise((resolve) => { answerThread = resolve; }) });
+  open.api.keptConversation = (id) => (id === 42 ? { detail: open.dm, page: { messages: [row(1, 'kept')], nextBefore: null } } : null);
+  open.api.listMessages = async () => ({ messages: [row(1, 'kept'), row(2, 'new since')], nextBefore: null });
+  open.store.messagesController.route(42);
+  await open.flush();
+  assert.equal(open.state().loadingThread, true);
+  t.mock.timers.tick(KEPT_DRAW_MS);
+  assert.deepEqual(open.state().messages.map((item) => item.content), ['kept']);
+  assert.equal(open.state().loadingThread, false);
+  answerThread(open.dm);
+  await open.flush();
+  assert.deepEqual(open.state().messages.map((item) => item.content), ['kept', 'new since']);
+
+  // A read that answers inside the wait never draws a copy.
+  const quick = storeHarness(t);
+  let asked = 0;
+  quick.api.keptConversations = () => { asked += 1; return [quick.dm]; };
+  await quick.store.loadConversations(true);
+  t.mock.timers.tick(KEPT_DRAW_MS);
+  assert.equal(asked, 0);
+});
+
+test('the bot tab draws its kept lists once their reads go KEPT_DRAW_MS unanswered', () => {
+  const src = read(AI);
+  assert.match(src, /const early = setTimeout\(\(\) => \{\n\s+if \(!live\) return;\n\s+const keptWork = drawn\.current\.work \? null : keptCopy<AiWork>\('ai:work'\);/);
+  assert.match(src, /const keptNeeds = drawn\.current\.needs \? null : keptCopy<NeedItem\[\]>\('ai:needs'\);/);
+  assert.match(src, /\}, KEPT_DRAW_MS\);/);
+  assert.match(src, /return \(\) => \{ live = false; clearTimeout\(early\); \};/);
+});
+
 test('every failure a person reads is in words: an exception\'s message never reaches the screen', () => {
   const src = read(STORE);
   const helper = src.slice(src.indexOf('function errorMessage('), src.indexOf('function unreachable('));

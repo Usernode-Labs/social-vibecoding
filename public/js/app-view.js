@@ -27306,14 +27306,13 @@ const AppView = {
         if (restored) AppView._repaintAfterVote(sessionId);
       }
     };
+    const known = AppView._seenEpoch.get(sessionId);
+    const epoch = known === undefined ? expectedEpoch : known;
+    const body = { vote, expectedEpoch: epoch, ...(reason ? { reason } : {}) };
+    let answered = false;
     try {
-      const known = AppView._seenEpoch.get(sessionId);
-      const epoch = known === undefined ? expectedEpoch : known;
-      const res = await fetch(`/api/sessions/${sessionId}/vote`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vote, expectedEpoch: epoch, ...(reason ? { reason } : {}) }),
-      });
+      const res = await AppView._sendVote(sessionId, body);
+      answered = true;
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         // #1924: the optimistic vote goes back before anything else — the
@@ -27334,6 +27333,8 @@ const AppView = {
         return false;
       }
       AppView._seenEpoch.delete(sessionId);
+      // A vote on this change kept from while offline is older than this one.
+      window.UsernodeReact?.actionOutbox?.drop?.(`vote:${sessionId}`);
       // Its code did not come across from GitHub (services/code-missing.js):
       // the vote is saved, and the voter hears it cannot go live yet. The
       // server says so when it knows; the row's own flag says it otherwise.
@@ -27379,6 +27380,17 @@ const AppView = {
       window.Leaderboard?.invalidateHistory?.();
       return true;
     } catch {
+      // Offline follow-up, 2 Nov 2026: a vote with no answer (offline, or a
+      // network that passes nothing, which _sendVote stops waiting on) is
+      // kept on the device and sent once the connection is back
+      // (frontend/src/lib/action-outbox.ts; _actionSent hears how it went).
+      // It stays on the card meanwhile, held as pending so no read paints
+      // it away. Sending it twice is safe: the server answers a repeat
+      // `unchanged`.
+      if (!answered && await AppView._queueVote(sessionId, body)) {
+        window.PlatformUI?.toast?.(PlatformI18n.t('changes:vote.toast.queued'));
+        return true;
+      }
       rollback();
       // QA 2026-09-24 Q3: a vote that never reached the server used to put
       // the card back without a word, which read as the button doing
@@ -27390,6 +27402,74 @@ const AppView = {
       AppView._voteInFlight.delete(key);
       AppView._publishVoteSending(`castVote:${sessionId}`, null);
     }
+  },
+
+  // How long a vote waits for its answer before it counts as none. Writes
+  // have no limit of their own, and on a network that passes nothing the
+  // POST waited until the web view gave up, a minute or more, on
+  // "Sending…" (offline test, 2 Nov 2026).
+  VOTE_SEND_TIMEOUT_MS: 15000,
+
+  async _sendVote(sessionId, body) {
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), AppView.VOTE_SEND_TIMEOUT_MS) : null;
+    try {
+      return await fetch(`/api/sessions/${sessionId}/vote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        ...(ctrl ? { signal: ctrl.signal } : {}),
+      });
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  },
+
+  // Keep a vote that had no answer, to send when the connection is back.
+  // False when it could not be kept (no storage, nobody signed in): the
+  // caller says it was not sent, as before.
+  async _queueVote(sessionId, body) {
+    const outbox = window.UsernodeReact?.actionOutbox;
+    if (!outbox || typeof outbox.queue !== 'function') return false;
+    try {
+      return await outbox.queue({ key: `vote:${sessionId}`, kind: 'vote', url: `/api/sessions/${sessionId}/vote`, body });
+    } catch {
+      return false;
+    }
+  },
+
+  // A vote kept while offline was answered (frontend/src/lib/action-outbox.ts
+  // ACTION_OUTBOX_EVENT): what castVote does with an answer, late. Sent, it
+  // is saved everywhere a saved vote is heard of; refused (the change moved
+  // on to a new revision meanwhile, the voter left the project), the card
+  // asks again and the voter is told, in the server's words when it has
+  // them. Either way the rows are read again.
+  _actionSent(detail) {
+    const record = detail && detail.record;
+    if (!record || record.kind !== 'vote' || !record.body) return;
+    const sessionId = Number(String(record.key).slice('vote:'.length));
+    if (!Number.isSafeInteger(sessionId) || sessionId <= 0) return;
+    const vote = record.body.vote;
+    const held = AppView._pendingVotes.get(sessionId);
+    if (held && held.vote === vote) AppView._pendingVotes.delete(sessionId);
+    const data = detail.data || {};
+    if (detail.outcome === 'sent') {
+      AppView._seenEpoch.delete(sessionId);
+      AppView._seenEpoch.delete(String(sessionId));
+      AppView._noteOwnVote(sessionId, vote);
+      AppView._publishVoteSaved(sessionId, vote, record.body.expectedEpoch);
+      window.Notifications?.refresh?.();
+      window.UsernodeReact?.profileProposals?.voted?.();
+      window.Leaderboard?.invalidateHistory?.();
+      window.PlatformUI?.toast?.(PlatformI18n.t('changes:vote.toast.queuedSent'));
+    } else {
+      if (Number.isFinite(parseInt(data.approvalEpoch, 10))) {
+        AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
+      }
+      window.PlatformUI?.toast?.(data.error || PlatformI18n.t('changes:vote.toast.queuedRefused'));
+    }
+    AppView.refreshDevData('vote');
+    if (typeof GroupChat !== 'undefined' && GroupChat.appSlug) AppView.loadVoteState(GroupChat.appSlug);
   },
 
   // The review flow's Undo: take the viewer's vote on a change back
@@ -27469,6 +27549,8 @@ const AppView = {
         return false;
       }
       AppView._seenEpoch.delete(sessionId);
+      // Nor is a vote kept from while offline to be sent after its undo.
+      window.UsernodeReact?.actionOutbox?.drop?.(`vote:${sessionId}`);
       AppView._noteOwnVote(sessionId, null);
       AppView._publishVoteSaved(sessionId, null, epoch);
       const refresh = typeof App !== 'undefined' && App._liveRefresh
@@ -30862,6 +30944,9 @@ const AppView = {
 // top-level listener; handleLlmBridgeMessage verifies the source is an
 // iframe this shell owns and ignores everything else.
 if (typeof window !== 'undefined') {
+  // A vote kept while offline was answered (AppView._actionSent).
+  window.addEventListener('usernode:action-outbox', (event) => AppView._actionSent(event.detail));
+
   // Snapshot identities are display-only and never own analytics. Once the
   // authoritative /api/auth/me answer arrives, arm the already-open App tab
   // without requiring a navigation or frame reload.
