@@ -41,6 +41,7 @@
 'use strict';
 
 const { nativeWebSessionIsLive } = require('../../services/web-session-auth');
+const { translatedReads } = require('../../services/admin-text-translations');
 const { activityTimePrecision, parseActivityAt } = require('../../services/topochain/activity-time');
 
 
@@ -792,6 +793,14 @@ async function fetchSeasonEventsWithChallenges(pool, seasonId, opts) {
 function topochainMobileRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+  // What organisers wrote, in the reader's language (#4814). Mounted ahead of
+  // these routes: it only wraps res.json, so the auth and limiter each route
+  // declares still run first and decide whether there is anything to send.
+  const translated = translatedReads(pool);
+  for (const path of [
+    '/api/v4/mobile/challenges', '/api/v4/mobile/seasons', '/api/v4/mobile/me/breakdown',
+    '/challenges-api/challenges', '/challenges-api/seasons', '/challenges-api/me/breakdown',
+  ]) router.use(path, translated);
 
   // Mount-order probe (plan Task 3). Deliberately NOT gated by
   // mobileTokenAuth — it exists only to prove this router sits ahead of

@@ -19,8 +19,9 @@ consent pages among them). Dates and numbers are still formatted as they
 were; only the words around them are catalog entries. Apps still receive the
 person's locale through the bridge (`usernode.getUserLocale()`), unchanged.
 
-Text an admin writes in the console for phones to show (update prompts, for now)
-is data rather than a catalog, so it has its own table and pass of the same
+Text an admin writes in the console for people to read (update prompts,
+challenges, seasons and season events) is data rather than a catalog, so it has
+its own table and pass of the same
 translation step: `src/services/admin-text-translations.js`, read and corrected
 on the admin console's Translations screen.
 

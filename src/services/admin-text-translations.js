@@ -18,8 +18,12 @@
 // as it has passed the checks. What a person wrote or approved is never
 // overwritten while its English stands.
 //
-// Update prompts are the first text here. A new kind of text is one more entry
-// in sources().
+// Two kinds of text so far. Update prompts are keyed by what they are, and a
+// reply picks its one message. Challenges, seasons and season events are keyed
+// by their words: the same sentence on ten challenges is one translation, and a
+// read swaps any string in its answer that has one (translatedReads), so no read
+// has to know which column a string came from. A string with no translation is
+// simply not touched, which is what leaves rewards, links and names alone.
 
 const log = require('./logger');
 const packs = require('../../scripts/language-packs');
@@ -29,6 +33,10 @@ const languageCache = require('./language-cache');
 // every look: each ask is paid for and would most likely be refused again.
 const RETRY_MS = 24 * 60 * 60 * 1000;
 const MAX_TEXT = 5000;
+// Messages asked for in one pass. The first pass after a season's text arrives
+// owes thousands; the clock's next look carries on, under the budget.
+const MAX_PER_PASS = 300;
+const MAX_STRINGS_READ = 5000;
 const MODEL_ERRORS_PAID_FOR = new Set(['refusal', 'max_tokens']);
 
 const DEFAULT_MUST = 'A required update is available. Please update the app to continue.';
@@ -109,6 +117,64 @@ function updateMessage(os, upgrade, config) {
   return null;
 }
 
+const CHALLENGE_FIELDS = Object.freeze({
+  goal: 'The title of a challenge, on its card.',
+  task: 'What a person does to complete a challenge, on its card.',
+  description: 'The longer explanation of a challenge, in its details.',
+  requirements: 'What a challenge asks for, in its details.',
+  reward_logic: 'How the reward of a challenge is worked out, in its details.',
+  cta_button: 'A short button on a challenge, in its details.',
+  cta_label: 'A short button on a challenge, in its details.',
+  mobile_cta_label: 'A short button on a challenge, on a phone.',
+  metric_label: 'The unit a challenge counts, beside a number such as 3 of 10.',
+});
+const hasWords = (text) => typeof text === 'string' && text.length <= MAX_TEXT && /\p{L}/u.test(text);
+const textKey = (english) => `text:${packs.hash(english)}`;
+
+/** What readers see of the programme: a challenge's own words over its template's. */
+async function programmeSources(pool) {
+  const fields = Object.keys(CHALLENGE_FIELDS);
+  const [challenges, events, seasons] = await Promise.all([
+    pool.query(
+      `SELECT c.goal, c.task, c.description, c.requirements, c.reward_logic, c.cta_button,
+              c.cta_label, c.mobile_cta_label, c.metric_label,
+              t.goal AS t_goal, t.task AS t_task, t.description AS t_description,
+              t.requirements AS t_requirements, t.reward_logic AS t_reward_logic,
+              t.cta_button AS t_cta_button, t.cta_label AS t_cta_label,
+              t.mobile_cta_label AS t_mobile_cta_label, t.metric_label AS t_metric_label
+         FROM challenges c
+         JOIN season_events e ON e.id = c.season_event_id
+         LEFT JOIN challenge_templates t ON t.id = c.challenge_template_id
+        WHERE c.enabled = TRUE AND e.internal = FALSE`,
+    ),
+    pool.query('SELECT name, description, disclaimer FROM season_events WHERE internal = FALSE'),
+    pool.query('SELECT name, description FROM seasons WHERE internal = FALSE'),
+  ]);
+  const found = new Map();
+  const add = (english, label, description) => {
+    const words = typeof english === 'string' ? english.trim() : '';
+    if (english !== words || !hasWords(words) || found.has(words)) return;
+    found.set(words, {
+      key: textKey(words), english: words, reviewRequired: false, group: 'programme', label, description,
+    });
+  };
+  for (const row of challenges.rows) {
+    for (const field of fields) {
+      add(row[field] ?? row[`t_${field}`], 'Challenge', CHALLENGE_FIELDS[field]);
+    }
+  }
+  for (const row of events.rows) {
+    add(row.name, 'Season event', 'The name of a season event, a period of challenges.');
+    add(row.description, 'Season event', 'What a season event is about.');
+    add(row.disclaimer, 'Season event', 'The small print of a season event.');
+  }
+  for (const row of seasons.rows) {
+    add(row.name, 'Season', 'The name of a season of challenges.');
+    add(row.description, 'Season', 'What a season of challenges is about.');
+  }
+  return [...found.values()];
+}
+
 /** Everything there is to translate, as it stands now. */
 async function sources(pool) {
   const { rows } = await pool.query(
@@ -116,7 +182,7 @@ async function sources(pool) {
        FROM app_version_configs WHERE is_active = TRUE ORDER BY os ASC`,
   );
   const out = [];
-  const add = (message, label, description) => { out.push({ ...message, label, description }); };
+  const add = (message, label, description) => { out.push({ ...message, group: 'update-prompts', label, description }); };
   for (const config of rows) {
     const name = OS_NAME[config.os] || config.os;
     if (config.must_update_message) {
@@ -132,7 +198,7 @@ async function sources(pool) {
     'Shown in a dialog on the phone app that blocks it until the person updates to a new version.');
   add(shouldMessage(null, null), 'Any phone: should update (default)',
     'Shown in a dialog on the phone app recommending that the person updates to a new version.');
-  return out;
+  return [...out, ...await programmeSources(pool)];
 }
 
 // ── Reading one ────────────────────────────────────────────────────────
@@ -160,6 +226,86 @@ async function translated(pool, message, language) {
   }
 }
 
+/** Every string in `value`, once. */
+function collectStrings(value, out = new Set()) {
+  if (typeof value === 'string') {
+    if (out.size < MAX_STRINGS_READ && hasWords(value)) out.add(value);
+  } else if (Array.isArray(value)) {
+    for (const item of value) collectStrings(item, out);
+  } else if (value && typeof value === 'object') {
+    for (const item of Object.values(value)) collectStrings(item, out);
+  }
+  return out;
+}
+
+function swapStrings(value, words) {
+  if (typeof value === 'string') return words.has(value) ? words.get(value) : value;
+  if (Array.isArray(value)) return value.map((item) => swapStrings(item, words));
+  if (value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, swapStrings(item, words)]));
+  }
+  return value;
+}
+
+/** A copy of `payload` with each string that has a translation swapped. Never throws. */
+async function translatePayload(pool, payload, language) {
+  if (!language) return payload;
+  try {
+    const byKey = new Map([...collectStrings(payload)].map((english) => [textKey(english), english]));
+    if (!byKey.size) return payload;
+    const { rows } = await pool.query(
+      `SELECT source_key, source_digest, text
+         FROM admin_text_translations
+        WHERE language = $1 AND source_key = ANY($2)`,
+      [language, [...byKey.keys()]],
+    );
+    const words = new Map();
+    for (const row of rows) {
+      const english = byKey.get(row.source_key);
+      if (english && isCurrent(row, english) && hasText(row)) words.set(english, row.text);
+    }
+    return words.size ? swapStrings(payload, words) : payload;
+  } catch (err) {
+    log.warn('admin-text-translations', 'Read failed, showing English', { message: err.message });
+    return payload;
+  }
+}
+
+/** The language a reader chose in Settings, else their browser's; null for English. */
+async function readerLanguage(pool, req, source) {
+  let locale = req.user?.locale;
+  if (!locale && req.user?.id) {
+    const { rows } = await pool.query('SELECT locale FROM users WHERE id = $1', [req.user.id]);
+    locale = rows[0]?.locale;
+  }
+  return languageFor(locale || undefined, req.get('accept-language'), { source });
+}
+
+/**
+ * Middleware for a read of the programme: its answer, in the reader's language.
+ * An error answer goes out as it is, and anything going wrong here sends the
+ * English the handler wrote.
+ */
+function translatedReads(pool, { source } = {}) {
+  return (req, res, next) => {
+    res.vary('Accept-Language');
+    const send = res.json.bind(res);
+    res.json = (body) => {
+      res.json = send;
+      if (res.statusCode >= 400) return send(body);
+      (async () => {
+        const language = await readerLanguage(pool, req, source !== undefined ? source : languageCache.readSource());
+        return translatePayload(pool, body, language);
+      })().then(send, (err) => {
+        log.warn('admin-text-translations', 'Could not tell the reader\'s language', { message: err.message });
+        send(body);
+      });
+      return res;
+    };
+    next();
+  };
+}
+
 // ── The translation pass ───────────────────────────────────────────────
 
 async function currentRows(pool) {
@@ -171,16 +317,19 @@ async function currentRows(pool) {
 }
 
 /** Language -> the messages it owes: none yet, older English, or a refusal a day old. */
-function owed(messages, rows, languages, now = Date.now()) {
+function owed(messages, rows, languages, { now = Date.now(), limit = Infinity } = {}) {
   const plan = new Map();
+  let count = 0;
   for (const language of languages) {
     const items = [];
     for (const message of messages) {
+      if (count >= limit) break;
       const row = rows.get(`${message.key}|${language}`);
       if (isCurrent(row, message.english)) {
         if (hasText(row)) continue;
         if (now - new Date(row.attempted_at).getTime() < RETRY_MS) continue;
       }
+      count += 1;
       items.push({
         kind: 'text',
         id: message.key,
@@ -236,7 +385,7 @@ async function runOnce({ pool, deps = {} }) {
   if (!source) return { skipped: 'no_source' };
 
   const messages = await sources(pool);
-  const plan = owed(messages, await currentRows(pool), translatedLanguages(source));
+  const plan = owed(messages, await currentRows(pool), translatedLanguages(source), { limit: MAX_PER_PASS });
   if (!plan.size) return { skipped: 'nothing_missing' };
   const budget = await budgets.checkSystemBudget(pool);
   if (budget.error) return { skipped: 'budget' };
@@ -292,6 +441,7 @@ async function overview(pool, { source = languageCache.readSource() } = {}) {
   return {
     messages: messages.map((message) => ({
       key: message.key,
+      group: message.group,
       label: message.label,
       english: message.english,
       review_required: message.reviewRequired,
@@ -365,6 +515,8 @@ module.exports = {
   retranslate,
   runOnce,
   sources,
+  translatePayload,
   translated,
+  translatedReads,
   updateMessage,
 };
