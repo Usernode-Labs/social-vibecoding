@@ -36,8 +36,10 @@ test('L01: the strips above the header are reserved on every screen, not only a 
 });
 
 test('L01: the bot\'s columns start under the strips too', () => {
+  // #6147: and 8px below the header (+ .5rem, the line of the list's first
+  // card and the Workshop's side panel), not 8px up into it (- .5rem).
   for (const sel of ['#ai-screen .ai-main-pane', '#ai-screen .ai-preview-pane', '#ai-main-divider']) {
-    assert.match(rule(sel), /top: calc\(var\(--browser-banner-h, 0px\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top, 0px\) - \.5rem\);/, sel);
+    assert.match(rule(sel), /top: calc\(var\(--browser-banner-h, 0px\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top, 0px\) \+ \.5rem\);/, sel);
   }
   assert.doesNotMatch(APP_CSS, /\n\s*top: calc\(var\(--platform-header-h\) \+ var\(--platform-safe-top, 0px\) - \.5rem\);/,
     'nothing under the header starts from it without the strips');
