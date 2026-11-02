@@ -22,6 +22,20 @@
  * (the rail), less that. The bound is re-read on every use, so a window that
  * narrows gives a remembered width back instead of letting it squeeze the app.
  *
+ * ── Beside the Homeroom bot page, the list's floor and the Duo's column ─
+ *
+ * Main is the same column there, and its neighbour is the bot's list, not an
+ * app: the list keeps what app.css gives it (`--ai-list-min`, 280px below
+ * 1024px), read from the stylesheet so the two cannot disagree. The drag
+ * stopped at the app's 480px while the stylesheet allowed 360.
+ *
+ * iPhone Duo held sideways has an 84px column of system chrome on the right
+ * (`--platform-strip-w`, side-strip.ts), and Main runs under it (app.css,
+ * THE PINNED COLUMNS RUN UNDER IT). The width chosen is what is left of the
+ * column: measured from the panel's left edge to the column, not as the
+ * panel's box, which counted the column, so the first 84px of a drag moved
+ * nothing.
+ *
  * ── Per device, and never trusted blindly ─────────────────────────────
  *
  * localStorage, one number. Every read and write is wrapped: storage can be
@@ -53,12 +67,26 @@ export interface LayoutProbe {
   innerWidth: number;
   /** Where the app view begins from the window's left edge (the rail's width). */
   appLeft: number;
+  /** The Duo's column on the right, which the panel runs under but does not count. */
+  rightInset?: number;
+  /** The narrowest the neighbour may be left: the app's, or the bot's list's. */
+  neighbourMin?: number;
+}
+
+/** The right end of the room the panel's width is measured to. */
+function roomRight(probe: LayoutProbe): number {
+  return probe.innerWidth - Math.max(0, probe.rightInset || 0);
 }
 
 /** The range the panel's width may take in this window. */
 export function bounds(probe: LayoutProbe): WidthBounds {
-  const room = Math.floor(probe.innerWidth - Math.max(0, probe.appLeft) - MIN_APP_W);
+  const room = Math.floor(roomRight(probe) - Math.max(0, probe.appLeft) - (probe.neighbourMin ?? MIN_APP_W));
   return { min: MIN_PANEL_W, max: Math.max(MIN_PANEL_W, room) };
+}
+
+/** The panel's width as chosen: its left edge to the end of the room. */
+export function shownWidth(panelLeft: number, probe: LayoutProbe): number {
+  return Math.round(roomRight(probe) - panelLeft);
 }
 
 /** `width`, held inside `b` and rounded to a whole pixel. */
@@ -139,5 +167,21 @@ export function probeLayout(win: Window = window): LayoutProbe {
   } catch {
     appLeft = 0;
   }
-  return { innerWidth: win.innerWidth, appLeft };
+  let rightInset = 0;
+  let neighbourMin = MIN_APP_W;
+  try {
+    const doc = win.document;
+    const style = doc.body ? win.getComputedStyle(doc.body) : null;
+    const px = (name: string): number => {
+      const n = parseFloat(style ? style.getPropertyValue(name) : '');
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    if (doc.documentElement.getAttribute('data-side-strip') === 'right') rightInset = px('--platform-strip-w');
+    const ai = doc.getElementById('ai-screen');
+    if (ai && !ai.classList.contains('hidden')) neighbourMin = px('--ai-list-min') || MIN_APP_W;
+  } catch {
+    rightInset = 0;
+    neighbourMin = MIN_APP_W;
+  }
+  return { innerWidth: win.innerWidth, appLeft, rightInset, neighbourMin };
 }

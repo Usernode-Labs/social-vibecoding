@@ -22,6 +22,12 @@
  * From 768px nothing here is drawn: the list is its own column, beside the
  * column Main Chat docks in (1 Nov 2026: from 768px, not 1024px). The list
  * is never folded into the platform's sidebar (Evan, 30 Oct).
+ *
+ * NO PEEK UNTIL A THREAD HAS BEEN OPENED (Evan, 1 Nov 2026: "we shouldn't
+ * show the sidebar until the user has opened a thread once, until then full
+ * screen"). Until then the list is the whole screen and the column waits off
+ * its right edge (FULL_AT); the first time it is opened, the device
+ * remembers, and from then on the drawer is the one above.
  */
 import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
@@ -82,6 +88,26 @@ export function MainPane({ botId, active, at, onBack, threadUp = false }: {
   );
 }
 
+// ── Before a thread has been opened, the list is the whole screen ──
+
+const OPENED_KEY = 'homeroom:botDrawer:threadOpened';
+
+/** Where the strip rests with no peek: the column a whole screen to the right. */
+export const FULL_AT: readonly [number, number] = [0, 1];
+
+/** Whether a thread has ever been opened on this device. */
+export function rememberedThreadOpened(): boolean {
+  try {
+    return window.localStorage.getItem(OPENED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function rememberThreadOpened(): void {
+  try { window.localStorage.setItem(OPENED_KEY, '1'); } catch { /* a private window: this visit only */ }
+}
+
 /** The strip: the list at 85%, Main beside it; level 0 the list, 1 Main. */
 export function AiDrawer({ level, onLevel, list, pane, peekLabel }: {
   level: 0 | 1;
@@ -95,6 +121,29 @@ export function AiDrawer({ level, onLevel, list, pane, peekLabel }: {
   const [drag, setDrag] = useState<number | null>(null);
   const pan = useRef<{ x: number; y: number; from: 0 | 1; panning: boolean; id: number } | null>(null);
   const swallow = useRef(false);
+  const [opened, setOpened] = useState(rememberedThreadOpened);
+  const [snap, setSnap] = useState(false);
+  const at = opened ? MESSAGES_AT : FULL_AT;
+  // The first thread opened gives the drawer its peek, remembered at once
+  // but laid out only once the slide has landed: the list narrowing to 85%
+  // under a moving strip would jump, and off screen it is never seen. The
+  // strip's rest moves from 100% to 85% with it, in one frame and with no
+  // slide (snap), or the column would slide out and back.
+  useEffect(() => {
+    if (opened || level !== 1) return undefined;
+    rememberThreadOpened();
+    const id = window.setTimeout(() => { setSnap(true); setOpened(true); }, SLIDE_MS + 50);
+    return () => window.clearTimeout(id);
+  }, [opened, level]);
+  // Two frames: the first paints the new rest with no transition, the
+  // second gives the slide back.
+  useEffect(() => {
+    if (!snap) return undefined;
+    let id = window.requestAnimationFrame(() => {
+      id = window.requestAnimationFrame(() => setSnap(false));
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [snap]);
   useEffect(() => {
     const el = root.current;
     if (!el) return undefined;
@@ -103,8 +152,8 @@ export function AiDrawer({ level, onLevel, list, pane, peekLabel }: {
     setWidth(el.clientWidth);
     return () => ro?.disconnect();
   }, []);
-  const offset = drag ?? MESSAGES_AT[level];
-  const still = drag != null || reducedMotion();
+  const offset = drag ?? at[level];
+  const still = drag != null || snap || reducedMotion();
 
   const down = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -124,16 +173,16 @@ export function AiDrawer({ level, onLevel, list, pane, peekLabel }: {
       // A mouse dragging the strip would otherwise select the text under it.
       try { window.getSelection()?.removeAllRanges(); } catch { /* nothing selected */ }
     }
-    setDrag(Math.max(0, Math.min(MESSAGES_AT[1], MESSAGES_AT[p.from] - dx / width)));
+    setDrag(Math.max(0, Math.min(at[1], at[p.from] - dx / width)));
   };
   const up = (e: ReactPointerEvent<HTMLDivElement>) => {
     const p = pan.current;
     pan.current = null;
     if (!p?.panning) return;
-    const at = drag ?? MESSAGES_AT[p.from];
+    const now = drag ?? at[p.from];
     swallow.current = true;
     setDrag(null);
-    onLevel(landingIn(MESSAGES_AT, p.from, at, e.clientX - p.x) as 0 | 1);
+    onLevel(landingIn(at, p.from, now, e.clientX - p.x) as 0 | 1);
   };
   const cancel = () => { pan.current = null; setDrag(null); };
 
@@ -142,6 +191,7 @@ export function AiDrawer({ level, onLevel, list, pane, peekLabel }: {
       ref={root}
       className="ai-drawer"
       data-level={level}
+      data-peek={opened ? '' : undefined}
       data-panning={drag != null ? '' : undefined}
       onPointerDown={down}
       onPointerMove={move}
@@ -160,7 +210,7 @@ export function AiDrawer({ level, onLevel, list, pane, peekLabel }: {
         <section className="ai-drawer-thread">
           <div className="ai-drawer-pane" inert={level === 0} aria-hidden={level === 0 ? true : undefined}>{pane}</div>
           {/* The peek: Main as it is, pressed as one (Messages' own). */}
-          {level === 0 && drag == null ? (
+          {opened && level === 0 && drag == null ? (
             <button type="button" className="messages-peek-open ai-drawer-peek" aria-label={peekLabel} onClick={() => onLevel(1)} />
           ) : null}
         </section>

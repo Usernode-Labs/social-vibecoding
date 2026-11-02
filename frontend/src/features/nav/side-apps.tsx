@@ -41,12 +41,14 @@ function isModifiedClick(event: React.MouseEvent): boolean {
   return event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
 }
 
+// The icon loads at once: the strip is always on screen, and a lazy image in
+// it stayed its first letter for as long as Home was up (1 Nov 2026).
 function AppTile({ app }: { app: StripApp }) {
   return (
     <>
       <span className="platform-tab-mark">
         <span data-icon={appIconKind(record(app))} className="app-icon-tile platform-side-app-tile">
-          <AppIconContent app={record(app)} />
+          <AppIconContent app={record(app)} eager />
         </span>
       </span>
       <span className="platform-tab-label">{app.name}</span>
@@ -86,7 +88,9 @@ export function SideApps() {
             onClick={(event) => {
               if (isModifiedClick(event)) return;
               event.preventDefault();
-              noteResumeOrigin(left.slug, event.currentTarget);
+              // It grows out of the tile, where its close lands
+              // (./resume-motion.ts resumeHandleFor), not the whole row.
+              noteResumeOrigin(left.slug, event.currentTarget.querySelector('.platform-side-app-tile') || event.currentTarget);
               window.App?.openAppTab?.(left.slug, 'app');
             }}
           >

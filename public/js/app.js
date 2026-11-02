@@ -6155,6 +6155,18 @@ const App = {
     try { return window.UsernodeReact?.nav?.resumeHandle?.(slug) || null; } catch (_) { return null; }
   },
 
+  // Whether iPhone Duo's strip is drawing `slug` as the app on screen, lit
+  // among its tabs (frontend/src/features/nav/side-apps.tsx). Off the strip
+  // that row is never drawn, so this is false on every other layout.
+  _stripShowsRunning(slug) {
+    try {
+      return Array.from(document.querySelectorAll('#platform-tabs .platform-side-app[aria-current="page"]'))
+        .some((el) => el.getAttribute('data-side-app') === slug && el.getClientRects().length > 0);
+    } catch (_) {
+      return false;
+    }
+  },
+
   // #3618: how long a zoom into or out of a Resume control takes.
   _resumeMotionMs() {
     return Number(window.UsernodeReact?.nav?.resumeMotionMs) || 250;
@@ -8784,7 +8796,16 @@ const App = {
       if (typeof Home !== 'undefined') Home.publishImproveTarget();
       App.setHeaderTitle('Homeroom');
     }, {
-      type: App._entryTransition('zoom-out', av, viaTab),
+      // A TAB PRESS IS A CUT (#2881), EXCEPT HOME ON THE DUO'S STRIP OUT OF
+      // A RUNNING APP (1 Nov 2026). Only iPhone Duo's strip keeps the tabs on
+      // screen over a running app, with the app among them, and every other
+      // tab pressed there carries the app into its tile with the stand-in
+      // card (_syncParkedApp). Home's press had neither: the card leaves the
+      // shrink to this zoom-out, which the press turned off, so the app just
+      // vanished. Asked here, before `fn` parks the app. The app's own
+      // Workshop is not this: the strip draws no running app there, and Home
+      // still cuts.
+      type: App._entryTransition('zoom-out', av, viaTab && !(leavingSlug && App._stripShowsRunning(leavingSlug))),
       el: av,
       fromEl: () => {
         if (!leavingSlug) return null;
