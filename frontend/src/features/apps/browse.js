@@ -492,6 +492,10 @@ const Browse = {
   SHOW_ONLY: [
     { key: 'featured', label: 'discover:filter.featured' },
     { key: 'new', label: 'discover:filter.new' },
+    // After New on purpose: New's "newest six" fallback answers for the whole
+    // directory, and this switch then keeps the ones you opened. Before it,
+    // New would call the newest of your own apps new however old they are.
+    { key: 'recent', label: 'discover:filter.recent' },
     // What you could still join (#5267): Discover is for finding new
     // things, and this switch is the list without the ones you are in.
     { key: 'notjoined', label: 'discover:filters.hideJoined' },
@@ -504,6 +508,17 @@ const Browse = {
   // created apps instead: the chip always shows what arrived last.
   NEW_WINDOW_DAYS: 14,
   NEW_FALLBACK_COUNT: 6,
+
+  // "Opened recently on this device" (#4809) is an app you left within the
+  // last RECENT_WINDOW_DAYS days, by the list ../nav/recent-apps-store.js
+  // keeps. So it is this browser's and this account's, not the account's
+  // everywhere; an app counts from the moment you leave it; and that list
+  // holds 40 at most. The window is stated in the switch's catalog description
+  // too. There is no fallback, unlike New: an empty list here is the truth.
+  RECENT_WINDOW_DAYS: 30,
+  // Reads that list, PLANTED by ./mount.ts the way _store is, for the same
+  // reason: this file is evaluated as a classic script by its tests.
+  _recentEntries: null,
 
   // The view, remembered for the SESSION only: it lives on this object, so it
   // survives leaving Discover and coming back, and a reload starts on For
@@ -519,7 +534,7 @@ const Browse = {
 
   // The keys a ?filter= link may name. The old chips' labels left with the
   // chips; the switch and the sheet carry their own copies of the words.
-  FILTERS: ['all', 'featured', 'notjoined', 'yours', 'new'],
+  FILTERS: ['all', 'featured', 'notjoined', 'yours', 'new', 'recent'],
 
   // Anything unrecognised lands on the defaults rather than emptying the
   // screen. Pure — unit-tested.
@@ -736,6 +751,22 @@ const Browse = {
       .slice(0, Browse.NEW_FALLBACK_COUNT);
   },
 
+  // The Opened recently switch's set: see RECENT_WINDOW_DAYS. An entry with no
+  // time of its own (recent-apps-store.js seeds one from the parked app) is
+  // not recent: nobody knows when it was left. `now` is injectable for the
+  // tests. Pure but for reading the list.
+  recentApps(apps, now) {
+    const at = Number.isFinite(now) ? now : Date.now();
+    const windowMs = Browse.RECENT_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+    const entries = typeof Browse._recentEntries === 'function' ? Browse._recentEntries() : [];
+    const slugs = new Set();
+    for (const entry of entries || []) {
+      const left = entry && entry.at ? new Date(entry.at).getTime() : NaN;
+      if (!Number.isNaN(left) && at - left <= windowMs) slugs.add(entry.slug);
+    }
+    return (apps || []).filter((a) => a && slugs.has(a.slug));
+  },
+
   // The chip's set, before any sort or search. Each chip reads a predicate
   // that already exists rather than growing its own:
   //   featured — the per-viewer `featured` flag GET /api/apps serializes: the
@@ -750,6 +781,7 @@ const Browse = {
   //              row during this visit (_keptJoins), which stay until the
   //              list is rebuilt.
   //   new      — newApps above.
+  //   recent   — recentApps above.
   // Pure — unit-tested.
   filterApps(apps, key, now) {
     const filter = Browse.resolveFilter(key == null ? Browse.derivedFilter() : key);
@@ -758,6 +790,7 @@ const Browse = {
     if (filter === 'notjoined') return list.filter((a) => !Home.isJoined(a) || Browse._keptJoins.has(a.slug));
     if (filter === 'yours') return list.filter((a) => Home.isJoined(a));
     if (filter === 'new') return Browse.newApps(list, now);
+    if (filter === 'recent') return Browse.recentApps(list, now);
     return list;
   },
 
@@ -782,11 +815,13 @@ const Browse = {
       if (filter === 'notjoined') return PlatformI18n.t('discover:empty.search.notJoined', { query: q });
       if (filter === 'yours') return PlatformI18n.t('discover:empty.search.joined', { query: q });
       if (filter === 'new') return PlatformI18n.t('discover:empty.search.new', { query: q });
+      if (filter === 'recent') return PlatformI18n.t('discover:empty.search.recent', { query: q });
       return PlatformI18n.t('discover:empty.search.all', { query: q });
     }
     if (filter === 'featured') return PlatformI18n.t('discover:empty.featured');
     if (filter === 'notjoined') return PlatformI18n.t('discover:empty.notJoined');
     if (filter === 'yours') return PlatformI18n.t('discover:empty.joined');
+    if (filter === 'recent') return PlatformI18n.t('discover:empty.recent');
     return PlatformI18n.t('discover:empty.all');
   },
 
@@ -975,7 +1010,10 @@ const Browse = {
   visibleApps(model) {
     const draft = model || {};
     const view = draft.view || Browse._view;
-    const only = Array.isArray(draft.only) ? draft.only : Browse._only;
+    // In SHOW_ONLY order, as applyFilters stores them: a draft holds them in
+    // the order they were pressed, and New's fallback makes the order matter,
+    // so "Show N apps" would otherwise count a different list than it shows.
+    const only = Array.isArray(draft.only) ? Browse.showOnlyKeys(draft.only) : Browse._only;
     const category = draft.category === undefined ? Browse._category : draft.category;
     const sort = draft.sort === undefined ? Browse._sort : draft.sort;
     const narrowed = Browse.narrowApps(Browse._apps, { view, only });
