@@ -1,4 +1,4 @@
-// New project's screen and its "Who says yes?" sheet leave the way they came,
+// New project's screen and its "Who can change it?" sheet leave the way they came,
 // and the screen keeps what you started (polish board #8 and N9, 19 Oct 2026).
 //
 //   1. #8: the sheet slid up over 200ms and the screen rose over 300ms, and
@@ -32,13 +32,15 @@ const ENGLISH_HOOK = { useMessages: () => message, RichMessage: () => null, Mess
 
 // ── 1. #8: out the way they came in ────────────────────────────────────
 
-test('"Who says yes?" slides down before it goes, by every way out', () => {
+test('"Who can change it?" slides down before it goes, by every way out', () => {
   const sheet = RULE.slice(RULE.indexOf('function PresetsSheet('), RULE.indexOf('export function MakeRuleLine('));
   // Every way out is `close`, which slides it down; `onGone` unmounts it after.
   assert.match(sheet, /<div aria-hidden="true" onClick=\{close\}/, 'the scrim');
   assert.match(sheet, /<button type="button" onClick=\{close\} aria-label=\{t\('onboarding:firstSession\.make\.rule\.close'\)\}/, 'the ✕');
   assert.match(sheet, /onClick=\{\(\) => \{ if \(changed\) onPick\(picked\); close\(\); \}\}/, 'Done, or Use: the pick lands, then it slides');
-  assert.match(sheet, /if \(e\.key === 'Escape'\) closeRef\.current\(\);/, 'Escape');
+  // Audit D02: Escape is the sheet's alone, heard first and kept from the make screen under it.
+  assert.match(sheet, /if \(e\.key !== 'Escape'\) return;\s*e\.preventDefault\(\);\s*e\.stopPropagation\(\);\s*closeRef\.current\(\);/, 'Escape');
+  assert.match(sheet, /document\.addEventListener\('keydown', onKey, true\);/, 'in the capture phase');
   assert.doesNotMatch(sheet, /onClose/, 'nothing takes it off the page at once');
   // The slide: the same transition it came in on, run backwards.
   assert.match(sheet, /setShown\(false\);/);
