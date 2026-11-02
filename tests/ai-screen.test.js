@@ -87,8 +87,14 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
   assert.equal(rows[2].href, '#app/garden/dev/issues/390');
   assert.equal(rows[3].href, '#app/garden/dev/governance/14');
   assert.equal(words(rows[3].sub), 'Garden club');
-  assert.deepEqual([rows[4].title, words(rows[4].sub), rows[4].href], ['A reminder email', 'Garden club · #410', '#app/garden/dev/issues/410'],
-    'a plan opens on its request, where its Build it is');
+  assert.deepEqual([rows[4].title, words(rows[4].sub), rows[4].href], ['A reminder email', 'Garden club · #410', '#app/garden/dev/issues/410']);
+  // B06 (audit 2 Nov 2026): its Build it is on the plan in Main Chat, not on
+  // the request's page, so the row opens Main there.
+  assert.deepEqual(rows[4].plan, { slug: 'garden', number: 410 });
+  assert.equal(rows[0].plan, undefined, 'a vote is decided on its page');
+  const index = read('frontend/src/features/ai/index.tsx');
+  assert.match(index, /if \(row\.plan\) \{\s+sidePanel\(\)\?\.close\?\.\(\);\s+void openBotRequest\(row\.plan\.slug, row\.plan\.number\);\s+return;\s+\}/,
+    'a plan row opens Main Chat at the plan, as See progress on its page does');
   // Private threads: a lock on the tile, and where they stand.
   assert.deepEqual([rows[5].who, words(rows[5].sub)], ['solo', 'Only you · Not in a community yet']);
   assert.deepEqual([rows[6].who, words(rows[6].sub)], ['me', 'Only you · Garden club · Not posted yet']);

@@ -6123,7 +6123,9 @@ const AppView = {
     } else if (st.key === 'bot') {
       lead = bot && bot.held ? PlatformI18n.t('changes:request.status.lead.botHeld')
         : bot && bot.plan
-          ? (bot.askedBy ? PlatformI18n.t('changes:request.status.lead.botPlanWaiting', { username: bot.askedBy }) : PlatformI18n.t('changes:request.status.lead.botPlanWaitingUnnamed'))
+          // B06 (audit 2 Nov 2026): the person it waits for reads "you", not their own @name.
+          ? (bot.mine ? PlatformI18n.t('changes:request.status.lead.botPlanYours')
+            : bot.askedBy ? PlatformI18n.t('changes:request.status.lead.botPlanWaiting', { username: bot.askedBy }) : PlatformI18n.t('changes:request.status.lead.botPlanWaitingUnnamed'))
           : bot && bot.what === 'queued' ? PlatformI18n.t('changes:request.status.lead.botQueued')
             : AppView._botWorkReading(bot) ? PlatformI18n.t('changes:request.status.lead.botReading') : PlatformI18n.t('changes:request.status.lead.botBuilding');
     } else if (st.key === 'auto_solving') lead = PlatformI18n.t('changes:request.status.lead.autoSolving');
@@ -22295,9 +22297,11 @@ const AppView = {
       const reading = AppView._botWorkReading(issue.bot);
       // B8: whoever it is being built for can follow it in their chat.
       if (issue.bot.mine) {
+        // B06: their plan waits for their Build it, which is on the plan in the chat this opens at.
+        const plan = !!issue.bot.plan;
         return {
-          key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.seeProgress'),
-          title: PlatformI18n.t('changes:issue.action.seeProgressTitle'),
+          key: 'primary', cls: 'gc-vote-btn', label: plan ? PlatformI18n.t('changes:issue.action.seePlan') : PlatformI18n.t('changes:issue.action.seeProgress'),
+          title: plan ? PlatformI18n.t('changes:issue.action.seePlanTitle') : PlatformI18n.t('changes:issue.action.seeProgressTitle'),
           act: { fn: 'openBotChatFromRequest', args: [n] },
         };
       }
