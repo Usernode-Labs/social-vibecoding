@@ -394,6 +394,77 @@ test('#1771: pressure reclaim skips every preview somebody is using', () => {
   assert.equal(victims[0].id, 1, 'idle-longest first');
 });
 
+// #6157: sleep, beside the pressure reclaim and by its rules (isBusy and
+// last_activity_at), but a vote-backed preview sleeps too: sleep has no dead
+// link, since whatever opens a sleeping preview wakes it.
+test('#6157: an idle vote-backed preview past PREVIEW_SLEEP_AFTER is chosen to sleep, not torn down', () => {
+  const { selectSleepers, selectPressureVictims } = require('../src/services/staging-reap');
+  const now = Date.parse('2026-11-02T12:00:00Z');
+  const hoursAgo = (h) => new Date(now - h * 3600 * 1000).toISOString();
+  const row = (id, extra = {}) => ({
+    id, status: 'promoted', last_activity_at: hoursAgo(3), staging_asleep_at: null,
+    machine_state: 'settled', serving: { n: 2, db: 'app_x_staging_s1_abcdef' }, check_run_open: false, ...extra,
+  });
+  const rows = [row(1, { last_activity_at: hoursAgo(5) }), row(2, { status: 'merging' }), row(3, { status: 'paused', last_activity_at: hoursAgo(4) })];
+  const sleepers = selectSleepers({ rows, isBusy: () => false, now, sleepAfterMs: 2 * 3600 * 1000 });
+  assert.deepEqual(sleepers.map((r) => r.id), [1, 3, 2], 'vote-backed ones too, idle-longest first');
+  assert.deepEqual(selectPressureVictims({ rows: rows.slice(0, 2) }), [],
+    'the teardown passes still never take a vote-backed preview');
+  // What sleeps is scaled down, never torn down.
+  const src = stripComments(read('src/services/staging-reap.js'));
+  const fn = src.slice(src.indexOf('async function sweepSleep('));
+  const body = fn.slice(0, fn.indexOf('\n}\n') + 3);
+  assert.match(body, /previewSleep\.sleep\(config, pool, row, \{ afterMs \}\)/);
+  assert.doesNotMatch(body, /retire|teardown|reapOne/);
+  assert.match(stripComments(read('src/services/preview-sleep.js')), /kubernetes\.scalePreview\(kube, name, 0, \{ attempt: n \}\)/);
+});
+
+test('#6157: a preview something works on does not sleep: a worker turn, a checks run, a shots run, a build', () => {
+  const { selectSleepers } = require('../src/services/staging-reap');
+  const now = Date.parse('2026-11-02T12:00:00Z');
+  const idle = new Date(now - 3 * 3600 * 1000).toISOString();
+  const row = (id, extra = {}) => ({
+    id, status: 'active', last_activity_at: idle, staging_asleep_at: null,
+    machine_state: 'settled', serving: { n: 1 }, check_run_open: false, ...extra,
+  });
+  const rows = [
+    row(1),                                  // nothing works on it: sleeps
+    row(2),                                  // a worker turn (isBusy: session-work.ts workedOnSql)
+    row(3),                                  // a shots run (isBusy too)
+    row(4, { machine_state: 'checking' }),   // the machine's checks run
+    row(5, { check_run_open: true }),        // a checks run on the cluster
+    row(6, { machine_state: 'preparing' }),  // a build
+    row(7, { serving: null }),               // nothing serves
+    row(8, { serving: { n: 1, lost: true } }),
+    row(9, { staging_asleep_at: idle }),     // asleep already
+    row(10, { status: 'merged' }),           // backs nothing: the gc's
+  ];
+  const busy = new Set([2, 3]);
+  assert.deepEqual(selectSleepers({ rows, isBusy: (id) => busy.has(id), now, sleepAfterMs: 2 * 3600 * 1000 }).map((r) => r.id), [1]);
+});
+
+test('#6157: a preview used inside the window does not sleep, and PREVIEW_SLEEP_AFTER_MS=0 switches sleep off', () => {
+  const { selectSleepers } = require('../src/services/staging-reap');
+  const previewSleep = require('../src/services/preview-sleep');
+  const now = Date.parse('2026-11-02T12:00:00Z');
+  const at = (ms) => new Date(now - ms).toISOString();
+  const row = (id, ago) => ({ id, status: 'active', last_activity_at: at(ago), machine_state: 'settled', serving: { n: 1 } });
+  const window = previewSleep.DEFAULT_SLEEP_AFTER_MS;
+  assert.equal(window, 2 * 3600 * 1000, 'two hours by default');
+  const rows = [row(1, window + 1000), row(2, window - 1000), row(3, 60 * 1000)];
+  assert.deepEqual(selectSleepers({ rows, now, sleepAfterMs: window }).map((r) => r.id), [1]);
+  assert.deepEqual(selectSleepers({ rows, now, sleepAfterMs: 0 }), []);
+  assert.equal(previewSleep.sleepAfterMs({ previewSleepAfterMs: 0 }), 0);
+  assert.equal(previewSleep.sleepAfterMs({ previewSleepAfterMs: 'junk' }), window);
+});
+
+test('#6157: a sleeping preview holds no connection, so the pressure reclaim passes it by', () => {
+  const src = stripComments(read('src/services/staging-reap.js'));
+  const fn = src.slice(src.indexOf('async function sweepConnectionPressure('));
+  const body = fn.slice(0, fn.indexOf('\n}\n') + 3);
+  assert.match(body, /AND staging_asleep_at IS NULL/);
+});
+
 test('#1771: the reclaim acts on a reading, one preview at a time, and kills nothing', () => {
   const src = stripComments(read('src/services/staging-reap.js'));
   const fn = src.slice(src.indexOf('async function sweepConnectionPressure('));

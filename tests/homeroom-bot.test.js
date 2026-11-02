@@ -361,12 +361,13 @@ test('the everyone moment and the proposal ceiling parse, clamp and validate', (
 
 test('the proposal ceiling: an admin\'s number, else a fixed one, since every app is live', () => {
   assert.equal(bot.botProposalCeiling({}), bot.EVERYONE_PROPOSAL_CEILING);
-  assert.equal(bot.EVERYONE_PROPOSAL_CEILING, 100);
-  assert.equal(bot.botProposalCeiling(null), 100);
-  assert.equal(bot.botProposalCeiling({ liveApps: ['a', 'b'], firstVersionApps: ['c'] }), 100,
+  // #6157: 500 since a proposal waiting for votes keeps a sleeping preview.
+  assert.equal(bot.EVERYONE_PROPOSAL_CEILING, 500);
+  assert.equal(bot.botProposalCeiling(null), 500);
+  assert.equal(bot.botProposalCeiling({ liveApps: ['a', 'b'], firstVersionApps: ['c'] }), 500,
     'the retired lists do not count: "per live app" would be no ceiling at all');
   assert.equal(bot.botProposalCeiling({ proposalCeiling: 30 }), 30);
-  assert.equal(bot.botProposalCeiling({ proposalCeiling: 0 }), 100, 'unset is automatic');
+  assert.equal(bot.botProposalCeiling({ proposalCeiling: 0 }), 500, 'unset is automatic');
 });
 
 test('a settings save never writes the everyone moment, and more room asks the lane to grant again', async () => {
@@ -1295,7 +1296,7 @@ test('capRoomFor counts the same two things the live check does', async () => {
     },
   };
   assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9),
-    { proposals_per_app: 4, proposals_total: 93, question_tripwire: 0 }, '#3576: the automatic ceiling across every app');
+    { proposals_per_app: 4, proposals_total: 493, question_tripwire: 0 }, '#3576: the automatic ceiling across every app');
   assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { proposalCeiling: 10 }),
     { proposals_per_app: 4, proposals_total: 3, question_tripwire: 0 }, 'an admin\'s ceiling, across them all');
   assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { proposalCeiling: 5 }),

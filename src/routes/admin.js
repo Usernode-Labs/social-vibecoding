@@ -399,11 +399,16 @@ function adminRoutes(config) {
       // inventory call.
       const counts = await stagingReap.previewCounts(config)
         .catch(() => ({ open: null, stale: null, abandoned: null }));
+      // #6157: previews asleep (scaled to no replicas), and the storage
+      // their database clones still hold. Null when it cannot be read.
+      const asleep = await require('../services/preview-sleep').asleepTotals(pool).catch(() => null);
       res.json({
         job: await stagingReap.read(pool),
         open: counts.open,
         stale: counts.stale,
         abandoned: counts.abandoned,
+        asleep,
+        sleepAfterMs: require('../services/preview-sleep').sleepAfterMs(config),
         expectedFingerprint: stagingEnv.expectedStagingFingerprint(config),
         automatic: await automaticReap(pool),
         staging,

@@ -154,7 +154,7 @@ test('GET /api/admin/homeroom-bot: a view-only admin reads the whole dashboard; 
   assert.deepEqual(data.queue.items.map((i) => [i.issue_number, i.waiting && i.waiting.reason]), [[7, 'bot_paused']], 'the bot is off');
   assert.equal(data.runs.length, 1);
   assert.equal(data.runs[0].issueUrl, 'https://github.com/usernode-bot/todo/issues/12');
-  assert.deepEqual(data.caps, { proposalsPerApp: 5, proposalsTotal: 100, questionsPerAppPerDay: 10 });
+  assert.deepEqual(data.caps, { proposalsPerApp: 5, proposalsTotal: 500, questionsPerAppPerDay: 10 });
   assert.deepEqual(data.pairsWaiting, { first_version: 0, later: 0 }, 'the configurations\' pairs waiting, per scope');
 
   // adminMiddleware sends a non-admin back to the shell (a redirect, since
