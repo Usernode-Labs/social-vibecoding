@@ -112,3 +112,10 @@ test('the layout audit has the Android app\'s shape, with its navigation bar', a
   assert.ok(android.system.some((z) => z.name === 'navigation bar' && z.severity === 'error'));
   assert.match(read('scripts/layout-audit/run.mjs'), /un-platform=\$\{profile\.platform \|\| 'ios'\}/);
 });
+
+test('M01: on a narrow phone the lit Messages pill clears "Homeroom bot"; the audience chips fit at 393', () => {
+  // Home's and You's short words give Messages' and the bot's seats room.
+  assert.match(APP_CSS, /@media \(max-width: 767\.98px\) \{[\s\S]{0,400}#platform-tabs \{ grid-template-columns: \.85fr 1\.3fr 1\.4fr 1\.1fr \.85fr; \}/);
+  assert.match(APP_CSS, /@media \(max-width: 374\.98px\) \{[\s\S]{0,300}#platform-tabs \{ grid-template-columns: \.85fr 1\.25fr 1\.35fr 1\.1fr \.85fr; \}/);
+  assert.match(read('frontend/src/features/workshop/index.tsx'), /className=\{key !== 'all' && !count \? 'hidden' : 'gap-1\.5 px-3'\}/);
+});

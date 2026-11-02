@@ -22817,15 +22817,22 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
    labels tighten their tracking and are let out of their cells rather than
    cut: they are centred, and their seats are wider than the others.
    Narrower than 375px they drop half a point as well. Measured in the bar's
-   own font: the bot's name has 4px to spare at 360 and 375, 8 at 390, and
-   the lit pill around it clears "Messages" by 2px. The rail has room and is
-   left alone. */
+   own font: the bot's name has 4px to spare at 360 and 375, 8 at 390. The
+   rail has room and is left alone.
+
+   AND THE ROOM BESIDE IT GOES TO MESSAGES (overnight audit M01, 2 Nov 2026).
+   With Messages lit its pill reaches 8px past its label, and on an iPhone 13
+   mini that pill ran into "Homeroom bot" (2px apart in the bar's font, none
+   in the phone's). Home's and You's words are short and their seats had 30px
+   to spare, so they give some: Messages' seat is a little wider and the
+   bot's a little more, and the pill now clears the bot's name by about 9px
+   at 375 and 12 at 360. */
 @media (max-width: 767.98px) {
   /* Communities' seat, the second (#6019), and Homeroom bot's, the third,
      are a little wider than the other three: they hold the longest words,
      and the bar's other labels (Home, Messages, and your name last, which
      ellipsizes) have room to spare in theirs. */
-  #platform-tabs { grid-template-columns: 1fr 1.3fr 1.3fr 1fr 1fr; }
+  #platform-tabs { grid-template-columns: .85fr 1.3fr 1.4fr 1.1fr .85fr; }
   :is(#platform-tab-workshop, #platform-tab-ai) { overflow: visible; }
   :is(#platform-tab-workshop, #platform-tab-ai) .platform-tab-label {
     letter-spacing: -.02em;
@@ -22836,7 +22843,7 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
 @media (max-width: 374.98px) {
   /* The smallest phones: every label drops half a point and tightens, the
      cells lose their 2px sides, and the two wide seats widen a little less. */
-  #platform-tabs { grid-template-columns: 1fr 1.2fr 1.2fr 1fr 1fr; }
+  #platform-tabs { grid-template-columns: .85fr 1.25fr 1.35fr 1.1fr .85fr; }
   .platform-tab { padding: 0; }
   .platform-tab .platform-tab-label { font-size: 10.5px; letter-spacing: -.02em; }
 }
