@@ -27,5 +27,5 @@ test('the transcript decides it, in the chat with Homeroom bot alone', () => {
   assert.match(index, /const quoteAgain = botDm && !!message\.sender\.bot && !!message\.reply && message\.reply\.id === quoted;/);
   assert.match(index, /if \(botDm && message\.sender\.bot && message\.reply\) quoted = message\.reply\.id;/);
   assert.match(index, /if \(!message\.sender\.bot\) quoted = null;/, 'somebody else speaking starts a new exchange');
-  assert.match(index, /previousDay = day;\n      quoted = null;/, 'and so does a new day');
+  assert.match(index, /if \(day && day !== previousDay\) quoted = null;/, 'and so does a new day');
 });

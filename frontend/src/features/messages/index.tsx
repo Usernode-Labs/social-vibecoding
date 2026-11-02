@@ -2224,10 +2224,11 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     const asks = asking(message);
     const settled = botDm && isBotNews(message) && !asks && !!newsStatusOf(message, botWork)?.settled;
     if (!settled || (day && day !== previousDay) || (lineAt !== null && message.id >= lineAt && !lineDrawn)) flushRun();
+    // B16: a new day starts a new exchange, its first answer quoting afresh.
+    if (day && day !== previousDay) quoted = null;
     if (day && day !== previousDay) {
       rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
       previousDay = day;
-      quoted = null;
     }
     if (lineAt !== null && message.id >= lineAt) drawLine();
     // B16: somebody other than the bot spoke; the next answer quotes afresh.
