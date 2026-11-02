@@ -7242,3 +7242,35 @@ test('the Hub has its own address, #app/<slug>/dev/hub, for links that mean the 
   assert.match(read('src/services/homeroom-bot-dm.js'), /id: 'open_community'[^\n]*target: `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub`/);
   assert.match(read('src/services/shared-objects.js'), /href: link\.type === 'hub' \? `#app\/\$\{slug\}\/dev\/hub`/);
 });
+
+// ── #6098: a keyboard vote keeps the reader's place ──────────────────
+//
+// A vote button used to be `disabled` while its vote was on its way, which
+// dropped keyboard focus to the page: the next Tab started again at the top.
+// It is shown busy (`aria-disabled`) instead, so it keeps focus, and each
+// handler refuses a second press itself.
+
+test('#6098: the card\'s Vote button keeps focus while its vote is sent, and takes focus back after the picker sends', () => {
+  // Only the spec's own `disabled` and an approval switch the face off.
+  assert.match(CARD_TSX, /disabled=\{disabled \|\| approved\}/);
+  assert.doesNotMatch(CARD_TSX, /disabled=\{[^}]*!!sending[^}]*\}/, 'never by its own send');
+  assert.match(CARD_TSX, /aria-disabled=\{sending \? 'true' : undefined\}/, 'shown busy instead, which keeps keyboard focus');
+  assert.match(CARD_TSX, /if \(sending\) return;\n    if \(open \|\| sheetRef\.current\)/, 'and the second press is refused');
+  // A send from the desktop popover returns focus to the face with no scroll:
+  // the popover is a portal and would take focus down with it.
+  assert.match(CARD_TSX, /const btn = open \? btnRef\.current : null;\s*shut\(\);\s*if \(btn\?\.isConnected\) btn\.focus\(\{ preventScroll: true \}\);/);
+  assert.match(CSS, /\.dev-vote-btn\[aria-disabled="true"\] \{ cursor: progress; opacity: 0\.75; \}/);
+});
+
+test('#6098: the request\'s ballot and its vote to close keep the button that was pressed focused', () => {
+  const src = read('frontend/src/features/dev-board/topic/thread-changes.tsx');
+  assert.doesNotMatch(src, /disabled=\{busy\}/, 'neither the ballot nor the close vote is switched off mid-vote');
+  assert.match(src, /data-ballot-option=\{c\.key\}\s*aria-disabled=\{busy \|\| undefined\}/);
+  assert.match(src, /aria-pressed=\{on\}\s*aria-disabled=\{busy \|\| undefined\}\s*data-close-vote=\{side\}/);
+  assert.match(src, /onClick=\{\(e\) => \{ if \(!on\) void choose\(c\.pick, e\.currentTarget\); \}\}/, 'the pressed button is what comes back');
+  assert.match(src, /onClick=\{\(e\) => \{ void vote\(side, e\.currentTarget\); \}\}/);
+  assert.match(src, /if \(active && active !== document\.body\) return;/, 'only where focus was actually lost');
+  assert.match(src, /focus\(\{ preventScroll: true \}\)/, 'and the page does not scroll under it');
+  assert.match(src, /refocusAfterVote\(box\.current, 'ballot-option', from, wasFocused\)/);
+  assert.match(src, /refocusAfterVote\(box\.current, 'close-vote', from, wasFocused\)/);
+});
