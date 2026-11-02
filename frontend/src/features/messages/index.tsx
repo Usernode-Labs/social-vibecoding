@@ -6,7 +6,7 @@ import {
 import { createPortal } from 'react-dom';
 
 import {
-  JumpToLatestButton, NewMessagesBanner, NewMessagesDivider, TranscriptOverlay, groupsWithPrevious,
+  ChatStatusLine, JumpToLatestButton, NewMessagesBanner, NewMessagesDivider, TranscriptOverlay, groupsWithPrevious,
 } from '@/components/ui/chat';
 import {
   ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronDownIcon, ChevronLeftIcon, EllipsisHorizontalIcon, LockIcon, PencilSparklesIcon,
@@ -96,6 +96,7 @@ import {
   useMessagesSnapshot,
 } from './store';
 import { typingLine } from './typing-line';
+import { BotWorkingCard, typingBesides, workingBot } from './bot-working';
 import { DesignPane, DesignViewSwitch, isDesignRoot, isDesignThread, setDesignView, useDesignView } from './design-pane';
 import { openPreview, usePreview } from '../ai/preview';
 import { NewThreadButton, NewThreadPanel, startedThreadTitle, useNewThread } from './new-thread';
@@ -1924,7 +1925,12 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // Whether this conversation was last drawn as a linked window (#2387).
   const wasWindow = useRef(false);
   const conversationId = snap.route.conversationId;
-  const typing = conversationId ? typingUsers(conversationId) : [];
+  // 1 Nov 2026: the bot's typing is its working card, where its answer will
+  // appear (./bot-working.tsx); the status line keeps people's names, and
+  // the bot's too while the transcript is a window part-way back.
+  const typists = conversationId ? typingUsers(conversationId) : [];
+  const working = snap.nextAfter ? null : workingBot(typists);
+  const typing = typingBesides(typists, working);
   // #2884: the runs of cards the viewer has opened, by their first message.
   const [expandedRuns, setExpandedRuns] = useState<ReadonlySet<string>>(() => new Set());
   // One request, one story: where each request stands, for folding the settled ones.
@@ -2332,8 +2338,11 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
           once useComposerKeyboard attaches (#3571), as it does to
           `#gc-messages`, and app.css's `.platform-kb-column .un-kb-avoid`
           keeps it from padding this scroller with the inset a second time.
-          So this className stays constant: React never strips the kit's. */}
-      <div ref={scroller} className="messages-thread-scroll platform-safe-scroll" aria-live="polite">
+          So this className stays constant: React never strips the kit's.
+          `chat-transcript` is what ends the transcript 12px inside this
+          scroller, at the composer card's edge, as every chat's does
+          (@/components/ui/chat, "A chat's foot", 1 November 2026). */}
+      <div ref={scroller} className="messages-thread-scroll platform-safe-scroll chat-transcript" aria-live="polite">
         {/* Only a thread with nothing to show yet says it is loading (#2907).
             A refresh of the visible thread — the realtime echo of every send
             is one — re-reads it silently: this row drawn above the messages
@@ -2364,6 +2373,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
           </div>
         ) : null}
         {rows}
+        {working ? <BotWorkingCard typist={working} /> : null}
         {/* #2387: a message link opened the transcript part-way back. */}
         {snap.nextAfter ? (
           <div className="messages-newer">
@@ -2372,15 +2382,16 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
           </div>
         ) : null}
       </div>
-      <div className="messages-typing" aria-live="polite">{typingLine(t, typing)}</div>
       {/* Jump to latest whenever the reader is not at the bottom, with a dot
-          for what arrived while they were up. Run six: at the right edge,
-          hung just above the composer (below the typing line, which is
-          empty on the right), so it covers the strip under the words rather
-          than a message in the middle of the conversation. */}
+          for what arrived while they were up: centred, hung from the
+          transcript's foot, just above the composer (@/components/ui/chat
+          TranscriptOverlay). Above the typing line since 1 November 2026,
+          as in every chat: it rises with the transcript when a name
+          appears rather than covering it. */}
       <TranscriptOverlay edge="foot">
         <JumpToLatestButton shown={unread.jump} dot={unread.arrived > 0} aria-label={jumpLabel(unread.arrived)} title={t('messages:thread.jumpToLatest')} onClick={jumpToLatest} />
       </TranscriptOverlay>
+      <ChatStatusLine className="messages-typing">{typingLine(t, typing)}</ChatStatusLine>
       <MessageComposer />
     </section>
   );
@@ -2514,7 +2525,10 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
   const conversationId = snap.route.conversationId;
   const rootId = snap.route.threadRootId;
   const thread = snap.thread && snap.thread.rootId === rootId ? snap.thread : null;
-  const threadTyping = conversationId && rootId ? typingUsers(conversationId, rootId) : [];
+  // 1 Nov 2026: the bot answering here is its working card (./bot-working.tsx).
+  const threadTypists = conversationId && rootId ? typingUsers(conversationId, rootId) : [];
+  const threadWorking = workingBot(threadTypists);
+  const threadTyping = typingBesides(threadTypists, threadWorking);
   // 16 Oct 2026: a request's thread marks where each of its tries began
   // (./bot-track.tsx), when the bot built it more than once.
   const trackRoot = thread?.root || snap.messages.find((item) => item.id === rootId) || null;
@@ -2628,8 +2642,8 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
     writeReplyWidth(commitReplyWidth(base + (event.key === 'ArrowLeft' ? REPLY_WIDTH_STEP : -REPLY_WIDTH_STEP)));
   };
   // #6019: a private thread in their chat with the bot is theirs alone
-  // until they File it or Post it: its head says so, its foot has the doors
-  // that apply (./private-thread-bar.tsx). 1 Nov 2026: every one, not only
+  // until they File it or Post it under the bot's offer: its head says so,
+  // its foot has the door that applies (./private-thread-bar.tsx). 1 Nov 2026: every one, not only
   // those off a message of theirs: a "+" thread, a draft the bot opened and
   // a design thread hang off a line of the bot's, and the server says
   // whether it is theirs (`mine`). Read before the early return, so the hook
@@ -2639,7 +2653,7 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
   const privateRoot = rootId && snap.active?.kind === 'direct' && threadsAllowed(snap.active) && snap.active.homeroomBot
     && privateRootMessage && !requestPageOf(privateRootMessage)
     ? rootId : null;
-  const [privateWhere, setPrivateWhere] = usePrivateThread(privateRoot);
+  const [privateWhere] = usePrivateThread(privateRoot);
   // 1 Nov 2026 (C1): whether this thread's design is open beside it.
   const preview = usePreview();
   const privateMine = !!privateRoot && isOwnPrivateThread(privateWhere, privateRootMessage, meId);
@@ -2786,7 +2800,7 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
       {/* Its head says it is theirs alone in Main Chat's column; under it,
           where it went once it was filed or posted. */}
       {privateMine && !(inMain && privateWhere?.state === 'open') ? <PrivateThreadNote where={privateWhere} /> : null}
-      <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll" aria-live="polite">
+      <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll chat-transcript" aria-live="polite">
         {/* The root's Reply quotes it into THIS thread's composer (#2387): its
             own threadRootId is null, being the main stream's message. */}
         {root ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} /> : null}
@@ -2823,22 +2837,23 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
           const row = <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped && !divider} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === message.id} planCardId={cardId && isPlanMessage(message) ? cardId : null} />;
           return divider ? <Fragment key={message.clientKey || message.id}>{divider}{row}</Fragment> : row;
         })}
+        {threadWorking ? <BotWorkingCard typist={threadWorking} /> : null}
         {privateRoot && privateMine && root ? (
           <PrivateThreadDoors
             rootId={privateRoot}
             text={privateThreadWords(root, replies, meId)}
             where={privateWhere}
-            onWhere={setPrivateWhere}
             botReplied={replies.some((message) => message.sender.bot)}
           />
         ) : null}
       </div>
+      <JumpToLatest scroller={scroller} />
       {/* 31 Oct 2026: who is typing in this thread (the bot answering a
           message written here among them), as the conversation's own line
           says it. It was drawn beside the conversation alone, which a phone
-          hides while a thread is open. */}
-      <div className="messages-typing" aria-live="polite">{typingLine(t, threadTyping)}</div>
-      <JumpToLatest scroller={scroller} />
+          hides while a thread is open. Under Jump to latest, as in every
+          chat (1 Nov 2026). */}
+      <ChatStatusLine className="messages-typing">{typingLine(t, threadTyping)}</ChatStatusLine>
       <MessageComposer threadRootId={rootId} />
     </aside>
   );
