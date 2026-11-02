@@ -272,8 +272,8 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
       && verifiedNativeEpoch === before.nativeEpoch;
     if (permitted) headers.set(API_SCOPE_HEADER, before.scope!);
     // Revalidate the browser's HTTP copy too. Permitted offline fallbacks
-    // still work in the worker; private reads do not race a stale deadline
-    // against the server's current permission decision.
+    // still work in the worker; private reads skip its sub-second deadlines
+    // and get the saved copy only from a network silent for seconds.
     const boundaryBefore = boundary, expectedViewer = currentViewer();
     const confirmsNative = identityRead && !tokenRequest && req.credentials !== 'omit'
       && verifiedNativeEpoch !== before.nativeEpoch;
