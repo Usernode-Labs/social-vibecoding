@@ -57,17 +57,33 @@ function transactional(sql) {
   return !code.split(';').some(statement => /^\s*(?:BEGIN\b|START\s+TRANSACTION\b|COMMIT\b|ROLLBACK\b|END\b|ABORT\b|PREPARE\s+TRANSACTION\b|SET\s+(?:LOCAL\s+)?TRANSACTION\b|(?:CREATE\s+(?:UNIQUE\s+)?|DROP\s+)INDEX\s+CONCURRENTLY\b|VACUUM\b)/i.test(statement));
 }
 
+// A migration's ID is its name. Its place in the history is its position in
+// the manifest, so two branches that each add one collide only in the
+// manifest, which `record-schema-migration.js --onto <main>` regenerates.
+// The first IDs carry their position as a number (`0013-…`); those are kept
+// because receipts and tests name them, and the number must still be the
+// position. A new ID is a bare name (the record command refuses a number).
+const NAME = /^[a-z][a-z0-9-]*$/;
+const NUMBERED = /^(\d{4})-[a-z][a-z0-9-]*$/;
+
+function validId(id, index) {
+  const numbered = NUMBERED.exec(id);
+  return numbered ? Number(numbered[1]) === index + 1 : NAME.test(id);
+}
+
 function loadPlan(dir = directory,
   manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'))) {
   if (manifest.version !== 1 || !Array.isArray(manifest.migrations) || !manifest.migrations.length) {
     throw new Error('Invalid schema migration manifest');
   }
   const prefix = [];
+  const seen = new Set();
   const migrations = manifest.migrations.map((entry, index) => {
-    if (!new RegExp(`^${String(index + 1).padStart(4, '0')}-[a-z][a-z0-9-]*$`).test(entry.id)
+    if (typeof entry.id !== 'string' || !validId(entry.id, index) || seen.has(entry.id)
         || !/^[a-f0-9]{64}$/.test(entry.schemaSha256)) {
-      throw new Error('Schema migrations must have consecutive, ordered IDs and schema checksums');
+      throw new Error('Schema migrations must have unique, valid IDs (a number only as their position) and schema checksums');
     }
+    seen.add(entry.id);
     const sql = fs.readFileSync(path.join(dir, `${entry.id}.sql`), 'utf8');
     if (digest(sql) !== entry.sha256) throw new Error(`Schema migration checksum mismatch: ${entry.id}`);
     // The runner owns the transaction and commits its receipt with the DDL.
@@ -81,8 +97,9 @@ function loadPlan(dir = directory,
     }
     return { ...entry, sql };
   });
+  // Names do not sort in history order: compare the sets, sorted alike.
   const files = fs.readdirSync(dir).filter(file => file.endsWith('.sql')).sort();
-  if (JSON.stringify(files) !== JSON.stringify(migrations.map(m => `${m.id}.sql`))) {
+  if (JSON.stringify(files) !== JSON.stringify(migrations.map(m => `${m.id}.sql`).sort())) {
     throw new Error('Every schema migration SQL file must appear in the manifest');
   }
   return migrations;
@@ -110,4 +127,4 @@ function ensureSchema(dir = directory) {
   return target;
 }
 
-module.exports = { loadPlan, renderSchema, schemaSql, ensureSchema };
+module.exports = { loadPlan, renderSchema, schemaSql, ensureSchema, NAME };

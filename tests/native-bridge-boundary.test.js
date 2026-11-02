@@ -723,9 +723,10 @@ test('the homescreen badge count requires the exact native session realm', async
   assert.deepEqual(loaded.nativePosts[3].args, { count: 7 });
 });
 
-test('notification permission and navigation actions require the top-frame capability',
+test('pre-session preparation, permission and navigation require the top-frame capability',
   async () => {
     const methods = [
+      'prepareProvingParameters',
       'requestNotificationPermission',
       'requestAlarmPermissions',
       'openNotificationSettings',
@@ -2201,4 +2202,64 @@ test('web recovery is root-privileged and does not need an established realm ses
   assert.equal(post.privilegedCapability, 'navigation-capability');
   assert.equal('realmSessionClaim' in post, false);
   assert.equal('sessionToken' in post, false);
+});
+test('proof preparation is privileged, pre-session, and outlives action deadlines', async () => {
+  const loaded = loadBridge({
+    capabilities: ['privilegedBridgeCapability', 'prepareProvingParameters'],
+    silentMethods: ['prepareProvingParameters'], timeoutScale: 0.0001,
+  });
+  let settled = false;
+  const pending = loaded.sandbox.usernode.prepareProvingParameters();
+  pending.then(() => { settled = true; }, () => { settled = true; });
+  await new Promise(resolve => setTimeout(resolve, 25));
+  const request = loaded.nativePosts.find(p => p.method === 'prepareProvingParameters');
+  assert.ok(request);
+  assert.equal(request.privilegedCapability, 'navigation-capability');
+  assert.equal('realmSessionClaim' in request, false);
+  assert.equal(settled, false, 'a download must not inherit the two-minute action timeout');
+  loaded.sandbox.__usernodeResolve(request.id, true, null);
+  assert.equal(await pending, true);
+});
+
+test('realm closure immediately rejects outstanding parameter preparation', async () => {
+  const loaded = loadBridge({
+    capabilities: ['privilegedBridgeCapability', 'prepareProvingParameters'],
+    silentMethods: ['prepareProvingParameters'],
+  });
+  const pending = loaded.sandbox.usernode.prepareProvingParameters();
+  const rejected = assert.rejects(pending, error => error.usernodeKind === 'session-changed');
+  await new Promise(resolve => setImmediate(resolve));
+  const request = loaded.nativePosts.find(p => p.method === 'prepareProvingParameters');
+  assert.ok(request);
+  loaded.dispatchWindow('sv:native-realm-close');
+  await rejected;
+  loaded.sandbox.__usernodeResolve(request.id, true, null);
+  assert.equal(Object.keys(loaded.sandbox.__usernodeBridge.pending).length, 0);
+});
+
+
+test('realm closure cancels preparation before capability bootstrap completes', async () => {
+  const loaded = loadBridge({
+    capabilities: ['privilegedBridgeCapability', 'prepareProvingParameters'],
+    silentMethods: ['getPrivilegedBridgeCapability', 'prepareProvingParameters'],
+  });
+  const pending = loaded.sandbox.usernode.prepareProvingParameters();
+  const rejected = assert.rejects(pending, error => error.usernodeKind === 'session-changed');
+  await new Promise(resolve => setImmediate(resolve));
+  const bootstrap = loaded.nativePosts.find(p => p.method === 'getPrivilegedBridgeCapability');
+  assert.ok(bootstrap);
+  loaded.dispatchWindow('sv:native-realm-close');
+  await rejected;
+  loaded.sandbox.__usernodeResolve(bootstrap.id, 'navigation-capability', null);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(loaded.nativePosts.some(p => p.method === 'prepareProvingParameters'), false);
+  assert.equal(Object.keys(loaded.sandbox.__usernodeBridge.pending).length, 0);
+});
+
+test('preparation refuses false native readiness', async () => {
+  const loaded = loadBridge({
+    capabilities: ['privilegedBridgeCapability', 'prepareProvingParameters'],
+    responseMethods: { prepareProvingParameters: false },
+  });
+  await assert.rejects(loaded.sandbox.usernode.prepareProvingParameters(), /not ready/);
 });

@@ -322,10 +322,13 @@ const MAX_PER_PERSON = 6;
 // project's one session.
 const BUILDS_PER_PROJECT = 3;
 const MAX_PROPOSAL_CEILING = 1000;
-// The automatic ceiling: what twenty live apps
-// had under "5 per live app", and well past what 16 builds at once can fill
-// in the days a vote takes.
-const EVERYONE_PROPOSAL_CEILING = 100;
+// The automatic ceiling. It was 100 (what twenty live apps had under "5 per
+// live app") while every proposal waiting for votes kept a running preview.
+// Since #6157 an unused preview sleeps (services/preview-sleep.js: no pod,
+// only its database copy kept), so a waiting proposal costs little but
+// storage, and the ceiling is 500. An admin's number still replaces it
+// (KEY_PROPOSAL_CEILING, up to MAX_PROPOSAL_CEILING).
+const EVERYONE_PROPOSAL_CEILING = 500;
 const MAX_BATCH_SIZE = 500;
 // The budget a single triage turn may spend (#2737). Measured over the
 // first 213 shadow runs: 7 of the 74 that produced a verdict took $30.04 of

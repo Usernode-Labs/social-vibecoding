@@ -224,6 +224,13 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/rate-limit-store').prune(pool),
   },
   {
+    // #6002: the reports signed-out pages send with no account (the reads
+    // the session guard cut off, where an invite page landed), 30 days on
+    // (services/ui-telemetry.js pruneAnonymous).
+    name: 'ui-telemetry-anonymous-retention', everyMs: 24 * HOUR,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/ui-telemetry').pruneAnonymous(pool),
+  },
+  {
     // An agent session's delegated connector grants, a week after their turn.
     name: 'delegation-prune', everyMs: HOUR,
     run: async (_ctx: WorkContext, { pool }: JobDeps) => ({ pruned: await legacy('services/mcp-oauth').pruneDelegations(pool) }),
@@ -624,6 +631,14 @@ export const JOBS: readonly Job[] = Object.freeze([
         return r;
       },
     },
+  },
+  {
+    // Previews nobody has used for PREVIEW_SLEEP_AFTER_MS (two hours by
+    // default) put to sleep: scaled to no replicas, everything else kept,
+    // woken by whatever opens them (#6157, services/preview-sleep.js). A few
+    // a run. PREVIEW_SLEEP_AFTER_MS=0 switches it off.
+    name: 'preview-sleep', everyMs: 5 * MIN, leaseMs: 10 * MIN,
+    run: (_ctx: WorkContext, { config }: JobDeps) => legacy('services/staging-reap').sweepSleep(config),
   },
   {
     // Previews built with another platform environment than the newest

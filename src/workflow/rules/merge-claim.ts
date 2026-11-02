@@ -57,10 +57,21 @@ const SHOTS_ACCEPTED: ReadonlySet<string> = new Set(['verified', 'not_required',
 
 export interface ClaimInputs {
   head: string | null;          // the commit the claim is for (the row's, checked by the caller)
-  force: boolean;               // an admin's force: votes, checks, lock and main are skipped, shots are not
+  force: boolean;               // an admin's force: votes, lock and main are skipped, shots are not
+  forcedHead: string | null;    // the commit the force skips the checks on (forceWaivesChecks)
   shotsEnforced: boolean;       // config.shots.enforce
   mainPassThrough: boolean;     // the gate found this head level with main, clean and green on its own tree
   votesMergeable: boolean;      // rules/pr-gate.ts, read under the same lock
+}
+
+// An admin's force skips the checks only on the commit it was given on, or
+// one a merge of main moved it to by pure git. It lasts through a conflict
+// resolution (M4), but the commit the resolution wrote, Homeroom's own
+// included, merges on its own green checks: on 2 Nov 2026 a force carried
+// onto a model-resolved head merged it 19 seconds later, never checked, and
+// main stopped loading its schema migrations.
+export function forceWaivesChecks(force: boolean, forcedHead: string | null, head: string | null): boolean {
+  return force && !!head && lower(forcedHead) === lower(head);
 }
 
 // Why the claim is refused now, or null. The order is the gate's, so the
@@ -69,6 +80,8 @@ export function claimRefusal(f: ClaimFacts, x: ClaimInputs): string | null {
   if (!x.force) {
     if (!x.votesMergeable) return 'not_mergeable';
     if (f.locked && !f.adminYes) return 'awaiting_admin';
+  }
+  if (!forceWaivesChecks(x.force, x.forcedHead, x.head)) {
     const settled = (f.checkState === 'passing' || f.checkState === 'skipped')
       && (!x.head || f.checksCommitSha === x.head) && !f.freshSuiteOwed;
     if (!settled) return 'checks';

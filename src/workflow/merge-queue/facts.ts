@@ -30,6 +30,8 @@ export interface Candidate {
   epoch: number;
   approved: boolean;
   forced: boolean;
+  // The commit an admin's force skips the checks on (rules/merge-claim.ts).
+  forcedHead: string | null;
   yes: number;
   waitedSince: number;
   // The mirror's last measurement of this head: true clean, false conflict,
@@ -128,7 +130,7 @@ export async function readLine(tx: Tx, appId: number, now: Date): Promise<Candid
       : (r.check_state === 'failing' || r.check_state === 'error') && onHead && !!checksSha ? `checks_${r.check_state}` : null;
     out.push({
       id: Number(r.id), head, epoch: Number(r.approval_epoch) || 0,
-      approved: !!gate?.mergeable, forced: !!d.force, yes: Number(r.yes_count) || 0,
+      approved: !!gate?.mergeable, forced: !!d.force, forcedHead: sha(d.force?.head), yes: Number(r.yes_count) || 0,
       waitedSince: ms(r.promoted_at || r.created_at),
       mergesClean: githubConflict ? false : r.integration_merges_clean == null ? null : !!r.integration_merges_clean,
       githubConflict,

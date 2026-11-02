@@ -1151,11 +1151,12 @@ test('a ready verdict is held before it is built when the bot is at its ceiling 
   // changes waiting for votes.
   assert.equal(bot.BUILDS_PER_APP, 5);
   assert.equal(bot.WAITING_PER_APP, 15);
-  assert.equal(bot.botProposalCeiling({}), 100, 'the automatic ceiling');
-  assert.equal(bot.botProposalCeiling(null), 100);
-  total = 99;
+  // #6157: 500 since a waiting proposal's preview sleeps.
+  assert.equal(bot.botProposalCeiling({}), 500, 'the automatic ceiling');
+  assert.equal(bot.botProposalCeiling(null), 500);
+  total = 499;
   assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', {}), null);
-  total = 100;
+  total = 500;
   assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', {}), 'proposals_total');
   const settings = { proposalCeiling: 20 };
   assert.equal(bot.botProposalCeiling(settings), 20, 'an admin\'s number');

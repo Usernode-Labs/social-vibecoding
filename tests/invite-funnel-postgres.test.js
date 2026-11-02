@@ -41,7 +41,8 @@ test('the funnel reading: from the first sign-in through an invite, everyone\'s,
   const week = { start: new Date('2026-09-28T00:00:00Z'), end: new Date('2026-10-05T00:00:00Z') };
   const row = { since: '2026-09-30T12:00:00Z', opened: 9, signed_in: 4, signed_in_by_invite: 3, signed_in_already: 1, joined: 2 };
   assert.deepEqual(journey.inviteFunnelReading(row, { week }),
-    { from: '2026-09-30T12:00:00.000Z', opened: 9, signedIn: 4, signedInByInvite: 3, signedInAlready: 1, joined: 2 },
+    { from: '2026-09-30T12:00:00.000Z', opened: 9, signedIn: 4, signedInByInvite: 3, signedInAlready: 1, joined: 2,
+      landed: { recorded: false, reason: 'Not recorded before invite pages reported where they landed.' } },
     'counted from the first sign-in, which came during the week, and the sign-ins in their two ways');
   assert.equal(journey.inviteFunnelReading({ ...row, since: '2026-09-01T00:00:00Z' }, { week }).from,
     '2026-09-28T00:00:00.000Z', 'from the start of the week once the record is older');
@@ -357,6 +358,7 @@ test('invite opens, sign-ins and joins through the real routes, against the full
     assert.deepEqual(r.opens, {
       from: new Date(since).toISOString(), opened: 3,
       signedIn: 5, signedInByInvite: 3, signedInAlready: 2, joined: 4,
+      landed: { recorded: false, reason: 'Not recorded before invite pages reported where they landed.' },
     }, 'three opens; five signed in with it, Carol, Dan and Erin from the link and Sam and Fay already; four joined');
     assert.equal(r.recordedFrom.signedIn, new Date(since).toISOString());
     // Dan on the left-out list: his sign-in and join go, his open signed
