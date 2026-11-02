@@ -13,10 +13,10 @@ const { schemaSql, renderSchema } = require('../src/db/schema-source');
 const snapshot = schemaSql();
 const error = code => Object.assign(new Error(`PostgreSQL ${code}`), { code });
 
-function fixture(t, statements = ['CREATE TABLE baseline (id int);']) {
+function fixture(t, statements = ['CREATE TABLE baseline (id int);'], ids = null) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'schema-history-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const entries = statements.map((sql, i) => ({ id: `${String(i + 1).padStart(4, '0')}-step`,
+  const entries = statements.map((sql, i) => ({ id: ids ? ids[i] : `${String(i + 1).padStart(4, '0')}-step`,
     sha256: digest(sql), schemaSha256: digest(statements.slice(0, i + 1).join('\n')) }));
   const save = () => fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ version: 1, migrations: entries }));
   entries.forEach((m, i) => fs.writeFileSync(path.join(dir, `${m.id}.sql`), statements[i]));
@@ -43,12 +43,21 @@ test('missing files, untracked files and edited SQL fail before DB access', t =>
   assert.throws(() => loadPlan(f.dir), /ENOENT/);
 });
 
-test('migration IDs cannot be reordered, duplicated, skipped or escape the directory', t => {
+test('migration IDs cannot be duplicated, misnumbered or escape the directory', t => {
   const f = fixture(t, ['SELECT 1;', 'SELECT 2;']);
-  for (const id of ['0001-step', '0003-step', '../escape']) {
+  for (const id of ['0001-step', '0003-step', '2-step', 'Step', '-step', '../escape', 7]) {
     f.entries[1].id = id; f.save();
-    assert.throws(() => loadPlan(f.dir), /ordered IDs/);
+    assert.throws(() => loadPlan(f.dir), /unique, valid IDs/);
   }
+});
+
+test('a named migration takes its place from the manifest, not from its name', t => {
+  // Names sort the other way round from the history: the manifest decides.
+  const f = fixture(t, ['CREATE TABLE a (id int);', 'ALTER TABLE a ADD b int;', 'ALTER TABLE a ADD c int;'],
+    ['0001-baseline', 'zeta-change', 'alpha-change']);
+  assert.deepEqual(loadPlan(f.dir).map(m => m.id), ['0001-baseline', 'zeta-change', 'alpha-change']);
+  f.entries[2].id = 'zeta-change'; f.save();
+  assert.throws(() => loadPlan(f.dir), /unique, valid IDs/);
 });
 
 for (const sql of ['BEGIN; SELECT 1; COMMIT;', 'COMMIT;', 'ROLLBACK;', 'SELECT 1; /* nested /* comment */ */ COMMIT;', 'SELECT 1; END;', 'CREATE INDEX CONCURRENTLY x ON t(id);']) {
@@ -69,6 +78,22 @@ test('receipts must be an exact prefix, with immutable SQL and schema checksums'
     assert.throws(() => pendingMigrations(plan, invalid), /history differs/);
   }
   assert.throws(() => pendingMigrations(plan, [...rows, rows[1]]), /newer than/);
+});
+
+test('receipts are matched by ID, whatever order the database returns them in', t => {
+  const f = fixture(t, ['SELECT 1;', 'SELECT 2;', 'SELECT 3;'], ['0001-baseline', 'zeta-change', 'alpha-change']);
+  const plan = loadPlan(f.dir);
+  const rows = plan.map(m => ({ id: m.id, checksum: m.sha256, schema_sha256: m.schemaSha256 }));
+  assert.deepEqual(pendingMigrations(plan, [rows[1], rows[0]]).map(m => m.id), ['alpha-change']);
+  assert.deepEqual(pendingMigrations(plan, [rows[2], rows[0], rows[1]]), []);
+  // A database that applied the two in the other order has another history:
+  // the same IDs, but alpha-change's receipt names a different prefix.
+  const swapped = fixture(t, ['SELECT 1;', 'SELECT 3;', 'SELECT 2;'], ['0001-baseline', 'alpha-change', 'zeta-change']);
+  const theirs = loadPlan(swapped.dir).map(m => ({ id: m.id, checksum: m.sha256, schema_sha256: m.schemaSha256 }));
+  assert.throws(() => pendingMigrations(plan, theirs.slice(0, 2)), /history differs/);
+  assert.throws(() => pendingMigrations(plan, theirs), /history differs/);
+  // Another build's migration in this build's place.
+  assert.throws(() => pendingMigrations(plan, [rows[0], { ...rows[1], id: 'other-change' }]), /history differs/);
 });
 
 function harness(f, { failures = [], applied = [], setupError } = {}) {
@@ -164,15 +189,18 @@ test('the authoring command appends checksums and refuses to bless historical ed
   fs.mkdirSync(path.join(work, 'migrations'));
   for (const file of fs.readdirSync(f.dir)) fs.copyFileSync(path.join(f.dir, file), path.join(work, 'migrations', file));
   fs.writeFileSync(path.join(work, 'schema.sql'), f.schema + '\nALTER TABLE baseline ADD value int;');
-  const next = path.join(work, 'migrations', '0002-example.sql');
+  const next = path.join(work, 'migrations', 'example.sql');
   fs.writeFileSync(next, 'ALTER TABLE baseline ADD value int;');
-  record('0002-example', work);
+  record('example', work);
   assert.equal(loadPlan(path.join(work, 'migrations')).length, 2);
-  assert.throws(() => record('0002-again', work), /must start with 0003/);
+  assert.throws(() => record('example', work), /already recorded/);
+  fs.writeFileSync(path.join(work, 'migrations', '0003-numbered.sql'), 'SELECT 3;');
+  assert.throws(() => record('0003-numbered', work), /no number/);
+  fs.unlinkSync(path.join(work, 'migrations', '0003-numbered.sql'));
   fs.appendFileSync(path.join(work, 'migrations', '0001-step.sql'), '\nSELECT 1;');
-  fs.writeFileSync(path.join(work, 'migrations', '0003-next.sql'), 'SELECT 3;');
+  fs.writeFileSync(path.join(work, 'migrations', 'next.sql'), 'SELECT 3;');
   const before = fs.readFileSync(path.join(work, 'migrations', 'manifest.json'), 'utf8');
-  assert.throws(() => record('0003-next', work), /checksum mismatch/);
+  assert.throws(() => record('next', work), /checksum mismatch/);
   assert.equal(fs.readFileSync(path.join(work, 'migrations', 'manifest.json'), 'utf8'), before);
 });
 
