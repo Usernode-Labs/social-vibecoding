@@ -59,9 +59,11 @@ async function assertSanitized(client) {
   const { catalog } = await policy.inspect('clone',psql(client));
   for (const name of policy.exclusions(catalog)) {
     if (name === 'public.schema_migrations') {
+      // Receipts match by ID (names do not sort in history order).
+      const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
       const expected = loadPlan()
-        .map(m => ({ id: m.id, checksum: m.sha256, schema_sha256: m.schemaSha256 }));
-      assert.deepEqual((await client.query('SELECT id,checksum,schema_sha256 FROM public.schema_migrations ORDER BY id')).rows, expected,
+        .map(m => ({ id: m.id, checksum: m.sha256, schema_sha256: m.schemaSha256 })).sort(byId);
+      assert.deepEqual((await client.query('SELECT id,checksum,schema_sha256 FROM public.schema_migrations')).rows.sort(byId), expected,
         'only locally generated receipts survive; source history is never trusted or copied');
       continue;
     }

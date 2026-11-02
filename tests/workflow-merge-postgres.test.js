@@ -559,6 +559,61 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     await settle();
   });
 
+  await t.test('M11b a force skips the checks only where it was given: a resolved head merges on its own green checks, a mechanical one keeps the force (2 Nov 2026)', async () => {
+    defaults();
+    // Forced at a, conflicting: resolved at once, and the force stands.
+    const s = await proposalRow({ clean: false, approvalsRequired: 5 });
+    await toProposal(s, 'ForceMerge', { from: 'promoted', userId: s.owner.id, username: 'admin' }, { kind: 'route' });
+    await settle();
+    assert.equal(calls(WORK.sync).length, 1);
+    assert.equal((await pInst(s)).data.force.head, SHA('a'), 'the force names the commit it was given on');
+    // The resolution wrote b: the votes stay, and so does the force, still
+    // about a. b's checks are under way.
+    await toProposal(s, 'ReviewHeadMoved', { column: 'reviewed', from: SHA('a'), to: SHA('b'), keepVotes: true, reason: 'resolved' });
+    await rt.drain();
+    assert.equal((await pInst(s)).data.force.head, SHA('a'));
+    await pool.query(`UPDATE chat_sessions SET check_state = 'pending', checks_commit_sha = $2, integration_merges_clean = TRUE,
+                        integration_head_sha = $2 WHERE id = $1`, [s.id, SHA('b')]);
+    await want(s.app, { sessionId: s.id });
+    await settle();
+    assert.equal(calls(WORK.gate).length, 0, 'not tried while its run is under way');
+    assert.equal(calls(WORK.attempt).length, 0);
+    // Red on b: still not merged, nor tried.
+    await pool.query(`UPDATE chat_sessions SET check_state = 'failing' WHERE id = $1`, [s.id]);
+    await want(s.app, { sessionId: s.id });
+    await settle();
+    assert.equal(calls(WORK.attempt).length, 0, 'a force about a is not one about b');
+    // Even if the gate is asked (the claim is the last word).
+    await toProposal(s, 'MergeRequested', { queueN: 501, force: true }, fromQueueSrc);
+    await settle();
+    assert.equal(calls(WORK.attempt).length, 0, 'the claim refuses b\'s red checks');
+    assert.equal((await pInst(s)).state, 'in_review');
+    // Green on b: the force merges it, with none of its five votes.
+    await pool.query(`UPDATE chat_sessions SET check_state = 'passing' WHERE id = $1`, [s.id]);
+    await want(s.app, { sessionId: s.id });
+    await settle();
+    assert.equal(calls(WORK.attempt).length, 1);
+    assert.equal(calls(WORK.attempt)[0].input.head, SHA('b'));
+    assert.equal((await sentTo('merge-followups', sessionKey(s.id)))[0].payload.force, true);
+
+    // A mechanical merge of main is pure git over a: the force follows it,
+    // red checks and all.
+    defaults();
+    const m = await proposalRow({ clean: false, approvalsRequired: 5, checks: 'failing' });
+    await toProposal(m, 'ForceMerge', { from: 'promoted', userId: m.owner.id, username: 'admin' }, { kind: 'route' });
+    await settle();
+    assert.equal(calls(WORK.sync).length, 0, 'the conflict lane spends nothing on a head whose checks fail');
+    await toProposal(m, 'ReviewHeadMoved', { column: 'reviewed', from: SHA('a'), to: SHA('c'), keepVotes: true, reason: 'mechanical' });
+    await rt.drain();
+    assert.equal((await pInst(m)).data.force.head, SHA('c'));
+    await pool.query(`UPDATE chat_sessions SET checks_commit_sha = $2, integration_merges_clean = TRUE, integration_head_sha = $2
+                       WHERE id = $1`, [m.id, SHA('c')]);
+    await want(m.app, { sessionId: m.id });
+    await settle();
+    assert.equal(calls(WORK.attempt).length, 1);
+    assert.equal(calls(WORK.attempt)[0].input.head, SHA('c'));
+  });
+
   await t.test('M12 a proposal left merging with no attempt of this machine\'s is asked about once its claim is old; a merge it lost is recorded', async () => {
     defaults();
     const s = await proposalRow({ status: 'merging' });

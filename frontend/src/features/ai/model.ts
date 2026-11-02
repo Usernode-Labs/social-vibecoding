@@ -38,6 +38,13 @@ export interface AiPrivate {
   at: string | null;
   /** 1 Nov 2026: what a thread opened from a request's or a change's page is about; its row carries the number. */
   about?: { kind: 'request' | 'change'; number: number } | null;
+  /**
+   * #6153: where it went: a design thread stays listed once it is filed as
+   * a request, or posted on one as its plan (absent from an older server).
+   */
+  state?: 'open' | 'filed' | 'posted' | 'dropped';
+  /** #6153: the number of the request it was filed as, or posted on. */
+  resultRef?: number | null;
 }
 
 export interface AiThread {
@@ -67,6 +74,11 @@ export interface AiThread {
   claimedBy?: string | null;
   /** Held for a slot: how many of Homeroom bot's changes holding one wait on your vote (upNext). */
   yourVotes?: number;
+  /**
+   * #6153: the private thread its request was filed from (a design thread's
+   * New request), which the row opens: the design and its story are there.
+   */
+  rootId?: number | null;
 }
 
 export interface AiWork {
@@ -285,11 +297,57 @@ function isOwed(owed: Set<string>, t: AiThread): boolean {
     || (!!t.change?.number && owed.has(`${t.app.slug}#${t.change.number}`));
 }
 
-/** Pure: Needs you, in order: the feed's cards, the bot's plans waiting for Build it, then your private threads. */
+/**
+ * Pure (#6153): the request a private thread was filed as, or posted its
+ * plan on, on a project, as `slug#number`; null for any other thread.
+ */
+export function filedKey(p: AiPrivate): string | null {
+  if ((p.state !== 'filed' && p.state !== 'posted') || !p.app || !(Number(p.resultRef) > 0)) return null;
+  return `${p.app.slug}#${Number(p.resultRef)}`;
+}
+
+/**
+ * Pure (#6153): each request's private thread, by `slug#number`: the newest
+ * thread filed as it or posted on it (the list comes newest first).
+ */
+function filedThreads(work: AiWork | null): Map<string, number> {
+  const filed = new Map<string, number>();
+  for (const p of work?.private || []) {
+    const key = filedKey(p);
+    if (key && !filed.has(key)) filed.set(key, p.rootId);
+  }
+  return filed;
+}
+
+/** Pure (#6153): a request's row, carrying the private thread it was filed from, which it opens. */
+function withThread(filed: Map<string, number>, t: AiThread): AiThread {
+  const rootId = t.app && t.number ? filed.get(`${t.app.slug}#${t.number}`) : undefined;
+  return rootId ? { ...t, rootId } : t;
+}
+
+/** Pure (#6153): every request with a row in any list, as `slug#number`. */
+function listedKeys(needs: NeedItem[] | null, work: AiWork | null): Set<string> {
+  const listed = owedKeys(needs);
+  for (const t of [...(work?.needs || []), ...(work?.next || []), ...(work?.waiting || []), ...(work?.live || [])]) {
+    if (t.app && t.number) listed.add(`${t.app.slug}#${t.number}`);
+  }
+  return listed;
+}
+
+/**
+ * Pure: Needs you, in order: the feed's cards, the bot's plans waiting for
+ * Build it, then your private threads. #6153: a design thread filed as a
+ * request is that request's row once the request has one, in any list (in
+ * In progress, Waiting or Live it opens the thread: inProgress, upNext,
+ * liveThisWeek), never a second "Only you" row. One whose request is in no
+ * list (closed, live long ago) is still listed here.
+ */
 export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow[] {
   const rows: WorkRow[] = [];
   const owed = owedKeys(needs);
   const held = heldProjects(work);
+  const filed = filedThreads(work);
+  const listed = listedKeys(needs, work);
   for (const item of needs || []) {
     const app = item.app || null;
     rows.push({
@@ -333,6 +391,8 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
     });
   }
   for (const p of work?.private || []) {
+    const key = filedKey(p);
+    if (key && filed.get(key) === p.rootId && listed.has(key)) continue;
     // 1 Nov 2026: a thread about a request or a change is drawn by it, its
     // number before its title as a request's row is ("#18 Dark mode").
     const about = p.about && p.about.number > 0 && p.app ? p.about : null;
@@ -385,24 +445,38 @@ export function threadWhy(t: AiThread): Phrase | null {
   return null;
 }
 
-/** Pure: In progress, less any thread the feed already lists. */
+/**
+ * Pure: In progress, less any thread the feed already lists. #6153: a
+ * request filed from a private thread of yours carries that thread
+ * (`rootId`), which its row opens.
+ */
 export function inProgress(needs: NeedItem[] | null, work: AiWork | null): AiThread[] {
   const owed = owedKeys(needs);
-  return (work?.next || []).filter((t) => !isOwed(owed, t));
+  const filed = filedThreads(work);
+  return (work?.next || []).filter((t) => !isOwed(owed, t)).map((t) => withThread(filed, t));
 }
 
 /**
  * Pure: Waiting, less any thread the feed already lists. A request held for
  * one of Homeroom bot's slots counts the bot's changes on its project that
- * wait on your vote: those votes are what frees one.
+ * wait on your vote: those votes are what frees one. #6153: and a request
+ * filed from a private thread carries it, as In progress does.
  */
 export function upNext(needs: NeedItem[] | null, work: AiWork | null): AiThread[] {
   const owed = owedKeys(needs);
+  const filed = filedThreads(work);
   return (work?.waiting || []).filter((t) => !isOwed(owed, t)).map((t) => {
-    if (t.what !== 'held' || t.heldBy === 'daily' || !t.app) return t;
-    const yourVotes = (needs || []).filter((item) => item.app?.slug === t.app!.slug && holdsSlot(item)).length;
-    return yourVotes ? { ...t, yourVotes } : t;
+    const row = withThread(filed, t);
+    if (row.what !== 'held' || row.heldBy === 'daily' || !row.app) return row;
+    const yourVotes = (needs || []).filter((item) => item.app?.slug === row.app!.slug && holdsSlot(item)).length;
+    return yourVotes ? { ...row, yourVotes } : row;
   });
+}
+
+/** Pure: Live this week; #6153: a request filed from a private thread carries it, as In progress does. */
+export function liveThisWeek(work: AiWork | null): AiThread[] {
+  const filed = filedThreads(work);
+  return (work?.live || []).map((t) => withThread(filed, t));
 }
 
 /** The words of an In progress or Waiting row's tooltip, by what it waits on. */

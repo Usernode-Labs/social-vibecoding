@@ -682,6 +682,86 @@ test('Main Chat is the list\'s first row: the bot\'s mark, its name, what is new
   assert.match(read('frontend/src/features/ai/index.tsx'), /const lit = !columnShows \|\| blank \? null : openRoot \? `private:\$\{openRoot\}` : 'main';/);
 });
 
+// #6153 (2 Nov 2026): a design thread filed as request #14 was listed twice,
+// in Needs you as "Only you" and under In progress as #14, with nothing
+// tying the two together. It is the request's row now, which opens it.
+test('#6153: a design thread filed as a request is the request\'s row, which opens the thread; never a second "Only you" row', () => {
+  const { needsYou, inProgress, upNext, liveThisWeek, filedKey, shortWords } = loadTsx(MODEL);
+  const ear = { slug: 'ear-trainer', name: 'Ear Trainer', icon_url: null, icon_emoji: null };
+  const design = (rootId, extra = {}) => ({ rootId, title: 'Can you first render the main screen?', kind: 'design', app: ear, at: null, ...extra });
+  const request = (threadId, number, what, extra = {}) => thread(threadId, number, what, {
+    app: ear, title: `Design: Ear Trainer ${number}`, href: `#app/ear-trainer/dev/issues/${number}`, ...extra,
+  });
+  const building = request(40, 14, 'building', { group: 'next', by: 'bot' });
+  const work = { private: [design(731, { state: 'filed', resultRef: 14 })], needs: [], next: [building], waiting: [], live: [] };
+
+  assert.deepEqual(needsYou([], work).map((r) => r.key), [], 'no private: row in Needs you');
+  const [row, ...more] = inProgress([], work);
+  assert.equal(more.length, 0, 'one row, the request\'s');
+  assert.deepEqual([row.threadId, row.number, row.rootId, row.href], [40, 14, 731, '#app/ear-trainer/dev/issues/14'],
+    'carrying the thread it was filed from');
+  assert.deepEqual(shortWords(row), shortWords(building), 'its right side is the track\'s word, as it was');
+  assert.notEqual(words(shortWords(row)), message('messages:ai.short.private'));
+  assert.equal(building.rootId, undefined, 'the work it came from is left as it was');
+
+  // A design thread that went nowhere yet is unchanged: its own row, Only you.
+  const open = { ...work, private: [design(732, { state: 'open' })] };
+  assert.deepEqual(needsYou([], open).map((r) => [r.key, r.rootId, r.pill]), [['private:732', 732, null]]);
+  assert.equal(inProgress([], open)[0].rootId, undefined);
+  assert.equal(inProgress([], { ...work, private: [design(733)] })[0].rootId, undefined, 'nor one from an older server, which says nothing of where it went');
+
+  // Waiting and Live this week carry it the same; posted on a request as its plan, too.
+  const later = {
+    private: [design(734, { state: 'filed', resultRef: 15 }), design(735, { state: 'posted', resultRef: 16 })],
+    needs: [], next: [], waiting: [request(41, 15, 'vote', { myVote: 'yes' })], live: [request(42, 16, 'live', { group: 'live' })],
+  };
+  assert.deepEqual(needsYou([], later).map((r) => r.key), []);
+  assert.deepEqual(upNext([], later).map((t) => [t.number, t.rootId]), [[15, 734]]);
+  assert.deepEqual(liveThisWeek(later).map((t) => [t.number, t.rootId]), [[16, 735]]);
+  assert.deepEqual(liveThisWeek(null), []);
+
+  // A request in no list (closed, live long ago): the thread stays reachable as it was.
+  const gone = { private: [design(736, { state: 'filed', resultRef: 9 })], needs: [], next: [building], waiting: [], live: [] };
+  assert.deepEqual(needsYou([], gone).map((r) => [r.key, r.rootId]), [['private:736', 736]]);
+  // A vote you owe on its change is the feed's row, by the request's number: still one row.
+  const owed = [{ kind: 'proposal', id: 12229, number: 330, title: 'Ear Trainer home', app: ear, request: { number: 14 } }];
+  assert.deepEqual(needsYou(owed, work).map((r) => r.key), ['need:proposal:12229']);
+  assert.deepEqual(inProgress(owed, work), []);
+  // Two threads filed as one request: the newest is its row; the other is still listed.
+  const twice = { ...work, private: [design(737, { state: 'posted', resultRef: 14 }), design(731, { state: 'filed', resultRef: 14 })] };
+  assert.deepEqual(needsYou([], twice).map((r) => r.key), ['private:731']);
+  assert.equal(inProgress([], twice)[0].rootId, 737);
+  assert.equal(filedKey(design(738, { state: 'filed', resultRef: 14, app: null })), null, 'a thread in no project is no request\'s');
+  assert.equal(filedKey(design(738, { state: 'dropped', resultRef: 14 })), null);
+  assert.equal(filedKey(design(738, { state: 'filed', resultRef: 14 })), 'ear-trainer#14');
+
+  // The row opens the thread (index.tsx openThread), and is lit while it is in the column.
+  const { renderComponent } = require('./lib/render-tsx');
+  const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, lit: 'private:731', ready: true, rows: [], owed: 0,
+    progress: [row], waiting: [], live: [], openRow() {}, openThread() {},
+  });
+  assert.match(html, /data-ai-line="building" data-ai-lit="" aria-current="true">[\s\S]*?Design: Ear Trainer 14/);
+  assert.doesNotMatch(html, /data-ai-line="private"/);
+  assert.equal((html.match(/data-ai-lit=""/g) || []).length, 1);
+
+  // Homeroom bot's answer reads the same lists: one row there too.
+  const aiWork = require('../src/services/ai-work');
+  const lists = aiWork.listsOf([], work, { botUsername: 'homeroom_bot' });
+  assert.deepEqual(lists.needsYou, [], 'no private thread in Needs you');
+  assert.deepEqual(lists.inProgress.map((r) => r.number), [14]);
+  assert.equal(lists.counts.needsYou, 0);
+  const kept = aiWork.listsOf([], gone, { botUsername: 'homeroom_bot' });
+  assert.deepEqual(kept.needsYou.map((r) => r.says), ['their private thread with Homeroom bot, not posted yet']);
+  assert.equal(kept.counts.needsYou, 0, 'a private thread asks nothing');
+  // And the server says where each went (ai-work.js shapePrivate, PRIVATE_SQL).
+  assert.match(aiWork.PRIVATE_SQL, /SELECT m\.id AS root_id, m\.content, m\.created_at, p\.kind, p\.state, p\.result_ref,/);
+  const shaped = aiWork.shapePrivate({ root_id: 731, content: 'I opened a design thread.', kind: 'design', design_title: 'Ear Trainer home', state: 'filed', result_ref: 14, slug: 'ear-trainer', name: 'Ear Trainer' });
+  assert.deepEqual([shaped.state, shaped.resultRef, shaped.title], ['filed', 14, 'Ear Trainer home']);
+  const bare = aiWork.shapePrivate({ root_id: 9, content: 'An idea', created_at: null });
+  assert.deepEqual([bare.state, bare.resultRef], [undefined, undefined], 'a thread with no row says nothing of where it went');
+});
+
 test('the column from 768px: Main, or one thread alone under its own head; a page the panel holds puts Main back under it', () => {
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /const WIDE = '\(min-width: 768px\)';/);
@@ -715,7 +795,8 @@ test('a thread opens on this page: beside the list in Main\'s place, or on its p
     'a topic page opened from here goes back here');
   assert.match(src, /const BOT_PAGE = BOT_TAB;/);
   assert.equal(loadTsx('frontend/src/features/ai/door.ts').BOT_TAB, '#homeroom-bot');
-  assert.match(src, /const openThread = \(th: AiThread\) => \{\s+if \(openPublic\(th\.href, th\.app, th\.title, aboutRow\(th\), botId\)\) underPanel\(\);/,
+  // #6153: a request filed from a private thread opens that thread first.
+  assert.match(src, /const openThread = \(th: AiThread\) => \{(\s+\/\/[^\n]*)*\s+if \(th\.rootId\) \{\s+openPrivate\(th\.rootId\);\s+return;\s+\}\s+if \(openPublic\(th\.href, th\.app, th\.title, aboutRow\(th\), botId\)\) underPanel\(\);/,
     'In progress, Waiting and Live this week');
   assert.match(src, /if \(openPublic\(row\.href, row\.app, row\.title, aboutRow\(row\), botId\)\) underPanel\(\);\s+\};/, 'and Needs you');
   const { isTopicHref } = loadTsx(MODEL);
@@ -724,7 +805,8 @@ test('a thread opens on this page: beside the list in Main\'s place, or on its p
   assert.equal(isTopicHref('#app/garden/dev/governance/3'), true);
   assert.equal(isTopicHref('#app/garden/workshop'), false, 'a Workshop is no topic: the origin would wait for the next one');
   // A private thread is the column's: the panel gives its place back first (showAt).
-  assert.match(src, /const next = \{ threadRootId: row\.rootId, focusMessageId: null \};[\s\S]{0,120}showAt\(next\);\s+showAddress\(botTabAddress\(next\)\);/);
+  assert.match(src, /const openPrivate = \(rootId: number\) => \{\s+const next = \{ threadRootId: rootId, focusMessageId: null \};[\s\S]{0,120}showAt\(next\);\s+showAddress\(botTabAddress\(next\)\);/);
+  assert.match(src, /const openRow = \(row: WorkRow\) => \{\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}/);
   // The panel may stand beside the AI tab's page, and stays while it is up.
   const controller = read('frontend/src/features/side-panel/controller.ts');
   assert.match(controller, /const besideAi = typeof A\._isScreenVisible === 'function' && A\._isScreenVisible\('ai-screen'\);/);

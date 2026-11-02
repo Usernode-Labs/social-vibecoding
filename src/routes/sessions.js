@@ -6562,6 +6562,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     if (await stagingRecovery.stagingNeedsRebuild(session, { config, headSha })) {
       return { status: 'missing' };
     }
+    // Asleep (#6157, services/preview-sleep.js): not missing, since its
+    // image, database and address are all there, and not ready, since it has
+    // no pod. The route wakes it. One out of date was answered missing above,
+    // and is rebuilt rather than woken.
+    if (require('../services/preview-sleep').isAsleep(session)) return { status: 'asleep' };
 
     const stagingName = `usernode-staging-${session.app_slug}--${session.id}`;
     const runtimeKind = session.staging_runtime_kind || applicationRuntime.mode(config);
@@ -6617,9 +6622,49 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     };
   }
 
+  // A sleeping preview opened from Homeroom (#6157): woken in the background,
+  // behind the same "spinning back up" loader a rebuild shows. Once it serves,
+  // `staging_awake` tells the loader to open it (it asks ensure-staging again,
+  // which verifies it as ever). One that does not wake is handed to the
+  // preview machine as lost, which rebuilds it, and the loader waits for that
+  // build's staging_ready or staging_failed instead; for a read-only reviewer
+  // (`rebuild: false`) it is reported as failed, since their route never
+  // rebuilds.
+  function wakeAndTell(session, requesterId, { rebuild = true } = {}) {
+    const sessionId = Number(session.id);
+    const previewSleep = require('../services/preview-sleep');
+    const { broadcastGlobal } = require('../services/ws');
+    previewSleep.wake(config, pool, sessionId, { reason: 'preview-click' })
+      .then((out) => {
+        if (out.status === 'woke' || out.status === 'awake') {
+          broadcastGlobal({ type: 'session_event', sessionId, event: 'staging_awake', url: out.url || session.staging_url });
+          return null;
+        }
+        log.warn('sessions', 'A sleeping preview did not wake', { sessionId, status: out.status, detail: out.detail, rebuild });
+        if (!rebuild) {
+          broadcastGlobal({
+            type: 'session_event', sessionId, event: 'staging_failed',
+            error: 'This preview was asleep and did not wake up. A collaborator can rebuild it.',
+            errorName: 'PreviewAsleep', missingKeys: [],
+          });
+          return null;
+        }
+        return stagingRecovery.rebuildSessionStaging({ config, pool, session, reason: 'preview-click', requesterId });
+      })
+      .catch((err) => {
+        const { errMsg, errName, missingKeys } = describeStagingFailure(err);
+        log.error('sessions', 'A sleeping preview could not be woken or rebuilt', { sessionId, errName, err: errMsg });
+        broadcastGlobal({
+          type: 'session_event', sessionId, event: 'staging_failed', error: errMsg, errorName: errName, missingKeys,
+        });
+      });
+  }
+
   // Read-only twin of ensure-staging. A reviewer who cannot trigger a build
   // still gets the same health/revision/edge gate instead of opening the
-  // last stored URL directly. It never repairs, rebuilds, or changes state.
+  // last stored URL directly. It never repairs or rebuilds. It does wake a
+  // sleeping preview (#6157): that is what its direct link does for anyone
+  // who opens it, and nothing is rebuilt.
   router.get('/api/sessions/:id/preview-status', async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
@@ -6631,6 +6676,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.json({ status: 'unavailable', reason: 'demo' });
       }
       const result = await inspectPreview(session);
+      if (result.status === 'asleep') {
+        require('../services/preview-sleep').touchActivity(pool, session.id);
+        wakeAndTell(session, req.user.id, { rebuild: false });
+        return res.json({ status: 'rebuilding', waking: true });
+      }
       // The admin Journey's creation path: a preview answered as ready is
       // a preview opened, once per viewer per change. Never awaited.
       if (result.status === 'ready') journeyEvents.notePreviewOpened(pool, { sessionId: session.id, viewerId: req.user.id });
@@ -6676,6 +6726,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.json({ status: 'unavailable', reason: 'demo' });
       }
 
+      // Somebody opened it: a preview in use does not go to sleep (#6157).
+      require('../services/preview-sleep').touchActivity(pool, session.id);
       // A missing/stale runtime rebuilds. A present but unhealthy one is
       // reported honestly and left alone: one failed bounded probe is not a
       // reason to churn the app or its database, but it is a reason not to
@@ -6684,6 +6736,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // As in preview-status: a ready answer is a preview opened. A rebuild
       // is not, until the client asks again once it is up.
       if (inspected.status === 'ready') journeyEvents.notePreviewOpened(pool, { sessionId: session.id, viewerId: req.user.id });
+      // Asleep: scaled back up, no rebuild and no checks run again (#6157).
+      if (inspected.status === 'asleep') {
+        wakeAndTell(session, req.user.id);
+        return res.json({ status: 'rebuilding', waking: true });
+      }
       if (inspected.status !== 'missing') return res.json(inspected);
 
       // Dedup concurrent clicks: at most one rebuild per session in flight.

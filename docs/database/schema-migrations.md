@@ -1,8 +1,9 @@
 # Schema migrations
 
 `src/db/migrations/` is the SQL source of truth: one immutable baseline plus
-numbered, append-only deltas. `src/db/reference-data.js` owns the insert-only
-reference/default rows shared by fresh initialization and every boot.
+append-only deltas, in the order `manifest.json` lists them.
+`src/db/reference-data.js` owns the insert-only reference/default rows
+shared by fresh initialization and every boot.
 There is no hand-maintained second copy of the schema.
 
 `src/db/schema.sql` is an ignored generated input for tools that need a file.
@@ -34,11 +35,12 @@ Historical backfills and their completion markers stay in the baseline.
 
 To change the schema:
 
-1. Add the next consecutive SQL file, for example
-   `src/db/migrations/0002-example-change.sql`, containing only the change
-   from the preceding schema. Include transformations needed on existing
+1. Add a SQL file named for what it does, for example
+   `src/db/migrations/example-change.sql`, containing only the change from
+   the preceding schema. No number: its place in the history is its
+   position in the manifest. Include transformations needed on existing
    databases; keep independent changes in separate files.
-2. Run `node scripts/record-schema-migration.js 0002-example-change` to append
+2. Run `node scripts/record-schema-migration.js example-change` to append
    its SQL and history-prefix checksums and regenerate the ignored input.
    It refuses edited historical files. Commit the delta and manifest only;
    never edit or commit schema.sql.
@@ -53,12 +55,38 @@ To change the schema:
    schema policy. Review that policy when the catalog changes; approving a
    schema never approves exporting new data.
 
+When main records a migration first, the branch's manifest conflicts with
+main's, and that is the only conflict: the files have different names.
+Never merge the manifest by hand. After merging or rebasing onto main, run
+
+```sh
+node scripts/record-schema-migration.js --onto origin/main
+```
+
+It rebuilds the manifest as main's history, exactly as main recorded it,
+followed by the branch's own migrations in their order, each recorded again
+so its history checksum covers main's. File names and anything that cites
+them stay as they are. It refuses a branch that edited one of main's
+migrations. Homeroom's sync with main runs it the same way (`--onto
+MERGE_HEAD`) and hands any other conflicted file to the model; if the
+command refuses, the sync stops and the author resolves it. The commit a
+resolution writes merges only on its own green checks, even when an admin
+forced the proposal before (`forceWaivesChecks` in
+`src/workflow/rules/merge-claim.ts`).
+
+The first fourteen migrations carry their position as a number
+(`0001-baseline` … `0014-web-withdraws-at-cutover`). Their IDs stay: the
+receipts and tests name them, and the manifest still requires each number
+to be its position. New IDs are names; the record command refuses a number.
+
 Never edit, reorder or delete an applied migration. Correct it in a new file.
 The manifest's schemaSha256 is the digest of its ordered migration prefix,
-not of generated output or mutable reference defaults. A build older than
-recorded history or with different checksums refuses schema startup. Roll
-forward with compatible reader/writer releases; an old image is not a
-schema down-migration. Existing marker-guarded boot repairs and fixtures
+not of generated output or mutable reference defaults. The runner matches
+a database's receipts to the build's first migrations by ID (names do not
+sort in history order), so a database knows exactly which history it has.
+A build older than recorded history or with different checksums refuses
+schema startup. Roll forward with compatible reader/writer releases; an old
+image is not a schema down-migration. Existing marker-guarded boot repairs and fixtures
 continue through migrate.js.
 
 Files cannot commit/roll back themselves. CREATE INDEX CONCURRENTLY needs a

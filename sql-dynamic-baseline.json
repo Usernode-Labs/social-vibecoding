@@ -1641,6 +1641,13 @@
       "preview": "`UPDATE chat_sessions SET pr_body = $1, ${summaryFreshness.INVALIDATE_SQL} WHERE id = $2`"
     },
     {
+      "source": "src/services/preview-sleep.js",
+      "kind": "structural-template",
+      "fingerprint": "aa74331ecdcc54d02ff3",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions cs SET staging_asleep_at = now(), staging_asleep_db_bytes = NULL WHERE cs.id = $1 AND cs.staging_asleep_at IS NULL AND cs.staging_url IS N"
+    },
+    {
       "source": "src/services/private-threads.js",
       "kind": "structural-template",
       "fingerprint": "eec20ca6db6e76c3ef52",
