@@ -351,6 +351,13 @@ async function redo(pool, config, { row, user, message = null, deps = {} }) {
   } catch (err) {
     log.warn('homeroom-bot-steer', 'Could not stop a build to redo it', { sessionId: build.sessionId, err: err.message });
   }
+  // 2 Nov 2026: a Stop that found no turn to stop (the build's coding turn
+  // ended: it is in its tests, or done) is the build finishing first, as
+  // with no build at all above, never a stop to try again in a minute.
+  if (stopped?.body && stopped.body.stopped === false) {
+    await pool.query("UPDATE homeroom_bot_build_notes SET state = 'gone', settled_at = NOW() WHERE id = $1 AND state = 'redone'", [row.id]);
+    return { ok: true, gone: true, patch: { state: 'gone' } };
+  }
   if (!stopped?.body?.stopped) {
     await pool.query("UPDATE homeroom_bot_build_notes SET state = 'offered', settled_at = NULL WHERE id = $1 AND state = 'redone'", [row.id]);
     return { ok: false, status: 503, error: 'I could not stop it just now. Try again in a minute.' };
