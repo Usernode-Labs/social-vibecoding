@@ -28,6 +28,32 @@ export function changeDetailAsk(detail: unknown, id: unknown): ChangeDetailAsk {
   return Number(detail) === Number(id) ? { reread: true } : null;
 }
 
+/**
+ * #6139: a request's page says whether a change underway has finished from its
+ * read of the thread, so it reads the thread again when it hears news of one
+ * (a verdict, a turn starting or ending), once for a burst. `reread` and
+ * `target` are the caller's; the result stops listening.
+ */
+export function rereadOnChangeNews(
+  target: EventTarget,
+  changes: ReadonlyArray<{ id: number; state?: string }>,
+  reread: () => void,
+  waitMs = 500,
+): () => void {
+  const underway = changes.filter((c) => c.state === 'underway');
+  if (!underway.length) return () => {};
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const hear = (event: Event) => {
+    if (timer || !underway.some((c) => changeDetailAsk((event as CustomEvent).detail, c.id))) return;
+    timer = setTimeout(() => { timer = null; reread(); }, waitMs);
+  };
+  target.addEventListener('change-detail-refresh', hear);
+  return () => {
+    target.removeEventListener('change-detail-refresh', hear);
+    if (timer) clearTimeout(timer);
+  };
+}
+
 /** The page's read with `patch` merged over it, when that read is this change's. */
 export function mergeChangePatch(current: any, id: unknown, patch: Record<string, unknown>): any {
   return current && Number(current.id) === Number(id) ? { ...current, ...patch } : current;

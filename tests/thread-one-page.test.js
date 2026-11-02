@@ -188,6 +188,37 @@ test('#6139: the line under a change says whether it is still being built or fin
   assert.equal(message('project:topic.thread.page.ready'), 'Built, and its checks pass. Its votes open once it is put up for a vote.');
 });
 
+test('#6139: an open request page reads its thread again when a change underway has news, once for a burst', async () => {
+  const { rereadOnChangeNews } = loadTsx(`${TOPIC}/change-detail-refresh.ts`);
+  const target = new EventTarget();
+  let reads = 0;
+  const tell = (detail) => target.dispatchEvent(new CustomEvent('change-detail-refresh', { detail }));
+  const settle = () => new Promise((resolve) => { setTimeout(resolve, 20); });
+  const stop = rereadOnChangeNews(target, [{ id: 91, state: 'underway' }, { id: 92, state: 'review' }], () => { reads += 1; }, 5);
+
+  tell(92);
+  tell(99);
+  await settle();
+  assert.equal(reads, 0, 'news of a change up for a vote, or of another change, moves nothing here');
+
+  tell(91);
+  tell({ id: 91, patch: { check_state: 'passing' } });
+  tell({ id: 91, row: { id: 91 } });
+  await settle();
+  assert.equal(reads, 1, 'a bare id, a patch and a row all count, and a burst is one read');
+
+  tell(91);
+  await settle();
+  assert.equal(reads, 2, 'work starting again is heard too');
+
+  tell(91);
+  stop();
+  await settle();
+  assert.equal(reads, 2, 'a page that has gone reads nothing');
+
+  assert.match(read(`${TOPIC}/request-head.tsx`), /useEffect\(\(\) => rereadOnChangeNews\(window, layout\.changes, threadRead\.reread\), \[underwayKey\]\);/);
+});
+
 test('D5: a change folded under its ballot has no Vote of its own', () => {
   const head = read(`${TOPIC}/change-head.tsx`);
   assert.match(head, /<GateCard which="votes" g=\{v\.votes\} action=\{ballot \? null : voteAction\} id=\{id\} \/>/);
