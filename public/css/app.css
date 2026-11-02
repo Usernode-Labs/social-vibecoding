@@ -21529,6 +21529,18 @@ span.dev-ws-dash-cell[data-ws-dash-open]:focus-visible { outline: 2px solid var(
 #dev-workshop.dev-ws-has-board > .dev-ws > .dev-ws-tabbody > :not(.dev-ws-pane) {
   width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
 }
+/* THE PLACE'S TITLE WIDENS WITH THE BOARD (overnight audit D12, 1 Nov 2026).
+   Since #4417 the band is the page's title row ("Workshop" over its
+   hairline), not the pill strip the rule above kept at reading width, and
+   held to 760px it left the board starting left of the title and running on
+   past the end of its rule. From 768px, where it is that title row, it spans
+   the pane like the board's own head, and its name steps in by the head's
+   10px so the title, the head's first control and the columns share one
+   edge. A phone's band is the coloured strip and is left alone. */
+@media (min-width: 768px) {
+  #dev-workshop.dev-ws-has-board > .dev-ws > .dev-ws-placebar { max-width: none; }
+  #dev-workshop.dev-ws-has-board > .dev-ws > .dev-ws-placebar > .dev-ws-tabtrack { padding-left: 10px; padding-right: 10px; }
+}
 /* On By stage the pane WIDENS AND STAYS A PANE. An earlier cut stripped its
    sheet, radius and padding here, on the argument that a card face is a frame
    drawn around the whole window. What that actually produced was the pane
