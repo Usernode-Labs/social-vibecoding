@@ -4919,13 +4919,13 @@
     "text": "Needs you",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Pill at the end of a row that waits on the person, when it says no more than that."
   },
-  "ai.next.titleCount_one": {
-    "text": "In progress · {{count}}",
-    "description": "The AI tab's main view: the label over the person's work being worked on, with how many."
+  "ai.busy.title_one": {
+    "text": "Waiting & in progress · {{count}}",
+    "description": "The AI tab's main view: small caps label over the card of the person's work that is under way or waits on someone else, beside Needs you and Live this week. {{count}} is how many rows it holds."
   },
-  "ai.next.titleCount_other": {
-    "text": "In progress · {{count}}",
-    "description": "The AI tab's main view: the label over the person's work being worked on, with how many."
+  "ai.busy.title_other": {
+    "text": "Waiting & in progress · {{count}}",
+    "description": "The AI tab's main view: small caps label over the card of the person's work that is under way or waits on someone else, beside Needs you and Live this week. {{count}} is how many rows it holds."
   },
   "ai.next.goingLive": {
     "text": "{{project}} · #{{number}} · Going live",
@@ -4962,14 +4962,6 @@
   "ai.next.claimed": {
     "text": "{{project}} · #{{number}} · {{username}} is building it",
     "description": "The AI tab's main view, In progress: tooltip of the row of a request of the person's that someone has claimed to build and has no change for yet. {{username}} is who claimed it."
-  },
-  "ai.up.titleCount_one": {
-    "text": "Waiting · {{count}}",
-    "description": "The AI tab's main view: the label over the person's work with nothing for them to do on it, with how many."
-  },
-  "ai.up.titleCount_other": {
-    "text": "Waiting · {{count}}",
-    "description": "The AI tab's main view: the label over the person's work with nothing for them to do on it, with how many."
   },
   "ai.up.vote": {
     "text": "{{project}} · #{{number}} · Waiting for votes",
