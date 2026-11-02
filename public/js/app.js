@@ -3826,7 +3826,9 @@ const App = {
     // vote-panel preview), so drive the "spinning back up" overlay globally,
     // before the currentSession gate below. onStagingRebuildResult is a
     // no-op unless a matching pending marker is parked, so this is cheap.
-    if (data.event === 'staging_ready') {
+    // #6157: a sleeping preview woke (ensure-staging scaled it back up rather
+    // than rebuilding it): its loader opens it the same way.
+    if (data.event === 'staging_ready' || data.event === 'staging_awake') {
       AppView.onStagingRebuildResult(data.sessionId, { url: data.url });
     } else if (data.event === 'staging_failed') {
       AppView.onStagingRebuildResult(data.sessionId, { failed: true, error: data.error });

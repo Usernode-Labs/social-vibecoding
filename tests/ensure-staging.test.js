@@ -605,3 +605,126 @@ test('ensure-staging allows a non-owner on a promoted (vote-backed) session', as
     assert.equal((await res.json()).status, 'rebuilding');
   } finally { await srv.close(); loaded.restore(); }
 });
+
+// ── #6157: a sleeping preview is woken, not rebuilt ──────────────────────
+//
+// A preview nobody used sleeps (services/preview-sleep.js): its Deployment at
+// no replicas, everything else kept. Its row says so (staging_asleep_at).
+// Opening it scales it back up behind the same "spinning back up" loader,
+// with no rebuild and no checks run again. One built with another platform
+// environment is rebuilt instead, as the stale sweep would have done.
+
+function loadRecoveryKubernetes(inspect) {
+  const runtimePath = require.resolve('../src/services/application-runtime');
+  const recPath = require.resolve('../src/services/staging-recovery');
+  const original = stubModule(runtimePath, { ...require('../src/services/application-runtime'), inspect });
+  delete require.cache[recPath];
+  const subject = require('../src/services/staging-recovery');
+  const restore = () => {
+    if (original) require.cache[runtimePath] = original; else delete require.cache[runtimePath];
+    delete require.cache[recPath];
+    stagingEnvModule._resetExpected();
+  };
+  return { subject, restore };
+}
+
+const ASLEEP_KUBE = {
+  id: 42, staging_url: 'https://stg.example', staging_runtime_kind: 'kubernetes',
+  staging_runtime_name: 'sv-preview-1-s42', staging_asleep_at: '2026-11-02T10:00:00Z',
+};
+
+test('#6157 stagingNeedsRebuild: an asleep preview at no replicas is not gone; out of date it is rebuilt', async () => {
+  const current = { [stagingEnvModule.LABEL_ENV_FP]: currentFingerprint() };
+  const fresh = loadRecoveryKubernetes(async () => ({ status: 'stopped', labels: current }));
+  try {
+    assert.equal(await fresh.subject.stagingNeedsRebuild(ASLEEP_KUBE, { config: TEST_CONFIG }), false, 'asleep: woken, not rebuilt');
+    assert.equal(await fresh.subject.stagingNeedsRebuild({ ...ASLEEP_KUBE, staging_asleep_at: null }, { config: TEST_CONFIG }), true,
+      'a stopped preview nobody put to sleep is still a dead one');
+  } finally { fresh.restore(); }
+  const waking = loadRecoveryKubernetes(async () => ({ status: 'restarting', labels: current }));
+  try {
+    assert.equal(await waking.subject.stagingNeedsRebuild(ASLEEP_KUBE, { config: TEST_CONFIG }), false, 'a second click during the wake rebuilds nothing');
+  } finally { waking.restore(); }
+  const stale = loadRecoveryKubernetes(async () => ({ status: 'stopped', labels: { [stagingEnvModule.LABEL_ENV_FP]: 'anotherbuild' } }));
+  try {
+    assert.equal(await stale.subject.stagingNeedsRebuild(ASLEEP_KUBE, { config: TEST_CONFIG }), true,
+      'built with another platform environment: rebuilt on wake, as the stale sweep would have');
+    assert.equal(await stale.subject.stagingNeedsRebuild(ASLEEP_KUBE, { config: TEST_CONFIG, envCheck: false }), false,
+      'the preview-runtimes clock never reports a sleeping preview lost');
+  } finally { stale.restore(); }
+  const gone = loadRecoveryKubernetes(async () => ({ status: 'not_found', labels: {} }));
+  try {
+    assert.equal(await gone.subject.stagingNeedsRebuild(ASLEEP_KUBE, { config: TEST_CONFIG }), true, 'asleep but gone is gone');
+  } finally { gone.restore(); }
+});
+
+// The route with preview-sleep's wake stubbed: `wake` answers as given.
+function stubPreviewSleep(wakeAnswer) {
+  const id = require.resolve('../src/services/preview-sleep');
+  const real = require('../src/services/preview-sleep');
+  const woken = [];
+  const original = stubModule(id, {
+    ...real,
+    touchActivity: async () => true,
+    wake: async (config, pool, sessionId, opts) => { woken.push({ sessionId, reason: opts?.reason }); return wakeAnswer; },
+  });
+  return { woken, restore: () => { if (original) require.cache[id] = original; else delete require.cache[id]; } };
+}
+
+const ASLEEP_ROW = { ...OWNED_ACTIVE, status: 'promoted', staging_container_id: null,
+  staging_runtime_kind: 'kubernetes', staging_runtime_name: 'sv-preview-1-s42', staging_asleep_at: '2026-11-02T10:00:00Z' };
+
+test('#6157 ensure-staging on a sleeping preview scales it up and answers ready, with no rebuild', async () => {
+  const sleep = stubPreviewSleep({ status: 'woke', url: 'https://stg.example' });
+  const loaded = loadSessions({ pool: makePool(ASLEEP_ROW), needsRebuild: false, rebuild: async () => 'must not rebuild' });
+  const srv = await startServer(loaded);
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' });
+    assert.deepEqual(await res.json(), { status: 'rebuilding', waking: true }, 'the "spinning back up" loader, saying it wakes');
+    assert.ok(await waitFor(() => loaded.broadcasts.length > 0));
+    assert.deepEqual(sleep.woken, [{ sessionId: 42, reason: 'preview-click' }]);
+    assert.deepEqual(loaded.broadcasts, [{ type: 'session_event', sessionId: 42, event: 'staging_awake', url: 'https://stg.example' }],
+      'the loader opens it once it serves (it asks ensure-staging again, which verifies it)');
+    assert.equal(loaded.getRebuildCalls(), 0, 'no rebuild, no checks run again');
+    assert.equal(loaded.healthProbes.length, 0, 'nothing to probe while it has no pod');
+    assert.equal(loaded.edgeProbes.length, 0);
+  } finally { await srv.close(); loaded.restore(); sleep.restore(); }
+});
+
+test('#6157 ensure-staging on a stale sleeping preview rebuilds it instead of waking it', async () => {
+  const sleep = stubPreviewSleep({ status: 'woke', url: 'https://stg.example' });
+  // stagingNeedsRebuild judges a sleeping preview by its labels (above): out
+  // of date, it is missing as far as the route is concerned.
+  const loaded = loadSessions({ pool: makePool(ASLEEP_ROW), needsRebuild: true, rebuild: async () => 'handed_off' });
+  const srv = await startServer(loaded);
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' });
+    assert.deepEqual(await res.json(), { status: 'rebuilding' });
+    assert.ok(await waitFor(() => loaded.getRebuildCalls() === 1));
+    assert.deepEqual(sleep.woken, [], 'not woken');
+  } finally { await srv.close(); loaded.restore(); sleep.restore(); }
+});
+
+test('#6157 a sleeping preview that does not wake is rebuilt; a reader\'s preview-status wakes it too', async () => {
+  const sleep = stubPreviewSleep({ status: 'timeout', detail: 'The preview was asleep and did not wake in time' });
+  const loaded = loadSessions({ pool: makePool(ASLEEP_ROW), needsRebuild: false, rebuild: async () => 'handed_off' });
+  const srv = await startServer(loaded, { id: 2, username: 'bob' });
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/sessions/42/preview-status`);
+    assert.deepEqual(await res.json(), { status: 'rebuilding', waking: true });
+    assert.ok(await waitFor(() => loaded.getRebuildCalls() === 1), 'handed to the preview machine, which rebuilds it');
+    assert.deepEqual(sleep.woken, [{ sessionId: 42, reason: 'preview-click' }]);
+    assert.ok(!loaded.broadcasts.some((b) => b.event === 'staging_awake'));
+  } finally { await srv.close(); loaded.restore(); sleep.restore(); }
+});
+
+test('#6157 the loader opens a woken preview the way it opens a rebuilt one, and says it is waking', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(app, /data\.event === 'staging_ready' \|\| data\.event === 'staging_awake'\) \{\s*AppView\.onStagingRebuildResult\(data\.sessionId, \{ url: data\.url \}\);/);
+  const view = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
+  assert.match(view, /PlatformI18n\.t\(data\.waking \? 'changes:frame\.loader\.wakingSub' : 'changes:frame\.loader\.rebuildingSub'\)/);
+  const catalog = require('../frontend/locales/en/changes.json');
+  assert.match(catalog['frame.loader.wakingSub'].text, /asleep/);
+});

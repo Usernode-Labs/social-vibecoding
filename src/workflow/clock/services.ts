@@ -626,6 +626,14 @@ export const JOBS: readonly Job[] = Object.freeze([
     },
   },
   {
+    // Previews nobody has used for PREVIEW_SLEEP_AFTER_MS (two hours by
+    // default) put to sleep: scaled to no replicas, everything else kept,
+    // woken by whatever opens them (#6157, services/preview-sleep.js). A few
+    // a run. PREVIEW_SLEEP_AFTER_MS=0 switches it off.
+    name: 'preview-sleep', everyMs: 5 * MIN, leaseMs: 10 * MIN,
+    run: (_ctx: WorkContext, { config }: JobDeps) => legacy('services/staging-reap').sweepSleep(config),
+  },
+  {
     // Previews built with another platform environment than the newest
     // build's, handed to the preview machine. Only the newest build acts: an
     // older Pod still running during a rollout would judge the new build's

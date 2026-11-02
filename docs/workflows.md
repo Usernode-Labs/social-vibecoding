@@ -1310,6 +1310,15 @@ release built is known, and retired by identity once a newer attempt serves).
   (`EnvStale`, once per attempt and environment), and is built again if it backs a vote,
   else given back. An older Pod during a rollout never judges the new build's previews by
   its own fingerprint.
+- **Sleep** (#6157) is outside the machine: the `preview-sleep` clock scales a Kubernetes
+  preview unused for `PREVIEW_SLEEP_AFTER_MS` (2 h) to no replicas, vote-backed ones
+  included, only while the instance rests in a state where an attempt serves
+  (`settled`, `deferred`, `failed`) and nothing works on the session; the row records it
+  (`staging_asleep_at`). The machine is not told: its `checks.run` wakes the preview
+  before it starts (a wake that times out is the platform's fault), a build deploys one
+  replica, and `published`/`unpublished` end the sleep. A sleeping preview is neither lost
+  (`preview-runtimes`) nor judged for its environment by `preview-env`: it is rebuilt when
+  something wakes it instead.
 - **What people read.** The transitions write the lines: the dev chat's "Staging
   deployed!" when a new attempt serves, and "Staging build failed" when a build fails
   while a turn's "Building staging preview..." card is still open; an imported pull
@@ -1872,7 +1881,7 @@ intervals and their I/O are the table in `clock/services.ts` (`JOBS`).
   `notifications.mailed_at` NULL, written with the notice); `workshop-changes` (every 10 s) runs each
   Workshop pass a board change owed.
 - **Previews and proposals.** `preview-runtimes`, `preview-gc`, `preview-env`,
-  `preview-orphan-dbs`, `preview-pressure` and `worker-volumes` read the runtimes
+  `preview-sleep`, `preview-orphan-dbs`, `preview-pressure` and `worker-volumes` read the runtimes
   and the database servers;
   `imported-prs`, `merged-by-hand`, `proposal-revisions`, `proposal-measure` and
   `fixed-check-sync` read GitHub and the mirrors. Each hands what it found to the preview or
