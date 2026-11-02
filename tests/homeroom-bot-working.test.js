@@ -97,11 +97,12 @@ test('a loop goes on after one only while a round, a nudge and room are left', (
 // ── 2. Main Chat ─────────────────────────────────────────────────────────
 
 const call = (name, args, id = `c${name}`) => ({ id, function: { name, arguments: JSON.stringify(args) } });
-function scripted(steps, seen = [], choices = []) {
+function scripted(steps, seen = [], choices = [], offered = []) {
   let i = 0;
   return async (req) => {
     seen.push(structuredClone(req.messages));
     choices.push(req.toolChoice);
+    offered.push((req.tools || []).map((tool) => tool.function.name));
     const step = steps[Math.min(i, steps.length - 1)];
     i += 1;
     return typeof step === 'string' ? { content: step, toolCalls: [] } : { content: step.content || '', toolCalls: step.calls };
@@ -205,15 +206,20 @@ test('what counts as saying a screen is being drawn', () => {
 
 // `files`: the project's code on main, for a design of an app (surface
 // 'app'), read only when `canRead`.
-function designTurn(steps, { handoff = true, design = null, current = null, surface = 'new', files = null, canRead = true } = {}) {
+// `thread`: the thread's messages so far, newest first, as the database
+// answers them.
+function designTurn(steps, {
+  handoff = true, design = null, current = null, surface = 'new', files = null, canRead = true, thread = [],
+} = {}) {
   const sent = [];
   const doings = [];
   const seen = [];
   const choices = [];
+  const offered = [];
   const recorded = [];
   const versions = [];
   const reads = [];
-  const pool = { async query() { return { rows: [] }; } };
+  const pool = { async query(sql) { return { rows: /FROM conversation_messages\b/.test(sql) ? thread : [] }; } };
   const threads = {
     surfaceFor: () => surface,
     validHtml: () => true,
@@ -229,7 +235,7 @@ function designTurn(steps, { handoff = true, design = null, current = null, surf
     },
   } : {};
   const deps = {
-    chat: scripted(steps, seen, choices), apiKey: 'sk-test', seesImages: false, sleep: async () => {},
+    chat: scripted(steps, seen, choices, offered), apiKey: 'sk-test', seesImages: false, sleep: async () => {},
     dm: { async sendDm(_pool, args) { sent.push(args); return { messageId: 900 + sent.length }; } },
     mayor: Object.assign(Object.create(mayor), {
       async recordTurn(_pool, row) { recorded.push(row); }, async turnsLastHour() { return 0; }, ...code,
@@ -250,7 +256,7 @@ function designTurn(steps, { handoff = true, design = null, current = null, surf
     brief: handoff ? 'The main screen of Ear Trainer' : null,
     deps,
   });
-  return { run, sent, doings, seen, choices, recorded, versions, reads };
+  return { run, sent, doings, seen, choices, offered, recorded, versions, reads };
 }
 
 const SCREEN = { title: 'Main screen', size: 'phone', html: '<main class="keys">Keys</main>', note: 'The main screen' };
@@ -358,37 +364,50 @@ test('a real question back ends the designer\'s turn; words that still claim a d
 // #6141 (2 Nov 2026): handed Ear Trainer's main screen to draw, the turn read
 // the code round after round and its forced last reply was "placeholder",
 // posted as the answer, with nothing drawn and nothing recorded. #6142: a
-// first drawing (handed a screen, or no version yet) has FIRST_DRAW_ROUNDS,
-// and with nothing drawn by DRAW_BY_ROUND that round draws; an edit keeps
-// MAX_ROUNDS.
+// first drawing (handed a screen, or no version yet) with nothing drawn by
+// DRAW_BY_ROUND draws in that round. #6144: every design turn has MAX_ROUNDS
+// (12), reads until READ_UNTIL (7), and ends honestly, an edit too.
 const READ = { calls: [call('read_source', { path: 'public/index.html' })] };
 const FORCED = (name) => ({ type: 'function', function: { name } });
 const times = (n, step) => Array.from({ length: n }, () => step);
-const edit = (find, replace) => ({ calls: [call('edit_design', { edits: [{ find, replace }] })] });
+const reply = (text) => ({ calls: [call('reply', { text })] });
+const edit = (find, replace, note) => ({ calls: [call('edit_design', { edits: [{ find, replace }], ...(note ? { note } : {}) })] });
+const TOOL_NAMES = designBot.TOOLS.map((tool) => tool.function.name);
+const ACT_NAMES = TOOL_NAMES.filter((name) => name !== 'list_source' && name !== 'read_source');
 
-test('#6142: a first drawing has 12 rounds and draws by round 8; an edit keeps 6', () => {
-  assert.equal(designBot.MAX_ROUNDS, 6);
-  assert.equal(designBot.FIRST_DRAW_ROUNDS, 12);
+// An edit: a message in a thread that holds version 2 already.
+const CURRENT = { version: 2, html: '<main>Keys</main>' };
+const DESIGNED = { rootId: 500, threadId: 7, state: 'open', latest: 2, title: 'Main screen', surface: 'new' };
+const editTurn = (steps, extra = {}) => designTurn(steps, { handoff: false, design: DESIGNED, current: CURRENT, ...extra });
+const HOME = 'Keys<nav>Intervals · Chords · Progressions</nav></main>';
+
+test('#6144: every design turn has 12 rounds, reads in the first 7, and a first drawing draws by round 8', () => {
+  assert.equal(designBot.MAX_ROUNDS, 12);
+  assert.equal(designBot.READ_UNTIL, 7);
   assert.equal(designBot.DRAW_BY_ROUND, 8);
+  assert.deepEqual(designBot.ACT_TOOLS.map((tool) => tool.function.name), ACT_NAMES);
+  assert.ok(ACT_NAMES.includes('write_screen') && ACT_NAMES.includes('edit_design') && ACT_NAMES.includes('reply'));
+  assert.equal(designBot.READING_OVER_NOTE, '[Homeroom check, not from them: reading is over for this turn. Draw or change the '
+    + 'screen now with write_screen or edit_design, or reply.]');
 });
 
 test('#6141: handed a screen, a turn that only read never posts its last words as the answer', async () => {
-  const turn = designTurn([...times(11, READ), { calls: [call('reply', { text: 'placeholder' })] }]);
+  const turn = designTurn([...times(11, READ), reply('placeholder')]);
   await turn.run;
-  assert.equal(turn.seen.length, designBot.FIRST_DRAW_ROUNDS);
+  assert.equal(turn.seen.length, designBot.MAX_ROUNDS);
   assert.deepEqual(turn.choices, [...times(7, 'auto'), FORCED('write_screen'), ...times(3, 'auto'), FORCED('reply')],
     'round 8 draws; the last replies');
   assert.equal(turn.sent.length, 1);
   assert.equal(turn.sent[0].content, designBot.NOT_DRAWN_TEXT, 'never "placeholder"');
   assert.equal(turn.sent[0].metadata, undefined, 'no version');
   assert.equal(turn.recorded.length, 1);
-  assert.deepEqual(turn.recorded[0].failures, ['d8:draw_forced', 'end:handoff'], 'shown in the admin\'s recent failures');
+  assert.deepEqual(turn.recorded[0].failures, ['d8:draw_forced', 'end:filler'], 'shown in the admin\'s recent failures');
   assert.equal(turn.recorded[0].fallback, 'not_drawn');
 
   // The forced draw came back with an error: told to draw twice, then the
   // same honest line.
   const broken = designTurn([...times(7, READ), { calls: [call('write_screen', { title: 'Main screen', html: '' })] },
-    { calls: [call('reply', { text: 'Here it is, in the app\'s own style.' })] }]);
+    reply('Here it is, in the app\'s own style.')]);
   await broken.run;
   assert.equal(broken.sent[0].content, designBot.NOT_DRAWN_TEXT);
   assert.deepEqual(broken.recorded[0].failures, ['d8:draw_forced', 'd9:handoff', 'd10:handoff', 'end:handoff']);
@@ -398,7 +417,7 @@ test('#6142: a first drawing that reads long is made to draw in round 8, and gro
   const turn = designTurn([...times(7, READ), { calls: [call('write_screen', SCREEN)] },
     edit('Keys</main>', 'Keys<p class="score">Score 0</p></main>'), edit('Score 0', 'Score 3'),
     edit('<main class="keys">', '<main class="keys"><h1>Ear Trainer</h1>'),
-    { calls: [call('reply', { text: 'Here it is, with the score.' })] }]);
+    reply('Here it is, with the score.')]);
   await turn.run;
   assert.deepEqual(turn.choices, [...times(7, 'auto'), FORCED('write_screen'), ...times(3, 'auto'), FORCED('reply')]);
   assert.equal(turn.sent.length, 1);
@@ -410,7 +429,7 @@ test('#6142: a first drawing that reads long is made to draw in round 8, and gro
   assert.deepEqual(turn.recorded[0].failures, ['d8:draw_forced'], 'it drew: no end failure');
   assert.equal(turn.recorded[0].fallback, null);
 
-  const short = designTurn([...times(7, READ), { calls: [call('write_screen', SCREEN)] }, { calls: [call('reply', { text: 'Here it is.' })] }]);
+  const short = designTurn([...times(7, READ), { calls: [call('write_screen', SCREEN)] }, reply('Here it is.')]);
   await short.run;
   assert.deepEqual(short.choices, [...times(7, 'auto'), FORCED('write_screen'), 'auto']);
   assert.equal(short.sent[0].content, 'Version 1 · The main screen\n\nHere it is.');
@@ -419,7 +438,7 @@ test('#6142: a first drawing that reads long is made to draw in round 8, and gro
 test('#6142: a first drawing that draws early is never forced, and records nothing', async () => {
   const turn = designTurn([READ, READ, { calls: [call('write_screen', SCREEN)] },
     edit('Keys</main>', 'Keys<p class="score">Score 0</p></main>'), edit('Score 0', 'Score 3'),
-    { calls: [call('reply', { text: 'Here it is.' })] }]);
+    reply('Here it is.')]);
   await turn.run;
   assert.deepEqual(turn.choices, times(6, 'auto'));
   assert.equal(turn.sent[0].content, 'Version 1 · The main screen\n\nHere it is.');
@@ -428,24 +447,118 @@ test('#6142: a first drawing that draws early is never forced, and records nothi
   assert.equal(turn.recorded[0].fallback, null);
 });
 
-test('#6141, #6142: a real question back still goes out; an edit to a version keeps 6 rounds and is never forced to draw', async () => {
-  const question = 'Which screen, the quiz or the results?';
-  const asks = designTurn([...times(11, READ), { calls: [call('reply', { text: question })] }]);
+// #6144 (2 Nov 2026): in Ear Trainer's design thread, holding version 1,
+// "build a dedicated home screen…" read the code for five rounds and the
+// reply forced in round 6 was "placeholder", sent as the answer.
+test('#6144: an edit that reads every round it can stops reading at round 8 and never posts its forced words', async () => {
+  const turn = editTurn([...times(11, READ), reply('placeholder')]);
+  await turn.run;
+  assert.equal(turn.seen.length, designBot.MAX_ROUNDS, 'an edit has 12 rounds too');
+  assert.deepEqual(turn.offered, [...times(7, TOOL_NAMES), ...times(5, ACT_NAMES)], 'rounds 1 to 7 read; from 8 they act');
+  assert.deepEqual(turn.choices, [...times(11, 'auto'), FORCED('reply')], 'an edit is never forced to draw');
+  assert.deepEqual(turn.seen[7].at(-1), { role: 'user', content: designBot.READING_OVER_NOTE }, 'round 8 is told once');
+  assert.equal(turn.seen[11].filter((m) => m.content === designBot.READING_OVER_NOTE).length, 1);
+  const refused = turn.seen[8].filter((m) => m.role === 'tool').at(-1);
+  assert.deepEqual(JSON.parse(refused.content), { ok: false, error: designBot.READING_OVER_ERROR }, 'a late read is refused');
+  assert.equal(turn.doings.length, 7, 'and the working card never says it reads');
+  assert.equal(turn.sent.length, 1);
+  assert.equal(turn.sent[0].content, designBot.NOT_DRAWN_TEXT, 'never "placeholder"');
+  assert.deepEqual(turn.recorded[0].failures, ['end:filler']);
+  assert.equal(turn.recorded[0].fallback, 'not_drawn');
+
+  // Words the forced round wrote that are no question back: the same line.
+  const said = editTurn([...times(11, READ), reply('The home screen lists the three modes.')]);
+  await said.run;
+  assert.equal(said.sent[0].content, designBot.NOT_DRAWN_TEXT);
+  assert.deepEqual(said.recorded[0].failures, ['end:forced']);
+  assert.equal(said.recorded[0].fallback, 'not_drawn');
+});
+
+test('#6144: an edit that acts once reading is over saves its version and records nothing', async () => {
+  const turn = editTurn([...times(7, READ), edit('Keys</main>', HOME, 'A home screen'), reply('Here it is.')]);
+  await turn.run;
+  assert.deepEqual(turn.choices, times(9, 'auto'));
+  assert.equal(turn.versions.length, 1);
+  assert.match(turn.versions[0], /<nav>Intervals · Chords · Progressions<\/nav>/);
+  assert.equal(turn.sent[0].content, 'Version 3 · A home screen\n\nHere it is.');
+  assert.equal(turn.sent[0].metadata.designVersion, 3);
+  assert.deepEqual(turn.recorded[0].failures, []);
+  assert.equal(turn.recorded[0].fallback, null);
+});
+
+test('#6144: filler is never an answer: sent back while rounds are left, and never said beside a version', async () => {
+  const turn = editTurn([READ, reply('placeholder'), edit('Keys</main>', HOME, 'A home screen'), reply('Here it is.')]);
+  await turn.run;
+  assert.deepEqual(turn.seen[2].at(-1), { role: 'user', content: designBot.fillerNote('placeholder') });
+  assert.equal(designBot.fillerNote('placeholder'), '[Homeroom check, not from them: "placeholder" is not an answer. Do what '
+    + 'they asked with your tools, or ask one real question, then reply.]');
+  assert.equal(turn.sent[0].content, 'Version 3 · A home screen\n\nHere it is.');
+  assert.deepEqual(turn.recorded[0].failures, ['d2:filler']);
+
+  const beside = editTurn([edit('Keys</main>', HOME, 'A home screen'), reply('placeholder')]);
+  await beside.run;
+  assert.equal(beside.sent[0].content, 'Version 3 · A home screen', 'the version line alone');
+
+  for (const text of ['placeholder', '"Placeholder."', '[placeholder]', '**TODO**', 'tbd', 'n/a', 'None', '...', '…', '', ' ']) {
+    assert.equal(designBot.isFiller(text), true, JSON.stringify(text));
+    assert.equal(designBot.notDrawnYet(text, { drawnBefore: true, mayor }), 'filler', JSON.stringify(text));
+    assert.equal(designBot.notDrawnYet(text, { handoff: true, mayor }), 'filler', JSON.stringify(text));
+  }
+  for (const text of ['Here it is.', 'placeholder text', 'No', 'The keys use the kit\'s grid.']) {
+    assert.equal(designBot.isFiller(text), false, text);
+  }
+});
+
+test('#6141, #6144: a real question back from the last round still goes out; asking leave to start does not', async () => {
+  const handedQuestion = 'Which screen, the quiz or the results?';
+  const asks = designTurn([...times(11, READ), reply(handedQuestion)]);
   await asks.run;
-  assert.equal(asks.sent[0].content, question);
+  assert.equal(asks.sent[0].content, handedQuestion);
   assert.deepEqual(asks.recorded[0].failures, ['d8:draw_forced']);
   assert.equal(asks.recorded[0].fallback, null);
 
-  // In a thread that holds a version, the person's message is an edit:
-  // reading until the end is allowed, and an answer that draws nothing is fine.
-  const current = { version: 2, html: '<main>Keys</main>' };
-  const talk = designTurn([...times(5, READ), { calls: [call('reply', { text: 'The keys use the kit\'s grid.' })] }],
-    { handoff: false, design: { rootId: 500, threadId: 7, state: 'open', latest: 2, title: 'Main screen', surface: 'new' }, current });
+  const question = 'Which modes should the home screen list, all three or only Intervals?';
+  const editAsks = editTurn([...times(11, READ), reply(question)]);
+  await editAsks.run;
+  assert.equal(editAsks.sent[0].content, question);
+  assert.deepEqual(editAsks.recorded[0].failures, []);
+  assert.equal(editAsks.recorded[0].fallback, null);
+
+  const leave = editTurn([...times(11, READ), reply('Want me to start on the home screen?')]);
+  await leave.run;
+  assert.equal(leave.sent[0].content, designBot.NOT_DRAWN_TEXT);
+  assert.deepEqual(leave.recorded[0].failures, ['end:forced']);
+
+  // An edit that answers in words before the last round is an answer.
+  const talk = editTurn([...times(5, READ), reply('The keys use the kit\'s grid.')]);
   await talk.run;
-  assert.equal(talk.seen.length, designBot.MAX_ROUNDS);
-  assert.deepEqual(talk.choices, [...times(5, 'auto'), FORCED('reply')]);
+  assert.deepEqual(talk.choices, times(6, 'auto'));
   assert.equal(talk.sent[0].content, 'The keys use the kit\'s grid.');
   assert.deepEqual(talk.recorded[0].failures, []);
+});
+
+test('#6144: the bot\'s filler is left out of what the model reads of the thread; the person\'s words are kept', async () => {
+  // Newest first, as the database answers.
+  const thread = [
+    { id: 71, sender_id: 9, content: 'I was thinking we build a dedicated home screen' },
+    { id: 70, sender_id: 2, content: 'placeholder' },
+    { id: 69, sender_id: 9, content: 'okay try now?' },
+    { id: 68, sender_id: 2, content: 'Version 1 · Main practice screen' },
+    { id: 67, sender_id: 9, content: 'placeholder' },
+  ];
+  const pool = { async query() { return { rows: thread.map((m) => ({ ...m })) }; } };
+  assert.deepEqual(await designBot.historyOf(pool, { conversationId: 41, rootId: 500, botId: 2, upToId: 71 }), [
+    { role: 'user', content: 'placeholder' },
+    { role: 'assistant', content: 'Version 1 · Main practice screen' },
+    { role: 'user', content: 'okay try now?' },
+    { role: 'user', content: 'I was thinking we build a dedicated home screen' },
+  ], 'the bot\'s "placeholder" left out; a person who wrote it is kept');
+
+  const turn = editTurn([reply('Which modes should it list?')], { thread: thread.map((m) => ({ ...m })) });
+  await turn.run;
+  const read = turn.seen[0].filter((m) => m.role !== 'system');
+  assert.deepEqual(read.filter((m) => m.role === 'assistant').map((m) => m.content), ['Version 1 · Main practice screen']);
+  assert.equal(read.at(-1).content, 'I was thinking we build a dedicated home screen');
 });
 
 // #6142: a first drawing of an app is shown the app's screen up front, its
