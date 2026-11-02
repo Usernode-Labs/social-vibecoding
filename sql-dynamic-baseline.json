@@ -1426,7 +1426,7 @@
     {
       "source": "src/services/leaderboard-users.js",
       "kind": "structural-template",
-      "fingerprint": "eeb751bfd8007b901e6a",
+      "fingerprint": "14f82b20dfde2217cf98",
       "count": 1,
       "preview": "`SELECT u.id AS user_id, u.username, (COUNT(pk.id) + COALESCE(ab.received, 0))::int AS kudos_received, COUNT(DISTINCT pk.session_id)::int AS prs_kudosed, (COUNT"
     },
