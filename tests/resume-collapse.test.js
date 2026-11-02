@@ -28,7 +28,7 @@ test('a running app you left keeps its App row with the still-open dot; pressing
   // A running app you are not in grows back out of its row; the app you are
   // in has nothing to resume.
   assert.match(src, /if \(running && onApp !== slug\) \{\s*noteResumeOrigin\(slug, event\.currentTarget\.querySelector\('\.platform-rail-sub-glyph'\) \|\| event\.currentTarget\);\s*\}/);
-  assert.match(src, /\{running \? <LiveAppDot className="platform-rail-live" \/> : null\}/);
+  assert.match(src, /\{keptOpen \? <LiveAppDot className="platform-rail-live" \/> : null\}/, 'the dot on an app you left (audit N04)');
 });
 
 test('Resume is an action: the accent, filled, on the phone strip', () => {

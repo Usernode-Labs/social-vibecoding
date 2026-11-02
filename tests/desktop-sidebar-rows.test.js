@@ -72,6 +72,14 @@ test('the markup: the section sits between Home and the Communities tab, its hea
   assert.doesNotMatch(tab.slice(0, tab.indexOf('>')), /aria-label=/);
 });
 
+test('audit Y04: the All row counts only when there are more than the rows above', () => {
+  const tab = read('frontend/src/features/nav/tab-bar.tsx');
+  assert.match(tab, /allCount > RAIL_COMMUNITIES \? t\('core:rail\.all', \{ count: allCount \}\) : t\('core:rail\.allPlain'\)/,
+    '"All 2 communities" under the same two rows says nothing; it is "All communities"');
+  assert.equal(message('core:rail.allPlain'), 'All communities');
+  assert.equal(message('core:rail.all', { count: 13 }), 'All 13 communities');
+});
+
 test('the presses: a row switches in place, the lit one climbs to its Hub and stops', () => {
   const src = read(RAIL);
   // From its app, the row goes to its page; on its page, up the page.

@@ -547,3 +547,8 @@ test('the phone\'s header names a conversation as its sheet does', () => {
     assert.ok(words.includes(`'messages:${id}'`) && header.includes(`'messages:${id}'`), id);
   }
 });
+
+test('a request\'s page has one back, its chip: the drawer draws no arrow beside it (audit N05)', () => {
+  const drawer = read(`${DIR}/header-drawer.tsx`);
+  assert.match(drawer, /if \(mode !== 'communities'\) return null;[\s\S]{0,600}if \(subTab === 'topic'\) return null;/);
+});

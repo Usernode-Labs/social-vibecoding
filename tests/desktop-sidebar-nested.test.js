@@ -153,8 +153,10 @@ test('the places: the column\'s own list, topics after two behind "Show N more",
   const rail = read('frontend/src/features/nav/rail-communities.tsx');
   assert.match(rail, /<ProjectPlaces[\s\S]*?fold=\{RAIL_TOPICS\}\s*onPlace=\{\(key\) => \{ openPlace\(slug, key\); \}\}/);
   assert.match(rail, /const open = sidebarRows && \(onPage === slug \|\| \(onApp === slug && yours\)\);/, 'it opens with the page, or the app of one of yours');
-  assert.match(rail, /<NestSlot open=\{open\} className="platform-rail-nest platform-rail-places" rows="\.dev-ws-place, \.dev-ws-places-head">\s*<RailPlaces slug=\{slug\} onPage=\{onPage === slug\} \/>/);
-  assert.match(rail, /const votes = c && !c\.unchosen && !open \? Number\(c\.needs\) \|\| 0 : 0;/, 'open, its votes are Needs you\'s count');
+  assert.match(rail, /<NestSlot open=\{open\} className="platform-rail-nest platform-rail-places" rows="\.dev-ws-place, \.dev-ws-places-head">\s*<RailPlaces slug=\{slug\} onPage=\{onPage === slug\} needs=\{needs\} \/>/);
+  // Open, its votes are Needs you's count, in its app too (audit N04).
+  assert.match(rail, /const needs = c && !c\.unchosen \? Number\(c\.needs\) \|\| 0 : 0;\s*const votes = open \? 0 : needs;/, 'open, its votes are Needs you\'s count');
+  assert.match(rail, /owed=\{here \? place\.owed : needs\}/);
 });
 
 test('the markup: the conversations follow Messages, empty in the prerender, and nothing is nested there', () => {

@@ -7,8 +7,9 @@
  * The colour is lib/community-color.ts's, from the header's own record of
  * the app (../improve/improve-store.js). It lands on <html> as
  * `--community-tint` with `data-community-tint`, so app.css paints the bar
- * from it ("The project's colour"), and the page's band and Open app read
- * the same property rather than working it out a second time.
+ * from it ("The project's colour"), and the page's band reads the same
+ * property rather than working it out a second time. Open app does not: it
+ * is an action, in the one accent (audit P01).
  *
  * WHICH HALF is the store's `tab`: 'dev' is the project's pages, anything
  * else with a target is the running app.

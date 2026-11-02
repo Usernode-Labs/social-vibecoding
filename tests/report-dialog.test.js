@@ -65,6 +65,10 @@ test('#5102: child safety is the first reason, worded plainly', () => {
     'Child safety: a minor at risk, or sexual content involving a minor');
 });
 
+test('audit D05: a reason wraps rather than truncating (child safety is the longest)', () => {
+  assert.match(REPORT, /titleClassName="font-medium whitespace-normal"/);
+});
+
 test('Send report is the one strong button; Cancel is quiet text', () => {
   assert.equal(message('dialogs:report.submit'), 'Send report');
   assert.match(REPORT, /<Button type="button" variant="unstyled" size="default" ink="muted" className="rounded-lg" disabled=\{busy\} onClick=\{dialog\.close\}>\{t\('core:common\.cancel'\)\}<\/Button>/);

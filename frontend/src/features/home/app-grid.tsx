@@ -478,7 +478,12 @@ export function AppGrid() {
     <div
       ref={listRef}
       id="app-list"
-      className="grid grid-cols-4 gap-1.5 sm:gap-2 p-2 pt-1.5 sm:p-3 sm:pt-2"
+      // FOUR COLUMNS STAY FOUR (Home.currentCols, HomeLayout.COLS): only how
+      // wide they may grow is capped. From md the grid is at most 40rem, on
+      // the column's left edge (overnight audit W06 / D18): across the whole
+      // 1024px column the four tiles sat ~250px apart, which read as four lone
+      // icons rather than a shelf. 160px a cell still fits a two-word name.
+      className="grid grid-cols-4 gap-1.5 sm:gap-2 p-2 pt-1.5 sm:p-3 sm:pt-2 md:max-w-[40rem]"
       data-view={state.ready ? state.view : undefined}
       // EDIT MODE (#4669). app.css keys the wiggle on this attribute; absent
       // otherwise, so the resting grid's markup is untouched.

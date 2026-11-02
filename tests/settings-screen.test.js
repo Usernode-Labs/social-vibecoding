@@ -767,18 +767,24 @@ test('the BYOK dot went with the row it marked', () => {
 
 // ── Two-level layout ───────────────────────────────────────────────────
 
-test('one breakpoint constant, read through matchMedia, in step with md:', () => {
-  assert.match(settingsJs, /DESKTOP_MEDIA: '\(min-width: 768px\)'/,
-    'the sidebar breakpoint is declared once, as 768px (Tailwind md)');
+// Overnight audit W01 (1 Nov 2026): lg, not md. From 768 the app's 212px rail
+// is open too, and at 800 the pane beside the section list was ~260px wide.
+test('one breakpoint constant, read through matchMedia, in step with lg:', () => {
+  assert.match(settingsJs, /DESKTOP_MEDIA: '\(min-width: 1024px\)'/,
+    'the sidebar breakpoint is declared once, as 1024px (Tailwind lg)');
   const isMobile = settingsJs.slice(settingsJs.indexOf('    _isMobile() {'));
   assert.match(isMobile.slice(0, 300), /matchMedia\(Settings\.DESKTOP_MEDIA\)/,
     '_isMobile reads the constant, never a hardcoded width');
   assert.match(isMobile.slice(0, 300), /catch \{ return false; \}/,
     'no matchMedia degrades to the desktop layout, not a phone layout');
-  assert.match(html, /id="settings-sidebar-col" class="hidden md:block md:w-56/,
-    'the sidebar still switches at md — the constant must match it');
-  assert.match(html, /<div class="md:flex md:items-start md:gap-6">[\s\S]{0,400}settings-sidebar-col/,
-    'the shell row still switches at md');
+  assert.match(html, /id="settings-sidebar-col" class="hidden lg:block lg:w-56/,
+    'the sidebar switches at lg — the constant must match it');
+  assert.match(html, /<div class="lg:flex lg:items-start lg:gap-6">[\s\S]{0,400}settings-sidebar-col/,
+    'the shell row switches at lg');
+  const css = read('public/css/app.css');
+  assert.match(css, /@media \(min-width: 1024px\) \{\s*#settings-sidebar-col \{/,
+    'and so do the sidebar sheet\'s own rules in app.css');
+  assert.doesNotMatch(css, /@media \(min-width: 768px\) \{\s*#settings-(sidebar-col|root|content-col)/);
 });
 
 test('level state and the viewport listener exist', () => {
@@ -926,7 +932,7 @@ test('the nav hosts still ship EMPTY, so the prerender is unchanged', () => {
   // console.errors and the proposal checks fail.
   assert.match(html, /id="settings-nav-desktop" aria-label="Settings sections" class="space-y-1"><\/nav>/,
     '#settings-nav-desktop prerenders empty');
-  assert.match(html, /id="settings-mobile-menu-host" class="md:hidden"><\/div>/,
+  assert.match(html, /id="settings-mobile-menu-host" class="lg:hidden"><\/div>/,
     '#settings-mobile-menu-host prerenders empty');
   assert.match(navStoreJs, /desktop: null/, 'both descriptors start null');
   assert.match(navStoreJs, /mobile: null/);
@@ -936,7 +942,7 @@ test('UX audit: the section list is the pane\'s sheet, and scrolls on its own', 
   // It was drawn on the strip while the pane rose beside it, and scrolled
   // away with the screen (20 Oct 2026).
   assert.match(html,
-    /id="settings-sidebar-col" class="hidden md:block md:w-56 shrink-0 dc-lift dc-lift-session settings-side-sheet"/,
+    /id="settings-sidebar-col" class="hidden lg:block lg:w-56 shrink-0 dc-lift dc-lift-session settings-side-sheet"/,
     'the column wears the pane\'s own lift, after the width classes the breakpoint test reads');
   assert.match(navTsx,
     /className="sticky top-0 z-10 -mt-2\.5 pt-2\.5 pb-3 bg-\[color:var\(--dc-sheet-solid\)\]"/,

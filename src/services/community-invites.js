@@ -168,6 +168,9 @@ function serializeLink(row, viewerId) {
     status: row.status || 'live',
     joined: row.joined ?? 0,
     waiting: row.waiting ?? 0,
+    // Audit D03: whether it went out (copied or shared from the pane), as
+    // the lines that say a link is out read it. A new link has not.
+    shared: !!row.shared_at,
   };
 }
 
@@ -228,7 +231,7 @@ async function listInvites(pool, { app, user }) {
   const manages = !!user && (user.canAdminWrite || await appAdmins.canManageApp(pool, app, user));
   const { rows } = await pool.query(
     `SELECT i.id, i.token, i.created_by, i.max_uses, i.uses, i.expires_at, i.created_at, i.note,
-            u.username AS created_by_username,
+            i.shared_at, u.username AS created_by_username,
             CASE
               WHEN i.revoked_at IS NOT NULL OR NOT community_invite_maker_holds(i.id) THEN 'revoked'
               WHEN i.expires_at IS NOT NULL AND i.expires_at <= NOW()                THEN 'expired'
@@ -307,7 +310,10 @@ async function hasLiveLink(pool, appId, userId) {
  * count, so a link turned off, ended or used up says nothing here.
  */
 function summarizeLinks(links) {
-  const live = (Array.isArray(links) ? links : []).filter((l) => l && l.status === 'live');
+  // Audit D03: a link that never went out (made by opening the pane, never
+  // copied or shared, nobody come through it) is not one that is out.
+  const live = (Array.isArray(links) ? links : []).filter((l) => l && l.status === 'live'
+    && (l.shared || Number(l.joined) > 0 || Number(l.waiting) > 0));
   let soonest = null;
   for (const link of live) {
     if (!link.expiresAt) continue;
@@ -359,6 +365,9 @@ async function linksOutFor(pool, appIds, userId) {
         AND i.revoked_at IS NULL AND (i.expires_at IS NULL OR i.expires_at > NOW())
         AND (i.max_uses IS NULL OR i.uses < i.max_uses)
         AND community_invite_maker_holds(i.id)
+        -- Audit D03: out means it went out, not that the pane made it.
+        AND (i.shared_at IS NOT NULL OR EXISTS (
+          SELECT 1 FROM community_invite_redemptions y WHERE y.invite_id = i.id))
       GROUP BY i.app_id`,
     [ids, userId]
   );
@@ -509,6 +518,25 @@ async function revokeInvite(pool, { inviteId, user }) {
     metadata: { inviteId: id, cancelled: cancelled.length },
   });
   return { ok: true, cancelled: cancelled.length };
+}
+
+/**
+ * Audit D03: the link went out. The Invite pane says so on the first Copy
+ * or Share of a link its viewer made; only the maker's word counts, and
+ * the first time is the one kept. `{ ok, shared }`, or a 404 for a link
+ * that is not theirs, as revokeInvite answers.
+ */
+async function markShared(pool, { inviteId, user }) {
+  const id = parseInt(inviteId, 10);
+  if (!Number.isFinite(id) || !user?.id) return { ok: false, status: 404, error: 'Invite link not found' };
+  const { rows } = await pool.query(
+    `UPDATE community_invites SET shared_at = COALESCE(shared_at, NOW())
+      WHERE id = $1 AND created_by = $2
+      RETURNING shared_at`,
+    [id, user.id]
+  );
+  if (!rows.length) return { ok: false, status: 404, error: 'Invite link not found' };
+  return { ok: true, shared: true };
 }
 
 // The link and its project, as preview and redeem read them. `lock` takes
@@ -1123,6 +1151,7 @@ async function dropCarried(pool, req, res, userId) {
 }
 
 module.exports = {
+  markShared,
   DEFAULT_DAYS,
   DEFAULT_USES,
   LIMITS,

@@ -57,9 +57,8 @@ import { GroupedList, ListRow, SectionHeader, rowSeparator } from '@/components/
 import {
   AppWindowIcon, BellIcon, BookmarkIcon, BookmarkSolidIcon, ChevronDownIcon, ChevronUpIcon, CodeIcon,
   CompassIcon, DescriptionIcon, EyeIcon, GlobeIcon, InfoCircleIcon, LightBulbIcon, LinkIcon, LockIcon,
-  PhonePlusIcon, ShieldCheckIcon, SparklesIcon, SunIcon, TerminalIcon, UserIcon, WalletIcon,
+  PhonePlusIcon, SearchIcon, ShieldCheckIcon, SparklesIcon, SunIcon, TerminalIcon, UserIcon, WalletIcon,
 } from '@/components/ui/icons';
-import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
@@ -377,20 +376,29 @@ function FilterField({ id, query, setQuery, hits, signOutHit }: {
       setQuery('');
     }
   };
+  // THE SHELL'S SEARCH FIELD (overnight audit W05, 1 Nov 2026): the white
+  // pill with its glyph that Messages and the Communities screen draw
+  // (`.messages-search` in app.css), not the grey boxed form field, which
+  // read as disabled and was the one search in the shell without a glyph.
+  // `settings-filter` drops the list's own margins; the hosts space it.
   return (
-    <Input
-      id={id}
-      type="search"
-      data-settings-filter=""
-      aria-label={t('settings:nav.filter.field')}
-      placeholder={t('settings:nav.filter.field')}
-      autoComplete="off"
-      spellCheck={false}
-      aria-keyshortcuts={FILTER_SHORTCUT_KEYS}
-      value={query}
-      onChange={(e) => setQuery(e.currentTarget.value)}
-      onKeyDown={onKeyDown}
-    />
+    <div className="messages-search settings-filter">
+      <SearchIcon className="messages-search-glyph w-5 h-5" aria-hidden="true" />
+      <input
+        id={id}
+        type="search"
+        className="messages-search-input"
+        data-settings-filter=""
+        aria-label={t('settings:nav.filter.field')}
+        placeholder={t('settings:nav.filter.field')}
+        autoComplete="off"
+        spellCheck={false}
+        aria-keyshortcuts={FILTER_SHORTCUT_KEYS}
+        value={query}
+        onChange={(e) => setQuery(e.currentTarget.value)}
+        onKeyDown={onKeyDown}
+      />
+    </div>
   );
 }
 
@@ -808,7 +816,7 @@ export function SettingsNavDesktop() {
 }
 
 /**
- * The phone's level-1 menu. Empty on desktop — `md:hidden` on the host is
+ * The phone's level-1 menu. Empty on desktop — `lg:hidden` on the host is
  * what hides it there, and `mobile: null` is what keeps it empty; both, so
  * that a viewport change without a repaint still cannot show two navs.
  */
@@ -822,7 +830,7 @@ export function SettingsMobileMenu() {
   const signOutHit = matchesSignOut(query);
   const filtering = query.trim() !== '';
   return (
-    <div id="settings-mobile-menu-host" className="md:hidden">
+    <div id="settings-mobile-menu-host" className="lg:hidden">
       {mobile ? (
         <div className="px-1 pb-4">
           <FilterField id="settings-filter-mobile" query={query} setQuery={setQuery} hits={hits} signOutHit={signOutHit} />
@@ -915,4 +923,28 @@ export function SettingsMobileMenu() {
       )}
     </div>
   );
+}
+
+/**
+ * THE PAGE'S OWN NAME at the head of the pane (overnight audit W05, 1 Nov
+ * 2026), from lg up, where the sidebar is beside it. A page of several parts
+ * (Account is Profile, Sign-in and Delete account) opened under the first
+ * part's heading, so "Account" was lit in the list while the pane said
+ * "Profile", and three headings of the same large size stood in one page.
+ * Now the page is named once, large, and its parts' headings step down
+ * (app.css `.settings-page-title`). Drawn only for a page of several parts:
+ * a one-part page's own heading already is its name. Below lg the header
+ * names the page (Settings._syncChrome), so this stays hidden there.
+ *
+ * Nothing until the nav's first paint, which is the prerender's empty pane.
+ */
+export function SettingsPageTitle() {
+  const { desktop } = useStoreState(settingsNavStore) as NavState;
+  let label = '';
+  for (const group of desktop || []) {
+    const hit = group.items.find((item) => item.active);
+    if (hit) { label = hit.label; break; }
+  }
+  if (!label) return null;
+  return <h2 className="settings-page-title" data-settings-page-title="">{label}</h2>;
 }

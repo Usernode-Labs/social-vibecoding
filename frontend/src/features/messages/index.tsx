@@ -215,7 +215,7 @@ function GroupMemberCount({ count }: { count: number }) {
  * initials, as today. A member with no photo falls back to their initials
  * tile, the way avatars look everywhere else.
  */
-function GroupFaces({ conversation }: { conversation: ConversationSummary }) {
+function GroupFaces({ conversation }: { conversation: Pick<ConversationSummary, 'members' | 'title'> }) {
   const viewerId = typeof window !== 'undefined' ? Number(window.App?.user?.id) : 0;
   const others = conversation.members
     .filter((member) => member.status === 'member' && Number(member.id) !== viewerId)
@@ -1404,12 +1404,11 @@ function ThreadHeader() {
   // N14: the people asked who have not joined yet, as threadWords says them.
   const asked = active.kind === 'group' && !invited ? active.members.filter((m) => m.status === 'invited').length : 0;
   const subtitle = asked ? dotText([said, t('messages:header.subtitle.invitedCount', { count: asked })]) : said;
-  // N14: a group leads with a member's face, as its row in the list does,
-  // not the initials of its name ("E+" for "Evan + Lukas").
-  const viewerId = Number(window.App?.user?.id);
-  const face = active.kind === 'group' && !invited
-    ? active.members.find((member) => member.status === 'member' && Number(member.id) !== viewerId) || null
-    : null;
+  // N14: a group leads with its members' faces, not the initials of its
+  // name ("E+" for "Evan + Lukas"). Audit C02: the same faces its row in
+  // the list draws (GroupFaces), not one of them, so the group is one
+  // picture in both places.
+  const groupFaces = active.kind === 'group' && !invited;
   return (
     <header className="messages-thread-header">
       {channel ? <PageBackButton label={hubBack.label} onBack={hubBack.onBack} data-channel-back="" /> : null}
@@ -1418,7 +1417,7 @@ function ThreadHeader() {
           page leaves its own name out and keeps only its discs. */}
       {inDrawer ? null : channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
-        : face ? <UserAvatar user={face} shape="square" />
+        : groupFaces ? <GroupFaces conversation={active} />
           : <UserAvatar user={active.kind === 'direct' ? person : null} title={person?.username || active.title} shape="square" />}
       {inDrawer ? <span className="flex-1" aria-hidden="true" /> : (
       <button

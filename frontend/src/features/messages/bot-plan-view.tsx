@@ -66,13 +66,14 @@ export const COMPLICATED_PLAN_NOTE = 'messages:bot.plan.complicatedNote';
 /** 20 Oct 2026: the same note, under a card that shows its plan itself. */
 export const COMPLICATED_PLAN_NOTE_SHOWN = 'messages:bot.plan.complicatedNoteShown';
 
-export type PlanCardState = 'open' | 'built' | 'replaced' | 'stopped' | 'changing' | 'closed';
+export type PlanCardState = 'open' | 'built' | 'replaced' | 'stopped' | 'changing' | 'drafted' | 'closed';
 
 /** What the line under a card that is no longer open says. */
 export const PLAN_STATE_LINES: Record<Exclude<PlanCardState, 'open' | 'replaced'>, string> = {
   built: 'messages:bot.plan.state.built',
   stopped: 'messages:bot.plan.state.stopped',
   changing: 'messages:bot.plan.state.changing',
+  drafted: 'messages:bot.plan.state.drafted',
   closed: 'messages:bot.plan.state.closed',
 };
 

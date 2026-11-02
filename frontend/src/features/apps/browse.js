@@ -675,10 +675,12 @@ const Browse = {
 
   // The Filters sheet's Type list: every type present, with Other always
   // included once anything is tagged, in CATEGORIES order. Empty when no
-  // project has a type at all, which leaves the section out. Pure.
+  // project has a type other than Other, which leaves the section out: a
+  // Type section of Other alone filters nothing (overnight audit D11), the
+  // same rule as the page's row above. Pure.
   categoryOptions(apps) {
     const keys = Browse.presentCategoryKeys(apps === undefined ? Browse._apps : apps);
-    if (!keys.length) return [];
+    if (!keys.some((key) => key !== 'other')) return [];
     const all = keys.includes('other') ? keys : keys.concat('other');
     return Browse.CATEGORIES.filter((c) => all.includes(c.key));
   },

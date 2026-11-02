@@ -38,6 +38,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { placeHandle, placeName, type PlaceKey } from '../dev-board/workshop/places';
+import { improveStore } from '../improve/improve-store.js';
 import { headerFrame, titleSlot, type HeaderFrame } from './drawer-math';
 import { back, communitiesDepth, drawerStore, reducedMotion, type DepthChannel } from './drawer-store';
 import { messagesBack, messagesDepth, messagesDrawerStore } from './messages-drawer';
@@ -98,8 +99,14 @@ export function DrawerBack(): ReactNode {
   const t = useMessages('core');
   const mode = useDrawerMode();
   const { level, shown } = useStoreState(drawerStore);
+  const { subTab } = useStoreState(improveStore) as { subTab: string | null };
   if (mode === 'messages') return <BackDisc mode={mode} label={t('core:header.drawer.toMessages')} onBack={messagesBack} />;
   if (mode !== 'communities') return null;
+  // A request's or a change's page has ONE back: the chip above its sheet,
+  // which names the place it returns to (../dev-board/topic/topic-back.tsx,
+  // where the header draws no arrow). This arrow beside it made two, to two
+  // places (audit N05, 1 Nov 2026). The drawer's pan still reaches the places.
+  if (subTab === 'topic') return null;
   return <BackDisc mode={mode} label={level === 2 ? t('core:header.drawer.toPlaces', { community: shown.name }) : t('core:header.drawer.toCommunities')} onBack={back} />;
 }
 

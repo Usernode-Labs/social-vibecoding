@@ -130,7 +130,9 @@ test('voteButtonsHtml: default-policy rows keep the raw totals unchanged', () =>
     id: 5, status: 'promoted', my_vote: null, yes_count: 2, no_count: 0,
   });
   assert.match(btns, /Yes \(2\)/);
-  assert.match(btns, /No \(0\)/);
+  // V03: a side nobody has taken says no count.
+  assert.match(btns, />No<\/button>/);
+  assert.doesNotMatch(btns, /\(0\)/);
   assert.doesNotMatch(btns, /✓/);
 });
 

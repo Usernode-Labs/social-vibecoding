@@ -1543,7 +1543,7 @@
       "name": "Adding from Discover lands in My apps with no reload, and removing takes it out again (#1567)",
       "path": "/?shot=discover-add",
       "expectSelector": "body[data-shot-add=\"round-trip\"] #home-apps-section #app-list",
-      "expectText": "Discover Communities"
+      "expectText": "Discover communities"
     },
     {
       "name": "The launcher grid shows two rows by default, with a way to the rest",
@@ -3147,7 +3147,7 @@
     },
     {
       "id": "messages.inbox",
-      "name": "Messages is two headed sections, Agents with Homeroom bot first and Direct messages, with no Channels: a community's channel is on its hub",
+      "name": "Messages is two headed sections, Agents with Homeroom bot first and People (direct messages and groups), with no Channels: a community's channel is on its hub",
       "path": "/?demo=1#messages",
       "expectSelector": "#messages-screen:not(.hidden) .messages-list-scroll:not(:has([data-inbox-card=\"channels\"])) > h3.messages-section-head[data-inbox-section=\"people\"] + .messages-section-card[data-inbox-card=\"people\"]",
       "visual": true,
@@ -3159,7 +3159,7 @@
       ]
     },
     {
-      "name": "Agents' heading is the button that folds its section, open to start; Direct messages, the last section, does not fold; and there is no filter strip",
+      "name": "Agents' heading is the button that folds its section, open to start; People, the last section, does not fold; and there is no filter strip",
       "path": "/?demo=1#messages",
       "expectSelector": "#messages-screen:not(.hidden):not(:has(#messages-filters)):not(:has([data-inbox-fold=\"people\"])) h3.messages-section-head[data-inbox-section=\"agents\"] > button.messages-section-toggle[data-inbox-fold=\"agents\"][aria-expanded=\"true\"]"
     },
@@ -4316,9 +4316,9 @@
       "expectText": "We sent you a code. It expires in 10 minutes."
     },
     {
-      "name": "#2916: back from a request is the Workshop chip above its sheet, to the layout it was opened from, and the header draws no arrow beside it (#4453)",
+      "name": "#2916: back from a request is the chip above its sheet, to the layout it was opened from, named for the place the project page reopens on (the Hub on a first visit, audit N05), and the header draws no arrow beside it (#4453)",
       "path": "/?demo=1&view=workshop#app/usernode-2d5619/dev/issues/900014",
-      "expectSelector": "body:has(#platform-header a#back-btn.hidden) #dev-topic-thread #gc-thread-back > a.dev-topic-back:first-child[aria-label=\"Back to Workshop\"][href=\"#app/usernode-2d5619/workshop\"]"
+      "expectSelector": "body:has(#platform-header a#back-btn.hidden) #dev-topic-thread #gc-thread-back > a.dev-topic-back:first-child[aria-label=\"Back to Hub\"][href=\"#app/usernode-2d5619/workshop\"]"
     },
     {
       "name": "…and from a request opened on it, the same chip to the same screen (#2916)",

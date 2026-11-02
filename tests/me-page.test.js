@@ -53,7 +53,7 @@ test('parked (#5249), two stat cards: merged and challenges, side by side', () =
   const view = read('frontend/src/features/profile/profile-view.tsx');
   assert.match(view, /const STAT_GRID = KUDOS_PARKED \? 'grid grid-cols-2 gap-2 mb-2' : 'grid grid-cols-3 gap-2 mb-2';/,
     'the grid has as many columns as cards');
-  assert.match(view, /<div id="profile-stats" className=\{STAT_GRID\}>/);
+  assert.match(view, /<div id="profile-stats" className=\{shown === stats\.length \? STAT_GRID : SHOWN_GRID\[Math\.min\(shown, 3\)\]\}>/);
 });
 
 test('the rows say what is behind them, from the data only', () => {
@@ -284,4 +284,15 @@ test('the prerender draws nothing: the Me screen\'s data only ever arrives from 
   const rows = loadTsx('frontend/src/features/settings/account-rows.tsx');
   assert.equal(renderToHtml(createElement(rows.SettingsAccountRows, {})), '',
     'Settings\' account block renders nothing until mounted, so its footer hydrates as shipped');
+});
+
+test('Y03: a zero stat card says nothing: hidden, kept in the DOM', () => {
+  const { statsView } = loadTsx(STORE);
+  const fresh = { ...SUMMARY, merged: 0, challenges: { ...SUMMARY.challenges, done: 0 } };
+  assert.deepEqual(statsView(fresh).map((s) => [s.key, !!s.zero]), [['merged', true], ['challenges', true]]);
+  assert.deepEqual(statsView(SUMMARY).map((s) => !!s.zero), [false, false]);
+  assert.deepEqual(statsView(null).map((s) => !!s.zero), [false, false], 'a dash is not a zero');
+  const view = read('frontend/src/features/profile/profile-view.tsx');
+  assert.match(view, /className=\{`rounded-2xl \$\{PLANE_FILL\} px-2 py-3 text-center\$\{stat\.zero \? ' hidden' : ''\}`\}/);
+  assert.match(view, /const SHOWN_GRID = \['hidden', 'grid grid-cols-1 gap-2 mb-2', 'grid grid-cols-2 gap-2 mb-2', 'grid grid-cols-3 gap-2 mb-2'\];/);
 });

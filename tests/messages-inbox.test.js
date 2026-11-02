@@ -83,10 +83,10 @@ test('a row with no timestamp sorts last in its section, not first', () => {
   assert.deepEqual(merged.map((e) => e.key), ['mayor:2', 'mayor:1', 'person:1']);
 });
 
-test('the sections are Agents and Direct messages, and there are no filter chips', () => {
+test('the sections are Agents and People, and there are no filter chips', () => {
   assert.deepEqual([...inbox.INBOX_SECTIONS], ['agents', 'people']);
   assert.deepEqual(inbox.INBOX_SECTIONS.map((section) => message(`messages:inbox.section.${section}`)),
-    ['Agents', 'Direct messages'], 'People\'s section is headed Direct messages (16 Oct 2026)');
+    ['Agents', 'People'], 'audit C02: it holds group chats too, so it is not headed "Direct messages"');
   assert.equal(inbox.INBOX_FILTERS, undefined, 'the chips went: the headings say which is which');
   assert.equal(inbox.admits, undefined);
   assert.doesNotMatch(SCREEN, /InboxFilters|setFilter|messages-filter/);

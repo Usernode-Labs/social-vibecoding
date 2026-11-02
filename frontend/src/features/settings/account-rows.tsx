@@ -57,7 +57,7 @@ import { walletSheetStore } from '../header/wallet-sheet-store';
 import { StakingRow } from '../profile/staking-sheet';
 
 /** The two nav hosts' heading insets, phone then desktop (settings-nav.tsx). */
-const HEADING = 'px-4 pt-0 pb-1.5 md:px-3 md:pb-1';
+const HEADING = 'px-4 pt-0 pb-1.5 lg:px-3 lg:pb-1';
 
 export function SettingsAccountRows(): ReactNode {
   const t = useMessages('settings');

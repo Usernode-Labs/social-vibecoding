@@ -160,7 +160,15 @@ export function HomeScreen() {
             below it. Uncapped, it lines up edge to edge with #home-body, and
             the column itself is what centres it.
         */}
-        <div className="home-column px-3 pt-3 pb-2">
+        {/*
+            `md:pt-5` (overnight audit W06 / D19): from 768px the header is
+            the rounded bar with its 8px notch (`-mb-2`), and `pt-3` left the
+            field ~4px under it, so it read as clipped by the bar. 8 for the
+            notch and 12 of air, the step Discover, Communities and Settings
+            already take. A phone keeps `pt-3`: its bar tucks under the
+            header, and the reveal reads the bar's height, not a constant.
+        */}
+        <div className="home-column px-3 pt-3 md:pt-5 pb-2">
           <div className="relative w-full">
             <SearchIcon
               className="w-4 h-4 absolute start-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"

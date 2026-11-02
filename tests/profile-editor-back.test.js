@@ -68,3 +68,8 @@ test('the next open shows the kept draft, and without one the saved profile', ()
   assert.match(fresh, /id="profile-edit-bio"[^>]*>The saved bio<\/textarea>/);
   assert.match(fresh, /id="profile-edit-name"[^>]*value="Evan"/);
 });
+
+test('audit D10: the bio keeps its label in view when focus scrolls the sheet', () => {
+  const html = renderSheet(null);
+  assert.match(html, /<textarea[^>]*class="[^"]*\bscroll-mt-8\b[^"]*"[^>]*id="profile-edit-bio"|<textarea[^>]*id="profile-edit-bio"[^>]*class="[^"]*\bscroll-mt-8\b/);
+});

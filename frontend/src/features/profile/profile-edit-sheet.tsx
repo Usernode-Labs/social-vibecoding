@@ -562,7 +562,10 @@ export function ProfileEditSheet({
                 rows={3}
                 box="groupRow"
                 ring={false}
-                className="resize-none"
+                // Overnight audit D10: focusing or typing scrolled the field's
+                // own top to the sheet's edge, so "Bio" and its count went
+                // under it. The margin keeps the label row in view.
+                className="resize-none scroll-mt-8"
                 value={bio}
                 maxLength={Profile.MAX_BIO}
                 onChange={(e) => setBio(e.target.value)}

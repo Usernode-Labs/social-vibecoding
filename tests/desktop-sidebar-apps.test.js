@@ -58,15 +58,18 @@ test('which communities lead with App: not Homeroom\'s own, and not before it is
   assert.equal(hasAppRow('stranger', {}, ['chess']), true, 'one that is not yours is never Homeroom, which every account is in');
 });
 
-test('in its app: the community open, App first and lit with its dot, no place lit', () => {
+test('in its app: the community open, App first and lit without the dot, no place lit', () => {
   const html = drawRow({ onApp: 'chess', live: ['chess'] }, { info: CHESS });
   assert.match(html, /<a class="platform-rail-community" href="#app\/chess\/workshop" data-rail-community="chess" data-rail-open="" title="Chess" aria-current="page">/);
   const app = html.indexOf('data-rail-app="chess"');
   const places = html.indexOf('data-places="chess"');
   assert.ok(app > 0 && places > app, 'App, then its places');
-  assert.match(html, /<div class="platform-rail-nest" data-nest="open"><div class="platform-rail-nest-in"><div class="platform-rail-app-row"><a class="platform-rail-sub platform-rail-app" href="\/app\/chess" data-rail-app="chess" data-live="true" title="Chess app" aria-label="Chess app, still open" aria-current="page">/);
+  assert.match(html, /<div class="platform-rail-nest" data-nest="open"><div class="platform-rail-nest-in"><div class="platform-rail-app-row"><a class="platform-rail-sub platform-rail-app" href="\/app\/chess" data-rail-app="chess" data-live="true" title="Chess app" aria-label="Chess app" aria-current="page">/);
   assert.match(html, /class="platform-rail-sub-glyph"/);
-  assert.match(html, new RegExp(`<span class="platform-rail-sub-name">${message('core:rail.app')}</span><span class="app-live-dot platform-rail-live"`));
+  // No "still open" dot on the app you are in (audit N04): it is for an app
+  // kept loaded behind another page, where its close X sits.
+  assert.match(html, new RegExp(`<span class="platform-rail-sub-name">${message('core:rail.app')}</span></a>`));
+  assert.doesNotMatch(html, /app-live-dot/);
   assert.match(html, /<div class="platform-rail-nest platform-rail-places" data-nest="open">/, 'the places in a part inside it');
   assert.doesNotMatch(html.slice(places), /aria-current/, 'in the app, App is lit and no place is');
 });
@@ -183,4 +186,20 @@ test('a part inside a part: the inner one opens with the outer, not after it', (
   assert.match(css, /\.platform-rail-nest \.platform-rail-app-row \+ \.platform-rail-places > \.platform-rail-nest-in \{\n {4}padding-top: 1px;\n {2}\}/);
   assert.match(css, /\.platform-rail-nest \.platform-rail-places > \.platform-rail-nest-in::before \{\n {4}display: none;\n {2}\}/);
   assert.match(css, /\.platform-rail-nest \.platform-rail-live \{\n {4}width: 8px;\n {4}height: 8px;/, 'the dot at a row\'s size');
+});
+
+test('in its app, the row\'s votes move to Needs you under it instead of vanishing (audit N04)', () => {
+  const info = { chess: { ...CHESS.chess, needs: 2 } };
+  // Folded (another page): the row carries the figure.
+  const folded = drawRow({ onPage: 'other' }, { info });
+  assert.match(folded, /<span class="platform-rail-votes" aria-label="[^"]*">2<\/span>/);
+  // In its app the part opens: the row gives its figure to Needs you.
+  const inApp = drawRow({ onApp: 'chess', live: ['chess'] }, { info });
+  assert.doesNotMatch(inApp, /platform-rail-votes/);
+  const needs = inApp.slice(inApp.indexOf('data-place="needs"'));
+  assert.ok(inApp.includes('data-place="needs"'), 'Needs you is listed');
+  assert.match(needs.slice(0, 1200), /class="dev-ws-place-count"[^>]*>2<\/span>/, 'and counts the same 2');
+  // An unchosen community's votes stay off both.
+  const unchosen = drawRow({ onApp: 'chess', live: ['chess'] }, { info: { chess: { ...info.chess, unchosen: true } } });
+  assert.doesNotMatch(unchosen, /dev-ws-place-count/);
 });

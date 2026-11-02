@@ -403,7 +403,9 @@ export function AiLists({ hero, main, lit = null, ready, rows, owed, progress, w
     glyph: needGlyph(row),
     number: Number(row.sub.values?.number) || null,
     title: row.title,
-    right: row.pill ? say(row.pill)! : t('messages:ai.short.private'),
+    // B07 (audit 2 Nov 2026): a private idea in no project sits under the
+    // Only you heading already, so its row does not say it again.
+    right: row.pill ? say(row.pill)! : row.app ? t('messages:ai.short.private') : '',
     tooltip: say(row.sub)!,
     why: say(whyOf(row)),
     owe: !!row.pill,

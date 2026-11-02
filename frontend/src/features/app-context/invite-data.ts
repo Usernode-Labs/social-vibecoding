@@ -38,6 +38,8 @@ export type InviteLink = {
   /** null: no end date; it works until it is turned off (WP-D). */
   expiresAt: string | null;
   createdBy: string | null;
+  /** Audit D03: it went out, copied or shared from the pane (absent on an older server's answer). */
+  shared?: boolean;
   mine: boolean;
   /** 'live', or how the link ended (the same names as deadReason). */
   status: 'live' | 'expired' | 'used_up' | 'revoked';

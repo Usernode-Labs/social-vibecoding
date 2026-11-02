@@ -88,7 +88,7 @@ test('the browse directory’s tier labels ARE grouped-list’s SectionHeader', 
       `“${label}” no longer renders through SectionHeader: it is hand-written again`,
     );
   }
-  for (const label of ['All apps']) {
+  for (const label of ['Apps to try']) {
     assert.ok(
       html.includes(headerHtml({ className: 'md:col-span-full' }, label)),
       `“${label}” no longer renders through SectionHeader — it is hand-written again`,
@@ -101,7 +101,7 @@ test('the browse directory’s tier labels ARE grouped-list’s SectionHeader', 
   // check reads `#browse-list[data-sort="users"]…:not(:has(h2))` to say the
   // ungrouped list draws no tier headings at all, and that only means anything
   // while the grouped list draws them AS h2.
-  assert.match(html, /<h2[^>]*>All apps</);
+  assert.match(html, /<h2[^>]*>Apps to try</);
 });
 
 test('the challenge detail page’s What counts label IS field’s SectionHeading', () => {

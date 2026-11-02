@@ -2657,6 +2657,17 @@ function isBotUsername(username) {
   return String(username || '').toLowerCase() === 'homeroom_bot';
 }
 
+// A reply's words on the row: at most 140 characters, cut at the last whole
+// word with "…" (overnight audit D04: a bare cut read "Tap File it under my
+// mes", a typo hiding the ask). The server's bellSubjectOf
+// (services/homeroom-bot-notify-copy.js) cuts the same way.
+function bellWords(words) {
+  if (words.length <= 140) return words;
+  const room = words.slice(0, 139);
+  const space = room.lastIndexOf(' ');
+  return `${(space > 70 ? room.slice(0, space) : room).replace(/[\s.,;:!?-]+$/, '')}…`;
+}
+
 // The row's words for one of the bot's notifications: { label, subject, meta },
 // or null when the detail is not the bot's. Its answer is what it wrote,
 // under its name.
@@ -2664,7 +2675,7 @@ function botMomentLine(detail, message) {
   const d = parseBotDetail(detail);
   if (!d) return null;
   if (d.moment === 'reply') {
-    const words = plainMarkdown(message).slice(0, 140);
+    const words = bellWords(plainMarkdown(message));
     return words ? { label: t('notifications:row.bot.name'), subject: words, meta: null } : null;
   }
   let subject;

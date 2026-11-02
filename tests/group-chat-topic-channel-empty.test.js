@@ -107,12 +107,36 @@ function appView() {
 test('the inline vote card says the tally in words; the board and the panel keep "4 / 3"', () => {
   const av = appView();
   const pr = { id: 7, pr_number: 700, status: 'promoted', yes_count: 4, no_count: 0, votes_required: 3 };
+  // V05: past what it needed, the words are the count alone, never
+  // "4 of 3 yes votes"; below it, how many of how many.
   const words = av.voteCountPill(pr, 3, { words: true });
-  assert.match(words, /<span class="gc-vote-count-label">4 of 3 yes votes<\/span>/);
+  assert.match(words, /<span class="gc-vote-count-label">4 yes votes<\/span>/);
+  assert.match(av.voteCountPill({ ...pr, yes_count: 1 }, 3, { words: true }),
+    /<span class="gc-vote-count-label">1 of 3 yes votes<\/span>/);
   const pair = av.voteCountPill(pr, 3);
   assert.match(pair, /<span class="gc-vote-count-label">4 \/ 3<\/span>/);
   assert.doesNotMatch(pair, /yes votes/);
   // One vote needed is one whole sentence, not "1 yes votes".
+  assert.match(av.voteCountPill({ ...pr, yes_count: 0, votes_required: 1 }, 1, { words: true }),
+    /class="gc-vote-count-label">0 of 1 yes vote<\/span>/);
   assert.match(av.voteCountPill({ ...pr, yes_count: 1, votes_required: 1 }, 1, { words: true }),
-    /class="gc-vote-count-label">1 of 1 yes vote<\/span>/);
+    /class="gc-vote-count-label">1 yes vote<\/span>/);
+});
+
+test('V03: the chat\'s vote row shows no zero counts and keeps to one accent', () => {
+  const av = appView();
+  av._rememberSessionTesting = () => {};
+  av._previewAffordanceHtml = () => '<button class="gc-vote-btn gc-vote-btn-preview">Preview</button>';
+  const pr = { id: 7, pr_number: 700, status: 'promoted', yes_count: 0, no_count: 0, votes_required: 2 };
+  const none = av.voteButtonsHtml(pr, { collapseVoted: true });
+  assert.match(none, /onclick="AppView\.castVote\(7, 'yes'\)">Yes<\/button>/, 'no "Yes (0)"');
+  assert.match(none, /onclick="AppView\.castVote\(7, 'no'\)">No<\/button>/, 'no "No (0)"');
+  const some = av.voteButtonsHtml({ ...pr, yes_count: 1 }, { collapseVoted: true });
+  assert.match(some, />Yes \(1\)<\/button>/, 'a count above zero is said');
+  assert.match(some, />No<\/button>/);
+  // The row's Yes and No are the plain pills, and a tally short of its
+  // threshold is outlined in the muted ink, not the purple progress tone.
+  const css = fs.readFileSync(path.join(__dirname, '../public/css/app.css'), 'utf8');
+  assert.match(css, /\.gc-vote-inline \.gc-vote-btn-yes,\n\.gc-vote-inline \.gc-vote-btn-no \{\n {2}color: var\(--text-primary\);\n {2}background: var\(--bg-tertiary\);/);
+  assert.match(css, /\.gc-vote-inline \.gc-vote-count-pending \{ color: var\(--text-muted\); \}/);
 });

@@ -169,7 +169,7 @@ test('the group chat\'s card is the same 44px line on a phone', () => {
   const row = Math.max(px(field['min-height']), px(send.height), px(glyph[2]));
   assert.equal(top + row + bottom, PHONE_LINE);
   assert.equal(right + px(send.width) / 2, PHONE_LINE / 2);
-  assert.match(GC_COMPOSER, /<form id=\{ids\.form\} className="gc-composer-card flex items-end gap-1\.5">/);
+  assert.match(GC_COMPOSER, /<form id=\{ids\.form\} className="gc-composer-card flex items-end gap-1\.5" data-gc-files=\{files\}>/);
 });
 
 // ── 2. Tap targets ─────────────────────────────────────────────────────

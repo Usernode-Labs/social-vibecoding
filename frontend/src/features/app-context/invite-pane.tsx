@@ -7,7 +7,9 @@
  *
  *   1. THE LINK. Your newest live link for this project, or a new one made
  *      the first time you open the pane: opening it again does not mint
- *      another. Copy, and Share where the device has a share sheet.
+ *      another. Copy, and Share where the device has a share sheet. The
+ *      first Copy or Share of a link tells the server it went out (audit
+ *      D03): only then do the Communities row and the hub say a link is out.
  *   2. YOUR LINKS. The live ones, with Turn off, and the ones that ended in
  *      the last 30 days, greyed, with how each ended instead of a Turn off.
  *      Every row says who came in through its link: how many joined and how
@@ -253,10 +255,21 @@ export function InvitePane({ slug, label, unnamed = false }: { slug: string | nu
   const current = state?.links.find((l) => l.mine && l.status === 'live') || null;
   const url = current ? absolute(current.path) : '';
 
+  // Audit D03: the link went out, so the Communities row and the hub may
+  // say an invite is out. Opening the pane made it; only this says it was
+  // sent. Once per link, and nothing waits on it.
+  const noted = useRef(new Set<number>());
+  const noteSent = (link: InviteLink) => {
+    if (link.shared || noted.current.has(link.id)) return;
+    noted.current.add(link.id);
+    void inviteApi(`/api/invite-links/${link.id}/shared`, { method: 'POST' }).catch(() => { noted.current.delete(link.id); });
+  };
+
   const copy = async () => {
-    if (!url) return;
+    if (!url || !current) return;
     try {
       await navigator.clipboard.writeText(url);
+      noteSent(current);
       setCopied(true);
       setSentOut(true);
       setTimeout(() => setCopied(false), 1600);
@@ -268,6 +281,7 @@ export function InvitePane({ slug, label, unnamed = false }: { slug: string | nu
     if (!url || typeof navigator.share !== 'function') return;
     try {
       await navigator.share({ title: unnamed ? t('agent:appContext.invite.shareTitleUnnamed') : t('agent:appContext.invite.shareTitle', { project: label }), url });
+      if (current) noteSent(current);
       setSentOut(true);
     } catch { /* dismissed */ }
   };

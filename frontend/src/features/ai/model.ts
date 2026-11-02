@@ -146,6 +146,12 @@ export interface WorkRow {
   /** Where the row goes: a page, or a private thread of Main. */
   href: string | null;
   rootId: number | null;
+  /**
+   * B06 (audit 2 Nov 2026): a plan of Homeroom bot's waiting for your Build
+   * it. Its Build it is on the plan in Main Chat, so the row opens there, at
+   * the plan; the request's page has no Build it.
+   */
+  plan?: { slug: string; number: number } | null;
 }
 
 /**
@@ -315,6 +321,7 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       pill: { id: PILLS[t.what] || 'messages:ai.pill.needsYou' },
       href: t.href,
       rootId: null,
+      ...(t.what === 'plan' && t.app && t.number ? { plan: { slug: t.app.slug, number: t.number } } : {}),
     });
   }
   for (const p of work?.private || []) {
@@ -472,10 +479,16 @@ export function shortWords(t: AiThread): Phrase {
   return { id: SHORT_WORDS[t.what] || 'messages:ai.short.waiting' };
 }
 
-/** Pure: the hero's line under the bot's name: what needs you, what is in progress. */
-export function heroWords(needs: number, next: number): Phrase {
-  if (needs > 0) return { id: 'messages:ai.hero.both', values: { needs, next } };
-  return { id: 'messages:ai.hero.next', values: { next } };
+/**
+ * Pure: the hero's line under the bot's name: what needs you, what is in
+ * progress. A zero says nothing (Y03, audit 2 Nov 2026): each half is said
+ * only above zero, and with neither there is no line ("In progress: 0" was).
+ */
+export function heroWords(needs: number, next: number): Phrase | null {
+  if (needs > 0 && next > 0) return { id: 'messages:ai.hero.both', values: { needs, next } };
+  if (needs > 0) return { id: 'messages:ai.hero.needs', values: { needs } };
+  if (next > 0) return { id: 'messages:ai.hero.next', values: { next } };
+  return null;
 }
 
 /**

@@ -150,6 +150,12 @@ const APPS = [
   app({ id: 802, slug: 'audit-garden', name: 'Audit Garden', emoji: '🌱', audience: 'invited', favorite: true, community: 501 }),
   app({ id: 803, slug: 'tide-tables', name: 'Tide Tables', emoji: '🌊', audience: 'open', featured: true, community: 502 }),
   app({ id: 804, slug: 'pocket-quiz', name: 'Pocket Quiz', emoji: '🧩', audience: 'solo', community: 503 }),
+  // Apps the viewer is not in, so Discover has a page of Join rows to lay out.
+  app({ id: 805, slug: 'group-challenge', name: 'Group challenge', emoji: '🏃', audience: 'open', member: false, community: 504 }),
+  app({ id: 806, slug: 'sign-up-sheet', name: 'Sign-up sheet', emoji: '✋', audience: 'open', member: false, community: 505 }),
+  app({ id: 807, slug: 'potluck-planner', name: 'Potluck planner', emoji: '🥗', audience: 'open', member: false, community: 506 }),
+  app({ id: 808, slug: 'find-a-time', name: 'Find a time', emoji: '📅', audience: 'open', member: false, community: 507 }),
+  app({ id: 809, slug: 'neighbourhood-lending-library', name: 'Neighbourhood lending library', emoji: '📚', audience: 'open', member: false, community: 508 }),
 ];
 const appBySlug = (slug) => APPS.find((a) => a.slug === slug);
 
@@ -374,4 +380,6 @@ export const SCREENS = [
   { id: 'project-hub', route: '#app/audit-garden', screen: '#app-view', composer: true },
   { id: 'profile', route: '#profile', screen: '#profile-screen' },
   { id: 'settings', route: '#settings', screen: '#settings-screen' },
+  { id: 'discover', route: '#apps', screen: '#browse-screen' },
+  { id: 'challenges', route: '#leaderboard', screen: '#leaderboard-screen' },
 ];
