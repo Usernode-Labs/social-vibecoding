@@ -510,14 +510,17 @@ function styleText(css) {
 
 /**
  * Pure: a screen the model wrote, with the stylesheets put in first in its
- * head (so its own <style> wins over them), as a whole document.
+ * head (so its own <style> wins over them), as a whole document. #6150: the
+ * sheet blocks are Homeroom's to write, so any the model copied from the
+ * version it read (collapsed, empty) are taken out first: each redraw left
+ * one empty duplicate per sheet, which the next edit filled with nothing.
  */
 function withSheets(html, { links = [], styles = [] } = {}) {
   const sheets = [
     ...links.map((href) => `<link rel="stylesheet" href="${escapeAttr(href)}">`),
     ...styles.map((s) => `<style ${SHEET_ATTR}="${escapeAttr(s.path)}">${styleText(s.css)}</style>`),
   ].join('');
-  let doc = String(html || '').trim();
+  let doc = String(html || '').replace(SHEET_BLOCK, '').trim();
   if (!/<html\b/i.test(doc)) {
     doc = /<body\b/i.test(doc) ? `<!doctype html><html>${doc}</html>` : `<!doctype html><html><body>${doc}</body></html>`;
   }
@@ -532,11 +535,29 @@ function collapseSheets(html) {
   return String(html || '').replace(SHEET_BLOCK, (_all, open, _path, _css, close) => `${open}${close}`);
 }
 
-/** Pure: a version the model edited (collapsed) with the stylesheets of `full` written back in. */
+/**
+ * Pure: a version the model edited (collapsed) with the stylesheets of `full`
+ * written back in. #6150: each path's first CSS that is not empty, so an
+ * empty duplicate after it cannot wipe it, and one block per path: later
+ * duplicates are dropped.
+ */
 function fillSheets(view, full) {
   const css = new Map();
-  for (const m of String(full || '').matchAll(SHEET_BLOCK)) css.set(m[2], m[3]);
-  return String(view || '').replace(SHEET_BLOCK, (all, open, sheet, inner, close) => (inner.trim() || !css.has(sheet) ? all : `${open}${css.get(sheet)}${close}`));
+  for (const m of String(full || '').matchAll(SHEET_BLOCK)) {
+    if (m[3].trim() && !css.has(m[2])) css.set(m[2], m[3]);
+  }
+  const seen = new Set();
+  return String(view || '').replace(SHEET_BLOCK, (all, open, sheet, inner, close) => {
+    if (seen.has(sheet)) return '';
+    seen.add(sheet);
+    return inner.trim() || !css.has(sheet) ? all : `${open}${css.get(sheet)}${close}`;
+  });
+}
+
+/** Pure (#6150): whether a version holds a sheet block with no CSS in it. */
+function hasEmptySheet(html) {
+  for (const m of String(html || '').matchAll(SHEET_BLOCK)) if (!m[3].trim()) return true;
+  return false;
 }
 
 // ── The prompt ───────────────────────────────────────────────────────────
@@ -1145,6 +1166,13 @@ async function answer(pool, config, {
     return say(unkept ? NOT_DRAWN_TEXT : clip(replyText, MAX_REPLY_CHARS) || BROKEN_TEXT,
       withCard.card ? { metadata: { kind: 'chat', ...withCard } } : {});
   }
+  // #6150: a version about to be saved with a sheet block left empty (an
+  // older version's empty duplicate, edited) takes that sheet's CSS from the
+  // project's stylesheets again rather than being saved unstyled.
+  if (hasEmptySheet(html)) {
+    if (!sheets) sheets = await sheetsFor(pool, { user, surface, app: project, config, deps, entry });
+    html = fillSheets(html, withSheets('', sheets));
+  }
   // The thread's design, made by its first screen (its rows, its size).
   const held = drawn || !design
     ? await threads.ensureDesign(pool, config, {
@@ -1241,6 +1269,7 @@ module.exports = {
   withSheets,
   collapseSheets,
   fillSheets,
+  hasEmptySheet,
   screenArgs,
   notDrawnYet,
   isFiller,
