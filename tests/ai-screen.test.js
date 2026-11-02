@@ -133,6 +133,8 @@ test('each section groups its rows by project, and a project shows its first few
   assert.match(lists, /aria-hidden=\{open \? undefined : true\}\s+inert=\{!open\}/, 'the folded rest is out of reach until it opens');
   assert.match(lists, /\{g\.app \? <SmallTile app=\{g\.app\} size="head" \/> : <LockIcon className="h-4 w-4 shrink-0" aria-hidden="true" \/>\}/);
   assert.equal(message('messages:ai.short.private'), 'Only you', 'the heading over private ideas in no project');
+  assert.match(lists, /right: row\.pill \? say\(row\.pill\)! : row\.app \? t\('messages:ai\.short\.private'\) : '',/,
+    'B07: a private idea under that heading does not say Only you again on its row');
   // One project picked: its chip names it, so its name is not said again.
   assert.match(lists, /const heads = picked\.length !== 1;/);
 });
