@@ -497,6 +497,37 @@ function planHtml({ design, title, notes, before = null, after, version }) {
 // What a design may post from: a thread put away posts nothing.
 const POSTABLE = new Set(['open', 'posted', 'filed']);
 
+// #6151 (2 Nov 2026): a design filed as a request is Homeroom bot's to
+// build: fileRequest queues it (reason dm_request) and the bot builds it a
+// minute later. The line that said it was filed stopped at "…as its plan",
+// and asked "will you build this now?" the design bot answered that it
+// could not. The line now says what happens next, read off the new
+// request's track (homeroom-bot-track.js): the track states in which the bot
+// has it in hand, and the limits it waits at.
+const FILED_BUILDS = new Set(['queued', 'planning', 'building']);
+const FILED_LIMITS = new Set(['slots', 'bot_wide', 'questions', 'allowance']);
+
+/**
+ * Pure (#6151): what the filed line says happens next, from the new
+ * request's track (null when the bot has none) and whether fileRequest
+ * queued it: { say: 'builds', version } (Homeroom bot reads it next and
+ * builds it from that version), { say: 'held', limit } (it builds it once
+ * that limit frees), { say: 'person' } (the bot is off for the project, or
+ * a person has it or must decide), or null for any other track. Codes,
+ * never words: the client words them (frontend/locales/en/messages.json
+ * bot.track.filed.*), as it words the track.
+ */
+function filedNext(track, { queued = false, version = null } = {}) {
+  const v = Number(version);
+  const builds = Number.isSafeInteger(v) && v > 0 ? { say: 'builds', version: v } : null;
+  if (!track) return queued ? builds : { say: 'person' };
+  if (FILED_BUILDS.has(track.state)) return builds;
+  const why = track.held?.limit || track.why || null;
+  if (track.state === 'held') return FILED_LIMITS.has(why) ? { say: 'held', limit: why } : { say: 'person' };
+  if (track.state === 'stopped' && why === 'needs_person') return { say: 'person' };
+  return null;
+}
+
 /**
  * 1 Nov 2026 (C2.1): the open request a design's plan goes on when nobody
  * names one: the request its thread is about (phase B's about columns), or
@@ -629,6 +660,13 @@ async function postDesignPlan(pool, config, {
     attached = false;
     log.warn('design-threads', 'Filed a design, but could not attach its plan', { app: app.slug, issueNumber: number, err: err.message });
   }
+  // #6151: what happens next, from the new request's track, said after the
+  // line in the reader's language (filedNext). Only with its plan attached:
+  // without it there is no version to build from. Never throws.
+  const tracks = attached
+    ? await (deps.track || require('./homeroom-bot-track')).tracksForRequests(pool, { appId: app.id, numbers: [number], deps })
+    : null;
+  const next = attached ? filedNext(tracks?.get(number) || null, { queued: !!filed.queueId, version: after.version }) : null;
   await dm.sendDm(pool, {
     bot, userId: user.id, threadRootId: design.rootId, moment: null,
     idempotencyKey: `design-thread-filed-${design.rootId}${planVersion > 1 ? `-v${planVersion}` : ''}`,
@@ -637,6 +675,7 @@ async function postDesignPlan(pool, config, {
       : captured
         ? `Filed it as request #${number} on ${name}, under your name, with version 1 and version ${after.version} side by side as its plan.`
         : `Filed it as request #${number} on ${name}, under your name, with version ${after.version} as its plan.`,
+    ...(next ? { metadata: { kind: 'design_filed', appSlug: app.slug, appName: name, filedNext: next } } : {}),
     objects: [{ type: 'issue', appId: Number(app.id), issueNumber: number }],
   }).catch((err) => log.warn('design-threads', 'Could not say a design was filed', { err: err.message }));
   log.info('design-threads', 'Proposed a design', { app: app.slug, issueNumber: number, userId: user.id, version: after.version });
@@ -680,6 +719,7 @@ module.exports = {
   screenMarkup,
   planHtml,
   planTargetOf,
+  filedNext,
   postDesignPlan,
   proposeDesign,
 };

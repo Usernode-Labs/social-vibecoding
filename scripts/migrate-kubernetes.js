@@ -62,14 +62,21 @@ async function main() {
   const config = loadConfig();
   const pool = getPool(config);
   try {
+    const grants = require('../src/services/database-role-grants');
     await ensureTargetDatabase(config);
+    // Web's writes on the workflow kernel's tables go only once no web
+    // process of a build that needs them serves: wait for that before
+    // changing anything, so a release refused for it leaves the running one
+    // as it was.
+    await grants.awaitWebRestrictionReady(pool);
     await migrate(config);
-    // One transaction: no login sees a grant half made (web never holds the
-    // kernel's writes, even for the moment between two statements).
+    // One transaction, after the schema web's withdrawals use is in place: no
+    // login sees a grant half made, and web's writes go last.
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await require('../src/services/database-role-grants').ensureRuntimeGrants(client);
+      await grants.ensureRuntimeGrants(client);
+      await grants.takeWebWorkflowWrites(client);
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});

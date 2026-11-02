@@ -150,6 +150,7 @@ const AdminTopochain = {
     { key: 'delegations', label: 'Delegations' },
     { key: 'settings', label: 'Settings' },
     { key: 'app-version', label: 'App version' },
+    { key: 'text-translations', label: 'Translations' },
     { key: 'sql-console', label: 'SQL console' },
     { key: 'api-tester', label: 'API tester' },
   ],

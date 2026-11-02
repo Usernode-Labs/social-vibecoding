@@ -225,8 +225,14 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
     assert.match(spec.spec_html, /<div data-side="after" data-change="1">[\s\S]*Water now/);
     assert.doesNotMatch(spec.spec_html, /<script/i, 'scripts left out');
     assert.match(spec.spec_md, /The screen is new/);
-    assert.equal((await lastSaid(words.rootId)).content,
+    const filedLine = await lastSaid(words.rootId);
+    assert.equal(filedLine.content,
       `Filed it as request #${filed.number} on Plant pal, under your name, with version 1 as its plan.`);
+    // #6151: what happens next, read off the new request's track. Homeroom
+    // bot is off here, so nothing queued it and it has no track: a person
+    // decides (tests/design-plans.test.js pins the other cases).
+    assert.equal(filedLine.metadata.homeroomBot.kind, 'design_filed');
+    assert.deepEqual(filedLine.metadata.homeroomBot.filedNext, { say: 'person' });
     const pure = designs.planHtml({ design: { width: 390, height: 844, title: 'Watering', route: null }, title: 'T', notes: '', before: null, after: DRAWN, version: 1 });
     assert.match(pure, /data-size="phone" data-height="844"/);
   });

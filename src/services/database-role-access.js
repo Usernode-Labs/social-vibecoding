@@ -7,11 +7,17 @@ const DEFAULT_ROLES = Object.freeze({
   migrator: 'homeroom_migrator', provisioner: 'homeroom_provisioner',
 });
 const IDENT = /^[a-z_][a-z0-9_]{0,62}$/;
-// The workflow kernel's tables besides its event stream. The conductor
+// The workflow kernel's relations are public's wf_* tables and sequences,
+// read from the catalog wherever they are granted or checked. The conductor
 // decides and writes them; web asks, appending to wf_events alone
-// (src/db/migrations/0011-workflow-producers.sql). A new kernel table goes
-// here too: default privileges give web every new table's writes.
-const KERNEL_TABLES = Object.freeze(['wf_instances', 'wf_receipts', 'wf_work', 'wf_work_attempts', 'wf_settings']);
+// (src/db/migrations/0011-workflow-producers.sql). Default privileges give
+// both serving logins every new table's writes, so a new kernel table is
+// the kernel's by its name: the grants and these checks find it.
+const isKernelRelation = (qualifiedName) => /^public\.wf_/.test(qualifiedName);
+// Its catalog form, for the checks below.
+const KERNEL_SQL = `SELECT c.oid, c.relname, c.relkind FROM pg_catalog.pg_class c
+  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+ WHERE n.nspname = 'public' AND c.relname LIKE 'wf\\_%' AND c.relkind IN ('r', 'p', 'S')`;
 // What a producer names when it appends an event; every other column of
 // wf_events (its status, outcome, retry time, producer) is the kernel's.
 const WEB_EVENT_COLUMNS = Object.freeze(['machine', 'key', 'app_id', 'type', 'payload', 'source', 'actor', 'request_key', 'caused_by']);
@@ -88,34 +94,31 @@ async function assertLogin(pool, kind, env = process.env) {
       || (kind === 'provisioner' && (!row.rolcreatedb || !row.rolcreaterole || !row.rolbypassrls))) {
     throw new Error(`Database ${kind} login does not match its required privileges`);
   }
-  // Web's own check comes with the release that takes its writes on the
-  // kernel's tables (database-role-grants.js ensureRuntimeGrants).
-  if (kind === 'conductor') await assertWorkflowAuthority(pool, kind);
+  if (kind === 'web' || kind === 'conductor') await assertWorkflowAuthority(pool, kind);
 }
 
 // The workflow's producers are told apart by this (wf_events.producer): web
 // may append a pending event, naming only what a producer says, and write
-// nothing more of the kernel's tables; the conductor may update the stream,
-// or every event it appends would count as web's.
+// nothing more of the kernel's relations (nor set a sequence's value); the
+// conductor may update the stream, or every event it appends would count as
+// web's, and writes every kernel table.
 async function assertWorkflowAuthority(pool, kind) {
   const { rows: [row] } = await pool.query(`
-    WITH t AS (
-      SELECT has_table_privilege(current_user, 'public.' || name, 'INSERT') AS i,
-             has_table_privilege(current_user, 'public.' || name, 'UPDATE') AS u,
-             has_table_privilege(current_user, 'public.' || name, 'DELETE') AS d,
-             has_table_privilege(current_user, 'public.' || name, 'TRUNCATE') AS x
-        FROM unnest($1::text[]) AS name)
+    WITH k AS (${KERNEL_SQL}),
+    t AS (
+      SELECT relname, has_table_privilege(current_user, oid, 'INSERT') AS i, has_table_privilege(current_user, oid, 'UPDATE') AS u,
+             has_table_privilege(current_user, oid, 'DELETE') AS d, has_table_privilege(current_user, oid, 'TRUNCATE') AS x
+        FROM k WHERE relkind <> 'S')
     SELECT has_table_privilege(current_user, 'public.wf_events', 'INSERT') AS appends,
            has_table_privilege(current_user, 'public.wf_events', 'UPDATE') AS decides,
-           has_table_privilege(current_user, 'public.wf_events', 'DELETE')
-             OR has_table_privilege(current_user, 'public.wf_events', 'TRUNCATE')
-             OR (SELECT bool_or(i OR u OR d OR x) FROM t) AS writes_any,
+           (SELECT bool_or(u OR d OR x OR (i AND relname <> 'wf_events')) FROM t)
+             OR (SELECT bool_or(has_sequence_privilege(current_user, oid, 'UPDATE')) FROM k WHERE relkind = 'S') AS writes_any,
            (SELECT bool_and(i AND u AND d) FROM t) AS writes_all,
-           (SELECT bool_and(has_column_privilege(current_user, 'public.wf_events', a.attname, 'INSERT') = (a.attname = ANY($2::text[])))
+           (SELECT bool_and(has_column_privilege(current_user, 'public.wf_events', a.attname, 'INSERT') = (a.attname = ANY($1::text[])))
               FROM pg_catalog.pg_attribute a
              WHERE a.attrelid = 'public.wf_events'::regclass AND a.attnum > 0 AND NOT a.attisdropped) AS asks,
            has_function_privilege(current_user, 'public.wf_refuse_pending(bigint, text)', 'EXECUTE') AS withdraws`,
-  [KERNEL_TABLES, WEB_EVENT_COLUMNS]);
+  [WEB_EVENT_COLUMNS]);
   const ok = kind === 'web'
     ? row.asks && !row.appends && row.withdraws && !row.decides && !row.writes_any
     : row.appends && row.withdraws && row.decides && row.writes_all;
@@ -139,6 +142,6 @@ function templateName(provisioner, extensions) {
 }
 
 module.exports = {
-  KERNEL_TABLES, WEB_EVENT_COLUMNS, enabled, names, identifier, literal, parseUrl, provisionerUrl, readUrl, assertLogin, assertWorkflowAuthority,
+  WEB_EVENT_COLUMNS, isKernelRelation, enabled, names, identifier, literal, parseUrl, provisionerUrl, readUrl, assertLogin, assertWorkflowAuthority,
   assertReadonlyRole, templateName,
 };

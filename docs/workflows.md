@@ -124,9 +124,9 @@ a `system` source does not trust web's claim of one where that would let web cho
 what only the platform chooses: web asks app delivery for an admin's redeploy of main,
 never for an image or a commit. Web writes nothing else of the kernel's tables: a route
 that stops waiting withdraws its own pending request through `wf_refuse_pending` (only
-one its own login appended, and only as `expired`, `operation_unavailable` or
-`stop_unavailable`), and an admin's release of a faulted instance is a platform
-operation a conductor runs.
+one its own login appended, or one it appended just before its writes were taken, and
+only as `expired`, `operation_unavailable` or `stop_unavailable`), and an admin's
+release of a faulted instance is a platform operation a conductor runs.
 
 **Answers.** A route answers from the outcome's `reply`, never by reading the tables
 afterwards. A machine that answers routes defines `reply(tx, event, after, ctx, facts)`:
