@@ -28,3 +28,13 @@ test('C03: the phone\'s Messages list keeps the rows\' own type and time', () =>
   assert.match(CSS, /\n\.messages-row-name \{ color: var\(--text-primary\); font-size: 15px; font-weight: 650;/);
   assert.match(CSS, /\n\.messages-row-preview \{ margin-top: 2px; color: var\(--text-muted\); font-size: 13px;/);
 });
+
+test('C06: an empty reply box on a request or a channel shows Send faded, as Messages does', () => {
+  const composer = read('frontend/src/features/group-chat/composer.tsx');
+  assert.match(composer, /const files = slot\.attachments\.length \? '' : undefined;/);
+  assert.match(composer, /<form id=\{ids\.form\} className="messages-composer-card" data-gc-files=\{files\}>/);
+  assert.match(composer, /<form id=\{ids\.form\} className="gc-composer-card flex items-end gap-1\.5" data-gc-files=\{files\}>/);
+  assert.match(CSS, /\.messages-send:disabled \{ opacity: \.35; \}/);
+  assert.match(CSS, /\.messages-composer-card:not\(\[data-gc-files\]\):has\(textarea:placeholder-shown\) \.messages-send \{ opacity: \.35; \}/);
+  assert.match(CSS, /\.gc-composer-card:not\(\[data-gc-files\]\):has\(textarea:placeholder-shown\) \.gc-send \{ opacity: \.35; \}/);
+});

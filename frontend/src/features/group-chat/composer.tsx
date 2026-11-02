@@ -216,11 +216,16 @@ export function ComposerForm({ scope, fill, placeholder, maxLength, messages = f
   // #4065: the drop zone, while a file is held over this composer or its
   // messages. The module's tracker publishes the flag; it lies over the card,
   // and takes no pointer events, so the drop still lands on the form.
-  const dragging = !!useComposerSlot(scope).dragging;
+  const slot = useComposerSlot(scope);
+  const dragging = !!slot.dragging;
   const dropZone = dragging ? <DropOverlay /> : null;
+  // Audit C06: with nothing to send, Send looks as Messages' own does, faded
+  // (app.css reads the empty field off :placeholder-shown, which follows
+  // the module's own writes to it too). Files staged are something to send.
+  const files = slot.attachments.length ? '' : undefined;
   if (messages) {
     return (
-      <form id={ids.form} className="messages-composer-card">
+      <form id={ids.form} className="messages-composer-card" data-gc-files={files}>
         <div className="flex items-end gap-1.5">
           <div className="messages-composer-add">
             <button type="button" id={ids.attach} className="messages-composer-action" aria-label={t('chat:group.composer.page.attachFiles')} title={t('chat:group.composer.page.attachFiles')}>
@@ -254,7 +259,7 @@ export function ComposerForm({ scope, fill, placeholder, maxLength, messages = f
   // already, and a card in a card is the thing the language avoids.
   if (fill) {
     return (
-      <form id={ids.form} className="gc-composer-card flex items-end gap-1.5">
+      <form id={ids.form} className="gc-composer-card flex items-end gap-1.5" data-gc-files={files}>
         <button
           type="button"
           id={ids.attach}
