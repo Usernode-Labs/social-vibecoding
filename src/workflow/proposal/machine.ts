@@ -178,8 +178,11 @@ export interface Data {
   n: number;
   attempt?: Attempt | null;
   // An admin's force (M4): it lasts until it merges, closes, leaves review
-  // or its author pushes new code.
-  force?: { by: string | null; userId: number | null; at: string } | null;
+  // or its author pushes new code. `head` is the commit it skips the checks
+  // on (rules/merge-claim.ts forceWaivesChecks): the one it was given on, or
+  // where a merge of main moved it by pure git; absent on a force given
+  // before it was recorded, which skips the checks nowhere.
+  force?: { by: string | null; userId: number | null; at: string; head?: string | null } | null;
   sync?: Sync | null;
   lastSync?: SyncOutcome | null;
   // GitHub's last refusal (named once per head), what the AI could not
@@ -978,7 +981,8 @@ function gated(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: D
   const base = baseRefusal(row);
   if (base) return back(base);
   const refusal = f.claim ? claimRefusal(f.claim, {
-    head: row.head, force: a.force, shotsEnforced: !!deps.shotsEnforced, mainPassThrough: !!r.mainPassThrough,
+    head: row.head, force: a.force, forcedHead: s.data.force?.head ?? null,
+    shotsEnforced: !!deps.shotsEnforced, mainPassThrough: !!r.mainPassThrough,
     votesMergeable: !!f.gate?.mergeable,
   }) : 'session_not_found';
   if (refusal) return back(refusal);
@@ -1125,7 +1129,8 @@ function observed(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps
 // An admin forces the merge (M4): it lasts until it merges, closes, leaves
 // review or its author pushes new code.
 const forceMerge: Handler = (s, e, f, ctx) => step(
-  { name: s.name, data: { ...s.data, force: { by: e.payload.username ?? null, userId: e.payload.userId ?? null, at: ctx.now.toISOString() } } } as Live,
+  { name: s.name, data: { ...s.data, force: { by: e.payload.username ?? null, userId: e.payload.userId ?? null,
+    at: ctx.now.toISOString(), head: f.row?.head ?? null } } } as Live,
   { messages: [toQueue(s.data, 'MergeWanted', { reason: 'force', force: true })] },
 );
 
@@ -1340,10 +1345,22 @@ function synced(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outco
 }
 
 
+// The moves that are pure git over the head they leave: its checks' green
+// verdict carries (routes/votes.js, services/pr-import-sync.js), and so does
+// an admin's force over its checks.
+const MECHANICAL_MOVES: ReadonlySet<string> = new Set(['mechanical', 'imported_head_mechanical']);
+
 const headMoved: Handler = (s, e, f) => {
   const p = e.payload;
-  // New code nobody forced: an admin's force ends with an authored push.
-  const next = p.keepVotes || !s.data.force ? s : ({ name: s.name, data: { ...s.data, force: null } } as Live);
+  const force = s.data.force;
+  // New code nobody forced: an admin's force ends with an authored push. It
+  // lasts through a merge of main, conflicts included (M4), but follows only
+  // a mechanical one: the head a resolution wrote merges on its own checks.
+  const next = !force ? s
+    : !p.keepVotes ? ({ name: s.name, data: { ...s.data, force: null } } as Live)
+      : MECHANICAL_MOVES.has(p.reason) && !!force.head && force.head === p.from
+        ? ({ name: s.name, data: { ...s.data, force: { ...force, head: p.to } } } as Live)
+        : s;
   return step(next, {
     writes: [{ type: 'headMoved', sessionId: s.data.sessionId, column: p.column, to: p.to, keepVotes: p.keepVotes, fixOnly: p.fixOnly }],
     messages: f.row!.shots ? [toShots(s.data, 'HeadMoved', { head: p.to, reason: p.reason, pin: p.column, from: null })] : [],
