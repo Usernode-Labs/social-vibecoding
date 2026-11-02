@@ -143,7 +143,7 @@ test('a board column draws the board variant: no tile, the line in words, the ca
   // Done: every row is live, so the bar leads the tags at its words' width,
   // and there is no band.
   const done = column(html, 'done');
-  assert.match(done, /<span class="dev-ws-wrow-sub">PR #1572 · alice · closed #1500 · 2d ago<\/span><span class="dev-ws-wrow-status"><span class="dev-ws-row-state dev-ws-row-state-ok dev-ws-wrow-live"[^>]*>✓ Live<\/span><span class="dev-ws-wrow-tally" title="3 yes and 1 no\. It needed 3 yes to pass\.">3\/3 yes · 1 no<\/span>/,
+  assert.match(done, /<span class="dev-ws-wrow-sub">PR #1572 · alice · closed #1500 · 2d ago<\/span><span class="dev-ws-wrow-status"><span class="dev-ws-row-state dev-ws-row-state-ok dev-ws-wrow-live"[^>]*>✓ Live<\/span><span class="dev-ws-wrow-tally" title="3 yes and 1 no\. It needed 3 yes to pass\.">3 yes · 1 no<\/span>/,
     '#6075: the final counted vote sits beside the live pill');
   assert.ok(!done.includes('dev-ws-row-band'), 'no bar across a live row');
   assert.ok(!/data-tone="ok"[^>]*>(?:<svg[^>]*>[\s\S]*?<\/svg>)?Live</.test(done), 'and no second, small Live tag');

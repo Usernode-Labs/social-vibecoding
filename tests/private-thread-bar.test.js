@@ -66,6 +66,22 @@ test('the doors wait for the bot\'s answer, and File it is never one of them', (
   assert.deepEqual(doors({ ...open('idea'), mine: false }), [], 'never on a thread that is not theirs');
   assert.deepEqual(doors({ state: 'filed', number: 4 }), [], 'none once it went somewhere');
   assert.deepEqual(doors(null), []);
+  // B04 (audit 2 Nov 2026): a screen drawn for no project yet is made into one from its drawing.
+  const drawn = { title: 'Weekly chore chart', version: 2 };
+  assert.deepEqual(doors({ ...open('ask'), design: drawn }), ['new']);
+  assert.deepEqual(doors({ ...open('design'), design: drawn }), ['new'], 'a design for no project yet too');
+  assert.deepEqual(doors({ ...open('design', notes), design: drawn }), [], 'never one of a project that exists');
+  assert.deepEqual(doors({ ...open('ask'), design: drawn }, false), []);
+});
+
+test('B04: New project on a drawn screen makes it with its name and drawing, never the generic create screen', () => {
+  const src = read(BAR);
+  assert.match(src, /import \{ MakeSheet \} from '\.\/bot-make';/);
+  assert.match(src, /const drawn = where\.design && !where\.app \? where\.design : null;/);
+  assert.match(src, /\{door === 'new' && drawn \? \(\s*<MakeSheet\s+project=\{\{ name: \(drawn\.title \|\| ''\)\.slice\(0, 60\), rootId, version: drawn\.version \}\}/);
+  assert.match(src, /\{door === 'new' && !drawn \? \(/, 'the who-for choices only for an idea with nothing drawn');
+  const server = read('src/services/private-threads.js');
+  assert.match(server, /\{ design: \{ title: row\.design_title \|\| null, version: Number\(row\.design_version\) \} \}/);
 });
 
 test('it is drawn on every private thread in the bot\'s chat, by the server\'s word: the note on top, the doors under it', () => {
@@ -112,6 +128,14 @@ test('whose thread it is, its name and the words to take public, for a root of t
   assert.equal(privateThreadWords(mine, replies, ME), 'An idea: swap seeds\nby post');
   assert.equal(privateThreadWords(plus, replies, ME), 'A seed calendar\nmonth by month');
   assert.equal(privateThreadWords(draft, [], ME), '', 'nothing of theirs yet');
+  // B08, B04 (audit 2 Nov 2026): a new project's thread is named by its idea and starts from it.
+  const project = { content: 'New thread, for a new project: a chore chart. Only you can see it.', sender: { id: 2, bot: true }, metadata: { homeroomBot: { kind: 'opened_thread', projectIdea: 'a chore chart for our flat' } } };
+  const answered = [{ content: 'Yes please. Just the three of us', sender: { id: ME } }];
+  assert.equal(privateThreadTitle(project, answered, ME), 'a chore chart for our flat', 'never their newest words');
+  assert.equal(privateThreadWords(project, answered, ME), 'a chore chart for our flat');
+  // B19: a draft's thread by what it drafts.
+  const named = { ...draft, metadata: { homeroomBot: { kind: 'opened_draft', draftTitle: 'Also show who has each thing' } } };
+  assert.equal(privateThreadTitle(named, [], ME), 'Also show who has each thing');
 });
 
 test('in Main Chat\'s column a thread is alone under its own head, and says it is theirs', () => {

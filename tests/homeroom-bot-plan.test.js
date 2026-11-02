@@ -377,7 +377,7 @@ test('B6: which bot messages draw a plan or two questions, and what state a plan
   // request's plan's reply is posted on the request, and its note says so.
   assert.match(composer, /\{planReply\.firstVersion \? t\('messages:composer\.planReplyNote'\) : t\('messages:composer\.planReplyNotePublic'\)\}/);
   assert.equal(message('messages:composer.planReplyNote'), 'Say what to change, and Homeroom bot sends a new plan. Only you see this.');
-  assert.equal(message('messages:composer.planReplyNotePublic'), 'What you write is posted on the request, where the group can see it.');
+  assert.equal(message('messages:composer.planReplyNotePublic'), 'What you write is drafted for you to post on the request, where the group can see it. Nothing is posted until you tap Post it.');
 });
 
 test('B6: the plan is answered in the chat; #4043: the App tab no longer draws it', () => {

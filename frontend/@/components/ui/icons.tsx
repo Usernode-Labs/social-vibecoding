@@ -121,6 +121,15 @@ function filled(name: string, d: string) {
 
 export const ChevronLeftIcon = strokedPath('ChevronLeftIcon', 'M15 19l-7-7 7-7');
 
+/**
+ * Heroicons v1 outline arrow-left: the header's back button on Android
+ * (overnight audit G01), where the platform's convention is a plain arrow
+ * with no disc rather than iOS's chevron. platform-header.tsx ships it beside
+ * ChevronLeftIcon and app.css shows one or the other off the kit's
+ * `html.un-android`.
+ */
+export const ArrowLeftIcon = stroked('ArrowLeftIcon', 'M10 19l-7-7m0 0l7-7m-7 7h18');
+
 /** The tighter back chevron used in the mobile Messages thread header. */
 export const ChevronLeftInsetIcon = stroked('ChevronLeftInsetIcon', 'M15 18l-6-6 6-6');
 

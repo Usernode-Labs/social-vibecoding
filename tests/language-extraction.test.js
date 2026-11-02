@@ -466,8 +466,6 @@ test('every unnamed wording added for a stand-in reads as the named one did with
     ['messages:members.leave.title', 'messages:members.leave.titleUntitled', { group: 'Conversation' }],
     ['messages:shareTo.sharedTo', 'messages:shareTo.sharedToUntitled', { destination: 'Conversation' }],
     ['messages:members.remove.title', 'messages:members.remove.titleUnknown', { username: 'unknown' }],
-    ['messages:create.block.title', 'messages:create.block.titleUnknown', { username: 'unknown' }],
-    ['messages:create.result.blockNamed', 'messages:create.result.blockUnknown', { username: 'unknown' }],
     ['messages:invitation.invitedBy', 'messages:invitation.invitedByUnknown', { username: 'unknown' }],
     ['messages:invitation.declineAndBlock', 'messages:invitation.declineAndBlockUnknown', { username: 'unknown' }],
     ['messages:attachments.removeNamed', 'messages:attachments.removeUnnamed', { file: 'file' }],

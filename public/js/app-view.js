@@ -6123,7 +6123,9 @@ const AppView = {
     } else if (st.key === 'bot') {
       lead = bot && bot.held ? PlatformI18n.t('changes:request.status.lead.botHeld')
         : bot && bot.plan
-          ? (bot.askedBy ? PlatformI18n.t('changes:request.status.lead.botPlanWaiting', { username: bot.askedBy }) : PlatformI18n.t('changes:request.status.lead.botPlanWaitingUnnamed'))
+          // B06 (audit 2 Nov 2026): the person it waits for reads "you", not their own @name.
+          ? (bot.mine ? PlatformI18n.t('changes:request.status.lead.botPlanYours')
+            : bot.askedBy ? PlatformI18n.t('changes:request.status.lead.botPlanWaiting', { username: bot.askedBy }) : PlatformI18n.t('changes:request.status.lead.botPlanWaitingUnnamed'))
           : bot && bot.what === 'queued' ? PlatformI18n.t('changes:request.status.lead.botQueued')
             : AppView._botWorkReading(bot) ? PlatformI18n.t('changes:request.status.lead.botReading') : PlatformI18n.t('changes:request.status.lead.botBuilding');
     } else if (st.key === 'auto_solving') lead = PlatformI18n.t('changes:request.status.lead.autoSolving');
@@ -13174,14 +13176,25 @@ const AppView = {
     // Unfiltered on purpose: a vote owed is owed whatever the board is
     // narrowed to. Same predicate as the filter bar's "Waiting on you".
     //
-    // Minus whatever the strip above is already showing. Your own promoted
-    // proposal satisfies "waiting on you" — the predicate asks whether you
-    // have voted, not whose it is — so it appeared in BOTH panes, one under
-    // the other, the same card twice on one screen. "What you are working
-    // on" wins: this pane is about somebody else's work, which is what its
-    // own heading has always said.
-    const mineKeys = new Set(mineItems.map(({ kind, item }) => AppView._workshopItemKey(kind, item)));
-    const notMine = (x) => !mineKeys.has(AppView._workshopItemKey(x.kind, x.item));
+    // Minus your own work: your own promoted proposal satisfies "waiting on
+    // you" (the predicate asks whether you have voted, not whose it is).
+    //
+    // V01 (audit, 2 Nov 2026): minus what the viewer AUTHORED, not minus
+    // everything in Your work. Your work also holds the change Homeroom bot
+    // built from the viewer's own request (#4538), and their vote on it is
+    // still owed: the Communities feed counts it (OWED_PROPOSALS_WHERE in
+    // src/routes/workshop-overview.js), so leaving it out here had the Hub
+    // say "Nothing more to vote on" and Needs you "All caught up" while
+    // Communities said "1 vote waiting on you". This is the server's rule:
+    // your own change is not owed, unless a coding agent submitted it for
+    // you (#6006, it waits on your yes), and nor is a decision you opened.
+    // The pane that drew both strips one under the other is gone, so the
+    // same change in Your work and in Needs you is two questions, not a
+    // duplicate.
+    const authoredByMe = (x) => meId != null && (x.kind === 'proposal'
+      ? String(x.item.user_id) === String(meId) && !x.item.external_agent
+      : x.kind === 'gov' && String(x.item.created_by) === String(meId));
+    const notMine = (x) => !authoredByMe(x);
     const owed = [];
     for (const x of buckets.inReview) {
       if (notMine(x) && AppView._devCardMatches(x.kind, x.item, { needsVote: true })) owed.push(x);
@@ -22301,9 +22314,11 @@ const AppView = {
       const reading = AppView._botWorkReading(issue.bot);
       // B8: whoever it is being built for can follow it in their chat.
       if (issue.bot.mine) {
+        // B06: their plan waits for their Build it, which is on the plan in the chat this opens at.
+        const plan = !!issue.bot.plan;
         return {
-          key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.seeProgress'),
-          title: PlatformI18n.t('changes:issue.action.seeProgressTitle'),
+          key: 'primary', cls: 'gc-vote-btn', label: plan ? PlatformI18n.t('changes:issue.action.seePlan') : PlatformI18n.t('changes:issue.action.seeProgress'),
+          title: plan ? PlatformI18n.t('changes:issue.action.seePlanTitle') : PlatformI18n.t('changes:issue.action.seeProgressTitle'),
           act: { fn: 'openBotChatFromRequest', args: [n] },
         };
       }
@@ -24848,8 +24863,12 @@ const AppView = {
       // F18 (#5683): the inline card in a chat can ask for the tally in
       // words ("4 of 3 yes votes") rather than "4 / 3"; the board and the
       // vote panel keep the pair, which sits beside a bar.
+      // V05 (audit, 2 Nov 2026): once Yes has what it needed the words are
+      // the count alone ("2 yes votes"), never "2 of 1 yes vote".
       + `<span class="gc-vote-count-label">${opts.words
-        ? PlatformI18n.htmlText('changes:badge.votePill.tallyWords', { yes, count: maj })
+        ? (yes >= maj
+          ? PlatformI18n.htmlText('changes:badge.votePill.tallyReached', { count: yes })
+          : PlatformI18n.htmlText('changes:badge.votePill.tallyWords', { yes, count: maj }))
         : `${yes} / ${maj}`}</span>`
       + `</span>` + advisoryChip + explicitChip;
   },
@@ -26825,8 +26844,16 @@ const AppView = {
     const revisionArg = voteEpoch === null ? '' : `, ${voteEpoch}`;
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'no');
-    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">${PlatformI18n.htmlText('changes:vote.row.yes', { tally: yesT.label })}</button>`;
-    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no'${revisionArg})">${PlatformI18n.htmlText('changes:vote.row.no', { tally: noT.label })}</button>`;
+    // V03 (audit, 2 Nov 2026): a side nobody has taken says no count. "Yes
+    // (0)" and "No (0)" spelled out two zeros on every new change's row.
+    const yesWords = yesT.label === '0'
+      ? PlatformI18n.htmlText('changes:vote.row.yesNone')
+      : PlatformI18n.htmlText('changes:vote.row.yes', { tally: yesT.label });
+    const noWords = noT.label === '0'
+      ? PlatformI18n.htmlText('changes:vote.row.noNone')
+      : PlatformI18n.htmlText('changes:vote.row.no', { tally: noT.label });
+    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">${yesWords}</button>`;
+    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no'${revisionArg})">${noWords}</button>`;
     return preview + retryPreview + yesBtn + noBtn + adminMerge + AppView._uncountedVoteNoteHtml(pr);
   },
 

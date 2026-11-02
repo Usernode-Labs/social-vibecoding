@@ -274,3 +274,13 @@ test('the email\'s button opens the request\'s thread, or the message, or the ch
   assert.match(mail.openUrl({ conversationId: 9 }), /\/#messages\/9$/);
   assert.match(mail.openUrl({ appSlug: 'plant-pal' }), /\/app\/plant-pal$/);
 });
+
+test('a long reply ends its bell subject at a whole word with an ellipsis (audit D04)', () => {
+  const words = "I've drafted that as a new request on Watering Rota: a weekly schedule where each person picks the days they water. Tap File it under my message to send it.";
+  const reply = copy.botMomentCopy('hrbot:reply:', words);
+  assert.equal(reply.body, words, 'the push keeps every word');
+  assert.ok(reply.bellSubject.length <= 140, reply.bellSubject);
+  assert.match(reply.bellSubject, /under my…$/, 'cut after a whole word, marked with …');
+  assert.equal(copy.bellSubjectOf('Short and whole.'), 'Short and whole.');
+  assert.equal(copy.bellSubjectOf('x'.repeat(200)), `${'x'.repeat(139)}…`, 'one long word is cut where it must be');
+});
