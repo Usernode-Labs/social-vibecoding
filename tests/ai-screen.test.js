@@ -1086,3 +1086,21 @@ test('the page listens while it is shown: the socket through app.js, the bot\'s 
   assert.match(src, /if \(drawn\.current\.work\) return null;/);
   assert.match(src, /if \(drawn\.current\.needs\) return null;/);
 });
+
+// #6147 (2 Nov 2026): at 1918px the right column (Main Chat or a thread, its
+// Preview pane and its divider) began 8px up into the header and was painted
+// over its rounded lower edge, while the list's first card began 8px below
+// it. All three now start on the line the list's card and the Workshop's side
+// panel do: the header's bottom plus 8px.
+test('#6147: the right column, its preview and its divider start 8px below the header, like the Workshop\'s side panel', () => {
+  const css = read('public/css/app.css');
+  const below = String.raw`top: calc\(var\(--browser-banner-h, 0px\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top, 0px\) \+ \.5rem\);`;
+  for (const selector of [String.raw`#ai-screen \.ai-main-pane \{`, String.raw`#ai-screen \.ai-preview-pane \{`, String.raw`#ai-main-divider \{`]) {
+    const rule = new RegExp(`${selector}[^}]*?${below}`);
+    assert.match(css, rule, selector);
+  }
+  assert.doesNotMatch(css, /#ai-screen \.(ai-main-pane|ai-preview-pane) \{[^}]*- \.5rem\);/, 'none rides up into the header');
+  assert.doesNotMatch(css, /#ai-main-divider \{[^}]*- \.5rem\);/);
+  assert.match(css, /\.dev-ws-side \{[^}]*top: calc\(var\(--browser-banner-h, 0px\) \+ var\(--platform-header-h, 3\.25rem\) \+ var\(--platform-safe-top, 0px\) \+ 8px\);/,
+    'the Workshop\'s side panel, the line it matches');
+});

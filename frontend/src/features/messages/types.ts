@@ -177,7 +177,24 @@ export interface HomeroomBotMeta {
   makeProject?: { name: string; rootId: number; version: number | null };
   madeSlug?: string;
   madeName?: string;
+  /**
+   * #6151: a design filed as a request (kind `design_filed`): what happens
+   * next, read off the new request's track when it was filed, said after
+   * the line (./bot-track.tsx filedNextLine).
+   */
+  filedNext?: BotFiledNext;
 }
+
+/**
+ * #6151: what happens to a design filed as a request, as codes
+ * (services/design-threads.js filedNext): Homeroom bot builds it from
+ * `version`, builds it once `limit` frees, or a person decides.
+ */
+export type BotFiledLimit = 'slots' | 'bot_wide' | 'questions' | 'allowance';
+export type BotFiledNext =
+  | { say: 'builds'; version: number }
+  | { say: 'held'; limit: BotFiledLimit }
+  | { say: 'person' };
 
 export interface HomeroomBotReady {
   group: boolean;

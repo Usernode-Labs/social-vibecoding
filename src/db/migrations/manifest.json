@@ -55,6 +55,21 @@
       "id": "0011-workflow-producers",
       "sha256": "0a09c903b09debd6f01562e700f61300adaa965fa001827204271ea24e88a2c8",
       "schemaSha256": "368fe38042acf4c553b1c1e1fa71f23ad0e649264b4f9cda95bd796e657571da"
+    },
+    {
+      "id": "0012-connect-accounts-cta",
+      "sha256": "b3f112d8c98dc1580d47ca8a9d0bb9f7224899600934d05d426b690fe27119da",
+      "schemaSha256": "89df74e9a767e2ed98c5faae0f7e69d1cb079b86fb0618500c20b39ebf20c086"
+    },
+    {
+      "id": "0013-admin-text-translations",
+      "sha256": "93f55a3dc1521149b838a67d5918370e63b84751a3122f67bccf1f722911b805",
+      "schemaSha256": "3fa1956cf7e3f6e4f3143ef76c162fea5107ce9d7ebcb0deec4ad4da48f9da15"
+    },
+    {
+      "id": "0014-web-withdraws-at-cutover",
+      "sha256": "7339b70b0a71fdd1fe5e5eaa8a59e254e083d7a74cbea7fbcc361e9adcdc9664",
+      "schemaSha256": "578bc78aa6cc67c646d1b5b256e4d79efba9ff206661263df6ff8ff42d8f454a"
     }
   ]
 }

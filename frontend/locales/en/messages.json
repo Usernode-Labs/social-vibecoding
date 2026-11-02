@@ -3585,11 +3585,11 @@
   },
   "thread.loadingNewer": {
     "text": "Loading…",
-    "description": "Label of the \"Load newer messages\" button while newer messages load."
+    "description": "Line at the foot of a conversation opened at an older message, while newer messages load after scrolling down."
   },
   "thread.loadNewer": {
     "text": "Load newer messages",
-    "description": "Button at the foot of a conversation opened at an older message: fetches the messages after the ones shown."
+    "description": "Button at the foot of a conversation opened at an older message, shown only after loading newer messages failed: tries again."
   },
   "thread.jumpToPresent": {
     "text": "Jump to present",
@@ -4213,11 +4213,11 @@
   },
   "replies.loadingEarlier": {
     "text": "Loading…",
-    "description": "Label of the \"Load earlier replies\" button while earlier replies load."
+    "description": "Line at the top of a thread's replies in the thread side pane, while earlier replies load after scrolling up."
   },
   "replies.loadEarlier": {
     "text": "Load earlier replies",
-    "description": "Button in the thread side pane: fetches the replies before the ones shown."
+    "description": "Button at the top of a thread's replies in the thread side pane, shown only after loading earlier replies failed: tries again."
   },
   "replies.discussion.from": {
     "text": "In the request's discussion",
@@ -4698,6 +4698,30 @@
   "bot.track.pictures.after": {
     "text": "After",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Label on the \"after\" picture of a change."
+  },
+  "bot.track.filed.builds": {
+    "text": "Homeroom bot reads it next and builds it from version {{version}}. Its progress shows here and on the request.",
+    "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when the bot has the new request in its queue. {{version}} is the number of the design's version the request's plan holds, which the bot builds from. \"Here\" is the person's chat with Homeroom bot."
+  },
+  "bot.track.filed.held.slots": {
+    "text": "Homeroom bot builds it when a slot frees: all of the project's are in use. Its progress shows here and on the request.",
+    "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when the new request waits for one of the project's slots (the changes the bot may have waiting for a vote at once), all of which are in use. \"Here\" is the person's chat with Homeroom bot."
+  },
+  "bot.track.filed.held.bot_wide": {
+    "text": "Homeroom bot builds it when a slot frees: it is at its limit across projects. Its progress shows here and on the request.",
+    "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when the new request waits because Homeroom bot has as much work waiting as it may have across all projects. \"Here\" is the person's chat with Homeroom bot."
+  },
+  "bot.track.filed.held.questions": {
+    "text": "Homeroom bot builds it once its daily limit resets: today's questions on this project are used up. Its progress shows here and on the request.",
+    "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when the new request waits because the bot has used up the questions and notes it may post on this project today. \"Here\" is the person's chat with Homeroom bot."
+  },
+  "bot.track.filed.held.allowance": {
+    "text": "Homeroom bot builds it once the week resets: this week's building time is used up. Its progress shows here and on the request.",
+    "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when the new request waits because the building time for this week is used up. \"Here\" is the person's chat with Homeroom bot."
+  },
+  "bot.track.filed.person": {
+    "text": "This needs a person, not Homeroom bot: the people on the project decide who builds it.",
+    "description": "In a private design thread, after Homeroom bot's line saying it filed the person's design as a request: what happens next, when Homeroom bot does not build requests on that project, or a person has to decide about it first."
   },
   "drawer.peek.open": {
     "text": "Open {{name}}",

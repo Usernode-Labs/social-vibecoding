@@ -989,22 +989,28 @@ async function refreshActiveAfterMembershipChange(conversationId: number): Promi
 /**
  * #2387: the newer half of a transcript a message link opened part-way back.
  * Reaching the present marks it read, as opening it normally would have.
+ * #6148: read as the reader scrolls down to the window's foot, one page at a
+ * time (the same `loadingOlder` flag as the top's). Resolves `true` when a
+ * page was read (or there was nothing to read), `false` only when the
+ * request failed: the foot then offers "Load newer messages" as the retry.
  */
-export async function loadNewer(): Promise<void> {
+export async function loadNewer(): Promise<boolean> {
   const conversationId = state.route.conversationId;
-  if (!conversationId || !state.nextAfter || state.loadingOlder) return;
+  if (!conversationId || !state.nextAfter || state.loadingOlder) return true;
   publish({ loadingOlder: true });
   try {
     const page = await api.listMessagesAfter(conversationId, state.nextAfter);
-    if (state.route.conversationId !== conversationId) return;
+    if (state.route.conversationId !== conversationId) return true;
     const known = new Set(state.messages.map((message) => message.id));
     const newer = page.messages.filter((message) => !known.has(message.id));
     const messages = [...state.messages, ...newer].sort(transcriptOrder);
     publish({ messages, nextAfter: page.nextAfter, loadingOlder: false });
     const last = newestMainId(messages);
     if (!page.nextAfter && last && unreadHold !== conversationId) readMainWhenThere(conversationId);
+    return true;
   } catch (error) {
     publish({ loadingOlder: false, threadError: errorMessage(error, t('messages:store.error.loadNewer')) });
+    return false;
   }
 }
 
@@ -2679,15 +2685,22 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
   }
 }
 
-/** The thread's earlier replies. */
-export async function loadOlderReplies(): Promise<void> {
+/**
+ * The thread's earlier replies. #6148: read as the reader scrolls up to the
+ * top of the replies, one page at a time. Resolves `true` when a page was
+ * read (or there was nothing to read), `false` only when the request failed.
+ * A failed page leaves the replies drawn as they are, with no error in their
+ * place: the pane offers "Load earlier replies" back as the retry, as a
+ * conversation's top does (#5019).
+ */
+export async function loadOlderReplies(): Promise<boolean> {
   const thread = state.thread;
-  if (!thread || !thread.nextBefore || thread.loading) return;
+  if (!thread || !thread.nextBefore || thread.loading) return true;
   publish({ thread: { ...thread, loading: true } });
   try {
     const page = await api.listThread(thread.conversationId, thread.rootId, thread.nextBefore);
     const now = state.thread;
-    if (!now || now.rootId !== thread.rootId) return;
+    if (!now || now.rootId !== thread.rootId) return true;
     const known = new Set(now.messages.map((item) => item.id));
     publish({
       thread: {
@@ -2697,9 +2710,12 @@ export async function loadOlderReplies(): Promise<void> {
         nextBefore: page.nextBefore,
       },
     });
-  } catch (error) {
+    return true;
+  } catch {
     const now = state.thread;
-    if (now) publish({ thread: { ...now, loading: false, error: errorMessage(error, t('messages:store.error.loadEarlierReplies')) } });
+    if (!now || now.rootId !== thread.rootId) return true;
+    publish({ thread: { ...now, loading: false } });
+    return false;
   }
 }
 

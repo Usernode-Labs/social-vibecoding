@@ -94,6 +94,35 @@ test('isNearTop: at the top, or within the load-older allowance of it', () => {
   assert.equal(isNearTop({ scrollHeight: 2000, clientHeight: 600, scrollTop: 100 }, 40), false, 'a slack of its own');
 });
 
+// ── 1c. #6148: the allowance at a linked window's foot, and at a list's start ──
+
+test('#6148: the foot of a linked window has the top\'s allowance', () => {
+  const { isNearBottom, LOAD_NEWER_SLACK_PX, LOAD_OLDER_SLACK_PX } = loadTsx(MODULE);
+  assert.equal(LOAD_NEWER_SLACK_PX, LOAD_OLDER_SLACK_PX);
+  const at = (scrollTop) => isNearBottom({ scrollHeight: 2000, clientHeight: 600, scrollTop }, LOAD_NEWER_SLACK_PX);
+  assert.equal(at(1400), true, 'exactly at the foot');
+  assert.equal(at(1200), true, 'the edge of the allowance');
+  assert.equal(at(1199), false, 'past it');
+  assert.equal(at(0), false, 'reading the top');
+});
+
+test('#6148: isNearStart measures from the row a list starts with, not from the scroller\'s top', () => {
+  const { isNearStart, isNearTop } = loadTsx(MODULE);
+  // A thread's first message, 500px tall, then its replies' earlier-replies
+  // row: the scroller's top edge is at 100 on screen.
+  const scroller = { getBoundingClientRect: () => ({ top: 100 }) };
+  const row = (top) => ({ getBoundingClientRect: () => ({ top }) });
+  // Scrolled 550px down: the row is 50px above the scroller's top edge,
+  // the earliest reply shown just under it.
+  assert.equal(isNearTop({ scrollTop: 550, scrollHeight: 4000, clientHeight: 600 }), false,
+    'measured from the scroller\'s top, the reader at the top of the replies is not near it');
+  assert.equal(isNearStart(scroller, row(50)), true, 'measured from the row, they are');
+  assert.equal(isNearStart(scroller, row(-100)), true, 'the edge of the allowance');
+  assert.equal(isNearStart(scroller, row(-101)), false, 'past it');
+  assert.equal(isNearStart(scroller, row(300)), true, 'the row in view, the first message above it');
+  assert.equal(isNearStart(scroller, row(80), 10), false, 'a slack of its own');
+});
+
 test('needsMoreHistory: whether what is drawn fills the scroller', () => {
   const { needsMoreHistory } = loadTsx(MODULE);
   const at = (scrollHeight) => needsMoreHistory({ scrollHeight, clientHeight: 600, scrollTop: 0 });
@@ -169,6 +198,46 @@ test('the foot of a linked window is not the present: nothing follows it', () =>
   el.scrollTop = el.scrollHeight;
   el.scroll();
   assert.equal(pinned.current, true);
+});
+
+// #6148: the foot of a linked window reads its newer pages as the reader
+// scrolls down to it. Each page lands below what is on screen: nothing moves
+// and nothing pins until the window reaches the present (nextAfter null, the
+// conversation's atPresent), and then the view sticks to the bottom again.
+test('#6148: newer pages read in at a linked window\'s foot move nothing and pin nothing until the present', () => {
+  const { attachStickToBottom, isNearBottom, LOAD_NEWER_SLACK_PX } = loadTsx(MODULE);
+  const { env, sizes } = fakeObservers();
+  // Opened at a linked message, centred: the window's foot is further down.
+  const el = fakeScroller({ scrollHeight: 2000, clientHeight: 600, scrollTop: 700 });
+  const pinned = { current: false };
+  const atPresent = { current: false }; // !snap.nextAfter
+  attachStickToBottom(el, pinned, atPresent, env);
+  const atFoot = () => isNearBottom(el, LOAD_NEWER_SLACK_PX);
+
+  el.scrollTop = 1250; // the reader scrolls down toward the foot
+  el.scroll();
+  assert.equal(atFoot(), true, 'within the allowance: the next page is read');
+  assert.equal(pinned.current, false, 'not the present: nothing follows it');
+
+  el.scrollHeight += 900; // a page of newer messages lands below
+  sizes.callback();
+  assert.equal(el.scrollTop, 1250, 'what is on screen stays where it was');
+  assert.equal(atFoot(), false, 'and the reader is no longer at the foot: no second page yet');
+
+  el.scrollTop = el.scrollHeight; // all the way down, still part-way back
+  el.scroll();
+  assert.equal(pinned.current, false, 'a window short of the present never pins');
+  el.scrollHeight += 400; // the last page: the window reaches the present
+  atPresent.current = true;
+  sizes.callback();
+  assert.equal(el.scrollTop, 2300, 'the last page moves nothing either');
+
+  el.scrollTop = el.scrollHeight; // and the reader reaches the newest line
+  el.scroll();
+  assert.equal(pinned.current, true, 'at the present the view sticks to the bottom again');
+  el.scrollHeight += 300; // a new message arrives
+  sizes.callback();
+  assert.equal(el.scrollTop, el.scrollHeight - el.clientHeight, 'and follows it');
 });
 
 test('every row is watched for size, as rows come and go, and the scroller itself', () => {
@@ -278,7 +347,7 @@ test('useStickToBottom follows the scroller React draws, and the present with it
 // ── 3. The conversation uses it ─────────────────────────────────────────
 
 test('the conversation follows a reader who was at the bottom before the message arrived', () => {
-  assert.match(THREAD, /import \{ centreInScroller, isNearTop, needsMoreHistory, useStickToBottom \} from '\.\/stick-to-bottom';/);
+  assert.match(THREAD, /import \{ centreInScroller, isNearBottom, isNearStart, isNearTop, LOAD_NEWER_SLACK_PX, needsMoreHistory, useStickToBottom \} from '\.\/stick-to-bottom';/);
   assert.match(THREAD, /const pinned = useStickToBottom\(scroller, !snap\.nextAfter\);/,
     'the thread scroller is watched, and a linked window is not the present');
   assert.match(THREAD, /if \(previousLast\.current === null \|\| sentNow \|\| pinned\.current\) \{\s*(?:\/\/[^\n]*\n\s*)*pinned\.current = sentNow \|\| !snap\.nextAfter;\s*el\.scrollTop = el\.scrollHeight;/,

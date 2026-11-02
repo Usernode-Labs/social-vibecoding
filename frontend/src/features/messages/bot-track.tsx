@@ -13,7 +13,7 @@ import { firstSpecScreen, type SpecScreen } from '../../lib/spec-html';
 import { BotActivityCard, ActivityLink, spanText } from './bot-activity';
 import { requestKey } from './bot-request';
 import { useBotWork } from './bot-work';
-import type { BotTrack, BotTrackStep, ConversationMessage, HomeroomBotWork } from './types';
+import type { BotFiledNext, BotTrack, BotTrackStep, ConversationMessage, HomeroomBotWork } from './types';
 
 /*
  * One track per request (16 Oct 2026), drawn the same everywhere.
@@ -171,6 +171,30 @@ export function trackLine(track: BotTrack): string {
   }
   const key = (track.why && LINES[`${track.state}.${track.why}`]) || LINES[`${track.state}.default`] || FALLBACK_LINES[track.state];
   return key ? translate(key) : trackStateWord(track);
+}
+
+// #6151: after "Filed it as request #14…" in a design thread, what happens
+// next, by the limit a held request waits at (services/design-threads.js
+// filedNext). Each a whole sentence: the limit in the track's own words.
+const FILED_HELD_LINES: Record<string, string> = {
+  slots: 'messages:bot.track.filed.held.slots',
+  bot_wide: 'messages:bot.track.filed.held.bot_wide',
+  questions: 'messages:bot.track.filed.held.questions',
+  allowance: 'messages:bot.track.filed.held.allowance',
+};
+
+/**
+ * Pure (#6151): what happens to a design filed as a request, in a sentence:
+ * Homeroom bot reads it next and builds it from its version, builds it once
+ * a limit frees, or a person decides. Null for codes this client does not
+ * know.
+ */
+export function filedNextLine(next: BotFiledNext | null | undefined): string | null {
+  if (!next) return null;
+  if (next.say === 'builds') return next.version > 0 ? translate('messages:bot.track.filed.builds', { version: String(next.version) }) : null;
+  if (next.say === 'held') return FILED_HELD_LINES[next.limit] ? translate(FILED_HELD_LINES[next.limit]) : null;
+  if (next.say === 'person') return translate('messages:bot.track.filed.person');
+  return null;
 }
 
 /** Pure: a held or queued track's place in line, in words, or null. */

@@ -60,7 +60,7 @@ import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
 import { ShareToDialog } from './share-to-dialog';
 import { JumpToLatest } from './jump-to-latest';
-import { centreInScroller, isNearTop, needsMoreHistory, useStickToBottom } from './stick-to-bottom';
+import { centreInScroller, isNearBottom, isNearStart, isNearTop, LOAD_NEWER_SLACK_PX, needsMoreHistory, useStickToBottom } from './stick-to-bottom';
 import {
   firstUnreadId, jumpLabel, lineTopIn, messageRow, newMessagesLabel, openingScrollTop, useLineHold, useUnreadAffordances,
 } from './unread-anchor';
@@ -1943,6 +1943,9 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // button at the top as the manual way back, until it succeeds or the
   // conversation (or its next-older cursor) changes.
   const [olderFailed, setOlderFailed] = useState(false);
+  // #6148: the same at the foot of a window a message link opened part-way
+  // back (#2387): a failed load of newer messages restores the button there.
+  const [newerFailed, setNewerFailed] = useState(false);
   // THE "NEW" LINE (./unread-anchor.ts): above the first message after where
   // reading had stopped when this conversation was opened (the store's
   // `unreadMark`). The transcript opens with it near the top.
@@ -2109,10 +2112,30 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     void older().then((ok) => { if (!ok) setOlderFailed(true); });
   }
   useIsomorphicLayoutEffect(() => { setOlderFailed(false); }, [conversationId, snap.nextBefore]);
+  // #6148: and at the foot of a window a message link opened part-way back
+  // (#2387), scrolling down near the bottom reads the next page in the same
+  // way, in place of the "Load newer messages" button that used to stop it.
+  // The page lands below what is on screen, so nothing on screen moves, and
+  // `pinned` waits for the present: useStickToBottom's atPresent is
+  // `!snap.nextAfter`, so the reader's scrolls cannot pin the conversation
+  // until the last page is in, and then it follows its newest line as it
+  // always does. One page at a time: loadNewer reads with the same
+  // `loadingOlder` flag as the top.
+  const newerGate = useRef({ nextAfter: snap.nextAfter, loadingOlder: snap.loadingOlder, loadingThread: snap.loadingThread, newerFailed });
+  newerGate.current = { nextAfter: snap.nextAfter, loadingOlder: snap.loadingOlder, loadingThread: snap.loadingThread, newerFailed };
+  function maybeLoadNewer() {
+    const el = scroller.current;
+    if (!el) return;
+    const gate = newerGate.current;
+    if (!gate.nextAfter || gate.loadingOlder || gate.loadingThread || gate.newerFailed) return;
+    if (!isNearBottom(el, LOAD_NEWER_SLACK_PX)) return;
+    void loadNewer().then((ok) => { if (!ok) setNewerFailed(true); });
+  }
+  useIsomorphicLayoutEffect(() => { setNewerFailed(false); }, [conversationId, snap.nextAfter]);
   useIsomorphicLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    const onScroll = () => maybeLoadOlder();
+    const onScroll = () => { maybeLoadOlder(); maybeLoadNewer(); };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2126,6 +2149,17 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     if (needsMoreHistory(el)) maybeLoadOlder();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snap.messages, snap.nextBefore, snap.loadingOlder, botWork]);
+  // #6148: and a linked window too short to scroll reads its newer pages in
+  // the same way, until the screen fills or it reaches the present: with
+  // nothing to scroll, the reader cannot reach its foot to ask. A pane with
+  // no height is not short but hidden (under a thread on a phone, or in
+  // Main Chat's column): it reads nothing until it is shown.
+  useIsomorphicLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || !el.clientHeight) return;
+    if (needsMoreHistory(el)) maybeLoadNewer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap.messages, snap.nextAfter, snap.loadingOlder]);
   // ./open-hold.ts: the bot's chat is shown once it can draw what it will
   // stay as. After the effect above, so it measures what that one read, and
   // a layout effect, so the rows appear in the frame they settle in.
@@ -2393,9 +2427,18 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
         {working ? <BotWorkingCard typist={working} /> : null}
         {/* #2387: a message link opened the transcript part-way back. */}
         {snap.nextAfter ? (
-          <div className="messages-newer">
-            <button type="button" className="messages-load-older" disabled={snap.loadingOlder} onClick={() => void loadNewer()}>{snap.loadingOlder ? t('messages:thread.loadingNewer') : t('messages:thread.loadNewer')}</button>
-            <button type="button" className="messages-load-older" onClick={() => { pinned.current = true; jumpToPresent(); }}>{t('messages:thread.jumpToPresent')}</button>
+          <div className="messages-newer" data-load-newer="">
+            {/* #6148: scrolling down to here reads the newer pages in, so
+                the row says "Loading…" while one loads and offers "Load
+                newer messages" only to retry a failed load, as the top's
+                row does. Jump to present stays, quiet, for a reader a long
+                way back. */}
+            {snap.loadingOlder
+              ? <span role="status" className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:thread.loadingNewer')}</span>
+              : newerFailed
+                ? <button type="button" onClick={() => { setNewerFailed(false); void loadNewer().then((ok) => { if (!ok) setNewerFailed(true); }); }} className="messages-load-older">{t('messages:thread.loadNewer')}</button>
+                : null}
+            <button type="button" className="messages-jump-present" onClick={() => { pinned.current = true; jumpToPresent(); }}>{t('messages:thread.jumpToPresent')}</button>
           </div>
         ) : null}
       </div>
@@ -2619,6 +2662,60 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
       clearThreadFocus();
     }, 2400);
   }, [wanted, thread?.messages.length, thread?.loading]);
+  // #6148: scrolling up near the top of the replies reads the earlier page
+  // in, one at a time, as a conversation's top does (#5019), in place of the
+  // "Load earlier replies" button that used to stop it. The top is where the
+  // replies start: their row under the message the thread hangs off, which
+  // can be taller than the allowance on its own (./stick-to-bottom.ts
+  // isNearStart). What is on screen stays where it is, as the conversation's
+  // older() keeps it: the scroller's height before the page, the difference
+  // added after. A failed load restores the button as the manual retry,
+  // until it succeeds or the thread (or its next-earlier cursor) changes.
+  const [earlierFailed, setEarlierFailed] = useState(false);
+  const earlierRow = useRef<HTMLDivElement>(null);
+  const earlierScroll = useRef<number | null>(null);
+  useIsomorphicLayoutEffect(() => { earlierScroll.current = null; }, [conversationId, rootId]);
+  async function earlierReplies() {
+    const el = scroller.current;
+    if (el) earlierScroll.current = el.scrollHeight;
+    const ok = await loadOlderReplies();
+    requestAnimationFrame(() => {
+      if (el && earlierScroll.current !== null) el.scrollTop += el.scrollHeight - earlierScroll.current;
+      earlierScroll.current = null;
+    });
+    return ok;
+  }
+  // The latest values the guard reads go through a ref, so the scroll
+  // listener below attaches once per thread instead of on every publish.
+  const earlierGate = useRef({ nextBefore: thread?.nextBefore || null, loading: !!thread?.loading, earlierFailed });
+  earlierGate.current = { nextBefore: thread?.nextBefore || null, loading: !!thread?.loading, earlierFailed };
+  function maybeLoadEarlierReplies() {
+    const el = scroller.current;
+    if (!el) return;
+    const gate = earlierGate.current;
+    if (!gate.nextBefore || gate.loading || gate.earlierFailed) return;
+    const start = earlierRow.current;
+    if (!(start ? isNearStart(el, start) : isNearTop(el))) return;
+    void earlierReplies().then((ok) => { if (!ok) setEarlierFailed(true); });
+  }
+  useIsomorphicLayoutEffect(() => { setEarlierFailed(false); }, [conversationId, rootId, thread?.nextBefore]);
+  useIsomorphicLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const onScroll = () => maybeLoadEarlierReplies();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, rootId]);
+  // A thread too short to scroll reads its earlier pages in until the pane
+  // fills: with nothing to scroll, the reader cannot reach its top to ask.
+  // A pane with no height is hidden, not short: it reads nothing.
+  useIsomorphicLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || !el.clientHeight) return;
+    if (needsMoreHistory(el)) maybeLoadEarlierReplies();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread?.messages.length, thread?.nextBefore, thread?.loading]);
   // #5691: how wide this thread is, against the chat beside it. Read in an
   // effect, never during the first render, so the first paint draws the CSS
   // default (and is the same markup on every render).
@@ -2853,9 +2950,18 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
           </div>
         )}
         {thread?.loading && !merged.length && !thread.error ? <ReplyRowSkeleton /> : null}
+        {/* #6148: the row holds its height and, while an earlier page
+            loads, the "Loading…" line; the button returns only to retry a
+            failed load. Scrolling up to here does the rest. */}
         {(thread?.nextBefore || discussion?.more) ? (
-          <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 py-2">
-            {thread?.nextBefore ? <button type="button" disabled={thread.loading} onClick={() => void loadOlderReplies()} className="messages-load-older">{thread.loading ? t('messages:replies.loadingEarlier') : t('messages:replies.loadEarlier')}</button> : null}
+          <div ref={earlierRow} className="flex min-h-12 flex-wrap items-center justify-center gap-x-3 gap-y-1 py-2" data-load-earlier-replies="">
+            {thread?.nextBefore
+              ? thread.loading
+                ? <span role="status" className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:replies.loadingEarlier')}</span>
+                : earlierFailed
+                  ? <button type="button" onClick={() => { setEarlierFailed(false); void earlierReplies().then((ok) => { if (!ok) setEarlierFailed(true); }); }} className="messages-load-older">{t('messages:replies.loadEarlier')}</button>
+                  : null
+              : null}
             {discussion?.more ? <a className="messages-load-older" href={issueRefHref(discussion.appSlug, String(discussion.issueNumber))}>{t('messages:replies.discussion.more')}</a> : null}
           </div>
         ) : null}

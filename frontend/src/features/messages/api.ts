@@ -18,6 +18,8 @@ import type {
   HomeroomBotPlanQuestion,
   HomeroomBotReadyNow,
   HomeroomBotWork,
+  BotFiledLimit,
+  BotFiledNext,
   BotSlotEntry,
   BotSlotsView,
   BotTrack,
@@ -323,8 +325,28 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       ...(normalizeBotCard(pick(bot, 'card')) ? { card: normalizeBotCard(pick(bot, 'card'))! } : {}),
       // Homeroom bot parity, P1: what the reply looked at (./bot-looked.tsx).
       ...(normalizeBotLooked(pick(bot, 'looked')) ? { looked: normalizeBotLooked(pick(bot, 'looked'))! } : {}),
+      // #6151: what happens to a design filed as a request (./bot-track.tsx filedNextLine).
+      ...(normalizeFiledNext(pick(bot, 'filedNext')) ? { filedNext: normalizeFiledNext(pick(bot, 'filedNext'))! } : {}),
     },
   };
+}
+
+const FILED_LIMITS: ReadonlySet<string> = new Set(['slots', 'bot_wide', 'questions', 'allowance']);
+
+/** #6151: a filed design's next step as the server sends it (design-threads.js filedNext), or null for one this client does not know. */
+export function normalizeFiledNext(input: unknown): BotFiledNext | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const row = record(input);
+  const say = text(pick(row, 'say'));
+  if (say === 'builds') {
+    const version = strictId(pick(row, 'version'));
+    return version ? { say, version } : null;
+  }
+  if (say === 'held') {
+    const limit = text(pick(row, 'limit'));
+    return FILED_LIMITS.has(limit) ? { say, limit: limit as BotFiledLimit } : null;
+  }
+  return say === 'person' ? { say } : null;
 }
 
 /**
