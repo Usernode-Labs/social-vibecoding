@@ -57,10 +57,10 @@ test('the layout audit\'s world has a request page and a phone browser\'s instal
 
 test('B25: on the Duo held sideways Main Chat stops at the column; its sheet still runs under it', () => {
   // Send, the "Live ›" row's chevron and the New label sat in the 84px column.
-  assert.match(APP_CSS, /html\[data-side-strip="right"\] #ai-screen \.ai-main-pane \.messages-layout\[data-main-chat\] > \.messages-thread-pane,\nhtml\[data-side-strip="right"\] #ai-screen \.ai-main-pane \.messages-layout\[data-main-chat\] > \.messages-reply-pane :is\(\.chat-transcript, \.chat-status, \.chat-composer-bar\) \{\n  padding-right: var\(--ai-edge, 0px\);\n\}/);
+  assert.match(APP_CSS, /html\[data-side-strip\] #ai-screen \.ai-main-pane \.messages-layout\[data-main-chat\] > \.messages-thread-pane,\nhtml\[data-side-strip\] #ai-screen \.ai-main-pane \.messages-layout\[data-main-chat\] > \.messages-reply-pane :is\(\.chat-transcript, \.chat-status, \.chat-composer-bar\) \{\n  padding-inline-end: var\(--ai-edge, 0px\);\n\}/);
   // The column itself still reaches the screen's edge (no band of another colour).
   assert.match(rule('#ai-screen .ai-main-pane'), /width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
-  assert.match(rule('#ai-screen .ai-main-pane'), /right: 0;/);
+  assert.match(rule('#ai-screen .ai-main-pane'), /inset-inline-end: 0;/);
 });
 
 test('B13: the bot list\'s heading keeps its line where the list is narrow', () => {
@@ -110,7 +110,7 @@ test('U03: the header\'s title is on the left from 640px, as on phones and the i
   // Between 640 and 768 the hook centred; the Duo upright (669px) had Home and
   // the bot centred and Messages (the drawer's absolutely-laid title,
   // measured 0px wide) cut to nothing.
-  assert.match(APP_CSS, /@media \(min-width: 640px\) \{\n  #header-title\.is-centered \{\n    position: static;\n    transform: none;\n    flex: 1 1 auto;\n    text-align: left;/);
+  assert.match(APP_CSS, /@media \(min-width: 640px\) \{\n  #header-title\.is-centered \{\n    position: static;\n    transform: none;\n    flex: 1 1 auto;\n    text-align: start;/);
   assert.doesNotMatch(APP_CSS, /@media \(min-width: 768px\) \{\n  #header-title\.is-centered \{/);
   assert.match(read('frontend/src/features/header/use-header-layout.ts'), /const CENTER_MIN_WIDTH_PX = 640;/, 'the hook never centres below it');
 });
