@@ -147,6 +147,7 @@ test('a change built for a request lives on the request\'s page', { timeout: 180
       ['a turn is running', { turn: JSON.stringify({ turnId: 't', phase: 'running' }) }],
       ['an imported head moved on', { source: 'imported', imported: OTHER }],
       ['a local upload is not submitted', { source: 'cli_handoff', uploaded: OTHER, head: SHA, uploadChecked: SHA }],
+      ['a submitted upload not checked yet', { source: 'cli_handoff', uploaded: OTHER, head: OTHER, uploadChecked: SHA }],
     ]) {
       await set(fields);
       assert.equal(await ready(), false, why);

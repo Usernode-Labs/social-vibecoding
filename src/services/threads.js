@@ -460,9 +460,11 @@ const visibleChangeSql = (s, viewer) => `(${s}.status IN ('promoted', 'merging',
 // #6139: a change not yet up for a vote that has finished building (an SQL
 // expression over chat_sessions as `cs`): its checks passed on its current
 // head and nothing is working on it. A verdict is about one commit, so an
-// imported pull request whose head moved, or a local upload not submitted
-// yet (the rule of proposal-handoff.js hasUnsubmittedUpload), is not ready. A
-// native change has no stored head to compare with (preview/facts.ts pinOf):
+// imported pull request or a submitted local upload whose head moved, or an
+// upload not submitted yet (proposal-handoff.js hasUnsubmittedUpload), is not
+// ready. A local upload a web turn built on after reads as not ready too: its
+// stored head is the upload's, and the mistake that leaves is the old words.
+// A native change has no stored head to compare with (preview/facts.ts pinOf):
 // its turn hands a new commit to the preview machine, which makes the verdict
 // pending, before the turn ends. No staging_url: a preview that went to sleep
 // did not unbuild anything. 'skipped' is not enough either: it can mean there
@@ -472,6 +474,8 @@ const CHANGE_READY_SQL = `(cs.status IN ('active', 'paused')
        AND cs.checks_commit_sha IS NOT NULL
        AND (cs.source IS DISTINCT FROM 'imported'
             OR LOWER(cs.imported_pr_head_sha) = LOWER(cs.checks_commit_sha))
+       AND (cs.source IS DISTINCT FROM 'cli_handoff'
+            OR LOWER(cs.handoff_head_sha) = LOWER(cs.checks_commit_sha))
        AND NOT (cs.handoff_uploaded_sha IS NOT NULL
                 AND cs.handoff_uploaded_sha IS DISTINCT FROM cs.handoff_head_sha
                 AND cs.checks_commit_sha IS NOT DISTINCT FROM cs.handoff_upload_checked_sha)

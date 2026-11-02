@@ -70,23 +70,27 @@ export function useThreadPayload(slug: string | null, number: number | null, thr
   const [revision, setRevision] = useState(0);
   // #6139: a gap (a dropped socket, a sleeping tab) reads it again, past any saved copy.
   const freshNext = useRef(false);
+  const readPath = useRef<string | null>(null);
   useEffect(() => {
-    if (!revision) setData(null);
     const path = skip ? null : number && slug ? `/api/apps/${encodeURIComponent(slug)}/threads/${number}${asChange ? '?as=change' : ''}`
       : threadId ? `/api/threads/${threadId}` : null;
+    // Reading the same thread again keeps what the page shows, also if that
+    // read fails; another thread starts empty.
+    const again = !!path && readPath.current === path;
+    readPath.current = path;
+    if (!again) setData(null);
     if (!path) return undefined;
     let live = true;
     const init: RequestInit = { credentials: 'same-origin', ...(freshNext.current ? FRESH : {}) };
     freshNext.current = false;
-    // A read again that fails keeps what the page shows.
     fetch(path, init)
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
         if (!live) return;
         if (json && Array.isArray(json.items)) setData(json);
-        else if (!revision) setData(null);
+        else if (!again) setData(null);
       })
-      .catch(() => { if (live && !revision) setData(null); });
+      .catch(() => { if (live && !again) setData(null); });
     const pathname = path.split('?')[0];
     const unwatch = watch(() => {
       freshNext.current = true;

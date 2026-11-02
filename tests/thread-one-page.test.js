@@ -230,6 +230,74 @@ test('#6139: an open request page reads its thread again when a change underway 
   assert.match(payload, /const unwatch = watch\(\(\) => \{\s*freshNext\.current = true;\s*setRevision\(\(n\) => n \+ 1\);\s*\}, \{ reads: \(url\) => url\.pathname === pathname \}\);/, 'a gap reads it again, past a saved copy');
 });
 
+test('#6139: reading a thread again keeps it through a failed read and past a saved copy; another thread starts empty', async () => {
+  // A React small enough to step through: the suite has no DOM.
+  const slots = [];
+  let cursor = 0;
+  let dirty = false;
+  const slot = (init) => { const i = cursor++; if (!(i in slots)) slots[i] = init(); return slots[i]; };
+  const react = {
+    ...require('../frontend/node_modules/react'),
+    useRef: (current) => slot(() => ({ current })),
+    useState: (initial) => {
+      const s = slot(() => ({ value: initial }));
+      return [s.value, (next) => { s.value = typeof next === 'function' ? next(s.value) : next; dirty = true; }];
+    },
+    useEffect: (effect, deps) => {
+      const s = slot(() => ({ deps: null, cleanup: null }));
+      if (s.deps && deps.every((v, i) => Object.is(v, s.deps[i]))) return;
+      s.deps = deps;
+      if (s.cleanup) s.cleanup();
+      s.cleanup = effect();
+    },
+  };
+  const watchers = new Set();
+  const FRESH = { cache: 'no-cache' };
+  const { useThreadPayload } = loadTsx(`${TOPIC}/thread-items.tsx`, {
+    stubs: {
+      react,
+      '../../../lib/live-reads': { FRESH, watch: (reread) => { watchers.add(reread); return () => watchers.delete(reread); } },
+    },
+  });
+  const calls = [];
+  let answer = { ok: true, json: async () => ({ items: [{ id: 1 }] }) };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (path, init) => { calls.push({ path, init }); return answer; };
+  try {
+    let out;
+    const draw = async (number) => {
+      do {
+        dirty = false;
+        cursor = 0;
+        out = useThreadPayload('club', number);
+        await new Promise((resolve) => { setImmediate(resolve); });
+      } while (dirty);
+    };
+    await draw(10);
+    assert.deepEqual(out.data.items, [{ id: 1 }]);
+    assert.equal(calls.at(-1).path, '/api/apps/club/threads/10');
+    assert.equal(calls.at(-1).init.cache, undefined);
+
+    answer = { ok: false, json: async () => null };
+    out.reread();
+    await draw(10);
+    assert.equal(calls.length, 2, 'read again');
+    assert.deepEqual(out.data.items, [{ id: 1 }], 'a failed read again keeps what is shown');
+
+    assert.equal(watchers.size, 1, 'one watcher, for as long as it shows');
+    [...watchers][0]();
+    await draw(10);
+    assert.equal(calls.at(-1).init.cache, 'no-cache', 'a gap reads past the saved copy');
+
+    await draw(11);
+    assert.equal(calls.at(-1).path, '/api/apps/club/threads/11');
+    assert.equal(out.data, null, 'another thread never shows the last one, even when its read fails');
+    assert.equal(watchers.size, 1);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 test('D5: a change folded under its ballot has no Vote of its own', () => {
   const head = read(`${TOPIC}/change-head.tsx`);
   assert.match(head, /<GateCard which="votes" g=\{v\.votes\} action=\{ballot \? null : voteAction\} id=\{id\} \/>/);
