@@ -68,3 +68,12 @@ test('D03: the Invite pane says a link went out on its first Copy or Share, not 
   assert.match(svc, /AND \(i\.shared_at IS NOT NULL OR EXISTS \(\n\s*SELECT 1 FROM community_invite_redemptions y WHERE y\.invite_id = i\.id\)\)/);
   assert.match(read('src/db/migrations/0010-invite-link-shared.sql'), /ALTER TABLE community_invites ADD COLUMN IF NOT EXISTS shared_at TIMESTAMPTZ;/);
 });
+
+test('D07: the waiting decisions sit under "Go to community", and an Invite opened from the hub has no back disc', () => {
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(sheet, /\{sub \? \(\n\s*<span className="flex-1 min-w-0">\n\s*<span className="block truncate font-medium">\{label\}<\/span>\n\s*\{sub\}/);
+  assert.match(sheet, /sub=\{owed \? \(\n\s*<span\n\s*id="app-menu-workshop-owed"/);
+  assert.match(sheet, /\{back === 'none' \? null : \(\n\s*<button\n\s*id="app-about-back"/);
+  const controller = read('frontend/src/features/app-context/app-context-controller.js');
+  assert.match(controller, /appContextStore\.set\(\{ back: opts\.back === 'about' \? 'about' : 'none' \}\);/);
+});
