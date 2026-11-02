@@ -153,17 +153,22 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
 // grid has two columns then. Complete literals, for Tailwind's extractor.
 const STAT_GRID = KUDOS_PARKED ? 'grid grid-cols-2 gap-2 mb-2' : 'grid grid-cols-3 gap-2 mb-2';
 const STAT_COUNT = KUDOS_PARKED ? 2 : 3;
+// Y03: as many columns as cards still shown once the zeros are hidden.
+const SHOWN_GRID = ['hidden', 'grid grid-cols-1 gap-2 mb-2', 'grid grid-cols-2 gap-2 mb-2', 'grid grid-cols-3 gap-2 mb-2'];
 
 /** The three stat cards (the prototype's `.stat`): merged, kudos, challenges.
- *  Numbers the Me screen never had until GET /api/me/summary added them up. */
-function StatCards({ stats }: { stats: Array<{ key: string; value: string; label: string }> }): ReactNode {
+ *  Numbers the Me screen never had until GET /api/me/summary added them up.
+ *  Y03: a zero card is hidden, kept in the DOM for the declared check that
+ *  selects on it, and the row goes when every card is a zero. */
+function StatCards({ stats }: { stats: Array<{ key: string; value: string; label: string; zero?: boolean }> }): ReactNode {
+  const shown = stats.filter((stat) => !stat.zero).length;
   return (
-    <div id="profile-stats" className={STAT_GRID}>
+    <div id="profile-stats" className={shown === stats.length ? STAT_GRID : SHOWN_GRID[Math.min(shown, 3)]}>
       {stats.map((stat) => (
         <div
           key={stat.key}
           data-profile-stat={stat.key}
-          className={`rounded-2xl ${PLANE_FILL} px-2 py-3 text-center`}
+          className={`rounded-2xl ${PLANE_FILL} px-2 py-3 text-center${stat.zero ? ' hidden' : ''}`}
         >
           <div className="text-xl font-bold tabular-nums text-zinc-900 dark:text-zinc-100">{stat.value}</div>
           <div className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{stat.label}</div>

@@ -472,10 +472,16 @@ export function shortWords(t: AiThread): Phrase {
   return { id: SHORT_WORDS[t.what] || 'messages:ai.short.waiting' };
 }
 
-/** Pure: the hero's line under the bot's name: what needs you, what is in progress. */
-export function heroWords(needs: number, next: number): Phrase {
-  if (needs > 0) return { id: 'messages:ai.hero.both', values: { needs, next } };
-  return { id: 'messages:ai.hero.next', values: { next } };
+/**
+ * Pure: the hero's line under the bot's name: what needs you, what is in
+ * progress. A zero says nothing (Y03, audit 2 Nov 2026): each half is said
+ * only above zero, and with neither there is no line ("In progress: 0" was).
+ */
+export function heroWords(needs: number, next: number): Phrase | null {
+  if (needs > 0 && next > 0) return { id: 'messages:ai.hero.both', values: { needs, next } };
+  if (needs > 0) return { id: 'messages:ai.hero.needs', values: { needs } };
+  if (next > 0) return { id: 'messages:ai.hero.next', values: { next } };
+  return null;
 }
 
 /**
