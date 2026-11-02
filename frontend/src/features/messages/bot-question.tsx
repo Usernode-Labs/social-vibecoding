@@ -182,6 +182,9 @@ export function suggestsOnly(actions: readonly HomeroomBotAction[]): boolean {
   return actions.length > 0 && actions.every((action) => action.type === 'prompt' || action.type === 'reply');
 }
 
+// #6153: where a request's track is once its change's vote is decided (bot-track.tsx).
+const VOTE_DECIDED: ReadonlySet<string> = new Set(['going_live', 'live', 'stopped', 'done_elsewhere', 'closed']);
+
 function BotActions({ message, meta, conversationId, hidePrompts = false }: {
   message: ConversationMessage;
   meta: HomeroomBotMeta;
@@ -203,7 +206,10 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
     appSlug: meta.appSlug, appName: meta.appName, issueNumber: meta.issueNumber, firstVersion: meta.firstVersion === true,
   } : null);
   const pastPlan = !!track && !['queued', 'planning', 'waiting'].includes(track.state);
-  const actions = (meta.actions || []).filter((action) => !(pastPlan && action.id === 'read_plan'));
+  // #6153: and Vote, under "#14 is up for a vote." in the private thread it
+  // came from, once the vote is decided.
+  const pastVote = !!track && VOTE_DECIDED.has(track.state);
+  const actions = (meta.actions || []).filter((action) => !(pastPlan && action.id === 'read_plan') && !(pastVote && action.id === 'vote'));
   if (!actions.length) return null;
   const invite = inviteMade(meta);
   const settled = meta.status === 'answered' || meta.status === 'closed';

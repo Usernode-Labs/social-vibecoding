@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchJson, send } from './api.ts';
 import { BTN } from './tokens.ts';
 import {
-  Badge, EmptyState, ErrorState, FormError, Panel, ScreenHeader, Skeleton, Textarea,
+  Badge, EmptyState, ErrorState, Field, FormError, FormGrid, Panel, ScreenHeader, Select, Skeleton, Textarea,
 } from './ui.tsx';
 
 // Translations: text admins write in this console and phones show (#6152).
@@ -24,10 +24,16 @@ type LanguageRow = {
 
 type Message = {
   key: string;
+  group: string;
   label: string;
   english: string;
   review_required: boolean;
   languages: LanguageRow[];
+};
+
+const GROUPS: Record<string, string> = {
+  'update-prompts': 'Update prompts',
+  programme: 'Challenges and seasons',
 };
 
 const topo = () => (window as any).AdminTopochain;
@@ -86,7 +92,7 @@ function LanguageLine({ messageKey, row, write, reload }: {
         />
       ) : (
         <p dir="auto" className="mt-1 text-sm whitespace-pre-wrap break-words">
-          {row.text || <span className="text-zinc-500">Phones see the English for now.</span>}
+          {row.text || <span className="text-zinc-500">People see the English for now.</span>}
         </p>
       )}
       {row.problem ? <p className="mt-1 text-xs text-zinc-500">{row.problem}</p> : null}
@@ -121,6 +127,8 @@ function TextTranslationsScreen() {
   const write = canWrite();
   const [messages, setMessages] = useState<Message[] | null>(null);
   const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
+  const [group, setGroup] = useState('update-prompts');
+  const [language, setLanguage] = useState('');
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -134,21 +142,40 @@ function TextTranslationsScreen() {
 
   useEffect(() => { load(); }, [load]);
 
+  // One language at a time: a season's text in every language is thousands of lines.
+  const languages = messages?.[0]?.languages || [];
+  const chosen = language || languages[0]?.language || '';
+  const shown = (error ? [] : messages || []).filter((message) => message.group === group);
+
   return (
     <>
       <ScreenHeader
         title="Translations"
-        subtitle="What you write in English here reaches phones in their language. An AI agent translates each message within about ten minutes. Until a translation is ready, phones show the English."
+        subtitle="What you write in English reaches people in their language. An AI agent translates it in the background, usually within minutes, and a whole season's text within a few hours. Until a translation is ready, people see the English."
       />
-      <div id="admin-topo-tt-list" className="space-y-4">
+      {languages.length ? (
+        <FormGrid cols={2}>
+          <Field label="Text" htmlFor="admin-topo-tt-group">
+            <Select id="admin-topo-tt-group" value={group} onChange={(event) => setGroup(event.target.value)}>
+              {Object.entries(GROUPS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </Select>
+          </Field>
+          <Field label="Language" htmlFor="admin-topo-tt-language">
+            <Select id="admin-topo-tt-language" value={chosen} onChange={(event) => setLanguage(event.target.value)}>
+              {languages.map((row) => <option key={row.language} value={row.language}>{row.name}</option>)}
+            </Select>
+          </Field>
+        </FormGrid>
+      ) : null}
+      <div id="admin-topo-tt-list" className="mt-4 space-y-4">
         {messages === null ? <Skeleton rows={4} /> : null}
         {error ? (
           <ErrorState title="Couldn't load translations" status={error.status} message={error.message} onRetry={load} />
         ) : null}
-        {messages !== null && !error && !messages.length ? (
-          <EmptyState title="Nothing to translate yet" body="Messages appear here once they are written on the App version screen." />
+        {messages !== null && !error && !shown.length ? (
+          <EmptyState title="Nothing to translate yet" body="Text appears here once it is written on the App version, Challenge templates or Season events screens." />
         ) : null}
-        {(error ? [] : messages || []).map((message) => (
+        {shown.map((message) => (
           <Panel
             key={message.key}
             title={message.label}
@@ -158,7 +185,7 @@ function TextTranslationsScreen() {
           >
             <p className="text-sm whitespace-pre-wrap break-words">{message.english}</p>
             <ul className="mt-3">
-              {message.languages.map((row) => (
+              {message.languages.filter((row) => row.language === chosen).map((row) => (
                 <LanguageLine
                   key={`${row.language}:${row.state}:${row.text || ''}`}
                   messageKey={message.key}

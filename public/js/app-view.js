@@ -28657,9 +28657,11 @@ const AppView = {
     // the loader up. A client-side give-up keeps the loader honest if the
     // event never lands (the server rebuild is still allowed to finish on
     // its own).
+    // #6157: `waking` is a preview that slept, scaled back up rather than
+    // rebuilt: the same loader, saying so.
     AppView._setStagingLoader(true, {
       title: PlatformI18n.t('changes:frame.loader.rebuilding'),
-      sub: PlatformI18n.t('changes:frame.loader.rebuildingSub'),
+      sub: PlatformI18n.t(data.waking ? 'changes:frame.loader.wakingSub' : 'changes:frame.loader.rebuildingSub'),
     });
     AppView._pendingStagingPreview = {
       sessionId, slug, jump, testing, dock, loadId, retry,

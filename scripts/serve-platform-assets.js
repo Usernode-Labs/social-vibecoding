@@ -34,6 +34,7 @@ const path = require('path');
 // Pure, and themselves dependency-free: the platform modules this server reads.
 const appHostConfig = require('../src/services/app-host-config');
 const offlineCache = require('../src/services/offline-cache');
+const wakingPage = require('../src/services/preview-waking-page');
 
 const PORT = Number(process.env.PORT || 3000);
 const ROOT = path.join(__dirname, '..', 'public');
@@ -90,14 +91,38 @@ function send(res, status, headers, body, method) {
   return res.end(body);
 }
 
+// A sleeping preview's link (#6157, services/preview-sleep.js). With the
+// app-host gate off, a preview that sleeps has no pod, so its Ingress sends
+// everything but the asset prefixes here instead of to its Service
+// (services/kubernetes.js routePreviewForSleep), and back once it wakes. A
+// preview's host gets the waking page (or, for a fetch, a short 503): it
+// asks the platform to wake the preview, polls, and reloads once the app
+// answers. Any other host keeps the plain 404 below.
+function sleepingPreview(req, res, method) {
+  const host = wakingPage.previewHost(req.headers.host, process.env.USERNODE_APPS_DOMAIN);
+  if (!host) return false;
+  const headers = { 'Cache-Control': 'no-store', 'Retry-After': '10' };
+  if (method === 'GET' && wakingPage.wantsDocument(req.headers)) {
+    const page = wakingPage.renderWakingPage({ wakeUrl: wakingPage.wakeUrlFor(process.env.USERNODE_DOMAIN, host) });
+    res.writeHead(503, { ...headers, 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(page);
+    return true;
+  }
+  res.writeHead(503, { ...headers, 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(method === 'HEAD' ? undefined : JSON.stringify({ error: 'preview_waking' }));
+  return true;
+}
+
 const server = http.createServer((req, res) => {
   const method = req.method || 'GET';
-  if (method !== 'GET' && method !== 'HEAD') {
-    return send(res, 405, { 'Content-Type': 'text/plain; charset=utf-8', Allow: 'GET, HEAD' }, 'Method Not Allowed', method);
-  }
 
   let pathname;
   try { pathname = new URL(req.url, 'http://localhost').pathname; } catch { pathname = '/'; }
+
+  if (!isAssetPath(pathname) && sleepingPreview(req, res, method)) return undefined;
+  if (method !== 'GET' && method !== 'HEAD') {
+    return send(res, 405, { 'Content-Type': 'text/plain; charset=utf-8', Allow: 'GET, HEAD' }, 'Method Not Allowed', method);
+  }
 
   if (pathname === '/health') {
     return send(res, 200, { 'Content-Type': 'text/plain; charset=utf-8' }, 'ok', method);

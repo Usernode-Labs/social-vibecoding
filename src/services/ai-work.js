@@ -203,9 +203,11 @@ SELECT t.id, mine.own, t.number, t.kind, t.title AS thread_title, t.state, t.cre
 // bot opened is a row of private_threads. Only those still open: a filed or
 // posted one is a public thread now, and listed there. 1 Nov 2026: except
 // one holding a design, which stays private and is still worked on (its
-// next post is the plan's next version): it stays listed.
+// next post is the plan's next version): it stays listed. #6153: with where
+// it went (its state and the request's number), so the tab draws it as that
+// request's row rather than a second one (model.ts needsYou).
 const PRIVATE_SQL = `
-SELECT m.id AS root_id, m.content, m.created_at, p.kind, a.slug, a.name,
+SELECT m.id AS root_id, m.content, m.created_at, p.kind, p.state, p.result_ref, a.slug, a.name,
        a.icon_emoji, a.icon_image_id,
        -- A thread started from the bot's "+" is named by their first words in it.
        (SELECT f.content FROM conversation_messages f
@@ -499,7 +501,37 @@ function shapePrivate(row) {
     app: appOf(row),
     at: iso(row.last_at || row.created_at),
     ...(about ? { about } : {}),
+    // #6153: a design thread filed as a request, or posted on one as its
+    // plan, and that request's number: its row is the request's.
+    ...(row.state ? { state: row.state } : {}),
+    ...(Number(row.result_ref) > 0 ? { resultRef: Number(row.result_ref) } : {}),
   };
+}
+
+/**
+ * Pure (#6153): the request a private thread was filed as, or posted its
+ * plan on, on a project, as `slug#number`; null for any other thread.
+ */
+function filedKey(p) {
+  if ((p?.state !== 'filed' && p?.state !== 'posted') || !p.app?.slug || !(Number(p.resultRef) > 0)) return null;
+  return `${p.app.slug}#${Number(p.resultRef)}`;
+}
+
+/**
+ * Pure (#6153): the private threads Needs you still lists. A thread filed as
+ * a request (or posted on one) whose request has a row of its own, in any
+ * list, is that row now: the newest such thread for each request is left
+ * out. One whose request is in no list stays, as it was. The tab does the
+ * same (frontend/src/features/ai/model.ts needsYou).
+ */
+function unfiledPrivate(privates, listed) {
+  const folded = new Set();
+  return (privates || []).filter((p) => {
+    const key = filedKey(p);
+    if (!key || folded.has(key)) return true;
+    folded.add(key);
+    return !listed.has(key);
+  });
 }
 
 /**
@@ -607,12 +639,18 @@ function listsOf(needs, work, { botUsername = null } = {}) {
     ? items.filter((item) => item.kind === 'proposal' && item.app?.slug === t.app.slug
       && String(item.author || '').toLowerCase() === bot).length
     : 0);
+  // #6153: a private thread filed as a request whose request has a row is that row.
+  const listed = new Set(owed);
+  for (const t of [...(work?.needs || []), ...(work?.next || []), ...(work?.waiting || []), ...(work?.live || [])]) {
+    if (t.app && t.number) listed.add(`${t.app.slug}#${t.number}`);
+  }
+  const privates = unfiledPrivate(work?.private, listed);
   const lists = {
     needsYou: [
       ...items.map((item) => row(item.app, shownNumber(item), (item.kind === 'ballot' && item.ballot?.title) || item.title,
         NEED_SAYS[item.kind] || 'waits for them')),
       ...(work?.needs || []).filter((t) => !isOwed(t)).map((t) => row(t.app, t.number, t.title, NEED_SAYS[t.what] || 'waits for them')),
-      ...(work?.private || []).map((p) => row(p.app, null, p.title, 'their private thread with Homeroom bot, not posted yet')),
+      ...privates.map((p) => row(p.app, null, p.title, 'their private thread with Homeroom bot, not posted yet')),
     ],
     inProgress: (work?.next || []).filter((t) => !isOwed(t)).map((t) => row(t.app, t.number, t.title, threadSays(t))),
     waiting: (work?.waiting || []).filter((t) => !isOwed(t)).map((t) => row(t.app, t.number, t.title, threadSays(t, slotVotes(t)))),
@@ -623,7 +661,7 @@ function listsOf(needs, work, { botUsername = null } = {}) {
   return {
     ...lists,
     counts: {
-      needsYou: lists.needsYou.length - (work?.private || []).length,
+      needsYou: lists.needsYou.length - privates.length,
       inProgress: lists.inProgress.length,
       waiting: lists.waiting.length,
       liveThisWeek: lists.liveThisWeek.length,
@@ -658,6 +696,8 @@ module.exports = {
   standing,
   arrange,
   shapePrivate,
+  filedKey,
+  unfiledPrivate,
   botStages,
   workFor,
   threadSays,

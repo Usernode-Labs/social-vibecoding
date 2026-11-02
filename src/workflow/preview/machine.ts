@@ -1731,10 +1731,13 @@ const WRITES = {
   // preview with no checks), the line that says it is up: the dev chat's
   // "Staging deployed!" (what a tab that watched it build already shows, and
   // what closes a "Building staging preview..." card on a reload), or an
-  // imported proposal's thread note.
+  // imported proposal's thread note. A new attempt serves awake: its deploy
+  // wrote one replica, so a sleep the preview was in has ended (#6157,
+  // services/preview-sleep.js).
   async published(tx: Tx, w: any, ctx: any) {
     await tx.query(
       `UPDATE chat_sessions SET staging_url = $2, staging_container_id = $3, staging_image_ref = $4, staging_build_ref = $5,
+              staging_asleep_at = NULL, staging_asleep_db_bytes = NULL,
               staging_runtime_kind = $6, staging_runtime_name = $7, staging_commit_sha = $8
         WHERE id = $1`,
       [w.sessionId, w.served.url, w.served.containerId, w.served.imageRef, w.served.buildRef,
@@ -1758,6 +1761,7 @@ const WRITES = {
   async unpublished(tx: Tx, w: any) {
     await tx.query(
       `UPDATE chat_sessions SET staging_url = NULL, staging_container_id = NULL, staging_image_ref = NULL,
+              staging_asleep_at = NULL, staging_asleep_db_bytes = NULL,
               staging_build_ref = NULL, staging_runtime_kind = NULL, staging_runtime_name = NULL, staging_commit_sha = NULL
         WHERE id = $1`, [w.sessionId]);
     await dropMedia(tx, w.sessionId);

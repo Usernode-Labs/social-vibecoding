@@ -285,3 +285,45 @@ test('#5263: a dead link\'s page welcomes, says what happened and what to do, an
   assert.equal(onInviteLink(`/invite/${TOKEN}/extra`), false);
   assert.equal(onInviteLink('/'), false);
 });
+
+// #6002: where the page first settled, reported once through UI telemetry.
+test('each page reports where it first settled, once: card, dead link, failed read, or the wait', async (t) => {
+  const settled = [];
+  globalThis.window = { UITelemetry: { inviteSettled: (kind) => settled.push(kind) } };
+  t.after(() => { delete globalThis.window; });
+  const cases = [
+    [`/invite/${TOKEN}`, answering(LIVE), 'card'],
+    [`/invite/${TOKEN}`, answering({ live: false, reason: 'expired' }), 'dead'],
+    ['/invite/nope', answering(LIVE), 'dead'],
+    [`/invite/${TOKEN}`, () => Promise.reject(new TypeError('Failed to fetch')), 'failed'],
+    [`/invite/${TOKEN}`, answering({ error: 'Internal server error' }), 'failed'],
+    [`/invite/${TOKEN}`, () => Promise.reject(new DOMException('Session changed', 'AbortError')), 'failed'],
+  ];
+  for (const [pathname, fetchImpl, want] of cases) {
+    settled.length = 0;
+    const hook = mountHook({ pathname, fetchImpl });
+    await flush(); await flush();
+    assert.deepEqual(settled, [want], `${pathname} → ${want}`);
+    hook.unmount();
+  }
+  settled.length = 0;
+  const elsewhere = mountHook({ pathname: '/', fetchImpl: answering(LIVE) });
+  await flush();
+  assert.deepEqual(settled, [], 'a page that is not an invite link records nothing');
+  elsewhere.unmount();
+});
+
+test('a card that arrives after the wait stays a timeout', async (t) => {
+  const settled = [];
+  globalThis.window = { UITelemetry: { inviteSettled: (kind) => settled.push(kind) } };
+  t.after(() => { delete globalThis.window; });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let resolve;
+  const hook = mountHook({ pathname: `/invite/${TOKEN}`, fetchImpl: () => new Promise((r) => { resolve = r; }) });
+  t.mock.timers.tick(8000);
+  resolve({ json: () => Promise.resolve(LIVE) });
+  await flush();
+  assert.equal(hook.read().preview.live, true, 'the card still shows');
+  assert.deepEqual(settled, ['timeout']);
+  hook.unmount();
+});

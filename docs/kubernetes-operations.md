@@ -301,6 +301,56 @@ preview whose row no longer names it keeps its staging database until the
 orphan database pass (`STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS`, 6 h) finds nothing
 connected to it.
 
+## Sleeping previews
+
+A preview nobody has used for `PREVIEW_SLEEP_AFTER_MS` (2 h by default; 0
+switches it off) sleeps (#6157, `src/services/preview-sleep.js`): the
+`preview-sleep` clock (every 5 minutes, a few previews a run) scales its
+Deployment to `replicas: 0`. Its image, Deployment, Service, env Secret,
+database copy and the session's row stay; `chat_sessions.staging_asleep_at`
+records the sleep and `staging_asleep_db_bytes` the copy's size, which
+Admin → Stale previews totals. Previews backing a live vote sleep too. A
+preview sleeps only while nothing works on it: no worker turn, shots run,
+recorded operation, build or checks run.
+
+Whatever opens it wakes it: a Preview click (`ensure-staging`, behind the
+"spinning back up" loader), a checks run (before it starts; one that does not
+wake in time is a platform-fault retry), and a direct link. A wake scales it
+back to one replica and waits for the pod and its public address; nothing is
+rebuilt and no checks run again. One built with another platform environment
+is rebuilt instead, as the stale pass would have done. A build of a new head
+deploys one replica, which ends the sleep too.
+
+The direct link's door depends on the app-host gate:
+
+- `APP_GATE=on`: the gate proxies to the preview's Service, finds no pod, and
+  falls back to the platform's `/__app_unavailable`, which answers a sleeping
+  preview's host with the "Waking this preview…" page and wakes it.
+- `APP_GATE=off` (the default, and production's today): Cilium's Envoy has no
+  custom error backend, so a Service with no endpoints would answer a bare
+  503. While a preview sleeps, its Ingress catch-all path is pointed at the
+  shared `usernode-platform-assets` Service in the same namespace instead,
+  which serves the same waking page for a preview's host
+  (`scripts/serve-platform-assets.js`), and it is pointed back when the
+  preview wakes. The page asks the platform to wake it with a POST to
+  `https://<platform domain>/__preview_wake` from the visitor's browser, so
+  no new network path is needed in the cluster: the ingress controller
+  already reaches the asset backend for every app's asset paths. The asset
+  backend runs the platform's image and picks the page up when the release
+  upserts it (`ensurePlatformAssetBackend`).
+
+No operator step is required. Check: `kubectl -n social-apps get deploy -l
+social.usernode.io/environment=staging` shows sleeping previews at `0/0`;
+open one's address and expect the waking page, then the app.
+
+Nothing is put to sleep while a workflow process of another build still
+serves (a rollout or a rollback): a build from before sleep would start a
+checks run on a sleeping preview without waking it. A rollback past this
+change leaves the previews already asleep as they are, and the older build
+reads each as stopped: it rebuilds one when it is opened, and its
+`preview-runtimes` clock rebuilds the vote-backed ones, so expect a burst of
+preview builds after such a rollback.
+
 ## A separate server for preview databases
 
 By default one PostgreSQL server holds everything: the platform's database,

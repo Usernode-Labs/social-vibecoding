@@ -4763,6 +4763,10 @@
     "text": "Open",
     "description": "Link after the filed or posted line at the top of a private thread with Homeroom bot: opens the request or change."
   },
+  "privateThread.openRequest": {
+    "text": "Open request #{{number}}",
+    "description": "Link at the end of the one-line strip at the top of a private thread with Homeroom bot that was filed as a request (or posted on one as its plan); the strip says where that request stands (its status, then a five-step bar). Opens the request's page. \"Open\" is a verb; {{number}} is the request's number, keep the #."
+  },
   "ai.hero.name": {
     "text": "Homeroom bot",
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. Its heading, the bot's name, beside its picture."

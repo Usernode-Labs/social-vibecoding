@@ -277,6 +277,16 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
     ['A calendar for the garden', 'idea', null],
     ['I drafted it as a request.', 'draft_request', 'aw-seeds'],
   ].sort(), 'open ones only; a filed one is a public thread now');
+  // #6153: one holding a design stays listed once filed, and says where it
+  // went: the tab draws it as that request's row (model.ts needsYou).
+  await pool.query(
+    `INSERT INTO design_threads (private_thread_id, title, surface, width, height)
+     SELECT id, 'Seed packets', 'app', 390, 844 FROM private_threads WHERE root_message_id = $1`, [filed.id]);
+  const listedNow = (await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } })).private;
+  const design = listedNow.find((p) => p.rootId === filed.id);
+  assert.deepEqual([design.title, design.state, design.resultRef, design.app.slug], ['Seed packets', 'filed', 12, 'aw-seeds']);
+  assert.equal(listedNow.find((p) => p.rootId === opened.id).state, 'open');
+  assert.equal(listedNow.find((p) => p.rootId === idea.id).resultRef, undefined, 'one that went nowhere has no number');
 
   // The route: signed in only.
   const httpApp = express();

@@ -1604,6 +1604,112 @@ async function restorePreviewAttempt(config, name, attempt, servingN, claim = 0)
   return await deleteAttemptDeployment(config, name, own) ? 'deleted' : 'superseded';
 }
 
+// ── A preview asleep (#6157) ─────────────────────────────────────────────
+//
+// A preview nobody has used for a while sleeps (services/preview-sleep.js):
+// its Deployment is scaled to no replicas and everything else stays, its
+// image, its Service, its Ingress, its env Secret and the database clone it
+// uses, so waking it is a scale back to one and a wait for the pod. No
+// rebuild, and no checks run again: the same image serves the same head.
+
+// Pure: the Deployment as it was read, with `replicas` changed and nothing
+// else (its template, its fence, the version it was read at). A preview
+// runs one replica awake and none asleep.
+function scaledPreviewDeployment(deployment, replicas) {
+  if (replicas !== 0 && replicas !== 1) throw new Error('A preview runs one replica awake and none asleep');
+  const body = structuredClone(deployment);
+  body.spec = { ...(body.spec || {}), replicas };
+  delete body.status;
+  return body;
+}
+
+// Scale a preview's Deployment to `replicas`. Only the Deployment is
+// written. It is replaced on the version read and never retried on a
+// conflict: a write in between is an attempt's deploy, which sets its own
+// replicas, or another sleep or wake, and either is newer than this one.
+// `attempt`: the attempt the caller read as serving; a Deployment another
+// attempt has written since (its fence) is left alone. Answers 'scaled',
+// 'unchanged' (already so), 'missing', 'superseded' or 'conflict'.
+async function scalePreview(config, runtimeName, replicas, { attempt = null } = {}) {
+  const namespace = config.kubernetes.appNamespace;
+  const { apps } = getClients();
+  let current;
+  try { current = await apps.readNamespacedDeployment({ name: runtimeName, namespace }); }
+  catch (err) { if (isNotFound(err)) return 'missing'; throw err; }
+  if (!current?.metadata || current.metadata.deletionTimestamp) return 'missing';
+  if (attempt != null && (fenceOf(current)?.attempt ?? 0) !== attempt) return 'superseded';
+  if ((current.spec?.replicas ?? 1) === replicas) return 'unchanged';
+  try {
+    await apps.replaceNamespacedDeployment({ name: runtimeName, namespace, body: scaledPreviewDeployment(current, replicas) });
+  } catch (err) {
+    if (isConflict(err)) return 'conflict';
+    if (isNotFound(err)) return 'missing';
+    throw err;
+  }
+  return 'scaled';
+}
+
+// Wait until the preview's one replica serves (the rollout contract every
+// deploy waits for). Throws when it does not within `timeoutMs`.
+async function waitForPreview(config, runtimeName, { timeoutMs = 3 * 60 * 1000 } = {}) {
+  await waitForDeployment(config.kubernetes.appNamespace, runtimeName, { timeoutMs });
+}
+
+// Pure: where a sleeping preview's direct link goes while it has no pod.
+// With the app-host gate on, its Ingress already sends every request to the
+// gate, which asks the platform; the platform answers a sleeping preview's
+// host with the waking page (routes/app-error.js), so nothing changes. With
+// the gate off the Ingress goes straight to the preview's Service, which has
+// no endpoints asleep, and the ingress controller (Cilium's Envoy, which
+// takes no custom error backend) would answer a bare 503: so while it
+// sleeps, its catch-all path goes to the shared asset backend in the same
+// namespace, which serves the waking page for a preview's host
+// (scripts/serve-platform-assets.js), and back to the Service when it wakes.
+// The asset prefixes and every other path are left as they are. Answers the
+// Ingress to write, or null when there is nothing to change (already so, or
+// a catch-all this does not recognise).
+function ingressForSleep(ingress, { name, asleep, gateBackend = null }) {
+  const from = asleep ? name : PLATFORM_ASSET_NAME;
+  const to = asleep ? PLATFORM_ASSET_NAME : (gateBackend || name);
+  let changed = false;
+  const rules = (ingress?.spec?.rules || []).map((rule) => {
+    if (!rule?.http || !Array.isArray(rule.http.paths)) return rule;
+    const paths = rule.http.paths.map((item) => {
+      if (item?.path !== '/' || item?.backend?.service?.name !== from) return item;
+      changed = true;
+      return { ...item, backend: { ...item.backend, service: { ...item.backend.service, name: to } } };
+    });
+    return { ...rule, http: { ...rule.http, paths } };
+  });
+  return changed ? { ...ingress, spec: { ...ingress.spec, rules } } : null;
+}
+
+// Apply ingressForSleep to a preview's Ingress. With the gate on, a sleeping
+// preview keeps its route (the gate serves the waking page); waking sends a
+// catch-all left on the asset backend to the gate when it serves, else to
+// the preview's own Service. Answers 'routed', 'unchanged' or 'missing'.
+async function routePreviewForSleep(config, runtimeName, { asleep }) {
+  const namespace = config.kubernetes.appNamespace;
+  const { networking } = getClients();
+  if (typeof networking?.readNamespacedIngress !== 'function') return 'missing';
+  const gate = appGateMode(config) === 'on';
+  if (asleep && gate) return 'unchanged';
+  const gateBackend = !asleep && gate && await sharedBackendServing(config, APP_GATE_NAME) ? APP_GATE_NAME : null;
+  for (let i = 0; ; i++) {
+    let ingress;
+    try { ingress = await networking.readNamespacedIngress({ name: runtimeName, namespace }); }
+    catch (err) { if (isNotFound(err)) return 'missing'; throw err; }
+    const body = ingressForSleep(ingress, { name: runtimeName, asleep, gateBackend });
+    if (!body) return 'unchanged';
+    try {
+      await networking.replaceNamespacedIngress({ name: runtimeName, namespace, body });
+      return 'routed';
+    } catch (err) {
+      if (!isConflict(err) || i >= UPSERT_CONFLICT_ATTEMPTS) throw err;
+    }
+  }
+}
+
 // A preview attempt's own Deployment, as it read it, deleted only if nobody
 // has written it since: the precondition carries its UID and the version it
 // read, so a successor's update in between (same UID) makes the delete
@@ -3772,6 +3878,7 @@ async function execInWorker(config, runtimeName, command, stdinText = null, { ti
 module.exports = {
   previewServesAttempt,
   restorePreviewAttempt,
+  scaledPreviewDeployment, scalePreview, waitForPreview, ingressForSleep, routePreviewForSleep,
   dnsName, withSuffix, labels, appResourceName, createBuild, buildReadsBelowSourceRoot,
   deployApplication, getApplicationStatus, inspectApplication,
   getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,

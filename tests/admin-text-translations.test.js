@@ -25,6 +25,7 @@ function fakePool({ configs = [], rows = [], failReads = false } = {}) {
     async query(sql, params = []) {
       if (failReads) throw new Error('database is down');
       if (sql.includes('FROM app_version_configs')) return { rows: configs };
+      if (/FROM (challenges|season_events|seasons)/.test(sql)) return { rows: [] };
       if (/^\s*SELECT/.test(sql) && sql.includes('WHERE source_key = $1 AND language = $2')) {
         const row = table.get(`${params[0]}|${params[1]}`);
         return { rows: row ? [row] : [] };
@@ -313,4 +314,180 @@ test('every route that changes a translation takes the write gate, and the scree
   assert.equal((screen.match(/<button/g) || []).length, 5, 'all five buttons sit inside that one gate');
   const gated = screen.slice(screen.indexOf('{write ? ('));
   assert.equal((gated.match(/<button/g) || []).length, 5);
+});
+
+// ── Challenges, seasons and season events (#4814) ────────────────────────
+
+const programmePool = ({ rows = [], locale = null } = {}) => {
+  const base = fakePool({ rows });
+  const query = base.query;
+  base.reads = [];
+  base.query = async (sql, params = []) => {
+    base.reads.push(sql);
+    if (/FROM challenges/.test(sql)) {
+      return { rows: [{ goal: null, task: 'Use any app', description: null, requirements: null, reward_logic: null, cta_button: null, cta_label: null, mobile_cta_label: null, metric_label: null,
+        t_goal: 'Use apps for 10 minutes', t_task: 'Template task', t_description: 'Any apps, any mix.', t_requirements: null, t_reward_logic: null, t_cta_button: null, t_cta_label: 'Browse apps', t_mobile_cta_label: null, t_metric_label: '42' }] };
+    }
+    if (/FROM season_events/.test(sql)) return { rows: [{ name: 'Week one', description: 'Any apps, any mix.', disclaimer: null }] };
+    if (/FROM seasons/.test(sql)) return { rows: [{ name: 'Season one', description: null }] };
+    if (/FROM users/.test(sql)) return { rows: [{ locale }] };
+    if (/source_key = ANY/.test(sql)) {
+      return { rows: [...base.table.values()].filter((r) => r.language === params[0] && params[1].includes(r.source_key)) };
+    }
+    return query(sql, params);
+  };
+  return base;
+};
+const textKey = (english) => `text:${packs.hash(english)}`;
+
+test('the text to translate is what a reader sees: a challenge\'s own words over its template\'s, each once', async () => {
+  const messages = await service.sources(programmePool());
+  const programme = messages.filter((m) => m.group === 'programme');
+  const english = programme.map((m) => m.english).sort();
+  assert.deepEqual(english, ['Any apps, any mix.', 'Browse apps', 'Season one', 'Use any app', 'Use apps for 10 minutes', 'Week one']);
+  assert.equal(english.includes('Template task'), false, 'the challenge overrides its template\'s task');
+  assert.equal(english.includes('42'), false, 'nothing without a letter is sent to be translated');
+  for (const message of programme) {
+    assert.equal(message.key, textKey(message.english));
+    assert.equal(message.reviewRequired, false);
+    assert.ok(message.description);
+  }
+  assert.equal(messages.find((m) => m.key === 'app-version:default:must').group, 'update-prompts');
+});
+
+test('a response\'s strings are swapped wherever they sit, and nothing else in it moves', async () => {
+  const pool = programmePool({ rows: [
+    row(textKey('Browse apps'), 'id', 'Browse apps', 'Jelajahi aplikasi'),
+    row(textKey('Week one'), 'id', 'Older', 'Basi'),
+  ] });
+  const body = {
+    success: true,
+    data: [{ id: 7, reward: '500 pts', card_preview: { goal: 'Browse apps' }, detail_modal: { cta_label: 'Browse apps', cta_link: '#apps' }, event_name: 'Week one', flags: [true, null, 3] }],
+  };
+  const out = await service.translatePayload(pool, body, 'id');
+  assert.deepEqual(out, {
+    success: true,
+    data: [{ id: 7, reward: '500 pts', card_preview: { goal: 'Jelajahi aplikasi' }, detail_modal: { cta_label: 'Jelajahi aplikasi', cta_link: '#apps' }, event_name: 'Week one', flags: [true, null, 3] }],
+  });
+  assert.equal(body.data[0].card_preview.goal, 'Browse apps', 'the object handed in is left alone');
+});
+
+test('a read that fails hands the payload back in English, and English reads nothing', async () => {
+  const body = { goal: 'Browse apps' };
+  assert.deepEqual(await service.translatePayload(fakePool({ failReads: true }), body, 'id'), body);
+  const pool = { query: async () => { throw new Error('must not read'); } };
+  assert.equal(await service.translatePayload(pool, body, null), body);
+});
+
+function fakeResponse() {
+  const res = { sent: null, varied: [], statusCode: 200, json(body) { res.sent = body; return res; }, vary(field) { res.varied.push(field); return res; } };
+  return res;
+}
+const run = async (pool, req, body, statusCode = 200) => {
+  const res = fakeResponse();
+  res.statusCode = statusCode;
+  await new Promise((done) => {
+    const original = res.json;
+    res.json = (sent) => { const out = original(sent); done(); return out; };
+    const wrapped = res.json;
+    service.translatedReads(pool, { source: { files: { 'config.json': { languages: { en: 'English', id: 'Bahasa Indonesia', fr: 'Français' } } } } })(req, res, () => {
+      assert.notEqual(res.json, wrapped);
+      res.json(body);
+    });
+  });
+  return res;
+};
+const browse = () => [row(textKey('Browse apps'), 'id', 'Browse apps', 'Jelajahi aplikasi'), row(textKey('Browse apps'), 'fr', 'Browse apps', 'Parcourir')];
+const headers = (accept) => ({ get: (name) => (name === 'accept-language' ? accept : undefined) });
+
+test('a signed-in reader gets the language they chose in Settings, over the browser\'s', async () => {
+  const pool = programmePool({ rows: browse(), locale: 'id' });
+  const res = await run(pool, { user: { id: 3 }, query: {}, ...headers('fr') }, { goal: 'Browse apps' });
+  assert.deepEqual(res.sent, { goal: 'Jelajahi aplikasi' });
+  assert.deepEqual(res.varied, ['Accept-Language']);
+});
+
+test('someone with no choice in Settings, or signed out, gets the browser\'s language', async () => {
+  const pool = programmePool({ rows: browse(), locale: null });
+  assert.deepEqual((await run(pool, { user: { id: 3 }, query: {}, ...headers('fr-CA') }, { goal: 'Browse apps' })).sent, { goal: 'Parcourir' });
+  assert.deepEqual((await run(pool, { query: {}, ...headers('id') }, { goal: 'Browse apps' })).sent, { goal: 'Jelajahi aplikasi' });
+});
+
+test('an error answer goes out as it is, and a failed language read answers in English', async () => {
+  const pool = programmePool({ rows: browse(), locale: 'id' });
+  const refused = await run(pool, { user: { id: 3 }, query: {}, ...headers('id') }, { error: 'Browse apps' }, 404);
+  assert.deepEqual(refused.sent, { error: 'Browse apps' });
+  const down = await run(fakePool({ failReads: true }), { user: { id: 3 }, query: {}, ...headers(undefined) }, { goal: 'Browse apps' });
+  assert.deepEqual(down.sent, { goal: 'Browse apps' });
+});
+
+test('a pass asks for at most its share of what is owed, the update prompts first', async () => {
+  const pool = programmePool();
+  const many = [];
+  for (let i = 0; i < 400; i += 1) many.push({ goal: `Goal number ${i}` });
+  const query = pool.query;
+  pool.query = async (sql, params) => (/FROM challenges/.test(sql) ? { rows: many } : query(sql, params));
+  const model = fakeModel();
+  const out = await service.runOnce({ pool, deps: { source, llm: model, limits: budget() } });
+  const asked = model.calls[0].flatMap((request) => request.items);
+  assert.equal(asked.length, 300);
+  assert.equal(out.saved, 300);
+  assert.equal(asked[0].key, 'app-version:default:must');
+});
+
+test('each challenge read and the home panels are wrapped; the admin\'s own reads never are', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+  const mobile = read('src/routes/topochain/mobile.js');
+  for (const route of ['/api/v4/mobile/challenges', '/api/v4/mobile/seasons', '/api/v4/mobile/me/breakdown', '/challenges-api/challenges', '/challenges-api/seasons', '/challenges-api/me/breakdown']) {
+    assert.ok(mobile.includes(`'${route}'`), route);
+  }
+  assert.match(mobile, /\]\) router\.use\(path, translated\);/);
+  assert.ok(mobile.indexOf('router.use(path, translated)') < mobile.indexOf("router.get('/api/v4/mobile/me'"), 'mounted ahead of the routes');
+  const pub = read('src/routes/topochain/public.js');
+  for (const route of ['/api/v4/season-events', '/api/v4/season-history', '/api/v4/season-events/:seasonEventId', '/api/v4/season-events/:seasonEventId/challenges']) {
+    assert.ok(pub.includes(`router.get('${route}', translated,`), route);
+  }
+  assert.ok(read('src/routes/home-panels.js').includes("router.get('/api/home-panels', translated,"));
+  assert.doesNotMatch(read('src/routes/topochain/admin/challenges.js'), /translatedReads/);
+});
+
+// ── Event and season names on the leaderboard reads ──────────────────────
+
+test('`only` swaps what sits under the named keys and leaves the rest of the answer alone', async () => {
+  const pool = programmePool({ rows: [row(textKey('Week one'), 'id', 'Week one', 'Minggu pertama')] });
+  const body = {
+    data: {
+      event: { name: 'Week one', disclaimer: null, id: 3 },
+      event_name: 'Week one',
+      leaderboard: [{ username: 'Week one', rank: 1 }],
+    },
+  };
+  const out = await service.translatePayload(pool, body, 'id', { only: ['event', 'event_name'] });
+  assert.deepEqual(out.data.event, { name: 'Minggu pertama', disclaimer: null, id: 3 });
+  assert.equal(out.data.event_name, 'Minggu pertama');
+  assert.equal(out.data.leaderboard[0].username, 'Week one', 'a person who picked that name keeps it');
+});
+
+test('`only` reads nothing when the answer has none of those keys', async () => {
+  const pool = { query: async () => { throw new Error('must not read'); } };
+  const body = { data: { leaderboard: [{ username: 'Week one' }] } };
+  assert.equal(await service.translatePayload(pool, body, 'id', { only: ['event'] }), body);
+});
+
+test('the leaderboard, ranking and points reads are wrapped with `only`, so rows of people are never walked', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+  const mobile = read('src/routes/topochain/mobile.js');
+  assert.match(mobile, /translatedReads\(pool, \{ only: EVENT_NAME_KEYS \}\)/);
+  for (const route of ['/api/v4/mobile/leaderboard', '/api/v4/mobile/me/ranking', '/api/v4/mobile/event/points', '/challenges-api/leaderboard', '/challenges-api/me/ranking']) {
+    assert.ok(mobile.includes(`'${route}'`), route);
+  }
+  assert.match(mobile, /router\.use\(path, translatedNames\);/);
+  const pub = read('src/routes/topochain/public.js');
+  for (const route of ['/api/v4/leaderboard', '/api/v4/leaderboard/epoch-breakdown']) {
+    assert.ok(pub.includes(`router.get('${route}', translatedNames,`), route);
+  }
 });
