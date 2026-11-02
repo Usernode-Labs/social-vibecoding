@@ -218,6 +218,11 @@ SELECT m.id AS root_id, m.content, m.created_at, p.kind, a.slug, a.name,
                   WHERE p.about_kind = 'request' AND rq.app_id = p.app_id AND rq.number = p.about_number),
                 m.metadata->'homeroomBot'->>'aboutTitle') AS about_title,
        (SELECT d.title FROM design_threads d WHERE d.private_thread_id = p.id) AS design_title,
+       -- B08, B19 (audit 2 Nov 2026): a new project's thread is named by its
+       -- idea, never by the person's latest words in it, and a draft's by
+       -- what it drafts, never by the bot's line that opened it.
+       m.metadata->'homeroomBot'->>'projectIdea' AS project_idea,
+       m.metadata->'homeroomBot'->>'draftTitle' AS draft_title,
        (SELECT MAX(r.created_at) FROM conversation_messages r
          WHERE r.thread_root_id = m.id AND r.deleted_at IS NULL) AS last_at
   FROM conversations c
@@ -483,8 +488,10 @@ function shapePrivate(row) {
   const about = row.about_kind && Number(row.about_number) > 0
     ? { kind: row.about_kind, number: Number(row.about_number) } : null;
   const named = about && row.about_title ? row.about_title
-    : row.kind === 'ask' && row.first_own ? row.first_own
-      : row.design_title || row.content;
+    : row.project_idea ? row.project_idea
+      : row.draft_title ? row.draft_title
+        : row.kind === 'ask' && row.first_own ? row.first_own
+          : row.design_title || row.content;
   return {
     rootId: Number(row.root_id),
     title: firstLine(named),

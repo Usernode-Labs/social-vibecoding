@@ -840,6 +840,8 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const openedLine = await read({ messageId: draftCard.threadRootId });
     assert.equal(openedLine.reply.id, ask.id);
     assert.match(openedLine.content, /^I drafted it as a request on Note board, in a thread only you can see\./);
+    // B19 (audit 2 Nov 2026): the thread is named by the request it drafts, not by this line.
+    assert.equal(openedLine.metadata.homeroomBot.draftTitle, 'Tags');
     const { rows: [privateRow] } = await pool.query(
       'SELECT kind, state FROM private_threads WHERE root_message_id = $1', [draftCard.threadRootId]);
     assert.deepEqual(privateRow, { kind: 'draft_request', state: 'open' }, 'the AI tab lists it, locked');

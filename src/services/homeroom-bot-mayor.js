@@ -3572,8 +3572,12 @@ function closeOfferMeta({ app, name, actionId, issueNumber }) {
 // with a lock until the draft is filed, posted or put away. Resolves the
 // line ({ messageId, conversationId }), or null when it could not be sent,
 // and the draft is then said in Main as before.
-async function openDraftThread(pool, { bot, user, conversationId, message, kind, app, name, deps }) {
+async function openDraftThread(pool, { bot, user, conversationId, message, kind, app, name, title = null, deps }) {
   const dm = dmModule(deps);
+  // B19 (audit 2 Nov 2026): what the thread is named by, in the tab's list
+  // and over it: the request it drafts, or the words it would post. Its
+  // line in Main was the name before, the bot's own sentence.
+  const draftTitle = clip(String(title || '').split('\n').map((line) => line.trim()).find(Boolean) || '', 120);
   const said = await dm.sendDm(pool, {
     bot,
     userId: user.id,
@@ -3584,7 +3588,7 @@ async function openDraftThread(pool, { bot, user, conversationId, message, kind,
     replyToId: message.id,
     threadRootId: false,
     moment: null,
-    metadata: { kind: 'opened_draft', appSlug: app.slug, appName: name, draft: kind },
+    metadata: { kind: 'opened_draft', appSlug: app.slug, appName: name, draft: kind, ...(draftTitle ? { draftTitle } : {}) },
   }).catch((err) => {
     log.warn('homeroom-bot-mayor', 'Could not open a draft\'s private thread (saying it in Main)', { err: err.message });
     return null;
@@ -3661,7 +3665,9 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
   // Said in a thread already, it stays there.
   const draft = kind === 'file_request' || post;
   const opened = draft && !(message.threadRootId || message.thread_root_id)
-    ? await openDraftThread(pool, { bot, user, conversationId, message, kind, app: o.app, name, deps })
+    ? await openDraftThread(pool, {
+      bot, user, conversationId, message, kind, app: o.app, name, title: post ? o.details : o.title, deps,
+    })
     : null;
   const sent = await dm.sendDm(pool, {
     bot,

@@ -75,6 +75,10 @@ export interface HomeroomBotMeta {
   aboutKind?: 'request' | 'change';
   aboutNumber?: number;
   aboutTitle?: string;
+  /** B08 (audit 2 Nov 2026): what a new project's thread is for (kind 'opened_thread', changeKind 'project'): its name. */
+  projectIdea?: string;
+  /** B19: what a draft's thread drafts (kind 'opened_draft'): the request's title or the words to post. */
+  draftTitle?: string;
   appSlug?: string;
   appName?: string;
   issueNumber?: number;
