@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
-import { confirmAction } from '../../lib/confirm';
 import { useMessages } from '../../lib/i18n/react';
 import { useDialog } from '../dialogs/use-dialog';
 import * as api from './api';
@@ -91,24 +90,6 @@ export function CreateConversationDialog() {
     } catch (err) { setError(err instanceof Error ? err.message : t('messages:create.error.unblock')); }
   }
 
-  async function block(user: ConversationUser) {
-    // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
-    const ok = await confirmAction({
-      title: user.unnamed ? t('messages:create.block.titleUnknown') : t('messages:create.block.title', { username: user.username }),
-      message: t('messages:create.block.message'),
-      confirmLabel: t('messages:create.block.confirm'),
-      danger: true,
-    });
-    if (!ok) return;
-    setSubmitting(true); setError('');
-    try {
-      await setUserBlocked(user.id, true);
-      setBlocked((current) => [...current.filter((item) => item.id !== user.id), user]);
-      setQuery('');
-    } catch (err) { setError(err instanceof Error ? err.message : t('messages:create.error.block')); }
-    finally { setSubmitting(false); }
-  }
-
   return (
     <DialogRoot id="messages-create-dialog" layout="scroll" ref={dialog.rootRef} {...dialog.backdropProps}>
       <DialogCard size="md">
@@ -157,7 +138,10 @@ export function CreateConversationDialog() {
                 <span className="text-sm font-medium truncate">@{user.username}</span>
                 <span className="ml-auto text-xs text-violet-700 dark:text-violet-400">{mode === 'group' ? t('messages:create.result.add') : t('messages:create.result.message')}</span>
               </button>
-              <button type="button" disabled={submitting} onClick={() => void block(user)} aria-label={user.unnamed ? t('messages:create.result.blockUnknown') : t('messages:create.result.blockNamed', { username: user.username })} className="px-2 py-2 text-xs text-red-700 dark:text-red-400 disabled:opacity-50">{t('messages:create.result.block')}</button>
+              {/* Audit D09 (2 Nov 2026): no Block here. A picker is for choosing
+                  someone, and a red Block beside each Message was a mis-tap
+                  away; blocking is on the conversation's ⋯, a message's menu
+                  and the profile. Blocked people, below, still unblocks. */}
             </div>
           ))}
         </div>

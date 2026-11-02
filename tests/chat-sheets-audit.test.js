@@ -50,3 +50,9 @@ test('D13: the hover bar on somebody else\'s bubble hangs off its name line, bes
   assert.match(row, /\{barBesideHead \? null : actions\}\n\s*<MessageActionSheet/);
   assert.match(CSS, /\.messages-message-head > \.messages-message-actions \{ top: -10px; right: auto; left: calc\(100% \+ 8px\); \}/);
 });
+
+test('D09: the new-message picker offers no Block beside each person', () => {
+  const dialog = read('frontend/src/features/messages/create-dialog.tsx');
+  assert.doesNotMatch(dialog, /void block\(user\)|create\.result\.block/);
+  assert.match(dialog, /onClick=\{\(\) => void unblock\(user\)\}/, 'Blocked people still unblocks');
+});
