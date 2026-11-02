@@ -568,6 +568,12 @@ Seed rules:
   version's populated demo" below.)
 - **Never reference real users.** Use fake usernames/IDs
   (e.g. `staging-demo-user`), never rows cloned from prod.
+- **Made-up people read as people.** Where the screen prints a
+  seeded person's name, it prints a plain made-up name ("Priya",
+  "Sam"), never an id-shaped handle such as `staging-demo-priya`:
+  the people trying the preview read those names, and the screen's
+  one label already says the rows are made up. Keep any prefix to
+  ids and usernames the screen does not print.
 - **Strictly a no-op outside staging.** The whole block is gated on
   `USERNODE_ENV === 'staging'`; production data is never touched.
 
