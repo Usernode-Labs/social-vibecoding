@@ -80,6 +80,12 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
   ], '#390 is the question owed above, so its plan is not listed again; nothing waiting on others is here');
   assert.deepEqual(rows.map((r) => r.pill && message(r.pill.id)), ['Vote', 'Pick one', 'Answer', 'Vote', 'Build it', null, null]);
   assert.equal(owedCount(rows), 5, 'the heading counts what asks for you, not your private threads');
+  // B17: on a project that is just yours, your yes alone approves it, and
+  // the row says so as its card and the project's Needs you do.
+  const [solo] = needsYou([{ kind: 'proposal', id: 21, number: 5, title: 'Darker header', app, approve: true }], null);
+  assert.equal(message(solo.pill.id), 'Approve');
+  const [ruleOnly] = needsYou([{ kind: 'governance', id: 22, number: null, title: 'Rename it', app, approve: true }], null);
+  assert.equal(message(ruleOnly.pill.id), 'Vote', 'only a change is approved alone');
   assert.equal(rows[1].title, 'Night theme', 'a ballot is named for the request its changes compete for');
   assert.equal(words(rows[1].sub), 'Garden club · #401');
   assert.equal(rows[1].href, '#app/garden/dev/issues/401', 'and is decided on its page');
