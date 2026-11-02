@@ -144,7 +144,7 @@ function Hero({ hero }: { hero: HeroView }) {
 }
 
 const PICKER = 'w-full appearance-none rounded-2xl border border-zinc-200 dark:border-zinc-800 '
-  + 'bg-white dark:bg-zinc-900 py-3 pl-4 pr-11 text-[0.9375rem] font-medium text-zinc-800 '
+  + 'bg-white dark:bg-zinc-900 py-3 ps-4 pe-11 text-[0.9375rem] font-medium text-zinc-800 '
   + 'dark:text-zinc-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500';
 
 export function EventBarView({
@@ -179,7 +179,7 @@ export function EventBarView({
         </select>
         <ChevronDownIcon
           aria-hidden="true"
-          className="pointer-events-none absolute right-4 top-1/2 h-[1.125rem] w-[1.125rem] -translate-y-1/2 text-violet-600 dark:text-violet-400"
+          className="pointer-events-none absolute end-4 top-1/2 h-[1.125rem] w-[1.125rem] -translate-y-1/2 text-violet-600 dark:text-violet-400"
         />
       </div>
       <div id="tc-ev-hero" className={hero ? 'mt-3' : undefined}>

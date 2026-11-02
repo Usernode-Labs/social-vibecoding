@@ -370,7 +370,7 @@ export const CLOSE_MS = 240;
  * (./welcome-page.tsx).
  */
 export function FinishingSpinner() {
-  return <SpinnerArcIcon className="mr-2 h-[18px] w-[18px] shrink-0 animate-spin" aria-hidden="true" />;
+  return <SpinnerArcIcon className="me-2 h-[18px] w-[18px] shrink-0 animate-spin" aria-hidden="true" />;
 }
 
 /**
@@ -1626,7 +1626,7 @@ export function SignInSheet({
       >
         <div className="mx-auto h-1 w-9 rounded-full bg-[color:var(--border)] md:hidden" aria-hidden="true" />
         {step === 'forgot' ? (
-          <button type="button" data-sign-in-sheet-forgot-back="" className={`${QUIET} mt-2 -ml-1 flex items-center gap-0.5`} onClick={() => { identifierPrefill.current = typedIdentifier.current; toStep('password'); }}>
+          <button type="button" data-sign-in-sheet-forgot-back="" className={`${QUIET} mt-2 -ms-1 flex items-center gap-0.5`} onClick={() => { identifierPrefill.current = typedIdentifier.current; toStep('password'); }}>
             <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />{t('auth:signInSheet.forgot.back')}
           </button>
         ) : null}

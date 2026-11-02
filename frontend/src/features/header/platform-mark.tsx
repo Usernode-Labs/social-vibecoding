@@ -104,7 +104,7 @@ import { improveStore } from '../improve/improve-store.js';
  * tile on any tint an app gives the bar.
  */
 const WORKING_DOT_CLS =
-  'absolute -top-1.5 -right-1.5 flex items-center justify-center w-[15px] h-[15px] rounded-full '
+  'absolute -top-1.5 -end-1.5 flex items-center justify-center w-[15px] h-[15px] rounded-full '
   + 'bg-zinc-200 text-violet-600 dark:bg-zinc-900 dark:text-violet-400';
 
 export function PlatformMark() {
@@ -139,7 +139,7 @@ export function PlatformMark() {
           the class owns the height, and the 26px tile fits inside it with a
           pixel of air either side.
       */
-      className="shrink-0 inline-flex items-center gap-0.5 h-7 pr-0.5 un-touch-target
+      className="shrink-0 inline-flex items-center gap-0.5 h-7 pe-0.5 un-touch-target
                  text-[color:var(--brand-ink)]"
       aria-haspopup="dialog"
       aria-expanded={open ? 'true' : 'false'}
@@ -186,7 +186,7 @@ export function PlatformMark() {
         <span
           ref={dotRef}
           id="feedback-queue-dot"
-          className="hidden absolute -bottom-0.5 -left-0.5 w-2 h-2 rounded-full bg-amber-400"
+          className="hidden absolute -bottom-0.5 -start-0.5 w-2 h-2 rounded-full bg-amber-400"
         />
         {/* Top-RIGHT: one of your changes is building right now. A live fact, true only
             while it is true, so it needs no dismissal and carries no count —

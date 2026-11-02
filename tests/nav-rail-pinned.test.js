@@ -316,8 +316,8 @@ test('the pinned frame rule lives only inside the desktop breakpoint', () => {
   // rule is still inside that block.
   assert.doesNotMatch(css.slice(open, at), /\n\}/);
   const rule = css.slice(at, css.indexOf('}', at));
-  assert.match(rule, /#app-view\s*\{[^]*padding-left:\s*var\(--platform-rail-w, 0px\)/);
-  assert.match(rule, /padding-right:\s*0/);
+  assert.match(rule, /#app-view\s*\{[^]*padding-inline-start:\s*var\(--platform-rail-w, 0px\)/);
+  assert.match(rule, /padding-inline-end:\s*0/);
 });
 
 test('the Settings switch renders checked, desktop only, and writes through App', () => {

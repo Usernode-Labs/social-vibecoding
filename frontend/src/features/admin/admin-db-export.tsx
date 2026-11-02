@@ -236,7 +236,7 @@ function DbExportSection() {
           Anyone holding the file can take over accounts and reach every app&apos;s data.
           It contains:
         </p>
-        <ul className="text-sm text-red-800 dark:text-red-200 mt-2 list-disc pl-5 space-y-1">
+        <ul className="text-sm text-red-800 dark:text-red-200 mt-2 list-disc ps-5 space-y-1">
           <li>every user&apos;s password hash and every currently-valid login session token</li>
           <li>every activation code, used and unused</li>
           <li>every app&apos;s database password, LLM proxy token and file-storage token</li>
@@ -307,10 +307,10 @@ function DbExportSection() {
                 (tests/admin-ui-registry.test.js). */}
             <div className="relative">
               <input id="admin-db-export-password" type={showPassword ? 'text' : 'password'} autoComplete="current-password"
-                placeholder="Your password" className={`${FIELD} pr-16`}
+                placeholder="Your password" className={`${FIELD} pe-16`}
                 value={password} onChange={(e) => setPassword(e.target.value)} />
               <button id="admin-db-export-password-toggle" type="button"
-                className="absolute inset-y-0 right-0 flex items-center px-3 text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                className="absolute inset-y-0 end-0 flex items-center px-3 text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
                 aria-pressed={showPassword}
                 onClick={() => setShowPassword((on) => !on)}>
@@ -346,17 +346,17 @@ function DbExportSection() {
         <summary className="text-sm font-semibold text-amber-800 dark:text-amber-200 cursor-pointer">
           After you download it, and what to do if it leaks
         </summary>
-        <ul className="text-sm text-amber-800 dark:text-amber-200 mt-3 list-disc pl-5 space-y-1">
+        <ul className="text-sm text-amber-800 dark:text-amber-200 mt-3 list-disc ps-5 space-y-1">
           <li>Treat the file as a live credential: keep it encrypted, never on shared storage, and delete it when you&apos;re done.</li>
           <li>
             {'It is unencrypted in your Downloads folder. Gzip is compression, not protection; cloud backup may sync it and anyone can read it with '}
             <code className="font-mono">zless</code>{'.'}
           </li>
           <li>If it may have been exposed, deletion is not enough. Rotate:</li>
-          <li className="list-none pl-4">— the platform JWT secret (invalidates every session; stored API keys and app secrets must be re-entered afterwards)</li>
-          <li className="list-none pl-4">— the platform database password</li>
-          <li className="list-none pl-4">— every per-app database password, LLM proxy token and storage token</li>
-          <li className="list-none pl-4">— invalidate all activation codes, and force a password reset for all users</li>
+          <li className="list-none ps-4">— the platform JWT secret (invalidates every session; stored API keys and app secrets must be re-entered afterwards)</li>
+          <li className="list-none ps-4">— the platform database password</li>
+          <li className="list-none ps-4">— every per-app database password, LLM proxy token and storage token</li>
+          <li className="list-none ps-4">— invalidate all activation codes, and force a password reset for all users</li>
           <li>Everything in the file stays valid until those rotations happen.</li>
         </ul>
       </details>

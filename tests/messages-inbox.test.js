@@ -331,7 +331,7 @@ test('the bot\'s row says what waits on you, and the headings say what in them a
   assert.match(SCREEN, /preview=\{conversation\.homeroomBot \? botLine : null\}/);
   // #5393: a group's preview names its last sender ahead of this; the bot's
   // own line (`preview`) still leads the fallback the DM rows draw.
-  assert.match(SCREEN, /: groupPreview \?\? \(preview \|\| conversation\.latestSummary \|\| t\('messages:inbox\.noMessages'\)\)/,
+  assert.match(SCREEN, /: groupPreview \?\? \(ownDirection\(preview \|\| conversation\.latestSummary \|\| ''\) \|\| t\('messages:inbox\.noMessages'\)\)/,
     'its last message until then — the bot\'s own line first, then a group\'s sender-prefixed one');
   assert.equal(message('messages:inbox.section.working', { count: 1 }), '1 working');
   assert.equal(message('messages:inbox.section.unread', { count: 3 }), '3 unread');
@@ -358,15 +358,15 @@ test('#5393: a group row shows its members\' faces and names the person who spok
   assert.doesNotMatch(row.slice(row.indexOf('<UserAvatar')), /<GroupFaces/, 'the fallback tile is the old one');
   // The preview names its last sender, the way #general's row already does.
   assert.match(row, /const groupSender = conversation\.kind === 'group' && !invited\s*\? conversation\.latestMessage\?\.sender \|\| null\s*: null;/);
-  assert.match(row, /t\('messages:inbox\.previewYou', \{ message: conversation\.latestSummary \}\)/, 'the viewer\'s own message reads "You: …"');
-  assert.match(row, /t\('messages:inbox\.previewBy', \{ username: groupSender\.username, message: conversation\.latestSummary \}\)/, 'anyone else reads "@name: …"');
+  assert.match(row, /t\('messages:inbox\.previewYou', \{ message: ownDirection\(conversation\.latestSummary\) \}\)/, 'the viewer\'s own message reads "You: …"');
+  assert.match(row, /t\('messages:inbox\.previewBy', \{ username: groupSender\.username, message: ownDirection\(conversation\.latestSummary\) \}\)/, 'anyone else reads "@name: …"');
   assert.equal(message('messages:inbox.previewYou', { message: 'hi' }), 'You: hi');
   assert.equal(message('messages:inbox.previewBy', { username: 'ada', message: 'hi' }), '@ada: hi');
   // The pair keeps the row's own geometry: a 44px box on the 74px inset.
   const css = read('public/css/app.css');
   assert.match(css, /\.messages-group-faces \{ position: relative; flex: 0 0 44px; width: 44px; height: 44px; \}/);
-  assert.match(css, /\.messages-conversation-row::after \{[^}]*left: 74px;/);
-  assert.match(css, /\.messages-group-faces > :last-child \{ right: 0; bottom: 0; box-shadow: 0 0 0 2px var\(--dc-sheet-solid, var\(--app-bg\)\); \}/);
+  assert.match(css, /\.messages-conversation-row::after \{[^}]*inset-inline-start: 74px;/);
+  assert.match(css, /\.messages-group-faces > :last-child \{ inset-inline-end: 0; bottom: 0; box-shadow: 0 0 0 2px var\(--dc-sheet-solid, var\(--app-bg\)\); \}/);
   // v3: the desktop's sidebar nests the latest conversations, with room for
   // one face: the first member who is not the viewer, at 18px.
   const rail = SCREEN.slice(SCREEN.indexOf('function railRow('), SCREEN.indexOf('function inboxRow('));

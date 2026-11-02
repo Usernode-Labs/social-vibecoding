@@ -354,7 +354,7 @@ export const MessageRow = memo(function MessageRow({
       {/* Homeroom bot parity, P1: what the reply looked at, above its words (./bot-looked.tsx). */}
       {!editing ? <BotLookedLine message={message} /> : null}
       {editing ? (
-        <div className="messages-edit"><textarea ref={editRef} aria-label={t('messages:row.editLabel')} value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>{t('core:common.save')}</button><button type="button" onClick={() => setEditing(false)}>{t('core:common.cancel')}</button></div></div>
+        <div className="messages-edit"><textarea ref={editRef} dir="auto" aria-label={t('messages:row.editLabel')} value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>{t('core:common.save')}</button><button type="button" onClick={() => setEditing(false)}>{t('core:common.cancel')}</button></div></div>
       ) : isThanksMessage(message) ? (
         // #4392: the activity card Build it moved under a plan is the bot's
         // thanks: its words over the app's card and build line.
@@ -501,7 +501,7 @@ export const MessageRow = memo(function MessageRow({
         ? <time className="messages-message-gutter" dateTime={message.createdAt} title={fullTime(message.createdAt)}>{shortTime}</time>
         : sided && mine ? null : <UserAvatar user={message.sender} size="md" shape="square" />}
       <div className={block ? 'min-w-0 flex-1 messages-bot-block-body' : sided ? 'min-w-0 flex-1 messages-bubble-wrap' : 'min-w-0 flex-1'}>
-        {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine ? 'text-violet-700 dark:text-violet-300' : ''}`}>{senderName(message.sender, { bare })}</span>{message.sender.bot ? <span className="messages-bot-badge">{t('messages:row.aiBadge')}</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
+        {grouped ? null : <div className="messages-message-head"><span dir="auto" className={`messages-message-author ${mine ? 'text-violet-700 dark:text-violet-300' : ''}`}>{senderName(message.sender, { bare })}</span>{message.sender.bot ? <span className="messages-bot-badge">{t('messages:row.aiBadge')}</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
         {/* #4564: the dropped card's own label, spoken: a screen reader still
             hears which request these words are about, as the block's top
             shows. */}
@@ -509,7 +509,7 @@ export const MessageRow = memo(function MessageRow({
         {inChatLabel && message.threadRootId ? (
           <button
             type="button"
-            className="block max-w-full truncate text-left text-[0.8125rem] font-medium text-zinc-500 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-100"
+            className="block max-w-full truncate text-start text-[0.8125rem] font-medium text-zinc-500 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-100"
             data-bot-thread-label={message.threadRootId}
             onClick={() => (story ? openRequestPage(story, conversationId) : openThread(message.threadRootId as number))}
           >{inChatLabel}</button>
@@ -517,7 +517,7 @@ export const MessageRow = memo(function MessageRow({
         {/* #5680: in a conversation the words sit in a bubble on their
             sender's side; the head above them, and everything under them
             (pictures, shared items, reactions, a thread) stays outside it. */}
-        {sided ? <div className="messages-bubble">{body}</div> : body}
+        {sided ? <div className="messages-bubble" dir="auto">{body}</div> : body}
         {extras}
         {grouped && message.editedAt && !message.deleted ? <div className="messages-message-meta">{status}</div> : null}
         {failedNote}
@@ -559,11 +559,11 @@ export const DiscussionRow = memo(function DiscussionRow({
       <UserAvatar user={message.sender} size="md" shape="square" />
       <div className="min-w-0 flex-1">
         <div className="messages-message-head">
-          <span className="messages-message-author">{senderName(message.sender, { bare: true })}</span>
+          <span dir="auto" className="messages-message-author">{senderName(message.sender, { bare: true })}</span>
           <time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>
         </div>
         <a
-          className="block max-w-full truncate text-left text-[0.8125rem] font-medium text-zinc-500 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-100"
+          className="block max-w-full truncate text-start text-[0.8125rem] font-medium text-zinc-500 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-100"
           href={issueRefHref(appSlug, String(issueNumber))}
         >{t('messages:replies.discussion.from')}</a>
         {message.content ? <MessageMarkdown content={message.content} appSlug={appSlug} /> : null}

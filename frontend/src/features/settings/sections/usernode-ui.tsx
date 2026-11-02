@@ -96,7 +96,7 @@ export function UnP({ note }: { note: UnNote }): ReactNode {
   return <p className={NOTE_CLASS[note.tone || 'muted']}>{note.text}</p>;
 }
 
-const ROW_BASE = 'flex items-center gap-2 mt-1 text-sm w-full text-left';
+const ROW_BASE = 'flex items-center gap-2 mt-1 text-sm w-full text-start';
 const ROW_TAP = ' rounded-md -mx-1 px-1 py-1 transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800';
 
 export function UnRow({ row }: { row: UnStatusRow }): ReactNode {
@@ -104,8 +104,8 @@ export function UnRow({ row }: { row: UnStatusRow }): ReactNode {
   const { busy, run } = useAction(t('settings:usernode.actionFailed'));
   const dot = `w-2 h-2 rounded-full shrink-0 ${row.ok ? 'bg-emerald-500' : 'bg-amber-500'}`;
   const ink = row.ok
-    ? 'ml-auto text-xs text-emerald-700 dark:text-emerald-400'
-    : 'ml-auto text-xs text-amber-800 dark:text-amber-400';
+    ? 'ms-auto text-xs text-emerald-700 dark:text-emerald-400'
+    : 'ms-auto text-xs text-amber-800 dark:text-amber-400';
   const inner = (
     <>
       <span className={dot}></span>
@@ -130,7 +130,7 @@ export function UnRow({ row }: { row: UnStatusRow }): ReactNode {
   );
 }
 
-const BTN_BASE = 'mt-3 mr-2 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ';
+const BTN_BASE = 'mt-3 me-2 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ';
 const BTN_TONE = {
   danger: 'border-red-400 dark:border-red-700 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950',
   plain: 'border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800',

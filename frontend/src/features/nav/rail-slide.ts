@@ -22,6 +22,7 @@
 import { flushSync } from 'react-dom';
 
 import { navStore } from './nav-store.js';
+import { dirSign } from '../../lib/i18n/direction';
 
 /** The slide's clock: short, and decelerating into place. */
 export const RAIL_SLIDE: KeyframeAnimationOptions = { duration: 200, easing: 'cubic-bezier(0.2, 0, 0, 1)' };
@@ -84,13 +85,13 @@ export function slideRail(commit: () => void): void {
     return;
   }
   const after = screen ? screen.mark.getBoundingClientRect().left : null;
-  const dx = before !== null && after !== null ? Math.round(before - after) : 0;
+  const dx = (before !== null && after !== null ? Math.round(before - after) : 0) * dirSign();
   if (screen && dx) {
     screen.root.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], RAIL_SLIDE);
   }
   if (fromPeek) return;
   const slide = bar.animate(open
-    ? [{ transform: 'translateX(-100%)' }, { transform: 'none' }]
-    : [{ transform: 'none' }, { transform: 'translateX(-100%)' }], RAIL_SLIDE);
+    ? [{ transform: `translateX(${-100 * dirSign()}%)` }, { transform: 'none' }]
+    : [{ transform: 'none' }, { transform: `translateX(${-100 * dirSign()}%)` }], RAIL_SLIDE);
   if (!open) slide.finished.then(leaving, leaving);
 }

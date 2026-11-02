@@ -362,7 +362,7 @@ export function BotTwoQuestions({ message, conversationId }: { message: Conversa
           </div>
         </div>
       )) : pairs ? <AnsweredChoices items={pairs} className="mt-2" /> : (
-        <ol className="mt-1.5 list-decimal space-y-0.5 pl-5 text-[0.9375rem] text-zinc-900 dark:text-zinc-100">
+        <ol className="mt-1.5 list-decimal space-y-0.5 ps-5 text-[0.9375rem] text-zinc-900 dark:text-zinc-100">
           {questions.map((q) => <li key={q.question}>{q.question}</li>)}
         </ol>
       )}

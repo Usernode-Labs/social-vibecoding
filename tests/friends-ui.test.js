@@ -231,7 +231,7 @@ test('a friend request row asks with Accept / Decline until it is answered', () 
   assert.match(source, /fetch\(`\/api\/friends\/\$\{userId\}\/decline`, init\)/);
   assert.match(source, /new CustomEvent\('usernode:friends-changed'\)/);
   const sheet = read('frontend/src/features/notifications/notifications-sheet.tsx');
-  assert.match(sheet, /if \(actions\.length > 1\) return <div className="flex items-center gap-2 pl-\[3\.75rem\]">\{buttons\}<\/div>;/,
+  assert.match(sheet, /if \(actions\.length > 1\) return <div className="flex items-center gap-2 ps-\[3\.75rem\]">\{buttons\}<\/div>;/,
     'two actions go on their own line under the text, past the tile');
   assert.match(sheet, /<RowActions view=\{view\} actions=\{actions\} \/>/);
   assert.equal(

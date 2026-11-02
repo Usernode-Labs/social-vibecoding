@@ -273,7 +273,7 @@ export function BotNewsLine({ message, focused = false, earlier = [], updates: u
       {status.settled ? (
         <button
           type="button"
-          className="flex w-full min-w-0 items-center gap-2 rounded-xl py-1 pr-1 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+          className="flex w-full min-w-0 items-center gap-2 rounded-xl py-1 pe-1 text-start hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
           data-bot-news-open="thread"
           data-bot-news-state="settled"
           onClick={tap}
@@ -289,7 +289,7 @@ export function BotNewsLine({ message, focused = false, earlier = [], updates: u
       ) : (
         <button
           type="button"
-          className="flex w-full min-w-0 items-center gap-2 rounded-xl py-1.5 pr-1 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+          className="flex w-full min-w-0 items-center gap-2 rounded-xl py-1.5 pe-1 text-start hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
           data-bot-news-open="thread"
           data-bot-news-state={status.need ? 'needs' : 'open'}
           onClick={tap}
@@ -382,7 +382,7 @@ export function SettledRun({ items, holdPlace }: {
         <button
           ref={count}
           type="button"
-          className="flex h-[30px] shrink-0 items-center gap-1 rounded-lg text-left text-[14px] font-semibold leading-5 text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white"
+          className="flex h-[30px] shrink-0 items-center gap-1 rounded-lg text-start text-[14px] font-semibold leading-5 text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white"
           aria-expanded={open}
           data-bot-settled-toggle=""
           onClick={toggle}

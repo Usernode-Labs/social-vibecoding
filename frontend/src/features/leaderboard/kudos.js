@@ -145,7 +145,7 @@ const Kudos = {
                 data-kudos-action="give" data-kudos-session-id="${pr.id}"${locked ? ' data-kudos-locked="1"' : ''}>
           ${face}
         </button>
-        <span class="kudos-popover hidden absolute z-30 right-0 top-full mt-1 min-w-[12rem] max-w-[18rem]
+        <span class="kudos-popover hidden absolute z-30 end-0 top-full mt-1 min-w-[12rem] max-w-[18rem]
                      bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700
                      rounded-lg shadow-xl text-xs text-zinc-700 dark:text-zinc-200 p-2"
               data-kudos-popover></span>

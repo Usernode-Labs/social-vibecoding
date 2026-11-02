@@ -115,8 +115,8 @@ test('"You" is read, not shown — and the agent\'s label still is', () => {
 });
 
 test('the two rows are still told apart by side and surface', () => {
-  assert.match(rule('.dc-msg-user'), /margin-left: auto/);
-  assert.match(rule('.dc-msg-assistant'), /margin-right: auto/);
+  assert.match(rule('.dc-msg-user'), /margin-inline-start: auto/);
+  assert.match(rule('.dc-msg-assistant'), /margin-inline-end: auto/);
   // Same radius on both: the deck's bubbles rely on side and surface, not on
   // a tail notch. (The notch went in the reskin; this keeps it gone.)
   assert.match(rule('.dc-msg-user'), /border-radius: 1\.25rem/);

@@ -214,7 +214,7 @@ function WidgetIcons({ s }: { s: UsernodeSectionState }): ReactNode {
             <div key={e.key} className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
               <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${e.ok ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
               <span className="text-zinc-700 dark:text-zinc-300">{e.name}</span>
-              <span className="ml-auto">{e.note}</span>
+              <span className="ms-auto">{e.note}</span>
             </div>
           ))}
         </div>

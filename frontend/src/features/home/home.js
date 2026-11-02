@@ -2827,7 +2827,7 @@ const Home = {
     // grid partitions on, so the two can never disagree.
     const isAdded = Home.isYours(app);
     const addBadgeHtml = `
-      <button class="card-add-btn absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors ${
+      <button class="card-add-btn absolute -top-1.5 -end-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors ${
         isAdded
           ? 'bg-emerald-500 border-emerald-500 text-white'
           : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
@@ -2855,7 +2855,7 @@ const Home = {
     // every action in the menu would 404.
     const wantsMenu = !!(opts && opts.menu) && !app.demo;
     const menuBadgeHtml = discovery
-      ? `${addBadgeHtml}${wantsMenu ? hamburgerHtml('-left-1.5') : ''}`
+      ? `${addBadgeHtml}${wantsMenu ? hamburgerHtml('-start-1.5') : ''}`
       : '';
     // QA 2026-09-24 Q9: Retry is a pill in the caption lane beside "Error",
     // not a corner button the icon covered on phones. Same classes as
@@ -2876,7 +2876,7 @@ const Home = {
       ? (app.forked_from.name || '<deleted>') : null;
     const forkDeleted = !!forkName && !app.forked_from.name;
     const forkTagHtml = forkName
-      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-white text-zinc-600 shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-800 dark:text-zinc-300" title="${(forkDeleted ? htmlText('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : htmlText('home:grid.tile.remixedFrom', { app: forkName }))}" aria-label="${(forkDeleted ? htmlText('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : htmlText('home:grid.tile.remixedFrom', { app: forkName }))}"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 9h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H11a2 2 0 0 1-2-2V9Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4"/></svg></span>`
+      ? `<span class="fork-tag absolute -bottom-1 -start-1 w-5 h-5 flex items-center justify-center rounded-full bg-white text-zinc-600 shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-800 dark:text-zinc-300" title="${(forkDeleted ? htmlText('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : htmlText('home:grid.tile.remixedFrom', { app: forkName }))}" aria-label="${(forkDeleted ? htmlText('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : htmlText('home:grid.tile.remixedFrom', { app: forkName }))}"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 9h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H11a2 2 0 0 1-2-2V9Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4"/></svg></span>`
       : '';
 
     const icon = Home.iconTileFor(app);

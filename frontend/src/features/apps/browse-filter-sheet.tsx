@@ -137,7 +137,7 @@ function BrowseFilterSheet({ types, view, initial, dialog, onClose }: SheetProps
                   data-category={c.key}
                   onClick={() => set({ category: picked ? 'all' : c.key })}
                 >
-                  {picked ? <CheckIcon className="mr-1.5 h-4 w-4" aria-hidden="true" /> : null}
+                  {picked ? <CheckIcon className="me-1.5 h-4 w-4" aria-hidden="true" /> : null}
                   {t(c.label)}
                 </Chip>
               );

@@ -195,7 +195,7 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
           type="button"
           disabled={preview}
           tabIndex={preview ? -1 : undefined}
-          className={`card-add-btn absolute top-1.5 right-1.5 inline-flex items-center gap-1 h-7 px-2.5 rounded-full border shadow-sm transition-colors un-touch-target ${
+          className={`card-add-btn absolute top-1.5 end-1.5 inline-flex items-center gap-1 h-7 px-2.5 rounded-full border shadow-sm transition-colors un-touch-target ${
             join === 'joined'
               ? 'bg-white dark:bg-zinc-800 border-transparent text-zinc-600 dark:text-zinc-300'
               : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'

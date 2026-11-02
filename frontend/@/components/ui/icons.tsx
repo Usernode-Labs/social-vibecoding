@@ -117,14 +117,31 @@ function filled(name: string, d: string) {
   return Icon;
 }
 
+/**
+ * A glyph whose meaning is the direction it points: back, forward, send,
+ * expand sideways. It mirrors with the reading direction, so in Arabic the
+ * back chevron points right and the send arrow points left. Glyphs that are
+ * not about direction (bell, check, people, search) never take this.
+ */
+function directional(name: string, Icon: (props: IconProps) => React.ReactElement) {
+  // The caller's class string comes FIRST, unchanged: markup tests across the
+  // shell pin `<svg class="…chev"` by its opening, and a prefix here rewrote
+  // every one of them. The mirroring utility rides at the end.
+  const Directional = ({ className, ...rest }: IconProps) => (
+    <Icon {...rest} className={className ? `${className} rtl:-scale-x-100` : 'rtl:-scale-x-100'} />
+  );
+  Directional.displayName = name;
+  return Directional;
+}
+
 // ── Navigation and chrome ────────────────────────────────────────────────
 
-export const ChevronLeftIcon = strokedPath('ChevronLeftIcon', 'M15 19l-7-7 7-7');
+export const ChevronLeftIcon = directional('ChevronLeftIcon', strokedPath('ChevronLeftIcon', 'M15 19l-7-7 7-7'));
 
 /** The tighter back chevron used in the mobile Messages thread header. */
-export const ChevronLeftInsetIcon = stroked('ChevronLeftInsetIcon', 'M15 18l-6-6 6-6');
+export const ChevronLeftInsetIcon = directional('ChevronLeftInsetIcon', stroked('ChevronLeftInsetIcon', 'M15 18l-6-6 6-6'));
 
-export const ChevronRightIcon = stroked('ChevronRightIcon', 'M9 5l7 7-7 7');
+export const ChevronRightIcon = directional('ChevronRightIcon', stroked('ChevronRightIcon', 'M9 5l7 7-7 7'));
 
 // Heroicons v1 outline view-grid — the drawer's "Your apps" row (owner
 // review round 2: the section header is a nav item of its own).
@@ -154,7 +171,7 @@ export const PencilSparklesIcon = stroked('PencilSparklesIcon', [
   'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
 ]);
 
-export const ArrowRightIcon = stroked('ArrowRightIcon', 'M14 5l7 7m0 0l-7 7m7-7H3');
+export const ArrowRightIcon = directional('ArrowRightIcon', stroked('ArrowRightIcon', 'M14 5l7 7m0 0l-7 7m7-7H3'));
 
 /**
  * The SHORT right arrow, drawn on a tighter inset than ArrowRightIcon. Not a
@@ -162,7 +179,7 @@ export const ArrowRightIcon = stroked('ArrowRightIcon', 'M14 5l7 7m0 0l-7 7m7-7H
  * where it sits beside a word inside a pill and the long arrow's 3→21 span
  * would crowd the label. Two spellings on purpose, each with one caller.
  */
-export const ArrowRightShortIcon = stroked('ArrowRightShortIcon', 'M13 7l5 5m0 0l-5 5m5-5H6');
+export const ArrowRightShortIcon = directional('ArrowRightShortIcon', stroked('ArrowRightShortIcon', 'M13 7l5 5m0 0l-5 5m5-5H6'));
 
 export const XIcon = stroked('XIcon', 'M6 18L18 6M6 6l12 12');
 
@@ -172,12 +189,12 @@ export const XIcon = stroked('XIcon', 'M6 18L18 6M6 6l12 12');
  * from the navigation prototype the panel comes from, which draws exactly
  * these four strokes; the panel's header row is its only caller.
  */
-export const ExpandIcon = stroked('ExpandIcon', [
+export const ExpandIcon = directional('ExpandIcon', stroked('ExpandIcon', [
   'M14 4h6v6',
   'M20 4l-7 7',
   'M10 20H4v-6',
   'M4 20l7-7',
-]);
+]));
 
 /**
  * The dev composer's send mark (Streamlined Concept). Its button is a 44px
@@ -305,7 +322,7 @@ export const SaveDraftIcon = stroked('SaveDraftIcon', [
   'M17 21v-8H7v8',
   'M7 3v5h8',
 ]);
-export const DraftSendIcon = stroked('DraftSendIcon', ['M22 2 11 13', 'M22 2 15 22l-4-9-9-4z']);
+export const DraftSendIcon = directional('DraftSendIcon', stroked('DraftSendIcon', ['M22 2 11 13', 'M22 2 15 22l-4-9-9-4z']));
 export const DraftEditIcon = stroked('DraftEditIcon', [
   'M12 20h9',
   'M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z',
@@ -514,10 +531,10 @@ export const DownloadIcon = stroked(
   'M12 3v12m0 0l-4-4m4 4l4-4M5 13v7h14v-7',
 );
 
-export const SendIcon = stroked(
+export const SendIcon = directional('SendIcon', stroked(
   'SendIcon',
   'M4 4l17 8-17 8 3-8-3-8zm3 8h14',
-);
+));
 
 export const UserGroupIcon = stroked(
   'UserGroupIcon',
@@ -911,10 +928,10 @@ export const FaceSmileIcon = stroked('FaceSmileIcon', [
 ]);
 
 /** Reply — the curved arrow back, Discord's glyph for quoting a message. */
-export const ReplyArrowIcon = stroked('ReplyArrowIcon', [
+export const ReplyArrowIcon = directional('ReplyArrowIcon', stroked('ReplyArrowIcon', [
   'M9 17l-5-5 5-5',
   'M20 18v-2a4 4 0 0 0-4-4H4',
-]);
+]));
 
 /** A thread: two overlapping bubbles, the conversation under a message. */
 export const ThreadIcon = stroked(

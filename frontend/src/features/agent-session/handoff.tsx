@@ -306,7 +306,7 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
                 <span className="sr-only">{check.done ? t('agent:session.handoff.check.done') : t('agent:session.handoff.check.notDone')}</span>
               </div>
               {check.current && !check.done ? (
-                <div className="mt-1.5 pl-8">
+                <div className="mt-1.5 ps-8">
                   {check.detail ? <p className="text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">{check.detail}</p> : null}
                   {check.actions.length ? (
                     <div className="mt-2 flex flex-wrap gap-2">

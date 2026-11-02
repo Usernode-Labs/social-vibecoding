@@ -88,7 +88,7 @@ function ConnectorUrl({ url }: { url: string }) {
         variant="unstyled"
         size="none"
         ink="none"
-        className="inline-flex min-h-[44px] min-w-[88px] items-center justify-center border-l border-zinc-200 dark:border-zinc-800 px-3 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+        className="inline-flex min-h-[44px] min-w-[88px] items-center justify-center border-s border-zinc-200 dark:border-zinc-800 px-3 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
         aria-label={t('devchat:connector.copyUrl')}
         onClick={async () => {
           const ok = await ui()?.copyText?.(url);

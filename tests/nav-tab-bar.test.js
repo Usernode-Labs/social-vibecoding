@@ -350,15 +350,15 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   // centred column inside then centred a gutter's width left of the window's
   // middle. Spending the same figure on both sides is what fixes that, and
   // 1.5rem is the shell's own outer gutter rather than a number for this edge.
-  assert.match(block, /padding-left: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter\)\);/,
+  assert.match(block, /padding-inline-start: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter\)\);/,
     'the screens move over by PADDING, so nothing about the flex chain moves');
-  assert.match(block, /padding-right: var\(--platform-gutter\);/,
+  assert.match(block, /padding-inline-end: var\(--platform-gutter\);/,
     'and the same figure is spent on the far edge');
   assert.match(block, /--platform-gutter: 1\.5rem;/);
   // …and the app view is NOT one of the roots in that list: an app covers the
   // rail, which is what "the app is the whole window" means. The prose above
   // the rule says so, so the check is on the selector itself.
-  const roots = block.slice(block.indexOf('  :is(#home-screen'), block.indexOf('padding-left: calc('));
+  const roots = block.slice(block.indexOf('  :is(#home-screen'), block.indexOf('padding-inline-start: calc('));
   assert.doesNotMatch(roots, /#app-view/, 'an app covers the rail');
   assert.match(roots, /#messages-screen/, 'every platform root does move over');
   // QA 2026-09-24 Q23: the agent session's own screen drew from the window's
@@ -371,7 +371,7 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   // rail. Keyed off the bar and not off the tab, because the bar is already
   // the answer to that question.
   assert.match(block,
-    /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\):not\(\.platform-tabs-folded\)\) #app-view \{\s*padding-left: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter\)\);/);
+    /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\):not\(\.platform-tabs-folded\)\) #app-view \{\s*padding-inline-start: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter\)\);/);
   // The parked strip is not drawn on the desktop: a running app keeps its
   // App row, with its dot, under its community in the sidebar.
   assert.match(block, /#platform-parked \{\s*display: none;\s*\}/);
@@ -664,7 +664,7 @@ test('the bar and the rail meet as one surface, squared and ruled', () => {
   const at = css.indexOf('WHERE THE BAR MEETS THE RAIL');
   assert.ok(at > 0, 'the rule states its reason');
   const block = css.slice(at, css.indexOf('\n  }\n', css.indexOf('.platform-tabs:not(.platform-tabs-folded)', at)));
-  assert.match(block, /#platform-header \{\s*\n\s*border-bottom-left-radius: 0;/,
+  assert.match(block, /#platform-header \{\s*\n\s*border-end-start-radius: 0;/,
     'square on the left');
   assert.doesNotMatch(block, /border-bottom-right-radius/,
     'and only on the left: the right corner still has page under it');
@@ -719,7 +719,7 @@ test('the Messages count is the quiet one: grey, on the glyph\'s corner on the p
   assert.match(phone[0], /background: var\(--text-faint, #8e8e93\);/,
     'a grey disc on the phone, one value in both themes');
   assert.doesNotMatch(phone[0], /--danger|#ef4444/, 'the red is the bell\'s alone');
-  assert.match(phone[0], /position: absolute;\s*top: -3px;\s*left: calc\(100% - 7px\);/,
+  assert.match(phone[0], /position: absolute;\s*top: -3px;\s*inset-inline-start: calc\(100% - 7px\);/,
     'and it keeps its place on the glyph\'s corner');
 
   // From 768px the sidebar of rows draws a row, and the count sits at its

@@ -207,14 +207,14 @@ function StatusCard({ status, failed }: { status: MailStatus | null; failed: boo
       <p className="text-amber-800/80 dark:text-amber-300/80 mt-1">
         These flows still report success to the user but deliver nothing:
       </p>
-      <ul className="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-300/80">
+      <ul className="list-disc ms-5 mt-1 text-amber-800/80 dark:text-amber-300/80">
         {/* eslint-disable-next-line react/no-array-index-key */}
         {(status.affectedFlows || []).map((f, i) => <li key={i}>{f}</li>)}
       </ul>
       <p className="text-amber-800/80 dark:text-amber-300/80 mt-2">Providers:</p>
       {/* Per-provider readiness, so the card says which provider needs what
           instead of a flat "mail is broken". */}
-      <ul className="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-300/80">
+      <ul className="list-disc ms-5 mt-1 text-amber-800/80 dark:text-amber-300/80">
         {(status.providers || []).map((p) => (
           <li key={p.name}>
             {`${p.label || p.name}: `}
@@ -285,7 +285,7 @@ function TransportError() {
 }
 
 const CHIP_BTN = 'rounded-lg border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs';
-const TH = 'text-left font-medium pb-1 pr-3';
+const TH = 'text-start font-medium pb-1 pe-3';
 
 function ActivityCard({
   data, failed, kindFilter, onToggleFilter, onRefresh, highlightId,
@@ -323,7 +323,7 @@ function ActivityCard({
                 <th className={TH}>Recipient</th>
                 <th className={TH}>Provider</th>
                 <th className={TH}>Status</th>
-                <th className="text-left font-medium pb-1">Detail</th>
+                <th className="text-start font-medium pb-1">Detail</th>
               </tr>
             </thead>
             <tbody>
@@ -331,13 +331,13 @@ function ActivityCard({
                 <tr key={r.id}
                   className={`border-t border-zinc-100 dark:border-zinc-800${
                     highlightId && r.id === highlightId ? ' bg-violet-50 dark:bg-violet-950/40' : ''}`}>
-                  <td className="py-1.5 pr-3 whitespace-nowrap text-zinc-500 dark:text-zinc-400">
+                  <td className="py-1.5 pe-3 whitespace-nowrap text-zinc-500 dark:text-zinc-400">
                     {r.created_at ? String(r.created_at).replace('T', ' ').slice(0, 19) : ''}
                   </td>
-                  <td className="py-1.5 pr-3 whitespace-nowrap">{r.kind || ''}</td>
-                  <td className="py-1.5 pr-3">{r.recipient || ''}</td>
-                  <td className="py-1.5 pr-3 whitespace-nowrap text-zinc-500 dark:text-zinc-400">{r.provider || '—'}</td>
-                  <td className={`py-1.5 pr-3 whitespace-nowrap font-medium ${statusClass(r.status)}`}>{r.status || ''}</td>
+                  <td className="py-1.5 pe-3 whitespace-nowrap">{r.kind || ''}</td>
+                  <td className="py-1.5 pe-3">{r.recipient || ''}</td>
+                  <td className="py-1.5 pe-3 whitespace-nowrap text-zinc-500 dark:text-zinc-400">{r.provider || '—'}</td>
+                  <td className={`py-1.5 pe-3 whitespace-nowrap font-medium ${statusClass(r.status)}`}>{r.status || ''}</td>
                   <td className="py-1.5 text-zinc-500 dark:text-zinc-400">{r.error || ''}</td>
                 </tr>
               ))}

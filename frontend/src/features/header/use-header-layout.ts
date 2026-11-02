@@ -178,7 +178,7 @@ export function useHeaderLayout(
       //
       // Rects instead. Both groups are flush to their own edge in either mode
       // (the title is `flex-1` in flow and `flex: none` when centred, and the
-      // right group's `ml-auto` pins it either way), so measuring while
+      // right group's `ms-auto` pins it either way), so measuring while
       // centred gives the same answer as measuring in flow — no oscillation.
       const canCenter = canCenterTitle({
         headerLeft: headerRect.left,

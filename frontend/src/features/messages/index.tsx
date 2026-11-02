@@ -17,6 +17,7 @@ import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { useCommunityColor } from '../../lib/community-color';
+import { dirSign, ownDirection } from '../../lib/i18n/direction';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -255,8 +256,8 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
     : null;
   const groupPreview = groupSender?.id && conversation.latestSummary
     ? (Number(groupSender.id) === Number(window.App?.user?.id)
-      ? t('messages:inbox.previewYou', { message: conversation.latestSummary })
-      : t('messages:inbox.previewBy', { username: groupSender.username, message: conversation.latestSummary }))
+      ? t('messages:inbox.previewYou', { message: ownDirection(conversation.latestSummary) })
+      : t('messages:inbox.previewBy', { username: groupSender.username, message: ownDirection(conversation.latestSummary) }))
     : null;
   return (
     <a
@@ -285,7 +286,7 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
           <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
         </div>
         <div className="messages-row-line">
-          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{invited ? (conversation.kind === 'direct' ? t('messages:inbox.requestReview') : t('messages:inbox.invitationReview')) : groupPreview ?? (preview || conversation.latestSummary || t('messages:inbox.noMessages'))}</span>
+          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{invited ? (conversation.kind === 'direct' ? t('messages:inbox.requestReview') : t('messages:inbox.invitationReview')) : groupPreview ?? (ownDirection(preview || conversation.latestSummary || '') || t('messages:inbox.noMessages'))}</span>
           {conversation.unreadCount > 0 ? <span className="messages-unread">{t('messages:inbox.newCount', { count: conversation.unreadCount })}</span> : null}
         </div>
       </div>
@@ -329,7 +330,7 @@ const GeneralChannelRow = memo(function GeneralChannelRow({ conversation, active
         <div className="messages-row-line">
           <span className="messages-row-preview">
             {conversation.latestSummary
-              ? (by ? t('messages:inbox.previewBy', { username: by, message: conversation.latestSummary }) : conversation.latestSummary)
+              ? (by ? t('messages:inbox.previewBy', { username: by, message: ownDirection(conversation.latestSummary) }) : ownDirection(conversation.latestSummary))
               : t('messages:inbox.everyone')}
           </span>
           {unread ? <span className="messages-unread">{t('messages:inbox.newCount', { count: conversation.unreadCount })}</span> : null}
@@ -390,7 +391,7 @@ const AppChannelRow = memo(function AppChannelRow({ discussion, active }: { disc
         <div className="messages-row-line">
           <span className="messages-row-preview">
             {discussion.lastMessage
-              ? (discussion.lastBy ? t('messages:inbox.previewBy', { username: discussion.lastBy, message: plainText(discussion.lastMessage) }) : plainText(discussion.lastMessage))
+              ? (discussion.lastBy ? t('messages:inbox.previewBy', { username: discussion.lastBy, message: ownDirection(plainText(discussion.lastMessage)) }) : ownDirection(plainText(discussion.lastMessage)))
               : t('messages:inbox.noMessages')}
           </span>
           {unread ? <span className="messages-unread">{t('messages:inbox.newCount', { count: unread })}</span> : null}
@@ -690,7 +691,7 @@ function ConversationRowSkeleton() {
                 the real row's trailing <time>. */}
             <div className="flex items-center gap-2">
               <Skeleton className={i % 2 ? 'w-28' : 'w-36'} />
-              <Skeleton shape="muted" className="ml-auto w-8" />
+              <Skeleton shape="muted" className="ms-auto w-8" />
             </div>
             {/* The preview line under it. */}
             <Skeleton shape="muted" className={`mt-1.5 ${i % 3 ? 'w-3/5' : 'w-2/5'}`} />
@@ -1422,7 +1423,7 @@ function ThreadHeader() {
       {inDrawer ? <span className="flex-1" aria-hidden="true" /> : (
       <button
         type="button"
-        className="min-w-0 text-left flex-1"
+        className="min-w-0 text-start flex-1"
         onClick={() => { if (active.kind === 'group') openDialog('messagesMembers'); }}
       >
         <div className="messages-thread-name">{active.kind === 'direct' && person ? senderName(person, { bare: true }) : channel ? `#${active.channelKey || active.title}` : active.title}{active.kind === 'direct' && person?.bot ? <span className="messages-bot-badge">{t('messages:header.aiBadge')}</span> : null}</div>
@@ -2465,7 +2466,7 @@ function ReplyRowSkeleton() {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <Skeleton className="w-24" />
-              <Skeleton shape="muted" className="ml-auto w-12" />
+              <Skeleton shape="muted" className="ms-auto w-12" />
             </div>
             <Skeleton shape="muted" className={`mt-2 ${i % 2 ? 'w-2/5' : 'w-3/5'}`} />
           </div>
@@ -2619,8 +2620,9 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
     // drag runs.
     const frames = Array.from(paneRef.current?.querySelectorAll<HTMLIFrameElement>('iframe') || []);
     frames.forEach((frame) => { frame.style.pointerEvents = 'none'; });
-    // Dragging left widens the thread: its left edge is the divider.
-    const onMove = (move: PointerEvent) => { latest = commitReplyWidth(startWidth - (move.clientX - startX)); };
+    // Dragging toward the thread's own edge widens it: the divider is its
+    // inline-start edge, the left in English and the right in Arabic.
+    const onMove = (move: PointerEvent) => { latest = commitReplyWidth(startWidth - dirSign() * (move.clientX - startX)); };
     const onUp = () => {
       handle.removeEventListener('pointermove', onMove);
       handle.removeEventListener('pointerup', onUp);
@@ -2639,7 +2641,9 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
     const base = replyWidth ?? Math.round(paneRef.current?.getBoundingClientRect().width || REPLY_MIN_WIDTH);
-    writeReplyWidth(commitReplyWidth(base + (event.key === 'ArrowLeft' ? REPLY_WIDTH_STEP : -REPLY_WIDTH_STEP)));
+    // An arrow toward the divider widens the thread, as the drag does.
+    const toward = event.key === 'ArrowLeft' ? 1 : -1;
+    writeReplyWidth(commitReplyWidth(base + toward * dirSign() * REPLY_WIDTH_STEP));
   };
   // #6019: a private thread in their chat with the bot is theirs alone
   // until they File it or Post it under the bot's offer: its head says so,

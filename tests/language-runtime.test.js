@@ -95,7 +95,8 @@ test('the first paint is held while a remembered language loads, and released on
   const head = read('frontend/src/head.html');
   assert.match(head, /html\.language-pending body \{ visibility: hidden; \}/);
   const hold = head.slice(head.indexOf("localStorage.getItem('homeroom:language:shown')") - 400);
-  assert.match(hold, /if \(!shown \|\| shown === 'en'\) return;/, 'English, or nothing remembered, is never held');
+  assert.match(hold, /if \(!shown\) return;/, 'nothing remembered is never held');
+  assert.match(hold, /if \(shown === 'en'\) return;/, 'English is never held');
   assert.match(hold, /root\.classList\.add\('language-pending'\);\s*setTimeout\(function \(\) \{ root\.classList\.remove\('language-pending'\); \}, 3000\);/);
   assert.ok(head.indexOf("'homeroom:language:shown'") > head.indexOf('window.Theme'), 'after the theme, which paints the ground');
 

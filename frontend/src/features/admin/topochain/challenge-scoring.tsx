@@ -272,7 +272,7 @@ function RunDetail({ run }: { run: Run | null }) {
         <p className="text-amber-700 dark:text-amber-400">{`Grading stopped: ${run.summary.grading}`}</p>
       ) : null}
       {scored.length ? (
-        <ul className="list-disc ml-5 mt-1">
+        <ul className="list-disc ms-5 mt-1">
           {scored.map((r) => (
             <li key={`${r.rule_id}-${r.challenge_id}`}>
               {`${r.goal || r.rule}: ${plural(r.credits, 'credit')}`}
@@ -283,7 +283,7 @@ function RunDetail({ run }: { run: Run | null }) {
         </ul>
       ) : null}
       {skipped.length ? (
-        <ul className="list-disc ml-5 mt-1 text-zinc-500 dark:text-zinc-400">
+        <ul className="list-disc ms-5 mt-1 text-zinc-500 dark:text-zinc-400">
           {skipped.map((r) => (
             <li key={`${r.rule_id}-${r.challenge_id}-s`}>{`${r.goal || r.rule}: ${r.skipped}`}</li>
           ))}
@@ -405,7 +405,7 @@ function HowItScores({ anatomy, lastPass }: { anatomy: Anatomy | null; lastPass:
               <div className="font-medium leading-5">
                 {step.title}
                 {step.tables?.length ? (
-                  <span className="ml-2 font-mono text-xs font-normal text-zinc-500 dark:text-zinc-400">
+                  <span className="ms-2 font-mono text-xs font-normal text-zinc-500 dark:text-zinc-400">
                     {step.tables.join(' · ')}
                   </span>
                 ) : null}
@@ -966,7 +966,7 @@ function ChallengeScoringScreen() {
   // Only when a rule pays into SEVERAL live challenges at once is there
   // anything the row above has not already said.
   const extra = (r: Rule) => (r.covers.length > 1 ? (
-    <ul className="list-disc ml-5 text-xs text-zinc-500 dark:text-zinc-400">
+    <ul className="list-disc ms-5 text-xs text-zinc-500 dark:text-zinc-400">
       {r.covers.map((c) => (
         <li key={c.challenge_id}>
           {`${c.goal || `Challenge #${c.challenge_id}`}: `}

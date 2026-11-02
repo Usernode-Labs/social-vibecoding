@@ -42,7 +42,9 @@ test('the sidebar slides in and out on the compositor, and not at all for reduce
   // synchronously between the two measurements.
   assert.match(src, /flushSync\(commit\);/);
   assert.match(src, /screen\.root\.animate\(\[\{ transform: `translateX\(\$\{dx\}px\)` \}, \{ transform: 'none' \}\], RAIL_SLIDE\);/);
-  assert.match(src, /\[\{ transform: 'translateX\(-100%\)' \}, \{ transform: 'none' \}\]/);
+  // The rail slides in from its own edge and out to it: `dirSign()` flips the
+  // direction, so in Arabic it comes in from the right.
+  assert.match(src, /\[\{ transform: `translateX\(\$\{-100 \* dirSign\(\)\}%\)` \}, \{ transform: 'none' \}\]/);
   const body = src.slice(src.indexOf('export function slideRail'));
   assert.equal((body.match(/\.animate\(/g) || []).length, 2, 'the screen and the rail');
   assert.doesNotMatch(body, /\{ (?!transform)[a-zA-Z]+: [`'"]/, 'every keyframe is a transform: nothing lays out again on a frame');

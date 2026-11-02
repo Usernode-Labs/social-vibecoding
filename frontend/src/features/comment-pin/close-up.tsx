@@ -172,7 +172,7 @@ export function CloseUp({ view, pin, crop }: { view: string; pin: Point; crop?: 
           alt=""
           draggable={false}
           onLoad={(e) => setLoaded({ src: view, size: { width: e.currentTarget.naturalWidth || 1, height: e.currentTarget.naturalHeight || 1 } })}
-          className="absolute left-0 top-0 max-w-none select-none"
+          className="absolute start-0 top-0 max-w-none select-none"
           style={view2
             ? { width: view2.size.width, height: view2.size.height, transform: `translate(${view2.offset.x}px, ${view2.offset.y}px)` }
             : { visibility: 'hidden' }}
@@ -201,7 +201,7 @@ export function CloseUp({ view, pin, crop }: { view: string; pin: Point; crop?: 
         />
       ) : null}
       {pinched || !view ? null : (
-        <span className="absolute left-2 top-2 rounded-full bg-zinc-900/80 px-2 py-0.5 text-[11px] font-semibold text-white">{t('devchat:commentPin.closeUp.pinchHint')}</span>
+        <span className="absolute start-2 top-2 rounded-full bg-zinc-900/80 px-2 py-0.5 text-[11px] font-semibold text-white">{t('devchat:commentPin.closeUp.pinchHint')}</span>
       )}
     </div>
   );

@@ -388,8 +388,8 @@ test('#3499: the band and the Discussion pane bleed to the screen\'s edges, not 
   // (an installed app, the native WebView) the hub scrolled sideways by 8px.
   // Each bleed has to cancel exactly the padding it sits in.
   const CSS = read('public/css/app.css');
-  const body = CSS.match(/^#dev-body:has\(> #dev-workshop\) \{ padding: \S+ (\d+)px /m);
-  assert.ok(body, '#dev-body has its Workshop padding');
+  const body = CSS.match(/^#dev-body:has\(> #dev-workshop\) \{ padding-block: [^;]+; padding-inline: (\d+)px; \}/m);
+  assert.ok(body, '#dev-body has its Workshop side padding');
   const side = Number(body[1]);
   const band = CSS.match(/^\.dev-ws-tabs\.dev-ws-band \{\s*margin: -18px -(\d+)px 0;/m);
   assert.ok(band, 'the band bleeds under the header and to the sides');
@@ -420,7 +420,7 @@ test('#3522: on a phone the band pins where it rests', () => {
   assert.match(block, /\.dev-ws-tabs\.dev-ws-band \{\s*position: sticky;\s*top: var\(--ws-band-top\);\s*z-index: 29;/, 'sticky, over the cards, under the header');
   assert.match(block, /#dev-workshop \.dev-ws-pane-head \{ top: calc\(var\(--ws-band-top\) \+ 18px\); \}/, 'All items\' head pins under the band');
   // The two numbers the offsets are built from.
-  assert.match(CSS, /^#dev-body:has\(> #dev-workshop\) \{ padding: 8px /m, '#dev-body\'s 8px top padding');
+  assert.match(CSS, /^#dev-body:has\(> #dev-workshop\) \{ padding-block: 8px /m, '#dev-body\'s 8px top padding');
   assert.match(CSS, /^\.dev-ws-tabs\.dev-ws-band \{\s*margin: -18px /m, 'the band\'s 18px tuck');
 });
 
@@ -479,7 +479,7 @@ test('#3520: a short growing tab keeps one pixel to scroll, so the installed app
   // not the two fitted tabs, which scroll inside themselves.
   assert.match(block, new RegExp(`html:not\\(\\[data-browser-scroller\\]\\) ${growing} \\{\\s*position: relative;\\s*\\}`),
     'the scroller is the sentinel\'s containing block');
-  assert.match(block, new RegExp(`html:not\\(\\[data-browser-scroller\\]\\) ${growing}::after \\{\\s*content: '';\\s*position: absolute; left: 0; bottom: -1px;\\s*width: 1px; height: 1px;\\s*pointer-events: none;\\s*\\}`),
+  assert.match(block, new RegExp(`html:not\\(\\[data-browser-scroller\\]\\) ${growing}::after \\{\\s*content: '';\\s*position: absolute; inset-inline-start: 0; bottom: -1px;\\s*width: 1px; height: 1px;\\s*pointer-events: none;\\s*\\}`),
     'a 1px box hung 1px below the scroller\'s bottom edge');
   // No percentage: a percentage floor in this chain is what Firefox dropped
   // (tests/dev-workshop.test.js), and the grow would absorb a spacer in flow.

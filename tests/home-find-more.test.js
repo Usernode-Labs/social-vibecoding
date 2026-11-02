@@ -715,8 +715,8 @@ test('the home feed is a 1024px centred column', () => {
   const css = read('public/css/app.css');
   const rule = css.match(/\.home-column \{[^}]*\}/)[0];
   assert.match(rule, /max-width:\s*64rem/, '64rem = 1024px');
-  assert.match(rule, /margin-left:\s*auto/);
-  assert.match(rule, /margin-right:\s*auto/);
+  assert.match(rule, /margin-inline-start:\s*auto/);
+  assert.match(rule, /margin-inline-end:\s*auto/);
   // The old per-box bound is gone for good.
   assert.doesNotMatch(css, /\.home-section-block\b/);
   assert.doesNotMatch(HOME_SRC, /alignSections|--home-section-indent/,

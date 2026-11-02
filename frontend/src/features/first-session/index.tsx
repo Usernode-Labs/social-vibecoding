@@ -884,8 +884,8 @@ export function Tour({ info, steps, onEnd: endTour, start = 0, moments = false, 
         data-tour-says-where-it-opens={step.saysWhereItOpens ? '' : undefined}
         data-first-session-tour-wait={wait || undefined}
         className={settling || wait === 'held' || leavingMenu
-          ? 'pointer-events-none fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 opacity-0 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] dark:bg-zinc-800 dark:text-zinc-100'
-          : 'pointer-events-auto fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] transition-opacity duration-150 dark:bg-zinc-800 dark:text-zinc-100'}
+          ? 'pointer-events-none fixed start-4 end-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 opacity-0 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] dark:bg-zinc-800 dark:text-zinc-100'
+          : 'pointer-events-auto fixed start-4 end-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] transition-opacity duration-150 dark:bg-zinc-800 dark:text-zinc-100'}
         style={card}
       >
         {waiting ? (
@@ -978,7 +978,7 @@ export function WelcomeHeld() {
           <SkeletonGroup label={t('onboarding:firstSession.welcome.opening')} className="my-auto flex flex-col items-center pb-10">
             <span className="flex">
               <Skeleton shape="block" className="h-10 w-10 rounded-full" />
-              <Skeleton shape="block" className="-ml-2.5 h-10 w-10 rounded-full" />
+              <Skeleton shape="block" className="-ms-2.5 h-10 w-10 rounded-full" />
             </span>
             <Skeleton className="mt-5 w-32" />
             <Skeleton shape="block" className="mt-3 h-9 w-64" />

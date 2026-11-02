@@ -389,8 +389,8 @@ test('the lit tab and the left edge are the drawer\'s on a phone; the tray keeps
   assert.match(ws, /useEdgeSwipe\(!placesInColumn && !drawerOn && !trayOpen && !!v\.slug && !v\.loading,/);
   const island = read(`${DIR}/nav-drawer.tsx`);
   assert.match(island, /const takesEdge = pageTakesEdge\(\);/, 'not the edge in Safari on an iPhone, where it is Back');
-  assert.match(island, /if \(!swipeBackMayStart\(\{ x: touch\.clientX, takesEdge, sideways \}\)\) return;/,
-    'a swipe right from anywhere on the page that is not sideways UI (tests/nav-drawer-swipe.test.js)');
+  assert.match(island, /if \(!swipeBackMayStart\(\{ x: touch\.clientX, takesEdge, sideways, rtl, width: window\.innerWidth \}\)\) return;/,
+    'a swipe toward the page from anywhere on it that is not sideways UI (tests/nav-drawer-swipe.test.js)');
   const shell = read('frontend/src/Shell.tsx');
   assert.match(shell, /<Island name="PlatformTabs"><PlatformTabs \/><\/Island>\s*\{\/\*[\s\S]*?\*\/\}\s*<Island name="NavDrawer"><NavDrawer \/><\/Island>/);
 });
@@ -512,12 +512,12 @@ test('the Messages screen: the panes are the levels, the page drops its name, th
   assert.match(drawer, /el\.animate\(\[\{ transform: start \}, \{ transform: end \}\], \{ duration: SLIDE_MS, easing: SLIDE_EASE \}\)/);
   assert.doesNotMatch(drawer, /\.style\.transition/, 'the conversation\'s pane is the kit\'s keyboard column, whose transition the kit owns');
   assert.match(drawer, /if \(!on \|\| \(level === 0 && !peekId\)\) return undefined;\s*const from = level;\s*const takesEdge = pageTakesEdge\(\);/);
-  assert.match(drawer, /const sideways = touch\.clientX > EDGE_PX && startsOnSideways\(target, layout, window\);\s*if \(!swipeBackMayStart\(\{ x: touch\.clientX, takesEdge, sideways \}\)\) return;/,
+  assert.match(drawer, /const pastEdge = rtl \? touch\.clientX < window\.innerWidth - EDGE_PX : touch\.clientX > EDGE_PX;\s*const sideways = pastEdge && startsOnSideways\(target, layout, window\);\s*if \(!swipeBackMayStart\(\{ x: touch\.clientX, takesEdge, sideways, rtl, width: window\.innerWidth \}\)\) return;/,
     'a conversation pans back from anywhere but sideways UI, as a page does (tests/nav-drawer-swipe.test.js)');
   const header = read(`${DIR}/header-drawer.tsx`);
   assert.match(header, /if \(mode === 'messages'\) return <BackDisc mode=\{mode\} label=\{t\('core:header\.drawer\.toMessages'\)\} onBack=\{messagesBack\} \/>;/);
   const css = read('public/css/app.css');
-  assert.match(css, /\.messages-layout\.messages-drawer > \.messages-list-pane \{\s*position: absolute; top: 0; bottom: 0; left: 0; width: 85%;/);
+  assert.match(css, /\.messages-layout\.messages-drawer > \.messages-list-pane \{\s*position: absolute; top: 0; bottom: 0; inset-inline-start: 0; width: 85%;/);
   assert.match(css, /\.messages-layout\.messages-drawer \.messages-list-scroll,\s*\.messages-layout\.messages-drawer \.messages-thread-scroll \{ touch-action: pan-y; \}/,
     'the list and the conversation hand a sideways drag on');
   const messages = JSON.parse(read('frontend/locales/en/messages.json'));

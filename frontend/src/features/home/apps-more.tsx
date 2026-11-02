@@ -45,7 +45,7 @@ export function AppsMoreBody({ moreCount }: { moreCount: number }) {
           <button
             type="button"
             id="home-apps-more-btn"
-            className={`text-right ${MORE_BTN}`}
+            className={`text-end ${MORE_BTN}`}
             onClick={() => {
               const home = controller();
               if (!home) return;

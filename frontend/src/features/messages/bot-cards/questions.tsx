@@ -33,8 +33,8 @@ const MAX_QUESTIONS = 4;
 const MAX_ANSWERS = 4;
 const MAX_OWN_CHARS = 200;
 
-const CHIP = 'inline-flex min-h-[44px] max-w-full items-center gap-1.5 rounded-full bg-[color:var(--dc-raised)] px-[13px] py-1.5 text-left text-[0.8125rem] font-[650] leading-tight text-[color:var(--text-secondary)] hover:brightness-[.97] sm:min-h-[36px]';
-const CHIP_ON = 'inline-flex min-h-[44px] max-w-full items-center gap-1.5 rounded-full bg-[color:var(--lit-tint)] px-[13px] py-1.5 text-left text-[0.8125rem] font-[650] leading-tight text-[color:var(--lit-ink)] shadow-[inset_0_0_0_1px_var(--lit-line)] sm:min-h-[36px]';
+const CHIP = 'inline-flex min-h-[44px] max-w-full items-center gap-1.5 rounded-full bg-[color:var(--dc-raised)] px-[13px] py-1.5 text-start text-[0.8125rem] font-[650] leading-tight text-[color:var(--text-secondary)] hover:brightness-[.97] sm:min-h-[36px]';
+const CHIP_ON = 'inline-flex min-h-[44px] max-w-full items-center gap-1.5 rounded-full bg-[color:var(--lit-tint)] px-[13px] py-1.5 text-start text-[0.8125rem] font-[650] leading-tight text-[color:var(--lit-ink)] shadow-[inset_0_0_0_1px_var(--lit-line)] sm:min-h-[36px]';
 const FIELD = 'mt-2 block min-h-[44px] w-full rounded-xl bg-[color:var(--dc-raised)] px-3 text-[0.9375rem] text-zinc-900 outline-none placeholder:text-zinc-500 focus-visible:shadow-[inset_0_0_0_2px_var(--accent)] dark:text-zinc-100 dark:placeholder:text-zinc-400 sm:min-h-[36px]';
 
 /** Pure: a card's questions, read defensively: at most four, each with two to four answers. */
@@ -120,7 +120,7 @@ export function QuestionsCard({ message, card }: BotCardProps) {
       <CardLabel>{t('messages:botCards.questions.label')}</CardLabel>
       {title ? <CardTitle>{title}</CardTitle> : null}
       {open ? (
-        <ol className="mt-2 flex list-decimal flex-col gap-3 pl-5 marker:text-[0.9375rem] marker:font-[650] marker:text-zinc-500">
+        <ol className="mt-2 flex list-decimal flex-col gap-3 ps-5 marker:text-[0.9375rem] marker:font-[650] marker:text-zinc-500">
           {questions.map((q, index) => (
             <li key={index} data-bot-question-row={index + 1}>
               <p className="text-[0.9375rem] font-[650] leading-5 text-zinc-900 [overflow-wrap:anywhere] dark:text-zinc-100">{q.question}</p>

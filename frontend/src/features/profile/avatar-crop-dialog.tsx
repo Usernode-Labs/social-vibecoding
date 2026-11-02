@@ -426,7 +426,7 @@ export function AvatarCropDialog({ source, onAccept, onCancel }: {
             aria-busy={busy || undefined}
             onClick={() => { void accept(); }}
           >
-            {busy ? <SpinnerArcIcon className="inline-block h-4 w-4 mr-2 -mt-0.5 align-middle animate-spin" aria-hidden="true" /> : null}
+            {busy ? <SpinnerArcIcon className="inline-block h-4 w-4 me-2 -mt-0.5 align-middle animate-spin" aria-hidden="true" /> : null}
             {busy ? t('profile:crop.preparing') : t('profile:crop.use')}
           </Button>
         </div>

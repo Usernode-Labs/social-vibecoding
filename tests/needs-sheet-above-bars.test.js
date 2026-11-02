@@ -81,7 +81,7 @@ test('the vote sheet is not held at the rail\'s level while it is up', () => {
   const rail = WORKSHOP.slice(WORKSHOP.indexOf('<aside className="dev-ws-rail" data-ws-rail=""'), WORKSHOP.indexOf('</aside>'));
   assert.match(rail, /className="dev-ws-sheet-modal dev-ws-sheet-vote" data-ws-sheet="vote"/, 'the vote sheet lives in the rail');
   // ...the rail is a stacking context on a phone...
-  assert.match(CSS, /\.dev-ws-rail \{\n  position: absolute; right: 8px; bottom: 10px; z-index: 3;/);
+  assert.match(CSS, /\.dev-ws-rail \{\n  position: absolute; inset-inline-end: 8px; bottom: 10px; z-index: 3;/);
   // ...so while the vote sheet is shown the rail lets go of it. `data-ws-sheet`
   // is the feed root's, set for as long as a sheet is shown or leaving.
   assert.match(WORKSHOP, /className="dev-ws-needs"\n\s*data-ws-needs=""\n\s*data-ws-sheet=\{shown \|\| undefined\}/);
@@ -92,7 +92,7 @@ test('the wide layout keeps its own stacking: the 40 is the phone sheet\'s alone
   const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS)[1];
   assert.match(wide, /\.dev-ws-sheet-talk \{\n\s*position: relative; inset: auto; flex: 0 1 380px; min-width: 300px; z-index: auto;/);
   assert.match(wide, /\.dev-ws-sheet-vote \{ position: absolute;[^}]*z-index: 6;/);
-  assert.match(wide, /\.dev-ws-rail \{\n\s*position: relative; right: auto; bottom: auto; z-index: auto;/);
+  assert.match(wide, /\.dev-ws-rail \{\n\s*position: relative; inset-inline-end: auto; bottom: auto; z-index: auto;/);
 });
 
 test('on a phone a tall sheet scrolls and the vote keeps its buttons on screen', () => {

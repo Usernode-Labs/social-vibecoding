@@ -127,7 +127,7 @@ export function ScreensBand({ screens, name, onEmpty }: { screens: FirstVersionS
       </div>
       <span
         data-first-version-pill=""
-        className="pointer-events-none absolute left-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-[12px] font-semibold leading-4 text-white"
+        className="pointer-events-none absolute start-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-[12px] font-semibold leading-4 text-white"
       >
         {screensPill(screens, now)}
       </span>

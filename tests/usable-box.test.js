@@ -80,7 +80,7 @@ test('the box is declared once, on body, beside the rail\'s tokens', () => {
   // `body:has(#platform-tabs:not(.hidden))`), so a box on :root would read
   // the rail as 0 at every width.
   assert.match(CSS,
-    /--platform-rail-w: 0px;\n  --platform-gutter: 0px;\n\}\n\/\* THE USABLE BOX: WHERE CONTENT CAN GO, DECIDED ONCE [^]*?\*\/\nbody \{\n  --platform-float-left: 0px;\n  --platform-float-right: 0px;\n  --platform-float-w: calc\(100vw - var\(--platform-float-left\) - var\(--platform-float-right\)\);\n  --platform-usable-left: calc\(var\(--platform-float-left\) \+ var\(--platform-rail-w, 0px\)\);\n  --platform-usable-right: var\(--platform-float-right\);\n  --platform-usable-w: calc\(var\(--platform-float-w\) - var\(--platform-rail-w, 0px\)\);\n\}/,
+    /--platform-rail-w: 0px;\n  --platform-gutter: 0px;\n\}\n\/\* THE USABLE BOX: WHERE CONTENT CAN GO, DECIDED ONCE [^]*?\*\/\nbody \{\n  --platform-float-left: 0px;\n  --platform-float-right: 0px;\n  --platform-float-w: calc\(100vw - var\(--platform-float-left\) - var\(--platform-float-right\)\);\n  \/\* The rail comes off whichever side it stands on[^]*?\*\/\n  --platform-usable-left: calc\(var\(--platform-float-left\) \+ var\(--platform-rail-w, 0px\) \* \(1 \+ var\(--rtl-sign\)\) \/ 2\);\n  --platform-usable-right: calc\(var\(--platform-float-right\) \+ var\(--platform-rail-w, 0px\) \* \(1 - var\(--rtl-sign\)\) \/ 2\);\n  --platform-usable-w: calc\(var\(--platform-float-w\) - var\(--platform-rail-w, 0px\)\);\n\}/,
     'the float box is the window less the column; the page\'s box is that less the rail, on the left');
   // The column, on the side the body pads it out: the strip at every width,
   // the folded Duo's corner on a phone only, as THE SIDE CORNER pads it.

@@ -291,7 +291,7 @@ test('an action row stays a <button> that carries its index and its disabled sta
 
 // ── the density this issue is about ────────────────────────────────────
 
-test('both cards draw at the grouped-list density, with the hairline at left-4', () => {
+test('both cards draw at the grouped-list density, with the hairline at the text inset', () => {
   const root = treeOf(renderDetail());
   const rows = [
     ...queryAll(root, '#browse-detail .browse-detail-action'),
@@ -302,7 +302,7 @@ test('both cards draw at the grouped-list density, with the hairline at left-4',
     const cls = row.attrs.class || '';
     assert.ok(/(^|\s)px-4(\s|$)/.test(cls), `row is not at px-4: ${cls}`);
     assert.ok(/(^|\s)py-3\.5(\s|$)/.test(cls), `row is not at py-3.5: ${cls}`);
-    assert.ok(cls.includes('[&:not(:last-child)]:after:left-4'),
+    assert.ok(cls.includes('[&:not(:last-child)]:after:start-4'),
       `row hairline is not at the text inset: ${cls}`);
   }
 });

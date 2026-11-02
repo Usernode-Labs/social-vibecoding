@@ -42,6 +42,6 @@ test('the group-chat reply preview × is a 44px tap target', () => {
 test('both overhang their strip padding instead of making the strip taller', () => {
   // Strip padding is 6px top/bottom (messages: `padding: 6px 10px`; group
   // chat: `padding: 6px 8px`), so a 44px button pulls back 6px each way.
-  assert.match(rule('.messages-pending-object button'), /\n\s*margin: -6px -8px -6px auto;/);
-  assert.match(rule('.gc-reply-preview-x'), /\n\s*margin: -6px -8px -6px 0;/);
+  assert.match(rule('.messages-pending-object button'), /\n\s*margin-block: -6px -6px; margin-inline: auto -8px;/);
+  assert.match(rule('.gc-reply-preview-x'), /\n\s*margin-block: -6px -6px; margin-inline: 0 -8px;/);
 });

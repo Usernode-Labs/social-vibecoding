@@ -63,7 +63,7 @@ export function MessageButton({ username }: { username: string }): ReactNode {
       {error ? (
         <p
           role="alert"
-          className="absolute right-0 top-full z-10 mt-1 w-max max-w-[14rem] rounded-lg bg-white px-2 py-1 text-right text-xs text-red-700 shadow-sm dark:bg-zinc-800 dark:text-red-400"
+          className="absolute end-0 top-full z-10 mt-1 w-max max-w-[14rem] rounded-lg bg-white px-2 py-1 text-end text-xs text-red-700 shadow-sm dark:bg-zinc-800 dark:text-red-400"
         >
           {error}
         </p>

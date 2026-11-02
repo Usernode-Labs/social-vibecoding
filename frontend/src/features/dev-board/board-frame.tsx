@@ -311,7 +311,7 @@ function ReleaseStallNotice(): ReactNode {
               href={s.runUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="ml-1 underline underline-offset-2"
+              className="ms-1 underline underline-offset-2"
             >
               {t('project:releaseStall.openRun')}
             </a>

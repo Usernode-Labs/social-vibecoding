@@ -92,7 +92,7 @@ test('the ordinary meter: one sentence, what is left of the allowance, one toolt
   assert.equal(s.hidden, false);
   const html = rowHtml(s);
   assert.match(html, /id="drawer-row-ai-budget"/);
-  assert.match(html, /id="ai-budget-slot"[^>]*class="ml-auto grow min-w-0 text-right"/);
+  assert.match(html, /id="ai-budget-slot"[^>]*class="ms-auto grow min-w-0 text-end"/);
   assert.match(html, /class="ai-budget-meter drawer-meter"/);
   assert.match(html, /<span class="drawer-meter-part" data-credits-remaining="1"><span class="text-emerald-700 dark:text-emerald-400">\$13\.60<\/span><span class="drawer-meter-dim"> of \$20 left today<\/span><\/span>/);
   assert.doesNotMatch(html, /limit /, 'no "limit $spent/$limit"');
@@ -213,7 +213,7 @@ test('the UNFETCHED row is visible and empty — what the shell prerenders', () 
   const html = rowHtml({ view: null, hidden: false });
   assert.match(html, /id="drawer-row-ai-budget"/);
   assert.doesNotMatch(html, /class="[^"]*hidden/);
-  assert.match(html, /<span id="ai-budget-slot" class="ml-auto grow min-w-0 text-right"><\/span>/);
+  assert.match(html, /<span id="ai-budget-slot" class="ms-auto grow min-w-0 text-end"><\/span>/);
 });
 
 test('the reset sentence comes from CreditOptions, not a second copy here', () => {

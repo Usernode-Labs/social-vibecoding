@@ -143,7 +143,7 @@ test('both switches are announced as switches and say Off before the account is 
     assert.match(input[0], /class="un-switch"/);
     assert.doesNotMatch(input[0], /checked/);
   }
-  const off = `<span aria-hidden="true" class="ml-2 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">${message('settings:privacy.state.off')}</span>`;
+  const off = `<span aria-hidden="true" class="ms-2 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">${message('settings:privacy.state.off')}</span>`;
   assert.equal(html.split(off).length - 1, 4, 'every switch, the two Email & texts ones (#6044) too');
   assert.ok(!html.includes(`>${message('settings:privacy.state.on')}</span>`));
   // The analytics switch is still described by its explanation.

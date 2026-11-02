@@ -95,7 +95,7 @@ export function SampleDataChip(): ReactNode {
   return (
     <span
       data-first-version-sample=""
-      className="pointer-events-none absolute bottom-3 left-3 max-w-[calc(50%-4.75rem)] rounded-full bg-black/55 px-2.5 py-1 text-[12px] font-semibold leading-4 text-white"
+      className="pointer-events-none absolute bottom-3 start-3 max-w-[calc(50%-4.75rem)] rounded-full bg-black/55 px-2.5 py-1 text-[12px] font-semibold leading-4 text-white"
     >
       {t('agent:appFrame.live.sampleData')}
     </span>
@@ -314,7 +314,7 @@ export default function LiveBand({ live, firstLook, name }: {
       </div>
       <span
         data-first-version-pill=""
-        className="pointer-events-none absolute left-3 top-3 max-w-[calc(100%-9.5rem)] rounded-full bg-black/55 px-2.5 py-1 text-[12px] font-semibold leading-4 text-white"
+        className="pointer-events-none absolute start-3 top-3 max-w-[calc(100%-9.5rem)] rounded-full bg-black/55 px-2.5 py-1 text-[12px] font-semibold leading-4 text-white"
       >
         {livePill(phase, age)}
       </span>

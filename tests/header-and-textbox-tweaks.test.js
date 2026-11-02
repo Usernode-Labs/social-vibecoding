@@ -110,7 +110,8 @@ test('both message text boxes use it, keyed on their own value', () => {
   assert.match(COMPOSER, /useAutoGrow\(inputRef, value\)/);
   assert.match(ROW, /useAutoGrow\(editRef, editValue\)/);
   assert.equal(message('messages:row.editLabel'), 'Edit message');
-  assert.match(ROW, /<textarea ref=\{editRef\} aria-label=\{t\('messages:row\.editLabel'\)\}/);
+  assert.match(ROW, /<textarea ref=\{editRef\} dir="auto" aria-label=\{t\('messages:row\.editLabel'\)\}/,
+    'the box follows the direction of what is typed into it');
 });
 
 test('a hand-dragged edit box is not undone by the next keystroke', () => {

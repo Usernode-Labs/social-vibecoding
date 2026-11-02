@@ -737,7 +737,7 @@ function Retention({ r, mode }: { r: any; mode: string }) {
   };
 
   const head: React.ReactNode[] = [
-    <th key="_c" className="text-left px-2 py-1 font-medium text-zinc-500 dark:text-zinc-400">Cohort</th>,
+    <th key="_c" className="text-start px-2 py-1 font-medium text-zinc-500 dark:text-zinc-400">Cohort</th>,
     <th key="_u" className="px-2 py-1 font-medium text-zinc-500 dark:text-zinc-400">Users</th>,
   ];
   let rows: React.ReactNode[];
@@ -1041,7 +1041,7 @@ function SpendDistribution({ days, includeZero }: { days: any[]; includeZero: bo
   const totals = days.map((x) => segs.reduce((a, s) => a + (Number(x[s.key]) || 0), 0));
   const labels = days.map((x) => weekLabel(x.day));
   const row = (label: string, color: string, v: number) =>
-    `<div class="flex justify-between gap-3"><span class="text-zinc-500 dark:text-zinc-400"><span class="inline-block w-2 h-2 rounded-sm align-middle mr-1" style="background:${color}"></span>${label}</span><span>${fmtInt(v)}</span></div>`;
+    `<div class="flex justify-between gap-3"><span class="text-zinc-500 dark:text-zinc-400"><span class="inline-block w-2 h-2 rounded-sm align-middle me-1" style="background:${color}"></span>${label}</span><span>${fmtInt(v)}</span></div>`;
   const tips = days.map((x, i) => `<div class="font-semibold mb-1">${esc(labels[i])}${i === days.length - 1 ? ' (today)' : ''}</div>
         <div class="mb-1">${fmtInt(totals[i])} user${totals[i] === 1 ? '' : 's'}</div>
         <div class="text-[11px] leading-tight">
@@ -1712,7 +1712,7 @@ function AnalyticsSection() {
             <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
               <h3 className={H3}>Funnels<InfoIcon info="funnels" /></h3>
               <div className="flex flex-wrap items-center gap-1 text-xs">
-                <span className="text-zinc-500 dark:text-zinc-400 mr-1">Entry window:</span>
+                <span className="text-zinc-500 dark:text-zinc-400 me-1">Entry window:</span>
                 <ToggleGroup cls="cohort-btn" attr="data-cohort" value={cohort} onChange={setCohort} options={[
                   ['all', 'All time'], ['90d', 'Last 90d'], ['30d', 'Last 30d'], ['14d', 'Last 14d'],
                   ['7d', 'Last 7d'], ['3d', 'Last 3d'], ['1d', 'Last 1d'],
@@ -1847,7 +1847,7 @@ function AnalyticsSection() {
             <div className="flex items-center justify-between flex-wrap gap-2 mt-8 mb-3">
               <h4 className={H4}>Retention cohorts</h4>
               <div className="flex flex-wrap items-center gap-1 text-xs">
-                <span className="text-zinc-500 dark:text-zinc-400 mr-1">Align:</span>
+                <span className="text-zinc-500 dark:text-zinc-400 me-1">Align:</span>
                 {/* Re-pivots the cached payload — no refetch. */}
                 <ToggleGroup cls="retalign-btn" attr="data-retalign" value={retAlign} onChange={setRetAlign} options={[
                   ['calendar', 'Calendar aligned'], ['cohort', 'By cohort age'],

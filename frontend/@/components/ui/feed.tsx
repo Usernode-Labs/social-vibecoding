@@ -61,7 +61,7 @@ export function Avatar({ className, shape, size, color, badge, children, style, 
       {children}
       {badge ? (
         <span
-          className="absolute -bottom-0.5 -right-0.5 flex h-[1.125rem] w-[1.125rem] items-center justify-center rounded-full bg-zinc-100 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 [&>svg]:h-3 [&>svg]:w-3"
+          className="absolute -bottom-0.5 -end-0.5 flex h-[1.125rem] w-[1.125rem] items-center justify-center rounded-full bg-zinc-100 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 [&>svg]:h-3 [&>svg]:w-3"
           aria-hidden="true"
         >
           {badge}
@@ -87,7 +87,7 @@ export function ActivityRow({
   return (
     <div
       className={cn(
-        "relative flex gap-3 px-4 py-3.5 [&:not(:last-child)]:after:absolute [&:not(:last-child)]:after:bottom-0 [&:not(:last-child)]:after:left-4 [&:not(:last-child)]:after:right-4 [&:not(:last-child)]:after:h-px [&:not(:last-child)]:after:bg-zinc-200 dark:[&:not(:last-child)]:after:bg-zinc-800 [&:not(:last-child)]:after:content-['']",
+        "relative flex gap-3 px-4 py-3.5 [&:not(:last-child)]:after:absolute [&:not(:last-child)]:after:bottom-0 [&:not(:last-child)]:after:start-4 [&:not(:last-child)]:after:end-4 [&:not(:last-child)]:after:h-px [&:not(:last-child)]:after:bg-zinc-200 dark:[&:not(:last-child)]:after:bg-zinc-800 [&:not(:last-child)]:after:content-['']",
         className,
       )}
       {...props}

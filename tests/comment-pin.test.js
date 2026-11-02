@@ -475,7 +475,7 @@ test('"Screenshot" leads the bar above the picture, never over the picture (#477
   // the question, then the usual one.
   assert.ok(label < bar.indexOf('{cropping && cropView ? ('), 'it leads the bar, before each of its states');
   assert.equal(src.split("t('devchat:commentPin.view.chip')").length - 1, 1, 'rendered once, in the bar');
-  assert.match(bar, /\{shotLabel \? \(\s*<>\s*\{\/\*[\s\S]*?\*\/\}\s*<span\s+aria-hidden="true"\s+className=\{`comment-shot-label-in min-w-0 truncate pl-1\.5 text-\[13px\] font-semibold text-zinc-500 dark:text-zinc-400\$\{confirm \? ' hidden sm:inline' : ''\}`\}/,
+  assert.match(bar, /\{shotLabel \? \(\s*<>\s*\{\/\*[\s\S]*?\*\/\}\s*<span\s+aria-hidden="true"\s+className=\{`comment-shot-label-in min-w-0 truncate ps-1\.5 text-\[13px\] font-semibold text-zinc-500 dark:text-zinc-400\$\{confirm \? ' hidden sm:inline' : ''\}`\}/,
     'a muted label that truncates first, and stays while the bar asks its question on a computer: the picture is still there');
   // On a phone the label takes the place of the mode's chat glyph, so the
   // bar still fits a 390px screen.
