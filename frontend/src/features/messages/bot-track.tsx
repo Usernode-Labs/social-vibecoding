@@ -94,6 +94,7 @@ const LINES: Record<string, string> = {
   'vote.default': 'messages:bot.track.line.vote.default',
   'going_live.default': 'messages:bot.track.line.going_live.default',
   'live.default': 'messages:bot.track.line.live.default',
+  'held.builds': 'messages:bot.track.line.held.builds',
   'held.slots': 'messages:bot.track.line.held.slots',
   'held.bot_wide': 'messages:bot.track.line.held.bot_wide',
   'held.questions': 'messages:bot.track.line.held.questions',
@@ -177,6 +178,7 @@ export function trackLine(track: BotTrack): string {
 // next, by the limit a held request waits at (services/design-threads.js
 // filedNext). Each a whole sentence: the limit in the track's own words.
 const FILED_HELD_LINES: Record<string, string> = {
+  builds: 'messages:bot.track.filed.held.builds',
   slots: 'messages:bot.track.filed.held.slots',
   bot_wide: 'messages:bot.track.filed.held.bot_wide',
   questions: 'messages:bot.track.filed.held.questions',
@@ -213,9 +215,15 @@ export function trackPlace(track: BotTrack): string | null {
  * Pure: a track's line where there is room for one short phrase (the
  * drawer's rows, the slots page's): one held for a slot says only its place
  * in line ("Next in line for a slot"), since its heading already says it is
- * on hold; anything else, where it is and its place.
+ * on hold; #6156: one held for the bot's turn among the project's builds,
+ * its place in that line ("Next in line to be built"); anything else, where
+ * it is and its place.
  */
 export function trackShort(track: BotTrack): string {
+  if (track.state === 'held' && track.held?.limit === 'builds' && track.held.position) {
+    const ahead = track.held.position - 1;
+    return ahead > 0 ? translate('messages:bot.track.held.aheadBuild', { count: ahead }) : translate('messages:bot.track.held.nextBuild');
+  }
   if (track.state === 'held' && track.held?.limit === 'slots' && track.held.position) {
     const ahead = track.held.position - 1;
     return ahead > 0 ? translate('messages:bot.track.held.aheadSlot', { count: ahead }) : translate('messages:bot.track.held.next');
@@ -629,7 +637,7 @@ export function trackLinks(track: BotTrack, { request = true }: { request?: bool
   if (request && track.links?.request && track.issueNumber) {
     out.push(<ActivityLink key="request" href={track.links.request}>{translate('messages:bot.track.link.request', { number: String(track.issueNumber) })}</ActivityLink>);
   }
-  if (track.state === 'held' && track.appSlug && track.held?.limit === 'slots') {
+  if (track.state === 'held' && track.appSlug && (track.held?.limit === 'slots' || track.held?.limit === 'builds')) {
     const slug = track.appSlug;
     out.push(
       <a

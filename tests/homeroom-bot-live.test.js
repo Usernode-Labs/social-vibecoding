@@ -895,11 +895,15 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
   h.posts.length = 0;
   assert.equal(await act(h, { verdict: 'question', question: 'Which feed?' }, { capSuppressed: 'question_tripwire' }), 'held');
   assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }, { capSuppressed: 'proposals_per_app' }), 'held');
-  assert.deepEqual(h.posts.map((p) => p.kind), ['held_question_tripwire', 'held_proposals_per_app'],
+  assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }, { capSuppressed: 'builds_per_app' }), 'held');
+  assert.deepEqual(h.posts.map((p) => p.kind), ['held_question_tripwire', 'held_proposals_per_app', 'held_builds_per_app'],
     'the caps hold the question and the build, and say so in one line (#3152)');
   assert.ok(!/Which feed/.test(h.posts[0].text), 'the held question itself is not posted');
   // One request, one story: in whole sentences, the project by its name.
-  assert.equal(h.posts[1].text, 'Homeroom bot will build this when one of its 5 changes on RSS reader is voted in or closed.');
+  // #6156: the number is the cap that held it: its changes waiting for votes,
+  // or its builds, and each says what it waits for.
+  assert.equal(h.posts[1].text, `Homeroom bot will build this when one of its ${bot.WAITING_PER_APP} changes on RSS reader is voted in or closed.`);
+  assert.equal(h.posts[2].text, `Homeroom bot will build this when one of the ${bot.BUILDS_PER_APP} changes it is building on RSS reader at once is done.`);
 
   live.buildAndPropose = async (args) => {
     await args.onSession({ id: 5001 });
@@ -1143,8 +1147,11 @@ test('a ready verdict is held before it is built when the bot is at its ceiling 
     },
   };
   // Every app is live, so the automatic ceiling is a fixed one; an admin's
-  // number replaces it.
-  assert.equal(bot.PROPOSALS_PER_APP_CAP, 5);
+  // number replaces it. #6156: a project's own caps are its builds and its
+  // changes waiting for votes.
+  assert.equal(bot.BUILDS_PER_APP, 5);
+  // #6157: 50 waiting since a waiting proposal's preview sleeps.
+  assert.equal(bot.WAITING_PER_APP, 50);
   // #6157: 500 since a waiting proposal's preview sleeps.
   assert.equal(bot.botProposalCeiling({}), 500, 'the automatic ceiling');
   assert.equal(bot.botProposalCeiling(null), 500);
@@ -1158,7 +1165,7 @@ test('a ready verdict is held before it is built when the bot is at its ceiling 
   assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', settings), null);
   total = 20;
   assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', settings), 'proposals_total');
-  perApp = 5;
+  perApp = bot.WAITING_PER_APP;
   assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', settings), 'proposals_per_app', 'the app\'s own cap is named first');
   assert.equal(await bot.simulateCaps(pool, BOT, 9, 'question', settings), null, 'only a build is held by them');
 
@@ -1191,8 +1198,62 @@ test('a ready verdict is held before it is built when the bot is at its ceiling 
   assert.match(LIVE_SRC, /router: deps\.votesRouter \|\| null, ceiling: proposalCeiling,/);
 });
 
+test('#6156: a project\'s builds and its changes waiting for votes are two caps, each held at its own number', async () => {
+  let builds = 0;
+  let proposals = 0;
+  const pool = {
+    async query(sql) {
+      const s = String(sql);
+      // The app's slots (slotHolders): one row each, of its kind.
+      if (s === bot.SLOT_HOLDERS_SQL) {
+        return { rows: [
+          ...Array.from({ length: proposals }, (_, i) => ({ kind: 'proposal', issue_number: 100 + i })),
+          ...Array.from({ length: builds }, (_, i) => ({ kind: 'build', issue_number: 200 + i })),
+        ] };
+      }
+      if (/FROM chat_sessions\s+WHERE user_id = \$1/.test(s)) return { rows: [{ cnt: proposals }] };
+      return { rows: [{ cnt: 0 }] };
+    },
+  };
+  const caps = (settings = {}) => bot.simulateCaps(pool, BOT, 9, 'ready', settings);
+  [builds, proposals] = [5, 0];
+  assert.equal(await caps(), 'builds_per_app', '5 builds under way: it waits for the bot\'s turn');
+  // #6157: 50 changes may wait for votes (their previews sleep): the 50th is
+  // built, and the 51st waits.
+  [builds, proposals] = [0, 49];
+  assert.equal(await caps(), null, '49 waiting: the 50th is built');
+  [builds, proposals] = [0, 50];
+  assert.equal(await caps(), 'proposals_per_app', '50 changes up for a vote: the 51st waits for votes');
+  [builds, proposals] = [4, 49];
+  assert.equal(await caps(), null, 'room in both: it is built');
+  [builds, proposals] = [5, 50];
+  assert.equal(await caps(), 'proposals_per_app', 'both full: votes are what it waits for longest');
+  // A project's own numbers (settings.appCaps, by app id), clamped as stored.
+  [builds, proposals] = [0, 50];
+  const own = bot.parseSettings([{ key: bot.KEY_APP_CAPS, value: JSON.stringify({ 9: { waiting: 80 } }) }]);
+  assert.deepEqual(bot.appCapsOf(own, 9), { building: bot.BUILDS_PER_APP, waiting: 80 });
+  assert.equal(await caps(own), null, 'waiting set to 80 lets the 51st through');
+  proposals = 80;
+  assert.equal(await caps(own), 'proposals_per_app');
+  assert.equal(await caps(bot.parseSettings([{ key: bot.KEY_APP_CAPS, value: JSON.stringify({ 8: { waiting: 80 } }) }])), 'proposals_per_app',
+    'another project\'s number is not this one\'s');
+  [builds, proposals] = [0, 15];
+  assert.equal(await caps(bot.parseSettings([{ key: bot.KEY_APP_CAPS, value: JSON.stringify({ 9: { waiting: 15 } }) }])), 'proposals_per_app',
+    'a smaller project\'s own number, lower than the default');
+  [builds, proposals] = [2, 0];
+  assert.equal(await caps(bot.parseSettings([{ key: bot.KEY_APP_CAPS, value: JSON.stringify({ 9: { building: 2 } }) }])), 'builds_per_app');
+  // Only a build is held by them.
+  [builds, proposals] = [5, 50];
+  assert.equal(await bot.simulateCaps(pool, BOT, 9, 'question', {}), null);
+});
+
 test('the held lines name the limit and never promise more than the refresh does', () => {
   assert.match(live.heldText({ cap: 'proposals_per_app', verdict: 'ready', limit: 2 }), /when one of its 2 changes on this project is voted in or closed/);
+  // #6156: a project's builds all under way: it waits for the bot's turn, not for a vote.
+  const turn = live.heldText({ cap: 'builds_per_app', verdict: 'ready', limit: 5, project: 'Plant Pal' });
+  assert.equal(turn, 'Homeroom bot will build this when one of the 5 changes it is building on Plant Pal at once is done.');
+  assert.ok(!/vote/.test(turn));
+  assert.ok(!/\u2014/.test(turn));
   const q = live.heldText({ cap: 'question_tripwire', verdict: 'question', limit: 10 });
   assert.match(q, /has a question about this request, but it has already posted 10 questions and notes on this project today/);
   assert.match(live.heldText({ cap: 'question_tripwire', verdict: 'empty', limit: 10 }), /has a note on this request/);

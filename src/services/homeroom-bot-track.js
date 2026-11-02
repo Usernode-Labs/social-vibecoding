@@ -43,11 +43,15 @@ const STEPS = Object.freeze(['plan', 'build', 'checks', 'vote', 'live']);
 // chat folds them into "finished today".
 const ENDED = new Set(['live', 'stopped', 'done_elsewhere', 'closed']);
 
-// The limits a request can be held at. `slots`: the project's
-// PROPOSALS_PER_APP_CAP; `bot_wide`: the bot's ceiling across projects;
+// The limits a request can be held at. `builds`: the project's builds
+// waiting or under way (homeroom-bot.js BUILDS_PER_APP, #6156), so it waits
+// for the bot's turn; `slots`: the project's changes waiting for votes
+// (WAITING_PER_APP), so it waits for votes on the bot's other changes;
+// `bot_wide`: the bot's ceiling across projects;
 // `questions`: the daily allowance of questions on the project;
 // `allowance`: whoever pays for it is out of building time this week.
 const CAP_LIMITS = Object.freeze({
+  builds_per_app: 'builds',
   proposals_per_app: 'slots',
   proposals_total: 'bot_wide',
   question_tripwire: 'questions',
@@ -210,6 +214,11 @@ function trackOf({ job, entry = null, runs = [], held = null, doneBy = null, unt
   const stage = job.stage || entry?.stage || null;
   const lead = runs.find((run) => Number(run.id) === Number(job.id)) || runs[0] || null;
   let base = stage ? fromStage(stage, { waitingFor: entry?.waitingFor || job.waitingFor || null }) : null;
+  // #6156: held, it waits at the limit its run was held by, as an ended
+  // hold reads it (fromOutcome): the bot's turn, or votes on its changes.
+  if (base?.state === 'held' && stage === 'held' && CAP_LIMITS[lead?.cap_suppressed]) {
+    base = { ...base, why: CAP_LIMITS[lead.cap_suppressed] };
+  }
   // A stage that says nothing waits (a change up for a vote) is read off the
   // outcome when the work ended in something sharper.
   if (!base) base = fromOutcome(job.outcome, lead);
@@ -703,11 +712,13 @@ async function openRequestsOf(app, deps = {}) {
 
 /**
  * One project's bot slots, for the slots page under its Workshop: what
- * holds each of its PROPOSALS_PER_APP_CAP slots (homeroom-bot.js
- * slotHolders), the requests waiting for one in the order the bot takes
- * them up (heldQueue), the ones on hold until the week resets, how many
- * wait to be read, and the viewer's own building time this week. Every
- * request is carried with its track.
+ * holds each of its slots (homeroom-bot.js slotHolders), the requests
+ * waiting for one in the order the bot takes them up (heldQueue), the ones
+ * on hold until the week resets, how many wait to be read, and the viewer's
+ * own building time this week. Every request is carried with its track.
+ * #6156: a slot is a build (`buildCap` of them, the project's
+ * BUILDS_PER_APP or its own number) or a change waiting for votes
+ * (`waitCap`, WAITING_PER_APP or its own), each counted against its own.
  */
 async function slotsView(pool, { app, user = null, settings = null, deps = {} }) {
   const botSvc = deps.botSvc || require('./homeroom-bot');
@@ -716,12 +727,14 @@ async function slotsView(pool, { app, user = null, settings = null, deps = {} })
   const { rows: [bot] = [] } = await pool.query(
     'SELECT id FROM users WHERE username = $1 AND is_synthetic = TRUE', [BOT_USERNAME],
   );
+  const caps = botSvc.appCapsOf(s, app.id);
   const view = {
     app: { slug: app.slug, name: app.name || app.slug },
     botOn: !!s && s.mode !== 'off',
     acts: !!s && live.isLiveFor(s, app),
     paused: Array.isArray(s?.pausedApps) && s.pausedApps.includes(app.slug),
-    cap: botSvc.PROPOSALS_PER_APP_CAP,
+    buildCap: caps.building,
+    waitCap: caps.waiting,
     buildsAtOnce: botSvc.BUILDS_PER_PROJECT || null,
     slots: [],
     waiting: [],
@@ -899,11 +912,15 @@ function demoSlots(app, now = Date.now(), mocks = []) {
     const a = about(n, title, askedBy);
     return { kind, issueNumber: n, ...a, since: ago(60), track: track(n, a.title, fields, extra) };
   };
+  // #6156: its builds are all in use, so these wait for the bot's turn.
   const wait = (n, title, askedBy, position, minutes) => {
     const a = about(n, title, askedBy);
-    return { issueNumber: n, ...a, position, limit: 'slots', since: ago(minutes),
-      track: track(n, a.title, { outcome: 'held' }, { held: { position, limit: 'slots' } }) };
+    return { issueNumber: n, ...a, position, limit: 'builds', since: ago(minutes),
+      track: track(n, a.title, { outcome: 'held' }, {
+        held: { position, limit: 'builds' }, runs: [{ verdict: 'ready', cap_suppressed: 'builds_per_app', created_at: ago(minutes) }],
+      }) };
   };
+  const botSvc = require('./homeroom-bot');
   // Any other request: its track when the bot has one (`fields` null: none).
   const other = (n, title, askedBy, fields, extra = {}) => {
     const a = about(n, title, askedBy);
@@ -919,13 +936,17 @@ function demoSlots(app, now = Date.now(), mocks = []) {
     botOn: true,
     acts: true,
     paused: false,
-    cap: 5,
+    buildCap: botSvc.BUILDS_PER_APP,
+    waitCap: botSvc.WAITING_PER_APP,
     buildsAtOnce: 3,
     slots: [
       slot('build', 900001, 'Staging demo: a total under the list', 'staging-demo-ana', { stage: 'building', since: ago(15) }),
       slot('build', 900003, 'Staging demo: darker buttons', 'staging-demo-ben', { stage: 'fixing', since: ago(4) }, {
         runs: [{ verdict: 'ready', created_at: ago(120) }],
       }),
+      slot('build', 900018, 'Staging demo: the bot is building this', 'staging-demo-cy', { stage: 'reviewing', since: ago(8) }),
+      slot('build', 900021, 'Staging demo: a calendar view', 'staging-demo-ana', { stage: 'build_queued', since: ago(30) }),
+      slot('build', 900022, 'Staging demo: export to a file', 'staging-demo-ben', { stage: 'build_queued', since: ago(12) }),
       slot('proposal', 900006, 'Staging demo: a name for the bot', 'staging-demo-ana', { stage: 'vote', since: ago(300) }),
       slot('proposal', 900002, 'Staging demo: smaller app names', 'staging-demo-cy', { stage: 'checks', since: ago(20) }),
       slot('proposal', 900015, 'Staging demo: keep the vote history', 'staging-demo-ben', { stage: 'question', since: ago(10) }),

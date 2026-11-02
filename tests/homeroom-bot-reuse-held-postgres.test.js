@@ -97,9 +97,10 @@ test('a held ready verdict is reused while its request is unchanged, and read ag
     `INSERT INTO apps (name, slug, status, repo_url) VALUES ('RSS', 'rss', 'running', 'https://github.com/o/rss')
      RETURNING id, slug, name, repo_url`,
   )).rows[0];
-  // The bot's proposals up for a vote on this app: the per-app cap, full.
+  // The bot's proposals up for a vote on this app: the per-app cap on
+  // changes waiting for votes (#6156: WAITING_PER_APP), full.
   const capped = [];
-  for (let i = 0; i < 5; i += 1) {
+  for (let i = 0; i < bot.WAITING_PER_APP; i += 1) {
     capped.push((await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, linked_issues)
        VALUES ($1, $2, $3, 'promoted', FALSE, '{99}') RETURNING id`,

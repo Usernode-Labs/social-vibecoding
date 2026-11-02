@@ -6121,7 +6121,8 @@ const AppView = {
       lead = who === 'you' ? PlatformI18n.t('changes:request.status.lead.reviewYours')
         : who ? PlatformI18n.t('changes:request.status.lead.reviewNamed', { username: who }) : PlatformI18n.t('changes:request.status.lead.review');
     } else if (st.key === 'bot') {
-      lead = bot && bot.held ? PlatformI18n.t('changes:request.status.lead.botHeld')
+      // #6156: held for its turn among the project's builds (`turn`), not for a vote.
+      lead = bot && bot.held ? (bot.turn ? PlatformI18n.t('changes:request.status.lead.botHeldTurn') : PlatformI18n.t('changes:request.status.lead.botHeld'))
         : bot && bot.plan
           // B06 (audit 2 Nov 2026): the person it waits for reads "you", not their own @name.
           ? (bot.mine ? PlatformI18n.t('changes:request.status.lead.botPlanYours')
