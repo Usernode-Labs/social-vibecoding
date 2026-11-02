@@ -300,7 +300,9 @@ function collectCatalogs(root) {
       const unusable = new Set();
       const countedKeys = new Set([...groups.values()].flat());
       for (const [key, text] of Object.entries(required)) {
-        tally.total += 1;
+        // Server-only text is translated like the rest but no screen shows it,
+        // so its being behind cannot take a language off the screens.
+        if (!isServerNamespace(namespace)) tally.total += 1;
         const problem = translationProblem(translation[key], text, countedKeys.has(key));
         if (problem) { tally[problem].push(`${namespace}:${key}`); unusable.add(key); } else messages[key] = translation[key].text;
       }
@@ -312,7 +314,7 @@ function collectCatalogs(root) {
       for (const key of Object.keys(translation)) {
         if (!(key in required)) tally.unknown.push(`${namespace}:${key}`);
       }
-      tally.translated += Object.keys(messages).length;
+      if (!isServerNamespace(namespace)) tally.translated += Object.keys(messages).length;
       catalogs[language][namespace] = messages;
     }
     tally.ships = covered(tally, config);

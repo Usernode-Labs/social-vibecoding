@@ -408,3 +408,31 @@ test('the catalog passes the build\'s check and stays out of what a screen loads
   assert.deepEqual(Object.keys(live.manifest.es), ['core'], 'the live list agrees with the shell, which checks it whole');
   assert.ok(![...live.files.keys()].some((name) => name.includes('.push.')));
 });
+
+test('a server-only catalog with nothing translated cannot take a language off the screens', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const packs = require('../scripts/language-packs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'push-coverage-'));
+  try {
+    const dir = path.join(root, 'frontend/locales');
+    const write = (file, value) => {
+      fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+      fs.writeFileSync(path.join(dir, file), JSON.stringify(value));
+    };
+    write('config.json', { sourceLanguage: 'en', minimumCoverage: 0.95, languages: { en: 'English', fr: 'Français' } });
+    const entry = (text) => ({ text, description: 'Somewhere on the screen.' });
+    write('en/core.json', { hello: entry('Hello') });
+    write('en/push.json', { one: entry('One'), two: entry('Two'), three: entry('Three') });
+    write('fr/core.json', { hello: { text: 'Bonjour', source: packs.hash('Hello') } });
+    const { config, report } = packs.collectCatalogs(root);
+    assert.equal(report.fr.total, 1, 'push is not counted');
+    assert.equal(report.fr.translated, 1);
+    assert.equal(report.fr.ships, true);
+    assert.ok(packs.shippedLanguages(config, report).fr);
+    assert.equal(report.fr.missing.length, 3, 'what it lacks is still listed, for the translation step');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

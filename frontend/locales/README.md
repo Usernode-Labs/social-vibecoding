@@ -241,9 +241,9 @@ second language.
 
 `en/push.json` is the fixed wording of the pushes people receive, and the one
 namespace only the server reads (`SERVER_NAMESPACES` in
-`scripts/language-packs.js`). The translation step fills it like any other and
-it counts towards a language's coverage, but it has no pack and is not in the
-shell's bundle. `src/services/mobile-push-policy.js` asks for it by id, and
+`scripts/language-packs.js`). The translation step fills it like any other,
+but it has no pack, is not in the shell's bundle, and does not count towards a
+language's coverage, so its being behind cannot take a language off the screens. `src/services/mobile-push-policy.js` asks for it by id, and
 `src/services/push-language.js` words a push in the recipient's `users.locale`:
 what wins is what wins everywhere (committed, then cached for the current
 English, then English, message by message), read at most once a minute per
