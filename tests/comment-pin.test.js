@@ -993,18 +993,14 @@ test('takeBase bounds the shell\'s own draw, and layInPanel bounds the panel blo
 
 // ── 2. Posting ────────────────────────────────────────────────────────
 
-test('the request says where the comment was pinned, in words', () => {
-  assert.equal(post.whereLine({ inApp: false, screen: '#settings/experimental', at: { tag: 'button', id: 'settings-save', text: 'Save' } }),
-    'Pinned with C on Homeroom at #settings/experimental, on button "Save" (#settings-save).');
-  assert.equal(post.whereLine({ inApp: true, screen: '/lists/42', at: { tag: 'div', id: '', text: 'Buy milk' } }),
-    'Pinned with C in the app at /lists/42, on div "Buy milk".');
-  assert.equal(post.whereLine({ inApp: true, screen: '', at: null }), 'Pinned with C in the app at /.');
-  assert.equal(post.whereLine({ inApp: true, screen: '/lists/42', at: { tag: 'div', id: '', text: 'Buy milk' }, preview: 4223 }, 'milkdrop'),
-    'Pinned with C in the preview of change 4223 at /lists/42, on div "Buy milk". Change: #app/milkdrop/dev/sessions/4223');
-  assert.equal(post.whereLine({ inApp: true, screen: '/lists/42', at: null, preview: 4223 }, null),
-    'Pinned with C in the preview of change 4223 at /lists/42.', 'no slug, no link');
-  assert.equal(post.whereLine({ inApp: false, screen: '#home', at: null, preview: null }), 'Pinned with C on Homeroom at #home.');
-  assert.equal(post.descriptionFor('  Make it bigger  ', 'Pinned.'), 'Make it bigger\n\nPinned.');
+test('the request is the comment\'s words, plus a link to the change it was pinned in', () => {
+  assert.equal(post.descriptionFor('  Make it bigger  ', ''), 'Make it bigger', 'nothing else is added');
+  assert.equal(post.descriptionFor('Make it bigger', post.changeLine(4223, 'milkdrop')),
+    'Make it bigger\n\nChange: #app/milkdrop/dev/sessions/4223');
+  assert.equal(post.changeLine(4223, 'milkdrop'), 'Change: #app/milkdrop/dev/sessions/4223');
+  assert.equal(post.changeLine(4223, null), '', 'no slug, no link');
+  assert.equal(post.changeLine(null, 'milkdrop'), '', 'no preview, no link');
+  assert.equal(post.descriptionFor('Make it bigger', post.changeLine(4223, null)), 'Make it bigger');
 });
 
 function withFetch(responses, fn) {
@@ -1022,7 +1018,7 @@ function withFetch(responses, fn) {
 }
 
 const blob = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: 'image/png' });
-const base = { text: 'Make it bigger', target: 'app', appSlug: 'demo', shots: [{ blob, pins: [] }], where: 'Pinned with C in the app at /.' };
+const base = { text: 'Make it bigger', target: 'app', appSlug: 'demo', shots: [{ blob, pins: [] }], change: '' };
 
 test('a comment is the dialog\'s two requests: the picture, then the request naming it', () => withFetch([
   { status: 200, body: { id: 'a'.repeat(32) } },
@@ -1035,7 +1031,7 @@ test('a comment is the dialog\'s two requests: the picture, then the request nam
   assert.equal(calls[0].init.body, blob);
   assert.equal(calls[1].url, '/api/feedback');
   assert.deepEqual(JSON.parse(calls[1].init.body), {
-    description: 'Make it bigger\n\nPinned with C in the app at /.',
+    description: 'Make it bigger',
     target: 'app', appSlug: 'demo', screenshotIds: ['a'.repeat(32)],
   });
 }));
@@ -1045,7 +1041,7 @@ test('Homeroom gets no app slug, and a comment without a picture makes one reque
 ], async (calls) => {
   await post.postComment({ ...base, target: 'platform', shots: [] });
   assert.equal(calls.length, 1);
-  assert.deepEqual(JSON.parse(calls[0].init.body), { description: 'Make it bigger\n\nPinned with C in the app at /.', target: 'platform' });
+  assert.deepEqual(JSON.parse(calls[0].init.body), { description: 'Make it bigger', target: 'platform' });
 }));
 
 test('a picture the server will not take does not cost the words', () => withFetch([
@@ -1080,7 +1076,7 @@ test('the box posts every picture first, then its title, Kudos and the page\'s p
   });
   assert.deepEqual(calls.slice(0, 3).map((c) => c.init.body), [blob, imageA, imageB], 'the page first, then the person\'s own');
   assert.deepEqual(JSON.parse(calls[3].init.body), {
-    description: 'Make the Join   button\nbigger\n\nPinned with C in the app at /.',
+    description: 'Make the Join   button\nbigger',
     target: 'app', appSlug: 'demo', title: 'Bigger Join button', bounty: true,
     screenshotIds: ['a'.repeat(32), 'b'.repeat(32), 'c'.repeat(32)],
     screenshotPins: [{ id: 'a'.repeat(32), x: 0.25, y: 0.5, note: 'Make the Join button bigger' }],
@@ -1124,30 +1120,6 @@ test('a request of several comments numbers them, and each picture carries its o
   const texts = ['The Join button is too small', '  Pace should say min per km  ', 'And the list wraps'];
   assert.equal(post.numberedWords(texts), '1. The Join button is too small\n\n2. Pace should say min per km\n\n3. And the list wraps');
   assert.equal(post.numberedWords(['  Just one  ', '']), 'Just one', 'one comment reads as it always has');
-  const where = post.whereLines([
-    { inApp: true, screen: '/runs', at: { tag: 'button', id: '', text: 'Join' } },
-    { inApp: true, screen: '/runs', at: null },
-  ]);
-  assert.equal(where, 'Pinned with C in the app at /runs: 1 on button "Join"; 2 on the page.');
-  assert.equal(post.whereLines([
-    { inApp: true, screen: '/runs', at: { tag: 'button', id: '', text: 'Join' } },
-    { inApp: false, screen: '#home', at: { tag: 'h1', id: 'hi', text: 'Home' } },
-  ]), 'Pinned with C: 1 in the app at /runs, on button "Join"; 2 on Homeroom at #home, on h1 "Home" (#hi).');
-  assert.equal(post.whereLines([{ inApp: false, screen: '#x', at: null }]), 'Pinned with C on Homeroom at #x.');
-  assert.equal(post.whereLines([
-    { inApp: true, screen: '/lists', at: null, preview: 4223 },
-    { inApp: false, screen: '#home', at: null },
-  ], 'milkdrop'), 'Pinned with C: 1 in the preview of change 4223 at /lists; 2 on Homeroom at #home. Change: #app/milkdrop/dev/sessions/4223',
-  'each comment names its place; the change link comes once, at the end');
-  assert.equal(post.whereLines([
-    { inApp: true, screen: '/lists', at: null, preview: 4223 },
-    { inApp: false, screen: '#home', at: null },
-  ]), 'Pinned with C: 1 in the preview of change 4223 at /lists; 2 on Homeroom at #home.', 'no slug, no link');
-  assert.equal(post.whereLines([
-    { inApp: true, screen: '/lists', at: null, preview: 4223 },
-    { inApp: true, screen: '/lists', at: null, preview: 4223 },
-  ], 'milkdrop'), 'Pinned with C in the preview of change 4223 at /lists: 1 on the page; 2 on the page. Change: #app/milkdrop/dev/sessions/4223');
-
   const shotB = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 2])], { type: 'image/png' });
   await post.postComment({
     ...base,
@@ -1156,8 +1128,9 @@ test('a request of several comments numbers them, and each picture carries its o
       { blob, pins: [{ x: 0.1, y: 0.2, n: 1, note: texts[0] }, { x: 0.3, y: 0.4, n: 2, note: texts[1] }] },
       { blob: shotB, pins: [{ x: 0.5, y: 0.6, n: 3, note: texts[2] }] },
     ],
-    where,
   });
+  assert.doesNotMatch(JSON.parse(calls[2].init.body).description, /Pinned with C/,
+    'the words only: no sentence about where the pin was');
   assert.deepEqual(JSON.parse(calls[2].init.body).screenshotPins, [
     { id: 'a'.repeat(32), x: 0.1, y: 0.2, n: 1, note: 'The Join button is too small' },
     { id: 'a'.repeat(32), x: 0.3, y: 0.4, n: 2, note: 'Pace should say min per km' },
@@ -1187,14 +1160,14 @@ test('handing over opens the dialog with the words, the pictures, the pin, the t
   globalThis.window = { App: { openFeedbackModal: (opts) => { got = opts; } } };
   try {
     post.handOver({ ...base, target: 'platform' });
-    assert.deepEqual(got, { target: 'platform', description: 'Make it bigger\n\nPinned with C in the app at /.', screenshots: [{ blob }] });
+    assert.deepEqual(got, { target: 'platform', description: 'Make it bigger', screenshots: [{ blob }] });
     post.handOver(full);
   } finally {
     globalThis.window = prev;
   }
   assert.deepEqual(got, {
     target: 'app',
-    description: 'Make the Join   button\nbigger\n\nPinned with C in the app at /.',
+    description: 'Make the Join   button\nbigger',
     screenshots: [{ blob, pins: [{ x: 0.25, y: 0.5, n: null, note: 'Make the Join button bigger' }] }, { blob: imageA }, { blob: imageB }],
     title: 'Bigger Join button',
     bounty: true,

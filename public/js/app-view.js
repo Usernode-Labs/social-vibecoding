@@ -29087,7 +29087,7 @@ const AppView = {
   // What the open staging preview is showing (#4918): { sessionId, slug,
   // name, self_hosted } — the change and the app its frames show — set by
   // ensureStaging and cleared on close. Comment mode reads it to file a
-  // request on the previewed app and name the change in its where line.
+  // request on the previewed app and name the change in its description.
   _stagingPreview: null,
 
   // #127: show/hide + wire the overlay's "Test this change" button and the

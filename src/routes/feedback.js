@@ -127,7 +127,7 @@ function buildScreenshotsEmbed(ids, domain, pins = null) {
 //
 // which never reaches a server: GitHub's image proxy, the coding agents and
 // GET /issue-images/:id all see the plain picture, and the comment's words
-// and where line are in the body for them. The same rule as
+// are in the body for them. The same rule as
 // frontend/src/features/comment-pin/pin-data.ts `pinsFragment`, which reads
 // it back; tests/comment-pin.test.js holds the two together. A request made
 // of several comments numbers them, and a picture with several of their pins
