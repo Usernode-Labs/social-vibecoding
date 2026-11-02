@@ -4,6 +4,7 @@ const { decrypt } = require('./secrets');
 const { ALLOWED_KINDS, buildMessage, isPushParked } = require('./mobile-push-policy');
 const { classifyError } = require('./mobile-push-provider');
 const { countUnread } = require('./notifications');
+const { pushTranslator } = require('./push-language');
 const log = require('./logger');
 
 const CONVERSATION_NOTIFICATION_KINDS = new Set([
@@ -314,6 +315,7 @@ class MobilePushWorker {
               d.created_at AS delivery_created_at,
               n.id AS notification_id, n.user_id AS notification_user_id,
               n.kind, n.read_at, n.detail, n.conversation_id, n.chat_message_id,
+              recipient.locale AS recipient_locale,
               EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = n.user_id AND b.app_id = n.app_id) AS app_blocked,
               a.name AS app_name,
               a.self_hosted AS app_self_hosted,
@@ -356,6 +358,7 @@ class MobilePushWorker {
               r.session_expires_at AS registration_session_expires_at
          FROM mobile_push_deliveries d
          JOIN notifications n ON n.id = d.notification_id
+         LEFT JOIN users recipient ON recipient.id = n.user_id
          LEFT JOIN apps a ON a.id = n.app_id
          LEFT JOIN users su ON su.id = n.source_user_id
          LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
@@ -553,6 +556,9 @@ class MobilePushWorker {
     }
 
     const unreadCount = await this.unreadBadgeCount(row);
+    // The recipient's language. Null, for nobody's or for English, leaves the
+    // words as the policy has them; this never rejects.
+    const translate = await pushTranslator(this.pool, row.recipient_locale);
 
     let message;
     try {
@@ -565,6 +571,7 @@ class MobilePushWorker {
         userId: row.notification_user_id,
         expiresAt: row.expires_at,
         unreadCount,
+        translate,
         // Send-time display context (#3289). Every field is optional: the
         // policy degrades to the generic copy rather than failing a delivery.
         context: {

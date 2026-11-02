@@ -13,7 +13,7 @@ namespace per surface (`core` and `shell` for what every screen has, then
 language loads only what the screen on show needs.
 
 Outside all of this: user content, an embedded app's own interface, the admin
-console, sentences the server composes (API errors, push and email text), and
+console, sentences the server composes (API errors and email text), and
 the few standalone pages that load no shell bundle (the CLI and connector
 consent pages among them). Dates and numbers are still formatted as they
 were; only the words around them are catalog entries. Apps still receive the
@@ -236,6 +236,22 @@ runtime: `PlatformI18n: englishPlatformI18n()` from
 English text for an assertion that names the message by id, and
 `loadInSpanish` in `tests/lib/language-fixture.js` renders a real module in a
 second language.
+
+## A phone push
+
+`en/push.json` is the fixed wording of the pushes people receive, and the one
+namespace only the server reads (`SERVER_NAMESPACES` in
+`scripts/language-packs.js`). The translation step fills it like any other and
+it counts towards a language's coverage, but it has no pack and is not in the
+shell's bundle. `src/services/mobile-push-policy.js` asks for it by id, and
+`src/services/push-language.js` words a push in the recipient's `users.locale`:
+what wins is what wins everywhere (committed, then cached for the current
+English, then English, message by message), read at most once a minute per
+language, and a problem costs the push its translation, never its delivery.
+`scripts/language-inventory.js` reads the client only, so
+`tests/mobile-push-language.test.js` checks these ids against the catalog. Names,
+titles, quoted words and the Homeroom bot's own words go in as they are, and what
+only a full admin receives stays in English in the policy.
 
 ## How a language reaches the screen
 
