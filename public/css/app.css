@@ -22836,6 +22836,25 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
   display: inline-flex; align-items: center; justify-content: center;
 }
 .platform-tab-mark:has(.platform-tab-votes) > #platform-tabs-badge-communities { display: none; }
+/* V02 (audit, 2 Nov 2026): ON THE PHONE'S BAR THE TAB'S ONE NUMBER IS THE
+   VOTES. The unread channels were a grey number in the same seat, so voting
+   on the only change waiting turned a blue 1 into a grey 2, which read as
+   the count growing. They are a grey dot there now: "something new to read"
+   with no figure to mistake for the votes. The span keeps its text and its
+   accessible name; the desktop rail, which gives the count its own pill at
+   the row's end, keeps the number. */
+@media (max-width: 767px) {
+  #platform-tabs-badge-communities {
+    top: -1px;
+    left: calc(100% - 5px);
+    min-width: 0;
+    width: 9px;
+    height: 9px;
+    padding: 0;
+    font-size: 0;
+    color: transparent;
+  }
+}
 
 /* THE MARK'S TILE (#2718). The artwork is a near-black squircle, which is a
    shade the dark bar behind it is also wearing — `bg-zinc-900` on
