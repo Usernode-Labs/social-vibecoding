@@ -54,6 +54,12 @@ type RowView = {
   addTitle: string;
 };
 
+// The wide window's box grid (overnight audit W03): as many 20rem columns as
+// the list's own width holds, not a count picked by the window's width, which
+// left two ~250px boxes beside the rail at 800px. #browse-list
+// (./browse-screen.tsx) and the "Show more" grid below share it.
+export const BOX_COLUMNS = 'md:grid-cols-[repeat(auto-fill,minmax(20rem,1fr))]';
+
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Browse : null) || null;
 }
@@ -351,7 +357,7 @@ export function BrowseRows({ rows, site = null, curated = false, grouped = true,
   // The default list's two sections (#5267): "Recommended for you" (the
   // featured apps you are not in, Browse.recommendedApps) and then the rest,
   // in the Recommended order, under one heading. The rest is "More apps"
-  // under a Recommended section and "All apps" where there is none.
+  // under a Recommended section and "Apps to try" where there is none.
   const picked = shown.filter((view) => view.recommended);
   const rest = shown.filter((view) => !view.recommended);
   const more = rows.filter((view) => view.directoryTier === 'more');
@@ -400,7 +406,7 @@ export function BrowseRows({ rows, site = null, curated = false, grouped = true,
             </Button>
           </div>
           <div id="browse-more-apps" className={moreExpanded
-            ? 'md:col-span-full md:grid md:grid-cols-2 xl:grid-cols-3 md:gap-3'
+            ? `md:col-span-full md:grid ${BOX_COLUMNS} md:gap-3`
             : 'hidden'}>
             {moreExpanded ? renderRows(more) : null}
           </div>

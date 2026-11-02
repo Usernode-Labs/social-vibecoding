@@ -92,7 +92,7 @@ import { pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
 import { runningAppStore } from './parked-store.js';
 import { SideApps } from './side-apps';
-import { RailCommunities, useRailCommunities } from './rail-communities';
+import { RAIL_COMMUNITIES, RailCommunities, useRailCommunities } from './rail-communities';
 import { RailConversations } from './rail-conversations';
 import { RailPinned } from './rail-pinned';
 import { useSidebarRows } from './sidebar-rows';
@@ -863,9 +863,61 @@ function openCommunitiesPage(): void {
   if (window.location.hash !== '#communities') window.location.hash = '#communities';
 }
 
+/**
+ * THE PHONE'S BAR IS READ IN THE ORDER IT IS SEEN (audit N01, 1 Nov 2026).
+ *
+ * The markup is the rail's order (TWO ORDERS, ONE MARKUP above), and the
+ * declared checks pin that sibling chain, so the phone's five cells are laid
+ * out with `order`. A screen reader followed the markup: Home, Messages,
+ * Homeroom bot, Communities, You, against Home, Communities, Homeroom bot,
+ * Messages, You on screen. Below 768px `aria-owns` hands the five tabs to
+ * the accessibility tree in the bar's order; the DOM, and so the chain the
+ * checks select on, is untouched. Off the phone the attribute goes, and the
+ * rail reads in its markup order as before.
+ *
+ * Written from an effect, never rendered: the prerender has no width, and a
+ * first client render that differed from it would be a hydration mismatch.
+ * The Duo's side strip is left alone: its Apps section is the bar's first
+ * child, which this list would not reach.
+ */
+export const PHONE_TAB_ORDER = [
+  'platform-tab-home',
+  'platform-tab-workshop',
+  'platform-tab-ai',
+  'platform-tab-messages',
+  'platform-tab-me',
+] as const;
+
+export function phoneReadingOrder(phone: boolean, sideStrip: boolean): string | null {
+  return phone && !sideStrip ? PHONE_TAB_ORDER.join(' ') : null;
+}
+
+function usePhoneReadingOrder(barRef: React.RefObject<HTMLElement | null>): void {
+  useEffect(() => {
+    const bar = barRef.current;
+    if (!bar || typeof window === 'undefined' || !window.matchMedia) return undefined;
+    const mq = window.matchMedia('(max-width: 767.98px)');
+    const root = document.documentElement;
+    const apply = () => {
+      const owns = phoneReadingOrder(mq.matches, root.hasAttribute('data-side-strip'));
+      if (owns) bar.setAttribute('aria-owns', owns);
+      else bar.removeAttribute('aria-owns');
+    };
+    apply();
+    mq.addEventListener?.('change', apply);
+    const watch = typeof MutationObserver === 'function' ? new MutationObserver(apply) : null;
+    watch?.observe(root, { attributes: true, attributeFilter: ['data-side-strip'] });
+    return () => {
+      mq.removeEventListener?.('change', apply);
+      watch?.disconnect();
+    };
+  }, [barRef]);
+}
+
 export function PlatformTabs() {
   const barRef = useRef<HTMLElement | null>(null);
   const t = useMessages();
+  usePhoneReadingOrder(barRef);
   // `true` is what the prerendered document ships: the bar is present and
   // visible, and the routes that hide it (an app, chromeless, the signed-out
   // shell) publish `false` once the router has run.
@@ -1172,10 +1224,13 @@ export function PlatformTabs() {
               app.css shows these instead of the label and the tab's own
               badge there; a hidden element is not in the accessible name, so
               each width's name is what it shows.
+              Overnight audit Y04: the count is said only when it IS more
+              than the rows above list. "All 2 communities" under the same
+              two rows (or "All 1 community") said nothing but a stray number.
           */}
           {key === 'workshop' ? (
             <span className="platform-tab-all-label">
-              {allCount > 0 ? t('core:rail.all', { count: allCount }) : t('core:rail.allPlain')}
+              {allCount > RAIL_COMMUNITIES ? t('core:rail.all', { count: allCount }) : t('core:rail.allPlain')}
             </span>
           ) : null}
           {key === 'workshop' && allVotes > 0 ? (

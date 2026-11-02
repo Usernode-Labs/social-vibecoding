@@ -267,6 +267,9 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
         ? { aboutKind: String(pick(bot, 'aboutKind')) as 'request' | 'change', aboutNumber: strictId(pick(bot, 'aboutNumber'))! }
         : {}),
       aboutTitle: optional('aboutTitle'),
+      // B04, B08, B19 (audit 2 Nov 2026): what a new project's thread is for, and what a draft's thread drafts.
+      projectIdea: optional('projectIdea'),
+      draftTitle: optional('draftTitle'),
       ...(['fix', 'add', 'design', 'project'].includes(String(pick(bot, 'changeKind'))) ? { changeKind: String(pick(bot, 'changeKind')) as HomeroomBotMeta['changeKind'] } : {}),
       ...(issueNumber ? { issueNumber } : {}),
       issueTitle: optional('issueTitle'),

@@ -292,8 +292,8 @@
     "description": "Heading over the rest of Discover's default list, below the \"Featured\" group."
   },
   "list.heading.allApps": {
-    "text": "All apps",
-    "description": "Heading over Discover's default list when there is no \"Featured\" group above it."
+    "text": "Apps to try",
+    "description": "Heading over Discover's default list (the For you view) when there is no \"Featured\" group above it: the apps that run, in Homeroom's suggested order. Not a personal recommendation, and not every app (the Browse view is), so it says neither \"for you\" nor \"all\"."
   },
   "list.more.note": {
     "text": "Demos and apps needing fixes, setup, or an icon are still available below and in search.",

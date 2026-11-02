@@ -1868,12 +1868,12 @@
     "description": "Title of the row that opens a project's discussion on its Hub. <0></0> draws the channel's name in a lighter weight; {{handle}} is the channel's name without the #, for example general."
   },
   "hub.forYou.discussion.lastBy": {
-    "text": "@{{username}}: {{message}} · {{ago}}",
-    "description": "Second line of the Discussion row on a project's Hub: the last message in the channel, who wrote it and how long ago. {{username}} is the writer, {{message}} the message itself, {{ago}} a time such as \"4h ago\"."
+    "text": "<0>@{{username}}: {{message}}</0><1> · {{ago}}</1>",
+    "description": "Second line of the Discussion row on a project's Hub: the last message in the channel, who wrote it and how long ago. {{username}} is the writer, {{message}} the message itself, {{ago}} a time such as \"4h ago\". <0> wraps the part that is cut short when the line is too long, <1> the time, which is always shown whole."
   },
   "hub.forYou.discussion.last": {
-    "text": "{{message}} · {{ago}}",
-    "description": "Second line of the Discussion row on a project's Hub when the last message in the channel has no writer to name: the message and how long ago it was sent. {{ago}} is a time such as \"4h ago\"."
+    "text": "<0>{{message}}</0><1> · {{ago}}</1>",
+    "description": "Second line of the Discussion row on a project's Hub when the last message in the channel has no writer to name: the message and how long ago it was sent. {{ago}} is a time such as \"4h ago\". <0> wraps the message, which is cut short when the line is too long, <1> the time, which is always shown whole."
   },
   "hub.forYou.discussion.postedBy": {
     "text": "@{{username}} posted · {{ago}}",
@@ -3771,6 +3771,14 @@
     "text": "{{yes}}/{{needed}} yes · {{no}} no",
     "description": "Final vote count shown beside the Live status of a change that has shipped, after the yes votes against the number needed, then the no votes. {{yes}} is how many yes votes counted, {{needed}} how many were needed to pass and {{no}} how many voted no, for example \"3/3 yes · 1 no\"."
   },
+  "card.tally.passed": {
+    "text": "{{yes}} yes",
+    "description": "Final vote count shown beside the Live status of a change that has shipped with at least as many yes votes as it needed and nobody against it. {{yes}} is how many yes votes counted, for example \"3 yes\". The number needed is in the hover text."
+  },
+  "card.tally.passedNo": {
+    "text": "{{yes}} yes · {{no}} no",
+    "description": "Final vote count shown beside the Live status of a change that has shipped with at least as many yes votes as it needed, then the no votes. {{yes}} is how many yes votes counted and {{no}} how many voted no, for example \"3 yes · 1 no\". The number needed is in the hover text."
+  },
   "card.tally.title": {
     "text": "{{yes}} yes and {{no}} no. It needed {{needed}} yes to pass.",
     "description": "Hover text for the final vote count beside the Live status of a change that has shipped: the whole sentence the short count stands for. {{yes}} is how many yes votes counted, {{no}} how many voted no and {{needed}} how many yes votes were needed to pass."
@@ -4054,6 +4062,10 @@
   "card.vote.picker.sendNo": {
     "text": "Vote no",
     "description": "Button at the bottom of the vote picker when No is chosen: sends a No vote. \"Vote\" is a verb."
+  },
+  "card.vote.picker.sendPick": {
+    "text": "Vote",
+    "description": "Button at the bottom of the vote picker before Yes or No is chosen: it stays off until one is. \"Vote\" is a verb."
   },
   "card.vote.picker.sendApprove": {
     "text": "Approve",
@@ -5010,6 +5022,30 @@
   "topic.back.allItems": {
     "text": "All items",
     "description": "Text of the back chip at the top of a proposal's or request's page when it was opened from the project's All items page (the whole board of requests and proposals under the Workshop tab), which the chip returns to. Shown after a left-pointing chevron."
+  },
+  "topic.back.hub": {
+    "text": "Hub",
+    "description": "Text of the back chip at the top of a proposal's or request's page when the project's page will reopen on its Hub (the project's front page), which the chip returns to. Shown after a left-pointing chevron."
+  },
+  "topic.back.toHub": {
+    "text": "Back to Hub",
+    "description": "Accessible name of the back chip on a proposal's or request's page that returns to the project's Hub, its front page."
+  },
+  "topic.back.needs": {
+    "text": "Needs you",
+    "description": "Text of the back chip at the top of a proposal's or request's page when the project's page will reopen on its Needs you place (the decisions waiting on this person), which the chip returns to. Shown after a left-pointing chevron."
+  },
+  "topic.back.toNeeds": {
+    "text": "Back to Needs you",
+    "description": "Accessible name of the back chip on a proposal's or request's page that returns to the project's Needs you place, the list of decisions waiting on this person."
+  },
+  "topic.back.channel": {
+    "text": "#{{handle}}",
+    "description": "Text of the back chip at the top of a proposal's or request's page when the project's page will reopen on one of its chat channels, which the chip returns to. {{handle}} is the channel's name without its #, such as general. Shown after a left-pointing chevron."
+  },
+  "topic.back.toChannel": {
+    "text": "Back to #{{handle}}",
+    "description": "Accessible name of the back chip on a proposal's or request's page that returns to one of the project's chat channels. {{handle}} is the channel's name without its #, such as general."
   },
   "topic.back.toAllItems": {
     "text": "Back to All items",

@@ -98,6 +98,16 @@ export function money(cents: number, locale?: string): string {
   }
 }
 
+// A check-in's heading in the notes, "Check-in 2 (<ISO time>):", as the
+// server writes it for the model (homeroom-bot-thread-tools/investigate.js
+// recordCheckin).
+const NOTE_TIME_RE = /\((\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\):/g;
+
+/** Pure: the notes as Notes shows them: each check-in's time in the card's own words, never as stored (2 Nov 2026). */
+export function notesShown(notes: string, now: Date, locale?: string): string {
+  return notes.replace(NOTE_TIME_RE, (whole, at: string) => (Number.isNaN(Date.parse(at)) ? whole : `(${timeOf(at, now, locale)}):`));
+}
+
 function timeOf(at: string, now: Date, locale?: string): string {
   const d = new Date(at);
   const sameDay = d.toDateString() === now.toDateString();
@@ -216,7 +226,7 @@ export function InvestigationCard({ message, card }: BotCardProps) {
           className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-xl bg-[color:var(--dc-raised)] px-3 py-2 text-[0.8125rem] leading-[1.125rem] text-zinc-700 dark:text-zinc-300"
           data-bot-investigation-notes=""
         >
-          {view.notes.trim()}
+          {notesShown(view.notes.trim(), now, locale)}
         </div>
       ) : null}
       <div className="messages-bot-answers" role="group" aria-label={t('messages:botCards.investigation.choices')}>

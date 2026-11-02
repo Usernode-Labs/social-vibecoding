@@ -10,7 +10,10 @@
 // person can see, and its number) opens the request's page, as the bot's
 // other cards do (../request-page.ts). "And 4 more" under it when the model
 // left rows out, and up to three buttons that say their words as the person.
-// On a phone the table scrolls sideways inside the card, never the page.
+// Words wrap whole, headings too (2 Nov 2026: unwrapped headings squeezed the
+// first column until "Weekly calendar" broke mid-word and the tags fell off
+// the card's edge). A table that still does not fit a phone scrolls sideways
+// inside the card, never the page.
 // The words are the model's, drawn as text.
 
 import { useState, type MouseEvent } from 'react';
@@ -141,7 +144,7 @@ export function TableCard({ message, conversationId, card }: BotCardProps) {
           <thead>
             <tr>
               {columns.map((column, i) => (
-                <th key={i} scope="col" className="whitespace-nowrap py-1.5 pr-3 text-[0.75rem] font-semibold leading-4 text-zinc-500 last:pr-0 dark:text-zinc-400">{column}</th>
+                <th key={i} scope="col" className="py-1.5 pr-3 align-bottom text-[0.75rem] font-semibold leading-4 text-zinc-500 last:pr-0 dark:text-zinc-400">{column}</th>
               ))}
               {tagged ? <th scope="col" className="py-1.5"><span className="sr-only">{t('messages:botCards.table.tagHeading')}</span></th> : null}
             </tr>
@@ -151,11 +154,11 @@ export function TableCard({ message, conversationId, card }: BotCardProps) {
               <tr key={r} className="border-t border-[color:var(--app-sheet-line)] align-top" data-bot-table-row={r + 1}>
                 {row.cells.map((cell, i) => (
                   i === 0 ? (
-                    <th key={i} scope="row" className="py-2 pr-3 text-[0.9375rem] font-[650] leading-5 text-zinc-900 [overflow-wrap:anywhere] dark:text-zinc-100">
+                    <th key={i} scope="row" className="py-2 pr-3 text-[0.9375rem] font-[650] leading-5 text-zinc-900 break-words dark:text-zinc-100">
                       <RowName row={row} conversationId={conversationId} />
                     </th>
                   ) : (
-                    <td key={i} className="py-2 pr-3 text-[0.8125rem] leading-5 text-zinc-500 [overflow-wrap:anywhere] last:pr-0 dark:text-zinc-400">{cell}</td>
+                    <td key={i} className="py-2 pr-3 text-[0.8125rem] leading-5 text-zinc-500 break-words last:pr-0 dark:text-zinc-400">{cell}</td>
                   )
                 ))}
                 {tagged ? (

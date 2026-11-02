@@ -131,6 +131,8 @@ async function connectPool() {
       payload JSONB NOT NULL, source JSONB NOT NULL, actor TEXT, request_key TEXT NOT NULL, caused_by BIGINT);
   `);
   await pool.query(stageSixBlock());
+  // Audit D03: when a link went out, a migration of its own after the baseline.
+  await pool.query(fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'migrations', '0010-invite-link-shared.sql'), 'utf8'));
   // The fixture: ada (who had access before the invite tree), an open
   // community and a group.
   await pool.query(`
@@ -551,6 +553,8 @@ test('invite links against a real PostgreSQL', async (t) => {
 
     await t.test('15 Oct 2026: the hub\'s summary and the list\'s "Invite link out" read the live links as listInvites does', async () => {
       const arena = await app('arena');
+      // Audit D03: what is out is what went out; these links all did.
+      await pool.query('UPDATE community_invites SET shared_at = NOW() WHERE shared_at IS NULL');
       const { links } = await invites.listInvites(pool, { app: arena, user: ADA });
       const live = links.filter((l) => l.status === 'live');
       assert.ok(live.length > 0 && links.length > live.length, 'live links and ended ones both');
@@ -570,6 +574,28 @@ test('invite links against a real PostgreSQL', async (t) => {
       assert.equal(out.has(999999), false, 'no links, no entry');
       assert.equal((await invites.linksOutFor(pool, [arena.id], 999)).size, 0, 'somebody with no links of their own');
       assert.equal((await invites.linksOutFor(pool, [], ADA.id)).size, 0);
+    });
+
+    await t.test('audit D03: a link made by opening the pane is not out until it is copied or shared, or used', async () => {
+      const arena = await app('arena');
+      const outNow = async () => (await invites.linksOutFor(pool, [arena.id], ADA.id)).get(arena.id)?.links || 0;
+      const summaryNow = async () => (await invites.inviteSummary(pool, { app: arena, user: ADA })).links;
+      const [out0, summary0] = [await outNow(), await summaryNow()];
+      const made = await invites.createInvite(pool, { app: arena, user: ADA, days: 7, maxUses: 25 });
+      assert.equal(made.link.shared, false, 'a new link has not gone out');
+      assert.equal(await outNow(), out0, 'the list does not count it');
+      assert.equal(await summaryNow(), summary0, 'nor the hub');
+      assert.deepEqual(await invites.markShared(pool, { inviteId: made.link.id, user: as(2, 'bo', true) }),
+        { ok: false, status: 404, error: 'Invite link not found' }, 'only its maker says it went out');
+      assert.deepEqual(await invites.markShared(pool, { inviteId: made.link.id, user: ADA }), { ok: true, shared: true });
+      const when = async () => (await pool.query('SELECT shared_at FROM community_invites WHERE id = $1', [made.link.id])).rows[0].shared_at.getTime();
+      const first = await when();
+      await invites.markShared(pool, { inviteId: made.link.id, user: ADA });
+      assert.equal(await when(), first, 'the first time is the one kept');
+      assert.equal(await outNow(), out0 + 1, 'copied or shared: out');
+      assert.equal(await summaryNow(), summary0 + 1);
+      const listed = (await invites.listInvites(pool, { app: arena, user: ADA })).links.find((l) => l.id === made.link.id);
+      assert.equal(listed.shared, true);
     });
 
     await t.test('WP-D: a project with no shot yet shows the card of its idea through a live link, and only then', async () => {

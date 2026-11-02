@@ -398,4 +398,35 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
     assert.equal(where.draft.changeKind, 'project', 'its turns know what it is for');
     assert.match(mayor.systemPrompt({ username: 'dp_ada', thread: where }), /the private thread you opened for a NEW project/);
   });
+
+  await t.test('B01: a turn that opened a project thread and then gave no answer asks its question in the thread, once', async () => {
+    const opened = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
+    const message = (await conversations.sendMessage(pool, ada, opened.conversationId, { content: 'Can you make us a chore chart for our flat?' })).message;
+    const settings = { ...(await homeroomBot.readSettings(pool)), mode: 'shadow' };
+    let later = 0;
+    const sent = await mayor.runDmTurn(pool, config, {
+      bot, user: ada, settings, conversationId: opened.conversationId, message,
+      deps: {
+        apiKey: 'sk-test', seesImages: false, sleep: async () => {},
+        onLater: () => { later += 1; },
+        openMcp: async () => { throw new Error('no platform tools here'); },
+        // The model opens the thread, then says nothing at all.
+        chat: scripted([[['start_project_thread', { idea: 'a chore chart for our flat' }]], []]),
+      },
+    });
+    const { rows } = await pool.query(
+      `SELECT id, content, thread_root_id, reply_to_id FROM conversation_messages
+        WHERE conversation_id = $1 AND sender_id = $2 AND id > $3 ORDER BY id`,
+      [opened.conversationId, bot.id, message.id],
+    );
+    const inMain = rows.filter((r) => r.thread_root_id == null);
+    assert.equal(inMain.length, 1, 'Main gets the thread\'s one line and nothing else');
+    assert.match(inMain[0].content, /^New thread, for a new project: a chore chart for our flat/);
+    const answer = rows.find((r) => Number(r.id) === Number(sent.messageId));
+    assert.equal(Number(answer.thread_root_id), Number(inMain[0].id), 'the answer is in the new thread');
+    assert.equal(answer.reply_to_id, null, 'quoting nothing');
+    assert.match(answer.content, /What should the first screen show/);
+    assert.doesNotMatch(answer.content, /come back|in a minute/i, 'no promise for later');
+    assert.equal(later, 0, 'and no later try is owed');
+  });
 });

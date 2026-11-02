@@ -77,7 +77,7 @@ import { ensureSettings, prefetchSettings, settingsChunkStore } from './facade.j
 // inside the chunk — and a boot listener that only exists once the screen has
 // been opened would never fire.
 import './terms-first-run.js';
-import { SettingsMobileMenu, SettingsNavDesktop } from './settings-nav';
+import { SettingsMobileMenu, SettingsNavDesktop, SettingsPageTitle } from './settings-nav';
 import { SettingsAccountRows } from './account-rows';
 
 interface SettingsChunkState {
@@ -141,13 +141,14 @@ export function SettingsScreen() {
           and #settings-section-content rises on it with the section inside.
       */}
       <div id="settings-root" className="max-w-5xl mx-auto p-4 md:pt-5 w-full">
-        <div className="md:flex md:items-start md:gap-6">
+        <div className="lg:flex lg:items-start lg:gap-6">
           {/*
-              Desktop sidebar menu. Below md there is no nav here at all:
+              Desktop sidebar menu, from lg (1024px; settings.js
+              DESKTOP_MEDIA says why not md). Below it there is no nav here:
               phones get the two-level hierarchy instead (the level-1 menu
               renders into #settings-mobile-menu-host).
           */}
-          <div id="settings-sidebar-col" className="hidden md:block md:w-56 shrink-0 dc-lift dc-lift-session settings-side-sheet">
+          <div id="settings-sidebar-col" className="hidden lg:block lg:w-56 shrink-0 dc-lift dc-lift-session settings-side-sheet">
             <SettingsNavDesktop />
             {/*
                 Sign out is pinned below the section list rather than buried
@@ -174,7 +175,7 @@ export function SettingsScreen() {
           <div id="settings-content-col" className="flex-1 min-w-0">
             {/*
                 Mobile level 1: the grouped section menu. Empty (and
-                md:hidden) on desktop.
+                lg:hidden) on desktop.
             */}
             <SettingsMobileMenu />
             {/*
@@ -184,6 +185,7 @@ export function SettingsScreen() {
                 full width of the wide shell.
             */}
             <div id="settings-section-content" className="settings-sheet dc-lift dc-lift-session">
+              <SettingsPageTitle />
               {mounted && Sections ? <Sections /> : null}
               {mounted && !Sections && failed ? (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400 p-4">

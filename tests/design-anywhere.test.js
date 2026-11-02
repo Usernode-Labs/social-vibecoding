@@ -98,6 +98,75 @@ test('what the stylesheets are, by what the design is of', async () => {
     'the kit, for a project whose code they cannot read');
 });
 
+// 2 Nov 2026, the parity test: apps made from the templates link
+// /tailwind.css, which their image build compiles and .gitignore keeps out of
+// the repository, so every drawing of one came out on the bare kit (serif
+// text, giant icons). A sheet main does not hold is read off the running app.
+test('a stylesheet main does not hold is read off the running app', async () => {
+  assert.equal(designBot.servedPath('public/index.html', 'public/tailwind.css'), '/tailwind.css');
+  assert.equal(designBot.servedPath('index.html', 'css/site.css'), '/css/site.css');
+  assert.equal(designBot.servedPath('public/index.html', 'styles/input.css'), null, 'outside the site root is not served');
+
+  const files = {
+    'public/index.html': '<link rel="stylesheet" href="/tailwind.css"><link rel="stylesheet" href="/scene.css">',
+    'public/scene.css': '.scene{}',
+  };
+  const fetched = [];
+  const answer = { status: 200, type: 'text/css; charset=UTF-8', body: '.flex{display:flex}' };
+  const deps = {
+    mayor: {
+      SECRET_PATH_RE: /(^|\/)\.env/,
+      async sourceRepo() { return { app: { id: 7, slug: 'garden' }, repo: { owner: 'o', repo: 'garden' } }; },
+    },
+    github: { async getFileContent(_o, _r, p) { return files[p] ?? null; } },
+    runtime: {
+      productionRef: (_config, row) => ({ runtimeKind: 'docker', runtimeName: row.runtime_name || `usernode-app-${row.slug}` }),
+      appOrigin: (_config, ref) => `http://${ref.runtimeName}:3000`,
+    },
+    async fetch(url, init) {
+      fetched.push({ url, init });
+      if (answer.fail) throw new Error('connect ECONNREFUSED');
+      return {
+        ok: answer.status === 200,
+        headers: { get: (name) => (name === 'content-type' ? answer.type : null) },
+        body: { cancel() {} },
+        async text() { return answer.body; },
+      };
+    },
+  };
+  const pool = { async query(sql, params) { assert.match(sql, /runtime_kind, runtime_name FROM apps WHERE id = \$1/); assert.deepEqual(params, [7]); return { rows: [{ id: 7, slug: 'garden', runtime_kind: null, runtime_name: 'garden-live' }] }; } };
+  const app = { slug: 'garden' };
+
+  assert.deepEqual(await designBot.sheetsFor(pool, { surface: 'app', app, deps }), {
+    links: [],
+    styles: [{ path: 'public/tailwind.css', css: '.flex{display:flex}' }, { path: 'public/scene.css', css: '.scene{}' }],
+  }, 'the built Tailwind first, as the page links it, then the sheet main holds');
+  assert.equal(fetched.length, 1, 'only the sheet main lacks is fetched');
+  assert.equal(fetched[0].url, 'http://garden-live:3000/tailwind.css', 'at the running copy\'s own address, by its runtime name');
+  assert.equal(fetched[0].init.redirect, 'error');
+  assert.ok(fetched[0].init.signal, 'and given a time limit');
+
+  // An app that answers every path with its page must not pass as CSS.
+  answer.type = 'text/html'; answer.body = '<!doctype html><p>app</p>';
+  assert.deepEqual((await designBot.sheetsFor(pool, { surface: 'app', app, deps })).styles, [{ path: 'public/scene.css', css: '.scene{}' }]);
+  answer.type = 'text/css'; answer.status = 404;
+  assert.deepEqual((await designBot.sheetsFor(pool, { surface: 'app', app, deps })).styles, [{ path: 'public/scene.css', css: '.scene{}' }]);
+  answer.fail = true;
+  assert.deepEqual((await designBot.sheetsFor(pool, { surface: 'app', app, deps })).styles, [{ path: 'public/scene.css', css: '.scene{}' }],
+    'a running copy that cannot be reached leaves what main holds');
+  delete files['public/scene.css'];
+  assert.deepEqual(await designBot.sheetsFor(pool, { surface: 'app', app, deps }), { links: [designBot.KIT_SHEET], styles: [] },
+    'and the kit when nothing can be read');
+});
+
+test('the prompt says an app\'s compiled Tailwind holds only the classes it uses today', () => {
+  const design = { surface: 'app', app: { slug: 'garden', name: 'Garden club' }, title: 'Plots', width: 390, height: 844 };
+  const prompt = designBot.designPrompt({ username: 'ada', design, version: 1, html: '<p>x</p>' });
+  assert.match(prompt, /A compiled Tailwind\n? *there holds only the classes the app uses today/);
+  assert.match(prompt, /style\n? *what is new in your own <style>/);
+  assert.doesNotMatch(prompt, /—/);
+});
+
 test('the prompt: a thread with no screen yet is drawn; one with a version is edited, its stylesheets left out', () => {
   const none = designBot.designPrompt({ username: 'ada', surface: 'new', brief: 'A seed calendar' });
   assert.match(none, /This thread has no screen yet\. It is for a screen of a new project, not made yet\. Draw it with write_screen/);
@@ -138,7 +207,9 @@ test('Main Chat draws a screen in place of the screen picker: draw_screen, no Pi
   assert.doesNotMatch(prompt, /offer_design|Pick the screen/);
   const src = read('src/services/homeroom-bot-mayor.js');
   assert.match(src, /while \(rounds < limit && !ctx\.reply && !ctx\.drawScreen\) \{/, 'the turn ends with it');
-  assert.match(src, /if \(ctx\.drawScreen\) \{\n\s+return \(deps\.designBot \|\| require\('\.\/design-bot'\)\)\.draw\(pool, config, \{/);
+  assert.match(src, /if \(ctx\.drawScreen\) \{\n(?:\s+\/\/[^\n]*\n)*\s+const where = ctx\.projectThread \? [^\n]+\n\s+return \(deps\.designBot \|\| require\('\.\/design-bot'\)\)\.draw\(pool, config, \{/);
+  // B01: drawn in the new project's thread when this turn opened one.
+  assert.match(src, /const where = ctx\.projectThread \? \{ \.\.\.deps, threadRootId: ctx\.projectThread\.rootId, threadRequest: null \} : deps;/);
   assert.match(read('src/services/homeroom-bot-dm.js'), /const design = await \(deps\.designThreads \|\| require\('\.\/design-threads'\)\)\.threadOf\(/,
     'a thread that holds a design is the design bot\'s');
   assert.doesNotMatch(read('src/services/design-threads.js'), /p\.kind = 'design'/, 'any private thread can hold one');

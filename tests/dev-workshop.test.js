@@ -2498,11 +2498,32 @@ test('#4538: a change Homeroom bot built from your request is Your work, still b
   assert.ok(!workshopHtml(AppView, 'needs').match(/<span class="dev-ws-tag" data-tone="plain"><svg[^]*?Homeroom bot<\/span>/),
     'the bot\'s other change, in Needs you, wears no bot tag');
 
-  // And the de-dup holds: your vote on it still counts, but it is not
-  // listed a second time among the votes the project needs from you.
-  assert.ok(!plain(v.votes.rows).some((r) => r.key.includes('proposal:71')),
-    'the bot change is not also in the vote deck');
-  assert.equal(v.votes.count, 1, 'only the bot change nobody asked this viewer for');
+  // V01 (audit, 2 Nov 2026): your vote on it is still owed, so it is in
+  // the vote deck and Needs you's queue too, as the Communities feed counts
+  // it (OWED_PROPOSALS_WHERE). Leaving it out had the Hub say "Nothing more
+  // to vote on" while Communities said "1 vote waiting on you".
+  assert.ok(plain(v.votes.rows).some((r) => r.key.includes('proposal:71')),
+    'the bot change from your request is in the vote deck');
+  assert.equal(v.votes.count, 2, 'both bot changes wait on this viewer\'s vote');
+  assert.ok(plain(v.queue).some((r) => r.key.includes('proposal:71')),
+    'and in the Needs you queue the Hub reads');
+  assert.match(workshopHtml(AppView, 'needs'), /Dark mode toggle/, 'Needs you lists it');
+  // Once voted on, it is owed no more.
+  AppView._proposals[0].my_vote = 'yes';
+  assert.ok(!plain(AppView._workshopView().queue).some((r) => r.key.includes('proposal:71')),
+    'a vote cast takes it out');
+  AppView._proposals[0].my_vote = null;
+  // A change the viewer made themselves is still not owed by them.
+  AppView._proposals.push({ id: 73, pr_number: 214, pr_title: 'Mine by hand', status: 'promoted', username: 'me',
+    user_id: 1, created_at: at(0.4), promoted_at: at(0.4), last_message_at: at(0.4), my_vote: null });
+  assert.ok(!plain(AppView._workshopView().queue).some((r) => r.key.includes('proposal:73')),
+    'your own change waits on the group, not on you');
+  // Unless a coding agent submitted it for you (#6006): it waits on your yes,
+  // and the Communities feed counts it (external_agent IS NOT NULL).
+  AppView._proposals[2].external_agent = 'claude_code';
+  assert.ok(plain(AppView._workshopView().queue).some((r) => r.key.includes('proposal:73')),
+    'an agent-submitted change of yours is owed your yes');
+  AppView._proposals.pop();
 
   // Since your last visit does not repeat it while Your work shows it.
   const seen = 'workshopSeen:demo-app';
@@ -7063,12 +7084,18 @@ test('#6075: a live row keeps its final counted vote beside ✓ Live', () => {
   // The yes votes counted against the threshold snapshotted at merge time,
   // then the no votes.
   const withNo = render({ yes_count: 3, no_count: 1, votes_required: 3 });
-  assert.match(withNo, /<span class="dev-ws-wrow-tally" title="3 yes and 1 no\. It needed 3 yes to pass\.">3\/3 yes · 1 no<\/span>/);
+  assert.match(withNo, /<span class="dev-ws-wrow-tally" title="3 yes and 1 no\. It needed 3 yes to pass\.">3 yes · 1 no<\/span>/);
 
   // A change nobody voted against names no votes.
   const yesOnly = render({ yes_count: 2, no_count: 0, votes_required: 2 });
-  assert.match(yesOnly, /<span class="dev-ws-wrow-tally"[^>]*>2\/2 yes<\/span>/,
+  assert.match(yesOnly, /<span class="dev-ws-wrow-tally"[^>]*>2 yes<\/span>/,
     'no votes are named only when there were some');
+  // V05: more yes than it needed is the count alone, never "2/1 yes"; one
+  // that went live short of its threshold keeps the pair.
+  const over = render({ yes_count: 2, no_count: 0, votes_required: 1 });
+  assert.match(over, /<span class="dev-ws-wrow-tally" title="2 yes and 0 no\. It needed 1 yes to pass\.">2 yes<\/span>/);
+  const short = render({ yes_count: 1, no_count: 0, votes_required: 2 });
+  assert.match(short, /<span class="dev-ws-wrow-tally"[^>]*>1\/2 yes<\/span>/);
 
   // An imported PR has no counted votes: no tally, never "0/1".
   const imported = render({ yes_count: 0, no_count: 0, votes_required: 3 });
@@ -7078,4 +7105,21 @@ test('#6075: a live row keeps its final counted vote beside ✓ Live', () => {
   const deploying = render({ yes_count: 3, no_count: 1, votes_required: 3, deployment_state: 'deploying' });
   assert.match(deploying, />Going live…<\/span>/);
   assert.ok(!deploying.includes('dev-ws-wrow-tally'));
+});
+
+test('a link to the list of requests or changes opens All items by stage, not the Hub (audit N03)', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public/js/app.js'), 'utf8');
+  const at = src.indexOf("// dev, dev/issues, dev/proposals, dev/sessions (no id)");
+  assert.ok(at > 0);
+  const block = src.slice(at, at + 1200);
+  assert.match(block, /subTab = 'forum';/);
+  assert.match(block, /sec === 'proposals' \|\| sec === 'issues' \|\| sec === 'changes'/);
+  assert.match(block, /AppView\._overrideWorkshopTab\('all'\);\s*AppView\._overrideWorkshopGroup\?\.\('stage'\);/,
+    'both halves, as the retired Board route takes them');
+  // …and the two together are what put the stage pane up.
+  const view = makeAppView({ localStorage: { devWorkshopTab: 'status' } });
+  view._overrideWorkshopTab('all');
+  view._overrideWorkshopGroup('stage');
+  assert.equal([view._workshopTab(), view._getWorkshopGroup()].join('/'), 'all/stage',
+    'over a remembered Hub');
 });

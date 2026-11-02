@@ -230,3 +230,40 @@ test('papote #3: a track waiting on its requester names them to anybody else', (
     'the board list');
   assert.match(routes, /track = trackSvc\.forViewer\(track, asker, req\.user\.id\);/, 'and a request opened on its own');
 });
+
+test('B02: a filed first version waiting on its creator\'s plan is waiting on them, never "Stopped"', async () => {
+  // As the tray has it: its job and its runs keyed by the request's number,
+  // and progressFor's entry for it naming the number too.
+  const keyOf = (slug, n) => `${slug}#${Number(n) || 'first'}`;
+  const work = {
+    now: [],
+    needsYou: [{ key: 'flat-chores#1', appSlug: 'flat-chores', appName: 'Flat Chores', issueNumber: 1, firstVersion: true, outcome: null }],
+    history: [],
+  };
+  const entries = [{ project: 'flat-chores', number: 1, firstVersion: true, stage: 'plan', waitingOn: 'them' }];
+  const rows = [{ id: 60, slug: 'flat-chores', app_id: 3, issue_number: 1, verdict: 'ready', awaiting_go_at: ago(5), created_at: ago(6) }];
+  await track.withTracks(null, work, { entries, rows, keyOf });
+  const [first] = work.tracks;
+  assert.equal(first.state, 'waiting');
+  assert.equal(first.why, 'plan');
+  assert.equal(first.waitingOn, 'you');
+  // One still being set up has no number, and is found as 'first'.
+  const setting = { now: [{ key: 'ear#first', appSlug: 'ear', firstVersion: true, issueNumber: null }], needsYou: [], history: [] };
+  await track.withTracks(null, setting, { entries: [{ project: 'ear', number: null, firstVersion: true, stage: 'setting_up' }], rows: [], keyOf });
+  assert.equal(setting.tracks[0].why, 'setting_up');
+});
+
+test('B23: a request its own change made live reads live once it closed, whatever a later look said', () => {
+  const runs = [
+    { id: 71, verdict: 'empty', created_at: ago(5) },
+    { id: 70, verdict: 'ready', proposal_session_id: 9, proposal_status: 'merged', merged_at: ago(10), created_at: ago(40) },
+  ];
+  const live = track.trackOf({ job: job({ id: 71, outcome: 'empty', requestClosed: true, firstVersion: true }), runs });
+  assert.equal(live.state, 'live');
+  // A change that never went live is still just closed.
+  const closed = track.trackOf({
+    job: job({ id: 71, outcome: 'empty', requestClosed: true }),
+    runs: [runs[0], { ...runs[1], proposal_status: 'closed' }],
+  });
+  assert.equal(closed.state, 'closed');
+});

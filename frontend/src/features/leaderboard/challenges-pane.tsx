@@ -314,7 +314,19 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
   if (view.kind === 'loading') return <GridSkeleton />;
   if (view.kind === 'error') return <div className={GRID_ERROR}>{view.message}</div>;
   if (view.kind === 'empty') {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400 py-8 text-center">{t('leaderboard:challenges.empty')}</p>;
+    // W07 (overnight audit, 1 Nov 2026): the same state Home's Challenges
+    // section draws, a card with a title and a hint, and on the tabs' left
+    // edge. It was one grey line centred across the page, under a control
+    // pinned left, so the two did not share an edge at any width.
+    return (
+      <GroupedList className="mx-0 mt-4" data-challenges-empty="">
+        <ListRow
+          chevron={false}
+          title={t('leaderboard:challenges.empty')}
+          subtitle={t('leaderboard:challenges.emptyHint')}
+        />
+      </GroupedList>
+    );
   }
   // The card's own threshold, so a count it would not draw never hides the note.
   const locked = Math.floor(Number(view.lockedCount) || 0) >= 1;

@@ -239,6 +239,18 @@ test('notes into a running build, against the full PostgreSQL schema', { timeout
   assert.equal((await steer.noteRow(pool, failing.id)).state, 'offered');
   assert.equal(await steer.redoAsked(pool, run14.id), false);
   assert.equal(queued.length, 0);
+  // 2 Nov 2026 (tested in a browser): the build's coding turn had already
+  // ended (it was in its tests), so its Stop found no turn, and the card said
+  // "Try again in a minute" for a stop no later tap could make. No turn to
+  // stop is the build finishing first.
+  const ended = await offer(ada);
+  const noTurn = deps();
+  noTurn.stopTurn = async (args) => { stops.push(args); return { status: 200, body: { ok: true, stopped: false, reason: 'no active turn' } }; };
+  assert.deepEqual(await steer.redo(pool, {}, { row: ended, user: ada, deps: noTurn }), { ok: true, gone: true, patch: { state: 'gone' } });
+  assert.equal((await steer.noteRow(pool, ended.id)).state, 'gone');
+  assert.equal(await steer.redoAsked(pool, run14.id), false, 'nothing was stopped to be redone');
+  assert.equal(queued.length, 0);
+  assert.equal(posts.length, 0, 'and their note is not posted');
   // Ada's tap: stopped as her, her note on the request as hers, the request first in the queue on her own time.
   const redone = await steer.redo(pool, {}, { row: failing, user: ada, message: { id: msg.id }, deps: deps() });
   assert.deepEqual(redone, { ok: true, patch: { state: 'redone', posted: true } });

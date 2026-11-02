@@ -109,6 +109,16 @@ export const PROFILES = [
     system: [],
     keyboard: 0,
   },
+  // The desktop widths the overnight audit of 1 Nov 2026 read every screen
+  // at: the rail's narrowest (800), a small laptop, and two large displays.
+  ...[800, 1024, 1440, 1920].map((width) => ({
+    id: `desktop-${width}`,
+    label: `Desktop browser, ${width}px`,
+    width, height: width >= 1440 ? 900 : 800, scale: 1, touch: false, userAgent: null, native: false,
+    insets: { top: 0, right: 0, bottom: 0, left: 0 },
+    system: [],
+    keyboard: 0,
+  })),
 ];
 
 export function profileById(id) {

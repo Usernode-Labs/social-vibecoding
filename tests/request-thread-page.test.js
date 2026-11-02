@@ -59,6 +59,15 @@ test('the bot\'s GitHub copy of a spec posted here is the same posting twice, an
   assert.equal(out.specs[0].read.kind, 'shared');
 });
 
+test('audit R02: the platform\'s "created issue" record of the request leaves its own page', () => {
+  const { requestStream } = loadTsx(MODEL);
+  const filed = row({ id: 1, kind: 'system', systemText: 'audit_ada created issue: "Let members suggest a book" (#1)' });
+  const claim = row({ id: 2, kind: 'system', systemText: 'evan claimed this issue' });
+  const said = row({ id: 3, systemText: '', bodyHtml: '<p>audit_ada created issue: "x" (#1)</p>' });
+  const out = requestStream([filed, claim, said]);
+  assert.deepEqual(out.rows.map((m) => m.id), [2, 3], 'the root post already says who asked; a claim and a reply stay');
+});
+
 test('with no posting in the thread, the bot\'s spec comment is the spec: a card, by Homeroom bot', () => {
   const { requestStream } = loadTsx(MODEL);
   const out = requestStream([row({ id: 1 }), botSpecComment]);

@@ -56,7 +56,10 @@ function ReasonList({ reasons, value, onPick, labelId }: {
           onClick={() => onPick(key)}
           className="py-3"
           title={t(label)}
-          titleClassName="font-medium"
+          // Overnight audit D05: the reasons wrap. The first and most serious
+          // ("Child safety: a minor at risk, or sexual content involving a
+          // minor") is the longest, and a truncated row hid what it meant.
+          titleClassName="font-medium whitespace-normal"
           chevron={false}
           trailing={value === key
             ? <CheckIcon className="h-5 w-5 shrink-0 text-violet-600 dark:text-violet-400" aria-hidden="true" />

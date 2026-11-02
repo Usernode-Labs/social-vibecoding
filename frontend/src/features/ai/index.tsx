@@ -79,7 +79,7 @@ import { DesignPane } from '../messages/design-pane';
 import { closeNewThread, NewThreadButton, useNewThread } from '../messages/new-thread';
 import { openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
-import { closeThread, useMessagesSnapshot } from '../messages/store';
+import { closeThread, openBotRequest, useMessagesSnapshot } from '../messages/store';
 import { SidePanelDivider } from '../side-panel/side-panel';
 import { sidePanelStore } from '../side-panel/store.js';
 import { BOT_TAB, botTabAddress, noteBotConversation, useBotTabAsk, type BotAt } from './door';
@@ -362,6 +362,13 @@ export function AiScreen(): ReactNode {
       showAddress(botTabAddress(next));
       return;
     }
+    // B06: a plan's Build it is on the plan in Main Chat: Main, at the plan
+    // (the door "See progress" on its request's page uses too).
+    if (row.plan) {
+      sidePanel()?.close?.();
+      void openBotRequest(row.plan.slug, row.plan.number);
+      return;
+    }
     if (openPublic(row.href, row.app, row.title, aboutRow(row), botId)) underPanel();
   };
   const openThread = (th: AiThread) => {
@@ -383,14 +390,15 @@ export function AiScreen(): ReactNode {
     if (phone) setLevel(1);
     showAddress(BOT_TAB);
   };
+  const heroLine = work ? heroWords(owed, progress.length) : null;
   const hero = (
     <section className="flex items-center gap-3 px-4 pt-3" data-ai-hero="">
       <img src={BOT_AVATAR} alt="" className="w-12 h-12 rounded-2xl object-cover shrink-0" />
       <span className="min-w-0 flex-1 flex flex-col">
         <h1 className="text-[1.375rem] font-bold leading-tight">{t('messages:ai.hero.name')}</h1>
-        {work ? (
+        {heroLine ? (
           <span className="text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-hero-sub="">
-            {say(heroWords(owed, progress.length))}
+            {say(heroLine)}
           </span>
         ) : null}
       </span>
