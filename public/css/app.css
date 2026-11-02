@@ -23852,6 +23852,23 @@ html.un-kb #platform-parked {
   display: none;
 }
 
+/* ANDROID'S BACK IS A PLAIN ARROW (overnight audit G01, 2 Nov 2026). The
+   header's back was iOS's chevron in a periwinkle disc on every device,
+   which on Android reads as an iPhone port: Material's back is a bare
+   arrow. The kit marks the device on <html> (`un-android`, native.js
+   detectPlatform), so there the disc goes and the arrow
+   (platform-header.tsx `.back-icon-android`) stands in for the chevron,
+   shown exactly when the chevron would be. The house and the ✕ keep their
+   glyphs; only the disc goes from under them. Elsewhere the arrow never
+   shows. */
+.back-icon-android { display: none; }
+html.un-android #back-btn {
+  border-color: transparent;
+  background: transparent;
+}
+html.un-android #back-btn > #back-icon-arrow { display: none; }
+html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android { display: block; }
+
 /* ── WHAT REACT STOPPED DECIDING (#2718 review) ──────────────────────
    The toggle's markup is constant and so is its group's class string. Both
    used to be computed from `useVisibility('platform-tabs')` during render,
