@@ -66,9 +66,9 @@ export function switchToEnglish(): Promise<boolean> {
 // initialization, and repaint on `homeroom:language-changed`.
 (globalThis as unknown as { PlatformI18n: unknown }).PlatformI18n = {
   t, htmlText, htmlRich, listText, languageName, getLanguage, getPreference, changeLanguage,
-  applySessionLanguage, saveAccountLocale, getLanguages,
   // #6103: the classic scripts' date formatters read the same rule.
   dateLocale: getDateLocale,
+  applySessionLanguage, saveAccountLocale, getLanguages,
 };
 
 if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
