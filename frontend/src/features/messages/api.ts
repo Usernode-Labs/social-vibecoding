@@ -875,6 +875,8 @@ export async function listThread(id: number, rootId: number, before?: number | n
   messages: ConversationMessage[];
   nextBefore: number | null;
   discussion: DiscussionState | null;
+  /** B19 follow-up: the first reply this reader has not read, on the first page; null when none. */
+  firstUnreadId: number | null;
 }> {
   const params = new URLSearchParams({ limit: '50' });
   if (before) params.set('before', String(before));
@@ -888,6 +890,7 @@ export async function listThread(id: number, rootId: number, before?: number | n
     messages: array(pick(data, 'messages', 'items')).map((message) => normalizeMessage(message, id)),
     nextBefore: strictId(pick(data, 'nextBefore', 'next_before')),
     discussion,
+    firstUnreadId: strictId(pick(record(pick(data, 'read')), 'firstUnreadId', 'first_unread_id')),
   };
 }
 
