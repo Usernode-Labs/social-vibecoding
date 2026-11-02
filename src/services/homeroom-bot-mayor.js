@@ -1945,7 +1945,8 @@ function draftWriter(ctx, { every = DRAFT_EVERY_MS, wait = (ms) => new Promise((
   return {
     onDelta(state) {
       const text = draftOf(state);
-      if (text !== null) set(text);
+      // 2 Nov 2026: the words already kept from earlier rounds stay on the card (answerText).
+      if (text !== null) set(text && ctx.besides?.length ? answerText(ctx.besides, text) : text);
     },
     clear() { set(''); },
     // `clear`: what was shown goes too (the turn found no answer to send).
@@ -1958,6 +1959,52 @@ function draftWriter(ctx, { every = DRAFT_EVERY_MS, wait = (ms) => new Promise((
       }
     },
   };
+}
+
+// ── Words written beside a call (Homeroom bot parity, P1) ──────────────────
+//
+// 2 Nov 2026 (#6097 tested in a browser): the cheap model often writes its
+// whole answer as plain words in a round that also calls a tool
+// (offer_request, list_requests), then sends a short reply that assumes those
+// words were read. They were shown as they were written (draftOf) and then
+// dropped: a long walkthrough appeared on the working card, and what arrived
+// was "Short version: …", or only "To be clear: nothing has been filed".
+// Now words beside a call that are longer than a preamble are the start of
+// the answer: kept in order (ctx.besides), the model is told so once
+// (BESIDE_NOTE), and the reply's text follows them (answerText).
+
+/** Pure: a round's words beside its calls, when they are part of the answer (longer than a preamble), else null. */
+function besideWords(content) {
+  const text = cleanReply(content);
+  return text.length > MAX_PREAMBLE_CHARS ? text : null;
+}
+
+/** What a turn is told the first time its words beside a call are kept (role user, as checkNote is). */
+const BESIDE_NOTE = '[Homeroom check, not from them: the words you wrote beside those calls are shown to them as the start '
+  + 'of your answer. Your reply\'s text follows them: do not write them again, add only what is new.]';
+
+// How much of a kept passage's opening, found in the reply, means the reply wrote it again.
+const BESIDE_MATCH_CHARS = 160;
+const squashWords = (text) => String(text || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+/**
+ * Pure: the answer as it is sent: the words kept beside calls, in order,
+ * then the reply's text, each said once. Kept words whose opening the reply
+ * (or an earlier passage) writes again are left out, and a reply already
+ * inside the kept words adds nothing.
+ */
+function answerText(besides = [], text = '') {
+  const reply = String(text || '').trim();
+  const said = squashWords(reply);
+  const kept = [];
+  for (const words of Array.isArray(besides) ? besides : []) {
+    const passage = String(words || '').trim();
+    const opening = squashWords(passage).slice(0, BESIDE_MATCH_CHARS);
+    if (!opening || said.includes(opening) || kept.some((k) => squashWords(k).includes(opening))) continue;
+    kept.push(passage);
+  }
+  const inside = said && squashWords(kept.join(' ')).includes(said);
+  return [...kept, ...(reply && !inside ? [reply] : [])].join('\n\n');
 }
 
 // ── What the turn looked at (Homeroom bot parity, P1) ─────────────────────
@@ -3313,6 +3360,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
             finalText = res.content || '';
             break;
           }
+          // 2 Nov 2026: words beside these calls are the start of the answer (besideWords).
+          const beside = besideWords(res.content);
+          if (beside) ctx.besides = [...(ctx.besides || []), beside];
           messages.push({ role: 'assistant', content: res.content || null, tool_calls: calls });
           const pictures = [];
           for (const call of calls) {
@@ -3331,6 +3381,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           }
           const shown = picturesMessage(takeImages({ images: pictures }));
           if (shown) messages.push(shown);
+          if (beside && !ctx.reply && !ctx.besideNoted) {
+            ctx.besideNoted = true;
+            messages.push({ role: 'user', content: BESIDE_NOTE });
+          }
         }
       };
       await runRounds();
@@ -3338,7 +3392,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // this turn's tools did, and every request number it names against the
       // requests that exist. One more pass to put it right; whatever is still
       // claimed with nothing behind it is cut before it is sent (answer()).
-      const said = ctx.reply?.text ?? finalText;
+      const said = answerText(ctx.besides, ctx.reply?.text ?? finalText);
       // A screen handed to the designer is answered by it, not checked here.
       const problems = said && !ctx.drawScreen ? await claimProblems(pool, ctx, said) : [];
       if (problems.length) {
@@ -3362,7 +3416,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           log.info('homeroom-bot-mayor', 'The second pass failed; sending the first answer, checked', { userId: user.id, code: codeOf(err) });
         }
         if (!ctx.reply && !finalText) ctx.reply = first;
-        ctx.checkedProblems = await claimProblems(pool, ctx, ctx.reply?.text ?? finalText);
+        ctx.checkedProblems = await claimProblems(pool, ctx, answerText(ctx.besides, ctx.reply?.text ?? finalText));
       }
     } catch (err) {
       error = codeOf(err);
@@ -3374,7 +3428,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       try { await platform?.close?.(); } catch {}
     }
   }
-  let text = clip(cleanReply(ctx.reply?.text || finalText), MAX_REPLY_CHARS);
+  let text = clip(cleanReply(answerText(ctx.besides, ctx.reply?.text || finalText)), MAX_REPLY_CHARS);
   // P1: nothing more is shown as it is written; the message takes the card's place.
   draft?.close({ clear: !text });
   // Whatever the second pass still claimed with nothing behind it is cut.
@@ -3426,7 +3480,14 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     });
   }
   if (fallback) return say(text, { objects: cards, metadata: { kind: 'chat' } });
-  if (ctx.offer) return offer(pool, { bot, user, conversationId, message, text, offer: ctx.offer, deps });
+  // P1: what the turn looked at, as one line above the words (lookedMeta).
+  const looked = await lookedMeta(pool, ctx, Date.now() - t.startedMs);
+  // Homeroom bot parity (P1-P9): a card a thread tool put under the reply
+  // (homeroom-bot-cards/, frontend features/messages/bot-cards/).
+  const toolCard = ctx.card && typeof ctx.card === 'object' && typeof ctx.card.type === 'string' ? ctx.card : null;
+  const extra = { ...(looked ? { looked } : {}), ...(toolCard ? { card: toolCard } : {}) };
+  // 2 Nov 2026: a reply that ends in an offer keeps both.
+  if (ctx.offer) return offer(pool, { bot, user, conversationId, message, text, offer: ctx.offer, deps, extra });
   // A card that cannot be read never costs the answer. #4097: the model's
   // cards first, then the requests its words name that it did not list.
   const named = namedCards(text, ctx);
@@ -3444,18 +3505,13 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   const next = suggestionLabels(ctx.reply?.suggestions);
   const prompts = next.length ? require('./homeroom-bot-dm').promptActions(next) : [];
   const actions = prompts.slice(0, 3);
-  // P1: what the turn looked at, as one line above the words (lookedMeta).
-  const looked = await lookedMeta(pool, ctx, Date.now() - t.startedMs);
   const project = named.project ? { appSlug: named.project } : {};
   return say(text, {
     objects: unique,
     metadata: {
       kind: 'chat', ...project,
       ...(actions.length ? { actions, status: 'open' } : {}),
-      ...(looked ? { looked } : {}),
-      // Homeroom bot parity (P1-P9): a card a thread tool put under the reply
-      // (homeroom-bot-cards/, frontend features/messages/bot-cards/).
-      ...(ctx.card && typeof ctx.card === 'object' && typeof ctx.card.type === 'string' ? { card: ctx.card } : {}),
+      ...extra,
     },
     // C2.4: a new project's thread opened this turn: the answer is its first reply.
     ...(ctx.projectThread ? { replyToId: null, threadRootId: ctx.projectThread.rootId } : {}),
@@ -3583,7 +3639,7 @@ async function notePrivateDraft(pool, { userId, messageId, state, ref = null }) 
   ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not note where a draft\'s private thread went', { err: err.message }));
 }
 
-async function offer(pool, { bot, user, conversationId, message, text, offer: o, deps }) {
+async function offer(pool, { bot, user, conversationId, message, text, offer: o, deps, extra = null }) {
   const dm = dmModule(deps);
   const name = o.app.name || o.app.slug;
   // #11 (WP3): an offer to withdraw one of its proposals is decided the same
@@ -3649,17 +3705,21 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     // The proposal it would withdraw, to open before deciding.
     objects: withdraw || (post && o.sessionId) ? [{ type: 'proposal', appId: Number(o.app.id), sessionId: Number(o.sessionId) }]
       : move || close || post ? [{ type: 'issue', appId: Number(o.app.id), issueNumber: Number(o.issueNumber) }] : null,
-    metadata: post ? confirmMeta('post_reply', {
-      app: o.app, name, actionId: action.id,
-      question: o.sessionId ? `Post this on the change for request #${o.issueNumber} on ${name}?` : `Post this on request #${o.issueNumber} on ${name}?`,
-    })
-      : move ? moveSvc.moveOfferMeta({ app: o.app, actionId: action.id })
-      : close ? closeOfferMeta({ app: o.app, name, actionId: action.id, issueNumber: o.issueNumber })
-      : o.guess ? guessMeta({ app: o.app, name, actionId: action.id })
-      : confirmMeta(kind, {
+    metadata: {
+      ...(post ? confirmMeta('post_reply', {
         app: o.app, name, actionId: action.id,
-        question: withdraw ? `Withdraw this proposal on ${name}?` : `File this as a request on ${name}?`,
-      }),
+        question: o.sessionId ? `Post this on the change for request #${o.issueNumber} on ${name}?` : `Post this on request #${o.issueNumber} on ${name}?`,
+      })
+        : move ? moveSvc.moveOfferMeta({ app: o.app, actionId: action.id })
+        : close ? closeOfferMeta({ app: o.app, name, actionId: action.id, issueNumber: o.issueNumber })
+        : o.guess ? guessMeta({ app: o.app, name, actionId: action.id })
+        : confirmMeta(kind, {
+          app: o.app, name, actionId: action.id,
+          question: withdraw ? `Withdraw this proposal on ${name}?` : `File this as a request on ${name}?`,
+        })),
+      // 2 Nov 2026: the turn's "Looked at" line and a thread tool's card (answer()).
+      ...(extra || {}),
+    },
   });
   if (sent?.messageId && sent.duplicate) {
     // Offered already, by an attempt a restart cut short: that offer is
@@ -5640,6 +5700,9 @@ module.exports = {
   partialTextField,
   draftOf,
   draftWriter,
+  besideWords,
+  answerText,
+  BESIDE_NOTE,
   noteLookup,
   lookedItems,
   lookedMeta,
