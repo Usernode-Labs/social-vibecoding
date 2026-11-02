@@ -117,6 +117,8 @@ export interface HomeroomBotMeta {
   replaced?: boolean;
   stopped?: boolean;
   changing?: boolean;
+  /** B05: a change its requester wrote waits below it for Post it, so it offers no Build it. */
+  changeDrafted?: boolean;
   choices?: string[];
   /**
    * B7: a change ready to try (kind `proposal`), drawn as its card: whether

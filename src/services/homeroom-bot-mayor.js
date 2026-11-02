@@ -3015,7 +3015,7 @@ async function fallbackAnswer(pool, t, { error, errorStatus = null, history }) {
   if (ctx.posted) {
     return {
       fallback: 'posted',
-      text: `I posted your answer on ${ctx.posted}'s public discussion, and I'll look at the request again next.`,
+      text: `I posted your answer on the public discussion of ${ctx.posted}, and I'll look at the request again next.`,
       cards: ctx.cards.slice(0, MAX_CARDS),
       defer: false,
     };
@@ -3552,7 +3552,9 @@ function closeOfferText({ name, issueNumber, text = null, title, why = null }) {
 function postOfferText({ name, issueNumber, revise = false, text = null, draft }) {
   const where = revise ? `the change for request #${issueNumber}` : `request #${issueNumber}`;
   return [
-    text || `This chat is private. Want me to post this on ${where}'s public discussion, as you?`,
+    // B20 (audit 2 Nov 2026): "request #1's" put a gap between the #1 chip
+    // and its "'s"; the discussion is named first instead.
+    text || `This chat is private. Want me to post this on the public discussion of ${where}, as you?`,
     '',
     `**${name}** · ${where}:`,
     '',
@@ -3663,7 +3665,9 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
   // put in a private thread of its own, only the person's. Main says so,
   // quoting what they asked, and the draft is the thread's first reply.
   // Said in a thread already, it stays there.
-  const draft = kind === 'file_request' || post;
+  // B05 (audit 2 Nov 2026): a change to a plan is drafted where the plan
+  // is, so its Post it is right under it, never one thread away.
+  const draft = kind === 'file_request' || (post && o.title !== 'plan_change');
   const opened = draft && !(message.threadRootId || message.thread_root_id)
     ? await openDraftThread(pool, {
       bot, user, conversationId, message, kind, app: o.app, name, title: post ? o.details : o.title, deps,
@@ -4156,6 +4160,10 @@ async function settleOffer(pool, config, {
   // A draft put away: its private thread went nowhere (openDraftThread).
   if (no && (action.kind === 'file_request' || action.kind === 'post_reply')) {
     await notePrivateDraft(pool, { userId: user.id, messageId: action.message_id, state: 'dropped' });
+  }
+  // B05: a change to a plan put away gives the plan its Build it back.
+  if (no && tapped && action.kind === 'post_reply' && action.title === 'plan_change' && action.target_message_id) {
+    await dm.notePlanChangeDropped(pool, { user, messageId: Number(action.target_message_id), deps });
   }
   if (no && tapped) return { declined: true };
   // The act's claim (`key`) rides with it, so what it calls can tell a
@@ -5196,13 +5204,24 @@ async function offerCloseRequest(pool, ctx, args) {
  * revision), every gate read again now. Keep it private posts nothing.
  */
 async function decidePost(pool, { bot, user, settings, action, yes, ack, deps = {} }) {
-  if (!yes) return ack('OK, it stays here in our chat. Nothing was posted.');
+  const dm = dmModule(deps);
+  // B05 (audit 2 Nov 2026): a change to a plan that is not posted leaves the
+  // plan as it was, its Build it back (homeroom-bot-dm.js changeOnRequest).
+  const keepPlan = async () => {
+    if (action.title === 'plan_change' && action.target_message_id) {
+      await dm.notePlanChangeDropped(pool, { user, messageId: Number(action.target_message_id), deps });
+    }
+  };
+  if (!yes) {
+    await keepPlan();
+    return ack('OK, it stays here in our chat. Nothing was posted.');
+  }
   const failed = async (error, text) => {
     await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
+    await keepPlan();
     return ack(text);
   };
   const later = 'I couldn\'t post it just now. Try again in a minute.';
-  const dm = dmModule(deps);
   const { rows } = await pool.query('SELECT slug FROM apps WHERE id = $1', [action.app_id]);
   const app = rows[0] ? await findApp(pool, rows[0].slug) : null;
   const n = Number(action.source_issue_number);
@@ -5265,14 +5284,12 @@ async function decidePost(pool, { bot, user, settings, action, yes, ack, deps = 
   // and is planned again with it (homeroom-bot-dm.js changeOnRequest).
   if (action.title === 'plan_change') {
     await dm.notePlanChanged(pool, { user, target, app, deps });
-    return ack(`Posted on ${posted.line}'s public discussion, as you. I'll plan it again with it and send the new plan here.`, {
-      objects: [{ type: 'issue', appId: Number(app.id), issueNumber: n }],
-    });
+    return ack(`Posted on the public discussion of ${posted.line}, as you. I'll plan it again with it and send the new plan here.`);
   }
+  // B20 (audit 2 Nov 2026): the draft right above already shows the
+  // request's card; a second one under the ack repeated it.
   const builds = liveModule(deps).isLiveFor(settings, app);
-  return ack(`Posted on ${posted.line}'s public discussion, as you.${builds ? ' I\'ll look at it again now.' : ''}`, {
-    objects: [{ type: 'issue', appId: Number(app.id), issueNumber: n }],
-  });
+  return ack(`Posted on the public discussion of ${posted.line}, as you.${builds ? ' I\'ll look at it again now.' : ''}`);
 }
 
 /**

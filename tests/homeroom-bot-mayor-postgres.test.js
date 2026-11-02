@@ -530,7 +530,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const ack = await mayor.decideOffer(pool, CONFIG, {
       bot, user: ada, settings, message: await say('Post it', { reply_to_id: sent.messageId }), deps: {},
     });
-    assert.match((await read(ack)).content, /^Posted on Seed swap request #4's public discussion, as you\./);
+    assert.match((await read(ack)).content, /^Posted on the public discussion of Seed swap request #4, as you\./);
     assert.equal(threadPosts.length, 1);
     assert.match(threadPosts[0].msg.content, /^dark first please\n\n\(Answered in a chat with Homeroom bot\.\)$/,
       'her own words, as she wrote them, never the model\'s');
@@ -1299,7 +1299,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const sent = await turn('by link please', failsAfter);
     const msg = await read(sent);
     assert.equal(threadPosts.length, 0, 'nothing is public before the tap');
-    assert.equal(msg.content, 'This chat is private. Want me to post this on request #6\'s public discussion, as you?\n\n'
+    assert.equal(msg.content, 'This chat is private. Want me to post this on the public discussion of request #6, as you?\n\n'
       + '**Note board** · request #6:\n\n> by link please');
     assert.deepEqual(msg.metadata.homeroomBot.answers, ['Post it', 'Keep it private']);
     const { rows: objects } = await pool.query(

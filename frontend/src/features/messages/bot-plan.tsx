@@ -82,6 +82,9 @@ export function planState(meta: HomeroomBotMeta, pressed = false): PlanCardState
   if (meta.replaced) return 'replaced';
   if (meta.stopped) return 'stopped';
   if (meta.changing) return 'changing';
+  // B05 (audit 2 Nov 2026): a change to it waits for Post it; Build it would
+  // build the plan that change replaces.
+  if (meta.changeDrafted) return 'drafted';
   if (meta.status === 'closed' || !meta.actionId) return 'closed';
   return 'open';
 }

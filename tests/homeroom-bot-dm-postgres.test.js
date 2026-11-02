@@ -338,7 +338,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     const card = await conversations.getMessage(pool, ada, sent.conversationId, draft.messageId);
     assert.deepEqual(card.metadata.homeroomBot.answers, ['Post it', 'Keep it private']);
     assert.equal(card.metadata.homeroomBot.status, 'open');
-    assert.match(card.content, /^This chat is private\. Want me to post this on request #7's public discussion, as you\?\n\n\*\*Seed swap\*\* · request #7:\n\n> whichever was changed last$/);
+    assert.match(card.content, /^This chat is private\. Want me to post this on the public discussion of request #7, as you\?\n\n\*\*Seed swap\*\* · request #7:\n\n> whichever was changed last$/);
     assert.equal((await conversations.getMessage(pool, ada, sent.conversationId, sent.messageId)).metadata.homeroomBot.status, 'open',
       'the question is still open: nothing answered it yet');
     const mayor = require('../src/services/homeroom-bot-mayor');
