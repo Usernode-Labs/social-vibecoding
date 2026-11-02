@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { ipKeyGenerator } = require('express-rate-limit');
 const events = require('./events');
 const usernames = require('./usernames');
 const leftOut = require('./journey-left-out');
@@ -83,6 +84,16 @@ const KINDS = Object.freeze(new Set([
   // the screen showing. services/signal-observers/client-errors.js files
   // the ones several visits hit; topic-figures.js counts the visits.
   'client_error',
+  // Reads the browser's session guard cut off on one page load (#6002,
+  // frontend/src/lib/api-cache-identity.ts): each fenced route's template,
+  // why, how many, and whether the page was signed in.
+  // services/signal-observers/session-fences.js files the ones that should
+  // never happen.
+  'session_fence',
+  // Where a signed-out invite page first settled (#6002): the card, the
+  // dead-link page, or the pitch after the read failed or took too long.
+  // Counted beside the invite opens in the admin Journey.
+  'invite_settlement',
 ]));
 const OUTCOMES = Object.freeze(new Set(['success', 'failure', 'cancelled']));
 const ERROR_CODES = Object.freeze(new Set([
@@ -95,7 +106,7 @@ const ERROR_CODES = Object.freeze(new Set([
 const EVENT_KEYS = Object.freeze([
   'id', 'visitId', 'attemptId', 'kind', 'screen', 'action', 'outcome',
   'errorCode', 'durationMs', 'appSlug', 'build', 'occurredAt', 'sequence',
-  'via', 'errorName', 'template', 'frame',
+  'via', 'errorName', 'template', 'frame', 'signedIn', 'fences', 'settled',
 ]);
 
 // ── client_error ────────────────────────────────────────────────────────
@@ -371,13 +382,186 @@ function parseClientError(value, index, nowMs) {
   };
 }
 
-function parseEvent(value, index, nowMs) {
+// ── session_fence / invite_settlement (#6002) ───────────────────────────
+//
+// A fence report says which reads the session guard cut off: never a query,
+// a link code or a name. The client sends each path with its query dropped
+// and every code or id replaced (`/api/public/invites/<token>`); the
+// collector refuses one that still holds a code and stores only the route
+// it matched, as Express declared it (`/api/public/invites/:token`), so a
+// username or project in an address never reaches a row. Keep the reasons,
+// the path pattern and the caps identical with public/js/ui-telemetry.js.
+const FENCE_REASONS = Object.freeze(new Set(['epoch', 'scope', 'native']));
+const FENCE_PATH_RE = /^\/api(?:\/[A-Za-z0-9._~:<>-]{1,64}){0,12}$/;
+const FENCE_TOKEN_SEGMENT_RE = /\/[A-Za-z0-9_-]{22,}(?=\/|$)/;
+const MAX_FENCE_ENTRIES = 16;
+const MAX_FENCE_COUNT = 1000;
+const INVITE_SETTLED = Object.freeze(new Set(['card', 'dead', 'failed', 'timeout']));
+const FENCE_ONLY_KEYS = Object.freeze(['signedIn', 'fences', 'settled']);
+const FENCE_KEYS = Object.freeze([
+  'id', 'visitId', 'kind', 'screen', 'build', 'occurredAt', 'sequence', 'signedIn', 'fences',
+]);
+const SETTLEMENT_KEYS = Object.freeze([
+  'id', 'visitId', 'kind', 'screen', 'build', 'occurredAt', 'sequence', 'settled',
+]);
+const ROUTE_SEGMENT_RE = /^(?::[A-Za-z0-9_]+|[A-Za-z0-9._~-]+)$/;
+
+function routeSegments(template) {
+  if (typeof template !== 'string' || !template.startsWith('/api/')) return null;
+  const segments = template.split('/').slice(1);
+  return segments.every((segment) => ROUTE_SEGMENT_RE.test(segment)) ? segments : null;
+}
+
+/**
+ * Pure: the route a reported path belongs to, from `routes` (templates as
+ * Express declared them). A literal must be equal and a `:param` matches
+ * any one segment; the template with the most literal segments wins. A
+ * path no route matches is `/api/<first segment>/…` when that segment
+ * begins some route, else `/api/…`: never a segment nobody declared.
+ */
+function routeTemplate(path, routes = []) {
+  const segments = String(path || '').split('/').slice(1);
+  let best = null;
+  let bestLiterals = -1;
+  let knownFirst = false;
+  for (const template of routes) {
+    const parts = routeSegments(template);
+    if (!parts) continue;
+    if (parts.length > 1 && !parts[1].startsWith(':') && parts[1] === segments[1]) knownFirst = true;
+    if (parts.length !== segments.length) continue;
+    let literals = 0;
+    let matches = true;
+    for (let i = 0; i < parts.length; i += 1) {
+      if (parts[i].startsWith(':')) continue;
+      if (parts[i] !== segments[i]) { matches = false; break; }
+      literals += 1;
+    }
+    if (matches && literals > bestLiterals) { best = template; bestLiterals = literals; }
+  }
+  if (best) return best;
+  return knownFirst ? `/api/${segments[1]}/\u2026` : '/api/\u2026';
+}
+
+// The /api/ routes an Express app declared, read from its router once per
+// shape of its stack. Routers mounted at the root are read through.
+const routeCache = new WeakMap();
+function apiRouteTemplates(app) {
+  try {
+    const stack = app && app._router && app._router.stack;
+    if (!Array.isArray(stack)) return [];
+    const cached = routeCache.get(stack);
+    if (cached && cached.length === stack.length) return cached.routes;
+    const found = new Set();
+    const walk = (layers, depth) => {
+      for (const layer of layers) {
+        const route = layer && layer.route;
+        if (route) {
+          for (const p of Array.isArray(route.path) ? route.path : [route.path]) {
+            if (routeSegments(p)) found.add(p);
+          }
+        } else if (depth < 4 && layer && layer.handle && Array.isArray(layer.handle.stack)
+            && layer.regexp && layer.regexp.fast_slash) {
+          walk(layer.handle.stack, depth + 1);
+        }
+      }
+    };
+    walk(stack, 0);
+    const routes = [...found];
+    routeCache.set(stack, { length: stack.length, routes });
+    return routes;
+  } catch (_) {
+    return [];
+  }
+}
+
+function baseFields(value, label, nowMs) {
+  let build = null;
+  if (value.build != null) {
+    if (typeof value.build !== 'string' || !BUILD_RE.test(value.build)) {
+      throw new TelemetryValidationError(`${label}.build is invalid`);
+    }
+    build = value.build;
+  }
+  return {
+    eventId: opaqueId(value.id, `${label}.id`),
+    visitId: opaqueId(value.visitId, `${label}.visitId`),
+    attemptId: null,
+    screen: oneOf(value.screen, SCREENS, `${label}.screen`),
+    action: null,
+    outcome: null,
+    errorCode: null,
+    durationMs: null,
+    appSlug: null,
+    build,
+    occurredAt: eventTimestamp(value.occurredAt, nowMs),
+    sequence: integer(value.sequence, `${label}.sequence`, 1, 1_000_000),
+    via: null,
+  };
+}
+
+function parseSessionFence(value, index, nowMs, routes) {
+  const label = `events[${index}]`;
+  exactKeys(value, FENCE_KEYS, label);
+  if (typeof value.signedIn !== 'boolean') {
+    throw new TelemetryValidationError(`${label}.signedIn must be a boolean`);
+  }
+  const fences = value.fences;
+  if (!Array.isArray(fences) || fences.length < 1 || fences.length > MAX_FENCE_ENTRIES) {
+    throw new TelemetryValidationError(`${label}.fences must contain 1-${MAX_FENCE_ENTRIES} entries`);
+  }
+  // Entries that match the same route and reason are one.
+  const byKey = new Map();
+  fences.forEach((entry, i) => {
+    const at = `${label}.fences[${i}]`;
+    exactKeys(entry, ['path', 'reason', 'public', 'count'], at);
+    if (typeof entry.path !== 'string' || !FENCE_PATH_RE.test(entry.path)
+        || FENCE_TOKEN_SEGMENT_RE.test(entry.path)) {
+      throw new TelemetryValidationError(`${at}.path must be a path with every code replaced`);
+    }
+    const reason = oneOf(entry.reason, FENCE_REASONS, `${at}.reason`);
+    if (typeof entry.public !== 'boolean') throw new TelemetryValidationError(`${at}.public must be a boolean`);
+    const count = integer(entry.count, `${at}.count`, 1, MAX_FENCE_COUNT);
+    const path = routeTemplate(entry.path, routes);
+    const key = `${reason}|${path}`;
+    const seen = byKey.get(key);
+    if (seen) seen.count = Math.min(MAX_FENCE_COUNT, seen.count + count);
+    // `public` is the collector's own, from the route, never the client's.
+    else byKey.set(key, { path, reason, public: path.startsWith('/api/public/'), count });
+  });
+  return {
+    ...baseFields(value, label, nowMs),
+    kind: 'session_fence',
+    signedIn: value.signedIn,
+    fences: [...byKey.values()],
+  };
+}
+
+function parseInviteSettlement(value, index, nowMs) {
+  const label = `events[${index}]`;
+  exactKeys(value, SETTLEMENT_KEYS, label);
+  if (value.screen !== 'shell_boot') {
+    throw new TelemetryValidationError(`${label}.screen must be shell_boot`);
+  }
+  return {
+    ...baseFields(value, label, nowMs),
+    kind: 'invite_settlement',
+    settled: oneOf(value.settled, INVITE_SETTLED, `${label}.settled`),
+  };
+}
+
+function parseEvent(value, index, nowMs, routes = []) {
   exactKeys(value, EVENT_KEYS, `events[${index}]`);
   const kind = oneOf(value.kind, KINDS, `events[${index}].kind`);
   if (kind === 'client_error') return parseClientError(value, index, nowMs);
+  if (kind === 'session_fence') return parseSessionFence(value, index, nowMs, routes);
+  if (kind === 'invite_settlement') return parseInviteSettlement(value, index, nowMs);
   const scriptOnly = CLIENT_ERROR_ONLY_KEYS.find((key) => value[key] != null);
   if (scriptOnly) {
     throw new TelemetryValidationError(`${scriptOnly} is only valid on a client_error`);
+  }
+  const fenceOnly = FENCE_ONLY_KEYS.find((key) => value[key] != null);
+  if (fenceOnly) {
+    throw new TelemetryValidationError(`${fenceOnly} is only valid on a session_fence or invite_settlement`);
   }
   const screen = oneOf(value.screen, SCREENS, `events[${index}].screen`);
   const action = oneOf(value.action, ACTIONS, `events[${index}].action`, true);
@@ -482,7 +666,7 @@ function parseEvent(value, index, nowMs) {
   };
 }
 
-function parseBatch(body, { nowMs = Date.now() } = {}) {
+function parseBatch(body, { nowMs = Date.now(), routes = [] } = {}) {
   if (Buffer.byteLength(JSON.stringify(body || {}), 'utf8') > MAX_BODY_BYTES) {
     throw new TelemetryValidationError('batch is too large');
   }
@@ -502,13 +686,62 @@ function parseBatch(body, { nowMs = Date.now() } = {}) {
     failedBatches: integer(body.delivery.failedBatches, 'delivery.failedBatches', 0, 10_000),
     droppedEvents: integer(body.delivery.droppedEvents, 'delivery.droppedEvents', 0, 10_000),
   };
-  const parsed = body.events.map((value, index) => parseEvent(value, index, nowMs));
+  const parsed = body.events.map((value, index) => parseEvent(value, index, nowMs, routes));
   const ids = new Set(parsed.map((event) => event.eventId));
   if (ids.size !== parsed.length) throw new TelemetryValidationError('event ids must be unique within a batch');
   return { batchId, events: parsed, delivery };
 }
 
-function eventMetadata(event, language = null) {
+// The most a signed-out page sends in one anonymous report, the most one
+// source (anonymousSource) may store in a day, and how long these rows are
+// kept (pruneAnonymous, the ui-telemetry-anonymous-retention clock).
+const MAX_ANONYMOUS_EVENTS = 4;
+const MAX_ANONYMOUS_PER_SOURCE_DAY = 40;
+const ANONYMOUS_RETENTION_DAYS = 30;
+
+// Where an anonymous report came from, as the collector itself sees it: an
+// HMAC of the address's NETWORK and the day under a server key, 16 hex
+// characters. The network is an IPv4 address, or an IPv6 address's /48
+// (express-rate-limit ipKeyGenerator with a /48 subnet): one ordinary IPv6
+// allocation is a /48, which holds 256 of the /56s the rate limiters key
+// by, so a source is the whole allocation and one site cannot pass for the
+// five sources an anonymous-only signal needs.
+const SOURCE_IPV6_SUBNET = 48;
+// It is never the client's own visit id, which anybody can make up, so the
+// signals that read these rows (signal-observers/session-fences.js) count
+// distinct sources a forger cannot multiply from one address. It names
+// nobody, changes every day, and cannot be turned back into an address
+// without the key. Without a configured key a process uses its own.
+const PROCESS_SOURCE_KEY = crypto.randomBytes(32);
+function anonymousSource(ip, { key = null, now = Date.now() } = {}) {
+  const day = new Date(now).toISOString().slice(0, 10);
+  let network = 'unknown';
+  try { network = ip ? ipKeyGenerator(String(ip), SOURCE_IPV6_SUBNET) : 'unknown'; } catch (_) { network = String(ip || 'unknown'); }
+  return crypto.createHmac('sha256', key || PROCESS_SOURCE_KEY)
+    .update(`ui-telemetry-source:${day}:${network}`)
+    .digest('hex').slice(0, 16);
+}
+
+/**
+ * A signed-out page's batch: parseBatch, then only invite landings and
+ * fence reports from a page that was signed out, at most four.
+ */
+function parseAnonymousBatch(body, options = {}) {
+  const batch = parseBatch(body, options);
+  if (batch.events.length > MAX_ANONYMOUS_EVENTS) {
+    throw new TelemetryValidationError(`an anonymous report holds at most ${MAX_ANONYMOUS_EVENTS} records`);
+  }
+  for (const event of batch.events) {
+    const allowed = event.kind === 'invite_settlement'
+      || (event.kind === 'session_fence' && event.signedIn === false);
+    if (!allowed) {
+      throw new TelemetryValidationError('a signed-out page reports only invite landings and its own cut-off reads');
+    }
+  }
+  return batch;
+}
+
+function eventMetadata(event, language = null, source = null) {
   const metadata = {
     eventId: event.eventId,
     visitId: event.visitId,
@@ -517,9 +750,12 @@ function eventMetadata(event, language = null) {
     sequence: event.sequence,
   };
   for (const key of ['attemptId', 'action', 'outcome', 'errorCode', 'durationMs', 'build', 'via',
-    'errorName', 'template', 'frame']) {
+    'errorName', 'template', 'frame', 'signedIn', 'fences', 'settled']) {
     if (event[key] != null) metadata[key] = event[key];
   }
+  // The collector's own source of an anonymous report (anonymousSource),
+  // never a field a client sends: EVENT_KEYS has no `source`.
+  if (source) metadata.source = source;
   // Once per shell start is all browserLanguages() reads.
   if (language && event.kind === 'screen_visit' && event.screen === 'shell_boot') {
     metadata.language = language;
@@ -528,7 +764,60 @@ function eventMetadata(event, language = null) {
 }
 
 // `language` is browserLanguage() of the delivering request, or null.
-async function insertBatch(pool, userId, batch, { language = null } = {}) {
+/**
+ * A signed-out page's report, stored under `source` unless that source has
+ * already stored MAX_ANONYMOUS_PER_SOURCE_DAY rows in the last day: a cap
+ * the database holds, whatever the limiter let through. Serialised per
+ * source, so two pods do not both pass the cap. Resolves { accepted,
+ * capped }.
+ */
+async function insertAnonymous(pool, batch, { source, max = MAX_ANONYMOUS_PER_SOURCE_DAY } = {}) {
+  if (!source) return { accepted: 0, capped: true };
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`ui-telemetry-anon:${source}`]);
+    const { rows: [seen] } = await client.query(
+      `SELECT COUNT(*)::int AS n FROM events
+        WHERE event_type = 'ui_experience' AND user_id IS NULL
+          AND metadata->>'source' = $1 AND created_at > NOW() - interval '1 day'`, [source]);
+    const room = Math.max(0, max - seen.n);
+    let accepted = 0;
+    for (const event of batch.events.slice(0, room)) {
+      // Stored at the server's receipt time, never the client's: a report
+      // backdated to just under a day old would otherwise leave the cap's
+      // window at once and let its source store without end. When the page
+      // says it happened is kept in the payload.
+      const result = await client.query(
+        `INSERT INTO events (user_id, event_type, metadata, created_at)
+         VALUES (NULL, $1, $2::jsonb, NOW())`,
+        [events.EVENT_TYPES.UI_EXPERIENCE,
+          JSON.stringify({ ...eventMetadata(event, null, source), occurredAt: event.occurredAt })]);
+      accepted += result.rowCount || 0;
+    }
+    await client.query('COMMIT');
+    return { accepted, capped: room < batch.events.length };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** The anonymous rows past ANONYMOUS_RETENTION_DAYS, deleted. */
+async function pruneAnonymous(pool, { days = ANONYMOUS_RETENTION_DAYS } = {}) {
+  const { rowCount } = await pool.query(
+    `DELETE FROM events
+      WHERE event_type = 'ui_experience' AND user_id IS NULL
+        AND metadata->>'kind' IN ('session_fence', 'invite_settlement')
+        AND created_at < NOW() - make_interval(days => $1::int)`, [days]);
+  return { pruned: rowCount || 0 };
+}
+
+// `userId` null is a signed-out page's anonymous report
+// (POST /api/ui-telemetry/anonymous), which keeps no delivery receipt.
+async function insertBatch(pool, userId, batch, { language = null, receipt: keepReceipt = true, source = null } = {}) {
   const client = await pool.connect();
   let accepted = 0;
   try {
@@ -540,9 +829,13 @@ async function insertBatch(pool, userId, batch, { language = null } = {}) {
          ON CONFLICT DO NOTHING
          RETURNING id`,
         [userId, event.appSlug, events.EVENT_TYPES.UI_EXPERIENCE,
-          JSON.stringify(eventMetadata(event, language)), event.occurredAt]
+          JSON.stringify(eventMetadata(event, language, userId == null ? source : null)), event.occurredAt]
       );
       accepted += result.rowCount || 0;
+    }
+    if (!keepReceipt) {
+      await client.query('COMMIT');
+      return { accepted, duplicate: false };
     }
     const receipt = await client.query(
       `INSERT INTO events (user_id, event_type, metadata)
@@ -943,12 +1236,17 @@ module.exports = {
   VIAS,
   ERROR_CODES,
   KINDS,
+  FENCE_REASONS,
+  INVITE_SETTLED,
+  MAX_FENCE_ENTRIES,
   MAX_BATCH_EVENTS,
   MAX_BODY_BYTES,
   OUTCOMES,
   SCREENS,
   TelemetryValidationError,
   aggregate,
+  apiRouteTemplates,
+  routeTemplate,
   browserLanguage,
   browserLanguages,
   daysWindow,
@@ -958,6 +1256,13 @@ module.exports = {
   clientErrorCode,
   normalizeErrorTemplate,
   parseBatch,
+  parseAnonymousBatch,
+  anonymousSource,
+  insertAnonymous,
+  pruneAnonymous,
+  MAX_ANONYMOUS_PER_SOURCE_DAY,
+  ANONYMOUS_RETENTION_DAYS,
+  MAX_ANONYMOUS_EVENTS,
   pageLoads,
   recordServerFailure,
   safeServerError,
