@@ -107,12 +107,18 @@ function appView() {
 test('the inline vote card says the tally in words; the board and the panel keep "4 / 3"', () => {
   const av = appView();
   const pr = { id: 7, pr_number: 700, status: 'promoted', yes_count: 4, no_count: 0, votes_required: 3 };
+  // V05: past what it needed, the words are the count alone, never
+  // "4 of 3 yes votes"; below it, how many of how many.
   const words = av.voteCountPill(pr, 3, { words: true });
-  assert.match(words, /<span class="gc-vote-count-label">4 of 3 yes votes<\/span>/);
+  assert.match(words, /<span class="gc-vote-count-label">4 yes votes<\/span>/);
+  assert.match(av.voteCountPill({ ...pr, yes_count: 1 }, 3, { words: true }),
+    /<span class="gc-vote-count-label">1 of 3 yes votes<\/span>/);
   const pair = av.voteCountPill(pr, 3);
   assert.match(pair, /<span class="gc-vote-count-label">4 \/ 3<\/span>/);
   assert.doesNotMatch(pair, /yes votes/);
   // One vote needed is one whole sentence, not "1 yes votes".
+  assert.match(av.voteCountPill({ ...pr, yes_count: 0, votes_required: 1 }, 1, { words: true }),
+    /class="gc-vote-count-label">0 of 1 yes vote<\/span>/);
   assert.match(av.voteCountPill({ ...pr, yes_count: 1, votes_required: 1 }, 1, { words: true }),
-    /class="gc-vote-count-label">1 of 1 yes vote<\/span>/);
+    /class="gc-vote-count-label">1 yes vote<\/span>/);
 });

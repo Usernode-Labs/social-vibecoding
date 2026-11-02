@@ -7084,12 +7084,18 @@ test('#6075: a live row keeps its final counted vote beside ✓ Live', () => {
   // The yes votes counted against the threshold snapshotted at merge time,
   // then the no votes.
   const withNo = render({ yes_count: 3, no_count: 1, votes_required: 3 });
-  assert.match(withNo, /<span class="dev-ws-wrow-tally" title="3 yes and 1 no\. It needed 3 yes to pass\.">3\/3 yes · 1 no<\/span>/);
+  assert.match(withNo, /<span class="dev-ws-wrow-tally" title="3 yes and 1 no\. It needed 3 yes to pass\.">3 yes · 1 no<\/span>/);
 
   // A change nobody voted against names no votes.
   const yesOnly = render({ yes_count: 2, no_count: 0, votes_required: 2 });
-  assert.match(yesOnly, /<span class="dev-ws-wrow-tally"[^>]*>2\/2 yes<\/span>/,
+  assert.match(yesOnly, /<span class="dev-ws-wrow-tally"[^>]*>2 yes<\/span>/,
     'no votes are named only when there were some');
+  // V05: more yes than it needed is the count alone, never "2/1 yes"; one
+  // that went live short of its threshold keeps the pair.
+  const over = render({ yes_count: 2, no_count: 0, votes_required: 1 });
+  assert.match(over, /<span class="dev-ws-wrow-tally" title="2 yes and 0 no\. It needed 1 yes to pass\.">2 yes<\/span>/);
+  const short = render({ yes_count: 1, no_count: 0, votes_required: 2 });
+  assert.match(short, /<span class="dev-ws-wrow-tally"[^>]*>1\/2 yes<\/span>/);
 
   // An imported PR has no counted votes: no tally, never "0/1".
   const imported = render({ yes_count: 0, no_count: 0, votes_required: 3 });

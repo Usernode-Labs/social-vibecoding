@@ -24853,8 +24853,12 @@ const AppView = {
       // F18 (#5683): the inline card in a chat can ask for the tally in
       // words ("4 of 3 yes votes") rather than "4 / 3"; the board and the
       // vote panel keep the pair, which sits beside a bar.
+      // V05 (audit, 2 Nov 2026): once Yes has what it needed the words are
+      // the count alone ("2 yes votes"), never "2 of 1 yes vote".
       + `<span class="gc-vote-count-label">${opts.words
-        ? PlatformI18n.htmlText('changes:badge.votePill.tallyWords', { yes, count: maj })
+        ? (yes >= maj
+          ? PlatformI18n.htmlText('changes:badge.votePill.tallyReached', { count: yes })
+          : PlatformI18n.htmlText('changes:badge.votePill.tallyWords', { yes, count: maj }))
         : `${yes} / ${maj}`}</span>`
       + `</span>` + advisoryChip + explicitChip;
   },
