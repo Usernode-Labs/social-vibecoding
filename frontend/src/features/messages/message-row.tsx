@@ -1,4 +1,4 @@
-import { memo, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 
 import {
   BookmarkIcon, BookmarkSolidIcon, CopyIcon, DownloadIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
@@ -88,6 +88,32 @@ function Attachment({ attachment }: { attachment: ConversationMessage['attachmen
   );
 }
 
+/**
+ * How long a send may be on its way before its row says "Sending…" (offline
+ * test, 2 Nov 2026, finding 1). #2907 took the word away because it came and
+ * went on every send and moved the transcript twice; a send that answers in
+ * a second or two still shows nothing but the fade. One that does not, on a
+ * slow or silent network, said nothing at all and looked sent, so past this
+ * it says so, on the line where "Not sent" or "Will send when you're back
+ * online" takes its place if it comes to that.
+ */
+export const SLOW_SEND_MS = 2000;
+
+/** Whether a row still on its way (`pending`, drawn at `since`) has been out longer than SLOW_SEND_MS. */
+function useSlowSend(pending: boolean, since: string): boolean {
+  const started = Date.parse(since);
+  const [slow, setSlow] = useState(() => pending && Date.now() - started >= SLOW_SEND_MS);
+  useEffect(() => {
+    if (!pending) { setSlow(false); return undefined; }
+    const wait = Number.isFinite(started) ? SLOW_SEND_MS - (Date.now() - started) : SLOW_SEND_MS;
+    if (wait <= 0) { setSlow(true); return undefined; }
+    setSlow(false);
+    const timer = window.setTimeout(() => setSlow(true), wait);
+    return () => window.clearTimeout(timer);
+  }, [pending, started]);
+  return pending && slow;
+}
+
 /*
  * MEMOIZED. The Messages store publishes one snapshot for everything, so any
  * publish — the inbox reloading, someone else's typing ping — re-rendered the
@@ -165,6 +191,7 @@ export const MessageRow = memo(function MessageRow({
   useAutoGrow(editRef, editValue);
 
   const live = !message.deleted && !message.pending && !message.failed && message.id > 0;
+  const slowSend = useSlowSend(!!message.pending, message.createdAt);
   // Threads where the chat keeps them (./bot-shared.ts threadsAllowed). In
   // the chat with Homeroom bot a thread is a request's: it hangs off the
   // request's card (or a message that already has one), and a moment the
@@ -439,8 +466,8 @@ export const MessageRow = memo(function MessageRow({
 
   // The bar. WHILE A SEND IS IN FLIGHT it is still laid out, but invisible
   // and inert (#2907). A failed row has no bar — its Retry is its control —
-  // and neither has a deleted one.
-  const actions = !message.failed && !message.deleted ? (
+  // and neither has one waiting for a connection, nor a deleted one.
+  const actions = !message.failed && !message.queued && !message.deleted ? (
     <MessageActionBar
       className={`messages-message-actions ${message.pending ? 'messages-message-actions-reserved' : ''}`}
       hidden={!!message.pending}
@@ -478,9 +505,11 @@ export const MessageRow = memo(function MessageRow({
   // header, so it carries it on a meta line of its own, beside nothing: the
   // time is already in the gutter.
   //
-  // NO "sending…" (#2907). A message in flight says so by being faded
-  // (app.css), which changes no line's height; the word came and went in a
-  // line of its own on a continuation row and moved the transcript twice.
+  // NO "sending…" IN THE HEADER (#2907). A message in flight says so by
+  // being faded (app.css), which changes no line's height; the word came and
+  // went in a line of its own on a continuation row and moved the transcript
+  // twice. Only a send still out after SLOW_SEND_MS says it, under the text
+  // (sendNote below).
   const status = message.editedAt && !message.deleted ? <span title={fullTime(message.editedAt)}>{t('messages:row.edited')}</span> : null;
 
   // A send that failed says so under its text, with the two things to do
@@ -491,6 +520,16 @@ export const MessageRow = memo(function MessageRow({
     <span className="text-red-700 dark:text-red-400">{t('messages:row.notSent')}</span>
     {message.clientKey ? <button type="button" className="messages-retry" onClick={() => void retrySend(message.clientKey as string)}>{t('core:common.retry')}</button> : null}
     {message.clientKey ? <button type="button" className="messages-discard" onClick={() => discardFailed(message.clientKey as string)}>{t('messages:row.discard')}</button> : null}
+  </div> : null;
+
+  // Offline test, finding 1: the same line for a message not sent yet. One
+  // written with no connection says it will go by itself, and can be dropped;
+  // one on its way for longer than SLOW_SEND_MS says it is still sending.
+  const sendNote = failedNote ? null : message.queued ? <div className="messages-message-meta messages-message-send-note" role="status">
+    <span>{t('messages:row.queued')}</span>
+    {message.clientKey ? <button type="button" className="messages-discard" onClick={() => discardFailed(message.clientKey as string)}>{t('messages:row.discard')}</button> : null}
+  </div> : slowSend ? <div className="messages-message-meta messages-message-send-note" role="status">
+    <span>{t('messages:row.sending')}</span>
   </div> : null;
 
   // #4564: the change block this row belongs to, as classes and data its
@@ -535,6 +574,7 @@ export const MessageRow = memo(function MessageRow({
         {extras}
         {grouped && message.editedAt && !message.deleted ? <div className="messages-message-meta">{status}</div> : null}
         {failedNote}
+        {sendNote}
       </div>
       {barBesideHead ? null : actions}
       <MessageActionSheet

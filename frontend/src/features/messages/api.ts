@@ -700,15 +700,52 @@ export async function listMessages(id: number, before?: number | null, options?:
   };
 }
 
-export async function sendMessage(id: number, input: { content: string; replyToId?: number; threadRootId?: number; attachmentIds?: string[]; object?: SharedObjectReference; idempotencyKey: string; designPin?: DesignPin }): Promise<ConversationMessage> {
+/**
+ * A send given up after its time (offline test, 2 Nov 2026, finding 1): on a
+ * network that connects but passes nothing the request never fails, and the
+ * message looked sent for as long as the web view let it wait. Not an answer
+ * from the server, so the store asks whether the connection is gone.
+ */
+export class MessagesTimeoutError extends Error {
+  constructor() {
+    super(t('messages:api.sendTimedOut'));
+    this.name = 'TimeoutError';
+  }
+}
+
+/**
+ * `timeoutMs` gives up on the request, body included, once it has gone that
+ * long unanswered, and rejects with MessagesTimeoutError. The idempotency key
+ * is what makes that safe: a message the server did store is returned, not
+ * stored again, when it is sent again under the same key.
+ */
+export async function sendMessage(id: number, input: { content: string; replyToId?: number; threadRootId?: number; attachmentIds?: string[]; object?: SharedObjectReference; idempotencyKey: string; designPin?: DesignPin }, options: { timeoutMs?: number } = {}): Promise<ConversationMessage> {
   const payload: JsonRecord = { content: input.content, idempotency_key: input.idempotencyKey };
   if (input.designPin) payload.design_pin = input.designPin as unknown as JsonRecord;
   if (input.replyToId) payload.reply_to_id = input.replyToId;
   if (input.threadRootId) payload.thread_root_id = input.threadRootId;
   if (input.attachmentIds?.length) payload.attachment_ids = input.attachmentIds;
   if (input.object) payload.object = input.object;
-  const data = record(await request<unknown>(`/api/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify(payload) }));
-  return normalizeMessage(pick(data, 'message') ?? data, id);
+  const init: RequestInit = { method: 'POST', body: JSON.stringify(payload) };
+  const timeoutMs = options.timeoutMs;
+  if (!timeoutMs || typeof AbortController !== 'function') {
+    const data = record(await request<unknown>(`/api/conversations/${id}/messages`, init));
+    return normalizeMessage(pick(data, 'message') ?? data, id);
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const answer = await request<unknown>(`/api/conversations/${id}/messages`, { ...init, signal: controller.signal });
+    // A body cut off by the deadline reads as no body (request): not the message.
+    if (controller.signal.aborted) throw new MessagesTimeoutError();
+    const data = record(answer);
+    return normalizeMessage(pick(data, 'message') ?? data, id);
+  } catch (error) {
+    if (controller.signal.aborted && !(error instanceof MessagesApiError)) throw new MessagesTimeoutError();
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ── #6071: design threads ─────────────────────────────────────────────────

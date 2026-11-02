@@ -993,19 +993,25 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   padding: 8px 16px;
 }
 /* A message in flight is drawn at once, faded, and changes nothing else
-   (#2907): no spinner, no "sending…" line, so confirming it moves no row.
-   The fade lifts when the server has it. */
+   (#2907): no spinner, and no "Sending…" line for a send that answers in a
+   couple of seconds, so confirming it moves no row. The fade lifts when the
+   server has it. One out longer says "Sending…" on the line under it, where
+   "Not sent" or "Will send when you're back online" comes if it does
+   (message-row.tsx SLOW_SEND_MS; offline test, finding 1). */
 .messages-message { transition: opacity .15s ease-out; }
 .messages-message-pending { opacity: .55; }
 .messages-message-failed { background: rgba(239, 68, 68, .06); }
-.messages-message-meta.messages-message-failed-note { display: flex; align-items: baseline; gap: 12px; padding: 2px 0 0; }
-.messages-message-failed-note button {
+.messages-message-meta.messages-message-failed-note,
+.messages-message-meta.messages-message-send-note { display: flex; align-items: baseline; gap: 12px; padding: 2px 0 0; }
+.messages-message-failed-note button,
+.messages-message-send-note button {
   color: var(--accent);
   font-weight: 600;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.messages-message-failed-note button.messages-discard { color: var(--text-muted); font-weight: 400; }
+.messages-message-failed-note button.messages-discard,
+.messages-message-send-note button.messages-discard { color: var(--text-muted); font-weight: 400; }
 .messages-message-head {
   display: flex;
   flex-wrap: wrap;

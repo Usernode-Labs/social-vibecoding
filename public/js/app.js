@@ -198,7 +198,10 @@ const App = {
       const snap = JSON.parse(raw);
       if (!snap || !snap.user || !snap.user.id) return null;
       if (!snap.cacheScope || snap.cacheScope !== App._sessionCacheScope()) {
-        App._dropCachedSession();
+        // Another session token, not necessarily another person (a native
+        // app's restored session is a new token): unsent messages stay, and
+        // only the account that wrote them is ever given them back.
+        App._dropCachedSession({ keepUnsent: true });
         return null;
       }
       const age = Date.now() - Number(snap.savedAt || 0);
@@ -229,7 +232,11 @@ const App = {
   // Ask the service worker to drop the cached API responses of a session
   // that is definitively over. Fire-and-forget: the snapshot has already
   // been cleared, so a worker that never answers changes nothing.
-  _dropCachedSession({ apiCache = true } = {}) {
+  //
+  // `keepUnsent` keeps the messages the account wrote that the server has
+  // not had yet (below): only for a snapshot whose session token has merely
+  // changed, which a native app's restored session does to the same person.
+  _dropCachedSession({ apiCache = true, keepUnsent = false } = {}) {
     window.UsernodeReact?.apiCache?.reset?.({ broadcast: apiCache });
     App.clearSessionSnapshot();
     // The remembered top-bar state goes with it, for the same reason and on
@@ -267,6 +274,14 @@ const App = {
     try {
       if (typeof AppView !== 'undefined') AppView.clearOfflineReady();
     } catch (err) { /* ignore */ }
+    // …and the messages this account wrote that the server has not had yet,
+    // kept on the device so a reload cannot lose them (offline test, finding
+    // 1; frontend/src/features/messages/outbox.ts). They are never left for
+    // the next account, which is also why the outbox only ever gives back
+    // the signed-in account's own.
+    try {
+      if (!keepUnsent) window.UsernodeReact?.messages?.clearUnsent?.();
+    } catch (err) { /* nothing kept, or no bridge */ }
   },
 
   // True while the shell is running on the snapshot rather than a verified

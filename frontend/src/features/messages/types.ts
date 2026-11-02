@@ -699,6 +699,12 @@ export interface ConversationMessage {
    */
   saved?: boolean;
   pending?: boolean;
+  /**
+   * The sender's own message, written while the app had no connection: kept
+   * on the device and sent by itself when the connection is back (offline
+   * test, 2 Nov 2026, finding 1; store.ts flushQueued).
+   */
+  queued?: boolean;
   failed?: boolean;
   clientKey?: string;
 }
