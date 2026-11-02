@@ -7002,8 +7002,9 @@ test('#5385: a request of yours Homeroom bot has in hand is a Your work row, in 
   // Polish board #24: its words in full on hover, where a narrow card cuts them short.
   assert.match(work, /<span class="dev-ws-hrow-tag" data-ws-bot-step="" data-tone="run" title="Writing the plan">Writing the plan<\/span>/);
   assert.match(wait, /<span class="dev-ws-hrow-tag" data-ws-bot-step="" data-tone="warn" title="It can&#x27;t build this as written: add detail">It can&#x27;t build this as written: add detail<\/span>/);
-  // The row opens the chat with the bot at the request's thread, where the
-  // drawer's row goes; a modified click keeps the request page's href.
+  // #6145: the row opens like every row, the request's page (its href; the
+  // side panel beside the Workshop on a wide window), which carries the
+  // bot's story itself.
   assert.match(work, /href="#app\/demo-app\/dev\/issues\/12"/);
   assert.match(work, /<li class="dev-ws-hrow" data-ws-row="mine:issue:12" data-ws-kind="request"/);
 
@@ -7060,9 +7061,65 @@ test('#5385: a request of yours Homeroom bot has in hand is a Your work row, in 
   assert.deepEqual(plain(shot.mine.extra), []);
   assert.equal(AppView._workshopShot, 'mine-empty');
 
-  // The bot row's click goes to the chat, not the side panel (week-pages.tsx).
-  assert.match(read('frontend/src/features/dev-board/workshop/week-pages.tsx'),
-    /callAppView\('openBotChatFromRequest', b\.n\)/);
+  // #6145: a bot row's click opens it like every row (onOpen: the side panel
+  // on a wide window, else its href), never the chat. The chat's door is the
+  // request card's See progress (card-action-layout, work-with-bot).
+  const weekPages = read('frontend/src/features/dev-board/workshop/week-pages.tsx');
+  assert.match(weekPages, /className="dev-ws-hrow-link"\s+href=\{href\}\s+aria-current=\{on \? 'true' : undefined\}\s+onClick=\{ref && onOpen \? \(e\) => onOpen\(e, ref\) : undefined\}/,
+    'the row link calls onOpen, bot row or not');
+  assert.doesNotMatch(weekPages, /onBotClick|openBotChatFromRequest|callAppView/, 'no jump to the chat from a row');
+  assert.match(work, /<li class="dev-ws-hrow" data-ws-row="mine:issue:12" data-ws-kind="request" data-ws-open="[a-z]+:12"/,
+    'the bot row carries the item it opens');
+});
+
+// #6145 (2 Nov 2026): a row's side panel is portalled to <body>, so it stayed
+// over the Homeroom bot tab after the project page was left. app.js now
+// publishes the project page's visibility to the store, and the Workshop
+// clears its panel's item when that goes false.
+test('#6145: the side panel\'s item is cleared when the project page is hidden', () => {
+  const classes = new Map();
+  const sandbox = {
+    console, URLSearchParams, setTimeout, clearTimeout, setInterval, clearInterval,
+    location: { hash: '', search: '', pathname: '/', origin: 'https://example.test' },
+    localStorage: { getItem: () => null, setItem() {} },
+    document: {
+      getElementById: (id) => ({ classList: { toggle(name, on) { classes.set(id, on ? name : ''); } } }),
+      querySelector: () => null, querySelectorAll: () => [], addEventListener() {},
+    },
+    addEventListener() {},
+  };
+  sandbox.window = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  vm.createContext(sandbox);
+  vm.runInContext(read('public/js/app.js'), sandbox);
+  const { App } = sandbox;
+  assert.ok(!App.REACT_SCREEN_IDS.includes('app-view'), 'no island owns the project page\'s class');
+  App._setScreenVisible('app-view', true);
+  assert.equal(sandbox.__usernodeVisibility.visible['app-view'], true);
+  assert.equal(classes.get('app-view'), '', 'app.js still writes its class');
+  App._setScreenVisible('app-view', false);
+  assert.equal(sandbox.__usernodeVisibility.visible['app-view'], false, 'published when the page is left');
+  assert.equal(classes.get('app-view'), 'hidden');
+  App._setScreenVisible('settings-screen', true);
+  assert.equal(sandbox.__usernodeVisibility.visible['settings-screen'], undefined, 'another unconverted screen keeps the class alone');
+
+  // React reads the same store: the value the Workshop's useVisibility sees.
+  const store = loadTsx('frontend/src/lib/visibility-store.ts');
+  const before = store.readVisibility('app-view');
+  try {
+    store.publishVisibility('app-view', false);
+    assert.equal(store.readVisibility('app-view'), false);
+  } finally {
+    store.getVisibilityStore().visible['app-view'] = before;
+  }
+
+  // The Workshop clears the panel's item when the page is hidden; with no
+  // item, no panel is drawn, so back to the Workshop shows none open.
+  const workshop = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.match(workshop, /import \{ useVisibility \} from '\.\.\/\.\.\/\.\.\/lib\/visibility-store';/);
+  assert.match(workshop, /const pageShown = useVisibility\('app-view', true\);\n\s+useEffect\(\(\) => \{\n\s+if \(!pageShown\) setSideItem\(null\);\n\s+\}, \[pageShown\]\);/);
+  assert.match(workshop, /\{sideOpen && sideItem \? <TopicSidePanel item=\{sideItem\} onClose=\{closeSide\} \/> : null\}/);
+  assert.match(workshop, /const sideOpen = !!sideItem && /);
 });
 
 test('#6075: a live row keeps its final counted vote beside ✓ Live', () => {
