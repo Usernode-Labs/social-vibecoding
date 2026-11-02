@@ -143,9 +143,10 @@ export const MessageRow = memo(function MessageRow({
 }) {
   const t = useMessages('messages');
   const mine = Number(typeof window !== 'undefined' ? window.App?.user?.id : 0) === message.sender.id;
-  // #4655: in a direct message people are named bare ("ada", not "@ada"),
-  // everywhere this row names someone — its author line, a quote, the sheet
-  // and the Block and Report labels. Group chats and channels keep the @.
+  // #4655: in a direct message people are named bare ("ada", not "@ada") in
+  // the Block and Report labels; group chats and channels keep the @ there.
+  // The author line, a quote and the sheet's header name them bare in every
+  // chat (audit C05/Y06).
   const bare = kind === 'direct';
   const [picker, setPicker] = useState<'above' | 'below' | null>(null);
   const [menu, setMenu] = useState<'above' | 'below' | null>(null);
@@ -350,7 +351,7 @@ export const MessageRow = memo(function MessageRow({
     <p className="messages-deleted">{t('messages:row.deleted')}</p>
   ) : (
     <>
-      {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender, { bare })}</span><p>{message.reply.deleted ? t('messages:row.quote.deleted') : plainText(message.reply.content) || t('messages:row.quote.attachment')}</p></button> : null}
+      {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender, { bare: true })}</span><p>{message.reply.deleted ? t('messages:row.quote.deleted') : plainText(message.reply.content) || t('messages:row.quote.attachment')}</p></button> : null}
       {/* Homeroom bot parity, P1: what the reply looked at, above its words (./bot-looked.tsx). */}
       {!editing ? <BotLookedLine message={message} /> : null}
       {editing ? (
@@ -501,7 +502,13 @@ export const MessageRow = memo(function MessageRow({
         ? <time className="messages-message-gutter" dateTime={message.createdAt} title={fullTime(message.createdAt)}>{shortTime}</time>
         : sided && mine ? null : <UserAvatar user={message.sender} size="md" shape="square" />}
       <div className={block ? 'min-w-0 flex-1 messages-bot-block-body' : sided ? 'min-w-0 flex-1 messages-bubble-wrap' : 'min-w-0 flex-1'}>
-        {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine ? 'text-violet-700 dark:text-violet-300' : ''}`}>{senderName(message.sender, { bare })}</span>{message.sender.bot ? <span className="messages-bot-badge">{t('messages:row.aiBadge')}</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
+        {/* Audit C05/Y06 (2 Nov 2026): the line over a message names its
+            author the one way every chat does, their bare username, as a
+            direct message and #general already did; a handle in a sentence
+            keeps its @. Your own bubble is already on your side and tinted,
+            so its line says only the time, and your name is there for a
+            screen reader alone, not in the accent, which marks an action. */}
+        {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine && sided ? 'sr-only' : ''}`}>{senderName(message.sender, { bare: true })}</span>{message.sender.bot ? <span className="messages-bot-badge">{t('messages:row.aiBadge')}</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
         {/* #4564: the dropped card's own label, spoken: a screen reader still
             hears which request these words are about, as the block's top
             shows. */}
@@ -531,7 +538,7 @@ export const MessageRow = memo(function MessageRow({
         onReact={(emoji) => { void toggle(emoji); }}
         onPick={pick}
         items={sheetItems}
-        preview={{ who: senderName(message.sender, { bare }), text: message.content }}
+        preview={{ who: senderName(message.sender, { bare: true }), text: message.content }}
       />
     </article>
   );

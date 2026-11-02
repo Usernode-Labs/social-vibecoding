@@ -3180,8 +3180,8 @@
     "description": "Small-caps heading over the Messages list section that holds the viewer's conversations with AI agents and their changes in flight. It is a button that folds the section away and opens it again."
   },
   "inbox.section.people": {
-    "text": "Direct messages",
-    "description": "Small-caps heading over the last section of the Messages list, under Agents: the viewer's direct messages and group chats with people. It does not fold."
+    "text": "People",
+    "description": "Small-caps heading over the last section of the Messages list, under Agents, and over the same rows in the sidebar: the viewer's direct messages and group chats with people. It does not fold."
   },
   "inbox.section.working_one": {
     "text": "{{count}} working",
