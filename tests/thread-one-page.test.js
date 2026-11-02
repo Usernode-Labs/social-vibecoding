@@ -173,6 +173,21 @@ test('D1: rendered, a change built for a request is a line with its title, and a
   assert.equal((ballot.match(/data-change-row-open=/g) || []).length, 2, 'a row\'s title opens its fold');
 });
 
+test('#6139: the line under a change says whether it is still being built or finished', () => {
+  const underway = { ...review(91, 6063), status: 'active', state: 'underway' };
+  const draw = (item) => renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
+    slug: 'club', data: thread([request, item]), number: 10, changes: [item], close: null, onChanged: () => {},
+  });
+  const built = draw({ ...underway, ready: true });
+  assert.ok(built.includes('data-thread-change-waiting="ready"'));
+  assert.ok(built.includes(message('project:topic.thread.page.ready')));
+  assert.ok(!built.includes(message('project:topic.thread.page.underway')), 'it does not say it is being built');
+  const still = draw(underway);
+  assert.ok(still.includes('data-thread-change-waiting="building"'));
+  assert.ok(still.includes(message('project:topic.thread.page.underway')));
+  assert.equal(message('project:topic.thread.page.ready'), 'Built, and its checks pass. Its votes open once it is put up for a vote.');
+});
+
 test('D5: a change folded under its ballot has no Vote of its own', () => {
   const head = read(`${TOPIC}/change-head.tsx`);
   assert.match(head, /<GateCard which="votes" g=\{v\.votes\} action=\{ballot \? null : voteAction\} id=\{id\} \/>/);

@@ -264,6 +264,31 @@ test('the bar\'s pill says where the request\'s work stands', () => {
   assert.equal(message('project:topic.thread.pill.choosing'), 'Pick one');
 });
 
+test('#6139: a change that finished building reads as ready, with no spinner, and only when all of them have', () => {
+  const { requestPill, threadLayout, threadRows } = loadTsx(MODEL);
+  const here = { type: 'request', id: 7 };
+  const layoutOf = (items) => threadLayout(payload([request, ...items]), here);
+  const building = { type: 'change', id: 51, number: 8, title: 'A', status: 'active', state: 'underway', ready: false, replies: 0, closes: [7] };
+  const ready = { ...building, id: 52, ready: true };
+
+  const pill = requestPill(layoutOf([ready]), null, message);
+  assert.equal(pill.key, 'ready');
+  assert.equal(pill.label, 'Ready for a vote');
+  assert.equal(pill.tone, 'neutral');
+  assert.ok(!pill.spinner, 'nothing is running');
+
+  const still = requestPill(layoutOf([ready, building]), null, message);
+  assert.equal(still.key, 'building', 'another change is still being built');
+  assert.equal(still.spinner, true);
+  assert.equal(requestPill(layoutOf([ready]), 'building').key, 'building', 'the bot is really building for it');
+  assert.equal(requestPill(layoutOf([ready]), 'queued').key, 'ready', 'a build that has not started says nothing');
+  assert.equal(requestPill(layoutOf([ready, { ...building, id: 53, status: 'promoted', state: 'review' }]), null).key, 'vote', 'one up for a vote still leads');
+
+  const [row] = threadRows(payload([ready]), null);
+  assert.ok(JSON.stringify(row.facts).includes('project:topic.thread.state.ready'), 'the list says it too');
+  assert.equal(message('project:topic.thread.state.ready'), 'Ready for a vote');
+});
+
 test('the request\'s changes are drawn from their own pages\' reads, and the ballot lives with them', () => {
   const src = read('frontend/src/features/dev-board/topic/thread-changes.tsx');
   assert.match(src, /readChangeDetail\(\{ id: item\.id, status: item\.status \}, false, abort\.signal\)/, 'read as its own page reads it');

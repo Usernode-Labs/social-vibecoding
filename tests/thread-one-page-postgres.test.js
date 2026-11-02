@@ -120,6 +120,47 @@ test('a change built for a request lives on the request\'s page', { timeout: 180
     assert.equal(asMaya.items.find((i) => i.type === 'request').replies, 4, 'the draft\'s owner counts its reply');
   });
 
+  await t.test('#6139: a change is ready only with checks passing on its current head and nothing working on it', async () => {
+    const SHA = 'a'.repeat(40);
+    const OTHER = 'b'.repeat(40);
+    const set = (fields) => pool.query(
+      `UPDATE chat_sessions SET check_state = $2, checks_commit_sha = $3, source = $4, imported_pr_head_sha = $5,
+                                handoff_uploaded_sha = $6, handoff_head_sha = $7, handoff_upload_checked_sha = $8,
+                                active_turn = $9::jsonb, staging_url = NULL
+        WHERE id = $1`,
+      [draft.id, fields.state ?? 'passing', 'sha' in fields ? fields.sha : SHA, fields.source ?? 'native', fields.imported ?? null,
+        fields.uploaded ?? null, fields.head ?? null, fields.uploadChecked ?? null, fields.turn ?? null]);
+    const ready = async () => {
+      const thread = await threads.threadForNumber(pool, { appId: app.id, number: 10 });
+      const page = await threads.threadPage(pool, { thread, viewerId: maya.id });
+      const item = page.items.find((i) => i.type === 'change' && i.id === Number(draft.id));
+      assert.equal(item.state, 'underway');
+      return item.ready;
+    };
+    await set({});
+    assert.equal(await ready(), true, 'passing on its head, idle, its preview asleep');
+    for (const [why, fields] of [
+      ['checks still running', { state: 'pending' }],
+      ['checks failed', { state: 'failing' }],
+      ['nothing was built', { state: 'skipped' }],
+      ['a verdict about no commit', { sha: null }],
+      ['a turn is running', { turn: JSON.stringify({ turnId: 't', phase: 'running' }) }],
+      ['an imported head moved on', { source: 'imported', imported: OTHER }],
+      ['a local upload is not submitted', { source: 'cli_handoff', uploaded: OTHER, head: SHA, uploadChecked: SHA }],
+    ]) {
+      await set(fields);
+      assert.equal(await ready(), false, why);
+    }
+    await set({ source: 'imported', imported: SHA.toUpperCase() });
+    assert.equal(await ready(), true, 'an imported pull request checked on its head, whatever the case of the sha');
+    await set({ source: 'cli_handoff', uploaded: SHA, head: SHA, uploadChecked: OTHER });
+    assert.equal(await ready(), true, 'a submitted upload');
+    await pool.query(`UPDATE chat_sessions SET check_state = NULL, checks_commit_sha = NULL, source = NULL, imported_pr_head_sha = NULL,
+                        handoff_uploaded_sha = NULL, handoff_head_sha = NULL, handoff_upload_checked_sha = NULL WHERE id = $1`, [draft.id]);
+    const pinPage = await threads.threadPage(pool, { thread: await threads.threadForNumber(pool, { appId: app.id, number: 10 }), viewerId: ana.id });
+    assert.equal(pinPage.items.find((i) => i.type === 'change' && i.id === Number(pin.id)).ready, false, 'one up for a vote is past it');
+  });
+
   await t.test('a change for two requests is on the first one\'s page; the other says where', async () => {
     const other = await threads.threadForNumber(pool, { appId: app.id, number: 11 });
     const page = await threads.threadPage(pool, { thread: other, viewerId: ana.id });
