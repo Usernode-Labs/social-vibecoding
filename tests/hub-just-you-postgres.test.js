@@ -169,6 +169,12 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
     };
     assert.equal((await listed()).invite_link_out, false, 'the Communities list says nothing yet');
     const id = await link(evan);
+    // Audit D03: made (as opening the Invite pane makes one) is not sent.
+    const made = await get();
+    assert.equal(made.invite_link, true, 'the hub still draws its open seats');
+    assert.equal(made.invite_summary.links, 0, 'but Share it says no link went out');
+    assert.equal((await listed()).invite_link_out, false, 'nor does the Communities list');
+    await pool.query('UPDATE community_invites SET shared_at = NOW() WHERE id = $1', [id]);
     const body = await get();
     assert.equal(body.invite_link, true, 'their live link is out');
     assert.equal(body.audience, 'solo', 'the audience is still derived from people, not links');

@@ -4763,6 +4763,11 @@
    * with the chosen action object, or null on cancel/backdrop.
    * ──────────────────────────────────────────────────────────────────── */
 
+  // The page's address, for a surface that closes when it moves.
+  function currentHref() {
+    try { return window.location.href; } catch (_) { return null; }
+  }
+
   // actionSheet({ title?, actions: [{ label, icon?, iconEl?, destructive?,
   // highlighted?, handler? }], cancelLabel? }) — returns a Promise.
   // `highlighted` lights one row (a tint behind it, its label bold): the
@@ -4848,6 +4853,7 @@
       var settleAction = null; // the chosen action while the exit spring runs
       function finishSettle() {
         if (unwatch) unwatch();
+        stopNavWatch();
         if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
         if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
         if (settleAction && settleAction.handler) settleAction.handler();
@@ -4863,6 +4869,19 @@
       }
 
       onBackdropDismiss(backdrop, function () { settle(null); });
+
+      // A MOVE TO ANOTHER ADDRESS CLOSES IT, as a Cancel would (audit D01,
+      // 2 Nov 2026). Back, a swipe back or a link written under it left the
+      // sheet floating over the next screen, and the next tap only closed
+      // it. Only a move away from where it opened counts.
+      var openedAt = currentHref();
+      function onNav() { if (currentHref() !== openedAt) settle(null); }
+      function stopNavWatch() {
+        window.removeEventListener('popstate', onNav);
+        window.removeEventListener('hashchange', onNav);
+      }
+      window.addEventListener('popstate', onNav);
+      window.addEventListener('hashchange', onNav);
 
       // Same present-time height assumption as the bottom sheet (issue
       // #742). The API can't receive late content, but a re-measure (e.g.

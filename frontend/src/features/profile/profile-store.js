@@ -261,18 +261,25 @@ export function identityView(state) {
  * The three stat cards (the prototype's `.stat`): merged, kudos, challenges.
  * From GET /api/me/summary. A read that failed or has not answered shows a
  * dash rather than a zero — a 0 would be a claim.
+ *
+ * Y03 (audit, 2 Nov 2026): a zero says nothing. A card whose number is a
+ * read zero is marked `zero`, and the screen hides it (kept in the DOM,
+ * where a declared check selects on it): a new member's profile opened on
+ * two large tiles reading "0 live" and "0 challenges".
  */
 export function statsView(summary, { kudosParked = KUDOS_PARKED } = {}) {
   const has = !!summary;
   const value = (n) => (has ? Number(n || 0).toLocaleString() : '–');
+  const zero = (n) => has && !(Number(n) > 0);
   // #5249: while kudos is parked (../leaderboard/kudos-parked.ts) there is no
   // kudos card, and merged and challenges share the row.
   return [
-    { key: 'merged', value: value(summary && summary.merged), label: t('profile:stats.live') },
-    { key: 'kudos', value: value(summary && summary.kudos), label: t('profile:stats.kudos') },
+    { key: 'merged', value: value(summary && summary.merged), zero: zero(summary && summary.merged), label: t('profile:stats.live') },
+    { key: 'kudos', value: value(summary && summary.kudos), zero: zero(summary && summary.kudos), label: t('profile:stats.kudos') },
     {
       key: 'challenges',
       value: value(summary && summary.challenges && summary.challenges.done),
+      zero: zero(summary && summary.challenges && summary.challenges.done),
       label: t('profile:stats.challenges'),
     },
   ].filter((stat) => !(kudosParked && stat.key === 'kudos'));

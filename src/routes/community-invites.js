@@ -11,6 +11,8 @@
  *                                                  for someone who manages
  *                                                  the project)
  *   DELETE /api/invite-links/:id                   turn one off
+ *   POST   /api/invite-links/:id/shared            it went out: copied or
+ *                                                  shared from the pane
  *   GET    /api/public/invites/:token              the preview, signed out
  *   GET    /api/public/invites/:token/picture      the project's picture, when
  *                                                  it is an after-shot
@@ -166,6 +168,19 @@ function communityInviteRoutes(config) {
       });
     } catch (err) {
       log.error('invites', 'Listing invite links failed', { slug: req.params.slug, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Audit D03: the pane's Copy or Share. What says a link is out reads it.
+  router.post('/api/invite-links/:id/shared', drainGuard, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const done = await invites.markShared(pool, { inviteId: req.params.id, user: req.user });
+      if (!done.ok) return res.status(done.status).json({ error: done.error });
+      return res.json({ ok: true });
+    } catch (err) {
+      log.error('invites', 'Marking an invite link sent failed', { id: req.params.id, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

@@ -127,8 +127,9 @@ test('a group\'s header leads with a member\'s face and says who is still invite
   assert.equal(threadWords({ ...group, membershipStatus: 'invited' }).sub, 'Invitation pending', 'an invitee reads the invitation');
   const src = read('frontend/src/features/messages/index.tsx');
   const header = src.slice(src.indexOf('function ThreadHeader('), src.indexOf('/** The day a message was sent'));
-  assert.match(header, /const face = active\.kind === 'group' && !invited\s*\? active\.members\.find\(\(member\) => member\.status === 'member' && Number\(member\.id\) !== viewerId\) \|\| null/);
-  assert.match(header, /: face \? <UserAvatar user=\{face\} shape="square" \/>/, 'not the initials of its name ("E+")');
+  // Audit C02: the members' faces its row in the list draws (GroupFaces), not one of them.
+  assert.match(header, /const groupFaces = active\.kind === 'group' && !invited;/);
+  assert.match(header, /: groupFaces \? <GroupFaces conversation=\{active\} \/>/, 'not the initials of its name ("E+")');
   // A bot's thread line says its name, not @homeroom_bot.
   assert.match(src, /name: reply\.sender\.bot \? senderName\(reply\.sender, \{ bare: true \}\) : reply\.sender\.username,\s*bot: !!reply\.sender\.bot,/);
   assert.match(read('frontend/src/features/message-actions/thread-activity.tsx'), /\{reply\.bot \? reply\.name : `@\$\{reply\.name\}`\}/);
@@ -141,4 +142,19 @@ test('one number on the All row: the votes hide the grey count of unread channel
   const show = CSS.indexOf('#platform-tab-workshop .platform-tab-mark:has(.platform-tab-votes) > #platform-tabs-badge-communities:not(.hidden) {');
   const hide = CSS.indexOf('#platform-tab-workshop:has(.platform-tab-all-votes) .platform-tab-mark > #platform-tabs-badge-communities:not(.hidden) {\n    display: none;');
   assert.ok(show > 0 && hide > show, 'the hide rule, as heavy, after the show rule');
+});
+
+test('V02: on the phone\'s bar the Communities tab\'s one number is its votes; unread channels are a dot', () => {
+  // Voting on the only change waiting turned a blue 1 into a grey 2 (the
+  // channels' count in the same seat), which read as the count growing.
+  const at = CSS.indexOf('@media (max-width: 767px) {\n  #platform-tabs-badge-communities {');
+  assert.ok(at > 0, 'a phone-only rule for the channels\' badge');
+  const body = CSS.slice(at, CSS.indexOf('}', at) + 1);
+  assert.match(body, /width: 9px;/);
+  assert.match(body, /font-size: 0;/, 'no figure on the dot');
+  assert.match(body, /color: transparent;/);
+  // Its accessible name stays the words, with no number to lose.
+  assert.equal(message('core:tabs.unreadChannels'), 'Channels with unread messages');
+  // And the votes still take its seat while any are owed.
+  assert.ok(CSS.includes('.platform-tab-mark:has(.platform-tab-votes) > #platform-tabs-badge-communities { display: none; }'));
 });

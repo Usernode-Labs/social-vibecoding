@@ -279,10 +279,16 @@
     _chromeSuspended: false,
 
     // The single source of truth in JS for where the sidebar layout starts.
-    // Must stay in step with the `md:` classes in index.html's
-    // #settings-screen markup (Tailwind's md breakpoint IS 768px) — same
+    // Must stay in step with the `lg:` classes in index.html's
+    // #settings-screen markup (Tailwind's lg breakpoint IS 1024px) — same
     // discipline as AdminConsole.DESKTOP_MEDIA.
-    DESKTOP_MEDIA: '(min-width: 768px)',
+    //
+    // 1024, not the shell's 768 (overnight audit W01, 1 Nov 2026): from 768
+    // the app's own 212px rail is open too, so at 800 the section list and
+    // the pane shared ~560px and the pane was ~260px wide, cutting your own
+    // name to "A." and "@.". Below 1024 Settings is the phone's two levels,
+    // the list and then the page, each with the column to itself.
+    DESKTOP_MEDIA: '(min-width: 1024px)',
 
     // ── Parts and pages ───────────────────────────────────────────────────
     //

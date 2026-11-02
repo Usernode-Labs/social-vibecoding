@@ -1116,8 +1116,8 @@
     "description": "Link at the end of the Make it step's \"Who can change it\" line: opens the four approval presets."
   },
   "firstSession.make.rule.title": {
-    "text": "Who says yes?",
-    "description": "Title of the sheet with the four approval presets, opened from Change on the \"What do you want to make?\" screen."
+    "text": "Who can change it?",
+    "description": "Title of the sheet with the four approval presets, opened from Change at the end of the \"Who can change it\" line on the \"What do you want to make?\" screen. It asks the line's own question."
   },
   "firstSession.make.rule.plays": {
     "text": "How it plays out",

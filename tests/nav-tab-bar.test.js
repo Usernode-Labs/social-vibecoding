@@ -1271,8 +1271,10 @@ test('#5323: a pinned row carries the Unpin menu and the drag-out path', () => {
 test('the still-open dot only on the apps kept alive, said aloud; the app on screen lit', () => {
   const src = read(RAIL);
   assert.match(src, /const live = useLiveAppSlugs\(\);/, 'read off the frame store\'s kept frames');
-  assert.match(src, /\{running \? <LiveAppDot className="platform-rail-live" \/> : null\}/);
-  assert.match(src, /aria-label=\{running \? listText\(\[appName, liveAppLabel\(\)\]\) : appName\}/);
+  // Only on an app kept behind another page, not the one on screen (audit N04).
+  assert.match(src, /const keptOpen = running && onApp !== slug;/);
+  assert.match(src, /\{keptOpen \? <LiveAppDot className="platform-rail-live" \/> : null\}/);
+  assert.match(src, /aria-label=\{keptOpen \? listText\(\[appName, liveAppLabel\(\)\]\) : appName\}/);
   assert.equal(message('core:liveApp.stillOpen'), 'still open');
   assert.equal(message('core:rail.app'), 'App');
   assert.equal(message('core:rail.appOf', { name: 'Chess' }), 'Chess app');
@@ -1368,4 +1370,33 @@ test('the folded Duo\'s corner shifts the bar\'s cells, never its shape (6072)',
   assert.ok(at > 0 && corner.length > 0, 'the corner block is in app.css');
   assert.doesNotMatch(corner, /data-side-strip/);
   assert.doesNotMatch(corner, /flex-direction: column/);
+});
+
+test('the phone\'s bar is read in the order it is drawn; the markup keeps the rail\'s (audit N01)', () => {
+  const { PHONE_TAB_ORDER, phoneReadingOrder } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
+  // The same five, in the order app.css's `order` draws them (TWO ORDERS, ONE MARKUP).
+  assert.deepEqual([...PHONE_TAB_ORDER],
+    ['platform-tab-home', 'platform-tab-workshop', 'platform-tab-ai', 'platform-tab-messages', 'platform-tab-me']);
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public/css/app.css'), 'utf8');
+  const block = css.slice(css.indexOf('/* TWO ORDERS, ONE MARKUP'));
+  const drawn = ['home', 'workshop', 'ai', 'messages']
+    .map((k) => [k, Number(new RegExp(`#platform-tab-${k} \\{ order: (-?\\d+); \\}`).exec(block)[1])])
+    .sort((a, b) => a[1] - b[1]).map(([k]) => `platform-tab-${k}`);
+  assert.deepEqual(PHONE_TAB_ORDER.slice(0, 4), drawn, 'aria-owns follows the bar\'s own order');
+  assert.equal(phoneReadingOrder(true, false), PHONE_TAB_ORDER.join(' '));
+  assert.equal(phoneReadingOrder(false, false), null, 'the rail reads in its markup order');
+  assert.equal(phoneReadingOrder(true, true), null, 'the Duo strip is left alone');
+  // Written from an effect, never rendered: the prerender has no width.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/nav/tab-bar.tsx'), 'utf8');
+  assert.doesNotMatch(src, /aria-owns=\{/);
+  assert.match(src, /bar\.setAttribute\('aria-owns', owns\)/);
+});
+
+test('the Communities ring overhangs instead of pushing its label down (audit N02)', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public/css/app.css'), 'utf8');
+  const ring = /\.platform-tab-ring \{([^}]*)\}/.exec(css)[1];
+  assert.match(ring, /width: 28px; height: 28px/);
+  // 28 - 2 * 3 = the 22px of every other tab's glyph.
+  assert.match(ring, /margin-block: -3px;/);
+  assert.match(css, /@media \(min-width: 768px\) \{\s*\.platform-tab-ring \{[^}]*margin-block: 0;/);
 });

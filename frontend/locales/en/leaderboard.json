@@ -84,8 +84,12 @@
     "description": "Accessible name of the grey placeholder shown on the Challenges tab while the challenges are being fetched."
   },
   "challenges.empty": {
-    "text": "No challenges right now.",
-    "description": "Shown on the Challenges tab when no challenge is running."
+    "text": "No challenges right now",
+    "description": "Title of the one card on the Challenges tab when no challenge is running."
+  },
+  "challenges.emptyHint": {
+    "text": "New ones will show up here.",
+    "description": "Line under \"No challenges right now\" on the Challenges tab: new challenges will appear on this tab."
   },
   "challenges.loadFailed": {
     "text": "Failed to load challenges.",

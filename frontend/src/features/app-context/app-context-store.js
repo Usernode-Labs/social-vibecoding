@@ -34,8 +34,9 @@ export const appContextStore = createStore({
   /**
    * Where the header's back disc goes from a second pane: `'menu'`, or
    * `'about'` for an invite pane opened from About's Invite, so Back retraces
-   * the step taken rather than skipping the page it was taken from. Reset
-   * with `view`.
+   * the step taken rather than skipping the page it was taken from, or
+   * `'none'` for one the sheet opened on (the hub's Invite), which has no
+   * back disc: there is no menu behind it (audit D07). Reset with `view`.
    */
   back: 'menu',
   /**

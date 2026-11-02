@@ -29,6 +29,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { englishPlatformI18n } = require('./lib/platform-i18n');
+const { message } = require('./lib/platform-i18n');
+const { loadTsx } = require('./lib/render-tsx');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -416,4 +418,22 @@ test('a Discover row binds its click once, however often the list renders', () =
   assert.match(effect, /const view = latest\.current;[\s\S]*rowHref\(view\)/, 'hrefFor reads the current row');
   assert.match(effect, /const view = latest\.current;[\s\S]*openRow\(view\)/, 'and so does the plain click');
   assert.match(BROWSE_LIST, /const latest = useRef<RowView>\(view\);\s*\n\s*latest\.current = view;/);
+});
+
+test('a topic\'s chip names the place the project page reopens on, which is where it goes (audit N05)', () => {
+  const { chipFor, placeChip } = loadTsx('frontend/src/features/dev-board/topic/topic-back.tsx');
+  const board = '#app/garden/workshop';
+  assert.deepEqual({ ...chipFor(board, 'status') }, { to: 'hub' }, 'a first visit reopens on the Hub');
+  assert.deepEqual({ ...chipFor(board, 'workshop') }, { to: 'workshop' });
+  assert.deepEqual({ ...chipFor(board, 'all') }, { to: 'allItems' });
+  assert.deepEqual({ ...chipFor(board, 'needs') }, { to: 'needs' });
+  assert.deepEqual({ ...chipFor(board, 'discussion') }, { to: 'channel', handle: 'general' });
+  assert.deepEqual({ ...chipFor(board, 'c:onboarding') }, { to: 'channel', handle: 'onboarding' });
+  assert.deepEqual({ ...placeChip('bot') }, { to: 'workshop' }, 'the bot\'s slots are under the Workshop');
+  assert.deepEqual({ ...chipFor('#messages/12', 'status') }, { to: 'messages' });
+  assert.equal(message('project:topic.back.hub'), 'Hub');
+  assert.equal(message('project:topic.back.toHub'), 'Back to Hub');
+  // The sidebar lights the same place on a request's page.
+  const rail = read('frontend/src/features/nav/rail-communities.tsx');
+  assert.match(rail, /place=\{here \? place\.place : \(onItem \? reopenPlace\(slug\) as PlaceKey : null\)\}/);
 });

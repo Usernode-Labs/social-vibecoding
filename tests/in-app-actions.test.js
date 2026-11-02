@@ -77,12 +77,16 @@ test('outside a running app the controls are nowhere', () => {
   for (const improve of [
     { target: 'platform' }, // Home and the other platform screens
     { target: null },
-    { tab: 'dev' },         // the app's own Workshop, board, a topic
     { slug: null },
     { selfHosted: true },   // the platform's own row has no app on screen
   ]) {
     assert.equal(render(improve), '', JSON.stringify(improve));
   }
+});
+
+test('the project\'s page keeps Suggest: its Hub, places and requests are the same project (audit P01)', () => {
+  assert.match(render({ tab: 'dev' }), /id="header-in-app-suggest"/);
+  assert.equal(render({ tab: 'other' }), '', 'not a project screen');
 });
 
 test('Suggest shows on its own, and the vote pill is gone (#5419)', () => {

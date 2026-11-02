@@ -114,14 +114,21 @@ test('your own message carries no avatar, and its head sits before its bubble', 
   const html = row({ message: message(ME, 8, { content: 'Looking now' }), kind: 'direct' });
   assert.match(html, /messages-message-self/);
   assert.doesNotMatch(html, /w-9 h-9/, 'no avatar on your own row');
-  assert.match(html, /<div class="messages-message-head"><span class="messages-message-author text-violet-700[^"]*">me<\/span><time[\s\S]*?<\/time><\/div><div class="messages-bubble"><div class="messages-markdown gc-msg-content">Looking now<\/div><\/div>/);
+  // Audit C05: its line says the time alone; the name is for a screen
+  // reader, and nothing on it wears the accent.
+  assert.match(html, /<div class="messages-message-head"><span class="messages-message-author sr-only">me<\/span><time[\s\S]*?<\/time><\/div><div class="messages-bubble"><div class="messages-markdown gc-msg-content">Looking now<\/div><\/div>/);
+  assert.doesNotMatch(html, /text-violet/);
 });
 
 test('the other person keeps the avatar, the name and the time above their bubble', () => {
+  // Audit C05/Y06: named bare in a group too, as in a direct message.
+  const group = row({ message: message(ADA, 19, { content: 'Hi all' }), kind: 'group' });
+  assert.match(group, /<span class="messages-message-author ">ada<\/span>/);
   const html = row({ message: message(ADA, 9, { content: 'Thanks!' }), kind: 'direct' });
   assert.doesNotMatch(html, /messages-message-self/);
   assert.match(html, /<span aria-hidden="true" class="w-9 h-9/, 'the avatar, as before');
-  assert.match(html, /<div class="messages-message-head"><span class="messages-message-author ">ada<\/span><time[\s\S]*?<\/time><\/div><div class="messages-bubble"><div class="messages-markdown gc-msg-content">Thanks!<\/div><\/div>/);
+  // Audit D13: the hover bar ends the name line, beside the bubble.
+  assert.match(html, /<div class="messages-message-head"><span class="messages-message-author ">ada<\/span><time[\s\S]*?<\/time><div class="messages-message-actions\s+msgx-bar[\s\S]*?<\/div><\/div><div class="messages-bubble"><div class="messages-markdown gc-msg-content">Thanks!<\/div><\/div>/);
 });
 
 test('a deleted message keeps its bubble, and the id, data and classes the checks select on', () => {

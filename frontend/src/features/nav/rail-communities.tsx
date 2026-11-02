@@ -116,7 +116,9 @@ import {
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { devWorkshopStore } from '../dev-board/card/cards-store';
 import { useCommunity } from '../dev-board/workshop/community-card';
-import { openPlace, placeStore } from '../dev-board/workshop/place-store';
+import { openPlace, placeStore, reopenPlace } from '../dev-board/workshop/place-store';
+import type { PlaceKey } from '../dev-board/workshop/places';
+import { improveStore } from '../improve/improve-store.js';
 import { ProjectPlaces } from '../dev-board/workshop/project-places';
 import { openCommunitiesSearch } from '../workshop/communities-search';
 import { communityScopeStore, goToCommunity, type CommunityInfo } from '../workshop/community-scope';
@@ -271,19 +273,28 @@ export function useRailCommunities(): string[] {
 }
 
 /** A community's places, nested under its row: the project's own list, kept short. */
-function RailPlaces({ slug, onPage }: { slug: string; onPage: boolean }) {
+function RailPlaces({ slug, onPage, needs = 0 }: { slug: string; onPage: boolean; needs?: number }) {
   const place = useStoreState(placeStore);
   const v = useStoreState(devWorkshopStore);
+  const improve = useStoreState(improveStore) as { slug: string | null; tab: string | null; subTab: string | null };
   const community = useCommunity(slug);
   // In its app, no place is lit: App is.
   const here = onPage && place.slug === slug;
+  // A request's or a change's page lights the place its back chip returns
+  // to, the one the project page reopens on, as All items lights the
+  // Workshop: with none lit the sidebar said nothing of where you were
+  // (audit N05, 1 Nov 2026).
+  const onItem = onPage && improve.slug === slug && improve.tab === 'dev' && improve.subTab === 'topic';
   return (
     <ProjectPlaces
       slug={slug}
       name={community?.name || slug}
       // Nothing lit until the page has said where it is.
-      place={here ? place.place : null}
-      owed={here ? place.owed : 0}
+      place={here ? place.place : (onItem ? reopenPlace(slug) as PlaceKey : null)}
+      // Off its page (in its app) the row's own count moves here: it hid
+      // the row's figure when the part opened, and Needs you drew nothing,
+      // so the one count that asks for you vanished (audit N04).
+      owed={here ? place.owed : needs}
       places={community?.places}
       // #2915: the Workshop's dot, as the page's own list draws it.
       filtered={here && v.slug === slug && !!v.meta?.filtered && place.place !== 'all'}
@@ -395,10 +406,17 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
   const open = sidebarRows && (onPage === slug || (onApp === slug && yours));
   const app = hasAppRow(slug, info, list);
   const running = live.includes(slug);
+  // The "still open" dot is for an app you are NOT in: it marks the one kept
+  // loaded behind another page and sits where its close X shows. On the App
+  // row of the app on screen it said nothing ("still open" while you look at
+  // it), and an unexplained grey dot on the lit row read as a warning
+  // (audit N04, 1 Nov 2026).
+  const keptOpen = running && onApp !== slug;
   // The part: everything while you are in it, its App row alone while its app runs.
   const part = open || (sidebarRows && app && (running || onApp === slug));
   // Open, its votes are Needs you's count under it.
-  const votes = c && !c.unchosen && !open ? Number(c.needs) || 0 : 0;
+  const needs = c && !c.unchosen ? Number(c.needs) || 0 : 0;
+  const votes = open ? 0 : needs;
   const appName = t('core:rail.appOf', { name });
   const href = `#app/${encodeURIComponent(slug)}/workshop`;
   // The App row, which the close control hands the focus to before it goes.
@@ -472,7 +490,7 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
               title={appName}
               // "Game Corner app", and that it is still open: the row's words
               // are only "App", under the community's name.
-              aria-label={running ? listText([appName, liveAppLabel()]) : appName}
+              aria-label={keptOpen ? listText([appName, liveAppLabel()]) : appName}
               aria-current={onApp === slug ? 'page' : undefined}
               onClick={(event) => {
                 if (isNativeClick(event)) return;
@@ -488,13 +506,13 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
             >
               <AppWindowIcon className="platform-rail-sub-glyph" aria-hidden="true" />
               <span className="platform-rail-sub-name">{t('core:rail.app')}</span>
-              {running ? <LiveAppDot className="platform-rail-live" /> : null}
+              {keptOpen ? <LiveAppDot className="platform-rail-live" /> : null}
             </a>
             {/* Close the app (#5525): an X where the dot sits, shown on hover
                 or keyboard focus (app.css). Not offered for the app on
                 screen — there is nothing to close it away from. Pressing it
                 must not press the row's own open. */}
-            {running && onApp !== slug ? (
+            {keptOpen ? (
               <button
                 type="button"
                 className="platform-rail-live-stop"
@@ -515,7 +533,7 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
           </div>
         ) : null}
         <NestSlot open={open} className="platform-rail-nest platform-rail-places" rows=".dev-ws-place, .dev-ws-places-head">
-          <RailPlaces slug={slug} onPage={onPage === slug} />
+          <RailPlaces slug={slug} onPage={onPage === slug} needs={needs} />
         </NestSlot>
       </NestSlot>
     </Fragment>

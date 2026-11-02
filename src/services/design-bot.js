@@ -53,6 +53,9 @@ const PLATFORM_SHEETS = Object.freeze([KIT_SHEET, '/css/app.css', '/css/tailwind
 const ENTRY_PAGES = Object.freeze(['public/index.html', 'index.html']);
 const MAX_SHEETS = 4;
 const MAX_SHEET_CHARS = 200_000;
+// A stylesheet main does not hold is read off the project's running copy:
+// one GET at its internal address, given this long.
+const BUILT_SHEET_TIMEOUT_MS = 3000;
 
 // Pictures: from the person's newest messages in the thread, at most these
 // many; described for a text-only model in a few sentences each.
@@ -325,15 +328,66 @@ function sheetPath(entry, href) {
   return out.length && /\.css$/i.test(out[out.length - 1]) ? out.join('/') : null;
 }
 
+/** Pure: the path a stylesheet in the repository is served at, from the entry page whose folder is the site's root. */
+function servedPath(entry, filePath) {
+  const root = String(entry || '').split('/').slice(0, -1).join('/');
+  const file = String(filePath || '');
+  if (root && !file.startsWith(`${root}/`)) return null;
+  return `/${root ? file.slice(root.length + 1) : file}`;
+}
+
+/**
+ * A stylesheet the repository does not hold, read off the project's running
+ * copy: its text, or null. Apps made from the templates link /tailwind.css,
+ * which their image build compiles and .gitignore keeps out of the
+ * repository, so main never has it, and every drawing of such an app came out
+ * on the bare kit (the parity test of 2 Nov 2026). The production container
+ * serves the built file; it is reached at its internal address, as the shell
+ * probe reaches it (application-runtime appOrigin). Only a 200 that says it is
+ * CSS counts: an app that answers every path with its page must not pass.
+ */
+async function builtSheet(pool, config, app, { entry, filePath }, deps = {}) {
+  const path = servedPath(entry, filePath);
+  if (!path || !app) return null;
+  try {
+    const runtime = deps.runtime || require('./application-runtime');
+    let row = app;
+    if (pool && app.id) {
+      const { rows } = await pool.query('SELECT id, slug, runtime_kind, runtime_name FROM apps WHERE id = $1', [app.id]);
+      row = rows[0] || app;
+    }
+    // productionRef derives a name when runtime_name is empty; without an id
+    // and slug it would derive one that resolves nowhere (shell-probe.js).
+    if (!row.runtime_name && !(row.id && row.slug)) return null;
+    const origin = runtime.appOrigin(config, runtime.productionRef(config, row));
+    if (!origin) return null;
+    const response = await (deps.fetch || fetch)(`${origin}${path}`, {
+      headers: { accept: 'text/css' },
+      redirect: 'error',
+      signal: AbortSignal.timeout(BUILT_SHEET_TIMEOUT_MS),
+    });
+    if (!response.ok || !/\btext\/css\b/i.test(response.headers.get('content-type') || '')) {
+      await response.body?.cancel?.();
+      return null;
+    }
+    return await response.text();
+  } catch (err) {
+    log.info('design-bot', 'Could not read a project\'s built stylesheet', { app: app.slug, path, err: err.message });
+    return null;
+  }
+}
+
 /**
  * The stylesheets a screen of this design is drawn with: { links, styles }.
  * Homeroom's own pages: the shell's three (the preview draws today's, frame
  * ts freshSheets). A new project: the native kit. A project's app: what its
  * entry page links on main, read with the Main Chat turn's own readers and
- * its check (view and build access; never a secret path), the kit kept as a
- * link; the kit alone when none of it can be read. Never throws.
+ * its check (view and build access; never a secret path), and a sheet main
+ * does not hold (a compiled Tailwind) read off its running copy (builtSheet);
+ * the kit kept as a link; the kit alone when none of it can be read. Never
+ * throws.
  */
-async function sheetsFor(pool, { user, surface, app, deps = {} }) {
+async function sheetsFor(pool, { user, surface, app, config, deps = {} }) {
   if (surface === 'platform') return { links: [...PLATFORM_SHEETS], styles: [] };
   if (surface !== 'app' || !app?.slug) return { links: [KIT_SHEET], styles: [] };
   try {
@@ -352,7 +406,8 @@ async function sheetsFor(pool, { user, surface, app, deps = {} }) {
         if (clean.startsWith('/usernode-native/')) { links.push(clean); continue; }
         const filePath = sheetPath(entry, href);
         if (!filePath || mayor.SECRET_PATH_RE.test(filePath)) continue;
-        const css = await github.getFileContent(owner, repo, filePath, 'main');
+        let css = await github.getFileContent(owner, repo, filePath, 'main');
+        if (typeof css !== 'string' || !css.trim()) css = await builtSheet(pool, config, found.app, { entry, filePath }, deps);
         if (typeof css === 'string' && css.trim() && !css.includes('\u0000') && css.length <= MAX_SHEET_CHARS) {
           styles.push({ path: filePath, css });
         }
@@ -413,7 +468,11 @@ function whereWords({ surface, app }) {
 /** Pure: what the stylesheets put in for it are, for the prompt. */
 function sheetWords(surface) {
   if (surface === 'platform') return 'Homeroom\'s own: native.css, app.css and the compiled Tailwind, as its pages have them';
-  if (surface === 'app') return 'the CSS its entry page links on main, or the native kit (native.css) when it links none';
+  if (surface === 'app') {
+    return 'the CSS its entry page links on main, or the native kit (native.css) when it links none. A compiled Tailwind'
+      + ' there holds only the classes the app uses today, so a utility class it does not use yet does nothing: style'
+      + ' what is new in your own <style>';
+  }
   return 'the native kit (native.css), the stylesheet every project starts from';
 }
 
@@ -811,7 +870,7 @@ async function answer(pool, config, {
           const screen = screenArgs(args);
           if (screen.error) result = { ok: false, error: screen.error };
           else {
-            if (!sheets) sheets = await sheetsFor(pool, { user, surface, app: project, deps });
+            if (!sheets) sheets = await sheetsFor(pool, { user, surface, app: project, config, deps });
             const full = withSheets(screen.html, sheets);
             if (!threads.validHtml(full)) result = { ok: false, error: 'That screen is too big. Draw less of it.' };
             else {
@@ -1025,6 +1084,8 @@ module.exports = {
   historyOf,
   linkedSheets,
   sheetPath,
+  servedPath,
+  builtSheet,
   sheetsFor,
   withSheets,
   collapseSheets,

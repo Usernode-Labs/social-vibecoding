@@ -148,32 +148,32 @@
     "description": "Quiet fact on a project's row on the Communities screen, in place of when it was last active: the person has sent an invite link for it and nobody has joined yet."
   },
   "row.active.justNow": {
-    "text": "just now",
-    "description": "The whole quiet fact on the row of a project that is just the person's own, on the Communities screen: it was last active less than a minute ago. Drawn in its own element, in lower case."
+    "text": "Active just now",
+    "description": "The whole quiet fact on the row of a project that is just the person's own, on the Communities screen: it was last active less than a minute ago."
   },
   "row.active.minutes_one": {
-    "text": "{{count}}m ago",
-    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many minutes ago it was last active. \"m\" abbreviates minutes; keep it short."
+    "text": "Active {{count}}m ago",
+    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many minutes ago it was last active. \"Active\" says what the time is, since the row says nothing else. \"m\" abbreviates minutes; keep it short."
   },
   "row.active.minutes_other": {
-    "text": "{{count}}m ago",
-    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many minutes ago it was last active. \"m\" abbreviates minutes; keep it short."
+    "text": "Active {{count}}m ago",
+    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many minutes ago it was last active. \"Active\" says what the time is, since the row says nothing else. \"m\" abbreviates minutes; keep it short."
   },
   "row.active.hours_one": {
-    "text": "{{count}}h ago",
-    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many hours ago it was last active. \"h\" abbreviates hours; keep it short."
+    "text": "Active {{count}}h ago",
+    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many hours ago it was last active. \"Active\" says what the time is, since the row says nothing else. \"h\" abbreviates hours; keep it short."
   },
   "row.active.hours_other": {
-    "text": "{{count}}h ago",
-    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many hours ago it was last active. \"h\" abbreviates hours; keep it short."
+    "text": "Active {{count}}h ago",
+    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many hours ago it was last active. \"Active\" says what the time is, since the row says nothing else. \"h\" abbreviates hours; keep it short."
   },
   "row.active.days_one": {
-    "text": "{{count}}d ago",
-    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many days ago it was last active. \"d\" abbreviates days; keep it short."
+    "text": "Active {{count}}d ago",
+    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many days ago it was last active. \"Active\" says what the time is, since the row says nothing else. \"d\" abbreviates days; keep it short."
   },
   "row.active.days_other": {
-    "text": "{{count}}d ago",
-    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many days ago it was last active. \"d\" abbreviates days; keep it short."
+    "text": "Active {{count}}d ago",
+    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many days ago it was last active. \"Active\" says what the time is, since the row says nothing else. \"d\" abbreviates days; keep it short."
   },
   "row.inProgress_one": {
     "text": "{{count}} in progress",

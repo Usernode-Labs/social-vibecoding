@@ -66,7 +66,19 @@ export interface RequestSpecCard {
  *     or another version, never stands in for it: without its line, a
  *     comment that carries the plan is that plan's card, and a link-only one
  *     stays as it was written.
+ *   - Overnight audit R02 (2 Nov 2026): the platform's record that the
+ *     request was filed ("evan created issue: "Dark mode" (#4)", written in
+ *     the GitHub era's words and still parsed by the server) leaves too. The
+ *     root post the page opens on already says who asked, what and when, so
+ *     the line only repeated it, in a word the product no longer uses.
  */
+const FILED_LINE = /^\S+ created issue: ".*" \(#\d+\)$/s;
+
+/** Whether a row is the platform's "X created issue: …" record of the request being filed. */
+export function isFiledLine(m: TranscriptMessage): boolean {
+  return m.kind === 'system' && FILED_LINE.test((m.systemText || '').trim());
+}
+
 export function requestStream(rows: TranscriptMessage[]): { rows: TranscriptMessage[]; specs: RequestSpecCard[] } {
   const shared = rows.some((m) => m.kind === 'spec_share' && !!m.specShare);
   const announced = (mirror: { author: string; version: number }) => rows.some((m) => m.kind === 'spec_share'
@@ -74,6 +86,7 @@ export function requestStream(rows: TranscriptMessage[]): { rows: TranscriptMess
     && String(m.specShare.sharedBy).toLowerCase() === mirror.author.toLowerCase()
     && Number(m.specShare.version) === mirror.version);
   const kept = rows.filter((m) => {
+    if (isFiledLine(m)) return false;
     if (m.kind !== 'github') return true;
     if (m.planMirror) return !announced(m.planMirror);
     return !(shared && m.githubSpec);
