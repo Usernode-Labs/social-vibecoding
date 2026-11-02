@@ -60,6 +60,11 @@
       "id": "0012-connect-accounts-cta",
       "sha256": "b3f112d8c98dc1580d47ca8a9d0bb9f7224899600934d05d426b690fe27119da",
       "schemaSha256": "89df74e9a767e2ed98c5faae0f7e69d1cb079b86fb0618500c20b39ebf20c086"
+    },
+    {
+      "id": "0013-web-withdraws-at-cutover",
+      "sha256": "7339b70b0a71fdd1fe5e5eaa8a59e254e083d7a74cbea7fbcc361e9adcdc9664",
+      "schemaSha256": "98be7265fd836b9cad6bc975bb6e24ec2cacc008cc18e42b2248efb0227907f3"
     }
   ]
 }

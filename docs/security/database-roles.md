@@ -21,8 +21,31 @@ keeps access to reserved connections within the existing platform budget.
 BYPASSRLS is intentional for the trusted provisioner: a complete logical
 source copy must include rows protected by forced row-level security. Restore
 and redaction still authenticate as the copy's own unprivileged owner. This
-split does not make the provisioner a tenant-isolated service or introduce
-table-level separation between web and conductor.
+split does not make the provisioner a tenant-isolated service. Between web and
+the conductor, only the workflow kernel's relations are separated: public's
+`wf_*` tables and sequences, found by name in the catalog, so a new one is
+covered without a list to update. Web may append to `wf_events`, naming only
+a producer's columns, read the rest and draw sequence values; it may write
+none of them nor set a sequence (`restrictWebWorkflow`), so the database can
+tell which login appended an event (docs/workflows.md "Who produced it").
+Startup refuses a web login that can write them and a conductor login that
+cannot. The application tables stay writable by both.
+
+The bootstrap only adds web's narrow workflow grants. The migration Job takes
+the rest, in this order: before it migrates anything, it waits up to eight
+minutes for every live web process to record
+`platform_processes.web_restriction_ready` (`awaitWebRestrictionReady`), since
+a web process of an earlier build still writes those tables and could not
+restart without them; if one still serves, the Job fails having changed
+nothing, and the running release stays as it is. Then it migrates, and in its
+grants' transaction counts the registered processes once more and takes web's
+writes (`takeWebWorkflowWrites`). That count sees only processes already
+registered: one still booting is kept out by the wait and by the earlier
+build's rollout having finished, not by the count. The moment web's writes go
+is recorded (`wf_settings` `web_restricted_at`), so a request web appended
+just before still reads as the platform's and web may withdraw it
+(`wf_refuse_pending`). Deploy the release that records
+`web_restriction_ready` first and let it finish rolling out.
 
 ## Release order
 
