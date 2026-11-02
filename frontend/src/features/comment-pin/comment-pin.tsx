@@ -83,15 +83,15 @@ import { platformSlug } from '../messages/channel-hub';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import {
   changesPicture, loadLibrary, outOfPicture, textsUnchanged,
-  closeUpView, coverCrop, cropCanvas, CROP_SHADE, describeElement, dragCrop, encodeUnder, FULL_CROP, inRect, insetFrame,
+  closeUpView, coverCrop, cropCanvas, CROP_SHADE, dragCrop, encodeUnder, FULL_CROP, inRect, insetFrame,
   isFullCrop, overlaysGone, pictureScale, pinInCrop, placeBeside,
   takeBase, thumbnail, toPage, toScreen,
-  type Base, type CropHandle, type ElementInfo, type Point, type Rect, type Size,
+  type Base, type CropHandle, type Point, type Rect, type Size,
 } from './picture';
 import { CloseUp } from './close-up';
 import {
-  MAX_COMMENTS, MAX_PICTURES, handOver, numberFromUrl, numberedWords, postComment, whereLines,
-  type CommentPost, type CommentShot, type Spot, type Target,
+  MAX_COMMENTS, MAX_PICTURES, changeLine, handOver, numberFromUrl, numberedWords, postComment,
+  type CommentPost, type CommentShot, type Target,
 } from './post';
 
 export const HOST_ID = 'comment-pin-host';
@@ -329,7 +329,7 @@ interface Comment {
   inApp: boolean;
   /** The change the preview was showing, when the pin went in a preview. */
   preview: number | null;
-  /** The route the page was on, for the where line. */
+  /** The route the page was on when the pin went down. */
   screen: string;
   /** The picture its pin is on, when it has one. */
   picture: number | null;
@@ -1061,14 +1061,6 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     for (const pic of d.pictures) {
       bases.set(pic.key, pic.base === undefined ? await pic.promise.catch(() => null) : pic.base);
     }
-    const spots: Spot[] = live.map((c) => {
-      const pic = c.picture != null ? d.pictures.find((x) => x.key === c.picture) : null;
-      const base = pic ? bases.get(pic.key) ?? null : null;
-      let at: ElementInfo | null;
-      if (c.inApp) at = pic && pic.askedFor === c.key ? base?.app?.at ?? null : null;
-      else at = c.anchor.el && c.anchor.el.isConnected ? describeElement(c.anchor.el) : null;
-      return { inApp: c.inApp, preview: c.inApp ? c.preview : null, screen: c.inApp ? (base?.app?.path || '') : c.screen, at };
-    });
     const shots: CommentShot[] = [];
     if (d.keepShot) {
       for (const pic of d.pictures) {
@@ -1097,7 +1089,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       images: d.images.map((i) => i.blob),
       title: titleToSend(d),
       bounty: !KUDOS_PARKED && d.kudos && budget.remaining !== 0,
-      where: live.length ? whereLines(spots, app?.slug ?? null) : '',
+      change: changeLine(live.find((c) => c.inApp && c.preview)?.preview ?? null, app?.slug ?? null),
     };
   }, [app, budget.remaining]);
 
