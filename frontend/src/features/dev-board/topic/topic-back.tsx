@@ -139,6 +139,7 @@ export function chipFor(href: string, workshopTab: string | null, stepsBack = fa
 
 /** Whether a press on a chip to `href` steps Back (App._canStepBackTo). */
 function stepsBackTo(href: string): boolean {
+  if (typeof window === 'undefined') return false;
   const app = (window as unknown as { App?: { _canStepBackTo?: (h: string) => boolean } }).App;
   try { return !!app?._canStepBackTo?.(href); } catch { return false; }
 }
