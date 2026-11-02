@@ -6202,6 +6202,26 @@ const App = {
     };
   },
 
+  // The name and face this device remembers for `slug`, shaped like the
+  // launcher's row (name, icon_url, icon_emoji, self_hosted), or null. For
+  // when no list of apps has loaded: offline, a cold start has none, and the
+  // slug is not a name. What is remembered is your communities, the app you
+  // left, the apps you left and your pins (frontend/src/features/nav/
+  // app-names.ts, through the nav bridge's `knownApp`); the bridge names a
+  // parked app from the same place, so `_parkRecord` may still hand it a slug.
+  _rememberedAppRecord(slug) {
+    let known = null;
+    try { known = window.UsernodeReact?.nav?.knownApp?.(slug) || null; } catch (_) { known = null; }
+    if (!known || !known.name) return null;
+    return {
+      slug,
+      name: known.name,
+      icon_url: known.iconUrl || null,
+      icon_emoji: known.iconEmoji || null,
+      self_hosted: !!known.selfHosted,
+    };
+  },
+
   // ── #workshop — the app Workshop you left (#2776) ───────────────────
   //
   // The Workshop tab is a stack, like every tab in an iOS tab bar: the
@@ -8613,9 +8633,11 @@ const App = {
       // showed, so the header says them as the view is revealed (here, not
       // before the transition: #979); the read below confirms them, or says
       // the app is not available. The App tab only: a Dev view names itself.
+      // With no launcher row (offline, nothing has listed the apps yet) the
+      // name this device remembers says it instead of the screen you left.
       if (initialRoute.tab === 'app') {
         let named = null;
-        try { named = AppView.launchRecordFor?.(slug) || null; } catch (_) { named = null; }
+        try { named = AppView.launchRecordFor?.(slug) || App._rememberedAppRecord(slug); } catch (_) { named = null; }
         if (named && named.name && !named.self_hosted) {
           App.setHeaderTitle(named.name);
           App.ImproveStatus.setPendingApp(named);
