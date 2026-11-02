@@ -56,3 +56,15 @@ test('D09: the new-message picker offers no Block beside each person', () => {
   assert.doesNotMatch(dialog, /void block\(user\)|create\.result\.block/);
   assert.match(dialog, /onClick=\{\(\) => void unblock\(user\)\}/, 'Blocked people still unblocks');
 });
+
+test('D03: the Invite pane says a link went out on its first Copy or Share, not on opening', () => {
+  const pane = read('frontend/src/features/app-context/invite-pane.tsx');
+  assert.match(pane, /void inviteApi\(`\/api\/invite-links\/\$\{link\.id\}\/shared`, \{ method: 'POST' \}\)/);
+  assert.match(pane, /await navigator\.clipboard\.writeText\(url\);\n\s*noteSent\(current\);/);
+  assert.match(pane, /if \(current\) noteSent\(current\);\n\s*setSentOut\(true\);/);
+  const route = read('src/routes/community-invites.js');
+  assert.match(route, /router\.post\('\/api\/invite-links\/:id\/shared', drainGuard, sameOriginBrowserOnly,/);
+  const svc = read('src/services/community-invites.js');
+  assert.match(svc, /AND \(i\.shared_at IS NOT NULL OR EXISTS \(\n\s*SELECT 1 FROM community_invite_redemptions y WHERE y\.invite_id = i\.id\)\)/);
+  assert.match(read('src/db/migrations/0010-invite-link-shared.sql'), /ALTER TABLE community_invites ADD COLUMN IF NOT EXISTS shared_at TIMESTAMPTZ;/);
+});

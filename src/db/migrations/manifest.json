@@ -45,6 +45,11 @@
       "id": "0009-bot-parity-p6-p7",
       "sha256": "af1a6b5a153dc41b1dd5714c90a1d763cb4f039a628163e727bd2678820d937d",
       "schemaSha256": "04b7ada04242e1d8281a673a40ec1a38b2894262b91970b2fd2772ad160043af"
+    },
+    {
+      "id": "0010-invite-link-shared",
+      "sha256": "669d2a1c789f3fe7e54801f325eba28488e447fb5c4246974ef34c43f654dbc9",
+      "schemaSha256": "d6b3f27f8785aa80117914afd5bbd1de50ba45af3a1f42804f5b19174b3c7193"
     }
   ]
 }
